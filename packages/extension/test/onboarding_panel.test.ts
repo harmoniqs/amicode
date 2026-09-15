@@ -409,7 +409,7 @@ describe("Harmoniqs AI — branded provider preset", () => {
       else process.env.XDG_DATA_HOME = prevXdgDataHome;
     });
 
-    it("writes the non-secret provider shape into opencode.json (npm, baseURL, model, tool_call:false)", () => {
+    it("writes the non-secret provider shape into opencode.json with tool calling enabled", () => {
       const configPath = path.join(tmpDir, "config", "opencode.json");
       writeOnboardingConfig(
         {
@@ -424,7 +424,7 @@ describe("Harmoniqs AI — branded provider preset", () => {
       const entry = written.provider[HARMONIQS_PROVIDER_ID];
       expect(entry.npm).toBe("@ai-sdk/openai-compatible");
       expect(entry.options.baseURL).toBe(HARMONIQS_BASE_URL);
-      expect(entry.models[HARMONIQS_MODEL_ID].tool_call).toBe(false);
+      expect(entry.models[HARMONIQS_MODEL_ID].tool_call).toBe(true);
       // Regression: without limit.output, opencode's own maxOutputTokens
       // fallback (Math.min(model.limit.output, 32000) || 32000) treats the
       // unset 0 as "no cap" and sends max_tokens: 32000 on every real turn --
@@ -494,7 +494,7 @@ describe("Harmoniqs AI — branded provider preset", () => {
       // collapsed onto HARMONIQS_MODEL_ID ("harmoniqs-auto").
       expect(entry.models["harmoniqs-fast"]).toBeDefined();
       expect(entry.models[HARMONIQS_MODEL_ID]).toBeUndefined();
-      expect(entry.models["harmoniqs-fast"].tool_call).toBe(false);
+      expect(entry.models["harmoniqs-fast"].tool_call).toBe(true);
       expect(entry.models["harmoniqs-fast"].limit).toEqual({ output: HARMONIQS_MAX_OUTPUT_TOKENS });
       // The gateway shape (npm/baseURL) is protocol-level, not model-specific,
       // and must stay identical regardless of which model was selected.
@@ -529,6 +529,48 @@ describe("Harmoniqs AI — branded provider preset", () => {
       );
       const written = JSON.parse(fs.readFileSync(configPath, "utf8"));
       expect(written.provider[HARMONIQS_PROVIDER_ID].models["harmoniqs-fast"].name).toBe("harmoniqs-fast");
+    });
+
+    // Regression: re-running onboarding (e.g. switching the selected model)
+    // used to replace the whole harmoniqs entry with the freshly built one,
+    // silently dropping any other model already recorded under `models`.
+    it("merges onto an existing harmoniqs entry instead of replacing it wholesale", () => {
+      const configPath = path.join(tmpDir, "config", "opencode.json");
+      fs.mkdirSync(path.dirname(configPath), { recursive: true });
+      fs.writeFileSync(
+        configPath,
+        JSON.stringify({
+          $schema: "https://opencode.ai/config.json",
+          provider: {
+            [HARMONIQS_PROVIDER_ID]: {
+              npm: "@ai-sdk/openai-compatible",
+              name: "Harmoniqs AI",
+              options: { baseURL: HARMONIQS_BASE_URL },
+              models: {
+                "harmoniqs-fast": { name: "harmoniqs-fast", tool_call: true },
+              },
+            },
+          },
+        }),
+      );
+
+      writeOnboardingConfig(
+        {
+          provider: HARMONIQS_PROVIDER_ID,
+          model: `${HARMONIQS_PROVIDER_ID}/${HARMONIQS_MODEL_ID}`,
+          apiKey: "hqa_supersecretvalue123456",
+        },
+        configPath,
+      );
+
+      const written = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      const entry = written.provider[HARMONIQS_PROVIDER_ID];
+      // The previously-recorded model survives the re-run...
+      expect(entry.models["harmoniqs-fast"]).toBeDefined();
+      // ...alongside the newly selected one.
+      expect(entry.models[HARMONIQS_MODEL_ID]).toBeDefined();
+      expect(entry.models[HARMONIQS_MODEL_ID].tool_call).toBe(true);
+      expect(written.model).toBe(`${HARMONIQS_PROVIDER_ID}/${HARMONIQS_MODEL_ID}`);
     });
   });
 
@@ -616,6 +658,8 @@ describe("Harmoniqs AI — branded provider preset", () => {
       expect(healed.provider[HARMONIQS_PROVIDER_ID].models[HARMONIQS_MODEL_ID].limit).toEqual({
         output: HARMONIQS_MAX_OUTPUT_TOKENS,
       });
+      // The chat-only flag the old writer planted gets healed to tool-capable too.
+      expect(healed.provider[HARMONIQS_PROVIDER_ID].models[HARMONIQS_MODEL_ID].tool_call).toBe(true);
       // Everything else survives untouched.
       expect(healed.provider[HARMONIQS_PROVIDER_ID].options.baseURL).toBe(HARMONIQS_BASE_URL);
       expect(healed.model).toBe(`${HARMONIQS_PROVIDER_ID}/${HARMONIQS_MODEL_ID}`);
@@ -627,7 +671,7 @@ describe("Harmoniqs AI — branded provider preset", () => {
           [HARMONIQS_PROVIDER_ID]: {
             npm: "@ai-sdk/openai-compatible",
             options: { baseURL: HARMONIQS_BASE_URL },
-            models: { "harmoniqs-fast": { name: "harmoniqs-fast", tool_call: true } },
+            models: { "harmoniqs-fast": { name: "harmoniqs-fast", tool_call: false } },
           },
         },
       };
@@ -637,7 +681,7 @@ describe("Harmoniqs AI — branded provider preset", () => {
 
       const healed = JSON.parse(fs.readFileSync(configPath, "utf8"));
       const model = healed.provider[HARMONIQS_PROVIDER_ID].models["harmoniqs-fast"];
-      expect(model.tool_call).toBe(false);
+      expect(model.tool_call).toBe(true);
       expect(model.limit).toEqual({ output: HARMONIQS_MAX_OUTPUT_TOKENS });
     });
 
@@ -650,7 +694,7 @@ describe("Harmoniqs AI — branded provider preset", () => {
             models: {
               [HARMONIQS_MODEL_ID]: {
                 name: "Harmoniqs Auto",
-                tool_call: false,
+                tool_call: true,
                 limit: { output: HARMONIQS_MAX_OUTPUT_TOKENS },
               },
             },
@@ -697,6 +741,7 @@ describe("Harmoniqs AI — branded provider preset", () => {
       expect(written.provider[HARMONIQS_PROVIDER_ID].models[HARMONIQS_MODEL_ID].limit).toEqual({
         output: HARMONIQS_MAX_OUTPUT_TOKENS,
       });
+      expect(written.provider[HARMONIQS_PROVIDER_ID].models[HARMONIQS_MODEL_ID].tool_call).toBe(true);
       expect(written.provider.anthropic).toBeDefined();
     });
   });

@@ -371,14 +371,33 @@ describe("amicode bridge — clipboard", () => {
 });
 
 describe("amicode bridge — connect-harmoniqs-provider", () => {
-  it("rejects a missing key without opening the onboarding panel", async () => {
+  it("hands a keyless connect off to the onboarding panel and acks so the picker closes (amicode#962)", async () => {
+    // The branded picker row (dialog-connect-provider-harmoniqs.ts) posts with
+    // NO apiKey and waits for connect-harmoniqs-provider-ack to close. The host
+    // opens its own Stage-0 connection UI and acks — it must NOT fall through to
+    // the "Enter a valid API key" result the keyless post has no listener for.
     const host = io();
+    const executed = (vscode.commands as unknown as { executed: string[] }).executed ?? [];
+    const before = executed.length;
     expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "connect-harmoniqs-provider", tab: "tab-1" }, host)).toBe(true);
+    await flush();
+    const ack = host.posted.find((m: any) => m.kind === "connect-harmoniqs-provider-ack") as any;
+    expect(ack).toEqual({ source: "amicode", kind: "connect-harmoniqs-provider-ack", tab: "tab-1" });
+    expect(host.posted.find((m: any) => m.kind === "connect-harmoniqs-provider-result")).toBeUndefined();
+    expect(executed.slice(before)).toContain("amicode.onboarding.open");
+  });
+
+  it("rejects a present-but-malformed key inline without opening the onboarding panel", async () => {
+    const host = io();
+    const executed = (vscode.commands as unknown as { executed: string[] }).executed ?? [];
+    const before = executed.length;
+    const oversized = "x".repeat(501);
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "connect-harmoniqs-provider", tab: "tab-1", apiKey: oversized }, host)).toBe(true);
     await flush();
     const result = host.posted.find((m: any) => m.kind === "connect-harmoniqs-provider-result") as any;
     expect(result).toEqual({ source: "amicode", kind: "connect-harmoniqs-provider-result", tab: "tab-1", ok: false, error: "Enter a valid API key" });
-    const ran = (vscode.commands as unknown as { executed: string[] }).executed ?? [];
-    expect(ran).not.toContain("amicode.connectHarmoniqsProvider");
+    expect(host.posted.find((m: any) => m.kind === "connect-harmoniqs-provider-ack")).toBeUndefined();
+    expect(executed.slice(before)).not.toContain("amicode.onboarding.open");
   });
 
   it("restarts the server on success so the running Provider.list() picks up the new credentials", async () => {

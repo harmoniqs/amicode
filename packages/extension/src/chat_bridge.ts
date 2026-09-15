@@ -462,10 +462,31 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     return true;
   }
 
-  // Connect Provider dialog → Harmoniqs AI: keep the user inside the model
-  // picker modal while the extension host validates and stores the secret.
+  // Connect Provider dialog → Harmoniqs AI. Two shapes reach this branch:
+  //
+  //  (a) key-inline (Design A): the picker collected the secret itself and
+  //      posts { apiKey }. The host validates/stores it and replies with
+  //      connect-harmoniqs-provider-result (ok/error) so the picker can stay
+  //      open and surface the outcome inline.
+  //  (b) handoff (Design B): the branded picker row posts with NO apiKey
+  //      (dialog-connect-provider-harmoniqs.ts's requestHarmoniqsProviderConnect)
+  //      and waits for connect-harmoniqs-provider-ack to close, expecting the
+  //      host to open its own connection UI. Reconciles amicode#962: without
+  //      this the no-key post fell through to the "Enter a valid API key"
+  //      result — which the handoff dialog has no listener for — so clicking
+  //      the row appeared to do nothing (no inline field, no panel, no ack).
+  //
+  // Detect (b) by an absent/empty apiKey and hand off to the Stage-0
+  // onboarding webview, acking so the picker gets out of the way. A
+  // present-but-malformed key is still a (a)-shaped error.
   if (msg.kind === "connect-harmoniqs-provider") {
-    const apiKey = (msg as { apiKey?: unknown }).apiKey;
+    const rawApiKey = (msg as { apiKey?: unknown }).apiKey;
+    if (rawApiKey === undefined || rawApiKey === null || rawApiKey === "") {
+      void vscode.commands.executeCommand("amicode.onboarding.open");
+      io.postToWebview({ source: "amicode", kind: "connect-harmoniqs-provider-ack", tab: msg.tab });
+      return true;
+    }
+    const apiKey = rawApiKey;
     if (typeof apiKey !== "string" || apiKey.length === 0 || apiKey.length > 500) {
       io.postToWebview({ source: "amicode", kind: "connect-harmoniqs-provider-result", tab: msg.tab, ok: false, error: "Enter a valid API key" });
       return true;

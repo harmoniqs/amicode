@@ -303,7 +303,7 @@
     "packages/opencode/test/fixture/fixture.ts": "357bdaa06c6233a91069db20cc5f1cbb2d6eafa3bc7ba3e89b019859d195d6ef",
     "packages/opencode/test/lib/cli-process.ts": "110c43d247930e834ffffb9068682c5ab2e1b95460ec1ac3d0a75cafbdee60ff",
     "packages/opencode/test/project/worktree-rename.test.ts": "3ec168c9f8595249b75832895a251483ec1f3641ce44ad0bd5a664b5bbd6dad1",
-    "packages/opencode/test/provider/harmoniqs-no-tools.test.ts": "ac455d754c1a61791fa45b18db5322ec2d472ff71778fbed1d412ec749b4b7b9",
+    "packages/opencode/test/provider/harmoniqs-tools.test.ts": "63e47f9a6f5d5f0e69ae35068ccc416aff8771667c7aa26ee456d6d8c0994399",
     "packages/opencode/test/provider/provider.test.ts": "5b2cbed8994d3bbc968a72d01459460c1de72b6117a0795c2bc6a10abbf02926",
     "packages/opencode/test/provider/transform.test.ts": "e9e796696c4a35392b8a77af2176f341a5d7db2fb76deb7225d48724891206fb",
     "packages/opencode/test/server/amicode-connections-routes.test.ts": "2852289427fadaf6133b556af02f7e7b369b2a4df53ababc39531fe85bcc9d17",
@@ -704,7 +704,7 @@
     "packages/opencode/src/server/shared/public-ui.ts": "a843b4e84673d9a5e34f36eb7cffbb499850f7588154c23061fc8a81cd1369ef",
     "packages/opencode/src/server/shared/ui.ts": "eba93fdd47c786d723d2593e788f6b7278b072548acb916d19eeb2e9616a4197",
     "packages/opencode/src/server/shared/workspace-routing.ts": "3704b6cf218fc165ce9c1cdad0ee42fc9cf604976e4a552478200f85db80876a",
-    "packages/opencode/src/session/llm/request.ts": "248db5d00c4513fa7101b4631950ed39fe8fe6de8228c2f527c57ca72e0b55f0",
+    "packages/opencode/src/session/llm/request.ts": "498ad2d8e98c550a2e9a3c1e45c4f42b740b341f5b80dbc98826ad949f49fafb",
     "packages/opencode/src/session/prompt/anthropic.txt": "e3e1a55159f0104ceec69098620eb281cd8927cfa808ab5feaa753719af27f05",
     "packages/opencode/src/session/prompt/communicating.txt": "e14e1daf86eb4fa2fc1222cc941145913d540827bde3d27ebfe0fe30181f3e97",
     "packages/opencode/src/session/prompt/default.txt": "bfb0d6ab93fb82a8edad591101bd84839565a0fb401770ceb0045b1fd3b081bc",
@@ -840,7 +840,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-09-15T19:28:37.570Z",
+  "extracted_at": "2026-09-15T19:41:59.206Z",
   "per_package": {
     "packages/app": {
       "A": 164,
@@ -1184,7 +1184,7 @@
     "packages/opencode/test/fixture/fixture.ts": "M",
     "packages/opencode/test/lib/cli-process.ts": "M",
     "packages/opencode/test/project/worktree-rename.test.ts": "A",
-    "packages/opencode/test/provider/harmoniqs-no-tools.test.ts": "A",
+    "packages/opencode/test/provider/harmoniqs-tools.test.ts": "A",
     "packages/opencode/test/provider/provider.test.ts": "M",
     "packages/opencode/test/provider/transform.test.ts": "M",
     "packages/opencode/test/server/amicode-connections-routes.test.ts": "A",

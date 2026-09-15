@@ -3,15 +3,17 @@ import { Effect } from "effect"
 import { jsonSchema } from "ai"
 import { LLMRequestPrep, isNoToolsProvider } from "@/session/llm/request"
 
-// Harmoniqs AI is an OpenAI-compatible custom provider whose backend
-// (app-harmoniqs-ai) hard-rejects any request carrying a `tools` field with a
-// 400 unsupported_feature error. opencode agents default to tool calling, so
-// LLMRequestPrep.prepare must strip resolved tools for this provider — see
-// packages/opencode/src/session/llm/request.ts.
+// Harmoniqs AI is an OpenAI-compatible custom provider. Its backend
+// (app-harmoniqs-ai) used to hard-reject any request carrying a `tools`
+// field with a 400 unsupported_feature error, so LLMRequestPrep.prepare
+// stripped resolved tools for this provider. The gateway now translates
+// `tools` into a Bedrock Converse toolConfig (app-harmoniqs-ai PR #78), so
+// the provider was removed from NO_TOOLS_PROVIDERS and tools flow through
+// normally — see packages/opencode/src/session/llm/request.ts.
 
 describe("isNoToolsProvider", () => {
-  test("flags the harmoniqs provider", () => {
-    expect(isNoToolsProvider("harmoniqs")).toBe(true)
+  test("no longer flags the harmoniqs provider", () => {
+    expect(isNoToolsProvider("harmoniqs")).toBe(false)
   })
 
   test("leaves other providers untouched", () => {
@@ -21,7 +23,7 @@ describe("isNoToolsProvider", () => {
   })
 })
 
-describe("LLMRequestPrep.prepare - harmoniqs no-tools gate", () => {
+describe("LLMRequestPrep.prepare - harmoniqs tool calling", () => {
   const sessionID = "test-session-harmoniqs"
 
   const harmoniqsModel = {
@@ -37,7 +39,7 @@ describe("LLMRequestPrep.prepare - harmoniqs no-tools gate", () => {
       temperature: true,
       reasoning: false,
       attachment: false,
-      toolcall: false,
+      toolcall: true,
       input: { text: true, audio: false, image: false, video: false, pdf: false },
       output: { text: true, audio: false, image: false, video: false, pdf: false },
       interleaved: false,
@@ -112,9 +114,9 @@ describe("LLMRequestPrep.prepare - harmoniqs no-tools gate", () => {
     }
   }
 
-  test("strips resolved tools for the harmoniqs provider", async () => {
+  test("no longer strips resolved tools for the harmoniqs provider", async () => {
     const result = await Effect.runPromise(LLMRequestPrep.prepare(baseInput(harmoniqsModel)))
-    expect(Object.keys(result.tools)).toHaveLength(0)
+    expect(Object.keys(result.tools)).toContain("lookup")
   })
 
   test("leaves tools intact for other providers", async () => {

@@ -39,6 +39,7 @@ const identity = (p) => {
 };
 
 const overlayDir = join(PKG_ROOT, "overlay");
+const exceptionPaths = new Set((manifest.exceptions ?? []).map((e) => e.path));
 const files = {};
 const classification = {};
 const perPackage = {};
@@ -47,6 +48,10 @@ for (const rel of readdirSync(overlayDir, { recursive: true })) {
   const st = lstatSync(p, { throwIfNoEntry: false });
   if (!st || !(st.isFile() || st.isSymbolicLink())) continue;
   const key = rel.toString();
+  // Exception-tracked files (manifest.exceptions) are verified via their own
+  // reviewed sha256, never the auto-generated files map — drift_gate.mjs
+  // treats a file present in both as a duplicate and fails.
+  if (exceptionPaths.has(key)) continue;
   const h = st.isSymbolicLink() ? createHash("sha256").update(readlinkSync(p)).digest("hex") : sha256(p);
   files[key] = h;
   const up = identity(join(upstream, key));
