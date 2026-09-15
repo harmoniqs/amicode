@@ -1,7 +1,14 @@
 // AMICODE: ConnectionPicker — Add-flow picker list + inline forms (issue #327)
 import { createSignal, For, Show } from "solid-js"
 import { Button } from "../components/button"
-import { customConnectionPayload, tokenOnlySubmitPayload } from "./connections"
+import { CONNECTION_ICONS, customConnectionPayload, tokenOnlySubmitPayload } from "./connections"
+
+/** Open a URL via the extension bridge (window.open is dead in the webview
+ *  iframe); plain-browser contexts fall back to window.open. */
+function openExternal(url: string) {
+  if (window.parent !== window) window.parent.postMessage({ source: "amicode", kind: "open-external", url }, "*")
+  else window.open(url, "_blank", "noreferrer")
+}
 
 export type CatalogEntry = { id: string; name: string; icon: string; authShape: string }
 
@@ -202,12 +209,15 @@ export function ConnectionPicker(props: {
           }>
             {/* Slack: Client ID + OAuth flow */}
             <div class="flex flex-col gap-1.5" data-slot="amicode-picker-slack-form">
-              <span class="text-12-regular text-text-base">{picked()}</span>
+              <div class="flex items-center gap-2">
+                <span class="w-[18px] h-[18px] flex items-center justify-center" innerHTML={CONNECTION_ICONS.slack ?? ""} />
+                <span class="text-12-regular text-text-base font-medium">Slack</span>
+              </div>
               <span class="text-11-regular text-text-weaker">Ask your Slack workspace admin for your Client ID.</span>
               <details class="text-11-regular text-text-weaker">
                 <summary class="cursor-pointer hover:text-text-base">Don't have a Client ID?</summary>
                 <div class="flex flex-col gap-1.5 mt-1.5 pl-1">
-                  <span>Your Slack admin can create one at <a href="https://api.slack.com/apps" target="_blank" rel="noopener" class="underline text-text-base">api.slack.com/apps</a> → Create from Manifest.</span>
+                  <span>Your Slack admin can create one at <span class="underline text-text-base cursor-pointer" onClick={() => openExternal("https://api.slack.com/apps")}>api.slack.com/apps</span> → Create from Manifest.</span>
                 </div>
               </details>
               <input
