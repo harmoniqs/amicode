@@ -8,11 +8,12 @@ import { describe, it, expect } from "vitest";
 import { startAuthResponse } from "../src/amicode_service/connections";
 
 describe("startAuthResponse — refusal shapes (post-pin route, source-level parity)", () => {
-  it("non-google ids refuse browser auth", async () => {
+  it("slack browser auth starts OAuth flow (returns waiting-browser)", async () => {
     const body = await startAuthResponse(JSON.stringify({ id: "slack", method: "browser" }));
     const parsed = JSON.parse(body);
-    expect(parsed.ok).toBe(false);
-    expect(parsed.error).toContain("browser auth is only for google connections");
+    expect(parsed.ok).toBe(true);
+    expect(parsed.connection.state).toBe("waiting-browser");
+    expect(parsed.connection.id).toBe("slack");
   });
 
   it("bad body refuses", async () => {

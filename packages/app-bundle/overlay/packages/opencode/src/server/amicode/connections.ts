@@ -1640,8 +1640,144 @@ export async function startAuthResponse(rawBody: string, deps: MutationDeps = {}
   if (method !== "browser" && method !== "device-code") {
     return synthesizeConnection("bad_request", "method must be browser or device-code")
   }
-  if (id !== "google" && id !== "google-drive") {
-    return synthesizeConnection("bad_request", "browser auth is only for google connections")
+  if (id !== "google" && id !== "google-drive" && id !== "slack") {
+    return synthesizeConnection("bad_request", "browser auth is only for google and slack connections")
+  }
+
+  // ── Slack OAuth PKCE flow (#1037 revised) ──────────────────────────────────
+  if (id === "slack") {
+    const { createHash, randomBytes } = await import("node:crypto")
+    const { createServer } = await import("node:http")
+    const { mkdirSync, renameSync, rmSync, writeFileSync } = await import("node:fs")
+    const { dirname, join } = await import("node:path")
+    const { homedir } = await import("node:os")
+
+    const AMICODE_SLACK_CLIENT_ID = "AMICODE_SLACK_CLIENT_ID" // placeholder — fill after Slack App registration
+    const CALLBACK_PORT = 54213
+    const REDIRECT_URI = `http://localhost:${CALLBACK_PORT}/callback`
+    const SLACK_USER_SCOPES = "channels:history,channels:read,groups:history,groups:read,im:history,im:read,im:write,mpim:history,mpim:read,mpim:write,users:read,chat:write,search:read"
+
+    // PKCE: S256 code challenge (RFC 7636)
+    const codeVerifier = randomBytes(48).toString("base64url")
+    const codeChallenge = createHash("sha256").update(codeVerifier).digest("base64url")
+    const oauthState = randomBytes(16).toString("hex")
+
+    // Slack credential file — same resolution as credentials.ts slackFile()
+    const slackFile = () => {
+      const env = process.env.AMICO_SLACK_FILE
+      return (env && env.trim() !== "") ? env : join(homedir(), ".amico", "slack.json")
+    }
+
+    // Start the callback server (async, background)
+    const server = createServer(async (req, res) => {
+      const url = new URL(req.url ?? "/", `http://localhost:${CALLBACK_PORT}`)
+      if (url.pathname !== "/callback") { res.writeHead(404); res.end(); return }
+
+      const error = url.searchParams.get("error")
+      if (error) {
+        res.writeHead(200, { "Content-Type": "text/html" })
+        res.end(`<html><body style="font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#0f0f0f;color:#e0e0e0"><div style="text-align:center"><h2 style="color:#e55">Authorization denied</h2><p>${url.searchParams.get("error_description") ?? error}</p></div></body></html>`)
+        server.close()
+        return
+      }
+
+      if (url.searchParams.get("state") !== oauthState) {
+        res.writeHead(200, { "Content-Type": "text/html" })
+        res.end(`<html><body style="font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#0f0f0f;color:#e0e0e0"><div style="text-align:center"><h2 style="color:#e55">State mismatch</h2><p>Possible CSRF attack. Please try again.</p></div></body></html>`)
+        server.close()
+        return
+      }
+
+      const code = url.searchParams.get("code")
+      if (!code) { res.writeHead(400); res.end("No code"); server.close(); return }
+
+      try {
+        // Exchange code for token
+        const tokenRes = await fetch("https://slack.com/api/oauth.v2.access", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            client_id: AMICODE_SLACK_CLIENT_ID,
+            code,
+            redirect_uri: REDIRECT_URI,
+            code_verifier: codeVerifier,
+          }).toString(),
+        })
+        const tokenData = await tokenRes.json() as { ok: boolean; error?: string; authed_user?: { access_token: string; id: string } }
+
+        if (!tokenData.ok || !tokenData.authed_user?.access_token) {
+          res.writeHead(200, { "Content-Type": "text/html" })
+          res.end(`<html><body style="font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#0f0f0f;color:#e0e0e0"><div style="text-align:center"><h2 style="color:#e55">Token exchange failed</h2><p>${tokenData.error ?? "unknown error"}</p></div></body></html>`)
+          server.close()
+          return
+        }
+
+        // Write credential — atomic, 0600
+        const target = slackFile()
+        mkdirSync(dirname(target), { recursive: true })
+        const tmp = join(dirname(target), `.${randomBytes(6).toString("hex")}.tmp`)
+        try {
+          writeFileSync(tmp, JSON.stringify({ token: tokenData.authed_user.access_token }, null, 2) + "\n", { mode: 0o600 })
+          renameSync(tmp, target)
+        } catch { rmSync(tmp, { force: true }); throw new Error("credential write failed") }
+
+        // Update connection status so the panel sees "connected" on next read
+        persistStatus("slack", { state: "connected", validated_at: new Date().toISOString() })
+
+        // Resolve user name (best-effort)
+        let userName = tokenData.authed_user.id
+        try {
+          const userRes = await fetch(`https://slack.com/api/users.info?user=${tokenData.authed_user.id}`, {
+            headers: { Authorization: `Bearer ${tokenData.authed_user.access_token}` },
+          })
+          const userData = await userRes.json() as { ok: boolean; user?: { real_name?: string; name?: string } }
+          if (userData.ok && userData.user) userName = userData.user.real_name || userData.user.name || userName
+        } catch {}
+
+        res.writeHead(200, { "Content-Type": "text/html" })
+        res.end(`<html><body style="font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#0f0f0f;color:#e0e0e0"><div style="text-align:center;padding:2rem;border-radius:12px;background:#1a1a1a;border:1px solid #333"><h2 style="color:#f5c542;margin-bottom:.5rem">Connected</h2><p style="color:#aaa">Authenticated as <strong>${userName.replace(/[<>&"]/g, "")}</strong>.</p><p style="color:#aaa">You can close this tab and return to Amicode.</p></div></body></html>`)
+      } catch (err) {
+        res.writeHead(200, { "Content-Type": "text/html" })
+        res.end(`<html><body style="font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#0f0f0f;color:#e0e0e0"><div style="text-align:center"><h2 style="color:#e55">Error</h2><p>${err instanceof Error ? err.message : String(err)}</p></div></body></html>`)
+      }
+      server.close()
+    })
+
+    // Timeout: close callback server after 120s
+    const timeout = setTimeout(() => server.close(), 120_000)
+    server.on("close", () => clearTimeout(timeout))
+    server.on("error", () => { clearTimeout(timeout) })
+
+    try { server.listen(CALLBACK_PORT) } catch {
+      return synthesizeConnection("bad_request", `Port ${CALLBACK_PORT} is already in use`)
+    }
+
+    // Build authorize URL and open browser
+    const authorizeUrl = `https://slack.com/oauth/v2/authorize?` + new URLSearchParams({
+      client_id: AMICODE_SLACK_CLIENT_ID,
+      user_scope: SLACK_USER_SCOPES,
+      redirect_uri: REDIRECT_URI,
+      state: oauthState,
+      code_challenge: codeChallenge,
+      code_challenge_method: "S256",
+    }).toString()
+
+    try {
+      const browserCmd = process.env.BROWSER?.trim()
+      if (browserCmd) {
+        const { spawn } = await import("node:child_process")
+        try { const child = spawn(browserCmd, [authorizeUrl], { stdio: "ignore", detached: true }); child.unref() } catch {}
+      } else {
+        const open = (await import("open")).default
+        try { await open(authorizeUrl) } catch {}
+      }
+    } catch {}
+
+    return JSON.stringify({
+      ok: true,
+      connection: { id: "slack", state: "waiting-browser", validated_at: null, stale: false, auth_methods: ["browser"] },
+      error: null,
+    })
   }
   // Real Google OAuth URL — scopes differ by connector:
   //   google       → Gmail read + userinfo (read an email)

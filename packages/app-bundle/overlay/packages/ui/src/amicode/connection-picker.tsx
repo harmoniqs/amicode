@@ -31,6 +31,7 @@ export function ConnectionPicker(props: {
     const entry = pickedEntry()
     return entry?.id === "google" || entry?.id === "google-drive"
   }
+  const isSlackEntry = () => pickedEntry()?.id === "slack"
 
   const submitCustom = async (e: Event) => {
     e.preventDefault()
@@ -150,51 +151,81 @@ export function ConnectionPicker(props: {
 
       <Show when={isBuiltIn()}>
         <Show when={isBrowserEntry()} fallback={
-          <Show when={isGoogleEntry()} fallback={
-            <form class="flex flex-col gap-1.5" onSubmit={submitToken} data-slot="amicode-picker-token-form">
-              <span class="text-12-regular text-text-base">{picked()}</span>
-              <input
-                type="password"
-                placeholder="Token"
-                aria-label="Token"
-                value={token()}
-                onInput={(e) => setToken(e.currentTarget.value)}
-                class="amc-input amc-input--compact"
-              />
-              <div class="flex gap-2">
-                <Button type="submit" variant="primary" size="small">
-                  Connect
+          <Show when={isSlackEntry()} fallback={
+            <Show when={isGoogleEntry()} fallback={
+              <form class="flex flex-col gap-1.5" onSubmit={submitToken} data-slot="amicode-picker-token-form">
+                <span class="text-12-regular text-text-base">{picked()}</span>
+                <input
+                  type="password"
+                  placeholder="Token"
+                  aria-label="Token"
+                  value={token()}
+                  onInput={(e) => setToken(e.currentTarget.value)}
+                  class="amc-input amc-input--compact"
+                />
+                <div class="flex gap-2">
+                  <Button type="submit" variant="primary" size="small">
+                    Connect
+                  </Button>
+                  <Button type="button" variant="ghost" size="small" onClick={() => setPicked(undefined)}>
+                    Back
+                  </Button>
+                </div>
+              </form>
+            }>
+              {/* Google: token (paste like Claude) + browser alternative */}
+              <form class="flex flex-col gap-1.5" onSubmit={submitToken} data-slot="amicode-picker-token-form">
+                <span class="text-12-regular text-text-base">{picked()}</span>
+                <input
+                  type="password"
+                  placeholder="Paste Google token (or use browser below)"
+                  aria-label="Token"
+                  value={token()}
+                  onInput={(e) => setToken(e.currentTarget.value)}
+                  class="amc-input amc-input--compact"
+                />
+                <div class="flex gap-2">
+                  <Button type="submit" variant="primary" size="small">
+                    Connect with token
+                  </Button>
+                  <Button type="button" variant="ghost" size="small" onClick={() => setPicked(undefined)}>
+                    Back
+                  </Button>
+                </div>
+                <div class="text-11-regular text-text-weaker text-center">— or —</div>
+                <Button type="button" variant="secondary" size="small" onClick={startBrowser} data-slot="amicode-picker-browser-start">
+                  Sign in with browser
                 </Button>
-                <Button type="button" variant="ghost" size="small" onClick={() => setPicked(undefined)}>
-                  Back
-                </Button>
-              </div>
-            </form>
+              </form>
+            </Show>
           }>
-            {/* Google: token (paste like Claude) + browser alternative */}
-            <form class="flex flex-col gap-1.5" onSubmit={submitToken} data-slot="amicode-picker-token-form">
+            {/* Slack: browser-first (OAuth), token fallback for power users */}
+            <div class="flex flex-col gap-1.5" data-slot="amicode-picker-slack-form">
               <span class="text-12-regular text-text-base">{picked()}</span>
-              <input
-                type="password"
-                placeholder="Paste Google token (or use browser below)"
-                aria-label="Token"
-                value={token()}
-                onInput={(e) => setToken(e.currentTarget.value)}
-                class="amc-input amc-input--compact"
-              />
+              <span class="text-11-regular text-text-weaker">Sign in with your browser to connect Slack.</span>
               <div class="flex gap-2">
-                <Button type="submit" variant="primary" size="small">
-                  Connect with token
+                <Button type="button" variant="primary" size="small" onClick={startBrowser} data-slot="amicode-picker-browser-start">
+                  Connect with Slack
                 </Button>
                 <Button type="button" variant="ghost" size="small" onClick={() => setPicked(undefined)}>
                   Back
                 </Button>
               </div>
               <div class="text-11-regular text-text-weaker text-center">— or —</div>
-              <Button type="button" variant="secondary" size="small" onClick={startBrowser} data-slot="amicode-picker-browser-start">
-                Sign in with browser
-              </Button>
-            </form>
+              <form class="flex flex-col gap-1.5" onSubmit={submitToken}>
+                <input
+                  type="password"
+                  placeholder="Paste user token (advanced)"
+                  aria-label="Token"
+                  value={token()}
+                  onInput={(e) => setToken(e.currentTarget.value)}
+                  class="amc-input amc-input--compact"
+                />
+                <Button type="submit" variant="ghost" size="small">
+                  Connect with token
+                </Button>
+              </form>
+            </div>
           </Show>
         }>
           <div class="flex flex-col gap-1.5" data-slot="amicode-picker-browser-form">
