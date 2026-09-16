@@ -401,7 +401,7 @@
     "packages/opencode/src/provider/auth.ts": "b0ab1322c1039e27176bf9e3500603eae27506065ac141a69710220f3361f6b8",
     "packages/opencode/src/provider/error.ts": "7f3c8210c775e2ce98140bf015dc97e61192912af062c75e18ecb09ee2736a0f",
     "packages/opencode/src/provider/provider.ts": "671f6d8de83f919ddaa69b8240cacd82e2b8202ab505d4334175f2858bbd8c32",
-    "packages/opencode/src/provider/transform.ts": "e7962253385fb362a494999a96062f00824a190e666ab07be9486c08a3b20030",
+    "packages/opencode/src/provider/transform.ts": "d35a95a6092b5dd9cc8e37adb4d52f9ad9880d021cb3119c1d4abbc4b4fb0772",
     "packages/opencode/src/server/amicode/connections.ts": "dcfeeeddb380e11d8653c77e0dffa4ac3acabed4091f07f88b6ce0c7ae5772b3",
     "packages/opencode/src/server/amicode/credentials.ts": "f3a15c82496f9a3b6e8c1006a6a4ab419a02156e9a93a43c6c2319632c30063f",
     "packages/opencode/src/server/amicode/dashboard.ts": "031a4f40bfdc847984a1deecfefbe0fd27f42cbd1caf8823dc43c7eb5bcb9af0",
