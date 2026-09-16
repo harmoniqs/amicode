@@ -7,6 +7,7 @@ import { RuntimeFlags } from "@/effect/runtime-flags"
 import { MCP } from "@/mcp"
 import { Project } from "@/project/project"
 import { Session } from "@/session/session"
+import { SessionPause } from "@/session/pause"
 import type { SessionID } from "@/session/schema"
 import { ToolJsonSchema } from "@/tool/json-schema"
 import { ToolRegistry } from "@/tool/registry"
@@ -15,7 +16,7 @@ import { Effect, Option } from "effect"
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse"
 import { HttpApiBuilder, HttpApiError } from "effect/unstable/httpapi"
 import { InstanceHttpApi } from "../api"
-import { ConsoleSwitchPayload, SessionListQuery, ToolListQuery, WorktreeApiError } from "../groups/experimental"
+import { ConsoleSwitchPayload, SessionListQuery, SessionResumePayload, ToolListQuery, WorktreeApiError } from "../groups/experimental"
 
 function mapWorktreeError<A, R>(self: Effect.Effect<A, Worktree.Error, R>) {
   return self.pipe(
@@ -33,9 +34,9 @@ export const experimentalHandlers = HttpApiBuilder.group(InstanceHttpApi, "exper
     const registry = yield* ToolRegistry.Service
     const worktreeSvc = yield* Worktree.Service
     const sessions = yield* Session.Service
+    const pause = yield* SessionPause.Service
     const background = yield* BackgroundJob.Service
     const flags = yield* RuntimeFlags.Service
-
     const capabilities = Effect.fn("ExperimentalHttpApi.capabilities")(function* () {
       return { backgroundSubagents: flags.experimentalBackgroundSubagents }
     })
@@ -177,6 +178,23 @@ export const experimentalHandlers = HttpApiBuilder.group(InstanceHttpApi, "exper
       return promoted.some((job) => job !== undefined)
     })
 
+    const sessionPause = Effect.fn("ExperimentalHttpApi.sessionPause")(function* (ctx: {
+      params: { sessionID: SessionID }
+    }) {
+      yield* pause.pause(ctx.params.sessionID).pipe(Effect.catch(() => Effect.fail(new HttpApiError.BadRequest({}))))
+      return { paused: true }
+    })
+
+    const sessionResume = Effect.fn("ExperimentalHttpApi.sessionResume")(function* (ctx: {
+      params: { sessionID: SessionID }
+      payload: typeof SessionResumePayload.Type | void
+    }) {
+      const outcome = yield* pause
+        .resume(ctx.params.sessionID, ctx.payload?.steer)
+        .pipe(Effect.catch(() => Effect.fail(new HttpApiError.BadRequest({}))))
+      return { resumed: true, ...(outcome.steer !== undefined ? { steer: outcome.steer } : {}) }
+    })
+
     const resource = Effect.fn("ExperimentalHttpApi.resource")(function* () {
       return yield* mcp.resources()
     })
@@ -195,6 +213,8 @@ export const experimentalHandlers = HttpApiBuilder.group(InstanceHttpApi, "exper
       .handle("worktreeRename", worktreeRename)
       .handle("session", session)
       .handle("sessionBackground", sessionBackground)
+      .handle("sessionPause", sessionPause)
+      .handle("sessionResume", sessionResume)
       .handle("resource", resource)
   }),
 )

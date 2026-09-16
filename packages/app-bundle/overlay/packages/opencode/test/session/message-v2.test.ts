@@ -965,6 +965,82 @@ describe("session.message-v2.toModelMessage", () => {
     ])
   })
 
+  test("a steer message after an interrupted tool call lands on a clean transcript (paused resume)", async () => {
+    // The pause/resume path: original task → interrupted work (a tool call that
+    // was cut off when the turn was paused) → a steer message injected on resume.
+    // The interrupted tool part must reconcile to a clean tool-result, NOT a
+    // synthesized error, so the continuing turn reads coherently.
+    const userID = "m-user"
+    const assistantID = "m-assistant"
+    const steerID = "m-steer"
+    const partialOutput = "partial work before the pause"
+
+    const input: SessionV1.WithParts[] = [
+      {
+        info: userInfo(userID),
+        parts: [{ ...basePart(userID, "u1"), type: "text", text: "original task" }] as SessionV1.Part[],
+      },
+      {
+        info: assistantInfo(assistantID, userID),
+        parts: [
+          {
+            ...basePart(assistantID, "a1"),
+            type: "tool",
+            callID: "call-1",
+            tool: "bash",
+            state: {
+              status: "error",
+              input: { command: "long-running-thing" },
+              error: "Tool execution interrupted",
+              metadata: { interrupted: true, output: partialOutput },
+              time: { start: 0, end: 1 },
+            },
+          },
+        ] as SessionV1.Part[],
+      },
+      {
+        info: userInfo(steerID),
+        parts: [{ ...basePart(steerID, "s1"), type: "text", text: "actually, focus on the cache key" }] as SessionV1.Part[],
+      },
+    ]
+
+    const result = await MessageV2.toModelMessages(input, model)
+
+    // The transcript reads original-task → interrupted-work (clean result) → steer.
+    expect(result).toStrictEqual([
+      { role: "user", content: [{ type: "text", text: "original task" }] },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "call-1",
+            toolName: "bash",
+            input: { command: "long-running-thing" },
+            providerExecuted: undefined,
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call-1",
+            toolName: "bash",
+            output: { type: "text", value: partialOutput },
+          },
+        ],
+      },
+      { role: "user", content: [{ type: "text", text: "actually, focus on the cache key" }] },
+    ])
+
+    // No dangling tool part is rendered as an error to the model.
+    const toolResults = result.flatMap((m) => (m.role === "tool" ? m.content : []))
+    expect(toolResults.every((c) => c.type === "tool-result")).toBe(true)
+    expect(JSON.stringify(result)).not.toContain("Tool execution interrupted")
+  })
+
   test("filters assistant messages with non-abort errors", async () => {
     const assistantID = "m-assistant"
 

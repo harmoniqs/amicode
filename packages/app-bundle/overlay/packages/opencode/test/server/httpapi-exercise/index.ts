@@ -627,6 +627,29 @@ const scenarios: Scenario[] = [
     .json(200, (body) => {
       check(body === false, "background route should be a no-op without running subagents")
     }),
+  http.protected
+    .post("/experimental/session/{sessionID}/pause", "experimental.session.pause")
+    .mutating()
+    .seeded((ctx) => ctx.session({ title: "Pause route owner" }))
+    .at((ctx) => ({
+      path: route("/experimental/session/{sessionID}/pause", { sessionID: ctx.state.id }),
+      headers: ctx.headers(),
+    }))
+    .json(200, (body) => {
+      check(isRecord(body) && body.paused === true, "pause route should settle the session paused")
+    }),
+  http.protected
+    .post("/experimental/session/{sessionID}/resume", "experimental.session.resume")
+    .mutating()
+    .seeded((ctx) => ctx.session({ title: "Resume route owner" }))
+    .at((ctx) => ({
+      path: route("/experimental/session/{sessionID}/resume", { sessionID: ctx.state.id }),
+      headers: ctx.headers(),
+      body: { steer: "focus on the cache key" },
+    }))
+    .json(200, (body) => {
+      check(isRecord(body) && body.resumed === true, "resume route should clear the paused marker")
+    }),
   http.protected.get("/experimental/resource", "experimental.resource.list").json(),
   http.protected
     .post("/sync/history", "sync.history.list")

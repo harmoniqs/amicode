@@ -293,8 +293,8 @@
     "packages/opencode/src/tool/apply_patch.ts": "37535a783d115ac2032def7a28cce56e304f4e7c75d3ecac05b9a37054ae5b4f",
     "packages/opencode/src/tool/edit.ts": "38aa4ce0751ff99bbb0807bcda52f8b9a1d32b6e342df4cc2aedab1f03d342b1",
     "packages/opencode/src/tool/question.txt": "49bbecb33a825620c2ed14ec9b61faa294359c3673c33277e32f57c1070d2806",
-    "packages/opencode/src/tool/registry.ts": "2b0e8546f01643e78b9dee504357bfc33f2d7075ec45f8a1462d8c3ee8e7aff5",
-    "packages/opencode/src/tool/task.ts": "ddeb07a1cf009dcafc1d1d1c86b9d507676a8991db33a4632c8f29ae0e70e654",
+    "packages/opencode/src/tool/registry.ts": "27df3ff11910c72445a7049d18e30eb1b0f42982dea4fb5e99ef573a88781369",
+    "packages/opencode/src/tool/task.ts": "258dd9fb41ee90616a9a0d7dbbb118a5f18d4b91c3acafa07e694f3ce9524ad1",
     "packages/opencode/src/tool/truncate.ts": "92c59d83c4a660116d6ecc48e900aeb16bde93962bfae9f520193fda18273379",
     "packages/opencode/src/tool/widget-author.ts": "912be8636b162adca8796a501e927019c2449393c14bb5f3ff478b02083b73a9",
     "packages/opencode/src/tool/widget-author.txt": "a2572913debbbbd2d4a644dcdf4576accbc7efdcc8217c0fc9f5a011e7a15ec4",
@@ -336,7 +336,7 @@
     "packages/opencode/test/session/business-record.test.ts": "7857094479408bcfd6ea8d9f5b425c6384bcf8490f930674bc1c203e82782d75",
     "packages/opencode/test/session/instruction.test.ts": "8b4d954eb10afa852a671e6c0a94d19604deacc9a62f9c3651c7456cc32736b7",
     "packages/opencode/test/session/llm-native-recorded.test.ts": "7139b58569af0172862af521e8f8d7a78132f40f06dcceb4baf8ca3a2f07d3bd",
-    "packages/opencode/test/session/message-v2.test.ts": "9edc16ae57b7f2d34aaed7378d82fcf9d07a82075a05730bfb3caae39d70ac7f",
+    "packages/opencode/test/session/message-v2.test.ts": "c2cf060b9c9b6a2b2e6bb92087df98a97d1321df24891a551fa8c8130b8bb9a7",
     "packages/opencode/test/session/mutation.test.ts": "ccb82b6858ac097d2af09a94497d05f6a0ff843b928a69e763fdb510905a10cd",
     "packages/opencode/test/session/prompt.test.ts": "a1d1c7136ffd3bdf687717183dc1af1051a8b779457e54d1b7897fa8c286a52d",
     "packages/opencode/test/session/prose-guard.test.ts": "7239a758cbf27df4c3879fa9ee0374964559c1461773c2f5a85196f64632e6c4",
@@ -350,7 +350,7 @@
     "packages/opencode/test/tool/edit.test.ts": "ec1ed35002b1af4e2ff508aeac456c3edbb2e1dde3f6df4abd957eda9ef6d056",
     "packages/opencode/test/tool/question.test.ts": "75760ba6ed98f2fdfd75945c3b492342dfe91026f99cde86db19cf52444260c2",
     "packages/opencode/test/tool/registry-schema.test.ts": "053cb9732299ea6554db007bad873d8d61cd3769aa9514d66c70c3bf0d405b90",
-    "packages/opencode/test/tool/task.test.ts": "fb0276cc33add808c669a4f43649d189d8f62c75974f3092a5f05e45cf176486",
+    "packages/opencode/test/tool/task.test.ts": "3ed2b1515d0d0546420f6a6deb611cc3c74e3a8284b6004735d9b2aa7b41af9a",
     "packages/opencode/test/tool/truncation.test.ts": "582ef7199b3f294b1c1588fadda8a1c0ea43ca9af0424a97f48747ade1654ad1",
     "packages/opencode/test/tool/write.test.ts": "820d36fde2314abbd939ce43ca5bcc4cfa0139d12a4c669716249060d9a955ff",
     "packages/schema/src/v1/question.ts": "3ba37742dbd5ef322b7edb42fea0dacf43a1322747dfe997af909bf564bffd35",
@@ -711,7 +711,7 @@
     "packages/opencode/src/session/prompt/gemini.txt": "d24815ea833b058b304d95d3212ad2e091bc07064a22a6af9401872cdc3871a9",
     "packages/opencode/test/cli/run/question.shared.test.ts": "fbb3bdb20fae7d77f0e54444847c658c721b132feca9ad939a963721d2ddd772",
     "packages/opencode/test/cli/run/run-process.test.ts": "13e6386bf1919688cff2f6f9f68bcddcfbbec822ef8fc271ee68347a542827b8",
-    "packages/opencode/test/server/httpapi-exercise/index.ts": "59048fa30e60348240de62cca862a5c6abbe2e9e0f6340b77b0a9bbd997bec27",
+    "packages/opencode/test/server/httpapi-exercise/index.ts": "71af8fb756012a3a4a87e5209630cbed83afcf6f219158d1855e0a4c6a8377dd",
     "packages/opencode/test/tool/__snapshots__/parameters.test.ts.snap": "e1b0c536581dd36599aebcb5562ffe49923b09629cc8fe5d64ba0a2d7fe43630",
     "packages/session-ui/src/v2/components/attachment-card-v2.css": "3b4b9c23d69e76b35488bc3a65fb51211038c3e8aac015df3f531b4e97e96359",
     "packages/session-ui/src/v2/components/basic-tool-v2.css": "55d3aa179704deddda7149342a951229ff5561127f786dd551e5df9aea8a7835",
@@ -815,17 +815,19 @@
     "packages/sdk/js/src/v2/gen/types.gen.ts": "0c23b262085d1e14b89bd03292a380c9ec8b52e66c4308304a05173362b79339",
     "packages/session-ui/src/v2/components/prompt-input/attachments.ts": "ff66078f2edc9a67a4df0d7dfd76a49be5eab27ac332b303f3412721ef7268ea",
     "packages/session-ui/src/v2/components/prompt-input/index.tsx": "6cbd3a1e3a4fd789284526e5981c6fd2d4952f3926c5a1be0609bb6832453997",
-    "packages/opencode/src/server/routes/instance/httpapi/server.ts": "85c200797fed41c0cd08e7aa699ce13aeb8a3d23aa2b9eddc4d72e72b8b5082c",
-    "packages/opencode/src/server/routes/instance/httpapi/groups/experimental.ts": "944a0aee215a917e867fd9482f3c2bd40f49082bd3174c8a7d967ca40e34ec15",
+    "packages/opencode/src/server/routes/instance/httpapi/server.ts": "a039f4af02ad81bf0ef8beed7d6d05b884e9f289e450943ba7c4a309fcc4a795",
+    "packages/opencode/src/server/routes/instance/httpapi/groups/experimental.ts": "d9397aa6fedb883f16830fab3c2621a57e8b9007914728d38bc42209d350272b",
     "packages/opencode/src/server/routes/instance/httpapi/groups/file.ts": "ed165131c62eeb29375db39edf89db8f87488e24ef99fc6f2cf19705ba35751a",
     "packages/opencode/src/server/routes/instance/httpapi/groups/mcp.ts": "048efa7b74d43c4ad4a75d0f8421c808760c8c0dcd593f0051a87044e40487d6",
     "packages/opencode/src/server/routes/instance/httpapi/groups/provider.ts": "34c6f1ab1a085d1b047c220bbff32a36032dc5e924784e9272cda166cf0ec84b",
     "packages/opencode/src/server/routes/instance/httpapi/groups/session.ts": "1421f8c07948b121c7e2005bd9b0fcd6b2c456565ddd1da32d8e6c35d03fac9c",
-    "packages/opencode/src/server/routes/instance/httpapi/handlers/experimental.ts": "69ca3dd48d95157fc822e1f76eb42ac873df50f22616b85194619ca658613867",
+    "packages/opencode/src/server/routes/instance/httpapi/handlers/experimental.ts": "634ebe03d3a174b5536de1e705fdebfc980d850f80c68d66a8ec6c4f40fc926e",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/file.ts": "10bcb79b117beebee04184fb48c1ad789e782e2f7ae4b0c68603edc00f03aee9",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/mcp.ts": "7da08d58765cdf2b6ce4648fc70de371402949f5bb7b75696f674d43f2d5365b",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/provider.ts": "8baf16cad0992c5351b61b0c0fb27903bb25b17e1b25fc7c5d77f807c24413a6",
-    "packages/opencode/src/server/routes/instance/httpapi/handlers/session.ts": "b37ff4136c4aea85b23083bf441f03e09820e3e4cdd95e4118ca570d8435b94f"
+    "packages/opencode/src/server/routes/instance/httpapi/handlers/session.ts": "b37ff4136c4aea85b23083bf441f03e09820e3e4cdd95e4118ca570d8435b94f",
+    "packages/opencode/src/session/pause.ts": "c941fd21c957541e31c3e83f75c8eb9ff473ca22802c94ba392fb6bdfd76c581",
+    "packages/opencode/test/session/pause.test.ts": "813a095658423038ecdacb6b5ef07ab1ac8e51507a514d78ef2b1ee07f2c5c31"
   },
   "symlinks": [
     "packages/app/public/amico.svg"
@@ -858,7 +860,7 @@
       "D": 0
     },
     "packages/opencode": {
-      "A": 68,
+      "A": 70,
       "M": 80,
       "D": 0
     },
@@ -884,7 +886,7 @@
     }
   },
   "counts": {
-    "overlay_total": 818,
+    "overlay_total": 820,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1706,7 +1708,9 @@
     "packages/opencode/src/server/routes/instance/httpapi/handlers/file.ts": "M",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/mcp.ts": "M",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/provider.ts": "M",
-    "packages/opencode/src/server/routes/instance/httpapi/handlers/session.ts": "M"
+    "packages/opencode/src/server/routes/instance/httpapi/handlers/session.ts": "M",
+    "packages/opencode/src/session/pause.ts": "A",
+    "packages/opencode/test/session/pause.test.ts": "A"
   },
   "upstream_base_archive_sha256": "6ae708a289bf8957f928e59ec5f3fc8a61e56290a9f12f47b916c9a26a517e9b"
 }

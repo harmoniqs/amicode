@@ -4,6 +4,7 @@ import { ToolJsonSchema } from "./json-schema"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { BackgroundJob } from "@/background/job"
 import { Session } from "@/session/session"
+import { SessionPause } from "@/session/pause"
 import { SessionID, MessageID } from "../session/schema"
 import { MessageV2 } from "../session/message-v2"
 import { Agent } from "../agent/agent"
@@ -63,7 +64,7 @@ export const Parameters = Schema.Struct({
 
 function renderOutput(input: {
   sessionID: SessionID
-  state: "running" | "completed" | "error"
+  state: "running" | "completed" | "error" | "paused"
   summary?: string
   text: string
 }) {
@@ -85,6 +86,7 @@ export const TaskTool = Tool.define(
     const background = yield* BackgroundJob.Service
     const config = yield* Config.Service
     const sessions = yield* Session.Service
+    const pause = yield* SessionPause.Service
     const scope = yield* Scope.Scope
     const flags = yield* RuntimeFlags.Service
     const database = yield* Database.Service
@@ -327,7 +329,27 @@ export const TaskTool = Tool.define(
             )
             if (result?.metadata?.background === true) return backgroundResult()
             if (result?.status === "error") return yield* Effect.fail(new Error(result.error ?? "Task failed"))
-            if (result?.status === "cancelled") return yield* Effect.fail(new Error("Task cancelled"))
+            if (result?.status === "cancelled") {
+              // Parallel outcome path: a paused child settled through the cancel
+              // machinery, but the durable marker says it is resumable. Return a
+              // resumable sentinel instead of failing the blocked parent — this
+              // is the load-bearing distinction between "child paused" (resume it)
+              // and "child cancelled/errored" (fail the parent).
+              const marker = yield* pause.marker(nextSession.id)
+              if (marker) {
+                return {
+                  title: params.description,
+                  metadata: { ...metadata, paused: true, resumable: true },
+                  output: renderOutput({
+                    sessionID: nextSession.id,
+                    state: "paused",
+                    summary: `Task paused (resumable): ${params.description}`,
+                    text: "The subagent was paused and can be resumed. It did NOT fail.",
+                  }),
+                }
+              }
+              return yield* Effect.fail(new Error("Task cancelled"))
+            }
             return {
               title: params.description,
               metadata,

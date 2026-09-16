@@ -88,6 +88,19 @@ export const SessionListQuery = Schema.Struct({
   archived: Schema.optional(QueryBoolean),
 })
 
+export const SessionResumePayload = Schema.Struct({
+  steer: Schema.optional(Schema.String),
+})
+
+const SessionPauseResult = Schema.Struct({
+  paused: Schema.Boolean,
+}).annotate({ identifier: "SessionPauseResult" })
+
+const SessionResumeResult = Schema.Struct({
+  resumed: Schema.Boolean,
+  steer: Schema.optionalKey(Schema.String),
+}).annotate({ identifier: "SessionResumeResult" })
+
 export const ExperimentalPaths = {
   capabilities: "/experimental/capabilities",
   console: "/experimental/console",
@@ -100,6 +113,8 @@ export const ExperimentalPaths = {
   worktreeRename: "/experimental/worktree/rename",
   session: "/experimental/session",
   sessionBackground: "/experimental/session/:sessionID/background",
+  sessionPause: "/experimental/session/:sessionID/pause",
+  sessionResume: "/experimental/session/:sessionID/resume",
   resource: "/experimental/resource",
 } as const
 
@@ -257,6 +272,33 @@ export const ExperimentalApi = HttpApi.make("experimental")
             summary: "Background subagents",
             description:
               "Detach any synchronous subagents currently blocking the session and continue them in the background.",
+          }),
+        ),
+        HttpApiEndpoint.post("sessionPause", ExperimentalPaths.sessionPause, {
+          params: { sessionID: SessionID },
+          query: WorkspaceRoutingQuery,
+          success: described(SessionPauseResult, "Session paused"),
+          error: HttpApiError.BadRequest,
+        }).annotateMerge(
+          OpenApi.annotations({
+            identifier: "experimental.session.pause",
+            summary: "Pause a session",
+            description:
+              "Interrupt the session's running turn at the next tool-call boundary and settle it to a durable, resumable Paused state. Idempotent; a session with no running turn is a benign no-op.",
+          }),
+        ),
+        HttpApiEndpoint.post("sessionResume", ExperimentalPaths.sessionResume, {
+          params: { sessionID: SessionID },
+          query: WorkspaceRoutingQuery,
+          payload: [HttpApiSchema.NoContent, SessionResumePayload],
+          success: described(SessionResumeResult, "Session resumed"),
+          error: HttpApiError.BadRequest,
+        }).annotateMerge(
+          OpenApi.annotations({
+            identifier: "experimental.session.resume",
+            summary: "Resume a paused session",
+            description:
+              "Clear the Paused marker and return the optional steer message for the continuing turn. Resume is re-dispatch, not resurrection of the interrupted fiber.",
           }),
         ),
         HttpApiEndpoint.get("resource", ExperimentalPaths.resource, {

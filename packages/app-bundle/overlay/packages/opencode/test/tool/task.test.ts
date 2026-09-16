@@ -13,6 +13,7 @@ import { Ripgrep } from "@opencode-ai/core/ripgrep"
 import { Session } from "@/session/session"
 import type { SessionPrompt } from "../../src/session/prompt"
 import { MessageID, PartID, SessionID } from "../../src/session/schema"
+import { SessionPause } from "@/session/pause"
 import { SessionRunState } from "@/session/run-state"
 import { SessionStatus } from "@/session/status"
 
@@ -44,6 +45,7 @@ const layer = (flags: Partial<RuntimeFlags.Info> = {}) =>
       CrossSpawnSpawner.node,
       Session.node,
       SessionProjector.node,
+      SessionPause.node,
       SessionRunState.node,
       SessionStatus.node,
       Truncate.node,
@@ -984,6 +986,98 @@ describe("tool.task", () => {
 
       expect((yield* jobs.get(child.id))?.status).toBe("cancelled")
       expect((yield* jobs.get(grandchild.id))?.status).toBe("cancelled")
+    }),
+  )
+
+  it.instance("pausing a foreground subagent returns a resumable sentinel and does NOT fail the parent", () =>
+    Effect.gen(function* () {
+      const pause = yield* SessionPause.Service
+      const { chat, assistant } = yield* seed()
+      const tool = yield* TaskTool
+      const def = yield* tool.init()
+      const ready = defer<SessionPrompt.PromptInput>()
+      const released = defer<void>()
+      const promptOps: TaskPromptOps = {
+        cancel: () => Effect.void,
+        resolvePromptParts: (template) => Effect.succeed([{ type: "text" as const, text: template }]),
+        prompt: (input) =>
+          Effect.promise(() => {
+            ready.resolve(input)
+            return released.promise
+          }).pipe(Effect.as(reply(input, "interrupted work"))),
+      }
+
+      const fiber = yield* def
+        .execute(
+          {
+            description: "inspect bug",
+            prompt: "look into the cache key path",
+            subagent_type: "general",
+          },
+          {
+            sessionID: chat.id,
+            messageID: assistant.id,
+            agent: "build",
+            abort: new AbortController().signal,
+            extra: { promptOps },
+            messages: [],
+            metadata: () => Effect.void,
+            ask: () => Effect.void,
+          },
+        )
+        .pipe(Effect.forkChild)
+
+      const input = yield* Effect.promise(() => ready.promise)
+      // Pause the running foreground child: writes the resumable marker on the
+      // child session and interrupts the turn via the cancel machinery.
+      yield* pause.pause(input.sessionID)
+      released.resolve()
+
+      // The parent's own effect must NOT fail — it resolves to a paused sentinel.
+      const result = yield* Fiber.join(fiber)
+      expect(result.output).toContain(`state="paused"`)
+      expect((result.metadata as Record<string, unknown>).paused).toBe(true)
+      expect((result.metadata as Record<string, unknown>).resumable).toBe(true)
+      // And the child is durably discoverable as Paused.
+      expect(yield* pause.isPaused(input.sessionID)).toBe(true)
+    }),
+  )
+
+  it.instance("the parent can distinguish a paused child from an errored child", () =>
+    Effect.gen(function* () {
+      const { chat, assistant } = yield* seed()
+      const tool = yield* TaskTool
+      const def = yield* tool.init()
+      // A child that errors (never paused) still fails the parent turn.
+      const promptOps: TaskPromptOps = {
+        cancel: () => Effect.void,
+        resolvePromptParts: (template) => Effect.succeed([{ type: "text" as const, text: template }]),
+        prompt: () => Effect.die(new Error("child blew up")),
+      }
+
+      const exit = yield* def
+        .execute(
+          {
+            description: "inspect bug",
+            prompt: "look into the cache key path",
+            subagent_type: "general",
+          },
+          {
+            sessionID: chat.id,
+            messageID: assistant.id,
+            agent: "build",
+            abort: new AbortController().signal,
+            extra: { promptOps },
+            messages: [],
+            metadata: () => Effect.void,
+            ask: () => Effect.void,
+          },
+        )
+        .pipe(Effect.exit)
+
+      // An errored (never-paused) child fails the parent — the paused branch is
+      // the ONLY non-failing settle for an interrupted child.
+      expect(Exit.isFailure(exit)).toBe(true)
     }),
   )
 })
