@@ -206,7 +206,7 @@
     "packages/app/src/pages/new-session-landing.ts": "528d27cd5d441b521674328fb7812fb2acf77233e9e436d081c98ce611e8b268",
     "packages/app/src/pages/new-session.tsx": "c060bbb15569b6da2f67146e6af0879ccb5444345df03dbc2f9b39cb98b9db78",
     "packages/app/src/pages/session-stream-resilience.test.ts": "7def7368219d2351136c31b88a19a97f6a14c18e87562f25d49db8da200e3c28",
-    "packages/app/src/pages/session.tsx": "aa045e7b0d95f0cfc3482eb50099efcd581f18d215fb0814e2156294183e1bdb",
+    "packages/app/src/pages/session.tsx": "5aba32866f40b01d714387261569196f407cba1460c7fb3a76df47f28b7da319",
     "packages/app/src/utils/amicode-bridge.ts": "5104a04c7822f80dc0c564619e7dd2d850ba50035dbc86ea875604ecd97df05f",
     "packages/app/src/utils/amicode-bug-report.test.ts": "b1bbf49230ff3aa6d1a43ffa9165ba5a84ca4ee18a6d49f52ee5cd887c3e6444",
     "packages/app/src/utils/amicode-bug-report.ts": "d55d9cecfe17719c0d4a0ca498345c7eff6fca1de6b645e4bc3fecb40f2f4645",

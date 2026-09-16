@@ -2536,7 +2536,7 @@ export default function Page() {
               torn render cannot take the indicator down with it: during the
               stream gap the last rendered view is dimmed with a reconnecting
               badge, and it re-renders in place on reconnect. */}
-          <SessionStreamVeil degraded={streamGap()} label={language.t("session.stream.reconnecting")} />
+          <SessionStreamVeil degraded={streamGap} label={language.t("session.stream.reconnecting")} />
         </div>
 
         <Show when={!newSessionDesign() && desktopSidePanelOpen()}>
