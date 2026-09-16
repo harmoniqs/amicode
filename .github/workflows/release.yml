@@ -36,7 +36,7 @@ jobs:
             node packages/extension/scripts/build_binary.mjs --platform "$P"
           done
       - name: Upload vendor/opencode (all platforms)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: opencode-binaries
           path: packages/extension/vendor/opencode/
@@ -70,7 +70,7 @@ jobs:
             || { echo "::error::tag base and extension manifest version differ."; exit 1; }
       - run: pnpm install --frozen-lockfile
       - name: Download built binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: opencode-binaries
           path: packages/extension/vendor/opencode
