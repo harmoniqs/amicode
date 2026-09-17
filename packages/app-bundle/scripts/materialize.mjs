@@ -108,6 +108,30 @@ for (const rel of manifest.deletions ?? []) {
 }
 if (deleted > 0) console.log(`[materialize] applied ${deleted} overlay deletions`);
 
+// ── force a single effect version (dedupe the toJsonSchemaDocument crash) ────
+// Upstream pins effect via the workspace catalog, but hono-openapi's transitive
+// @standard-community/{standard-json,standard-openapi} declare `effect: ^3.x`,
+// which bun floats to a SECOND, unpatched effect@4.0.0-beta.74 alongside the
+// pinned+patched beta.83. Which copy the bundler wires into
+// Schema.toJsonSchemaDocument (tool params -> JSON schema) varies by build, so
+// some binaries crash on EVERY prompt with
+// "TypeError: undefined is not an object (evaluating 'a.name')" and others do
+// not. An explicit `overrides.effect` collapses the two to one, deterministically.
+// Injected into the materialized root package.json (not manifest-tracked) so it
+// survives upstream bumps without carrying an overlay copy of the whole file.
+{
+  const rootPkgPath = join(outDir, "package.json");
+  const rootPkg = JSON.parse(readFileSync(rootPkgPath, "utf8"));
+  const pinned = rootPkg.workspaces?.catalog?.effect;
+  if (pinned) {
+    rootPkg.overrides = { ...(rootPkg.overrides ?? {}), effect: pinned };
+    writeFileSync(rootPkgPath, JSON.stringify(rootPkg, null, 2) + "\n");
+    console.log(`[materialize] pinned single effect@${pinned} via overrides (dedupe)`);
+  } else {
+    console.warn("[materialize] WARNING: no catalog effect pin found — skipping effect dedupe");
+  }
+}
+
 // ── verify against the manifest (hashes are the contract) ───────────────────
 const sha256 = (p) => createHash("sha256").update(readFileSync(p)).digest("hex");
 let bad = 0;
