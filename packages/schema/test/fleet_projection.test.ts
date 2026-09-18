@@ -42,6 +42,9 @@ import {
   FLEET_PROJECTION_CACHE_RELPATH,
   fleetTopologyPath,
   FLEET_TOPOLOGY_RELPATH,
+  BASE_TIER_PUBLISHER_IDENTITY,
+  parseFleetTopology,
+  buildBaseProjection,
   type FleetProjection,
 } from "../src/fleet_projection.js";
 
@@ -297,5 +300,63 @@ describe("the stable projection-cache path convention (#1106)", () => {
 
   it("the relpath constant is the documented convention (scripts and the extension compose it from $HOME)", () => {
     expect(FLEET_PROJECTION_CACHE_RELPATH).toBe(join(".amico", "ops", "fleet", "projection.json"));
+  });
+});
+
+// ── ADR 0023: the base-tier producer (a public floor UNDER the authority) ──────
+describe("parseFleetTopology (the machine's fleet.json → {role, canonical})", () => {
+  it("parses a client membership record with a full canonical", () => {
+    const topo = parseFleetTopology(
+      JSON.stringify({ role: "client", canonical: { host: "jj@100.77.141.50", port: 4096, sshAlias: "jjs-mac-studio" } }),
+    );
+    expect(topo).toEqual({ role: "client", canonical: { host: "jj@100.77.141.50", port: 4096, sshAlias: "jjs-mac-studio" } });
+  });
+
+  it("parses a server record with a partial canonical (no sshAlias)", () => {
+    const topo = parseFleetTopology(JSON.stringify({ role: "server", canonical: { host: "h", port: 4096 } }));
+    expect(topo).toEqual({ role: "server", canonical: { host: "h", port: 4096 } });
+  });
+
+  it("returns null for a record with no role (never invents one)", () => {
+    expect(parseFleetTopology(JSON.stringify({ canonical: { port: 4096 } }))).toBeNull();
+  });
+
+  it("returns null for unparseable bytes and for a non-object", () => {
+    expect(parseFleetTopology("{not json")).toBeNull();
+    expect(parseFleetTopology(JSON.stringify(["role", "client"]))).toBeNull();
+  });
+});
+
+describe("buildBaseProjection (a minimal contract-v1 projection from fleet.json)", () => {
+  const opts = { epoch: "epoch-uuid-1", counter: 100, publishedAt: "2026-09-18T00:00:00.000Z" };
+
+  it("a client role produces a projection readProjection accepts, mode=fleet, role+canonical carried", () => {
+    const proj = buildBaseProjection({ role: "client", canonical: { host: "h", port: 4096, sshAlias: "a" } }, opts);
+    // must pass the ONE reader unchanged (contract_version + schema_version)
+    expect(() => readProjection(proj as unknown as Record<string, unknown>)).not.toThrow();
+    expect(proj.contract_version).toBe(FLEET_CONTRACT_VERSION);
+    expect(proj.schema_version).toBe(SUPPORTED_PROJECTION_SCHEMA_VERSIONS[0]);
+    expect(proj.sections?.mode?.value).toBe("fleet");
+    expect(proj.sections?.topology?.value).toEqual({ role: "client", canonical: { host: "h", port: 4096, sshAlias: "a" } });
+    expect(proj.freshness).toEqual({ counter: 100, hub_epoch: "epoch-uuid-1" });
+  });
+
+  it("stamps the base-tier publisher identity so a reader can tell it from the authority", () => {
+    const proj = buildBaseProjection({ role: "server" }, opts);
+    expect(proj.publisher?.identity).toBe(BASE_TIER_PUBLISHER_IDENTITY);
+    expect(BASE_TIER_PUBLISHER_IDENTITY).not.toBe("");
+  });
+
+  it("a standalone role renders mode=standalone (the floor still carries the role verbatim)", () => {
+    const proj = buildBaseProjection({ role: "standalone" }, opts);
+    expect(proj.sections?.mode?.value).toBe("standalone");
+    expect(proj.sections?.topology?.value).toEqual({ role: "standalone" });
+  });
+
+  it("two builds under one epoch with a rising counter compare as fresh, not unknown (no refetch loop)", () => {
+    const older = buildBaseProjection({ role: "client" }, { ...opts, counter: 100 });
+    const newer = buildBaseProjection({ role: "client" }, { ...opts, counter: 101 });
+    expect(freshnessBetween(older, newer)).toBe("fresh");
+    expect(freshnessBetween(newer, newer)).toBe("stale");
   });
 });

@@ -161,8 +161,24 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
   fi
 fi
 
-# --- tunnel plist (darwin only; repo ships hardened 15/2 + TCPKeepAlive) ---
-if [[ "$(uname -s)" == "Darwin" ]]; then
+# --- tunnel plist (CLIENT role only — a server IS the tunnel's destination,
+# not its client, so it needs no self-tunnel; darwin only) ---
+if [[ "$ROLE" != "client" ]]; then
+  # server (or any non-client enrolled role): guard + settings above are the
+  # whole install; the managed tunnel is a client-only concern.
+  if [[ $CHECK -eq 1 ]]; then
+    say "ok role $ROLE — no managed tunnel (only a client tunnels to the canonical hub)"
+  else
+    say "role $ROLE — no managed tunnel to install (only a client tunnels to the canonical hub)"
+    # A stale tunnel from a previous client enrollment must not linger on a
+    # server: unload + remove it if present (idempotent, best-effort).
+    if [[ "$(uname -s)" == "Darwin" && -f "$PLIST_DST" ]]; then
+      launchctl unload "$PLIST_DST" 2>/dev/null || true
+      rm -f "$PLIST_DST"
+      say "removed stale tunnel plist $PLIST_DST (role is $ROLE, not client)"
+    fi
+  fi
+elif [[ "$(uname -s)" == "Darwin" ]]; then
   if [[ ! -f "$PLIST_SRC" ]]; then
     say "note: no plist template at $PLIST_SRC — skipping tunnel install (guard-only fleet)"
   else

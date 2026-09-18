@@ -266,6 +266,18 @@ describe("the installer consumes the verb (never greps the raw file)", () => {
     }
   });
 
+  it("verb exit 0 + role server (no sshAlias) → guard+settings, NO tunnel, never dies on the missing alias (ADR 0023)", () => {
+    // A base-tier server projection carries role=server + canonical WITHOUT an
+    // sshAlias (a hub is the tunnel's destination, not its client). The installer
+    // must NOT die demanding an alias, and must install no self-tunnel.
+    fakeAmico({ code: 0, stdout: verbJson("server", { host: "jj@100.77.141.50", port: 4096 }) });
+    const r = runScript(INSTALL, [], installEnv()); // install mode (not --check)
+    expect(r.code).toBe(0);
+    expect(r.out).toMatch(/fleet role: server \(port: 4096\)/);
+    expect(r.out).toMatch(/no managed tunnel/);
+    expect(r.out).not.toMatch(/no sshAlias in the fleet topology/); // the die we scoped out
+  });
+
   it("verb exit 75 → the bootstrap exception: base-standalone STATED with the pointer, exit 0 (identical to CLI-absent)", () => {
     fakeAmico({ code: 75, stdout: "fleet status: base-standalone (bootstrap exception)" });
     const r = runScript(INSTALL, ["--check"], installEnv());

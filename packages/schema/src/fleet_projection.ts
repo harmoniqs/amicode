@@ -249,6 +249,94 @@ export function renderFleetStatus(proj: FleetProjection, previous: FleetProjecti
   return lines.join("\n");
 }
 
+// ── the base-tier producer (ADR 0023) ───────────────────────────────────────
+// A public floor UNDER the amicissimo authority. When the authority is
+// unavailable (no entitlement / no checkout) but the machine carries a
+// fleet.json declaring a real role, `amico fleet status --projection` renders a
+// minimal contract-v1 projection ITSELF from that membership file, so the base
+// (public) product still gets an enforced client (role → guard exit 1) without
+// amicissimo. This is a PRODUCER; every consumer still reads only the projection
+// through readProjection (the one-reader invariant is untouched). amicissimo
+// stays canonical: it runs whenever present and fills the rich sections; the
+// base tier fills only mode + topology + a stable local epoch.
+
+/** The base-tier publisher's stamped identity — a reader can always tell a base
+ *  floor from amicissimo's authority (never merged, always visible in provenance). */
+export const BASE_TIER_PUBLISHER_IDENTITY = "amicode-base-tier";
+
+/** The machine-local membership record's shape (fleet.json), tolerantly parsed. */
+export interface BaseTopologyCanonical {
+  host?: string;
+  port?: number;
+  sshAlias?: string;
+}
+export interface BaseTopology {
+  role: string;
+  canonical?: BaseTopologyCanonical;
+}
+
+/** Parse a raw fleet.json into a {role, canonical}, or null when it carries no
+ *  usable role (unparseable, not an object, or role absent). Null = the caller
+ *  keeps the honest bootstrap (never a base projection invented from nothing). */
+export function parseFleetTopology(raw: string): BaseTopology | null {
+  let doc: unknown;
+  try {
+    doc = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (doc === null || typeof doc !== "object" || Array.isArray(doc)) return null;
+  const o = doc as Record<string, unknown>;
+  const role = typeof o.role === "string" && o.role.length > 0 ? o.role : undefined;
+  if (role === undefined) return null;
+  let canonical: BaseTopologyCanonical | undefined;
+  const c = o.canonical;
+  if (c !== null && typeof c === "object" && !Array.isArray(c)) {
+    const cc = c as Record<string, unknown>;
+    canonical = {};
+    if (typeof cc.host === "string") canonical.host = cc.host;
+    if (typeof cc.port === "number" && Number.isFinite(cc.port)) canonical.port = cc.port;
+    if (typeof cc.sshAlias === "string") canonical.sshAlias = cc.sshAlias;
+  }
+  return { role, canonical };
+}
+
+export interface BaseProjectionOpts {
+  /** A STABLE per-machine epoch (persisted, reused across calls) — so
+   *  freshnessBetween compares within one epoch and never loops on "unknown". */
+  epoch: string;
+  /** A monotonic publish counter (the publish wall-second is the default source). */
+  counter: number;
+  /** ISO publish stamp — provenance only, never a freshness input (D1). */
+  publishedAt: string;
+}
+
+/** Render a minimal contract-v1 projection from a machine's fleet.json topology.
+ *  Fills mode (fleet unless role=standalone) + posture (ok) + topology
+ *  (role + canonical), stamped as the base-tier producer. Everything the
+ *  amicissimo authority would add (health, locks, program, org) stays absent —
+ *  the floor, not the rich surface. */
+export function buildBaseProjection(topo: BaseTopology, opts: BaseProjectionOpts): FleetProjection {
+  const mode = topo.role === "standalone" ? "standalone" : "fleet";
+  const provenance: FleetProvenance = {
+    source: "fleet.json",
+    parsed_from: "amicode base-tier producer (ADR 0023 — no amicissimo authority present)",
+  };
+  const topologyValue: Record<string, unknown> = { role: topo.role };
+  if (topo.canonical !== undefined) topologyValue.canonical = topo.canonical;
+  return {
+    contract_version: FLEET_CONTRACT_VERSION,
+    schema_version: SUPPORTED_PROJECTION_SCHEMA_VERSIONS[0],
+    publisher: { identity: BASE_TIER_PUBLISHER_IDENTITY, published_at: opts.publishedAt },
+    freshness: { counter: opts.counter, hub_epoch: opts.epoch },
+    sections: {
+      mode: { value: mode, provenance },
+      posture: { value: "ok", provenance },
+      topology: { value: topologyValue, provenance },
+    },
+  };
+}
+
 // ── internals ───────────────────────────────────────────────────────────────
 
 /** Mirrors the Python gate's `isinstance(counter, int)`: an integer counter,

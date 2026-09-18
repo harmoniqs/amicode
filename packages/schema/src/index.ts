@@ -186,11 +186,17 @@ export {
   FLEET_PROJECTION_CACHE_RELPATH,
   fleetTopologyPath,
   FLEET_TOPOLOGY_RELPATH,
+  BASE_TIER_PUBLISHER_IDENTITY,
+  parseFleetTopology,
+  buildBaseProjection,
   type FleetFreshness,
   type FleetProjection,
   type FleetProvenance,
   type FleetSection,
   type FleetFreshnessStamp,
+  type BaseTopology,
+  type BaseTopologyCanonical,
+  type BaseProjectionOpts,
 } from "./fleet_projection.js";
 
 // ajv-formats ships a CJS default export; under NodeNext the default import can
