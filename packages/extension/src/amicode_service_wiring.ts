@@ -73,6 +73,9 @@ export interface AmicodeServiceWiringOptions {
     overlaySource?: string | null;
     hub: { getUrl: () => string | undefined };
     getMode?: () => "engine" | "fleet";
+    /** #1261 (AC6): boot the fleet plane as a CLIENT relay (never-fork, no
+     *  local engine) — honest hub-down, no standalone→engine flip. */
+    client?: boolean;
     posture?: Partial<import("./amicode_service/fleet_posture").FleetPostureTuning>;
     tunnelConfigPath?: string;
     dataPlaneTimeoutMs?: number;

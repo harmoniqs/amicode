@@ -58,7 +58,22 @@ export interface FleetPlane {
    *  tunnel getter yielded nothing) — feeds the posture detector, so a
    *  tunnel-down window counts toward the named hub-down condition. */
   onNoUpstream?: () => void;
+  /** #1261 (AC6): this relay is a fleet CLIENT (never-fork, NO local engine).
+   *  When true, a hub-down window is the relay's OWN honest hub-down 503 —
+   *  never "engine upstream not available" (there is no engine to be
+   *  unavailable) and never a silent standalone→engine fall-through. */
+  client?: boolean;
+  /** #1261 (AC6): the live hub-down pointer for the client's honest 503 (the
+   *  posture snapshot's pointer when standalone; a default otherwise). */
+  hubDownPointer?: () => string | null;
 }
+
+/** #1261 (AC6): a client's own named hub-down state — distinct from the base
+ *  "hub upstream not available" and never the engine's message. */
+export const FLEET_HUB_DOWN_ERROR = "fleet-hub-down";
+export const FLEET_HUB_DOWN_POINTER =
+  "the fleet host is unreachable — a client holds no local engine (never-fork); " +
+  "check the tunnel / host service, or Go Standalone to work locally";
 
 interface RouteEntry {
   method: "GET" | "POST";
@@ -273,6 +288,18 @@ export class AmicodeServiceServer {
           // posture detector so a tunnel-down window reaches the named
           // hub-down condition.
           this.fleetPlane.onNoUpstream?.();
+        }
+        // #1261 (AC6): a CLIENT (never-fork, no local engine) answers with its
+        // OWN honest hub-down state — never "engine upstream not available"
+        // (there is no engine), never a silent local fall-through. The base
+        // (engine-armed) machine keeps its "hub upstream not available" 503.
+        if (this.fleetPlane.client) {
+          const pointer = this.fleetPlane.hubDownPointer?.() ?? FLEET_HUB_DOWN_POINTER;
+          send({
+            status: 503,
+            body: JSON.stringify({ ok: false, error: FLEET_HUB_DOWN_ERROR, reason: "hub-unreachable", pointer }),
+          });
+          return;
         }
         send({ status: 503, body: JSON.stringify({ ok: false, error: "hub upstream not available" }) });
         return;
