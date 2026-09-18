@@ -34,6 +34,7 @@
 import { createAmicodeService } from "./amicode_service";
 import type { AmicodeServiceServer } from "./amicode_service/server";
 import { fleetStagingSummary, stageFleetDataPlane } from "./amicode_service/fleet_staging";
+import { relayVersionGate, type RelayVersionGateOptions } from "./amicode_service/fleet_version_skew";
 import type { FleetActivation } from "./fleet_activation";
 
 /** What consumers (terminal env, dogfood probes, the frame picker) need. */
@@ -107,6 +108,12 @@ export interface AmicodeServiceWiringOptions {
    *  LIVE-provider getter (the running engine's /config/providers, key-free
    *  ids only) — the credential gate's refresh loop. */
   modelRouting?: import("./amicode_service/model_routing").ModelRoutingDeps;
+  /** #1261 (AC7): the version-skew relay-START gate. A client relay sets it
+   *  (its pinned version + a host-version probe); the relay REFUSES to boot on
+   *  a disagreement beyond tolerance (an actionable message, never a generic
+   *  downstream timeout). Matching — or an unreadable host version (host down,
+   *  deferred to hub-down) — boots normally. Absent = no gate (base boots). */
+  versionGate?: RelayVersionGateOptions;
 }
 
 /**
@@ -124,6 +131,18 @@ export async function startAmicodeService(
   opts: AmicodeServiceWiringOptions = {},
 ): Promise<AmicodeServiceBoot | undefined> {
   try {
+    // #1261 (AC7): the version-skew relay-START gate. Before wiring anything,
+    // a client relay checks the host version against its pin — a disagreement
+    // beyond tolerance REFUSES to boot with an actionable message (never a
+    // generic downstream timeout). Unreadable / matching versions fall through.
+    if (opts.versionGate !== undefined) {
+      const gate = await relayVersionGate(opts.versionGate);
+      if (!gate.start) {
+        log.appendLine(`[amicode-service] relay-start REFUSED — version skew: ${gate.reason}`);
+        return undefined;
+      }
+      log.appendLine(`[amicode-service] version gate: ${gate.reason}`);
+    }
     // #398: resolve the activation ONCE for the boot decision (armed → the
     // fleet option is assembled; not armed → it is never passed), keeping
     // the resolver itself for the LATE-BOUND hub getter below.
