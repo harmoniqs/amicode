@@ -58,7 +58,9 @@ Invariants held:
 The base tier has no hub epoch, so it mints a **stable per-machine epoch**
 persisted at `~/.amico/ops/fleet/base_epoch` (a UUID; reused across calls so
 `freshnessBetween` compares within one epoch and never loops on "unknown").
-The counter is the publish wall-second — monotonic across republishes.
+The counter is persisted beside the epoch and seeded from the publish
+wall-second. Each publish atomically advances it, including when publishes land
+within one second or the wall clock moves backwards.
 
 ## Consequences
 

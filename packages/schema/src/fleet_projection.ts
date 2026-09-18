@@ -305,7 +305,7 @@ export interface BaseProjectionOpts {
   /** A STABLE per-machine epoch (persisted, reused across calls) — so
    *  freshnessBetween compares within one epoch and never loops on "unknown". */
   epoch: string;
-  /** A monotonic publish counter (the publish wall-second is the default source). */
+  /** A monotonic publish counter (the publish wall-second may seed its persisted value). */
   counter: number;
   /** ISO publish stamp — provenance only, never a freshness input (D1). */
   publishedAt: string;

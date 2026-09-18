@@ -19,13 +19,13 @@
 //      surfaces the reader's LOUD rejection verbatim (both versions named).
 //
 // Run: pnpm --filter @amicode/amico-run test fleet_projection_verb
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fleetVerb } from "../src/fleet_verb.js";
 import { fleetProjectionStatus, FLEET_BOOTSTRAP_EXIT, type FleetProjectionDeps } from "../src/fleet_projection_verb.js";
-import { fleetProjectionCachePath, fleetTopologyPath, readProjection, BASE_TIER_PUBLISHER_IDENTITY } from "@amicode/schema";
+import { fleetProjectionCachePath, fleetTopologyPath, freshnessBetween, readProjection, BASE_TIER_PUBLISHER_IDENTITY } from "@amicode/schema";
 
 const E1 = "44444444-4444-4444-8444-444444444444";
 
@@ -37,7 +37,10 @@ let tmp: string;
 beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), "fleet-proj-verb-"));
 });
-afterEach(() => rmSync(tmp, { recursive: true, force: true }));
+afterEach(() => {
+  vi.restoreAllMocks();
+  rmSync(tmp, { recursive: true, force: true });
+});
 
 /** A hermetic world: an entitlements file carrying the `amicissimo` code, a
  *  checkout dir, and a runPublisher that copies the fixture projection to the
@@ -429,5 +432,57 @@ describe("the base-tier projection (ADR 0023 — enrolled machine, no amicissimo
     };
     const r = run(["--config", join(tmp, "entitlements.toml")], deps);
     expect(r.json.freshness).toEqual({ counter: 7, hub_epoch: "epoch-x" });
+  });
+
+  it("the default counter turns an equal wall-second into fresh, not equal-counter stale", () => {
+    const previousHome = process.env.HOME;
+    process.env.HOME = join(tmp, "home");
+    vi.spyOn(Date, "now").mockReturnValue(2_000_000_000_000);
+    try {
+      const topologyPath = join(tmp, "fleet.json");
+      const cachePath = join(tmp, "cache.json");
+      const deps: FleetProjectionDeps = {
+        readFile: (p) => (p === topologyPath ? JSON.stringify({ role: "client" }) : null),
+        topologyPath,
+        cachePath,
+      };
+      run(["--config", join(tmp, "entitlements.toml")], deps);
+      const previous = readProjection(cachePath);
+      run(["--config", join(tmp, "entitlements.toml")], deps);
+      const fetched = readProjection(cachePath);
+
+      expect(previous.freshness?.counter).toBe(2_000_000_000);
+      expect(fetched.freshness?.counter).toBe(2_000_000_001);
+      expect(freshnessBetween(previous, fetched)).toBe("fresh");
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+    }
+  });
+
+  it("the default counter turns a lower wall-second into fresh, not a backwards-counter unknown", () => {
+    const previousHome = process.env.HOME;
+    process.env.HOME = join(tmp, "home");
+    const now = vi.spyOn(Date, "now").mockReturnValue(2_000_000_000_000);
+    try {
+      const topologyPath = join(tmp, "fleet.json");
+      const cachePath = join(tmp, "cache.json");
+      const deps: FleetProjectionDeps = {
+        readFile: (p) => (p === topologyPath ? JSON.stringify({ role: "client" }) : null),
+        topologyPath,
+        cachePath,
+      };
+      run(["--config", join(tmp, "entitlements.toml")], deps);
+      const previous = readProjection(cachePath);
+      now.mockReturnValue(1_000_000_000_000);
+      run(["--config", join(tmp, "entitlements.toml")], deps);
+      const fetched = readProjection(cachePath);
+
+      expect(fetched.freshness?.counter).toBe(2_000_000_001);
+      expect(freshnessBetween(previous, fetched)).toBe("fresh");
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+    }
   });
 });
