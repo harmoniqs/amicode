@@ -73,6 +73,8 @@ import {
   readFleetTopology,
   readFleetTopologyWithRefresh,
   fleetConfigOf,
+  divertToFleetRelay,
+  FLEET_GUARD_BINARY_SUFFIX,
   verbRunnerWithPaths,
   type VerbRunResult,
 } from "./fleet_topology";
@@ -152,8 +154,13 @@ let fleetVerbRunner: (() => VerbRunResult) | undefined;
  *  — never a silent fallthrough, never a raw-file read. The GUARD remains the
  *  enforcement (it fails closed on a broken verb); this check is the UX layer. */
 function isFleetClientGuard(binary: string | undefined, log: (line: string) => void = () => {}): boolean {
-  if (process.platform !== "darwin") return false;
-  if (!binary || !binary.endsWith("amico-opencode-fleet-guard")) return false;
+  // #1261 (AC3): the never-fork decision is PLATFORM-AGNOSTIC — NO darwin gate.
+  // The guard binary is the OS-neutral installed signal; the role comes from
+  // the projection (fleet_topology, already OS-neutral). A client spawns no
+  // local engine on mac, linux, OR WSL alike — removing the old
+  // `process.platform !== "darwin"` early-return that let a linux/WSL client
+  // silently cold-spawn one (the ADR-0005 split-brain, #1227).
+  if (!binary || !binary.endsWith(FLEET_GUARD_BINARY_SUFFIX)) return false;
   const decision = readFleetTopologyWithRefresh({ runVerb: fleetVerbRunner });
   if (decision.state.kind === "ok" && decision.state.verdict !== undefined) {
     log(`[fleet] projection freshness: ${decision.state.verdict}${decision.state.advisory === undefined ? "" : ` — ${decision.state.advisory}`}`);
@@ -170,7 +177,7 @@ function isFleetClientGuard(binary: string | undefined, log: (line: string) => v
     log(`[fleet] ${decision.state.detail}`);
     return false;
   }
-  return decision.state.role === "client";
+  return divertToFleetRelay(binary, decision.state);
 }
 
 /** #398 (slice 4e): the fleet activation config, read from the workspace
