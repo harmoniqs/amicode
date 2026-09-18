@@ -88,8 +88,13 @@ export class HubProxy {
       const timeoutMs = this.opts.timeoutMs ?? 10_000;
       const started = Date.now();
       let counted = false;
+      // #1261 (AC5): a client-initiated close (a window reload dropping its
+      // stream) tears the upstream down — but it is NOT a hub failure, so it
+      // must never record a no-response outcome (that would falsely drive the
+      // hub-down posture).
+      let clientAborted = false;
       const timeout = setTimeout(() => {
-        if (counted) return;
+        if (counted || clientAborted) return;
         counted = true;
         // the client-enforced timeout IS the outcome — record it, then tear
         // the attempt down (the detector observes outcomes, it does not
@@ -114,8 +119,19 @@ export class HubProxy {
           }
         });
       });
+      // #1261 (AC5): exactly-once reattach. When the CLIENT disconnects (a
+      // reloaded window closing its stream), tear down the host upstream so a
+      // reload re-joins the host ONCE — never accumulating upstreams into the
+      // #792-Amendment-B connection storm. A normal completion (writableFinished)
+      // already ended the upstream, so skip it there.
+      res.on("close", () => {
+        if (res.writableFinished) return;
+        clientAborted = true;
+        clearTimeout(timeout);
+        upstream.destroy();
+      });
       upstream.on("error", (err) => {
-        if (!counted) {
+        if (!counted && !clientAborted) {
           counted = true;
           clearTimeout(timeout);
           this.opts.onOutcome?.({
