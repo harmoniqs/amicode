@@ -104,15 +104,14 @@ say "fleet role: $ROLE (port: $FLEET_PORT)"
 # --- guard ---
 if [[ ! -f "$GUARD_SRC" ]]; then die "repo guard missing at $GUARD_SRC (git pull?)"; fi
 if [[ $CHECK -eq 1 ]]; then
-  # On non-darwin (CI linux) the installed guard is irrelevant — the fleet is darwin fleet.
-  if [[ "$(uname -s)" != "Darwin" ]]; then
-    say "ok guard repo exists (host check skipped on $(uname -s))"
-  else
-    if [[ ! -f "$GUARD_DST" ]]; then echo "[fleet] FAIL guard not installed at $GUARD_DST"; exit 1; fi
-    if ! cmp -s "$GUARD_SRC" "$GUARD_DST"; then echo "[fleet] FAIL guard stale (differs from repo)"; diff -u "$GUARD_DST" "$GUARD_SRC" | head -n 20; exit 1; fi
-    if [[ ! -x "$GUARD_DST" ]]; then echo "[fleet] FAIL guard not executable"; exit 1; fi
-    say "ok guard $GUARD_DST in sync"
-  fi
+  # #1261 (AC4): the guard backstop is cross-platform — a client spawns no
+  # engine on mac, linux, OR WSL alike, so the installed guard is checked on
+  # EVERY OS (no non-darwin host-check skip). Only the launchd TUNNEL below
+  # stays darwin-specific (the linux tunnel is #1260).
+  if [[ ! -f "$GUARD_DST" ]]; then echo "[fleet] FAIL guard not installed at $GUARD_DST"; exit 1; fi
+  if ! cmp -s "$GUARD_SRC" "$GUARD_DST"; then echo "[fleet] FAIL guard stale (differs from repo)"; diff -u "$GUARD_DST" "$GUARD_SRC" | head -n 20; exit 1; fi
+  if [[ ! -x "$GUARD_DST" ]]; then echo "[fleet] FAIL guard not executable"; exit 1; fi
+  say "ok guard $GUARD_DST in sync"
 else
   mkdir -p "$(dirname "$GUARD_DST")"
   cp "$GUARD_SRC" "$GUARD_DST"
@@ -120,30 +119,53 @@ else
   say "installed guard $GUARD_DST"
 fi
 
-# --- machine-scoped settings (only on darwin; harmless elsewhere) ---
-if [[ "$(uname -s)" == "Darwin" ]]; then
-  want_binary="$GUARD_DST"
-  want_port="$FLEET_PORT"
+# --- machine-scoped settings (cross-platform — #1261 AC4) ---
+# Enrollment writes the platform-correct VS Code User settings so a client's
+# amicode.opencodeBinary/opencodePort point at the guard: macOS uses
+# Application Support; linux/WSL uses ~/.config/Code/User, plus the Remote-WSL /
+# Remote-SSH server-side Machine settings when a VS Code server is present.
+SETTINGS_PATHS=()
+case "$(uname -s)" in
+  Darwin) SETTINGS_PATHS+=("$HOME/Library/Application Support/Code/User/settings.json") ;;
+  *)
+    SETTINGS_PATHS+=("$HOME/.config/Code/User/settings.json")
+    # Remote-WSL / Remote-SSH server-side machine settings, when present.
+    if [[ -d "$HOME/.vscode-server" ]]; then
+      SETTINGS_PATHS+=("$HOME/.vscode-server/data/Machine/settings.json")
+    fi
+    ;;
+esac
+want_binary="$GUARD_DST"
+want_port="$FLEET_PORT"
+settings_fail=0
+for SETTINGS in "${SETTINGS_PATHS[@]}"; do
   if [[ $CHECK -eq 1 ]]; then
-    # check via node (json with comments not strict)
-    node -e "
+    if [[ ! -f "$SETTINGS" ]]; then
+      echo "[fleet] FAIL settings $SETTINGS missing (amicode.opencodeBinary/opencodePort not set)"
+      settings_fail=1
+      continue
+    fi
+    if node -e "
       const fs=require('fs');
       const p=process.argv[1];
-      let j={}; try{j=JSON.parse(fs.readFileSync(p,'utf8'))}catch(e){let t=fs.readFileSync(p,'utf8'); j=JSON.parse(t.replace(/\/\/.*|\/\*[\s\S]*?\*\//g,''))} 
+      let j={}; try{j=JSON.parse(fs.readFileSync(p,'utf8'))}catch(e){let t=fs.readFileSync(p,'utf8'); j=JSON.parse(t.replace(/\/\/.*|\/\*[\s\S]*?\*\//g,''))}
       const b=j['amicode.opencodeBinary']||''; const port=j['amicode.opencodePort'];
       const wantPort=Number(process.argv[3]);
       let fail=0;
       if(b!==process.argv[2]){console.error('[fleet] FAIL amicode.opencodeBinary is '+(b||'(empty)')+', want '+process.argv[2]); fail=1}
       if(port!==wantPort){console.error('[fleet] FAIL amicode.opencodePort is '+port+', want '+wantPort); fail=1}
       process.exit(fail);
-    " "$SETTINGS" "$want_binary" "$want_port" || exit 1
-    say "ok settings $SETTINGS (binary + port $want_port)"
+    " "$SETTINGS" "$want_binary" "$want_port"; then
+      say "ok settings $SETTINGS (binary + port $want_port)"
+    else
+      settings_fail=1
+    fi
   else
     if [[ -f "$SETTINGS" ]]; then
       # merge via node — preserve other settings, force fleet keys (machine scope)
       node -e "
         const fs=require('fs'), p=process.argv[1], b=process.argv[2], port=Number(process.argv[3]);
-        let j={}; try{j=JSON.parse(fs.readFileSync(p,'utf8'))}catch(e){ j={} }
+        let j={};
         // tolerate jsonc: strip // and /* */
         try{j=JSON.parse(fs.readFileSync(p,'utf8'))}catch(_){
           try{ const t=fs.readFileSync(p,'utf8').replace(/\/\/.*|\/\*[\s\S]*?\*\//g,''); j=JSON.parse(t)}catch(__){ j={} }
@@ -159,7 +181,8 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
       say "wrote new settings $SETTINGS"
     fi
   fi
-fi
+done
+if [[ $CHECK -eq 1 && $settings_fail -eq 1 ]]; then exit 1; fi
 
 # --- tunnel plist (CLIENT role only — a server IS the tunnel's destination,
 # not its client, so it needs no self-tunnel; darwin only) ---

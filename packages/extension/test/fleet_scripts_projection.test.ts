@@ -109,6 +109,16 @@ function fakeAmico(behavior: { code: number; stdout: string; cacheContent?: stri
   chmodSync(join(bin, "amico"), 0o755);
 }
 
+/** #1261 (AC4): shadow `uname` on the child PATH so the installer's per-OS
+ *  branches (the settings path, the darwin-only tunnel) can be exercised
+ *  deterministically regardless of the test runner's real OS. */
+function fakeUname(os: string): void {
+  const bin = join(tmp, "fakebin");
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, "uname"), `#!/usr/bin/env bash\necho ${os}\n`);
+  chmodSync(join(bin, "uname"), 0o755);
+}
+
 function writeCache(content: string): void {
   const dir = join(tmp, ".amico", "ops", "fleet");
   mkdirSync(dir, { recursive: true });
@@ -254,16 +264,12 @@ describe("the installer consumes the verb (never greps the raw file)", () => {
     // The BRANCH proof: the parsed role + port flowed through — never the standalone skip.
     expect(r.out).toMatch(/fleet role: client \(port: 4096\)/);
     expect(r.out).not.toMatch(/fleet checks skipped|nothing to install/);
-    // The terminal outcome is platform-specific BY DESIGN: on darwin, --check
-    // fails on the missing installed guard; on non-darwin the installer skips
-    // the host check ("the fleet is a darwin fleet") and completes green.
-    if (process.platform === "darwin") {
-      expect(r.code).toBe(1);
-      expect(r.out).toMatch(/guard not installed/);
-    } else {
-      expect(r.code).toBe(0);
-      expect(r.out).toMatch(/host check skipped/);
-    }
+    // #1261 (AC4): the guard backstop is cross-platform now — a client with no
+    // installed guard fails --check on EVERY OS (was: "host check skipped" on
+    // non-darwin). Unified: exit 1, "guard not installed".
+    expect(r.code).toBe(1);
+    expect(r.out).toMatch(/guard not installed/);
+    expect(r.out).not.toMatch(/host check skipped/);
   });
 
   it("verb exit 0 + role server (no sshAlias) → guard+settings, NO tunnel, never dies on the missing alias (ADR 0023)", () => {
@@ -312,6 +318,59 @@ describe("the installer consumes the verb (never greps the raw file)", () => {
     fakeAmico({ code: 0, stdout: verbJson("client", { host: "hq", port: 4096, sshAlias: "hq" }), cacheContent: CLIENT_PROJECTION });
     runScript(INSTALL, ["--check"], installEnv());
     expect(readFileSync(join(tmp, ".amico", "ops", "fleet", "projection.json"), "utf8").trim()).toBe(CLIENT_PROJECTION);
+  });
+});
+
+// ── #1261 AC4: enrollment writes the platform-correct VS Code settings path ───
+describe("the installer writes the platform-correct settings path (#1261 AC4)", () => {
+  const installEnv = (): { path: string } => ({
+    path: `${join(tmp, "fakebin")}:${process.env.PATH ?? ""}`,
+  });
+
+  it("on LINUX, enrollment writes ~/.config/Code/User/settings.json with the guard binary + port", () => {
+    fakeAmico({ code: 0, stdout: verbJson("client", { host: "hq", port: 4096, sshAlias: "hq" }) });
+    fakeUname("Linux"); // exercise the linux branch regardless of the runner's OS
+    const r = runScript(INSTALL, [], installEnv()); // write mode
+    expect(r.code).toBe(0);
+    const settingsPath = join(tmp, ".config", "Code", "User", "settings.json");
+    expect(existsSync(settingsPath)).toBe(true);
+    const j = JSON.parse(readFileSync(settingsPath, "utf8")) as Record<string, unknown>;
+    expect(String(j["amicode.opencodeBinary"])).toMatch(/amico-opencode-fleet-guard$/);
+    expect(j["amicode.opencodePort"]).toBe(4096);
+    // the darwin Application Support path is NOT used on linux
+    expect(existsSync(join(tmp, "Library", "Application Support", "Code", "User", "settings.json"))).toBe(false);
+  });
+
+  it("on LINUX with a VS Code server present, ALSO writes the Remote-WSL server-side Machine settings", () => {
+    fakeAmico({ code: 0, stdout: verbJson("client", { host: "hq", port: 4096, sshAlias: "hq" }) });
+    fakeUname("Linux");
+    mkdirSync(join(tmp, ".vscode-server"), { recursive: true }); // a Remote-WSL/SSH server is present
+    const r = runScript(INSTALL, [], installEnv());
+    expect(r.code).toBe(0);
+    expect(existsSync(join(tmp, ".config", "Code", "User", "settings.json"))).toBe(true);
+    expect(existsSync(join(tmp, ".vscode-server", "data", "Machine", "settings.json"))).toBe(true);
+  });
+
+  it("on macOS, enrollment writes the Application Support path (unchanged)", () => {
+    fakeAmico({ code: 0, stdout: verbJson("client", { host: "hq", port: 4096, sshAlias: "hq" }) });
+    fakeUname("Darwin");
+    const r = runScript(INSTALL, [], installEnv());
+    expect(r.code).toBe(0);
+    expect(existsSync(join(tmp, "Library", "Application Support", "Code", "User", "settings.json"))).toBe(true);
+  });
+
+  it("--check on LINUX catches settings drift (the check twin runs cross-platform, never 'skipped (not darwin)')", () => {
+    // Guard installed + in sync, but the settings are missing → --check must FAIL.
+    fakeAmico({ code: 0, stdout: verbJson("client", { host: "hq", port: 4096, sshAlias: "hq" }) });
+    fakeUname("Linux");
+    // install the guard so the guard check passes and we reach the settings check
+    mkdirSync(join(tmp, ".local", "bin"), { recursive: true });
+    writeFileSync(join(tmp, ".local", "bin", "amico-opencode-fleet-guard"), readFileSync(GUARD, "utf8"));
+    chmodSync(join(tmp, ".local", "bin", "amico-opencode-fleet-guard"), 0o755);
+    const r = runScript(INSTALL, ["--check"], installEnv());
+    expect(r.code).toBe(1);
+    expect(r.out).toMatch(/settings.*(missing|not set)|opencodeBinary/i);
+    expect(r.out).not.toMatch(/skipped \(not darwin\)/);
   });
 });
 

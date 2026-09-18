@@ -41,10 +41,9 @@ export function checkFleetGuard(
   opts: { read?: (p: string) => string; isExecutable?: (p: string) => boolean; platform?: string } = {},
 ): FleetCheck {
   const read = opts.read ?? ((p: string) => fs.readFileSync(p, "utf8"));
-  // Fleet guard only matters on darwin; elsewhere it's a no-op.
-  if ((opts.platform ?? process.platform) !== "darwin") {
-    return { name: "Fleet guard", ok: true, detail: "skipped (not darwin)" };
-  }
+  // #1261 (AC4): the guard backstop is cross-platform — a client spawns no
+  // engine on mac, linux, OR WSL, so this check RUNS everywhere (only the
+  // launchd-plist tunnel check below stays darwin-specific, deferring to #1260).
   const repo = readOrNull(repoGuardPath, read);
   if (repo == null) return { name: "Fleet guard", ok: false, detail: `repo guard missing at ${repoGuardPath}`, fix: "git pull (fleet hardening not merged)" };
   const installed = readOrNull(installedGuardPath, read);
@@ -84,9 +83,8 @@ export function checkFleetSettings(
   configuredPort: number,
   opts: { platform?: string; topology?: FleetTopologyState } = {},
 ): FleetCheck {
-  if ((opts.platform ?? process.platform) !== "darwin") {
-    return { name: "Fleet settings", ok: true, detail: "skipped (not darwin)" };
-  }
+  // #1261 (AC4): the guard/port settings must be correct on every platform a
+  // client runs on (mac, linux, WSL) — this check RUNS cross-platform.
   const topology = opts.topology ?? readFleetTopology();
   const wantPort = fleetPort(topology);
   const wantBinary = FLEET_GUARD_INSTALL;
@@ -172,9 +170,8 @@ export function checkFleetTunnel(
 export function checkFleetRole(
   opts: { topology?: FleetTopologyState; platform?: string } = {},
 ): FleetCheck {
-  if ((opts.platform ?? process.platform) !== "darwin") {
-    return { name: "Fleet role", ok: true, detail: "skipped (not darwin)" };
-  }
+  // #1261 (AC4): the role surfaces on every platform (the projection read is
+  // OS-neutral) — a linux/WSL client must see its client role, not a skip.
   const topology = opts.topology ?? readFleetTopology();
 
   if (topology.kind === "absent") {
@@ -233,8 +230,10 @@ export function fleetHealthReport(args: {
 
   // Standalone (or absent projection — the base default): fleet checks are
   // irrelevant — just surface the role. A BROKEN projection also returns only
-  // the role check, as its rendered fail.
-  if ((role === "standalone" || topology.kind !== "ok") && (args.platform ?? process.platform) === "darwin") {
+  // the role check, as its rendered fail. #1261 (AC4): this floor is
+  // cross-platform (the guard/settings/role checks run on linux + WSL too);
+  // only the launchd tunnel check below stays darwin-specific.
+  if (role === "standalone" || topology.kind !== "ok") {
     return [
       checkFleetRole({ topology, platform: args.platform }),
     ];

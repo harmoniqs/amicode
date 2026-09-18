@@ -2023,19 +2023,25 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   };
   ctx.subscriptions.push(vscode.commands.registerCommand("amicode.restartHub", () => void runRestartHub()));
 
-  // Activation-time fleet drift warning (darwin only). If this machine is a fleet
-  // client but the guard is missing/stale or the tunnel is mis-tuned, surface
-  // ONE warning with a Fix action — don't silently fork.
+  // Activation-time fleet drift warning (#1261 AC4: cross-platform). If this
+  // machine is a fleet client but the guard is missing/stale or the settings
+  // are wrong, surface ONE warning with a Fix action — don't silently fork.
+  // The guard/settings/role checks run on mac, linux, AND WSL; only the
+  // launchd-plist tunnel check is darwin-specific (it self-skips elsewhere,
+  // #1260 owns the linux tunnel).
   void (() => {
-    if (process.platform !== "darwin") return;
     try {
       const repoGuardPath = path.resolve(ctx.extensionPath, FLEET_GUARD_REL);
-      const plistPath = path.join(os.homedir(), "Library", "LaunchAgents", "co.harmoniqs.amico-tunnel.plist");
+      // The launchd tunnel plist is darwin-only; on linux/WSL this stays null
+      // and checkFleetTunnel self-skips (deferring the linux tunnel to #1260).
       let plistContent: string | null = null;
-      try {
-        plistContent = fs.readFileSync(plistPath, "utf8");
-      } catch {
-        plistContent = null;
+      if (process.platform === "darwin") {
+        const plistPath = path.join(os.homedir(), "Library", "LaunchAgents", "co.harmoniqs.amico-tunnel.plist");
+        try {
+          plistContent = fs.readFileSync(plistPath, "utf8");
+        } catch {
+          plistContent = null;
+        }
       }
       const checks = fleetHealthReport({
         repoGuardPath,

@@ -68,10 +68,15 @@ describe("fleet_health", () => {
     expect(c.detail).toMatch(/stale/);
   });
 
-  it("guard: skips on linux", () => {
-    const c = checkFleetGuard(REPO, INSTALLED, { platform: "linux", read: () => { throw new Error("no read on linux"); } });
-    expect(c.ok).toBe(true);
-    expect(c.detail).toMatch(/skipped/);
+  it("guard: RUNS on linux/WSL now (#1261 AC4) — no longer skipped; a stale guard is caught", () => {
+    const c = checkFleetGuard(REPO, INSTALLED, {
+      platform: "linux",
+      read: (p) => p === REPO ? guardContent : guardContent + "drift",
+      isExecutable: () => true,
+    });
+    expect(c.ok).toBe(false);
+    expect(c.detail).not.toMatch(/skipped/);
+    expect(c.detail).toMatch(/stale/);
   });
 
   it("settings: fails when binary not set", () => {
@@ -91,9 +96,11 @@ describe("fleet_health", () => {
     expect(c.ok).toBe(true);
   });
 
-  it("settings: skips on linux", () => {
-    const c = checkFleetSettings("", 0, { platform: "linux" });
-    expect(c.ok).toBe(true);
+  it("settings: RUNS on linux/WSL now (#1261 AC4) — an unset binary on a client is caught, not skipped", () => {
+    const c = checkFleetSettings("", 4096, { platform: "linux", topology: okClient });
+    expect(c.ok).toBe(false);
+    expect(c.detail).not.toMatch(/skipped/);
+    expect(c.detail).toMatch(/not set/);
   });
 
   it("tunnel: fails when missing", () => {
@@ -216,5 +223,67 @@ describe("fleet_health", () => {
     });
     expect(r).toHaveLength(4);
     expect(r.every(c => c.ok)).toBe(true);
+  });
+});
+
+// ── #1261 AC4: the guard/settings/role checks RUN on linux (WSL) too; only
+// the launchd-plist TUNNEL check stays darwin-specific (deferring to #1260) ──
+describe("fleet_health on linux — the guard backstop is wired cross-platform (#1261 AC4)", () => {
+  it("guard: ok on linux when installed + in sync (runs, not skipped)", () => {
+    const c = checkFleetGuard(REPO, INSTALLED, { platform: "linux", read: () => guardContent, isExecutable: () => true });
+    expect(c.ok).toBe(true);
+    expect(c.detail).not.toMatch(/skipped/);
+  });
+
+  it("settings: ok on linux when guard + matching port", () => {
+    const c = checkFleetSettings(INSTALLED, 4096, { platform: "linux", topology: okClient });
+    expect(c.ok).toBe(true);
+  });
+
+  it("role: RUNS on linux — a client renders its canonical target, not a skip", () => {
+    const c = checkFleetRole({ platform: "linux", topology: okClient });
+    expect(c.ok).toBe(true);
+    expect(c.detail).not.toMatch(/skipped/);
+    expect(c.detail).toMatch(/test:4096/);
+  });
+
+  it("tunnel: STILL skips on linux — the launchd plist is darwin-specific (#1260 owns the linux tunnel)", () => {
+    const c = checkFleetTunnel(null, { platform: "linux", topology: okClient });
+    expect(c.ok).toBe(true);
+    expect(c.detail).toMatch(/skipped/);
+  });
+
+  it("aggregate report on linux: a client runs role + guard + settings (tunnel self-skips) — not an all-skip", () => {
+    const r = fleetHealthReport({
+      repoGuardPath: REPO,
+      configuredBinary: "", // wrong on a client — must be caught on linux now
+      configuredPort: 4096,
+      plistContent: null,
+      read: () => guardContent,
+      isExecutable: () => true,
+      platform: "linux",
+      topology: okClient,
+    });
+    expect(r).toHaveLength(4);
+    const settings = r.find((c) => c.name === "Fleet settings")!;
+    expect(settings.ok).toBe(false); // the unset binary is CAUGHT on linux
+    const tunnel = r.find((c) => c.name === "Fleet tunnel")!;
+    expect(tunnel.detail).toMatch(/skipped/); // …but the tunnel stays darwin-only
+  });
+
+  it("aggregate report on linux: standalone → only the role check (the base floor, cross-platform)", () => {
+    const r = fleetHealthReport({
+      repoGuardPath: REPO,
+      configuredBinary: "",
+      configuredPort: 0,
+      plistContent: null,
+      read: () => { throw new Error("no file"); },
+      isExecutable: () => true,
+      platform: "linux",
+      topology: okStandalone,
+    });
+    expect(r).toHaveLength(1);
+    expect(r[0].name).toBe("Fleet role");
+    expect(r[0].detail).toMatch(/standalone/);
   });
 });
