@@ -124,6 +124,6 @@ capability we would rather adopt than maintain.
 
 ## Slices → tracking issues
 
-- Slice 1 — launchd reboot-survival hub service — issue TBD.
+- Slice 1 — launchd reboot-survival hub service — #1258.
 - Slice 2 — anonymous-loopback + client tunnel remote attach + attach-not-spawn —
-  issue TBD.
+  #1259 (blocked by #1258).
