@@ -31,11 +31,19 @@ interface StubHost {
   url: string;
   requests: string[];
   authSeen: string[];
+  /** #1262: the /amicode/* mutations the host RECEIVED (path + verbatim body)
+   *  — the "the mutation landed on the host" evidence. */
+  amicodePosts: { path: string; body: string }[];
   stop(): Promise<void>;
 }
+/** #1262: the sentinel a proxied /amicode/* GET returns — a value the client's
+ *  OWN local amicode_service handlers never emit, so its presence PROVES the
+ *  response came from the host, not the client's local ~/.amico. */
+const HOST_AMICODE_MARKER = "HOST-OWNS-AMICODE-STATE";
 function startStubHost(sessions: unknown[], hubPassword: string): Promise<StubHost> {
   const requests: string[] = [];
   const authSeen: string[] = [];
+  const amicodePosts: { path: string; body: string }[] = [];
   const server = http.createServer((req, res) => {
     requests.push(`${req.method} ${req.url}`);
     authSeen.push(req.headers.authorization ?? "");
@@ -54,13 +62,32 @@ function startStubHost(sessions: unknown[], hubPassword: string): Promise<StubHo
       res.end(JSON.stringify({ healthy: true, version: "v1.18.29" }));
       return;
     }
+    // #1262: the HOST's authoritative /amicode/* surface. A GET returns the
+    // host sentinel; a POST (a mutation) is RECORDED whole and accepted — the
+    // host binds loopback, so its own mutation guard passes (the SSH mesh is
+    // the client→host boundary, per ADR 0024).
+    if (req.method === "GET" && req.url?.startsWith("/amicode/")) {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true, host_marker: HOST_AMICODE_MARKER, path: req.url }));
+      return;
+    }
+    if (req.method === "POST" && req.url?.startsWith("/amicode/")) {
+      const chunks: Buffer[] = [];
+      req.on("data", (c) => chunks.push(c as Buffer));
+      req.on("end", () => {
+        amicodePosts.push({ path: req.url!, body: Buffer.concat(chunks).toString("utf8") });
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: true, host_marker: HOST_AMICODE_MARKER, accepted: req.url }));
+      });
+      return;
+    }
     res.writeHead(404, { "content-type": "application/json" });
     res.end(JSON.stringify({ message: "not found" }));
   });
   return new Promise((resolve) => {
     server.listen(0, "127.0.0.1", () => {
       const port = (server.address() as AddressInfo).port;
-      resolve({ url: `http://127.0.0.1:${port}`, requests, authSeen, stop: () => new Promise((r) => server.close(() => r())) });
+      resolve({ url: `http://127.0.0.1:${port}`, requests, authSeen, amicodePosts, stop: () => new Promise((r) => server.close(() => r())) });
     });
   });
 }
@@ -222,6 +249,92 @@ describe("fleet-client relay skeleton (#1261) — a client holds NO local engine
       const body = (await status.json()) as { mode: string; posture: { state: string } };
       expect(body.posture.state).toBe("standalone"); // the posture DID reach hub-down
       expect(body.mode).toBe("fleet"); // …but the client never flips to the (nonexistent) engine
+    } finally {
+      await svc.stop();
+    }
+  });
+
+  // ── #1262: the HOST owns all /amicode/* state; a fleet client PROXIES it ────
+  // Slice 1 (#1261) proxied only the ENGINE data plane; /amicode/* was still
+  // served LOCALLY by the client's own amicode_service (a REGISTERED route hits
+  // the exact-match table before the fleet branch). These pin the bypass: in
+  // fleet-client mode the ENTIRE local /amicode/* dispatch (exact-match table +
+  // catch-all) is skipped and the request routes to the host.
+
+  it("#1262 AC1 — a REGISTERED /amicode/* GET returns the HOST's state (the exact-match table no longer shadows the proxy)", async () => {
+    const svc = bootClientRelay(() => host.url);
+    const origin = (await svc.start()).toString().replace(/\/$/, "");
+    const seen = () => host.requests.filter((r) => r === "GET /amicode/profile").length;
+    const before = seen();
+    try {
+      // GET /amicode/profile is a REGISTERED route (registerProfileRoutes) — pre
+      // fix it is served LOCALLY (never carries the host marker). Post fix it
+      // proxies to the host, which answers the sentinel a local handler cannot.
+      const res = await fetch(`${origin}/amicode/profile?auth_token=${encodeURIComponent(serviceToken)}`);
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { ok: boolean; host_marker?: string };
+      expect(body.host_marker).toBe(HOST_AMICODE_MARKER); // came from the HOST, not local ~/.amico
+      expect(seen()).toBe(before + 1); // the host actually served the registered route
+    } finally {
+      await svc.stop();
+    }
+  });
+
+  it("#1262 AC1 — the client's OWN /amicode/fleet/* honesty surface stays LOCAL (never proxied)", async () => {
+    const svc = bootClientRelay(() => host.url);
+    const origin = (await svc.start()).toString().replace(/\/$/, "");
+    try {
+      const res = await fetch(`${origin}/amicode/fleet/status`, { headers: { Authorization: serverAuthHeader(SERVICE_PASSWORD) } });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { ok: boolean; mode: string; host_marker?: string };
+      expect(body.mode).toBe("fleet"); // the client's LOCAL fleet-plane status
+      expect(body.host_marker).toBeUndefined(); // NOT the proxied host sentinel — this surface is local
+      expect(host.requests.some((r) => r.startsWith("GET /amicode/fleet"))).toBe(false); // the host never saw it
+    } finally {
+      await svc.stop();
+    }
+  });
+
+  it("#1262 AC2 — a MUTATION (POST /amicode/solver-mode) lands on the host, is ACCEPTED, and carries the TRANSLATED hub mint", async () => {
+    const svc = bootClientRelay(() => host.url);
+    const origin = (await svc.start()).toString().replace(/\/$/, "");
+    try {
+      // The host binds loopback → its own mutation guard passes (the SSH mesh
+      // is the client→host boundary, ADR 0024). A 200 proves the write LANDED
+      // AND was accepted; the host 401s anything but the hub mint, so it also
+      // proves credential translation on the write path.
+      const res = await fetch(`${origin}/amicode/solver-mode`, {
+        method: "POST",
+        headers: { Authorization: serverAuthHeader(SERVICE_PASSWORD), "content-type": "application/json" },
+        body: JSON.stringify({ mode: "piccolo" }),
+      });
+      expect(res.status).toBe(200); // delivered + accepted by the host
+      const landed = host.amicodePosts.find((p) => p.path === "/amicode/solver-mode");
+      expect(landed).toBeTruthy(); // the mutation reached the HOST, not the client's local store
+      expect(JSON.parse(landed!.body)).toEqual({ mode: "piccolo" }); // the whole body, intact
+      // the write crossed with the HUB mint — the client's own service mint NEVER did
+      const postAuths = host.authSeen.filter((_, i) => host.requests[i] === "POST /amicode/solver-mode");
+      expect(postAuths.length).toBeGreaterThan(0);
+      expect(postAuths.every((a) => a === hubUpstreamAuthHeader(HUB_PASSWORD))).toBe(true);
+      expect(postAuths.some((a) => a === serverAuthHeader(SERVICE_PASSWORD))).toBe(false);
+    } finally {
+      await svc.stop();
+    }
+  });
+
+  it("#1262 AC5 — STANDALONE (non-fleet) is unchanged: /amicode/* is still served LOCALLY", async () => {
+    // No fleet block → no fleet plane → shouldProxyAmicodeToHost is false: the
+    // exact-match table serves /amicode/profile locally, byte-identically.
+    const svc = createAmicodeService({ password: SERVICE_PASSWORD, shelf: { distRoot: dist } });
+    const origin = (await svc.start()).toString().replace(/\/$/, "");
+    const hostBefore = host.requests.length;
+    try {
+      const res = await fetch(`${origin}/amicode/profile?auth_token=${encodeURIComponent(serviceToken)}`);
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { ok: boolean; host_marker?: string };
+      expect(body.ok).toBe(true); // the LOCAL handler's shape
+      expect(body.host_marker).toBeUndefined(); // never the host sentinel — served locally
+      expect(host.requests.length).toBe(hostBefore); // the host saw NOTHING
     } finally {
       await svc.stop();
     }

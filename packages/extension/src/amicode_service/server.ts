@@ -232,6 +232,25 @@ export class AmicodeServiceServer {
     return Buffer.concat(chunks).toString("utf8");
   }
 
+  /** #1262: does this request belong to the HOST's authoritative /amicode/*
+   *  surface — i.e. should a fleet CLIENT proxy it to the host instead of
+   *  serving it from the local exact-match table / catch-all? True ONLY for a
+   *  fleet client, in fleet routing mode, on an /amicode/* path that is NOT the
+   *  client's OWN /amicode/fleet/* honesty surface (posture/mode/staging —
+   *  those stay local). Standalone and the engine-armed base machine → false
+   *  (they own a local store and serve /amicode/* locally, byte-identically). */
+  private shouldProxyAmicodeToHost(url: URL): boolean {
+    if (!this.fleetPlane?.client) return false;
+    if (this.routingMode !== "fleet") return false;
+    const p = url.pathname;
+    if (p !== "/amicode" && !p.startsWith("/amicode/")) return false;
+    // The client's own fleet-plane surface stays LOCAL — never proxied (a
+    // proxied posture/status would report the HOST's, defeating the honesty
+    // surface #1261 AC6 relies on).
+    if (p === "/amicode/fleet" || p.startsWith("/amicode/fleet/")) return false;
+    return true;
+  }
+
   private async dispatch(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     const send = (r: AmicodeHandlerResult | AppShelfResult) => {
       res.statusCode = r.status ?? 200;
@@ -247,26 +266,39 @@ export class AmicodeServiceServer {
         send(unauthorized());
         return;
       }
-      const route = this.routes.get(`${req.method} ${url.pathname}`);
-      if (route) {
-        const body = await this.readBody(req);
-        const result = await route.handler({ url, body });
-        send(result);
-        return;
-      }
-      // #822 precedence, after the exact route table: the /amicode/*
-      // namespace is OWNED by this service (unmatched paths 404 here — the
-      // fork-parity discipline; stock canonical serves no /amicode/* so
-      // proxying them would just launder our 404) → the app shelf → the
-      // engine proxy.
-      if (url.pathname === "/amicode" || url.pathname.startsWith("/amicode/")) {
-        send({ status: 404, body: JSON.stringify({ ok: false, error: `no route: ${req.method} ${url.pathname}` }) });
-        return;
-      }
-      const shelfHit = this.shelf?.handle(req.method ?? "GET", url.pathname, String(req.headers.accept ?? ""));
-      if (shelfHit) {
-        send(shelfHit);
-        return;
+      // #1262: in fleet CLIENT mode the HOST owns all /amicode/* state. Bypass
+      // the ENTIRE local /amicode/* dispatch (the exact-match route table AND
+      // the catch-all 404 below) so a REGISTERED route (GET /amicode/problems,
+      // POST /amicode/connections) no longer shadows the proxy — the request
+      // falls through to the fleet branch and routes to the host's
+      // authoritative amicode_service (reads → hub proxy, non-GET → the
+      // write-failure contract). EXCEPTION: /amicode/fleet/* is the CLIENT'S
+      // OWN honesty surface (its live posture/mode/staging receipt) and stays
+      // LOCAL. Gated on the client role so standalone AND the engine-armed base
+      // machine are byte-identical — both still serve /amicode/* locally.
+      const proxyAmicodeToHost = this.shouldProxyAmicodeToHost(url);
+      if (!proxyAmicodeToHost) {
+        const route = this.routes.get(`${req.method} ${url.pathname}`);
+        if (route) {
+          const body = await this.readBody(req);
+          const result = await route.handler({ url, body });
+          send(result);
+          return;
+        }
+        // #822 precedence, after the exact route table: the /amicode/*
+        // namespace is OWNED by this service (unmatched paths 404 here — the
+        // fork-parity discipline; stock canonical serves no /amicode/* so
+        // proxying them would just launder our 404) → the app shelf → the
+        // engine proxy.
+        if (url.pathname === "/amicode" || url.pathname.startsWith("/amicode/")) {
+          send({ status: 404, body: JSON.stringify({ ok: false, error: `no route: ${req.method} ${url.pathname}` }) });
+          return;
+        }
+        const shelfHit = this.shelf?.handle(req.method ?? "GET", url.pathname, String(req.headers.accept ?? ""));
+        if (shelfHit) {
+          send(shelfHit);
+          return;
+        }
       }
       // #391 (D1): the upstream is chosen by the CURRENT routing mode —
       // fleet routes data + SSE to the hub over the tunnel (the shelf above
