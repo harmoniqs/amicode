@@ -144,7 +144,11 @@ function headerValue(headers: Record<string, string | string[] | undefined>, nam
 
 /** D3's refetch derivation: a write to a thread refetches that thread; a
  *  session create refetches the list. Documented heuristic — the refetch is
- *  evidence for the caller's reconciliation, never a silent re-write. */
+ *  evidence for the caller's reconciliation, never a silent re-write.
+ *
+ *  #1262: an /amicode/* write dispatches to the /amicode/* variant below —
+ *  the session-shaped fallthrough (`/${segs[0]}` = `/amicode`) would drop the
+ *  mutated FAMILY, yielding a refetch that hides a partial write. */
 export function deriveRefetchPath(writePath: string): string {
   const segs = writePath.split("?")[0].split("/").filter((s) => s !== "");
   if (segs.length === 0) return "/session";
@@ -152,7 +156,26 @@ export function deriveRefetchPath(writePath: string): string {
     if (segs.length >= 2) return `/session/${segs[1]}`;
     return "/session";
   }
+  if (segs[0] === "amicode") return deriveAmicodeRefetchPath(writePath);
   return `/${segs[0]}`;
+}
+
+/** #1262: the /amicode/*-appropriate refetch variant. An /amicode write
+ *  refetches its FAMILY resource — the GET twin that reflects the mutation:
+ *
+ *    POST /amicode/connections/credential  → GET /amicode/connections
+ *    POST /amicode/posture/dismiss         → GET /amicode/posture
+ *    POST /amicode/profile                 → GET /amicode/profile
+ *
+ *  Keep `amicode` + the family segment, drop the action. Best-effort
+ *  reconciliation evidence for the caller (the host owns all /amicode/* state,
+ *  so the family GET is where "did my write land?" is answered), NEVER a
+ *  silent re-write. Distinct from the session-shaped path by construction. */
+export function deriveAmicodeRefetchPath(writePath: string): string {
+  const segs = writePath.split("?")[0].split("/").filter((s) => s !== "");
+  // segs[0] === "amicode" by caller contract; guard anyway.
+  if (segs.length >= 2) return `/amicode/${segs[1]}`;
+  return "/amicode";
 }
 
 async function safeText(res: Response): Promise<string> {
