@@ -214,6 +214,26 @@ export class WorkspaceEdit {
     this._edits.push({ uri, range, newText });
   }
 }
+// FileSystemError with the code-bearing static factories the real API exposes
+// (used by the amico-host FileSystemProvider adapter, #1267). Each factory sets
+// `.code` so the host can render the honest outcome.
+export class FileSystemError extends Error {
+  code: string;
+  constructor(messageOrUri?: unknown, code = "Unknown") {
+    super(typeof messageOrUri === "string" ? messageOrUri : String(messageOrUri ?? ""));
+    this.name = "FileSystemError";
+    this.code = code;
+  }
+  static FileNotFound(messageOrUri?: unknown) { return new FileSystemError(messageOrUri, "FileNotFound"); }
+  static FileExists(messageOrUri?: unknown) { return new FileSystemError(messageOrUri, "FileExists"); }
+  static FileNotADirectory(messageOrUri?: unknown) { return new FileSystemError(messageOrUri, "FileNotADirectory"); }
+  static FileIsADirectory(messageOrUri?: unknown) { return new FileSystemError(messageOrUri, "FileIsADirectory"); }
+  static NoPermissions(messageOrUri?: unknown) { return new FileSystemError(messageOrUri, "NoPermissions"); }
+  static Unavailable(messageOrUri?: unknown) { return new FileSystemError(messageOrUri, "Unavailable"); }
+}
+export const FilePermission = { Readonly: 1 };
+export const FileChangeType = { Changed: 1, Created: 2, Deleted: 3 };
+export const StatusBarAlignment = { Left: 1, Right: 2 };
 export class TreeItem {
   description?: string;
   tooltip?: string;

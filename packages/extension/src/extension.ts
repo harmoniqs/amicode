@@ -105,6 +105,10 @@ import { startKeepalive, stopKeepalive, readGraceSeconds, pingKeepalive } from "
 import { FleetPollHysteresis } from "./fleet_poll_hysteresis";
 import { FleetPostureStateWriter } from "./fleet_posture_state";
 import { recordPostureState } from "./fleet_posture_feed";
+import { HostFileClient } from "./fleet_host_fs/host_file_client";
+import { AmicoHostFileSystemProvider } from "./fleet_host_fs/provider";
+import { mountAmicoHostFs } from "./fleet_host_fs/mount";
+import { type CapabilityLabel } from "./fleet_host_fs/mount_policy";
 import { stopServer } from "./stop_server";
 import type { QueueView } from "./qick_job_server";
 import { postDeviceStatus, postDeviceActions, postDeviceActivate } from "./inspector_bridge";
@@ -887,6 +891,42 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     void checkFleet();
     // Fallback status bar already handles the fallback-active case; in pure
     // client mode we surface tunnel health via the fleet health warning above.
+
+    // #1267: native Explorer shows HOST files. Mount the amico-host:// provider
+    // over the ALREADY-PROXIED host data plane (the client relay + /amicode/*
+    // proxy) so the Explorer, open, and save operate on the host. The transport's
+    // base URL is the tunnel origin (undefined when the tunnel is down → the
+    // provider surfaces the honest hub-down posture, NEVER local files, AC5); the
+    // Authorization is the same header the relay translates to the hub mint. The
+    // mandatory capability label ships in the SAME step (AC4). Mounts ONLY here,
+    // in fleet-client posture (AC6) — standalone/server never reach this branch.
+    const hostExplorerEnabled = vscode.workspace.getConfiguration("amicode").get<boolean>("fleet.hostExplorer", true);
+    const hostFsClient = new HostFileClient({
+      baseUrl: () => opencodeReadyUrl?.toString(),
+      authHeader: () => serverAuthHeaders.Authorization,
+    });
+    const hostFsProvider = new AmicoHostFileSystemProvider(hostFsClient);
+    const hostFsMount = mountAmicoHostFs(
+      { isFleetClient: true, disabled: !hostExplorerEnabled },
+      {
+        registerProvider: (scheme, isReadonly) =>
+          vscode.workspace.registerFileSystemProvider(scheme, hostFsProvider, { isReadonly }),
+        addFolder: (scheme) =>
+          void vscode.workspace.updateWorkspaceFolders(vscode.workspace.workspaceFolders?.length ?? 0, 0, {
+            uri: vscode.Uri.parse(`${scheme}:/`),
+            name: "Host (fleet)",
+          }),
+        showLabel: (label: CapabilityLabel) => {
+          const item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
+          item.text = label.text;
+          item.tooltip = label.tooltip;
+          item.show();
+          return { dispose: () => item.dispose() };
+        },
+        log: (m) => opencodeChannel.appendLine(m),
+      },
+    );
+    for (const d of hostFsMount.disposables) ctx.subscriptions.push(d);
   } else if (binary !== undefined) {
     // amico-run is argv-only (β.1) — no AMICO_* env propagation (S37), with ONE
     // recorded exception: AMICO_PYTHON (Pasqal python provisioning) rides the
