@@ -22,6 +22,7 @@ import {
 import { LinkSensor, type LinkPosture, type SensorScheduler } from "./link_sensor";
 import { AutoDownSwitch } from "./auto_switch";
 import { PromptUpSwitch } from "./prompt_up";
+import type { EditorCarryDeps } from "./editor_carry";
 
 /** The one command the companion contributes (see package.json contributes). */
 export const REOPEN_COMMAND = "amicode.companion.reopenWindow";
@@ -104,6 +105,16 @@ export interface CompanionDeps {
   promptUser?: (message: string, action: string) => Promise<boolean>;
   /** The prompt-frequency floor in ms (default DEFAULT_MIN_PROMPT_INTERVAL_MS). */
   minPromptIntervalMs?: number;
+  /** #1278 cross-scheme editor-carry seams — injectable so the carry is testable
+   *  without a live editor host. */
+  /** Capture the currently-open editor URIs as strings (default:
+   *  `vscode.window.visibleTextEditors` → `document.uri.toString()`). */
+  listOpenEditors?: () => string[];
+  /** Carry ONE translated editor across the switch by QUEUING it to reopen after
+   *  the window reload — `vscode.openFolder` reloads the host and discards live
+   *  editors, so the carry persists to `context.globalState` and the queue is
+   *  drained (opened) on the next activation (default). Tests inject a capture. */
+  carryEditor?: (uri: string) => void | Promise<void>;
 }
 
 /** The activated companion's API — the wired probe + reopen, returned so the
@@ -171,6 +182,39 @@ export function activate(context: vscode.ExtensionContext, deps: CompanionDeps =
   const disposable = vscode.commands.registerCommand(REOPEN_COMMAND, (arg?: ReopenArgs) => reopen(arg));
   context.subscriptions.push(disposable);
 
+  // #1278: the cross-scheme editor-carry seam, shared by both switch handlers.
+  // A window reopen changes the file scheme (vscode-remote://ssh-remote+…/ under
+  // Remote-SSH ↔ amico-host:/ under the lifeboat), so open host editors do not
+  // survive the flip unless their URIs are translated across it. `carryEditor`
+  // QUEUES each carried editor in globalState (openFolder reloads the host and
+  // discards live editors); the queue is DRAINED — opened — on the next
+  // activation, i.e. in the window we reopened into. The store is accessed
+  // defensively so a host without globalState (or a test's bare context) is a
+  // clean no-op rather than a throw.
+  const PENDING_CARRY_KEY = "amicode.companion.pendingEditorCarry";
+  const carryStore = (
+    context as { globalState?: { get?<T>(key: string, def: T): T; update?(key: string, value: unknown): unknown } }
+  ).globalState;
+  const pendingCarry = (carryStore?.get?.(PENDING_CARRY_KEY, [] as string[]) ?? []) as string[];
+  if (pendingCarry.length > 0) {
+    for (const uri of pendingCarry) {
+      void vscode.commands.executeCommand("vscode.open", vscode.Uri.parse(uri));
+    }
+    void carryStore?.update?.(PENDING_CARRY_KEY, []);
+  }
+  const editorCarry: EditorCarryDeps = {
+    listOpenEditors:
+      deps.listOpenEditors ??
+      (() => (vscode.window.visibleTextEditors ?? []).map((e) => e.document.uri.toString())),
+    carryEditor:
+      deps.carryEditor ??
+      ((uri: string) => {
+        const queued = (carryStore?.get?.(PENDING_CARRY_KEY, [] as string[]) ?? []) as string[];
+        void carryStore?.update?.(PENDING_CARRY_KEY, [...queued, uri]);
+      }),
+    reportNotCarried: deps.showMessage ?? ((m: string) => void vscode.window.showWarningMessage(m)),
+  };
+
   // #1275: the client-side link sensor — probe the hub on the standard cadence
   // and feed each outcome to the BUNDLED merged detector, emitting the
   // classified posture. The companion owns only the probe (it cannot read
@@ -189,6 +233,7 @@ export function activate(context: vscode.ExtensionContext, deps: CompanionDeps =
     ...(deps.openFolder !== undefined ? { openFolder: deps.openFolder } : {}),
     ...(deps.showError !== undefined ? { showError: deps.showError } : {}),
     ...(deps.minSwitchIntervalMs !== undefined ? { minSwitchIntervalMs: deps.minSwitchIntervalMs } : {}),
+    editorCarry, // #1278: carry open host editors DOWN across the flip
   });
 
   // #1277: the prompt-UP orchestrator consumes the SAME posture stream. On a
@@ -209,6 +254,7 @@ export function activate(context: vscode.ExtensionContext, deps: CompanionDeps =
     ...(deps.openFolder !== undefined ? { openFolder: deps.openFolder } : {}),
     ...(deps.showError !== undefined ? { showError: deps.showError } : {}),
     ...(deps.minPromptIntervalMs !== undefined ? { minPromptIntervalMs: deps.minPromptIntervalMs } : {}),
+    editorCarry, // #1278: carry open host editors UP across the flip
   });
 
   const onPosture = (posture: LinkPosture): void => {

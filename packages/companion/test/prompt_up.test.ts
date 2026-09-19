@@ -418,3 +418,95 @@ describe("PromptUpSwitch — end-to-end through the live #1275 sensor (AC1 + AC3
     expect(prompts).toHaveLength(0);
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════════════
+// #1278 — cross-scheme editor-URI carry across the UP flip (local → remote).
+// On an ACCEPTED return, the open host-file editors (amico-host:/…) are carried
+// to the Remote-SSH scheme (vscode-remote://ssh-remote+<alias>/…) at the SAME
+// logical path, using THIS module's resolved alias; local scratch editors are
+// untouched (AC3); a host editor that cannot be mapped is reported, never
+// silently dropped (AC2). No carry on dismiss or cannot-resolve (no flip = no loss).
+// ══════════════════════════════════════════════════════════════════════════════
+interface CarryHarness extends Harness {
+  carried: string[];
+  reports: string[];
+}
+function carryHarness(open: string[], overrides: Partial<PromptUpDeps> = {}): CarryHarness {
+  const carried: string[] = [];
+  const reports: string[] = [];
+  const base = harness({
+    editorCarry: {
+      listOpenEditors: () => open,
+      carryEditor: (uri) => {
+        carried.push(uri);
+        base.log.push("carry");
+      },
+      reportNotCarried: (m) => reports.push(m),
+    },
+    ...overrides,
+  });
+  return Object.assign(base, { carried, reports });
+}
+
+describe("PromptUpSwitch — carries open host editors across the return (#1278)", () => {
+  it("accept → the open host editors carry to the ssh authority at the same path; scratch untouched (AC1/AC3)", async () => {
+    const h = carryHarness([
+      "amico-host:/home/jj/a.jl",
+      "amico-host:/home/jj/b.md",
+      "file:///tmp/scratch.txt", // local scratch — unaffected
+    ]);
+    h.setAccept(true);
+    await h.sw.handle(down());
+    expect(await h.sw.handle(ok())).toBe("reopened");
+    expect(h.carried).toEqual([
+      "vscode-remote://ssh-remote+amico-erlich/home/jj/a.jl",
+      "vscode-remote://ssh-remote+amico-erlich/home/jj/b.md",
+    ]);
+    expect(h.reports).toHaveLength(0);
+  });
+
+  it("captures + carries the editors BEFORE the window reopens", async () => {
+    const h = carryHarness(["amico-host:/home/jj/a.jl"]);
+    h.setAccept(true);
+    await h.sw.handle(down());
+    await h.sw.handle(ok());
+    expect(h.log).toEqual(["prompt", "carry", "open"]);
+  });
+
+  it("dismiss → nothing carried (the window stayed local; the editors are still valid there)", async () => {
+    const h = carryHarness(["amico-host:/home/jj/a.jl"]);
+    h.setAccept(false);
+    await h.sw.handle(down());
+    expect(await h.sw.handle(ok())).toBe("dismissed");
+    expect(h.carried).toHaveLength(0);
+  });
+
+  it("cannot-resolve-target (blank alias) → nothing carried (no flip = no loss)", async () => {
+    const h = carryHarness(["amico-host:/home/jj/a.jl"], { sshAlias: "" });
+    h.setAccept(true);
+    await h.sw.handle(down());
+    expect(await h.sw.handle(ok())).toBe("cannot-resolve-target");
+    expect(h.carried).toHaveLength(0);
+  });
+
+  it("an un-carryable host editor is REPORTED and its siblings still carry (never silently dropped, AC2)", async () => {
+    const h = carryHarness([
+      "amico-host:/home/jj/a.jl", // carries
+      "amico-host:", // malformed → cannot carry
+    ]);
+    h.setAccept(true);
+    await h.sw.handle(down());
+    await h.sw.handle(ok());
+    expect(h.carried).toEqual(["vscode-remote://ssh-remote+amico-erlich/home/jj/a.jl"]);
+    expect(h.reports).toHaveLength(1);
+  });
+
+  it("the return is byte-for-byte unchanged when no editorCarry seam is wired", async () => {
+    const h = harness(); // no editorCarry
+    h.setAccept(true);
+    await h.sw.handle(down());
+    await h.sw.handle(ok());
+    expect(h.log).toEqual(["prompt", "open"]);
+  });
+});
+

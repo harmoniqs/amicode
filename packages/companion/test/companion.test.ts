@@ -495,3 +495,59 @@ describe("activate (#1277 — the prompt-UP offer fires through the wired sensor
     expect(typeof api.promptUp.onPosture).toBe("function");
   });
 });
+
+// ── #1278: activate wires the cross-scheme editor-carry into BOTH switches ─────
+// The carry seam is injectable through CompanionDeps; here we prove activate()
+// forwards it so a wired drop / return actually carries the open host editors
+// across the scheme flip (end-to-end through the live merged detector).
+describe("activate (#1278 — the editor-carry is wired into both switch handlers)", () => {
+  it("a wired auto-DOWN drop carries the open host editors to the lifeboat scheme (amico-host:/)", async () => {
+    const { scheduler } = fakeScheduler();
+    const carried: string[] = [];
+    const api = activate(fakeContext() as never, {
+      scheduler,
+      probeFetch: throwingFetch("ECONNREFUSED"),
+      localReopenPath: () => "/home/jj/amicode",
+      openFolder: () => {},
+      now: () => 0,
+      listOpenEditors: () => ["vscode-remote://ssh-remote+hub/home/jj/a.jl", "file:///tmp/scratch.txt"],
+      carryEditor: (uri) => carried.push(uri),
+    });
+    await api.linkSensor.tick();
+    await api.linkSensor.tick();
+    await api.linkSensor.tick(); // sustained hub-down → the drop fires
+    await flush();
+    // the host editor carried DOWN to amico-host; the local scratch untouched
+    expect(carried).toEqual(["amico-host:/home/jj/a.jl"]);
+  });
+
+  it("a wired, accepted prompt-UP return carries the open host editors to the Remote-SSH scheme", async () => {
+    (vscode.workspace as unknown as { _config: Record<string, unknown> })._config[COMPANION_HUB_URL_SETTING] =
+      "http://127.0.0.1:4096"; // the probe must actually dial for a recovery to register
+    (vscode.window as unknown as { _infoResponse: string | undefined })._infoResponse = "Reopen in Remote-SSH";
+    const { scheduler } = fakeScheduler();
+    const carried: string[] = [];
+    const link = { reachable: false };
+    const api = activate(fakeContext() as never, {
+      scheduler,
+      probeFetch: flippableFetch(link),
+      remoteSshAlias: () => "amico-erlich",
+      openFolder: () => {},
+      now: () => 0,
+      listOpenEditors: () => ["amico-host:/home/jj/a.jl", "file:///tmp/scratch.txt"],
+      carryEditor: (uri) => carried.push(uri),
+    });
+    await api.linkSensor.tick();
+    await api.linkSensor.tick();
+    await api.linkSensor.tick(); // hub-down
+    await flush();
+    link.reachable = true;
+    await api.linkSensor.tick();
+    await api.linkSensor.tick();
+    await api.linkSensor.tick(); // sustained recovery → prompt → accept → reopen UP
+    await flush();
+    // the host editor carried UP to the ssh authority; the local scratch untouched
+    expect(carried).toEqual(["vscode-remote://ssh-remote+amico-erlich/home/jj/a.jl"]);
+  });
+});
+

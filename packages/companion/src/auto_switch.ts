@@ -21,9 +21,10 @@
 //
 // SCOPE (this slice): the auto-DOWN reopen + the guards + the surface. NOT here:
 // prompt-UP on recovery (#1277 — it will consume this same posture seam, watching
-// for the recovery transition back to `fleet`), and cross-scheme editor-URI carry
-// across the switch (#1278 — it will supply/refine the reopen target so open
-// editors survive the flip; today the local target is a configured folder path).
+// for the recovery transition back to `fleet`). Cross-scheme editor-URI carry
+// across the switch (#1278) IS now wired here: when `deps.editorCarry` is
+// supplied, the open host editors are carried DOWN across the flip (see the carry
+// step in `handle`); when it is not, the drop carries the folder target only.
 
 import {
   resolveLocalReopenTarget,
@@ -31,6 +32,7 @@ import {
   type ReopenDeps,
   type ReopenOutcome,
 } from "./reopen";
+import { carryOpenEditors, type EditorCarryDeps } from "./editor_carry";
 import type { LinkPosture } from "./link_sensor";
 
 /** The switch-frequency floor: the minimum wall-clock interval between window
@@ -77,7 +79,8 @@ export type AutoDownAction =
 
 export interface AutoDownDeps {
   /** The absolute LOCAL folder the lifeboat drops into (the thin-client posture).
-   *  #1278 will refine this to carry open editors across the switch. */
+   *  #1278 carries the open host editors across the switch on top of this target
+   *  (see `editorCarry`), so the drop keeps the user's place, not just the folder. */
   localPath: string;
   /** The clock, in ms — the switch-frequency floor is measured against it.
    *  Production: `Date.now`. */
@@ -100,6 +103,12 @@ export interface AutoDownDeps {
   /** Whether the drop forces a NEW window. Default false — the auto-DOWN flips
    *  the CURRENT (frozen) window to the lifeboat. */
   forceNewWindow?: boolean;
+  /** #1278 cross-scheme editor-URI carry. When wired, the open host-file editors
+   *  are carried DOWN across the flip (their `vscode-remote://ssh-remote+<alias>/`
+   *  URIs → `amico-host:/` at the same logical path) so the user keeps their
+   *  place; un-carryable editors are reported, never silently dropped. Optional —
+   *  when omitted the drop carries the folder only, exactly as before this slice. */
+  editorCarry?: EditorCarryDeps;
 }
 
 /**
@@ -168,7 +177,18 @@ export class AutoDownSwitch {
     if (this.deps.showError !== undefined) reopenDeps.showError = this.deps.showError;
     if (this.deps.forceNewWindow !== undefined) reopenDeps.forceNewWindow = this.deps.forceNewWindow;
 
-    if (resolution.ok) this.deps.showMessage(AUTO_DOWN_MESSAGE);
+    if (resolution.ok) {
+      this.deps.showMessage(AUTO_DOWN_MESSAGE);
+      // #1278: carry the open host editors DOWN across the flip (remote → local)
+      // so the user keeps their place, not just the folder. Captured + enqueued
+      // BEFORE the reopen (the window reload discards live editors); a host editor
+      // that cannot be mapped is reported by the carry, never silently dropped.
+      // Only on a committed drop (resolution.ok) — an unresolvable target never
+      // switched, so the editors stay valid where they are.
+      if (this.deps.editorCarry !== undefined) {
+        await carryOpenEditors("amico-host", this.deps.editorCarry);
+      }
+    }
     // Record the switch time BEFORE the awaited reopen so a re-entrant tick
     // during the flip is already throttled — the floor holds even mid-drop, and
     // a persistently-broken target cannot storm the surface either.

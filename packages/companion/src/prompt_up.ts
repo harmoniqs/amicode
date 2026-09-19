@@ -26,10 +26,11 @@
 // return from — it does not prompt.
 //
 // SCOPE (this slice): recovery detection + the prompt + a user-accepted reopen.
-// NOT here: the auto-DOWN drop (#1276, its sibling) and cross-scheme editor-URI
-// carry across the flip (#1278 — it will supply/refine the reopen TARGET this
-// module builds, so open editors survive the return; today the target is the
-// configured hub SSH alias + the home-default remote path).
+// NOT here: the auto-DOWN drop (#1276, its sibling). Cross-scheme editor-URI
+// carry across the flip (#1278) IS now wired here: when `deps.editorCarry` is
+// supplied, an accepted return carries the open host editors UP across the flip
+// (see the carry step in `handle`); when it is not, the return carries the folder
+// target only.
 
 import {
   resolveRemoteSshReopenTarget,
@@ -37,6 +38,7 @@ import {
   type ReopenDeps,
   type ReopenOutcome,
 } from "./reopen";
+import { carryOpenEditors, type EditorCarryDeps } from "./editor_carry";
 import { isHubDownTrigger } from "./auto_switch";
 import type { LinkPosture } from "./link_sensor";
 
@@ -106,6 +108,13 @@ export interface PromptUpDeps {
   /** Whether the reopen forces a NEW window. Default false — returning UP flips
    *  the CURRENT (lifeboat) window back to Remote-SSH, the inverse of the drop. */
   forceNewWindow?: boolean;
+  /** #1278 cross-scheme editor-URI carry. When wired, on an accepted return the
+   *  open host-file editors are carried UP across the flip (their `amico-host:/`
+   *  URIs → `vscode-remote://ssh-remote+<alias>/` at the same logical path, using
+   *  THIS module's `sshAlias`) so the user keeps their place; un-carryable editors
+   *  are reported, never silently dropped. Optional — when omitted the return
+   *  carries the folder only, exactly as before this slice. */
+  editorCarry?: EditorCarryDeps;
 }
 
 /**
@@ -180,6 +189,17 @@ export class PromptUpSwitch {
     // the local session stays put; nothing is forced.
     const accepted = await this.deps.promptUser(PROMPT_UP_MESSAGE, PROMPT_UP_ACTION);
     if (!accepted) return "dismissed";
+
+    // #1278: carry the open host editors UP across the flip (local → remote) so
+    // the user keeps their place. Captured + enqueued BEFORE the reopen (the
+    // window reload discards live editors), using THIS module's resolved alias —
+    // which is guaranteed non-blank here (a blank alias took the cannot-resolve
+    // path above, before any reopen). A host editor that cannot be mapped is
+    // reported by the carry, never silently dropped. Optional seam: unwired → the
+    // return carries the folder only, exactly as before this slice.
+    if (this.deps.editorCarry !== undefined) {
+      await carryOpenEditors("vscode-remote", this.deps.editorCarry, { alias: this.deps.sshAlias });
+    }
 
     const reopenDeps: ReopenDeps = {};
     if (this.deps.openFolder !== undefined) reopenDeps.openFolder = this.deps.openFolder;

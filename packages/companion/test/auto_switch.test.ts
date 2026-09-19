@@ -428,3 +428,86 @@ describe("AutoDownSwitch — end-to-end through the live #1275 sensor (AC1 + AC4
     expect(opened).toHaveLength(0);
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════════════
+// #1278 — cross-scheme editor-URI carry across the DOWN flip (remote → local).
+// On the drop, the open host-file editors (vscode-remote://ssh-remote+<alias>/…)
+// are carried to the lifeboat scheme (amico-host:/…) at the SAME logical path, so
+// the user keeps their place; local scratch editors are untouched (AC3); a host
+// editor that cannot be mapped is reported, never silently dropped (AC2).
+// ══════════════════════════════════════════════════════════════════════════════
+interface CarryHarness extends Harness {
+  carried: string[];
+  reports: string[];
+}
+function carryHarness(open: string[], overrides: Partial<AutoDownDeps> = {}): CarryHarness {
+  const carried: string[] = [];
+  const reports: string[] = [];
+  const base = harness({
+    editorCarry: {
+      listOpenEditors: () => open,
+      carryEditor: (uri) => {
+        carried.push(uri);
+        base.log.push("carry");
+      },
+      reportNotCarried: (m) => reports.push(m),
+    },
+    ...overrides,
+  });
+  return Object.assign(base, { carried, reports });
+}
+
+describe("AutoDownSwitch — carries open host editors across the drop (#1278)", () => {
+  it("the open host editors carry to amico-host at the same logical path; scratch is untouched (AC1/AC3)", async () => {
+    const h = carryHarness([
+      "vscode-remote://ssh-remote+hub/home/jj/a.jl",
+      "vscode-remote://ssh-remote+hub/home/jj/b.md",
+      "file:///tmp/scratch.txt", // local scratch — unaffected
+      "untitled:Untitled-1", // scratch buffer — unaffected
+    ]);
+    expect(await h.sw.handle(down())).toBe("reopened");
+    expect(h.carried).toEqual(["amico-host:/home/jj/a.jl", "amico-host:/home/jj/b.md"]);
+    expect(h.reports).toHaveLength(0);
+  });
+
+  it("captures + carries the editors BEFORE the window reopens (the reload discards live editors)", async () => {
+    const h = carryHarness(["vscode-remote://ssh-remote+hub/home/jj/a.jl"]);
+    await h.sw.handle(down());
+    // surfaced, then the editor carried (enqueued), then the folder reopened
+    expect(h.log).toEqual(["surface", "carry", "open"]);
+  });
+
+  it("an un-carryable host editor is REPORTED and its siblings still carry (never silently dropped, AC2)", async () => {
+    const h = carryHarness([
+      "vscode-remote://ssh-remote+hub/home/jj/a.jl", // carries
+      "vscode-remote://ssh-remote+hub", // a host URI with no file path → cannot carry
+    ]);
+    await h.sw.handle(down());
+    expect(h.carried).toEqual(["amico-host:/home/jj/a.jl"]);
+    expect(h.reports).toHaveLength(1); // the un-mappable one was surfaced, not dropped
+  });
+
+  it("does NOT carry when the drop did not commit (an unresolvable target never switched)", async () => {
+    const h = carryHarness(["vscode-remote://ssh-remote+hub/home/jj/a.jl"], { localPath: "" });
+    expect(await h.sw.handle(down())).toBe("reopen-failed");
+    expect(h.carried).toHaveLength(0); // the window stayed remote — the editors are still valid there
+  });
+
+  it("does NOT carry on a guarded (dirty) or non-trigger posture — only on a real drop", async () => {
+    const dirty = carryHarness(["vscode-remote://ssh-remote+hub/home/jj/a.jl"]);
+    dirty.setDirty(true);
+    expect(await dirty.sw.handle(down())).toBe("blocked-dirty");
+    expect(dirty.carried).toHaveLength(0);
+
+    const notTrig = carryHarness(["vscode-remote://ssh-remote+hub/home/jj/a.jl"]);
+    expect(await notTrig.sw.handle(degraded())).toBe("not-a-trigger");
+    expect(notTrig.carried).toHaveLength(0);
+  });
+
+  it("the flip is byte-for-byte unchanged when no editorCarry seam is wired (the six landed slices)", async () => {
+    const h = harness(); // no editorCarry
+    await h.sw.handle(down());
+    expect(h.log).toEqual(["surface", "open"]); // no carry step interposed
+  });
+});
+
