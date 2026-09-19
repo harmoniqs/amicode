@@ -21,6 +21,7 @@ import type { Duplex } from "node:stream";
 import { HubCredentialRead } from "./hub_credential";
 import { hubUpstreamAuthHeader } from "./hub_credential";
 import type { DataPlaneOutcome } from "./fleet_posture";
+import type { SessionEventResume } from "./session_event_resume";
 
 export interface HubProxyOptions {
   /** The hub origin (the fleet tunnel's far end), read per request;
@@ -40,6 +41,13 @@ export interface HubProxyOptions {
   /** #392 (D7): the tunnel generation stamp, read per response so a
    *  mid-session rejoin changes what the client sees on the next stream. */
   responseStamp?: () => Record<string, string> | undefined;
+  /** #1264 (Slice 4): the per-session SSE cursor store. When present, a proxied
+   *  per-session event stream (`/api/session/{id}/event`) is made lossless
+   *  across tunnel blips — the relay resumes via `?after=<last seq>` and dedupes
+   *  the boundary. Absent → every stream pipes through byte-for-byte (the
+   *  pre-#1264 behavior); the non-resumable `/event` and `/global/event` streams
+   *  are untouched even when present (they are not per-session paths). */
+  sessionResume?: SessionEventResume;
 }
 
 /** Hop-by-hop headers a proxy must not forward verbatim (RFC 7230 §6.1) —
@@ -88,6 +96,15 @@ export class HubProxy {
       const incoming = new URL(req.url ?? "/", upstreamBase);
       incoming.searchParams.delete("auth_token");
       const target = new URL(incoming.toString());
+      // #1264 (Slice 4): per-session SSE resume. For `/api/session/{id}/event`
+      // the relay carries the last delivered aggregate seq across reconnects —
+      // injecting `?after=<seq>` here so a blip REPLAYS the gap, and deduping
+      // the boundary on the response below. `plan` is undefined for every other
+      // path (incl. the non-resumable `/event` / `/global/event`), so they are
+      // left exactly as-is. `incoming` still carries `after` (auth_token delete
+      // does not touch it), so an explicit caller cursor is honored / deferred.
+      const resumePlan = this.opts.sessionResume?.plan(incoming);
+      if (resumePlan?.afterToInject !== undefined) target.searchParams.set("after", resumePlan.afterToInject);
       const headers: Record<string, string | string[] | undefined> = { ...req.headers };
       for (const h of DROPPED_HEADERS) delete headers[h];
       headers["authorization"] = hubUpstreamAuthHeader(cred.credential.token);
@@ -119,7 +136,41 @@ export class HubProxy {
         }
         const stamp = this.opts.responseStamp?.() ?? undefined;
         res.writeHead(up.statusCode ?? 502, { ...up.headers, ...(stamp ?? {}) });
-        up.pipe(res);
+        // #1264 (Slice 4): a per-session event stream (matched by `plan`) whose
+        // response is actually SSE rides through the dedupe/track filter — each
+        // event's `id:` seq advances the session cursor, and a replayed seq at
+        // or below the resume point is dropped (idempotent resume). Every other
+        // response (non-session path → no plan; a non-SSE error body → not an
+        // event-stream) keeps the verbatim byte pipe, so behavior is unchanged.
+        const isSSE = String(up.headers["content-type"] ?? "").includes("text/event-stream");
+        if (resumePlan && isSSE) {
+          const filter = resumePlan.filter;
+          // Flush SSE headers NOW: a resume can legitimately forward zero bytes
+          // (the client is already caught up to the live tail, or the whole
+          // replay was deduped). Node sends headers lazily — without this flush
+          // the client's stream never opens until the first forwarded byte,
+          // which may be far in the future (or never). SSE must open on connect.
+          res.flushHeaders?.();
+          up.on("data", (chunk: Buffer) => {
+            try {
+              const out = filter.push(chunk);
+              if (out.length) res.write(out);
+            } catch {
+              /* never throw into the stream */
+            }
+          });
+          up.on("end", () => {
+            try {
+              const tail = filter.flush();
+              if (tail.length) res.write(tail);
+              res.end();
+            } catch {
+              /* already gone */
+            }
+          });
+        } else {
+          up.pipe(res);
+        }
         up.on("error", () => {
           try {
             res.end();

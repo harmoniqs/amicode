@@ -35,6 +35,7 @@ import { widgetFrameHtml, WIDGET_CSP } from "./widget_frame_html";
 import { AppShelf } from "./app_shelf";
 import { EngineProxy } from "./engine_proxy";
 import { HubProxy } from "./hub_proxy";
+import { SessionEventResume } from "./session_event_resume";
 import { HubCredentialRead, mintRegistry, readHubCredential } from "./hub_credential";
 import { buildMergedProjection, type UpstreamMode } from "./merged_projection";
 import { FleetPostureDetector, type FleetPostureTuning } from "./fleet_posture";
@@ -502,6 +503,14 @@ export function createAmicodeService(
       // #1261 (AC6): capture the client flag where the `opts.fleet !==
       // undefined` narrowing holds (the getMode closure cannot re-narrow it).
       const isClient = opts.fleet.client === true;
+      // #1264 (Slice 4): a fleet CLIENT carries the full data plane over the
+      // tunnel and has NO local engine — a blip drops the whole SSE gap. Arm
+      // per-session SSE resume so `/api/session/{id}/event` reconnects
+      // losslessly (cursor carried across reconnects, boundary deduped). Only
+      // for the client: the engine-armed base machine flips to its local engine
+      // on hub-down (never relies on the tunnel for its stream), so its
+      // steady-state stays byte-identical.
+      const sessionResume = isClient ? new SessionEventResume() : undefined;
       // D6: the hub-down posture IS the base standalone posture — the
       // effective mode falls back to the local engine (a session created in
       // a hub-down window is a LOCAL session, D3), and recovery re-enters
@@ -531,6 +540,7 @@ export function createAmicodeService(
           ...(opts.fleet.dataPlaneTimeoutMs !== undefined ? { timeoutMs: opts.fleet.dataPlaneTimeoutMs } : {}),
           onOutcome: (o) => monitor.record(o),
           ...(tunnelStampHeaders ? { responseStamp: tunnelStampHeaders } : {}),
+          ...(sessionResume ? { sessionResume } : {}),
         }),
         writes: { handle: (req, res) => handleFleetWrite(writeDeps, req, res) },
         onNoUpstream: () => monitor.record({ kind: "no-response", detail: "no-upstream" }),

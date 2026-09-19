@@ -96,6 +96,18 @@ ADR governs only the pipe they travel through.
   live in; it does not close either issue.
 - Posture/hysteresis detectors (`fleet_posture.ts`, `fleet_poll_hysteresis.ts`) gain a
   per-provider dimension (a Tailscale roam and an SSH drop have different signatures).
+- **SSE reconnect is lossless only on the per-session stream (#1264, Slice 4).** The
+  transport carries the event stream, and a blip on it drops every event in the gap unless
+  the stream is resumable. Only the engine's per-session route
+  `/api/session/{id}/event?after=<seq>` is: it replays durable events after an aggregate
+  `seq`. The relay therefore tracks that `seq` **per session** and resumes via `?after=` on
+  reconnect, deduping the boundary (client-side, in `session_event_resume.ts` — no engine
+  change). The multiplexed `/event` (per-instance) and `/global/event` streams are
+  **deliberately out of scope**: they emit `id: undefined` (no cursor form) and
+  `/global/event` rides an in-memory `GlobalBus` with nothing to replay, so they are proxied
+  **as-is** (never given an `?after=`, never assumed resumable). Making them resumable is
+  separate engine work — emit SSE ids + a durable/vector-cursor live stream — coordinated
+  with the `GlobalBus` subscriber-lifecycle root cause (#775), not forked from it.
 
 ## Flip conditions
 
