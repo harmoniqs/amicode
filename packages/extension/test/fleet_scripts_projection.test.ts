@@ -119,6 +119,21 @@ function fakeUname(os: string): void {
   chmodSync(join(bin, "uname"), 0o755);
 }
 
+/** #1258: shadow launchctl + systemctl on the child PATH with no-op shims so
+ *  the installer's best-effort load/enable of the hub-service unit NEVER
+ *  touches the real OS service manager. The test asserts the WRITTEN unit, not
+ *  the OS loader (per #1258: "don't fake OS-level launchctl/systemctl calls in
+ *  a unit test") — this keeps the server write-path hermetic, exactly as
+ *  fakeUname/fakeAmico shadow their binaries. */
+function fakeLoaders(): void {
+  const bin = join(tmp, "fakebin");
+  mkdirSync(bin, { recursive: true });
+  for (const name of ["launchctl", "systemctl"]) {
+    writeFileSync(join(bin, name), "#!/usr/bin/env bash\nexit 0\n");
+    chmodSync(join(bin, name), 0o755);
+  }
+}
+
 function writeCache(content: string): void {
   const dir = join(tmp, ".amico", "ops", "fleet");
   mkdirSync(dir, { recursive: true });
@@ -277,6 +292,7 @@ describe("the installer consumes the verb (never greps the raw file)", () => {
     // sshAlias (a hub is the tunnel's destination, not its client). The installer
     // must NOT die demanding an alias, and must install no self-tunnel.
     fakeAmico({ code: 0, stdout: verbJson("server", { host: "jj@100.77.141.50", port: 4096 }) });
+    fakeLoaders(); // #1258: the server write-path now provisions a hub service — shadow the OS loaders
     const r = runScript(INSTALL, [], installEnv()); // install mode (not --check)
     expect(r.code).toBe(0);
     expect(r.out).toMatch(/fleet role: server \(port: 4096\)/);
@@ -374,8 +390,89 @@ describe("the installer writes the platform-correct settings path (#1261 AC4)", 
   });
 });
 
-// ── both copies ship byte-identical (the VSIX's packaged copy is the installer users run) ──
+// ── #1258: the canonical hub gets a reboot-surviving service unit (server only) ──
+// The Studio's canonical hub must survive a REBOOT with NO editor opened.
+// Today the hub is the extension-spawned detached server (ADR 0020) — survives
+// a window close, dies on reboot. The installer provisions the EXISTING #955
+// headless runner (bin/dist/amicode-service-runner.mjs) under launchd (macOS) /
+// systemd-user (Linux) with RunAtLoad+KeepAlive — NOT a bespoke `opencode serve`
+// wrapper. One canonical DB / ONE writer (ADR 0005): the unit runs the SAME
+// runner the editor adopts, pinned to the canonical OPENCODE_DB. A CLIENT never
+// gets it (never-fork). The role gate rides the ONE topology reader (ADR 0023):
+// the SAME parsed projection role that decides guard/settings/tunnel decides this.
+describe("#1258 the installer provisions the canonical hub service (reboot-survival)", () => {
+  const installEnv = (): { path: string } => ({
+    path: `${join(tmp, "fakebin")}:${process.env.PATH ?? ""}`,
+  });
 
+  it("on macOS, a SERVER gets the launchd hub-service unit — RunAtLoad+KeepAlive, runs the #955 runner (never `opencode serve`), pins OPENCODE_DB", () => {
+    fakeAmico({ code: 0, stdout: verbJson("server", { host: "hq", port: 4096 }) });
+    fakeUname("Darwin");
+    fakeLoaders();
+    const r = runScript(INSTALL, [], installEnv());
+    expect(r.code).toBe(0);
+    // the decision rode the ONE topology reader (ADR 0023): parsed role=server.
+    expect(r.out).toMatch(/fleet role: server/);
+    const plist = join(tmp, "Library", "LaunchAgents", "co.harmoniqs.amico-hub.plist");
+    expect(existsSync(plist)).toBe(true);
+    const content = readFileSync(plist, "utf8");
+    expect(content).toMatch(/<key>RunAtLoad<\/key>\s*<true\/>/); // boots on reboot, no editor needed
+    expect(content).toMatch(/<key>KeepAlive<\/key>\s*<true\/>/); // stays up (auto-restart)
+    expect(content).toContain("amicode-service-runner.mjs"); // the #955 runner…
+    expect(content).not.toContain("opencode serve"); // …NOT the withdrawn bespoke wrapper
+    expect(content).toContain("<key>OPENCODE_DB</key>"); // one writer (ADR 0005)
+    expect(content).toContain("/.amico/server/session.db");
+    expect(content).toContain("<key>AMICODE_SERVICE_PORT</key>");
+    expect(content).toContain("<string>4096</string>"); // the canonical fleet port
+  });
+
+  it("on LINUX, a SERVER gets the systemd-user hub-service unit — WantedBy+Restart=always, ExecStart runs the #955 runner, pins OPENCODE_DB", () => {
+    fakeAmico({ code: 0, stdout: verbJson("server", { host: "hq", port: 4096 }) });
+    fakeUname("Linux");
+    fakeLoaders();
+    const r = runScript(INSTALL, [], installEnv());
+    expect(r.code).toBe(0);
+    const unit = join(tmp, ".config", "systemd", "user", "amico-hub.service");
+    expect(existsSync(unit)).toBe(true);
+    const content = readFileSync(unit, "utf8");
+    expect(content).toMatch(/WantedBy=/); // enable → start at boot (RunAtLoad ≙)
+    expect(content).toContain("Restart=always"); // KeepAlive ≙
+    expect(content).toMatch(/ExecStart=.*amicode-service-runner\.mjs/); // the #955 runner…
+    expect(content).not.toContain("opencode serve"); // …NOT the withdrawn bespoke wrapper
+    expect(content).toContain("Environment=OPENCODE_DB="); // one writer (ADR 0005)
+    expect(content).toContain("/.amico/server/session.db");
+    expect(content).toContain("Environment=AMICODE_SERVICE_PORT=4096");
+  });
+
+  it("never-fork: a CLIENT gets NO hub-service unit — this is the HUB's provisioning, not a client's (role-gated, ADR 0005)", () => {
+    fakeAmico({ code: 0, stdout: verbJson("client", { host: "hq", port: 4096, sshAlias: "hq" }) });
+    fakeUname("Linux"); // a linux client wires no darwin tunnel + no hub service — hermetic
+    fakeLoaders();
+    const r = runScript(INSTALL, [], installEnv());
+    expect(r.code).toBe(0);
+    expect(existsSync(join(tmp, ".config", "systemd", "user", "amico-hub.service"))).toBe(false);
+    expect(existsSync(join(tmp, "Library", "LaunchAgents", "co.harmoniqs.amico-hub.plist"))).toBe(false);
+  });
+
+  it("--check on a SERVER catches a missing/absent hub-service unit (the reboot-survival drift twin)", () => {
+    fakeAmico({ code: 0, stdout: verbJson("server", { host: "hq", port: 4096 }) });
+    fakeUname("Darwin");
+    fakeLoaders();
+    // guard installed + in sync AND settings correct so --check reaches the hub-service check
+    const guardDst = join(tmp, ".local", "bin", "amico-opencode-fleet-guard");
+    mkdirSync(join(tmp, ".local", "bin"), { recursive: true });
+    writeFileSync(guardDst, readFileSync(GUARD, "utf8"));
+    chmodSync(guardDst, 0o755);
+    const settings = join(tmp, "Library", "Application Support", "Code", "User", "settings.json");
+    mkdirSync(join(tmp, "Library", "Application Support", "Code", "User"), { recursive: true });
+    writeFileSync(settings, JSON.stringify({ "amicode.opencodeBinary": guardDst, "amicode.opencodePort": 4096 }, null, 2));
+    const r = runScript(INSTALL, ["--check"], installEnv());
+    expect(r.code).toBe(1);
+    expect(r.out).toMatch(/hub service/i);
+  });
+});
+
+// ── both copies ship byte-identical (the VSIX's packaged copy is the installer users run) ──
 describe("the packaged fleet scripts stay in sync with the repo copies", () => {
   it("guard + installer: packages/extension/tools/fleet copies are byte-identical", () => {
     for (const f of ["amico-opencode-fleet-guard", "install.sh"]) {

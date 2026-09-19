@@ -228,6 +228,125 @@ elif [[ "$(uname -s)" == "Darwin" ]]; then
   fi
 fi
 
+# --- canonical hub service (SERVER role only — reboot-survival, #1258) ---
+# The canonical hub must survive a REBOOT with NO editor ever opened. Today the
+# hub is the extension-spawned detached server (ADR 0020): survives a window
+# close, DIES ON REBOOT. This provisions the EXISTING #955 headless runner
+# (amicode_service_runner_cli.ts, bundled to bin/dist/amicode-service-runner.mjs)
+# under launchd (macOS) / systemd-user (Linux) with RunAtLoad + KeepAlive — NOT a
+# bespoke `opencode serve` wrapper (the WITHDRAWN design: reclaim-killed by the
+# editor's adoptOrSpawn, and two writers on one SQLite DB). One canonical DB /
+# ONE writer (ADR 0005): the unit runs the SAME runner the editor adopts, pinned
+# to the canonical OPENCODE_DB. A CLIENT never gets it (never-fork) — the role
+# gate rides the ONE topology reader (ADR 0023: the SAME parsed $ROLE above).
+# Distinct from the #1260 tunnel unit (which runs `ssh -L`, a different service).
+if [[ "$ROLE" == "server" ]]; then
+  HUB_LABEL="co.harmoniqs.amico-hub"
+  HUB_LOG="/tmp/amico-hub.log"
+  HUB_DB="$HOME/.amico/server/session.db"   # the canonical ONE-writer store (ADR 0005)
+  # Resolve the extension root carrying the bundled #955 runner + built app dist.
+  # Two layouts, one script (the byte-identical copies differ in REPO_ROOT):
+  #   VSIX      → REPO_ROOT IS the extension root        (bin/dist, dist/app)
+  #   monorepo  → REPO_ROOT/packages/extension is it     (…/bin/dist, …/dist/app)
+  HUB_EXT_ROOT=""
+  for cand in "$REPO_ROOT" "$REPO_ROOT/packages/extension"; do
+    if [[ -f "$cand/bin/dist/amicode-service-runner.mjs" ]]; then HUB_EXT_ROOT="$cand"; break; fi
+  done
+  HUB_RUNNER="$HUB_EXT_ROOT/bin/dist/amicode-service-runner.mjs"
+  HUB_APP_DIST="$HUB_EXT_ROOT/dist/app"   # AMICODE_APP_DIST — the built app shelf the runner serves
+  HUB_NODE="$(command -v node || true)"
+  HUB_PLIST_DST="$HOME/Library/LaunchAgents/${HUB_LABEL}.plist"
+  HUB_UNIT_DST="$HOME/.config/systemd/user/amico-hub.service"
+
+  if [[ $CHECK -eq 1 ]]; then
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+      if [[ ! -f "$HUB_PLIST_DST" ]]; then echo "[fleet] FAIL hub service launchd unit missing at $HUB_PLIST_DST (the canonical hub will NOT survive a reboot — run: bash tools/fleet/install.sh)"; exit 1; fi
+      if ! grep -q "amicode-service-runner.mjs" "$HUB_PLIST_DST"; then echo "[fleet] FAIL hub service unit does not run the #955 runner (must not be a bespoke server)"; exit 1; fi
+      if grep -q "opencode serve" "$HUB_PLIST_DST"; then echo "[fleet] FAIL hub service unit runs a bespoke 'opencode serve' (two writers on one DB — must run the #955 runner)"; exit 1; fi
+      if ! grep -q "<key>RunAtLoad</key>" "$HUB_PLIST_DST"; then echo "[fleet] FAIL hub service unit missing RunAtLoad (won't start on reboot)"; exit 1; fi
+      if ! grep -q "<key>KeepAlive</key>" "$HUB_PLIST_DST"; then echo "[fleet] FAIL hub service unit missing KeepAlive (won't restart on crash)"; exit 1; fi
+      if ! grep -q "OPENCODE_DB" "$HUB_PLIST_DST"; then echo "[fleet] FAIL hub service unit does not pin OPENCODE_DB (one-writer, ADR 0005)"; exit 1; fi
+      say "ok hub service $HUB_PLIST_DST (RunAtLoad+KeepAlive, runs the #955 runner)"
+    else
+      if [[ ! -f "$HUB_UNIT_DST" ]]; then echo "[fleet] FAIL hub service systemd unit missing at $HUB_UNIT_DST (the canonical hub will NOT survive a reboot — run: bash tools/fleet/install.sh)"; exit 1; fi
+      if ! grep -q "amicode-service-runner.mjs" "$HUB_UNIT_DST"; then echo "[fleet] FAIL hub service unit does not run the #955 runner (must not be a bespoke server)"; exit 1; fi
+      if grep -q "opencode serve" "$HUB_UNIT_DST"; then echo "[fleet] FAIL hub service unit runs a bespoke 'opencode serve' (two writers on one DB — must run the #955 runner)"; exit 1; fi
+      if ! grep -q "Restart=always" "$HUB_UNIT_DST"; then echo "[fleet] FAIL hub service unit missing Restart=always (won't restart on crash)"; exit 1; fi
+      if ! grep -q "WantedBy=" "$HUB_UNIT_DST"; then echo "[fleet] FAIL hub service unit missing WantedBy (won't start on boot)"; exit 1; fi
+      if ! grep -q "OPENCODE_DB" "$HUB_UNIT_DST"; then echo "[fleet] FAIL hub service unit does not pin OPENCODE_DB (one-writer, ADR 0005)"; exit 1; fi
+      say "ok hub service $HUB_UNIT_DST (WantedBy+Restart=always, runs the #955 runner)"
+    fi
+  else
+    if [[ -z "$HUB_EXT_ROOT" ]]; then
+      say "note: no service runner bundle at <ext>/bin/dist/amicode-service-runner.mjs — skipping hub service install (run \`pnpm --filter amicode build\`)"
+    elif [[ -z "$HUB_NODE" ]]; then
+      say "note: no \`node\` on PATH — skipping hub service install (the launchd/systemd unit needs an absolute node)"
+    elif [[ "$(uname -s)" == "Darwin" ]]; then
+      mkdir -p "$(dirname "$HUB_PLIST_DST")" "$(dirname "$HUB_DB")"
+      cat > "$HUB_PLIST_DST" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>${HUB_LABEL}</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>${HUB_NODE}</string>
+		<string>${HUB_RUNNER}</string>
+	</array>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>AMICODE_APP_DIST</key>
+		<string>${HUB_APP_DIST}</string>
+		<key>AMICODE_SERVICE_PORT</key>
+		<string>${FLEET_PORT}</string>
+		<key>OPENCODE_DB</key>
+		<string>${HUB_DB}</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>StandardOutPath</key>
+	<string>${HUB_LOG}</string>
+	<key>StandardErrorPath</key>
+	<string>${HUB_LOG}</string>
+	<key>ThrottleInterval</key>
+	<integer>10</integer>
+</dict>
+</plist>
+PLIST
+      launchctl unload "$HUB_PLIST_DST" 2>/dev/null || true
+      launchctl load "$HUB_PLIST_DST" 2>/dev/null || launchctl bootstrap "gui/$(id -u)" "$HUB_PLIST_DST" 2>/dev/null || true
+      say "installed hub service $HUB_PLIST_DST and (re)loaded (RunAtLoad+KeepAlive, port ${FLEET_PORT}, runs the #955 runner)"
+    else
+      mkdir -p "$(dirname "$HUB_UNIT_DST")" "$(dirname "$HUB_DB")"
+      cat > "$HUB_UNIT_DST" <<UNIT
+[Unit]
+Description=Amico canonical hub service (headless amicode_service runner — reboot-survival, #1258)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=AMICODE_APP_DIST=${HUB_APP_DIST}
+Environment=AMICODE_SERVICE_PORT=${FLEET_PORT}
+Environment=OPENCODE_DB=${HUB_DB}
+ExecStart=${HUB_NODE} ${HUB_RUNNER}
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target
+UNIT
+      systemctl --user daemon-reload 2>/dev/null || true
+      systemctl --user enable --now amico-hub.service 2>/dev/null || true
+      say "installed hub service $HUB_UNIT_DST and enabled (WantedBy+Restart=always, port ${FLEET_PORT}, runs the #955 runner)"
+    fi
+  fi
+fi
+
 if [[ $CHECK -eq 1 ]]; then
   say "fleet check: all ok"
 fi
