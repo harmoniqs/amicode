@@ -1,0 +1,261 @@
+// Tests for issue #1274 — "P2: UI-kind always-local companion (extension split)
+// — feasibility spike + go/no-go" (ADR 0025 P2, part of #1269).
+//
+// The companion is a SEPARATE `ui`-kind extension that always runs on the
+// client. This suite proves the three UNIT-TESTABLE feasibility halves; the two
+// runtime/HITL halves (survives main-extension relocation under live Remote-SSH;
+// the final feasible/abort decision) live in the go/no-go artifact, not here.
+//
+// AC1 (testable half): the companion ACTIVATES client-side — activate() runs,
+//   registers its command, and wires its probe + reopen. ("Remains running
+//   during live relocation" is HITL — go/no-go doc.)
+// AC2: the companion executes a CLIENT-SIDE probe, independent of any host-side
+//   instance (it reads only the client-configured hub URL + an injected fetch).
+// AC3 (testable half): the companion programmatically triggers a Remote-SSH↔local
+//   window reopen — pure URI construction (both directions) + the executeCommand
+//   ("vscode.openFolder", …) wiring. (The live reopen is runtime.)
+
+import { describe, it, expect, beforeEach } from "vitest";
+import * as vscode from "vscode";
+import { probeHubHealth } from "../src/probe";
+import {
+  resolveRemoteSshReopenTarget,
+  resolveLocalReopenTarget,
+  reopenWindow,
+} from "../src/reopen";
+import { activate, deactivate, REOPEN_COMMAND, COMPANION_HUB_URL_SETTING } from "../src/companion";
+
+// A fake ExtensionContext — the companion touches only `subscriptions`.
+function fakeContext(): { subscriptions: Array<{ dispose(): void }> } {
+  return { subscriptions: [] };
+}
+
+// A fetch double: resolves to a Response-like with the given status, and records
+// every URL it was asked to hit (so we can prove the probe targets the
+// client-configured URL and nothing host-side).
+function fakeFetch(status: number) {
+  const hits: string[] = [];
+  const fn = ((url: string) => {
+    hits.push(String(url));
+    return Promise.resolve({ status, json: () => Promise.resolve({}) } as unknown as Response);
+  }) as unknown as typeof fetch;
+  return { fn, hits };
+}
+function throwingFetch(message: string) {
+  return ((_url: string) => Promise.reject(new Error(message))) as unknown as typeof fetch;
+}
+
+beforeEach(() => {
+  (vscode.commands as unknown as { _reset(): void })._reset();
+  vscode.window.messages.error.length = 0;
+  vscode.window.messages.info.length = 0;
+  vscode.env.remoteName = undefined;
+  (vscode.workspace as unknown as { _config: Record<string, unknown> })._config = {};
+});
+
+// ── AC2: client-side probe, independent of any host-side instance ────────────
+describe("probeHubHealth (AC2 — client-side probe)", () => {
+  it("reaches the client-configured hub URL and reports the answer", async () => {
+    const f = fakeFetch(200);
+    const r = await probeHubHealth("http://127.0.0.1:4096", { fetch: f.fn, now: (() => 0) });
+    expect(r.reachable).toBe(true);
+    if (r.reachable) expect(r.status).toBe(200);
+  });
+
+  it("targets EXACTLY the given base URL + the health path (independent of host state)", async () => {
+    const f = fakeFetch(200);
+    await probeHubHealth("http://127.0.0.1:4096", { fetch: f.fn });
+    // The ONLY thing it touched is the injected fetch, aimed at the client URL —
+    // it read no host-side instance, posture file, or projection.
+    expect(f.hits).toEqual(["http://127.0.0.1:4096/global/health"]);
+  });
+
+  it("honors a custom health path", async () => {
+    const f = fakeFetch(204);
+    await probeHubHealth("http://h:1/", { fetch: f.fn, healthPath: "/status" });
+    expect(f.hits).toEqual(["http://h:1/status"]);
+  });
+
+  it("a 5xx is still an answer — reachable true (the host responded)", async () => {
+    const f = fakeFetch(503);
+    const r = await probeHubHealth("http://h:1", { fetch: f.fn });
+    expect(r.reachable).toBe(true);
+    if (r.reachable) expect(r.status).toBe(503);
+  });
+
+  it("a transport error is unreachable, carrying the reason", async () => {
+    const r = await probeHubHealth("http://h:1", { fetch: throwingFetch("ECONNREFUSED") });
+    expect(r.reachable).toBe(false);
+    if (!r.reachable) expect(r.reason).toContain("ECONNREFUSED");
+  });
+
+  it("an unconfigured (empty/undefined) hub URL is the honest no-base-url state — no fetch", async () => {
+    const f = fakeFetch(200);
+    const r = await probeHubHealth("", { fetch: f.fn });
+    expect(r.reachable).toBe(false);
+    if (!r.reachable) expect(r.reason).toMatch(/no-base-url|no hub/i);
+    const r2 = await probeHubHealth(undefined, { fetch: f.fn });
+    expect(r2.reachable).toBe(false);
+    expect(f.hits).toEqual([]); // never dialed anything
+  });
+
+  it("a malformed base URL is an honest unreachable, not a throw", async () => {
+    const r = await probeHubHealth("not a url", { fetch: fakeFetch(200).fn });
+    expect(r.reachable).toBe(false);
+  });
+});
+
+// ── AC3: programmatic Remote-SSH↔local reopen (pure URI construction) ─────────
+describe("resolveRemoteSshReopenTarget (AC3 — local → Remote-SSH URI)", () => {
+  it("builds the Remote-SSH URI from the alias + the home default path", () => {
+    const r = resolveRemoteSshReopenTarget("amico-erlich");
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.direction).toBe("to-remote");
+      expect(r.uri).toBe("vscode-remote://ssh-remote+amico-erlich/~");
+    }
+  });
+
+  it("uses a configured absolute path verbatim", () => {
+    const r = resolveRemoteSshReopenTarget("hub", "/home/jj/amicode");
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.uri).toBe("vscode-remote://ssh-remote+hub/home/jj/amicode");
+  });
+
+  it("accepts a home-relative (~) path", () => {
+    const r = resolveRemoteSshReopenTarget("hub", "~/amicode");
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.uri).toBe("vscode-remote://ssh-remote+hub/~/amicode");
+  });
+
+  it("trims the alias (mirrors the main extension's resolveRemoteSshTarget)", () => {
+    const r = resolveRemoteSshReopenTarget("  hub  ");
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.uri).toBe("vscode-remote://ssh-remote+hub/~");
+  });
+
+  it("a blank alias is a no-ssh-alias reason — never a half-window", () => {
+    const r = resolveRemoteSshReopenTarget("   ");
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe("no-ssh-alias");
+  });
+
+  it("a relative configured path is rejected — never a half-window", () => {
+    const r = resolveRemoteSshReopenTarget("hub", "amicode/sub");
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.reason).toBe("invalid-workspace-path");
+      expect(r.detail).toContain("amicode/sub");
+    }
+  });
+});
+
+describe("resolveLocalReopenTarget (AC3 — Remote-SSH → local URI)", () => {
+  it("builds a file:// URI from an absolute local path", () => {
+    const r = resolveLocalReopenTarget("/home/jj/amicode");
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.direction).toBe("to-local");
+      expect(r.uri).toBe("file:///home/jj/amicode");
+    }
+  });
+
+  it("a blank or relative local path is an honest error — never a half-window", () => {
+    expect(resolveLocalReopenTarget("").ok).toBe(false);
+    expect(resolveLocalReopenTarget("relative/path").ok).toBe(false);
+  });
+});
+
+describe("reopenWindow (AC3 — the executeCommand('vscode.openFolder') wiring)", () => {
+  it("fires the injected openFolder exactly once with the resolved URI + forceNewWindow", async () => {
+    const opened: Array<{ uri: string; forceNewWindow: boolean }> = [];
+    const res = resolveRemoteSshReopenTarget("hub");
+    const out = await reopenWindow(res, {
+      openFolder: (uri, opts) => {
+        opened.push({ uri, forceNewWindow: opts.forceNewWindow });
+      },
+    });
+    expect(out.ok).toBe(true);
+    expect(opened).toEqual([{ uri: "vscode-remote://ssh-remote+hub/~", forceNewWindow: false }]);
+  });
+
+  it("passes forceNewWindow through", async () => {
+    const opened: Array<{ uri: string; forceNewWindow: boolean }> = [];
+    await reopenWindow(resolveRemoteSshReopenTarget("hub"), {
+      forceNewWindow: true,
+      openFolder: (uri, opts) => opened.push({ uri, forceNewWindow: opts.forceNewWindow }),
+    });
+    expect(opened[0].forceNewWindow).toBe(true);
+  });
+
+  it("the DEFAULT wiring calls executeCommand('vscode.openFolder') exactly once", async () => {
+    await reopenWindow(resolveRemoteSshReopenTarget("hub"));
+    const openFolderCalls = vscode.commands.executed.filter((c) => c.id === "vscode.openFolder");
+    expect(openFolderCalls).toHaveLength(1);
+    expect(String((openFolderCalls[0].args[0] as { toString(): string }).toString())).toBe(
+      "vscode-remote://ssh-remote+hub/~",
+    );
+  });
+
+  it("an unresolvable target opens NO window and surfaces the honest message", async () => {
+    const opened: string[] = [];
+    const errors: string[] = [];
+    const out = await reopenWindow(resolveRemoteSshReopenTarget(""), {
+      openFolder: (uri) => opened.push(uri),
+      showError: (m) => errors.push(m),
+    });
+    expect(out.ok).toBe(false);
+    expect(opened).toEqual([]);
+    expect(errors).toHaveLength(1);
+  });
+});
+
+// ── AC1: the companion activates client-side (wires command + probe + reopen) ─
+describe("activate (AC1 — client-side activation)", () => {
+  it("registers the reopen command and pushes a disposable to subscriptions", () => {
+    const ctx = fakeContext();
+    activate(ctx as never);
+    expect((vscode.commands as unknown as { _registeredIds(): string[] })._registeredIds()).toContain(
+      REOPEN_COMMAND,
+    );
+    expect(ctx.subscriptions.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("returns an API that wires the client-side probe (reads the client hubUrl setting)", async () => {
+    (vscode.workspace as unknown as { _config: Record<string, unknown> })._config[COMPANION_HUB_URL_SETTING] =
+      "http://127.0.0.1:4096";
+    const f = fakeFetch(200);
+    const api = activate(fakeContext() as never, { probeFetch: f.fn });
+    const r = await api.probeHub();
+    expect(r.reachable).toBe(true);
+    expect(f.hits).toEqual(["http://127.0.0.1:4096/global/health"]);
+  });
+
+  it("the wired reopen flips LOCAL → Remote-SSH when the window is local", async () => {
+    const opened: string[] = [];
+    vscode.env.remoteName = undefined; // a local window
+    const api = activate(fakeContext() as never, { openFolder: (uri) => opened.push(uri) });
+    await api.reopen({ alias: "hub" });
+    expect(opened).toEqual(["vscode-remote://ssh-remote+hub/~"]);
+  });
+
+  it("the wired reopen flips Remote-SSH → LOCAL when the window is remote", async () => {
+    const opened: string[] = [];
+    vscode.env.remoteName = "ssh-remote"; // a Remote-SSH window
+    const api = activate(fakeContext() as never, { openFolder: (uri) => opened.push(uri) });
+    await api.reopen({ localPath: "/home/jj/amicode" });
+    expect(opened).toEqual(["file:///home/jj/amicode"]);
+  });
+
+  it("the registered command handler drives a reopen (executeCommand path)", async () => {
+    vscode.env.remoteName = undefined;
+    activate(fakeContext() as never);
+    await vscode.commands.executeCommand(REOPEN_COMMAND, { alias: "hub" });
+    const openFolderCalls = vscode.commands.executed.filter((c) => c.id === "vscode.openFolder");
+    expect(openFolderCalls).toHaveLength(1);
+  });
+
+  it("deactivate is a safe no-op", () => {
+    expect(() => deactivate()).not.toThrow();
+  });
+});
