@@ -103,6 +103,7 @@ import { adoptOrSpawn, buildLiveDeps, isPidAlive, reclaimOrphanPort, auditAdopte
 import { handshakePath, readHandshake, deleteHandshake, serverLogPath, coldSpawnHandshakeHook, hashFile, hashString } from "./server_handshake";
 import { startKeepalive, stopKeepalive, readGraceSeconds, pingKeepalive } from "./server_keepalive";
 import { FleetPollHysteresis } from "./fleet_poll_hysteresis";
+import { FleetPostureStateWriter } from "./fleet_posture_state";
 import { stopServer } from "./stop_server";
 import type { QueueView } from "./qick_job_server";
 import { postDeviceStatus, postDeviceActions, postDeviceActivate } from "./inspector_bridge";
@@ -794,8 +795,25 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           else if (pick === `Show log`) opencodeChannel.show();
         });
     };
+    // #780: the SOLE writer of the machine-posture state file. The context
+    // plugin reads it to render an honest posture block (which machine, mode,
+    // hub identity + reachability). We write it FROM this attach loop, only on
+    // FleetPollHysteresis TRANSITIONS (attach = fleet/hub-regained; detach =
+    // hub-lost/fell-back), so a blip below the threshold never rewrites it. The
+    // hub identity comes from the projection topology's canonical address; the
+    // client rides the local tunnel forward.
+    const postureWriter = new FleetPostureStateWriter({ log: (m) => opencodeChannel.appendLine(m) });
+    const postureHostname = os.hostname();
+    const postureCanonical = topology.kind === "ok" ? topology.canonical : undefined;
+    const postureHubHost = postureCanonical?.host;
+    const postureHubPort = postureCanonical?.port ?? fleetPort;
+    const postureHub = {
+      name: postureHubHost ?? null,
+      base_url: postureHubHost ? `http://${postureHubHost}:${postureHubPort}` : `http://127.0.0.1:${fleetPort}`,
+    };
     const checkFleet = async () => {
       let up = false;
+      const probeStarted = Date.now();
       try {
         const r = await fetch(`http://127.0.0.1:${fleetPort}${fleetProbePath}`, {
           signal: AbortSignal.timeout(fleetPoll.isReady ? 1500 : attachBudgetCfg),
@@ -805,11 +823,22 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       } catch {
         up = false; // connection refused / timeout — the same hysteresis applies
       }
+      const probeRttMs = Date.now() - probeStarted;
       const d = fleetPoll.onProbe(up);
       if (d.transition === "attach") {
         opencodeReadyUrl = new URL(`http://127.0.0.1:${fleetPort}`);
         statusBar?.setServerReady(true);
         sseClient?.connect(opencodeReadyUrl);
+        // #780: attach (first attach OR hub-regained) — record the live fleet
+        // posture so the next session's context names the hub + reachability.
+        postureWriter.record({
+          hostname: postureHostname,
+          mode: "fleet",
+          hub: postureHub,
+          reachable: true,
+          last_ok: new Date().toISOString(),
+          last_rtt_ms: probeRttMs,
+        });
         if (vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true)) {
           // Fleet client: no local service boots in this mode, so frameUrl()
           // resolves the tunnel engine origin — the honest available frame.
@@ -822,6 +851,16 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       } else if (d.transition === "detach") {
         opencodeReadyUrl = undefined;
         statusBar?.setServerReady(false);
+        // #780: hub-lost — the client fell back. Record the standalone posture
+        // with this instant as the fallback time, so context stops rendering
+        // the stale role line as if attached (the 2026-09-03 outage failure).
+        postureWriter.record({
+          hostname: postureHostname,
+          mode: "standalone",
+          hub: postureHub,
+          reachable: false,
+          last_rtt_ms: null,
+        });
         opencodeChannel.appendLine(
           `[fleet] tunnel down — ${d.failures} consecutive failed probes (threshold ${d.downThreshold}) — go standalone to work locally`,
         );
