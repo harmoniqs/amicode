@@ -13,6 +13,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import {
   createSshProvider,
   createTailscaleProvider,
+  createDirectProvider,
   resolveFleetTransportKind,
   transportForSelection,
   transportHealthToOutcome,
@@ -148,6 +149,103 @@ describe("#1260 tailscale provider — health + honest hub-down (AC: MagicDNS he
   it("end-to-end: a reachable tailscale origin feeds the SAME contract → fleet stays up (no reroute needed)", async () => {
     hub = await startStubHub();
     const p = createTailscaleProvider({ resolveMagicDnsOrigin: () => hub!.url });
+    const det = new FleetPostureDetector();
+    det.record(transportHealthToOutcome(await p.health(), p.kind));
+    expect(det.snapshot().state).toBe("fleet"); // a healthy transport keeps fleet posture
+  });
+});
+
+// ── the `direct` provider (THIS slice, #1260 — the FINAL provider) ───────────
+// For a host already reachable on a VPN/LAN, the OPERATOR arranges reachability
+// OUT-OF-BAND; the provider is just the supplied URL plus a health probe, with
+// NO tunnel-manager lifecycle (unlike ssh's OS-managed forward or tailscale's
+// host-side `serve`). The supplied URL points at the host's own edge, which
+// itself binds loopback behind it — direct authorizes NO non-loopback engine
+// bind. The supplied-URL resolution is modeled behind an injectable seam
+// (resolveUrl) exactly as ssh models its forward — these test provider logic,
+// never a live VPN/LAN.
+describe("#1260 direct provider — resolveBaseUrl (AC: targets a SUPPLIED URL)", () => {
+  it("resolves the operator-supplied URL (a VPN/LAN-reachable host's edge) as the base URL", () => {
+    const p = createDirectProvider({ resolveUrl: () => "https://amico-host.vpn.example:4096" });
+    expect(p.kind).toBe("direct");
+    const u = p.resolveBaseUrl();
+    expect(u).toBeInstanceOf(URL);
+    expect(u?.hostname).toBe("amico-host.vpn.example");
+    expect(u?.port).toBe("4096");
+  });
+
+  it("resolves LATE (per call): a cleared supplied URL yields undefined — the honest hub-down, never a stale snapshot, never another provider's URL", () => {
+    let url: string | undefined = "https://amico-host.vpn.example:4096";
+    const p = createDirectProvider({ resolveUrl: () => url });
+    expect(p.resolveBaseUrl()).toBeInstanceOf(URL);
+    url = undefined; // the operator's reachability went away (VPN down / URL cleared)
+    expect(p.resolveBaseUrl()).toBeUndefined(); // no supplied URL bound = honest hub-down
+  });
+
+  it("start()/stop() are honest no-ops — direct owns NO tunnel-manager lifecycle (the operator arranges reachability out-of-band), and they never disturb URL resolution", async () => {
+    // Unlike ssh (OS-managed launchd/systemd forward) and tailscale (host-side
+    // `tailscale serve` + system daemon), `direct` manages NOTHING: reachability
+    // is arranged out-of-band, so start()/stop() are honest no-ops.
+    const p = createDirectProvider({ resolveUrl: () => "https://amico-host.vpn.example:4096" });
+    await expect(p.start()).resolves.toBeUndefined();
+    await expect(p.stop()).resolves.toBeUndefined();
+    expect(p.resolveBaseUrl()?.port).toBe("4096"); // lifecycle calls never disturb the base-URL seam
+  });
+});
+
+describe("#1260 direct provider — health + honest hub-down (AC: a health probe; shared AC: no reachable host → honest hub-down, never a silent fallback)", () => {
+  it("a reachable supplied host (modeled by the stub hub) answers → { reachable: true } with latency + parsed version", async () => {
+    hub = await startStubHub({ version: "v1.18.29" });
+    // the stub hub stands in for the operator-supplied VPN/LAN URL — loopback in
+    // CI, a routable host in prod; the provider only ever sees a base URL
+    const p = createDirectProvider({ resolveUrl: () => hub!.url });
+    const h = await p.health();
+    expect(h.reachable).toBe(true);
+    if (h.reachable) {
+      expect(typeof h.latencyMs).toBe("number");
+      expect(h.latencyMs).toBeGreaterThanOrEqual(0);
+      expect(h.version).toBe("v1.18.29");
+    }
+    // the probe hit the transport's own health endpoint, not a data-plane route
+    expect(hub.requests.some((r) => r.startsWith("GET /global/health"))).toBe(true);
+  });
+
+  it("no reachable host (a dead supplied URL) → { reachable: false } with a named reason (honest, never a fabricated up)", async () => {
+    const p = createDirectProvider({ resolveUrl: () => "http://127.0.0.1:1", timeoutMs: 500 });
+    const h = await p.health();
+    expect(h.reachable).toBe(false);
+    if (!h.reachable) expect(h.reason).toBeTruthy();
+  });
+
+  it("no supplied URL (nothing configured) → { reachable: false, reason: no-base-url } — the honest hub-down, not a probe to nowhere", async () => {
+    const p = createDirectProvider({ resolveUrl: () => undefined });
+    const h = await p.health();
+    expect(h.reachable).toBe(false);
+    if (!h.reachable) expect(h.reason).toContain("no-base-url");
+  });
+
+  it("shared drop-vs-slow contract: an unreachable direct host maps to `no-response` whose detail NAMES direct — the REUSED transportHealthToOutcome, not a per-provider detector (AC per-provider signature)", () => {
+    const o = transportHealthToOutcome({ reachable: false, reason: "ECONNREFUSED (VPN down)" }, "direct");
+    expect(o.kind).toBe("no-response");
+    if (o.kind === "no-response") {
+      expect(o.detail).toContain("direct"); // a direct drop is told apart from an ssh/tailscale drop
+      expect(o.detail).toContain("ECONNREFUSED");
+    }
+  });
+
+  it("shared AC: a down direct transport drives HUB-DOWN through the SAME FleetPostureDetector — the honest hub-down posture, NEVER a reroute to ssh/tailscale", async () => {
+    const p = createDirectProvider({ resolveUrl: () => "http://127.0.0.1:1", timeoutMs: 300 });
+    const det = new FleetPostureDetector({ tuning: { hubDownConsecutiveNoResponses: 3 } });
+    for (let i = 0; i < 3; i++) {
+      det.record(transportHealthToOutcome(await p.health(), p.kind));
+    }
+    expect(det.snapshot().state).toBe("standalone"); // the hub-down posture (base standalone + pointer)
+    expect(det.snapshot().pointer).toContain("hub-down");
+  });
+
+  it("end-to-end: a reachable direct URL feeds the SAME contract → fleet stays up (no reroute needed)", async () => {
+    hub = await startStubHub();
+    const p = createDirectProvider({ resolveUrl: () => hub!.url });
     const det = new FleetPostureDetector();
     det.record(transportHealthToOutcome(await p.health(), p.kind));
     expect(det.snapshot().state).toBe("fleet"); // a healthy transport keeps fleet posture

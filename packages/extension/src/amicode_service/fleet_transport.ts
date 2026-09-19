@@ -93,10 +93,13 @@ export interface FleetTransportProvider {
   readonly kind: FleetTransportKind;
   resolveBaseUrl(): URL | undefined;
   health(): Promise<FleetTransportHealth>;
-  /** Lifecycle (Data Contract). For `ssh` the tunnel is OS-managed
-   *  (launchd/systemd, installed by the fleet installer), so these defer to
-   *  the service manager — honest no-ops in this build. The `tailscale` /
-   *  `direct` slices, which own their lifecycle, implement them. */
+  /** Lifecycle (Data Contract). No provider in THIS build owns an
+   *  extension-side tunnel lifecycle: `ssh` defers to the OS service manager
+   *  (launchd/systemd, installed by the fleet installer), `tailscale` to the
+   *  host-side `tailscale serve` + the system daemon, and `direct` to the
+   *  operator (reachability arranged out-of-band). So all three are honest
+   *  no-ops — the seam exists so a FUTURE provider that DOES own a lifecycle
+   *  implements them behind the SAME interface. */
   start(): Promise<void>;
   stop(): Promise<void>;
 }
@@ -197,9 +200,10 @@ export function createSshProvider(opts: SshProviderOptions): FleetTransportProvi
     },
     // The launchd/systemd `-L` forward is OS-managed (installed by the fleet
     // installer) in this build — the ssh provider does not own its lifecycle,
-    // so start()/stop() are honest no-ops. The seam members exist so the
-    // tailscale/direct providers (which own `tailscale serve` / their own edge)
-    // implement real lifecycle behind the SAME interface.
+    // so start()/stop() are honest no-ops. The tailscale (host-side `serve` +
+    // system daemon) and direct (operator-arranged reachability) providers are
+    // no-ops for their own honest reasons; the seam exists so a FUTURE provider
+    // that DOES own a lifecycle implements them behind the SAME interface.
     async start(): Promise<void> {
       /* OS-managed (launchd/systemd) — nothing to start from the extension */
     },
@@ -283,6 +287,85 @@ export function createTailscaleProvider(opts: TailscaleProviderOptions): FleetTr
     },
     async stop(): Promise<void> {
       /* host-side `tailscale serve` + system daemon — nothing to stop here */
+    },
+  };
+}
+
+
+/** Options for the `direct` provider. Mirrors SshProviderOptions, with the
+ *  operator-supplied URL in place of the loopback-forward resolution. */
+export interface DirectProviderOptions {
+  /** Resolve the operator-supplied URL of a host already reachable on a
+   *  VPN/LAN — the operator arranges reachability OUT-OF-BAND. Read LATE (per
+   *  call) so a cleared/unset URL yields undefined — the honest hub-down,
+   *  never a stale boot-time snapshot, and NEVER another provider's URL (the
+   *  no-cross-provider-fallback law). */
+  resolveUrl: () => string | undefined;
+  /** The active health probe's fetch (injectable; default the global fetch). */
+  fetch?: typeof fetch;
+  /** The transport-liveness endpoint the probe hits (default /global/health —
+   *  the same endpoint the ssh/tailscale providers probe and the merged
+   *  projection reads the hub build version from). */
+  healthPath?: string;
+  /** An Authorization header for the probe, when the host requires one. */
+  authHeader?: string;
+  /** The client-enforced probe timeout (ms). Default 1500 (checkFleet's poll). */
+  timeoutMs?: number;
+  /** Injectable clock for the latency measurement (prod = Date.now). */
+  now?: () => number;
+}
+
+/** The `direct` provider (#1260, the FINAL provider) — for a host already
+ *  reachable on a VPN/LAN, where the OPERATOR arranges reachability out-of-band.
+ *  It is just the supplied URL plus a health probe: `resolveBaseUrl()` is that
+ *  URL (read LATE); `health()` probes it (the ONE shared probe, reused).
+ *
+ *  No tunnel-manager lifecycle: unlike ssh (an OS-managed launchd/systemd `-L`
+ *  forward) and tailscale (host-side `tailscale serve` + a system daemon),
+ *  `direct` manages NOTHING — the reachability is arranged out-of-band — so
+ *  start()/stop() are honest no-ops (the same OS/operator-managed posture the
+ *  ssh and tailscale providers already take, for a third honest reason).
+ *
+ *  Loopback-bind preservation (ADR 0024): the supplied URL points at the host's
+ *  OWN EDGE, which itself binds 127.0.0.1 behind it — this provider authorizes
+ *  no non-loopback engine bind and touches no host bind at all (it is purely
+ *  client-side: a URL + a probe). The `100.x`/public-bind case (rejected) is
+ *  deliberately not a path this provider can take. */
+export function createDirectProvider(opts: DirectProviderOptions): FleetTransportProvider {
+  const doFetch = opts.fetch ?? fetch;
+  const healthPath = opts.healthPath ?? "/global/health";
+  const timeoutMs = opts.timeoutMs ?? 1500;
+  const now = opts.now ?? (() => Date.now());
+  const resolveBaseUrl = (): URL | undefined => {
+    const raw = opts.resolveUrl();
+    if (raw === undefined || raw.trim() === "") return undefined;
+    try {
+      return new URL(raw);
+    } catch {
+      return undefined;
+    }
+  };
+  return {
+    kind: "direct",
+    resolveBaseUrl,
+    async health(): Promise<FleetTransportHealth> {
+      return probeTransportHealth(resolveBaseUrl, {
+        fetch: doFetch,
+        healthPath,
+        timeoutMs,
+        now,
+        noBaseUrlReason: "no-base-url: no direct URL supplied (honest hub-down)",
+        ...(opts.authHeader !== undefined ? { authHeader: opts.authHeader } : {}),
+      });
+    },
+    // `direct` owns NO tunnel-manager lifecycle — the operator arranges
+    // reachability out-of-band (a VPN/LAN the host is already on), so there is
+    // nothing for the client provider to start or stop. Honest no-ops.
+    async start(): Promise<void> {
+      /* no tunnel-manager lifecycle — the operator arranges reachability out-of-band */
+    },
+    async stop(): Promise<void> {
+      /* no tunnel-manager lifecycle — the operator arranges reachability out-of-band */
     },
   };
 }
