@@ -36,6 +36,7 @@ import {
   For,
   type JSX,
   lazy,
+  Suspense,
   onCleanup,
   type ParentProps,
   Show,
@@ -236,7 +237,9 @@ function ResolvedDraftRoute(props: { draft: DraftTab }) {
             <SDKProvider directory={directory}>
               <DirectoryDataProvider directory={directory} server={serverKey}>
                 <DraftProviders>
-                  <NewSession />
+                  <Suspense>
+                    <NewSession />
+                  </Suspense>
                 </DraftProviders>
               </DirectoryDataProvider>
             </SDKProvider>
