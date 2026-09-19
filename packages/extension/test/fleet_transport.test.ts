@@ -44,6 +44,18 @@ describe("#1260 ssh provider — resolveBaseUrl (AC2: the loopback base URL thro
     url = undefined; // the forward went away (de-armed / tunnel down)
     expect(p.resolveBaseUrl()).toBeUndefined(); // no base URL bound = honest-down
   });
+
+  it("start()/stop() complete the Data Contract — the ssh provider defers to the OS service manager (launchd/systemd), so they are documented no-ops that never disturb URL resolution", async () => {
+    // The launchd/systemd tunnel lifecycle is OS-managed (installed by the
+    // fleet installer) in this build — the ssh provider does not own it, so
+    // start()/stop() are honest no-ops. The seam members exist so the
+    // tailscale/direct slices (which DO own lifecycle) implement them.
+    const p = createSshProvider({ resolveUrl: () => "http://127.0.0.1:4096" });
+    await expect(p.start()).resolves.toBeUndefined();
+    await expect(p.stop()).resolves.toBeUndefined();
+    // lifecycle calls never disturb the base-URL seam
+    expect(p.resolveBaseUrl()?.port).toBe("4096");
+  });
 });
 
 describe("#1260 ssh provider — health (AC2: a health signal through the interface)", () => {

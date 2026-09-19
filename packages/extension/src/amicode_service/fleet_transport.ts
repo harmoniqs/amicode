@@ -91,6 +91,12 @@ export interface FleetTransportProvider {
   readonly kind: FleetTransportKind;
   resolveBaseUrl(): URL | undefined;
   health(): Promise<FleetTransportHealth>;
+  /** Lifecycle (Data Contract). For `ssh` the tunnel is OS-managed
+   *  (launchd/systemd, installed by the fleet installer), so these defer to
+   *  the service manager — honest no-ops in this build. The `tailscale` /
+   *  `direct` slices, which own their lifecycle, implement them. */
+  start(): Promise<void>;
+  stop(): Promise<void>;
 }
 
 /** Options for the `ssh` provider. */
@@ -158,6 +164,17 @@ export function createSshProvider(opts: SshProviderOptions): FleetTransportProvi
       } catch (e) {
         return { reachable: false, reason: e instanceof Error ? e.message : String(e) };
       }
+    },
+    // The launchd/systemd `-L` forward is OS-managed (installed by the fleet
+    // installer) in this build — the ssh provider does not own its lifecycle,
+    // so start()/stop() are honest no-ops. The seam members exist so the
+    // tailscale/direct providers (which own `tailscale serve` / their own edge)
+    // implement real lifecycle behind the SAME interface.
+    async start(): Promise<void> {
+      /* OS-managed (launchd/systemd) — nothing to start from the extension */
+    },
+    async stop(): Promise<void> {
+      /* OS-managed (launchd/systemd) — nothing to stop from the extension */
     },
   };
 }
