@@ -17,6 +17,7 @@
 // mint, never an unauthenticated forward. A dead tunnel is the honest 502
 // (the caller answers no-upstream with its own named 503).
 import * as http from "node:http";
+import type { Duplex } from "node:stream";
 import { HubCredentialRead } from "./hub_credential";
 import { hubUpstreamAuthHeader } from "./hub_credential";
 import type { DataPlaneOutcome } from "./fleet_posture";
@@ -45,6 +46,14 @@ export interface HubProxyOptions {
  *  plus `authorization`, which this proxy OWNS (the hub mint translation is
  *  its whole reason to exist). */
 const DROPPED_HEADERS = ["host", "connection", "authorization"] as const;
+
+/** #1263 (Slice 3): the upgrade path's dropped headers. Unlike the body-pipe
+ *  set, `connection` and `upgrade` MUST survive — they are what makes the host
+ *  engine's upgrade handler fire and emit its own 101. Only `host` (node
+ *  recomputes it for the upstream) and `authorization` (this proxy TRANSLATES
+ *  it to the hub mint) are dropped; `sec-websocket-*`, `origin`, and the
+ *  `?ticket=`/`?cursor=` query all ride through verbatim. */
+const UPGRADE_DROPPED_HEADERS = ["host", "authorization"] as const;
 
 export class HubProxy {
   constructor(private readonly opts: HubProxyOptions) {}
@@ -166,4 +175,194 @@ export class HubProxy {
       return true;
     }
   }
+
+  /**
+   * #1263 (Slice 3): tunnel a WebSocket upgrade (the PTY terminal's
+   * `GET /pty/:id/connect`) through to the host engine and back. Owns the raw
+   * client socket for its whole lifetime — always tears it down cleanly, never
+   * leaks it, never throws into the server.
+   *
+   * The body-pipe `handle` cannot be reused: an upgrade has no `res`, its 101
+   * response must be forwarded VERBATIM (the engine computes
+   * `Sec-WebSocket-Accept` — the relay must never synthesize a 101), and
+   * `connection`/`upgrade` must SURVIVE (the body-pipe drops `connection`). So
+   * the credential translation is re-implemented here for the 101 path:
+   *   - strip the inbound Authorization + the `?auth_token=` carrier;
+   *   - attach the hub mint's Basic header;
+   *   - preserve `?ticket=`/`?cursor=`/`Origin` and the `sec-websocket-*` set.
+   * The host's PTY route authorizes by ticket OR Basic — the attached hub mint
+   * satisfies the Basic arm; the preserved `?ticket=` satisfies the other.
+   */
+  handleUpgrade(req: http.IncomingMessage, clientSocket: Duplex, head: Buffer): void {
+    // A pre-upgrade failure: answer the raw socket honestly, then destroy it
+    // (a WS client reads a non-101 status line as a failed handshake).
+    const fail = (code: number, reason: string): void => {
+      try {
+        if ((clientSocket as { writable?: boolean }).writable) {
+          clientSocket.write(`HTTP/1.1 ${code} ${reason}\r\nConnection: close\r\n\r\n`);
+        }
+      } catch {
+        /* socket already gone */
+      }
+      try {
+        clientSocket.destroy();
+      } catch {
+        /* already gone */
+      }
+    };
+
+    const upstreamBase = this.opts.getUrl();
+    if (!upstreamBase) {
+      // tunnel down — a client holds no local engine (never-fork); the socket
+      // is torn down cleanly (no leak). The honest hub-down surface for the
+      // data plane stays the request path's named 503.
+      fail(502, "Bad Gateway");
+      return;
+    }
+    const cred = this.opts.credential();
+    if (!cred.ok) {
+      fail(503, "Service Unavailable");
+      return;
+    }
+
+    let target: URL;
+    try {
+      // preserve the full request line (?ticket=/?cursor= ride through) MINUS
+      // the engine's ?auth_token= carrier (the hub reads it first and would 401)
+      const incoming = new URL(req.url ?? "/", upstreamBase);
+      incoming.searchParams.delete("auth_token");
+      target = new URL(incoming.toString());
+    } catch {
+      fail(502, "Bad Gateway");
+      return;
+    }
+
+    const headers: Record<string, string | string[] | undefined> = { ...req.headers };
+    for (const h of UPGRADE_DROPPED_HEADERS) delete headers[h];
+    headers["authorization"] = hubUpstreamAuthHeader(cred.credential.token);
+
+    let upgraded = false;
+    let upstreamReq: http.ClientRequest;
+    try {
+      upstreamReq = http.request(target, { method: req.method ?? "GET", headers });
+    } catch {
+      fail(502, "Bad Gateway");
+      return;
+    }
+
+    // The client dropped BEFORE the upstream upgraded → abort the pending
+    // upstream request so nothing is left half-open.
+    const onEarlyClientClose = (): void => {
+      if (!upgraded) {
+        try {
+          upstreamReq.destroy();
+        } catch {
+          /* already gone */
+        }
+      }
+    };
+    clientSocket.on("close", onEarlyClientClose);
+
+    upstreamReq.on("upgrade", (upstreamRes, upstreamSocket, upstreamHead) => {
+      upgraded = true;
+      // clean teardown: ANY end/close/error on EITHER side destroys BOTH
+      // sockets. This is the leak guard (AC3) — a half-close (a dropped client
+      // FINs its side) must not leave the counterpart's writable half open
+      // (which would keep the relay's own socket alive and wedge server.close),
+      // so we DESTROY both rather than rely on pipe's half-close semantics.
+      let torn = false;
+      const teardown = (): void => {
+        if (torn) return;
+        torn = true;
+        try {
+          upstreamSocket.destroy();
+        } catch {
+          /* already gone */
+        }
+        try {
+          clientSocket.destroy();
+        } catch {
+          /* already gone */
+        }
+      };
+      try {
+        // Forward the engine's OWN 101 VERBATIM — status line + every header as
+        // the upstream sent it (rawHeaders preserves the exact
+        // Sec-WebSocket-Accept the engine computed). NEVER a synthesized 101.
+        clientSocket.write(serializeStatusHead(upstreamRes));
+        if (upstreamHead && upstreamHead.length) clientSocket.write(upstreamHead);
+        // relay any bytes the client sent past its handshake (usually none)
+        if (head && head.length) upstreamSocket.write(head);
+      } catch {
+        teardown();
+        return;
+      }
+      // bidirectional raw pipe — the relay is opcode-agnostic past the 101.
+      // `end: false`: piped-src EOF must NOT half-close the dest; teardown owns
+      // lifecycle (both sockets die together), so neither side is left half-open.
+      upstreamSocket.pipe(clientSocket, { end: false });
+      clientSocket.pipe(upstreamSocket, { end: false });
+      for (const ev of ["end", "close", "error"] as const) {
+        clientSocket.on(ev, teardown);
+        upstreamSocket.on(ev, teardown);
+      }
+    });
+
+    // The host answered a NORMAL response (401/404/…) instead of upgrading —
+    // relay it verbatim so the client sees the real refusal, then close (no
+    // hang, no leak).
+    upstreamReq.on("response", (upstreamRes) => {
+      if (upgraded) return;
+      try {
+        clientSocket.write(serializeStatusHead(upstreamRes));
+        upstreamRes.on("data", (c: Buffer) => {
+          try {
+            clientSocket.write(c);
+          } catch {
+            /* gone */
+          }
+        });
+        upstreamRes.on("end", () => {
+          try {
+            clientSocket.end();
+          } catch {
+            /* gone */
+          }
+        });
+        upstreamRes.on("error", () => {
+          try {
+            clientSocket.destroy();
+          } catch {
+            /* gone */
+          }
+        });
+      } catch {
+        try {
+          clientSocket.destroy();
+        } catch {
+          /* gone */
+        }
+      }
+    });
+
+    upstreamReq.on("error", () => {
+      if (!upgraded) fail(502, "Bad Gateway");
+    });
+
+    try {
+      upstreamReq.end();
+    } catch {
+      fail(502, "Bad Gateway");
+    }
+  }
+}
+
+/** Serialize an IncomingMessage's status line + headers back to the wire form,
+ *  VERBATIM (rawHeaders preserves the upstream's exact header names/values,
+ *  including the engine-computed Sec-WebSocket-Accept). */
+function serializeStatusHead(res: http.IncomingMessage): string {
+  const raw = res.rawHeaders;
+  let block = "";
+  for (let i = 0; i + 1 < raw.length; i += 2) block += `${raw[i]}: ${raw[i + 1]}\r\n`;
+  return `HTTP/1.1 ${res.statusCode} ${res.statusMessage}\r\n${block}\r\n`;
 }

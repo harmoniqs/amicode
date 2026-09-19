@@ -354,6 +354,30 @@ export class AmicodeServiceServer {
     const server = http.createServer((req, res) => {
       void this.dispatch(req, res);
     });
+    // #1263 (Slice 3): the WebSocket/PTY upgrade path. The dispatch table and
+    // both body-pipe proxies are request-only, so WS upgrades (the integrated
+    // terminal's GET /pty/:id/connect) had nowhere to go on a thin client. This
+    // extends the SAME fleet branch dispatch keys on (fleetPlane.client &&
+    // routingMode === "fleet") — a fleet CLIENT tunnels the upgrade to the host
+    // engine, forwarding the engine's OWN 101 verbatim, with hub-credential
+    // translation on the request. Every OTHER posture (engine-armed base
+    // machine, standalone, no fleet plane) keeps the prior no-listener
+    // behavior — the socket is destroyed — so loopback/never-fork is unchanged.
+    server.on("upgrade", (req, socket, head) => {
+      try {
+        if (this.fleetPlane?.client && this.routingMode === "fleet") {
+          this.fleetPlane.hub.handleUpgrade(req, socket, head);
+          return;
+        }
+        socket.destroy();
+      } catch {
+        try {
+          socket.destroy();
+        } catch {
+          /* already gone — never throw out of the upgrade handler */
+        }
+      }
+    });
     this.server = server;
     const listenPort = port ?? 0;
     await new Promise<void>((resolve, reject) => {
@@ -384,6 +408,15 @@ export class AmicodeServiceServer {
     if (!server) return;
     this.server = undefined;
     this._port = undefined;
-    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve());
+      // #1263 (Slice 3): server.close() waits for existing connections to end,
+      // but an UPGRADED WS/PTY tunnel (the relay's proxied terminal) is a
+      // hijacked socket that server.close() never ends on its own — so a live
+      // terminal at shutdown would wedge stop() indefinitely. Force-close every
+      // connection so teardown is prompt and leak-free (idle keep-alives too);
+      // guarded because it is Node ≥18.2.
+      server.closeAllConnections?.();
+    });
   }
 }
