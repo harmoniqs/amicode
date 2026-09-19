@@ -758,6 +758,18 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       const v = vscode.workspace.getConfiguration("amicode").get<number>(key, 0);
       return Number.isFinite(v) && v > 0 ? v : undefined;
     };
+    // #777: the FIRST-attach probe needs a wide budget — on a ~750ms-RTT link
+    // every tunnel request runs ~2.5s against the fixed 1500ms (GET / measured
+    // 1.6-2.9s), so a healthy hub was unattachable: the probe itself timed out,
+    // the attach never fired, and the panel parked with chrome only. Once
+    // attached, the steady-state probe stays fast (1500ms) — SSE liveness
+    // covers the up-state, and #1202's hysteresis rides the failure pattern,
+    // not the probe budget. 0 = the old fixed 1500ms.
+    const attachBudgetCfg = fleetNum("fleetProbeTimeoutMs") ?? 1500;
+    // #777: GET / returns the SPA index — the heaviest page the engine serves.
+    // A cheap engine route (e.g. /session, measured 2x faster) halves the
+    // probe cost on degraded links. Default keeps the current / behavior.
+    const fleetProbePath = vscode.workspace.getConfiguration("amicode").get<string>("fleetProbePath", "/") || "/";
     const downCfg = fleetNum("fleetTunnelDownConsecutiveFailures");
     const offerCfg = fleetNum("fleetStandaloneOfferConsecutiveFailures");
     const cooldownCfg = fleetNum("fleetStandaloneOfferCooldownMinutes");
@@ -778,8 +790,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     const checkFleet = async () => {
       let up = false;
       try {
-        const r = await fetch(`http://127.0.0.1:${fleetPort}/`, {
-          signal: AbortSignal.timeout(1500),
+        const r = await fetch(`http://127.0.0.1:${fleetPort}${fleetProbePath}`, {
+          signal: AbortSignal.timeout(fleetPoll.isReady ? 1500 : attachBudgetCfg),
           headers: serverAuthHeaders,
         });
         up = r.ok || (r.status >= 200 && r.status < 400);

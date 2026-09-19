@@ -103,6 +103,13 @@ export class FleetPollHysteresis {
     this.now = opts.now ?? Date.now;
   }
 
+  /** #777: the CURRENT ready state, read BEFORE a probe — the wiring uses this
+   *  to widen the probe budget while un-attached (see checkFleet). A public
+   *  getter only; mutations still flow through onProbe. */
+  get isReady(): boolean {
+    return this.ready;
+  }
+
   /**
    * Record one probe outcome and return the decision the wiring must act on.
    * A successful probe clears the consecutive-failure count.

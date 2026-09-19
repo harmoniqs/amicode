@@ -303,6 +303,16 @@
           "default": 0,
           "description": "Fleet posture tuning (D6): consecutive healthy responses required to re-enter fleet mode (hysteresis — flapping cannot flap the posture). 0 = the default (3)."
         },
+        "amicode.fleetProbeTimeoutMs": {
+          "type": "number",
+          "default": 0,
+          "description": "Fleet client (#777): the FIRST-attach probe budget in ms. On a ~750ms-RTT link every tunnel request runs ~2.5s (GET / measured 1.6-2.9s) against the old fixed 1500ms, so a healthy hub was unattachable — the probe itself timed out before the attach could fire. Once attached the steady-state probe stays at 1500ms (SSE liveness covers the up-state). 0 = the old fixed 1500ms."
+        },
+        "amicode.fleetProbePath": {
+          "type": "string",
+          "default": "/",
+          "description": "Fleet client (#777): the path probed for tunnel health. Default / (the SPA index — the heaviest page the engine serves). On degraded links a cheap engine route (e.g. /session, measured 2x faster) halves the probe cost."
+        },
         "amicode.fleetTunnelDownConsecutiveFailures": {
           "type": "number",
           "default": 0,
