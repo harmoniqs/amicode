@@ -373,27 +373,28 @@ describe("activation wiring — the fleet option is passed ONLY when activation 
     }
   });
 
-  it("#1260 AC3 — a not-yet-shipped provider (direct) yields the honest hub-down, NEVER a silent fallback to the configured URL", async () => {
+  it("#1260 direct slice — an explicit fleetTransport=direct selects the DIRECT provider: its supplied URL IS dialed (a dead port → the 502, not the no-upstream 503), never a silent hub-down or ssh/tailscale substitution", async () => {
     const { lines, log } = sinkLog();
     const boot = await startAmicodeService(log, {
       engine: { password: "engine-activation-mint", getUrl: () => engine.url },
       fleetActivation: armedActivation({ entitlementConfigDir: entitledDir, overlaySource }),
-      fleetTransport: { kind: "direct" }, // tailscale shipped in #1260; `direct` is the remaining unshipped seam member
+      fleetTransport: { kind: "direct" }, // shipped in #1260 (the final provider) — its OWN provider is constructed
     });
     expect(boot).toBeDefined();
     if (!boot) return;
     try {
       const auth = serverAuthHeader("engine-activation-mint");
-      // No provider is registered for `direct` → NO base URL is bound → the
-      // honest "hub upstream not available" 503 (the no-upstream answer). The
-      // configured hubUrl (127.0.0.1:9) is NEVER dialed — so this is NOT the 502
-      // "hub upstream failed" a fallback to another provider would produce.
+      // direct is shipped → the direct provider is constructed and wraps the
+      // operator-supplied URL (armedActivation's hubUrl, a dead 127.0.0.1:9). It
+      // IS dialed → the proxy's "hub upstream failed" 502 (a bound-but-dead URL),
+      // NOT the no-upstream 503 an unshipped provider yields. This proves direct
+      // reaches its OWN supplied URL — not a silent hub-down, not an ssh/tailscale
+      // substitution.
       const res = await fetch(`${boot.url}/session`, { headers: { Authorization: auth } });
-      expect(res.status).toBe(503);
+      expect(res.status).toBe(502);
       const body = (await res.json()) as { error: string };
-      expect(body.error).toBe("hub upstream not available"); // no url bound = honest hub-down
-      expect(body.error).not.toContain("failed"); // NOT a dial of the configured URL
-      // the boot log names the transport selection outcome (never a silent no-op)
+      expect(body.error).toContain("hub upstream failed"); // the supplied URL was dialed
+      // the boot log names the shipped direct selection (never a silent no-op)
       expect(lines.some((l) => l.includes("transport") && l.includes("direct"))).toBe(true);
     } finally {
       await boot.service.stop();

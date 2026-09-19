@@ -1,40 +1,45 @@
-// FLEET TRANSPORT (#1260 — the pluggable transport provider seam + the `ssh`
-// provider, the walking skeleton). The client↔host data plane rode a single
-// launchd SSH `-L` forward, deferred by #792 ("the tunnel remains the transport
-// under the relay"). This module makes the transport a PLUGGABLE PROVIDER behind
-// one config knob (`amicode.fleetTransport`), decoupled from the app.
+// FLEET TRANSPORT (#1260 — the pluggable transport provider seam and its three
+// providers). The client↔host data plane rode a single launchd SSH `-L` forward,
+// deferred by #792 ("the tunnel remains the transport under the relay"). This
+// module makes the transport a PLUGGABLE PROVIDER behind one config knob
+// (`amicode.fleetTransport`), decoupled from the app.
 //
 // The Data Contract (issue #1260 / ADR 0024):
 //   resolveBaseUrl() → URL   — the hub proxy consumes it (targets whatever URL
 //                              it is given, so the app needs no transport code);
 //   health()        → status — posture consumes it (an active liveness probe);
-//   start()/stop()           — the extension host owns lifecycle.
+//   start()/stop()           — lifecycle (no provider owns an extension-side one
+//                              in this build — all three are honest no-ops).
 //
-// Providers: `ssh` (default; THIS slice — the launchd forward refactored behind
-// the seam, systemd as its Linux form), `tailscale` and `direct` (LATER slices,
-// additive/opt-in — named here only as seam members the no-fallback law refuses
-// to substitute). SSH is the only required provider and the zero-dependency floor.
+// Providers, all shipped: `ssh` (default — the launchd forward refactored behind
+// the seam, systemd as its Linux form), `tailscale` (opt-in — the host's
+// `tailscale serve` fronting loopback + MagicDNS resolution), and `direct` (a
+// supplied URL for a host already reachable on a VPN/LAN, health probe, no tunnel
+// lifecycle). SSH is the only required provider and the zero-dependency floor;
+// tailscale/direct are additive and independently disableable.
 //
 // Invariants (ADR 0024): loopback-only bind preserved (every provider proxies to
-// a host that binds 127.0.0.1); never-fork (the transport yields a data-plane
-// connection, never an engine); no silent cross-provider fallback (a down/disabled
-// transport is an honest hub-down posture, never a reroute to another provider).
+// a host that binds 127.0.0.1 behind its own edge); never-fork (the transport
+// yields a data-plane connection, never an engine); no silent cross-provider
+// fallback (a down/disabled transport is an honest hub-down posture, never a
+// reroute to another provider).
 
 import type { DataPlaneOutcome } from "./fleet_posture";
 
-/** The transport provider kinds. Only `ssh` is IMPLEMENTED in this slice; the
- *  other two are named seam members the later slices register. */
+/** The transport provider kinds — all three IMPLEMENTED (ssh, tailscale, direct). */
 export type FleetTransportKind = "ssh" | "tailscale" | "direct";
 
 /** The known seam members — every kind the vocabulary names, whether or not
  *  this build ships a provider for it (an unknown value is neither). */
 const KNOWN_KINDS: readonly FleetTransportKind[] = ["ssh", "tailscale", "direct"];
 
-/** The providers this build registers. `ssh` (the seam+walking-skeleton slice)
- *  and `tailscale` (its own slice, #1260) ship; `direct` adds itself when its
- *  slice lands — the seam is additive. A named-but-unregistered member (today:
- *  `direct`) resolves to a NAMED not-ok, never a silent fallback. */
-const DEFAULT_AVAILABLE: readonly FleetTransportKind[] = ["ssh", "tailscale"];
+/** The providers this build registers. All three named seam members ship now:
+ *  `ssh` (the seam+walking-skeleton slice), `tailscale` (its own slice), and
+ *  `direct` (the final slice, #1260). The seam stays additive — a build may
+ *  register a subset (via the `available` arg), and a KNOWN-but-unregistered
+ *  member then resolves to a NAMED unavailable-in-this-build not-ok, never a
+ *  silent fallback. */
+const DEFAULT_AVAILABLE: readonly FleetTransportKind[] = ["ssh", "tailscale", "direct"];
 
 /** The resolution of the `amicode.fleetTransport` setting to a provider kind.
  *  A registered + enabled provider is selected; a disabled one, an
@@ -387,12 +392,14 @@ export function transportForSelection(
   switch (sel.kind) {
     case "tailscale":
       return createTailscaleProvider({ resolveMagicDnsOrigin: resolveUrl });
+    case "direct":
+      return createDirectProvider({ resolveUrl });
     case "ssh":
       return createSshProvider({ resolveUrl });
     default:
-      // `direct` ships in its own later slice, so it cannot be ok here (not in
-      // DEFAULT_AVAILABLE) — but keep the no-fallback law explicit rather than
-      // silently substituting ssh for an unexpected ok kind.
+      // Every shipped kind (ssh/tailscale/direct) has an explicit case above, so
+      // this is only reached by an unexpected ok kind — keep the no-fallback law
+      // explicit rather than silently substituting ssh for it.
       return createSshProvider({ resolveUrl: () => undefined });
   }
 }

@@ -106,8 +106,9 @@ export interface AmicodeServiceWiringOptions {
    *  the defaults. #1260 adds `kind` — the `amicode.fleetTransport` provider
    *  selector (default `ssh`) — and `disabled`, the independently-disableable
    *  knob. An unset/`ssh` kind reproduces today's launchd-forward behavior; a
-   *  disabled or not-yet-shipped provider yields the honest hub-down (no base
-   *  URL bound), NEVER a silent fallback to another provider. */
+   *  disabled, unknown, or (in a build that registered a subset) unregistered
+   *  provider yields the honest hub-down (no base URL bound), NEVER a silent
+   *  fallback to another provider. */
   fleetTransport?: {
     dataPlaneTimeoutMs?: number;
     writeTimeoutMs?: number;
@@ -176,9 +177,9 @@ export async function startAmicodeService(
       // wraps the launchd/systemd `-L` forward — its resolveBaseUrl() is the
       // loopback hub URL, read LATE (per request) so a de-armed activation
       // yields undefined (the honest hub-down, never a stale snapshot). The hub
-      // proxy consumes it through the existing getUrl seam. A disabled /
-      // not-yet-shipped provider binds NO base URL (the honest hub-down),
-      // NEVER a silent fallback to another provider's URL.
+      // proxy consumes it through the existing getUrl seam. A disabled,
+      // unknown, or unregistered provider binds NO base URL (the honest
+      // hub-down), NEVER a silent fallback to another provider's URL.
       const transportSel = resolveFleetTransportKind({
         setting: opts.fleetTransport?.kind,
         ...(opts.fleetTransport?.disabled !== undefined ? { disabled: opts.fleetTransport.disabled } : {}),
@@ -188,10 +189,10 @@ export async function startAmicodeService(
         return a !== undefined && a.armed ? a.hubUrl : undefined;
       };
       // #1260: each ok kind gets ITS OWN provider — ssh wraps the loopback
-      // forward URL, tailscale the host's MagicDNS origin — NEVER another
-      // kind's (the no-cross-provider-fallback law). A not-ok selection
-      // (disabled / a not-yet-shipped `direct` / unknown) binds NO URL, so the
-      // hub proxy answers its honest hub-down, never a different provider's URL.
+      // forward URL, tailscale the host's MagicDNS origin, direct the supplied
+      // VPN/LAN URL — NEVER another kind's (the no-cross-provider-fallback law).
+      // A not-ok selection (disabled / unknown / unregistered) binds NO URL, so
+      // the hub proxy answers its honest hub-down, never a different provider's URL.
       const transport: FleetTransportProvider = transportForSelection(transportSel, lateHubUrl);
       transportNote = transportSel.ok
         ? `; transport: ${transportSel.kind}`

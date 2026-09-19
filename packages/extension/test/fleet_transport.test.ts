@@ -296,18 +296,25 @@ describe("#1260 resolveFleetTransportKind — the amicode.fleetTransport knob (A
     expect(resolveFleetTransportKind({ setting: "SSH" })).toEqual({ ok: true, kind: "ssh" }); // case/space tolerant
   });
 
-  it("a provider not registered in THIS build (direct) → a NAMED not-ok, NEVER a silent fallback to ssh (AC3)", () => {
-    // tailscale shipped in #1260, so `direct` is now the still-unshipped seam
-    // member that pins the no-cross-provider-fallback law.
-    const d = resolveFleetTransportKind({ setting: "direct" }); // available defaults to ssh+tailscale
+  it("#1260 direct slice: direct is selectable by DEFAULT now (its provider shipped — added to the available set)", () => {
+    // no explicit `available` — the default set now includes direct (the final provider)
+    expect(resolveFleetTransportKind({ setting: "direct" })).toEqual({ ok: true, kind: "direct" });
+    expect(resolveFleetTransportKind({ setting: "DIRECT" })).toEqual({ ok: true, kind: "direct" }); // case/space tolerant
+  });
+
+  it("the no-cross-provider-fallback law still holds for a known-but-unregistered member: an explicit `available` omitting a known kind → a NAMED unavailable-in-this-build not-ok, NEVER a silent fallback (AC3)", () => {
+    // with all three providers shipping by default, the known-but-not-registered
+    // branch is now exercised by an explicit `available` set that omits one — the
+    // code path (a valid member a given build did not register) still reports
+    // honestly and never substitutes another provider.
+    const d = resolveFleetTransportKind({ setting: "direct", available: ["ssh", "tailscale"] });
     expect(d.ok).toBe(false);
     if (!d.ok) {
       expect(d.reason).toContain("direct");
       expect(d.reason).toContain("unavailable");
     }
-    // the seam KNOWS the kind (it is a valid member) — it just is not shipped yet;
-    // resolution reports that honestly and does not substitute ssh.
-    expect((d as { kind?: string }).kind).not.toBe("ssh");
+    expect((d as { kind?: string }).kind).not.toBe("ssh"); // never substitutes another provider
+    expect((d as { kind?: string }).kind).not.toBe("tailscale");
   });
 
   it("an unknown kind → a NAMED not-ok (unknown-transport), never a fallback", () => {
@@ -328,6 +335,15 @@ describe("#1260 resolveFleetTransportKind — the amicode.fleetTransport knob (A
     if (!r.ok) {
       expect(r.reason).toContain("tailscale-disabled");
       expect(r.reason).not.toContain("ssh"); // disabling tailscale never reroutes to ssh
+    }
+  });
+
+  it("#1260 direct slice: direct is independently disableable → a NAMED off state, never a fallback (AC: independently disableable + AC3)", () => {
+    const r = resolveFleetTransportKind({ setting: "direct", disabled: ["direct"] });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.reason).toContain("direct-disabled");
+      expect(r.reason).not.toContain("ssh"); // disabling direct never reroutes to ssh
     }
   });
 
@@ -364,8 +380,18 @@ describe("#1260 transportForSelection — a selection maps to ITS OWN provider (
     expect(p.resolveBaseUrl()?.hostname).toBe("amico-host.tail9c7b.ts.net");
   });
 
-  it("a not-ok selection (unshipped `direct`) binds NO base URL — honest hub-down, never the configured URL under another provider", () => {
-    const sel = resolveFleetTransportKind({ setting: "direct" }); // unshipped in this build
+  it("direct selection → a DIRECT provider (NEVER a silent ssh/tailscale substitution) dialing its OWN supplied URL", () => {
+    const p = transportForSelection({ ok: true, kind: "direct" }, () => "https://amico-host.vpn.example:4096");
+    expect(p.kind).toBe("direct"); // the load-bearing anti-substitution assertion — its OWN provider
+    expect(p.resolveBaseUrl()?.hostname).toBe("amico-host.vpn.example"); // dials the SUPPLIED URL
+    expect(p.resolveBaseUrl()?.port).toBe("4096");
+  });
+
+  it("a not-ok selection (an unknown kind) binds NO base URL — honest hub-down, never the configured URL under another provider", () => {
+    // all three shipped members are selectable now, so the not-ok path is
+    // exercised by an unknown value (a known-but-unregistered member behaves
+    // identically — see the resolveFleetTransportKind suite).
+    const sel = resolveFleetTransportKind({ setting: "carrier-pigeon" }); // unknown → not-ok
     expect(sel.ok).toBe(false);
     const p = transportForSelection(sel, () => "http://127.0.0.1:4096");
     expect(p.resolveBaseUrl()).toBeUndefined(); // NOT the configured URL — no fallback
