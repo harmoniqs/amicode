@@ -216,6 +216,17 @@ function readFleetActivationConfig(cfg: vscode.WorkspaceConfiguration): FleetAct
   };
 }
 
+/** #1260: the fleet transport provider selector (`amicode.fleetTransport`),
+ *  read into the wiring's fleetTransport option. Empty/unset → undefined → the
+ *  wiring defaults to `ssh` (today's launchd-forward behavior, byte-identical).
+ *  A disabled or not-yet-shipped provider yields the honest hub-down, never a
+ *  silent fallback to another provider (the selection is resolved in the
+ *  wiring via resolveFleetTransportKind). */
+function readFleetTransportOption(cfg: vscode.WorkspaceConfiguration): { kind?: string } {
+  const kind = cfg.get<string>("fleetTransport", "").trim();
+  return kind !== "" ? { kind } : {};
+}
+
 /** Drive-line + qubit list from a device card's YAML frontmatter (§3.1). The
  *  card is durable knowledge (vault); this only READS it. Never throws. */
 function readDeviceCard(cardPath: string): { driveLines: DriveLine[]; qubits: string[] } | undefined {
@@ -1092,6 +1103,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       // entitlement-staged gate still decides whether fleet surfaces exist.
       fleetActivation: () =>
         resolveFleetActivation({ config: readFleetActivationConfig(vscode.workspace.getConfiguration("amicode")) }),
+      // #1260: the pluggable transport provider selector (default ssh).
+      fleetTransport: readFleetTransportOption(vscode.workspace.getConfiguration("amicode")),
       // Derive a fixed service port from the engine port so the iframe origin
       // stays stable across window reloads — preserving localStorage (settings,
       // titlebar positions, developer tool paths). Falls back to ephemeral if
@@ -1408,6 +1421,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         ),
         fleetActivation: () =>
           resolveFleetActivation({ config: readFleetActivationConfig(vscode.workspace.getConfiguration("amicode")) }),
+        // #1260: the pluggable transport provider selector (default ssh).
+        fleetTransport: readFleetTransportOption(vscode.workspace.getConfiguration("amicode")),
         port: configuredPort > 0 ? configuredPort + 1 : undefined,
       });
       amicodeService = adoptedServiceBoot ?? undefined;
