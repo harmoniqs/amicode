@@ -373,27 +373,54 @@ describe("activation wiring — the fleet option is passed ONLY when activation 
     }
   });
 
-  it("#1260 AC3 — a not-yet-shipped provider (tailscale) yields the honest hub-down, NEVER a silent fallback to the configured ssh URL", async () => {
+  it("#1260 AC3 — a not-yet-shipped provider (direct) yields the honest hub-down, NEVER a silent fallback to the configured URL", async () => {
     const { lines, log } = sinkLog();
     const boot = await startAmicodeService(log, {
       engine: { password: "engine-activation-mint", getUrl: () => engine.url },
       fleetActivation: armedActivation({ entitlementConfigDir: entitledDir, overlaySource }),
-      fleetTransport: { kind: "tailscale" }, // a named seam member with no provider in THIS build
+      fleetTransport: { kind: "direct" }, // tailscale shipped in #1260; `direct` is the remaining unshipped seam member
     });
     expect(boot).toBeDefined();
     if (!boot) return;
     try {
       const auth = serverAuthHeader("engine-activation-mint");
-      // No provider is registered for tailscale → NO base URL is bound → the
+      // No provider is registered for `direct` → NO base URL is bound → the
       // honest "hub upstream not available" 503 (the no-upstream answer). The
-      // configured ssh hubUrl (127.0.0.1:9) is NEVER dialed — so this is NOT the
-      // 502 "hub upstream failed" a fallback to ssh would produce.
+      // configured hubUrl (127.0.0.1:9) is NEVER dialed — so this is NOT the 502
+      // "hub upstream failed" a fallback to another provider would produce.
       const res = await fetch(`${boot.url}/session`, { headers: { Authorization: auth } });
       expect(res.status).toBe(503);
       const body = (await res.json()) as { error: string };
       expect(body.error).toBe("hub upstream not available"); // no url bound = honest hub-down
-      expect(body.error).not.toContain("failed"); // NOT a dial of the configured ssh URL
+      expect(body.error).not.toContain("failed"); // NOT a dial of the configured URL
       // the boot log names the transport selection outcome (never a silent no-op)
+      expect(lines.some((l) => l.includes("transport") && l.includes("direct"))).toBe(true);
+    } finally {
+      await boot.service.stop();
+    }
+  });
+
+  it("#1260 tailscale slice — an explicit fleetTransport=tailscale selects the TAILSCALE provider: its configured origin IS dialed (a dead port → the 502, not the no-upstream 503), never a silent hub-down or ssh substitution", async () => {
+    const { lines, log } = sinkLog();
+    const boot = await startAmicodeService(log, {
+      engine: { password: "engine-activation-mint", getUrl: () => engine.url },
+      fleetActivation: armedActivation({ entitlementConfigDir: entitledDir, overlaySource }),
+      fleetTransport: { kind: "tailscale" }, // shipped in #1260 — its OWN provider is constructed
+    });
+    expect(boot).toBeDefined();
+    if (!boot) return;
+    try {
+      const auth = serverAuthHeader("engine-activation-mint");
+      // tailscale is shipped → the tailscale provider is constructed and wraps
+      // the configured origin (armedActivation's hubUrl, a dead 127.0.0.1:9). It
+      // IS dialed → the proxy's "hub upstream failed" 502 (a bound-but-dead URL),
+      // NOT the no-upstream 503 an unshipped provider yields. This proves
+      // tailscale reaches its OWN configured origin — not a silent hub-down.
+      const res = await fetch(`${boot.url}/session`, { headers: { Authorization: auth } });
+      expect(res.status).toBe(502);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toContain("hub upstream failed"); // the configured origin was dialed
+      // the boot log names the shipped tailscale selection (never a silent no-op)
       expect(lines.some((l) => l.includes("transport") && l.includes("tailscale"))).toBe(true);
     } finally {
       await boot.service.stop();

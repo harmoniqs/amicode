@@ -36,7 +36,7 @@ import type { AmicodeServiceServer } from "./amicode_service/server";
 import { fleetStagingSummary, stageFleetDataPlane } from "./amicode_service/fleet_staging";
 import { relayVersionGate, type RelayVersionGateOptions } from "./amicode_service/fleet_version_skew";
 import {
-  createSshProvider,
+  transportForSelection,
   resolveFleetTransportKind,
   hubUrlStringFromProvider,
   type FleetTransportKind,
@@ -187,12 +187,12 @@ export async function startAmicodeService(
         const a = resolveActivation();
         return a !== undefined && a.armed ? a.hubUrl : undefined;
       };
-      // Only `ssh` is registered in this slice. A not-ok selection (disabled, or
-      // a named-but-unshipped tailscale/direct) binds NO URL so the hub proxy
-      // answers its honest hub-down — never a different provider's URL.
-      const transport: FleetTransportProvider = transportSel.ok
-        ? createSshProvider({ resolveUrl: lateHubUrl })
-        : createSshProvider({ resolveUrl: () => undefined });
+      // #1260: each ok kind gets ITS OWN provider — ssh wraps the loopback
+      // forward URL, tailscale the host's MagicDNS origin — NEVER another
+      // kind's (the no-cross-provider-fallback law). A not-ok selection
+      // (disabled / a not-yet-shipped `direct` / unknown) binds NO URL, so the
+      // hub proxy answers its honest hub-down, never a different provider's URL.
+      const transport: FleetTransportProvider = transportForSelection(transportSel, lateHubUrl);
       transportNote = transportSel.ok
         ? `; transport: ${transportSel.kind}`
         : `; transport: ${opts.fleetTransport?.kind ?? "?"} unavailable — ${transportSel.reason} (honest hub-down, no fallback)`;

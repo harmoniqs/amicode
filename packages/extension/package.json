@@ -272,7 +272,7 @@
           "type": "string",
           "enum": ["ssh", "tailscale", "direct"],
           "default": "ssh",
-          "description": "Fleet transport provider (#1260): the client↔host data-plane pipe. `ssh` (default) is the current launchd/systemd `-L` forward — zero new dependency, the only shipped provider. `tailscale` (tailscale serve over MagicDNS) and `direct` (a reachable URL) are named seam members shipping in later slices; selecting one before it ships yields the honest hub-down posture, NEVER a silent fallback to another provider. Unset/`ssh` reproduces today's behavior."
+          "description": "Fleet transport provider (#1260): the client↔host data-plane pipe. `ssh` (default) is the current launchd/systemd `-L` forward — zero new dependency. `tailscale` (opt-in) has the host run `tailscale serve` fronting its loopback service and the client resolve the host's MagicDNS origin — WireGuard roaming/NAT/low-latency with no TCP-over-TCP, and the loopback bind-guard stays intact (the app still binds localhost). `direct` (a reachable URL) is a named seam member shipping in a later slice; selecting it before it ships yields the honest hub-down posture, NEVER a silent fallback to another provider. Unset/`ssh` reproduces today's behavior."
         },
         "amicode.fleetTunnelAlias": {
           "type": "string",

@@ -30,9 +30,11 @@ export type FleetTransportKind = "ssh" | "tailscale" | "direct";
  *  this build ships a provider for it (an unknown value is neither). */
 const KNOWN_KINDS: readonly FleetTransportKind[] = ["ssh", "tailscale", "direct"];
 
-/** The providers THIS slice registers. `tailscale` / `direct` add themselves
- *  to this set when their slices land — the seam is additive. */
-const DEFAULT_AVAILABLE: readonly FleetTransportKind[] = ["ssh"];
+/** The providers this build registers. `ssh` (the seam+walking-skeleton slice)
+ *  and `tailscale` (its own slice, #1260) ship; `direct` adds itself when its
+ *  slice lands — the seam is additive. A named-but-unregistered member (today:
+ *  `direct`) resolves to a NAMED not-ok, never a silent fallback. */
+const DEFAULT_AVAILABLE: readonly FleetTransportKind[] = ["ssh", "tailscale"];
 
 /** The resolution of the `amicode.fleetTransport` setting to a provider kind.
  *  A registered + enabled provider is selected; a disabled one, an
@@ -120,6 +122,49 @@ export interface SshProviderOptions {
   now?: () => number;
 }
 
+/** The shared active health probe BOTH providers use — an HTTP GET to the
+ *  transport's own health endpoint under a client-enforced timeout. `reachable`
+ *  = the host ANSWERED (any HTTP status — a 5xx is still an answer, per the
+ *  fleet_posture DataPlaneOutcome contract); `unreachable` = no answer (a
+ *  network error, a client-enforced timeout, or no base URL bound). The
+ *  `noBaseUrlReason` differs per provider (which base URL is absent), so the
+ *  caller supplies it. This is the ONE probe — never a per-provider detector. */
+async function probeTransportHealth(
+  resolveBaseUrl: () => URL | undefined,
+  opts: {
+    fetch: typeof fetch;
+    healthPath: string;
+    timeoutMs: number;
+    now: () => number;
+    noBaseUrlReason: string;
+    authHeader?: string;
+  },
+): Promise<FleetTransportHealth> {
+  const base = resolveBaseUrl();
+  if (base === undefined) return { reachable: false, reason: opts.noBaseUrlReason };
+  const target = new URL(opts.healthPath, base);
+  const started = opts.now();
+  try {
+    const res = await opts.fetch(target.toString(), {
+      signal: AbortSignal.timeout(opts.timeoutMs),
+      ...(opts.authHeader !== undefined ? { headers: { Authorization: opts.authHeader } } : {}),
+    });
+    const latencyMs = opts.now() - started;
+    // Reachable = the host ANSWERED (any status); parse the build version
+    // best-effort from a JSON body (never throw on a non-JSON answer).
+    let version: string | null = null;
+    try {
+      const body = (await res.json()) as { version?: unknown };
+      if (typeof body.version === "string") version = body.version;
+    } catch {
+      /* a non-JSON answer is still an answer — version stays null */
+    }
+    return { reachable: true, latencyMs, version };
+  } catch (e) {
+    return { reachable: false, reason: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 /** The `ssh` provider — the current launchd `-L` forward (systemd as its Linux
  *  form) behind the seam. Its base URL is the loopback endpoint the forward
  *  binds; the far end is reached through the OS-managed SSH tunnel. */
@@ -141,29 +186,14 @@ export function createSshProvider(opts: SshProviderOptions): FleetTransportProvi
     kind: "ssh",
     resolveBaseUrl,
     async health(): Promise<FleetTransportHealth> {
-      const base = resolveBaseUrl();
-      if (base === undefined) return { reachable: false, reason: "no-base-url: no loopback forward bound (honest hub-down)" };
-      const target = new URL(healthPath, base);
-      const started = now();
-      try {
-        const res = await doFetch(target.toString(), {
-          signal: AbortSignal.timeout(timeoutMs),
-          ...(opts.authHeader !== undefined ? { headers: { Authorization: opts.authHeader } } : {}),
-        });
-        const latencyMs = now() - started;
-        // Reachable = the host ANSWERED (any status); parse the build version
-        // best-effort from a JSON body (never throw on a non-JSON answer).
-        let version: string | null = null;
-        try {
-          const body = (await res.json()) as { version?: unknown };
-          if (typeof body.version === "string") version = body.version;
-        } catch {
-          /* a non-JSON answer is still an answer — version stays null */
-        }
-        return { reachable: true, latencyMs, version };
-      } catch (e) {
-        return { reachable: false, reason: e instanceof Error ? e.message : String(e) };
-      }
+      return probeTransportHealth(resolveBaseUrl, {
+        fetch: doFetch,
+        healthPath,
+        timeoutMs,
+        now,
+        noBaseUrlReason: "no-base-url: no loopback forward bound (honest hub-down)",
+        ...(opts.authHeader !== undefined ? { authHeader: opts.authHeader } : {}),
+      });
     },
     // The launchd/systemd `-L` forward is OS-managed (installed by the fleet
     // installer) in this build — the ssh provider does not own its lifecycle,
@@ -180,9 +210,113 @@ export function createSshProvider(opts: SshProviderOptions): FleetTransportProvi
 }
 
 
+/** Options for the `tailscale` provider. Mirrors SshProviderOptions, with the
+ *  MagicDNS resolution in place of the loopback-forward resolution. */
+export interface TailscaleProviderOptions {
+  /** Resolve the host's MagicDNS origin (e.g. https://host.tailnet.ts.net that
+   *  the host's `tailscale serve` fronts), read LATE (per call) so a torn-down
+   *  serve or a logged-out tailnet yields undefined — the honest hub-down,
+   *  never a stale boot-time snapshot, and NEVER another provider's URL (the
+   *  no-cross-provider-fallback law). Injectable because `tailscale` is not
+   *  available in CI: the tests drive this seam, not the `tailscale` binary. */
+  resolveMagicDnsOrigin: () => string | undefined;
+  /** The active health probe's fetch (injectable; default the global fetch). */
+  fetch?: typeof fetch;
+  /** The transport-liveness endpoint the probe hits (default /global/health —
+   *  the same endpoint the ssh provider probes and the merged projection reads
+   *  the hub build version from). */
+  healthPath?: string;
+  /** An Authorization header for the probe, when the host requires one. */
+  authHeader?: string;
+  /** The client-enforced probe timeout (ms). Default 1500 (checkFleet's poll). */
+  timeoutMs?: number;
+  /** Injectable clock for the latency measurement (prod = Date.now). */
+  now?: () => number;
+}
+
+/** The `tailscale` provider (#1260) — the host runs `tailscale serve` fronting
+ *  its LOOPBACK service; the client points the hub proxy at the host's MagicDNS
+ *  origin. `resolveBaseUrl()` is that origin (read LATE); `health()` probes it.
+ *
+ *  Loopback-bind preservation (ADR 0024, the load-bearing reason `serve` is the
+ *  chosen integration): `tailscale serve` dials 127.0.0.1 on the host, so the
+ *  host's engine/service bind hostname stays loopback and the mutation guard
+ *  never trips — see tailscaleServeMapping, whose target is loopback by
+ *  construction. Binding the engine to the tailnet 100.x directly (rejected)
+ *  would trip that guard; this provider deliberately does not do that.
+ *
+ *  Lifecycle: `tailscale serve` is host-side (installer-provisioned) and
+ *  tailscaled is a system daemon, so the CLIENT provider's start()/stop() are
+ *  honest no-ops — the same OS-managed posture as the ssh provider. */
+export function createTailscaleProvider(opts: TailscaleProviderOptions): FleetTransportProvider {
+  const doFetch = opts.fetch ?? fetch;
+  const healthPath = opts.healthPath ?? "/global/health";
+  const timeoutMs = opts.timeoutMs ?? 1500;
+  const now = opts.now ?? (() => Date.now());
+  const resolveBaseUrl = (): URL | undefined => {
+    const raw = opts.resolveMagicDnsOrigin();
+    if (raw === undefined || raw.trim() === "") return undefined;
+    try {
+      return new URL(raw);
+    } catch {
+      return undefined;
+    }
+  };
+  return {
+    kind: "tailscale",
+    resolveBaseUrl,
+    async health(): Promise<FleetTransportHealth> {
+      return probeTransportHealth(resolveBaseUrl, {
+        fetch: doFetch,
+        healthPath,
+        timeoutMs,
+        now,
+        noBaseUrlReason: "no-base-url: no MagicDNS origin resolved (honest hub-down)",
+        ...(opts.authHeader !== undefined ? { authHeader: opts.authHeader } : {}),
+      });
+    },
+    // `tailscale serve` is host-side (installer-provisioned) and tailscaled is a
+    // system daemon — neither is the client provider's to start/stop, so these
+    // are honest no-ops (the same OS-managed posture the ssh provider takes).
+    async start(): Promise<void> {
+      /* host-side `tailscale serve` + system daemon — nothing to start here */
+    },
+    async stop(): Promise<void> {
+      /* host-side `tailscale serve` + system daemon — nothing to stop here */
+    },
+  };
+}
+
+
+/** Construct the transport provider for a resolved selection (the wiring's
+ *  kind→provider map). Each OK kind gets ITS OWN provider — NEVER another
+ *  kind's (the no-cross-provider-fallback law, AC3) — so the per-provider
+ *  posture signature and lifecycle stay honest. A not-ok selection (disabled, a
+ *  not-yet-shipped member, or unknown) binds NO base URL: the honest hub-down,
+ *  never the configured URL wrapped in a substitute provider. `resolveUrl` is
+ *  the transport-appropriate base-URL source read LATE — for ssh the loopback
+ *  forward URL, for tailscale the host's MagicDNS origin. */
+export function transportForSelection(
+  sel: FleetTransportSelection,
+  resolveUrl: () => string | undefined,
+): FleetTransportProvider {
+  if (!sel.ok) return createSshProvider({ resolveUrl: () => undefined }); // no URL bound = honest hub-down
+  switch (sel.kind) {
+    case "tailscale":
+      return createTailscaleProvider({ resolveMagicDnsOrigin: resolveUrl });
+    case "ssh":
+      return createSshProvider({ resolveUrl });
+    default:
+      // `direct` ships in its own later slice, so it cannot be ok here (not in
+      // DEFAULT_AVAILABLE) — but keep the no-fallback law explicit rather than
+      // silently substituting ssh for an unexpected ok kind.
+      return createSshProvider({ resolveUrl: () => undefined });
+  }
+}
+
 // ── the shared drop-vs-slow-link posture contract (this slice OWNS it) ────────
 // A provider's health() maps to the fleet_posture DataPlaneOutcome stream
-// through ONE mapping, so every provider (ssh now; tailscale/direct later) feeds
+// through ONE mapping, so every provider (ssh + tailscale now; direct later) feeds
 // the SAME FleetPostureDetector — never a per-provider detector fork. The
 // detector's own hysteresis then does the drop-vs-slow discrimination:
 //   reachable   → `responded` (its p95 latency window decides hub-up-but-slow
@@ -263,4 +397,39 @@ export function systemdTunnelUnit(opts: { alias: string; port: number }): string
     "WantedBy=default.target",
     "",
   ].join("\n");
+}
+
+// ── the tailscale provider's host form — `tailscale serve` fronts loopback ────
+// The ssh provider's OS form is a loopback `-L` forward (sshForwardArgs); the
+// tailscale provider's host form is `tailscale serve` fronting a LOOPBACK
+// target. This is the load-bearing reason `serve` is the chosen Tailscale
+// integration (ADR 0024): tailscaled publishes the node's HTTPS MagicDNS name,
+// but the target it proxies to is 127.0.0.1 — so the host's engine/service keeps
+// binding loopback and the mutation guard (bind_host/solver_mode) never trips.
+// Binding the engine to the tailnet 100.x directly (rejected) would trip it.
+
+/** The `tailscale serve` mapping — the public MagicDNS origin the client points
+ *  its hub proxy at, and the LOOPBACK target `serve` proxies to on the host.
+ *  `args` is the host-side `tailscale serve` argv (the fleet installer
+ *  provisions it — the client provider never runs it), analogous to
+ *  sshForwardArgs. The target binds 127.0.0.1 by construction (never 0.0.0.0,
+ *  never a tailnet 100.x), which is what keeps the host's loopback bind honest. */
+export function tailscaleServeMapping(opts: {
+  magicDnsName: string;
+  port: number;
+  /** The tailnet-facing HTTPS port `serve` publishes on (default 443 → the
+   *  MagicDNS origin carries no explicit port). */
+  tailnetPort?: number;
+}): { magicDnsOrigin: string; target: string; args: string[] } {
+  const tailnetPort = opts.tailnetPort ?? 443;
+  const magicDnsOrigin =
+    tailnetPort === 443 ? `https://${opts.magicDnsName}` : `https://${opts.magicDnsName}:${tailnetPort}`;
+  const target = `http://127.0.0.1:${opts.port}`; // LOOPBACK — never 0.0.0.0, never a tailnet 100.x
+  // `tailscale serve --bg <target>` publishes <target> on the node's MagicDNS
+  // HTTPS name, in the background (persistent). --https=<port> when non-default.
+  const args =
+    tailnetPort === 443
+      ? ["serve", "--bg", target]
+      : ["serve", "--bg", `--https=${tailnetPort}`, target];
+  return { magicDnsOrigin, target, args };
 }

@@ -12,13 +12,18 @@
 import { describe, it, expect, afterEach } from "vitest";
 import {
   createSshProvider,
+  createTailscaleProvider,
   resolveFleetTransportKind,
+  transportForSelection,
   transportHealthToOutcome,
   sshForwardArgs,
   systemdTunnelUnit,
+  tailscaleServeMapping,
   hubUrlStringFromProvider,
 } from "../src/amicode_service/fleet_transport";
 import { FleetPostureDetector } from "../src/amicode_service/fleet_posture";
+import { isLoopbackHostname } from "../src/amicode_service/bind_host";
+import { solverModeResponse } from "../src/amicode_service/solver_mode";
 import { startStubHub, type StubHub } from "./support/stub_hub";
 
 let hub: StubHub | undefined;
@@ -55,6 +60,97 @@ describe("#1260 ssh provider — resolveBaseUrl (AC2: the loopback base URL thro
     await expect(p.stop()).resolves.toBeUndefined();
     // lifecycle calls never disturb the base-URL seam
     expect(p.resolveBaseUrl()?.port).toBe("4096");
+  });
+});
+
+// ── the `tailscale` provider (THIS slice, #1260) ─────────────────────────────
+// The host runs `tailscale serve` fronting its LOOPBACK service; the client
+// points the hub proxy at the host's MagicDNS origin. `tailscale` is not on CI,
+// so the MagicDNS resolution is modeled behind an injectable seam
+// (resolveMagicDnsOrigin) exactly as the ssh provider models its forward
+// (resolveUrl) — these test the provider logic, never the `tailscale` binary.
+describe("#1260 tailscale provider — resolveBaseUrl (AC1: the host's MagicDNS origin as the base URL)", () => {
+  it("resolves the host's MagicDNS origin (https://<host>.<tailnet>.ts.net) as the base URL", () => {
+    const p = createTailscaleProvider({ resolveMagicDnsOrigin: () => "https://amico-host.tail9c7b.ts.net" });
+    expect(p.kind).toBe("tailscale");
+    const u = p.resolveBaseUrl();
+    expect(u).toBeInstanceOf(URL);
+    expect(u?.protocol).toBe("https:"); // `tailscale serve` fronts on HTTPS (443) by default
+    expect(u?.hostname).toBe("amico-host.tail9c7b.ts.net");
+  });
+
+  it("resolves LATE (per call): a torn-down `tailscale serve` / logged-out tailnet yields undefined — the honest hub-down, never a stale snapshot, never another provider's URL", () => {
+    let origin: string | undefined = "https://amico-host.tail9c7b.ts.net";
+    const p = createTailscaleProvider({ resolveMagicDnsOrigin: () => origin });
+    expect(p.resolveBaseUrl()).toBeInstanceOf(URL);
+    origin = undefined; // serve torn down / logged out of the tailnet
+    expect(p.resolveBaseUrl()).toBeUndefined(); // no MagicDNS origin bound = honest hub-down
+  });
+
+  it("start()/stop() complete the Data Contract — `tailscale serve` is host-side (installer-provisioned) and tailscaled is a system daemon, so the client provider's lifecycle calls are honest no-ops that never disturb URL resolution", async () => {
+    const p = createTailscaleProvider({ resolveMagicDnsOrigin: () => "https://amico-host.tail9c7b.ts.net" });
+    await expect(p.start()).resolves.toBeUndefined();
+    await expect(p.stop()).resolves.toBeUndefined();
+    expect(p.resolveBaseUrl()?.hostname).toBe("amico-host.tail9c7b.ts.net");
+  });
+});
+
+describe("#1260 tailscale provider — health + honest hub-down (AC: MagicDNS health; shared AC: no reachable host → honest hub-down, never a silent fallback)", () => {
+  it("a reachable host (its `tailscale serve` origin, modeled by the stub hub) answers → { reachable: true } with latency + parsed version", async () => {
+    hub = await startStubHub({ version: "v1.18.29" });
+    // the stub hub stands in for the host's `tailscale serve` origin — loopback
+    // in CI, a MagicDNS name in prod; the provider only ever sees a base URL
+    const p = createTailscaleProvider({ resolveMagicDnsOrigin: () => hub!.url });
+    const h = await p.health();
+    expect(h.reachable).toBe(true);
+    if (h.reachable) {
+      expect(typeof h.latencyMs).toBe("number");
+      expect(h.latencyMs).toBeGreaterThanOrEqual(0);
+      expect(h.version).toBe("v1.18.29");
+    }
+    // the probe hit the transport's own health endpoint, not a data-plane route
+    expect(hub.requests.some((r) => r.startsWith("GET /global/health"))).toBe(true);
+  });
+
+  it("no reachable host (a dead origin) → { reachable: false } with a named reason (honest, never a fabricated up)", async () => {
+    const p = createTailscaleProvider({ resolveMagicDnsOrigin: () => "http://127.0.0.1:1", timeoutMs: 500 });
+    const h = await p.health();
+    expect(h.reachable).toBe(false);
+    if (!h.reachable) expect(h.reason).toBeTruthy();
+  });
+
+  it("no MagicDNS origin resolved (torn-down serve / logged-out tailnet) → { reachable: false, reason: no-base-url } — the honest hub-down, not a probe to nowhere", async () => {
+    const p = createTailscaleProvider({ resolveMagicDnsOrigin: () => undefined });
+    const h = await p.health();
+    expect(h.reachable).toBe(false);
+    if (!h.reachable) expect(h.reason).toContain("no-base-url");
+  });
+
+  it("shared drop-vs-slow contract: an unreachable tailscale host maps to `no-response` whose detail NAMES tailscale — the REUSED transportHealthToOutcome, not a per-provider detector (AC4 per-provider signature)", () => {
+    const o = transportHealthToOutcome({ reachable: false, reason: "ETIMEDOUT (DERP)" }, "tailscale");
+    expect(o.kind).toBe("no-response");
+    if (o.kind === "no-response") {
+      expect(o.detail).toContain("tailscale"); // a Tailscale roam is told apart from an SSH drop
+      expect(o.detail).toContain("ETIMEDOUT");
+    }
+  });
+
+  it("shared AC: a down tailscale transport drives HUB-DOWN through the SAME FleetPostureDetector — the honest hub-down posture, NEVER a reroute to ssh", async () => {
+    const p = createTailscaleProvider({ resolveMagicDnsOrigin: () => "http://127.0.0.1:1", timeoutMs: 300 });
+    const det = new FleetPostureDetector({ tuning: { hubDownConsecutiveNoResponses: 3 } });
+    for (let i = 0; i < 3; i++) {
+      det.record(transportHealthToOutcome(await p.health(), p.kind));
+    }
+    expect(det.snapshot().state).toBe("standalone"); // the hub-down posture (base standalone + pointer)
+    expect(det.snapshot().pointer).toContain("hub-down");
+  });
+
+  it("end-to-end: a reachable tailscale origin feeds the SAME contract → fleet stays up (no reroute needed)", async () => {
+    hub = await startStubHub();
+    const p = createTailscaleProvider({ resolveMagicDnsOrigin: () => hub!.url });
+    const det = new FleetPostureDetector();
+    det.record(transportHealthToOutcome(await p.health(), p.kind));
+    expect(det.snapshot().state).toBe("fleet"); // a healthy transport keeps fleet posture
   });
 });
 
@@ -102,16 +198,18 @@ describe("#1260 resolveFleetTransportKind — the amicode.fleetTransport knob (A
     expect(resolveFleetTransportKind({ setting: "SSH" })).toEqual({ ok: true, kind: "ssh" }); // case/space tolerant
   });
 
-  it("a provider not registered in THIS build (tailscale/direct) → a NAMED not-ok, NEVER a silent fallback to ssh (AC3)", () => {
-    const ts = resolveFleetTransportKind({ setting: "tailscale" }); // available defaults to ssh-only this slice
-    expect(ts.ok).toBe(false);
-    if (!ts.ok) {
-      expect(ts.reason).toContain("tailscale");
-      expect(ts.reason).toContain("unavailable");
+  it("a provider not registered in THIS build (direct) → a NAMED not-ok, NEVER a silent fallback to ssh (AC3)", () => {
+    // tailscale shipped in #1260, so `direct` is now the still-unshipped seam
+    // member that pins the no-cross-provider-fallback law.
+    const d = resolveFleetTransportKind({ setting: "direct" }); // available defaults to ssh+tailscale
+    expect(d.ok).toBe(false);
+    if (!d.ok) {
+      expect(d.reason).toContain("direct");
+      expect(d.reason).toContain("unavailable");
     }
     // the seam KNOWS the kind (it is a valid member) — it just is not shipped yet;
     // resolution reports that honestly and does not substitute ssh.
-    expect((ts as { kind?: string }).kind).not.toBe("ssh");
+    expect((d as { kind?: string }).kind).not.toBe("ssh");
   });
 
   it("an unknown kind → a NAMED not-ok (unknown-transport), never a fallback", () => {
@@ -126,12 +224,53 @@ describe("#1260 resolveFleetTransportKind — the amicode.fleetTransport knob (A
     if (!r.ok) expect(r.reason).toContain("ssh-disabled");
   });
 
+  it("#1260 tailscale slice: tailscale is independently disableable → a NAMED off state, never a fallback (AC: independently disableable + AC3)", () => {
+    const r = resolveFleetTransportKind({ setting: "tailscale", disabled: ["tailscale"] });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.reason).toContain("tailscale-disabled");
+      expect(r.reason).not.toContain("ssh"); // disabling tailscale never reroutes to ssh
+    }
+  });
+
   it("a provider becomes selectable once its slice registers it (the seam is additive)", () => {
     // the tailscale/direct slices land by adding themselves to `available`
     expect(resolveFleetTransportKind({ setting: "tailscale", available: ["ssh", "tailscale"] })).toEqual({
       ok: true,
       kind: "tailscale",
     });
+  });
+
+  it("#1260 tailscale slice: tailscale is selectable by DEFAULT now (its provider shipped — added to the available set)", () => {
+    // no explicit `available` — the default set now includes tailscale
+    expect(resolveFleetTransportKind({ setting: "tailscale" })).toEqual({ ok: true, kind: "tailscale" });
+    expect(resolveFleetTransportKind({ setting: "TAILSCALE" })).toEqual({ ok: true, kind: "tailscale" }); // case/space tolerant
+  });
+});
+
+// ── #1260 transportForSelection — a selection maps to ITS OWN provider ───────
+// The wiring maps a resolved selection → a provider. AC3's law: an OK kind gets
+// its OWN provider (never another kind's — no silent cross-provider
+// substitution), and a not-ok selection binds NO base URL (the honest hub-down),
+// never the configured URL wrapped in a different provider.
+describe("#1260 transportForSelection — a selection maps to ITS OWN provider (AC3: no cross-provider substitution)", () => {
+  it("ssh selection → an ssh provider wrapping the resolver (no regression)", () => {
+    const p = transportForSelection({ ok: true, kind: "ssh" }, () => "http://127.0.0.1:4096");
+    expect(p.kind).toBe("ssh");
+    expect(p.resolveBaseUrl()?.port).toBe("4096");
+  });
+
+  it("tailscale selection → a TAILSCALE provider (NEVER a silent ssh substitution) resolving the same base-URL source", () => {
+    const p = transportForSelection({ ok: true, kind: "tailscale" }, () => "https://amico-host.tail9c7b.ts.net");
+    expect(p.kind).toBe("tailscale"); // the load-bearing anti-substitution assertion
+    expect(p.resolveBaseUrl()?.hostname).toBe("amico-host.tail9c7b.ts.net");
+  });
+
+  it("a not-ok selection (unshipped `direct`) binds NO base URL — honest hub-down, never the configured URL under another provider", () => {
+    const sel = resolveFleetTransportKind({ setting: "direct" }); // unshipped in this build
+    expect(sel.ok).toBe(false);
+    const p = transportForSelection(sel, () => "http://127.0.0.1:4096");
+    expect(p.resolveBaseUrl()).toBeUndefined(); // NOT the configured URL — no fallback
   });
 });
 
@@ -226,6 +365,55 @@ describe("#1260 ssh provider OS forms — the loopback-only `-L` forward (ADR 00
     expect(unit).toContain("127.0.0.1:4096:127.0.0.1:4096"); // the same loopback-only forward
     expect(unit).toContain("fleet-hub");
     expect(unit).toContain("Restart="); // the KeepAlive equivalent (launchd KeepAlive → systemd Restart)
+  });
+});
+
+// ── the `tailscale serve` host form — the loopback-preservation building block ─
+// The ssh provider's OS form is a loopback `-L` forward; the tailscale
+// provider's host form is `tailscale serve` fronting a loopback target. This
+// is WHY `serve` is chosen over a direct tailnet-IP bind (ADR 0024): the host's
+// engine/service keeps binding 127.0.0.1, so the mutation guard never trips.
+describe("#1260 tailscaleServeMapping — the loopback-only host form (ADR 0024: `serve`, not a direct tailnet bind)", () => {
+  it("maps the public MagicDNS origin → a LOOPBACK target (127.0.0.1) — the host engine/service bind stays loopback", () => {
+    const m = tailscaleServeMapping({ magicDnsName: "amico-host.tail9c7b.ts.net", port: 4096 });
+    // the public face is the MagicDNS origin the client resolves as its base URL
+    expect(m.magicDnsOrigin).toBe("https://amico-host.tail9c7b.ts.net");
+    // the target `tailscale serve` proxies TO is LOOPBACK — never 0.0.0.0, never a tailnet 100.x
+    const target = new URL(m.target);
+    expect(target.hostname).toBe("127.0.0.1");
+    expect(target.port).toBe("4096");
+    expect(isLoopbackHostname(target.hostname)).toBe(true); // the guard's own predicate agrees
+    expect(m.target).not.toContain("0.0.0.0");
+    expect(m.target).not.toMatch(/\b100\.\d+\.\d+\.\d+/);
+  });
+
+  it("the `tailscale serve` argv fronts the loopback target in the background — never binds the engine to the tailnet IP", () => {
+    const m = tailscaleServeMapping({ magicDnsName: "amico-host.tail9c7b.ts.net", port: 4096 });
+    expect(m.args[0]).toBe("serve"); // `tailscale serve ...`
+    const argv = m.args.join(" ");
+    expect(argv).toContain("http://127.0.0.1:4096"); // the loopback target it proxies to
+    expect(argv).not.toContain("0.0.0.0");
+    expect(argv).not.toMatch(/\b100\.\d+\.\d+\.\d+/);
+  });
+
+  it("the port flows through the serve target (a non-default canonical port)", () => {
+    const m = tailscaleServeMapping({ magicDnsName: "h.tailnet.ts.net", port: 7777 });
+    expect(new URL(m.target).port).toBe("7777");
+  });
+
+  it("#775 front-door composition: `tailscale serve` targets the SAME loopback front-door endpoint the ssh forward reaches — through the front door, never around it", () => {
+    const port = 4096; // the ONE canonical hub front-door (loopback) port both transports reach
+    const serve = tailscaleServeMapping({ magicDnsName: "h.tailnet.ts.net", port });
+    // the ssh forward's far end (the front door it dials) is 127.0.0.1:<port>
+    const sshForward = sshForwardArgs({ alias: "h", port });
+    expect(sshForward.join(" ")).toContain(`127.0.0.1:${port}:127.0.0.1:${port}`);
+    // the tailscale serve target is the SAME loopback front-door endpoint — the
+    // provider reaches the hub THROUGH its #775 front door, never a divergent
+    // bypass (a different port, 0.0.0.0, or the tailnet IP re-exposes the wedge).
+    const t = new URL(serve.target);
+    expect(t.hostname).toBe("127.0.0.1");
+    expect(t.port).toBe(String(port));
+    expect(serve.target).not.toMatch(/\b100\.\d+\.\d+\.\d+/); // never the tailnet IP (a bypass around the front door)
   });
 });
 
