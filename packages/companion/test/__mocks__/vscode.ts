@@ -29,13 +29,19 @@ export const commands = {
 
 export const window = {
   messages: { error: [] as string[], info: [] as string[], warn: [] as string[] },
+  // #1277: the actions offered on the most recent showInformationMessage calls,
+  // and the scripted pick it returns. `_infoResponse` defaults undefined (= the
+  // user dismissed); tests set it to an action label to simulate an accept.
+  infoActions: [] as string[][],
+  _infoResponse: undefined as string | undefined,
   showErrorMessage: (m: string) => {
     window.messages.error.push(m);
     return Promise.resolve(undefined);
   },
-  showInformationMessage: (m: string) => {
+  showInformationMessage: (m: string, ...actions: string[]) => {
     window.messages.info.push(m);
-    return Promise.resolve(undefined);
+    window.infoActions.push(actions);
+    return Promise.resolve(window._infoResponse);
   },
   showWarningMessage: (m: string) => {
     window.messages.warn.push(m);

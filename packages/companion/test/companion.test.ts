@@ -23,7 +23,7 @@ import {
   resolveLocalReopenTarget,
   reopenWindow,
 } from "../src/reopen";
-import { activate, deactivate, REOPEN_COMMAND, COMPANION_HUB_URL_SETTING } from "../src/companion";
+import { activate, deactivate, REOPEN_COMMAND, COMPANION_HUB_URL_SETTING, COMPANION_HUB_SSH_ALIAS_SETTING } from "../src/companion";
 import { DEFAULT_PROBE_CADENCE_MS, type SensorScheduler } from "../src/link_sensor";
 
 // A fake ExtensionContext — the companion touches only `subscriptions`.
@@ -50,8 +50,12 @@ beforeEach(() => {
   (vscode.commands as unknown as { _reset(): void })._reset();
   vscode.window.messages.error.length = 0;
   vscode.window.messages.info.length = 0;
+  vscode.window.messages.warn.length = 0;
+  vscode.window.infoActions.length = 0;
+  (vscode.window as unknown as { _infoResponse: string | undefined })._infoResponse = undefined;
   vscode.env.remoteName = undefined;
   (vscode.workspace as unknown as { _config: Record<string, unknown> })._config = {};
+  (vscode.workspace as unknown as { textDocuments: unknown[] }).textDocuments = [];
 });
 
 // ── AC2: client-side probe, independent of any host-side instance ────────────
@@ -382,5 +386,112 @@ describe("activate (#1276 — the auto-DOWN drop fires through the wired sensor)
     const api = activate(fakeContext() as never, { scheduler });
     expect(api.autoDown).toBeDefined();
     expect(typeof api.autoDown.onPosture).toBe("function");
+  });
+});
+
+// ── #1277: activate wires the prompt-UP orchestrator onto the SAME sensor seam ─
+// A fetch double whose reachability is flipped mid-stream, so one wired sensor
+// drives a full hub-down → sustained-recovery arc through the real merged
+// detector: 3 unreachable → hub-down, then 3 reachable → the recovery prompt.
+function flippableFetch(state: { reachable: boolean }) {
+  return ((_url: string) =>
+    state.reachable
+      ? Promise.resolve({ status: 200, json: () => Promise.resolve({}) } as unknown as Response)
+      : Promise.reject(new Error("ECONNREFUSED"))) as unknown as typeof fetch;
+}
+
+describe("activate (#1277 — the prompt-UP offer fires through the wired sensor)", () => {
+  it("a sustained recovery after a hub-down prompts to reopen in Remote-SSH; ACCEPT → reopen into the Remote-SSH target", async () => {
+    (vscode.workspace as unknown as { _config: Record<string, unknown> })._config[COMPANION_HUB_URL_SETTING] =
+      "http://127.0.0.1:4096";
+    (vscode.window as unknown as { _infoResponse: string | undefined })._infoResponse = "Reopen in Remote-SSH"; // accept
+    const { scheduler } = fakeScheduler();
+    const opened: string[] = [];
+    const link = { reachable: false };
+    const api = activate(fakeContext() as never, {
+      scheduler,
+      probeFetch: flippableFetch(link),
+      remoteSshAlias: () => "amico-erlich",
+      openFolder: (uri) => opened.push(uri),
+      now: () => 0,
+    });
+    // 3 unreachable → the merged detector enters hub-down (standalone)
+    await api.linkSensor.tick();
+    await api.linkSensor.tick();
+    await api.linkSensor.tick();
+    await flush();
+    expect(vscode.window.messages.info).toHaveLength(0); // no prompt while still down
+    // link recovers — 3 consecutive healthy → fleet (sustained recovery)
+    link.reachable = true;
+    await api.linkSensor.tick();
+    await api.linkSensor.tick();
+    await api.linkSensor.tick();
+    await flush();
+    expect(vscode.window.messages.info.length).toBeGreaterThanOrEqual(1); // the reopen prompt was shown
+    expect(vscode.window.infoActions.some((a) => a.includes("Reopen in Remote-SSH"))).toBe(true);
+    // accepted → reopened UP into the Remote-SSH authority (never a local file://)
+    expect(opened).toEqual(["vscode-remote://ssh-remote+amico-erlich/~"]);
+  });
+
+  it("a sustained-recovery prompt the user DISMISSES reopens NOTHING (never automatic)", async () => {
+    (vscode.workspace as unknown as { _config: Record<string, unknown> })._config[COMPANION_HUB_URL_SETTING] =
+      "http://127.0.0.1:4096";
+    (vscode.window as unknown as { _infoResponse: string | undefined })._infoResponse = undefined; // dismiss
+    const { scheduler } = fakeScheduler();
+    const opened: string[] = [];
+    const link = { reachable: false };
+    const api = activate(fakeContext() as never, {
+      scheduler,
+      probeFetch: flippableFetch(link),
+      remoteSshAlias: () => "hub",
+      openFolder: (uri) => opened.push(uri),
+      now: () => 0,
+    });
+    await api.linkSensor.tick();
+    await api.linkSensor.tick();
+    await api.linkSensor.tick();
+    await flush();
+    link.reachable = true;
+    await api.linkSensor.tick();
+    await api.linkSensor.tick();
+    await api.linkSensor.tick();
+    await flush();
+    expect(vscode.window.messages.info.length).toBeGreaterThanOrEqual(1); // prompt shown
+    expect(opened).toHaveLength(0); // dismissed → nothing reopened (AC2)
+  });
+
+  it("reads the hub-ssh-alias setting when no alias getter is injected (a recovery with no alias shows no half-prompt)", async () => {
+    (vscode.workspace as unknown as { _config: Record<string, unknown> })._config[COMPANION_HUB_URL_SETTING] =
+      "http://127.0.0.1:4096";
+    (vscode.workspace as unknown as { _config: Record<string, unknown> })._config[COMPANION_HUB_SSH_ALIAS_SETTING] = "";
+    (vscode.window as unknown as { _infoResponse: string | undefined })._infoResponse = "Reopen in Remote-SSH";
+    const { scheduler } = fakeScheduler();
+    const opened: string[] = [];
+    const link = { reachable: false };
+    const api = activate(fakeContext() as never, {
+      scheduler,
+      probeFetch: flippableFetch(link),
+      openFolder: (uri) => opened.push(uri),
+      now: () => 0,
+    });
+    await api.linkSensor.tick();
+    await api.linkSensor.tick();
+    await api.linkSensor.tick();
+    await flush();
+    link.reachable = true;
+    await api.linkSensor.tick();
+    await api.linkSensor.tick();
+    await api.linkSensor.tick();
+    await flush();
+    expect(vscode.window.messages.info).toHaveLength(0); // no half-prompt without a target
+    expect(opened).toHaveLength(0);
+    expect(vscode.window.messages.warn.length).toBeGreaterThanOrEqual(1); // the honest cannot-resolve notice
+  });
+
+  it("exposes the prompt-UP orchestrator wired to the same posture seam", () => {
+    const { scheduler } = fakeScheduler();
+    const api = activate(fakeContext() as never, { scheduler });
+    expect(api.promptUp).toBeDefined();
+    expect(typeof api.promptUp.onPosture).toBe("function");
   });
 });

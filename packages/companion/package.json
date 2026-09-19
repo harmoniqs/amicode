@@ -44,6 +44,11 @@
           "type": "string",
           "default": "",
           "description": "Absolute LOCAL folder the auto-DOWN drop reopens into \u2014 the thin-client lifeboat where the host-file mount surfaces your files when the hub link is down. Empty = no local target known; the companion still surfaces the transition and the honest \u2018no local folder\u2019 error rather than opening a half-window."
+        },
+        "amicode.companion.hubSshAlias": {
+          "type": "string",
+          "default": "",
+          "description": "Hub Remote-SSH alias the prompt-UP reopen returns into on a sustained link recovery. On recovery the companion PROMPTS to reopen this window in Remote-SSH (vscode-remote://ssh-remote+<alias>/~) and reopens only if you accept \u2014 never a forced switch. Empty = no Remote-SSH target known; a recovery then surfaces an honest \u2018cannot resolve target\u2019 notice rather than a half-prompt."
         }
       }
     }

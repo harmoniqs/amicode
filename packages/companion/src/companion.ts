@@ -21,6 +21,7 @@ import {
 } from "./reopen";
 import { LinkSensor, type LinkPosture, type SensorScheduler } from "./link_sensor";
 import { AutoDownSwitch } from "./auto_switch";
+import { PromptUpSwitch } from "./prompt_up";
 
 /** The one command the companion contributes (see package.json contributes). */
 export const REOPEN_COMMAND = "amicode.companion.reopenWindow";
@@ -35,6 +36,13 @@ export const COMPANION_HUB_URL_SETTING = "amicode.companion.hubUrl";
  *  transition and the reopen's honest "no local folder" error rather than a
  *  half-window). #1278 will supply/carry this across the switch. */
 export const COMPANION_LOCAL_PATH_SETTING = "amicode.companion.localWorkspacePath";
+
+/** The client-side setting naming the hub's Remote-SSH alias the prompt-UP
+ *  (#1277) reopen returns into on a sustained recovery. Empty = no Remote-SSH
+ *  target known; a recovery then surfaces the honest "cannot resolve" notice
+ *  rather than a half-prompt. #1278 may back this with the fleet projection's
+ *  sshAlias so it needs no manual setting. */
+export const COMPANION_HUB_SSH_ALIAS_SETTING = "amicode.companion.hubSshAlias";
 
 /** Arguments for a programmatic reopen. The alias/paths are supplied by the
  *  caller (a command arg here); #1275-1278 will wire them from the fleet
@@ -83,6 +91,19 @@ export interface CompanionDeps {
   localReopenPath?: () => string | undefined;
   /** The switch-frequency floor in ms (default DEFAULT_MIN_SWITCH_INTERVAL_MS). */
   minSwitchIntervalMs?: number;
+  /** #1277 prompt-UP seams — all injectable so the prompt + reopen are testable
+   *  without the VS Code host or real timers. */
+  /** The hub's Remote-SSH alias the prompt-UP reopen returns into (default: read
+   *  the hub-ssh-alias setting). #1278 may source this from the fleet projection. */
+  remoteSshAlias?: () => string | undefined;
+  /** The remote workspace path the reopen targets (default `~`, the home
+   *  default — coherent with the fleet state root ~/.amico/). */
+  remotePath?: () => string | undefined;
+  /** Show the recovery prompt; resolves TRUE iff the user accepted (default:
+   *  `showInformationMessage(msg, action)` and accept === the action button). */
+  promptUser?: (message: string, action: string) => Promise<boolean>;
+  /** The prompt-frequency floor in ms (default DEFAULT_MIN_PROMPT_INTERVAL_MS). */
+  minPromptIntervalMs?: number;
 }
 
 /** The activated companion's API — the wired probe + reopen, returned so the
@@ -102,6 +123,10 @@ export interface CompanionApi {
    *  sustained hub-down it drops the window to the local lifeboat — guarded and
    *  surfaced. Exposed so #1277 (prompt-UP) can extend the same seam. */
   autoDown: AutoDownSwitch;
+  /** The #1277 prompt-UP orchestrator wired to the SAME posture stream: on a
+   *  sustained recovery back to `fleet` it PROMPTS to reopen in Remote-SSH, and
+   *  reopens only if the user accepts (never a forced up-switch). */
+  promptUp: PromptUpSwitch;
   /** Dispose the registered command. */
   dispose(): void;
 }
@@ -113,6 +138,11 @@ function readHubUrlSetting(): string | undefined {
 
 function readLocalPathSetting(): string | undefined {
   const v = vscode.workspace.getConfiguration().get<string>(COMPANION_LOCAL_PATH_SETTING, "");
+  return typeof v === "string" && v.trim() !== "" ? v : undefined;
+}
+
+function readHubSshAliasSetting(): string | undefined {
+  const v = vscode.workspace.getConfiguration().get<string>(COMPANION_HUB_SSH_ALIAS_SETTING, "");
   return typeof v === "string" && v.trim() !== "" ? v : undefined;
 }
 
@@ -161,9 +191,30 @@ export function activate(context: vscode.ExtensionContext, deps: CompanionDeps =
     ...(deps.minSwitchIntervalMs !== undefined ? { minSwitchIntervalMs: deps.minSwitchIntervalMs } : {}),
   });
 
+  // #1277: the prompt-UP orchestrator consumes the SAME posture stream. On a
+  // SUSTAINED recovery back to `fleet` (paired with the hub-down class auto-DOWN
+  // dropped on) it PROMPTS to reopen in Remote-SSH, and reopens ONLY if the user
+  // accepts — never a forced up-switch (the asymmetry with auto-DOWN by design).
+  const promptUp = new PromptUpSwitch({
+    sshAlias: (deps.remoteSshAlias ?? readHubSshAliasSetting)() ?? "",
+    now: deps.now ?? (() => Date.now()),
+    promptUser:
+      deps.promptUser ??
+      (async (message: string, action: string) =>
+        (await vscode.window.showInformationMessage(message, action)) === action),
+    showMessage: deps.showMessage ?? ((m: string) => void vscode.window.showWarningMessage(m)),
+    ...((deps.remotePath ?? (() => undefined))() !== undefined
+      ? { remotePath: (deps.remotePath ?? (() => undefined))() as string }
+      : {}),
+    ...(deps.openFolder !== undefined ? { openFolder: deps.openFolder } : {}),
+    ...(deps.showError !== undefined ? { showError: deps.showError } : {}),
+    ...(deps.minPromptIntervalMs !== undefined ? { minPromptIntervalMs: deps.minPromptIntervalMs } : {}),
+  });
+
   const onPosture = (posture: LinkPosture): void => {
     deps.onPosture?.(posture); // observer seam
     autoDown.onPosture(posture); // the auto-DOWN drop (guarded + surfaced)
+    promptUp.onPosture(posture); // the prompt-UP offer on recovery (never forced)
   };
 
   const linkSensor = new LinkSensor({
@@ -179,6 +230,7 @@ export function activate(context: vscode.ExtensionContext, deps: CompanionDeps =
     linkSensor,
     reopen,
     autoDown,
+    promptUp,
     dispose: () => {
       linkSensor.stop();
       disposable.dispose();
