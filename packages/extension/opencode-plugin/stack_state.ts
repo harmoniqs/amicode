@@ -387,37 +387,169 @@ function readFleetStatus(statusPath?: string): FleetStatusSummary | undefined {
   };
 }
 
+// #780 — MACHINE POSTURE (read-only here; the EXTENSION is the sole writer).
+// The extension's fleet attach loop persists each attach-state TRANSITION to
+// ~/.amico/ops/fleet/posture-state.json (beside fleet.json / projection.json).
+// This plugin READS it to render an honest posture block: which machine, the
+// mode, the hub identity + reachability, where canonical sessions live. No
+// network I/O — files only. Missing / corrupt / stale → a degraded-but-honest
+// block, NEVER a false "healthy" claim and NEVER a crash. fleet.json stays the
+// ROLE config; this file is the LIVE truth, and the plugin prefers it.
+
+function fleetPostureStateFile(override?: string): string {
+  if (override) return override;
+  const env = process.env.AMICO_FLEET_POSTURE_STATE;
+  if (env && env.trim() !== "") return env.trim();
+  return path.join(os.homedir(), ".amico", "ops", "fleet", "posture-state.json");
+}
+
+// Writes are TRANSITION-ONLY (the writer never heartbeats), so `updated_at` is
+// the last-transition instant, not a liveness ping — a stably-attached client
+// legitimately carries an hours-old timestamp. The TTL therefore flags only a
+// GENUINELY ancient file (a dead writer / a machine asleep for a day); the
+// real honesty is that EVERY reachability claim is separately timestamped
+// ("as of …"), so the block can never read as a bare "healthy".
+const POSTURE_STALE_MS = 24 * 60 * 60 * 1000;
+
+interface PostureRecord {
+  hostname?: string;
+  mode?: string;
+  hub?: { name?: string | null; base_url?: string | null };
+  reachable?: boolean;
+  last_ok?: string | null;
+  last_rtt_ms?: number | null;
+  updated_at?: string;
+}
+
+type PostureRead =
+  | { kind: "ok"; rec: PostureRecord; ageMin: number }
+  | { kind: "stale"; rec: PostureRecord; ageMin: number }
+  | { kind: "corrupt" }
+  | { kind: "absent" };
+
+/** Read the posture state file, shape-tolerantly. A read error → absent; a
+ *  parse/shape error → corrupt; a parsed record older than the TTL → stale;
+ *  otherwise ok. Never throws. */
+function readPostureState(override?: string): PostureRead {
+  const file = fleetPostureStateFile(override);
+  let text: string;
+  try {
+    text = fs.readFileSync(file, "utf8");
+  } catch {
+    return { kind: "absent" }; // ENOENT and friends: nothing recorded
+  }
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return { kind: "corrupt" };
+  }
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return { kind: "corrupt" };
+  const rec = raw as PostureRecord;
+  if (typeof rec.mode !== "string" || rec.mode === "") return { kind: "corrupt" }; // must at least name a mode
+  let ageMin = 0;
+  if (typeof rec.updated_at === "string") {
+    const t = Date.parse(rec.updated_at);
+    if (!Number.isNaN(t)) {
+      ageMin = Math.max(0, Math.round((Date.now() - t) / 60000));
+      if (Date.now() - t > POSTURE_STALE_MS) return { kind: "stale", rec, ageMin };
+    }
+  }
+  return { kind: "ok", rec, ageMin };
+}
+
+/** Render the honest posture lines from a read. Every reachability claim is
+ *  timestamped; a hub SERVER is not a tunnel client, so its caller skips this
+ *  entirely when there is no file. */
+function renderPostureLines(read: PostureRead): string[] {
+  if (read.kind === "corrupt")
+    return ["Machine posture: live state unreadable — the role above is configuration, not live reachability."];
+  if (read.kind === "absent")
+    return ["Machine posture: not yet recorded — the role above is configuration, not live reachability."];
+
+  const rec = read.rec;
+  const machine = typeof rec.hostname === "string" && rec.hostname !== "" ? `\`${rec.hostname}\`` : "this machine";
+  const hubName = typeof rec.hub?.name === "string" && rec.hub.name !== "" ? `**${rec.hub.name}**` : "the canonical hub";
+  const hubUrl = typeof rec.hub?.base_url === "string" && rec.hub.base_url !== "" ? ` (\`${rec.hub.base_url}\`)` : "";
+  const when = typeof rec.updated_at === "string" ? rec.updated_at : "unknown time";
+  const age = `${read.ageMin} min ago`;
+  const rtt = typeof rec.last_rtt_ms === "number" ? `, RTT ${rec.last_rtt_ms}ms` : "";
+  const lastOk = typeof rec.last_ok === "string" && rec.last_ok !== "" ? ` (last ok ${rec.last_ok})` : "";
+  const lines: string[] = [];
+
+  if (rec.mode === "standalone") {
+    lines.push(
+      `Machine: ${machine} · mode **standalone** — hub ${hubName} UNREACHABLE; fell back at ${when} (${age}). ` +
+        `Sessions started now are LOCAL to this machine, not on the hub.`,
+    );
+  } else if (rec.mode === "degraded") {
+    lines.push(
+      `Machine: ${machine} · mode **degraded** — hub ${hubName}${hubUrl} reachable but slow${rtt} — as of ${when} (${age}). Usable; expect latency.`,
+    );
+    lines.push("Canonical sessions live on the hub; this client rides the tunnel.");
+  } else {
+    // fleet (attached) — or any other named mode, rendered honestly as attached
+    const reach = rec.reachable === false ? "NOT reachable" : "reachable";
+    lines.push(
+      `Machine: ${machine} · mode **fleet** — attached to hub ${hubName}${hubUrl}, ${reach}${lastOk}${rtt} — as of ${when} (${age}).`,
+    );
+    lines.push("Canonical sessions live on the hub; this client rides the tunnel.");
+  }
+  if (read.kind === "stale") {
+    lines.push(`Posture may be STALE — last transition ${age}; treat reachability as unverified until the next attach-state transition.`);
+  }
+  return lines;
+}
+
 /** Lean fleet line + on-demand pointers (the reader's choice: detail loads
  *  from fleet-status.json / the fleet skill only when relevant). Absent
- *  projection (standalone or no fleet tooling — or a projection with no
- *  topology section) → "" — nothing to say. */
-function buildFleetSection(opts: { projectionPath?: string; statusPath?: string } = {}): string {
+ *  projection AND no live posture recorded (standalone or no fleet tooling)
+ *  → "" — nothing to say. */
+function buildFleetSection(opts: { projectionPath?: string; statusPath?: string; posturePath?: string } = {}): string {
   const role = readFleetRoleFromProjection(opts.projectionPath);
-  if (role === null) return "";
+  const posture = readPostureState(opts.posturePath);
+  // Nothing to say: not a fleet machine (no projection role) AND no live
+  // posture ever recorded — a genuinely standalone box, the base default.
+  if (role === null && posture.kind === "absent") return "";
 
-  const roleText =
-    role === "server"
-      ? "**server** — this machine is the canonical Amicode server"
-      : role === "client"
-        ? "**client** — rides the tunnel to the canonical server"
-        : `**${role}**`;
-  const lines = [`## Fleet (live)`, `Role: ${roleText} (from the fleet projection at \`~/.amico/ops/fleet/projection.json\`).`];
-
-  const status = readFleetStatus(opts.statusPath);
-  if (status) {
-    const who = status.names.length > 0 ? ` (${status.names.join(", ")})` : "";
-    const age = status.ageMin !== undefined ? ` — refreshed ${status.ageMin} min ago` : "";
-    lines.push(
-      `Devices: ${status.up}/${status.total} reachable${who}${age} (launchd, 5-min cadence).`,
-    );
-  } else {
-    lines.push("Devices: status unknown (`~/.amico/ops/fleet-status.json` unreadable).");
+  const lines = [`## Fleet (live)`];
+  if (role !== null) {
+    const roleText =
+      role === "server"
+        ? "**server** — this machine is the canonical Amicode server"
+        : role === "client"
+          ? "**client** — rides the tunnel to the canonical server"
+          : `**${role}**`;
+    lines.push(`Role: ${roleText} (from the fleet projection at \`~/.amico/ops/fleet/projection.json\`).`);
   }
-  lines.push(
-    "Full status on demand: `~/.amico/ops/fleet-status.json` (devices, chat-db health,",
-    "server guard, repo sync). The `fleet` skill is the playbook for the sync/lock",
-    "rituals; code repos sync by `wip-sync.sh` leave/arrive — never file-sync a live `.git`.",
-  );
+
+  // #780: the live posture block, preferred over the role line. A hub SERVER
+  // is not a tunnel client — it gets NO posture note when it has no state file
+  // (its existing section stays unchanged in substance). Every other case (a
+  // client, a fell-back box, or any machine that actually wrote a state file)
+  // gets the honest, timestamped posture — including the degraded-but-honest
+  // missing/corrupt/stale renderings.
+  if (!(role === "server" && posture.kind === "absent")) {
+    for (const l of renderPostureLines(posture)) lines.push(l);
+  }
+
+  // Devices + on-demand pointers stay role-scoped (they describe the fleet the
+  // projection knows about) — unchanged in substance from before #780.
+  if (role !== null) {
+    const status = readFleetStatus(opts.statusPath);
+    if (status) {
+      const who = status.names.length > 0 ? ` (${status.names.join(", ")})` : "";
+      const age = status.ageMin !== undefined ? ` — refreshed ${status.ageMin} min ago` : "";
+      lines.push(`Devices: ${status.up}/${status.total} reachable${who}${age} (launchd, 5-min cadence).`);
+    } else {
+      lines.push("Devices: status unknown (`~/.amico/ops/fleet-status.json` unreadable).");
+    }
+    lines.push(
+      "Full status on demand: `~/.amico/ops/fleet-status.json` (devices, chat-db health,",
+      "server guard, repo sync). The `fleet` skill is the playbook for the sync/lock",
+      "rituals; code repos sync by `wip-sync.sh` leave/arrive — never file-sync a live `.git`.",
+    );
+  }
   return lines.join("\n");
 }
 

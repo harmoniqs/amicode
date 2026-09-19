@@ -136,10 +136,132 @@ describe("buildFleetSection (lean fleet line + pointers)", () => {
   });
 });
 
+// ── Machine posture (#780): the extension-written state file, read-only here ──
+
+/** Write a posture-state fixture; returns its path. */
+function writePostureState(over: Record<string, unknown> = {}): string {
+  const dir = mkTmp("posture-");
+  const file = path.join(dir, "posture-state.json");
+  const rec = {
+    schema_version: 1,
+    hostname: "macbook",
+    mode: "fleet",
+    hub: { name: "amicissimo-hub", base_url: "http://127.0.0.1:4096" },
+    reachable: true,
+    last_ok: new Date().toISOString(),
+    last_rtt_ms: 12,
+    updated_at: new Date().toISOString(),
+    ...over,
+  };
+  fs.writeFileSync(file, JSON.stringify(rec, null, 2));
+  return file;
+}
+
+const clientProjection = (): string => {
+  const dir = mkTmp("proj-");
+  const proj = path.join(dir, "projection.json");
+  fs.writeFileSync(
+    proj,
+    JSON.stringify({
+      schema_version: 1,
+      contract_version: 1,
+      sections: { topology: { value: { role: "client", canonical: { host: "127.0.0.1", port: 4096 } } } },
+    }),
+  );
+  return proj;
+};
+
+describe("buildFleetSection — machine posture from the state file (#780)", () => {
+  it("AC1: a fresh fleet-attached posture file names the machine, hub identity, reachability — timestamped", () => {
+    const posture = writePostureState();
+    const s = fleetSectionWith({ projectionPath: clientProjection(), posturePath: posture });
+    expect(s).toContain("## Fleet (live)");
+    expect(s).toContain("**client** — rides the tunnel to the canonical server"); // AC5: role line unchanged
+    expect(s).toContain("macbook"); // the machine (hostname)
+    expect(s).toContain("amicissimo-hub"); // the hub name
+    expect(s).toContain("http://127.0.0.1:4096"); // the hub base URL
+    expect(s).toMatch(/reachable/i); // current reachability
+    expect(s).toMatch(/as of|ago/); // the claim is timestamped (never a bare "healthy")
+    expect(s).toMatch(/canonical sessions live on the hub/i); // where sessions live
+  });
+
+  it("AC2: a standalone (fell-back) posture file says so explicitly and names the fallback time — never as-if-attached", () => {
+    const fellBack = new Date(Date.now() - 2 * 60_000).toISOString();
+    const posture = writePostureState({
+      mode: "standalone",
+      reachable: false,
+      last_ok: new Date(Date.now() - 5 * 60_000).toISOString(),
+      last_rtt_ms: null,
+      updated_at: fellBack,
+    });
+    const s = fleetSectionWith({ projectionPath: clientProjection(), posturePath: posture });
+    expect(s).toMatch(/standalone/i);
+    expect(s).toMatch(/fell back|unreachable/i);
+    expect(s).toMatch(/ago/); // the fallback time is named
+    expect(s).toMatch(/local/i); // sessions started now are local, not on the hub
+    expect(s).not.toMatch(/attached to hub/i); // never renders as if attached
+  });
+
+  it("AC2: a standalone posture file renders even when the projection is absent (prefer the state file)", () => {
+    const posture = writePostureState({ mode: "standalone", reachable: false, last_rtt_ms: null });
+    const s = fleetSectionWith({ posturePath: posture }); // no projection at all
+    expect(s).toContain("## Fleet (live)");
+    expect(s).toMatch(/standalone/i);
+  });
+
+  it("AC4: a MISSING posture file on a fleet client is degraded-but-honest — role is config, not live reachability", () => {
+    const s = fleetSectionWith({ projectionPath: clientProjection() }); // no posture file
+    expect(s).toContain("## Fleet (live)");
+    expect(s).toContain("**client**"); // role line still there
+    expect(s).toMatch(/not.*live reachability|posture.*not.*recorded|unknown/i); // honest degraded note
+    expect(s).not.toMatch(/attached to hub/i); // never a false healthy
+  });
+
+  it("AC4: a CORRUPT posture file never crashes and never claims healthy", () => {
+    const dir = mkTmp("posture-corrupt-");
+    const file = path.join(dir, "posture-state.json");
+    fs.writeFileSync(file, "{ not json");
+    const s = fleetSectionWith({ projectionPath: clientProjection(), posturePath: file });
+    expect(s).toContain("## Fleet (live)");
+    expect(s).toMatch(/unreadable|unavailable|unknown/i);
+    expect(s).not.toMatch(/attached to hub/i);
+  });
+
+  it("AC4: a STALE posture file (updated_at far in the past) is flagged stale, still timestamped, never bare-healthy", () => {
+    const posture = writePostureState({
+      updated_at: new Date(Date.now() - 25 * 60 * 60_000).toISOString(), // > TTL
+      last_ok: new Date(Date.now() - 25 * 60 * 60_000).toISOString(),
+    });
+    const s = fleetSectionWith({ projectionPath: clientProjection(), posturePath: posture });
+    expect(s).toMatch(/stale/i);
+    expect(s).toMatch(/ago/); // still timestamped
+  });
+
+  it("AC5: a hub SERVER with no posture file renders no posture note (existing section unchanged)", () => {
+    const dir = mkTmp("proj-server-");
+    const proj = path.join(dir, "projection.json");
+    fs.writeFileSync(
+      proj,
+      JSON.stringify({
+        schema_version: 1,
+        contract_version: 1,
+        sections: { topology: { value: { role: "server", canonical: { host: "127.0.0.1", port: 4096 } } } },
+      }),
+    );
+    const s = fleetSectionWith({ projectionPath: proj });
+    expect(s).toContain("**server** — this machine is the canonical Amicode server");
+    expect(s).not.toMatch(/mode \*\*fleet\*\*|not.*live reachability|posture/i); // no posture note on a server
+  });
+});
+
 // buildFleetSection is module-private; reach it through buildStackStateBlock's
 // seams for these unit cases (projection + status stubbed, everything else empty).
-function fleetSectionWith(opts: { projectionPath?: string; statusPath?: string }): string {
-  const stubs = stubAllSeams({ fleetProjection: opts.projectionPath, fleetStatus: opts.statusPath });
+function fleetSectionWith(opts: { projectionPath?: string; statusPath?: string; posturePath?: string }): string {
+  const stubs = stubAllSeams({
+    fleetProjection: opts.projectionPath,
+    fleetStatus: opts.statusPath,
+    fleetPostureState: opts.posturePath,
+  });
   try {
     const block = buildStackStateBlock() ?? "";
     const m = block.match(/## Fleet \(live\)[\s\S]*?(?=\n\n## |\n*$)/);
@@ -755,6 +877,7 @@ interface SeamOpts {
   vaultsRoot?: string;
   fleetProjection?: string;
   fleetStatus?: string;
+  fleetPostureState?: string;
   runsDir?: string;
   /** Prebuilt fixture vault flavor for the golden-text cases. */
   vault?: "profile" | "problems" | "demos" | "memory";
@@ -764,6 +887,7 @@ const SEAM_KEYS = [
   "AMICO_VAULTS_ROOT",
   "AMICO_FLEET_PROJECTION",
   "AMICO_FLEET_STATUS",
+  "AMICO_FLEET_POSTURE_STATE",
   "AMICODE_OPS_DIR",
   "AMICODE_CONNECTIONS_FILE",
   "AMICODE_PROBLEMS_DIR",
@@ -825,6 +949,7 @@ function stubAllSeams(opts: SeamOpts): Record<string, string | undefined> {
   process.env.AMICO_VAULTS_ROOT = root;
   process.env.AMICO_FLEET_PROJECTION = opts.fleetProjection ?? path.join(fleetDir, "absent-projection.json");
   process.env.AMICO_FLEET_STATUS = opts.fleetStatus ?? path.join(fleetDir, "absent-status.json");
+  process.env.AMICO_FLEET_POSTURE_STATE = opts.fleetPostureState ?? path.join(fleetDir, "absent-posture-state.json");
   process.env.AMICODE_OPS_DIR = ops; // no solver-mode.json → piccolo/ready → no section
   process.env.AMICODE_CONNECTIONS_FILE = path.join(conn, "absent.json"); // not connected
   process.env.AMICODE_PROBLEMS_DIR = problems; // no active problem
