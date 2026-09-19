@@ -389,12 +389,15 @@ function readFleetStatus(statusPath?: string): FleetStatusSummary | undefined {
 
 // #780 — MACHINE POSTURE (read-only here; the EXTENSION is the sole writer).
 // The extension's fleet attach loop persists each attach-state TRANSITION to
-// ~/.amico/ops/fleet/posture-state.json (beside fleet.json / projection.json).
-// This plugin READS it to render an honest posture block: which machine, the
-// mode, the hub identity + reachability, where canonical sessions live. No
-// network I/O — files only. Missing / corrupt / stale → a degraded-but-honest
-// block, NEVER a false "healthy" claim and NEVER a crash. fleet.json stays the
-// ROLE config; this file is the LIVE truth, and the plugin prefers it.
+// ~/.amico/ops/fleet/posture-state.json (beside the fleet role config and the
+// projection cache). This plugin READS it to render an honest posture block:
+// which machine, the mode, the hub identity + reachability, where canonical
+// sessions live. No network I/O — files only. Missing / corrupt / stale → a
+// degraded-but-honest block, NEVER a false "healthy" claim and NEVER a crash.
+// The role config stays the ROLE truth; this file is the LIVE posture truth,
+// and the plugin prefers it. (The plugin never reads the raw role config — it
+// reads only the projection cache and this posture file — F1: one topology
+// reader.)
 
 function fleetPostureStateFile(override?: string): string {
   if (override) return override;
