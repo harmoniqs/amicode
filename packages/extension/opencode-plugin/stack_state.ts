@@ -504,16 +504,89 @@ function renderPostureLines(read: PostureRead): string[] {
   return lines;
 }
 
+// #1272 — WINDOW MODE (read-only here; the EXTENSION is the sole writer). An
+// axis ORTHOGONAL to link-health posture: which machine the editor WINDOW sits
+// on — `remote-ssh` (attached to a Remote-SSH host) vs `local` (editor-local,
+// or a non-SSH remote). Its OWN state file (window-mode.json), written by its
+// OWN transition-only writer (src/fleet_window_mode_state.ts) so a
+// window-mode-only change is never swallowed by the posture signature. Here we
+// only READ it and render one honest, timestamped line. Missing / corrupt /
+// unknown-value → NOTHING (additive & optional — never a false claim, never a
+// crash), and NEVER the link-health `standalone` token (AC1).
+
+function fleetWindowModeStateFile(override?: string): string {
+  if (override) return override;
+  const env = process.env.AMICO_FLEET_WINDOW_MODE_STATE;
+  if (env && env.trim() !== "") return env.trim();
+  return path.join(os.homedir(), ".amico", "ops", "fleet", "window-mode.json");
+}
+
+interface WindowModeRecord {
+  hostname?: string;
+  window_mode?: string;
+  remote_name?: string | null;
+  updated_at?: string;
+}
+
+type WindowModeRead = { kind: "ok"; rec: WindowModeRecord; ageMin: number } | { kind: "absent" };
+
+/** Read the window-mode file, shape-tolerantly. A read/parse/shape error, or a
+ *  value that is not one of the two window-mode tokens, → absent (nothing to
+ *  say). Never throws. */
+function readWindowModeState(override?: string): WindowModeRead {
+  const file = fleetWindowModeStateFile(override);
+  let text: string;
+  try {
+    text = fs.readFileSync(file, "utf8");
+  } catch {
+    return { kind: "absent" };
+  }
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return { kind: "absent" };
+  }
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return { kind: "absent" };
+  const rec = raw as WindowModeRecord;
+  // Only the two window-mode tokens are renderable (AC1: never the posture
+  // `standalone`, never a guessed value).
+  if (rec.window_mode !== "remote-ssh" && rec.window_mode !== "local") return { kind: "absent" };
+  let ageMin = 0;
+  if (typeof rec.updated_at === "string") {
+    const t = Date.parse(rec.updated_at);
+    if (!Number.isNaN(t)) ageMin = Math.max(0, Math.round((Date.now() - t) / 60000));
+  }
+  return { kind: "ok", rec, ageMin };
+}
+
+/** Render the honest, timestamped window-mode line, or null when there is
+ *  nothing to say. */
+function renderWindowModeLine(read: WindowModeRead): string | null {
+  if (read.kind !== "ok") return null;
+  const rec = read.rec;
+  const machine = typeof rec.hostname === "string" && rec.hostname !== "" ? `\`${rec.hostname}\`` : "this machine";
+  const when = typeof rec.updated_at === "string" ? rec.updated_at : "unknown time";
+  const age = `${read.ageMin} min ago`;
+  if (rec.window_mode === "remote-ssh") {
+    const host = typeof rec.remote_name === "string" && rec.remote_name !== "" ? ` (\`${rec.remote_name}\`)` : "";
+    return `Window: editor attached over **Remote-SSH**${host}, on ${machine} — as of ${when} (${age}).`;
+  }
+  return `Window: editor is **local** on ${machine} — as of ${when} (${age}).`;
+}
+
 /** Lean fleet line + on-demand pointers (the reader's choice: detail loads
  *  from fleet-status.json / the fleet skill only when relevant). Absent
  *  projection AND no live posture recorded (standalone or no fleet tooling)
  *  → "" — nothing to say. */
-function buildFleetSection(opts: { projectionPath?: string; statusPath?: string; posturePath?: string } = {}): string {
+function buildFleetSection(opts: { projectionPath?: string; statusPath?: string; posturePath?: string; windowModePath?: string } = {}): string {
   const role = readFleetRoleFromProjection(opts.projectionPath);
   const posture = readPostureState(opts.posturePath);
+  const windowMode = readWindowModeState(opts.windowModePath);
   // Nothing to say: not a fleet machine (no projection role) AND no live
-  // posture ever recorded — a genuinely standalone box, the base default.
-  if (role === null && posture.kind === "absent") return "";
+  // posture ever recorded AND no window mode recorded — a genuinely standalone
+  // box, the base default.
+  if (role === null && posture.kind === "absent" && windowMode.kind === "absent") return "";
 
   const lines = [`## Fleet (live)`];
   if (role !== null) {
@@ -535,6 +608,15 @@ function buildFleetSection(opts: { projectionPath?: string; statusPath?: string;
   if (!(role === "server" && posture.kind === "absent")) {
     for (const l of renderPostureLines(posture)) lines.push(l);
   }
+
+  // #1272: the window-mode line (an axis ORTHOGONAL to link-health posture —
+  // which machine the editor WINDOW sits on, Remote-SSH vs local). Its own
+  // file, its own honest timestamped line, surfaced right beside the posture
+  // block. Additive & optional: absent/corrupt/unknown → nothing (unlike
+  // posture it is not a "role is config, not live" correction, so it does not
+  // emit a degraded note). Never the link-health `standalone` token (AC1).
+  const windowLine = renderWindowModeLine(windowMode);
+  if (windowLine) lines.push(windowLine);
 
   // Devices + on-demand pointers stay role-scoped (they describe the fleet the
   // projection knows about) — unchanged in substance from before #780.

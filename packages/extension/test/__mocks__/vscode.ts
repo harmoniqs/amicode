@@ -107,6 +107,10 @@ export const ColorThemeKind = { Light: 1, Dark: 2, HighContrast: 3, HighContrast
 export const ConfigurationTarget = { Global: 1, Workspace: 2, WorkspaceFolder: 3 };
 export const env = {
   opened: [] as unknown[],
+  // #1272 — the editor's remote indicator: an "ssh-remote…" string under
+  // Remote-SSH, undefined when the editor is local. Tests set it to exercise
+  // window-mode detection (windowModeFromRemoteName).
+  remoteName: undefined as string | undefined,
   openExternal: (u: unknown) => {
     env.opened.push(u);
     return Promise.resolve(true);

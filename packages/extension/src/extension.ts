@@ -104,6 +104,7 @@ import { handshakePath, readHandshake, deleteHandshake, serverLogPath, coldSpawn
 import { startKeepalive, stopKeepalive, readGraceSeconds, pingKeepalive } from "./server_keepalive";
 import { FleetPollHysteresis } from "./fleet_poll_hysteresis";
 import { FleetPostureStateWriter } from "./fleet_posture_state";
+import { WindowModeStateWriter, windowModeFacts } from "./fleet_window_mode_state";
 import { recordPostureState } from "./fleet_posture_feed";
 import { HostFileClient } from "./fleet_host_fs/host_file_client";
 import { AmicoHostFileSystemProvider } from "./fleet_host_fs/provider";
@@ -512,6 +513,21 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   registerFleetPanel(ctx); // #527 — Fleet & Versions: the view over doctor's JSON
   statusBar = new StatusBarManager();
   ctx.subscriptions.push({ dispose: () => statusBar?.dispose() });
+
+  // #1272 — WINDOW MODE (Remote-SSH vs editor-local), an axis ORTHOGONAL to the
+  // link-health posture (#780). Derived from the editor's remote indicator
+  // (vscode.env.remoteName: an "ssh-remote…" string under Remote-SSH, undefined
+  // when local), recorded to its OWN state file via its OWN transition-only
+  // writer (never the posture writer — a window-mode-only change must not be
+  // swallowed by the posture signature), and reflected in the status bar. This
+  // runs for EVERY window regardless of fleet role — a server or a standalone
+  // box can equally be opened over Remote-SSH. The writer never throws.
+  {
+    const windowMode = windowModeFacts(os.hostname(), vscode.env.remoteName);
+    new WindowModeStateWriter({ log: (m) => opencodeChannel.appendLine(m) }).record(windowMode);
+    statusBar.setWindowMode(windowMode.window_mode);
+    opencodeChannel.appendLine(`[fleet] window mode: ${windowMode.window_mode}${windowMode.remote_name ? ` (${windowMode.remote_name})` : ""}`);
+  }
 
   // 2. Start the multi-run RunsManager — tails the append-only runs/index;
   // #351: posts run data to the Work Column bridge (no bottom panel).
