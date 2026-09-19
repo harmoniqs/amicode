@@ -79,6 +79,7 @@ import {
   type VerbRunResult,
 } from "./fleet_topology";
 import { resolveHubTarget, restartHub } from "./hub_ops";
+import { connectToHubOverRemoteSsh } from "./fleet_connect_remote_ssh";
 import { registerAmicodeTerminal } from "./terminal";
 import { amicodeServiceDisposal, startAmicodeService, frameOriginUrl } from "./amicode_service_wiring";
 import { resolveAppDistRoot } from "./amicode_service/app_shelf";
@@ -2147,6 +2148,23 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     );
   };
   ctx.subscriptions.push(vscode.commands.registerCommand("amicode.restartHub", () => void runRestartHub()));
+
+  // #1271 (ADR 0025): "Amicode: Connect to Hub over Remote-SSH" — the opt-in
+  // ENTRY into the Remote-SSH posture. The hub coordinates come from the
+  // projection (the ONE topology reader, ADR 0023 — never a hand-built host
+  // string); a missing/broken/alias-less projection renders an honest,
+  // actionable message and opens NO window (AC2). The attach/adoption mechanics
+  // run host-side on activation (#1270) — this command is only the entry.
+  const runConnectRemoteSsh = async (): Promise<void> => {
+    const workspacePath = vscode.workspace.getConfiguration("amicode").get<string>("fleet.hubWorkspacePath", "");
+    const resolution = await connectToHubOverRemoteSsh({ workspacePath });
+    if (resolution.ok) {
+      opencodeChannel.appendLine(`[fleet] connect-remote-ssh → opening ${resolution.uri}`);
+    } else {
+      opencodeChannel.appendLine(`[fleet] connect-remote-ssh not resolved (${resolution.reason}): ${resolution.detail}`);
+    }
+  };
+  ctx.subscriptions.push(vscode.commands.registerCommand("amicode.fleet.connectRemoteSsh", () => void runConnectRemoteSsh()));
 
   // Activation-time fleet drift warning (#1261 AC4: cross-platform). If this
   // machine is a fleet client but the guard is missing/stale or the settings

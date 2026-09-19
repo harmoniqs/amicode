@@ -188,6 +188,10 @@
         "title": "Amicode: Restart Hub Server (fleet)"
       },
       {
+        "command": "amicode.fleet.connectRemoteSsh",
+        "title": "Amicode: Connect to Hub over Remote-SSH"
+      },
+      {
         "command": "amicode.selectHarness",
         "title": "Select Harness",
         "category": "Amicode"
@@ -229,6 +233,11 @@
           "type": "string",
           "default": "",
           "description": "Override path to the opencode CLI (dev only). Empty = use the vendored binary."
+        },
+        "amicode.fleet.hubWorkspacePath": {
+          "type": "string",
+          "default": "",
+          "description": "Remote folder that 'Amicode: Connect to Hub over Remote-SSH' opens on the hub (an absolute /-rooted path, or a home-relative ~ path). Empty = the hub's home directory (~), where ~/.amico/ lives. The hub host coordinates themselves always come from the fleet projection, never from here."
         },
         "amicode.harness": {
           "type": "string",
