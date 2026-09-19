@@ -20,6 +20,7 @@ import {
   type ReopenOutcome,
 } from "./reopen";
 import { LinkSensor, type LinkPosture, type SensorScheduler } from "./link_sensor";
+import { AutoDownSwitch } from "./auto_switch";
 
 /** The one command the companion contributes (see package.json contributes). */
 export const REOPEN_COMMAND = "amicode.companion.reopenWindow";
@@ -27,6 +28,13 @@ export const REOPEN_COMMAND = "amicode.companion.reopenWindow";
 /** The client-side setting the companion probes — it reads ONLY this, never a
  *  host-side instance or posture file (that independence is the whole point). */
 export const COMPANION_HUB_URL_SETTING = "amicode.companion.hubUrl";
+
+/** The client-side setting naming the LOCAL workspace folder the auto-DOWN drop
+ *  (#1276) reopens into — the thin-client lifeboat where #1267's FileSystemProvider
+ *  surfaces host files. Empty = no local target known (the drop then surfaces the
+ *  transition and the reopen's honest "no local folder" error rather than a
+ *  half-window). #1278 will supply/carry this across the switch. */
+export const COMPANION_LOCAL_PATH_SETTING = "amicode.companion.localWorkspacePath";
 
 /** Arguments for a programmatic reopen. The alias/paths are supplied by the
  *  caller (a command arg here); #1275-1278 will wire them from the fleet
@@ -57,9 +65,24 @@ export interface CompanionDeps {
   /** The link sensor's timer seam (default: global setInterval/clearInterval).
    *  Injected in tests so the cadence is driven without real timers. */
   scheduler?: SensorScheduler;
-  /** Called each sensor tick with the freshly classified posture — the seam the
-   *  switch orchestration (#1276 auto-DOWN, #1277 prompt-UP) will consume. */
+  /** Called each sensor tick with the freshly classified posture — an OBSERVER
+   *  seam (the built-in #1276 auto-DOWN orchestrator is always wired independently
+   *  of this; #1277 prompt-UP will extend the orchestrator, not replace it). */
   onPosture?: (posture: LinkPosture) => void;
+  /** #1276 auto-DOWN seams — all injectable so the drop is testable without the
+   *  VS Code host or real timers. */
+  /** The clock the switch-frequency floor is measured against (default Date.now). */
+  now?: () => number;
+  /** Whether any editor has unsaved changes — the dirty guard (default reads
+   *  `vscode.workspace.textDocuments`). */
+  isEditorDirty?: () => boolean;
+  /** Surface the auto-DOWN transition (default `vscode.window.showWarningMessage`). */
+  showMessage?: (message: string) => void;
+  /** The absolute LOCAL folder the auto-DOWN drop reopens into (default: read the
+   *  local-workspace setting). */
+  localReopenPath?: () => string | undefined;
+  /** The switch-frequency floor in ms (default DEFAULT_MIN_SWITCH_INTERVAL_MS). */
+  minSwitchIntervalMs?: number;
 }
 
 /** The activated companion's API — the wired probe + reopen, returned so the
@@ -75,12 +98,21 @@ export interface CompanionApi {
   /** Programmatically flip the window Remote-SSH↔local (AC3), direction chosen
    *  from the current window mode. */
   reopen(args?: ReopenArgs): Promise<ReopenOutcome>;
+  /** The #1276 auto-DOWN orchestrator wired to the sensor's posture stream: on a
+   *  sustained hub-down it drops the window to the local lifeboat — guarded and
+   *  surfaced. Exposed so #1277 (prompt-UP) can extend the same seam. */
+  autoDown: AutoDownSwitch;
   /** Dispose the registered command. */
   dispose(): void;
 }
 
 function readHubUrlSetting(): string | undefined {
   const v = vscode.workspace.getConfiguration().get<string>(COMPANION_HUB_URL_SETTING, "");
+  return typeof v === "string" && v.trim() !== "" ? v : undefined;
+}
+
+function readLocalPathSetting(): string | undefined {
+  const v = vscode.workspace.getConfiguration().get<string>(COMPANION_LOCAL_PATH_SETTING, "");
   return typeof v === "string" && v.trim() !== "" ? v : undefined;
 }
 
@@ -112,12 +144,32 @@ export function activate(context: vscode.ExtensionContext, deps: CompanionDeps =
   // #1275: the client-side link sensor — probe the hub on the standard cadence
   // and feed each outcome to the BUNDLED merged detector, emitting the
   // classified posture. The companion owns only the probe (it cannot read
-  // host-side posture state); the classification is the merged detector's. It
-  // acts on nothing here (auto-DOWN / prompt-UP are #1276/#1277).
+  // host-side posture state); the classification is the merged detector's.
+  //
+  // #1276: the auto-DOWN orchestrator consumes that posture stream. On a
+  // SUSTAINED hub-down (the detector's `standalone` hysteresis) it drops the
+  // window to the LOCAL lifeboat — gated by the switch-frequency floor + the
+  // dirty-editor guard + anti-flap, and SURFACED (never a silent reroute). It is
+  // wired independently of deps.onPosture, which stays a pure observer seam.
+  const autoDown = new AutoDownSwitch({
+    localPath: (deps.localReopenPath ?? readLocalPathSetting)() ?? "",
+    now: deps.now ?? (() => Date.now()),
+    isEditorDirty: deps.isEditorDirty ?? (() => vscode.workspace.textDocuments.some((d) => d.isDirty)),
+    showMessage: deps.showMessage ?? ((m: string) => void vscode.window.showWarningMessage(m)),
+    ...(deps.openFolder !== undefined ? { openFolder: deps.openFolder } : {}),
+    ...(deps.showError !== undefined ? { showError: deps.showError } : {}),
+    ...(deps.minSwitchIntervalMs !== undefined ? { minSwitchIntervalMs: deps.minSwitchIntervalMs } : {}),
+  });
+
+  const onPosture = (posture: LinkPosture): void => {
+    deps.onPosture?.(posture); // observer seam
+    autoDown.onPosture(posture); // the auto-DOWN drop (guarded + surfaced)
+  };
+
   const linkSensor = new LinkSensor({
     probe: probeHub,
+    onPosture,
     ...(deps.scheduler !== undefined ? { scheduler: deps.scheduler } : {}),
-    ...(deps.onPosture !== undefined ? { onPosture: deps.onPosture } : {}),
   });
   linkSensor.start();
   context.subscriptions.push({ dispose: () => linkSensor.stop() });
@@ -126,6 +178,7 @@ export function activate(context: vscode.ExtensionContext, deps: CompanionDeps =
     probeHub,
     linkSensor,
     reopen,
+    autoDown,
     dispose: () => {
       linkSensor.stop();
       disposable.dispose();

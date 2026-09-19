@@ -28,13 +28,17 @@ export const commands = {
 };
 
 export const window = {
-  messages: { error: [] as string[], info: [] as string[] },
+  messages: { error: [] as string[], info: [] as string[], warn: [] as string[] },
   showErrorMessage: (m: string) => {
     window.messages.error.push(m);
     return Promise.resolve(undefined);
   },
   showInformationMessage: (m: string) => {
     window.messages.info.push(m);
+    return Promise.resolve(undefined);
+  },
+  showWarningMessage: (m: string) => {
+    window.messages.warn.push(m);
     return Promise.resolve(undefined);
   },
 };
@@ -48,6 +52,9 @@ export const env = {
 
 export const workspace = {
   _config: {} as Record<string, unknown>,
+  // The open text documents — the dirty-editor guard (#1276) reads `.isDirty`.
+  // Empty by default; tests push `{ isDirty: true }` to exercise the guard.
+  textDocuments: [] as Array<{ isDirty: boolean }>,
   getConfiguration: () => ({
     get: (k: string, d?: unknown) => (k in workspace._config ? workspace._config[k] : (d ?? "")),
   }),

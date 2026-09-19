@@ -329,3 +329,58 @@ describe("activate (#1275 — the client-side link sensor runs on the standard c
     expect(cleared).toHaveLength(1);
   });
 });
+
+// ── #1276: activate wires the auto-DOWN orchestrator onto the sensor stream ────
+async function flush(): Promise<void> {
+  for (let i = 0; i < 5; i++) await Promise.resolve();
+}
+
+describe("activate (#1276 — the auto-DOWN drop fires through the wired sensor)", () => {
+  it("a sustained hub-down through the live sensor drops the window to the LOCAL lifeboat, surfaced (AC1/AC2/AC4)", async () => {
+    const { scheduler } = fakeScheduler();
+    const opened: string[] = [];
+    const api = activate(fakeContext() as never, {
+      scheduler,
+      probeFetch: throwingFetch("ECONNREFUSED"), // every probe unreachable
+      localReopenPath: () => "/home/jj/amicode",
+      openFolder: (uri) => opened.push(uri),
+      now: () => 0,
+    });
+    await api.linkSensor.tick(); // no-response 1 → fleet
+    await api.linkSensor.tick(); // no-response 2 → fleet (2 < N)
+    await flush();
+    expect(opened).toHaveLength(0); // not on the transient
+    await api.linkSensor.tick(); // no-response 3 → standalone → the drop fires
+    await flush();
+    expect(opened).toEqual(["file:///home/jj/amicode"]); // the local lifeboat target (AC4)
+    expect(vscode.window.messages.warn.length).toBeGreaterThanOrEqual(1); // surfaced (AC2)
+  });
+
+  it("a dirty editor blocks the wired drop (AC3 dirty guard, production predicate)", async () => {
+    const { scheduler } = fakeScheduler();
+    const opened: string[] = [];
+    (vscode.workspace as unknown as { textDocuments: Array<{ isDirty: boolean }> }).textDocuments = [
+      { isDirty: true },
+    ];
+    const api = activate(fakeContext() as never, {
+      scheduler,
+      probeFetch: throwingFetch("ECONNREFUSED"),
+      localReopenPath: () => "/home/jj/amicode",
+      openFolder: (uri) => opened.push(uri),
+      now: () => 0,
+    });
+    await api.linkSensor.tick();
+    await api.linkSensor.tick();
+    await api.linkSensor.tick(); // standalone — but the editor is dirty
+    await flush();
+    expect(opened).toHaveLength(0); // guarded — no drop under unsaved work
+    (vscode.workspace as unknown as { textDocuments: Array<{ isDirty: boolean }> }).textDocuments = [];
+  });
+
+  it("exposes the auto-DOWN orchestrator for #1277 (prompt-UP) to extend", () => {
+    const { scheduler } = fakeScheduler();
+    const api = activate(fakeContext() as never, { scheduler });
+    expect(api.autoDown).toBeDefined();
+    expect(typeof api.autoDown.onPosture).toBe("function");
+  });
+});

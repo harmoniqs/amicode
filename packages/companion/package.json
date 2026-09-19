@@ -39,6 +39,11 @@
           "type": "string",
           "default": "",
           "description": "Client-side base URL the always-local companion probes for hub liveness (e.g. http://127.0.0.1:4096). The companion bundles its own probe and reads ONLY this client-side setting \u2014 it never reads the host-side running instance or posture file. Empty = the companion reports the honest no-hub-configured state."
+        },
+        "amicode.companion.localWorkspacePath": {
+          "type": "string",
+          "default": "",
+          "description": "Absolute LOCAL folder the auto-DOWN drop reopens into \u2014 the thin-client lifeboat where the host-file mount surfaces your files when the hub link is down. Empty = no local target known; the companion still surfaces the transition and the honest \u2018no local folder\u2019 error rather than opening a half-window."
         }
       }
     }
