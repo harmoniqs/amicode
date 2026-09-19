@@ -325,6 +325,81 @@ describe("activation wiring — the fleet option is passed ONLY when activation 
     }
   });
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // #1260 — the pluggable transport provider seam wired through startAmicodeService
+  // ══════════════════════════════════════════════════════════════════════════
+
+  it("#1260 AC1 — fleetTransport unset defaults to ssh: fleet mode arms end-to-end, identical to today (no regression)", async () => {
+    const { log } = sinkLog();
+    const boot = await startAmicodeService(log, {
+      engine: { password: "engine-activation-mint", getUrl: () => engine.url },
+      appDistRoot: dist,
+      fleetActivation: armedActivation({ entitlementConfigDir: entitledDir, overlaySource }),
+      // NO fleetTransport option → the transport defaults to ssh (unset = today)
+    });
+    expect(boot).toBeDefined();
+    if (!boot) return;
+    try {
+      const auth = serverAuthHeader("engine-activation-mint");
+      const status = await fetch(`${boot.url}/amicode/fleet/status`, { headers: { Authorization: auth } });
+      expect(status.status).toBe(200);
+      const body = (await status.json()) as { mode: string; staging: { staged: boolean } };
+      expect(body.mode).toBe("fleet"); // armed exactly as before the transport seam
+      expect(body.staging.staged).toBe(true);
+    } finally {
+      await boot.service.stop();
+    }
+  });
+
+  it("#1260 AC1 — an explicit fleetTransport=ssh selects the ssh provider: the configured hub URL IS dialed (a dead port → the 502, not the no-upstream 503)", async () => {
+    const { log } = sinkLog();
+    const boot = await startAmicodeService(log, {
+      engine: { password: "engine-activation-mint", getUrl: () => engine.url },
+      fleetActivation: armedActivation({ entitlementConfigDir: entitledDir, overlaySource }),
+      fleetTransport: { kind: "ssh" },
+    });
+    expect(boot).toBeDefined();
+    if (!boot) return;
+    try {
+      const auth = serverAuthHeader("engine-activation-mint");
+      // hubUrl is the dead port http://127.0.0.1:9 → ssh DIALS it → the proxy's
+      // "hub upstream failed" 502 (a bound-but-dead URL), NOT the no-upstream 503.
+      const res = await fetch(`${boot.url}/session`, { headers: { Authorization: auth } });
+      expect(res.status).toBe(502);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toContain("hub upstream failed"); // the configured ssh URL was dialed
+    } finally {
+      await boot.service.stop();
+    }
+  });
+
+  it("#1260 AC3 — a not-yet-shipped provider (tailscale) yields the honest hub-down, NEVER a silent fallback to the configured ssh URL", async () => {
+    const { lines, log } = sinkLog();
+    const boot = await startAmicodeService(log, {
+      engine: { password: "engine-activation-mint", getUrl: () => engine.url },
+      fleetActivation: armedActivation({ entitlementConfigDir: entitledDir, overlaySource }),
+      fleetTransport: { kind: "tailscale" }, // a named seam member with no provider in THIS build
+    });
+    expect(boot).toBeDefined();
+    if (!boot) return;
+    try {
+      const auth = serverAuthHeader("engine-activation-mint");
+      // No provider is registered for tailscale → NO base URL is bound → the
+      // honest "hub upstream not available" 503 (the no-upstream answer). The
+      // configured ssh hubUrl (127.0.0.1:9) is NEVER dialed — so this is NOT the
+      // 502 "hub upstream failed" a fallback to ssh would produce.
+      const res = await fetch(`${boot.url}/session`, { headers: { Authorization: auth } });
+      expect(res.status).toBe(503);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toBe("hub upstream not available"); // no url bound = honest hub-down
+      expect(body.error).not.toContain("failed"); // NOT a dial of the configured ssh URL
+      // the boot log names the transport selection outcome (never a silent no-op)
+      expect(lines.some((l) => l.includes("transport") && l.includes("tailscale"))).toBe(true);
+    } finally {
+      await boot.service.stop();
+    }
+  });
+
   it("posture tuning reaches the detector end-to-end: hubDownConsecutiveNoResponses=1 → one no-response flips the mode to engine (the hub-down posture routes locally)", async () => {
     const { log } = sinkLog();
     const boot = await startAmicodeService(log, {

@@ -35,6 +35,13 @@ import { createAmicodeService } from "./amicode_service";
 import type { AmicodeServiceServer } from "./amicode_service/server";
 import { fleetStagingSummary, stageFleetDataPlane } from "./amicode_service/fleet_staging";
 import { relayVersionGate, type RelayVersionGateOptions } from "./amicode_service/fleet_version_skew";
+import {
+  createSshProvider,
+  resolveFleetTransportKind,
+  hubUrlStringFromProvider,
+  type FleetTransportKind,
+  type FleetTransportProvider,
+} from "./amicode_service/fleet_transport";
 import type { FleetActivation } from "./fleet_activation";
 
 /** What consumers (terminal env, dogfood probes, the frame picker) need. */
@@ -96,8 +103,20 @@ export interface AmicodeServiceWiringOptions {
   /** #398: the fleet transport tuning the activation does not own — the
    *  client-enforced data-plane timeout and the write pipeline's budget.
    *  The harness tightens these for the kill/hang legs; production uses
-   *  the defaults. */
-  fleetTransport?: { dataPlaneTimeoutMs?: number; writeTimeoutMs?: number; writeMaxRetries?: number };
+   *  the defaults. #1260 adds `kind` — the `amicode.fleetTransport` provider
+   *  selector (default `ssh`) — and `disabled`, the independently-disableable
+   *  knob. An unset/`ssh` kind reproduces today's launchd-forward behavior; a
+   *  disabled or not-yet-shipped provider yields the honest hub-down (no base
+   *  URL bound), NEVER a silent fallback to another provider. */
+  fleetTransport?: {
+    dataPlaneTimeoutMs?: number;
+    writeTimeoutMs?: number;
+    writeMaxRetries?: number;
+    /** The `amicode.fleetTransport` setting (default `ssh`). */
+    kind?: string;
+    /** Independently disabled providers. */
+    disabled?: FleetTransportKind[];
+  };
   /** Fixed port for the service. When set, the service binds to this port
    *  so the iframe origin stays stable across window reloads — preserving
    *  localStorage (settings, titlebar positions, etc.). Falls back to an
@@ -150,7 +169,33 @@ export async function startAmicodeService(
       typeof opts.fleetActivation === "function" ? opts.fleetActivation() : opts.fleetActivation;
     const activation = resolveActivation();
     let fleet: AmicodeServiceWiringOptions["fleet"];
+    let transportNote = "";
     if (activation !== undefined && activation.armed) {
+      // #1260: the client↔host transport is a PLUGGABLE PROVIDER selected by
+      // the amicode.fleetTransport setting (default `ssh`). The ssh provider
+      // wraps the launchd/systemd `-L` forward — its resolveBaseUrl() is the
+      // loopback hub URL, read LATE (per request) so a de-armed activation
+      // yields undefined (the honest hub-down, never a stale snapshot). The hub
+      // proxy consumes it through the existing getUrl seam. A disabled /
+      // not-yet-shipped provider binds NO base URL (the honest hub-down),
+      // NEVER a silent fallback to another provider's URL.
+      const transportSel = resolveFleetTransportKind({
+        setting: opts.fleetTransport?.kind,
+        ...(opts.fleetTransport?.disabled !== undefined ? { disabled: opts.fleetTransport.disabled } : {}),
+      });
+      const lateHubUrl = (): string | undefined => {
+        const a = resolveActivation();
+        return a !== undefined && a.armed ? a.hubUrl : undefined;
+      };
+      // Only `ssh` is registered in this slice. A not-ok selection (disabled, or
+      // a named-but-unshipped tailscale/direct) binds NO URL so the hub proxy
+      // answers its honest hub-down — never a different provider's URL.
+      const transport: FleetTransportProvider = transportSel.ok
+        ? createSshProvider({ resolveUrl: lateHubUrl })
+        : createSshProvider({ resolveUrl: () => undefined });
+      transportNote = transportSel.ok
+        ? `; transport: ${transportSel.kind}`
+        : `; transport: ${opts.fleetTransport?.kind ?? "?"} unavailable — ${transportSel.reason} (honest hub-down, no fallback)`;
       fleet = {
         // staging inputs the activation carries (undefined = the machine's
         // real resolution — the production path; tests/harnesses inject)
@@ -159,15 +204,12 @@ export async function startAmicodeService(
           ? { entitlementConfigDir: activation.entitlementConfigDir }
           : {}),
         ...(activation.overlaySource !== undefined ? { overlaySource: activation.overlaySource } : {}),
-        // LATE-BOUND: re-resolve per request. A de-armed activation (config
-        // cleared mid-session) is the honest upstream absence — the hub
-        // proxy answers its named 503 and the posture counts no-responses —
-        // never a stale boot-time snapshot.
+        // LATE-BOUND through the transport provider: re-resolve per request. A
+        // de-armed activation (config cleared mid-session) is the honest
+        // upstream absence — the hub proxy answers its named 503 and the
+        // posture counts no-responses — never a stale boot-time snapshot.
         hub: {
-          getUrl: () => {
-            const a = resolveActivation();
-            return a !== undefined && a.armed ? a.hubUrl : undefined;
-          },
+          getUrl: () => hubUrlStringFromProvider(transport),
         },
         // D6 tuning: the named config keys, defaults = the fixture values.
         posture: activation.posture,
@@ -236,7 +278,7 @@ export async function startAmicodeService(
           )}`
         : "";
     log.appendLine(
-      `[amicode-service] listening on ${url.toString()} (${service.routeCount} routes; auth: ${authNote})${engineNote}${shelfNote}${activationNote}${fleetNote}`,
+      `[amicode-service] listening on ${url.toString()} (${service.routeCount} routes; auth: ${authNote})${engineNote}${shelfNote}${activationNote}${transportNote}${fleetNote}`,
     );
     return { service, url: url.toString().replace(/\/$/, ""), authHeader: service.authHeader };
   } catch (err) {
