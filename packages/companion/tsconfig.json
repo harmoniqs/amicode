@@ -13,7 +13,11 @@
     "skipLibCheck": true,
     "resolveJsonModule": true,
     "outDir": "./dist",
-    "rootDir": "./",
+    // No `rootDir`: esbuild (esbuild.config.mjs) owns the bundle output, and tsc
+    // runs ONLY as `--noEmit` for typechecking. The link sensor (#1275) imports
+    // the PURE merged detector from ../../extension/src (bundle-and-reuse, no
+    // fork) — a rootDir of "./" would reject those cross-package source files
+    // (TS6059) though they never emit. Dropping it is the surgical fix.
     "sourceMap": true
   },
   "include": ["src/**/*"],

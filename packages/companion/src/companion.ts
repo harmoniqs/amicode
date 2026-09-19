@@ -19,6 +19,7 @@ import {
   reopenWindow,
   type ReopenOutcome,
 } from "./reopen";
+import { LinkSensor, type LinkPosture, type SensorScheduler } from "./link_sensor";
 
 /** The one command the companion contributes (see package.json contributes). */
 export const REOPEN_COMMAND = "amicode.companion.reopenWindow";
@@ -53,6 +54,12 @@ export interface CompanionDeps {
   openFolder?: (uri: string, opts: { forceNewWindow: boolean }) => void | Promise<void>;
   /** How to surface an honest error (default: `showErrorMessage`). */
   showError?: (message: string) => void;
+  /** The link sensor's timer seam (default: global setInterval/clearInterval).
+   *  Injected in tests so the cadence is driven without real timers. */
+  scheduler?: SensorScheduler;
+  /** Called each sensor tick with the freshly classified posture — the seam the
+   *  switch orchestration (#1276 auto-DOWN, #1277 prompt-UP) will consume. */
+  onPosture?: (posture: LinkPosture) => void;
 }
 
 /** The activated companion's API — the wired probe + reopen, returned so the
@@ -60,6 +67,11 @@ export interface CompanionDeps {
 export interface CompanionApi {
   /** Probe the client-configured hub for liveness (AC2). */
   probeHub(): Promise<HubProbeResult>;
+  /** The running client-side link sensor (#1275): it probes the hub on the
+   *  standard cadence and feeds each outcome to the bundled MERGED detector,
+   *  emitting the classified posture (ok / degraded / hub-down). It is started
+   *  on activation and stopped on dispose. */
+  linkSensor: LinkSensor;
   /** Programmatically flip the window Remote-SSH↔local (AC3), direction chosen
    *  from the current window mode. */
   reopen(args?: ReopenArgs): Promise<ReopenOutcome>;
@@ -97,10 +109,27 @@ export function activate(context: vscode.ExtensionContext, deps: CompanionDeps =
   const disposable = vscode.commands.registerCommand(REOPEN_COMMAND, (arg?: ReopenArgs) => reopen(arg));
   context.subscriptions.push(disposable);
 
+  // #1275: the client-side link sensor — probe the hub on the standard cadence
+  // and feed each outcome to the BUNDLED merged detector, emitting the
+  // classified posture. The companion owns only the probe (it cannot read
+  // host-side posture state); the classification is the merged detector's. It
+  // acts on nothing here (auto-DOWN / prompt-UP are #1276/#1277).
+  const linkSensor = new LinkSensor({
+    probe: probeHub,
+    ...(deps.scheduler !== undefined ? { scheduler: deps.scheduler } : {}),
+    ...(deps.onPosture !== undefined ? { onPosture: deps.onPosture } : {}),
+  });
+  linkSensor.start();
+  context.subscriptions.push({ dispose: () => linkSensor.stop() });
+
   return {
     probeHub,
+    linkSensor,
     reopen,
-    dispose: () => disposable.dispose(),
+    dispose: () => {
+      linkSensor.stop();
+      disposable.dispose();
+    },
   };
 }
 

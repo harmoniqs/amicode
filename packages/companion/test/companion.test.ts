@@ -24,6 +24,7 @@ import {
   reopenWindow,
 } from "../src/reopen";
 import { activate, deactivate, REOPEN_COMMAND, COMPANION_HUB_URL_SETTING } from "../src/companion";
+import { DEFAULT_PROBE_CADENCE_MS, type SensorScheduler } from "../src/link_sensor";
 
 // A fake ExtensionContext — the companion touches only `subscriptions`.
 function fakeContext(): { subscriptions: Array<{ dispose(): void }> } {
@@ -257,5 +258,74 @@ describe("activate (AC1 — client-side activation)", () => {
 
   it("deactivate is a safe no-op", () => {
     expect(() => deactivate()).not.toThrow();
+  });
+});
+
+// ── #1275: activate wires + STARTS the client-side link sensor on the cadence ─
+// A timer seam that captures the scheduled callback + cadence instead of using
+// real timers.
+function fakeScheduler() {
+  const scheduled: Array<{ cb: () => void; ms: number }> = [];
+  const cleared: unknown[] = [];
+  const scheduler: SensorScheduler = {
+    setInterval: (cb, ms) => {
+      scheduled.push({ cb, ms });
+      return scheduled.length - 1;
+    },
+    clearInterval: (h) => {
+      cleared.push(h);
+    },
+  };
+  return { scheduler, scheduled, cleared };
+}
+
+describe("activate (#1275 — the client-side link sensor runs on the standard cadence)", () => {
+  it("starts the link sensor on the standard cadence (AC1)", () => {
+    const { scheduler, scheduled } = fakeScheduler();
+    activate(fakeContext() as never, { scheduler });
+    expect(scheduled).toHaveLength(1);
+    expect(scheduled[0].ms).toBe(DEFAULT_PROBE_CADENCE_MS);
+  });
+
+  it("exposes the sensor; a reachable probe classifies fleet (ok), feeding the bundled detector (AC1)", async () => {
+    (vscode.workspace as unknown as { _config: Record<string, unknown> })._config[COMPANION_HUB_URL_SETTING] =
+      "http://127.0.0.1:4096";
+    const { scheduler } = fakeScheduler();
+    const f = fakeFetch(200);
+    const api = activate(fakeContext() as never, { probeFetch: f.fn, scheduler });
+    const posture = await api.linkSensor.tick();
+    expect(posture.state).toBe("fleet");
+    expect(posture.reachable).toBe(true);
+    expect(f.hits).toEqual(["http://127.0.0.1:4096/global/health"]);
+  });
+
+  it("an unreachable stream classifies hub-down (standalone) through the bundled detector (AC1/AC2)", async () => {
+    const { scheduler } = fakeScheduler();
+    const api = activate(fakeContext() as never, { probeFetch: throwingFetch("ECONNREFUSED"), scheduler });
+    // The hub URL is unset in this test → the probe is the honest no-base-url
+    // no-response; N of those enter the hub-down posture.
+    await api.linkSensor.tick();
+    await api.linkSensor.tick();
+    const third = await api.linkSensor.tick();
+    expect(third.state).toBe("standalone");
+    expect(third.pointer).toContain("hub-down");
+  });
+
+  it("dispose() and the subscription both stop the sensor (no dangling cadence)", () => {
+    const { scheduler, scheduled, cleared } = fakeScheduler();
+    const ctx = fakeContext();
+    const api = activate(ctx as never, { scheduler });
+    expect(scheduled).toHaveLength(1);
+    api.dispose();
+    expect(cleared).toHaveLength(1); // the interval was cleared
+  });
+
+  it("the sensor stop is registered on context.subscriptions (VS Code-driven teardown)", () => {
+    const { scheduler, cleared } = fakeScheduler();
+    const ctx = fakeContext();
+    activate(ctx as never, { scheduler });
+    // dispose every subscription the way VS Code does on deactivate
+    for (const d of ctx.subscriptions) d.dispose();
+    expect(cleared).toHaveLength(1);
   });
 });
