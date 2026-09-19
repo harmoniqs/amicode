@@ -27,6 +27,7 @@ import { FileProvider, selectionFromLines, useFile, type FileSelection, type Sel
 import { createStore } from "solid-js/store"
 import type { SessionReviewLineComment } from "@opencode-ai/session-ui/session-review"
 import { ResizeHandle } from "@opencode-ai/ui/resize-handle"
+import { Spinner } from "@opencode-ai/ui/spinner"
 import { isScrollKeyTarget, scrollKey, scrollKeyOwner } from "@opencode-ai/ui/scroll-view"
 import { Tabs } from "@opencode-ai/ui/tabs"
 import { ButtonV2 } from "@opencode-ai/ui/v2/button-v2"
@@ -150,6 +151,57 @@ async function runPromptRollbackMutation<T, R>(input: {
     })
 }
 
+// #1288 (never unmount first): the fallback slot for the keyed timeline gate.
+// While the next session's messages load, render a pixel-frozen snapshot of
+// the outgoing timeline (cloned from the last live scroller at its captured
+// scroll position) with a small loading pill — the swap happens the instant
+// the new view is ready, so a cold switch over a fleet link never wipes to a
+// blank or a bare spinner. The very first mount (no prior view exists yet)
+// falls back to the centered spinner exactly as before.
+function SessionTimelineHold(props: { getEl: () => HTMLDivElement | undefined; getScrollTop: () => number }) {
+  return (
+    <Show
+      when={props.getEl()}
+      fallback={
+        <div class="flex-1 flex items-center justify-center">
+          <Spinner class="size-5 text-v2-icon-icon-muted" />
+        </div>
+      }
+    >
+      <div class="relative h-full overflow-hidden">
+        <div
+          ref={(host) => {
+            const source = props.getEl()
+            if (!source) return
+            const clone = source.cloneNode(true) as HTMLDivElement
+            clone.style.margin = "0"
+            host.appendChild(clone)
+            const restore = () => {
+              clone.scrollTop = props.getScrollTop()
+            }
+            restore()
+            requestAnimationFrame(restore)
+          }}
+          class="absolute inset-0 overflow-hidden pointer-events-none"
+          style={{ opacity: "0.85" }}
+        />
+        <div class="absolute inset-x-0 bottom-6 flex justify-center pointer-events-none">
+          <div
+            class="flex items-center gap-2 rounded-full px-3 py-1.5 shadow-lg"
+            style={{
+              "backdrop-filter": "blur(8px)",
+              background: "color-mix(in oklch, var(--v2-bg-bg-base, #171717) 55%, transparent)",
+              border: "1px solid var(--v2-border-border-weak-base, rgba(128, 128, 128, 0.35))",
+            }}
+          >
+            <Spinner class="size-3.5 text-v2-icon-icon-muted" />
+          </div>
+        </div>
+      </div>
+    </Show>
+  )
+}
+
 export function SessionPage() {
   return (
     <SessionProviders>
@@ -259,7 +311,15 @@ function ResolvedTargetSessionRoute() {
     () => sync().session.lineage,
   )
   const directory = createMemo(() => current()?.session.directory)
-  const targetDirectory = () => directory()!
+  // #1288 (never unmount first): once the target's lineage has resolved once,
+  // hold the last resolved directory through cold windows (uncached lineage
+  // mid-resolution — 0.5-3s over a fleet link) so the workspace subtree stays
+  // mounted instead of tearing down and destroying the terminal/providers.
+  // The keyed gate in TargetSessionPage sees a frozen key and does not
+  // re-root; warm switches pass straight through. The Show below therefore
+  // never closes again after its first open.
+  const heldDirectory = createMemo((prev: string | undefined) => directory() ?? prev, undefined)
+  const targetDirectory = () => heldDirectory()!
 
   createEffect(() => {
     const session = current()
@@ -279,11 +339,17 @@ function ResolvedTargetSessionRoute() {
   })
 
   return (
-    // Non-keyed: closes only while the target's directory is unknown (uncached
-    // lineage mid-resolution), which tears down the workspace subtree including
-    // the terminal. Same-workspace tab switches keep it open because warm
-    // targets resolve synchronously from the sync cache.
-    <Show when={directory()}>
+    // Non-keyed: the held memo above means this gate only truly closes before
+    // the FIRST lineage resolve (cold deep link on app boot) — afterwards it
+    // stays open for the life of the route.
+    <Show
+      when={heldDirectory()}
+      fallback={
+        <div class="flex h-full w-full items-center justify-center">
+          <Spinner class="size-5 text-v2-icon-icon-muted" />
+        </div>
+      }
+    >
       <SDKProvider directory={targetDirectory}>
         <DirectoryDataProvider directory={targetDirectory} server={serverKey}>
           <TargetSessionPage />
@@ -1760,10 +1826,25 @@ export default function Page() {
 
   let fill = () => {}
 
+  // #1288 frozen hold: keep the last live timeline scroller and its scroll
+  // position so a cold session switch can render a pixel-frozen snapshot of
+  // the outgoing view while the next one loads, instead of wiping to a bare
+  // spinner. The element intentionally outlives the keyed unmount.
+  let timelineHoldEl: HTMLDivElement | undefined
+  let timelineHoldScrollTop = 0
+
   const setScrollRef = (el: HTMLDivElement | undefined) => {
     scroller = el
     autoScroll.scrollRef(el)
     if (!el) return
+    timelineHoldEl = el
+    el.addEventListener(
+      "scroll",
+      () => {
+        timelineHoldScrollTop = el.scrollTop
+      },
+      { passive: true },
+    )
     scheduleScrollState(el)
     fill()
   }
@@ -2284,7 +2365,18 @@ export default function Page() {
             </div>
           </Match>
           <Match when={params.id}>
-            <Show when={messagesReady() ? params.id : undefined} keyed>
+            <Show
+              when={messagesReady() ? params.id : undefined}
+              keyed
+              fallback={
+                // #1288 (never unmount first): a cold message load is a wire
+                // round-trip — hold a pixel-frozen snapshot of the outgoing
+                // timeline at its captured scroll position instead of wiping
+                // to a bare spinner; the swap happens the moment the new
+                // session is ready.
+                <SessionTimelineHold getEl={() => timelineHoldEl} getScrollTop={() => timelineHoldScrollTop} />
+              }
+            >
               {(_id) => (
                 <Show
                   when={visibleUserMessages().length > 0 || rolled().length === 0}
