@@ -252,6 +252,41 @@ describe("buildFleetSection — machine posture from the state file (#780)", () 
     expect(s).toContain("**server** — this machine is the canonical Amicode server");
     expect(s).not.toMatch(/mode \*\*fleet\*\*|not.*live reachability|posture/i); // no posture note on a server
   });
+
+  // #1265 (Slice 5): the honest degraded render covers the RELAY-driven states.
+  // The relay's FleetPostureDetector computes the hub-up-but-slow DEGRADED
+  // steady state the extension's own up/down probe cannot — this slice ensures
+  // that state renders honestly (machine, hub identity, reachability),
+  // timestamped, never as-if-attached and never a bare-healthy claim (AC1).
+  it("AC1: a DEGRADED (hub-up-but-slow) posture file renders honestly — machine, hub, reachable-but-slow, timestamped", () => {
+    const posture = writePostureState({ mode: "degraded", reachable: true, last_rtt_ms: 2500 });
+    const s = fleetSectionWith({ projectionPath: clientProjection(), posturePath: posture });
+    expect(s).toContain("macbook"); // the machine
+    expect(s).toContain("amicissimo-hub"); // the hub identity
+    expect(s).toContain("http://127.0.0.1:4096"); // the hub base URL
+    expect(s).toMatch(/degraded/i);
+    expect(s).toMatch(/slow|latency/i); // reachable-but-slow, not "unreachable"
+    expect(s).toMatch(/as of|ago/); // timestamped — never a bare "healthy"
+    expect(s).not.toMatch(/fell back|unreachable/i); // degraded is hub-UP, not fallen back
+    expect(s).not.toMatch(/attached to hub/i); // and not the plain-fleet "attached" claim
+  });
+
+  // AC3: the posture COPY is OS-neutral — no hardcoded launchd/plist wording
+  // (transport-specific health is #1260's, consumed here, not authored here).
+  it("AC3: the posture copy is OS-neutral for the relay-driven states — no launchd / plist wording", () => {
+    const degraded = writePostureState({ mode: "degraded", reachable: true, last_rtt_ms: 2500 });
+    const sd = fleetSectionWith({ projectionPath: clientProjection(), posturePath: degraded });
+    expect(sd).toMatch(/degraded/i); // the posture line is present …
+    expect(sd).not.toMatch(/launchd/i); // … and OS-neutral
+    expect(sd).not.toMatch(/plist/i);
+
+    // host-unreachable (fell-back) posture copy is OS-neutral too
+    const down = writePostureState({ mode: "standalone", reachable: false, last_rtt_ms: null });
+    const ss = fleetSectionWith({ projectionPath: clientProjection(), posturePath: down });
+    expect(ss).toMatch(/standalone/i);
+    expect(ss).not.toMatch(/launchd/i);
+    expect(ss).not.toMatch(/plist/i);
+  });
 });
 
 // buildFleetSection is module-private; reach it through buildStackStateBlock's

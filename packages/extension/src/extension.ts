@@ -104,6 +104,7 @@ import { handshakePath, readHandshake, deleteHandshake, serverLogPath, coldSpawn
 import { startKeepalive, stopKeepalive, readGraceSeconds, pingKeepalive } from "./server_keepalive";
 import { FleetPollHysteresis } from "./fleet_poll_hysteresis";
 import { FleetPostureStateWriter } from "./fleet_posture_state";
+import { recordPostureState } from "./fleet_posture_feed";
 import { stopServer } from "./stop_server";
 import type { QueueView } from "./qick_job_server";
 import { postDeviceStatus, postDeviceActions, postDeviceActivate } from "./inspector_bridge";
@@ -802,6 +803,14 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     // hub-lost/fell-back), so a blip below the threshold never rewrites it. The
     // hub identity comes from the projection topology's canonical address; the
     // client rides the local tunnel forward.
+    //
+    // #1265 (Slice 5): the fleet/standalone writes below go through the
+    // fleet_posture_feed seam (recordPostureState) — ONE fact-builder, the ONE
+    // writer. The relay's FleetPostureDetector computes the hub-up-but-slow
+    // DEGRADED steady state this up/down probe cannot see; when the client relay
+    // boot co-locates that detector with this loop, its snapshot feeds the SAME
+    // writer here via recordDetectorSnapshot (NO second writer). Its degraded
+    // posture already renders honestly (stack_state renderPostureLines).
     const postureWriter = new FleetPostureStateWriter({ log: (m) => opencodeChannel.appendLine(m) });
     const postureHostname = os.hostname();
     const postureCanonical = topology.kind === "ok" ? topology.canonical : undefined;
@@ -831,14 +840,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         sseClient?.connect(opencodeReadyUrl);
         // #780: attach (first attach OR hub-regained) — record the live fleet
         // posture so the next session's context names the hub + reachability.
-        postureWriter.record({
-          hostname: postureHostname,
-          mode: "fleet",
-          hub: postureHub,
-          reachable: true,
-          last_ok: new Date().toISOString(),
-          last_rtt_ms: probeRttMs,
-        });
+        // #1265: through the single-writer seam (recordPostureState).
+        recordPostureState("fleet", { hostname: postureHostname, hub: postureHub, rttMs: probeRttMs }, postureWriter);
         if (vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true)) {
           // Fleet client: no local service boots in this mode, so frameUrl()
           // resolves the tunnel engine origin — the honest available frame.
@@ -854,13 +857,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         // #780: hub-lost — the client fell back. Record the standalone posture
         // with this instant as the fallback time, so context stops rendering
         // the stale role line as if attached (the 2026-09-03 outage failure).
-        postureWriter.record({
-          hostname: postureHostname,
-          mode: "standalone",
-          hub: postureHub,
-          reachable: false,
-          last_rtt_ms: null,
-        });
+        // #1265: through the single-writer seam (recordPostureState).
+        recordPostureState("standalone", { hostname: postureHostname, hub: postureHub }, postureWriter);
         opencodeChannel.appendLine(
           `[fleet] tunnel down — ${d.failures} consecutive failed probes (threshold ${d.downThreshold}) — go standalone to work locally`,
         );
@@ -1893,6 +1891,23 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     const prevBinary = cfg.get<string>("opencodeBinary", "");
     const prevPort = cfg.get<number>("opencodePort", 0);
     goStandalone({ previousBinary: prevBinary, previousPort: prevPort });
+    // #1265 (Slice 5): the manual fallback is an attach-state TRANSITION too —
+    // persist the standalone posture through #780's single writer class so the
+    // context render stops claiming "attached" the instant the user chooses
+    // standalone (AC1: never a stale "attached" claim). Same writer discipline
+    // as the checkFleet loop (transition-only, atomic, never throws) — NOT a
+    // second write mechanism. The hub identity is the projection's canonical.
+    try {
+      const canonical = topology.kind === "ok" ? topology.canonical : undefined;
+      const host = canonical?.host;
+      recordPostureState(
+        "standalone",
+        { hostname: os.hostname(), hub: { name: host ?? null, base_url: host ? `http://${host}:${canonical?.port ?? 4096}` : null } },
+        new FleetPostureStateWriter({ log: (m) => opencodeChannel.appendLine(m) }),
+      );
+    } catch (e) {
+      opencodeChannel.appendLine(`[fleet] go standalone: posture-state write skipped — ${(e as Error).message}`);
+    }
     // #1106: the write changed the file amicissimo's ONE parser reads — refresh
     // the projection cache through the verb NOW so the guard + status bar + health
     // checks see role=standalone immediately (the coherence rule: every fleet.json
