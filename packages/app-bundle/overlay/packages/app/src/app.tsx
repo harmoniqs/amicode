@@ -679,6 +679,7 @@ ${text.slice(0, 12000)}` }).catch(() => {})  // #1294: 2400 truncated snapshots 
             up: Math.round((Date.now() - diagStart) / 1000),
             load: briefMap(w.__loadDebug),
             gate: briefMap(w.__gateDebug),
+            render: (globalThis as { __renderRing?: unknown }).__renderRing ?? null,
             mirror: w.__mirrorDebug?.slice(-4) ?? null,
             hydrated: w.__mirrorHydrated?.slice(-6) ?? null,
           }),
@@ -687,6 +688,43 @@ ${text.slice(0, 12000)}` }).catch(() => {})  // #1294: 2400 truncated snapshots 
     }
     const shipTimeout = setTimeout(shipRings, 8_000)
     const shipInterval = setInterval(shipRings, 30_000)
+
+    // #1296 render timing: the data layer is clean on switches (zero
+    // loads, zero gate holds in the rings) — the remaining perceived
+    // delay must be the RENDER (heavy sessions remount the timeline:
+    // 31-53 messages with tools/diffs/thinking). Stamp every route
+    // change and the first message-element paint; ship the durations.
+    const renderRing: { id: string; ms: number; els: number }[] = []
+    let lastPath = location.pathname
+    let renderT0 = 0
+    let renderId = ""
+    setInterval(() => {
+      try {
+        const path = location.pathname
+        if (path !== lastPath) {
+          lastPath = path
+          renderT0 = performance.now()
+          renderId = (path.match(/session\/([^/?]+)/)?.[1] ?? "").slice(-14)
+        }
+        if (renderT0 > 0) {
+          const els = document.querySelectorAll(
+            '[data-slot*=user-message], [data-slot*=assistant-message], [data-component*=message]',
+          ).length
+          if (els > 0) {
+            renderRing.push({ id: renderId, ms: Math.round(performance.now() - renderT0), els })
+            if (renderRing.length > 24) renderRing.shift()
+            renderT0 = 0
+          }
+        }
+      } catch {
+        /* best-effort */
+      }
+    }, 100)
+    const shipRenderRing = () => {
+      const w = globalThis as { __renderRing?: unknown }
+      w.__renderRing = renderRing.slice(-8)
+    }
+    setInterval(shipRenderRing, 1_000)
     let lastHtml = -1
     let lastKids = -1
     const ring: string[] = []
