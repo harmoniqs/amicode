@@ -949,7 +949,18 @@ export function createServerSession(
       const count = data.message[sessionID]?.length ?? 0
       const cached =
         count > 0 && meta.limit[sessionID] !== undefined && count >= (meta.limit[sessionID] ?? 0)
-      if (cached && data.info[sessionID] && !options?.force) return
+      if (cached && !options?.force) {
+        // #1295: info is METADATA (title, model) — the messages are the
+        // content. A cached session with missing info (outside the warm's
+        // window, never wire-resolved this document) must not block the
+        // timeline on the info's wire round-trip: resolve it in the
+        // background and render the cached messages now. The header/title
+        // fill in when the info lands. (The bare /session/:id fetches on
+        // every such switch + the Suspense holding the panel for them was
+        // the remaining "missing chat" on switches.)
+        if (!data.info[sessionID]) void resolve(sessionID).catch(() => {})
+        return
+      }
       await Promise.all([
         resolve(sessionID, options),
         cached && !options?.force
