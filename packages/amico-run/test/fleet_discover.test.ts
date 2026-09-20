@@ -39,3 +39,39 @@ describe("discoverFleetCandidates — enumeration", () => {
     expect(byName.cygnus.sources).toEqual(["roster"]);
   });
 });
+
+describe("discoverFleetCandidates — dedupe across sources", () => {
+  it("folds one machine seen in all three sources into a single candidate, merging sources + reach hints", () => {
+    const result = discoverFleetCandidates({
+      // The same machine, named consistently across sources (tailnet HostName ==
+      // ssh alias == roster name), with a MagicDNS suffix on the tailnet name to
+      // exercise the first-DNS-label normalization.
+      tailnet: [{ hostName: "mini.tail-abcd.ts.net.", tailscaleIP: "100.64.0.9", online: true }],
+      sshConfig: [{ alias: "mini", hostName: "mini.local" }],
+      roster: [rosterRow({ machine_id: "mini-id", name: "mini", sshAlias: "mini", health: "reachable" })],
+    });
+
+    expect(result).toHaveLength(1);
+    const [c] = result;
+    // sources deduped + in canonical order (roster, ssh-config, tailnet).
+    expect(c.sources).toEqual(["roster", "ssh-config", "tailnet"]);
+    expect(c.id).toBe("mini");
+    // reach hints merged from whichever sources carried them.
+    expect(c.sshAlias).toBe("mini");
+    expect(c.address).toBe("100.64.0.9");
+  });
+
+  it("keeps distinct machines distinct even when some share a source", () => {
+    const result = discoverFleetCandidates({
+      tailnet: [
+        { hostName: "mini", tailscaleIP: "100.64.0.9" },
+        { hostName: "studio", tailscaleIP: "100.64.0.10" },
+      ],
+      sshConfig: [{ alias: "mini" }],
+      roster: [],
+    });
+    expect(result.map((c) => c.id)).toEqual(["mini", "studio"]);
+    expect(result.find((c) => c.id === "mini")!.sources).toEqual(["ssh-config", "tailnet"]);
+    expect(result.find((c) => c.id === "studio")!.sources).toEqual(["tailnet"]);
+  });
+});
