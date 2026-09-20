@@ -8,7 +8,8 @@
 //   - renderFleetSection(): the view-model → DOM (rows, posture badge, the
 //     single Manage affordance), and the read-only click contract.
 import { describe, it, expect, vi } from "vitest";
-import { buildFleetSectionModel } from "../src/sidebar_fleet_section";
+import { buildFleetSectionModel, renderFleetSection } from "../src/sidebar_fleet_section";
+import type { FleetSectionModel } from "../src/sidebar_fleet_section";
 
 // A lawful roster row (the #1318 / @amicode/schema RosterRow shape).
 function row(over: Partial<Record<string, unknown>> = {}) {
@@ -132,5 +133,63 @@ describe("buildFleetSectionModel — honest empty / unreachable state (AC6)", ()
     });
     expect(model.state).toBe("unreachable");
     expect(model.devices).toEqual([]);
+  });
+});
+
+// ── renderFleetSection (DOM) ─────────────────────────────────────────────────
+
+function populatedModel(over: Partial<FleetSectionModel> = {}): FleetSectionModel {
+  return buildFleetSectionModel({
+    roster: [{
+      machine_id: "mac-studio-01", name: "Mac Studio", server_mode: "server",
+      capabilities: ["compute", "gpu-rig"], last_report: "2026-09-20T12:00:00.000Z", health: "degraded",
+    }],
+    rosterReachable: true,
+    posture: { serverMode: "server", hostname: "mac-studio-01", mode: "fleet", reachable: true, hub: { name: "hub", base_url: "u" } },
+    manageAvailable: true,
+    ...(over as any),
+  });
+}
+
+describe("renderFleetSection — per-device rows + posture badge (AC1, AC2)", () => {
+  it("renders one row per device with name, role, capability chips, health, last-seen", () => {
+    const el = document.createElement("div");
+    renderFleetSection(el, populatedModel(), () => {});
+
+    const rows = el.querySelectorAll(".fleet-device-row");
+    expect(rows).toHaveLength(1);
+    const r = rows[0] as HTMLElement;
+    expect(r.getAttribute("data-machine-id")).toBe("mac-studio-01");
+    expect(r.querySelector(".fleet-device-name")!.textContent).toContain("Mac Studio");
+
+    // server_mode surfaced under the "role" label.
+    const role = r.querySelector(".fleet-device-role")!;
+    expect(role.textContent).toContain("role");
+    expect(role.textContent).toContain("server");
+
+    // capability chips: known (compute) vs descriptive (gpu-rig) distinguished.
+    const chips = r.querySelectorAll(".fleet-cap-chip");
+    expect(chips).toHaveLength(2);
+    expect((chips[0] as HTMLElement).getAttribute("data-known")).toBe("true");
+    expect((chips[1] as HTMLElement).getAttribute("data-known")).toBe("false");
+
+    // tri-state health indicator, keyed on data-health and paired with text (color is never the only signal).
+    const health = r.querySelector(".fleet-health")!;
+    expect(health.getAttribute("data-health")).toBe("degraded");
+    expect(health.textContent!.toLowerCase()).toContain("degraded");
+
+    // last_report surfaced under the "last-seen" label.
+    const seen = r.querySelector(".fleet-last-seen")!;
+    expect(seen.textContent!.toLowerCase()).toContain("last-seen");
+    expect(seen.textContent).toContain("2026-09-20T12:00:00.000Z");
+  });
+
+  it("renders this machine's posture badge (Server mode + link-health)", () => {
+    const el = document.createElement("div");
+    renderFleetSection(el, populatedModel(), () => {});
+    const badge = el.querySelector(".fleet-posture-badge") as HTMLElement;
+    expect(badge).not.toBeNull();
+    expect(badge.getAttribute("data-link-health")).toBe("ok");
+    expect(badge.textContent).toContain("server");
   });
 });
