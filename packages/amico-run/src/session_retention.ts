@@ -25,7 +25,7 @@ export const DEFAULT_ARCHIVE_DAYS = 30;
  *  silent this long before the nightly curation relocates it. */
 export const DEFAULT_AUTOARCHIVE_HOURS = 48;
 
-function amicodeOpsDir(env: NodeJS.ProcessEnv): string {
+export function amicodeOpsDir(env: NodeJS.ProcessEnv): string {
   const v = env.AMICODE_OPS_DIR;
   return v && v.trim() !== "" ? v : join(homedir(), ".amico", "amicode");
 }

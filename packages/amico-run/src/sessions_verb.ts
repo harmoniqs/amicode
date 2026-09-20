@@ -20,10 +20,11 @@
 // The driver is the python3 stdlib sqlite3 bridge (src/sqlite_bridge.ts) —
 // NOT node:sqlite, which does not exist on the repo's CI node (20.x). See the
 // bridge module header for the full rationale.
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
+  amicodeOpsDir,
   readArchiveDays,
   readAutoArchiveHours,
   renderSessionIndex,
@@ -32,8 +33,8 @@ import {
   writeAutoArchiveHours,
   type IndexSession,
 } from "./session_retention.js";
-import { classifySession, type SessionFeatures } from "./session_junk.js";
-import { jevArchiveAdmits, jevJunkResidual, type JevPassStatus, type ResidualSession, type ResidualVerdict } from "./jev_curation.js";
+import { classifySession, isGreetingTitle, type SessionFeatures } from "./session_junk.js";
+import { jevArchiveAdmits, jevJunkResidual, jevThreadNouls, type JevPassStatus, type NoulCandidate, type ResidualSession, type ResidualVerdict } from "./jev_curation.js";
 import { jevDisabled } from "./jev_client.js";
 import { sqliteBatch, type BridgeStatement } from "./sqlite_bridge.js";
 import type { VerbResult } from "./verbs.js";
@@ -307,6 +308,134 @@ async function runJunkResidual(
   }
 }
 
+// ── thread-noul (#1311): the onset digest's noul-map pass ────────────────────
+// The amico-run half of the onset thread-Noul seam: sweep the digest window,
+// ONE Jev noul per candidate (junk titles pre-filtered by the SAME
+// deterministic vocabulary the classifier uses — the middle layer never
+// pays for obvious noise), and write the derived map (thread-nouls.json in
+// the ops dir) the plugin's digest READS as an input feature. The digest's
+// deterministic derivation never calls Jev; this pass is the only spender.
+// DRY-RUN by default (the S2 convention); --apply writes the map.
+
+/** The sweep window matches the digest's (open_threads AMICODE_OPEN_THREADS_
+ * WINDOW_DAYS default 14). */
+export const DEFAULT_THREAD_NOUL_WINDOW_DAYS = 14;
+
+const THREAD_NOUL_CANDIDATES_SQL = `
+  SELECT s.id, s.title,
+    (SELECT json_extract(p.data, '$.text') FROM part p JOIN message m ON m.id = p.message_id
+      WHERE p.session_id = s.id AND json_extract(m.data, '$.role') = 'assistant'
+        AND json_extract(p.data, '$.type') = 'text'
+        AND length(json_extract(p.data, '$.text')) > 0
+      ORDER BY p.time_created DESC LIMIT 1) AS last_text,
+    (SELECT COUNT(*) FROM todo t WHERE t.session_id = s.id
+      AND t.status != 'completed') AS todo_count
+  FROM session s
+  WHERE s.parent_id IS NULL AND s.time_archived IS NULL AND s.time_created > ?
+  ORDER BY s.time_created DESC`;
+
+/** The noul pass's injectable seam (the same shape autoarchive's residual takes). */
+export interface ThreadNoulDeps {
+  jev?: (candidates: NoulCandidate[]) => Promise<{ status: JevPassStatus; nouls: Record<string, number> }>;
+}
+
+export async function sessionsThreadNoul(argv: string[], env: NodeJS.ProcessEnv, deps: ThreadNoulDeps = {}): Promise<VerbResult> {
+  const dbPath = resolveSessionDb(argv);
+  if (!existsSync(dbPath)) return fail(`session DB not found: ${dbPath}`);
+  const days = flagValue(argv, "--days") ? Number(flagValue(argv, "--days")) : DEFAULT_THREAD_NOUL_WINDOW_DAYS;
+  if (!Number.isInteger(days) || days < 1) return fail(`--days must be a positive integer, got ${days}`);
+  const apply = hasFlag(argv, "--apply");
+  const cutoff = Date.now() - days * 86_400_000;
+  const mapPath = join(amicodeOpsDir(env), "thread-nouls.json");
+
+  if (jevDisabled(env)) {
+    return {
+      json: { verb: "sessions", subcommand: "thread-noul", dry_run: !apply, days, disabled: true, note: "jev path disabled (AMICO_JEV_DISABLED) — zero delta; no map written" },
+      code: 0,
+    };
+  }
+
+  let batch;
+  try {
+    batch = sqliteBatch(dbPath, "ro", [{ sql: THREAD_NOUL_CANDIDATES_SQL, params: [cutoff] }]);
+  } catch (e) {
+    return fail(e instanceof Error ? e.message : String(e));
+  }
+
+  // The deterministic pre-filter: greeting-vocabulary titles never reach the
+  // middle layer (the classifier's noise vocabulary — same words, one source).
+  const candidates: NoulCandidate[] = batch.results[0].rows
+    .map((r) => ({
+      id: String(r.id),
+      title: String(r.title),
+      lastAssistantText: r.last_text === null || r.last_text === undefined ? "" : String(r.last_text),
+      pendingTodos: Number(r.todo_count),
+    }))
+    .filter((c) => !isGreetingTitle(c.title));
+
+  let pass: { status: JevPassStatus | "error"; nouls: Record<string, number> };
+  try {
+    pass = deps.jev !== undefined ? await deps.jev(candidates) : await jevThreadNouls(candidates, { env });
+  } catch (e) {
+    pass = { status: "error", nouls: {} };
+    return {
+      json: {
+        verb: "sessions",
+        subcommand: "thread-noul",
+        dry_run: !apply,
+        days,
+        window_days: days,
+        candidates: candidates.length,
+        status: "error",
+        error: e instanceof Error ? e.message : String(e),
+        map_path: mapPath,
+        note: "fail-open: the noul pass crashed; no map written; the digest degrades to today",
+      },
+      code: 0,
+    };
+  }
+
+  if (pass.status !== "ran") {
+    return {
+      json: {
+        verb: "sessions",
+        subcommand: "thread-noul",
+        dry_run: !apply,
+        days,
+        window_days: days,
+        candidates: candidates.length,
+        status: pass.status,
+        map_path: mapPath,
+        note: "fail-open: the middle layer is unavailable; no map written; the digest degrades to today",
+      },
+      code: 0,
+    };
+  }
+
+  if (apply) {
+    const tmpMap = `${mapPath}.tmp-${process.pid}`;
+    mkdirSync(dirname(mapPath), { recursive: true });
+    writeFileSync(tmpMap, JSON.stringify({ schema_version: 1, generated_at: new Date().toISOString(), entries: pass.nouls }, null, 2) + "\n");
+    renameSync(tmpMap, mapPath);
+  }
+
+  return {
+    json: {
+      verb: "sessions",
+      subcommand: "thread-noul",
+      dry_run: !apply,
+      days,
+      window_days: days,
+      candidates: candidates.length,
+      status: "ran",
+      judged: Object.keys(pass.nouls).length,
+      map_path: apply ? mapPath : undefined,
+      note: apply ? undefined : "dry-run: nothing written — pass --apply to write the derived thread-nouls map",
+    },
+    code: 0,
+  };
+}
+
 // ── restore (clear the one field) ───────────────────────────────────────────
 
 function sessionsRestore(argv: string[]): VerbResult {
@@ -424,6 +553,8 @@ export async function sessionsVerb(argv: string[]): Promise<VerbResult> {
       return sessionsArchive(rest, env);
     case "autoarchive":
       return await sessionsAutoarchive(rest, env);
+    case "thread-noul":
+      return await sessionsThreadNoul(rest, env);
     case "restore":
       return sessionsRestore(rest);
     case "index":
@@ -436,7 +567,7 @@ export async function sessionsVerb(argv: string[]): Promise<VerbResult> {
           verb: "sessions",
           error: `unknown subcommand ${sub ? `"${sub}"` : "(none)"}`,
           usage:
-            "amico sessions list [--archived] [--limit <n>] [--cursor <c>] [--db <path>]  |  amico sessions archive [--days <n>] [--apply]  |  amico sessions autoarchive [--hours <n>] [--apply]  |  amico sessions restore <id>  |  amico sessions index [--out <path>]  |  amico sessions prefs [--days <n>] [--autoarchive-hours <n>]",
+            "amico sessions list [--archived] [--limit <n>] [--cursor <c>] [--db <path>]  |  amico sessions archive [--days <n>] [--apply]  |  amico sessions autoarchive [--hours <n>] [--apply]  |  amico sessions thread-noul [--days <n>] [--apply]  |  amico sessions restore <id>  |  amico sessions index [--out <path>]  |  amico sessions prefs [--days <n>] [--autoarchive-hours <n>]",
         },
         code: 64,
       };

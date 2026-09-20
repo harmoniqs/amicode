@@ -19,10 +19,12 @@ import {
   buildThread,
   composeOpenThreadsDigest,
   buildOpenThreadsBlock,
+  readThreadNoulMap,
   resolveWindowDays,
   resolveMaxThreads,
   resolveStaleDays,
   JUNK_TITLE_WORDS,
+  THREAD_NOUL_PROMOTION_MIN,
   DEFAULT_WINDOW_DAYS,
   DEFAULT_MAX_THREADS,
   DEFAULT_STALE_DAYS,
@@ -344,8 +346,141 @@ describe("amicode_context wiring — open-threads block follows the recap block"
 
   it("pushes the open-threads block after the recent-sessions block", () => {
     const recapAt = source.indexOf("buildRecentSessionsBlock(input.sessionID)");
-    const threadsAt = source.indexOf("buildOpenThreadsBlock(input.sessionID)");
+    const threadsAt = source.indexOf("buildOpenThreadsBlock(input.sessionID");
     expect(recapAt).toBeGreaterThan(-1);
     expect(threadsAt).toBeGreaterThan(recapAt);
+  });
+});
+
+// ── #1311: the thread-Noul middle layer — ranking + promotion, labels stay deterministic ──
+// The noul map is an INPUT feature (sibling of prStateFor: the amico-run pass
+// spends the network; this module reads a derived map). Jev informs ranking
+// and promotion ONLY — the bucket label and the no-noul ordering are exactly
+// #1305's, so an absent map degrades to today's digest byte-for-byte.
+
+describe("thread-Noul promotion — ranking + cap (#1311)", () => {
+  function mk(overrides: Partial<OpenThread> = {}): OpenThread {
+    return {
+      session_id: "ses_x",
+      title: "Thread",
+      bucket: "parked",
+      signal: "2 pending todos",
+      created: "2026-09-18T10:00:00.000Z",
+      ageDays: 2,
+      ...overrides,
+    };
+  }
+
+  it("exports the promotion threshold as a named constant (the curation spec's calibrated gate)", () => {
+    expect(THREAD_NOUL_PROMOTION_MIN).toBe(0.5);
+  });
+
+  it("ZERO-DELTA: threads with no noul compose to exactly today's digest (no noul rendered, today's order)", () => {
+    const threads = [
+      mk({ session_id: "a", title: "Old fresh", ageDays: 6 }),
+      mk({ session_id: "b", title: "New fresh", ageDays: 1 }),
+      mk({ session_id: "c", title: "Stale one", bucket: "stale", ageDays: 21 }),
+    ];
+    const md = composeOpenThreadsDigest(threads, 5)!;
+    expect(md).not.toContain("noul");
+    const pos = (t: string) => md.indexOf(t);
+    expect(pos("New fresh")).toBeLessThan(pos("Old fresh"));
+    expect(pos("Old fresh")).toBeLessThan(pos("Stale one"));
+  });
+
+  it("PROMOTES: a noul ≥ 0.5 outranks recency under the cap — a capped-out thread makes the surface", () => {
+    const threads = Array.from({ length: 8 }, (_, i) =>
+      mk({ session_id: `t${i}`, title: `Thread ${i}`, ageDays: i + 1 }),
+    );
+    // threads 6 and 7 would lose the cap of 3 to recency — the noul promotes them in
+    threads[6].threadNoul = 0.6;
+    threads[7].threadNoul = 0.91;
+    const md = composeOpenThreadsDigest(threads, 3)!;
+    // promoted first, BY NOUL DESC (Jev ranks the surface), then today's order fills
+    const pos = (t: string) => md.indexOf(t);
+    expect(pos("Thread 7")).toBeLessThan(pos("Thread 6"));
+    expect(md).toContain("Thread 0"); // the rest, today's recency order, fills the cap
+    expect(md).not.toContain("Thread 2");
+  });
+
+  it("the digest CARRIES the noul per surfaced session (rendered on the line)", () => {
+    const md = composeOpenThreadsDigest(
+      [mk({ title: "Bug report", bucket: "blocked-on-user", signal: "waiting on you", threadNoul: 0.71 })],
+      5,
+    )!;
+    expect(md).toContain("blocked-on-user");
+    expect(md).toContain("noul 0.71");
+  });
+
+  it("a sub-threshold noul neither promotes NOR drops — fail-open keeps today's behavior for that thread", () => {
+    const threads = [
+      mk({ session_id: "a", title: "Promoted", ageDays: 9, threadNoul: 0.9 }),
+      mk({ session_id: "b", title: "Below floor", ageDays: 1, threadNoul: 0.4 }),
+      mk({ session_id: "c", title: "Plain", ageDays: 2 }),
+    ];
+    const md = composeOpenThreadsDigest(threads, 2)!;
+    // promoted first; the 0.4 noul does NOT outrank recency but is NOT dropped either
+    const pos = (t: string) => md.indexOf(t);
+    expect(pos("Promoted")).toBeLessThan(pos("Below floor"));
+    expect(md).toContain("Below floor"); // the cap's second slot — today's rule
+    expect(md).not.toContain("Plain");
+  });
+
+  it("stale stays retirement-ranked even when promoted — promotion never outranks the retire flag", () => {
+    const threads = [
+      mk({ session_id: "s", title: "Stale promoted", bucket: "stale", ageDays: 30, threadNoul: 0.95 }),
+      mk({ session_id: "f", title: "Fresh plain", ageDays: 1 }),
+    ];
+    const md = composeOpenThreadsDigest(threads, 5)!;
+    const pos = (t: string) => md.indexOf(t);
+    expect(pos("Fresh plain")).toBeLessThan(pos("Stale promoted")); // stale still last
+  });
+
+  it("the deterministic derivation never calls Jev — mechanical purity guard on the module source", () => {
+    const source = fs.readFileSync(path.join(__dirname, "..", "opencode-plugin", "open_threads.ts"), "utf8");
+    expect(source).not.toMatch(/\bfetch\s*\(/);
+    expect(source).not.toMatch(/api\.typesafe/);
+    expect(source).not.toMatch(/from\s+"\.\.?\/.*jev/);
+  });
+});
+
+// ── the derived noul map: the amico-run pass writes it, the digest reads it ──
+
+describe("readThreadNoulMap — the ops-dir derived map (input feature, fail-open)", () => {
+  let tmp: string;
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "amico-thread-noul-"));
+    process.env.AMICODE_OPS_DIR = tmp;
+  });
+  afterEach(() => {
+    fs.rmSync(tmp, { recursive: true, force: true });
+    delete process.env.AMICODE_OPS_DIR;
+  });
+
+  it("reads the map the amico-run pass wrote (session id → noul)", () => {
+    fs.writeFileSync(
+      path.join(tmp, "thread-nouls.json"),
+      JSON.stringify({ schema_version: 1, generated_at: "2026-09-20T05:00:00.000Z", entries: { ses_a: 0.71, ses_b: 0.05 } }),
+    );
+    expect(readThreadNoulMap()).toEqual({ ses_a: 0.71, ses_b: 0.05 });
+  });
+
+  it("a missing or corrupt map is undefined — the digest degrades to today, never to a crash", () => {
+    expect(readThreadNoulMap()).toBeUndefined();
+    fs.writeFileSync(path.join(tmp, "thread-nouls.json"), "{not json");
+    expect(readThreadNoulMap()).toBeUndefined();
+  });
+});
+
+// ── wiring: amicode_context passes the map reader as the third input feature ──
+
+describe("amicode_context wiring — the thread-noul map rides the digest's input-feature seam", () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, "..", "opencode-plugin", "amicode_context.ts"),
+    "utf8",
+  );
+
+  it("buildOpenThreadsBlock receives a threadNoulFor input map (the caller spends the network)", () => {
+    expect(source).toContain("buildOpenThreadsBlock(input.sessionID, undefined, threadNoulFor");
   });
 });

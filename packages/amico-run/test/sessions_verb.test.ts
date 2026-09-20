@@ -99,6 +99,8 @@ interface SeedOpts {
   userMessages?: string[];
   /** Assistant message count (no parts — the classifier only counts turns). */
   assistantMessages?: number;
+  /** One assistant message with a text part carrying this text (#1311 thread-noul sweep). */
+  lastAssistantText?: string;
   /** Pending todo rows (status 'pending', the open-threads convention). */
   pendingTodos?: number;
 }
@@ -189,6 +191,12 @@ for s in seeds:
     for i in range(s.get("assistantMessages") or 0):
         con.execute("INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?,?,?,?,?)",
                     ("msg_%s_a%d" % (s["id"], i), s["id"], created, updated, json.dumps({"role": "assistant"})))
+    if s.get("lastAssistantText") is not None:
+        mid = "msg_%s_last" % s["id"]
+        con.execute("INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?,?,?,?,?)",
+                    (mid, s["id"], created, updated, json.dumps({"role": "assistant"})))
+        con.execute("INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?,?,?,?,?,?)",
+                    ("part_" + mid, mid, s["id"], created, updated, json.dumps({"type": "text", "text": s["lastAssistantText"]})))
     for i in range(s.get("pendingTodos") or 0):
         con.execute("INSERT INTO todo (session_id, content, status, priority, position, time_created, time_updated) VALUES (?,?,?,?,?,?,?)",
                     (s["id"], "todo %d" % i, "pending", "medium", i, created, updated))
@@ -978,5 +986,113 @@ describe("sessions autoarchive — the jev off-switch and unavailability (bundle
     // run() injects AMICO_JEV_DISABLED=1 — the machine's real key cannot arm the residual
     const r = JSON.parse(run(["sessions", "autoarchive"], { OPENCODE_DB: db, AMICODE_OPS_DIR: ops }).stdout);
     expect(r.jev).toBeUndefined();
+  });
+});
+
+// ══ #1311: the onset thread-Noul pass — the amico-run half of the digest seam ══
+// `amico sessions thread-noul` sweeps the digest window, ONE noul call per
+// candidate (junk titles pre-filtered deterministically), and writes the
+// derived map the onset digest reads (thread-nouls.json in the ops dir —
+// dry-run by default, --apply writes). Fail-open on every client failure.
+import { sessionsThreadNoul } from "../src/sessions_verb.js";
+import type { NoulCandidate } from "../src/jev_curation.js";
+
+describe("amico sessions thread-noul — the derived noul map (#1311, in-process)", () => {
+  let tmp: string;
+  let db: string;
+  let ops: string;
+
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), "amico-jev-noul-"));
+    db = join(tmp, "opencode.db");
+    ops = join(tmp, "ops");
+    mkdirSync(ops, { recursive: true });
+  });
+  afterEach(() => rmSync(tmp, { recursive: true, force: true }));
+
+  function fakeNouls(nouls: Record<string, number>, log: NoulCandidate[] = []) {
+    return async (candidates: NoulCandidate[]) => {
+      log.push(...candidates);
+      return { status: "ran" as const, nouls };
+    };
+  }
+
+  it("sweeps the window and asks ONE noul per NON-JUNK candidate — junk titles pre-filtered, window honored", async () => {
+    seedDb(db, [
+      { id: "ses_bug", title: "Bug report: panel", userMessages: ["the panel loses sessions"], lastAssistantText: "The fix is staged — waiting on your confirmation.", pendingTodos: 1, updatedHoursAgo: 20 },
+      { id: "ses_greeting", title: "hello", userMessages: ["hi"], lastAssistantText: "Hello!", updatedHoursAgo: 2 },
+      { id: "ses_old", title: "Ancient work", userMessages: ["old"], lastAssistantText: "done", createdDaysAgo: 40, updatedDaysAgo: 39 },
+    ]);
+    const asked: NoulCandidate[] = [];
+
+    const r = (await sessionsThreadNoul(["--db", db], { OPENCODE_DB: db, AMICODE_OPS_DIR: ops }, { jev: fakeNouls({ ses_bug: 0.71 }, asked) })).json as Record<string, unknown>;
+
+    // only the bug report: greeting junk pre-filtered, the 39-day-old session outside the 14-day window
+    expect(asked.map((c) => c.id)).toEqual(["ses_bug"]);
+    expect(asked[0]).toMatchObject({ title: "Bug report: panel", pendingTodos: 1 });
+    expect(asked[0].lastAssistantText).toContain("waiting on your confirmation");
+    expect(r).toMatchObject({ subcommand: "thread-noul", status: "ran", candidates: 1, judged: 1 });
+  });
+
+  it("dry-run is the DEFAULT (reports, writes no map); --apply writes the map the digest reads", async () => {
+    seedDb(db, [
+      { id: "ses_bug", title: "Bug report: panel", userMessages: ["fix it"], lastAssistantText: "Waiting on your call.", pendingTodos: 1, updatedHoursAgo: 20 },
+    ]);
+    const env = { OPENCODE_DB: db, AMICODE_OPS_DIR: ops };
+    const mapPath = join(ops, "thread-nouls.json");
+
+    const dry = (await sessionsThreadNoul(["--db", db], env, { jev: fakeNouls({ ses_bug: 0.71 }) })).json as Record<string, unknown>;
+    expect(dry.dry_run).toBe(true);
+    expect(existsSync(mapPath)).toBe(false);
+
+    const applied = (await sessionsThreadNoul(["--db", db, "--apply"], env, { jev: fakeNouls({ ses_bug: 0.71 }) })).json as Record<string, unknown>;
+    expect(applied.dry_run).toBe(false);
+    expect(applied.map_path).toBe(mapPath);
+    const written = JSON.parse(readFileSync(mapPath, "utf8"));
+    expect(written).toMatchObject({ schema_version: 1, entries: { ses_bug: 0.71 } });
+    expect(typeof written.generated_at).toBe("string");
+  });
+
+  it("fail-open: a crashing pass reports the error, writes NO map, exits 0", async () => {
+    seedDb(db, [
+      { id: "ses_bug", title: "Bug report: panel", userMessages: ["fix it"], lastAssistantText: "Waiting on your call.", updatedHoursAgo: 20 },
+    ]);
+    const crash = async () => {
+      throw new Error("jev down");
+    };
+
+    const r = (await sessionsThreadNoul(["--db", db, "--apply"], { OPENCODE_DB: db, AMICODE_OPS_DIR: ops }, { jev: crash })).json as Record<string, unknown>;
+    expect(r.status).toBe("error");
+    expect(existsSync(join(ops, "thread-nouls.json"))).toBe(false);
+  });
+
+  it("no key → unavailable, no map (the fail-open configuration)", async () => {
+    seedDb(db, [
+      { id: "ses_bug", title: "Bug report: panel", userMessages: ["fix it"], lastAssistantText: "Waiting on your call.", updatedHoursAgo: 20 },
+    ]);
+    const jev = async (candidates: NoulCandidate[]) => ({ status: "unavailable" as const, nouls: {} as Record<string, number> });
+
+    const r = (await sessionsThreadNoul(["--db", db, "--apply"], { OPENCODE_DB: db, AMICODE_OPS_DIR: ops, AMICO_TYPESAFE_KEY_FILE: join(tmp, "missing-key") }, { jev })).json as Record<string, unknown>;
+    expect(r.status).toBe("unavailable");
+    expect(r.candidates).toBe(1);
+    expect(r).not.toHaveProperty("entries");
+    expect(existsSync(join(ops, "thread-nouls.json"))).toBe(false);
+  });
+
+  it("the off-switch (bundle): ZERO delta — no jev block, no map, exit 0", () => {
+    seedDb(db, [
+      { id: "ses_bug", title: "Bug report: panel", userMessages: ["fix it"], lastAssistantText: "Waiting on your call.", updatedHoursAgo: 20 },
+    ]);
+    const r = JSON.parse(run(["sessions", "thread-noul", "--apply"], { OPENCODE_DB: db, AMICODE_OPS_DIR: ops }).stdout);
+    expect(r.verb).toBe("sessions");
+    expect(r.subcommand).toBe("thread-noul"); // the verb RAN (not a usage error)
+    expect(r.jev).toBeUndefined();
+    expect(r.status).toBeUndefined();
+    expect(existsSync(join(ops, "thread-nouls.json"))).toBe(false);
+  });
+
+  it("usage: a missing DB is an honest 64; bad --days is a usage error", async () => {
+    expect((await sessionsThreadNoul(["--db", join(tmp, "nope.db")], { AMICODE_OPS_DIR: ops })).code).toBe(64);
+    expect((await sessionsThreadNoul(["--db", db, "--days", "0"], { AMICODE_OPS_DIR: ops })).code).toBe(64);
   });
 });
