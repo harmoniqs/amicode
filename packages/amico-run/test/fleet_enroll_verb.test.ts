@@ -229,3 +229,202 @@ describe("amico fleet enroll --as-server (#1319 AC1)", () => {
     expect(j(r).join_token).toEqual(token);
   });
 });
+
+// A ready-to-redeem join token pointing at a stub host.
+function tokenFor(s: EnrollStub, over: Partial<JoinToken> = {}): JoinToken {
+  return {
+    canonical: { host: s.host, port: s.port, sshAlias: "hub" },
+    fleet_token: "FLEET-SECRET",
+    transport_hint: "ssh",
+    pin_version: "v1.18.29",
+    ...over,
+  };
+}
+
+describe("amico fleet enroll <join-token> — client redeem happy path (#1319 AC2)", () => {
+  it("writes fleet.json (role+canonical ONLY), registers the roster row, sets the transport, runs the installer, and reports success after verify-attach", async () => {
+    const s = await stub({ version: "v1.18.29" });
+    const rec = recorder();
+    const token = tokenFor(s);
+    const r = await fleetEnroll(["--join-token-json", JSON.stringify(token)], rec.deps);
+
+    expect(r.code).toBe(0);
+    expect(j(r).ok).toBe(true);
+
+    // fleet.json = role + canonical ONLY (no capabilities smuggled in)
+    expect(rec.fleetWrites).toHaveLength(1);
+    expect(rec.fleetWrites[0].config).toEqual({ role: "client", canonical: token.canonical });
+
+    // the roster row registered on the host, contract-valid, server_mode=client
+    expect(s.rosterRows()).toHaveLength(1);
+    const row = s.rosterRows()[0];
+    expect(row.machine_id).toBe("machine-abc");
+    expect(row.name).toBe("workbench");
+    expect(row.server_mode).toBe("client");
+    expect(row.transport).toBe("ssh");
+    expect(row.sshAlias).toBe("hub");
+    expect(row.health).toBe("reachable");
+    // capabilities live on the ROW, not fleet.json
+    expect(row.capabilities).toEqual([]);
+
+    // transport set + installer run (guard) as a client
+    expect(rec.transportSets).toEqual(["ssh"]);
+    expect(rec.installerCalls).toEqual(["client"]);
+
+    // success reported only after verify-attach passed
+    expect(j(r).result?.verify_attach).toEqual({ ok: true });
+  });
+
+  it("defaults the transport to tailscale when this machine's capabilities include `roaming` (else the token's hint)", async () => {
+    const s = await stub({ version: "v1.18.29" });
+    const rec = recorder({ capabilities: () => ["roaming"] });
+    const r = await fleetEnroll(["--join-token-json", JSON.stringify(tokenFor(s))], rec.deps);
+
+    expect(r.code).toBe(0);
+    expect(rec.transportSets).toEqual(["tailscale"]);
+    expect(s.rosterRows()[0].transport).toBe("tailscale");
+    expect(s.rosterRows()[0].capabilities).toEqual(["roaming"]);
+  });
+});
+
+describe("amico fleet enroll — pin check refuses a skewed token BEFORE any write (#1319 AC4)", () => {
+  it("rejects a join token whose pin_version disagrees with the host-version probe, writing NOTHING", async () => {
+    const s = await stub({ version: "v2.0.0" }); // host is v2.x; token pins v1.18.29 → major skew
+    const rec = recorder();
+    const token = tokenFor(s, { pin_version: "v1.18.29" });
+    const r = await fleetEnroll(["--join-token-json", JSON.stringify(token)], rec.deps);
+
+    // refused, honestly
+    expect(r.code).not.toBe(0);
+    expect(j(r).ok).toBe(false);
+    expect(j(r).cause).toBe("pin-mismatch");
+    // the reason names BOTH versions (the pure versionSkewVerdict speaking)
+    expect(j(r).errors?.join(" ")).toContain("1.18.29");
+    expect(j(r).errors?.join(" ")).toContain("2.0.0");
+
+    // BEFORE any file is written: no fleet.json, no roster row, no transport, no installer
+    expect(j(r).wrote_nothing).toBe(true);
+    expect(rec.fleetWrites).toEqual([]);
+    expect(s.rosterRows()).toEqual([]);
+    expect(rec.transportSets).toEqual([]);
+    expect(rec.installerCalls).toEqual([]);
+  });
+});
+
+describe("amico fleet enroll — verify-attach honest failure (#1319 AC3)", () => {
+  it("transport down: the just-set transport is unreachable → cause=transport-down, row health=down, NO success", async () => {
+    const s = await stub({ version: "v1.18.29" }); // canonical healthy → pin check passes
+    // verify-attach probes the transport, which resolves to a dead port
+    const rec = recorder({ resolveProbeOrigin: () => ({ ok: true, origin: "http://127.0.0.1:1" }) });
+    const r = await fleetEnroll(["--join-token-json", JSON.stringify(tokenFor(s))], rec.deps);
+
+    expect(r.code).not.toBe(0);
+    expect(j(r).ok).toBe(false);
+    expect(j(r).cause).toBe("transport-down");
+    expect(typeof j(r).fix).toBe("string"); // the specific fix accompanies the cause
+    expect(j(r).result?.verify_attach).toEqual({ ok: false, cause: "transport-down" });
+    // the roster row's health reflects the failure (re-posted), NOT a false green
+    expect(s.rosterRows()).toHaveLength(1);
+    expect(s.rosterRows()[0].health).toBe("down");
+  });
+
+  it("auth rejected: the transport reaches a host that 401s → cause=auth-rejected, row health=degraded, NO success", async () => {
+    const canonical = await stub({ version: "v1.18.29" }); // pin check target (healthy)
+    const rejecting = await stub({ healthStatus: 401 }); // what the transport actually reaches
+    const rec = recorder({ resolveProbeOrigin: () => ({ ok: true, origin: rejecting.url }) });
+    const r = await fleetEnroll(["--join-token-json", JSON.stringify(tokenFor(canonical))], rec.deps);
+
+    expect(r.code).not.toBe(0);
+    expect(j(r).cause).toBe("auth-rejected");
+    expect(canonical.rosterRows()[0].health).toBe("degraded");
+  });
+
+  it("sshAlias unresolved: an ssh transport with no alias → cause=sshAlias-unresolved, NO success", async () => {
+    const s = await stub({ version: "v1.18.29" });
+    const rec = recorder();
+    // transport_hint ssh + an EMPTY sshAlias → the default origin resolver refuses
+    const token = tokenFor(s, { transport_hint: "ssh", canonical: { host: s.host, port: s.port, sshAlias: "" } });
+    const r = await fleetEnroll(["--join-token-json", JSON.stringify(token)], rec.deps);
+
+    expect(r.code).not.toBe(0);
+    expect(j(r).cause).toBe("sshAlias-unresolved");
+    expect(j(r).ok).toBe(false);
+    expect(s.rosterRows()[0].health).toBe("degraded");
+  });
+});
+
+describe("amico fleet enroll — idempotent re-run repairs in place (#1319 AC5)", () => {
+  it("a second enroll on an already-enrolled machine produces NO duplicate roster row and no duplicate unit path", async () => {
+    const s = await stub({ version: "v1.18.29" });
+    const token = tokenFor(s);
+
+    const first = await fleetEnroll(["--join-token-json", JSON.stringify(token)], recorder().deps);
+    const rec2 = recorder();
+    const second = await fleetEnroll(["--join-token-json", JSON.stringify(token)], rec2.deps);
+
+    expect(first.code).toBe(0);
+    expect(second.code).toBe(0);
+    // single-writer upsert by machine_id → exactly ONE row after two runs
+    expect(s.rosterRows()).toHaveLength(1);
+    expect(s.rosterRows()[0].machine_id).toBe("machine-abc");
+    // the re-run still repairs via the installer (idempotent), never a second mechanism
+    expect(rec2.installerCalls).toEqual(["client"]);
+    // two posts total (one per run), collapsed to one row — no duplication
+    expect(s.rosterPosts().length).toBe(2);
+  });
+});
+
+describe("amico fleet enroll — the enroll-result JSON shape #1320 consumes (#1319 AC6)", () => {
+  it("client result has EXACTLY {machine_id,name,server_mode,capabilities,transport,verify_attach:{ok}}", async () => {
+    const s = await stub({ version: "v1.18.29" });
+    const r = await fleetEnroll(["--join-token-json", JSON.stringify(tokenFor(s))], recorder().deps);
+    const result = j(r).result!;
+    expect(Object.keys(result).sort()).toEqual([
+      "capabilities",
+      "machine_id",
+      "name",
+      "server_mode",
+      "transport",
+      "verify_attach",
+    ]);
+    expect(Object.keys(result.verify_attach)).toEqual(["ok"]); // no cause on success
+    expect(result.server_mode).toBe("client");
+  });
+
+  it("server result carries the same fixed shape (server_mode=server, verify_attach ok)", async () => {
+    const r = await fleetEnroll(["--as-server", "--host", "hub", "--port", "4096", "--ssh-alias", "hub"], recorder().deps);
+    const result = j(r).result!;
+    expect(Object.keys(result).sort()).toEqual([
+      "capabilities",
+      "machine_id",
+      "name",
+      "server_mode",
+      "transport",
+      "verify_attach",
+    ]);
+    expect(result.server_mode).toBe("server");
+    expect(result.verify_attach.ok).toBe(true);
+  });
+
+  it("on failure the verify_attach carries {ok:false, cause} — the exact shape, with the cause", async () => {
+    const s = await stub({ version: "v1.18.29" });
+    const rec = recorder({ resolveProbeOrigin: () => ({ ok: true, origin: "http://127.0.0.1:1" }) });
+    const r = await fleetEnroll(["--join-token-json", JSON.stringify(tokenFor(s))], rec.deps);
+    expect(Object.keys(j(r).result!.verify_attach).sort()).toEqual(["cause", "ok"]);
+    expect(j(r).result!.verify_attach.ok).toBe(false);
+  });
+});
+
+describe("amico fleet enroll — never-fork: a client installs the guard and spawns NO engine (#1319, ADR 0005)", () => {
+  it("enrolling as a client runs the installer (guard) and NEVER touches the engine-spawn seam", async () => {
+    const s = await stub({ version: "v1.18.29" });
+    const rec = recorder();
+    const r = await fleetEnroll(["--join-token-json", JSON.stringify(tokenFor(s))], rec.deps);
+
+    expect(r.code).toBe(0);
+    // the guard is installed via the client installer (the never-fork enforcement)
+    expect(rec.installerCalls).toEqual(["client"]);
+    // and the enroll verb NEVER spawns a local engine (the tripwire stays untouched)
+    expect(rec.engine.spawns).toBe(0);
+  });
+});
