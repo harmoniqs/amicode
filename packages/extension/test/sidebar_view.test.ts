@@ -209,6 +209,31 @@ describe("sidebar bridge — handleSidebarMessage", () => {
       handleSidebarMessage({ kind: "chat-active", active: true }, { openChat, newProject })
     ).not.toThrow();
   });
+
+  it("routes open-fleet-manager to the openFleetManager navigation handler (#1321, AC3/AC4)", () => {
+    const openFleetManager = vi.fn();
+    const fileOp = vi.fn();
+    expect(() =>
+      handleSidebarMessage({ kind: "open-fleet-manager" }, { openFleetManager, fileOp } as any)
+    ).not.toThrow();
+    // the ONE navigation handler fires — and no mutation handler is touched (read-only).
+    expect(openFleetManager).toHaveBeenCalledTimes(1);
+    expect(fileOp).not.toHaveBeenCalled();
+  });
+
+  it("open-fleet-manager degrades honestly when no handler is wired (no throw)", () => {
+    // The handler is optional (the Fleet Manager tab #1322 may be absent).
+    expect(() => handleSidebarMessage({ kind: "open-fleet-manager" }, {} as any)).not.toThrow();
+  });
+
+  it("treats fleet-status as a down-only message — no host-side handler, no throw (#1321)", () => {
+    // fleet-status flows host→webview only; the host handler must ignore it.
+    const openFleetManager = vi.fn();
+    expect(() =>
+      handleSidebarMessage({ kind: "fleet-status", model: { state: "empty", devices: [], posture: null, manage: { enabled: false } } } as any, { openFleetManager } as any)
+    ).not.toThrow();
+    expect(openFleetManager).not.toHaveBeenCalled();
+  });
 });
 
 // ── Build pipeline ───────────────────────────────────────────────────────────
