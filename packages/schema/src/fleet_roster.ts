@@ -36,6 +36,23 @@ export const ROSTER_SCHEMA_VERSION = 1;
 export const HEALTH_VOCABULARY = ["reachable", "degraded", "down"] as const;
 export type RosterHealth = (typeof HEALTH_VOCABULARY)[number];
 
+/** The KNOWN, behavior-adjacent capability tags (ADR 0026 §Decision.1):
+ *  `compute` (a solve-target hint — declared-but-inert until a fleet-peer
+ *  executor exists, an explicit non-goal here) and `roaming` (a transport hint
+ *  that defaults a machine to tailscale). This is NOT a closed set: it names
+ *  only the tags with meaning. Any OTHER tag is a valid descriptive label — the
+ *  capability set is OPEN, and an arbitrary tag round-trips verbatim
+ *  (parseRosterRow never rejects a tag for being unknown). */
+export const KNOWN_CAPABILITY_TAGS = ["compute", "roaming"] as const;
+export type KnownCapability = (typeof KNOWN_CAPABILITY_TAGS)[number];
+
+/** Whether a tag is one of the known behavior tags. A false answer is NOT a
+ *  rejection — a descriptive tag is fully valid; this only says "no built-in
+ *  meaning attaches" (the UI renders an honest "descriptive" affordance). */
+export function isKnownCapability(tag: string): tag is KnownCapability {
+  return (KNOWN_CAPABILITY_TAGS as readonly string[]).includes(tag);
+}
+
 /** One roster row — the reconciled self-report of one machine. `server_mode`
  *  mirrors that machine's own fleet.json role (read-only here; the UI labels it
  *  "role"), `last_report` renders as "last-seen". Every field is a string

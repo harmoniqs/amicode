@@ -209,6 +209,8 @@ export {
 export {
   ROSTER_SCHEMA_VERSION,
   HEALTH_VOCABULARY,
+  KNOWN_CAPABILITY_TAGS,
+  isKnownCapability,
   parseRosterRow,
   FLEET_ROSTER_CACHE_RELPATH,
   fleetRosterCachePath,
