@@ -65,12 +65,36 @@ export interface FleetDeviceRow {
  *  zero devices). Neither ever fabricates a device list. */
 export type FleetSectionState = "populated" | "empty" | "unreachable";
 
+/** The attach-posture vocabulary (fleet_posture_state.ts FleetPostureMode). */
+export type PostureMode = "fleet" | "standalone" | "degraded";
+
+/** THIS machine's posture, as the posture feed reports it — the host passes
+ *  this; `serverMode` is the serve-stance (fleet.json role), the rest is the
+ *  attach posture the feed derives. */
+export interface FleetPostureInput {
+  serverMode: string;
+  hostname: string;
+  mode: PostureMode;
+  reachable: boolean;
+  hub: { name: string | null; base_url: string | null };
+}
+
+/** The rendered posture badge: this machine's Server mode + a folded
+ *  link-health signal (ADR 0026's link-health axis, distinct from a peer's
+ *  per-device `health`). */
+export interface FleetPostureBadge {
+  serverMode: string;
+  hostname: string;
+  linkHealth: "ok" | "degraded" | "down";
+  hub: { name: string | null; base_url: string | null };
+}
+
 /** What buildFleetSectionModel needs. `rosterReachable` is the honesty signal:
  *  false ⇒ the roster read failed / host down ⇒ the `unreachable` state. */
 export interface FleetSectionInput {
   roster: RosterRowLike[];
   rosterReachable: boolean;
-  posture: unknown;
+  posture: FleetPostureInput | null;
   manageAvailable: boolean;
 }
 
@@ -78,10 +102,19 @@ export interface FleetSectionInput {
 export interface FleetSectionModel {
   state: FleetSectionState;
   devices: FleetDeviceRow[];
-  posture: null;
+  posture: FleetPostureBadge | null;
   /** The single Manage affordance — enabled only when the Fleet Manager tab
    *  (#1322) is present. Disabled ⇒ honest degrade, no dead click. */
   manage: { enabled: boolean };
+}
+
+/** Fold the attach posture into the badge's link-health signal: an attached,
+ *  reachable hub is "ok"; the hub-up-but-slow steady state is "degraded";
+ *  standalone or unreachable is "down" (never falsely healthy). */
+function linkHealthOf(posture: FleetPostureInput): "ok" | "degraded" | "down" {
+  if (posture.mode === "degraded") return "degraded";
+  if (posture.mode === "fleet" && posture.reachable) return "ok";
+  return "down";
 }
 
 /** Build the fleet-section view-model. Pure. */
@@ -95,10 +128,18 @@ export function buildFleetSectionModel(input: FleetSectionInput): FleetSectionMo
     lastSeen: r.last_report,
   }));
   const state: FleetSectionState = devices.length > 0 ? "populated" : "empty";
+  const posture: FleetPostureBadge | null = input.posture
+    ? {
+        serverMode: input.posture.serverMode,
+        hostname: input.posture.hostname,
+        linkHealth: linkHealthOf(input.posture),
+        hub: { name: input.posture.hub.name ?? null, base_url: input.posture.hub.base_url ?? null },
+      }
+    : null;
   return {
     state,
     devices,
-    posture: null,
+    posture,
     manage: { enabled: input.manageAvailable },
   };
 }
