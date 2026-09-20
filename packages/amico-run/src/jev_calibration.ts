@@ -114,7 +114,7 @@ export async function runCalibrationBattery(
   );
   const answers: Record<string, ChoiceAnswer> = {};
   for (const [id, verdict] of Object.entries(residual.verdicts)) {
-    if (verdict.choice !== undefined) answers[id] = { choice: verdict.choice, confidence: verdict.confidence };
+    if (verdict.choice !== undefined) answers[id] = { choice: verdict.choice, confidence: verdict.confidence, probabilities: verdict.probabilities };
   }
   return {
     ts: new Date(now()).toISOString(),

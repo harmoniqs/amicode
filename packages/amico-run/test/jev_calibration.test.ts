@@ -125,4 +125,35 @@ describe("runCalibrationBattery — both loops + grading in one pass", () => {
     expect(battery.choice.judged).toBe(0);
     expect(battery.noul.judged).toBe(0);
   });
+
+  it("carries the choice probabilities THROUGH the residual verdicts so the live battery can Brier them", async () => {
+    const { mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const root = mkdtempSync(join(tmpdir(), "amico-jev-prob-"));
+    try {
+      const key = join(root, "key");
+      writeFileSync(key, "k_test_prob", { mode: 0o600 });
+      const transport = async (_url: string, init: { body: string }) => {
+        const body = JSON.parse(init.body) as { state: { title?: string }; questions: Record<string, { type: string }> };
+        const [questionId, question] = Object.entries(body.questions)[0];
+        const answer =
+          question.type === "choice"
+            ? { type: "choice", choice: body.state.title === "fleet-smoke" ? "dead-cast" : body.state.title!.match(/greeting/i) ? "junk-greeting" : "substantive", confidence: 0.9, probabilities: body.state.title!.match(/greeting|smoke/i) ? { "junk-greeting": 0.5, "dead-cast": 0.4, substantive: 0.1 } : { substantive: 0.9, unclassified: 0.1 } }
+            : { type: "noul", noul: 0.07 };
+        return { status: 200, text: async () => JSON.stringify({ model: "jev-test", answers: { [questionId]: answer }, usage: { input_tokens: 500, output_tokens: 21 } }) };
+      };
+
+      const battery = await runCalibrationBattery(FIXTURE.entries, {
+        env: { AMICO_TYPESAFE_KEY_FILE: key, AMICO_TYPESAFE_RECEIPTS: join(root, "receipts.jsonl") },
+        transport,
+      });
+
+      // probabilities present → choice Brier is COMPUTED (not null)
+      expect(battery.choice.brier).not.toBeNull();
+      expect(battery.choice.brier_reason).toBeUndefined();
+      expect(battery.choice.brier).toBeGreaterThan(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

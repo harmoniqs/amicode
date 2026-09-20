@@ -96,11 +96,13 @@ export interface ResidualSession {
   ageHours: number;
 }
 
-/** Per-session residual verdict: the Choice read, or the honest error that
- * failed it (never both, never neither). */
+/** Per-session residual verdict: the Choice read (with its full probability
+ * distribution — the calibration battery Briers it), or the honest error
+ * that failed it (never both, never neither). */
 export interface ResidualVerdict {
   choice?: string;
   confidence?: number;
+  probabilities?: Record<string, number>;
   error?: string;
 }
 
@@ -125,7 +127,7 @@ export async function jevJunkResidual(
       verdicts[s.id] = { error: "no choice answer for junk_bucket" };
       continue;
     }
-    verdicts[s.id] = { choice: answer.choice, confidence: answer.confidence };
+    verdicts[s.id] = { choice: answer.choice, confidence: answer.confidence, ...(answer.probabilities !== undefined ? { probabilities: answer.probabilities } : {}) };
   }
   return { status: "ran", verdicts };
 }
