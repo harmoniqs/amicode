@@ -6,6 +6,8 @@ import {
   fleetManagerCommand,
   transportPrefill,
   TRANSPORT_OPTIONS,
+  enrollAction,
+  CREATE_FLEET_COMMAND,
   type RosterRowLike,
 } from "./fleet-manager"
 
@@ -121,5 +123,18 @@ describe("transportPrefill (AC3 — transport selector prefill)", () => {
   test("the selector offers the known transport providers", () => {
     expect(TRANSPORT_OPTIONS).toContain("ssh")
     expect(TRANSPORT_OPTIONS).toContain("tailscale")
+  })
+})
+
+describe("enrollAction (AC6 — Enroll degrades honestly)", () => {
+  test("launches /create-a-fleet when the skill is present", () => {
+    expect(enrollAction({ hasCreateFleetSkill: true })).toEqual({ available: true, launch: CREATE_FLEET_COMMAND })
+    expect(CREATE_FLEET_COMMAND).toBe("/create-a-fleet")
+  })
+
+  test("shows an honest not-yet-available state and launches NOTHING when absent (#1320 not built on this branch)", () => {
+    const action = enrollAction({ hasCreateFleetSkill: false })
+    expect(action.available).toBe(false)
+    expect(action.launch).toBeUndefined()
   })
 })
