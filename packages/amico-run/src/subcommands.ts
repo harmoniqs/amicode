@@ -12,6 +12,7 @@ import { loadExemplarsIndex, loadRegistry, matchShape } from "./catalog.js";
 import { estimateFromVars, extractKeyVars } from "./estimate.js";
 import { JULIA_STDLIBS } from "./import_scan.js";
 import { ConfigError } from "./types.js";
+import { strategyBriefCommand } from "./strategy_brief.js";
 
 /** Tier-3 minimum package set — the free skeleton's `using` block AND the
  *  re-rollout harness both need these in the sandbox env, so `resolve` returns
@@ -203,5 +204,6 @@ export function trySubcommand(argv: string[]): number | undefined {
   if (head === "resolve" && !existsSync(head)) return resolveCommand(argv.slice(1));
   if (head === "sandbox" && !existsSync(head)) return sandboxCommand(argv.slice(1));
   if (head === "estimate" && !existsSync(head)) return estimateCommand(argv.slice(1));
+  if (head === "strategy-brief" && !existsSync(head)) return strategyBriefCommand(argv.slice(1));
   return undefined;
 }
