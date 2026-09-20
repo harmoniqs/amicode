@@ -356,6 +356,60 @@ describe("SidebarViewProvider — fleet section host wiring (#1321)", () => {
   });
 });
 
+describe("defaultFleetSectionDeps — production readers (#1321)", () => {
+  let defaultFleetSectionDeps: any;
+  let tmp: string;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    const mod = await import("../src/sidebar_view");
+    defaultFleetSectionDeps = mod.defaultFleetSectionDeps;
+    const os = await import("node:os");
+    const fs = await import("node:fs");
+    tmp = fs.mkdtempSync(resolve(os.tmpdir(), "amc-fleet-"));
+  });
+
+  it("readRoster parses the roster cache into rows, reachable=true", async () => {
+    const fs = await import("node:fs");
+    const rosterFile = resolve(tmp, "roster.json");
+    fs.writeFileSync(rosterFile, JSON.stringify({
+      schema_version: 1,
+      rows: [{ machine_id: "a", name: "A", server_mode: "server", capabilities: ["compute"], sshAlias: "a", transport: "ssh", last_report: "t", health: "reachable" }],
+    }));
+    const deps = defaultFleetSectionDeps({ rosterFile });
+    const out = deps.readRoster();
+    expect(out.reachable).toBe(true);
+    expect(out.rows).toHaveLength(1);
+    expect(out.rows[0].server_mode).toBe("server");
+  });
+
+  it("readRoster treats an absent roster file as an empty-but-reachable fleet", () => {
+    const deps = defaultFleetSectionDeps({ rosterFile: resolve(tmp, "nope.json") });
+    const out = deps.readRoster();
+    expect(out.reachable).toBe(true);
+    expect(out.rows).toEqual([]);
+  });
+
+  it("readPosture folds fleet.json role (Server mode) with the posture-state link-health", async () => {
+    const fs = await import("node:fs");
+    const postureFile = resolve(tmp, "posture-state.json");
+    const fleetConfigFile = resolve(tmp, "fleet.json");
+    fs.writeFileSync(postureFile, JSON.stringify({ hostname: "mac-01", mode: "fleet", reachable: true, hub: { name: "hub", base_url: "u" } }));
+    fs.writeFileSync(fleetConfigFile, JSON.stringify({ role: "server", canonical: {} }));
+    const deps = defaultFleetSectionDeps({ postureFile, fleetConfigFile });
+    const p = deps.readPosture();
+    expect(p).not.toBeNull();
+    expect(p.serverMode).toBe("server"); // fleet.json role
+    expect(p.mode).toBe("fleet");
+    expect(p.reachable).toBe(true);
+  });
+
+  it("isFleetManagerAvailable honestly reports false when the Fleet Manager tab (#1322) is absent", () => {
+    const deps = defaultFleetSectionDeps({});
+    expect(deps.isFleetManagerAvailable()).toBe(false);
+  });
+});
+
 // ── Build pipeline ───────────────────────────────────────────────────────────
 
 describe("sidebar build pipeline", () => {
