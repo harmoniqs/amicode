@@ -118,8 +118,6 @@
     "packages/app/src/components/report-bug-button.stories.tsx": "82aed22bd3fcca448841205dee759ca0f0de92562a99d07c696eee5bd29e807b",
     "packages/app/src/components/report-bug-button.tsx": "a1beb8c94b4faaa4c7db3ab68de349f8a8a03cb3a058ce447f552aed35848d43",
     "packages/app/src/components/session-context-usage.tsx": "cd25a9af91c73d0cb53000261e066dc16385e1a3ea13e92392fd3a5ca7b33032",
-    "packages/app/src/components/session-stream-veil.test.ts": "1885c3815dc77e601357b9f97551225cbd8900a3058b5b776bc86257dfe49fae",
-    "packages/app/src/components/session-stream-veil.tsx": "c15cb6cf0d39e24cd7f920b98af397b7737b3c20fcf6d7fab2d9b2320ad28b53",
     "packages/app/src/components/settings-dialog.tsx": "da3bc01dad4ece4214c14083ae4e7dea87ef64ef9829b315b867fdafccdb6916",
     "packages/app/src/components/settings-providers.tsx": "c86c9bf4a6f6e198dc7b0995a69d5b76e851144987bbe601802b1b0120ee4ac4",
     "packages/app/src/components/solver-switch-banner.tsx": "ec7edeec6dc05a4a06b39241b4f3a8e7534da97722dd8ec6f26ff782025802e9",
@@ -130,8 +128,6 @@
     "packages/app/src/components/status-popover-model.test.ts": "10634035bab0f31de24564e0d6c8413a0f7434fb2c08ac3ef722981a69dd08e7",
     "packages/app/src/components/status-popover-model.ts": "ec5a5a3caf9344fe617c7bc668af81d96ad4290378c34186cd4cd959821f1c85",
     "packages/app/src/components/status-popover.tsx": "663b3ab44218780b3415120c42d89a2a410ba0054231e8fdd0887a97a1b75b23",
-    "packages/app/src/components/stream-veil-view.test.ts": "119cc78c855e45d173cd3b45954730974ae9eaaf5ff5e2603c189ad82b627100",
-    "packages/app/src/components/stream-veil-view.ts": "7ea53b196be71cef4dbb0c6ae330ddabd82b3b74402a7234a67211de0a9e1a99",
     "packages/app/src/components/terminal.tsx": "2ce242034ae129c1f475c7a24fdec3facdd9bb1f49ba8c6b503643b07ae241e5",
     "packages/app/src/components/titlebar-channel.test.ts": "184238871c46f586dcc21081f710e37a77914c983fccf250665c7317212e41d8",
     "packages/app/src/components/titlebar-channel.ts": "385ace91d3c69c92f5b442bf15d2040e35df855f1d4ece47312c1ff8e1b01780",
@@ -206,7 +202,6 @@
     "packages/app/src/pages/new-session-landing.test.ts": "c0f47e4096e6a20fa59dac2b10f7285d3ef45e9289bf6f0ad75c1d9e4dd1117f",
     "packages/app/src/pages/new-session-landing.ts": "528d27cd5d441b521674328fb7812fb2acf77233e9e436d081c98ce611e8b268",
     "packages/app/src/pages/new-session.tsx": "c060bbb15569b6da2f67146e6af0879ccb5444345df03dbc2f9b39cb98b9db78",
-    "packages/app/src/pages/session-stream-resilience.test.ts": "7def7368219d2351136c31b88a19a97f6a14c18e87562f25d49db8da200e3c28",
     "packages/app/src/pages/session.tsx": "589dcfb37581dab15b448fc66fc9a295a2350cfa4cab182965142936085a0f91",
     "packages/app/src/utils/amicode-bridge.ts": "5104a04c7822f80dc0c564619e7dd2d850ba50035dbc86ea875604ecd97df05f",
     "packages/app/src/utils/amicode-bug-report.test.ts": "b1bbf49230ff3aa6d1a43ffa9165ba5a84ca4ee18a6d49f52ee5cd887c3e6444",
@@ -850,10 +845,10 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-09-20T20:15:02.677Z",
+  "extracted_at": "2026-09-20T20:57:45.909Z",
   "per_package": {
     "packages/app": {
-      "A": 173,
+      "A": 168,
       "M": 158,
       "D": 0
     },
@@ -894,7 +889,7 @@
     }
   },
   "counts": {
-    "overlay_total": 828,
+    "overlay_total": 823,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1009,8 +1004,6 @@
     "packages/app/src/components/report-bug-button.stories.tsx": "A",
     "packages/app/src/components/report-bug-button.tsx": "A",
     "packages/app/src/components/session-context-usage.tsx": "M",
-    "packages/app/src/components/session-stream-veil.test.ts": "A",
-    "packages/app/src/components/session-stream-veil.tsx": "A",
     "packages/app/src/components/settings-dialog.tsx": "M",
     "packages/app/src/components/settings-providers.tsx": "M",
     "packages/app/src/components/solver-switch-banner.tsx": "A",
@@ -1021,8 +1014,6 @@
     "packages/app/src/components/status-popover-model.test.ts": "A",
     "packages/app/src/components/status-popover-model.ts": "A",
     "packages/app/src/components/status-popover.tsx": "M",
-    "packages/app/src/components/stream-veil-view.test.ts": "A",
-    "packages/app/src/components/stream-veil-view.ts": "A",
     "packages/app/src/components/terminal.tsx": "M",
     "packages/app/src/components/titlebar-channel.test.ts": "A",
     "packages/app/src/components/titlebar-channel.ts": "A",
@@ -1097,7 +1088,6 @@
     "packages/app/src/pages/new-session-landing.test.ts": "A",
     "packages/app/src/pages/new-session-landing.ts": "A",
     "packages/app/src/pages/new-session.tsx": "M",
-    "packages/app/src/pages/session-stream-resilience.test.ts": "A",
     "packages/app/src/pages/session.tsx": "M",
     "packages/app/src/utils/amicode-bridge.ts": "A",
     "packages/app/src/utils/amicode-bug-report.test.ts": "A",
