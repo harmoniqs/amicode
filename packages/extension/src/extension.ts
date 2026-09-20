@@ -2070,6 +2070,42 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
 
   ctx.subscriptions.push(vscode.commands.registerCommand("amicode.fleet.goStandalone", () => void runFleetGoStandalone()));
 
+  // amicode#1319: "Amicode: Fleet — Enroll" — join THIS machine to a fleet by
+  // redeeming a join token from the server (`amico fleet enroll --as-server`).
+  // The handler delegates the whole flow to the enroll VERB (which writes
+  // fleet.json + the roster row, sets the transport, runs the installer that
+  // installs the never-fork guard, and verify-attaches) — it NEVER cold-spawns
+  // a local engine (ADR 0005 never-fork). The join token is a SECRET: collected
+  // masked, written to a 0600 temp file (never on the shell argv/history), and
+  // never logged. The visible terminal is the transparency surface, exactly like
+  // Fleet — Repair.
+  const runFleetEnroll = async (): Promise<void> => {
+    const token = await vscode.window.showInputBox({
+      title: "Amicode: Fleet — Enroll",
+      prompt:
+        "Paste the join token from the server (run `amico fleet enroll --as-server` there). It is a secret — handled at 0600, never logged.",
+      password: true,
+      ignoreFocusOut: true,
+    });
+    if (!token || token.trim() === "") return; // cancelled / empty
+    if (amicoRunBinDir === undefined) {
+      void vscode.window.showErrorMessage("Amicode: cannot enroll — the amico launcher is unavailable on this install.");
+      return;
+    }
+    const amico = path.join(amicoRunBinDir, "amico");
+    // The token is a secret: land it in a 0600 temp file so it never rides the
+    // shell argv/history; the terminal command removes it after enroll runs.
+    const tokenFile = path.join(os.tmpdir(), `amico-join-${process.pid}-${Date.now()}.json`);
+    fs.writeFileSync(tokenFile, token, { mode: 0o600 });
+    try { fs.chmodSync(tokenFile, 0o600); } catch { /* best-effort tighten */ }
+    const term = vscode.window.createTerminal({ name: "Amicode: Fleet enroll" });
+    term.show();
+    term.sendText(`"${amico}" fleet enroll --join-token "${tokenFile}"; rm -f "${tokenFile}"`);
+    // The token value is redacted from the log — only the flow is recorded.
+    opencodeChannel.appendLine("[fleet] enroll started (join token redacted) — watch the terminal; the projection refreshes on the next status tick");
+  };
+  ctx.subscriptions.push(vscode.commands.registerCommand("amicode.fleet.enroll", () => void runFleetEnroll()));
+
   // amicode#649: "Amicode: Restart Hub Server" — fleet clients restart the
   // canonical hub over SSH by driving ops/hub-restart.sh (the one restart-safe
   // path: atomic rename swap, single-verb restart, trap-verified). Initiated

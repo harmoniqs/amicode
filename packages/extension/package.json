@@ -167,6 +167,10 @@
         "title": "Amicode: Fleet \u2014 Go Standalone (leave fleet, run locally)"
       },
       {
+        "command": "amicode.fleet.enroll",
+        "title": "Amicode: Fleet \u2014 Enroll (join this machine to a fleet)"
+      },
+      {
         "command": "amicode.repo.sync",
         "title": "Amicode: Repo Sync (git + vendor + fleet)"
       },
