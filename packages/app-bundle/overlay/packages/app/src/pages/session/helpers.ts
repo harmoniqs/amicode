@@ -47,6 +47,9 @@ export const createSessionTabs = (input: TabsInput) => {
   const pulseInspectorOpen = createMemo(
     () => input.tabs().active() === "pulseInspector" || input.tabs().all().includes("pulseInspector"),
   )
+  const fleetManagerOpen = createMemo(
+    () => input.tabs().active() === "fleetManager" || input.tabs().all().includes("fleetManager"),
+  )
   const homeOpen = createMemo(() => input.tabs().active() === "home" || input.tabs().all().includes("home"))
   const panelTabs = createMemo(
     () => {
@@ -61,7 +64,8 @@ export const createSessionTabs = (input: TabsInput) => {
             tab === "vault" ||
             tab === "home" ||
             tab === SESSION_PREVIEW_TAB ||
-            tab === "pulseInspector"
+            tab === "pulseInspector" ||
+            tab === "fleetManager"
           )
             return []
           if (tab === SESSION_OPEN_FILE_TAB && !fileBrowser()) return []
@@ -82,6 +86,7 @@ export const createSessionTabs = (input: TabsInput) => {
     if (active === "home") return active
     if (active === "context") return active
     if (active === "pulseInspector") return active
+    if (active === "fleetManager") return active
     if (active === SESSION_PREVIEW_TAB && previewOpen()) return active
     if (active === "vault" && vaultOpen()) return active
     if (active === SESSION_OPEN_FILE_TAB && openFileOpen()) return active
@@ -94,6 +99,7 @@ export const createSessionTabs = (input: TabsInput) => {
     if (previewOpen()) return SESSION_PREVIEW_TAB
     if (contextOpen()) return "context"
     if (pulseInspectorOpen()) return "pulseInspector"
+    if (fleetManagerOpen()) return "fleetManager"
     if (review() && hasReview()) return "review"
     return "home"
   })
@@ -106,6 +112,7 @@ export const createSessionTabs = (input: TabsInput) => {
     const active = activeTab()
     if (active === "context") return active
     if (active === "pulseInspector" && pulseInspectorOpen()) return active
+    if (active === "fleetManager" && fleetManagerOpen()) return active
     if (active === SESSION_OPEN_FILE_TAB && openFileOpen()) return active
     if (!openedTabs().includes(active)) return
     return active
@@ -115,6 +122,7 @@ export const createSessionTabs = (input: TabsInput) => {
     contextOpen,
     previewOpen,
     pulseInspectorOpen,
+    fleetManagerOpen,
     homeOpen,
     openFileOpen,
     panelTabs,
