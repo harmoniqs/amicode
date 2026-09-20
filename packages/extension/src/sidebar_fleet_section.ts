@@ -277,6 +277,24 @@ export function renderFleetSection(
       list.appendChild(renderDeviceRow(device));
     }
     container.appendChild(list);
-    container.appendChild(renderManage(model.manage.enabled, post));
+  } else if (model.state === "empty") {
+    // Honest empty state — the fleet is reachable, no devices are reporting.
+    // Never a spinner or a fabricated list.
+    const empty = document.createElement("div");
+    empty.className = "fleet-empty fleet-placeholder-text";
+    empty.textContent = "No devices reporting yet";
+    container.appendChild(empty);
+  } else {
+    // Honest degraded state — the roster host is unreachable. Never a spinner
+    // and never a stale/fabricated device list.
+    const down = document.createElement("div");
+    down.className = "fleet-unreachable fleet-placeholder-text";
+    down.textContent = "Fleet host unreachable";
+    container.appendChild(down);
   }
+
+  // The single, section-level Manage affordance — read-only navigation to the
+  // Fleet Manager tab (#1322), rendered in every state; honestly disabled when
+  // that tab is absent (no dead click, AC3).
+  container.appendChild(renderManage(model.manage.enabled, post));
 }
