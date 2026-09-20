@@ -2,7 +2,7 @@
 //
 // Replaces the native TreeDataProvider (workspace_tree.ts) with a webview that
 // can render custom UI: styled buttons, project metadata, lifecycle pills, and
-// eventually a fleet section. The sidebar is navigation chrome — destinations
+// a read-only fleet section (#1321). The sidebar is navigation chrome — destinations
 // open in the editor area; it never hosts chat or rich visualizations.
 //
 // Pattern: WebviewViewProvider (sidebar view), CSP nonce, typed bridge.
