@@ -224,6 +224,16 @@ export {
   type ParseRosterDocumentResult,
 } from "./fleet_roster.js";
 
+// The pure version-skew verdict (amicode#1319, hoisted from the extension's
+// #1261 relay-start gate): the ONE cross-package definition of client↔host
+// version parity. The extension re-exports it (relayVersionGate/hostVersionProbe
+// stay there); `amico fleet enroll` reuses it for the enroll-time pin check.
+export {
+  versionSkewVerdict,
+  type SkewTolerance,
+  type VersionSkewVerdict,
+} from "./fleet_version_skew.js";
+
 // ajv-formats ships a CJS default export; under NodeNext the default import can
 // bind the module namespace rather than the callable, so normalize defensively.
 const addFormats = (typeof addFormatsDefault === "function"
