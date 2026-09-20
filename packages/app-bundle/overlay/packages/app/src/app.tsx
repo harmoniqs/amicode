@@ -1,7 +1,7 @@
 import "@/index.css"
 import * as Sentry from "@sentry/solid"
 import { requestComputeConnect } from "@/components/amicode-defaults-capsule"
-import { adoptWorkspaceProjects, workspaceProjects } from "@/utils/amicode-workspace-projects"
+import { adoptWorkspaceProjects, workspaceProjects, requestAddWorkspaceProject } from "@/utils/amicode-workspace-projects"
 import { I18nProvider } from "@opencode-ai/ui/context"
 import { DialogProvider } from "@opencode-ai/ui/context/dialog"
 import { FileComponentProvider } from "@opencode-ai/ui/context/file"
@@ -1226,6 +1226,7 @@ function NewSessionLanding() {
   const tabs = useTabs()
   const global = useGlobal()
   const navigate = useNavigate()
+  const [showEmpty, setShowEmpty] = createSignal(false)
 
   const land = () => {
     // #1291 diagnostic hook — one build cycle to pinpoint the gate
@@ -1239,6 +1240,7 @@ function NewSessionLanding() {
     // If there's already a session or draft tab, navigate to it
     const existing = tabs.store.find((tab) => tab.type === "session" || tab.type === "draft")
     if (existing) {
+      setShowEmpty(false)
       dbg({ gate: "existing-tab", href: tabHref(existing) })
       navigate(tabHref(existing), { replace: true })
       return
@@ -1260,9 +1262,13 @@ function NewSessionLanding() {
     const directory = resolveLandingDirectory(ctx.projects.list(), ctx.sync.data.project[0]?.worktree)
     if (!directory) {
       dbg({ gate: "no-directory", projects: ctx.projects.list().length, syncProjects: ctx.sync.data.project?.length ?? -1 })
-      return // nothing to land on yet — re-renders when sync arrives
+      // No workspace folder open — show the v2 empty-workspace landing
+      // instead of rendering nothing at all (the blank-screen gap).
+      setShowEmpty(true)
+      return
     }
 
+    setShowEmpty(false)
     dbg({ gate: "newDraft", directory })
     tabs.newDraft({ server: ServerConnection.key(conn), directory }, "").catch((err) => {
       dbg({ gate: "newDraft-error", err: String(err?.message ?? err) })
@@ -1272,9 +1278,20 @@ function NewSessionLanding() {
   return (
     <Show when={tabs.ready()} fallback={null}>
       <LandingEffect land={land} />
+      <Show when={showEmpty()}>
+        <EmptyWorkspaceLanding />
+      </Show>
     </Show>
   )
 }
+
+/** Lightweight v2 landing shown when no workspace folder is open. Renders the
+ *  Amicode mark + an "Open a folder" prompt in the same visual frame as the
+ *  normal new-session view, and populates the titlebar controls so the app
+ *  never appears empty. The createEffect in LandingEffect keeps running: the
+ *  moment a workspace folder arrives (the extension pushes it), the draft
+ *  resolves and this component unmounts. */
+const EmptyWorkspaceLanding = /* @once */ lazy(() => import("@/pages/empty-workspace-landing"))
 
 /** #1291: the landing's resolve used to run as a bare IIFE inside <Show> —
  *  evaluated ONCE at mount, never again. When the server connected (or the
