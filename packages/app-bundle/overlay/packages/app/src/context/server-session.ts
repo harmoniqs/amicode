@@ -773,7 +773,21 @@ export function createServerSession(
       await hydrateFromMirror(sessionID).catch(() => {})
       loadDebug(sessionID, "hydrated", { count: data.message[sessionID]?.length ?? -1 })
       if (meta.loading[sessionID]) return
+      if ((data.message[sessionID]?.length ?? 0) > 0) {
+        // #1295d: the mirror satisfied the render — the caller (the
+        // timeline resource!) resolves NOW; the wire reconcile runs
+        // DETACHED. Before this, every session not yet in this document's
+        // store (at boot: ALL of them) awaited a full wire fetch before
+        // first paint even though the hydrated data was in the store —
+        // the "frozen pane then a couple seconds of chat loading" on
+        // boot and cold switches, at exactly the wire RTT.
+        void wireReconcile().catch(() => {})
+        return
+      }
     }
+    return wireReconcile()
+
+    async function wireReconcile() {
     const active = generation(sessionID)
     const load: MessageLoadState = {
       touchedMessages: new Set(),
@@ -877,6 +891,7 @@ export function createServerSession(
       }
       if (messageLoads.get(sessionID) === load) messageLoads.delete(sessionID)
       if (generations.get(sessionID) === active) setMeta("loading", sessionID, false)
+    }
     }
   }
 
