@@ -1,8 +1,9 @@
 // ============================================================================
 // amicode_context — an opencode plugin that injects live stack-state context
-// (solver mode, routing, active problem, live runs, recent sessions) plus the
-// posture-aware `## Active mode` block (#808, spec D4) into every system
-// prompt via the `experimental.chat.system.transform` hook.
+// (solver mode, routing, active problem, live runs, recent sessions, derived
+// open-thread digest #1305) plus the posture-aware `## Active mode` block
+// (#808, spec D4) into every system prompt via the
+// `experimental.chat.system.transform` hook.
 //
 // RUNTIME: same constraints as amicode_tools.ts — executes inside opencode's
 // embedded Bun runtime, registered by absolute path via OPENCODE_CONFIG_CONTENT
@@ -25,6 +26,7 @@
 import { buildModeBlock, deployedModesRoot, type ModeBlockClient } from "./mode_block";
 import { buildStackStateBlock } from "./stack_state";
 import { buildRecentSessionsBlock } from "./session_recap";
+import { buildOpenThreadsBlock } from "./open_threads";
 import { buildSetupStateSection } from "./setup_state";
 
 console.error("[amicode-context] loaded — stack-state + session-recap + mode-block injection plugin");
@@ -91,6 +93,19 @@ export const AmicodeContext = async (input: unknown) => {
       } catch (e) {
         console.error(`[amicode-context] buildRecentSessionsBlock failed: ${e instanceof Error ? e.message : String(e)}`);
         // Never throw — graceful degradation: no recap is better than a crash.
+      }
+
+      // Open-threads digest (#1305) — derived, deterministic read of what is
+      // still open, rendered after the recent-sessions block. PR-state is an
+      // input feature; this pass spends no network call.
+      try {
+        const threadsBlock = buildOpenThreadsBlock(input.sessionID);
+        if (threadsBlock) {
+          output.system.push(threadsBlock);
+        }
+      } catch (e) {
+        console.error(`[amicode-context] buildOpenThreadsBlock failed: ${e instanceof Error ? e.message : String(e)}`);
+        // Never throw — graceful degradation: no digest is better than a crash.
       }
     },
   };
