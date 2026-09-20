@@ -65,39 +65,69 @@ function normalizeIdentity(raw: string): string {
   return raw.trim().replace(/\.$/, "").split(".")[0]!.toLowerCase();
 }
 
+/** Canonical source order — the order sources appear in a candidate's list. */
+const SOURCE_ORDER: DiscoverySource[] = ["roster", "ssh-config", "tailnet"];
+
+/** Fold a source into a candidate accumulator, keyed by identity. Merges the
+ *  source tag (deduped) and fills reach hints/display name without clobbering a
+ *  value an earlier source already supplied — except `address`, where a
+ *  `preferAddress` source (the tailnet IP is the canonical routable address)
+ *  wins over a `.local`/alias an earlier source left. */
+function fold(
+  acc: Map<string, FleetCandidate>,
+  id: string,
+  source: DiscoverySource,
+  fields: { name: string; sshAlias?: string; address?: string; preferAddress?: boolean },
+): void {
+  const existing = acc.get(id);
+  if (existing === undefined) {
+    acc.set(id, {
+      id,
+      name: fields.name,
+      sources: [source],
+      sshAlias: fields.sshAlias,
+      address: fields.address,
+    });
+    return;
+  }
+  if (!existing.sources.includes(source)) existing.sources.push(source);
+  existing.sshAlias ??= fields.sshAlias;
+  if (fields.address !== undefined && (fields.preferAddress || existing.address === undefined)) {
+    existing.address = fields.address;
+  }
+}
+
 /**
  * Enumerate the candidate machines from the three discovery sources, deduped by
  * normalized machine name, mutating nothing. Read-only: the returned candidates
  * are fresh objects; the inputs are never touched.
  */
 export function discoverFleetCandidates(input: DiscoverInput): FleetCandidate[] {
-  const candidates: FleetCandidate[] = [];
+  const acc = new Map<string, FleetCandidate>();
 
-  for (const peer of input.tailnet ?? []) {
-    candidates.push({
-      id: normalizeIdentity(peer.hostName),
-      name: peer.hostName,
-      sources: ["tailnet"],
-      address: peer.tailscaleIP,
+  // Fold in canonical source order so a candidate's `sources` list is already
+  // ordered and its display name/reach hints prefer the richer roster source.
+  for (const row of input.roster ?? []) {
+    fold(acc, normalizeIdentity(row.name), "roster", {
+      name: row.name,
+      sshAlias: row.sshAlias || undefined,
     });
   }
   for (const host of input.sshConfig ?? []) {
-    candidates.push({
-      id: normalizeIdentity(host.alias),
+    fold(acc, normalizeIdentity(host.alias), "ssh-config", {
       name: host.alias,
-      sources: ["ssh-config"],
       sshAlias: host.alias,
       address: host.hostName,
     });
   }
-  for (const row of input.roster ?? []) {
-    candidates.push({
-      id: normalizeIdentity(row.name),
-      name: row.name,
-      sources: ["roster"],
-      sshAlias: row.sshAlias || undefined,
+  for (const peer of input.tailnet ?? []) {
+    fold(acc, normalizeIdentity(peer.hostName), "tailnet", {
+      name: peer.hostName,
+      address: peer.tailscaleIP,
+      preferAddress: true,
     });
   }
 
-  return candidates.sort((a, b) => a.id.localeCompare(b.id));
+  for (const c of acc.values()) c.sources.sort((a, b) => SOURCE_ORDER.indexOf(a) - SOURCE_ORDER.indexOf(b));
+  return [...acc.values()].sort((a, b) => a.id.localeCompare(b.id));
 }
