@@ -12,6 +12,7 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import { handleSidebarMessage, type SidebarMessageHandlers, type SidebarDownMessage, type FileOpRequest, type FileOpResult, type TreeEntry, type TreeRoot } from "./sidebar_bridge";
+import { buildFleetSectionModel, type RosterRowLike, type FleetPostureInput } from "./sidebar_fleet_section";
 import { SidebarTreeService, type RawDirEntry } from "./sidebar_tree_service";
 import { ChatPanel } from "./chat_panel";
 import { detectProjectType } from "./project/detect";
@@ -281,6 +282,26 @@ function resolveIconTheme(webview: vscode.Webview): { data: IconThemeData; rootU
 }
 
 /**
+ * Injectable fleet-section data seams (#1321). Kept behind an interface so the
+ * host is testable without real HTTP/fs/events, and so the roster READ can be a
+ * local file read (this machine is the server) or the `GET /amicode/roster`
+ * proxy (a client) without the provider caring which. Read-only by contract:
+ * there is no write seam here.
+ */
+export interface FleetSectionDeps {
+  /** The fleet-wide roster + whether it could be read (false ⇒ host down). */
+  readRoster: () => { rows: RosterRowLike[]; reachable: boolean };
+  /** This machine's posture (serve-stance + link-health), or null if unknown. */
+  readPosture: () => FleetPostureInput | null;
+  /** Subscribe to posture/roster change; the callback re-pushes the section. */
+  onPostureChange: (cb: () => void) => vscode.Disposable;
+  /** Whether the Fleet Manager tab (#1322) exists — gates the Manage affordance. */
+  isFleetManagerAvailable: () => boolean;
+  /** Open the Fleet Manager tab (#1322). Only invoked when available. */
+  openFleetManager: () => void;
+}
+
+/**
  * Provides the sidebar webview for the Amicode workspace panel.
  * Registered as `amicode.workspace` (type: "webview" in package.json).
  */
@@ -302,13 +323,22 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
   private resolvedEnvDebounceTimer?: ReturnType<typeof setTimeout>;
   private treeService: SidebarTreeService;
   private globalState?: { get(key: string, fallback?: unknown): unknown; update(key: string, value: unknown): Thenable<void> };
+  /** Injected fleet seams (#1321); undefined ⇒ the section stays inert (the
+   *  webview shows its own honest empty state and posts nothing). */
+  private fleetDeps?: FleetSectionDeps;
+  private fleetSub?: vscode.Disposable;
 
   static readonly DEFAULT_SECTION_ORDER = ["research", "dev", "fleet"];
   private static readonly SECTION_ORDER_KEY = "amicode.sectionOrder";
 
-  constructor(extensionUri: vscode.Uri, globalState?: { get(key: string, fallback?: unknown): unknown; update(key: string, value: unknown): Thenable<void> }) {
+  constructor(
+    extensionUri: vscode.Uri,
+    globalState?: { get(key: string, fallback?: unknown): unknown; update(key: string, value: unknown): Thenable<void> },
+    fleetDeps?: FleetSectionDeps,
+  ) {
     this.extensionUri = extensionUri;
     this.globalState = globalState;
+    this.fleetDeps = fleetDeps;
     this.treeService = new SidebarTreeService({
       detectProjectType,
       readToml: (dir) => readResearchToml(dir),
@@ -440,6 +470,12 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
             });
           }
         },
+        // #1321 — the ONLY fleet action: navigate to the Fleet Manager tab
+        // (#1322). Honest degrade: navigate only when that tab exists; a stray
+        // message when it doesn't is a no-op (never a dead navigation).
+        openFleetManager: () => {
+          if (this.fleetDeps?.isFleetManagerAvailable()) this.fleetDeps.openFleetManager();
+        },
       };
       void handleSidebarMessage(msg, handlers);
     });
@@ -459,6 +495,14 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
       this.pushGitStatus();
     });
 
+    // #1321 — the read-only fleet section: push the initial view-model, then
+    // refresh it on every posture-change (no manual reload). Inert when no
+    // fleet deps were injected (backward compatible).
+    if (this.fleetDeps) {
+      this.pushFleetStatus();
+      this.fleetSub = this.fleetDeps.onPostureChange(() => this.pushFleetStatus());
+    }
+
     webviewView.onDidDispose(() => {
       clearTimeout(this.fsDebounceTimer);
       clearTimeout(this.resolvedEnvDebounceTimer);
@@ -470,6 +514,8 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
       this.workspaceSub?.dispose();
       for (const sub of this.gitSubs) sub.dispose();
       this.gitSubs = [];
+      this.fleetSub?.dispose();
+      this.fleetSub = undefined;
       this.view = undefined;
     });
 
@@ -526,6 +572,24 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
 
   private postDown(msg: SidebarDownMessage): void {
     this.view?.webview.postMessage(msg);
+  }
+
+  /**
+   * #1321 — build the read-only fleet section view-model from the injected
+   * seams and push it to the webview. Honest by construction: an unreachable
+   * roster resolves to the degraded state (never a fabricated list), and Manage
+   * is enabled only when the Fleet Manager tab (#1322) exists.
+   */
+  private pushFleetStatus(): void {
+    if (!this.fleetDeps) return;
+    const roster = this.fleetDeps.readRoster();
+    const model = buildFleetSectionModel({
+      roster: roster.rows,
+      rosterReachable: roster.reachable,
+      posture: this.fleetDeps.readPosture(),
+      manageAvailable: this.fleetDeps.isFleetManagerAvailable(),
+    });
+    this.postDown({ kind: "fleet-status", model });
   }
 
   /**
