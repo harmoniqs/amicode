@@ -119,6 +119,17 @@ function linkHealthOf(posture: FleetPostureInput): "ok" | "degraded" | "down" {
 
 /** Build the fleet-section view-model. Pure. */
 export function buildFleetSectionModel(input: FleetSectionInput): FleetSectionModel {
+  // Host down / roster read failed ⇒ the honest unreachable state. A stale
+  // roster array is deliberately DROPPED here — the section never renders a
+  // possibly-stale list as if it were live (AC6, no fabricated list).
+  if (!input.rosterReachable) {
+    return {
+      state: "unreachable",
+      devices: [],
+      posture: buildPostureBadge(input.posture),
+      manage: { enabled: input.manageAvailable },
+    };
+  }
   const devices: FleetDeviceRow[] = input.roster.map((r) => ({
     machineId: r.machine_id,
     name: r.name,
@@ -128,18 +139,21 @@ export function buildFleetSectionModel(input: FleetSectionInput): FleetSectionMo
     lastSeen: r.last_report,
   }));
   const state: FleetSectionState = devices.length > 0 ? "populated" : "empty";
-  const posture: FleetPostureBadge | null = input.posture
-    ? {
-        serverMode: input.posture.serverMode,
-        hostname: input.posture.hostname,
-        linkHealth: linkHealthOf(input.posture),
-        hub: { name: input.posture.hub.name ?? null, base_url: input.posture.hub.base_url ?? null },
-      }
-    : null;
   return {
     state,
     devices,
-    posture,
+    posture: buildPostureBadge(input.posture),
     manage: { enabled: input.manageAvailable },
+  };
+}
+
+/** Derive the posture badge, or null when posture is unknown (never fabricated). */
+function buildPostureBadge(posture: FleetPostureInput | null): FleetPostureBadge | null {
+  if (!posture) return null;
+  return {
+    serverMode: posture.serverMode,
+    hostname: posture.hostname,
+    linkHealth: linkHealthOf(posture),
+    hub: { name: posture.hub.name ?? null, base_url: posture.hub.base_url ?? null },
   };
 }
