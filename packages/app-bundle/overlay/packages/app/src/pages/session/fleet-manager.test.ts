@@ -9,6 +9,7 @@ import {
   enrollAction,
   CREATE_FLEET_COMMAND,
   fleetTransportMessage,
+  shapeVersionRows,
   type RosterRowLike,
 } from "./fleet-manager"
 
@@ -145,5 +146,25 @@ describe("enrollAction (AC6 — Enroll degrades honestly)", () => {
     const action = enrollAction({ hasCreateFleetSkill: false })
     expect(action.available).toBe(false)
     expect(action.launch).toBeUndefined()
+  })
+})
+
+describe("shapeVersionRows (AC5 — Versions renders the retired panel's doctor content)", () => {
+  test("maps doctor surfaces to version rows; null version → the honest '—' absence marker", () => {
+    const rows = shapeVersionRows({
+      surfaces: [
+        { surface: "extension", version: "0.3.6", source_version: "0.3.6", verdict: "current" },
+        { surface: "staged-skills", version: null, source_version: null, verdict: "unknown" },
+      ],
+    })
+    expect(rows).toEqual([
+      { surface: "extension", version: "0.3.6", sourceVersion: "0.3.6", verdict: "current" },
+      { surface: "staged-skills", version: "—", sourceVersion: "—", verdict: "unknown" },
+    ])
+  })
+
+  test("no report ⇒ no rows (honest empty, never fabricated)", () => {
+    expect(shapeVersionRows(null)).toEqual([])
+    expect(shapeVersionRows(undefined)).toEqual([])
   })
 })
