@@ -331,6 +331,14 @@ jobs:
         run: cd packages/app-bundle/.materialized && bun install --ignore-scripts
       - name: Engine typecheck gate (opencode) — new errors fail; base-drift (#1229) allowlisted
         run: bash packages/app-bundle/scripts/engine_typecheck_gate.sh
+      # #1348: the engine gate covers only `opencode`, but the overlay also
+      # modifies app/ui/session-ui/core/schema/sdk/llm — none reached by the
+      # engine gate or the fast job's `pnpm -r run typecheck` (the overlay is
+      # not a pnpm workspace member). This gate typechecks them all in the same
+      # materialized tree. No allowlist — #1348 fixed all nine pre-existing
+      # base-drift errors, so ANY type error in a covered package fails CI.
+      - name: Overlay typecheck gate (app, ui, session-ui, core, schema, sdk, llm) — fail-closed, no allowlist (#1348)
+        run: bash packages/app-bundle/scripts/overlay_typecheck_gate.sh
       # Non-blocking until #1239 fixes suite pollution, timing flakiness, and
       # positive cross-test dependencies. It still runs the overlay suite and
       # reports the result on every PR; drop continue-on-error to promote it.
