@@ -60,3 +60,49 @@ describe("buildFleetSectionModel — per-device rows (AC1)", () => {
     ]);
   });
 });
+
+describe("buildFleetSectionModel — this machine's posture badge (AC2)", () => {
+  it("derives the posture badge from Server mode + link-health", () => {
+    const model = buildFleetSectionModel({
+      roster: [row()],
+      rosterReachable: true,
+      posture: {
+        serverMode: "server",
+        hostname: "mac-studio-01",
+        mode: "fleet",
+        reachable: true,
+        hub: { name: "hub", base_url: "http://hub:43117" },
+      },
+      manageAvailable: false,
+    });
+    expect(model.posture).not.toBeNull();
+    expect(model.posture!.serverMode).toBe("server");
+    expect(model.posture!.hostname).toBe("mac-studio-01");
+    // link-health folds the attach posture: fleet+reachable → ok.
+    expect(model.posture!.linkHealth).toBe("ok");
+    expect(model.posture!.hub).toEqual({ name: "hub", base_url: "http://hub:43117" });
+  });
+
+  it("maps the degraded attach posture to a degraded link-health (not down)", () => {
+    const model = buildFleetSectionModel({
+      roster: [], rosterReachable: true, manageAvailable: false,
+      posture: { serverMode: "client", hostname: "h", mode: "degraded", reachable: true, hub: { name: null, base_url: null } },
+    });
+    expect(model.posture!.linkHealth).toBe("degraded");
+  });
+
+  it("maps the standalone / unreachable posture to a down link-health", () => {
+    const model = buildFleetSectionModel({
+      roster: [], rosterReachable: true, manageAvailable: false,
+      posture: { serverMode: "standalone", hostname: "h", mode: "standalone", reachable: false, hub: { name: null, base_url: null } },
+    });
+    expect(model.posture!.linkHealth).toBe("down");
+  });
+
+  it("carries a null posture badge when posture is unknown (never fabricated)", () => {
+    const model = buildFleetSectionModel({
+      roster: [row()], rosterReachable: true, posture: null, manageAvailable: false,
+    });
+    expect(model.posture).toBeNull();
+  });
+});
