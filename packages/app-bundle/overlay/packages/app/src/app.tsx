@@ -661,7 +661,7 @@ ${text.slice(0, 12000)}` }).catch(() => {})  // #1294: 2400 truncated snapshots 
     const briefMap = (m?: Map<string, unknown[]>) =>
       m
         ? Object.fromEntries(
-            [...m.entries()].slice(-4).map(([k, v]) => [k.slice(-14), (v as unknown[]).slice(-6)]),
+            [...m.entries()].slice(-12).map(([k, v]) => [k.slice(-14), (v as unknown[]).slice(-6)]),
           )
         : null
     const shipRings = () => {
@@ -796,6 +796,22 @@ function SessionLineagePrewarmer() {
     }
   })
   createEffect(() => {
+    const live = global.servers.list()
+    const known = new Set(live.map((item) => ServerConnection.key(item)))
+    if (known.size > 0) {
+      // #1295: rebase stale-era tab server keys (pre-fleet origins, retired
+      // hosts) to the live server — ghost keys route tab clicks into a
+      // context that can never load (the frozen-panel-forever switch).
+      const seenGhost = new Set<string>()
+      for (const tab of tabs.store) {
+        if (tab.type === "session" && tab.server !== undefined && !known.has(tab.server)) {
+          if (!seenGhost.has(tab.server)) {
+            seenGhost.add(tab.server)
+            tabs.rebaseServer(tab.server, live.length === 1 ? ServerConnection.key(live[0]) : [...known][0])
+          }
+        }
+      }
+    }
     for (const tab of tabs.store) {
       if (tab.type !== "session") continue
       const conn = global.servers.list().find((item) => ServerConnection.key(item) === tab.server)
