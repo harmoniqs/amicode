@@ -44,4 +44,19 @@ describe("buildFleetSectionModel — per-device rows (AC1)", () => {
     // the per-device reachability tri-state is carried verbatim.
     expect(alpha.health).toBe("reachable");
   });
+
+  it("splits capability tags into known-behavior vs descriptive chips (AC1)", () => {
+    const model = buildFleetSectionModel({
+      roster: [row({ capabilities: ["compute", "roaming", "gpu-rig"] })],
+      rosterReachable: true,
+      posture: null,
+      manageAvailable: false,
+    });
+    const chips = model.devices[0].capabilities;
+    expect(chips).toEqual([
+      { tag: "compute", known: true },
+      { tag: "roaming", known: true },
+      { tag: "gpu-rig", known: false }, // an arbitrary descriptive tag round-trips, marked not-known
+    ]);
+  });
 });
