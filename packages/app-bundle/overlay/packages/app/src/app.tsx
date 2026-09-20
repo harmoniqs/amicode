@@ -39,7 +39,6 @@ import {
   onCleanup,
   type ParentProps,
   Show,
-  Suspense,
 } from "solid-js"
 import { Dynamic } from "solid-js/web"
 import { Spinner } from "@opencode-ai/ui/spinner"
