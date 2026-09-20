@@ -3,6 +3,9 @@ import {
   capabilityChip,
   shapeFleetDeviceRows,
   buildCapabilitiesReport,
+  fleetManagerCommand,
+  transportPrefill,
+  TRANSPORT_OPTIONS,
   type RosterRowLike,
 } from "./fleet-manager"
 
@@ -88,5 +91,35 @@ describe("buildCapabilitiesReport (AC2 — local-row capabilities edit → POST 
     const input = row({ capabilities: ["compute"] })
     buildCapabilitiesReport(input, ["compute", "roaming"])
     expect(input.capabilities).toEqual(["compute"])
+  })
+})
+
+describe("fleetManagerCommand (AC3/AC4 — buttons invoke EXISTING registered commands)", () => {
+  test("This-machine + Hub actions map to the exact registered command strings", () => {
+    // These are the commands already registered in the extension (extension.ts):
+    // the tab INVOKES them, it does not reimplement their logic.
+    expect(fleetManagerCommand("repair")).toBe("amicode.fleet.repair")
+    expect(fleetManagerCommand("goStandalone")).toBe("amicode.fleet.goStandalone")
+    expect(fleetManagerCommand("restartHub")).toBe("amicode.restartHub")
+  })
+})
+
+describe("transportPrefill (AC3 — transport selector prefill)", () => {
+  test("a roaming-tagged machine prefills to tailscale", () => {
+    expect(transportPrefill({ capabilities: ["compute", "roaming"], transport: "ssh" })).toBe("tailscale")
+  })
+
+  test("a non-roaming machine keeps its recorded transport", () => {
+    expect(transportPrefill({ capabilities: ["compute"], transport: "ssh" })).toBe("ssh")
+  })
+
+  test("a non-roaming machine with no recorded transport falls back to the ssh default", () => {
+    expect(transportPrefill({ capabilities: [], transport: "" })).toBe("ssh")
+    expect(transportPrefill({ capabilities: [] })).toBe("ssh")
+  })
+
+  test("the selector offers the known transport providers", () => {
+    expect(TRANSPORT_OPTIONS).toContain("ssh")
+    expect(TRANSPORT_OPTIONS).toContain("tailscale")
   })
 })
