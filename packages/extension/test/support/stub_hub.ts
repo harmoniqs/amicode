@@ -46,6 +46,11 @@ export interface StubHubOptions {
    *  generic host write route). Lets a test pin the provider's honest
    *  RouteAbsent path against a read-only host. Default false (mutations served). */
   hostReadOnly?: boolean;
+  /** #1318: the fleet-wide roster this host serves at GET /amicode/roster — the
+   *  host-owned roster a fleet client obtains through the /amicode/*→host proxy
+   *  (ADR 0026). The stub returns it VERBATIM (JSON.stringify of this value), so
+   *  a relay test can assert byte-identity. Omit → an empty roster. */
+  roster?: unknown;
 }
 
 const DEFAULT_SESSIONS = [
@@ -179,6 +184,14 @@ export function startStubHub(opts: StubHubOptions = {}): Promise<StubHub> {
     if (req.method === "GET" && req.url?.startsWith("/session")) {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify(sessions));
+      return;
+    }
+    // ── #1318: the host-owned fleet roster (ADR 0026). A fleet client reaches
+    //    THIS through the /amicode/*→host proxy; the stub returns it verbatim so
+    //    a relay test can assert the client receives it BYTE-identically.
+    if (req.method === "GET" && (req.url === "/amicode/roster" || req.url?.startsWith("/amicode/roster?"))) {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(opts.roster ?? { schema_version: 1, rows: [] }));
       return;
     }
     // ── #1267: the host file plane. READ routes mirror the REAL vault-browser
