@@ -162,4 +162,22 @@ export function enrollAction(input: { hasCreateFleetSkill: boolean }): EnrollAct
   return { available: false }
 }
 
+// ── This machine: the transport write envelope (app → extension bridge) ──────
+
+/** The app→extension message that writes the `amicode.fleetTransport` setting.
+ *  The command bridge (postAmicode) carries no argument, so a transport SELECTION
+ *  (which must carry a value) rides its own value-bearing envelope; the extension
+ *  chat bridge writes the config from it. No silent reroute — the selector's
+ *  change is an explicit, honest write (ADR 0024/0025). */
+export interface FleetTransportMessage {
+  source: "amicode"
+  kind: "fleet-set-transport"
+  value: string
+}
+
+export function fleetTransportMessage(value: string): FleetTransportMessage {
+  return { source: "amicode", kind: "fleet-set-transport", value }
+}
+
+
 

@@ -8,6 +8,7 @@ import {
   TRANSPORT_OPTIONS,
   enrollAction,
   CREATE_FLEET_COMMAND,
+  fleetTransportMessage,
   type RosterRowLike,
 } from "./fleet-manager"
 
@@ -123,6 +124,14 @@ describe("transportPrefill (AC3 — transport selector prefill)", () => {
   test("the selector offers the known transport providers", () => {
     expect(TRANSPORT_OPTIONS).toContain("ssh")
     expect(TRANSPORT_OPTIONS).toContain("tailscale")
+  })
+
+  test("a transport selection rides a value-bearing bridge envelope (writes amicode.fleetTransport)", () => {
+    expect(fleetTransportMessage("tailscale")).toEqual({
+      source: "amicode",
+      kind: "fleet-set-transport",
+      value: "tailscale",
+    })
   })
 })
 
