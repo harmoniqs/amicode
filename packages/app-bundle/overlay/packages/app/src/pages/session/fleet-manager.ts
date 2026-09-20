@@ -140,3 +140,26 @@ export function transportPrefill(input: { capabilities: string[]; transport?: st
   return input.transport && input.transport.trim() !== "" ? input.transport : TRANSPORT_DEFAULT
 }
 
+// ── Enroll: launch /create-a-fleet, or degrade honestly when it is absent ────
+
+/** The slash-command the Enroll action launches when the orchestrator (#1320)
+ *  is present. */
+export const CREATE_FLEET_COMMAND = "/create-a-fleet"
+
+/** The Enroll affordance's resolved state. `available` ⇒ launch the command;
+ *  otherwise the honest not-yet-available state (launches NOTHING) — the live
+ *  wiring lands when #1320 / `/create-a-fleet` ships. */
+export interface EnrollAction {
+  available: boolean
+  /** the slash-command to launch — present only when available. */
+  launch?: string
+}
+
+/** Resolve the Enroll action honestly: launch `/create-a-fleet` when the skill
+ *  is present, else the not-yet-available state that launches nothing (AC6). */
+export function enrollAction(input: { hasCreateFleetSkill: boolean }): EnrollAction {
+  if (input.hasCreateFleetSkill) return { available: true, launch: CREATE_FLEET_COMMAND }
+  return { available: false }
+}
+
+
