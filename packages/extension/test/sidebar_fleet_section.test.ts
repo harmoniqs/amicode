@@ -106,3 +106,31 @@ describe("buildFleetSectionModel — this machine's posture badge (AC2)", () => 
     expect(model.posture).toBeNull();
   });
 });
+
+describe("buildFleetSectionModel — honest empty / unreachable state (AC6)", () => {
+  it("resolves an empty-but-reachable roster to the 'empty' state, no devices", () => {
+    const model = buildFleetSectionModel({
+      roster: [], rosterReachable: true, posture: null, manageAvailable: false,
+    });
+    expect(model.state).toBe("empty");
+    expect(model.devices).toEqual([]);
+  });
+
+  it("resolves an unreachable roster (host down) to the 'unreachable' state", () => {
+    const model = buildFleetSectionModel({
+      roster: [], rosterReachable: false, posture: null, manageAvailable: false,
+    });
+    expect(model.state).toBe("unreachable");
+    expect(model.devices).toEqual([]);
+  });
+
+  it("never fabricates a device list when unreachable — a stale roster is dropped", () => {
+    // Host down: even if a stale roster array is handed in, an unreachable read
+    // must not render it as if live (no fabricated/stale list).
+    const model = buildFleetSectionModel({
+      roster: [row(), row({ machine_id: "b" })], rosterReachable: false, posture: null, manageAvailable: false,
+    });
+    expect(model.state).toBe("unreachable");
+    expect(model.devices).toEqual([]);
+  });
+});
