@@ -1180,6 +1180,94 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
       color: var(--vscode-descriptionForeground);
       font-style: italic;
     }
+    /* #1321 — the read-only fleet section. Token-driven (no raw literals),
+       border-defined, health paired with text (color is never the only signal). */
+    .fleet-section-body { padding: 2px 0; }
+    .fleet-posture-badge {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin: 2px 8px 6px 32px;
+      padding: 2px 8px;
+      border: 1px solid var(--vscode-sideBarSectionHeader-border, var(--vscode-panel-border));
+      border-radius: 4px;
+      font-size: 11px;
+      color: var(--vscode-descriptionForeground);
+      background: var(--vscode-badge-background);
+    }
+    .fleet-posture-mode {
+      color: var(--vscode-badge-foreground, var(--vscode-foreground));
+      font-weight: 600;
+      text-transform: capitalize;
+    }
+    .fleet-posture-link[data-link-health="ok"] { color: var(--vscode-testing-iconPassed, var(--vscode-terminal-ansiGreen)); }
+    .fleet-posture-link[data-link-health="degraded"] { color: var(--vscode-editorWarning-foreground, var(--vscode-terminal-ansiYellow)); }
+    .fleet-posture-link[data-link-health="down"] { color: var(--vscode-errorForeground, var(--vscode-terminal-ansiRed)); }
+    .fleet-device-list { display: flex; flex-direction: column; gap: 2px; }
+    .fleet-device-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 8px 3px 32px;
+      font-size: 12px;
+      color: var(--vscode-foreground);
+    }
+    .fleet-device-row:hover { background: var(--vscode-list-hoverBackground); }
+    .fleet-device-name { font-weight: 600; }
+    .fleet-device-role,
+    .fleet-last-seen { color: var(--vscode-descriptionForeground); font-size: 11px; }
+    .fleet-caps { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+    .fleet-cap-chip {
+      padding: 0 6px;
+      border: 1px solid var(--vscode-badge-background, var(--vscode-panel-border));
+      border-radius: 999px;
+      font-size: 10px;
+      line-height: 15px;
+      color: var(--vscode-badge-foreground, var(--vscode-foreground));
+      background: var(--vscode-badge-background);
+    }
+    /* A descriptive (non-behavior) tag is defined by a muted border only, no fill. */
+    .fleet-cap-chip[data-known="false"] {
+      background: transparent;
+      border-color: var(--vscode-panel-border, var(--vscode-descriptionForeground));
+      color: var(--vscode-descriptionForeground);
+    }
+    .fleet-health {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 11px;
+      text-transform: capitalize;
+    }
+    .fleet-health::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: currentColor;
+      flex-shrink: 0;
+    }
+    .fleet-health[data-health="reachable"] { color: var(--vscode-testing-iconPassed, var(--vscode-terminal-ansiGreen)); }
+    .fleet-health[data-health="degraded"] { color: var(--vscode-editorWarning-foreground, var(--vscode-terminal-ansiYellow)); }
+    .fleet-health[data-health="down"] { color: var(--vscode-errorForeground, var(--vscode-terminal-ansiRed)); }
+    .fleet-manage {
+      margin: 6px 8px 4px 32px;
+      padding: 2px 10px;
+      font-size: 11px;
+      border: 1px solid var(--vscode-button-border, var(--vscode-panel-border));
+      border-radius: 4px;
+      color: var(--vscode-foreground);
+      background: transparent;
+      cursor: pointer;
+    }
+    .fleet-manage:hover:not(:disabled) { background: var(--vscode-list-hoverBackground); }
+    .fleet-manage:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+    .fleet-manage:disabled {
+      cursor: default;
+      opacity: 0.5;
+      color: var(--vscode-disabledForeground, var(--vscode-descriptionForeground));
+    }
     .context-menu {
       position: fixed;
       z-index: 1000;
