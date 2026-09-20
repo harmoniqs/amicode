@@ -1,6 +1,6 @@
 # ADR 0026 — Generalizable machine capabilities + a host-owned fleet roster
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-09-20
 - **Context refs:** ADR 0005 (managed fleet — defines `Server mode`), ADR 0023 (base-tier
   fleet projection — the one-parser invariant), ADR 0025 (Remote-SSH default / host-owns-all-

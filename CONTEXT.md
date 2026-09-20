@@ -144,6 +144,14 @@ _Avoid_: ledger blob, session attachment
 The per-machine stance for where Sessions are served from, in three values. `standalone` — this machine spawns and owns its own chat server, detached and survivable so it outlives an extension-host reload and is re-adopted rather than dying with the editor (the default; the only mode that ever spawns). `server` — this machine runs the Canonical Server as a system service and the panel attaches to it. `client` — this machine never serves; the panel attaches to the Canonical Server through a Managed Tunnel. Determined by `~/.amico/ops/fleet/fleet.json` (no file = standalone). Machine-scoped, never synced.
 _Avoid_: profile, spawn vs attach (as concept names)
 
+**Capability**:
+An orthogonal, open tag describing what a machine is *for* — distinct from its serve-stance (Server mode). Two known, behavior-adjacent tags: `compute` (a solve-target hint — declared-but-inert until a fleet-peer executor exists, an explicit non-goal today) and `roaming` (a transport hint that defaults a machine to Tailscale). Any other tag is a free descriptive label with no behavioral meaning; it round-trips verbatim. A Capability never overrides the guard/tunnel/hub decision — Server mode stays the only serve-stance authority (ADR 0026).
+_Avoid_: role (that is Server mode), type, class
+
+**Roster**:
+The amicode-owned, fleet-wide device list on the Canonical Server (`~/.amico/ops/fleet/roster.json`) — one row per machine, each machine the single writer of its own row (a registry/heartbeat model). A row is `{ machine_id, name, server_mode, capabilities[], sshAlias, transport, last_report, health }` with `health ∈ {reachable, degraded, down}`; the UI labels `server_mode` as "role" and `last_report` as "last-seen". Surfaced at `GET /amicode/roster` (read) + `POST /amicode/roster` (self-report), on the proxied `/amicode/*` namespace so a client sees it through the host proxy. Separate from `fleet.json` (untouched — one-parser invariant, ADR 0023) and from the per-machine projection (which carries only this machine's topology). ADR 0026.
+_Avoid_: fleet.json (a different, per-machine file), device table, inventory
+
 **Fleet config**:
 The file at `~/.amico/ops/fleet/fleet.json` that declares this machine's fleet role and the canonical server's coordinates (`host`, `port`, `sshAlias`). No file on disk = standalone. The guard script, extension, and installer all resolve role from this file — never from a hardcoded hostname.
 _Avoid_: fleet.toml, fleet settings (those are VS Code settings, a different thing)
