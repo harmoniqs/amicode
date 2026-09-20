@@ -49,6 +49,7 @@ import {
   releaseOnboardingPanel,
 } from "./onboarding_panel";
 import { registerFleetPanel } from "./fleet_panel";
+import { registerFleetManagerCommands } from "./fleet_manager_command";
 import { isModelConfigured } from "./onboarding_routing";
 import { getWorkspaceProjects, type WorkspaceProjectDeps } from "./workspace_projects";
 import { detectProjectType } from "./project/detect";
@@ -514,7 +515,11 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // the generic re-auth flow for an existing entry never touches the model
   // shape either). No-op when there's nothing to heal.
   reconcileHarmoniqsProviderConfig();
-  registerFleetPanel(ctx); // #527 — Fleet & Versions: the view over doctor's JSON
+  // #1322: the standalone Fleet & Versions panel is retired; its command
+  // (amicode.fleet.versions) + amicode.openFleetManager now route to the Fleet
+  // Manager Work Column tab. registerFleetPanel stays a no-op (retired).
+  registerFleetPanel(ctx);
+  registerFleetManagerCommands(ctx);
   statusBar = new StatusBarManager();
   ctx.subscriptions.push({ dispose: () => statusBar?.dispose() });
 

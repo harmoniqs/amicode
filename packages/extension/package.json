@@ -160,7 +160,11 @@
       },
       {
         "command": "amicode.fleet.versions",
-        "title": "Amicode: Fleet & Versions (doctor's surface report)"
+        "title": "Amicode: Fleet & Versions (open Fleet Manager \u2014 Versions)"
+      },
+      {
+        "command": "amicode.openFleetManager",
+        "title": "Amicode: Open Fleet Manager"
       },
       {
         "command": "amicode.fleet.goStandalone",
