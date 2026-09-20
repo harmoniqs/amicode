@@ -1,0 +1,10 @@
+[Unit]
+Description=Amicode session auto-archive nightly at 04:00 (before skill-freshness)
+
+[Timer]
+OnCalendar=*-*-* 04:00:00
+Persistent=true
+Unit=co.harmoniqs.session-archive.service
+
+[Install]
+WantedBy=timers.target

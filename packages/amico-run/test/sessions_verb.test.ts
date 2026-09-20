@@ -598,7 +598,7 @@ describe("amico sessions autoarchive — classification-gated archive (#1304, bu
     const before = JSON.parse(dbRows(db)) as { sessions: Record<string, unknown>[] };
 
     const a = JSON.parse(run(["sessions", "autoarchive", "--apply"], env).stdout);
-    expect(a).toMatchObject({ subcommand: "autoarchive", dry_run: false, scanned: 5, candidates: 3, archived: 3 });
+    expect(a).toMatchObject({ subcommand: "autoarchive", dry_run: false, scanned: 4, candidates: 3, archived: 3 });
     expect(new Set(a.candidate_ids as string[])).toEqual(new Set(JUNK_OLD_IDS));
 
     // the junk buckets relocated; substantive + young stay visible
@@ -647,7 +647,9 @@ describe("amico sessions autoarchive — classification-gated archive (#1304, bu
     // the gate is the same ops-dir preference pattern — configurable, fail-safe
     const p = JSON.parse(run(["sessions", "prefs", "--autoarchive-hours", "6"], env).stdout);
     expect(p).toMatchObject({ autoarchive_hours: 6 });
-    expect(JSON.parse(run(["sessions", "autoarchive"], env).stdout)).toMatchObject({ hours: 6, candidates: 2 });
+    // a 6 h gate crosses all three greeting sessions (12 / 47 / 49 h old)
+    const six = JSON.parse(run(["sessions", "autoarchive"], env).stdout);
+    expect(six).toMatchObject({ hours: 6, candidates: 3 });
   });
 
   it("AC 4: dry-run is the DEFAULT — reports count + ids, writes nothing", () => {
@@ -774,7 +776,7 @@ describe("ops/session-archive job — the nightly wrapper (smoke, #1304)", () =>
       receipt_version: 1,
       kind: "session-archive",
       mode: "dry-run",
-      scanned: 5,
+      scanned: 4,
       archived: 0,
     });
     expect(new Set(lines[0].ids as string[])).toEqual(new Set(JUNK_OLD_IDS));
@@ -795,7 +797,7 @@ describe("ops/session-archive job — the nightly wrapper (smoke, #1304)", () =>
 
     const lines = receiptLines();
     expect(lines).toHaveLength(1);
-    expect(lines[0]).toMatchObject({ kind: "session-archive", mode: "apply", scanned: 5, archived: 3 });
+    expect(lines[0]).toMatchObject({ kind: "session-archive", mode: "apply", scanned: 4, archived: 3 });
     expect(new Set(lines[0].ids as string[])).toEqual(new Set(JUNK_OLD_IDS));
 
     const env = { OPENCODE_DB: db, AMICODE_OPS_DIR: ops };
