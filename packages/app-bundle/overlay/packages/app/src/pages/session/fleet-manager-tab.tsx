@@ -52,6 +52,10 @@ export function FleetManagerContent() {
   // absent it, rows render read-only (honest — we never fabricate "which
   // machine is us").
   const [localMachineId, setLocalMachineId] = createSignal<string | null>(null)
+  // This machine's window-mode axis (remote-ssh | local) — its OWN field, kept
+  // separate from link-health posture (ADR 0025 #4). Host-provided via the open
+  // message; "unknown" until then (honest, never fabricated / overloaded).
+  const [windowMode, setWindowMode] = createSignal<string | null>(null)
   // The doctor report the extension ships with the Versions route (open-fleet-
   // manager). Null until the route provides it — the section degrades honestly.
   const [versionReport, setVersionReport] = createSignal<{ surfaces: DoctorSurfaceLike[] } | null>(null)
@@ -60,11 +64,13 @@ export function FleetManagerContent() {
       source?: string
       kind?: string
       localMachineId?: string
+      windowMode?: string
       section?: FleetManagerSection
       report?: { surfaces: DoctorSurfaceLike[] }
     }
     if (d?.source !== "amicode" || d.kind !== "open-fleet-manager") return
     if (typeof d.localMachineId === "string") setLocalMachineId(d.localMachineId)
+    if (typeof d.windowMode === "string") setWindowMode(d.windowMode)
     if (d.report) setVersionReport(d.report)
     if (d.section) setSection(d.section)
   }
@@ -241,6 +247,11 @@ export function FleetManagerContent() {
             <div class="flex flex-col gap-1">
               <div class={eyebrow}>Server mode</div>
               <div class="text-12-regular text-text-base">{localRow()?.server_mode ?? "unknown"}</div>
+            </div>
+
+            <div class="flex flex-col gap-1">
+              <div class={eyebrow}>Window mode</div>
+              <div class="text-12-regular text-text-base">{windowMode() ?? "unknown"}</div>
             </div>
 
             <div class="flex flex-col gap-1">

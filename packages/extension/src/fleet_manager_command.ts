@@ -21,6 +21,9 @@ export interface OpenFleetManagerMessage {
   kind: typeof OPEN_FLEET_MANAGER_KIND;
   section?: FleetManagerSection;
   localMachineId?: string;
+  /** This machine's window-mode axis (remote-ssh | local) — its OWN field,
+   *  never overloaded onto link-health posture (ADR 0025 #4). */
+  windowMode?: string;
   report?: DoctorReport;
 }
 
@@ -29,11 +32,13 @@ export interface OpenFleetManagerMessage {
 export function buildOpenFleetManagerMessage(opts: {
   section?: FleetManagerSection;
   localMachineId?: string | null;
+  windowMode?: string | null;
   report?: DoctorReport | null;
 }): OpenFleetManagerMessage {
   const msg: OpenFleetManagerMessage = { source: "amicode", kind: OPEN_FLEET_MANAGER_KIND };
   if (opts.section) msg.section = opts.section;
   if (typeof opts.localMachineId === "string") msg.localMachineId = opts.localMachineId;
+  if (typeof opts.windowMode === "string") msg.windowMode = opts.windowMode;
   if (opts.report) msg.report = opts.report;
   return msg;
 }
@@ -44,6 +49,8 @@ export interface FleetManagerCommandDeps {
   postToAll?: (msg: OpenFleetManagerMessage) => void;
   /** This machine's roster id, for the local-row editability (single-writer). */
   localMachineId?: () => string | null;
+  /** This machine's window-mode (remote-ssh | local) — the separate axis. */
+  windowMode?: () => string | null;
   /** `amico doctor` runner — its report rides the Versions route. */
   doctor?: () => Promise<DoctorOutcome>;
 }
@@ -59,13 +66,14 @@ export function registerFleetManagerCommands(
 ): void {
   const postToAll = deps.postToAll ?? ((msg) => ChatPanel.postToAll(msg));
   const localMachineId = deps.localMachineId ?? (() => null);
+  const windowMode = deps.windowMode ?? (() => null);
   const doctor =
     deps.doctor ??
     (() => runDoctor({ amicoBin: resolveAmicoCli(ctx.extensionUri.fsPath) }));
 
   ctx.subscriptions.push(
     vscode.commands.registerCommand("amicode.openFleetManager", () => {
-      postToAll(buildOpenFleetManagerMessage({ localMachineId: localMachineId() }));
+      postToAll(buildOpenFleetManagerMessage({ localMachineId: localMachineId(), windowMode: windowMode() }));
     }),
   );
 
@@ -81,7 +89,12 @@ export function registerFleetManagerCommands(
         report = null;
       }
       postToAll(
-        buildOpenFleetManagerMessage({ section: "versions", localMachineId: localMachineId(), report }),
+        buildOpenFleetManagerMessage({
+          section: "versions",
+          localMachineId: localMachineId(),
+          windowMode: windowMode(),
+          report,
+        }),
       );
     }),
   );

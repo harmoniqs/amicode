@@ -34,6 +34,14 @@ describe("buildOpenFleetManagerMessage — the open-fleet-manager envelope", () 
       localMachineId: "m1",
     });
   });
+
+  it("carries window-mode as its OWN field (a separate axis from posture, ADR 0025 #4)", () => {
+    expect(buildOpenFleetManagerMessage({ windowMode: "remote-ssh" })).toEqual({
+      source: "amicode",
+      kind: OPEN_FLEET_MANAGER_KIND,
+      windowMode: "remote-ssh",
+    });
+  });
 });
 
 describe("registerFleetManagerCommands — routes to the Work Column tab", () => {
