@@ -410,6 +410,48 @@ describe("defaultFleetSectionDeps — production readers (#1321)", () => {
   });
 });
 
+describe("sidebar webview — fleet section styling (#1321, design-system tokens)", () => {
+  let SidebarViewProvider: any;
+  beforeEach(async () => {
+    vi.resetModules();
+    SidebarViewProvider = (await import("../src/sidebar_view")).SidebarViewProvider;
+  });
+
+  function html() {
+    const provider = new SidebarViewProvider(makeExtensionUri());
+    const view = makeWebviewView();
+    provider.resolveWebviewView(view, {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
+    return view.webview.html as string;
+  }
+
+  it("styles device rows + posture badge through --vscode-* theme tokens (no raw literals)", () => {
+    const css = html();
+    expect(css).toMatch(/\.fleet-device-row\s*\{/);
+    expect(css).toMatch(/\.fleet-posture-badge\s*\{/);
+    // the fleet section styling is token-driven, not hardcoded colors.
+    expect(css).toMatch(/\.fleet-(device-row|posture-badge|health|cap-chip|manage)[^{]*\{[^}]*var\(--vscode-/);
+  });
+
+  it("keys the tri-state health indicator on data-health with distinct theme colors (a11y: color is not the only signal)", () => {
+    const css = html();
+    expect(css).toMatch(/\.fleet-health\[data-health=["']reachable["']\]/);
+    expect(css).toMatch(/\.fleet-health\[data-health=["']degraded["']\]/);
+    expect(css).toMatch(/\.fleet-health\[data-health=["']down["']\]/);
+  });
+
+  it("defines the capability chips by border and marks descriptive vs known", () => {
+    const css = html();
+    expect(css).toMatch(/\.fleet-cap-chip[^{]*\{[^}]*border/);
+    expect(css).toMatch(/\.fleet-cap-chip\[data-known=/);
+  });
+
+  it("renders a disabled Manage affordance that reads as non-interactive (honest degrade)", () => {
+    const css = html();
+    expect(css).toMatch(/\.fleet-manage:disabled\s*\{/);
+    expect(css).toMatch(/\.fleet-manage:disabled\s*\{[^}]*(cursor:\s*default|opacity)/);
+  });
+});
+
 // ── Build pipeline ───────────────────────────────────────────────────────────
 
 describe("sidebar build pipeline", () => {
