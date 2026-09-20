@@ -212,11 +212,16 @@ export {
   KNOWN_CAPABILITY_TAGS,
   isKnownCapability,
   parseRosterRow,
+  parseRosterDocument,
+  emptyRoster,
+  upsertRosterRow,
   FLEET_ROSTER_CACHE_RELPATH,
   fleetRosterCachePath,
   type RosterHealth,
   type RosterRow,
+  type RosterDocument,
   type ParseRosterRowResult,
+  type ParseRosterDocumentResult,
 } from "./fleet_roster.js";
 
 // ajv-formats ships a CJS default export; under NodeNext the default import can

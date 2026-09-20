@@ -124,6 +124,65 @@ export function parseRosterRow(candidate: unknown): ParseRosterRowResult {
   return { ok: true, row };
 }
 
+// ── the roster document + single-writer upsert ──────────────────────────────
+
+/** The on-disk roster document: a schema version + the fleet-wide rows. */
+export interface RosterDocument {
+  schema_version: number;
+  rows: RosterRow[];
+}
+
+/** An empty, lawful roster (the absent-file / fresh-fleet state). */
+export function emptyRoster(): RosterDocument {
+  return { schema_version: ROSTER_SCHEMA_VERSION, rows: [] };
+}
+
+/** A document parse outcome — a Result, never a throw (the GET route collapses
+ *  an absent/malformed store into an empty roster, honestly). */
+export type ParseRosterDocumentResult = { ok: true; doc: RosterDocument } | { ok: false; error: string };
+
+/** Validate a candidate roster document: an object with a numeric
+ *  schema_version and an array of rows, each row lawful per parseRosterRow. A
+ *  single bad row rejects the whole document (a partially-trusted roster is
+ *  never silently half-loaded). */
+export function parseRosterDocument(candidate: unknown): ParseRosterDocumentResult {
+  if (candidate === null || typeof candidate !== "object" || Array.isArray(candidate)) {
+    return { ok: false, error: `roster document is not a JSON object: ${describe(candidate)}` };
+  }
+  const o = candidate as Record<string, unknown>;
+  if (typeof o.schema_version !== "number") {
+    return { ok: false, error: `roster document: "schema_version" must be a number` };
+  }
+  if (!Array.isArray(o.rows)) {
+    return { ok: false, error: `roster document: "rows" must be an array` };
+  }
+  const rows: RosterRow[] = [];
+  for (let i = 0; i < o.rows.length; i++) {
+    const parsed = parseRosterRow(o.rows[i]);
+    if (!parsed.ok) return { ok: false, error: `roster document: rows[${i}] — ${parsed.error}` };
+    rows.push(parsed.row);
+  }
+  return { ok: true, doc: { schema_version: o.schema_version, rows } };
+}
+
+/** The single-writer merge (ADR 0026 §Decision.2 — "a write only ever touches
+ *  the reporting machine's own row"). Returns a NEW document in which the row
+ *  matching `row.machine_id` is REPLACED in place (order preserved), or the row
+ *  is appended when new. Every OTHER row is carried through unchanged — so a
+ *  machine's self-report can never mutate a peer's row. */
+export function upsertRosterRow(doc: RosterDocument, row: RosterRow): RosterDocument {
+  let replaced = false;
+  const rows = doc.rows.map((existing) => {
+    if (existing.machine_id === row.machine_id) {
+      replaced = true;
+      return row;
+    }
+    return existing;
+  });
+  if (!replaced) rows.push(row);
+  return { schema_version: doc.schema_version, rows };
+}
+
 // ── the roster-cache path convention (sibling of the projection cache) ───────
 
 /** The stable roster-cache path fragment — beside the projection cache
