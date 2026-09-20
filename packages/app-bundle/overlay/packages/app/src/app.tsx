@@ -35,6 +35,7 @@ import {
   For,
   type JSX,
   lazy,
+  Suspense,
   onCleanup,
   type ParentProps,
   Show,

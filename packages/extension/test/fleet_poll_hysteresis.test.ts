@@ -197,4 +197,17 @@ describe("FleetPollHysteresis — counter reset + configurability (AC4)", () => 
     expect(poll.onProbe(false).downThreshold).toBe(1); // clamped, same floor as the keepalive's Math.max(1, …)
     expect(poll.onProbe(false).transition).toBeNull(); // 2nd failure: already detached, no re-detach
   });
+
+  it("isReady exposes the CURRENT state before a probe (#777 — the wiring widens the probe budget while un-attached)", () => {
+    const poll = new FleetPollHysteresis({ downThreshold: 2 });
+    expect(poll.isReady).toBe(false); // pre-attach: the wide first-attach budget applies
+    poll.onProbe(false); // still not ready — a failed wide-budget probe
+    expect(poll.isReady).toBe(false);
+    poll.onProbe(true);
+    expect(poll.isReady).toBe(true); // attached: the fast steady-state budget applies
+    poll.onProbe(false); // a transient failure does NOT flip ready back
+    expect(poll.isReady).toBe(true);
+    poll.onProbe(false); // downThreshold 2 → detach
+    expect(poll.isReady).toBe(false); // un-attached again: wide budget on the next probe
+  });
 });
