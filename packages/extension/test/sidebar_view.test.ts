@@ -452,6 +452,20 @@ describe("sidebar webview — fleet section styling (#1321, design-system tokens
   });
 });
 
+describe("CONTEXT.md — Sidebar fleet section refinement (#1321)", () => {
+  const context = readFileSync(resolve(__dirname, "..", "..", "..", "CONTEXT.md"), "utf8");
+  const sidebarEntry = context.slice(context.indexOf("**Sidebar**:"), context.indexOf("**Sidebar**:") + 800);
+
+  it("no longer marks the fleet section deferred", () => {
+    expect(sidebarEntry).not.toMatch(/fleet section \(deferred\)/);
+  });
+
+  it("describes the read-only fleet section (roster devices + health)", () => {
+    expect(sidebarEntry).toMatch(/read-only/i);
+    expect(sidebarEntry).toMatch(/fleet section/i);
+  });
+});
+
 // ── Build pipeline ───────────────────────────────────────────────────────────
 
 describe("sidebar build pipeline", () => {
