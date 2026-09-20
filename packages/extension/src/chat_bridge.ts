@@ -145,6 +145,11 @@ export const BRIDGE_ALLOWED_COMMANDS: ReadonlySet<string> = new Set([
   // initiated atomic restart over SSH (amicode#649). Initiated from the
   // extension host, never from the hub itself.
   "amicode.restartHub",
+  // #1322: the Fleet Manager tab's This-machine actions. The tab INVOKES these
+  // existing registered commands (Repair / Go Standalone) over the bridge — it
+  // never reimplements their logic. Payload-free, like restartHub/restartServer.
+  "amicode.fleet.repair",
+  "amicode.fleet.goStandalone",
   "amicode.distillNow",
   "amicode.stopRun",
   "amicode.openRunDir",
