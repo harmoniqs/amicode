@@ -876,10 +876,16 @@ function SessionLineagePrewarmer() {
       // Messages too: the timeline gates on the sync store holding the
       // session's messages — a cold message load is the same wire gap.
       if (session.prefetch) {
-        // #1292 deeper warm for open tabs — the actively-used sessions get
-        // the first ~3 pages so history scrolls locally; the 15s freshness
-        // guard in prefetch() keeps repeat passes free.
-        void session.prefetch(tab.sessionId, 60).catch(() => {})
+        // #1299: the RENDER PAGE FIRST, the deep warm behind it. The
+        // previous order (60 deep, immediately) meant a quick first switch
+        // to a cold tab JOINED the mid-flight deep prefetch — 8-12s holds
+        // (measured: the paint ring's 11,949ms / 8,034ms sessions). The
+        // 20-message page lands in one round trip and satisfies the
+        // timeline; the 60-deep pass continues behind it and fills history.
+        void session
+          .prefetch(tab.sessionId, 20)
+          .then(() => session.prefetch(tab.sessionId, 60))
+          .catch(() => {})
       }
     }
   })
