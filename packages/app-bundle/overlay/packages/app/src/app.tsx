@@ -612,14 +612,16 @@ function HoldDebugBadge() {
       }
       originalError(...(args as Parameters<typeof console.error>))
     }
-    window.addEventListener("error", (e) => {
+    const onWindowError = (e: ErrorEvent) => {
       setLastErr(`E:${(e.message || "unknown").slice(0, 70)}`)
       ship("E", `${e.message ?? "unknown"}\n${(e.error as Error | undefined)?.stack ?? ""}`)
-    })
-    window.addEventListener("unhandledrejection", (e) => {
+    }
+    const onRejection = (e: PromiseRejectionEvent) => {
       setLastErr(`R:${String(e.reason).slice(0, 70)}`)
       ship("R", `${String(e.reason)}\n${e.reason instanceof Error ? e.reason.stack ?? "" : ""}`)
-    })
+    }
+    window.addEventListener("error", onWindowError)
+    window.addEventListener("unhandledrejection", onRejection)
     const entry = performance
       .getEntriesByType("resource")
       .map((r) => r.name)
@@ -668,11 +670,12 @@ ${text.slice(0, 12000)}` }).catch(() => {})  // #1294: 2400 truncated snapshots 
         )
       } catch {}
     }
-    setTimeout(shipRings, 8_000)
-    setInterval(shipRings, 30_000)
+    const shipTimeout = setTimeout(shipRings, 8_000)
+    const shipInterval = setInterval(shipRings, 30_000)
     let lastHtml = -1
     let lastKids = -1
     const ring: string[] = []
+    let rafId = 0
     const tickFast = () => {
       const frame = document.querySelector("[data-amicode-panel]")
       const html = frame ? frame.innerHTML.length : -1
@@ -692,9 +695,9 @@ ${text.slice(0, 12000)}` }).catch(() => {})  // #1294: 2400 truncated snapshots 
       } else if (html !== lastHtml) {
         lastHtml = html
       }
-      requestAnimationFrame(tickFast)
+      rafId = requestAnimationFrame(tickFast)
     }
-    requestAnimationFrame(tickFast)
+    rafId = requestAnimationFrame(tickFast)
     const timer = setInterval(() => {
       const frame = document.querySelector("[data-amicode-panel]")
       const pill = document.querySelectorAll('[style*="backdrop-filter"]').length
@@ -707,7 +710,18 @@ ${text.slice(0, 12000)}` }).catch(() => {})  // #1294: 2400 truncated snapshots 
         : `warm:none${prewarmErr ? "!" + prewarmErr.slice(0, 40) : ""}`
       setState(`${build} | up:${Math.round(performance.now() / 1000)}s | ${warmState} | hold:${heldPanelViewState() ? "Y" : "n"} | now:${frame ? frame.childElementCount + "k/" + frame.innerHTML.length + "h" : "none"} | main:${mainKids} | p${pill} | ${location.pathname.slice(-34)}${lastErr() ? "\n" + lastErr() : ""}`)
     }, 500)
-    onCleanup(() => clearInterval(timer))
+    // #1287: clean up EVERY effect this badge installs, not just the 500ms
+    // interval — restore console.error, drop both window listeners, and clear
+    // the diagnostic timeout/interval and the animation-frame loop.
+    onCleanup(() => {
+      console.error = originalError
+      window.removeEventListener("error", onWindowError)
+      window.removeEventListener("unhandledrejection", onRejection)
+      clearTimeout(shipTimeout)
+      clearInterval(shipInterval)
+      cancelAnimationFrame(rafId)
+      clearInterval(timer)
+    })
   }
   return (
     <div
@@ -1110,7 +1124,12 @@ export function AppInterface(props: {
                   <TabsProvider>
                     <AmicodeNavigateBridge />
                     <SessionLineagePrewarmer />
-                    <HoldDebugBadge />
+                    {/* #1287: gate on the actual boolean — the enclosing Show
+                        keys on newLayoutDesigns().toString(), which is truthy
+                        for BOTH values, so it never gated the badge. */}
+                    <Show when={useSettings().general.newLayoutDesigns()}>
+                      <HoldDebugBadge />
+                    </Show>
                     <PermissionProvider>
                       <NotificationProvider>
                         <ServerShell>

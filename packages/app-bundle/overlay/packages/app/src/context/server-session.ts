@@ -21,7 +21,7 @@ import { normalizeSessionInfo } from "@/utils/session"
 import { compareMessages, messageKey, normalizeSessionMessages } from "@/utils/session-message"
 import { dropSessionCaches, pickSessionCacheEvictions, SESSION_CACHE_LIMIT } from "./global-sync/session-cache"
 import { createV2SessionReducer, type V2SessionReduction } from "./server-session-v2-reducer"
-import { loadMirror, mirrorSlice, saveMirror } from "./session-mirror"
+import { deleteMirror, loadMirror, mirrorSlice, saveMirror } from "./session-mirror"
 import type { ServerApi } from "@/utils/server"
 
 type MessageApi = ServerApi["message"]
@@ -111,6 +111,14 @@ function mergeOptimisticPage(page: MessagePage, items: OptimisticItem[]) {
   const part = new Map(page.part.map((item) => [item.id, item.part]))
   const observed: { messageID: string; parts: Part[] }[] = []
   for (const item of items) {
+    // Ordering invariant: `session` is kept in `compareMessages` order
+    // (time.created, tie-broken by id), and we search/insert it here by id
+    // (`messageKey`). That is valid because opencode message ids are
+    // ULID-style monotonic — `Identifier.ascending("message")` emits a
+    // fixed-width, zero-padded, big-endian hex time prefix (timestamp*0x1000
+    // + a per-ms counter), so lexicographic id order equals creation-time
+    // order. Thus id order agrees with the time-then-id sort. This matches
+    // main's cmpMessage (time sort, id search) — parity, not new behavior.
     const result = Binary.search(session, messageKey(item.message), messageKey)
     const found = result.found
     if (!found) session.splice(result.index, 0, item.message)
@@ -1114,8 +1122,13 @@ export function createServerSession(
         void resolve(eventID).catch(() => {})
       // #1291 durable mirror: streams and edits mutate the store live —
       // keep the mirror following (saveMirror's per-session trailing
-      // debounce collapses a token stream into ~1 write/s).
-      if (event.type === "session.updated" || event.type.startsWith("message.")) persistMirror(eventID)
+      // debounce collapses a token stream into ~1 write/s). Schedule it in a
+      // microtask so it captures the store AFTER this event's reducer
+      // mutation lands — persisting before the switch would mirror a
+      // still-present message on message.removed, or omit a just-inserted
+      // one on message.updated (#1287).
+      if (event.type === "session.updated" || event.type.startsWith("message."))
+        queueMicrotask(() => persistMirror(eventID))
     }
     switch (event.type) {
       case "session.created":
@@ -1137,6 +1150,10 @@ export function createServerSession(
           produce((draft) => void delete draft[sessionID]),
         )
         evict([sessionID])
+        // #1287 privacy (CWE-922): evict() only clears in-memory state — the
+        // durable mirror must be dropped too, or the deleted session's
+        // messages stay readable in IndexedDB until pruning ages them out.
+        if (options?.mirrorScope) deleteMirror(options.mirrorScope, sessionID)
         return
       }
       case "todo.updated": {
@@ -1175,6 +1192,10 @@ export function createServerSession(
         const result = Binary.search(messages, messageKey(info), messageKey)
         if (result.found) setData("message", info.sessionID, result.index, reconcile(info))
         if (!result.found)
+          // `messages` is compareMessages-sorted (time.created, tie-broken by
+          // id) yet searched/inserted here by id. Safe because opencode
+          // message ids are ULID-style monotonic (see mergeOptimisticPage) —
+          // id order == creation-time order — so the two orderings agree.
           setData("message", info.sessionID, (value = []) => {
             const next = value.slice()
             next.splice(result.index, 0, info)

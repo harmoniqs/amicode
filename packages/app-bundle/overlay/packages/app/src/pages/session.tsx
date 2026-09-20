@@ -769,6 +769,10 @@ export default function Page() {
     }
   }
 
+  // #1287: bumped when a grace window expires, so timelineGateReady (which
+  // reads it) re-evaluates into the real empty state without a store update.
+  const [graceTick, setGraceTick] = createSignal(0)
+
   const timelineGateReady = createMemo(() => {
     const id = params.id
     if (!id) return messagesReady()
@@ -779,7 +783,17 @@ export default function Page() {
       return messagesReady()
     }
     if (hadTimelineMessages.get(id)) {
-      const at = emptiedAt.get(id) ?? emptiedAt.set(id, Date.now()).get(id)!
+      let at = emptiedAt.get(id)
+      if (at === undefined) {
+        at = Date.now()
+        emptiedAt.set(id, at)
+        // #1287: Date.now() is not reactive — if the session goes empty and
+        // no further store update arrives, nothing re-runs this memo when the
+        // grace window ends, so the frozen snapshot would hold forever. Wake
+        // the memo at expiry via a signal bump.
+        setTimeout(() => setGraceTick((value) => value + 1), EMPTY_GRACE_MS)
+      }
+      graceTick()
       if (historyLoading() || Date.now() - at < EMPTY_GRACE_MS) return false
     }
     // #1290: the sync seeds `[]` for every session on SSE events — an
