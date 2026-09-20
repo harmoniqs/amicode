@@ -236,6 +236,126 @@ describe("sidebar bridge — handleSidebarMessage", () => {
   });
 });
 
+// ── #1321: read-only sidebar fleet section (host wiring) ─────────────────────
+
+describe("SidebarViewProvider — fleet section host wiring (#1321)", () => {
+  let SidebarViewProvider: any;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    const mod = await import("../src/sidebar_view");
+    SidebarViewProvider = mod.SidebarViewProvider;
+  });
+
+  function deviceRow(over: Record<string, unknown> = {}) {
+    return {
+      machine_id: "mac-01", name: "Mac Studio", server_mode: "server",
+      capabilities: ["compute"], sshAlias: "mac", transport: "ssh",
+      last_report: "2026-09-20T12:00:00.000Z", health: "reachable", ...over,
+    };
+  }
+
+  function fleetHarness() {
+    const state = {
+      roster: { rows: [deviceRow()], reachable: true } as { rows: any[]; reachable: boolean },
+      posture: { serverMode: "server", hostname: "mac-01", mode: "fleet", reachable: true, hub: { name: "hub", base_url: "u" } } as any,
+      managerAvailable: false,
+      postureCb: (() => {}) as () => void,
+    };
+    const openFleetManager = vi.fn();
+    const deps = {
+      readRoster: () => state.roster,
+      readPosture: () => state.posture,
+      onPostureChange: (cb: () => void) => { state.postureCb = cb; return { dispose() {} }; },
+      isFleetManagerAvailable: () => state.managerAvailable,
+      openFleetManager,
+    };
+    return { state, deps, openFleetManager };
+  }
+
+  function lastFleetStatus(view: any) {
+    const calls = view.webview.postMessage.mock.calls.map((c: any[]) => c[0]);
+    const fleet = calls.filter((m: any) => m && m.kind === "fleet-status");
+    return fleet.length ? fleet[fleet.length - 1] : undefined;
+  }
+
+  function resolve(provider: any, view: any) {
+    provider.resolveWebviewView(view, {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
+  }
+
+  it("posts a fleet-status down-message with device rows + posture badge on resolve (AC1, AC2)", () => {
+    const { deps } = fleetHarness();
+    const provider = new SidebarViewProvider(makeExtensionUri(), undefined, deps);
+    const view = makeWebviewView();
+    resolve(provider, view);
+
+    const msg = lastFleetStatus(view);
+    expect(msg).toBeDefined();
+    expect(msg.model.state).toBe("populated");
+    expect(msg.model.devices).toHaveLength(1);
+    expect(msg.model.devices[0].role).toBe("server");        // server_mode → "role"
+    expect(msg.model.devices[0].lastSeen).toBe("2026-09-20T12:00:00.000Z"); // last_report → "last-seen"
+    expect(msg.model.devices[0].health).toBe("reachable");
+    expect(msg.model.posture.serverMode).toBe("server");
+    expect(msg.model.posture.linkHealth).toBe("ok");
+  });
+
+  it("re-posts fleet-status with updated health on a posture-change event (AC5, no manual reload)", () => {
+    const { state, deps } = fleetHarness();
+    const provider = new SidebarViewProvider(makeExtensionUri(), undefined, deps);
+    const view = makeWebviewView();
+    resolve(provider, view);
+    expect(lastFleetStatus(view).model.devices[0].health).toBe("reachable");
+
+    // A peer degrades; the posture-change fires — no reload, the section refreshes.
+    state.roster = { rows: [deviceRow({ health: "degraded" })], reachable: true };
+    state.postureCb();
+    expect(lastFleetStatus(view).model.devices[0].health).toBe("degraded");
+  });
+
+  it("shows an honest unreachable state when the roster host is down (AC6)", () => {
+    const { state, deps } = fleetHarness();
+    state.roster = { rows: [], reachable: false };
+    const provider = new SidebarViewProvider(makeExtensionUri(), undefined, deps);
+    const view = makeWebviewView();
+    resolve(provider, view);
+    const msg = lastFleetStatus(view);
+    expect(msg.model.state).toBe("unreachable");
+    expect(msg.model.devices).toEqual([]);
+  });
+
+  it("Manage degrades honestly at the host — no navigation when the Fleet Manager tab is absent (AC3)", () => {
+    const { state, deps, openFleetManager } = fleetHarness();
+    state.managerAvailable = false; // #1322 not present on this branch
+    const provider = new SidebarViewProvider(makeExtensionUri(), undefined, deps);
+    const view = makeWebviewView();
+    resolve(provider, view);
+    // the posted model marks Manage disabled …
+    expect(lastFleetStatus(view).model.manage.enabled).toBe(false);
+    // … and even a stray up-message does not navigate (belt-and-suspenders host guard).
+    view.webview._simulateMessage({ kind: "open-fleet-manager" });
+    expect(openFleetManager).not.toHaveBeenCalled();
+  });
+
+  it("Manage navigates when the Fleet Manager tab is present (AC3)", () => {
+    const { state, deps, openFleetManager } = fleetHarness();
+    state.managerAvailable = true;
+    const provider = new SidebarViewProvider(makeExtensionUri(), undefined, deps);
+    const view = makeWebviewView();
+    resolve(provider, view);
+    expect(lastFleetStatus(view).model.manage.enabled).toBe(true);
+    view.webview._simulateMessage({ kind: "open-fleet-manager" });
+    expect(openFleetManager).toHaveBeenCalledTimes(1);
+  });
+
+  it("does no fleet work when no fleet deps are injected (backward compatible)", () => {
+    const provider = new SidebarViewProvider(makeExtensionUri());
+    const view = makeWebviewView();
+    resolve(provider, view);
+    expect(lastFleetStatus(view)).toBeUndefined();
+  });
+});
+
 // ── Build pipeline ───────────────────────────────────────────────────────────
 
 describe("sidebar build pipeline", () => {
