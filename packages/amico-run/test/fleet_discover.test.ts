@@ -103,3 +103,45 @@ describe("discoverFleetCandidates — read-only (mutates nothing)", () => {
     expect(input).toEqual(snapshot);
   });
 });
+
+describe("discoverFleetCandidates — enrolled state + the simulated gap", () => {
+  it("marks a machine enrolled ONLY when its roster row is healthy; a gap machine stays enumerated but unenrolled", () => {
+    const result = discoverFleetCandidates({
+      // hub: enrolled server (verify-attach passed → health reachable).
+      // gap: discovered on the wire but NO roster row (no amicode / no link yet).
+      // stuck: has a roster row but verify-attach FAILED (health down).
+      tailnet: [
+        { hostName: "hub", tailscaleIP: "100.64.0.1" },
+        { hostName: "gap", tailscaleIP: "100.64.0.2" },
+        { hostName: "stuck", tailscaleIP: "100.64.0.3" },
+      ],
+      sshConfig: [{ alias: "hub" }, { alias: "gap" }, { alias: "stuck" }],
+      roster: [
+        rosterRow({ machine_id: "hub-id", name: "hub", sshAlias: "hub", server_mode: "server", health: "reachable" }),
+        rosterRow({ machine_id: "stuck-id", name: "stuck", sshAlias: "stuck", server_mode: "client", health: "down" }),
+      ],
+    });
+
+    // guide-and-resume: the gap machine is NOT dropped — all three continue.
+    expect(result.map((c) => c.id)).toEqual(["gap", "hub", "stuck"]);
+    const byId = Object.fromEntries(result.map((c) => [c.id, c]));
+
+    // hub: a healthy roster row → enrolled, with its role + health surfaced.
+    expect(byId.hub).toMatchObject({ inRoster: true, enrolled: true, serverMode: "server", health: "reachable" });
+
+    // gap: no roster row at all → never reported enrolled (nothing to verify yet).
+    expect(byId.gap).toMatchObject({ inRoster: false, enrolled: false });
+    expect(byId.gap.health).toBeUndefined();
+    expect(byId.gap.serverMode).toBeUndefined();
+
+    // stuck: a roster row exists but verify-attach failed → unenrolled until resolved.
+    expect(byId.stuck).toMatchObject({ inRoster: true, enrolled: false, health: "down" });
+  });
+
+  it("a degraded roster row is also not enrolled (only `reachable` clears the honesty bar)", () => {
+    const result = discoverFleetCandidates({
+      roster: [rosterRow({ machine_id: "d-id", name: "deg", health: "degraded" })],
+    });
+    expect(result[0]).toMatchObject({ inRoster: true, enrolled: false, health: "degraded" });
+  });
+});
