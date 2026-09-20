@@ -20,7 +20,7 @@ export function createTimelineModel(input: {
 
   const [resource] = createResource(
     () => input.sessionID(),
-    (id) => {
+    async (id) => {
       clearRefresh()
       if (!id) return
 
@@ -39,6 +39,17 @@ export function createTimelineModel(input: {
         // the sync still runs as a TRUE background task — it may join an
         // in-flight prefetch, reconcile fresh data, fill session info —
         // nothing awaits it, so it can take as long as the wire needs.
+        void sync().session.sync(id).catch(() => {})
+        return
+      }
+      // #1297: not in the store — the MIRROR satisfies the render before
+      // any task is joined: a mid-deep-warm prefetch can hold its slot for
+      // many seconds (the parallel-parents fix shrinks the chains, but the
+      // render must never depend on a wire chain at all when disk has the
+      // data). Hydrate (an IDB read, milliseconds) → resolve; the sync
+      // runs in the background as above.
+      await sync().session.hydrate(id)
+      if (untrack(() => sync().data.message[id] !== undefined)) {
         void sync().session.sync(id).catch(() => {})
         return
       }

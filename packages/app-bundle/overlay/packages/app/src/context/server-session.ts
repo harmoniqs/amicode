@@ -833,20 +833,29 @@ export function createServerSession(
             ),
           ),
         ]
-        for (const parentID of parentIDs) {
-          if (generations.get(sessionID) !== active) break
-          const parent = await fetchMessage(sessionID, parentID, () =>
-            resetMessageLoad(sessionID, load, messageLoadBaseline(load, parentID)),
-          ).catch((error) => {
-            const cause = error instanceof Error && typeof error.cause === "object" ? error.cause : undefined
-            if (cause && "status" in cause && cause.status === 404) {
-              load.removedMessages.add(parentID)
-              return
-            }
-            throw error
-          })
+        // #1297: PARALLELIZE the parent fetches. The sequential loop was
+        // THE switch-delay for big sessions: each parent missing from the
+        // fetched page cost a full wire round-trip, one after another —
+        // the render ring measured a 12.7s route-change-to-first-paint on
+        // the user's research session (5-7 parents x ~2s each, joined by
+        // any switch that landed mid-chain). All parents in one flight.
+        const parentResults = await Promise.all(
+          parentIDs.map((parentID) =>
+            fetchMessage(sessionID, parentID, () =>
+              resetMessageLoad(sessionID, load, messageLoadBaseline(load, parentID)),
+            ).catch((error) => {
+              const cause = error instanceof Error && typeof error.cause === "object" ? error.cause : undefined
+              if (cause && "status" in cause && cause.status === 404) {
+                load.removedMessages.add(parentID)
+                return
+              }
+              throw error
+            }),
+          ),
+        )
+        for (const parent of parentResults) {
           if (!parent) continue
-          if (parent.message.role !== "user") throw new Error(`Assistant parent is not a user message: ${parentID}`)
+          if (parent.message.role !== "user") throw new Error(`Assistant parent is not a user message: ${parent.message.id}`)
           parents.push(parent)
         }
       }
@@ -947,6 +956,17 @@ export function createServerSession(
       setMeta("limit", sessionID, record.messages.length)
       setMeta("at", sessionID, Date.now())
     })
+  }
+
+  /** #1297: satisfy the render from the mirror WITHOUT joining any
+   *  in-flight task (a mid-deep-warm prefetch can hold a runInflight slot
+   *  for many seconds; a switch that joins it shows the frozen pane for
+   *  the whole chain even though the mirror can paint NOW). */
+  const hydrate = (sessionID: string) => {
+    if ((data.message[sessionID]?.length ?? 0) > 0) return Promise.resolve()
+    return hydrateFromMirror(sessionID)
+      .catch(() => {})
+      .then(() => undefined)
   }
 
   const sync = (sessionID: string, options?: { force?: boolean; messageLimit?: number }) => {
@@ -1492,6 +1512,7 @@ export function createServerSession(
     // seeds `[]` for every session on SSE events — an empty array that was
     // never fetched must not read as "ready" (it renders an empty timeline:
     // "the session history is missing until it comes back").
+    hydrate,
     loaded(sessionID: string) {
       return meta.at[sessionID] !== undefined
     },

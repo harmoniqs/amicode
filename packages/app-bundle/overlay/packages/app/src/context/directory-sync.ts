@@ -12,7 +12,13 @@ const sessionFields = new Set([
   "session_status",
   "session_working",
   "session_diff",
-  "diff_version",
+  // amicode#hotfix: diff_version must NOT ride sessionFields. The shared
+  // ServerSession store never initializes the key, so a proxied read returns
+  // undefined and `data.diff_version[sessionID]` throws on every fresh load —
+  // the throw gets swallowed by the route error boundary, the query-options
+  // memo stays undefined, and TanStack Query surfaces the misleading
+  // "Cannot read properties of undefined (reading '_defaulted')". The child
+  // store owns diff_version (initialized + written by the event reducer).
   "todo",
   "permission",
   "question",
@@ -21,8 +27,6 @@ const sessionFields = new Set([
   "part",
   "part_text_accum_delta",
 ])
-
-const emptyDiffVersion: State["diff_version"] = {}
 
 export const createDirSyncContext = (
   directory: string,
@@ -35,8 +39,6 @@ export const createDirSyncContext = (
   const data = new Proxy({} as State, {
     get(_, property: keyof State) {
       if (property === "session_working") return serverSync.session.data.session_working.bind(serverSync.session.data)
-      // Older app bundles may not have initialized this newer shared-session field yet.
-      if (property === "diff_version") return serverSync.session.data.diff_version ?? emptyDiffVersion
       if (sessionFields.has(property)) return serverSync.session.data[property as keyof typeof serverSync.session.data]
       return current()[0][property]
     },
@@ -119,6 +121,11 @@ export const createDirSyncContext = (
       },
       async sync(sessionID: string, options?: { force?: boolean }) {
         await serverSync.session.sync(sessionID, options)
+      },
+      // #1297: the render path hydrates from the mirror WITHOUT joining
+      // an in-flight task — see createServerSession's hydrate.
+      hydrate(sessionID: string) {
+        return serverSync.session.hydrate(sessionID)
         index(sessionID)
       },
       todo: serverSync.session.todo,
