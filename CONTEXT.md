@@ -165,8 +165,12 @@ The user's machines acting as one logical studio: exactly one Canonical Server p
 _Avoid_: mesh, cluster
 
 **Go Standalone**:
-The user-invoked mode switch from `client` to `standalone` — the machine leaves the fleet and serves itself permanently. Not an escape hatch: a first-class choice. Sessions made locally stay local. Re-enrollment in a fleet is a separate flow (Enroll, deferred).
+The user-invoked mode switch from `client` to `standalone` — the machine leaves the fleet and serves itself permanently. Not an escape hatch: a first-class choice. Sessions made locally stay local. Re-enrollment in a fleet is a separate flow (Enroll).
 _Avoid_: local fallback, offline mode, degraded mode
+
+**Enroll**:
+The idempotent, verifiable flow that brings one machine into a fleet — the inverse of Go Standalone. Server-first, the standard join-token pattern: `amico fleet enroll --as-server` provisions the durable hub service, mints the Fleet token, and emits a **join token** (`{ canonical, fleet_token, transport_hint, pin_version }` — a secret, 0600, never logged). A client redeems it with `amico fleet enroll --join-token`: it rejects a pin-mismatched token before writing anything, then writes `fleet.json` (role + canonical only — capabilities go to the roster row), registers its roster row, sets the transport (`tailscale` when the machine roams, else the token's hint), runs the installer (which installs the never-fork guard), and **verify-attaches** — reporting success only after a live probe of the just-set transport passes. A re-run repairs in place; a failed verify surfaces the specific cause with its fix and never reports a false success. `amico fleet enroll` is a distinct verb from the session registry — it writes membership, not session records.
+_Avoid_: register (as the verb name), pair, handshake
 
 **Fleet token**:
 The shared secret authenticating a client to the Canonical Server's data routes — minted when the fleet server is enabled, stored at 0600, handed to clients during the ssh-based setup flow. The sibling of the per-boot server password (ADR 0002): that guards a spawned server its extension owns; this guards the service no extension spawns.
