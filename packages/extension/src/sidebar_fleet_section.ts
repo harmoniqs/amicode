@@ -20,6 +20,14 @@
 /** The per-device reachability tri-state (schema HEALTH_VOCABULARY, #1318). */
 export type RosterHealth = "reachable" | "degraded" | "down";
 
+/** The KNOWN behavior-adjacent capability tags (schema KNOWN_CAPABILITY_TAGS,
+ *  ADR 0026 §1) — re-declared here to keep this module node-import-free. Any
+ *  OTHER tag is a valid descriptive label (known:false), never rejected. */
+const KNOWN_CAPABILITY_TAGS = ["compute", "roaming"] as const;
+function isKnownCapability(tag: string): boolean {
+  return (KNOWN_CAPABILITY_TAGS as readonly string[]).includes(tag);
+}
+
 /** The structural roster-row shape this module consumes (the @amicode/schema
  *  RosterRow — accepted structurally so the host can pass real parsed rows and
  *  tests can pass literals, without a node import). */
@@ -82,7 +90,7 @@ export function buildFleetSectionModel(input: FleetSectionInput): FleetSectionMo
     machineId: r.machine_id,
     name: r.name,
     role: r.server_mode,
-    capabilities: [],
+    capabilities: r.capabilities.map((tag) => ({ tag, known: isKnownCapability(tag) })),
     health: r.health,
     lastSeen: r.last_report,
   }));
