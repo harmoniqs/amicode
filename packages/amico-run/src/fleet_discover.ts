@@ -56,6 +56,17 @@ export interface FleetCandidate {
   sshAlias?: string;
   /** A reachable address (tailnet IP or ssh HostName), when known. */
   address?: string;
+  /** Whether a host-owned roster row (#1318) exists for this machine. */
+  inRoster: boolean;
+  /** Whether the machine is ENROLLED — a roster row whose reachability is
+   *  `reachable`, i.e. its enroll's verify-attach passed (#1319's honesty bar:
+   *  never reported enrolled until `verify_attach.ok`). A discovered machine
+   *  with no row, or a row still `down`/`degraded`, is NOT enrolled. */
+  enrolled: boolean;
+  /** The roster row's reconciled serve-stance ("server"/"client"), when known. */
+  serverMode?: string;
+  /** The roster row's reachability tri-state, when known. */
+  health?: RosterHealth;
 }
 
 /** Normalize a raw machine name to its dedup identity: trim, drop a trailing
@@ -77,7 +88,16 @@ function fold(
   acc: Map<string, FleetCandidate>,
   id: string,
   source: DiscoverySource,
-  fields: { name: string; sshAlias?: string; address?: string; preferAddress?: boolean },
+  fields: {
+    name: string;
+    sshAlias?: string;
+    address?: string;
+    preferAddress?: boolean;
+    inRoster?: boolean;
+    enrolled?: boolean;
+    serverMode?: string;
+    health?: RosterHealth;
+  },
 ): void {
   const existing = acc.get(id);
   if (existing === undefined) {
@@ -87,6 +107,10 @@ function fold(
       sources: [source],
       sshAlias: fields.sshAlias,
       address: fields.address,
+      inRoster: fields.inRoster ?? false,
+      enrolled: fields.enrolled ?? false,
+      serverMode: fields.serverMode,
+      health: fields.health,
     });
     return;
   }
@@ -95,6 +119,12 @@ function fold(
   if (fields.address !== undefined && (fields.preferAddress || existing.address === undefined)) {
     existing.address = fields.address;
   }
+  // Roster facts (only the roster fold supplies these, and it folds first, so
+  // these are normally set at creation). Never downgrade a fact already set.
+  if (fields.inRoster) existing.inRoster = true;
+  if (fields.enrolled) existing.enrolled = true;
+  existing.serverMode ??= fields.serverMode;
+  existing.health ??= fields.health;
 }
 
 /**
@@ -111,6 +141,13 @@ export function discoverFleetCandidates(input: DiscoverInput): FleetCandidate[] 
     fold(acc, normalizeIdentity(row.name), "roster", {
       name: row.name,
       sshAlias: row.sshAlias || undefined,
+      inRoster: true,
+      // The honesty bar (#1319): enrolled ONLY when verify-attach passed, which
+      // the roster mirrors as health "reachable". A `down`/`degraded` row is a
+      // machine that has a row but is not yet trustworthy — not enrolled.
+      enrolled: row.health === "reachable",
+      serverMode: row.server_mode,
+      health: row.health,
     });
   }
   for (const host of input.sshConfig ?? []) {
