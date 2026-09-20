@@ -199,6 +199,24 @@ export {
   type BaseProjectionOpts,
 } from "./fleet_projection.js";
 
+// The fleet roster contract (amicode#1318, fleet capability model + host-owned
+// roster; ADR 0026): an amicode-OWNED, schema-versioned, fleet-wide device
+// roster whose rows each machine self-reports. Sibling of fleet_projection but
+// amicode's OWN format (fleet.json is untouched — ADR 0023 one-parser holds).
+// Same documented root seam: the extension's `/amicode/roster` route (reader +
+// self-report writer) and `ops/fleet-status.sh` (via the ONE cache path) both
+// consume this single definition.
+export {
+  ROSTER_SCHEMA_VERSION,
+  HEALTH_VOCABULARY,
+  parseRosterRow,
+  FLEET_ROSTER_CACHE_RELPATH,
+  fleetRosterCachePath,
+  type RosterHealth,
+  type RosterRow,
+  type ParseRosterRowResult,
+} from "./fleet_roster.js";
+
 // ajv-formats ships a CJS default export; under NodeNext the default import can
 // bind the module namespace rather than the callable, so normalize defensively.
 const addFormats = (typeof addFormatsDefault === "function"

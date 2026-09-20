@@ -1,0 +1,129 @@
+// The fleet roster contract (amicode#1318, fleet capability model + host-owned
+// roster; ADR 0026) — an amicode-OWNED, schema-versioned roster that lives on
+// the Canonical Server at `~/.amico/ops/fleet/roster.json`. It is the sibling
+// of the fleet projection reader (fleet_projection.ts), with one deliberate
+// difference: the projection MIRRORS amicissimo's Python contract (a consumer,
+// never a redefiner), whereas the roster FORMAT is amicode's own — `fleet.json`
+// is untouched (ADR 0023's one-parser invariant holds; zero amicissimo change).
+//
+// What the roster is, and is not:
+// - It is a fleet-WIDE device roster: one row per machine, each machine the
+//   single writer of its OWN row (a registry/heartbeat model — no dual-writer
+//   conflict). The authoritative per-machine role stays that machine's own
+//   `fleet.json`; the row's `server_mode` is the reconciled, read-only mirror.
+// - It is NOT a second serve-stance authority: `Server mode`
+//   (standalone|server|client) remains the only driver of guard/tunnel/hub
+//   behavior. `capabilities[]` is an ORTHOGONAL, OPEN set — two known,
+//   behavior-adjacent tags (`compute`, `roaming`) plus any free descriptive
+//   tag, which round-trips verbatim and carries no behavioral meaning.
+//
+// Placement: @amicode/schema, the repo's home for cross-package shared contract
+// code — the extension's roster route (reader + self-report writer) and the
+// reachability status job both consume this ONE definition, exactly as
+// fleet_projection's reader is shared across the verb and the extension.
+import { homedir } from "node:os";
+import { join } from "node:path";
+
+/** The roster document's schema version — bumped independently of the
+ *  projection's contract (a different, amicode-owned artifact). */
+export const ROSTER_SCHEMA_VERSION = 1;
+
+/** The per-device reachability tri-state. DISTINCT from the link-health posture
+ *  vocabulary (`ok/degraded/hub-down`, fleet_projection.ts), which is about THIS
+ *  machine's link to the hub — `health` here is a peer's reachability as the
+ *  status job probed it (ADR 0026 §Decision.2). Closed on purpose: a value
+ *  outside it is a malformed row, never coerced. */
+export const HEALTH_VOCABULARY = ["reachable", "degraded", "down"] as const;
+export type RosterHealth = (typeof HEALTH_VOCABULARY)[number];
+
+/** One roster row — the reconciled self-report of one machine. `server_mode`
+ *  mirrors that machine's own fleet.json role (read-only here; the UI labels it
+ *  "role"), `last_report` renders as "last-seen". Every field is a string
+ *  except the open `capabilities[]`. */
+export interface RosterRow {
+  /** The single-writer key — a stable per-machine id. */
+  machine_id: string;
+  /** Human display name / nickname. */
+  name: string;
+  /** Read-only mirror of the machine's fleet.json serve-stance. */
+  server_mode: string;
+  /** The OPEN capability-tag set (known: compute, roaming; plus free tags). */
+  capabilities: string[];
+  /** The ssh target the reachability job probes (its fleet.json canonical alias). */
+  sshAlias: string;
+  /** The machine's transport hint (e.g. ssh, tailscale, local). */
+  transport: string;
+  /** ISO stamp of this self-report — provenance, rendered as "last-seen". */
+  last_report: string;
+  /** Per-device reachability, from the closed tri-state. */
+  health: RosterHealth;
+}
+
+/** A parse outcome — a Result, never a throw: the self-report route collapses a
+ *  malformed report into a fixed-string refusal (sibling discipline), so the
+ *  contract must hand it a verdict, not an exception. */
+export type ParseRosterRowResult = { ok: true; row: RosterRow } | { ok: false; error: string };
+
+function isStringField(o: Record<string, unknown>, key: string): boolean {
+  return typeof o[key] === "string";
+}
+
+/** Validate one candidate row against the contract and return a normalized row
+ *  carrying EXACTLY the eight known fields (round-trips a well-formed row
+ *  without loss; drops nothing it owns, invents nothing, and does not smuggle
+ *  unknown keys through). Rejects — never coerces — a missing key, a non-string
+ *  scalar, a non-string-array `capabilities`, or a `health` outside the closed
+ *  tri-state. */
+export function parseRosterRow(candidate: unknown): ParseRosterRowResult {
+  if (candidate === null || typeof candidate !== "object" || Array.isArray(candidate)) {
+    return { ok: false, error: `roster row is not a JSON object: ${describe(candidate)}` };
+  }
+  const o = candidate as Record<string, unknown>;
+  for (const key of ["machine_id", "name", "server_mode", "sshAlias", "transport", "last_report"] as const) {
+    if (!isStringField(o, key)) return { ok: false, error: `roster row: "${key}" must be a string` };
+  }
+  if (typeof o.machine_id === "string" && o.machine_id.trim() === "") {
+    return { ok: false, error: `roster row: "machine_id" must be a non-empty string (the single-writer key)` };
+  }
+  if (!Array.isArray(o.capabilities) || !o.capabilities.every((c) => typeof c === "string")) {
+    return { ok: false, error: `roster row: "capabilities" must be an array of strings` };
+  }
+  if (!(HEALTH_VOCABULARY as readonly unknown[]).includes(o.health)) {
+    return {
+      ok: false,
+      error: `roster row: "health" must be one of ${HEALTH_VOCABULARY.join(", ")} (got ${describe(o.health)})`,
+    };
+  }
+  const row: RosterRow = {
+    machine_id: o.machine_id as string,
+    name: o.name as string,
+    server_mode: o.server_mode as string,
+    capabilities: (o.capabilities as string[]).slice(),
+    sshAlias: o.sshAlias as string,
+    transport: o.transport as string,
+    last_report: o.last_report as string,
+    health: o.health as RosterHealth,
+  };
+  return { ok: true, row };
+}
+
+// ── the roster-cache path convention (sibling of the projection cache) ───────
+
+/** The stable roster-cache path fragment — beside the projection cache
+ *  (fleet_projection's FLEET_PROJECTION_CACHE_RELPATH), on the Canonical
+ *  Server. ONE definition consumed by the extension's route and the status
+ *  job. */
+export const FLEET_ROSTER_CACHE_RELPATH = join(".amico", "ops", "fleet", "roster.json");
+
+/** The roster path under a given home (default: the process home). */
+export function fleetRosterCachePath(home: string = homedir()): string {
+  return join(home, FLEET_ROSTER_CACHE_RELPATH);
+}
+
+// ── internals ────────────────────────────────────────────────────────────────
+
+function describe(v: unknown): string {
+  if (Array.isArray(v)) return "array";
+  if (v === null) return "null";
+  return JSON.stringify(v) ?? typeof v;
+}
