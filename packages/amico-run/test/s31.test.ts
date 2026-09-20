@@ -21,7 +21,14 @@ const FORBIDDEN = [/--gate\b/, /--system\b/, /--pulse\b/, /modelcontextprotocol/
 // callback server (node:http) + fetch for Slack's oauth.v2.access token
 // exchange and users.info name resolution. Same class of sanctioned edge as
 // the cloud client.
-const EXEMPT = new Set(["cloud_client.ts", "slack_verb.ts"]);
+//
+// jev_client.ts (#1311, slice of #1301 session curation): the ONE thin Jev
+// client (TypeSafe System One decision API) for the confidence-gated
+// curation middle layer — the amico-run doctrine's named home for that wire
+// ("one thin client per repo, amico-run package for amicode surfaces" —
+// spec-20260920-jev-integration). Fail-open by construction; every call
+// receipted; the transport is injectable so the suite stays hermetic.
+const EXEMPT = new Set(["cloud_client.ts", "slack_verb.ts", "jev_client.ts"]);
 
 describe("S31 grep rule", () => {
   it("src/ contains no forbidden tool-layer patterns", () => {

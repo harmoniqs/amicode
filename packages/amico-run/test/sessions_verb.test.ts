@@ -72,7 +72,10 @@ beforeAll(() => {
 
 function run(args: string[], env: Record<string, string> = {}): { code: number; stdout: string; stderr: string } {
   try {
-    const stdout = execFileSync("node", [BUNDLE, ...args], { encoding: "utf8", env: { ...process.env, ...env } });
+    // AMICO_JEV_DISABLED guards the bundle hermetically: the machine's real
+    // ~/.amico/typesafe/key would otherwise arm the live Jev residual inside
+    // autoarchive. Tests that WANT the enabled path override this explicitly.
+    const stdout = execFileSync("node", [BUNDLE, ...args], { encoding: "utf8", env: { ...process.env, AMICO_JEV_DISABLED: "1", ...env } });
     return { code: 0, stdout, stderr: "" };
   } catch (e) {
     const err = e as { status?: number; stdout?: string; stderr?: string };
@@ -745,6 +748,9 @@ describe("ops/session-archive job — the nightly wrapper (smoke, #1304)", () =>
       SESSION_ARCHIVE_RECEIPTS: receipts,
       SESSION_ARCHIVE_AMICO: BUNDLE,
       AMICODE_OPS_DIR: ops,
+      // hermeticity: the nightly wrapper spawns the CLI; without this the
+      // machine's real jev key would arm the live residual inside autoarchive
+      AMICO_JEV_DISABLED: "1",
     };
   }
 
@@ -809,5 +815,168 @@ describe("ops/session-archive job — the nightly wrapper (smoke, #1304)", () =>
     const r = job([], { ...jobEnv(), SESSION_ARCHIVE_DB: join(tmp, "missing", "opencode.db") });
     expect(r.code).not.toBe(0);
     expect(existsSync(receipts)).toBe(false);
+  });
+});
+
+// ══ #1311: the Jev classifier residual in autoarchive (the middle layer) ═══
+// Residual-only wiring: sessions the deterministic rules leave unclassified
+// get ONE Jev Choice; junk-bucket p ≥ 0.95 AND the FIXED 48 h gate admit to
+// the archive path as an OR with the deterministic junk rule (which stays
+// first and untouched). In-process deps inject the jev pass (no network);
+// bundle runs prove the off-switch / unavailable zero-delta paths.
+import { sessionsAutoarchive } from "../src/sessions_verb.js";
+import { jevArchiveAdmits, type ResidualSession, type ResidualVerdict } from "../src/jev_curation.js";
+
+/** A fake jev pass for the in-process wiring tests: records the sessions it
+ * was asked about, answers from the given verdict map. */
+function fakeJev(verdicts: Record<string, ResidualVerdict>, log: ResidualSession[] = []) {
+  return async (sessions: ResidualSession[]): Promise<{ status: "ran"; verdicts: Record<string, ResidualVerdict> }> => {
+    log.push(...sessions);
+    return { status: "ran", verdicts };
+  };
+}
+
+describe("sessions autoarchive — the jev classifier residual (#1311, in-process)", () => {
+  let tmp: string;
+  let db: string;
+  let ops: string;
+
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), "amico-jev-res-"));
+    db = join(tmp, "opencode.db");
+    ops = join(tmp, "ops");
+    mkdirSync(ops, { recursive: true });
+  });
+  afterEach(() => rmSync(tmp, { recursive: true, force: true }));
+
+  it("RESIDUAL-ONLY: the deterministic junk sessions get NO jev call — only the rule-unclassified do", async () => {
+    seedDb(db, junkSeeds());
+    const asked: ResidualSession[] = [];
+
+    const r = await sessionsAutoarchive(["--db", db], { OPENCODE_DB: db, AMICODE_OPS_DIR: ops }, { jev: fakeJev({}, asked) });
+
+    expect(r.code).toBe(0);
+    // the three junk sessions never reach the middle layer; ses_real (substantive, 72 h) is the residual
+    expect(asked.map((s) => s.id)).toEqual(["ses_real"]);
+    expect(asked[0].ageHours).toBeGreaterThanOrEqual(48);
+  });
+
+  it("admits a junk-bucket read at p ≥ 0.95 AND age ≥ 48 h: the session archives with the deterministic junk", async () => {
+    seedDb(db, [
+      ...junkSeeds(),
+      { id: "ses_ambiguous", title: "Untitled follow-up", userMessages: ["hi"], assistantMessages: 2, updatedHoursAgo: 49 },
+    ]);
+    const env = { OPENCODE_DB: db, AMICODE_OPS_DIR: ops };
+
+    const dry = (await sessionsAutoarchive(["--db", db], env, { jev: fakeJev({ ses_ambiguous: { choice: "junk-greeting", confidence: 0.96 } }) })).json as Record<string, unknown>;
+    expect(dry.candidates).toBe(4);
+    expect(dry.jev).toMatchObject({ status: "ran", consulted: 2, admitted: 1, admitted_ids: ["ses_ambiguous"] });
+
+    const applied = (await sessionsAutoarchive(["--db", db, "--apply"], env, { jev: fakeJev({ ses_ambiguous: { choice: "junk-greeting", confidence: 0.96 } }) })).json as Record<string, unknown>;
+    expect(applied.archived).toBe(4);
+    const visible = JSON.parse(run(["sessions", "list"], env).stdout);
+    expect((visible.sessions as { id: string }[]).map((s) => s.id).sort()).toEqual(["ses_real", "ses_young"].sort());
+  });
+
+  it("the calibrated pair holds at the boundary: 0.94 never admits; 'substantive' and 'unclassified' never admit", async () => {
+    seedDb(db, [
+      { id: "ses_a", title: "Untitled one", userMessages: ["hi"], assistantMessages: 2, updatedHoursAgo: 49 },
+      { id: "ses_b", title: "Untitled two", userMessages: ["hi"], assistantMessages: 2, updatedHoursAgo: 49 },
+      { id: "ses_c", title: "Untitled three", userMessages: ["hi"], assistantMessages: 2, updatedHoursAgo: 49 },
+    ]);
+    const env = { OPENCODE_DB: db, AMICODE_OPS_DIR: ops };
+    const verdicts: Record<string, ResidualVerdict> = {
+      ses_a: { choice: "junk-greeting", confidence: 0.94 },
+      ses_b: { choice: "substantive", confidence: 1.0 },
+      ses_c: { choice: "unclassified", confidence: 1.0 },
+    };
+
+    const r = (await sessionsAutoarchive(["--db", db], env, { jev: fakeJev(verdicts) })).json as Record<string, unknown>;
+    expect(r.candidates).toBe(0);
+    expect(r.jev).toMatchObject({ consulted: 3, admitted: 0 });
+  });
+
+  it("the jev age gate is the FIXED 48 h, never the scan cutoff: a fresh scanned session is untouchable on a model's word", async () => {
+    seedDb(db, [
+      { id: "ses_fresh_sub", title: "Untitled fresh", userMessages: ["just started this"], assistantMessages: 2, updatedHoursAgo: 2 },
+    ]);
+    const env = { OPENCODE_DB: db, AMICODE_OPS_DIR: ops };
+
+    // --hours 1 scans the 2 h-old session; jev reads junk at 0.99 — still NO admission (2 h < 48 h)
+    const r = (await sessionsAutoarchive(["--db", db, "--hours", "1"], env, { jev: fakeJev({ ses_fresh_sub: { choice: "junk-greeting", confidence: 0.99 } }) })).json as Record<string, unknown>;
+    expect(r.candidates).toBe(0);
+    expect(r.jev).toMatchObject({ admitted: 0 });
+  });
+
+  it("fail-open: a crashing jev pass never breaks the archive run — deterministic candidates survive intact", async () => {
+    seedDb(db, junkSeeds());
+    const env = { OPENCODE_DB: db, AMICODE_OPS_DIR: ops };
+    const crash = async () => {
+      throw new Error("jev down");
+    };
+
+    const dry = (await sessionsAutoarchive(["--db", db], env, { jev: crash })).json as Record<string, unknown>;
+    expect(dry.candidates).toBe(3); // the deterministic junk, untouched
+    expect(dry.jev).toMatchObject({ status: "error" });
+    expect(run(["sessions", "list"], env).code).toBe(0);
+  });
+});
+
+describe("sessions autoarchive — the jev off-switch and unavailability (bundle)", () => {
+  let tmp: string;
+  let db: string;
+  let ops: string;
+
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), "amico-jev-off-"));
+    db = join(tmp, "opencode.db");
+    ops = join(tmp, "ops");
+    mkdirSync(ops, { recursive: true });
+  });
+  afterEach(() => rmSync(tmp, { recursive: true, force: true }));
+
+  /** The deterministic output's exact key set — the zero-delta contract. */
+  const DETERMINISTIC_KEYS = [
+    "archived",
+    "buckets",
+    "candidate_ids",
+    "candidates",
+    "cutoff_iso",
+    "cutoff_ms",
+    "dry_run",
+    "hours",
+    "note",
+    "scanned",
+    "subcommand",
+    "verb",
+  ].sort();
+
+  it("AMICO_JEV_DISABLED=1 → ZERO delta: the output JSON is exactly the deterministic shape (no jev key)", () => {
+    seedDb(db, junkSeeds());
+    const env = { OPENCODE_DB: db, AMICODE_OPS_DIR: ops, AMICO_JEV_DISABLED: "1" };
+    const r = JSON.parse(run(["sessions", "autoarchive"], env).stdout);
+    expect(Object.keys(r).sort()).toEqual(DETERMINISTIC_KEYS);
+    expect(r.candidates).toBe(3);
+  });
+
+  it("enabled but no key → fail-open with the honest unavailable report; the deterministic path is untouched", () => {
+    seedDb(db, junkSeeds());
+    const env = {
+      OPENCODE_DB: db,
+      AMICODE_OPS_DIR: ops,
+      AMICO_JEV_DISABLED: "0",
+      AMICO_TYPESAFE_KEY_FILE: join(tmp, "missing-key"),
+    };
+    const r = JSON.parse(run(["sessions", "autoarchive"], env).stdout);
+    expect(r.candidates).toBe(3);
+    expect(new Set(r.candidate_ids as string[])).toEqual(new Set(JUNK_OLD_IDS));
+    expect(r.jev).toMatchObject({ status: "unavailable" });
+  });
+
+  it("default harness runs carry no jev key either (hermeticity guard, machine-key-proof)", () => {
+    seedDb(db, junkSeeds());
+    // run() injects AMICO_JEV_DISABLED=1 — the machine's real key cannot arm the residual
+    const r = JSON.parse(run(["sessions", "autoarchive"], { OPENCODE_DB: db, AMICODE_OPS_DIR: ops }).stdout);
+    expect(r.jev).toBeUndefined();
   });
 });

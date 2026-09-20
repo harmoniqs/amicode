@@ -33,6 +33,8 @@ import {
   type IndexSession,
 } from "./session_retention.js";
 import { classifySession, type SessionFeatures } from "./session_junk.js";
+import { jevArchiveAdmits, jevJunkResidual, type JevPassStatus, type ResidualSession, type ResidualVerdict } from "./jev_curation.js";
+import { jevDisabled } from "./jev_client.js";
 import { sqliteBatch, type BridgeStatement } from "./sqlite_bridge.js";
 import type { VerbResult } from "./verbs.js";
 
@@ -192,7 +194,17 @@ const AUTOARCHIVE_FEATURES_SQL = `
   WHERE s.time_archived IS NULL AND s.time_updated < ?
   ORDER BY s.time_updated DESC, s.id`;
 
-function sessionsAutoarchive(argv: string[], env: NodeJS.ProcessEnv): VerbResult {
+// ── autoarchive (#1304 + #1311): classification-gated curation with the Jev
+//    classifier residual as the confidence-gated middle layer ───────────────
+
+/** The jev residual pass over rule-unclassified sessions — injectable so the
+ * suite runs hermetically (the default is the real client, key read at call
+ * time from the secrets path; disabled/unavailable → fail-open). */
+export interface AutoarchiveDeps {
+  jev?: (sessions: ResidualSession[]) => Promise<{ status: JevPassStatus; verdicts: Record<string, ResidualVerdict> }>;
+}
+
+export async function sessionsAutoarchive(argv: string[], env: NodeJS.ProcessEnv, deps: AutoarchiveDeps = {}): Promise<VerbResult> {
   const dbPath = resolveSessionDb(argv);
   if (!existsSync(dbPath)) return fail(`session DB not found: ${dbPath}`);
   const hours = flagValue(argv, "--hours") ? Number(flagValue(argv, "--hours")) : readAutoArchiveHours(env);
@@ -217,22 +229,32 @@ function sessionsAutoarchive(argv: string[], env: NodeJS.ProcessEnv): VerbResult
       assistant_message_count: Number(r.assistant_message_count),
       todo_count: Number(r.todo_count),
     };
-    return { id: String(r.id), bucket: classifySession(features) };
+    return { id: String(r.id), bucket: classifySession(features), features, time_updated: Number(r.time_updated) };
   });
   const buckets = judged.reduce<Record<string, number>>((acc, j) => {
     acc[j.bucket] = (acc[j.bucket] ?? 0) + 1;
     return acc;
   }, {});
-  // Junk buckets only — curation archives the deterministic noise, never a
-  // substantive session (the classifier's closed-set default guards work).
+  // Deterministic junk first — the #1304 rule, first and untouched. Jev NEVER
+  // re-judges a session the rules already classified (residual-only wiring).
   const ids = judged.filter((j) => j.bucket !== "substantive").map((j) => j.id);
 
-  if (apply && ids.length > 0) {
+  // ── the #1311 residual: the middle layer, additive and fail-open ─────────
+  // Sessions the rules left unclassified (substantive = no junk rule fired)
+  // get ONE Jev Choice; a junk-bucket read at p ≥ 0.95 AND age ≥ 48 h (the
+  // FIXED gate, never the scan cutoff) admits to the archive path as an OR.
+  // The off-switch (AMICO_JEV_DISABLED) skips the pass entirely — the output
+  // is byte-identical to the deterministic shape (zero behavioral delta).
+  const jevReport: Record<string, unknown> | undefined = await runJunkResidual(judged, env, deps);
+  const admittedIds = Array.isArray(jevReport?.admitted_ids) ? (jevReport.admitted_ids as string[]) : [];
+  const allIds = [...ids, ...admittedIds];
+
+  if (apply && allIds.length > 0) {
     try {
       sqliteBatch(dbPath, "rw", [
         {
-          sql: `UPDATE session SET time_archived = ? WHERE time_archived IS NULL AND id IN (${ids.map(() => "?").join(",")})`,
-          params: [Date.now(), ...ids],
+          sql: `UPDATE session SET time_archived = ? WHERE time_archived IS NULL AND id IN (${allIds.map(() => "?").join(",")})`,
+          params: [Date.now(), ...allIds],
         },
       ]);
     } catch (e) {
@@ -250,13 +272,39 @@ function sessionsAutoarchive(argv: string[], env: NodeJS.ProcessEnv): VerbResult
       cutoff_iso: new Date(cutoff).toISOString(),
       scanned: judged.length,
       buckets,
-      candidates: ids.length,
-      candidate_ids: ids.slice(0, 50),
-      archived: apply ? ids.length : 0,
+      candidates: allIds.length,
+      candidate_ids: allIds.slice(0, 50),
+      archived: apply ? allIds.length : 0,
       note: apply ? undefined : "dry-run: nothing written — pass --apply to stamp time_archived",
+      ...(jevReport !== undefined ? { jev: jevReport } : {}),
     },
     code: 0,
   };
+}
+
+/** The residual step, isolated: returns the jev report block (undefined when
+ * the path is disabled — the zero-delta off-switch), never throws (fail-open:
+ * an error report still archives the deterministic candidates). */
+async function runJunkResidual(
+  judged: { id: string; bucket: string; features: SessionFeatures; time_updated: number }[],
+  env: NodeJS.ProcessEnv,
+  deps: AutoarchiveDeps,
+): Promise<Record<string, unknown> | undefined> {
+  if (jevDisabled(env)) return undefined;
+  const residual: ResidualSession[] = judged
+    .filter((j) => j.bucket === "substantive")
+    .map((j) => ({ id: j.id, features: j.features, ageHours: (Date.now() - j.time_updated) / 3_600_000 }));
+  if (residual.length === 0) return { status: "ran", consulted: 0, admitted: 0, admitted_ids: [] };
+  try {
+    const pass = deps.jev !== undefined ? await deps.jev(residual) : await jevJunkResidual(residual, { env });
+    if (pass.status !== "ran") return { status: pass.status, consulted: 0, admitted: 0, admitted_ids: [] };
+    const admittedIds = residual
+      .filter((s) => jevArchiveAdmits(pass.verdicts[s.id]?.choice, pass.verdicts[s.id]?.confidence ?? 0, s.ageHours))
+      .map((s) => s.id);
+    return { status: "ran", consulted: residual.length, admitted: admittedIds.length, admitted_ids: admittedIds };
+  } catch (e) {
+    return { status: "error", error: e instanceof Error ? e.message : String(e), consulted: 0, admitted: 0, admitted_ids: [] };
+  }
 }
 
 // ── restore (clear the one field) ───────────────────────────────────────────
@@ -375,7 +423,7 @@ export async function sessionsVerb(argv: string[]): Promise<VerbResult> {
     case "archive":
       return sessionsArchive(rest, env);
     case "autoarchive":
-      return sessionsAutoarchive(rest, env);
+      return await sessionsAutoarchive(rest, env);
     case "restore":
       return sessionsRestore(rest);
     case "index":
