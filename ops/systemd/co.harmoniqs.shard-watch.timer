@@ -1,0 +1,10 @@
+[Unit]
+Description=Amicode shard-divergence watch nightly at 04:15 (before skill-freshness)
+
+[Timer]
+OnCalendar=*-*-* 04:15:00
+Persistent=true
+Unit=co.harmoniqs.shard-watch.service
+
+[Install]
+WantedBy=timers.target
