@@ -75,3 +75,31 @@ describe("discoverFleetCandidates — dedupe across sources", () => {
     expect(result.find((c) => c.id === "studio")!.sources).toEqual(["tailnet"]);
   });
 });
+
+describe("discoverFleetCandidates — read-only (mutates nothing)", () => {
+  /** Recursively freeze so ANY write to an input throws in strict mode. */
+  function deepFreeze<T>(o: T): T {
+    if (o && typeof o === "object") {
+      for (const v of Object.values(o)) deepFreeze(v);
+      Object.freeze(o);
+    }
+    return o;
+  }
+
+  it("does not read-through-and-write: frozen inputs survive, deep-equal to a pre-call snapshot", () => {
+    const input = {
+      tailnet: [{ hostName: "mini.tail-abcd.ts.net.", tailscaleIP: "100.64.0.9", online: true }],
+      sshConfig: [{ alias: "mini", hostName: "mini.local" }],
+      roster: [rosterRow({ machine_id: "mini-id", name: "mini", sshAlias: "mini", health: "reachable" })],
+    };
+    const snapshot = structuredClone(input);
+    deepFreeze(input);
+
+    // The call must not throw (no write to a frozen input) and must produce a result.
+    const result = discoverFleetCandidates(input);
+    expect(result.length).toBeGreaterThan(0);
+
+    // The inputs are byte-for-byte what they were.
+    expect(input).toEqual(snapshot);
+  });
+});
