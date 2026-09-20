@@ -46,18 +46,34 @@ membership. A "show me my fleet" surface has no roster to read.
    dual-writer conflict); the authoritative per-machine role remains its own `fleet.json`, and
    the roster row is the reconciled self-report.
    - Row shape: `{ machine_id, name, server_mode, capabilities[], sshAlias, transport,
-     last_report, health }`; schema-versioned.
-   - Rows are written by the machine itself (a Fleet-token-authed self-report) or by the
-     `/create-a-fleet` orchestrator acting for it during enroll. The reachability status job
-     probes per roster row, retiring the hardcoded device array.
+     last_report, health }`; schema-versioned. `health ∈ { reachable, degraded, down }` (a
+     per-device reachability tri-state — distinct from the *link-health* posture vocabulary
+     `ok/degraded/hub-down`, which is about this machine's link to the hub, not a peer's
+     reachability). The UI renders `server_mode` as "role" and `last_report` as "last-seen" —
+     same fields, display labels.
+   - Rows are written by the machine itself (a self-report over the authenticated `/amicode/`
+     data plane — the accept-both service/engine mint of #822, to a loopback-bound host, NOT the
+     ADR-0005 Fleet token, which guards SSH enrollment) or by the `/create-a-fleet` orchestrator
+     acting for it during enroll. A write only ever touches the reporting machine's own row. The
+     reachability status job (`ops/fleet-status.sh`) probes per roster row, retiring its
+     hardcoded device array.
 
-3. **Surface the roster via a host route + the landed `/amicode/*` proxy — not the per-machine
-   projection.** The projection is published *locally* per machine from that machine's own
-   `fleet.json`, so it is the wrong vehicle for fleet-wide state. Instead the host serves the
-   roster on a read route (`GET /amicode/fleet/roster`), and every client obtains the identical
-   fleet-wide roster **for free** through the already-merged `/amicode/*`→host proxy (#1262).
-   This is consistent with the host-owns-all-state model ADR 0025 adopts, and adds no second
-   topology reader (ADR 0023 stays green).
+3. **Surface the roster via a host route on the proxied `/amicode/` namespace — not the
+   per-machine projection, and NOT under `/amicode/fleet/*`.** The projection is published
+   *locally* per machine from that machine's own `fleet.json`, so it is the wrong vehicle for
+   fleet-wide state. Instead the host serves the roster at **`GET /amicode/roster`** (read) and
+   accepts the self-report at **`POST /amicode/roster`** (write), and every client obtains the
+   identical fleet-wide roster through the already-merged `/amicode/*`→host proxy (#1262).
+   **Critically, the roster must live OUTSIDE `/amicode/fleet/*`:** that prefix is the client's
+   own *local* honesty surface (its posture/mode/staging), which `shouldProxyAmicodeToHost`
+   (`amicode_service/server.ts:250`) deliberately refuses to proxy so a client's own status can
+   never be masked by the host's — verified by `fleet_client_relay.test.ts` (the host never sees
+   `/amicode/fleet/*`). A roster route under that prefix would 404 on every client. Every OTHER
+   `/amicode/*` path IS proxied to the host (`server.ts:251` returns `true`), so `/amicode/roster`
+   is carried unchanged — the read as a GET proxy, the write as a proxied mutation to the
+   loopback-bound host (the accepted-mutation path `fleet_client_relay.test.ts` covers). This is
+   consistent with the host-owns-all-state model ADR 0025 adopts, and adds no second topology
+   reader (ADR 0023 stays green).
 
 4. **`compute` is declared-but-inert.** The capability model, the enroll flow, and the Fleet
    Manager UI all carry `compute`, but it **drives no solve routing**: a fleet-peer executor
@@ -81,6 +97,10 @@ membership. A "show me my fleet" surface has no roster to read.
 - **Roster in an additive projection section** — rejected in favor of the host route: the
   projection is locally published, so it cannot carry fleet-wide state to a client without a new
   aggregation path; the host route + #1262 proxy already exists.
+- **A roster route under `/amicode/fleet/*`** — rejected: that prefix is the one namespace
+  `shouldProxyAmicodeToHost` (`server.ts:250`) refuses to proxy (the client's own local honesty
+  surface), so it would 404 on every client. The roster is host-owned fleet-wide state, the
+  opposite of a local honesty surface, and belongs on the proxied `/amicode/roster` path.
 
 ## Invariants held
 
@@ -89,8 +109,10 @@ membership. A "show me my fleet" surface has no roster to read.
 2. **Never-fork (ADR 0005).** Enroll on a client installs the guard (`role: client` → `exit 1`);
    no client spawns an engine. Capabilities never change serve-stance behavior.
 3. **Loopback bind + mutation refusal (ADR 0002/0005).** The roster self-report write rides the
-   data plane with Fleet-token auth to a loopback-bound host — the same inject-the-credential,
-   keep-loopback model #1262 uses.
+   authenticated `/amicode/` data plane (the accept-both service/engine mint, #822) to a
+   loopback-bound host — the same inject-the-credential, keep-loopback model #1262 uses; the new
+   write route calls the `bind_host` loopback check like the other mutation routes
+   (`solver_mode.ts`, `connections.ts`).
 4. **No silent fallback (ADR 0024/0025).** Roster health reflects honest reachability; nothing
    reroutes silently.
 5. **Server mode is the only serve-stance authority.** Capabilities are orthogonal metadata; a
@@ -114,5 +136,6 @@ membership. A "show me my fleet" surface has no roster to read.
 ## Source
 
 - Design of record: the fleet-setup PRD-parent, #1316 (this branch's
-  `feature/free-tier-fleet` design-of-record), which decomposes into four slice sub-issues
-  (capability model + roster · enroll primitive · `/create-a-fleet` orchestrator · UI surfaces).
+  `feature/free-tier-fleet` design-of-record), which decomposes into **five** slice sub-issues:
+  capability model + roster (#1318) · enroll primitive (#1319) · `/create-a-fleet` orchestrator
+  (#1320) · sidebar section (#1321) · Fleet Manager tab (#1322).
