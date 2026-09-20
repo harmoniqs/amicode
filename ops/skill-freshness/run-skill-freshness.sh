@@ -61,9 +61,16 @@ set -uo pipefail
 # Cross-platform (amicode#991): the user's ~/.local/bin comes first so the
 # cadence host (Linux server: node >= 22.18 + gh live there) resolves the
 # real toolchain; the platform paths behind it keep macOS (Homebrew) intact.
-export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+# The inherited PATH is appended so callers (CI setup-node, NVM, the test
+# harness) can supply a node that the fixed prefix doesn't cover (#1348).
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin${PATH:+:$PATH}"
 
 SELF_NAME="run-skill-freshness"
+# Allow callers to pin the node binary (e.g. the test harness forwards
+# process.execPath so the lint runs under the same node as vitest). When
+# unset, falls back to whichever `node` PATH resolves — the production
+# default (#1348).
+NODE="${SKILL_FRESHNESS_NODE:-node}"
 
 # --- arguments ---------------------------------------------------------------
 DRY_RUN=0
@@ -100,8 +107,8 @@ if [ -z "${SKILL_FRESHNESS_SEARCH_ROOTS:-}" ] && [ -d "$HOME/armonia/repos/openc
 fi
 
 # --- pre-flight (a broken runtime is not a skippable surface) ----------------
-if ! command -v node >/dev/null 2>&1; then
-  echo "$SELF_NAME: FATAL node not found on PATH — cannot run the lint CLI" >&2
+if ! command -v "$NODE" >/dev/null 2>&1; then
+  echo "$SELF_NAME: FATAL node not found (SKILL_FRESHNESS_NODE=$NODE) — cannot run the lint CLI" >&2
   exit 1
 fi
 if [ ! -f "$LINT" ]; then
@@ -124,7 +131,7 @@ RANS=()       # 1 when the surface ran (dir present)
 # A missing/unparseable report (lint died before writing) counts as a
 # structural failure: the surface ran and produced no clean evidence.
 counts() {
-  node -e '
+  "$NODE" -e '
     const fs = require("node:fs");
     let r = null;
     try { r = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); } catch { /* report lost */ }
@@ -180,15 +187,15 @@ run_surface() {
   fi
   mkdir -p "$REPORTS_DIR"
   local rc=0
-  node "$LINT" "${args[@]}" >&2 || rc=$?
+  "$NODE" "$LINT" "${args[@]}" >&2 || rc=$?
   if [ "$rc" -ne 0 ]; then
     echo "$SELF_NAME: lint $key surface exited $rc (1=structural, 2=usage/pre-flight)" >&2
   fi
   FRAG="$(counts "$report")"
-  if node -e 'const f=JSON.parse(process.argv[1]);process.exit((f.structural>0||f.drifted>0)?0:1)' "$FRAG" 2>/dev/null; then
+  if "$NODE" -e 'const f=JSON.parse(process.argv[1]);process.exit((f.structural>0||f.drifted>0)?0:1)' "$FRAG" 2>/dev/null; then
     DRIFTED_SURFACE=1
   fi
-  if node -e 'const f=JSON.parse(process.argv[1]);process.exit(f.structural>0?0:1)' "$FRAG" 2>/dev/null; then
+  if "$NODE" -e 'const f=JSON.parse(process.argv[1]);process.exit(f.structural>0?0:1)' "$FRAG" 2>/dev/null; then
     STRUCTURAL_HIT=1
   fi
   return 0
@@ -233,7 +240,7 @@ done
 MAX_BODY_CHARS=50000
 build_issue_body() {
   # args: surface=report-path pairs; prints markdown to stdout
-  MAX_BODY_CHARS="$MAX_BODY_CHARS" node -e '
+  MAX_BODY_CHARS="$MAX_BODY_CHARS" "$NODE" -e '
     const MAX = parseInt(process.env.MAX_BODY_CHARS || "50000", 10);
     const fs = require("node:fs");
     const pairs = process.argv.slice(1);
@@ -315,7 +322,7 @@ if [ "${#DRIFT_KEYS[@]}" -gt 0 ]; then
     found=""
     if gh_list="$(gh issue list -R "$TRACKING_REPO" --state open \
         --search "\"$ISSUE_TITLE\" in:title" --json number,title,url --limit 20 2>/dev/null)"; then
-      found="$(node -e '
+      found="$("$NODE" -e '
         let list = [];
         try { list = JSON.parse(process.argv[1] || "[]"); } catch { /* search result lost */ }
         const hit = list.find((it) => it.title === process.argv[2]);

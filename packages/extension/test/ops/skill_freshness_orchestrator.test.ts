@@ -75,7 +75,7 @@ const NODE_STRIPS_TYPES = (process.features as { typescript?: string } | undefin
   function runDryRun(env: Record<string, string>) {
     return spawnSync("/bin/bash", [OPS_SCRIPT, "--dry-run"], {
       encoding: "utf8",
-      env: { ...process.env, ...env },
+      env: { ...process.env, ...env, SKILL_FRESHNESS_NODE: process.execPath },
     });
   }
 
