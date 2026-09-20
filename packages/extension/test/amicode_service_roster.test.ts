@@ -5,7 +5,7 @@
 // persistence (AC3) and the loopback + auth mutation guard (AC6), mirroring the
 // solver-mode route tests (the loopback-mutation-guard pattern, #798).
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createAmicodeService } from "../src/amicode_service";
@@ -79,6 +79,55 @@ describe("roster route — AC3: a self-report touches ONLY the reporting machine
     expect(body.ok).toBe(true);
     expect(body.rows).toEqual([]);
     expect(body.schema_version).toBe(1);
+  });
+});
+
+describe("roster route — AC6: an unauthenticated write is refused; the write calls the loopback guard", () => {
+  it("rosterReportResponse on a NON-loopback bind refuses with non_loopback (the mutation guard)", () => {
+    const parsed = JSON.parse(rosterReportResponse(JSON.stringify(ROW_A), { bindHostname: "10.1.2.3" }));
+    expect(parsed).toEqual({
+      ok: false,
+      machine_id: null,
+      error: "non_loopback: roster self-report serves loopback binds only",
+    });
+  });
+
+  it("a loopback bind PASSES the guard (127.0.0.1 is served, never refused non_loopback)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "roster-lb-"));
+    try {
+      const parsed = JSON.parse(
+        rosterReportResponse(JSON.stringify(ROW_A), { bindHostname: "127.0.0.1", rosterFile: join(dir, "roster.json") }),
+      );
+      expect(parsed).toEqual({ ok: true, machine_id: "mac-studio-01", error: null });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("an UNAUTHENTICATED POST /amicode/roster is refused 401 (no data-plane credential), never served", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "roster-auth-"));
+    const file = join(dir, "roster.json");
+    const saved = process.env.AMICO_FLEET_ROSTER_FILE;
+    process.env.AMICO_FLEET_ROSTER_FILE = file;
+    // credential mode (the default) — every non-public-UI request needs a valid mint
+    const service = createAmicodeService({ password: "roster-auth-test" });
+    try {
+      const url = await service.start();
+      const res = await fetch(new URL("/amicode/roster", url), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" }, // NO Authorization header
+        body: JSON.stringify(ROW_A),
+      });
+      expect(res.status).toBe(401);
+      expect((await res.json()).ok).toBe(false);
+      // the refused write NEVER touched the store
+      expect(existsSync(file)).toBe(false);
+    } finally {
+      await service.stop();
+      if (saved === undefined) delete process.env.AMICO_FLEET_ROSTER_FILE;
+      else process.env.AMICO_FLEET_ROSTER_FILE = saved;
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
