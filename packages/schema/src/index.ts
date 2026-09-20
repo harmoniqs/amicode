@@ -234,6 +234,15 @@ export {
   type VersionSkewVerdict,
 } from "./fleet_version_skew.js";
 
+// The fleet.json WRITER (amicode#1319) — the write side of the membership
+// record, hoisted beside its reader (parseFleetTopology). The extension
+// re-exports it from fleet_fallback.ts; `amico fleet enroll` uses it to write
+// the role+canonical record on the enrolling machine.
+export {
+  writeFleetConfig,
+  type FleetConfig,
+} from "./fleet_config.js";
+
 // ajv-formats ships a CJS default export; under NodeNext the default import can
 // bind the module namespace rather than the callable, so normalize defensively.
 const addFormats = (typeof addFormatsDefault === "function"
