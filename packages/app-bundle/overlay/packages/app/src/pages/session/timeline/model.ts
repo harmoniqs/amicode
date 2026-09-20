@@ -21,6 +21,12 @@ export function createTimelineModel(input: {
   const [resource] = createResource(
     () => input.sessionID(),
     async (id) => {
+      // #1298: t0 for the paint probe — every route change into a
+      // session view lands here first; the probe wrapper in session.tsx
+      // stamps t1 at the new timeline's first paint.
+      try {
+        ;(globalThis as { __paintT0?: number }).__paintT0 = performance.now()
+      } catch {}
       clearRefresh()
       if (!id) return
 

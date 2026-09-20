@@ -480,6 +480,26 @@ function SessionProviders(props: ParentProps) {
   )
 }
 
+/** #1298 paint probe: t0 = the timeline model's fetcher stamp on the
+ *  route change; t1 = the new timeline's first settled paint (two rAFs
+ *  after mount). Rides the ring snapshots — the number that names the
+ *  remount cost and decides keep-alive vs remount-tuning. */
+function TimelinePaintProbe(props: { id: string; children: JSX.Element }) {
+  const w = globalThis as { __paintT0?: number; __paintRing?: { id: string; ms: number }[] }
+  onMount(() => {
+    const t0 = w.__paintT0
+    if (t0 === undefined) return
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        w.__paintRing = w.__paintRing ?? []
+        w.__paintRing.push({ id: props.id.slice(-14), ms: Math.round(performance.now() - t0) })
+        if (w.__paintRing.length > 16) w.__paintRing.shift()
+      })
+    })
+  })
+  return props.children as unknown as JSX.Element
+}
+
 function SessionRouteFrame(props: ParentProps<{ padded?: boolean }>) {
   return (
     <div class="relative size-full overflow-hidden flex flex-col" classList={{ "p-2": props.padded }}>
@@ -2509,6 +2529,7 @@ export default function Page() {
               }
             >
               {(_id) => (
+                <TimelinePaintProbe id={_id}>
                 <Show
                   when={visibleUserMessages().length > 0 || rolled().length === 0}
                   fallback={
@@ -2557,6 +2578,7 @@ export default function Page() {
                     }}
                   />
                 </Show>
+                </TimelinePaintProbe>
               )}
             </Show>
           </Match>

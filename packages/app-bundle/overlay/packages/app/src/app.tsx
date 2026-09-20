@@ -680,6 +680,8 @@ ${text.slice(0, 12000)}` }).catch(() => {})  // #1294: 2400 truncated snapshots 
             load: briefMap(w.__loadDebug),
             gate: briefMap(w.__gateDebug),
             render: (globalThis as { __renderRing?: unknown }).__renderRing ?? null,
+            paint: (globalThis as { __paintRing?: unknown[] }).__paintRing?.slice(-8) ?? null,
+            hold: (globalThis as { __holdRing?: unknown[] }).__holdRing?.slice(-8) ?? null,
             mirror: w.__mirrorDebug?.slice(-4) ?? null,
             hydrated: w.__mirrorHydrated?.slice(-6) ?? null,
           }),
@@ -707,6 +709,10 @@ ${text.slice(0, 12000)}` }).catch(() => {})  // #1294: 2400 truncated snapshots 
           renderId = (path.match(/session\/([^/?]+)/)?.[1] ?? "").slice(-14)
         }
         if (renderT0 > 0) {
+          // #1297: this DOM-scan ring was flawed twice (hold clone pixels
+          // counted as paint; the live scroll container's hold tag broke
+          // the exclusion) — superseded by the model-t0 → probe-t1 pair
+          // (__paintRing). Kept for continuity; trust paint.
           const els = document.querySelectorAll(
             '[data-slot*=user-message], [data-slot*=assistant-message], [data-component*=message]',
           ).length
