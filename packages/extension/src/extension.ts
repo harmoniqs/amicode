@@ -7,7 +7,7 @@ import { resolveOpencodeBinary, OpencodeMissingError, unsupportedHostAdvice } fr
 import { resolveSelectedLaunch, HARNESS_REGISTRY } from "./harness";
 import { ChatPanel } from "./chat_panel";
 import { DeckPanel } from "./deck_panel";
-import { SidebarViewProvider, createNewProject, createNewEnvironment } from "./sidebar_view";
+import { SidebarViewProvider, createNewProject, createNewEnvironment, defaultFleetSectionDeps } from "./sidebar_view";
 import { StatusBarManager } from "./status_bar";
 import {
   prepareOpencodeProject,
@@ -489,7 +489,10 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     telemetryGateOpen(resolveTelemetryContext(ctx, { sessionId: telemetrySessionId }));
 
   // 1. UI surfaces — Workspace sidebar (webview, #673)
-  const sidebarProvider = new SidebarViewProvider(ctx.extensionUri);
+  //    #1321: the read-only fleet section reads the host-owned roster + this
+  //    machine's posture and pushes them to the webview. Manage stays honestly
+  //    disabled until the Fleet Manager tab (#1322) registers its command.
+  const sidebarProvider = new SidebarViewProvider(ctx.extensionUri, undefined, defaultFleetSectionDeps());
   ctx.subscriptions.push(
     vscode.window.registerWebviewViewProvider("amicode.workspace", sidebarProvider, {
       webviewOptions: { retainContextWhenHidden: true },
