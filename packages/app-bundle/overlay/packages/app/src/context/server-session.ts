@@ -767,9 +767,11 @@ export function createServerSession(
     // fetch so the timeline renders instantly; the fetch (which continues
     // below) reconciles into truth. Only the FIRST load of a session this
     // document hydrates; later loads have data.message defined already.
-    if ((data.message[sessionID]?.length ?? 0) === 0) {
-      // #1294: hydrate empty-OR-missing lists — an SSE-emptied session
-      // renders its mirror content instantly while the wire revalidates.
+    if ((data.message[sessionID]?.length ?? 0) < 20) {
+      // #1300: hydrate over sparse-or-missing lists — an SSE seed (a
+      // running session's single streaming message) must not veto the
+      // mirror; hydrateFromMirror itself refuses only when the store
+      // already holds at least as much as the record.
       await hydrateFromMirror(sessionID).catch(() => {})
       loadDebug(sessionID, "hydrated", { count: data.message[sessionID]?.length ?? -1 })
       if (meta.loading[sessionID]) return
@@ -933,11 +935,17 @@ export function createServerSession(
    *  (background revalidate, not a cache hit). */
   const hydrateFromMirror = async (sessionID: string) => {
     const scope = options?.mirrorScope
-    // #1294: also hydrate EMPTY-but-defined lists (SSE-emptied sessions) —
-    // but never overwrite a non-empty list with mirror content.
-    if (!scope || (data.message[sessionID]?.length ?? 0) > 0) return
+    if (!scope) return
     const record = await loadMirror(scope, sessionID)
-    if (!record || (data.message[sessionID]?.length ?? 0) > 0) return
+    if (!record) return
+    // #1300: hydrate over SPARSE SSE seeds. A running session's event
+    // stream seeds data.message with a SINGLE message before any real
+    // load; the old guard (> 0 = refuse) let that 1-message seed veto a
+    // 40-message mirror record — the switch rendered the ghost of one
+    // message and waited on the wire for history the disk already had.
+    // Only refuse when the store holds at least as much as the record.
+    const storeCount = data.message[sessionID]?.length ?? 0
+    if (storeCount >= record.messages.length) return
     ;(globalThis as { __mirrorHydrated?: string[] }).__mirrorHydrated = (
       (globalThis as { __mirrorHydrated?: string[] }).__mirrorHydrated ?? []
     ).concat([sessionID])
