@@ -1046,8 +1046,9 @@ describe("sidebar webview — fleet section render (#1321)", () => {
 
   it("Manage clicks post the open-fleet-manager navigation via vscode.postMessage", () => {
     // The renderer is handed vscode.postMessage — the section's only up-message.
-    const fleetBranch = src.slice(src.indexOf('key === "fleet"'));
-    expect(fleetBranch).toMatch(/renderFleetSection\s*\([^)]*vscode\.postMessage/s);
+    const fleetBranch = src.slice(src.indexOf('key === "fleet"'), src.indexOf('key === "fleet"') + 600);
+    expect(fleetBranch).toMatch(/renderFleetSection\s*\(/);
+    expect(fleetBranch).toMatch(/vscode\.postMessage/);
   });
 });
 
@@ -1840,8 +1841,10 @@ describe("sidebar webview — section labels", () => {
       "utf8",
     );
     expect(src).toMatch(/renderSectionHeader\s*\(\s*["']Fleet["']\s*,\s*["']fleet["']\s*\)/);
-    // Contains "Coming soon" as dynamically inserted text
-    expect(src).toContain("Coming soon");
+    // #1321: the "Coming soon" placeholder is replaced by the read-only fleet
+    // section, rendered dynamically via the shared renderFleetSection renderer.
+    expect(src).not.toContain("Coming soon");
+    expect(src).toMatch(/renderFleetSection\s*\(/);
   });
 });
 
