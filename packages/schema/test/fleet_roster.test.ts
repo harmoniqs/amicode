@@ -19,6 +19,8 @@ import { describe, it, expect } from "vitest";
 import {
   ROSTER_SCHEMA_VERSION,
   HEALTH_VOCABULARY,
+  KNOWN_CAPABILITY_TAGS,
+  isKnownCapability,
   parseRosterRow,
   type RosterRow,
 } from "../src/fleet_roster.js";
@@ -73,5 +75,31 @@ describe("parseRosterRow — AC1: a full row round-trips without loss", () => {
     expect(parseRosterRow(null).ok).toBe(false);
     expect(parseRosterRow([1, 2, 3]).ok).toBe(false);
     expect(parseRosterRow("mac-studio-01").ok).toBe(false);
+  });
+});
+
+describe("capabilities — AC2: known behavior tags + an open descriptive set", () => {
+  it("`compute` and `roaming` are the recognized known tags", () => {
+    expect(KNOWN_CAPABILITY_TAGS).toEqual(["compute", "roaming"]);
+    expect(isKnownCapability("compute")).toBe(true);
+    expect(isKnownCapability("roaming")).toBe(true);
+  });
+
+  it("an arbitrary descriptive tag is NOT known, yet is accepted (the set is open)", () => {
+    expect(isKnownCapability("gpu-box-3090")).toBe(false);
+    const r = parseRosterRow({ ...ROW, capabilities: ["compute", "roaming", "gpu-box-3090"] });
+    expect(r.ok).toBe(true);
+  });
+
+  it("preserves capability tags VERBATIM and in order — known and arbitrary alike, none dropped", () => {
+    const caps = ["compute", "the-loud-one", "roaming", "🛰️ satellite-lab"];
+    const r = parseRosterRow({ ...ROW, capabilities: caps });
+    expect(r.ok).toBe(true);
+    if (!r.ok) throw new Error("expected a valid row");
+    expect(r.row.capabilities).toEqual(caps); // arbitrary tags round-trip byte-for-byte
+  });
+
+  it("an empty capability set is valid (a machine may declare nothing)", () => {
+    expect(parseRosterRow({ ...ROW, capabilities: [] }).ok).toBe(true);
   });
 });
