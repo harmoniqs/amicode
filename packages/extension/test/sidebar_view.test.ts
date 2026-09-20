@@ -1015,6 +1015,42 @@ describe("sidebar webview — section reorder structure", () => {
   });
 });
 
+// ── #1321: read-only fleet section (webview glue) ────────────────────────────
+
+describe("sidebar webview — fleet section render (#1321)", () => {
+  const src = readFileSync(
+    resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+    "utf8",
+  );
+
+  it("imports the shared renderFleetSection renderer", () => {
+    expect(src).toMatch(/import\s*\{[^}]*renderFleetSection[^}]*\}\s*from\s*["']\.\/sidebar_fleet_section["']/);
+  });
+
+  it("no longer renders the 'Coming soon' fleet placeholder", () => {
+    expect(src).not.toContain("Coming soon");
+  });
+
+  it("the fleet section body is rendered via renderFleetSection, not a static placeholder", () => {
+    // The fleet branch of renderRoots delegates to the shared renderer.
+    const fleetBranch = src.slice(src.indexOf('key === "fleet"'));
+    expect(fleetBranch).toMatch(/renderFleetSection\s*\(/);
+  });
+
+  it("handles the fleet-status down-message and re-renders from it", () => {
+    expect(src).toMatch(/case\s+["']fleet-status["']/);
+    // the fleet-status handler feeds the shared renderer.
+    const handler = src.slice(src.indexOf('case "fleet-status"'));
+    expect(handler).toMatch(/renderFleetSection\s*\(/);
+  });
+
+  it("Manage clicks post the open-fleet-manager navigation via vscode.postMessage", () => {
+    // The renderer is handed vscode.postMessage — the section's only up-message.
+    const fleetBranch = src.slice(src.indexOf('key === "fleet"'));
+    expect(fleetBranch).toMatch(/renderFleetSection\s*\([^)]*vscode\.postMessage/s);
+  });
+});
+
 // ── Environments nested in research section (#911) ───────────────────────────
 
 describe("sidebar webview — environments nested in research (#911)", () => {
