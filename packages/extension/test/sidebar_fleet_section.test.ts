@@ -193,3 +193,56 @@ describe("renderFleetSection — per-device rows + posture badge (AC1, AC2)", ()
     expect(badge.textContent).toContain("server");
   });
 });
+
+describe("renderFleetSection — honest empty / unreachable DOM (AC6)", () => {
+  it("empty roster renders an honest empty state, no device rows", () => {
+    const el = document.createElement("div");
+    const model = buildFleetSectionModel({ roster: [], rosterReachable: true, posture: null, manageAvailable: true });
+    renderFleetSection(el, model, () => {});
+    expect(el.querySelector(".fleet-empty")).not.toBeNull();
+    expect(el.querySelectorAll(".fleet-device-row")).toHaveLength(0);
+    // never a spinner / loading affordance.
+    expect(el.querySelector(".fleet-loading, .spinner")).toBeNull();
+  });
+
+  it("unreachable roster (host down) renders an honest degraded state, no fabricated rows", () => {
+    const el = document.createElement("div");
+    const model = buildFleetSectionModel({ roster: [], rosterReachable: false, posture: null, manageAvailable: true });
+    renderFleetSection(el, model, () => {});
+    expect(el.querySelector(".fleet-unreachable")).not.toBeNull();
+    expect(el.querySelectorAll(".fleet-device-row")).toHaveLength(0);
+    expect(el.querySelector(".fleet-loading, .spinner")).toBeNull();
+  });
+});
+
+describe("renderFleetSection — read-only navigation contract (AC3, AC4)", () => {
+  it("clicking an enabled Manage posts EXACTLY the open-fleet-manager navigation and nothing else", () => {
+    const el = document.createElement("div");
+    const post = vi.fn();
+    renderFleetSection(el, populatedModel({ manage: { enabled: true } } as any), post);
+    const manage = el.querySelector(".fleet-manage") as HTMLButtonElement;
+    manage.click();
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(post).toHaveBeenCalledWith({ kind: "open-fleet-manager" });
+    // read-only: no other message kind is ever emitted by the section.
+    for (const call of post.mock.calls) {
+      expect((call[0] as { kind: string }).kind).toBe("open-fleet-manager");
+    }
+  });
+
+  it("honest degrade — a disabled Manage (Fleet Manager tab absent) has no dead click", () => {
+    const el = document.createElement("div");
+    const post = vi.fn();
+    // manageAvailable:false ⇒ #1322 not present on this branch.
+    const model = buildFleetSectionModel({
+      roster: [{ machine_id: "a", name: "A", server_mode: "server", capabilities: [], last_report: "t", health: "reachable" }],
+      rosterReachable: true, posture: null, manageAvailable: false,
+    });
+    renderFleetSection(el, model, post);
+    const manage = el.querySelector(".fleet-manage") as HTMLButtonElement;
+    expect(manage.disabled).toBe(true);
+    expect(manage.getAttribute("aria-disabled")).toBe("true");
+    manage.click();
+    expect(post).not.toHaveBeenCalled(); // no dead click — nothing emitted
+  });
+});
