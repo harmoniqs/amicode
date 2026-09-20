@@ -103,3 +103,40 @@ export function shapeFleetDeviceRows(input: {
 export function buildCapabilitiesReport(localRow: RosterRowLike, nextCapabilities: string[]): RosterRowLike {
   return { ...localRow, capabilities: [...nextCapabilities] }
 }
+
+// ── This-machine / Hub actions → existing registered commands ────────────────
+
+/** The tab's command-invoking actions. The tab INVOKES these existing commands
+ *  (via the app→extension bridge, postAmicode) — it never reimplements their
+ *  logic (Key Decision: "the commands stay registered in the Command Palette").
+ *  `repair` + `goStandalone` are This-machine actions; `restartHub` is the Hub
+ *  service action (server only). */
+export type FleetManagerAction = "repair" | "goStandalone" | "restartHub"
+
+const FLEET_MANAGER_COMMANDS: Record<FleetManagerAction, string> = {
+  repair: "amicode.fleet.repair",
+  goStandalone: "amicode.fleet.goStandalone",
+  restartHub: "amicode.restartHub",
+}
+
+/** The EXISTING registered command string a This-machine / Hub button invokes. */
+export function fleetManagerCommand(action: FleetManagerAction): string {
+  return FLEET_MANAGER_COMMANDS[action]
+}
+
+// ── This machine: transport selector ─────────────────────────────────────────
+
+/** The default transport when a machine has no recorded/roaming hint. */
+export const TRANSPORT_DEFAULT = "ssh"
+
+/** The transport providers the selector offers (writes `amicode.fleetTransport`). */
+export const TRANSPORT_OPTIONS = ["ssh", "tailscale", "local"] as const
+
+/** The transport selector's prefill: a `roaming`-tagged machine defaults to
+ *  tailscale (ADR 0026 §1); otherwise the machine's recorded transport, else the
+ *  ssh default. No silent reroute — this is only the SELECTOR's initial value. */
+export function transportPrefill(input: { capabilities: string[]; transport?: string }): string {
+  if (input.capabilities.includes("roaming")) return "tailscale"
+  return input.transport && input.transport.trim() !== "" ? input.transport : TRANSPORT_DEFAULT
+}
+
