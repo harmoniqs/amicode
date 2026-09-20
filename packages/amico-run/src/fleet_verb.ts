@@ -590,6 +590,8 @@ const USAGE =
   "amico fleet re-tier --session <id> --model <provider/id> [--variant <v>]  |  amico fleet sweep [--dry-run]  |  " +
   "amico fleet launch --session <id> --pid <n>  |  " +
   'amico fleet finish --session <id> --outcome settled|crashed --pid <n> [--step "<s>"]  |  ' +
+  "amico fleet enroll --as-server [--host H --port N --ssh-alias A --transport-hint T]  |  " +
+  "amico fleet enroll --join-token <path>  |  " +
   "amico fleet digest [--post <channel>] [--machines a,b] [--jobs-line \"<t>\"] [--dry-run] [--root D]";
 
 /** Optional injection surface for the fleet verb's sub-verbs — the projection
@@ -617,6 +619,9 @@ export function fleetVerb(argv: string[], deps: FleetVerbDeps = {}): VerbResult 
   if (sub === "launch") return fleetLaunch(rest);
   if (sub === "finish") return fleetFinish(rest);
   if (sub === "digest") return fleetDigest(rest);
+  // NOTE: `enroll` is async (real HTTP) and is dispatched at the registry seam
+  // (verbs.ts `run`), NOT here — so this synchronous router stays synchronous
+  // and its pinned VerbResult contract (and callers) are untouched.
   return {
     json: { verb: "fleet", error: `unknown subcommand ${sub ? `"${sub}"` : "(none)"}`, usage: USAGE },
     code: 64,
