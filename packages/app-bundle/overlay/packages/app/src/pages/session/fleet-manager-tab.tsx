@@ -23,7 +23,9 @@ import {
   enrollAction,
   CREATE_FLEET_COMMAND,
   fleetTransportMessage,
+  shapeVersionRows,
   type RosterRowLike,
+  type DoctorSurfaceLike,
 } from "@/pages/session/fleet-manager"
 
 type FleetManagerSection = "devices" | "machine" | "hub" | "versions"
@@ -50,10 +52,20 @@ export function FleetManagerContent() {
   // absent it, rows render read-only (honest — we never fabricate "which
   // machine is us").
   const [localMachineId, setLocalMachineId] = createSignal<string | null>(null)
+  // The doctor report the extension ships with the Versions route (open-fleet-
+  // manager). Null until the route provides it — the section degrades honestly.
+  const [versionReport, setVersionReport] = createSignal<{ surfaces: DoctorSurfaceLike[] } | null>(null)
   const onBridge = (e: MessageEvent) => {
-    const d = e.data as { source?: string; kind?: string; localMachineId?: string; section?: FleetManagerSection }
+    const d = e.data as {
+      source?: string
+      kind?: string
+      localMachineId?: string
+      section?: FleetManagerSection
+      report?: { surfaces: DoctorSurfaceLike[] }
+    }
     if (d?.source !== "amicode" || d.kind !== "open-fleet-manager") return
     if (typeof d.localMachineId === "string") setLocalMachineId(d.localMachineId)
+    if (d.report) setVersionReport(d.report)
     if (d.section) setSection(d.section)
   }
   if (typeof window !== "undefined") {
@@ -280,12 +292,39 @@ export function FleetManagerContent() {
 
         {/* ── Versions (absorbs the retired Fleet & Versions panel) ───────── */}
         <Show when={section() === "versions"}>
-          <div class="flex flex-col gap-1">
+          <div class="flex flex-col gap-2">
             <div class={eyebrow}>Fleet &amp; versions</div>
-            <div class="text-12-regular text-text-weak">
-              Version status is checked by <span class="text-text-base">amico doctor</span>. This section absorbs the
-              retired Fleet &amp; Versions panel.
-            </div>
+            <Show
+              when={shapeVersionRows(versionReport()).length > 0}
+              fallback={
+                <div class="text-12-regular text-text-weak">
+                  Version status is checked by <span class="text-text-base">amico doctor</span>. Open this from the
+                  command palette (Fleet &amp; Versions) to load the surface report.
+                </div>
+              }
+            >
+              <div class="flex flex-col gap-1">
+                <For each={shapeVersionRows(versionReport())}>
+                  {(v) => (
+                    <div
+                      class="flex items-center justify-between gap-2 rounded-md border border-border-weak-base p-2"
+                      data-surface={v.surface}
+                    >
+                      <span class="text-12-medium text-text-base truncate">{v.surface}</span>
+                      <span class="text-11-regular text-text-weak tabular-nums">
+                        {v.version} → {v.sourceVersion}
+                      </span>
+                      <span
+                        class="text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 border border-border-weak-base text-text-weak"
+                        data-verdict={v.verdict}
+                      >
+                        {v.verdict}
+                      </span>
+                    </div>
+                  )}
+                </For>
+              </div>
+            </Show>
           </div>
         </Show>
       </div>

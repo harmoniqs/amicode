@@ -179,5 +179,43 @@ export function fleetTransportMessage(value: string): FleetTransportMessage {
   return { source: "amicode", kind: "fleet-set-transport", value }
 }
 
+// ── Versions: the retired Fleet & Versions panel's doctor content ────────────
+
+/** A doctor surface record (structural — the extension ships this in the
+ *  open-fleet-manager message; matches fleet_panel.ts FleetSurfaceRecord). */
+export interface DoctorSurfaceLike {
+  surface: string
+  version: string | null
+  source_version: string | null
+  verdict: string
+}
+
+/** One rendered version row — a surface's running/source version + verdict. */
+export interface FleetVersionRow {
+  surface: string
+  version: string
+  sourceVersion: string
+  verdict: string
+}
+
+/** The doctor absence marker — the same "—" doctor's own human table uses. */
+const VERSION_NULL_MARKER = "—"
+
+/** Doctor report → version rows for the tab's Versions section. Null version
+ *  fields render as the honest absence marker; a missing report ⇒ no rows
+ *  (never a fabricated list). This is the content the retired panel showed. */
+export function shapeVersionRows(
+  report: { surfaces: DoctorSurfaceLike[] } | null | undefined,
+): FleetVersionRow[] {
+  if (!report || !Array.isArray(report.surfaces)) return []
+  return report.surfaces.map((s) => ({
+    surface: s.surface,
+    version: s.version ?? VERSION_NULL_MARKER,
+    sourceVersion: s.source_version ?? VERSION_NULL_MARKER,
+    verdict: s.verdict,
+  }))
+}
+
+
 
 
