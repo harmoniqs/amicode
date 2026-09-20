@@ -180,6 +180,9 @@ answers like a well-written engineering doc, not a terminal log:
 >   `~/.amico/connections.json` — especially before setting `tier` or `executor`
 >   in a solvespec.
 > - fleet: `~/.amico/ops/fleet/fleet.json` and `~/.amico/ops/fleet-status.json`.
+> - research direction: the ops checkout's `vault/INTENT.md` (the PI-owned
+>   direction surface) and `vault/INTENT-MERGE-RECEIPT.toml` (its merge stamp)
+>   — the checkout the ops standing check keeps at canonical.
 > - profile, problems, demos, mounts, memory: the personal Armonia mount (first
 >   `kind = "personal"` dir under `~/.amico/vaults/`) — its `amicode/PROFILE.md`,
 >   `amicode/problems/` (problem-card frontmatter), `amicode/DEMOS.md`, and
