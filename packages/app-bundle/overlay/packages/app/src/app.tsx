@@ -1126,10 +1126,12 @@ export function AppInterface(props: {
                   <TabsProvider>
                     <AmicodeNavigateBridge />
                     <SessionLineagePrewarmer />
-                    {/* #1287: gate on the actual boolean — the enclosing Show
-                        keys on newLayoutDesigns().toString(), which is truthy
-                        for BOTH values, so it never gated the badge. */}
-                    <Show when={useSettings().general.newLayoutDesigns()}>
+                    {/* #1287/#1290 debug badge — opt-in via localStorage so it
+                        never shows to users by default. Enable:
+                        localStorage.setItem("amicode_debug_badge","1") + reload.
+                        The badge, its RAF ring, error shipper, and diagnostic
+                        intervals only mount when the flag is set. */}
+                    <Show when={useSettings().general.newLayoutDesigns() && globalThis.localStorage?.getItem("amicode_debug_badge") === "1"}>
                       <HoldDebugBadge />
                     </Show>
                     <PermissionProvider>

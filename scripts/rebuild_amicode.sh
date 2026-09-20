@@ -388,6 +388,15 @@ build_amicode() {
     echo "==> Overlay unchanged (hash match) — skipping engine build (server stays alive)"
   else
     echo ""
+    # The overlay changed — clear the .materialized tree's content stamp so
+    # build_binary.mjs re-materializes from the overlay instead of reusing
+    # a stale tree. Without this, build_binary.mjs's manifest-based check
+    # can miss direct overlay edits (the #1290 debug-badge staleness gap).
+    local materialized_tree="$AMICODE_ROOT/packages/app-bundle/.materialized"
+    if [ -f "$materialized_tree/.overlay-content-stamp" ]; then
+      rm -f "$materialized_tree/.overlay-content-stamp"
+      echo "==> Cleared .overlay-content-stamp to force re-materialization"
+    fi
     echo "==> Building binary from the local overlay (build:binary)..."
     # build:binary materializes base+overlay and bun-compiles — no fork, no release.
     local bun; bun="$(resolve_bun)"
