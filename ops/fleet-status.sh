@@ -8,9 +8,48 @@ OUT="$HOME/.amico/ops/fleet-status.json"
 TMP="$OUT.tmp"
 DB="$HOME/.local/share/opencode/opencode-dev.db"
 SYNCLOG="$HOME/.amico/sync.log"
+ROSTER="$HOME/.amico/ops/fleet/roster.json"
 
-# --- devices: alias|host pairs (edit here as the fleet grows) ---------------
-DEVICES=("mini:127.0.0.1" "macbook:macbook" "erlich:erlich")
+# --- devices: derived from the host-owned roster (#1318, ADR 0026) ----------
+# The fleet's device list is the roster's rows (each machine self-reports its
+# own row), NOT a hardcoded array — a machine tagged/enrolled shows up here
+# without editing this script. Each device is `name:host`, host = the row's
+# sshAlias (the ssh target the probe uses), falling back to loopback. When the
+# roster is absent/empty the job probes only this machine (a loopback self-row),
+# never an invented peer.
+roster_devices() {
+  if [ -f "$ROSTER" ] && command -v python3 >/dev/null 2>&1; then
+    python3 - "$ROSTER" <<'PY'
+import json, sys
+try:
+    doc = json.load(open(sys.argv[1]))
+    rows = doc.get("rows", []) if isinstance(doc, dict) else []
+except Exception:
+    rows = []
+for r in rows:
+    if not isinstance(r, dict):
+        continue
+    name = r.get("name") or r.get("machine_id") or "unknown"
+    host = r.get("sshAlias") or "127.0.0.1"
+    # keep the pair delimiter clean (name:host is split on the first colon)
+    print(f"{name}:{host}")
+PY
+  fi
+}
+
+# The derived device pairs, with a loopback self-row fallback when the roster
+# yields nothing (honest "this machine only", never the retired hardcoded peers).
+DEVICE_PAIRS="$(roster_devices)"
+if [ -z "$DEVICE_PAIRS" ]; then
+  DEVICE_PAIRS="this-machine:127.0.0.1"
+fi
+
+# --emit-devices: a dry-run seam (the AC5 test surface) — print the derived
+# device list and exit BEFORE any ssh/sqlite/curl/launchctl work.
+if [ "${1:-}" = "--emit-devices" ]; then
+  printf '%s\n' "$DEVICE_PAIRS"
+  exit 0
+fi
 
 # Bounded ssh probe — no GNU timeout on macOS, and ConnectTimeout alone does
 # NOT bound an in-band stall (observed 2026-08-08: Tailscale SSH to erlich
@@ -27,7 +66,8 @@ ssh_probe() {
 }
 
 dev_rows=""
-for pair in "${DEVICES[@]}"; do
+while IFS= read -r pair; do
+  [ -z "$pair" ] && continue
   name="${pair%%:*}"; host="${pair#*:}"
   if [ "$host" = "127.0.0.1" ]; then
     reachable=true; detail="this machine"
@@ -39,7 +79,9 @@ for pair in "${DEVICES[@]}"; do
     fi
   fi
   dev_rows="$dev_rows{\"name\":\"$name\",\"reachable\":$reachable,\"detail\":\"$detail\"},"
-done
+done <<EOF_DEVICES
+$DEVICE_PAIRS
+EOF_DEVICES
 dev_rows="[${dev_rows%,}]"
 
 # --- canonical chat DB --------------------------------------------------------

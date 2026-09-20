@@ -4,6 +4,8 @@
 
 import { groupRootsForResearchSection } from "./sidebar_bridge";
 import type { EnvGroup } from "./sidebar_bridge";
+import { renderFleetSection } from "./sidebar_fleet_section";
+import type { FleetSectionModel } from "./sidebar_fleet_section";
 
 declare function acquireVsCodeApi(): {
   postMessage(msg: unknown): void;
@@ -943,6 +945,11 @@ function createIconEl(icon: string): HTMLElement {
   // (drag-reorder and section-order re-renders bypass the host's pushGitStatus).
   let lastGitStatusMap: Record<string, string> = {};
 
+  // #1321 — the last fleet view-model the host pushed. Defaults to the honest
+  // empty state so the section renders something real before the first
+  // fleet-status arrives (never a spinner, never a fabricated device list).
+  let lastFleetModel: FleetSectionModel = { state: "empty", devices: [], posture: null, manage: { enabled: false } };
+
   /** Walk all rendered nodes and apply/remove git-status CSS classes. */
   function applyGitStatus(statusMap: Record<string, string>): void {
     const gitClasses = ["git-modified", "git-added", "git-deleted", "git-untracked", "git-ignored", "git-conflict"];
@@ -1355,10 +1362,10 @@ function createIconEl(icon: string): HTMLElement {
         treeRoot.appendChild(section);
       } else if (key === "fleet") {
         const { section, body } = renderSectionHeader("Fleet", "fleet");
-        const placeholder = document.createElement("div");
-        placeholder.className = "fleet-placeholder-text";
-        placeholder.textContent = "Coming soon";
-        body.appendChild(placeholder);
+        body.classList.add("fleet-section-body");
+        // Read-only glanceable fleet section (#1321): render the last-pushed
+        // view-model; the only up-message is the Manage navigation.
+        renderFleetSection(body, lastFleetModel, (m) => vscode.postMessage(m));
         treeRoot.appendChild(section);
       }
     }
@@ -2386,6 +2393,19 @@ function createIconEl(icon: string): HTMLElement {
         for (const dir of orphanedDirs) {
           delete childrenCache[dir];
           vscode.postMessage({ kind: "get-children", path: dir });
+        }
+        break;
+      }
+
+      case "fleet-status": {
+        // #1321 — the host pushed a fresh read-only fleet view-model. Cache it
+        // (so a later renderRoots re-render keeps it) and re-render the fleet
+        // section body in place if it is mounted. No manual reload needed —
+        // this fires on every posture-change.
+        if (msg.model) lastFleetModel = msg.model as FleetSectionModel;
+        const fleetBody = treeRoot?.querySelector(".fleet-section-body") as HTMLElement | null;
+        if (fleetBody) {
+          renderFleetSection(fleetBody, lastFleetModel, (m) => vscode.postMessage(m));
         }
         break;
       }

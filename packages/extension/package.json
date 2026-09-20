@@ -160,11 +160,19 @@
       },
       {
         "command": "amicode.fleet.versions",
-        "title": "Amicode: Fleet & Versions (doctor's surface report)"
+        "title": "Amicode: Fleet & Versions (open Fleet Manager \u2014 Versions)"
+      },
+      {
+        "command": "amicode.openFleetManager",
+        "title": "Amicode: Open Fleet Manager"
       },
       {
         "command": "amicode.fleet.goStandalone",
         "title": "Amicode: Fleet \u2014 Go Standalone (leave fleet, run locally)"
+      },
+      {
+        "command": "amicode.fleet.enroll",
+        "title": "Amicode: Fleet \u2014 Enroll (join this machine to a fleet)"
       },
       {
         "command": "amicode.repo.sync",

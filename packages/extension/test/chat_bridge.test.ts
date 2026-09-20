@@ -469,6 +469,18 @@ describe("amicode bridge — commands & settings", () => {
     expect(ran).toContain("amicode.reportBug");
   });
 
+  it("allowlists the Fleet Manager tab's This-machine/Hub commands (#1322 — invoke, not reimplement)", async () => {
+    const host = io();
+    // The Fleet Manager tab's This-machine (Repair / Go Standalone) buttons post
+    // these EXISTING commands over the bridge; the tab never reimplements them.
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "command", command: "amicode.fleet.repair" }, host)).toBe(true);
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "command", command: "amicode.fleet.goStandalone" }, host)).toBe(true);
+    await flush();
+    const ran = (vscode.commands as unknown as { executed: string[] }).executed ?? [];
+    expect(ran).toContain("amicode.fleet.repair");
+    expect(ran).toContain("amicode.fleet.goStandalone");
+  });
+
   it("set-default-model accepts provider/model-id shapes and mirrors them to config", () => {
     const host = io();
     expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "set-default-model", model: "anthropic/claude-sonnet-5" }, host)).toBe(true);
@@ -638,9 +650,13 @@ describe("amicode bridge — reportBug model handoff (amicode#277)", () => {
   it("no additional command gains a payload channel and the allowlist is unchanged in size (AC7)", async () => {
     const { BRIDGE_ALLOWED_COMMANDS } = await import("../src/chat_bridge");
     // amicode#653 added amicode.restartHub (payload-free, like restartServer).
-    expect(BRIDGE_ALLOWED_COMMANDS.size).toBe(11);
+    // #1322 added the Fleet Manager tab's This-machine actions (payload-free):
+    // amicode.fleet.repair + amicode.fleet.goStandalone.
+    expect(BRIDGE_ALLOWED_COMMANDS.size).toBe(13);
     expect(BRIDGE_ALLOWED_COMMANDS.has("amicode.reportBug")).toBe(true);
     expect(BRIDGE_ALLOWED_COMMANDS.has("amicode.restartHub")).toBe(true);
+    expect(BRIDGE_ALLOWED_COMMANDS.has("amicode.fleet.repair")).toBe(true);
+    expect(BRIDGE_ALLOWED_COMMANDS.has("amicode.fleet.goStandalone")).toBe(true);
     // other allowlisted commands ignore model payload
     const host = io();
     let received: unknown = "sentinel";

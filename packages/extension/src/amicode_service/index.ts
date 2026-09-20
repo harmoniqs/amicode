@@ -56,6 +56,7 @@ import {
   submitCredentialResponse,
 } from "./connections";
 import { solverModeResponse } from "./solver_mode";
+import { rosterReadResponse, rosterReportResponse } from "./roster";
 import { postureResponse, savePostureResponse, dismissPostureResponse } from "./posture";
 import {
   modelRoutingResponse,
@@ -236,6 +237,21 @@ export function registerConnectionRoutes(server: AmicodeServiceServer): AmicodeS
 // connection card.
 export function registerSolverModeRoutes(server: AmicodeServiceServer): AmicodeServiceServer {
   server.add("POST", "/amicode/solver-mode", ({ body }) => ({ body: solverModeResponse(body) }));
+
+  return server;
+}
+
+// Roster routes (#1318, ADR 0026): the host-owned, fleet-wide device roster.
+// GET /amicode/roster reads it; POST /amicode/roster is the caller's OWN-row
+// self-report (single-writer, loopback-guarded like the solver-mode mutation).
+// Deliberately on the PROXIED /amicode/* namespace (NOT /amicode/fleet/*): a
+// fleet client reaches the host's authoritative roster through the #1262 proxy,
+// while its own /amicode/fleet/* honesty surface stays local. Own family
+// because the shape is the roster tuple, not a connection card.
+export function registerRosterRoutes(server: AmicodeServiceServer): AmicodeServiceServer {
+  server.add("GET", "/amicode/roster", () => ({ body: rosterReadResponse() }));
+
+  server.add("POST", "/amicode/roster", ({ body }) => ({ body: rosterReportResponse(body) }));
 
   return server;
 }
@@ -574,6 +590,7 @@ export function createAmicodeService(
   registerProjectRoutes(server);
   registerConnectionRoutes(server);
   registerSolverModeRoutes(server);
+  registerRosterRoutes(server);
   registerPostureRoutes(server);
   registerModelRoutingRoutes(server, opts.modelRouting);
   return server;

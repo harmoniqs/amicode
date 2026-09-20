@@ -199,6 +199,50 @@ export {
   type BaseProjectionOpts,
 } from "./fleet_projection.js";
 
+// The fleet roster contract (amicode#1318, fleet capability model + host-owned
+// roster; ADR 0026): an amicode-OWNED, schema-versioned, fleet-wide device
+// roster whose rows each machine self-reports. Sibling of fleet_projection but
+// amicode's OWN format (fleet.json is untouched — ADR 0023 one-parser holds).
+// Same documented root seam: the extension's `/amicode/roster` route (reader +
+// self-report writer) and `ops/fleet-status.sh` (via the ONE cache path) both
+// consume this single definition.
+export {
+  ROSTER_SCHEMA_VERSION,
+  HEALTH_VOCABULARY,
+  KNOWN_CAPABILITY_TAGS,
+  isKnownCapability,
+  parseRosterRow,
+  parseRosterDocument,
+  emptyRoster,
+  upsertRosterRow,
+  FLEET_ROSTER_CACHE_RELPATH,
+  fleetRosterCachePath,
+  type RosterHealth,
+  type RosterRow,
+  type RosterDocument,
+  type ParseRosterRowResult,
+  type ParseRosterDocumentResult,
+} from "./fleet_roster.js";
+
+// The pure version-skew verdict (amicode#1319, hoisted from the extension's
+// #1261 relay-start gate): the ONE cross-package definition of client↔host
+// version parity. The extension re-exports it (relayVersionGate/hostVersionProbe
+// stay there); `amico fleet enroll` reuses it for the enroll-time pin check.
+export {
+  versionSkewVerdict,
+  type SkewTolerance,
+  type VersionSkewVerdict,
+} from "./fleet_version_skew.js";
+
+// The fleet.json WRITER (amicode#1319) — the write side of the membership
+// record, hoisted beside its reader (parseFleetTopology). The extension
+// re-exports it from fleet_fallback.ts; `amico fleet enroll` uses it to write
+// the role+canonical record on the enrolling machine.
+export {
+  writeFleetConfig,
+  type FleetConfig,
+} from "./fleet_config.js";
+
 // ajv-formats ships a CJS default export; under NodeNext the default import can
 // bind the module namespace rather than the callable, so normalize defensively.
 const addFormats = (typeof addFormatsDefault === "function"

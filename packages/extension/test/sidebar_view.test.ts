@@ -209,6 +209,261 @@ describe("sidebar bridge — handleSidebarMessage", () => {
       handleSidebarMessage({ kind: "chat-active", active: true }, { openChat, newProject })
     ).not.toThrow();
   });
+
+  it("routes open-fleet-manager to the openFleetManager navigation handler (#1321, AC3/AC4)", () => {
+    const openFleetManager = vi.fn();
+    const fileOp = vi.fn();
+    expect(() =>
+      handleSidebarMessage({ kind: "open-fleet-manager" }, { openFleetManager, fileOp } as any)
+    ).not.toThrow();
+    // the ONE navigation handler fires — and no mutation handler is touched (read-only).
+    expect(openFleetManager).toHaveBeenCalledTimes(1);
+    expect(fileOp).not.toHaveBeenCalled();
+  });
+
+  it("open-fleet-manager degrades honestly when no handler is wired (no throw)", () => {
+    // The handler is optional (the Fleet Manager tab #1322 may be absent).
+    expect(() => handleSidebarMessage({ kind: "open-fleet-manager" }, {} as any)).not.toThrow();
+  });
+
+  it("treats fleet-status as a down-only message — no host-side handler, no throw (#1321)", () => {
+    // fleet-status flows host→webview only; the host handler must ignore it.
+    const openFleetManager = vi.fn();
+    expect(() =>
+      handleSidebarMessage({ kind: "fleet-status", model: { state: "empty", devices: [], posture: null, manage: { enabled: false } } } as any, { openFleetManager } as any)
+    ).not.toThrow();
+    expect(openFleetManager).not.toHaveBeenCalled();
+  });
+});
+
+// ── #1321: read-only sidebar fleet section (host wiring) ─────────────────────
+
+describe("SidebarViewProvider — fleet section host wiring (#1321)", () => {
+  let SidebarViewProvider: any;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    const mod = await import("../src/sidebar_view");
+    SidebarViewProvider = mod.SidebarViewProvider;
+  });
+
+  function deviceRow(over: Record<string, unknown> = {}) {
+    return {
+      machine_id: "mac-01", name: "Mac Studio", server_mode: "server",
+      capabilities: ["compute"], sshAlias: "mac", transport: "ssh",
+      last_report: "2026-09-20T12:00:00.000Z", health: "reachable", ...over,
+    };
+  }
+
+  function fleetHarness() {
+    const state = {
+      roster: { rows: [deviceRow()], reachable: true } as { rows: any[]; reachable: boolean },
+      posture: { serverMode: "server", hostname: "mac-01", mode: "fleet", reachable: true, hub: { name: "hub", base_url: "u" } } as any,
+      managerAvailable: false,
+      postureCb: (() => {}) as () => void,
+    };
+    const openFleetManager = vi.fn();
+    const deps = {
+      readRoster: () => state.roster,
+      readPosture: () => state.posture,
+      onPostureChange: (cb: () => void) => { state.postureCb = cb; return { dispose() {} }; },
+      isFleetManagerAvailable: () => state.managerAvailable,
+      openFleetManager,
+    };
+    return { state, deps, openFleetManager };
+  }
+
+  function lastFleetStatus(view: any) {
+    const calls = view.webview.postMessage.mock.calls.map((c: any[]) => c[0]);
+    const fleet = calls.filter((m: any) => m && m.kind === "fleet-status");
+    return fleet.length ? fleet[fleet.length - 1] : undefined;
+  }
+
+  function resolve(provider: any, view: any) {
+    provider.resolveWebviewView(view, {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
+  }
+
+  it("posts a fleet-status down-message with device rows + posture badge on resolve (AC1, AC2)", () => {
+    const { deps } = fleetHarness();
+    const provider = new SidebarViewProvider(makeExtensionUri(), undefined, deps);
+    const view = makeWebviewView();
+    resolve(provider, view);
+
+    const msg = lastFleetStatus(view);
+    expect(msg).toBeDefined();
+    expect(msg.model.state).toBe("populated");
+    expect(msg.model.devices).toHaveLength(1);
+    expect(msg.model.devices[0].role).toBe("server");        // server_mode → "role"
+    expect(msg.model.devices[0].lastSeen).toBe("2026-09-20T12:00:00.000Z"); // last_report → "last-seen"
+    expect(msg.model.devices[0].health).toBe("reachable");
+    expect(msg.model.posture.serverMode).toBe("server");
+    expect(msg.model.posture.linkHealth).toBe("ok");
+  });
+
+  it("re-posts fleet-status with updated health on a posture-change event (AC5, no manual reload)", () => {
+    const { state, deps } = fleetHarness();
+    const provider = new SidebarViewProvider(makeExtensionUri(), undefined, deps);
+    const view = makeWebviewView();
+    resolve(provider, view);
+    expect(lastFleetStatus(view).model.devices[0].health).toBe("reachable");
+
+    // A peer degrades; the posture-change fires — no reload, the section refreshes.
+    state.roster = { rows: [deviceRow({ health: "degraded" })], reachable: true };
+    state.postureCb();
+    expect(lastFleetStatus(view).model.devices[0].health).toBe("degraded");
+  });
+
+  it("shows an honest unreachable state when the roster host is down (AC6)", () => {
+    const { state, deps } = fleetHarness();
+    state.roster = { rows: [], reachable: false };
+    const provider = new SidebarViewProvider(makeExtensionUri(), undefined, deps);
+    const view = makeWebviewView();
+    resolve(provider, view);
+    const msg = lastFleetStatus(view);
+    expect(msg.model.state).toBe("unreachable");
+    expect(msg.model.devices).toEqual([]);
+  });
+
+  it("Manage degrades honestly at the host — no navigation when the Fleet Manager tab is absent (AC3)", () => {
+    const { state, deps, openFleetManager } = fleetHarness();
+    state.managerAvailable = false; // #1322 not present on this branch
+    const provider = new SidebarViewProvider(makeExtensionUri(), undefined, deps);
+    const view = makeWebviewView();
+    resolve(provider, view);
+    // the posted model marks Manage disabled …
+    expect(lastFleetStatus(view).model.manage.enabled).toBe(false);
+    // … and even a stray up-message does not navigate (belt-and-suspenders host guard).
+    view.webview._simulateMessage({ kind: "open-fleet-manager" });
+    expect(openFleetManager).not.toHaveBeenCalled();
+  });
+
+  it("Manage navigates when the Fleet Manager tab is present (AC3)", () => {
+    const { state, deps, openFleetManager } = fleetHarness();
+    state.managerAvailable = true;
+    const provider = new SidebarViewProvider(makeExtensionUri(), undefined, deps);
+    const view = makeWebviewView();
+    resolve(provider, view);
+    expect(lastFleetStatus(view).model.manage.enabled).toBe(true);
+    view.webview._simulateMessage({ kind: "open-fleet-manager" });
+    expect(openFleetManager).toHaveBeenCalledTimes(1);
+  });
+
+  it("does no fleet work when no fleet deps are injected (backward compatible)", () => {
+    const provider = new SidebarViewProvider(makeExtensionUri());
+    const view = makeWebviewView();
+    resolve(provider, view);
+    expect(lastFleetStatus(view)).toBeUndefined();
+  });
+});
+
+describe("defaultFleetSectionDeps — production readers (#1321)", () => {
+  let defaultFleetSectionDeps: any;
+  let tmp: string;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    const mod = await import("../src/sidebar_view");
+    defaultFleetSectionDeps = mod.defaultFleetSectionDeps;
+    const os = await import("node:os");
+    const fs = await import("node:fs");
+    tmp = fs.mkdtempSync(resolve(os.tmpdir(), "amc-fleet-"));
+  });
+
+  it("readRoster parses the roster cache into rows, reachable=true", async () => {
+    const fs = await import("node:fs");
+    const rosterFile = resolve(tmp, "roster.json");
+    fs.writeFileSync(rosterFile, JSON.stringify({
+      schema_version: 1,
+      rows: [{ machine_id: "a", name: "A", server_mode: "server", capabilities: ["compute"], sshAlias: "a", transport: "ssh", last_report: "t", health: "reachable" }],
+    }));
+    const deps = defaultFleetSectionDeps({ rosterFile });
+    const out = deps.readRoster();
+    expect(out.reachable).toBe(true);
+    expect(out.rows).toHaveLength(1);
+    expect(out.rows[0].server_mode).toBe("server");
+  });
+
+  it("readRoster treats an absent roster file as an empty-but-reachable fleet", () => {
+    const deps = defaultFleetSectionDeps({ rosterFile: resolve(tmp, "nope.json") });
+    const out = deps.readRoster();
+    expect(out.reachable).toBe(true);
+    expect(out.rows).toEqual([]);
+  });
+
+  it("readPosture folds fleet.json role (Server mode) with the posture-state link-health", async () => {
+    const fs = await import("node:fs");
+    const postureFile = resolve(tmp, "posture-state.json");
+    const fleetConfigFile = resolve(tmp, "fleet.json");
+    fs.writeFileSync(postureFile, JSON.stringify({ hostname: "mac-01", mode: "fleet", reachable: true, hub: { name: "hub", base_url: "u" } }));
+    fs.writeFileSync(fleetConfigFile, JSON.stringify({ role: "server", canonical: {} }));
+    const deps = defaultFleetSectionDeps({ postureFile, fleetConfigFile });
+    const p = deps.readPosture();
+    expect(p).not.toBeNull();
+    expect(p.serverMode).toBe("server"); // fleet.json role
+    expect(p.mode).toBe("fleet");
+    expect(p.reachable).toBe(true);
+  });
+
+  it("isFleetManagerAvailable honestly reports false when the Fleet Manager tab (#1322) is absent", () => {
+    const deps = defaultFleetSectionDeps({});
+    expect(deps.isFleetManagerAvailable()).toBe(false);
+  });
+});
+
+describe("sidebar webview — fleet section styling (#1321, design-system tokens)", () => {
+  let SidebarViewProvider: any;
+  beforeEach(async () => {
+    vi.resetModules();
+    SidebarViewProvider = (await import("../src/sidebar_view")).SidebarViewProvider;
+  });
+
+  function html() {
+    const provider = new SidebarViewProvider(makeExtensionUri());
+    const view = makeWebviewView();
+    provider.resolveWebviewView(view, {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
+    return view.webview.html as string;
+  }
+
+  it("styles device rows + posture badge through --vscode-* theme tokens (no raw literals)", () => {
+    const css = html();
+    expect(css).toMatch(/\.fleet-device-row\s*\{/);
+    expect(css).toMatch(/\.fleet-posture-badge\s*\{/);
+    // the fleet section styling is token-driven, not hardcoded colors.
+    expect(css).toMatch(/\.fleet-(device-row|posture-badge|health|cap-chip|manage)[^{]*\{[^}]*var\(--vscode-/);
+  });
+
+  it("keys the tri-state health indicator on data-health with distinct theme colors (a11y: color is not the only signal)", () => {
+    const css = html();
+    expect(css).toMatch(/\.fleet-health\[data-health=["']reachable["']\]/);
+    expect(css).toMatch(/\.fleet-health\[data-health=["']degraded["']\]/);
+    expect(css).toMatch(/\.fleet-health\[data-health=["']down["']\]/);
+  });
+
+  it("defines the capability chips by border and marks descriptive vs known", () => {
+    const css = html();
+    expect(css).toMatch(/\.fleet-cap-chip[^{]*\{[^}]*border/);
+    expect(css).toMatch(/\.fleet-cap-chip\[data-known=/);
+  });
+
+  it("renders a disabled Manage affordance that reads as non-interactive (honest degrade)", () => {
+    const css = html();
+    expect(css).toMatch(/\.fleet-manage:disabled\s*\{/);
+    expect(css).toMatch(/\.fleet-manage:disabled\s*\{[^}]*(cursor:\s*default|opacity)/);
+  });
+});
+
+describe("CONTEXT.md — Sidebar fleet section refinement (#1321)", () => {
+  const context = readFileSync(resolve(__dirname, "..", "..", "..", "CONTEXT.md"), "utf8");
+  const sidebarEntry = context.slice(context.indexOf("**Sidebar**:"), context.indexOf("**Sidebar**:") + 800);
+
+  it("no longer marks the fleet section deferred", () => {
+    expect(sidebarEntry).not.toMatch(/fleet section \(deferred\)/);
+  });
+
+  it("describes the read-only fleet section (roster devices + health)", () => {
+    expect(sidebarEntry).toMatch(/read-only/i);
+    expect(sidebarEntry).toMatch(/fleet section/i);
+  });
 });
 
 // ── Build pipeline ───────────────────────────────────────────────────────────
@@ -867,6 +1122,43 @@ describe("sidebar webview — section reorder structure", () => {
   it("getAllSections collects all sections uniformly from treeRoot children", () => {
     // After Fleet unification, getAllSections no longer special-cases fleetSection
     expect(src).not.toMatch(/if\s*\(\s*fleetSection\s*\)\s*sections\.push/);
+  });
+});
+
+// ── #1321: read-only fleet section (webview glue) ────────────────────────────
+
+describe("sidebar webview — fleet section render (#1321)", () => {
+  const src = readFileSync(
+    resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+    "utf8",
+  );
+
+  it("imports the shared renderFleetSection renderer", () => {
+    expect(src).toMatch(/import\s*\{[^}]*renderFleetSection[^}]*\}\s*from\s*["']\.\/sidebar_fleet_section["']/);
+  });
+
+  it("no longer renders the 'Coming soon' fleet placeholder", () => {
+    expect(src).not.toContain("Coming soon");
+  });
+
+  it("the fleet section body is rendered via renderFleetSection, not a static placeholder", () => {
+    // The fleet branch of renderRoots delegates to the shared renderer.
+    const fleetBranch = src.slice(src.indexOf('key === "fleet"'));
+    expect(fleetBranch).toMatch(/renderFleetSection\s*\(/);
+  });
+
+  it("handles the fleet-status down-message and re-renders from it", () => {
+    expect(src).toMatch(/case\s+["']fleet-status["']/);
+    // the fleet-status handler feeds the shared renderer.
+    const handler = src.slice(src.indexOf('case "fleet-status"'));
+    expect(handler).toMatch(/renderFleetSection\s*\(/);
+  });
+
+  it("Manage clicks post the open-fleet-manager navigation via vscode.postMessage", () => {
+    // The renderer is handed vscode.postMessage — the section's only up-message.
+    const fleetBranch = src.slice(src.indexOf('key === "fleet"'), src.indexOf('key === "fleet"') + 600);
+    expect(fleetBranch).toMatch(/renderFleetSection\s*\(/);
+    expect(fleetBranch).toMatch(/vscode\.postMessage/);
   });
 });
 
@@ -1659,8 +1951,10 @@ describe("sidebar webview — section labels", () => {
       "utf8",
     );
     expect(src).toMatch(/renderSectionHeader\s*\(\s*["']Fleet["']\s*,\s*["']fleet["']\s*\)/);
-    // Contains "Coming soon" as dynamically inserted text
-    expect(src).toContain("Coming soon");
+    // #1321: the "Coming soon" placeholder is replaced by the read-only fleet
+    // section, rendered dynamically via the shared renderFleetSection renderer.
+    expect(src).not.toContain("Coming soon");
+    expect(src).toMatch(/renderFleetSection\s*\(/);
   });
 });
 

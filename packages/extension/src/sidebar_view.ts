@@ -2,7 +2,7 @@
 //
 // Replaces the native TreeDataProvider (workspace_tree.ts) with a webview that
 // can render custom UI: styled buttons, project metadata, lifecycle pills, and
-// eventually a fleet section. The sidebar is navigation chrome — destinations
+// a read-only fleet section (#1321). The sidebar is navigation chrome — destinations
 // open in the editor area; it never hosts chat or rich visualizations.
 //
 // Pattern: WebviewViewProvider (sidebar view), CSP nonce, typed bridge.
@@ -12,6 +12,9 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import { handleSidebarMessage, type SidebarMessageHandlers, type SidebarDownMessage, type FileOpRequest, type FileOpResult, type TreeEntry, type TreeRoot } from "./sidebar_bridge";
+import { buildFleetSectionModel, type RosterRowLike, type FleetPostureInput } from "./sidebar_fleet_section";
+import { parseRosterDocument, fleetRosterCachePath, fleetTopologyPath } from "@amicode/schema";
+import { fleetPostureStateFile } from "./fleet_posture_state";
 import { SidebarTreeService, type RawDirEntry } from "./sidebar_tree_service";
 import { ChatPanel } from "./chat_panel";
 import { detectProjectType } from "./project/detect";
@@ -281,6 +284,114 @@ function resolveIconTheme(webview: vscode.Webview): { data: IconThemeData; rootU
 }
 
 /**
+ * Injectable fleet-section data seams (#1321). Kept behind an interface so the
+ * host is testable without real HTTP/fs/events, and so the roster READ can be a
+ * local file read (this machine is the server) or the `GET /amicode/roster`
+ * proxy (a client) without the provider caring which. Read-only by contract:
+ * there is no write seam here.
+ */
+export interface FleetSectionDeps {
+  /** The fleet-wide roster + whether it could be read (false ⇒ host down). */
+  readRoster: () => { rows: RosterRowLike[]; reachable: boolean };
+  /** This machine's posture (serve-stance + link-health), or null if unknown. */
+  readPosture: () => FleetPostureInput | null;
+  /** Subscribe to posture/roster change; the callback re-pushes the section. */
+  onPostureChange: (cb: () => void) => vscode.Disposable;
+  /** Whether the Fleet Manager tab (#1322) exists — gates the Manage affordance. */
+  isFleetManagerAvailable: () => boolean;
+  /** Open the Fleet Manager tab (#1322). Only invoked when available. */
+  openFleetManager: () => void;
+}
+
+/** Options for {@link defaultFleetSectionDeps} — every file path is injectable
+ *  so the readers are unit-testable; production leaves them at the canonical
+ *  `~/.amico/ops/fleet/*` locations. */
+export interface DefaultFleetDepsOptions {
+  rosterFile?: string;
+  postureFile?: string;
+  fleetConfigFile?: string;
+  fleetManagerCommandId?: string;
+  /** Override the availability probe; default honestly reports false until the
+   *  Fleet Manager tab (#1322) lands and flips this. */
+  isFleetManagerAvailable?: () => boolean;
+  /** Override the change subscription (default: fs.watch on the ops/fleet dir). */
+  onPostureChange?: (cb: () => void) => vscode.Disposable;
+}
+
+/**
+ * The production fleet seams (#1321). READ-ONLY: the roster + posture are read
+ * from their canonical on-disk homes (this machine is the Canonical Server, so
+ * the roster cache is local; a client's HTTP-proxy read is a follow-up that
+ * swaps `readRoster`). No write path exists here by contract.
+ */
+export function defaultFleetSectionDeps(opts: DefaultFleetDepsOptions = {}): FleetSectionDeps {
+  const rosterFile = opts.rosterFile ?? fleetRosterCachePath();
+  const postureFile = opts.postureFile ?? fleetPostureStateFile();
+  const fleetConfigFile = opts.fleetConfigFile ?? fleetTopologyPath();
+  const commandId = opts.fleetManagerCommandId ?? "amicode.openFleetManager";
+
+  function readServeStance(): string {
+    try {
+      if (!fs.existsSync(fleetConfigFile)) return "standalone";
+      const cfg = JSON.parse(fs.readFileSync(fleetConfigFile, "utf8"));
+      return cfg && typeof cfg.role === "string" ? cfg.role : "standalone";
+    } catch {
+      return "standalone";
+    }
+  }
+
+  return {
+    readRoster: () => {
+      try {
+        // An absent roster file is a fresh/empty fleet (reachable), NOT host-down.
+        if (!fs.existsSync(rosterFile)) return { rows: [] as RosterRowLike[], reachable: true };
+        const parsed = parseRosterDocument(JSON.parse(fs.readFileSync(rosterFile, "utf8")));
+        return { rows: parsed.ok ? parsed.doc.rows : [], reachable: true };
+      } catch {
+        // A genuine I/O error is the honest unreachable signal (AC6).
+        return { rows: [], reachable: false };
+      }
+    },
+    readPosture: () => {
+      const serverMode = readServeStance();
+      try {
+        if (!fs.existsSync(postureFile)) {
+          // No posture recorded yet — report the serve-stance with a standalone,
+          // unreachable link (honest: never a fabricated "healthy").
+          return { serverMode, hostname: os.hostname(), mode: "standalone", reachable: false, hub: { name: null, base_url: null } };
+        }
+        const p = JSON.parse(fs.readFileSync(postureFile, "utf8"));
+        const mode: FleetPostureInput["mode"] =
+          p.mode === "fleet" || p.mode === "degraded" || p.mode === "standalone" ? p.mode : "standalone";
+        return {
+          serverMode,
+          hostname: typeof p.hostname === "string" ? p.hostname : os.hostname(),
+          mode,
+          reachable: !!p.reachable,
+          hub: { name: p.hub?.name ?? null, base_url: p.hub?.base_url ?? null },
+        };
+      } catch {
+        return null;
+      }
+    },
+    onPostureChange:
+      opts.onPostureChange ??
+      ((cb) => {
+        // Watch the ops/fleet dir (posture-state.json + roster.json) — a change
+        // to either re-pushes the section (AC5, no manual reload).
+        try {
+          const watcher = fs.watch(path.dirname(postureFile), { persistent: false }, () => cb());
+          return { dispose() { try { watcher.close(); } catch { /* already closed */ } } };
+        } catch {
+          return { dispose() { /* dir absent — nothing to watch */ } };
+        }
+      }),
+    isFleetManagerAvailable: opts.isFleetManagerAvailable ?? (() => false),
+    openFleetManager: () => { void vscode.commands.executeCommand(commandId); },
+  };
+}
+
+/**
  * Provides the sidebar webview for the Amicode workspace panel.
  * Registered as `amicode.workspace` (type: "webview" in package.json).
  */
@@ -302,13 +413,22 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
   private resolvedEnvDebounceTimer?: ReturnType<typeof setTimeout>;
   private treeService: SidebarTreeService;
   private globalState?: { get(key: string, fallback?: unknown): unknown; update(key: string, value: unknown): Thenable<void> };
+  /** Injected fleet seams (#1321); undefined ⇒ the section stays inert (the
+   *  webview shows its own honest empty state and posts nothing). */
+  private fleetDeps?: FleetSectionDeps;
+  private fleetSub?: vscode.Disposable;
 
   static readonly DEFAULT_SECTION_ORDER = ["research", "dev", "fleet"];
   private static readonly SECTION_ORDER_KEY = "amicode.sectionOrder";
 
-  constructor(extensionUri: vscode.Uri, globalState?: { get(key: string, fallback?: unknown): unknown; update(key: string, value: unknown): Thenable<void> }) {
+  constructor(
+    extensionUri: vscode.Uri,
+    globalState?: { get(key: string, fallback?: unknown): unknown; update(key: string, value: unknown): Thenable<void> },
+    fleetDeps?: FleetSectionDeps,
+  ) {
     this.extensionUri = extensionUri;
     this.globalState = globalState;
+    this.fleetDeps = fleetDeps;
     this.treeService = new SidebarTreeService({
       detectProjectType,
       readToml: (dir) => readResearchToml(dir),
@@ -440,6 +560,12 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
             });
           }
         },
+        // #1321 — the ONLY fleet action: navigate to the Fleet Manager tab
+        // (#1322). Honest degrade: navigate only when that tab exists; a stray
+        // message when it doesn't is a no-op (never a dead navigation).
+        openFleetManager: () => {
+          if (this.fleetDeps?.isFleetManagerAvailable()) this.fleetDeps.openFleetManager();
+        },
       };
       void handleSidebarMessage(msg, handlers);
     });
@@ -459,6 +585,14 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
       this.pushGitStatus();
     });
 
+    // #1321 — the read-only fleet section: push the initial view-model, then
+    // refresh it on every posture-change (no manual reload). Inert when no
+    // fleet deps were injected (backward compatible).
+    if (this.fleetDeps) {
+      this.pushFleetStatus();
+      this.fleetSub = this.fleetDeps.onPostureChange(() => this.pushFleetStatus());
+    }
+
     webviewView.onDidDispose(() => {
       clearTimeout(this.fsDebounceTimer);
       clearTimeout(this.resolvedEnvDebounceTimer);
@@ -470,6 +604,8 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
       this.workspaceSub?.dispose();
       for (const sub of this.gitSubs) sub.dispose();
       this.gitSubs = [];
+      this.fleetSub?.dispose();
+      this.fleetSub = undefined;
       this.view = undefined;
     });
 
@@ -526,6 +662,24 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
 
   private postDown(msg: SidebarDownMessage): void {
     this.view?.webview.postMessage(msg);
+  }
+
+  /**
+   * #1321 — build the read-only fleet section view-model from the injected
+   * seams and push it to the webview. Honest by construction: an unreachable
+   * roster resolves to the degraded state (never a fabricated list), and Manage
+   * is enabled only when the Fleet Manager tab (#1322) exists.
+   */
+  private pushFleetStatus(): void {
+    if (!this.fleetDeps) return;
+    const roster = this.fleetDeps.readRoster();
+    const model = buildFleetSectionModel({
+      roster: roster.rows,
+      rosterReachable: roster.reachable,
+      posture: this.fleetDeps.readPosture(),
+      manageAvailable: this.fleetDeps.isFleetManagerAvailable(),
+    });
+    this.postDown({ kind: "fleet-status", model });
   }
 
   /**
@@ -1025,6 +1179,94 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
       font-size: 12px;
       color: var(--vscode-descriptionForeground);
       font-style: italic;
+    }
+    /* #1321 — the read-only fleet section. Token-driven (no raw literals),
+       border-defined, health paired with text (color is never the only signal). */
+    .fleet-section-body { padding: 2px 0; }
+    .fleet-posture-badge {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin: 2px 8px 6px 32px;
+      padding: 2px 8px;
+      border: 1px solid var(--vscode-sideBarSectionHeader-border, var(--vscode-panel-border));
+      border-radius: 4px;
+      font-size: 11px;
+      color: var(--vscode-descriptionForeground);
+      background: var(--vscode-badge-background);
+    }
+    .fleet-posture-mode {
+      color: var(--vscode-badge-foreground, var(--vscode-foreground));
+      font-weight: 600;
+      text-transform: capitalize;
+    }
+    .fleet-posture-link[data-link-health="ok"] { color: var(--vscode-testing-iconPassed, var(--vscode-terminal-ansiGreen)); }
+    .fleet-posture-link[data-link-health="degraded"] { color: var(--vscode-editorWarning-foreground, var(--vscode-terminal-ansiYellow)); }
+    .fleet-posture-link[data-link-health="down"] { color: var(--vscode-errorForeground, var(--vscode-terminal-ansiRed)); }
+    .fleet-device-list { display: flex; flex-direction: column; gap: 2px; }
+    .fleet-device-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 8px 3px 32px;
+      font-size: 12px;
+      color: var(--vscode-foreground);
+    }
+    .fleet-device-row:hover { background: var(--vscode-list-hoverBackground); }
+    .fleet-device-name { font-weight: 600; }
+    .fleet-device-role,
+    .fleet-last-seen { color: var(--vscode-descriptionForeground); font-size: 11px; }
+    .fleet-caps { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+    .fleet-cap-chip {
+      padding: 0 6px;
+      border: 1px solid var(--vscode-badge-background, var(--vscode-panel-border));
+      border-radius: 999px;
+      font-size: 10px;
+      line-height: 15px;
+      color: var(--vscode-badge-foreground, var(--vscode-foreground));
+      background: var(--vscode-badge-background);
+    }
+    /* A descriptive (non-behavior) tag is defined by a muted border only, no fill. */
+    .fleet-cap-chip[data-known="false"] {
+      background: transparent;
+      border-color: var(--vscode-panel-border, var(--vscode-descriptionForeground));
+      color: var(--vscode-descriptionForeground);
+    }
+    .fleet-health {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 11px;
+      text-transform: capitalize;
+    }
+    .fleet-health::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: currentColor;
+      flex-shrink: 0;
+    }
+    .fleet-health[data-health="reachable"] { color: var(--vscode-testing-iconPassed, var(--vscode-terminal-ansiGreen)); }
+    .fleet-health[data-health="degraded"] { color: var(--vscode-editorWarning-foreground, var(--vscode-terminal-ansiYellow)); }
+    .fleet-health[data-health="down"] { color: var(--vscode-errorForeground, var(--vscode-terminal-ansiRed)); }
+    .fleet-manage {
+      margin: 6px 8px 4px 32px;
+      padding: 2px 10px;
+      font-size: 11px;
+      border: 1px solid var(--vscode-button-border, var(--vscode-panel-border));
+      border-radius: 4px;
+      color: var(--vscode-foreground);
+      background: transparent;
+      cursor: pointer;
+    }
+    .fleet-manage:hover:not(:disabled) { background: var(--vscode-list-hoverBackground); }
+    .fleet-manage:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+    .fleet-manage:disabled {
+      cursor: default;
+      opacity: 0.5;
+      color: var(--vscode-disabledForeground, var(--vscode-descriptionForeground));
     }
     .context-menu {
       position: fixed;
