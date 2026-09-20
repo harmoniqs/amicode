@@ -24,14 +24,24 @@ export function createTimelineModel(input: {
       clearRefresh()
       if (!id) return
 
-      // #1294: the 15s staleness force-refetch is REMOVED. It fired on
-      // every switch to a session idle >15s, and the resource's own sync
-      // then JOINED the in-flight force task (runInflight dedupe) — so the
-      // timeline suspended on a wire round-trip for a session whose
-      // messages were cached and on screen the whole time (the panel's
-      // rings: zero message loads, yet frozen/blank holds on every
-      // switch). Freshness is the SSE reducers' job; the warm pass and
-      // on-demand loads cover the rest.
+      // #1295c: a session with ANY data in the store never syncs on the
+      // switch path at all. Two suspensions died here: the stale-force
+      // join (removed earlier), and the one the rings finally exposed —
+      // the switch's sync JOINING an in-flight deep prefetch (the
+      // prewarmer warms open tabs to 60 messages over the wire; switching
+      // mid-prefetch held the panel for the whole fetch chain while the
+      // cached data sat on screen). The SSE reducers keep live sessions
+      // fresh; the warm pass reconciles in the background; only a
+      // genuinely-empty session takes the sync path.
+      const cached = untrack(() => sync().data.message[id] !== undefined)
+      if (cached) {
+        // The resource resolves NOW (the cached messages are on screen);
+        // the sync still runs as a TRUE background task — it may join an
+        // in-flight prefetch, reconcile fresh data, fill session info —
+        // nothing awaits it, so it can take as long as the wire needs.
+        void sync().session.sync(id).catch(() => {})
+        return
+      }
       return sync().session.sync(id)
     },
   )

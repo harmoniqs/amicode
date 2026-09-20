@@ -228,10 +228,28 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
   // Track the last payload id seen (the server ids every event; id-less
   // events just don't advance the cursor — replay may over-deliver, which
   // the reconcile-based reducers tolerate by design).
+  // #1264: the cursor must survive RELOADS — module state died with every
+  // document, so a drop right after a reload reconnected cursor-less and
+  // the gap's events were lost (the harness caught it: the sse-gap flow
+  // failed only in the post-reload context). sessionStorage is per-tab,
+  // cheap, and exactly the lifetime the cursor wants.
+  const CURSOR_KEY = "amicode.sse.lastEventID"
   let lastEventID: string | undefined
+  try {
+    lastEventID = sessionStorage.getItem(CURSOR_KEY) ?? undefined
+  } catch {
+    /* private mode etc. — degrade to module state */
+  }
   const trackEventID = (payload: unknown) => {
     const id = (payload as { id?: unknown } | undefined)?.id
-    if (typeof id === "string" && id) lastEventID = id
+    if (typeof id === "string" && id) {
+      lastEventID = id
+      try {
+        sessionStorage.setItem(CURSOR_KEY, id)
+      } catch {
+        /* best-effort */
+      }
+    }
   }
   const sseFetch: FetchLike = (input, init) => {
     const base = eventFetch ?? globalThis.fetch
