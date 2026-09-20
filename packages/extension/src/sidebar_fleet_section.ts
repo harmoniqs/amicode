@@ -157,3 +157,126 @@ function buildPostureBadge(posture: FleetPostureInput | null): FleetPostureBadge
     hub: { name: posture.hub.name ?? null, base_url: posture.hub.base_url ?? null },
   };
 }
+
+// ── DOM render (browser / webview) ───────────────────────────────────────────
+
+/** The single navigation message the section can emit — the READ-ONLY contract:
+ *  there is no roster-write / management message (AC4). */
+export interface OpenFleetManagerRequest {
+  kind: "open-fleet-manager";
+}
+
+/** Human-readable label for a per-device health tri-state (color is never the
+ *  only signal — the label always accompanies the indicator). */
+function healthLabel(health: RosterHealth): string {
+  return health; // reachable | degraded | down — the vocabulary is already legible
+}
+
+/** Render THIS machine's posture badge into the section. */
+function renderPostureBadge(badge: FleetPostureBadge): HTMLElement {
+  const el = document.createElement("div");
+  el.className = "fleet-posture-badge";
+  el.setAttribute("data-link-health", badge.linkHealth);
+  const mode = document.createElement("span");
+  mode.className = "fleet-posture-mode";
+  mode.textContent = badge.serverMode;
+  const link = document.createElement("span");
+  link.className = "fleet-posture-link";
+  link.setAttribute("data-link-health", badge.linkHealth);
+  link.textContent = badge.linkHealth;
+  el.appendChild(mode);
+  el.appendChild(link);
+  return el;
+}
+
+/** Render one read-only device row. */
+function renderDeviceRow(device: FleetDeviceRow): HTMLElement {
+  const rowEl = document.createElement("div");
+  rowEl.className = "fleet-device-row";
+  rowEl.setAttribute("data-machine-id", device.machineId);
+
+  const name = document.createElement("span");
+  name.className = "fleet-device-name";
+  name.textContent = device.name;
+  rowEl.appendChild(name);
+
+  // server_mode under the "role" label.
+  const role = document.createElement("span");
+  role.className = "fleet-device-role";
+  role.textContent = `role: ${device.role}`;
+  rowEl.appendChild(role);
+
+  if (device.capabilities.length > 0) {
+    const caps = document.createElement("span");
+    caps.className = "fleet-caps";
+    for (const chip of device.capabilities) {
+      const c = document.createElement("span");
+      c.className = "fleet-cap-chip";
+      c.setAttribute("data-known", chip.known ? "true" : "false");
+      c.textContent = chip.tag;
+      caps.appendChild(c);
+    }
+    rowEl.appendChild(caps);
+  }
+
+  // tri-state health, keyed on data-health, paired with text (a11y: color is not the only signal).
+  const health = document.createElement("span");
+  health.className = "fleet-health";
+  health.setAttribute("data-health", device.health);
+  health.textContent = healthLabel(device.health);
+  rowEl.appendChild(health);
+
+  // last_report under the "last-seen" label.
+  const seen = document.createElement("span");
+  seen.className = "fleet-last-seen";
+  seen.textContent = `last-seen: ${device.lastSeen}`;
+  rowEl.appendChild(seen);
+
+  return rowEl;
+}
+
+/** The single Manage affordance. Enabled ⇒ a button that posts the navigation
+ *  message. Disabled (Fleet Manager tab #1322 absent) ⇒ an honestly-disabled
+ *  control with no click handler — no dead click (AC3). */
+function renderManage(enabled: boolean, post: (msg: OpenFleetManagerRequest) => void): HTMLElement {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "fleet-manage";
+  btn.textContent = "Manage";
+  btn.setAttribute("aria-label", "Manage fleet");
+  if (enabled) {
+    btn.addEventListener("click", () => post({ kind: "open-fleet-manager" }));
+  } else {
+    btn.disabled = true;
+    btn.setAttribute("aria-disabled", "true");
+    btn.title = "Fleet Manager is not available yet";
+  }
+  return btn;
+}
+
+/**
+ * Render the fleet section into `container` from the view-model. Pure DOM +
+ * a `post` callback (the webview passes vscode.postMessage). READ-ONLY: the
+ * only message it can emit is the Manage navigation (AC4).
+ */
+export function renderFleetSection(
+  container: HTMLElement,
+  model: FleetSectionModel,
+  post: (msg: OpenFleetManagerRequest) => void,
+): void {
+  container.innerHTML = "";
+
+  if (model.posture) {
+    container.appendChild(renderPostureBadge(model.posture));
+  }
+
+  if (model.state === "populated") {
+    const list = document.createElement("div");
+    list.className = "fleet-device-list";
+    for (const device of model.devices) {
+      list.appendChild(renderDeviceRow(device));
+    }
+    container.appendChild(list);
+    container.appendChild(renderManage(model.manage.enabled, post));
+  }
+}
