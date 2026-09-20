@@ -123,6 +123,7 @@ export const createDirSyncContext = (
       },
       todo: serverSync.session.todo,
       history: serverSync.session.history,
+      prefetch: (sessionID: string, limit: number) => serverSync.session.prefetch(sessionID, limit),
       evict(sessionID: string) {
         serverSync.session.evict(sessionID)
       },

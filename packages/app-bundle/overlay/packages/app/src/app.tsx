@@ -67,6 +67,8 @@ import { SDKProvider, useSDK } from "@/context/sdk"
 import { resolveLandingDirectory } from "@/pages/new-session-landing"
 import { authTokenFromCredentials } from "@/utils/server"
 import { normalizeSessionInfo } from "@/utils/session"
+import type { SessionV2Info } from "@opencode-ai/sdk/v2/client"
+import type { SessionInfo } from "@opencode-ai/client/promise"
 import { WslServersProvider } from "@/wsl/context"
 import DirectoryLayout, { DirectoryDataProvider } from "@/pages/directory-layout"
 import LegacyLayout from "@/pages/layout"
@@ -824,7 +826,7 @@ function SessionLineagePrewarmer() {
         ;(globalThis as { __amicodePrewarmErr?: string }).__amicodePrewarmErr = "no-sync-ctx"
         continue
       }
-      let recent: Array<{ id: string }> = []
+      let recent: Array<SessionV2Info> = []
       try {
         const ctx = global.ensureServerCtx(conn)
         const page = await ctx.sdk.client.v2.session.list({ limit: BULK_WARM_SESSIONS, order: "desc" })
@@ -850,7 +852,7 @@ function SessionLineagePrewarmer() {
         // (every other consumer normalizes at the boundary; the raw
         // object crashed the tab strip's render on the real hub).
         try {
-          sync.session.remember(normalizeSessionInfo(info))
+          sync.session.remember(normalizeSessionInfo(info as SessionInfo))
         } catch {
           /* best-effort */
         }
@@ -1147,7 +1149,7 @@ export function AppInterface(props: {
                                   thrown teardowns (ErrorBoundary) and
                                   pending resources (Suspense). */}
                               <ErrorBoundary fallback={() => <SessionPanelHold />}>
-                                <Suspense fallback={() => <SessionPanelHold />}>
+                                <Suspense fallback={<SessionPanelHold />}>
                                   {routerProps.children}
                                 </Suspense>
                               </ErrorBoundary>

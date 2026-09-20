@@ -20,6 +20,10 @@ const isAbortError = (error: unknown) =>
 const isStreamClosed = (error: unknown, signal?: AbortSignal) => isAbortError(error) || signal?.aborted === true
 export type ServerEvent = Event & { current?: OpenCodeEvent }
 type QueuedServerEvent = { directory: string; payload: ServerEvent }
+/** A minimal fetch call signature. Newer lib types make `typeof fetch` require
+ *  a `preconnect` member our plain wrappers don't implement (lib drift);
+ *  consumers that insist on `typeof fetch` cast at the call site. */
+type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
 type CurrentDelta = Extract<
   OpenCodeEvent,
   { type: "session.text.delta" | "session.reasoning.delta" | "session.tool.input.delta" | "session.compaction.delta" }
@@ -229,7 +233,7 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
     const id = (payload as { id?: unknown } | undefined)?.id
     if (typeof id === "string" && id) lastEventID = id
   }
-  const sseFetch: typeof fetch = (input, init) => {
+  const sseFetch: FetchLike = (input, init) => {
     const base = eventFetch ?? globalThis.fetch
     try {
       if (lastEventID) {
@@ -247,10 +251,10 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
     }
     return base(input as Parameters<typeof fetch>[0], init as Parameters<typeof fetch>[1])
   }
-  const eventApi = createApiForServer({ server: server.http, fetch: sseFetch })
+  const eventApi = createApiForServer({ server: server.http, fetch: sseFetch as typeof fetch })
   const eventSdk = createSdkForServer({
     signal: abort.signal,
-    fetch: sseFetch,
+    fetch: sseFetch as typeof fetch,
     server: server.http,
   })
   const protocol = detectServerProtocol(server.http, platform.fetch ?? globalThis.fetch)
@@ -412,7 +416,7 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
   // the old forever. A timed-out call rejects; the sync layer's retry
   // paths (and the frozen holds) carry the view until it lands.
   const platformFetch = platform.fetch ?? globalThis.fetch
-  const fetchWithTimeout: typeof fetch = (input, init) =>
+  const fetchWithTimeout: FetchLike = (input, init) =>
     platformFetch(input, {
       ...init,
       signal: init?.signal ?? AbortSignal.timeout(30_000),
@@ -420,14 +424,14 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
 
   const sdk = createSdkForServer({
     server: server.http,
-    fetch: fetchWithTimeout,
+    fetch: fetchWithTimeout as typeof fetch,
     throwOnError: true,
   })
-  const currentApi: ServerApi = createApiForServer({ server: server.http, fetch: fetchWithTimeout })
+  const currentApi: ServerApi = createApiForServer({ server: server.http, fetch: fetchWithTimeout as typeof fetch })
   const legacy = (directory?: string) =>
     createSdkForServer({
       server: server.http,
-      fetch: fetchWithTimeout,
+      fetch: fetchWithTimeout as typeof fetch,
       throwOnError: true,
       directory,
     })
@@ -451,7 +455,7 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
     createClient(opts: Omit<Parameters<typeof createSdkForServer>[0], "server" | "fetch">) {
       return createSdkForServer({
         server: server.http,
-        fetch: fetchWithTimeout,
+        fetch: fetchWithTimeout as typeof fetch,
         ...opts,
       })
     },

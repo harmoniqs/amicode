@@ -213,6 +213,7 @@ export function createServerSession(
     info: {} as Record<string, Session | undefined>,
     session_status: {} as Record<string, SessionStatus>,
     session_diff: {} as Record<string, FileDiffInfo[]>,
+    diff_version: {} as Record<string, number>,
     todo: {} as Record<string, Todo[]>,
     permission: {} as Record<string, PermissionRequest[]>,
     question: {} as Record<string, QuestionRequest[]>,
