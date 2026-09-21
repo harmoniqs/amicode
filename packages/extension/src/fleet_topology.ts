@@ -317,3 +317,13 @@ function canonicalOf(topology: Record<string, unknown> | undefined): FleetCanoni
   if (typeof rec.sshAlias === "string") canonical.sshAlias = rec.sshAlias;
   return Object.keys(canonical).length > 0 ? canonical : undefined;
 }
+
+/** Derive the synthetic machine_id for a FleetCanonical — the same derivation
+ *  the sidebar uses at `sidebar_view.ts:516` to synthesize the canonical-server
+ *  row's `machineId`. Shared so both the sidebar and the attach action use the
+ *  same predicate, preventing synthesis drift. (#1411, ADR 0030 §D4) */
+export function canonicalMachineId(c: FleetCanonical | undefined): string | null {
+  if (!c) return null;
+  const id = c.host ?? c.sshAlias;
+  return typeof id === "string" && id.trim() !== "" ? id.trim() : null;
+}

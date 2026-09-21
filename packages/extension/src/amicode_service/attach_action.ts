@@ -43,6 +43,10 @@ import {
   writeAttachmentCredential,
   type AttachmentCredentialDeps,
 } from "./attachment_credential";
+import {
+  type FleetTopologyState,
+  canonicalMachineId,
+} from "../fleet_topology";
 
 export interface AttachActionDeps extends AttachmentPointerDeps, RosterDeps, AttachmentCredentialDeps {
   /** The SWITCH side-effect seam (AC3): invoked when the attached origin
@@ -52,6 +56,10 @@ export interface AttachActionDeps extends AttachmentPointerDeps, RosterDeps, Att
    *  staged fleet plane; a standalone peer passes nothing and the pointer still
    *  flips. */
   resetCursorOnSwitch?: () => void;
+  /** Topology reader for the canonical-server fallback (#1411, ADR 0030 §D4).
+   *  When the roster lookup misses, this reader resolves the canonical server's
+   *  coordinates from fleet.json. Injectable for testability. */
+  readTopology?: () => FleetTopologyState;
 }
 
 /** Tolerant roster load → the fleet-wide rows (the candidate source). An absent
@@ -106,34 +114,77 @@ function currentMachineId(deps: AttachActionDeps): string | null {
 }
 
 /** POST /amicode/fleet/attach — add an upstream + set the pointer from the
- *  matching roster row (candidate source). Optional {base_url, token} provisions
- *  the per-attachment credential. Resets the SSE cursor when the attached origin
- *  changes (a switch). */
+ *  matching roster row (primary candidate source) or the topology canonical
+ *  (fallback for the synthesized hub row on a client — ADR 0030 §D4).
+ *  Optional {base_url, token} provisions the per-attachment credential.
+ *  Resets the SSE cursor when the attached origin changes (a switch). */
 export function attachActionResponse(rawBody: string, deps: AttachActionDeps = {}): string {
   const body = parseAttachBody(rawBody);
   if (!body) return refuse("bad_request", "body must be a JSON object with a non-empty machine_id");
 
   const rows = loadRosterRows(deps);
   const match = rows.find((r) => r.machine_id === body.machine_id);
-  // The ROSTER is the sole candidate source: no row → no attach (a refused
-  // attach never half-writes a pointer or a credential).
-  if (!match) return refuse("unknown_machine", "the requested machine_id is not in the fleet roster");
 
-  const prior = currentMachineId(deps);
-  const pointer: AttachmentPointer = {
-    sshAlias: match.sshAlias,
-    transport: match.transport,
-    machine_id: match.machine_id,
-  };
-  writeAttachmentPointerFile(pointer, deps);
-  if (body.base_url && body.token) {
-    writeAttachmentCredential(match.machine_id, { baseUrl: body.base_url, token: body.token }, deps);
+  let pointer: AttachmentPointer;
+  if (match) {
+    // Primary path: roster row supplies reach coordinates
+    pointer = {
+      sshAlias: match.sshAlias,
+      transport: match.transport,
+      machine_id: match.machine_id,
+    };
+  } else {
+    // Fallback: topology canonical (#1411, ADR 0030 §D4)
+    // On a CLIENT, the canonical server is never a roster row — the roster lists
+    // reporters (peers/clients). The canonical's coordinates come from fleet.json
+    // (a trusted local config file), never from the request body.
+    const fallback = resolveCanonicalFallback(body.machine_id, deps);
+    if (typeof fallback === "string") return fallback; // refusal JSON
+    pointer = fallback;
   }
 
-  const switched = prior !== match.machine_id;
+  const prior = currentMachineId(deps);
+  writeAttachmentPointerFile(pointer, deps);
+  if (body.base_url && body.token) {
+    writeAttachmentCredential(pointer.machine_id, { baseUrl: body.base_url, token: body.token }, deps);
+  }
+
+  const switched = prior !== pointer.machine_id;
   if (switched) deps.resetCursorOnSwitch?.();
 
   return JSON.stringify({ ok: true, attached: true, pointer, switched });
+}
+
+/** Resolve the canonical server as a fallback when the roster lookup misses.
+ *  Returns an AttachmentPointer on success, or a refusal JSON string on failure.
+ *  Coordinates come from fleet.json, never from the request body — the security
+ *  property is preserved. (#1411, ADR 0030 §D4) */
+function resolveCanonicalFallback(machineId: string, deps: AttachActionDeps): AttachmentPointer | string {
+  if (!deps.readTopology) {
+    return refuse("unknown_machine", "the requested machine_id is not in the fleet roster");
+  }
+  let state: FleetTopologyState;
+  try {
+    state = deps.readTopology();
+  } catch {
+    return refuse("unknown_machine", "the requested machine_id is not in the fleet roster");
+  }
+  if (state.kind !== "ok" || !state.canonical) {
+    return refuse("unknown_machine", "the requested machine_id is not in the fleet roster");
+  }
+  const canonicalId = canonicalMachineId(state.canonical);
+  if (canonicalId !== machineId) {
+    return refuse("unknown_machine", "the requested machine_id is not in the fleet roster");
+  }
+  const alias = typeof state.canonical.sshAlias === "string" ? state.canonical.sshAlias.trim() : "";
+  if (alias === "") {
+    return refuse("canonical_no_ssh", "the canonical server has no sshAlias configured");
+  }
+  return {
+    sshAlias: alias,
+    transport: "ssh", // the canonical has no transport field; SSH is the universal floor (ADR 0027 §D9)
+    machine_id: machineId,
+  };
 }
 
 /** POST /amicode/fleet/detach — remove the upstream: clear the pointer (back to

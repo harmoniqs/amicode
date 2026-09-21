@@ -118,6 +118,132 @@ describe("attachActionResponse — the attach verb (#1344 AC1: attach_detach_act
   });
 });
 
+// ── #1411 (ADR 0030 §D4): canonical-server fallback ─────────────────────────
+
+describe("attachActionResponse — canonical-server fallback (#1411, ADR 0030 §D4)", () => {
+  let dir: string;
+  let attachmentFile: string;
+  let rosterFile: string;
+  let credentialFile: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "attach-canonical-"));
+    attachmentFile = join(dir, "attachment.json");
+    rosterFile = join(dir, "roster.json");
+    credentialFile = join(dir, "attachment-credentials.json");
+    // Empty roster — the canonical server is never a roster row on a client
+    writeRoster(rosterFile, []);
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  const canonicalTopology = (canonical?: { host?: string; port?: number; sshAlias?: string }) =>
+    () => ({
+      kind: "ok" as const,
+      role: "client",
+      canonical,
+      mode: "fleet",
+      posture: "ok",
+      freshness: {},
+      provenanceSource: "test",
+      projection: {} as never,
+    });
+
+  it("machine_id not in roster, matches canonical → attach succeeds with canonical coords", () => {
+    const body = JSON.parse(
+      attachActionResponse(JSON.stringify({ machine_id: "192.168.1.100" }), {
+        attachmentFile, rosterFile, credentialFile,
+        readTopology: canonicalTopology({ host: "192.168.1.100", sshAlias: "mac-studio" }),
+      }),
+    ) as { ok: boolean; attached: boolean; pointer: { sshAlias: string; transport: string; machine_id: string } };
+    expect(body.ok).toBe(true);
+    expect(body.attached).toBe(true);
+    expect(body.pointer).toEqual({ sshAlias: "mac-studio", transport: "ssh", machine_id: "192.168.1.100" });
+  });
+
+  it("canonical match via sshAlias (when host is absent)", () => {
+    const body = JSON.parse(
+      attachActionResponse(JSON.stringify({ machine_id: "mac-studio" }), {
+        attachmentFile, rosterFile, credentialFile,
+        readTopology: canonicalTopology({ sshAlias: "mac-studio" }),
+      }),
+    ) as { ok: boolean; pointer: { sshAlias: string; transport: string } };
+    expect(body.ok).toBe(true);
+    expect(body.pointer.sshAlias).toBe("mac-studio");
+    expect(body.pointer.transport).toBe("ssh");
+  });
+
+  it("canonical has no sshAlias → distinct canonical_no_ssh error code", () => {
+    const body = JSON.parse(
+      attachActionResponse(JSON.stringify({ machine_id: "192.168.1.100" }), {
+        attachmentFile, rosterFile, credentialFile,
+        readTopology: canonicalTopology({ host: "192.168.1.100" }),
+      }),
+    ) as { ok: boolean; error?: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toMatch(/canonical_no_ssh/);
+  });
+
+  it("machine_id not in roster AND not canonical → unknown_machine refusal", () => {
+    const body = JSON.parse(
+      attachActionResponse(JSON.stringify({ machine_id: "ghost-99" }), {
+        attachmentFile, rosterFile, credentialFile,
+        readTopology: canonicalTopology({ host: "192.168.1.100", sshAlias: "mac-studio" }),
+      }),
+    ) as { ok: boolean; error?: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toMatch(/unknown_machine/);
+  });
+
+  it("roster hit takes priority when machine_id is in both roster and canonical", () => {
+    writeRoster(rosterFile, [row({ machine_id: "192.168.1.100", sshAlias: "roster-alias", transport: "tailscale" })]);
+    const body = JSON.parse(
+      attachActionResponse(JSON.stringify({ machine_id: "192.168.1.100" }), {
+        attachmentFile, rosterFile, credentialFile,
+        readTopology: canonicalTopology({ host: "192.168.1.100", sshAlias: "canonical-alias" }),
+      }),
+    ) as { ok: boolean; pointer: { sshAlias: string; transport: string } };
+    expect(body.ok).toBe(true);
+    // Roster wins over canonical
+    expect(body.pointer.sshAlias).toBe("roster-alias");
+    expect(body.pointer.transport).toBe("tailscale");
+  });
+
+  it("credential provisioning works for canonical-sourced attach", () => {
+    attachActionResponse(
+      JSON.stringify({ machine_id: "192.168.1.100", base_url: "http://127.0.0.1:7777", token: "tok" }),
+      {
+        attachmentFile, rosterFile, credentialFile,
+        readTopology: canonicalTopology({ host: "192.168.1.100", sshAlias: "mac-studio" }),
+      },
+    );
+    expect(readAttachmentCredential("192.168.1.100", { credentialFile })).toEqual({
+      ok: true,
+      credential: { baseUrl: "http://127.0.0.1:7777", token: "tok" },
+    });
+  });
+
+  it("no readTopology dep + roster miss → unknown_machine (backward compatible)", () => {
+    const body = JSON.parse(
+      attachActionResponse(JSON.stringify({ machine_id: "ghost" }), {
+        attachmentFile, rosterFile, credentialFile,
+        // readTopology intentionally NOT provided
+      }),
+    ) as { ok: boolean; error?: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toMatch(/unknown_machine/);
+  });
+
+  it("topology reader throws → unknown_machine (graceful degradation)", () => {
+    const body = JSON.parse(
+      attachActionResponse(JSON.stringify({ machine_id: "192.168.1.100" }), {
+        attachmentFile, rosterFile, credentialFile,
+        readTopology: () => { throw new Error("boom"); },
+      }),
+    ) as { ok: boolean; error?: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toMatch(/unknown_machine/);
+  });
+});
+
 describe("detachActionResponse — the detach verb (#1344 AC1)", () => {
   let dir: string;
   let attachmentFile: string;
