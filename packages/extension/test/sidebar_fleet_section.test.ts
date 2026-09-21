@@ -283,6 +283,7 @@ function populatedModel(over: Partial<FleetSectionModel> = {}): FleetSectionMode
     posture: { serverMode: "server", hostname: "mac-studio-01", mode: "fleet", reachable: true, hub: { name: "hub", base_url: "u" } },
     manageAvailable: true,
     troubleshootAvailable: true,
+    now: Date.parse("2026-09-20T12:00:00.000Z"),
     ...(over as any),
   });
 }
@@ -356,7 +357,8 @@ describe("renderFleetSection — per-device rows + posture badge (AC1, AC2)", ()
     expect(r.querySelector(".fleet-last-seen")).toBeNull();
     const title = r.getAttribute("title") ?? "";
     expect(title).toContain("server");
-    expect(title).toContain("2026-09-20T12:00:00.000Z");
+    // #1375: tooltip shows relative age ("just now") via formatAge, not raw ISO.
+    expect(title).toContain("just now");
     expect(title).toContain("compute");
     expect(title).toContain("gpu-rig");
   });
@@ -636,5 +638,41 @@ describe("buildFleetSectionModel — staleness integration (#1375)", () => {
     }));
     const server = model.devices.find((d) => d.machineId === "server-01");
     expect(server!.health).toBe("reachable"); // from reachable roster, not staleness-derived
+  });
+});
+
+describe("renderFleetSection — enhanced tooltip with staleness (#1375)", () => {
+  const NOW = Date.parse("2026-09-20T12:00:00.000Z");
+
+  it("tooltip shows relative age via formatAge when now is available", () => {
+    const report = new Date(NOW - 90_000).toISOString(); // 1m 30s ago
+    const model = buildFleetSectionModel({
+      roster: [{ machine_id: "a", name: "A", server_mode: "server", capabilities: [], last_report: report, health: "reachable" }],
+      rosterReachable: true,
+      posture: null,
+      manageAvailable: false,
+      troubleshootAvailable: false,
+      now: NOW,
+    });
+    const el = document.createElement("div");
+    renderFleetSection(el, model, () => {});
+    const row = el.querySelector(".fleet-device-row") as HTMLElement;
+    expect(row.title).toContain("1m 30s ago");
+  });
+
+  it("tooltip annotates staleness-degraded health: 'degraded (no heartbeat)'", () => {
+    const stale = new Date(NOW - 200_000).toISOString(); // > 3min → degraded
+    const model = buildFleetSectionModel({
+      roster: [{ machine_id: "a", name: "A", server_mode: "server", capabilities: [], last_report: stale, health: "reachable" }],
+      rosterReachable: true,
+      posture: null,
+      manageAvailable: false,
+      troubleshootAvailable: false,
+      now: NOW,
+    });
+    const el = document.createElement("div");
+    renderFleetSection(el, model, () => {});
+    const row = el.querySelector(".fleet-device-row") as HTMLElement;
+    expect(row.title).toContain("degraded (no heartbeat)");
   });
 });

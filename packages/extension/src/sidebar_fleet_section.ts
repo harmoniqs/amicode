@@ -382,12 +382,13 @@ function healthLabel(health: RosterHealth): string {
 
 /** Render one read-only device row: a file-list-style line — status dot,
  *  name, type pill (#1359). `role` / `last-seen` / `capabilities` move to the
- *  row's `title` tooltip rather than cluttering the row body. */
-function renderDeviceRow(device: FleetDeviceRow): HTMLElement {
+ *  row's `title` tooltip rather than cluttering the row body.
+ *  `now` is the injectable clock for relative-age tooltips (#1375). */
+function renderDeviceRow(device: FleetDeviceRow, now?: number): HTMLElement {
   const rowEl = document.createElement("div");
   rowEl.className = "fleet-device-row";
   rowEl.setAttribute("data-machine-id", device.machineId);
-  rowEl.title = deviceTooltip(device);
+  rowEl.title = deviceTooltip(device, device.rosterHealth, now);
 
   // left: a status dot — color is never the only signal, so the same
   // tri-state also carries as an aria-label (a11y) even without inline text.
@@ -420,9 +421,21 @@ function renderDeviceRow(device: FleetDeviceRow): HTMLElement {
 }
 
 /** The row's hover tooltip: role, last-seen, and capabilities — demoted from
- *  inline text (#1359) but not lost. */
-function deviceTooltip(device: FleetDeviceRow): string {
-  const parts = [`role: ${device.role}`, `last-seen: ${device.lastSeen}`];
+ *  inline text (#1359) but not lost. When `now` is available, last-seen shows
+ *  relative age via formatAge (#1375). When staleness changed the display
+ *  health (rosterHealth ≠ device.health), the change is annotated. */
+function deviceTooltip(device: FleetDeviceRow, rosterHealth?: RosterHealth, now?: number): string {
+  let lastSeenText: string;
+  if (now !== undefined) {
+    const ts = Date.parse(device.lastSeen);
+    lastSeenText = Number.isFinite(ts) ? formatAge(now - ts) : device.lastSeen;
+  } else {
+    lastSeenText = device.lastSeen;
+  }
+  const parts = [`role: ${device.role}`, `last-seen: ${lastSeenText}`];
+  if (rosterHealth !== undefined && device.health !== rosterHealth) {
+    parts.push(`${device.health} (no heartbeat)`);
+  }
   if (device.capabilities.length > 0) {
     parts.push(`capabilities: ${device.capabilities.map((c) => c.tag).join(", ")}`);
   }
@@ -516,7 +529,7 @@ export function renderFleetSection(
       const list = document.createElement("div");
       list.className = "fleet-device-list";
       for (const device of model.devices) {
-        list.appendChild(renderDeviceRow(device));
+        list.appendChild(renderDeviceRow(device, model.now));
       }
       container.appendChild(list);
     }
