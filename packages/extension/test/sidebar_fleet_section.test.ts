@@ -60,6 +60,26 @@ describe("buildFleetSectionModel — per-device rows (AC1)", () => {
       { tag: "gpu-rig", known: false }, // an arbitrary descriptive tag round-trips, marked not-known
     ]);
   });
+
+  it("resolves the type-pill label from device_type when the row reports one (#1359)", () => {
+    const model = buildFleetSectionModel({
+      roster: [row({ device_type: "laptop" })],
+      rosterReachable: true,
+      posture: null,
+      manageAvailable: false,
+    });
+    expect(model.devices[0].typeLabel).toBe("laptop");
+  });
+
+  it("falls back the type-pill label to server_mode when device_type is absent (#1359)", () => {
+    const model = buildFleetSectionModel({
+      roster: [row({ server_mode: "client" })], // no device_type in this row
+      rosterReachable: true,
+      posture: null,
+      manageAvailable: false,
+    });
+    expect(model.devices[0].typeLabel).toBe("client");
+  });
 });
 
 describe("buildFleetSectionModel — this machine's posture badge (AC2)", () => {
@@ -117,6 +137,48 @@ describe("buildFleetSectionModel — honest empty / unreachable state (AC6)", ()
     expect(model.devices).toEqual([]);
   });
 
+  it("synthesizes a self-row from localDevice when the roster has none for this machine (#1359)", () => {
+    const model = buildFleetSectionModel({
+      roster: [], rosterReachable: true, posture: null, manageAvailable: false,
+      localDevice: { machineId: "this-mac", name: "Mac", serveStance: "server", deviceType: undefined },
+    });
+    expect(model.state).toBe("populated");
+    expect(model.devices).toHaveLength(1);
+    expect(model.devices[0].machineId).toBe("this-mac");
+    expect(model.devices[0].name).toBe("Mac");
+    expect(model.devices[0].typeLabel).toBe("server"); // no deviceType → falls back to serveStance
+    expect(model.devices[0].health).toBe("reachable"); // you can always see yourself
+  });
+
+  it("does not duplicate the self-row when the roster already carries this machine (#1359)", () => {
+    const model = buildFleetSectionModel({
+      roster: [row({ machine_id: "this-mac", name: "Real Report", health: "degraded" })],
+      rosterReachable: true, posture: null, manageAvailable: false,
+      localDevice: { machineId: "this-mac", name: "Local Guess", serveStance: "server", deviceType: undefined },
+    });
+    expect(model.devices).toHaveLength(1);
+    // the roster's own report wins — it's real provenance, not a guess.
+    expect(model.devices[0].name).toBe("Real Report");
+    expect(model.devices[0].health).toBe("degraded");
+    expect(model.devices[0].isLocal).toBe(true);
+  });
+
+  it("the local machine always renders first, even when the roster lists it after peers (#1359)", () => {
+    const model = buildFleetSectionModel({
+      roster: [
+        row({ machine_id: "peer-a", name: "Alpha" }),
+        row({ machine_id: "peer-b", name: "Beta" }),
+        row({ machine_id: "this-mac", name: "Me" }),
+      ],
+      rosterReachable: true, posture: null, manageAvailable: false,
+      localDevice: { machineId: "this-mac", name: "Me", serveStance: "server", deviceType: undefined },
+    });
+    expect(model.devices).toHaveLength(3);
+    expect(model.devices[0].machineId).toBe("this-mac");
+    expect(model.devices[0].isLocal).toBe(true);
+    expect(model.devices[1].machineId).toBe("peer-a");
+    expect(model.devices[2].machineId).toBe("peer-b");
+  });
   it("resolves an unreachable roster (host down) to the 'unreachable' state", () => {
     const model = buildFleetSectionModel({
       roster: [], rosterReachable: false, posture: null, manageAvailable: false,
@@ -132,6 +194,38 @@ describe("buildFleetSectionModel — honest empty / unreachable state (AC6)", ()
       roster: [row(), row({ machine_id: "b" })], rosterReachable: false, posture: null, manageAvailable: false,
     });
     expect(model.state).toBe("unreachable");
+    expect(model.devices).toEqual([]);
+  });
+
+  it("still shows the self-row when the peer roster is unreachable but local identity is known (#1359)", () => {
+    // The peer roster being down says nothing about local truth — this
+    // machine's own identity comes from fleet.json/config, not that read.
+    const model = buildFleetSectionModel({
+      roster: [row(), row({ machine_id: "b" })], rosterReachable: false, posture: null, manageAvailable: false,
+      localDevice: { machineId: "this-mac", name: "Mac", serveStance: "server", deviceType: undefined },
+    });
+    expect(model.state).toBe("unreachable"); // the peer read genuinely failed — still say so
+    expect(model.devices).toHaveLength(1); // but you still see yourself
+    expect(model.devices[0].machineId).toBe("this-mac");
+  });
+});
+
+describe("buildFleetSectionModel — not registered with a fleet (#1359)", () => {
+  it("collapses to the 'standalone' state when this machine has no fleet.json (serveStance standalone)", () => {
+    const model = buildFleetSectionModel({
+      roster: [], rosterReachable: true, posture: null, manageAvailable: false,
+      localDevice: { machineId: "this-mac", name: "Mac", serveStance: "standalone", deviceType: undefined },
+    });
+    expect(model.state).toBe("standalone");
+    expect(model.devices).toEqual([]);
+  });
+
+  it("standalone collapse takes priority even if the (irrelevant) peer roster is unreachable", () => {
+    const model = buildFleetSectionModel({
+      roster: [row(), row({ machine_id: "b" })], rosterReachable: false, posture: null, manageAvailable: false,
+      localDevice: { machineId: "this-mac", name: "Mac", serveStance: "standalone", deviceType: undefined },
+    });
+    expect(model.state).toBe("standalone");
     expect(model.devices).toEqual([]);
   });
 });
@@ -152,7 +246,7 @@ function populatedModel(over: Partial<FleetSectionModel> = {}): FleetSectionMode
 }
 
 describe("renderFleetSection — per-device rows + posture badge (AC1, AC2)", () => {
-  it("renders one row per device with name, role, capability chips, health, last-seen", () => {
+  it("renders one row per device: a status dot, the name, and a type pill (#1359)", () => {
     const el = document.createElement("div");
     renderFleetSection(el, populatedModel(), () => {});
 
@@ -162,35 +256,31 @@ describe("renderFleetSection — per-device rows + posture badge (AC1, AC2)", ()
     expect(r.getAttribute("data-machine-id")).toBe("mac-studio-01");
     expect(r.querySelector(".fleet-device-name")!.textContent).toContain("Mac Studio");
 
-    // server_mode surfaced under the "role" label.
-    const role = r.querySelector(".fleet-device-role")!;
-    expect(role.textContent).toContain("role");
-    expect(role.textContent).toContain("server");
+    // left: a status dot, keyed on data-health (color is never the only
+    // signal — an aria-label carries the same tri-state for a11y).
+    const dot = r.querySelector(".fleet-status-dot")!;
+    expect(dot.getAttribute("data-health")).toBe("degraded");
+    expect(dot.getAttribute("aria-label")).toBe("degraded");
 
-    // capability chips: known (compute) vs descriptive (gpu-rig) distinguished.
-    const chips = r.querySelectorAll(".fleet-cap-chip");
-    expect(chips).toHaveLength(2);
-    expect((chips[0] as HTMLElement).getAttribute("data-known")).toBe("true");
-    expect((chips[1] as HTMLElement).getAttribute("data-known")).toBe("false");
+    // right: the type pill (device_type when set, else server_mode — here unset).
+    const pill = r.querySelector(".fleet-type-pill")!;
+    expect(pill.textContent).toBe("server");
 
-    // tri-state health indicator, keyed on data-health and paired with text (color is never the only signal).
-    const health = r.querySelector(".fleet-health")!;
-    expect(health.getAttribute("data-health")).toBe("degraded");
-    expect(health.textContent!.toLowerCase()).toContain("degraded");
-
-    // last_report surfaced under the "last-seen" label.
-    const seen = r.querySelector(".fleet-last-seen")!;
-    expect(seen.textContent!.toLowerCase()).toContain("last-seen");
-    expect(seen.textContent).toContain("2026-09-20T12:00:00.000Z");
+    // role / capabilities / last-seen move to the row's tooltip, not inline text.
+    expect(r.querySelector(".fleet-device-role")).toBeNull();
+    expect(r.querySelector(".fleet-cap-chip")).toBeNull();
+    expect(r.querySelector(".fleet-last-seen")).toBeNull();
+    const title = r.getAttribute("title") ?? "";
+    expect(title).toContain("server");
+    expect(title).toContain("2026-09-20T12:00:00.000Z");
+    expect(title).toContain("compute");
+    expect(title).toContain("gpu-rig");
   });
 
-  it("renders this machine's posture badge (Server mode + link-health)", () => {
+  it("the posture badge is retired — no longer rendered in the sidebar (#1359)", () => {
     const el = document.createElement("div");
     renderFleetSection(el, populatedModel(), () => {});
-    const badge = el.querySelector(".fleet-posture-badge") as HTMLElement;
-    expect(badge).not.toBeNull();
-    expect(badge.getAttribute("data-link-health")).toBe("ok");
-    expect(badge.textContent).toContain("server");
+    expect(el.querySelector(".fleet-posture-badge")).toBeNull();
   });
 });
 
@@ -213,6 +303,35 @@ describe("renderFleetSection — honest empty / unreachable DOM (AC6)", () => {
     expect(el.querySelectorAll(".fleet-device-row")).toHaveLength(0);
     expect(el.querySelector(".fleet-loading, .spinner")).toBeNull();
   });
+
+  it("unreachable roster still renders the self-row when local identity is known (#1359)", () => {
+    const el = document.createElement("div");
+    const model = buildFleetSectionModel({
+      roster: [], rosterReachable: false, posture: null, manageAvailable: true,
+      localDevice: { machineId: "this-mac", name: "Mac", serveStance: "server", deviceType: undefined },
+    });
+    renderFleetSection(el, model, () => {});
+    // the honest notice stays — the PEER roster really is unreachable.
+    expect(el.querySelector(".fleet-unreachable")).not.toBeNull();
+    // but you still see yourself, right there in the list.
+    const rows = el.querySelectorAll(".fleet-device-row");
+    expect(rows).toHaveLength(1);
+    expect((rows[0] as HTMLElement).getAttribute("data-machine-id")).toBe("this-mac");
+  });
+
+  it("no fleet.json (standalone) renders the single honest line, no device rows (#1359)", () => {
+    const el = document.createElement("div");
+    const model = buildFleetSectionModel({
+      roster: [], rosterReachable: true, manageAvailable: true,
+      posture: { serverMode: "standalone", hostname: "h", mode: "standalone", reachable: false, hub: { name: null, base_url: null } },
+      localDevice: { machineId: "this-mac", name: "Mac", serveStance: "standalone", deviceType: undefined },
+    });
+    renderFleetSection(el, model, () => {});
+    expect(el.querySelectorAll(".fleet-device-row")).toHaveLength(0);
+    const notice = el.querySelector(".fleet-standalone");
+    expect(notice).not.toBeNull();
+    expect(notice!.textContent).toBe("Current device not registered with a fleet.");
+  });
 });
 
 describe("renderFleetSection — read-only navigation contract (AC3, AC4)", () => {
@@ -230,7 +349,7 @@ describe("renderFleetSection — read-only navigation contract (AC3, AC4)", () =
     }
   });
 
-  it("honest degrade — a disabled Manage (Fleet Manager tab absent) has no dead click", () => {
+  it("honest degrade — Manage is not rendered at all when the Fleet Manager tab is absent (#1359)", () => {
     const el = document.createElement("div");
     const post = vi.fn();
     // manageAvailable:false ⇒ #1322 not present on this branch.
@@ -239,10 +358,7 @@ describe("renderFleetSection — read-only navigation contract (AC3, AC4)", () =
       rosterReachable: true, posture: null, manageAvailable: false,
     });
     renderFleetSection(el, model, post);
-    const manage = el.querySelector(".fleet-manage") as HTMLButtonElement;
-    expect(manage.disabled).toBe(true);
-    expect(manage.getAttribute("aria-disabled")).toBe("true");
-    manage.click();
-    expect(post).not.toHaveBeenCalled(); // no dead click — nothing emitted
+    // no dead click — nothing to click at all, not merely a disabled control.
+    expect(el.querySelector(".fleet-manage")).toBeNull();
   });
 });

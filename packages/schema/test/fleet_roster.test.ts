@@ -20,6 +20,7 @@ import {
   ROSTER_SCHEMA_VERSION,
   HEALTH_VOCABULARY,
   KNOWN_CAPABILITY_TAGS,
+  KNOWN_DEVICE_TYPES,
   isKnownCapability,
   parseRosterRow,
   type RosterRow,
@@ -75,6 +76,37 @@ describe("parseRosterRow — AC1: a full row round-trips without loss", () => {
     expect(parseRosterRow(null).ok).toBe(false);
     expect(parseRosterRow([1, 2, 3]).ok).toBe(false);
     expect(parseRosterRow("mac-studio-01").ok).toBe(false);
+  });
+});
+
+describe("device_type — optional per-row form factor (fleet sidebar type pill, #1359)", () => {
+  it("round-trips a device_type when the reporting machine includes one", () => {
+    const r = parseRosterRow({ ...ROW, device_type: "laptop" });
+    expect(r.ok).toBe(true);
+    if (!r.ok) throw new Error("expected a valid row");
+    expect(r.row.device_type).toBe("laptop");
+  });
+
+  it("parses a row that omits device_type entirely — absent is lawful, not invented", () => {
+    const r = parseRosterRow(ROW); // ROW carries no device_type key
+    expect(r.ok).toBe(true);
+    if (!r.ok) throw new Error("expected a valid row");
+    expect(r.row.device_type).toBeUndefined();
+    expect("device_type" in r.row).toBe(false); // never fabricated onto the row
+  });
+
+  it("rejects a non-string device_type, never coercing it", () => {
+    const r = parseRosterRow({ ...ROW, device_type: 42 });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("expected rejection");
+    expect(r.error).toMatch(/device_type/i);
+  });
+
+  it("names the suggested form factors for the sidebar's type pill (open set, like capabilities)", () => {
+    expect(KNOWN_DEVICE_TYPES).toEqual(["server", "desktop", "laptop"]);
+    // an unrecognized form factor is still a valid, round-tripping value.
+    const r = parseRosterRow({ ...ROW, device_type: "raspberry-pi" });
+    expect(r.ok).toBe(true);
   });
 });
 

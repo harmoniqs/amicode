@@ -53,6 +53,14 @@ export function isKnownCapability(tag: string): tag is KnownCapability {
   return (KNOWN_CAPABILITY_TAGS as readonly string[]).includes(tag);
 }
 
+/** The suggested `device_type` vocabulary — the fleet sidebar's type-pill
+ *  labels (#1359). Like `capabilities`, this is an OPEN set: it names the
+ *  three form factors the pill knows how to talk about, but an arbitrary
+ *  value still round-trips through `parseRosterRow` and renders (just without
+ *  special-cased styling). */
+export const KNOWN_DEVICE_TYPES = ["server", "desktop", "laptop"] as const;
+export type KnownDeviceType = (typeof KNOWN_DEVICE_TYPES)[number];
+
 /** One roster row — the reconciled self-report of one machine. `server_mode`
  *  mirrors that machine's own fleet.json role (read-only here; the UI labels it
  *  "role"), `last_report` renders as "last-seen". Every field is a string
@@ -74,6 +82,12 @@ export interface RosterRow {
   last_report: string;
   /** Per-device reachability, from the closed tri-state. */
   health: RosterHealth;
+  /** Optional device form factor (e.g. server, desktop, laptop) — the fleet
+   *  sidebar's type-pill source. Absent is lawful (a machine that hasn't
+   *  detected/reported its form factor yet); the UI falls back to
+   *  `server_mode` when unset. Open, like `capabilities` — an unrecognized
+   *  value still round-trips (see KNOWN_DEVICE_TYPES). */
+  device_type?: string;
 }
 
 /** A parse outcome — a Result, never a throw: the self-report route collapses a
@@ -111,6 +125,9 @@ export function parseRosterRow(candidate: unknown): ParseRosterRowResult {
       error: `roster row: "health" must be one of ${HEALTH_VOCABULARY.join(", ")} (got ${describe(o.health)})`,
     };
   }
+  if (o.device_type !== undefined && typeof o.device_type !== "string") {
+    return { ok: false, error: `roster row: "device_type" must be a string when present (got ${describe(o.device_type)})` };
+  }
   const row: RosterRow = {
     machine_id: o.machine_id as string,
     name: o.name as string,
@@ -120,6 +137,7 @@ export function parseRosterRow(candidate: unknown): ParseRosterRowResult {
     transport: o.transport as string,
     last_report: o.last_report as string,
     health: o.health as RosterHealth,
+    ...(typeof o.device_type === "string" ? { device_type: o.device_type } : {}),
   };
   return { ok: true, row };
 }

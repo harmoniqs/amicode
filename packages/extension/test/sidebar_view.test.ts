@@ -260,12 +260,14 @@ describe("SidebarViewProvider — fleet section host wiring (#1321)", () => {
       roster: { rows: [deviceRow()], reachable: true } as { rows: any[]; reachable: boolean },
       posture: { serverMode: "server", hostname: "mac-01", mode: "fleet", reachable: true, hub: { name: "hub", base_url: "u" } } as any,
       managerAvailable: false,
+      localDevice: null as { machineId: string; name: string; serveStance: string; deviceType?: string } | null,
       postureCb: (() => {}) as () => void,
     };
     const openFleetManager = vi.fn();
     const deps = {
       readRoster: () => state.roster,
       readPosture: () => state.posture,
+      readLocalDevice: () => state.localDevice,
       onPostureChange: (cb: () => void) => { state.postureCb = cb; return { dispose() {} }; },
       isFleetManagerAvailable: () => state.managerAvailable,
       openFleetManager,
@@ -324,6 +326,34 @@ describe("SidebarViewProvider — fleet section host wiring (#1321)", () => {
     expect(msg.model.devices).toEqual([]);
   });
 
+  it("threads the local device through to the posted model, synthesizing a self-row (#1359)", () => {
+    const { state, deps } = fleetHarness();
+    state.roster = { rows: [deviceRow({ machine_id: "mac-01" })], reachable: true };
+    state.localDevice = { machineId: "this-mac", name: "Laptop", serveStance: "client", deviceType: "laptop" };
+    const provider = new SidebarViewProvider(makeExtensionUri(), undefined, deps);
+    const view = makeWebviewView();
+    resolve(provider, view);
+    const msg = lastFleetStatus(view);
+    // the peer row AND the synthesized self-row both show up.
+    expect(msg.model.devices).toHaveLength(2);
+    const self = msg.model.devices.find((d: any) => d.machineId === "this-mac");
+    expect(self).toBeDefined();
+    expect(self.name).toBe("Laptop");
+    expect(self.typeLabel).toBe("laptop");
+    expect(self.health).toBe("reachable");
+  });
+
+  it("collapses to the standalone state when the local device has no fleet.json (#1359)", () => {
+    const { state, deps } = fleetHarness();
+    state.localDevice = { machineId: "this-mac", name: "Mac", serveStance: "standalone", deviceType: undefined };
+    const provider = new SidebarViewProvider(makeExtensionUri(), undefined, deps);
+    const view = makeWebviewView();
+    resolve(provider, view);
+    const msg = lastFleetStatus(view);
+    expect(msg.model.state).toBe("standalone");
+    expect(msg.model.devices).toEqual([]);
+  });
+
   it("Manage degrades honestly at the host — no navigation when the Fleet Manager tab is absent (AC3)", () => {
     const { state, deps, openFleetManager } = fleetHarness();
     state.managerAvailable = false; // #1322 not present on this branch
@@ -358,15 +388,61 @@ describe("SidebarViewProvider — fleet section host wiring (#1321)", () => {
 
 describe("defaultFleetSectionDeps — production readers (#1321)", () => {
   let defaultFleetSectionDeps: any;
+  let classifyDeviceType: any;
   let tmp: string;
 
   beforeEach(async () => {
     vi.resetModules();
     const mod = await import("../src/sidebar_view");
     defaultFleetSectionDeps = mod.defaultFleetSectionDeps;
+    classifyDeviceType = mod.classifyDeviceType;
     const os = await import("node:os");
     const fs = await import("node:fs");
     tmp = fs.mkdtempSync(resolve(os.tmpdir(), "amc-fleet-"));
+  });
+
+  it("classifyDeviceType reads 'laptop' from a MacBook system_profiler Model Name (#1359)", () => {
+    expect(classifyDeviceType("      Model Name: MacBook Pro\n      Model Identifier: Mac14,9\n")).toBe("laptop");
+    expect(classifyDeviceType("Model Name: MacBook Air")).toBe("laptop");
+  });
+
+  it("classifyDeviceType reads 'desktop' from Mac Studio / iMac / Mac mini / Mac Pro (#1359)", () => {
+    expect(classifyDeviceType("Model Name: Mac Studio")).toBe("desktop");
+    expect(classifyDeviceType("Model Name: iMac")).toBe("desktop");
+    expect(classifyDeviceType("Model Name: Mac mini")).toBe("desktop");
+    expect(classifyDeviceType("Model Name: Mac Pro")).toBe("desktop");
+  });
+
+  it("classifyDeviceType abstains (undefined) on unrecognized or missing output — never a guess", () => {
+    expect(classifyDeviceType("Model Name: Some Future Device")).toBeUndefined();
+    expect(classifyDeviceType("")).toBeUndefined();
+    expect(classifyDeviceType("garbage, no such field")).toBeUndefined();
+  });
+
+  it("readLocalDevice mirrors fleet.json's serve-stance and uses the friendly hostname when available (#1359)", async () => {
+    const os = await import("node:os");
+    const fs = await import("node:fs");
+    const fleetConfigFile = resolve(tmp, "fleet.json");
+    fs.writeFileSync(fleetConfigFile, JSON.stringify({ role: "server", canonical: {} }));
+    const deps = defaultFleetSectionDeps({ fleetConfigFile, detectDeviceType: () => undefined });
+    const local = deps.readLocalDevice();
+    expect(local.serveStance).toBe("server");
+    // name prefers the friendly hostname (scutil ComputerName on macOS)
+    // over the raw os.hostname(); machineId stays the raw hostname (stable key).
+    expect(local.machineId).toBe(os.hostname());
+    if (process.platform === "darwin") {
+      // on macOS the friendly name should NOT be the raw hostname
+      expect(local.name).not.toBe(os.hostname());
+      expect(local.name.length).toBeGreaterThan(0);
+    } else {
+      expect(local.name).toBe(os.hostname());
+    }
+    expect(local.deviceType).toBeUndefined();
+  });
+
+  it("readLocalDevice surfaces the injected device-type detection when it succeeds (#1359)", () => {
+    const deps = defaultFleetSectionDeps({ detectDeviceType: () => "laptop" });
+    expect(deps.readLocalDevice().deviceType).toBe("laptop");
   });
 
   it("readRoster parses the roster cache into rows, reachable=true", async () => {
@@ -429,26 +505,25 @@ describe("sidebar webview — fleet section styling (#1321, design-system tokens
     expect(css).toMatch(/\.fleet-device-row\s*\{/);
     expect(css).toMatch(/\.fleet-posture-badge\s*\{/);
     // the fleet section styling is token-driven, not hardcoded colors.
-    expect(css).toMatch(/\.fleet-(device-row|posture-badge|health|cap-chip|manage)[^{]*\{[^}]*var\(--vscode-/);
+    expect(css).toMatch(/\.fleet-(device-row|posture-badge|status-dot|type-pill|manage)[^{]*\{[^}]*var\(--vscode-/);
   });
 
-  it("keys the tri-state health indicator on data-health with distinct theme colors (a11y: color is not the only signal)", () => {
+  it("keys the status dot on data-health with distinct theme colors (a11y: an aria-label carries the same signal)", () => {
     const css = html();
-    expect(css).toMatch(/\.fleet-health\[data-health=["']reachable["']\]/);
-    expect(css).toMatch(/\.fleet-health\[data-health=["']degraded["']\]/);
-    expect(css).toMatch(/\.fleet-health\[data-health=["']down["']\]/);
+    expect(css).toMatch(/\.fleet-status-dot\[data-health=["']reachable["']\]/);
+    expect(css).toMatch(/\.fleet-status-dot\[data-health=["']degraded["']\]/);
+    expect(css).toMatch(/\.fleet-status-dot\[data-health=["']down["']\]/);
   });
 
-  it("defines the capability chips by border and marks descriptive vs known", () => {
+  it("styles the type pill via badge tokens (#1359)", () => {
     const css = html();
-    expect(css).toMatch(/\.fleet-cap-chip[^{]*\{[^}]*border/);
-    expect(css).toMatch(/\.fleet-cap-chip\[data-known=/);
+    expect(css).toMatch(/\.fleet-type-pill[^{]*\{[^}]*var\(--vscode-badge-/);
   });
 
-  it("renders a disabled Manage affordance that reads as non-interactive (honest degrade)", () => {
+  it("the Manage affordance is a plain clickable control — no disabled visual state to style (#1359: hidden, not disabled)", () => {
     const css = html();
-    expect(css).toMatch(/\.fleet-manage:disabled\s*\{/);
-    expect(css).toMatch(/\.fleet-manage:disabled\s*\{[^}]*(cursor:\s*default|opacity)/);
+    expect(css).toMatch(/\.fleet-manage\s*\{/);
+    expect(css).not.toMatch(/\.fleet-manage:disabled/);
   });
 });
 

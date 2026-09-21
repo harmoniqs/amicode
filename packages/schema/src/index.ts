@@ -210,6 +210,7 @@ export {
   ROSTER_SCHEMA_VERSION,
   HEALTH_VOCABULARY,
   KNOWN_CAPABILITY_TAGS,
+  KNOWN_DEVICE_TYPES,
   isKnownCapability,
   parseRosterRow,
   parseRosterDocument,
@@ -222,6 +223,7 @@ export {
   type RosterDocument,
   type ParseRosterRowResult,
   type ParseRosterDocumentResult,
+  type KnownDeviceType,
 } from "./fleet_roster.js";
 
 // The pure version-skew verdict (amicode#1319, hoisted from the extension's
