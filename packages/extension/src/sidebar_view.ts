@@ -1479,14 +1479,14 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
       inset: -5px;
       border-radius: 999px;
     }
-    /* CSS tooltip — appears above the dot on hover. Uses VS Code's hover-widget
-       tokens so it looks native. */
+    /* CSS tooltip — appears to the top-right of the dot on hover so it is not
+       clipped by the sidebar's left edge. Uses VS Code's hover-widget tokens
+       so it looks native. */
     .fleet-status-dot[data-tooltip]::before {
       content: attr(data-tooltip);
       position: absolute;
-      bottom: calc(100% + 6px);
-      left: 50%;
-      transform: translateX(-50%);
+      bottom: calc(100% + 4px);
+      left: calc(100% + 4px);
       padding: 4px 8px;
       border-radius: 4px;
       background: var(--vscode-editorHoverWidget-background, #2d2d30);

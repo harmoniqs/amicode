@@ -39,15 +39,26 @@ export function effectiveHealth(health: RosterHealth, lastSeen: string, now: num
   return "reachable";
 }
 
-/** Format millisecond age into a human-readable relative timestamp. */
+/** Format millisecond age into a human-readable relative timestamp.
+ *  Reports the single most-significant unit as a fraction:
+ *    <5s → "just now", <60s → "42s ago", <60m → "12m ago",
+ *    <24h → "3.5h ago", ≥24h → "2.1d ago". */
 export function formatAge(ms: number): string {
   if (ms < 0 || !Number.isFinite(ms)) return "just now";
-  const totalSec = Math.floor(ms / 1000);
+  const totalSec = ms / 1000;
   if (totalSec < 5) return "just now";
-  const min = Math.floor(totalSec / 60);
-  const sec = totalSec % 60;
-  if (min === 0) return `${sec}s ago`;
-  return sec > 0 ? `${min}m ${sec}s ago` : `${min}m ago`;
+  if (totalSec < 60) return `${Math.floor(totalSec)}s ago`;
+  const totalMin = totalSec / 60;
+  if (totalMin < 60) return `${Math.floor(totalMin)}m ago`;
+  const totalHr = totalMin / 60;
+  if (totalHr < 24) return `${round1(totalHr)}h ago`;
+  return `${round1(totalHr / 24)}d ago`;
+}
+
+/** Round to one decimal place, dropping ".0". */
+function round1(n: number): string {
+  const r = Math.round(n * 10) / 10;
+  return r % 1 === 0 ? String(r) : r.toFixed(1);
 }
 
 /** The KNOWN behavior-adjacent capability tags (schema KNOWN_CAPABILITY_TAGS,
