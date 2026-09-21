@@ -484,7 +484,7 @@ function SessionProviders(props: ParentProps) {
  *  route change; t1 = the new timeline's first settled paint (two rAFs
  *  after mount). Rides the ring snapshots — the number that names the
  *  remount cost and decides keep-alive vs remount-tuning. */
-function TimelinePaintProbe(props: { id: string; children: JSX.Element }) {
+function TimelinePaintProbe(props: ParentProps<{ id: string }>) {
   const w = globalThis as { __paintT0?: number; __paintRing?: { id: string; ms: number }[] }
   onMount(() => {
     const t0 = w.__paintT0
@@ -497,7 +497,7 @@ function TimelinePaintProbe(props: { id: string; children: JSX.Element }) {
       })
     })
   })
-  return props.children as unknown as JSX.Element
+  return <>{props.children}</>
 }
 
 function SessionRouteFrame(props: ParentProps<{ padded?: boolean }>) {

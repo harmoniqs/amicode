@@ -37,6 +37,7 @@ import {
   lazy,
   Suspense,
   onCleanup,
+  onMount,
   type ParentProps,
   Show,
 } from "solid-js"
@@ -1230,7 +1231,7 @@ export function AppInterface(props: {
                                   thrown teardowns (ErrorBoundary) and
                                   pending resources (Suspense). */}
                               <ErrorBoundary fallback={() => <SessionPanelHold />}>
-                                <Suspense fallback={<SessionPanelHold />}>
+                                <Suspense fallback={<SuspenseHoldProbe />}>
                                   {routerProps.children}
                                 </Suspense>
                               </ErrorBoundary>
@@ -1395,6 +1396,24 @@ const EmptyWorkspaceLanding = lazy(() => import("@/pages/empty-workspace-landing
 function LandingEffect(props: { land: () => void }) {
   createEffect(() => props.land())
   return null
+}
+
+/** #1297: stamp the outlet-Suspense fallback's mounts — the frozen pane
+ *  the user keeps seeing on quick switches. The durations ride the ring
+ *  snapshots; correlated with the frontdoor log they name the suspender. */
+function SuspenseHoldProbe() {
+  const w = globalThis as { __holdRing?: { at: number; ms: number | null }[] }
+  const at = Date.now()
+  onMount(() => {
+    w.__holdRing = w.__holdRing ?? []
+    w.__holdRing.push({ at, ms: null })
+    if (w.__holdRing.length > 16) w.__holdRing.shift()
+    const mine = w.__holdRing[w.__holdRing.length - 1]
+    onCleanup(() => {
+      mine.ms = Date.now() - at
+    })
+  })
+  return <SessionPanelHold />
 }
 
 function NewLayoutLegacySessionRedirect() {
