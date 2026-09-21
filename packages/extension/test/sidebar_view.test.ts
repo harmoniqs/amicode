@@ -318,6 +318,33 @@ describe("SidebarViewProvider — fleet section host wiring (#1321)", () => {
     expect(msg.model.posture.linkHealth).toBe("ok");
   });
 
+  it("on a client, an async roster read resolves and posts a fleet-status that includes the synthesized canonical-server node (#1363)", async () => {
+    const { deps, state } = fleetHarness();
+    // Simulate the CLIENT path: async roster read (host proxy) + a canonical
+    // server pointer + a client self-row. The server is NOT in the roster.
+    state.localDevice = { machineId: "laptop-01", name: "JJ's Laptop", serveStance: "client", deviceType: "laptop" };
+    const asyncDeps = {
+      ...deps,
+      readRoster: () => Promise.resolve({ rows: [], reachable: true }),
+      readLocalDevice: () => state.localDevice,
+      readCanonicalServer: () => ({ machineId: "jjs-mac-studio", name: "jjs-mac-studio" }),
+    };
+    const provider = new SidebarViewProvider(makeExtensionUri(), undefined, asyncDeps);
+    const view = makeWebviewView();
+    resolve(provider, view);
+    // The async read posts on a later microtask — flush it.
+    await new Promise((r) => setTimeout(r, 0));
+
+    const msg = lastFleetStatus(view);
+    expect(msg).toBeDefined();
+    const ids = msg.model.devices.map((d: any) => d.machineId);
+    expect(ids).toContain("laptop-01");        // the client's own self-row
+    expect(ids).toContain("jjs-mac-studio");   // the synthesized canonical server
+    const server = msg.model.devices.find((d: any) => d.machineId === "jjs-mac-studio");
+    expect(server.role).toBe("server");
+    expect(server.isLocal).toBe(false);
+  });
+
   it("re-posts fleet-status with updated health on a posture-change event (AC5, no manual reload)", () => {
     const { state, deps } = fleetHarness();
     const provider = new SidebarViewProvider(makeExtensionUri(), undefined, deps);
@@ -480,6 +507,88 @@ describe("defaultFleetSectionDeps — production readers (#1321)", () => {
     const out = deps.readRoster();
     expect(out.reachable).toBe(true);
     expect(out.rows).toEqual([]);
+  });
+
+  it("readRoster on a CLIENT proxy-reads GET /amicode/roster from the host with the credential (#1363)", async () => {
+    const fs = await import("node:fs");
+    const fleetConfigFile = resolve(tmp, "fleet-client.json");
+    fs.writeFileSync(fleetConfigFile, JSON.stringify({ role: "client", canonical: { host: "jjs-mac-studio", port: 4096, sshAlias: "jjs-mac-studio" } }));
+    const fetchImpl = vi.fn(async () => ({
+      ok: true, status: 200,
+      json: async () => ({
+        ok: true, schema_version: 1, error: null,
+        rows: [{ machine_id: "peer-1", name: "Peer", server_mode: "client", capabilities: [], sshAlias: "p", transport: "ssh", last_report: "t", health: "reachable" }],
+      }),
+    }));
+    const deps = defaultFleetSectionDeps({
+      fleetConfigFile,
+      fetchImpl: fetchImpl as any,
+      serviceEndpoint: () => ({ origin: "http://127.0.0.1:4095", authHeader: "Bearer x" }),
+    });
+    const out = await deps.readRoster();
+    expect(out.reachable).toBe(true);
+    expect(out.rows).toHaveLength(1);
+    expect(out.rows[0].machine_id).toBe("peer-1");
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "http://127.0.0.1:4095/amicode/roster",
+      expect.objectContaining({ headers: expect.objectContaining({ Authorization: "Bearer x" }) }),
+    );
+  });
+
+  it("readRoster on a CLIENT degrades to reachable=false when the host proxy read throws (#1363)", async () => {
+    const fs = await import("node:fs");
+    const fleetConfigFile = resolve(tmp, "fleet-client-2.json");
+    fs.writeFileSync(fleetConfigFile, JSON.stringify({ role: "client", canonical: { host: "h", port: 4096, sshAlias: "h" } }));
+    const fetchImpl = vi.fn(async () => { throw new Error("ECONNREFUSED"); });
+    const deps = defaultFleetSectionDeps({
+      fleetConfigFile,
+      fetchImpl: fetchImpl as any,
+      serviceEndpoint: () => ({ origin: "http://127.0.0.1:4095", authHeader: "Bearer x" }),
+    });
+    const out = await deps.readRoster();
+    expect(out.reachable).toBe(false);
+    expect(out.rows).toEqual([]);
+  });
+
+  it("readRoster on a CLIENT with no live service endpoint degrades to reachable=false (#1363)", async () => {
+    const fs = await import("node:fs");
+    const fleetConfigFile = resolve(tmp, "fleet-client-3.json");
+    fs.writeFileSync(fleetConfigFile, JSON.stringify({ role: "client", canonical: { host: "h", port: 4096, sshAlias: "h" } }));
+    const deps = defaultFleetSectionDeps({ fleetConfigFile, serviceEndpoint: () => null });
+    const out = await deps.readRoster();
+    expect(out.reachable).toBe(false);
+    expect(out.rows).toEqual([]);
+  });
+
+  it("readRoster on a SERVER reads the LOCAL roster cache and never hits the network (#1363)", async () => {
+    const fs = await import("node:fs");
+    const rosterFile = resolve(tmp, "roster-server.json");
+    const fleetConfigFile = resolve(tmp, "fleet-server.json");
+    fs.writeFileSync(fleetConfigFile, JSON.stringify({ role: "server", canonical: {} }));
+    fs.writeFileSync(rosterFile, JSON.stringify({
+      schema_version: 1,
+      rows: [{ machine_id: "a", name: "A", server_mode: "client", capabilities: [], sshAlias: "a", transport: "ssh", last_report: "t", health: "reachable" }],
+    }));
+    const fetchImpl = vi.fn();
+    const deps = defaultFleetSectionDeps({ rosterFile, fleetConfigFile, fetchImpl: fetchImpl as any });
+    const out = await deps.readRoster();
+    expect(out.reachable).toBe(true);
+    expect(out.rows).toHaveLength(1);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("readCanonicalServer returns the canonical server on a CLIENT, null on a SERVER (#1363)", async () => {
+    const fs = await import("node:fs");
+    const clientCfg = resolve(tmp, "fleet-cs-client.json");
+    const serverCfg = resolve(tmp, "fleet-cs-server.json");
+    fs.writeFileSync(clientCfg, JSON.stringify({ role: "client", canonical: { host: "jjs-mac-studio", port: 4096, sshAlias: "jjs-mac-studio" } }));
+    fs.writeFileSync(serverCfg, JSON.stringify({ role: "server", canonical: { host: "jjs-mac-studio", port: 4096, sshAlias: "jjs-mac-studio" } }));
+    const clientDeps = defaultFleetSectionDeps({ fleetConfigFile: clientCfg });
+    const serverDeps = defaultFleetSectionDeps({ fleetConfigFile: serverCfg });
+    const cs = clientDeps.readCanonicalServer?.();
+    expect(cs).not.toBeNull();
+    expect(cs!.machineId).toBe("jjs-mac-studio");
+    expect(serverDeps.readCanonicalServer?.()).toBeNull();
   });
 
   it("readPosture folds fleet.json role (Server mode) with the posture-state link-health", async () => {

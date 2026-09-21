@@ -212,6 +212,55 @@ describe("buildFleetSectionModel — not registered with a fleet (#1359)", () =>
   });
 });
 
+describe("buildFleetSectionModel — canonical-server synthesis on a client (#1363)", () => {
+  it("synthesizes a server row from canonicalServer when the roster carries none for it", () => {
+    const model = buildFleetSectionModel(input({
+      roster: [],
+      localDevice: { machineId: "laptop-01", name: "JJ's Laptop", serveStance: "client", deviceType: "laptop" },
+      canonicalServer: { machineId: "jjs-mac-studio", name: "jjs-mac-studio" },
+    }));
+    expect(model.state).toBe("populated");
+    const server = model.devices.find((d) => d.machineId === "jjs-mac-studio");
+    expect(server).toBeDefined();
+    expect(server!.role).toBe("server");        // the canonical node is the server
+    expect(server!.isLocal).toBe(false);
+    expect(server!.health).toBe("reachable");   // reachable roster ⇒ server reachable
+  });
+
+  it("does not duplicate the server row when the host roster already carries it", () => {
+    const model = buildFleetSectionModel(input({
+      roster: [row({ machine_id: "jjs-mac-studio", name: "Mac Studio", server_mode: "server" })],
+      localDevice: { machineId: "laptop-01", name: "Laptop", serveStance: "client" },
+      canonicalServer: { machineId: "jjs-mac-studio", name: "jjs-mac-studio" },
+    }));
+    const serverRows = model.devices.filter((d) => d.machineId === "jjs-mac-studio");
+    expect(serverRows).toHaveLength(1);
+  });
+
+  it("does not synthesize a server row for the local machine (the server never doubles its own self-row)", () => {
+    const model = buildFleetSectionModel(input({
+      roster: [],
+      localDevice: { machineId: "jjs-mac-studio", name: "Mac Studio", serveStance: "server" },
+      canonicalServer: { machineId: "jjs-mac-studio", name: "jjs-mac-studio" },
+    }));
+    const serverRows = model.devices.filter((d) => d.machineId === "jjs-mac-studio");
+    expect(serverRows).toHaveLength(1);
+    expect(serverRows[0].isLocal).toBe(true);   // it's the self-row, not a synthesized peer
+  });
+
+  it("still shows the canonical server (as down) when the host roster is unreachable (#1359-style known fact)", () => {
+    const model = buildFleetSectionModel(input({
+      rosterReachable: false,
+      localDevice: { machineId: "laptop-01", name: "Laptop", serveStance: "client" },
+      canonicalServer: { machineId: "jjs-mac-studio", name: "jjs-mac-studio" },
+    }));
+    expect(model.state).toBe("unreachable");
+    const server = model.devices.find((d) => d.machineId === "jjs-mac-studio");
+    expect(server).toBeDefined();
+    expect(server!.health).toBe("down");        // known to exist, but unreachable — never fabricated as healthy
+  });
+});
+
 // ── renderFleetSection (DOM) ─────────────────────────────────────────────────
 
 function populatedModel(over: Partial<FleetSectionModel> = {}): FleetSectionModel {

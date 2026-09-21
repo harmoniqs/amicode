@@ -118,6 +118,24 @@ export interface FleetSectionInput {
    *  when local identity can't be resolved. Drives the self-row synthesis and
    *  the "not registered with a fleet" collapse below. */
   localDevice?: LocalDeviceInput | null;
+  /** The canonical server this machine points at (fleet.json `canonical`),
+   *  known independent of the peer roster (#1363). On a CLIENT the server is
+   *  never a roster row — the roster lists reporters (peers/clients) — so
+   *  without this the client would never see the machine it's attached to.
+   *  Synthesized into a server device row below when present, not the local
+   *  machine, and not already carried by the roster. Null/omitted on a server
+   *  or standalone machine (the server is its own self-row; a standalone has
+   *  no canonical). */
+  canonicalServer?: CanonicalServerInput | null;
+}
+
+/** The canonical-server seed — the machine a client points at, from fleet.json
+ *  `canonical` (#1363). Deliberately minimal: identity only. `machineId`
+ *  should be the canonical host (or sshAlias) so it de-dupes against a roster
+ *  row for the same server if one ever appears. */
+export interface CanonicalServerInput {
+  machineId: string;
+  name: string;
 }
 
 /** The self-row seed — independent of the roster, so a machine always sees
@@ -177,9 +195,14 @@ export function buildFleetSectionModel(input: FleetSectionInput): FleetSectionMo
   // from local fleet.json/config, not a read of the down peer roster — so it
   // still renders when known (#1359: "still show the self-row").
   if (!input.rosterReachable) {
+    const downDevices: FleetDeviceRow[] = local ? [localDeviceRow(local)] : [];
+    // The canonical server is a fact known from fleet.json, not a read of the
+    // down peer roster — so it still renders (as `down`, never fabricated as
+    // healthy), the same way the self-row does (#1363).
+    maybeAddCanonicalServer(downDevices, input.canonicalServer ?? null, local, "down");
     return {
       state: "unreachable",
-      devices: local ? [localDeviceRow(local)] : [],
+      devices: downDevices,
       posture: buildPostureBadge(input.posture),
       manage: { enabled: input.manageAvailable },
       troubleshoot: { enabled: input.troubleshootAvailable },
@@ -202,6 +225,11 @@ export function buildFleetSectionModel(input: FleetSectionInput): FleetSectionMo
   if (local && !devices.some((d) => d.machineId === local.machineId)) {
     devices.unshift(localDeviceRow(local));
   }
+  // Synthesize the canonical-server row on a client (the server is never a
+  // roster row — the roster lists reporters), so you always see the machine
+  // you're attached to. A reachable peer roster means the host answered, so
+  // the server is `reachable` (#1363).
+  maybeAddCanonicalServer(devices, input.canonicalServer ?? null, local, "reachable");
   // The local machine always renders first — whether it was synthesized
   // (already unshifted above) or found in the roster at an arbitrary index.
   const localIdx = devices.findIndex((d) => d.isLocal);
@@ -246,6 +274,41 @@ function localDeviceRow(local: LocalDeviceInput): FleetDeviceRow {
     health: "reachable",
     lastSeen: "now",
     isLocal: true,
+  };
+}
+
+/** Add the synthesized canonical-server row to `devices` in place, unless it
+ *  would double a row that already exists — the local machine's own self-row
+ *  (the server viewing itself) or a roster row for the same server (#1363).
+ *  `health` is the caller's honest signal: `reachable` when the host answered
+ *  the roster read, `down` when it didn't. */
+function maybeAddCanonicalServer(
+  devices: FleetDeviceRow[],
+  server: CanonicalServerInput | null,
+  local: LocalDeviceInput | null,
+  health: RosterHealth,
+): void {
+  if (!server) return;
+  // The server IS this machine ⇒ it's the self-row, never a synthesized peer.
+  if (local && local.machineId === server.machineId) return;
+  // Already carried (a roster row for the same server) ⇒ don't duplicate.
+  if (devices.some((d) => d.machineId === server.machineId)) return;
+  devices.push(canonicalServerRow(server, health));
+}
+
+/** Build the synthesized canonical-server row (#1363). Like the self-row, this
+ *  is a fact known from fleet.json, not a self-report read off disk — so
+ *  `lastSeen` is the literal "now" and there is no capability list. */
+function canonicalServerRow(server: CanonicalServerInput, health: RosterHealth): FleetDeviceRow {
+  return {
+    machineId: server.machineId,
+    name: server.name,
+    role: "server",
+    typeLabel: "server",
+    capabilities: [],
+    health,
+    lastSeen: "now",
+    isLocal: false,
   };
 }
 
