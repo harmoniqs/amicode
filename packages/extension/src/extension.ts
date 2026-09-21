@@ -493,7 +493,13 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   //    #1321: the read-only fleet section reads the host-owned roster + this
   //    machine's posture and pushes them to the webview. Manage stays honestly
   //    disabled until the Fleet Manager tab (#1322) registers its command.
-  const sidebarProvider = new SidebarViewProvider(ctx.extensionUri, undefined, defaultFleetSectionDeps());
+  const sidebarProvider = new SidebarViewProvider(ctx.extensionUri, undefined, defaultFleetSectionDeps({
+    // #1363 — a CLIENT proxy-reads the host's roster through the live local
+    // amicode service. Lazy: the service boots AFTER this construction, so read
+    // the module-level handle at call time (null until up ⇒ honest degrade).
+    serviceEndpoint: () =>
+      amicodeService ? { origin: new URL(amicodeService.url).origin, authHeader: amicodeService.authHeader } : null,
+  }));
   ctx.subscriptions.push(
     vscode.window.registerWebviewViewProvider("amicode.workspace", sidebarProvider, {
       webviewOptions: { retainContextWhenHidden: true },

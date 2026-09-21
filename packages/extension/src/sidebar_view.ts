@@ -13,7 +13,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import { execSync } from "node:child_process";
 import { handleSidebarMessage, type SidebarMessageHandlers, type SidebarDownMessage, type FileOpRequest, type FileOpResult, type TreeEntry, type TreeRoot } from "./sidebar_bridge";
-import { buildFleetSectionModel, type RosterRowLike, type FleetPostureInput, type LocalDeviceInput } from "./sidebar_fleet_section";
+import { buildFleetSectionModel, type RosterRowLike, type FleetPostureInput, type LocalDeviceInput, type CanonicalServerInput } from "./sidebar_fleet_section";
 import { parseRosterDocument, fleetRosterCachePath, fleetTopologyPath } from "@amicode/schema";
 import { fleetPostureStateFile } from "./fleet_posture_state";
 import { SidebarTreeService, type RawDirEntry } from "./sidebar_tree_service";
@@ -347,8 +347,12 @@ function friendlyHostname(): string | undefined {
  * proxy (a client) without the provider caring which. Read-only by contract:
  * there is no write seam here.
  */export interface FleetSectionDeps {
-  /** The fleet-wide roster + whether it could be read (false ⇒ host down). */
-  readRoster: () => { rows: RosterRowLike[]; reachable: boolean };
+  /** The fleet-wide roster + whether it could be read (false ⇒ host down).
+   *  Async by contract (#1363): a SERVER/standalone resolves synchronously from
+   *  the local roster cache; a CLIENT proxy-reads the host over HTTP and so
+   *  returns a Promise. `pushFleetStatus` accepts either — the union keeps every
+   *  existing synchronous injection working unchanged. */
+  readRoster: () => RosterRead | Promise<RosterRead>;
   /** This machine's posture (serve-stance + link-health), or null if unknown. */
   readPosture: () => FleetPostureInput | null;
   /** THIS machine's own identity, independent of the roster (fleet.json +
@@ -356,6 +360,11 @@ function friendlyHostname(): string | undefined {
    *  registered with a fleet" collapse. Optional for backward compatibility
    *  (older injected deps omit it; treated as null — no self-row). */
   readLocalDevice?: () => LocalDeviceInput | null;
+  /** The canonical server this machine points at (fleet.json `canonical`),
+   *  or null on a server/standalone (#1363). On a CLIENT the server is never a
+   *  roster row, so this drives the server-node synthesis. Optional for
+   *  backward compatibility (older injected deps omit it — no server row). */
+  readCanonicalServer?: () => CanonicalServerInput | null;
   /** Subscribe to posture/roster change; the callback re-pushes the section. */
   onPostureChange: (cb: () => void) => vscode.Disposable;
   /** Whether the Fleet Manager tab (#1322) exists — gates the Manage affordance. */
@@ -365,6 +374,13 @@ function friendlyHostname(): string | undefined {
   /** Spawn a new chat session with the given prompt. Used by the Troubleshoot
    *  button to invoke the troubleshoot-fleet skill. */
   launchSession: (prompt: string) => void;
+}
+
+/** The roster read result — rows + whether the read succeeded (false ⇒ host
+ *  down / unreachable, an honest degraded state, never a fabricated list). */
+export interface RosterRead {
+  rows: RosterRowLike[];
+  reachable: boolean;
 }
 
 /** Options for {@link defaultFleetSectionDeps} — every file path is injectable
@@ -387,13 +403,28 @@ export interface DefaultFleetDepsOptions {
   /** Override session launch; default navigates the chat panel to a new session
    *  with the given prompt (same pattern as New Project / New Environment). */
   launchSession?: (prompt: string) => void;
+  /** Override the HTTP client used for a CLIENT's roster proxy-read (#1363);
+   *  default: the global `fetch`. Inject for tests — never hits the network in
+   *  a test run. */
+  fetchImpl?: typeof fetch;
+  /** The live local amicode-service endpoint (origin + engine credential) a
+   *  CLIENT proxy-reads the host roster through (#1363). Lazy — resolved at
+   *  read time because the service may not be up when the deps are constructed;
+   *  returns null when it isn't, and the read degrades to unreachable. Default:
+   *  a null-returning stub (production wires the live handle from extension.ts). */
+  serviceEndpoint?: () => { origin: string; authHeader: string } | null;
 }
 
+/** The proxied route a CLIENT reads the host's authoritative roster from — the
+ *  local service forwards `/amicode/*` to the host (shouldProxyAmicodeToHost). */
+const CLIENT_ROSTER_ROUTE = "/amicode/roster";
+
 /**
- * The production fleet seams (#1321). READ-ONLY: the roster + posture are read
- * from their canonical on-disk homes (this machine is the Canonical Server, so
- * the roster cache is local; a client's HTTP-proxy read is a follow-up that
- * swaps `readRoster`). No write path exists here by contract.
+ * The production fleet seams (#1321, #1363). READ-ONLY: no write path exists
+ * here by contract. The roster read is role-aware — a SERVER/standalone reads
+ * the local roster cache synchronously; a CLIENT proxy-reads the host's
+ * authoritative roster over `GET /amicode/roster` (forwarded by the local
+ * service) and synthesizes the canonical-server node it points at.
  */
 export function defaultFleetSectionDeps(opts: DefaultFleetDepsOptions = {}): FleetSectionDeps {
   const rosterFile = opts.rosterFile ?? fleetRosterCachePath();
@@ -411,17 +442,61 @@ export function defaultFleetSectionDeps(opts: DefaultFleetDepsOptions = {}): Fle
     }
   }
 
+  function readCanonical(): { host?: string; port?: number; sshAlias?: string } | null {
+    try {
+      if (!fs.existsSync(fleetConfigFile)) return null;
+      const cfg = JSON.parse(fs.readFileSync(fleetConfigFile, "utf8"));
+      const c = cfg?.canonical;
+      return c && typeof c === "object" ? c : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** The SERVER/standalone path: read the local roster cache synchronously. */
+  function readLocalRoster(): RosterRead {
+    try {
+      // An absent roster file is a fresh/empty fleet (reachable), NOT host-down.
+      if (!fs.existsSync(rosterFile)) return { rows: [] as RosterRowLike[], reachable: true };
+      const parsed = parseRosterDocument(JSON.parse(fs.readFileSync(rosterFile, "utf8")));
+      return { rows: parsed.ok ? parsed.doc.rows : [], reachable: true };
+    } catch {
+      // A genuine I/O error is the honest unreachable signal (AC6).
+      return { rows: [], reachable: false };
+    }
+  }
+
+  /** The CLIENT path (#1363): proxy-read the host's authoritative roster via
+   *  the local service's `GET /amicode/roster` (forwarded to the host). Any
+   *  failure — no live endpoint, network error, non-200, malformed body — is
+   *  the honest unreachable state, never a fabricated or stale list. */
+  async function readHostRoster(): Promise<RosterRead> {
+    const endpoint = (opts.serviceEndpoint ?? (() => null))();
+    if (!endpoint) return { rows: [], reachable: false };
+    const doFetch = opts.fetchImpl ?? fetch;
+    try {
+      const res = await doFetch(`${endpoint.origin}${CLIENT_ROSTER_ROUTE}`, {
+        headers: { Authorization: endpoint.authHeader },
+      });
+      if (!res.ok) return { rows: [], reachable: false };
+      const body = (await res.json()) as { ok?: boolean; rows?: unknown };
+      const parsed = parseRosterDocument(body);
+      return { rows: parsed.ok ? parsed.doc.rows : [], reachable: true };
+    } catch {
+      return { rows: [], reachable: false };
+    }
+  }
+
   return {
-    readRoster: () => {
-      try {
-        // An absent roster file is a fresh/empty fleet (reachable), NOT host-down.
-        if (!fs.existsSync(rosterFile)) return { rows: [] as RosterRowLike[], reachable: true };
-        const parsed = parseRosterDocument(JSON.parse(fs.readFileSync(rosterFile, "utf8")));
-        return { rows: parsed.ok ? parsed.doc.rows : [], reachable: true };
-      } catch {
-        // A genuine I/O error is the honest unreachable signal (AC6).
-        return { rows: [], reachable: false };
-      }
+    readRoster: () => (readServeStance() === "client" ? readHostRoster() : readLocalRoster()),
+    readCanonicalServer: () => {
+      // The server node is a client-only synthesis: a server sees itself as its
+      // self-row; a standalone has no canonical to point at.
+      if (readServeStance() !== "client") return null;
+      const c = readCanonical();
+      const id = c?.host ?? c?.sshAlias;
+      if (!id) return null;
+      return { machineId: id, name: id };
     },
     readPosture: () => {
       const serverMode = readServeStance();
@@ -770,16 +845,30 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
    */
   private pushFleetStatus(): void {
     if (!this.fleetDeps) return;
-    const roster = this.fleetDeps.readRoster();
-    const model = buildFleetSectionModel({
-      roster: roster.rows,
-      rosterReachable: roster.reachable,
-      posture: this.fleetDeps.readPosture(),
-      manageAvailable: this.fleetDeps.isFleetManagerAvailable(),
-      troubleshootAvailable: true,
-      localDevice: this.fleetDeps.readLocalDevice?.() ?? null,
-    });
-    this.postDown({ kind: "fleet-status", model });
+    const deps = this.fleetDeps;
+    const result = deps.readRoster();
+    const build = (roster: RosterRead) => {
+      // Re-check: an async read may resolve after the view/deps were torn down.
+      if (!this.fleetDeps) return;
+      const model = buildFleetSectionModel({
+        roster: roster.rows,
+        rosterReachable: roster.reachable,
+        posture: deps.readPosture(),
+        manageAvailable: deps.isFleetManagerAvailable(),
+        troubleshootAvailable: true,
+        localDevice: deps.readLocalDevice?.() ?? null,
+        canonicalServer: deps.readCanonicalServer?.() ?? null,
+      });
+      this.postDown({ kind: "fleet-status", model });
+    };
+    // The SERVER/standalone read is synchronous — post immediately (keeps every
+    // existing synchronous injection posting in the same tick). The CLIENT read
+    // is a Promise (the host proxy-read) — build when it resolves (#1363).
+    if (result instanceof Promise) {
+      void result.then(build).catch(() => build({ rows: [], reachable: false }));
+    } else {
+      build(result);
+    }
   }
 
   /**
