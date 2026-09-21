@@ -311,7 +311,7 @@ describe("SidebarViewProvider — fleet section host wiring (#1321)", () => {
     expect(msg).toBeDefined();
     expect(msg.model.state).toBe("populated");
     expect(msg.model.devices).toHaveLength(1);
-    expect(msg.model.devices[0].role).toBe("server");        // server_mode → "role"
+    expect(msg.model.devices[0].role).toBe("peer");            // non-hub server → "peer" (#1394)
     expect(msg.model.devices[0].lastSeen).toMatch(/^\d{4}-\d{2}-\d{2}T/); // last_report → "last-seen" (ISO timestamp)
     expect(msg.model.devices[0].health).toBe("reachable");
     expect(msg.model.posture.serverMode).toBe("server");
@@ -652,9 +652,9 @@ describe("defaultFleetSectionDeps — production readers (#1321)", () => {
     expect(p.reachable).toBe(true);
   });
 
-  it("isFleetManagerAvailable honestly reports true (the Fleet Manager is always available)", () => {
+  it("isFleetManagerAvailable defaults to false (Fleet Manager not yet wired)", () => {
     const deps = defaultFleetSectionDeps({});
-    expect(deps.isFleetManagerAvailable()).toBe(true);
+    expect(deps.isFleetManagerAvailable()).toBe(false);
   });
 });
 

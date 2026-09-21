@@ -551,7 +551,7 @@ export function defaultFleetSectionDeps(opts: DefaultFleetDepsOptions = {}): Fle
           return { dispose() { /* dir absent — nothing to watch */ } };
         }
       }),
-    isFleetManagerAvailable: opts.isFleetManagerAvailable ?? (() => true),
+    isFleetManagerAvailable: opts.isFleetManagerAvailable ?? (() => false),
     openFleetManager: () => { void vscode.commands.executeCommand(commandId); },
     launchSession: opts.launchSession ?? ((prompt: string) => {
       // Late-bound: the chat panel may not exist at deps-construction time, but
