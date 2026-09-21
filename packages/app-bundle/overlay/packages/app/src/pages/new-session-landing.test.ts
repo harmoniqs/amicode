@@ -23,6 +23,10 @@ describe("empty-workspace landing gate (no directory → showEmpty)", () => {
   // empty-workspace component (no workspace folder open). These tests verify
   // the decision logic by exercising resolveLandingDirectory as the predicate:
   // `!directory` is the condition that sets showEmpty=true in NewSessionLanding.
+  //
+  // The fix for CodeRabbit's review: land() now reads workspaceProjects()
+  // FIRST, so the createEffect subscribes to the reactive store. When a
+  // workspace folder arrives, the effect re-runs and resolves a directory.
 
   test("truthy directory does NOT trigger empty state", () => {
     const dir = resolveLandingDirectory([{ worktree: "/proj" }], undefined)
@@ -38,6 +42,27 @@ describe("empty-workspace landing gate (no directory → showEmpty)", () => {
     const dir = resolveLandingDirectory([], "")
     // empty string is falsy in JS, which means `if (!directory)` catches it
     expect(!dir).toBe(true)
+  })
+
+  test("workspace projects take priority over server projects", () => {
+    // Simulates the fix: workspaceProjects are preferred over ctx.projects
+    const wsProjects = [{ worktree: "/ws/project" }]
+    const serverProjects = [{ worktree: "/server/project" }]
+    const dir = resolveLandingDirectory(
+      wsProjects.length > 0 ? wsProjects : serverProjects,
+      undefined,
+    )
+    expect(dir).toBe("/ws/project")
+  })
+
+  test("falls back to server projects when workspace is empty", () => {
+    const wsProjects: { worktree: string }[] = []
+    const serverProjects = [{ worktree: "/server/project" }]
+    const dir = resolveLandingDirectory(
+      wsProjects.length > 0 ? wsProjects : serverProjects,
+      undefined,
+    )
+    expect(dir).toBe("/server/project")
   })
 })
 
