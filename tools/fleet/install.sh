@@ -273,6 +273,7 @@ if [[ "$ROLE" == "server" ]]; then
       if ! grep -q "<key>RunAtLoad</key>" "$HUB_PLIST_DST"; then echo "[fleet] FAIL hub service unit missing RunAtLoad (won't start on reboot)"; exit 1; fi
       if ! grep -q "<key>KeepAlive</key>" "$HUB_PLIST_DST"; then echo "[fleet] FAIL hub service unit missing KeepAlive (won't restart on crash)"; exit 1; fi
       if ! grep -q "OPENCODE_DB" "$HUB_PLIST_DST"; then echo "[fleet] FAIL hub service unit does not pin OPENCODE_DB (one-writer, ADR 0005)"; exit 1; fi
+      if ! grep -q "AMICODE_SERVICE_AUTH" "$HUB_PLIST_DST"; then echo "[fleet] FAIL hub service unit missing AMICODE_SERVICE_AUTH=open (#1354 — the SSH tunnel is the auth boundary)"; exit 1; fi
       say "ok hub service $HUB_PLIST_DST (RunAtLoad+KeepAlive, runs the #955 runner)"
     else
       if [[ ! -f "$HUB_UNIT_DST" ]]; then echo "[fleet] FAIL hub service systemd unit missing at $HUB_UNIT_DST (the canonical hub will NOT survive a reboot — run: bash tools/fleet/install.sh)"; exit 1; fi
@@ -281,6 +282,7 @@ if [[ "$ROLE" == "server" ]]; then
       if ! grep -q "Restart=always" "$HUB_UNIT_DST"; then echo "[fleet] FAIL hub service unit missing Restart=always (won't restart on crash)"; exit 1; fi
       if ! grep -q "WantedBy=" "$HUB_UNIT_DST"; then echo "[fleet] FAIL hub service unit missing WantedBy (won't start on boot)"; exit 1; fi
       if ! grep -q "OPENCODE_DB" "$HUB_UNIT_DST"; then echo "[fleet] FAIL hub service unit does not pin OPENCODE_DB (one-writer, ADR 0005)"; exit 1; fi
+      if ! grep -q "AMICODE_SERVICE_AUTH" "$HUB_UNIT_DST"; then echo "[fleet] FAIL hub service unit missing AMICODE_SERVICE_AUTH=open (#1354 — the SSH tunnel is the auth boundary)"; exit 1; fi
       say "ok hub service $HUB_UNIT_DST (WantedBy+Restart=always, runs the #955 runner)"
     fi
   else
@@ -306,6 +308,8 @@ if [[ "$ROLE" == "server" ]]; then
 	<dict>
 		<key>AMICODE_APP_DIST</key>
 		<string>${HUB_APP_DIST}</string>
+		<key>AMICODE_SERVICE_AUTH</key>
+		<string>open</string>
 		<key>AMICODE_SERVICE_PORT</key>
 		<string>${FLEET_PORT}</string>
 		<key>OPENCODE_DB</key>
@@ -338,6 +342,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 Environment=AMICODE_APP_DIST=${HUB_APP_DIST}
+Environment=AMICODE_SERVICE_AUTH=open
 Environment=AMICODE_SERVICE_PORT=${FLEET_PORT}
 Environment=OPENCODE_DB=${HUB_DB}
 ExecStart=${HUB_NODE} ${HUB_RUNNER}

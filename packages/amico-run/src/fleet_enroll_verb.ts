@@ -355,7 +355,9 @@ async function enrollAsClient(argv: string[], token: JoinToken, deps: FleetEnrol
   // Probe the canonical host's version and reject a pin_version disagreement
   // via the pure versionSkewVerdict. An unreachable host at this stage is also
   // a pre-write refusal (the token cannot be validated) — never a blind write.
-  const pinProbe = await probeHealth(`http://${canonical.host}:${canonical.port}`, token.fleet_token, fetchImpl);
+  // #1354: the hub uses open auth (AMICODE_SERVICE_AUTH=open) — the SSH tunnel
+  // is the trust boundary, so no HTTP credentials are sent.
+  const pinProbe = await probeHealth(`http://${canonical.host}:${canonical.port}`, undefined, fetchImpl);
   if ("error" in pinProbe) {
     return fail(
       [`cannot reach the hub host to validate the join token's pin (host ${canonical.host}:${canonical.port} unreachable)`],
@@ -406,7 +408,7 @@ async function enrollAsClient(argv: string[], token: JoinToken, deps: FleetEnrol
     last_report: now,
     health: "reachable",
   };
-  await postRosterRow(canonical, token.fleet_token, provisionalRow, fetchImpl);
+  await postRosterRow(canonical, undefined, provisionalRow, fetchImpl);
 
   // ── set the transport, then run the installer (guard + client tunnel) ──
   (deps.setTransport ?? defaultSetTransport)(transport);
@@ -443,7 +445,7 @@ async function enrollAsClient(argv: string[], token: JoinToken, deps: FleetEnrol
   const failedHealth: RosterHealth = verify.cause === "transport-down" ? "down" : "degraded";
   await postRosterRow(
     canonical,
-    token.fleet_token,
+    undefined,
     { ...provisionalRow, health: failedHealth, last_report: (deps.now ?? (() => new Date().toISOString()))() },
     fetchImpl,
   );
@@ -478,7 +480,7 @@ async function runVerifyAttach(
 
   const maxAttempts = 1 + retryDelays.length; // first try + retries
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const probe = await probeHealth(originR.origin, token.fleet_token, fetchImpl);
+    const probe = await probeHealth(originR.origin, undefined, fetchImpl);
 
     // Only "unreachable" (transport-down) retries — auth rejections, pin
     // mismatches, and other non-transport failures fail immediately.

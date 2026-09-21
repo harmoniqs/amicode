@@ -19,6 +19,7 @@ import {
   launchdHubServiceUnit,
   systemdHubServiceUnit,
   hubServiceProgramArgs,
+  hubServiceEnv,
   HUB_SERVICE_LABEL,
   type HubServiceUnitOptions,
 } from "../src/amicode_service/fleet_hub_service";
@@ -126,5 +127,33 @@ describe("#1258 the hub-service unit is DISTINCT from #1260's tunnel unit (not c
     // the launchd + systemd forms both exec exactly this argv (no divergence)
     for (const a of args) expect(launchdHubServiceUnit(OPTS)).toContain(a);
     expect(systemdHubServiceUnit(OPTS)).toContain(args.join(" "));
+  });
+});
+
+describe("#1354 hub open-auth — the SSH tunnel is the auth boundary, not HTTP credentials", () => {
+  it("hubServiceEnv sets AMICODE_SERVICE_AUTH=open by default", () => {
+    const env = hubServiceEnv(OPTS);
+    expect(env.AMICODE_SERVICE_AUTH).toBe("open");
+  });
+
+  it("launchd plist carries AMICODE_SERVICE_AUTH=open", () => {
+    const plist = launchdHubServiceUnit(OPTS);
+    expect(plist).toContain("<key>AMICODE_SERVICE_AUTH</key>");
+    expect(plist).toContain("<string>open</string>");
+  });
+
+  it("systemd unit carries Environment=AMICODE_SERVICE_AUTH=open", () => {
+    const unit = systemdHubServiceUnit(OPTS);
+    expect(unit).toContain("Environment=AMICODE_SERVICE_AUTH=open");
+  });
+
+  it("extraEnv can override AMICODE_SERVICE_AUTH (deploy-policy control)", () => {
+    const optsOverride = { ...OPTS, extraEnv: { AMICODE_SERVICE_AUTH: "credential" } };
+    const env = hubServiceEnv(optsOverride);
+    // extraEnv spreads AFTER the default, so "credential" wins
+    expect(env.AMICODE_SERVICE_AUTH).toBe("credential");
+    // the override propagates to the rendered plist
+    const plist = launchdHubServiceUnit(optsOverride);
+    expect(plist).toContain("<string>credential</string>");
   });
 });

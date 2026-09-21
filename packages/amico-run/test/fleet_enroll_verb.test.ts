@@ -430,6 +430,26 @@ describe("amico fleet enroll — never-fork: a client installs the guard and spa
   });
 });
 
+describe("amico fleet enroll — open-auth hub: no HTTP credentials sent (#1354 Bug 2)", () => {
+  it("does NOT send an Authorization header to the hub (the SSH tunnel is the auth boundary)", async () => {
+    const s = await stub({ version: "v1.18.29" });
+    const authHeaders: (string | undefined)[] = [];
+    const spyFetch: typeof fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const hdrs = init?.headers as Record<string, string> | undefined;
+      authHeaders.push(hdrs?.Authorization);
+      return globalThis.fetch(input, init);
+    }) as typeof fetch;
+    const rec = recorder({ fetchImpl: spyFetch });
+    const r = await fleetEnroll(["--join-token-json", JSON.stringify(tokenFor(s))], rec.deps);
+
+    expect(r.code).toBe(0);
+    expect(j(r).ok).toBe(true);
+    // Every fetch call should have Authorization = undefined (open auth)
+    expect(authHeaders.length).toBeGreaterThan(0); // at least the pin check + verify-attach
+    expect(authHeaders.every((h) => h === undefined)).toBe(true);
+  });
+});
+
 describe("amico fleet enroll — verify-attach retries on transient transport-down (#1354 Bug 3)", () => {
   it("retries up to 3 times on transport-down, then succeeds when the host comes up", async () => {
     const canonical = await stub({ version: "v1.18.29" }); // pin check target (healthy)
