@@ -1,6 +1,6 @@
 # ADR 0029 — One fleet, differentiated by a `serving` capability (retire the hub-vs-peer topology split)
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-09-21
 - **Context refs:** ADR 0005 (managed fleet — `Server mode`, the never-fork guard), ADR 0023
   (base-tier projection — the one-parser invariant), ADR 0025 (Remote-SSH default / thin-client
@@ -9,7 +9,7 @@
   (peer fleet studios — chose "additive, two topologies"), ADR 0028 (self-reported device
   identity in the roster). Program: #1316/#1319/#1341–#1346 (#1353, merged), #1369 (the doc PR
   that documents the current two-topology reality this ADR proposes to unify).
-- **Supersedes:** **amends ADR 0027 §D1.** ADR 0027 shipped peer studios as a *second topology
+- **Amends:** **ADR 0027 Decision #1 (§D1).** ADR 0027 shipped peer studios as a *second topology
   additive alongside* the hub/star, leaving "am I a hub or a peer?" as a user-facing distinction.
   This ADR reframes that distinction out of the product: there is **one fleet**, and whether
   others may attach to a device is a **per-device `serving` capability**, not a topology or a

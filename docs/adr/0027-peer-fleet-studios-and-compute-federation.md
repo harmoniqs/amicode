@@ -1,6 +1,6 @@
 # ADR 0027 — Peer fleet studios, with compute federation as the declared end-state
 
-- **Status:** proposed
+- **Status:** accepted — Decision #1 (§D1, "Additive peer topology") superseded by ADR 0029
 - **Date:** 2026-09-20
 - **Context refs:** ADR 0005 (managed fleet — defines `Server mode`, the never-fork guard), ADR 0023
   (base-tier projection — the one-parser invariant), ADR 0024 (pluggable transport), ADR 0025
@@ -11,11 +11,16 @@
   tier-1 mechanical `approved-mechanical`; judgment critics run by-hand — see that spec's Review).
 - **Supersedes:** nothing. **Additive.** It amends ADR 0025's *single-canonical-hub* premise to
   "one hub **or** many peers," and leaves the hub path (enroll, guard, Remote-SSH) byte-unchanged.
-- **Amended by:** ADR 0028 (#1368) — lifts this ADR's byte-freeze of the enroll verb
-  (`fleet_enroll_verb.ts`) so it can produce self-reported device identity on the roster row.
-  The additive-invariants gate's AC1 `FROZEN` set drops the enroll verb accordingly; the
-  never-fork guard freeze and the one-parser / single-writer / no-client-stance invariants
-  (AC2 / AC3 / AC4 + `assert_fleet_guard.sh`) remain in force.
+- **Amended by:**
+  - ADR 0028 (#1368) — lifts this ADR's byte-freeze of the enroll verb
+    (`fleet_enroll_verb.ts`) so it can produce self-reported device identity on the roster row.
+    The additive-invariants gate's AC1 `FROZEN` set drops the enroll verb accordingly; the
+    never-fork guard freeze and the one-parser / single-writer / no-client-stance invariants
+    (AC2 / AC3 / AC4 + `assert_fleet_guard.sh`) remain in force.
+  - ADR 0029 (accepted) — retires Decision #1's "additive, two topologies" framing: there is
+    **one fleet**, and `serving` is a per-device capability, not a topology or role. Decision #1's
+    **mechanism** (independent studios, the multiplexing service, the §D2–§D8 substrate seams) is
+    retained and generalized to the default; only its hub-vs-peer **framing** is superseded.
 
 ## Context
 
@@ -50,6 +55,11 @@ ADR declares but does not build.
 1. **Additive peer topology.** Peers coexist with the hub/star mode; the hub `enroll`, the never-fork
    guard, and ADR 0025 remain for the thin-client→server case. A peer stays `standalone` and
    *advertises*; it never takes the `client` stance, so the guard is never triggered and never relaxed.
+
+   > **Superseded by ADR 0029 (accepted).** One fleet; `serving` is a per-device capability, not a
+   > topology. The independent-studios mechanism (§D2) is retained and becomes the default; the thin
+   > client survives as an explicit `hosted-only` capability, not a topology. See ADR 0029 for the
+   > authoritative model.
 
 2. **Independent studios + a multiplexing `amicode_service`.** Each peer runs its own engine on its
    own DB (single-writer-per-DB preserved *per machine* by the existing adopt-or-spawn gate). The
@@ -154,7 +164,8 @@ ADR declares but does not build.
 ## Consequences
 
 - The product's "any capable machine can serve, and I can hop between them" lands as an additive mode;
-  the thin-client→hub case and ADR 0025 keep working.
+  the thin-client→hub case and ADR 0025 keep working. *(ADR 0029 reframes: the "additive mode" framing
+  is retired — there is one fleet; `serving` is a per-device capability, own-engine is the default.)*
 - The merged roster/discovery/status/UI are reused as the directory and front-end; the near-term build
   is a multiplexing service + a switch pointer + an Attach control, not new plumbing.
 - The Horizon-2 executor can make `compute` live without re-opening this ADR — the transport, the peer
