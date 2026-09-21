@@ -215,6 +215,7 @@ export {
   parseRosterDocument,
   emptyRoster,
   upsertRosterRow,
+  placementDescriptor,
   FLEET_ROSTER_CACHE_RELPATH,
   fleetRosterCachePath,
   type RosterHealth,
@@ -222,6 +223,7 @@ export {
   type RosterDocument,
   type ParseRosterRowResult,
   type ParseRosterDocumentResult,
+  type PlacementDescriptor,
 } from "./fleet_roster.js";
 
 // The pure version-skew verdict (amicode#1319, hoisted from the extension's
