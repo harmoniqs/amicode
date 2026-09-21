@@ -123,6 +123,14 @@ export type ReorderRootMessage = { kind: "reorder-root"; sourcePath: string; tar
 export type OpenFleetManagerMessage = { kind: "open-fleet-manager" };
 /** Request to spawn a troubleshoot-fleet session from the sidebar. */
 export type TroubleshootFleetMessage = { kind: "troubleshoot-fleet" };
+/** #1413 — connect to a fleet device from the sidebar. The message carries
+ *  identity only; all precondition data is resolved host-side. */
+export type ConnectToDeviceMessage = {
+  kind: "connect-to-device";
+  machineId: string;
+  deviceName: string;
+  isLocal: boolean;
+};
 
 // ── Environment action messages (#887) ───────────────────────────────────────
 
@@ -153,7 +161,8 @@ export type SidebarUpMessage =
   | BindToEnvironmentMessage
   | PromoteToEnvironmentMessage
   | OpenFleetManagerMessage
-  | TroubleshootFleetMessage;
+  | TroubleshootFleetMessage
+  | ConnectToDeviceMessage;
 
 // ── Fleet section view-model (host→webview payload) ──────────────────────────
 // The model type is defined in sidebar_fleet_section.ts (the browser-safe
@@ -283,6 +292,8 @@ export interface SidebarMessageHandlers {
   openFleetManager?: () => void;
   /** Spawn a new chat session invoking the troubleshoot-fleet skill. */
   troubleshootFleet?: () => void;
+  /** #1413 — connect to a fleet device (show the Quick Pick). */
+  connectToDevice?: (msg: ConnectToDeviceMessage) => void;
 }
 
 /**
@@ -351,6 +362,9 @@ export function handleSidebarMessage(
       break;
     case "troubleshoot-fleet":
       handlers.troubleshootFleet?.();
+      break;
+    case "connect-to-device":
+      handlers.connectToDevice?.(msg);
       break;
     case "file-op": {
       const { kind: _k, ...req } = msg;
