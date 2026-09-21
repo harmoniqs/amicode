@@ -24,6 +24,14 @@ import { AddressInfo } from "node:net";
 import { createAmicodeService } from "../src/amicode_service";
 import { serverAuthToken, serverAuthHeader } from "../src/server_auth";
 import { writeHubCredential, hubUpstreamAuthHeader } from "../src/amicode_service/hub_credential";
+import { resolveKeeperPointer, writeKeeperPointerFile, type KeeperPointer } from "../src/amicode_service/keeper_pointer";
+import {
+  resolveAttachmentPointer,
+  writeAttachmentPointerFile,
+  clearAttachmentPointerFile,
+  resolveAmicodeTarget,
+  type AttachmentPointer,
+} from "../src/amicode_service/attachment_pointer";
 
 // ── a stub HOST (the far end of the tunnel — an opencode server expecting its
 //    OWN hub mint; it 401s anything else, so a 200 proves the translation) ────
@@ -338,5 +346,134 @@ describe("fleet-client relay skeleton (#1261) — a client holds NO local engine
     } finally {
       await svc.stop();
     }
+  });
+
+  // ── #1342 (ADR 0027 §2-3, Slice 2): the D6 attachment pointer + the D3
+  // three-way resolver. Per the issue's own Testing Decision, this extends
+  // the relay-law suite with a DISTINCT keeper/attached fixture rather than a
+  // new harness. Two REAL stub hosts at DISTINCT addresses stand in for the
+  // keeper and the attached peer — not because the resolver calls them (it
+  // never does: it is a PURE function over already-resolved pointer files),
+  // but so "distinct addresses" is a literal, verifiable fact and so a
+  // dedicated test can prove ZERO requests ever reach either host — the
+  // sharpest possible demonstration that these are ROUTING-TARGET
+  // assertions ("resolves to"), never "arrives at" (that is Slice 3's real
+  // per-attachment transport).
+  //
+  // The resolver itself is NOT wired into the live dispatch() path this
+  // slice (see attachment_pointer.ts's header) — the EXISTING
+  // shouldProxyAmicodeToHost / hub-client routing above is untouched. The
+  // one live-wire test in this block proves the NEW /amicode/fleet/attachment
+  // route inherits "never proxied" from that EXISTING, unmodified exclusion
+  // of the whole /amicode/fleet/* prefix — zero server.ts changes needed.
+  describe("#1342 (ADR 0027 §2-3, Slice 2) — the D6 pointer + D3 three-way resolver: routing-target assertions, not arrival", () => {
+    let dir: string;
+    let keeperFile: string;
+    let attachmentFile: string;
+    let keeperHost: StubHost;
+    let attachedHost: StubHost;
+    const ATTACHED_MACHINE_ID = "peer-mac-studio-02";
+
+    beforeAll(async () => {
+      dir = mkdtempSync(join(tmpdir(), "amicode-multiplex-"));
+      keeperFile = join(dir, "keeper.json");
+      attachmentFile = join(dir, "attachment.json");
+      // Two REAL HTTP stub hosts, at two DISTINCT ephemeral ports — the
+      // literal "distinct addresses" the acceptance criteria name. Neither
+      // password is ever exercised: the resolver makes no request to them.
+      keeperHost = await startStubHost([], "keeper-stub-unused-password");
+      attachedHost = await startStubHost([], "attached-stub-unused-password");
+      expect(keeperHost.url).not.toBe(attachedHost.url); // sanity: genuinely distinct
+    });
+
+    afterAll(async () => {
+      await keeperHost.stop();
+      await attachedHost.stop();
+      rmSync(dir, { recursive: true, force: true });
+      // The sharpest proof of "resolves to, never arrives at": across this
+      // ENTIRE describe block's tests, resolving the target never made a
+      // single HTTP request to either stub host.
+      expect(keeperHost.requests.length).toBe(0);
+      expect(attachedHost.requests.length).toBe(0);
+    });
+
+    function writeDistinctPointers(): { keeper: KeeperPointer; attached: AttachmentPointer } {
+      const keeper: KeeperPointer = { sshAlias: keeperHost.url, transport: "ssh" };
+      const attached: AttachmentPointer = { sshAlias: attachedHost.url, transport: "ssh", machine_id: ATTACHED_MACHINE_ID };
+      writeKeeperPointerFile(keeper, { keeperFile });
+      writeAttachmentPointerFile(attached, { attachmentFile });
+      return { keeper, attached };
+    }
+
+    it("roster_route_resolves_to_distinct_keeper == 1 — GET/POST /amicode/roster resolves to the keeper's address regardless of which studio is attached", () => {
+      const { keeper } = writeDistinctPointers();
+      const keeperResult = resolveKeeperPointer({ keeperFile });
+      const attachedResult = resolveAttachmentPointer({ attachmentFile });
+      // "GET/POST" — the resolver decides on pathname alone; the same
+      // pathname must resolve identically regardless of verb.
+      const getDecision = resolveAmicodeTarget("/amicode/roster", { attached: attachedResult, keeper: keeperResult });
+      const postDecision = resolveAmicodeTarget("/amicode/roster", { attached: attachedResult, keeper: keeperResult });
+      expect(getDecision).toEqual({ target: "keeper", pointer: keeper });
+      expect(postDecision).toEqual({ target: "keeper", pointer: keeper });
+      expect((getDecision.pointer as KeeperPointer).sshAlias).toBe(keeperHost.url);
+      expect((getDecision.pointer as KeeperPointer).sshAlias).not.toBe(attachedHost.url); // NOT the attached studio's address
+    });
+
+    it("studio_state_resolves_to_attached_server == 1 — every OTHER /amicode/* path + the raw engine plane + SSE resolves to the ATTACHED host's address, not the keeper's", () => {
+      const { attached } = writeDistinctPointers();
+      const keeperResult = resolveKeeperPointer({ keeperFile });
+      const attachedResult = resolveAttachmentPointer({ attachmentFile });
+      for (const p of ["/amicode/vaults", "/amicode/profile", "/session", "/global/health", "/api/session/ses-1/event"]) {
+        const decision = resolveAmicodeTarget(p, { attached: attachedResult, keeper: keeperResult });
+        expect(decision).toEqual({ target: "attached", pointer: attached });
+        expect((decision.pointer as AttachmentPointer).sshAlias).toBe(attachedHost.url);
+        expect((decision.pointer as AttachmentPointer).sshAlias).not.toBe(keeperHost.url); // NOT the keeper's address
+      }
+    });
+
+    it("honesty_surface_stays_local == 1 — /amicode/fleet/* AND the switch-pointer's own endpoint never resolve to a peer, regardless of attachment", () => {
+      writeDistinctPointers();
+      const keeperResult = resolveKeeperPointer({ keeperFile });
+      const attachedResult = resolveAttachmentPointer({ attachmentFile });
+      for (const p of ["/amicode/fleet", "/amicode/fleet/status", "/amicode/fleet/attachment"]) {
+        const decision = resolveAmicodeTarget(p, { attached: attachedResult, keeper: keeperResult });
+        expect(decision).toEqual({ target: "local" });
+      }
+    });
+
+    it("empty_attachment_routes_local == 1 — with the attachment pointer EMPTY, studio /amicode/* + engine resolve to the LOCAL engine (testable by setting the pointer directly; no real transport needed)", () => {
+      const { keeper } = writeDistinctPointers();
+      clearAttachmentPointerFile({ attachmentFile }); // back to "empty" — the D3 default
+      const keeperResult = resolveKeeperPointer({ keeperFile });
+      const attachedResult = resolveAttachmentPointer({ attachmentFile });
+      expect(attachedResult).toEqual({ ok: true, attached: false });
+      for (const p of ["/amicode/vaults", "/session", "/api/session/ses-1/event"]) {
+        const decision = resolveAmicodeTarget(p, { attached: attachedResult, keeper: keeperResult });
+        expect(decision).toEqual({ target: "local" });
+      }
+      // the roster route is UNCHANGED by attachment being empty — still the keeper
+      expect(resolveAmicodeTarget("/amicode/roster", { attached: attachedResult, keeper: keeperResult })).toEqual({
+        target: "keeper",
+        pointer: keeper,
+      });
+    });
+
+    it("#1342 AC3 (live-wire bonus) — GET /amicode/fleet/attachment is served LOCALLY by a running relay, never proxied to the hub host (inherits the EXISTING shouldProxyAmicodeToHost's /amicode/fleet/* exclusion, unmodified)", async () => {
+      writeDistinctPointers();
+      const svc = bootClientRelay(() => host.url); // the OUTER describe's primary hub stub — a THIRD, unrelated host
+      const origin = (await svc.start()).toString().replace(/\/$/, "");
+      const hostBefore = host.requests.length;
+      try {
+        const res = await fetch(`${origin}/amicode/fleet/attachment`, { headers: { Authorization: serverAuthHeader(SERVICE_PASSWORD) } });
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as { ok: boolean; attached: boolean; host_marker?: string };
+        expect(body.ok).toBe(true);
+        expect(body.host_marker).toBeUndefined(); // NOT the proxied host sentinel — served locally
+        expect(host.requests.some((r) => r.startsWith("GET /amicode/fleet"))).toBe(false); // the hub never saw it
+        expect(host.requests.length).toBe(hostBefore);
+      } finally {
+        await svc.stop();
+      }
+    });
   });
 });

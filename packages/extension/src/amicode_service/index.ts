@@ -57,6 +57,7 @@ import {
 } from "./connections";
 import { solverModeResponse } from "./solver_mode";
 import { rosterReadResponse, rosterReportResponse } from "./roster";
+import { attachmentStatusResponse } from "./attachment_pointer";
 import { postureResponse, savePostureResponse, dismissPostureResponse } from "./posture";
 import {
   modelRoutingResponse,
@@ -345,9 +346,15 @@ export interface FleetRouteDeps {
  *  routing mode, the D6 posture (a steady state with its named entry
  *  condition — mid-session live, never boot-frozen), the D7 tunnel stamp,
  *  the three named mints (D5), the hub credential's NAMED outcome, and the
- *  staging receipt. GET /amicode/fleet/sessions — the MERGED projection
- *  (D2): both stores, provenance-tagged, currency derived over what is
- *  actually fetched. */
+ *  staging receipt. GET /amicode/fleet/attachment (#1342, ADR 0027 §3/D6):
+ *  the SWITCH-CONTROL pointer's own local honesty surface — the currently
+ *  attached server's coordinate, or `attached:false` for the empty/local
+ *  default. Deliberately under the SAME /amicode/fleet/* prefix as `status`
+ *  so it inherits the EXISTING shouldProxyAmicodeToHost's never-proxied
+ *  exclusion for free — zero server.ts changes needed for this route to stay
+ *  local on a fleet client (AC3, `honesty_surface_stays_local`). GET
+ *  /amicode/fleet/sessions — the MERGED projection (D2): both stores,
+ *  provenance-tagged, currency derived over what is actually fetched. */
 export function registerFleetRoutes(server: AmicodeServiceServer, deps: FleetRouteDeps): AmicodeServiceServer {
   server.add("GET", "/amicode/fleet/status", () => {
     const mode = deps.getMode();
@@ -365,6 +372,13 @@ export function registerFleetRoutes(server: AmicodeServiceServer, deps: FleetRou
       }),
     };
   });
+
+  // #1342 (ADR 0027 §3/D6): the switch-control (attachment) pointer's own
+  // never-proxied local endpoint. Reads the shared cache path (injected-path
+  // → $AMICO_FLEET_ATTACHMENT_FILE → default), mirroring registerRosterRoutes'
+  // no-deps-threading simplicity — the pointer resolves its own source, same
+  // as GET /amicode/roster resolves its own.
+  server.add("GET", "/amicode/fleet/attachment", () => ({ body: attachmentStatusResponse() }));
 
   server.add("GET", "/amicode/fleet/sessions", async () => {
     const started = Date.now();
