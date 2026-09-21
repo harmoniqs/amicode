@@ -245,7 +245,8 @@ export function buildFleetSectionModel(input: FleetSectionInput): FleetSectionMo
   // from local fleet.json/config, not a read of the down peer roster — so it
   // still renders when known (#1359: "still show the self-row").
   if (!input.rosterReachable) {
-    const downDevices: FleetDeviceRow[] = local ? [localDeviceRow(local)] : [];
+    const localIsHub = local != null && local.serveStance === "server" && input.canonicalServer == null;
+    const downDevices: FleetDeviceRow[] = local ? [localDeviceRow(local, localIsHub)] : [];
     // The canonical server is a fact known from fleet.json, not a read of the
     // down peer roster — so it still renders (as `down`, never fabricated as
     // healthy), the same way the self-row does (#1363).
@@ -260,22 +261,27 @@ export function buildFleetSectionModel(input: FleetSectionInput): FleetSectionMo
     };
   }
   const localId = local?.machineId ?? null;
-  const devices: FleetDeviceRow[] = input.roster.map((r) => ({
-    machineId: r.machine_id,
-    name: r.name,
-    role: r.server_mode,
-    typeLabel: r.device_type ?? r.server_mode,
-    capabilities: r.capabilities.map((tag) => ({ tag, known: isKnownCapability(tag) })),
-    health: effectiveHealth(r.health as RosterHealth, r.last_report, now),
-    rosterHealth: r.health as RosterHealth,
-    lastSeen: r.last_report,
-    isLocal: localId !== null && r.machine_id === localId,
-  }));
+  const canonicalId = input.canonicalServer?.machineId ?? null;
+  const devices: FleetDeviceRow[] = input.roster.map((r) => {
+    const isHub = canonicalId !== null && r.machine_id === canonicalId;
+    return {
+      machineId: r.machine_id,
+      name: r.name,
+      role: displayRole(r.server_mode, isHub),
+      typeLabel: r.device_type ?? displayRole(r.server_mode, isHub),
+      capabilities: r.capabilities.map((tag) => ({ tag, known: isKnownCapability(tag) })),
+      health: effectiveHealth(r.health as RosterHealth, r.last_report, now),
+      rosterHealth: r.health as RosterHealth,
+      lastSeen: r.last_report,
+      isLocal: localId !== null && r.machine_id === localId,
+    };
+  });
   // Synthesize the self-row when the roster doesn't already carry one for
   // this machine, so you always see yourself — even before any self-report
   // producer exists, and even with an empty roster (#1359).
   if (local && !devices.some((d) => d.machineId === local.machineId)) {
-    devices.unshift(localDeviceRow(local));
+    const localIsHub = local.serveStance === "server" && canonicalId == null;
+    devices.unshift(localDeviceRow(local, localIsHub));
   }
   // Synthesize the canonical-server row on a client (the server is never a
   // roster row — the roster lists reporters), so you always see the machine
@@ -317,12 +323,13 @@ function buildPostureBadge(posture: FleetPostureInput | null): FleetPostureBadge
  *  stamp): this row is never a self-report read off disk, so there is no
  *  provenance timestamp to show, and a pure function must not call the
  *  clock to invent one. */
-function localDeviceRow(local: LocalDeviceInput): FleetDeviceRow {
+function localDeviceRow(local: LocalDeviceInput, isCanonicalHub = false): FleetDeviceRow {
+  const role = displayRole(local.serveStance, isCanonicalHub);
   return {
     machineId: local.machineId,
     name: local.name,
-    role: local.serveStance,
-    typeLabel: local.deviceType ?? local.serveStance,
+    role,
+    typeLabel: local.deviceType ?? role,
     capabilities: [],
     health: "reachable",
     lastSeen: "now",
@@ -444,6 +451,16 @@ function renderDeviceRow(device: FleetDeviceRow, now?: number): HTMLElement {
   rowEl.appendChild(pill);
 
   return rowEl;
+}
+
+/** Map the raw `server_mode` to a user-friendly display role.
+ *  The canonical hub stays "server"; a non-hub server is a "peer" (ADR 0029);
+ *  everything else passes through unchanged. `isCanonicalHub` is true when the
+ *  row represents this fleet's canonical server (the machine fleet.json points
+ *  at — the hub whose health endpoint clients/peers check). */
+export function displayRole(serverMode: string, isCanonicalHub: boolean): string {
+  if (serverMode === "server" && !isCanonicalHub) return "peer";
+  return serverMode;
 }
 
 /** The row's hover tooltip: role, last-seen, and capabilities — demoted from

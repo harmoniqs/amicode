@@ -13,6 +13,7 @@ import {
   renderFleetSection,
   effectiveHealth,
   formatAge,
+  displayRole,
   DEGRADED_AGE_MS,
   DOWN_AGE_MS,
 } from "../src/sidebar_fleet_section";
@@ -57,8 +58,9 @@ describe("buildFleetSectionModel — per-device rows (AC1)", () => {
     expect(model.devices).toHaveLength(2);
     const alpha = model.devices[0];
     expect(alpha.name).toBe("Alpha");
-    // server_mode is surfaced under the "role" label — the value round-trips.
-    expect(alpha.role).toBe("server");
+    // server_mode is surfaced under the "role" label — a non-hub server
+    // displays as "peer" (#1394, ADR 0029).
+    expect(alpha.role).toBe("peer");
     // last_report is surfaced under the "last-seen" label — the value round-trips.
     expect(alpha.lastSeen).toBe("2026-09-20T12:00:00.000Z");
     // the per-device reachability tri-state is carried verbatim.
@@ -347,16 +349,17 @@ describe("renderFleetSection — per-device rows + posture badge (AC1, AC2)", ()
     expect(dot.getAttribute("data-health")).toBe("degraded");
     expect(dot.getAttribute("aria-label")).toBe("degraded");
 
-    // right: the type pill (device_type when set, else server_mode — here unset).
+    // right: the type pill (device_type when set, else displayRole — here
+    // unset device_type + non-hub server → "peer", #1394).
     const pill = r.querySelector(".fleet-type-pill")!;
-    expect(pill.textContent).toBe("server");
+    expect(pill.textContent).toBe("peer");
 
     // role / capabilities / last-seen move to the row's tooltip, not inline text.
     expect(r.querySelector(".fleet-device-role")).toBeNull();
     expect(r.querySelector(".fleet-cap-chip")).toBeNull();
     expect(r.querySelector(".fleet-last-seen")).toBeNull();
     const title = r.getAttribute("title") ?? "";
-    expect(title).toContain("server");
+    expect(title).toContain("role: peer");
     // #1375: tooltip shows relative age ("just now") via formatAge, not raw ISO.
     expect(title).toContain("just now");
     expect(title).toContain("compute");
@@ -674,5 +677,20 @@ describe("renderFleetSection — enhanced tooltip with staleness (#1375)", () =>
     renderFleetSection(el, model, () => {});
     const row = el.querySelector(".fleet-device-row") as HTMLElement;
     expect(row.title).toContain("degraded (no heartbeat)");
+  });
+});
+
+describe("displayRole — peer label for non-hub servers (#1394, ADR 0029)", () => {
+  it("maps server to peer when not the canonical hub", () => {
+    expect(displayRole("server", false)).toBe("peer");
+  });
+  it("keeps server for the canonical hub", () => {
+    expect(displayRole("server", true)).toBe("server");
+  });
+  it("passes client through unchanged", () => {
+    expect(displayRole("client", false)).toBe("client");
+  });
+  it("passes standalone through unchanged", () => {
+    expect(displayRole("standalone", false)).toBe("standalone");
   });
 });
