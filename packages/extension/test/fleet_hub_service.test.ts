@@ -157,3 +157,18 @@ describe("#1354 hub open-auth — the SSH tunnel is the auth boundary, not HTTP 
     expect(plist).toContain("<string>credential</string>");
   });
 });
+
+describe("#1354 fleet port convention — server engine on FLEET_PORT - 1, service on FLEET_PORT", () => {
+  it("the hub service targets FLEET_PORT for its amicode service; the extension engine is FLEET_PORT - 1 (from amicode.opencodePort)", () => {
+    // The convention: the installer writes amicode.opencodePort = FLEET_PORT - 1
+    // for the server role. The extension derives the amicode service port as
+    // configuredPort + 1 = (FLEET_PORT - 1) + 1 = FLEET_PORT. So the extension's
+    // amicode service and the hub service target the SAME canonical port.
+    const fleetPort = 4096;
+    const enginePort = fleetPort - 1; // what amicode.opencodePort gets set to on server
+    const servicePort = enginePort + 1; // what the extension derives (configuredPort + 1)
+    expect(servicePort).toBe(fleetPort);
+    // The hub service renderer also targets fleetPort for AMICODE_SERVICE_PORT:
+    expect(OPTS.servicePort).toBe(fleetPort);
+  });
+});

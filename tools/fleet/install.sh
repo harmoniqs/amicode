@@ -135,8 +135,15 @@ case "$(uname -s)" in
     fi
     ;;
 esac
-want_binary="$GUARD_DST"
-want_port="$FLEET_PORT"
+if [[ "$ROLE" == "server" ]]; then
+  # #1354: server runs a real engine — no guard, port offset by -1 so the
+  # amicode service (configuredPort + 1) lands on FLEET_PORT.
+  want_binary=""
+  want_port=$((FLEET_PORT - 1))
+else
+  want_binary="$GUARD_DST"
+  want_port="$FLEET_PORT"
+fi
 settings_fail=0
 for SETTINGS in "${SETTINGS_PATHS[@]}"; do
   if [[ $CHECK -eq 1 ]]; then
@@ -152,7 +159,7 @@ for SETTINGS in "${SETTINGS_PATHS[@]}"; do
       const b=j['amicode.opencodeBinary']||''; const port=j['amicode.opencodePort'];
       const wantPort=Number(process.argv[3]);
       let fail=0;
-      if(b!==process.argv[2]){console.error('[fleet] FAIL amicode.opencodeBinary is '+(b||'(empty)')+', want '+process.argv[2]); fail=1}
+      if(process.argv[2]!=='' && b!==process.argv[2]){console.error('[fleet] FAIL amicode.opencodeBinary is '+(b||'(empty)')+', want '+process.argv[2]); fail=1}
       if(port!==wantPort){console.error('[fleet] FAIL amicode.opencodePort is '+port+', want '+wantPort); fail=1}
       process.exit(fail);
     " "$SETTINGS" "$want_binary" "$want_port"; then
@@ -170,14 +177,18 @@ for SETTINGS in "${SETTINGS_PATHS[@]}"; do
         try{j=JSON.parse(fs.readFileSync(p,'utf8'))}catch(_){
           try{ const t=fs.readFileSync(p,'utf8').replace(/\/\/.*|\/\*[\s\S]*?\*\//g,''); j=JSON.parse(t)}catch(__){ j={} }
         }
-        j['amicode.opencodeBinary']=b; j['amicode.opencodePort']=port;
+        if (b !== '') j['amicode.opencodeBinary']=b; else delete j['amicode.opencodeBinary']; j['amicode.opencodePort']=port;
         fs.mkdirSync(require('path').dirname(p),{recursive:true});
         fs.writeFileSync(p, JSON.stringify(j,null,2)+'\n');
         console.log('[fleet] wrote settings '+p);
       " "$SETTINGS" "$want_binary" "$want_port"
     else
       mkdir -p "$(dirname "$SETTINGS")"
-      printf '{\n  "amicode.opencodeBinary": "%s",\n  "amicode.opencodePort": %d\n}\n' "$want_binary" "$want_port" > "$SETTINGS"
+      if [[ -n "$want_binary" ]]; then
+        printf '{\n  "amicode.opencodeBinary": "%s",\n  "amicode.opencodePort": %d\n}\n' "$want_binary" "$want_port" > "$SETTINGS"
+      else
+        printf '{\n  "amicode.opencodePort": %d\n}\n' "$want_port" > "$SETTINGS"
+      fi
       say "wrote new settings $SETTINGS"
     fi
   fi
