@@ -629,6 +629,10 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
    *  webview shows its own honest empty state and posts nothing). */
   private fleetDeps?: FleetSectionDeps;
   private fleetSub?: vscode.Disposable;
+  /** #1375: staleness sweep — re-pushes fleet status on a fixed interval so
+   *  display health transitions (reachable → degraded → down) even when
+   *  roster.json is static and fs.watch fires nothing. */
+  private fleetStalenessTimer?: ReturnType<typeof setInterval>;
 
   static readonly DEFAULT_SECTION_ORDER = ["research", "dev", "fleet"];
   private static readonly SECTION_ORDER_KEY = "amicode.sectionOrder";
@@ -806,6 +810,10 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
     if (this.fleetDeps) {
       this.pushFleetStatus();
       this.fleetSub = this.fleetDeps.onPostureChange(() => this.pushFleetStatus());
+      // #1375: staleness sweep — re-push every 60s so display health degrades
+      // even when roster.json is static (no fs.watch event). The model's
+      // effectiveHealth re-evaluates staleness against the current clock.
+      this.fleetStalenessTimer = setInterval(() => this.pushFleetStatus(), 60_000);
     }
 
     webviewView.onDidDispose(() => {
@@ -821,6 +829,10 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
       this.gitSubs = [];
       this.fleetSub?.dispose();
       this.fleetSub = undefined;
+      if (this.fleetStalenessTimer) {
+        clearInterval(this.fleetStalenessTimer);
+        this.fleetStalenessTimer = undefined;
+      }
       this.view = undefined;
     });
 

@@ -427,6 +427,53 @@ describe("SidebarViewProvider — fleet section host wiring (#1321)", () => {
     resolve(provider, view);
     expect(lastFleetStatus(view)).toBeUndefined();
   });
+
+  it("staleness sweep timer re-pushes fleet status every 60 seconds (#1375)", () => {
+    vi.useFakeTimers();
+    try {
+      const { deps, state } = fleetHarness();
+      const provider = new SidebarViewProvider(makeExtensionUri(), undefined, deps);
+      const view = makeWebviewView();
+      resolve(provider, view);
+      // Initial fleet-status push on resolve
+      const initial = (view.webview.postMessage as any).mock.calls
+        .filter((c: any) => c[0]?.kind === "fleet-status").length;
+      expect(initial).toBeGreaterThan(0);
+
+      // Advance 60s — the staleness sweep timer should fire
+      vi.advanceTimersByTime(60_000);
+      const after = (view.webview.postMessage as any).mock.calls
+        .filter((c: any) => c[0]?.kind === "fleet-status").length;
+      expect(after).toBeGreaterThan(initial);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("staleness sweep timer is cleared on dispose (#1375)", () => {
+    vi.useFakeTimers();
+    try {
+      const { deps } = fleetHarness();
+      const provider = new SidebarViewProvider(makeExtensionUri(), undefined, deps);
+      const view = makeWebviewView();
+      resolve(provider, view);
+
+      // Trigger dispose
+      view._disposeCbs.forEach((cb: () => void) => cb());
+
+      // Clear and capture count
+      const countBefore = (view.webview.postMessage as any).mock.calls
+        .filter((c: any) => c[0]?.kind === "fleet-status").length;
+
+      // Advance 120s — no more pushes because timer is cleared
+      vi.advanceTimersByTime(120_000);
+      const countAfter = (view.webview.postMessage as any).mock.calls
+        .filter((c: any) => c[0]?.kind === "fleet-status").length;
+      expect(countAfter).toBe(countBefore);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("defaultFleetSectionDeps — production readers (#1321)", () => {
