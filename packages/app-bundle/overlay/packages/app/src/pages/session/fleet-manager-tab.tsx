@@ -24,6 +24,8 @@ import {
   CREATE_FLEET_COMMAND,
   fleetTransportMessage,
   shapeVersionRows,
+  attachControlFor,
+  performAttachControl,
   type RosterRowLike,
   type DoctorSurfaceLike,
 } from "@/pages/session/fleet-manager"
@@ -89,6 +91,39 @@ export function FleetManagerContent() {
   const localRow = createMemo(() => rows().find((r) => r.machine_id === localMachineId()) ?? null)
   // Hub service is a server-only concern (Server mode === "server").
   const isServer = createMemo(() => localRow()?.server_mode === "server")
+
+  // ── #1344 (ADR 0027 §3, Slice 4): the current attachment + the Attach control.
+  // The attached peer is read from the pointer's OWN local honesty surface
+  // (GET /amicode/fleet/attachment — never proxied). A switch re-keys this +
+  // the roster (a full reload of the scoped surfaces, so no previous studio's
+  // cached data leaks) WITHOUT ever changing server.current: the webview stays
+  // SINGLE-ORIGIN. The ADR explicitly rejected reusing useServer's add/setActive
+  // (the multi-server switcher) for the data plane — a switch is a backend
+  // pointer flip, so this drives the verb via amicodePost(server.current, …),
+  // which re-resolves the origin per call.
+  const [attachmentRaw, { refetch: refetchAttachment }] = createResource(
+    () => server.current,
+    () => amicodeGet(server.current, "/amicode/fleet/attachment").catch(() => undefined),
+  )
+  const attachedMachineId = createMemo(() => {
+    const raw = attachmentRaw()
+    if (!raw || typeof raw !== "object") return null
+    const a = raw as { attached?: boolean; pointer?: { machine_id?: string } | null }
+    return a.attached && a.pointer?.machine_id ? a.pointer.machine_id : null
+  })
+  const runAttachControl = (machineId: string) => {
+    void performAttachControl({
+      control: attachControlFor(machineId, attachedMachineId()),
+      // server.current's SAME origin — single-origin, never a server switch.
+      post: (route, body) => amicodePost(server.current, route, body),
+    })
+      .then(() => {
+        // the switch's reload: refetch the scoped surfaces (no stale-cache leak).
+        refetchAttachment()
+        refetch()
+      })
+      .catch(() => {})
+  }
 
   // ── Devices: the local row's inline capabilities edit → POST /amicode/roster ─
   const toggleCapability = (tag: string) => {
@@ -177,6 +212,25 @@ export function FleetManagerContent() {
                         <span class={eyebrow} data-health={device.health}>
                           {device.health}
                         </span>
+                        {/* #1344: the per-row Attach/Detach control — a peer row
+                            only (you attach to ANOTHER machine, not yourself).
+                            Drives the backend verb on server.current's origin. */}
+                        <Show when={!device.editable}>
+                          <button
+                            type="button"
+                            class="ml-auto shrink-0 rounded px-1.5 py-0.5 text-[10px] border transition-colors cursor-pointer"
+                            classList={{
+                              "border-v2-border-border-strong text-text-base": attachedMachineId() === device.machineId,
+                              "border-border-weak-base text-text-weak hover:text-text-base":
+                                attachedMachineId() !== device.machineId,
+                            }}
+                            onClick={() => runAttachControl(device.machineId)}
+                            data-attach-control={attachControlFor(device.machineId, attachedMachineId()).action}
+                            data-attach-machine-id={device.machineId}
+                          >
+                            {attachControlFor(device.machineId, attachedMachineId()).label}
+                          </button>
+                        </Show>
                       </div>
                       <div class="text-11-regular text-text-weak">
                         role: {device.role} · last-seen: {device.lastSeen}
