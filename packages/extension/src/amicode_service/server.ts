@@ -23,6 +23,9 @@ import { EngineProxy } from "./engine_proxy";
 import { HubProxy } from "./hub_proxy";
 import type { UpstreamMode } from "./merged_projection";
 import { isPublicUiPath } from "./public_ui";
+import { resolveAttachmentPointer } from "./attachment_pointer";
+import { resolveKeeperPointer } from "./keeper_pointer";
+import { resolveAmicodeTarget, type MultiplexTarget } from "./attachment_pointer";
 
 export interface AmicodeRequestCtx {
   /** Fully-parsed request URL (query params included — POST /amicode/profile
@@ -66,6 +69,16 @@ export interface FleetPlane {
   /** #1261 (AC6): the live hub-down pointer for the client's honest 503 (the
    *  posture snapshot's pointer when standalone; a default otherwise). */
   hubDownPointer?: () => string | null;
+  /** #1378 (D3 resolver wiring): the ATTACHED server's upstream — the D6
+   *  switch-control pointer's transport. Present only on engine-armed (non-
+   *  client) peers that have peer capabilities; absent on client relays and
+   *  standalone machines. When present, `dispatch()` calls the D3 resolver
+   *  to route requests through this proxy or the keeper below. */
+  attached?: HubProxy;
+  /** #1378 (D3 resolver wiring): the KEEPER's upstream — the directory
+   *  registry's transport. /amicode/roster resolves here regardless of
+   *  which server is attached. */
+  keeper?: HubProxy;
 }
 
 /** #1261 (AC6): a client's own named hub-down state — distinct from the base
@@ -277,7 +290,30 @@ export class AmicodeServiceServer {
       // LOCAL. Gated on the client role so standalone AND the engine-armed base
       // machine are byte-identical — both still serve /amicode/* locally.
       const proxyAmicodeToHost = this.shouldProxyAmicodeToHost(url);
-      if (!proxyAmicodeToHost) {
+      // #1378 (D3 resolver wiring): the peer branch's routing decision for
+      // engine-armed (!client) fleet machines with an attached upstream. Called
+      // EARLY: a non-"local" result bypasses the local /amicode/* dispatch (the
+      // route table + 404 catch-all) so registered routes like /amicode/roster
+      // and /amicode/vaults no longer shadow the upstream — they fall through to
+      // the fleet branch and route to the resolver's target (keeper or attached).
+      // A "local" result keeps the route table's normal behavior, which is D3's
+      // fail-safe default (empty/corrupt pointer → local engine).
+      let peerTarget: MultiplexTarget | undefined;
+      if (
+        !proxyAmicodeToHost &&
+        this.routingMode === "fleet" &&
+        this.fleetPlane &&
+        !this.fleetPlane.client &&
+        this.fleetPlane.attached
+      ) {
+        const attachedResult = resolveAttachmentPointer();
+        const keeperResult = resolveKeeperPointer();
+        const { target } = resolveAmicodeTarget(url.pathname, { attached: attachedResult, keeper: keeperResult });
+        if (target !== "local") {
+          peerTarget = target;
+        }
+      }
+      if (!proxyAmicodeToHost && !peerTarget) {
         const route = this.routes.get(`${req.method} ${url.pathname}`);
         if (route) {
           const body = await this.readBody(req);
@@ -308,6 +344,19 @@ export class AmicodeServiceServer {
       // engine's.
       const mode = this.routingMode;
       if (mode === "fleet" && this.fleetPlane) {
+        // #1378: peer branch — the resolver already decided the target above.
+        // Routes to the named upstream; if unreachable, falls through to the
+        // engine proxy (D3's fail-safe: the local engine is always the last
+        // resort for an engine-armed machine).
+        if (peerTarget && !this.fleetPlane.client) {
+          if (peerTarget === "keeper" && this.fleetPlane.keeper) {
+            if (this.fleetPlane.keeper.handle(req, res)) return;
+          } else if (peerTarget === "attached" && this.fleetPlane.attached) {
+            if (this.fleetPlane.attached.handle(req, res)) return;
+          }
+          // upstream unreachable → fall through to engine proxy below
+        } else {
+        // ── BYTE-UNCHANGED: the client→hub path (incl. #1261 hub-down 503) ──
         // #392 (D3): writes resolve through the write-failure contract —
         // every outcome enumerated, never silently ambiguous. Reads
         // (GET/HEAD — SSE included) stream through the proxy.
@@ -335,6 +384,7 @@ export class AmicodeServiceServer {
         }
         send({ status: 503, body: JSON.stringify({ ok: false, error: "hub upstream not available" }) });
         return;
+        }
       }
       if (this.engineProxy) {
         // Streams method/headers/body through to the engine (SSE included);
@@ -368,6 +418,25 @@ export class AmicodeServiceServer {
         if (this.fleetPlane?.client && this.routingMode === "fleet") {
           this.fleetPlane.hub.handleUpgrade(req, socket, head);
           return;
+        }
+        // #1378: peer branch — the D3 resolver routes SSE/WebSocket upgrades
+        // to the same target as dispatch() (attached or keeper). The client
+        // path above is byte-unchanged; "local" falls through to socket.destroy
+        // (the engine handles its own upgrades on its native port).
+        if (!this.fleetPlane?.client && this.routingMode === "fleet" && this.fleetPlane?.attached) {
+          const upgradeUrl = new URL(req.url ?? "/", `http://${req.headers.host ?? "127.0.0.1"}`);
+          const attachedResult = resolveAttachmentPointer();
+          const keeperResult = resolveKeeperPointer();
+          const { target } = resolveAmicodeTarget(upgradeUrl.pathname, { attached: attachedResult, keeper: keeperResult });
+          if (target === "attached") {
+            this.fleetPlane.attached.handleUpgrade(req, socket, head);
+            return;
+          }
+          if (target === "keeper" && this.fleetPlane.keeper) {
+            this.fleetPlane.keeper.handleUpgrade(req, socket, head);
+            return;
+          }
+          // "local" → fall through to socket.destroy (engine's native port)
         }
         socket.destroy();
       } catch {

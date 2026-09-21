@@ -518,6 +518,13 @@ export function createAmicodeService(
        *  generation marker) — read per request; proxied responses (SSE
        *  included) carry its generation stamp. */
       tunnelConfigPath?: string;
+      /** #1378 (D3 resolver wiring): the attached server's upstream for the
+       *  peer branch. When set (alongside `keeper`), the D3 resolver routes
+       *  /amicode/* and engine paths to this upstream or the keeper below. */
+      attached?: { getUrl: () => string | undefined };
+      /** #1378 (D3 resolver wiring): the keeper's upstream for the peer
+       *  branch. /amicode/roster resolves here regardless of attachment. */
+      keeper?: { getUrl: () => string | undefined };
     };
   } = {},
 ): AmicodeServiceServer {
@@ -611,6 +618,25 @@ export function createAmicodeService(
         onOutcome: (o) => monitor.record(o),
         ...(tunnelStampHeaders ? { responseStamp: tunnelStampHeaders } : {}),
       };
+      // #1378 (D3 resolver wiring): build the peer branch's upstream proxies
+      // when configured. These use the hub credential for H1 (the real per-peer
+      // credential model is a later slice). Absent when no peer upstream is
+      // configured — the dispatch peer branch activates only when `attached`
+      // exists on the plane.
+      const attachedProxy = opts.fleet.attached
+        ? new HubProxy({
+            getUrl: opts.fleet.attached.getUrl,
+            credential: readCredential,
+            ...(opts.fleet.dataPlaneTimeoutMs !== undefined ? { timeoutMs: opts.fleet.dataPlaneTimeoutMs } : {}),
+          })
+        : undefined;
+      const keeperProxy = opts.fleet.keeper
+        ? new HubProxy({
+            getUrl: opts.fleet.keeper.getUrl,
+            credential: readCredential,
+            ...(opts.fleet.dataPlaneTimeoutMs !== undefined ? { timeoutMs: opts.fleet.dataPlaneTimeoutMs } : {}),
+          })
+        : undefined;
       server.attachFleetPlane({
         getMode,
         hub: new HubProxy({
@@ -627,6 +653,8 @@ export function createAmicodeService(
         // never flips to a (nonexistent) local engine.
         ...(isClient ? { client: true } : {}),
         hubDownPointer: () => monitor.snapshot().pointer,
+        ...(attachedProxy ? { attached: attachedProxy } : {}),
+        ...(keeperProxy ? { keeper: keeperProxy } : {}),
       });
       registerFleetRoutes(server, {
         getMode,
