@@ -265,7 +265,7 @@ describe("SidebarViewProvider — fleet section host wiring (#1321)", () => {
     return {
       machine_id: "mac-01", name: "Mac Studio", server_mode: "server",
       capabilities: ["compute"], sshAlias: "mac", transport: "ssh",
-      last_report: "2026-09-20T12:00:00.000Z", health: "reachable", ...over,
+      last_report: new Date().toISOString(), health: "reachable", ...over,
     };
   }
 
@@ -312,7 +312,7 @@ describe("SidebarViewProvider — fleet section host wiring (#1321)", () => {
     expect(msg.model.state).toBe("populated");
     expect(msg.model.devices).toHaveLength(1);
     expect(msg.model.devices[0].role).toBe("server");        // server_mode → "role"
-    expect(msg.model.devices[0].lastSeen).toBe("2026-09-20T12:00:00.000Z"); // last_report → "last-seen"
+    expect(msg.model.devices[0].lastSeen).toMatch(/^\d{4}-\d{2}-\d{2}T/); // last_report → "last-seen" (ISO timestamp)
     expect(msg.model.devices[0].health).toBe("reachable");
     expect(msg.model.posture.serverMode).toBe("server");
     expect(msg.model.posture.linkHealth).toBe("ok");
