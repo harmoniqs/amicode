@@ -18,6 +18,8 @@ import {
   resolveRemoteSshTarget,
   resolveRemoteSshFromTopology,
   connectToHubOverRemoteSsh,
+  connectToDeviceOverRemoteSsh,
+  isRemoteSshAvailable,
   DEFAULT_HUB_WORKSPACE_PATH,
 } from "../src/fleet_connect_remote_ssh";
 import type { FleetTopologyState } from "../src/fleet_topology";
@@ -95,7 +97,8 @@ describe("resolveRemoteSshTarget (cannot resolve — AC2)", () => {
     expect(r.ok).toBe(false);
     if (!r.ok) {
       expect(r.reason).toBe("no-ssh-alias");
-      expect(r.detail).toMatch(/amico fleet status --projection/);
+      // Generic resolver gives device-neutral message (not hub-specific)
+      expect(r.detail).toContain("No SSH alias configured");
     }
   });
 
@@ -279,5 +282,168 @@ describe("connectToHubOverRemoteSsh (thin command handler)", () => {
     expect(r.ok).toBe(false);
     expect(s.opened).toEqual([]);
     expect(s.errors).toHaveLength(1);
+  });
+});
+
+// ── #1412: Generalised resolver + device handler + extension check ───────────
+
+describe("resolveRemoteSshTarget (generalised — accepts raw sshAlias string)", () => {
+  it("resolves from a raw sshAlias string (no FleetCanonical wrapper)", () => {
+    const r = resolveRemoteSshTarget("mac-studio");
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.authority).toBe("ssh-remote+mac-studio");
+      expect(r.path).toBe("~");
+      expect(r.uri).toBe("vscode-remote://ssh-remote+mac-studio/~");
+    }
+  });
+
+  it("resolves from a raw alias with a configured workspace path", () => {
+    const r = resolveRemoteSshTarget("mac-studio", "/home/jj/amicode");
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.uri).toBe("vscode-remote://ssh-remote+mac-studio/home/jj/amicode");
+    }
+  });
+
+  it("empty string alias returns no-ssh-alias with a device-neutral message", () => {
+    const r = resolveRemoteSshTarget("");
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.reason).toBe("no-ssh-alias");
+      // Device-neutral: should NOT mention "hub" or "fleet projection"
+      expect(r.detail).not.toContain("hub");
+      expect(r.detail).not.toContain("projection");
+      expect(r.detail).toContain("No SSH alias configured");
+    }
+  });
+
+  it("whitespace-only alias returns no-ssh-alias", () => {
+    const r = resolveRemoteSshTarget("   ");
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe("no-ssh-alias");
+  });
+
+  it("trims the alias", () => {
+    const r = resolveRemoteSshTarget("  hub  ");
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.authority).toBe("ssh-remote+hub");
+  });
+
+  it("rejects a relative workspace path", () => {
+    const r = resolveRemoteSshTarget("hub", "relative/path");
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe("invalid-workspace-path");
+  });
+});
+
+describe("resolveRemoteSshFromTopology (hub adapter — preserves hub-specific messaging)", () => {
+  it("the hub adapter's no-ssh-alias message is hub-specific (mentions projection)", () => {
+    const r = resolveRemoteSshFromTopology(okTopology({ host: "h" }));
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.reason).toBe("no-ssh-alias");
+      // The hub adapter overrides the generic message with hub-specific framing
+      expect(r.detail).toContain("fleet projection");
+    }
+  });
+});
+
+describe("isRemoteSshAvailable", () => {
+  it("returns false when the Remote-SSH extension is not installed (mock default)", () => {
+    expect(isRemoteSshAvailable()).toBe(false);
+  });
+
+  it("returns true when the Remote-SSH extension is installed", () => {
+    const orig = vscode.extensions.getExtension;
+    (vscode.extensions as any).getExtension = (id: string) =>
+      id === "ms-vscode-remote.remote-ssh" ? { id } : undefined;
+    try {
+      expect(isRemoteSshAvailable()).toBe(true);
+    } finally {
+      (vscode.extensions as any).getExtension = orig;
+    }
+  });
+});
+
+describe("connectToDeviceOverRemoteSsh", () => {
+  beforeEach(() => {
+    vscode.commands.executed.length = 0;
+  });
+
+  it("opens a Remote-SSH window for a valid alias, no error", async () => {
+    const s = spies();
+    const r = await connectToDeviceOverRemoteSsh("mac-studio", {
+      openFolder: s.openFolder,
+      showError: s.showError,
+      isRemoteSshAvailable: () => true,
+    });
+    expect(r.ok).toBe(true);
+    expect(s.opened).toEqual(["vscode-remote://ssh-remote+mac-studio/~"]);
+    expect(s.errors).toEqual([]);
+  });
+
+  it("returns extension-not-installed when the extension is absent", async () => {
+    const s = spies();
+    const r = await connectToDeviceOverRemoteSsh("mac-studio", {
+      openFolder: s.openFolder,
+      showError: s.showError,
+      isRemoteSshAvailable: () => false,
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.reason).toBe("extension-not-installed");
+      expect(r.detail).toContain("Remote-SSH extension");
+    }
+    expect(s.opened).toEqual([]);
+    expect(s.errors).toHaveLength(1);
+  });
+
+  it("returns no-ssh-alias for an empty alias", async () => {
+    const s = spies();
+    const r = await connectToDeviceOverRemoteSsh("", {
+      openFolder: s.openFolder,
+      showError: s.showError,
+      isRemoteSshAvailable: () => true,
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe("no-ssh-alias");
+    expect(s.opened).toEqual([]);
+  });
+
+  it("returns open-failed when openFolder throws", async () => {
+    const s = spies();
+    const r = await connectToDeviceOverRemoteSsh("mac-studio", {
+      openFolder: () => { throw new Error("VSCode failed"); },
+      showError: s.showError,
+      isRemoteSshAvailable: () => true,
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe("open-failed");
+    expect(s.errors).toHaveLength(1);
+  });
+
+  it("returns invalid-workspace-path for a relative path", async () => {
+    const s = spies();
+    const r = await connectToDeviceOverRemoteSsh("mac-studio", {
+      workspacePath: "relative/path",
+      openFolder: s.openFolder,
+      showError: s.showError,
+      isRemoteSshAvailable: () => true,
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe("invalid-workspace-path");
+    expect(s.opened).toEqual([]);
+  });
+
+  it("passes a configured workspace path into the URI", async () => {
+    const s = spies();
+    await connectToDeviceOverRemoteSsh("mac-studio", {
+      workspacePath: "~/work",
+      openFolder: s.openFolder,
+      showError: s.showError,
+      isRemoteSshAvailable: () => true,
+    });
+    expect(s.opened).toEqual(["vscode-remote://ssh-remote+mac-studio/~/work"]);
   });
 });

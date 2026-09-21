@@ -1,31 +1,21 @@
-// fleet_connect_remote_ssh.ts — "Amicode: Connect to Hub over Remote-SSH"
-// (#1271, ADR 0025, part of #1268). The opt-in ENTRY into the Remote-SSH
-// posture: resolve the hub's coordinates from the projection and open a
-// Remote-SSH window onto the hub workspace.
+// fleet_connect_remote_ssh.ts — Remote-SSH connection for fleet devices.
+// Generalised (#1412, ADR 0030 §D8) from the hub-only command (#1271, ADR 0025)
+// to accept any fleet device's sshAlias. One resolver, two callers: the hub path
+// (`connectToHubOverRemoteSsh`) and the device path (`connectToDeviceOverRemoteSsh`).
 //
-// ONE TOPOLOGY READER (ADR 0023): the coordinates come from the projection via
-// `readFleetTopology()` — the SAME path the status bar and the hub-restart
-// command read. There is NO hand-built host string and NO second config
-// source; the sshAlias is taken from `canonical.sshAlias` exactly as
-// `hub_ops.resolveHubTarget` does. Absent / broken / alias-less projections are
-// honest, actionable RENDERED states here — never a crash, never a
-// half-opened window (#1271 AC2).
+// ONE TOPOLOGY READER (ADR 0023): the hub path still reads coordinates from the
+// projection via `readFleetTopology()` — the SAME path the status bar and the
+// hub-restart command read. The device path accepts a raw sshAlias and skips the
+// topology entirely.
 //
-// WORKSPACE-PATH DECISION (documented): the projection's `canonical` carries
-// `{host, port, sshAlias}` only — it has NO remote workspace path (confirmed at
-// both the extension `FleetCanonical` and the schema `BaseTopologyCanonical`).
-// So the remote folder to open is resolved as:
-//   1. the `amicode.fleet.hubWorkspacePath` setting when the operator has set
-//      one (an absolute `/`-rooted path, or a home-relative `~`/`~/…` path); else
-//   2. the HOME DEFAULT `~` — coherent with the whole fleet architecture, whose
-//      state root is `~/.amico/` (projection, ops, runs all live under home).
-// The `~` default relies on Remote-SSH's server-side home expansion for
-// `openFolder`; a site that wants a guaranteed absolute folder sets the
-// setting. A CONFIGURED-but-misconfigured path (relative, e.g. `foo/bar`) is an
-// honest AC2 error — Amicode refuses to open a half-configured window rather
-// than guess. (#1274 will drive this same Remote-SSH↔local reopen
-// programmatically; it consumes the typed RemoteSshResolution below — the
-// `authority`, `path`, and `uri` fields are the stable contract for that.)
+// WORKSPACE-PATH DECISION (documented, unchanged): the remote folder is resolved
+// from the `amicode.fleet.hubWorkspacePath` setting when configured, else the
+// HOME DEFAULT `~`. Both paths share the same validation (`isLawfulWorkspacePath`).
+//
+// ERROR MESSAGES are split by audience: the generic resolver emits device-neutral
+// messages; the hub adapter (`resolveRemoteSshFromTopology`) overrides the
+// `no-ssh-alias` message with hub-specific framing that points to the projection.
+// ADR 0025 AC2: every error path is honest and actionable — no crash, no half-window.
 
 import * as vscode from "vscode";
 import {
@@ -43,17 +33,21 @@ export const HUB_WORKSPACE_PATH_SETTING = "amicode.fleet.hubWorkspacePath";
  *  server-side `~` expansion; override with the setting for an absolute folder. */
 export const DEFAULT_HUB_WORKSPACE_PATH = "~";
 
+/** The Remote-SSH extension id — probed before offering the option. */
+const REMOTE_SSH_EXTENSION_ID = "ms-vscode-remote.remote-ssh";
+
 /** Why a Remote-SSH target could not be resolved — each maps to an honest,
  *  actionable message (never a half-window). */
 export type RemoteSshUnresolvableReason =
   | "topology-absent" // the projection cache is absent (carries the refresh pointer)
   | "topology-broken" // the projection failed the contract read (carries the rejection)
-  | "no-ssh-alias" // the projection names no hub sshAlias (nothing to connect to)
+  | "no-ssh-alias" // no sshAlias configured for the target device
   | "invalid-workspace-path" // a configured hubWorkspacePath is neither absolute nor ~-rooted
   | "read-error" // the topology read itself threw (defensive; readFleetTopology normally never throws)
-  | "open-failed"; // executeCommand("vscode.openFolder", …) rejected
+  | "open-failed" // executeCommand("vscode.openFolder", …) rejected
+  | "extension-not-installed"; // the Remote-SSH extension is not installed (#1412)
 
-/** The resolution of hub coordinates → a Remote-SSH open target, or a typed
+/** The resolution of device coordinates → a Remote-SSH open target, or a typed
  *  cannot-resolve reason with a rendered actionable message. */
 export type RemoteSshResolution =
   | {
@@ -74,21 +68,32 @@ function isLawfulWorkspacePath(p: string): boolean {
   return p.startsWith("/") || p === "~" || p.startsWith("~/");
 }
 
-/** PURE: canonical coordinates (+ optional configured workspace path) → the
- *  Remote-SSH open target. No vscode, no I/O — the unit-testable core.
- *  The alias is trimmed exactly as `hub_ops.resolveHubTarget` trims it. */
+// ── Generic resolver (accepts raw sshAlias OR FleetCanonical) ────────────────
+
+/** PURE: sshAlias (+ optional configured workspace path) → the Remote-SSH open
+ *  target. Accepts either a raw sshAlias string or a FleetCanonical object for
+ *  backward compatibility with the hub path. No vscode, no I/O — unit-testable.
+ *
+ *  Error messages are device-neutral; the hub adapter overrides them with
+ *  hub-specific framing when needed. */
 export function resolveRemoteSshTarget(
-  canonical: FleetCanonical | undefined,
+  aliasOrCanonical: string | FleetCanonical | undefined,
   workspacePath?: string,
 ): RemoteSshResolution {
-  const alias = typeof canonical?.sshAlias === "string" ? canonical.sshAlias.trim() : "";
+  // Extract the alias: from a string directly, or from FleetCanonical.sshAlias
+  let rawAlias: string;
+  if (typeof aliasOrCanonical === "string") {
+    rawAlias = aliasOrCanonical;
+  } else {
+    rawAlias = typeof aliasOrCanonical?.sshAlias === "string" ? aliasOrCanonical.sshAlias : "";
+  }
+  const alias = rawAlias.trim();
+
   if (alias === "") {
     return {
       ok: false,
       reason: "no-ssh-alias",
-      detail:
-        `Amicode: the fleet projection names no hub SSH alias, so there is nothing to connect to over Remote-SSH. ` +
-        `Refresh it with \`${FLEET_TOPOLOGY_REFRESH_COMMAND}\` (or run 'Amicode: Fleet — Repair'), then retry.`,
+      detail: `Amicode: No SSH alias configured for this device — there is nothing to connect to over Remote-SSH.`,
     };
   }
 
@@ -103,7 +108,7 @@ export function resolveRemoteSshTarget(
       ok: false,
       reason: "invalid-workspace-path",
       detail:
-        `Amicode: the configured hub workspace path '${configured}' is not absolute (\`/\`-rooted) or ` +
+        `Amicode: the configured workspace path '${configured}' is not absolute (\`/\`-rooted) or ` +
         `home-relative (\`~\`). Fix \`${HUB_WORKSPACE_PATH_SETTING}\` in Settings, then retry — Amicode will ` +
         `not open a half-configured Remote-SSH window.`,
     };
@@ -114,29 +119,67 @@ export function resolveRemoteSshTarget(
   return { ok: true, authority, path, uri };
 }
 
+// ── Hub-specific adapter ─────────────────────────────────────────────────────
+
 /** The ONE topology reader → a Remote-SSH resolution. Absent/broken states
  *  carry the reader's OWN rendered actionable message VERBATIM (the refresh
  *  pointer / the contract rejection) — this module invents no second message
- *  for them (#1271 AC2). An ok state delegates to the pure resolver. */
+ *  for them (#1271 AC2). An ok state delegates to the pure resolver, then
+ *  overrides the `no-ssh-alias` message with hub-specific framing. */
 export function resolveRemoteSshFromTopology(
   state: FleetTopologyState,
   workspacePath?: string,
 ): RemoteSshResolution {
   if (state.kind === "absent") return { ok: false, reason: "topology-absent", detail: state.detail };
   if (state.kind === "broken") return { ok: false, reason: "topology-broken", detail: state.detail };
-  return resolveRemoteSshTarget(state.canonical, workspacePath);
+  const resolution = resolveRemoteSshTarget(state.canonical, workspacePath);
+  // Override the generic no-ssh-alias message with hub-specific framing
+  if (!resolution.ok && resolution.reason === "no-ssh-alias") {
+    return {
+      ok: false,
+      reason: "no-ssh-alias",
+      detail:
+        `Amicode: the fleet projection names no hub SSH alias, so there is nothing to connect to over Remote-SSH. ` +
+        `Refresh it with \`${FLEET_TOPOLOGY_REFRESH_COMMAND}\` (or run 'Amicode: Fleet — Repair'), then retry.`,
+    };
+  }
+  return resolution;
 }
 
-export interface ConnectRemoteSshDeps {
-  /** The topology read (injectable; default: `readFleetTopology()` — the one reader). */
-  readTopology?: () => FleetTopologyState;
-  /** The configured hub workspace path override (default: home `~`). */
+// ── Extension check ──────────────────────────────────────────────────────────
+
+/** Probe whether the Remote-SSH extension is installed. Synchronous —
+ *  `vscode.extensions.getExtension` is a sync API. Callers use this for Quick
+ *  Pick precondition gating without attempting a connection. */
+export function isRemoteSshAvailable(): boolean {
+  return vscode.extensions.getExtension(REMOTE_SSH_EXTENSION_ID) !== undefined;
+}
+
+// ── Deps interfaces (shared base + hub-specific extension) ───────────────────
+
+/** Shared deps for any Remote-SSH action (hub or device). */
+export interface RemoteSshActionDeps {
+  /** The configured workspace path override (default: home `~`). */
   workspacePath?: string;
   /** How to open the folder (injectable; default: `vscode.openFolder` in a new window). */
   openFolder?: (uri: string) => void | Promise<void>;
   /** How to surface the honest error (injectable; default: `showErrorMessage`). */
   showError?: (message: string) => void;
 }
+
+/** Hub-specific deps — extends the shared base with the topology reader. */
+export interface ConnectRemoteSshDeps extends RemoteSshActionDeps {
+  /** The topology read (injectable; default: `readFleetTopology()` — the one reader). */
+  readTopology?: () => FleetTopologyState;
+}
+
+/** Device-specific deps — extends the shared base with the extension check. */
+export interface ConnectDeviceRemoteSshDeps extends RemoteSshActionDeps {
+  /** Remote-SSH extension presence check (injectable; default: `isRemoteSshAvailable`). */
+  isRemoteSshAvailable?: () => boolean;
+}
+
+// ── Command handlers ─────────────────────────────────────────────────────────
 
 async function defaultOpenFolder(uri: string): Promise<void> {
   await vscode.commands.executeCommand("vscode.openFolder", vscode.Uri.parse(uri), { forceNewWindow: true });
@@ -146,11 +189,10 @@ function defaultShowError(message: string): void {
   void vscode.window.showErrorMessage(message);
 }
 
-/** The thin command handler: read the projection → resolve → open the
- *  Remote-SSH window (happy path) OR surface the honest actionable message and
- *  open NOTHING (every error path). Returns the resolution so the caller (and
- *  #1274's programmatic driver) can act on the typed outcome. Never throws:
- *  a reader or open failure becomes an honest not-ok resolution + a message. */
+/** Hub command handler: read the projection → resolve → open the Remote-SSH
+ *  window (happy path) OR surface the honest actionable message and open
+ *  NOTHING (every error path). Returns the resolution so the caller can act
+ *  on the typed outcome. Never throws. */
 export async function connectToHubOverRemoteSsh(deps: ConnectRemoteSshDeps = {}): Promise<RemoteSshResolution> {
   const readTopology = deps.readTopology ?? (() => readFleetTopology());
   const openFolder = deps.openFolder ?? defaultOpenFolder;
@@ -168,6 +210,40 @@ export async function connectToHubOverRemoteSsh(deps: ConnectRemoteSshDeps = {})
   }
 
   const resolution = resolveRemoteSshFromTopology(state, deps.workspacePath);
+  if (!resolution.ok) {
+    showError(resolution.detail);
+    return resolution;
+  }
+
+  try {
+    await openFolder(resolution.uri);
+  } catch (e) {
+    const detail = `Amicode: failed to open the Remote-SSH window (${resolution.uri}) — ${(e as Error).message}.`;
+    showError(detail);
+    return { ok: false, reason: "open-failed", detail };
+  }
+  return resolution;
+}
+
+/** Device command handler (#1412): resolve from a raw sshAlias → open a
+ *  Remote-SSH window. Checks the extension is installed before attempting.
+ *  Never throws; every failure is an honest, typed resolution + a message. */
+export async function connectToDeviceOverRemoteSsh(
+  sshAlias: string,
+  deps: ConnectDeviceRemoteSshDeps = {},
+): Promise<RemoteSshResolution> {
+  const openFolder = deps.openFolder ?? defaultOpenFolder;
+  const showError = deps.showError ?? defaultShowError;
+  const checkExtension = deps.isRemoteSshAvailable ?? isRemoteSshAvailable;
+
+  // Internal extension guard — callers outside the sidebar don't have to check
+  if (!checkExtension()) {
+    const detail = `Amicode: the Remote-SSH extension is not installed — install \`${REMOTE_SSH_EXTENSION_ID}\` to connect to devices over SSH.`;
+    showError(detail);
+    return { ok: false, reason: "extension-not-installed", detail };
+  }
+
+  const resolution = resolveRemoteSshTarget(sshAlias, deps.workspacePath);
   if (!resolution.ok) {
     showError(resolution.detail);
     return resolution;
