@@ -121,6 +121,8 @@ export type ReorderRootMessage = { kind: "reorder-root"; sourcePath: string; tar
 /** #1321 — the ONLY message the read-only fleet section emits: navigate to the
  *  Fleet Manager tab (#1322). No roster-write / management message exists. */
 export type OpenFleetManagerMessage = { kind: "open-fleet-manager" };
+/** Request to spawn a troubleshoot-fleet session from the sidebar. */
+export type TroubleshootFleetMessage = { kind: "troubleshoot-fleet" };
 
 // ── Environment action messages (#887) ───────────────────────────────────────
 
@@ -150,7 +152,8 @@ export type SidebarUpMessage =
   | ReorderRootMessage
   | BindToEnvironmentMessage
   | PromoteToEnvironmentMessage
-  | OpenFleetManagerMessage;
+  | OpenFleetManagerMessage
+  | TroubleshootFleetMessage;
 
 // ── Fleet section view-model (host→webview payload) ──────────────────────────
 // The model type is defined in sidebar_fleet_section.ts (the browser-safe
@@ -278,6 +281,8 @@ export interface SidebarMessageHandlers {
   /** #1321 — navigate to the Fleet Manager tab (#1322). Optional: the read-only
    *  section degrades honestly when the tab is absent. */
   openFleetManager?: () => void;
+  /** Spawn a new chat session invoking the troubleshoot-fleet skill. */
+  troubleshootFleet?: () => void;
 }
 
 /**
@@ -343,6 +348,9 @@ export function handleSidebarMessage(
       break;
     case "open-fleet-manager":
       handlers.openFleetManager?.();
+      break;
+    case "troubleshoot-fleet":
+      handlers.troubleshootFleet?.();
       break;
     case "file-op": {
       const { kind: _k, ...req } = msg;

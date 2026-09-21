@@ -226,11 +226,25 @@ describe("sidebar bridge — handleSidebarMessage", () => {
     expect(() => handleSidebarMessage({ kind: "open-fleet-manager" }, {} as any)).not.toThrow();
   });
 
+  it("routes troubleshoot-fleet to the troubleshootFleet handler", () => {
+    const troubleshootFleet = vi.fn();
+    const fileOp = vi.fn();
+    expect(() =>
+      handleSidebarMessage({ kind: "troubleshoot-fleet" }, { troubleshootFleet, fileOp } as any)
+    ).not.toThrow();
+    expect(troubleshootFleet).toHaveBeenCalledTimes(1);
+    expect(fileOp).not.toHaveBeenCalled();
+  });
+
+  it("troubleshoot-fleet degrades honestly when no handler is wired (no throw)", () => {
+    expect(() => handleSidebarMessage({ kind: "troubleshoot-fleet" }, {} as any)).not.toThrow();
+  });
+
   it("treats fleet-status as a down-only message — no host-side handler, no throw (#1321)", () => {
     // fleet-status flows host→webview only; the host handler must ignore it.
     const openFleetManager = vi.fn();
     expect(() =>
-      handleSidebarMessage({ kind: "fleet-status", model: { state: "empty", devices: [], posture: null, manage: { enabled: false } } } as any, { openFleetManager } as any)
+      handleSidebarMessage({ kind: "fleet-status", model: { state: "empty", devices: [], posture: null, manage: { enabled: false }, troubleshoot: { enabled: false } } } as any, { openFleetManager } as any)
     ).not.toThrow();
     expect(openFleetManager).not.toHaveBeenCalled();
   });
@@ -260,17 +274,21 @@ describe("SidebarViewProvider — fleet section host wiring (#1321)", () => {
       roster: { rows: [deviceRow()], reachable: true } as { rows: any[]; reachable: boolean },
       posture: { serverMode: "server", hostname: "mac-01", mode: "fleet", reachable: true, hub: { name: "hub", base_url: "u" } } as any,
       managerAvailable: false,
+      localDevice: null as { machineId: string; name: string; serveStance: string; deviceType?: string } | null,
       postureCb: (() => {}) as () => void,
     };
     const openFleetManager = vi.fn();
+    const launchSession = vi.fn();
     const deps = {
       readRoster: () => state.roster,
       readPosture: () => state.posture,
+      readLocalDevice: () => state.localDevice,
       onPostureChange: (cb: () => void) => { state.postureCb = cb; return { dispose() {} }; },
       isFleetManagerAvailable: () => state.managerAvailable,
       openFleetManager,
+      launchSession,
     };
-    return { state, deps, openFleetManager };
+    return { state, deps, openFleetManager, launchSession };
   }
 
   function lastFleetStatus(view: any) {
@@ -300,6 +318,33 @@ describe("SidebarViewProvider — fleet section host wiring (#1321)", () => {
     expect(msg.model.posture.linkHealth).toBe("ok");
   });
 
+  it("on a client, an async roster read resolves and posts a fleet-status that includes the synthesized canonical-server node (#1363)", async () => {
+    const { deps, state } = fleetHarness();
+    // Simulate the CLIENT path: async roster read (host proxy) + a canonical
+    // server pointer + a client self-row. The server is NOT in the roster.
+    state.localDevice = { machineId: "laptop-01", name: "JJ's Laptop", serveStance: "client", deviceType: "laptop" };
+    const asyncDeps = {
+      ...deps,
+      readRoster: () => Promise.resolve({ rows: [], reachable: true }),
+      readLocalDevice: () => state.localDevice,
+      readCanonicalServer: () => ({ machineId: "jjs-mac-studio", name: "jjs-mac-studio" }),
+    };
+    const provider = new SidebarViewProvider(makeExtensionUri(), undefined, asyncDeps);
+    const view = makeWebviewView();
+    resolve(provider, view);
+    // The async read posts on a later microtask — flush it.
+    await new Promise((r) => setTimeout(r, 0));
+
+    const msg = lastFleetStatus(view);
+    expect(msg).toBeDefined();
+    const ids = msg.model.devices.map((d: any) => d.machineId);
+    expect(ids).toContain("laptop-01");        // the client's own self-row
+    expect(ids).toContain("jjs-mac-studio");   // the synthesized canonical server
+    const server = msg.model.devices.find((d: any) => d.machineId === "jjs-mac-studio");
+    expect(server.role).toBe("server");
+    expect(server.isLocal).toBe(false);
+  });
+
   it("re-posts fleet-status with updated health on a posture-change event (AC5, no manual reload)", () => {
     const { state, deps } = fleetHarness();
     const provider = new SidebarViewProvider(makeExtensionUri(), undefined, deps);
@@ -321,6 +366,34 @@ describe("SidebarViewProvider — fleet section host wiring (#1321)", () => {
     resolve(provider, view);
     const msg = lastFleetStatus(view);
     expect(msg.model.state).toBe("unreachable");
+    expect(msg.model.devices).toEqual([]);
+  });
+
+  it("threads the local device through to the posted model, synthesizing a self-row (#1359)", () => {
+    const { state, deps } = fleetHarness();
+    state.roster = { rows: [deviceRow({ machine_id: "mac-01" })], reachable: true };
+    state.localDevice = { machineId: "this-mac", name: "Laptop", serveStance: "client", deviceType: "laptop" };
+    const provider = new SidebarViewProvider(makeExtensionUri(), undefined, deps);
+    const view = makeWebviewView();
+    resolve(provider, view);
+    const msg = lastFleetStatus(view);
+    // the peer row AND the synthesized self-row both show up.
+    expect(msg.model.devices).toHaveLength(2);
+    const self = msg.model.devices.find((d: any) => d.machineId === "this-mac");
+    expect(self).toBeDefined();
+    expect(self.name).toBe("Laptop");
+    expect(self.typeLabel).toBe("laptop");
+    expect(self.health).toBe("reachable");
+  });
+
+  it("collapses to the standalone state when the local device has no fleet.json (#1359)", () => {
+    const { state, deps } = fleetHarness();
+    state.localDevice = { machineId: "this-mac", name: "Mac", serveStance: "standalone", deviceType: undefined };
+    const provider = new SidebarViewProvider(makeExtensionUri(), undefined, deps);
+    const view = makeWebviewView();
+    resolve(provider, view);
+    const msg = lastFleetStatus(view);
+    expect(msg.model.state).toBe("standalone");
     expect(msg.model.devices).toEqual([]);
   });
 
@@ -358,15 +431,61 @@ describe("SidebarViewProvider — fleet section host wiring (#1321)", () => {
 
 describe("defaultFleetSectionDeps — production readers (#1321)", () => {
   let defaultFleetSectionDeps: any;
+  let classifyDeviceType: any;
   let tmp: string;
 
   beforeEach(async () => {
     vi.resetModules();
     const mod = await import("../src/sidebar_view");
     defaultFleetSectionDeps = mod.defaultFleetSectionDeps;
+    classifyDeviceType = mod.classifyDeviceType;
     const os = await import("node:os");
     const fs = await import("node:fs");
     tmp = fs.mkdtempSync(resolve(os.tmpdir(), "amc-fleet-"));
+  });
+
+  it("classifyDeviceType reads 'laptop' from a MacBook system_profiler Model Name (#1359)", () => {
+    expect(classifyDeviceType("      Model Name: MacBook Pro\n      Model Identifier: Mac14,9\n")).toBe("laptop");
+    expect(classifyDeviceType("Model Name: MacBook Air")).toBe("laptop");
+  });
+
+  it("classifyDeviceType reads 'desktop' from Mac Studio / iMac / Mac mini / Mac Pro (#1359)", () => {
+    expect(classifyDeviceType("Model Name: Mac Studio")).toBe("desktop");
+    expect(classifyDeviceType("Model Name: iMac")).toBe("desktop");
+    expect(classifyDeviceType("Model Name: Mac mini")).toBe("desktop");
+    expect(classifyDeviceType("Model Name: Mac Pro")).toBe("desktop");
+  });
+
+  it("classifyDeviceType abstains (undefined) on unrecognized or missing output — never a guess", () => {
+    expect(classifyDeviceType("Model Name: Some Future Device")).toBeUndefined();
+    expect(classifyDeviceType("")).toBeUndefined();
+    expect(classifyDeviceType("garbage, no such field")).toBeUndefined();
+  });
+
+  it("readLocalDevice mirrors fleet.json's serve-stance and uses the friendly hostname when available (#1359)", async () => {
+    const os = await import("node:os");
+    const fs = await import("node:fs");
+    const fleetConfigFile = resolve(tmp, "fleet.json");
+    fs.writeFileSync(fleetConfigFile, JSON.stringify({ role: "server", canonical: {} }));
+    const deps = defaultFleetSectionDeps({ fleetConfigFile, detectDeviceType: () => undefined });
+    const local = deps.readLocalDevice();
+    expect(local.serveStance).toBe("server");
+    // name prefers the friendly hostname (scutil ComputerName on macOS)
+    // over the raw os.hostname(); machineId stays the raw hostname (stable key).
+    expect(local.machineId).toBe(os.hostname());
+    if (process.platform === "darwin") {
+      // on macOS the friendly name should NOT be the raw hostname
+      expect(local.name).not.toBe(os.hostname());
+      expect(local.name.length).toBeGreaterThan(0);
+    } else {
+      expect(local.name).toBe(os.hostname());
+    }
+    expect(local.deviceType).toBeUndefined();
+  });
+
+  it("readLocalDevice surfaces the injected device-type detection when it succeeds (#1359)", () => {
+    const deps = defaultFleetSectionDeps({ detectDeviceType: () => "laptop" });
+    expect(deps.readLocalDevice().deviceType).toBe("laptop");
   });
 
   it("readRoster parses the roster cache into rows, reachable=true", async () => {
@@ -390,6 +509,88 @@ describe("defaultFleetSectionDeps — production readers (#1321)", () => {
     expect(out.rows).toEqual([]);
   });
 
+  it("readRoster on a CLIENT proxy-reads GET /amicode/roster from the host with the credential (#1363)", async () => {
+    const fs = await import("node:fs");
+    const fleetConfigFile = resolve(tmp, "fleet-client.json");
+    fs.writeFileSync(fleetConfigFile, JSON.stringify({ role: "client", canonical: { host: "jjs-mac-studio", port: 4096, sshAlias: "jjs-mac-studio" } }));
+    const fetchImpl = vi.fn(async () => ({
+      ok: true, status: 200,
+      json: async () => ({
+        ok: true, schema_version: 1, error: null,
+        rows: [{ machine_id: "peer-1", name: "Peer", server_mode: "client", capabilities: [], sshAlias: "p", transport: "ssh", last_report: "t", health: "reachable" }],
+      }),
+    }));
+    const deps = defaultFleetSectionDeps({
+      fleetConfigFile,
+      fetchImpl: fetchImpl as any,
+      serviceEndpoint: () => ({ origin: "http://127.0.0.1:4095", authHeader: "Bearer x" }),
+    });
+    const out = await deps.readRoster();
+    expect(out.reachable).toBe(true);
+    expect(out.rows).toHaveLength(1);
+    expect(out.rows[0].machine_id).toBe("peer-1");
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "http://127.0.0.1:4095/amicode/roster",
+      expect.objectContaining({ headers: expect.objectContaining({ Authorization: "Bearer x" }) }),
+    );
+  });
+
+  it("readRoster on a CLIENT degrades to reachable=false when the host proxy read throws (#1363)", async () => {
+    const fs = await import("node:fs");
+    const fleetConfigFile = resolve(tmp, "fleet-client-2.json");
+    fs.writeFileSync(fleetConfigFile, JSON.stringify({ role: "client", canonical: { host: "h", port: 4096, sshAlias: "h" } }));
+    const fetchImpl = vi.fn(async () => { throw new Error("ECONNREFUSED"); });
+    const deps = defaultFleetSectionDeps({
+      fleetConfigFile,
+      fetchImpl: fetchImpl as any,
+      serviceEndpoint: () => ({ origin: "http://127.0.0.1:4095", authHeader: "Bearer x" }),
+    });
+    const out = await deps.readRoster();
+    expect(out.reachable).toBe(false);
+    expect(out.rows).toEqual([]);
+  });
+
+  it("readRoster on a CLIENT with no live service endpoint degrades to reachable=false (#1363)", async () => {
+    const fs = await import("node:fs");
+    const fleetConfigFile = resolve(tmp, "fleet-client-3.json");
+    fs.writeFileSync(fleetConfigFile, JSON.stringify({ role: "client", canonical: { host: "h", port: 4096, sshAlias: "h" } }));
+    const deps = defaultFleetSectionDeps({ fleetConfigFile, serviceEndpoint: () => null });
+    const out = await deps.readRoster();
+    expect(out.reachable).toBe(false);
+    expect(out.rows).toEqual([]);
+  });
+
+  it("readRoster on a SERVER reads the LOCAL roster cache and never hits the network (#1363)", async () => {
+    const fs = await import("node:fs");
+    const rosterFile = resolve(tmp, "roster-server.json");
+    const fleetConfigFile = resolve(tmp, "fleet-server.json");
+    fs.writeFileSync(fleetConfigFile, JSON.stringify({ role: "server", canonical: {} }));
+    fs.writeFileSync(rosterFile, JSON.stringify({
+      schema_version: 1,
+      rows: [{ machine_id: "a", name: "A", server_mode: "client", capabilities: [], sshAlias: "a", transport: "ssh", last_report: "t", health: "reachable" }],
+    }));
+    const fetchImpl = vi.fn();
+    const deps = defaultFleetSectionDeps({ rosterFile, fleetConfigFile, fetchImpl: fetchImpl as any });
+    const out = await deps.readRoster();
+    expect(out.reachable).toBe(true);
+    expect(out.rows).toHaveLength(1);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("readCanonicalServer returns the canonical server on a CLIENT, null on a SERVER (#1363)", async () => {
+    const fs = await import("node:fs");
+    const clientCfg = resolve(tmp, "fleet-cs-client.json");
+    const serverCfg = resolve(tmp, "fleet-cs-server.json");
+    fs.writeFileSync(clientCfg, JSON.stringify({ role: "client", canonical: { host: "jjs-mac-studio", port: 4096, sshAlias: "jjs-mac-studio" } }));
+    fs.writeFileSync(serverCfg, JSON.stringify({ role: "server", canonical: { host: "jjs-mac-studio", port: 4096, sshAlias: "jjs-mac-studio" } }));
+    const clientDeps = defaultFleetSectionDeps({ fleetConfigFile: clientCfg });
+    const serverDeps = defaultFleetSectionDeps({ fleetConfigFile: serverCfg });
+    const cs = clientDeps.readCanonicalServer?.();
+    expect(cs).not.toBeNull();
+    expect(cs!.machineId).toBe("jjs-mac-studio");
+    expect(serverDeps.readCanonicalServer?.()).toBeNull();
+  });
+
   it("readPosture folds fleet.json role (Server mode) with the posture-state link-health", async () => {
     const fs = await import("node:fs");
     const postureFile = resolve(tmp, "posture-state.json");
@@ -404,9 +605,9 @@ describe("defaultFleetSectionDeps — production readers (#1321)", () => {
     expect(p.reachable).toBe(true);
   });
 
-  it("isFleetManagerAvailable honestly reports false when the Fleet Manager tab (#1322) is absent", () => {
+  it("isFleetManagerAvailable honestly reports true (the Fleet Manager is always available)", () => {
     const deps = defaultFleetSectionDeps({});
-    expect(deps.isFleetManagerAvailable()).toBe(false);
+    expect(deps.isFleetManagerAvailable()).toBe(true);
   });
 });
 
@@ -429,26 +630,25 @@ describe("sidebar webview — fleet section styling (#1321, design-system tokens
     expect(css).toMatch(/\.fleet-device-row\s*\{/);
     expect(css).toMatch(/\.fleet-posture-badge\s*\{/);
     // the fleet section styling is token-driven, not hardcoded colors.
-    expect(css).toMatch(/\.fleet-(device-row|posture-badge|health|cap-chip|manage)[^{]*\{[^}]*var\(--vscode-/);
+    expect(css).toMatch(/\.fleet-(device-row|posture-badge|status-dot|type-pill|manage)[^{]*\{[^}]*var\(--vscode-/);
   });
 
-  it("keys the tri-state health indicator on data-health with distinct theme colors (a11y: color is not the only signal)", () => {
+  it("keys the status dot on data-health with distinct theme colors (a11y: an aria-label carries the same signal)", () => {
     const css = html();
-    expect(css).toMatch(/\.fleet-health\[data-health=["']reachable["']\]/);
-    expect(css).toMatch(/\.fleet-health\[data-health=["']degraded["']\]/);
-    expect(css).toMatch(/\.fleet-health\[data-health=["']down["']\]/);
+    expect(css).toMatch(/\.fleet-status-dot\[data-health=["']reachable["']\]/);
+    expect(css).toMatch(/\.fleet-status-dot\[data-health=["']degraded["']\]/);
+    expect(css).toMatch(/\.fleet-status-dot\[data-health=["']down["']\]/);
   });
 
-  it("defines the capability chips by border and marks descriptive vs known", () => {
+  it("styles the type pill via badge tokens (#1359)", () => {
     const css = html();
-    expect(css).toMatch(/\.fleet-cap-chip[^{]*\{[^}]*border/);
-    expect(css).toMatch(/\.fleet-cap-chip\[data-known=/);
+    expect(css).toMatch(/\.fleet-type-pill[^{]*\{[^}]*var\(--vscode-badge-/);
   });
 
-  it("renders a disabled Manage affordance that reads as non-interactive (honest degrade)", () => {
+  it("the action bar buttons use a shared transparent-border style, never a disabled visual state (#1359: hidden, not disabled)", () => {
     const css = html();
-    expect(css).toMatch(/\.fleet-manage:disabled\s*\{/);
-    expect(css).toMatch(/\.fleet-manage:disabled\s*\{[^}]*(cursor:\s*default|opacity)/);
+    expect(css).toMatch(/\.fleet-action-bar button\s*\{/);
+    expect(css).not.toMatch(/\.fleet-manage:disabled/);
   });
 });
 

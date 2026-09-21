@@ -20,18 +20,45 @@ export function createTimelineModel(input: {
 
   const [resource] = createResource(
     () => input.sessionID(),
-    (id) => {
+    async (id) => {
+      // #1298: t0 for the paint probe — every route change into a
+      // session view lands here first; the probe wrapper in session.tsx
+      // stamps t1 at the new timeline's first paint.
+      try {
+        ;(globalThis as { __paintT0?: number }).__paintT0 = performance.now()
+      } catch {}
       clearRefresh()
       if (!id) return
 
-      // #1294: the 15s staleness force-refetch is REMOVED. It fired on
-      // every switch to a session idle >15s, and the resource's own sync
-      // then JOINED the in-flight force task (runInflight dedupe) — so the
-      // timeline suspended on a wire round-trip for a session whose
-      // messages were cached and on screen the whole time (the panel's
-      // rings: zero message loads, yet frozen/blank holds on every
-      // switch). Freshness is the SSE reducers' job; the warm pass and
-      // on-demand loads cover the rest.
+      // #1295c: a session with ANY data in the store never syncs on the
+      // switch path at all. Two suspensions died here: the stale-force
+      // join (removed earlier), and the one the rings finally exposed —
+      // the switch's sync JOINING an in-flight deep prefetch (the
+      // prewarmer warms open tabs to 60 messages over the wire; switching
+      // mid-prefetch held the panel for the whole fetch chain while the
+      // cached data sat on screen). The SSE reducers keep live sessions
+      // fresh; the warm pass reconciles in the background; only a
+      // genuinely-empty session takes the sync path.
+      const cached = untrack(() => (sync().data.message[id]?.length ?? 0) > 0)
+      if (cached) {
+        // The resource resolves NOW (the cached messages are on screen);
+        // the sync still runs as a TRUE background task — it may join an
+        // in-flight prefetch, reconcile fresh data, fill session info —
+        // nothing awaits it, so it can take as long as the wire needs.
+        void sync().session.sync(id).catch(() => {})
+        return
+      }
+      // #1297: not in the store — the MIRROR satisfies the render before
+      // any task is joined: a mid-deep-warm prefetch can hold its slot for
+      // many seconds (the parallel-parents fix shrinks the chains, but the
+      // render must never depend on a wire chain at all when disk has the
+      // data). Hydrate (an IDB read, milliseconds) → resolve; the sync
+      // runs in the background as above.
+      await sync().session.hydrate(id)
+      if (untrack(() => (sync().data.message[id]?.length ?? 0) > 0)) {
+        void sync().session.sync(id).catch(() => {})
+        return
+      }
       return sync().session.sync(id)
     },
   )

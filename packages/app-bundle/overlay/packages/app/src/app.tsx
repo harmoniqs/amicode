@@ -37,6 +37,7 @@ import {
   lazy,
   Suspense,
   onCleanup,
+  onMount,
   type ParentProps,
   Show,
 } from "solid-js"
@@ -661,7 +662,7 @@ ${text.slice(0, 12000)}` }).catch(() => {})  // #1294: 2400 truncated snapshots 
     const briefMap = (m?: Map<string, unknown[]>) =>
       m
         ? Object.fromEntries(
-            [...m.entries()].slice(-4).map(([k, v]) => [k.slice(-14), (v as unknown[]).slice(-6)]),
+            [...m.entries()].slice(-12).map(([k, v]) => [k.slice(-14), (v as unknown[]).slice(-6)]),
           )
         : null
     const shipRings = () => {
@@ -679,6 +680,9 @@ ${text.slice(0, 12000)}` }).catch(() => {})  // #1294: 2400 truncated snapshots 
             up: Math.round((Date.now() - diagStart) / 1000),
             load: briefMap(w.__loadDebug),
             gate: briefMap(w.__gateDebug),
+            render: (globalThis as { __renderRing?: unknown }).__renderRing ?? null,
+            paint: (globalThis as { __paintRing?: unknown[] }).__paintRing?.slice(-8) ?? null,
+            hold: (globalThis as { __holdRing?: unknown[] }).__holdRing?.slice(-8) ?? null,
             mirror: w.__mirrorDebug?.slice(-4) ?? null,
             hydrated: w.__mirrorHydrated?.slice(-6) ?? null,
           }),
@@ -687,6 +691,47 @@ ${text.slice(0, 12000)}` }).catch(() => {})  // #1294: 2400 truncated snapshots 
     }
     const shipTimeout = setTimeout(shipRings, 8_000)
     const shipInterval = setInterval(shipRings, 30_000)
+
+    // #1296 render timing: the data layer is clean on switches (zero
+    // loads, zero gate holds in the rings) — the remaining perceived
+    // delay must be the RENDER (heavy sessions remount the timeline:
+    // 31-53 messages with tools/diffs/thinking). Stamp every route
+    // change and the first message-element paint; ship the durations.
+    const renderRing: { id: string; ms: number; els: number }[] = []
+    let lastPath = location.pathname
+    let renderT0 = 0
+    let renderId = ""
+    const renderScanTimer = setInterval(() => {
+      try {
+        const path = location.pathname
+        if (path !== lastPath) {
+          lastPath = path
+          renderT0 = performance.now()
+          renderId = (path.match(/session\/([^/?]+)/)?.[1] ?? "").slice(-14)
+        }
+        if (renderT0 > 0) {
+          // #1297: this DOM-scan ring was flawed twice (hold clone pixels
+          // counted as paint; the live scroll container's hold tag broke
+          // the exclusion) — superseded by the model-t0 → probe-t1 pair
+          // (__paintRing). Kept for continuity; trust paint.
+          const els = document.querySelectorAll(
+            '[data-slot*=user-message], [data-slot*=assistant-message], [data-component*=message]',
+          ).length
+          if (els > 0) {
+            renderRing.push({ id: renderId, ms: Math.round(performance.now() - renderT0), els })
+            if (renderRing.length > 24) renderRing.shift()
+            renderT0 = 0
+          }
+        }
+      } catch {
+        /* best-effort */
+      }
+    }, 100)
+    const shipRenderRing = () => {
+      const w = globalThis as { __renderRing?: unknown }
+      w.__renderRing = renderRing.slice(-8)
+    }
+    const renderShipTimer = setInterval(shipRenderRing, 1_000)
     let lastHtml = -1
     let lastKids = -1
     const ring: string[] = []
@@ -734,6 +779,8 @@ ${text.slice(0, 12000)}` }).catch(() => {})  // #1294: 2400 truncated snapshots 
       window.removeEventListener("unhandledrejection", onRejection)
       clearTimeout(shipTimeout)
       clearInterval(shipInterval)
+      clearInterval(renderScanTimer)
+      clearInterval(renderShipTimer)
       cancelAnimationFrame(rafId)
       clearInterval(timer)
     })
@@ -796,6 +843,22 @@ function SessionLineagePrewarmer() {
     }
   })
   createEffect(() => {
+    const live = global.servers.list()
+    const known = new Set(live.map((item) => ServerConnection.key(item)))
+    if (known.size > 0) {
+      // #1295: rebase stale-era tab server keys (pre-fleet origins, retired
+      // hosts) to the live server — ghost keys route tab clicks into a
+      // context that can never load (the frozen-panel-forever switch).
+      const seenGhost = new Set<string>()
+      for (const tab of tabs.store) {
+        if (tab.type === "session" && tab.server !== undefined && !known.has(tab.server)) {
+          if (!seenGhost.has(tab.server)) {
+            seenGhost.add(tab.server)
+            tabs.rebaseServer(tab.server, live.length === 1 ? ServerConnection.key(live[0]) : [...known][0])
+          }
+        }
+      }
+    }
     for (const tab of tabs.store) {
       if (tab.type !== "session") continue
       const conn = global.servers.list().find((item) => ServerConnection.key(item) === tab.server)
@@ -816,10 +879,16 @@ function SessionLineagePrewarmer() {
       // Messages too: the timeline gates on the sync store holding the
       // session's messages — a cold message load is the same wire gap.
       if (session.prefetch) {
-        // #1292 deeper warm for open tabs — the actively-used sessions get
-        // the first ~3 pages so history scrolls locally; the 15s freshness
-        // guard in prefetch() keeps repeat passes free.
-        void session.prefetch(tab.sessionId, 60).catch(() => {})
+        // #1299: the RENDER PAGE FIRST, the deep warm behind it. The
+        // previous order (60 deep, immediately) meant a quick first switch
+        // to a cold tab JOINED the mid-flight deep prefetch — 8-12s holds
+        // (measured: the paint ring's 11,949ms / 8,034ms sessions). The
+        // 20-message page lands in one round trip and satisfies the
+        // timeline; the 60-deep pass continues behind it and fills history.
+        void session
+          .prefetch(tab.sessionId, 20)
+          .then(() => session.prefetch(tab.sessionId, 60))
+          .catch(() => {})
       }
     }
   })
@@ -1164,7 +1233,7 @@ export function AppInterface(props: {
                                   thrown teardowns (ErrorBoundary) and
                                   pending resources (Suspense). */}
                               <ErrorBoundary fallback={() => <SessionPanelHold />}>
-                                <Suspense fallback={<SessionPanelHold />}>
+                                <Suspense fallback={<SuspenseHoldProbe />}>
                                   {routerProps.children}
                                 </Suspense>
                               </ErrorBoundary>
@@ -1329,6 +1398,24 @@ const EmptyWorkspaceLanding = lazy(() => import("@/pages/empty-workspace-landing
 function LandingEffect(props: { land: () => void }) {
   createEffect(() => props.land())
   return null
+}
+
+/** #1297: stamp the outlet-Suspense fallback's mounts — the frozen pane
+ *  the user keeps seeing on quick switches. The durations ride the ring
+ *  snapshots; correlated with the frontdoor log they name the suspender. */
+function SuspenseHoldProbe() {
+  const w = globalThis as { __holdRing?: { at: number; ms: number | null }[] }
+  const at = Date.now()
+  onMount(() => {
+    w.__holdRing = w.__holdRing ?? []
+    w.__holdRing.push({ at, ms: null })
+    if (w.__holdRing.length > 16) w.__holdRing.shift()
+    const mine = w.__holdRing[w.__holdRing.length - 1]
+    onCleanup(() => {
+      mine.ms = Date.now() - at
+    })
+  })
+  return <SessionPanelHold />
 }
 
 function NewLayoutLegacySessionRedirect() {

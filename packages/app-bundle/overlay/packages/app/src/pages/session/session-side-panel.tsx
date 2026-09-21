@@ -461,6 +461,20 @@ export function SessionSidePanel(props: {
   const previewOpen = tabState.previewOpen
   const pulseInspectorOpen = tabState.pulseInspectorOpen
   const fleetManagerOpen = tabState.fleetManagerOpen
+  // Bridge listener: open the fleet manager tab when the extension broadcasts
+  // the open-fleet-manager message. This runs at the panel level so the tab
+  // activates even when FleetManagerContent is not yet mounted.
+  if (typeof window !== "undefined") {
+    const onFleetBridge = (e: MessageEvent) => {
+      const d = e.data as { source?: string; kind?: string }
+      if (d?.source !== "amicode" || d.kind !== "open-fleet-manager") return
+      tabs().open("fleetManager")
+      tabs().setActive("fleetManager")
+      openReviewPanel()
+    }
+    window.addEventListener("message", onFleetBridge)
+    onCleanup(() => window.removeEventListener("message", onFleetBridge))
+  }
   const openFileOpen = tabState.openFileOpen
   const panelTabs = tabState.panelTabs
   const openedTabs = tabState.openedTabs

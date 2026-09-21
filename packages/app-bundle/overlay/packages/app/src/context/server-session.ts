@@ -767,13 +767,29 @@ export function createServerSession(
     // fetch so the timeline renders instantly; the fetch (which continues
     // below) reconciles into truth. Only the FIRST load of a session this
     // document hydrates; later loads have data.message defined already.
-    if ((data.message[sessionID]?.length ?? 0) === 0) {
-      // #1294: hydrate empty-OR-missing lists — an SSE-emptied session
-      // renders its mirror content instantly while the wire revalidates.
+    if ((data.message[sessionID]?.length ?? 0) < 20) {
+      // #1300: hydrate over sparse-or-missing lists — an SSE seed (a
+      // running session's single streaming message) must not veto the
+      // mirror; hydrateFromMirror itself refuses only when the store
+      // already holds at least as much as the record.
       await hydrateFromMirror(sessionID).catch(() => {})
       loadDebug(sessionID, "hydrated", { count: data.message[sessionID]?.length ?? -1 })
       if (meta.loading[sessionID]) return
+      if ((data.message[sessionID]?.length ?? 0) > 0) {
+        // #1295d: the mirror satisfied the render — the caller (the
+        // timeline resource!) resolves NOW; the wire reconcile runs
+        // DETACHED. Before this, every session not yet in this document's
+        // store (at boot: ALL of them) awaited a full wire fetch before
+        // first paint even though the hydrated data was in the store —
+        // the "frozen pane then a couple seconds of chat loading" on
+        // boot and cold switches, at exactly the wire RTT.
+        void wireReconcile().catch(() => {})
+        return
+      }
     }
+    return wireReconcile()
+
+    async function wireReconcile() {
     const active = generation(sessionID)
     const load: MessageLoadState = {
       touchedMessages: new Set(),
@@ -819,20 +835,29 @@ export function createServerSession(
             ),
           ),
         ]
-        for (const parentID of parentIDs) {
-          if (generations.get(sessionID) !== active) break
-          const parent = await fetchMessage(sessionID, parentID, () =>
-            resetMessageLoad(sessionID, load, messageLoadBaseline(load, parentID)),
-          ).catch((error) => {
-            const cause = error instanceof Error && typeof error.cause === "object" ? error.cause : undefined
-            if (cause && "status" in cause && cause.status === 404) {
-              load.removedMessages.add(parentID)
-              return
-            }
-            throw error
-          })
+        // #1297: PARALLELIZE the parent fetches. The sequential loop was
+        // THE switch-delay for big sessions: each parent missing from the
+        // fetched page cost a full wire round-trip, one after another —
+        // the render ring measured a 12.7s route-change-to-first-paint on
+        // the user's research session (5-7 parents x ~2s each, joined by
+        // any switch that landed mid-chain). All parents in one flight.
+        const parentResults = await Promise.all(
+          parentIDs.map((parentID) =>
+            fetchMessage(sessionID, parentID, () =>
+              resetMessageLoad(sessionID, load, messageLoadBaseline(load, parentID)),
+            ).catch((error) => {
+              const cause = error instanceof Error && typeof error.cause === "object" ? error.cause : undefined
+              if (cause && "status" in cause && cause.status === 404) {
+                load.removedMessages.add(parentID)
+                return
+              }
+              throw error
+            }),
+          ),
+        )
+        for (const parent of parentResults) {
           if (!parent) continue
-          if (parent.message.role !== "user") throw new Error(`Assistant parent is not a user message: ${parentID}`)
+          if (parent.message.role !== "user") throw new Error(`Assistant parent is not a user message: ${parent.message.id}`)
           parents.push(parent)
         }
       }
@@ -878,6 +903,7 @@ export function createServerSession(
       if (messageLoads.get(sessionID) === load) messageLoads.delete(sessionID)
       if (generations.get(sessionID) === active) setMeta("loading", sessionID, false)
     }
+    }
   }
 
   /** #1291 durable mirror: persist the current store state for a session
@@ -909,11 +935,17 @@ export function createServerSession(
    *  (background revalidate, not a cache hit). */
   const hydrateFromMirror = async (sessionID: string) => {
     const scope = options?.mirrorScope
-    // #1294: also hydrate EMPTY-but-defined lists (SSE-emptied sessions) —
-    // but never overwrite a non-empty list with mirror content.
-    if (!scope || (data.message[sessionID]?.length ?? 0) > 0) return
+    if (!scope) return
     const record = await loadMirror(scope, sessionID)
-    if (!record || (data.message[sessionID]?.length ?? 0) > 0) return
+    if (!record) return
+    // #1300: hydrate over SPARSE SSE seeds. A running session's event
+    // stream seeds data.message with a SINGLE message before any real
+    // load; the old guard (> 0 = refuse) let that 1-message seed veto a
+    // 40-message mirror record — the switch rendered the ghost of one
+    // message and waited on the wire for history the disk already had.
+    // Only refuse when the store holds at least as much as the record.
+    const storeCount = data.message[sessionID]?.length ?? 0
+    if (storeCount >= record.messages.length) return
     ;(globalThis as { __mirrorHydrated?: string[] }).__mirrorHydrated = (
       (globalThis as { __mirrorHydrated?: string[] }).__mirrorHydrated ?? []
     ).concat([sessionID])
@@ -934,6 +966,17 @@ export function createServerSession(
     })
   }
 
+  /** #1297: satisfy the render from the mirror WITHOUT joining any
+   *  in-flight task (a mid-deep-warm prefetch can hold a runInflight slot
+   *  for many seconds; a switch that joins it shows the frozen pane for
+   *  the whole chain even though the mirror can paint NOW). */
+  const hydrate = (sessionID: string) => {
+    if ((data.message[sessionID]?.length ?? 0) > 0) return Promise.resolve()
+    return hydrateFromMirror(sessionID)
+      .catch(() => {})
+      .then(() => undefined)
+  }
+
   const sync = (sessionID: string, options?: { force?: boolean; messageLimit?: number }) => {
     touch(sessionID)
     return runInflight(inflight, sessionID, async () => {
@@ -949,7 +992,18 @@ export function createServerSession(
       const count = data.message[sessionID]?.length ?? 0
       const cached =
         count > 0 && meta.limit[sessionID] !== undefined && count >= (meta.limit[sessionID] ?? 0)
-      if (cached && data.info[sessionID] && !options?.force) return
+      if (cached && !options?.force) {
+        // #1295: info is METADATA (title, model) — the messages are the
+        // content. A cached session with missing info (outside the warm's
+        // window, never wire-resolved this document) must not block the
+        // timeline on the info's wire round-trip: resolve it in the
+        // background and render the cached messages now. The header/title
+        // fill in when the info lands. (The bare /session/:id fetches on
+        // every such switch + the Suspense holding the panel for them was
+        // the remaining "missing chat" on switches.)
+        if (!data.info[sessionID]) void resolve(sessionID).catch(() => {})
+        return
+      }
       await Promise.all([
         resolve(sessionID, options),
         cached && !options?.force
@@ -1466,6 +1520,7 @@ export function createServerSession(
     // seeds `[]` for every session on SSE events — an empty array that was
     // never fetched must not read as "ready" (it renders an empty timeline:
     // "the session history is missing until it comes back").
+    hydrate,
     loaded(sessionID: string) {
       return meta.at[sessionID] !== undefined
     },

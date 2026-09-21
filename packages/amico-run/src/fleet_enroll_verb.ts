@@ -146,6 +146,11 @@ export interface FleetEnrollDeps {
    *  sshAlias-unresolved cause. Default: local/tailscale/direct → http host:port;
    *  ssh with an empty alias → sshAlias-unresolved. */
   resolveProbeOrigin?: (transport: string, canonical: JoinTokenCanonical) => ProbeOriginResult;
+  /** Retry delays in ms for verify-attach transport-down probes.
+   *  Default: [1000, 2000, 4000] — up to 3 retries with exponential backoff.
+   *  Only `{ error: "unreachable" }` retries; auth rejections and pin mismatches
+   *  fail immediately. Tests inject [0, 0, 0] for instant retries. */
+  retryDelayMs?: number[];
 }
 
 // ── flag parsing ──────────────────────────────────────────────────────────────
@@ -286,7 +291,29 @@ async function postRosterRow(
 }
 
 // ── the server path ────────────────────────────────────────────────────────
-function enrollAsServer(argv: string[], deps: FleetEnrollDeps): VerbResult {
+/** The pin_version to stamp on a minted join token. Precedence (#1354 follow-up):
+ *  an explicit injection or AMICO_CLIENT_VERSION env wins (operator override);
+ *  otherwise probe the just-provisioned local hub's /global/health and pin its
+ *  REAL engine version — NOT the placeholder "dev", which fails the enroll-time
+ *  pin-check against the server's own 1.18.x engine. "dev" survives only as the
+ *  last-resort fallback when the hub is unreachable at mint time. */
+async function resolveServerPinVersion(
+  deps: FleetEnrollDeps,
+  canonical: JoinTokenCanonical,
+  fetchImpl: typeof fetch,
+): Promise<string> {
+  if (deps.clientVersion) return deps.clientVersion();
+  const envPin = process.env.AMICO_CLIENT_VERSION;
+  if (typeof envPin === "string" && envPin.trim() !== "") return envPin;
+  // The hub listens on loopback; advertised canonical.host may not resolve locally.
+  const probe = await probeHealth(`http://127.0.0.1:${canonical.port}`, undefined, fetchImpl);
+  if ("version" in probe && typeof probe.version === "string" && probe.version.trim() !== "") {
+    return probe.version;
+  }
+  return "dev";
+}
+
+async function enrollAsServer(argv: string[], deps: FleetEnrollDeps): Promise<VerbResult> {
   const machineName = (deps.machineName ?? (() => hostname()))();
   const host = flagValue(argv, "--host") ?? machineName;
   const portRaw = flagValue(argv, "--port") ?? "4096";
@@ -311,7 +338,8 @@ function enrollAsServer(argv: string[], deps: FleetEnrollDeps): VerbResult {
   }
 
   const fleet_token = (deps.mintFleetToken ?? defaultMintFleetToken)();
-  const pin_version = (deps.clientVersion ?? (() => process.env.AMICO_CLIENT_VERSION ?? "dev"))();
+  const fetchImpl = deps.fetchImpl ?? (globalThis.fetch as typeof fetch);
+  const pin_version = await resolveServerPinVersion(deps, canonical, fetchImpl);
   const token: JoinToken = { canonical, fleet_token, transport_hint: transportHint, pin_version };
   const outPath = deps.joinTokenOutPath ?? path.join(homedir(), ".amico", "ops", "fleet", "join-token.json");
   (deps.writeJoinToken ?? defaultWriteJoinToken)(outPath, token);
@@ -350,7 +378,9 @@ async function enrollAsClient(argv: string[], token: JoinToken, deps: FleetEnrol
   // Probe the canonical host's version and reject a pin_version disagreement
   // via the pure versionSkewVerdict. An unreachable host at this stage is also
   // a pre-write refusal (the token cannot be validated) — never a blind write.
-  const pinProbe = await probeHealth(`http://${canonical.host}:${canonical.port}`, token.fleet_token, fetchImpl);
+  // #1354: the hub uses open auth (AMICODE_SERVICE_AUTH=open) — the SSH tunnel
+  // is the trust boundary, so no HTTP credentials are sent.
+  const pinProbe = await probeHealth(`http://${canonical.host}:${canonical.port}`, undefined, fetchImpl);
   if ("error" in pinProbe) {
     return fail(
       [`cannot reach the hub host to validate the join token's pin (host ${canonical.host}:${canonical.port} unreachable)`],
@@ -401,7 +431,7 @@ async function enrollAsClient(argv: string[], token: JoinToken, deps: FleetEnrol
     last_report: now,
     health: "reachable",
   };
-  await postRosterRow(canonical, token.fleet_token, provisionalRow, fetchImpl);
+  await postRosterRow(canonical, undefined, provisionalRow, fetchImpl);
 
   // ── set the transport, then run the installer (guard + client tunnel) ──
   (deps.setTransport ?? defaultSetTransport)(transport);
@@ -409,7 +439,7 @@ async function enrollAsClient(argv: string[], token: JoinToken, deps: FleetEnrol
 
   // ── VERIFY ATTACH (AC3): probe the just-set transport ──
   const resolveOrigin = deps.resolveProbeOrigin ?? defaultResolveProbeOrigin;
-  const verify = await runVerifyAttach(resolveOrigin, transport, canonical, token, fetchImpl);
+  const verify = await runVerifyAttach(resolveOrigin, transport, canonical, token, fetchImpl, deps.retryDelayMs);
 
   const result: EnrollResult = {
     machine_id: machineId,
@@ -438,7 +468,7 @@ async function enrollAsClient(argv: string[], token: JoinToken, deps: FleetEnrol
   const failedHealth: RosterHealth = verify.cause === "transport-down" ? "down" : "degraded";
   await postRosterRow(
     canonical,
-    token.fleet_token,
+    undefined,
     { ...provisionalRow, health: failedHealth, last_report: (deps.now ?? (() => new Date().toISOString()))() },
     fetchImpl,
   );
@@ -466,40 +496,60 @@ async function runVerifyAttach(
   canonical: JoinTokenCanonical,
   token: JoinToken,
   fetchImpl: typeof fetch,
+  retryDelays: number[] = [1000, 2000, 4000],
 ): Promise<VerifyOutcome> {
   const originR = resolveOrigin(transport, canonical);
   if (!originR.ok) return { ok: false, cause: originR.cause, fix: originR.fix };
-  const probe = await probeHealth(originR.origin, token.fleet_token, fetchImpl);
-  if ("error" in probe) {
-    return {
-      ok: false,
-      cause: "transport-down",
-      fix: `the ${transport} transport to ${canonical.host}:${canonical.port} is not reachable — confirm the tunnel/tailscale is up, then re-run enroll`,
-    };
+
+  const maxAttempts = 1 + retryDelays.length; // first try + retries
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const probe = await probeHealth(originR.origin, undefined, fetchImpl);
+
+    // Only "unreachable" (transport-down) retries — auth rejections, pin
+    // mismatches, and other non-transport failures fail immediately.
+    if ("error" in probe) {
+      if (attempt < retryDelays.length) {
+        await new Promise<void>((resolve) => setTimeout(resolve, retryDelays[attempt]));
+        continue;
+      }
+      // Exhausted retries
+      return {
+        ok: false,
+        cause: "transport-down",
+        fix: `the ${transport} transport to ${canonical.host}:${canonical.port} is not reachable — confirm the tunnel/tailscale is up, then re-run enroll`,
+      };
+    }
+    if (probe.status === 401 || probe.status === 403) {
+      return {
+        ok: false,
+        cause: "auth-rejected",
+        fix: "the hub rejected the Fleet token — re-mint it on the server (`amico fleet enroll --as-server`) and re-enroll with the fresh join token",
+      };
+    }
+    if (probe.status !== 200) {
+      return {
+        ok: false,
+        cause: "transport-down",
+        fix: `the transport reached the host but it answered HTTP ${probe.status} on /global/health — confirm the hub is healthy, then re-run enroll`,
+      };
+    }
+    // 200 but a pin that does not match the host = reached the WRONG/updated host.
+    if (probe.version !== null && !versionSkewVerdict(token.pin_version, probe.version).agree) {
+      return {
+        ok: false,
+        cause: "pin-mismatch",
+        fix: `verify-attach reached a host reporting ${probe.version} but the token pins ${token.pin_version} — the transport points at the wrong host or it was upgraded; re-mint the join token`,
+      };
+    }
+    return { ok: true };
   }
-  if (probe.status === 401 || probe.status === 403) {
-    return {
-      ok: false,
-      cause: "auth-rejected",
-      fix: "the hub rejected the Fleet token — re-mint it on the server (`amico fleet enroll --as-server`) and re-enroll with the fresh join token",
-    };
-  }
-  if (probe.status !== 200) {
-    return {
-      ok: false,
-      cause: "transport-down",
-      fix: `the transport reached the host but it answered HTTP ${probe.status} on /global/health — confirm the hub is healthy, then re-run enroll`,
-    };
-  }
-  // 200 but a pin that does not match the host = reached the WRONG/updated host.
-  if (probe.version !== null && !versionSkewVerdict(token.pin_version, probe.version).agree) {
-    return {
-      ok: false,
-      cause: "pin-mismatch",
-      fix: `verify-attach reached a host reporting ${probe.version} but the token pins ${token.pin_version} — the transport points at the wrong host or it was upgraded; re-mint the join token`,
-    };
-  }
-  return { ok: true };
+
+  // Unreachable — the loop always returns — but TypeScript needs it.
+  return {
+    ok: false,
+    cause: "transport-down",
+    fix: `the ${transport} transport to ${canonical.host}:${canonical.port} is not reachable — confirm the tunnel/tailscale is up, then re-run enroll`,
+  };
 }
 
 // ── the enroll verb body ───────────────────────────────────────────────────
