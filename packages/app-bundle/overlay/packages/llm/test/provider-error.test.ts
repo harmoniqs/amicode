@@ -23,6 +23,7 @@ describe("provider error classification", () => {
       "Throttling error: Too many tokens, please wait before trying again.",
       "Rate limit exceeded, please retry after 30 seconds.",
       "Too many requests. Please slow down.",
+      "Monthly token limit exceeded",
     ]
 
     expect(messages.some(isContextOverflow)).toBe(false)

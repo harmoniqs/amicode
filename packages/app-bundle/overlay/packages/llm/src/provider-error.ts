@@ -29,8 +29,8 @@ const patterns = [
   /too large for model with \d+ maximum context length/i,
   /prompt has [\d,]+ tokens?, but the configured context size is [\d,]+ tokens?/i,
   /model_context_window_exceeded/i,
-  /too many tokens/i,
-  /token limit exceeded/i,
+  /^too many tokens$/i,
+  /^token limit exceeded$/i,
 ]
 
 const exclusions = [
