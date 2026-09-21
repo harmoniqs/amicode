@@ -134,6 +134,50 @@ describe("buildFleetSectionModel — this machine's posture badge (AC2)", () => 
   });
 });
 
+describe("buildFleetSectionModel — peer fleet posture override (ADR 0029)", () => {
+  const serverLocal = { machineId: "mac-studio", name: "Mac Studio", serveStance: "server", deviceType: "desktop" };
+  const stalePosture = { serverMode: "server", hostname: "mac-studio", mode: "standalone" as const, reachable: false, hub: { name: null, base_url: null } };
+
+  it("overrides linkHealth to 'ok' when a server has a reachable peer", () => {
+    const model = buildFleetSectionModel(input({
+      roster: [row({ machine_id: "macbook", name: "MacBook", health: "reachable" })],
+      localDevice: serverLocal,
+      posture: stalePosture,
+    }));
+    expect(model.posture!.linkHealth).toBe("ok");
+  });
+
+  it("overrides linkHealth to 'down' when all peers are down", () => {
+    const model = buildFleetSectionModel(input({
+      roster: [row({ machine_id: "macbook", name: "MacBook", health: "down", last_report: "2026-09-20T11:50:00.000Z" })],
+      localDevice: serverLocal,
+      posture: stalePosture,
+    }));
+    expect(model.posture!.linkHealth).toBe("down");
+  });
+
+  it("overrides linkHealth to 'degraded' when peers are degraded", () => {
+    // 200s old → past DEGRADED_AGE_MS (180s) but under DOWN_AGE_MS (300s)
+    const model = buildFleetSectionModel(input({
+      roster: [row({ machine_id: "macbook", name: "MacBook", last_report: "2026-09-20T11:56:40.000Z" })],
+      localDevice: serverLocal,
+      posture: stalePosture,
+    }));
+    expect(model.posture!.linkHealth).toBe("degraded");
+  });
+
+  it("does NOT override for client-mode machines (hub-client posture is correct)", () => {
+    const clientLocal = { ...serverLocal, serveStance: "client" };
+    const model = buildFleetSectionModel(input({
+      roster: [row({ machine_id: "macbook", name: "MacBook", health: "reachable" })],
+      localDevice: clientLocal,
+      posture: { ...stalePosture, serverMode: "client" },
+    }));
+    // Client posture comes from the data-plane detector, not the roster.
+    expect(model.posture!.linkHealth).toBe("down");
+  });
+});
+
 describe("buildFleetSectionModel — honest empty / unreachable state (AC6)", () => {
   it("resolves an empty-but-reachable roster to the 'empty' state, no devices", () => {
     const model = buildFleetSectionModel(input());

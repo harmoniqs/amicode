@@ -296,10 +296,24 @@ export function buildFleetSectionModel(input: FleetSectionInput): FleetSectionMo
     devices.unshift(self);
   }
   const state: FleetSectionState = devices.length > 0 ? "populated" : "empty";
+  // For a server-mode machine in a peer fleet, the data-plane posture detector
+  // has nothing to observe (no hub proxy traffic), so linkHealth stays "down".
+  // Override: derive link health from the roster — if any non-local peer is
+  // reachable, the fleet is healthy. (#1394 follow-up, ADR 0029 peer posture.)
+  let postureBadge = buildPostureBadge(input.posture);
+  if (postureBadge && local && local.serveStance === "server") {
+    const hasPeerUp = devices.some((d) => !d.isLocal && d.health === "reachable");
+    const allPeersDown = devices.filter((d) => !d.isLocal).length > 0 &&
+      devices.filter((d) => !d.isLocal).every((d) => d.health === "down");
+    postureBadge = {
+      ...postureBadge,
+      linkHealth: hasPeerUp ? "ok" : allPeersDown ? "down" : "degraded",
+    };
+  }
   return {
     state,
     devices,
-    posture: buildPostureBadge(input.posture),
+    posture: postureBadge,
     manage: { enabled: input.manageAvailable },
     troubleshoot: { enabled: input.troubleshootAvailable },
     now,
