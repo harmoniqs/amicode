@@ -476,4 +476,121 @@ describe("fleet-client relay skeleton (#1261) — a client holds NO local engine
       }
     });
   });
+
+  // ── #1344 (ADR 0027 §3, Slice 4): the attach/detach VERB drives the Slice-2
+  // pointer. Reuses THIS relay suite (per the issue's Testing Decision) for the
+  // pointer-flip routing: the verb is POSTed through the RUNNING relay's real
+  // registered route, flips the D6 pointer, and the D3 resolver then routes
+  // studio paths to the newly-attached target — the "switch" made observable.
+  // The verb stays LOCAL on a client (the /amicode/fleet/* exclusion): the hub
+  // host never sees an attach. The verb writes the pointer/roster/credential via
+  // the env-file seam (the route handler injects no path), so this block points
+  // those envs at temp files and seeds a two-row roster (the candidate source).
+  describe("#1344 (ADR 0027 §3, Slice 4) — the attach/detach verb flips the pointer; the resolver routes to the attached target (pointer-flip routing)", () => {
+    let vdir: string;
+    let attachmentFile: string;
+    let rosterFile: string;
+    let credentialFile: string;
+    let keeperFile: string;
+    const savedEnv: Record<string, string | undefined> = {};
+
+    beforeAll(() => {
+      vdir = mkdtempSync(join(tmpdir(), "amicode-attach-verb-"));
+      attachmentFile = join(vdir, "attachment.json");
+      rosterFile = join(vdir, "roster.json");
+      credentialFile = join(vdir, "attachment-credentials.json");
+      keeperFile = join(vdir, "keeper.json");
+      for (const k of ["AMICO_FLEET_ATTACHMENT_FILE", "AMICO_FLEET_ROSTER_FILE", "AMICO_FLEET_ATTACHMENT_CREDENTIAL_FILE"]) {
+        savedEnv[k] = process.env[k];
+      }
+      process.env.AMICO_FLEET_ATTACHMENT_FILE = attachmentFile;
+      process.env.AMICO_FLEET_ROSTER_FILE = rosterFile;
+      process.env.AMICO_FLEET_ATTACHMENT_CREDENTIAL_FILE = credentialFile;
+      // seed the candidate source: two peers the verb may attach to
+      writeFileSync(
+        rosterFile,
+        JSON.stringify({
+          schema_version: 1,
+          rows: [
+            { machine_id: "peer-a", name: "A", server_mode: "server", capabilities: [], sshAlias: "a@host", transport: "ssh", last_report: "t", health: "reachable" },
+            { machine_id: "peer-b", name: "B", server_mode: "server", capabilities: [], sshAlias: "b@host", transport: "ssh", last_report: "t", health: "reachable" },
+          ],
+        }),
+      );
+      // a keeper coordinate (unused by the routing decision except to confirm
+      // roster still resolves to the keeper, never the attached peer)
+      writeKeeperPointerFile({ sshAlias: "keeper@host", transport: "ssh" }, { keeperFile });
+    });
+
+    afterAll(() => {
+      for (const [k, v] of Object.entries(savedEnv)) {
+        if (v === undefined) delete process.env[k]
+        else process.env[k] = v
+      }
+      rmSync(vdir, { recursive: true, force: true });
+    });
+
+    it("attach → the pointer flips to the roster peer's coordinate; a studio /amicode/* path RESOLVES to that attached target (and the hub host never saw the attach)", async () => {
+      const svc = bootClientRelay(() => host.url);
+      const origin = (await svc.start()).toString().replace(/\/$/, "");
+      const hostBefore = host.requests.length;
+      try {
+        const res = await fetch(`${origin}/amicode/fleet/attach`, {
+          method: "POST",
+          headers: { Authorization: serverAuthHeader(SERVICE_PASSWORD), "content-type": "application/json" },
+          body: JSON.stringify({ machine_id: "peer-a" }),
+        });
+        expect(res.status).toBe(200); // served LOCALLY (the /amicode/fleet/* exclusion) — a switch is not a host request
+        expect(host.requests.some((r) => r.includes("/amicode/fleet/attach"))).toBe(false); // the hub NEVER saw the attach
+
+        // the D6 pointer flipped to the ROSTER peer's coordinate
+        const attached = resolveAttachmentPointer({ attachmentFile });
+        expect(attached).toEqual({ ok: true, attached: true, pointer: { sshAlias: "a@host", transport: "ssh", machine_id: "peer-a" } });
+        // and the D3 resolver now routes a studio path to that attached target
+        const decision = resolveAmicodeTarget("/amicode/vaults", {
+          attached,
+          keeper: resolveKeeperPointer({ keeperFile }),
+        });
+        expect(decision.target).toBe("attached");
+        expect((decision.pointer as AttachmentPointer).machine_id).toBe("peer-a");
+      } finally {
+        await svc.stop();
+      }
+    });
+
+    it("a switch (attach peer-a → attach peer-b) re-targets the pointer; detach flips it back to LOCAL", async () => {
+      const svc = bootClientRelay(() => host.url);
+      const origin = (await svc.start()).toString().replace(/\/$/, "");
+      const post = (body: unknown) =>
+        fetch(`${origin}/amicode/fleet/attach`, {
+          method: "POST",
+          headers: { Authorization: serverAuthHeader(SERVICE_PASSWORD), "content-type": "application/json" },
+          body: JSON.stringify(body),
+        });
+      try {
+        await post({ machine_id: "peer-a" });
+        await post({ machine_id: "peer-b" }); // the switch
+        expect(resolveAttachmentPointer({ attachmentFile })).toEqual({
+          ok: true,
+          attached: true,
+          pointer: { sshAlias: "b@host", transport: "ssh", machine_id: "peer-b" },
+        });
+
+        const detach = await fetch(`${origin}/amicode/fleet/detach`, {
+          method: "POST",
+          headers: { Authorization: serverAuthHeader(SERVICE_PASSWORD), "content-type": "application/json" },
+          body: JSON.stringify({ machine_id: "peer-b" }),
+        });
+        expect(detach.status).toBe(200);
+        // back to empty/local: a studio path now resolves LOCAL (D3 default)
+        const attached = resolveAttachmentPointer({ attachmentFile });
+        expect(attached).toEqual({ ok: true, attached: false });
+        expect(resolveAmicodeTarget("/amicode/vaults", { attached, keeper: resolveKeeperPointer({ keeperFile }) })).toEqual({
+          target: "local",
+        });
+      } finally {
+        await svc.stop();
+      }
+    });
+  });
 });

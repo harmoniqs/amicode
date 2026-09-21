@@ -113,6 +113,15 @@ export class SessionEventResume {
     return this.delivered.get(sessionID);
   }
 
+  /** Reset EVERY session's cursor — a SWITCH (#1344, ADR 0027 §3/D4: the
+   *  attachment pointer flips to a different server) invalidates every tracked
+   *  seq at once (a different server's aggregate seqs are meaningless), so the
+   *  next per-session subscription to the newly-attached server opens a FRESH
+   *  stream with NO `?after=`. Idempotent: resetting an empty store is a no-op. */
+  reset(): void {
+    this.delivered.clear();
+  }
+
   private record(sessionID: string, seq: number): void {
     const prev = this.delivered.get(sessionID);
     if (prev === undefined || seq > prev) this.delivered.set(sessionID, seq);
