@@ -228,12 +228,13 @@ export function fleetHealthReport(args: {
   const topology = args.topology ?? readFleetTopology();
   const role = topology.kind === "ok" ? topology.role : "standalone";
 
-  // Standalone (or absent projection — the base default): fleet checks are
-  // irrelevant — just surface the role. A BROKEN projection also returns only
-  // the role check, as its rendered fail. #1261 (AC4): this floor is
-  // cross-platform (the guard/settings/role checks run on linux + WSL too);
-  // only the launchd tunnel check below stays darwin-specific.
-  if (role === "standalone" || topology.kind !== "ok") {
+  // Guard/settings/tunnel checks are only relevant for CLIENT machines — they
+  // verify the engine-blocking guard, the binary redirect, and the SSH tunnel
+  // that a client needs to reach the server. Servers and standalone machines
+  // run their own engines and need none of that (peer fleet: every server runs
+  // its own engine, ADR 0029). A broken projection also returns only the role
+  // check, as its rendered fail.
+  if (role !== "client" || topology.kind !== "ok") {
     return [
       checkFleetRole({ topology, platform: args.platform }),
     ];

@@ -28,6 +28,16 @@ const okStandalone: FleetTopologyState = {
   provenanceSource: "base default (mode absent = standalone)",
   projection: { schema_version: 1, contract_version: 1, sections: {} },
 };
+const okServer: FleetTopologyState = {
+  kind: "ok",
+  role: "server",
+  canonical: { host: "studio", port: 4096, sshAlias: "studio" },
+  mode: "fleet",
+  posture: "ok",
+  freshness: { counter: 3, hubEpoch: "55555555-5555-5555-8555-555555555555" },
+  provenanceSource: "fleet.json",
+  projection: { schema_version: 1, contract_version: 1, sections: {} },
+};
 const absent: FleetTopologyState = {
   kind: "absent",
   detail: "fleet projection absent at /tmp/projection.json — refresh it with `amico fleet status --projection`",
@@ -176,6 +186,22 @@ describe("fleet_health", () => {
     expect(r).toHaveLength(1);
     expect(r[0].name).toBe("Fleet role");
     expect(r[0].detail).toMatch(/standalone/);
+  });
+
+  it("aggregate report: server mode skips guard/settings/tunnel — servers run their own engine (ADR 0029)", () => {
+    const r = fleetHealthReport({
+      repoGuardPath: REPO,
+      configuredBinary: "", // unset is fine on a server — it spawns the vendored binary
+      configuredPort: 0,
+      plistContent: null,
+      read: () => { throw new Error("no file"); },
+      isExecutable: () => true,
+      platform: "darwin",
+      topology: okServer,
+    });
+    expect(r).toHaveLength(1);
+    expect(r[0].name).toBe("Fleet role");
+    expect(r[0].detail).toMatch(/server/);
   });
 
   it("aggregate report: absent projection → the standalone floor (only the role check), identical to the ok-standalone shape", () => {
