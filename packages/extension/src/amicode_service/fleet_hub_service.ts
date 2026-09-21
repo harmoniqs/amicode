@@ -72,6 +72,7 @@ export interface HubServiceUnitOptions {
 export function hubServiceEnv(opts: HubServiceUnitOptions): Record<string, string> {
   return {
     AMICODE_APP_DIST: opts.appDist,
+    AMICODE_SERVICE_AUTH: "open", // #1354: the SSH tunnel is the auth boundary
     AMICODE_SERVICE_PORT: String(opts.servicePort),
     OPENCODE_DB: opts.dbPath, // the canonical ONE-writer store (ADR 0005)
     ...(opts.extraEnv ?? {}),

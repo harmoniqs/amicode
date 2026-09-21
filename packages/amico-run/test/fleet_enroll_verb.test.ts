@@ -180,6 +180,7 @@ function recorder(over: Partial<FleetEnrollDeps> = {}): Recorder {
     spawnEngine: () => {
       engine.spawns += 1;
     },
+    retryDelayMs: [0, 0, 0],
     ...over,
   };
   return { deps, fleetWrites, joinTokenWrites, installerCalls, transportSets, engine };
@@ -426,5 +427,80 @@ describe("amico fleet enroll — never-fork: a client installs the guard and spa
     expect(rec.installerCalls).toEqual(["client"]);
     // and the enroll verb NEVER spawns a local engine (the tripwire stays untouched)
     expect(rec.engine.spawns).toBe(0);
+  });
+});
+
+describe("amico fleet enroll — open-auth hub: no HTTP credentials sent (#1354 Bug 2)", () => {
+  it("does NOT send an Authorization header to the hub (the SSH tunnel is the auth boundary)", async () => {
+    const s = await stub({ version: "v1.18.29" });
+    const authHeaders: (string | undefined)[] = [];
+    const spyFetch: typeof fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const hdrs = init?.headers as Record<string, string> | undefined;
+      authHeaders.push(hdrs?.Authorization);
+      return globalThis.fetch(input, init);
+    }) as typeof fetch;
+    const rec = recorder({ fetchImpl: spyFetch });
+    const r = await fleetEnroll(["--join-token-json", JSON.stringify(tokenFor(s))], rec.deps);
+
+    expect(r.code).toBe(0);
+    expect(j(r).ok).toBe(true);
+    // Every fetch call should have Authorization = undefined (open auth)
+    expect(authHeaders.length).toBeGreaterThan(0); // at least the pin check + verify-attach
+    expect(authHeaders.every((h) => h === undefined)).toBe(true);
+  });
+});
+
+describe("amico fleet enroll — verify-attach retries on transient transport-down (#1354 Bug 3)", () => {
+  it("retries up to 3 times on transport-down, then succeeds when the host comes up", async () => {
+    const canonical = await stub({ version: "v1.18.29" }); // pin check target (healthy)
+    const verifyTarget = await stub({ version: "v1.18.29" }); // verify-attach target
+    let verifyProbeCount = 0;
+    const rec = recorder({
+      resolveProbeOrigin: () => ({ ok: true as const, origin: verifyTarget.url }),
+      fetchImpl: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.href : (input as Request).url;
+        if (url.includes(`:${verifyTarget.port}/global/health`)) {
+          verifyProbeCount++;
+          if (verifyProbeCount <= 2) throw new TypeError("fetch failed");
+        }
+        return globalThis.fetch(input, init);
+      }) as typeof fetch,
+      retryDelayMs: [0, 0, 0],
+    });
+    const r = await fleetEnroll(["--join-token-json", JSON.stringify(tokenFor(canonical))], rec.deps);
+
+    expect(r.code).toBe(0);
+    expect(j(r).ok).toBe(true);
+    expect(j(r).result?.verify_attach).toEqual({ ok: true });
+    expect(verifyProbeCount).toBe(3); // 2 failures + 1 success
+    expect(verifyTarget.healthHits()).toBe(1); // only the successful probe reached the stub
+  });
+
+  it("gives up after exhausting retries and reports transport-down", async () => {
+    const canonical = await stub({ version: "v1.18.29" }); // pin check target (healthy)
+    const rec = recorder({
+      resolveProbeOrigin: () => ({ ok: true as const, origin: "http://127.0.0.1:1" }),
+      retryDelayMs: [0, 0, 0],
+    });
+    const r = await fleetEnroll(["--join-token-json", JSON.stringify(tokenFor(canonical))], rec.deps);
+
+    expect(r.code).not.toBe(0);
+    expect(j(r).ok).toBe(false);
+    expect(j(r).cause).toBe("transport-down");
+    expect(j(r).result?.verify_attach).toEqual({ ok: false, cause: "transport-down" });
+  });
+
+  it("does NOT retry on auth-rejected (401)", async () => {
+    const canonical = await stub({ version: "v1.18.29" }); // pin check target (healthy)
+    const rejecting = await stub({ healthStatus: 401 }); // what the transport actually reaches
+    const rec = recorder({
+      resolveProbeOrigin: () => ({ ok: true as const, origin: rejecting.url }),
+      retryDelayMs: [0, 0, 0],
+    });
+    const r = await fleetEnroll(["--join-token-json", JSON.stringify(tokenFor(canonical))], rec.deps);
+
+    expect(r.code).not.toBe(0);
+    expect(j(r).cause).toBe("auth-rejected");
+    expect(rejecting.healthHits()).toBe(1); // no retries — fails immediately
   });
 });
