@@ -1279,7 +1279,9 @@ function NewSessionLanding() {
     <Show when={tabs.ready()} fallback={null}>
       <LandingEffect land={land} />
       <Show when={showEmpty()}>
-        <EmptyWorkspaceLanding />
+        <Suspense>
+          <EmptyWorkspaceLanding />
+        </Suspense>
       </Show>
     </Show>
   )
@@ -1290,8 +1292,11 @@ function NewSessionLanding() {
  *  normal new-session view, and populates the titlebar controls so the app
  *  never appears empty. The createEffect in LandingEffect keeps running: the
  *  moment a workspace folder arrives (the extension pushes it), the draft
- *  resolves and this component unmounts. */
-const EmptyWorkspaceLanding = /* @once */ lazy(() => import("@/pages/empty-workspace-landing"))
+ *  resolves and this component unmounts.
+ *
+ *  lazy() keeps the chunk off the critical path; the <Suspense> in the parent
+ *  catches the suspension while the chunk loads. */
+const EmptyWorkspaceLanding = lazy(() => import("@/pages/empty-workspace-landing"))
 
 /** #1291: the landing's resolve used to run as a bare IIFE inside <Show> —
  *  evaluated ONCE at mount, never again. When the server connected (or the

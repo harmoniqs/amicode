@@ -24,7 +24,7 @@
     "packages/app/public/amico.svg": "7c64b145bdd063bacd53318336a423f0654ec702de2b4e0c4a4a384694052804",
     "packages/app/public/oc-theme-preload.js": "27227e802b3494e7c545da903e679efdb30ccc754cd4eb5cdf08005a40d560b6",
     "packages/app/src/app-desktop-commands.test.ts": "1d2057f238dc14e4407ff5c4e53afe091784790bc0fd0dbfde0eacd91e2bd968",
-    "packages/app/src/app.tsx": "b8b8e98f51ee887c8a4351815ba88c87ce5cc55168013d70bb3f4b1b25676e63",
+    "packages/app/src/app.tsx": "fd1c281eaf999b490b202002b4cc2097141c44a9cc8e7b27f74a38678a92b5c8",
     "packages/app/src/design-polish.css": "6b860316d2d57a4a9a89c1ff2772de45eca0d0cef2bd3e2ea8572d817e1d1910",
     "packages/app/src/desktop-menu.ts": "55481604f4fd5dcb74b0678347076c42fda7f928590d90bc2c3d1633bea8bc36",
     "packages/app/src/entry.tsx": "f35e1017f4c9d478d254b2a38043e5750064b6bef25169c3e07ae9f72ff1049c",
@@ -193,6 +193,7 @@
     "packages/app/src/i18n/zht.ts": "11a18096ad1369c92c8895d129d150d20ce18db05ff9a11aa3eec868388d8e22",
     "packages/app/src/pages/empty-workspace-landing.tsx": "8bd76387aaa75b5f5c10832c1c464340f0eb29e0f96db534abd432258a7d1099",
     "packages/app/src/pages/error.tsx": "db9ba0847cfb205100ad6133cce30c6ea2ce983802af44947e6d2b746c2a6ec5",
+    "packages/app/src/pages/hold-debug-badge-gate.test.ts": "0bedaa343e4ded3859a64f413d67a097795fbc3b1d0f99b28647d7132fcc3e0f",
     "packages/app/src/pages/home-projects.test.ts": "a90155c37210a0e5b7a095bbfc3ba2d40681f02927d9726148a706bed5ba7891",
     "packages/app/src/pages/home-projects.ts": "d55124578dc839b98e2084b488d818e30e4a1abf1ae264499b83e403c2aabca7",
     "packages/app/src/pages/home-session-archive.test.ts": "e8f1126287a3e9daa455efcc378e5d72aebdd092158bf8526f7779669b72e850",
@@ -200,9 +201,10 @@
     "packages/app/src/pages/home.tsx": "06fb5c7718aacfd29b35e730e05d45076b39d6cd5d936d1270fb1bd9424c32fa",
     "packages/app/src/pages/layout-new.tsx": "3ef477634cb6d7de0c32d3572c5ff699e07efff47e6e75458583456eb1ff8b27",
     "packages/app/src/pages/layout.tsx": "eaf8bed869b5ec53582db732119fb903b223d749ebda354b1e388de3be02dc52",
-    "packages/app/src/pages/new-session-landing.test.ts": "c0f47e4096e6a20fa59dac2b10f7285d3ef45e9289bf6f0ad75c1d9e4dd1117f",
+    "packages/app/src/pages/new-session-landing.test.ts": "319ac2a3bef9ebf1eac39088fdb9513a21b1c282aa7de7c7847429456e83f90f",
     "packages/app/src/pages/new-session-landing.ts": "528d27cd5d441b521674328fb7812fb2acf77233e9e436d081c98ce611e8b268",
     "packages/app/src/pages/new-session.tsx": "c060bbb15569b6da2f67146e6af0879ccb5444345df03dbc2f9b39cb98b9db78",
+    "packages/app/src/pages/overlay-content-hash.test.ts": "aa208098213522dcde42434408afe9c8641fad663f44a58c316922dbd0da2f5c",
     "packages/app/src/pages/session.tsx": "589dcfb37581dab15b448fc66fc9a295a2350cfa4cab182965142936085a0f91",
     "packages/app/src/utils/amicode-bridge.ts": "5104a04c7822f80dc0c564619e7dd2d850ba50035dbc86ea875604ecd97df05f",
     "packages/app/src/utils/amicode-bug-report.test.ts": "b1bbf49230ff3aa6d1a43ffa9165ba5a84ca4ee18a6d49f52ee5cd887c3e6444",
@@ -846,10 +848,10 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-09-20T23:56:49.982Z",
+  "extracted_at": "2026-09-21T00:13:59.875Z",
   "per_package": {
     "packages/app": {
-      "A": 169,
+      "A": 171,
       "M": 158,
       "D": 0
     },
@@ -890,7 +892,7 @@
     }
   },
   "counts": {
-    "overlay_total": 824,
+    "overlay_total": 826,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1080,6 +1082,7 @@
     "packages/app/src/i18n/zht.ts": "M",
     "packages/app/src/pages/empty-workspace-landing.tsx": "A",
     "packages/app/src/pages/error.tsx": "M",
+    "packages/app/src/pages/hold-debug-badge-gate.test.ts": "A",
     "packages/app/src/pages/home-projects.test.ts": "A",
     "packages/app/src/pages/home-projects.ts": "A",
     "packages/app/src/pages/home-session-archive.test.ts": "M",
@@ -1090,6 +1093,7 @@
     "packages/app/src/pages/new-session-landing.test.ts": "A",
     "packages/app/src/pages/new-session-landing.ts": "A",
     "packages/app/src/pages/new-session.tsx": "M",
+    "packages/app/src/pages/overlay-content-hash.test.ts": "A",
     "packages/app/src/pages/session.tsx": "M",
     "packages/app/src/utils/amicode-bridge.ts": "A",
     "packages/app/src/utils/amicode-bug-report.test.ts": "A",
