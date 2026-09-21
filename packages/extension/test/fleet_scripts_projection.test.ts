@@ -442,6 +442,10 @@ describe("#1258 the installer provisions the canonical hub service (reboot-survi
     expect(content).toContain("Environment=OPENCODE_DB="); // one writer (ADR 0005)
     expect(content).toContain("/.amico/server/session.db");
     expect(content).toContain("Environment=AMICODE_SERVICE_PORT=4096");
+    // #1354 follow-up: the hub engine is pinned off the extension engine and runs
+    // unarmed so open-auth /global/health works through the tunnel.
+    expect(content).toContain("Environment=AMICODE_ENGINE_PORT=4093");
+    expect(content).toContain("Environment=AMICODE_ENGINE_UNARMED=1");
   });
 
   it("never-fork: a CLIENT gets NO hub-service unit — this is the HUB's provisioning, not a client's (role-gated, ADR 0005)", () => {
@@ -465,8 +469,9 @@ describe("#1258 the installer provisions the canonical hub service (reboot-survi
     chmodSync(guardDst, 0o755);
     const settings = join(tmp, "Library", "Application Support", "Code", "User", "settings.json");
     mkdirSync(join(tmp, "Library", "Application Support", "Code", "User"), { recursive: true });
-    // #1354: server role uses FLEET_PORT - 1 for the engine port and no guard binary
-    writeFileSync(settings, JSON.stringify({ "amicode.opencodePort": 4095 }, null, 2));
+    // #1354 follow-up: server role uses FLEET_PORT - 2 for the engine port (app
+    // shelf gets FLEET_PORT - 1, hub service keeps FLEET_PORT) and no guard binary
+    writeFileSync(settings, JSON.stringify({ "amicode.opencodePort": 4094 }, null, 2));
     const r = runScript(INSTALL, ["--check"], installEnv());
     expect(r.code).toBe(1);
     expect(r.out).toMatch(/hub service/i);

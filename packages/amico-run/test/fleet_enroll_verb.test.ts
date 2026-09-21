@@ -229,6 +229,66 @@ describe("amico fleet enroll --as-server (#1319 AC1)", () => {
     // the emitted join token is also surfaced on the result for #1320 to hand out
     expect(j(r).join_token).toEqual(token);
   });
+
+  // #1354 follow-up: minting must pin the host's REAL engine version, not the
+  // placeholder "dev" — a dev-minted token otherwise fails the pin-check against
+  // the server's own 1.18.x engine before verify-attach ever runs.
+  it("pins the host's probed /global/health version when no version is explicitly configured", async () => {
+    const s = await stub({ version: "1.18.29" });
+    const savedEnv = process.env.AMICO_CLIENT_VERSION;
+    delete process.env.AMICO_CLIENT_VERSION;
+    try {
+      // No clientVersion injected → the mint must probe the local hub (127.0.0.1:port),
+      // NOT fall back to "dev". The stub answers /global/health with 1.18.29.
+      const rec = recorder({ clientVersion: undefined });
+      const r = await fleetEnroll(
+        ["--as-server", "--host", "hub.example", "--port", String(s.port), "--ssh-alias", "hub", "--transport-hint", "ssh"],
+        rec.deps,
+      );
+      expect(r.code).toBe(0);
+      expect(rec.joinTokenWrites).toHaveLength(1);
+      expect(rec.joinTokenWrites[0].token.pin_version).toBe("1.18.29");
+    } finally {
+      if (savedEnv === undefined) delete process.env.AMICO_CLIENT_VERSION;
+      else process.env.AMICO_CLIENT_VERSION = savedEnv;
+    }
+  });
+
+  it("falls back to \"dev\" when the local hub is unreachable at mint time", async () => {
+    const savedEnv = process.env.AMICO_CLIENT_VERSION;
+    delete process.env.AMICO_CLIENT_VERSION;
+    try {
+      const rec = recorder({ clientVersion: undefined });
+      // --port points at a closed port → the mint-time probe is unreachable → "dev".
+      const r = await fleetEnroll(
+        ["--as-server", "--host", "hub.example", "--port", "1", "--ssh-alias", "hub"],
+        rec.deps,
+      );
+      expect(r.code).toBe(0);
+      expect(rec.joinTokenWrites[0].token.pin_version).toBe("dev");
+    } finally {
+      if (savedEnv === undefined) delete process.env.AMICO_CLIENT_VERSION;
+      else process.env.AMICO_CLIENT_VERSION = savedEnv;
+    }
+  });
+
+  it("lets an explicit AMICO_CLIENT_VERSION override win over the probe", async () => {
+    const s = await stub({ version: "1.18.29" });
+    const savedEnv = process.env.AMICO_CLIENT_VERSION;
+    process.env.AMICO_CLIENT_VERSION = "operator-pin";
+    try {
+      const rec = recorder({ clientVersion: undefined });
+      const r = await fleetEnroll(
+        ["--as-server", "--host", "hub.example", "--port", String(s.port), "--ssh-alias", "hub"],
+        rec.deps,
+      );
+      expect(r.code).toBe(0);
+      expect(rec.joinTokenWrites[0].token.pin_version).toBe("operator-pin");
+    } finally {
+      if (savedEnv === undefined) delete process.env.AMICO_CLIENT_VERSION;
+      else process.env.AMICO_CLIENT_VERSION = savedEnv;
+    }
+  });
 });
 
 // A ready-to-redeem join token pointing at a stub host.

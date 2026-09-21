@@ -72,6 +72,15 @@ export interface HubServiceUnitOptions {
 export function hubServiceEnv(opts: HubServiceUnitOptions): Record<string, string> {
   return {
     AMICODE_APP_DIST: opts.appDist,
+    // #1354: the hub's embedded engine must NOT collide with the extension's
+    // engine. Layout on a server: FLEET_PORT-3 hub-engine · FLEET_PORT-2
+    // ext-engine · FLEET_PORT-1 app-shelf · FLEET_PORT hub-service.
+    AMICODE_ENGINE_PORT: String(opts.servicePort - 3),
+    // #1354: open-auth REQUIRES an unarmed engine — /global/health proxies to
+    // the engine, which 401s if it holds a password. The SSH tunnel is the
+    // boundary; the engine behind it is passwordless. This is the matched pair
+    // to AMICODE_SERVICE_AUTH=open, not optional deploy policy.
+    AMICODE_ENGINE_UNARMED: "1",
     AMICODE_SERVICE_AUTH: "open", // #1354: the SSH tunnel is the auth boundary
     AMICODE_SERVICE_PORT: String(opts.servicePort),
     OPENCODE_DB: opts.dbPath, // the canonical ONE-writer store (ADR 0005)
