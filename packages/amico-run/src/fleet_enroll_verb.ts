@@ -291,7 +291,29 @@ async function postRosterRow(
 }
 
 // ── the server path ────────────────────────────────────────────────────────
-function enrollAsServer(argv: string[], deps: FleetEnrollDeps): VerbResult {
+/** The pin_version to stamp on a minted join token. Precedence (#1354 follow-up):
+ *  an explicit injection or AMICO_CLIENT_VERSION env wins (operator override);
+ *  otherwise probe the just-provisioned local hub's /global/health and pin its
+ *  REAL engine version — NOT the placeholder "dev", which fails the enroll-time
+ *  pin-check against the server's own 1.18.x engine. "dev" survives only as the
+ *  last-resort fallback when the hub is unreachable at mint time. */
+async function resolveServerPinVersion(
+  deps: FleetEnrollDeps,
+  canonical: JoinTokenCanonical,
+  fetchImpl: typeof fetch,
+): Promise<string> {
+  if (deps.clientVersion) return deps.clientVersion();
+  const envPin = process.env.AMICO_CLIENT_VERSION;
+  if (typeof envPin === "string" && envPin.trim() !== "") return envPin;
+  // The hub listens on loopback; advertised canonical.host may not resolve locally.
+  const probe = await probeHealth(`http://127.0.0.1:${canonical.port}`, undefined, fetchImpl);
+  if ("version" in probe && typeof probe.version === "string" && probe.version.trim() !== "") {
+    return probe.version;
+  }
+  return "dev";
+}
+
+async function enrollAsServer(argv: string[], deps: FleetEnrollDeps): Promise<VerbResult> {
   const machineName = (deps.machineName ?? (() => hostname()))();
   const host = flagValue(argv, "--host") ?? machineName;
   const portRaw = flagValue(argv, "--port") ?? "4096";
@@ -316,7 +338,8 @@ function enrollAsServer(argv: string[], deps: FleetEnrollDeps): VerbResult {
   }
 
   const fleet_token = (deps.mintFleetToken ?? defaultMintFleetToken)();
-  const pin_version = (deps.clientVersion ?? (() => process.env.AMICO_CLIENT_VERSION ?? "dev"))();
+  const fetchImpl = deps.fetchImpl ?? (globalThis.fetch as typeof fetch);
+  const pin_version = await resolveServerPinVersion(deps, canonical, fetchImpl);
   const token: JoinToken = { canonical, fleet_token, transport_hint: transportHint, pin_version };
   const outPath = deps.joinTokenOutPath ?? path.join(homedir(), ".amico", "ops", "fleet", "join-token.json");
   (deps.writeJoinToken ?? defaultWriteJoinToken)(outPath, token);

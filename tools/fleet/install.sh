@@ -136,10 +136,11 @@ case "$(uname -s)" in
     ;;
 esac
 if [[ "$ROLE" == "server" ]]; then
-  # #1354: server runs a real engine — no guard, port offset by -1 so the
-  # amicode service (configuredPort + 1) lands on FLEET_PORT.
+  # #1354: server runs a real engine — no guard, port offset by -2 so the
+  # extension's app shelf (configuredPort + 1) gets FLEET_PORT - 1 and the
+  # hub service keeps FLEET_PORT for the fleet API (roster, health, enroll).
   want_binary=""
-  want_port=$((FLEET_PORT - 1))
+  want_port=$((FLEET_PORT - 2))
 else
   want_binary="$GUARD_DST"
   want_port="$FLEET_PORT"
@@ -285,6 +286,7 @@ if [[ "$ROLE" == "server" ]]; then
       if ! grep -q "<key>KeepAlive</key>" "$HUB_PLIST_DST"; then echo "[fleet] FAIL hub service unit missing KeepAlive (won't restart on crash)"; exit 1; fi
       if ! grep -q "OPENCODE_DB" "$HUB_PLIST_DST"; then echo "[fleet] FAIL hub service unit does not pin OPENCODE_DB (one-writer, ADR 0005)"; exit 1; fi
       if ! grep -q "AMICODE_SERVICE_AUTH" "$HUB_PLIST_DST"; then echo "[fleet] FAIL hub service unit missing AMICODE_SERVICE_AUTH=open (#1354 — the SSH tunnel is the auth boundary)"; exit 1; fi
+      if ! grep -q "AMICODE_ENGINE_PORT" "$HUB_PLIST_DST"; then echo "[fleet] FAIL hub service unit missing AMICODE_ENGINE_PORT (#1354 — hub engine must not collide with extension engine)"; exit 1; fi
       say "ok hub service $HUB_PLIST_DST (RunAtLoad+KeepAlive, runs the #955 runner)"
     else
       if [[ ! -f "$HUB_UNIT_DST" ]]; then echo "[fleet] FAIL hub service systemd unit missing at $HUB_UNIT_DST (the canonical hub will NOT survive a reboot — run: bash tools/fleet/install.sh)"; exit 1; fi
@@ -294,6 +296,7 @@ if [[ "$ROLE" == "server" ]]; then
       if ! grep -q "WantedBy=" "$HUB_UNIT_DST"; then echo "[fleet] FAIL hub service unit missing WantedBy (won't start on boot)"; exit 1; fi
       if ! grep -q "OPENCODE_DB" "$HUB_UNIT_DST"; then echo "[fleet] FAIL hub service unit does not pin OPENCODE_DB (one-writer, ADR 0005)"; exit 1; fi
       if ! grep -q "AMICODE_SERVICE_AUTH" "$HUB_UNIT_DST"; then echo "[fleet] FAIL hub service unit missing AMICODE_SERVICE_AUTH=open (#1354 — the SSH tunnel is the auth boundary)"; exit 1; fi
+      if ! grep -q "AMICODE_ENGINE_PORT" "$HUB_UNIT_DST"; then echo "[fleet] FAIL hub service unit missing AMICODE_ENGINE_PORT (#1354 — hub engine must not collide with extension engine)"; exit 1; fi
       say "ok hub service $HUB_UNIT_DST (WantedBy+Restart=always, runs the #955 runner)"
     fi
   else
@@ -319,6 +322,10 @@ if [[ "$ROLE" == "server" ]]; then
 	<dict>
 		<key>AMICODE_APP_DIST</key>
 		<string>${HUB_APP_DIST}</string>
+		<key>AMICODE_ENGINE_PORT</key>
+		<string>$((FLEET_PORT - 3))</string>
+		<key>AMICODE_ENGINE_UNARMED</key>
+		<string>1</string>
 		<key>AMICODE_SERVICE_AUTH</key>
 		<string>open</string>
 		<key>AMICODE_SERVICE_PORT</key>
@@ -353,6 +360,8 @@ Wants=network-online.target
 [Service]
 Type=simple
 Environment=AMICODE_APP_DIST=${HUB_APP_DIST}
+Environment=AMICODE_ENGINE_PORT=$((FLEET_PORT - 3))
+Environment=AMICODE_ENGINE_UNARMED=1
 Environment=AMICODE_SERVICE_AUTH=open
 Environment=AMICODE_SERVICE_PORT=${FLEET_PORT}
 Environment=OPENCODE_DB=${HUB_DB}

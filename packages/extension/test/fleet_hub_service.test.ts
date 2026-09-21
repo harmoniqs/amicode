@@ -156,19 +156,39 @@ describe("#1354 hub open-auth — the SSH tunnel is the auth boundary, not HTTP 
     const plist = launchdHubServiceUnit(optsOverride);
     expect(plist).toContain("<string>credential</string>");
   });
+
+  it("hubServiceEnv sets AMICODE_ENGINE_UNARMED=1 — open-auth's matched pair (the /global/health proxy 401s on an armed engine)", () => {
+    const env = hubServiceEnv(OPTS);
+    expect(env.AMICODE_ENGINE_UNARMED).toBe("1");
+    expect(launchdHubServiceUnit(OPTS)).toContain("<key>AMICODE_ENGINE_UNARMED</key>");
+    expect(systemdHubServiceUnit(OPTS)).toContain("Environment=AMICODE_ENGINE_UNARMED=1");
+  });
+
+  it("hubServiceEnv pins AMICODE_ENGINE_PORT = servicePort - 3 so the hub engine never collides with the extension engine", () => {
+    const env = hubServiceEnv(OPTS);
+    expect(env.AMICODE_ENGINE_PORT).toBe(String(OPTS.servicePort - 3)); // 4093 for a 4096 fleet
+    expect(launchdHubServiceUnit(OPTS)).toContain("<key>AMICODE_ENGINE_PORT</key>");
+    expect(systemdHubServiceUnit(OPTS)).toContain(`Environment=AMICODE_ENGINE_PORT=${OPTS.servicePort - 3}`);
+  });
 });
 
-describe("#1354 fleet port convention — server engine on FLEET_PORT - 1, service on FLEET_PORT", () => {
-  it("the hub service targets FLEET_PORT for its amicode service; the extension engine is FLEET_PORT - 1 (from amicode.opencodePort)", () => {
-    // The convention: the installer writes amicode.opencodePort = FLEET_PORT - 1
-    // for the server role. The extension derives the amicode service port as
-    // configuredPort + 1 = (FLEET_PORT - 1) + 1 = FLEET_PORT. So the extension's
-    // amicode service and the hub service target the SAME canonical port.
+describe("#1354 fleet port convention — no collisions across engine, app-shelf, and hub", () => {
+  it("lays out hub-engine (FLEET_PORT-3), ext-engine (FLEET_PORT-2), app-shelf (FLEET_PORT-1), hub-service (FLEET_PORT) without overlap", () => {
+    // The corrected convention (#1354 follow-up): the installer writes
+    // amicode.opencodePort = FLEET_PORT - 2 for the server role. The extension
+    // derives its app shelf as configuredPort + 1 = FLEET_PORT - 1, leaving
+    // FLEET_PORT free for the hub service. The hub's OWN engine sits at
+    // FLEET_PORT - 3 (AMICODE_ENGINE_PORT), below all of them.
     const fleetPort = 4096;
-    const enginePort = fleetPort - 1; // what amicode.opencodePort gets set to on server
-    const servicePort = enginePort + 1; // what the extension derives (configuredPort + 1)
-    expect(servicePort).toBe(fleetPort);
-    // The hub service renderer also targets fleetPort for AMICODE_SERVICE_PORT:
+    const extEnginePort = fleetPort - 2; // amicode.opencodePort on server
+    const appShelfPort = extEnginePort + 1; // extension derives configuredPort + 1
+    const hubEnginePort = fleetPort - 3; // AMICODE_ENGINE_PORT
+    // four distinct ports, no collision
+    const ports = [hubEnginePort, extEnginePort, appShelfPort, fleetPort];
+    expect(new Set(ports).size).toBe(4);
+    expect(appShelfPort).toBe(fleetPort - 1); // app shelf does NOT land on the hub port
+    // the hub service renderer targets fleetPort and pins its engine at fleetPort-3
     expect(OPTS.servicePort).toBe(fleetPort);
+    expect(hubServiceEnv(OPTS).AMICODE_ENGINE_PORT).toBe(String(hubEnginePort));
   });
 });
