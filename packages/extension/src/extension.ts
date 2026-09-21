@@ -56,7 +56,7 @@ import { getWorkspaceProjects, type WorkspaceProjectDeps } from "./workspace_pro
 import { detectProjectType } from "./project/detect";
 import { stagePasqalConnector } from "./pasqal_assets";
 import { stageModCards, opencodeGlobalConfigRoot } from "./mode_cards";
-import { stageModeBundles } from "@amicode/schema";
+import { stageModeBundles, parseRosterDocument, fleetRosterCachePath, type RosterRow } from "@amicode/schema";
 import { needsProvision, pasqalVenvDir, provisionPasqalPython } from "./pasqal_python";
 import { createLocalPersonalVault, sanitizeVaultName, suggestVaultName } from "./substrate/vault_setup";
 import {
@@ -81,7 +81,8 @@ import {
   type VerbRunResult,
 } from "./fleet_topology";
 import { resolveHubTarget, restartHub } from "./hub_ops";
-import { connectToHubOverRemoteSsh } from "./fleet_connect_remote_ssh";
+import { connectToHubOverRemoteSsh, connectToDeviceOverRemoteSsh, isRemoteSshAvailable } from "./fleet_connect_remote_ssh";
+import { handleConnectToDevice, type ConnectToDeviceMessage, type FleetConnectDeps } from "./fleet_connect_device";
 import { registerAmicodeTerminal } from "./terminal";
 import { amicodeServiceDisposal, startAmicodeService, frameOriginUrl } from "./amicode_service_wiring";
 import { resolveAppDistRoot } from "./amicode_service/app_shelf";
@@ -505,6 +506,45 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     // the module-level handle at call time (null until up ⇒ honest degrade).
     serviceEndpoint: () =>
       amicodeService ? { origin: new URL(amicodeService.url).origin, authHeader: amicodeService.authHeader } : null,
+    // #1413 (ADR 0030 §D6): the connect-to-device Quick Pick handler. Builds a
+    // production FleetConnectDeps from the live service handle, roster, topology,
+    // and VS Code APIs, then delegates to handleConnectToDevice. Fire-and-forget
+    // from the sidebar (async errors are logged, never thrown to the webview).
+    connectToDevice: (msg) => {
+      const rosterPath = fleetRosterCachePath();
+      const connectDeps: FleetConnectDeps = {
+        readRoster: (): RosterRow[] => {
+          try {
+            if (!fs.existsSync(rosterPath)) return [];
+            const parsed = parseRosterDocument(JSON.parse(fs.readFileSync(rosterPath, "utf8")));
+            return parsed.ok ? parsed.doc.rows : [];
+          } catch { return []; }
+        },
+        readTopology: () => readFleetTopology(),
+        attachToDevice: async (payload) => {
+          const svc = amicodeService;
+          if (!svc) return { ok: false };
+          const res = await fetch(`${svc.url}/fleet/attach`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: svc.authHeader },
+            body: JSON.stringify(payload),
+          });
+          if (!res.ok) return { ok: false };
+          const body = await res.json() as { ok?: boolean; switched?: boolean };
+          return { ok: !!body.ok, switched: body.switched };
+        },
+        connectRemoteSsh: (sshAlias) => connectToDeviceOverRemoteSsh(sshAlias),
+        goStandalone: () => { void vscode.commands.executeCommand("amicode.fleet.goStandalone"); },
+        isRemoteSshAvailable: () => isRemoteSshAvailable(),
+        reloadWindow: () => vscode.commands.executeCommand("workbench.action.reloadWindow"),
+        showQuickPick: (items, opts) => vscode.window.showQuickPick(items, opts) as any,
+        showWarningMessage: (m, ...items) => vscode.window.showWarningMessage(m, ...items),
+        showInformationMessage: (m, ...items) => vscode.window.showInformationMessage(m, ...items),
+      };
+      void handleConnectToDevice(msg as ConnectToDeviceMessage, connectDeps).catch((e) => {
+        opencodeChannel.appendLine(`[fleet] connect-to-device error: ${(e as Error).message}`);
+      });
+    },
   }));
   ctx.subscriptions.push(
     vscode.window.registerWebviewViewProvider("amicode.workspace", sidebarProvider, {

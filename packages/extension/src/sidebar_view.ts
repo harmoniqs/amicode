@@ -435,6 +435,10 @@ export interface DefaultFleetDepsOptions {
    *  returns null when it isn't, and the read degrades to unreachable. Default:
    *  a null-returning stub (production wires the live handle from extension.ts). */
   serviceEndpoint?: () => { origin: string; authHeader: string } | null;
+  /** #1413 — override the connect-to-device handler. Default: undefined (the
+   *  sidebar degrades honestly when absent). Production wires the real Quick
+   *  Pick handler from extension.ts. */
+  connectToDevice?: (msg: { machineId: string; deviceName: string; isLocal: boolean }) => void;
 }
 
 /** The proxied route a CLIENT reads the host's authoritative roster from — the
@@ -603,6 +607,7 @@ export function defaultFleetSectionDeps(opts: DefaultFleetDepsOptions = {}): Fle
       const deviceType = configuredType || (opts.detectDeviceType ?? detectDeviceType)();
       return { machineId, name, serveStance, deviceType };
     },
+    connectToDevice: opts.connectToDevice,
   };
 }
 
