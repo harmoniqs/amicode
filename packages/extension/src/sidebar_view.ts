@@ -14,7 +14,7 @@ import * as os from "node:os";
 import { execSync } from "node:child_process";
 import { handleSidebarMessage, type SidebarMessageHandlers, type SidebarDownMessage, type FileOpRequest, type FileOpResult, type TreeEntry, type TreeRoot } from "./sidebar_bridge";
 import { buildFleetSectionModel, type RosterRowLike, type FleetPostureInput, type LocalDeviceInput, type CanonicalServerInput } from "./sidebar_fleet_section";
-import { parseRosterDocument, fleetRosterCachePath, fleetTopologyPath } from "@amicode/schema";
+import { parseRosterDocument, fleetRosterCachePath, fleetTopologyPath, classifyMacModel } from "@amicode/schema";
 import { fleetPostureStateFile } from "./fleet_posture_state";
 import { SidebarTreeService, type RawDirEntry } from "./sidebar_tree_service";
 import { ChatPanel } from "./chat_panel";
@@ -286,37 +286,51 @@ function resolveIconTheme(webview: vscode.Webview): { data: IconThemeData; rootU
 
 /** Best-effort device-type classifier from `system_profiler SPHardwareDataType`
  *  output's "Model Name:" line (#1359) — laptop/desktop, or undefined when
- *  unrecognized. An honest abstention, never a guess: the fleet sidebar's type
- *  pill falls back to `server_mode` when this is undefined. Pure — takes the
- *  raw command output as a string so it's testable without shelling out; the
- *  impure caller (`detectDeviceType`) is the one that actually runs the command
- *  and only invokes this on darwin. */
+ *  unrecognized. Pure — takes the raw command output as a string so it's
+ *  testable without shelling out. The MAPPING (Model Name → form factor) is the
+ *  shared `classifyMacModel` in `@amicode/schema` (#1371, ADR 0028): the enroll
+ *  producer and this self-row derive device_type from ONE function and cannot
+ *  drift. This wrapper is the thin extraction shell — it pulls the Model Name
+ *  off the `system_profiler` output and hands it to the schema classifier; no
+ *  model-mapping logic lives here. */
 export function classifyDeviceType(systemProfilerOutput: string): string | undefined {
   const m = /Model Name:\s*(.+)/i.exec(systemProfilerOutput);
-  const model = m?.[1]?.trim() ?? "";
-  if (!model) return undefined;
-  if (/macbook/i.test(model)) return "laptop";
-  if (/mac studio|imac|mac mini|mac pro/i.test(model)) return "desktop";
-  return undefined;
+  const model = m?.[1]?.trim();
+  return model ? classifyMacModel(model) : undefined;
+}
+
+/** The injectable command-runner seam for the extension host's device detection
+ *  (#1371 AC6, ADR 0028): ONE seam per node package hiding the impure shell so a
+ *  test can feed canned command output through the REAL detector into the shared
+ *  pure classifier without shelling out. Default: `execSync`. */
+export type HostCommandRunner = (command: string) => string;
+
+const defaultHostCommandRunner: HostCommandRunner = (command) =>
+  execSync(command, { encoding: "utf8", timeout: 2000 }).toString();
+
+/** Run the device-type detector body through a given command runner: macOS-only
+ *  (`system_profiler` → `classifyDeviceType` → the shared `classifyMacModel`);
+ *  any failure (non-darwin, missing binary, timeout) is a quiet `undefined`. */
+function detectDeviceTypeWith(run: HostCommandRunner): string | undefined {
+  if (process.platform !== "darwin") return undefined;
+  try {
+    return classifyDeviceType(run("system_profiler SPHardwareDataType"));
+  } catch {
+    return undefined;
+  }
 }
 
 /** The real, impure device-type detector: macOS only, `system_profiler`
  *  (~100ms), memoized for the process lifetime so it never re-shells on every
  *  posture refresh. Any failure (non-darwin, missing binary, timeout) is a
- *  quiet `undefined` — detection is best-effort; the type pill's fallback to
- *  `server_mode` covers it. */
+ *  quiet `undefined`; the type pill's fallback to `server_mode` covers it. An
+ *  explicitly-injected command runner (tests) bypasses the process-lifetime
+ *  memo and runs the detector body directly (#1371 AC6). */
 let cachedDeviceType: string | undefined | "unset" = "unset";
-function detectDeviceType(): string | undefined {
+export function detectDeviceType(run?: HostCommandRunner): string | undefined {
+  if (run) return detectDeviceTypeWith(run); // explicit runner (tests): no memo
   if (cachedDeviceType !== "unset") return cachedDeviceType;
-  cachedDeviceType = undefined;
-  if (process.platform === "darwin") {
-    try {
-      const out = execSync("system_profiler SPHardwareDataType", { encoding: "utf8", timeout: 2000 });
-      cachedDeviceType = classifyDeviceType(out);
-    } catch {
-      cachedDeviceType = undefined;
-    }
-  }
+  cachedDeviceType = detectDeviceTypeWith(defaultHostCommandRunner);
   return cachedDeviceType;
 }
 
@@ -400,6 +414,11 @@ export interface DefaultFleetDepsOptions {
    *  memoized `detectDeviceType` (macOS `system_profiler`, undefined
    *  elsewhere/on failure). Inject for tests — never shells out in a test run. */
   detectDeviceType?: () => string | undefined;
+  /** Read a device-identity setting override (#1371 AC10, ADR 0028) — the SAME
+   *  namespace the amico-run enroll producer reads: `amicode.device.name` /
+   *  `amicode.device.type`. Default: the VS Code `amicode` configuration.
+   *  Inject for tests so the override precedence is exercisable. */
+  readDeviceSetting?: (key: string) => string | undefined;
   /** Override session launch; default navigates the chat panel to a new session
    *  with the given prompt (same pattern as New Project / New Environment). */
   launchSession?: (prompt: string) => void;
@@ -548,15 +567,38 @@ export function defaultFleetSectionDeps(opts: DefaultFleetDepsOptions = {}): Fle
     readLocalDevice: () => {
       // THIS machine's own identity, independent of the roster (#1359): the
       // serve-stance mirrors fleet.json (same reader readPosture uses), the
-      // name honors amicode.device.name when set else the OS hostname, and
-      // deviceType is best-effort (never blocks on failure — the type pill
-      // falls back to serveStance).
+      // name and device_type resolve via the SAME override namespace + precedence
+      // the amico-run enroll producer uses (#1371, ADR 0028): setting override
+      // (amicode.device.name / amicode.device.type) → OS detection → prettified
+      // hostname (name) / undefined (type). deviceType is best-effort (never
+      // blocks on failure — the type pill falls back to serveStance).
       const serveStance = readServeStance();
       const hostname = os.hostname();
-      const configuredName = (vscode.workspace.getConfiguration("amicode").get<string>("device.name", "") || "").trim();
+      // AC4 (#1372, ADR 0028): on a SERVER/standalone this machine self-registers
+      // its roster row keyed by fleet.json canonical.host (which differs from
+      // os.hostname() under --host / FQDN drift, e.g. Mac.mynetworksettings.com).
+      // Reconcile the self-row identity to that SAME key so the posted row
+      // collapses against the self-row (sidebar_fleet_section's
+      // `r.machine_id === localId`), rendering the server exactly once. A CLIENT
+      // keeps machine_id = os.hostname() (peers reference it by hostname); a
+      // server with no canonical.host falls back to os.hostname() (never fabricated).
+      const canonicalHost = serveStance !== "client" ? readCanonical()?.host : undefined;
+      const machineId =
+        typeof canonicalHost === "string" && canonicalHost.trim() !== "" ? canonicalHost : hostname;
+      const readSetting =
+        opts.readDeviceSetting ??
+        ((key: string) => {
+          // The producer reads flat keys (amicode.device.name); the VS Code API
+          // is section-scoped, so strip the `amicode.` prefix to the sub-key.
+          const sub = key.startsWith("amicode.") ? key.slice("amicode.".length) : key;
+          const v = (vscode.workspace.getConfiguration("amicode").get<string>(sub, "") || "").trim();
+          return v || undefined;
+        });
+      const configuredName = readSetting("amicode.device.name");
+      const configuredType = readSetting("amicode.device.type");
       const name = configuredName || friendlyHostname() || hostname;
-      const deviceType = (opts.detectDeviceType ?? detectDeviceType)();
-      return { machineId: hostname, name, serveStance, deviceType };
+      const deviceType = configuredType || (opts.detectDeviceType ?? detectDeviceType)();
+      return { machineId, name, serveStance, deviceType };
     },
   };
 }

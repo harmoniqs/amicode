@@ -454,7 +454,12 @@
         "amicode.device.name": {
           "type": "string",
           "default": "",
-          "description": "Device to show in the Device Inspector (Spec A \u00a73). Empty = the Device Inspector stays dormant. Ops state is read from ~/.amico/amicode/devices/<name>/state.json."
+          "description": "Friendly name for this machine. Names it in the Device Inspector (Spec A \u00a73) AND labels this machine in the fleet roster/sidebar (its self-reported device name; see \"amicode.device.type\"). Empty = the OS name (macOS ComputerName / Linux PRETTY_HOSTNAME) is used, falling back to the prettified hostname. Ops state is read from ~/.amico/amicode/devices/<name>/state.json."
+        },
+        "amicode.device.type": {
+          "type": "string",
+          "default": "",
+          "description": "Override this machine's fleet device type (form factor) in the roster/sidebar. Suggested values are the open KNOWN_DEVICE_TYPES vocabulary \u2014 server, desktop, or laptop \u2014 but any string round-trips. Empty = the type is detected from the OS (macOS model / Linux chassis; WSL abstains); an undetected type falls back to the machine's serve-stance."
         },
         "amicode.device.graph": {
           "type": "string",

@@ -474,3 +474,37 @@ describe("renderFleetSection — read-only navigation contract (AC3, AC4)", () =
     expect(el.querySelector(".fleet-action-bar")).toBeNull();
   });
 });
+
+// ── #1372 (ADR 0028) — both views render the server exactly ONCE ──────────────
+describe("buildFleetSectionModel — server self-registration collapses to one row (#1372)", () => {
+  it("AC3: a CLIENT renders exactly one server row after the server self-registers (keyed canonical.host)", () => {
+    // The server now self-registers a real roster row keyed by canonical.host;
+    // the client's synthesized canonical-server node (same key) must collapse —
+    // ZERO client-side change, just the producer keying its row correctly.
+    const model = buildFleetSectionModel(input({
+      roster: [row({ machine_id: "Mac.mynetworksettings.com", name: "JJ's Mac Studio", server_mode: "server", device_type: "desktop" })],
+      localDevice: { machineId: "jvs-macbook.local", name: "JV's MacBook", serveStance: "client", deviceType: "laptop" },
+      canonicalServer: { machineId: "Mac.mynetworksettings.com", name: "Mac.mynetworksettings.com" },
+    }));
+    const serverRows = model.devices.filter((d) => d.machineId === "Mac.mynetworksettings.com");
+    expect(serverRows).toHaveLength(1);
+    // it's the REAL roster row (friendly name + type), not the raw synthesized node
+    expect(serverRows[0].name).toBe("JJ's Mac Studio");
+    expect(serverRows[0].typeLabel).toBe("desktop");
+    expect(serverRows[0].isLocal).toBe(false); // the server is a peer to this client
+  });
+
+  it("AC4: the SERVER renders exactly one self-row when canonical.host ≠ hostname()", () => {
+    // The server's posted row is keyed canonical.host; its self-row identity is
+    // reconciled to the SAME key (readLocalDevice on a server → canonical.host),
+    // so the roster row is marked isLocal and no second self-row is synthesized.
+    const model = buildFleetSectionModel(input({
+      roster: [row({ machine_id: "Mac.mynetworksettings.com", name: "JJ's Mac Studio", server_mode: "server", device_type: "desktop" })],
+      localDevice: { machineId: "Mac.mynetworksettings.com", name: "JJ's Mac Studio", serveStance: "server", deviceType: "desktop" },
+      canonicalServer: null, // a server has no canonical to synthesize — it IS the server
+    }));
+    const serverRows = model.devices.filter((d) => d.machineId === "Mac.mynetworksettings.com");
+    expect(serverRows).toHaveLength(1);
+    expect(serverRows[0].isLocal).toBe(true); // the roster row IS the self-row (collapsed)
+  });
+});

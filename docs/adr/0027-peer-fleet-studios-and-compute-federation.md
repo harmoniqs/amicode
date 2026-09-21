@@ -11,6 +11,11 @@
   tier-1 mechanical `approved-mechanical`; judgment critics run by-hand — see that spec's Review).
 - **Supersedes:** nothing. **Additive.** It amends ADR 0025's *single-canonical-hub* premise to
   "one hub **or** many peers," and leaves the hub path (enroll, guard, Remote-SSH) byte-unchanged.
+- **Amended by:** ADR 0028 (#1368) — lifts this ADR's byte-freeze of the enroll verb
+  (`fleet_enroll_verb.ts`) so it can produce self-reported device identity on the roster row.
+  The additive-invariants gate's AC1 `FROZEN` set drops the enroll verb accordingly; the
+  never-fork guard freeze and the one-parser / single-writer / no-client-stance invariants
+  (AC2 / AC3 / AC4 + `assert_fleet_guard.sh`) remain in force.
 
 ## Context
 
@@ -135,7 +140,9 @@ ADR declares but does not build.
    registry + switch pointer). Zero `amicissimo` changes.
 2. **Never-fork + single-writer-per-DB (ADR 0005).** The guard and `enroll` are byte-unchanged; peers
    never take the `client` stance; adopt-or-spawn keeps ≤1 writer per machine's DB. Attaching to a
-   peer is a proxy operation that spawns no engine.
+   peer is a proxy operation that spawns no engine. (Amended by ADR 0028: the guard stays
+   byte-unchanged; the `enroll` verb's byte-freeze is lifted for device-identity production — its
+   never-fork / single-writer semantics remain enforced by the guard freeze + AC2/AC3/AC4.)
 3. **Loopback bind + mutation refusal (ADR 0002).** The multiplexer keeps every upstream credentialed
    and loopback-bound; the roster self-report and the switch-control write ride the authenticated
    `/amicode/` plane to a loopback host.
@@ -160,7 +167,8 @@ ADR declares but does not build.
   sync-back, inter-server trust made live, event relay/merge). Named here; specced/built later.
 - Making `compute` live (stays "declared but inert").
 - Any change to `FleetConfig`/`fleet.json`, the hub `enroll` flow, the never-fork guard, or the
-  `amicissimo` contract.
+  `amicissimo` contract. (Amended by ADR 0028: the `enroll` verb's device-identity *producer* is
+  a sanctioned change; the never-fork guard and `fleet.json`/`FleetConfig` contract stay frozen.)
 - Replacing the hub/star mode or ADR 0025's Remote-SSH posture.
 
 ## Source

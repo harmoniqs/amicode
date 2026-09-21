@@ -15,6 +15,7 @@
  */
 
 import { SUPPORTED, unsupportedHostAdvice } from "../opencode_binary";
+import { isWslKernel } from "@amicode/schema";
 
 type ExecFn = (cmd: string, cwd?: string) => Promise<{ ok: boolean; stdout?: string; error?: string }>;
 
@@ -74,7 +75,11 @@ export async function detectWSLVersion(
   if (!result.ok) return null;
 
   const version = result.stdout ?? "";
-  if (!/microsoft/i.test(version)) return null;
+  // The WSL marker check is the shared pure `isWslKernel` from @amicode/schema
+  // (#1371 AC4, ADR 0028) — the ONE definition of "is this a WSL kernel", so the
+  // regex is no longer duplicated here. A real WSL kernel always carries the
+  // Microsoft marker; the WSL2-vs-WSL1 split below is unchanged.
+  if (!isWslKernel(version)) return null;
 
   // WSL 2 has "WSL2" or "microsoft-standard-WSL2" in the version string
   if (/WSL2/i.test(version)) return 2;
