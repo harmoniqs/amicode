@@ -146,7 +146,7 @@
     "packages/app/src/components/windows-app-menu.tsx": "460669a129e9be61ab2d5f51fe6ecad73579a395295d5f724f235b988cdc667e",
     "packages/app/src/components/workbench-panel.tsx": "d16f477044098842a214a2e16f9be719e7688a04bcb575889ca544988f23c690",
     "packages/app/src/context/command.tsx": "388d6cb12b6dc43ecb0827e3fb918370cb9d16d96161a5990dec10fff05af172",
-    "packages/app/src/context/directory-sync.ts": "03b75224a9321ced2cc48a686b0ba6823611d1b6f589b83121ec81c771576874",
+    "packages/app/src/context/directory-sync.ts": "df5ef26146788551c04f93556f2046c898d011652a504a09402b3468d9c380d3",
     "packages/app/src/context/language.tsx": "cb545e04c128bf981b2b72ac407f9220cf9e80337fe8c87482ffe85407e0cf9a",
     "packages/app/src/context/layout-side-panel-tabs.test.ts": "47425bbed0ada18d3fcb67a76b63de3b9e1f827cd63a61ffe4eb45430fc5814e",
     "packages/app/src/context/layout-side-panel-tabs.ts": "e8426fadbdf9e7c49bf457e00ec92793475b44bcc11548e8b5ef9a9fa461be76",
@@ -849,7 +849,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-09-21T00:54:36.951Z",
+  "extracted_at": "2026-09-21T02:10:59.406Z",
   "per_package": {
     "packages/app": {
       "A": 171,

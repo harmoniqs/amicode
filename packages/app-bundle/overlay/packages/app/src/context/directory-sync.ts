@@ -121,12 +121,14 @@ export const createDirSyncContext = (
       },
       async sync(sessionID: string, options?: { force?: boolean }) {
         await serverSync.session.sync(sessionID, options)
+        index(sessionID)
       },
       // #1297: the render path hydrates from the mirror WITHOUT joining
       // an in-flight task — see createServerSession's hydrate.
-      hydrate(sessionID: string) {
-        return serverSync.session.hydrate(sessionID)
+      async hydrate(sessionID: string) {
+        const result = await serverSync.session.hydrate(sessionID)
         index(sessionID)
+        return result
       },
       todo: serverSync.session.todo,
       history: serverSync.session.history,
