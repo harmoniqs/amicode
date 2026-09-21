@@ -79,6 +79,10 @@ export interface FleetPlane {
    *  registry's transport. /amicode/roster resolves here regardless of
    *  which server is attached. */
   keeper?: HubProxy;
+  /** #1382 (peer-unreachable posture): the live pointer for the peer's
+   *  honest 503 — the posture snapshot's pointer when attached; a default
+   *  otherwise. Absent → the FLEET_PEER_UNREACHABLE_POINTER default. */
+  peerUnreachablePointer?: () => string | null;
 }
 
 /** #1261 (AC6): a client's own named hub-down state — distinct from the base
@@ -87,6 +91,14 @@ export const FLEET_HUB_DOWN_ERROR = "fleet-hub-down";
 export const FLEET_HUB_DOWN_POINTER =
   "the fleet host is unreachable — a client holds no local engine (never-fork); " +
   "check the tunnel / host service, or Go Standalone to work locally";
+
+/** #1382 (peer-unreachable posture): the NAMED error and default pointer for
+ *  the attached-server-unreachable 503 — the peer branch's own honest posture,
+ *  distinct from the client's hub-down (same shape, different condition). */
+export const FLEET_PEER_UNREACHABLE_ERROR = "attached server unreachable";
+export const FLEET_PEER_UNREACHABLE_POINTER =
+  "the attached server is unreachable — check the peer's tunnel / service, " +
+  "or detach to work locally";
 
 interface RouteEntry {
   method: "GET" | "POST";
@@ -345,16 +357,25 @@ export class AmicodeServiceServer {
       const mode = this.routingMode;
       if (mode === "fleet" && this.fleetPlane) {
         // #1378: peer branch — the resolver already decided the target above.
-        // Routes to the named upstream; if unreachable, falls through to the
-        // engine proxy (D3's fail-safe: the local engine is always the last
-        // resort for an engine-armed machine).
+        // Routes to the named upstream; if unreachable, answers the peer's OWN
+        // named 503 — NEVER falls through to the local engine (the sessions
+        // are on a different DB; serving local sessions dressed as the peer's
+        // would be dishonest — #1382).
         if (peerTarget && !this.fleetPlane.client) {
           if (peerTarget === "keeper" && this.fleetPlane.keeper) {
             if (this.fleetPlane.keeper.handle(req, res)) return;
           } else if (peerTarget === "attached" && this.fleetPlane.attached) {
             if (this.fleetPlane.attached.handle(req, res)) return;
           }
-          // upstream unreachable → fall through to engine proxy below
+          // #1382: upstream unreachable → named 503, hold, no silent local.
+          // Same shape as the client's hub-down 503 (consumers handle both
+          // cases uniformly) with the peer-unreachable reason.
+          const pointer = this.fleetPlane.peerUnreachablePointer?.() ?? FLEET_PEER_UNREACHABLE_POINTER;
+          send({
+            status: 503,
+            body: JSON.stringify({ ok: false, error: FLEET_PEER_UNREACHABLE_ERROR, reason: "peer-unreachable", pointer }),
+          });
+          return;
         } else {
         // ── BYTE-UNCHANGED: the client→hub path (incl. #1261 hub-down 503) ──
         // #392 (D3): writes resolve through the write-failure contract —

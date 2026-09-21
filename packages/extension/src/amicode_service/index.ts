@@ -570,6 +570,10 @@ export function createAmicodeService(
       /** #1381: the remote port the peer engine listens on (for the SSH
        *  forward's -L target). Default 43117. */
       attachRemotePort?: number;
+      /** #1382 (peer-unreachable posture): optional callback that supplies
+       *  the pointer value for the peer-unreachable 503. Absent → the
+       *  FLEET_PEER_UNREACHABLE_POINTER default. */
+      peerUnreachablePointer?: () => string | null;
     };
   } = {},
 ): AmicodeServiceServer {
@@ -705,6 +709,7 @@ export function createAmicodeService(
         hubDownPointer: () => monitor.snapshot().pointer,
         ...(attachedProxy ? { attached: attachedProxy } : {}),
         ...(keeperProxy ? { keeper: keeperProxy } : {}),
+        ...(opts.fleet.peerUnreachablePointer ? { peerUnreachablePointer: opts.fleet.peerUnreachablePointer } : {}),
       };
       server.attachFleetPlane(fleetPlaneObj);
       // #1381: create the attach lifecycle for non-client fleet machines.

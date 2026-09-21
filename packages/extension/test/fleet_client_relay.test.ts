@@ -767,6 +767,120 @@ describe("fleet-client relay skeleton (#1261) — a client holds NO local engine
       }
     });
 
+    // ── #1382: peer-unreachable posture ────────────────────────────────────────
+    // When the attached server is SET (the pointer resolves to "attached") but
+    // the upstream FAILS to serve (getUrl returns undefined — the peer's tunnel
+    // is down), the peer branch must return a NAMED 503 — never silently fall
+    // through to the local engine (the sessions are on a different DB; serving
+    // local sessions dressed as the peer's would be dishonest).
+    describe("#1382 — peer-unreachable posture: named 503, hold, no silent local", () => {
+      /** Boot a peer relay where the attached upstream returns undefined (the
+       *  peer's tunnel is down) but the pointer file STILL points at a peer —
+       *  the resolver says "attached", the transport says "unreachable". */
+      function bootPeerRelayWithDeadAttached() {
+        return createAmicodeService({
+          password: SERVICE_PASSWORD,
+          shelf: { distRoot: dist },
+          engine: { getUrl: () => "http://127.0.0.1:19999" }, // engine armed with a real-ish URL
+          fleet: {
+            client: false,
+            entitlements: ["amicissimo"],
+            overlaySource,
+            hub: { getUrl: () => host.url },
+            getMode: () => "fleet",
+            attached: { getUrl: () => undefined }, // DEAD — tunnel down
+            keeper: { getUrl: () => keeperStub.url },
+            posture: { hubDownConsecutiveNoResponses: 2, recoveryConsecutiveHealthy: 2 },
+            dataPlaneTimeoutMs: 400,
+          },
+        });
+      }
+
+      it("AC2 — attached unreachable → 503 with { ok: false, error: 'attached server unreachable', reason: 'peer-unreachable', pointer }", async () => {
+        const svc = bootPeerRelayWithDeadAttached();
+        const origin = (await svc.start()).toString().replace(/\/$/, "");
+        try {
+          const res = await fetch(`${origin}/amicode/vaults`, { headers: { Authorization: serverAuthHeader(SERVICE_PASSWORD) } });
+          expect(res.status).toBe(503);
+          const body = (await res.json()) as { ok: boolean; error: string; reason: string; pointer: string };
+          expect(body.ok).toBe(false);
+          expect(body.error).toBe("attached server unreachable");
+          expect(body.reason).toBe("peer-unreachable");
+          expect(body.pointer).toBeTruthy(); // carries an honest pointer
+        } finally {
+          await svc.stop();
+        }
+      });
+
+      it("AC3 — attached unreachable → the local engine is NOT silently served as a fallback", async () => {
+        const svc = bootPeerRelayWithDeadAttached();
+        const origin = (await svc.start()).toString().replace(/\/$/, "");
+        try {
+          // /session is a non-amicode path that would normally hit the engine proxy
+          const res = await fetch(`${origin}/session`, { headers: { Authorization: serverAuthHeader(SERVICE_PASSWORD) } });
+          expect(res.status).toBe(503);
+          const body = (await res.json()) as { ok: boolean; error: string; reason: string };
+          expect(body.ok).toBe(false);
+          expect(body.reason).toBe("peer-unreachable");
+          // The response MUST NOT be from the engine (which would be a 200/502 depending on state)
+          expect(body.error).toBe("attached server unreachable");
+        } finally {
+          await svc.stop();
+        }
+      });
+
+      it("AC4 — peer-unreachable 503 shape matches the hub-down contract (same fields: status, ok, error, reason, pointer)", async () => {
+        // The hub-down shape (from the client branch): { ok: false, error: "fleet-hub-down", reason: "hub-unreachable", pointer: "..." }
+        // The peer-unreachable shape MUST carry the same field set with its own values.
+        const svc = bootPeerRelayWithDeadAttached();
+        const origin = (await svc.start()).toString().replace(/\/$/, "");
+        try {
+          const res = await fetch(`${origin}/amicode/vaults`, { headers: { Authorization: serverAuthHeader(SERVICE_PASSWORD) } });
+          expect(res.status).toBe(503);
+          const body = await res.json();
+          // Same structural shape as the hub-down 503 — all four fields present
+          expect(body).toHaveProperty("ok");
+          expect(body).toHaveProperty("error");
+          expect(body).toHaveProperty("reason");
+          expect(body).toHaveProperty("pointer");
+          // Correct content type
+          expect(res.headers.get("content-type")).toContain("application/json");
+        } finally {
+          await svc.stop();
+        }
+      });
+
+      it("AC1 — peerUnreachablePointer callback on FleetPlane is read for the 503's pointer value", async () => {
+        const CUSTOM_POINTER = "peer Mac Studio is offline — check the SSH tunnel or detach to work locally";
+        const svc = createAmicodeService({
+          password: SERVICE_PASSWORD,
+          shelf: { distRoot: dist },
+          engine: { getUrl: () => "http://127.0.0.1:19999" },
+          fleet: {
+            client: false,
+            entitlements: ["amicissimo"],
+            overlaySource,
+            hub: { getUrl: () => host.url },
+            getMode: () => "fleet",
+            attached: { getUrl: () => undefined }, // DEAD
+            keeper: { getUrl: () => keeperStub.url },
+            posture: { hubDownConsecutiveNoResponses: 2, recoveryConsecutiveHealthy: 2 },
+            dataPlaneTimeoutMs: 400,
+            peerUnreachablePointer: () => CUSTOM_POINTER,
+          },
+        });
+        const origin = (await svc.start()).toString().replace(/\/$/, "");
+        try {
+          const res = await fetch(`${origin}/amicode/vaults`, { headers: { Authorization: serverAuthHeader(SERVICE_PASSWORD) } });
+          expect(res.status).toBe(503);
+          const body = (await res.json()) as { pointer: string };
+          expect(body.pointer).toBe(CUSTOM_POINTER); // the callback's value, not a default
+        } finally {
+          await svc.stop();
+        }
+      });
+    });
+
     it("AC4 — handleUpgrade routes WebSocket upgrades through the same resolver (attached target)", async () => {
       // Dedicated upgrade-capable stubs — the resolver routes /pty/test/connect
       // to "attached" (it is not an /amicode/fleet/* path).
