@@ -574,6 +574,17 @@ export function defaultFleetSectionDeps(opts: DefaultFleetDepsOptions = {}): Fle
       // blocks on failure — the type pill falls back to serveStance).
       const serveStance = readServeStance();
       const hostname = os.hostname();
+      // AC4 (#1372, ADR 0028): on a SERVER/standalone this machine self-registers
+      // its roster row keyed by fleet.json canonical.host (which differs from
+      // os.hostname() under --host / FQDN drift, e.g. Mac.mynetworksettings.com).
+      // Reconcile the self-row identity to that SAME key so the posted row
+      // collapses against the self-row (sidebar_fleet_section's
+      // `r.machine_id === localId`), rendering the server exactly once. A CLIENT
+      // keeps machine_id = os.hostname() (peers reference it by hostname); a
+      // server with no canonical.host falls back to os.hostname() (never fabricated).
+      const canonicalHost = serveStance !== "client" ? readCanonical()?.host : undefined;
+      const machineId =
+        typeof canonicalHost === "string" && canonicalHost.trim() !== "" ? canonicalHost : hostname;
       const readSetting =
         opts.readDeviceSetting ??
         ((key: string) => {
@@ -587,7 +598,7 @@ export function defaultFleetSectionDeps(opts: DefaultFleetDepsOptions = {}): Fle
       const configuredType = readSetting("amicode.device.type");
       const name = configuredName || friendlyHostname() || hostname;
       const deviceType = configuredType || (opts.detectDeviceType ?? detectDeviceType)();
-      return { machineId: hostname, name, serveStance, deviceType };
+      return { machineId, name, serveStance, deviceType };
     },
   };
 }

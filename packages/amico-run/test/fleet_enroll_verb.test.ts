@@ -36,6 +36,8 @@ interface EnrollJson {
   wrote_nothing?: boolean;
   roster_health?: string;
   installer_ok?: boolean;
+  self_registered?: boolean;
+  caveat?: string;
 }
 const j = (r: { json: unknown }): EnrollJson => r.json as EnrollJson;
 
@@ -704,5 +706,80 @@ describe("detectDeviceTypeVia / detectDeviceNameVia — the amico-run impure det
     const run: CommandRunner = (cmd, args) =>
       cmd === "hostnamectl" && args[0] === "--pretty" ? "Lab Server\n" : "";
     expect(detectDeviceNameVia(run, "box.local", "linux")).toBe("Lab Server");
+  });
+});
+
+// ── server self-registration (#1372 / #1368, ADR 0028) ────────────────────────
+// Slice 2, the SERVER half: after provisioning the hub, `enroll --as-server`
+// self-registers its OWN roster row keyed machine_id = canonical.host (the same
+// identity a client references it by, so the client's synthesized node collapses
+// against it). The POST happens ONLY after the hub is verified reachable on
+// loopback (retry-or-honest-fail); the dev-fallback pin probe is NOT reachability
+// proof. `canonical.host` is documented immutable post-enroll.
+describe("amico fleet enroll --as-server — self-registration (#1372 AC2)", () => {
+  it("POSTs its own roster row keyed machine_id = canonical.host with resolved name + type after a verified-reachable hub", async () => {
+    const s = await stub({ version: "v1.18.29" });
+    const rec = recorder({ machineName: () => "JJ's Mac Studio" });
+    const r = await fleetEnroll(
+      ["--as-server", "--host", "Mac.mynetworksettings.com", "--port", String(s.port), "--ssh-alias", "studio"],
+      rec.deps,
+    );
+    expect(r.code).toBe(0);
+    expect(j(r).self_registered).toBe(true);
+    const serverRow = s.rosterRows().find((x) => x.machine_id === "Mac.mynetworksettings.com");
+    expect(serverRow).toBeDefined();
+    expect(serverRow!.server_mode).toBe("server");
+    expect(serverRow!.name).toBe("JJ's Mac Studio");
+    // detection abstains (commandRunner "" in recorder) ⇒ device_type defaults to "server"
+    expect(serverRow!.device_type).toBe("server");
+    expect(serverRow!.sshAlias).toBe("studio");
+    expect(serverRow!.health).toBe("reachable");
+  });
+
+  it("honors the amicode.device.type override on the server row (#1372 AC2)", async () => {
+    const s = await stub({ version: "v1.18.29" });
+    const rec = recorder({
+      machineName: () => "JJ's Mac Studio",
+      readDeviceSetting: (k: string) => (k === "amicode.device.type" ? "desktop" : undefined),
+    });
+    const r = await fleetEnroll(["--as-server", "--host", "hub.example", "--port", String(s.port), "--ssh-alias", "hub"], rec.deps);
+    expect(r.code).toBe(0);
+    const serverRow = s.rosterRows().find((x) => x.machine_id === "hub.example");
+    expect(serverRow!.device_type).toBe("desktop");
+  });
+});
+
+describe("amico fleet enroll --as-server — reachability-verified, no false-success row (#1372 AC1)", () => {
+  it("does NOT self-register when the hub is unreachable on loopback — no roster POST, no false-success row", async () => {
+    const postAttempts: string[] = [];
+    const spy: typeof fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : (input as Request).url;
+      if (url.includes("/amicode/roster") && init?.method === "POST") postAttempts.push(url);
+      // The hub is unreachable EVERYWHERE (health probe + any POST both fail).
+      throw new TypeError("fetch failed");
+    }) as typeof fetch;
+    // clientVersion undefined ⇒ the dev-fallback pin probe runs and TOLERATES the
+    // unreachable hub (returns "dev") — which must NOT be taken as reachability.
+    const rec = recorder({ fetchImpl: spy, clientVersion: undefined });
+    const r = await fleetEnroll(
+      ["--as-server", "--host", "Mac.mynetworksettings.com", "--port", "4096", "--ssh-alias", "hub"],
+      rec.deps,
+    );
+    // provisioning still succeeded (token minted, fleet.json written), but the
+    // self-registration honestly did not happen — and NO row was POSTed.
+    expect(j(r).self_registered).toBe(false);
+    expect(postAttempts).toEqual([]);
+    // the dev-fallback pin still resolved (tolerant), proving it is a SEPARATE
+    // concern from reachability — a dev pin did not green-light the self-POST.
+    expect(j(r).join_token?.pin_version).toBe("dev");
+  });
+});
+
+describe("amico fleet enroll --as-server — canonical.host immutability (#1372 AC5)", () => {
+  it("documents that canonical.host is immutable post-enroll (changing --host requires re-enrolling clients)", async () => {
+    const s = await stub({ version: "v1.18.29" });
+    const r = await fleetEnroll(["--as-server", "--host", "hub.example", "--port", String(s.port), "--ssh-alias", "hub"], recorder().deps);
+    expect(r.code).toBe(0);
+    expect(String(j(r).caveat ?? "")).toMatch(/canonical.*immutable|re-?enroll/i);
   });
 });

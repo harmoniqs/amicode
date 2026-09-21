@@ -399,6 +399,28 @@ async function postRosterRow(
 }
 
 // ── the server path ────────────────────────────────────────────────────────
+/** Verify the hub is reachable on the given origin, retry-or-honest-fail (#1372
+ *  AC1). Retries ONLY on `{error:"unreachable"}` (a transient loopback race);
+ *  any answer (the hub responded at all) proves it is up. Returns ok:false only
+ *  after exhausting retries. Distinct from the dev-fallback pin probe, which
+ *  TOLERATES an unreachable hub and is therefore NOT proof of reachability. */
+async function verifyHubReachable(
+  origin: string,
+  fetchImpl: typeof fetch,
+  retryDelays: number[] = [1000, 2000, 4000],
+): Promise<{ ok: boolean }> {
+  const maxAttempts = 1 + retryDelays.length;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const probe = await probeHealth(origin, undefined, fetchImpl);
+    if (!("error" in probe)) return { ok: true }; // the hub answered ⇒ reachable
+    if (attempt < retryDelays.length) {
+      await new Promise<void>((resolve) => setTimeout(resolve, retryDelays[attempt]));
+      continue;
+    }
+  }
+  return { ok: false };
+}
+
 /** The pin_version to stamp on a minted join token. Precedence (#1354 follow-up):
  *  an explicit injection or AMICO_CLIENT_VERSION env wins (operator override);
  *  otherwise probe the just-provisioned local hub's /global/health and pin its
@@ -456,9 +478,50 @@ async function enrollAsServer(argv: string[], deps: FleetEnrollDeps): Promise<Ve
   const outPath = deps.joinTokenOutPath ?? path.join(homedir(), ".amico", "ops", "fleet", "join-token.json");
   (deps.writeJoinToken ?? defaultWriteJoinToken)(outPath, token);
 
+  // ── self-register the server's OWN roster row (#1372 AC2), keyed by
+  //    machine_id = canonical.host — the same identity a client references it
+  //    by, so the client's synthesized canonical-server node collapses against
+  //    this real row (zero client-side change), and the server's own self-row
+  //    (reconciled to canonical.host in the extension) renders exactly once.
+  //    ONLY after VERIFYING the hub is reachable on loopback (#1372 AC1): the
+  //    hub listens on loopback; canonical.host may not resolve locally. This is
+  //    a SEPARATE check from resolveServerPinVersion's dev-fallback probe (which
+  //    tolerates an unreachable hub) — a dev pin is never reachability proof.
+  //    No silent fallback (ADR 0024/0025): unreachable ⇒ no POST, no false row.
+  const readSetting = deps.readDeviceSetting ?? defaultReadDeviceSetting;
+  const nameOverride = readSetting("amicode.device.name");
+  const resolvedName = nameOverride && nameOverride.trim() !== "" ? nameOverride.trim() : machineName;
+  const typeOverride = readSetting("amicode.device.type");
+  const detectedType = (deps.deviceType ?? (() => detectDeviceTypeVia(runner, process.platform)))();
+  // The server's device_type: override → OS detection → the honest "server"
+  // default (a server that can't detect its form factor is, at least, a server).
+  const serverDeviceType = typeOverride && typeOverride.trim() !== "" ? typeOverride.trim() : (detectedType ?? "server");
+
+  const loopbackOrigin = `http://127.0.0.1:${port}`;
+  const loopbackCanonical: JoinTokenCanonical = { host: "127.0.0.1", port, sshAlias };
+  const reachable = await verifyHubReachable(loopbackOrigin, fetchImpl, deps.retryDelayMs);
+  let self_registered = false;
+  if (reachable.ok) {
+    const serverRow: RosterRow = {
+      machine_id: canonical.host,
+      name: resolvedName,
+      server_mode: "server",
+      capabilities: (deps.capabilities ?? (() => []))(),
+      sshAlias: canonical.sshAlias,
+      transport: transportHint,
+      last_report: (deps.now ?? (() => new Date().toISOString()))(),
+      health: "reachable",
+      device_type: serverDeviceType,
+    };
+    // Reuse the single-writer POST (no new writer). The URL targets loopback
+    // (the local hub); the ROW carries machine_id = canonical.host.
+    const post = await postRosterRow(loopbackCanonical, undefined, serverRow, fetchImpl);
+    self_registered = "ok" in post && post.ok;
+  }
+
   const result: EnrollResult = {
     machine_id: (deps.machineId ?? (() => hostname()))(),
-    name: machineName,
+    name: resolvedName,
     server_mode: "server",
     capabilities: (deps.capabilities ?? (() => []))(),
     transport: transportHint,
@@ -475,7 +538,15 @@ async function enrollAsServer(argv: string[], deps: FleetEnrollDeps): Promise<Ve
       // result only, never in a log line.
       join_token: token,
       join_token_path: outPath,
-      note: "server enrolled — durable hub service provisioned, Fleet token minted, join token emitted (0600)",
+      self_registered,
+      // AC5: canonical.host is IMMUTABLE after first server enroll — changing
+      // --host on a re-enroll orphans clients' synthesized node and requires
+      // re-enrolling the CLIENTS, not just the server (never auto-reconciled).
+      caveat:
+        "canonical.host is immutable after first enroll — changing --host requires re-enrolling clients (their canonical pointer is not auto-reconciled)",
+      note: self_registered
+        ? "server enrolled — durable hub service provisioned, Fleet token minted, join token emitted (0600), and the server's own roster row self-registered (machine_id = canonical.host)"
+        : "server enrolled — hub provisioned + join token emitted (0600); the hub was NOT reachable on loopback at self-register time, so the server roster row was NOT posted (no false success). Re-enroll once the hub answers.",
     },
     code: 0,
   };

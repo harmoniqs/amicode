@@ -4618,3 +4618,65 @@ describe("device identity — shared @amicode/schema derivation (#1371, ADR 0028
     expect(keysSeen).toContain("amicode.device.type");
   });
 });
+
+// ── server self-row identity reconciliation (#1372, ADR 0028) ─────────────────
+// AC4: on a SERVER/standalone this machine self-registers its roster row keyed by
+// fleet.json canonical.host (which differs from os.hostname() under --host / FQDN
+// drift, e.g. Mac.mynetworksettings.com). The self-row identity must reconcile to
+// that SAME key so the posted row collapses against the self-row (the
+// r.machine_id === localId check), rendering the server exactly once. A CLIENT
+// keeps machine_id = os.hostname() (peers reference it by hostname).
+describe("readLocalDevice — server self-row identity reconciled to canonical.host (#1372 AC4)", () => {
+  let defaultFleetSectionDeps: any;
+  let tmp: string;
+  beforeEach(async () => {
+    vi.resetModules();
+    const mod = await import("../src/sidebar_view");
+    defaultFleetSectionDeps = mod.defaultFleetSectionDeps;
+    const os = await import("node:os");
+    const fs = await import("node:fs");
+    tmp = fs.mkdtempSync(resolve(os.tmpdir(), "amc-selfrow-"));
+  });
+
+  it("a SERVER resolves machineId to fleet.json canonical.host, even when it ≠ os.hostname()", async () => {
+    const os = await import("node:os");
+    const fs = await import("node:fs");
+    // A canonical.host GUARANTEED to differ from this machine's os.hostname()
+    // (the live-fleet FQDN/--host drift case) — the assertion must discriminate.
+    const canonicalHost = `server-canonical-${os.hostname()}.fleet.internal`;
+    expect(canonicalHost).not.toBe(os.hostname());
+    const fleetConfigFile = resolve(tmp, "fleet-server.json");
+    fs.writeFileSync(
+      fleetConfigFile,
+      JSON.stringify({ role: "server", canonical: { host: canonicalHost, port: 4096, sshAlias: "studio" } }),
+    );
+    const deps = defaultFleetSectionDeps({ fleetConfigFile, detectDeviceType: () => "desktop", readDeviceSetting: () => undefined });
+    const local = deps.readLocalDevice();
+    expect(local.serveStance).toBe("server");
+    expect(local.machineId).toBe(canonicalHost); // the canonical.host, NOT os.hostname()
+    expect(local.machineId).not.toBe(os.hostname());
+  });
+
+  it("a CLIENT keeps machineId = os.hostname() (peers reference it by hostname — unchanged)", async () => {
+    const os = await import("node:os");
+    const fs = await import("node:fs");
+    const fleetConfigFile = resolve(tmp, "fleet-client.json");
+    fs.writeFileSync(
+      fleetConfigFile,
+      JSON.stringify({ role: "client", canonical: { host: "Mac.mynetworksettings.com", port: 4096, sshAlias: "studio" } }),
+    );
+    const deps = defaultFleetSectionDeps({ fleetConfigFile, detectDeviceType: () => undefined, readDeviceSetting: () => undefined });
+    const local = deps.readLocalDevice();
+    expect(local.serveStance).toBe("client");
+    expect(local.machineId).toBe(os.hostname());
+  });
+
+  it("a SERVER with no canonical.host falls back to os.hostname() (honest, never fabricated)", async () => {
+    const os = await import("node:os");
+    const fs = await import("node:fs");
+    const fleetConfigFile = resolve(tmp, "fleet-nohost.json");
+    fs.writeFileSync(fleetConfigFile, JSON.stringify({ role: "server", canonical: {} }));
+    const deps = defaultFleetSectionDeps({ fleetConfigFile, detectDeviceType: () => undefined, readDeviceSetting: () => undefined });
+    expect(deps.readLocalDevice().machineId).toBe(os.hostname());
+  });
+});
