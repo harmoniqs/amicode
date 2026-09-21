@@ -72,6 +72,49 @@ test("opens and reopens Preview without promoting a new-session draft", async ({
   await expect(preview.getByRole("tab", { name: "draft-preview.md" })).toBeVisible()
 })
 
+test("does not join a reopened Preview save to an older draft save", async ({ page }) => {
+  await openDraft(page)
+
+  let releaseFirstWrite: (() => void) | undefined
+  const writes: string[] = []
+  await page.route("**/file/write", async (route) => {
+    writes.push(route.request().postDataJSON().content as string)
+    if (writes.length === 1) {
+      await new Promise<void>((resolve) => {
+        releaseFirstWrite = resolve
+      })
+    }
+    await route.fulfill({ status: 200, contentType: "application/json", body: "{}" })
+  })
+
+  await postPreviewFile(page)
+  const preview = page.locator("[data-draft-preview]")
+  await preview.getByRole("button", { name: "Edit" }).click()
+  const editor = preview.locator(".cm-content")
+  await editor.click({ force: true })
+  await editor.press("End")
+  await editor.type("\nOlder draft save.")
+  await editor.press(await page.evaluate(() => (navigator.platform.includes("Mac") ? "Meta+s" : "Control+s")))
+  await expect.poll(() => writes.length).toBe(1)
+
+  await preview.getByRole("button", { name: "Close Preview" }).click({ force: true })
+  await postPreviewFile(page)
+  await preview.getByRole("button", { name: "Edit" }).click({ force: true })
+  const reopenedEditor = preview.locator(".cm-content")
+  await reopenedEditor.click({ force: true })
+  await reopenedEditor.press("End")
+  await reopenedEditor.type("\nNewer draft save.")
+  await reopenedEditor.press(await page.evaluate(() => (navigator.platform.includes("Mac") ? "Meta+s" : "Control+s")))
+  await expect(preview.getByLabel("Unsaved changes")).toBeVisible()
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())))
+  expect(writes).toHaveLength(1)
+  if (!releaseFirstWrite) throw new Error("The older draft save must be waiting before the reopened save")
+  releaseFirstWrite()
+  await expect.poll(() => writes.length).toBe(2)
+  expect(writes[1]).toContain("Newer draft save.")
+  await expect(preview.getByLabel("Unsaved changes")).toHaveCount(0)
+})
+
 test("shows selectable PDF text in draft Preview", async ({ page }) => {
   await openDraft(page)
   await postPreviewFile(page, pdfPreviewFile)

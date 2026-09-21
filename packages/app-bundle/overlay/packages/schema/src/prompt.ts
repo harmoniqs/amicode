@@ -1,4 +1,4 @@
-import { Schema } from "effect"
+import { Effect, Schema } from "effect"
 import { optional } from "./schema"
 import { statics } from "./schema"
 
@@ -45,23 +45,30 @@ export const SkillAttachment = Schema.Struct({
   source: Source.pipe(optional),
 }).annotate({ identifier: "Prompt.SkillAttachment" })
 
+export const ResponsePresentation = Schema.Literals(["concise", "standard", "detailed"]).annotate({
+  identifier: "Prompt.ResponsePresentation",
+})
+export type ResponsePresentation = typeof ResponsePresentation.Type
+
 export interface Prompt extends Schema.Schema.Type<typeof Prompt> {}
 export const Prompt = Schema.Struct({
   text: Schema.String,
   files: Schema.Array(FileAttachment).pipe(optional),
   agents: Schema.Array(AgentAttachment).pipe(optional),
   skills: Schema.Array(SkillAttachment).pipe(optional),
+  response_presentation: ResponsePresentation.pipe(Schema.optional, Schema.withDecodingDefault(Effect.succeed("standard"))),
 })
   .annotate({ identifier: "Prompt" })
   .pipe(
     statics((schema) => ({
       equivalence: Schema.toEquivalence(schema),
-      fromUserMessage: (input: Pick<Prompt, "text" | "files" | "agents" | "skills">) =>
+      fromUserMessage: (input: Pick<Prompt, "text" | "files" | "agents" | "skills" | "response_presentation">) =>
         schema.make({
           text: input.text,
           ...(input.files === undefined ? {} : { files: input.files }),
           ...(input.agents === undefined ? {} : { agents: input.agents }),
           ...(input.skills === undefined ? {} : { skills: input.skills }),
+          response_presentation: input.response_presentation ?? "standard",
         }),
     })),
   )

@@ -16,6 +16,7 @@ import { same } from "@/utils/same"
 import { createScrollPersistence, type SessionScroll } from "./layout-scroll"
 import { createPathHelpers } from "./file/path"
 import type { ProjectAvatarVariant } from "@opencode-ai/ui/v2/project-avatar-v2"
+import type { PreviewViewState } from "@opencode-ai/session-ui/v2/preview-view-state"
 import { migrateLegacySessionStateKeys, ServerScope, SessionStateKey } from "@/utils/server-scope"
 import { createSessionKeyReader, ensureSessionKey, pruneSessionKeys } from "./layout-helpers"
 import { requireServerKey } from "@/utils/session-route"
@@ -45,6 +46,7 @@ const DEFAULT_PANEL_COLUMN_WIDTH = 330
 const DEFAULT_SESSION_WIDTH = 600
 const DEFAULT_TERMINAL_HEIGHT = 280
 const DEFAULT_REVIEW_PANEL_OPENED = false
+let previewDraftSourceID = 0
 export type AvatarColorKey = (typeof AVATAR_COLOR_KEYS)[number]
 
 export function getAvatarColors(key?: string) {
@@ -101,6 +103,19 @@ export type HomeProjectSelection = { server: ServerConnection.Key; directory?: s
 export type ReviewDiffStyle = "unified" | "split" | "preview"
 export type ReviewChangeMode = "git" | "branch" | "turn"
 export type ReviewPanelSource = "context-button" | "other"
+export type PreviewDraft = { content: string; revision: number; source: string }
+export type PreviewCloseRequest = { path: string; id: number }
+export type PreviewDraftCache = {
+  get(path: string): PreviewDraft | undefined
+  set(path: string, content: string): PreviewDraft
+  clear(path: string, draft?: PreviewDraft): void
+}
+/** #1250: per-document editor/PDF view-state, session+project+path scoped. */
+export type PreviewViewStateCache = {
+  get(path: string): PreviewViewState | undefined
+  set(path: string, state: PreviewViewState): void
+}
+export type { PreviewViewState }
 
 export type LayoutRoute =
   | { type: "home" }
@@ -343,10 +358,17 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
       sessionTabPreview: {} as Record<string, string | undefined>,
       /** Per-session preview file path (companion viewer). Null = empty state. */
       sessionPreviewFile: {} as Record<string, string | null>,
+      sessionPreviewOpen: {} as Record<string, string[] | undefined>,
+      sessionPreviewClose: {} as Record<string, PreviewCloseRequest | undefined>,
+      sessionPreviewDrafts: {} as Record<string, Record<string, PreviewDraft | undefined> | undefined>,
+      /** #1250: per-session, per-path editor/PDF view-state (cursor, scroll, page). */
+      sessionPreviewViewState: {} as Record<string, Record<string, PreviewViewState | undefined> | undefined>,
     })
 
     const MAX_SESSION_KEYS = 50
     const PENDING_MESSAGE_TTL_MS = 2 * 60 * 1000
+    let previewDraftRevision = 0
+    const previewDraftSource = `preview-draft-${++previewDraftSourceID}`
     const usage = {
       active: undefined as string | undefined,
       pruned: false,
@@ -389,6 +411,9 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
         tabs: Object.keys(store.sessionTabs),
       })
       if (drop.length === 0) return
+      const preservePreview = new Set(
+        drop.filter((key) => Object.values(ephemeral.sessionPreviewDrafts[key] ?? {}).some(Boolean)),
+      )
 
       setStore(
         produce((draft) => {
@@ -405,6 +430,36 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
         "sessionTabPreview",
         produce((draft) => {
           for (const key of drop) delete draft[key]
+        }),
+      )
+      setEphemeral(
+        "sessionPreviewDrafts",
+        produce((draft) => {
+          for (const key of drop) {
+            if (!preservePreview.has(key)) delete draft[key]
+          }
+        }),
+      )
+      setEphemeral(
+        "sessionPreviewViewState",
+        produce((draft) => {
+          for (const key of drop) delete draft[key]
+        }),
+      )
+      setEphemeral(
+        "sessionPreviewOpen",
+        produce((draft) => {
+          for (const key of drop) {
+            if (!preservePreview.has(key)) delete draft[key]
+          }
+        }),
+      )
+      setEphemeral(
+        "sessionPreviewClose",
+        produce((draft) => {
+          for (const key of drop) {
+            if (!preservePreview.has(key)) delete draft[key]
+          }
         }),
       )
 
@@ -930,6 +985,55 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
               setEphemeral("sessionPreviewFile", key(), path)
             },
           },
+          previewOpen: {
+            get: createMemo(() => ephemeral.sessionPreviewOpen[key()] ?? []),
+            open(path: string) {
+              const session = key()
+              const current = ephemeral.sessionPreviewOpen[session] ?? []
+              if (current.includes(path)) return
+              setEphemeral("sessionPreviewOpen", session, [...current, path])
+            },
+            close(path: string) {
+              const session = key()
+              const current = ephemeral.sessionPreviewOpen[session] ?? []
+              if (!current.includes(path)) return
+              setEphemeral("sessionPreviewOpen", session, current.filter((candidate) => candidate !== path))
+            },
+          },
+          previewClose: {
+            get: createMemo(() => ephemeral.sessionPreviewClose[key()] ?? null),
+            set(request: PreviewCloseRequest | null) {
+              setEphemeral("sessionPreviewClose", key(), request ?? undefined)
+            },
+          },
+          previewDrafts: {
+            get(path: string) {
+              return ephemeral.sessionPreviewDrafts[key()]?.[path]
+            },
+            set(path: string, content: string) {
+              const session = key()
+              const draft = { content, revision: ++previewDraftRevision, source: `${previewDraftSource}\0${session}` }
+              setEphemeral("sessionPreviewDrafts", session, (drafts) => ({ ...drafts, [path]: draft }))
+              return draft
+            },
+            clear(path: string, draft?: PreviewDraft) {
+              const session = key()
+              const current = ephemeral.sessionPreviewDrafts[session]?.[path]
+              if (!current || (draft && (current.revision !== draft.revision || current.source !== draft.source))) return
+              setEphemeral("sessionPreviewDrafts", session, path, undefined)
+            },
+          } satisfies PreviewDraftCache,
+          previewViewState: {
+            get(path: string) {
+              return ephemeral.sessionPreviewViewState[key()]?.[path]
+            },
+            set(path: string, state: PreviewViewState) {
+              const session = key()
+              const existing = ephemeral.sessionPreviewViewState[session]?.[path]
+              const merged = { ...existing, ...state }
+              setEphemeral("sessionPreviewViewState", session, (states) => ({ ...states, [path]: merged }))
+            },
+          } satisfies PreviewViewStateCache,
           terminal: {
             opened: terminalOpened,
             open() {

@@ -111,6 +111,8 @@ import type {
   McpDisconnectResponses,
   McpLocalConfig,
   McpRemoteConfig,
+  McpRemoveErrors,
+  McpRemoveResponses,
   McpStatusErrors,
   McpStatusResponses,
   ModelRef,
@@ -145,6 +147,7 @@ import type {
   ProjectUpdateErrors,
   ProjectUpdateResponses,
   PromptInput,
+  PromptResponsePresentation,
   ProviderAuthErrors,
   ProviderAuthResponses,
   ProviderListErrors,
@@ -416,6 +419,9 @@ import type {
   WorktreeRemoveErrors,
   WorktreeRemoveInput,
   WorktreeRemoveResponses,
+  WorktreeRenameErrors,
+  WorktreeRenameInput,
+  WorktreeRenameResponses,
   WorktreeResetErrors,
   WorktreeResetInput,
   WorktreeResetResponses,
@@ -1733,6 +1739,43 @@ export class Worktree extends HeyApiClient {
       },
     })
   }
+
+  /**
+   * Rename worktree
+   *
+   * Move a git worktree to a new name, updating all references.
+   */
+  public rename<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+      worktreeRenameInput?: WorktreeRenameInput
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { key: "worktreeRenameInput", map: "body" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<WorktreeRenameResponses, WorktreeRenameErrors, ThrowOnError>({
+      url: "/experimental/worktree/rename",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
 }
 
 export class Find extends HeyApiClient {
@@ -2510,6 +2553,38 @@ export class Mcp extends HeyApiClient {
         ...options?.headers,
         ...params.headers,
       },
+    })
+  }
+
+  /**
+   * Remove MCP server
+   *
+   * Dynamically remove a Model Context Protocol (MCP) server. Idempotent — removing a non-existent server is a no-op.
+   */
+  public remove<ThrowOnError extends boolean = false>(
+    parameters: {
+      name: string
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "name" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).delete<McpRemoveResponses, McpRemoveErrors, ThrowOnError>({
+      url: "/mcp/{name}",
+      ...options,
+      ...params,
     })
   }
 
@@ -4026,6 +4101,7 @@ export class Session2 extends HeyApiClient {
       format?: OutputFormat
       system?: string
       variant?: string
+      response_presentation?: PromptResponsePresentation
       parts?: Array<TextPartInput | FilePartInput | AgentPartInput | SkillPartInput | SubtaskPartInput>
     },
     options?: Options<never, ThrowOnError>,
@@ -4046,6 +4122,7 @@ export class Session2 extends HeyApiClient {
             { in: "body", key: "format" },
             { in: "body", key: "system" },
             { in: "body", key: "variant" },
+            { in: "body", key: "response_presentation" },
             { in: "body", key: "parts" },
           ],
         },
@@ -4379,6 +4456,7 @@ export class Session2 extends HeyApiClient {
       format?: OutputFormat
       system?: string
       variant?: string
+      response_presentation?: PromptResponsePresentation
       parts?: Array<TextPartInput | FilePartInput | AgentPartInput | SkillPartInput | SubtaskPartInput>
     },
     options?: Options<never, ThrowOnError>,
@@ -4399,6 +4477,7 @@ export class Session2 extends HeyApiClient {
             { in: "body", key: "format" },
             { in: "body", key: "system" },
             { in: "body", key: "variant" },
+            { in: "body", key: "response_presentation" },
             { in: "body", key: "parts" },
           ],
         },
@@ -4432,6 +4511,7 @@ export class Session2 extends HeyApiClient {
       arguments?: string
       command?: string
       variant?: string
+      response_presentation?: PromptResponsePresentation
       parts?: Array<{
         id?: string
         type: "file"
@@ -4457,6 +4537,7 @@ export class Session2 extends HeyApiClient {
             { in: "body", key: "arguments" },
             { in: "body", key: "command" },
             { in: "body", key: "variant" },
+            { in: "body", key: "response_presentation" },
             { in: "body", key: "parts" },
           ],
         },

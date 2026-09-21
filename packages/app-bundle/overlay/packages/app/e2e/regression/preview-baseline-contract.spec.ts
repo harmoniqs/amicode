@@ -9,6 +9,8 @@ const directory = "C:/OpenCode/PreviewBaselineContract"
 const projectID = "proj_preview_baseline_contract"
 const sessionID = "ses_preview_baseline_contract"
 const title = "Preview baseline contract"
+const otherSessionID = "ses_preview_baseline_contract_other"
+const otherTitle = "Other Preview session"
 const markdownFile = "notes/baseline.md"
 const secondMarkdownFile = "notes/second.md"
 const juliaFile = "scripts/preview.jl"
@@ -700,6 +702,634 @@ test("retains renderer hosts and editor state through inner and outer Preview ta
   expect(await host!.evaluate((element) => element.isConnected)).toBe(true)
 })
 
+test("keeps unsaved Preview drafts scoped to their Session", async ({ page }) => {
+  const writes: unknown[] = []
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname.endsWith("/file/write")) writes.push(request.postDataJSON())
+  })
+  await openPreview(page, {
+    sessions: [
+      { id: sessionID, title },
+      { id: otherSessionID, title: otherTitle },
+    ],
+  })
+
+  const panel = page.locator("#review-panel")
+  await panel.getByRole("button", { name: "Edit" }).click()
+  const editor = panel.locator(`[data-preview-host="${markdownFile}"] .cm-content`)
+  await editor.click()
+  await editor.press("End")
+  await editor.type("\nOnly the first Session owns this draft.")
+  await expect(panel.getByLabel("Unsaved changes")).toBeVisible()
+
+  await page.locator("[data-titlebar-tab-slot]", { hasText: otherTitle }).click()
+  await expectSessionTitle(page, otherTitle)
+  await openPreviewFile(page, markdownFile)
+  const host = panel.locator(`[data-preview-host="${markdownFile}"]`)
+  await expect(host).not.toContainText("Only the first Session owns this draft.")
+  await panel.getByRole("button", { name: "Edit" }).click()
+  const otherEditor = panel.locator(`[data-preview-host="${markdownFile}"] .cm-content`)
+  await otherEditor.click()
+  await otherEditor.press("End")
+  await otherEditor.type("\nOnly the second Session owns this draft.")
+  await expect(panel.getByLabel("Unsaved changes")).toBeVisible()
+
+  await page.locator("[data-titlebar-tab-slot]", { hasText: title }).click()
+  await expectSessionTitle(page, title)
+  await panel.getByRole("button", { name: "Edit" }).click()
+  const write = page.waitForRequest(
+    (request) => new URL(request.url()).pathname.endsWith("/file/write") && request.method() === "POST",
+  )
+  await editor.press(await page.evaluate(() => (navigator.platform.includes("Mac") ? "Meta+s" : "Control+s")))
+  await write
+  await expect(panel.getByLabel("Unsaved changes")).toHaveCount(0)
+
+  await page.locator("[data-titlebar-tab-slot]", { hasText: otherTitle }).click()
+  await expectSessionTitle(page, otherTitle)
+  await expect(host).toContainText("Only the second Session owns this draft.")
+  await expect(panel.getByLabel("Unsaved changes")).toBeVisible()
+
+  await page.locator("[data-titlebar-tab-slot]", { hasText: title }).click()
+  await expectSessionTitle(page, title)
+  await expect(panel.getByLabel("Unsaved changes")).toHaveCount(0)
+  expect(writes).toHaveLength(1)
+})
+
+test("restores every open Preview document for its Session", async ({ page }) => {
+  await openPreview(page, {
+    sessions: [
+      { id: sessionID, title },
+      { id: otherSessionID, title: otherTitle },
+    ],
+  })
+
+  await openPreviewFile(page, secondMarkdownFile)
+  const panel = page.locator("#review-panel")
+  await panel.getByRole("tab", { name: "baseline.md" }).click()
+  await panel.getByRole("button", { name: "Edit" }).click()
+  const editor = panel.locator(`[data-preview-host="${markdownFile}"] .cm-content`)
+  await editor.click()
+  await editor.press("End")
+  await editor.type("\nRetain this non-active draft.")
+
+  await page.locator("[data-titlebar-tab-slot]", { hasText: otherTitle }).click()
+  await expectSessionTitle(page, otherTitle)
+  await page.locator("[data-titlebar-tab-slot]", { hasText: title }).click()
+  await expectSessionTitle(page, title)
+  await expect(panel.getByRole("tab", { name: "baseline.md" })).toBeVisible()
+  await expect(panel.getByRole("tab", { name: "second.md" })).toBeVisible()
+  await expect(panel.getByRole("button", { name: "Close baseline.md" }).locator("[data-preview-unsaved]")).toBeVisible()
+  await panel.getByRole("tab", { name: "baseline.md" }).click()
+  await panel.getByRole("button", { name: "Edit" }).click()
+  await expect(editor).toContainText("Retain this non-active draft.")
+})
+
+test("clears a Preview draft only after its Session explicitly saves", async ({ page }) => {
+  await openPreview(page, {
+    sessions: [
+      { id: sessionID, title },
+      { id: otherSessionID, title: otherTitle },
+    ],
+  })
+
+  const panel = page.locator("#review-panel")
+  await panel.getByRole("button", { name: "Edit" }).click()
+  const editor = panel.locator(`[data-preview-host="${markdownFile}"] .cm-content`)
+  await editor.click()
+  await editor.press("End")
+  await editor.type("\nThis draft should clear after Save.")
+
+  const write = page.waitForRequest(
+    (request) => new URL(request.url()).pathname.endsWith("/file/write") && request.method() === "POST",
+  )
+  await editor.press(await page.evaluate(() => (navigator.platform.includes("Mac") ? "Meta+s" : "Control+s")))
+  await write
+  await expect(panel.getByLabel("Unsaved changes")).toHaveCount(0)
+
+  await page.locator("[data-titlebar-tab-slot]", { hasText: otherTitle }).click()
+  await expectSessionTitle(page, otherTitle)
+  await openPreviewFile(page, markdownFile)
+  await expect(panel.getByLabel("Unsaved changes")).toHaveCount(0)
+
+  await page.locator("[data-titlebar-tab-slot]", { hasText: title }).click()
+  await expectSessionTitle(page, title)
+  await expect(panel.getByLabel("Unsaved changes")).toHaveCount(0)
+})
+
+test("keeps edits made while a Preview save is in flight", async ({ page }) => {
+  await openPreview(page, {
+    sessions: [
+      { id: sessionID, title },
+      { id: otherSessionID, title: otherTitle },
+    ],
+  })
+
+  let releaseWrite: (() => void) | undefined
+  let writeArrived = false
+  const response = page.waitForResponse(
+    (response) => new URL(response.url()).pathname.endsWith("/file/write") && response.request().method() === "POST",
+  )
+  await page.route("**/file/write", async (route) => {
+    writeArrived = true
+    await new Promise<void>((resolve) => {
+      releaseWrite = resolve
+    })
+    await route.fulfill({ status: 200, contentType: "application/json", body: "{}" })
+  })
+
+  const panel = page.locator("#review-panel")
+  await panel.getByRole("button", { name: "Edit" }).click()
+  const editor = panel.locator(`[data-preview-host="${markdownFile}"] .cm-content`)
+  await editor.click()
+  await editor.press("End")
+  await editor.type("\nSaved first.")
+  await editor.press(await page.evaluate(() => (navigator.platform.includes("Mac") ? "Meta+s" : "Control+s")))
+  await expect.poll(() => writeArrived).toBe(true)
+  await editor.type("\nStill a draft.")
+  if (!releaseWrite) throw new Error("The delayed save must be waiting before another edit")
+  releaseWrite()
+  await response
+  await expect(editor).toContainText("Still a draft.")
+  await expect(panel.getByLabel("Unsaved changes")).toBeVisible()
+
+  await page.locator("[data-titlebar-tab-slot]", { hasText: otherTitle }).click()
+  await expectSessionTitle(page, otherTitle)
+  await openPreviewFile(page, markdownFile)
+  const host = panel.locator(`[data-preview-host="${markdownFile}"]`)
+  await expect(host).not.toContainText("Still a draft.")
+
+  await page.locator("[data-titlebar-tab-slot]", { hasText: title }).click()
+  await expectSessionTitle(page, title)
+  await expect(host).toContainText("Still a draft.")
+  await expect(panel.getByLabel("Unsaved changes")).toBeVisible()
+})
+
+test("keeps a restored draft when an older Preview save finishes", async ({ page }) => {
+  await openPreview(page, {
+    sessions: [
+      { id: sessionID, title },
+      { id: otherSessionID, title: otherTitle },
+    ],
+  })
+
+  let releaseWrite: (() => void) | undefined
+  let writeArrived = false
+  const response = page.waitForResponse(
+    (response) => new URL(response.url()).pathname.endsWith("/file/write") && response.request().method() === "POST",
+  )
+  await page.route("**/file/write", async (route) => {
+    writeArrived = true
+    await new Promise<void>((resolve) => {
+      releaseWrite = resolve
+    })
+    await route.fulfill({ status: 200, contentType: "application/json", body: "{}" })
+  })
+
+  const panel = page.locator("#review-panel")
+  await panel.getByRole("button", { name: "Edit" }).click()
+  const editor = panel.locator(`[data-preview-host="${markdownFile}"] .cm-content`)
+  await editor.click()
+  await editor.press("End")
+  await editor.type("\nOlder draft.")
+  await editor.press(await page.evaluate(() => (navigator.platform.includes("Mac") ? "Meta+s" : "Control+s")))
+  await expect.poll(() => writeArrived).toBe(true)
+
+  await page.locator("[data-titlebar-tab-slot]", { hasText: otherTitle }).click()
+  await expectSessionTitle(page, otherTitle)
+  await openPreviewFile(page, markdownFile)
+  await page.locator("[data-titlebar-tab-slot]", { hasText: title }).click()
+  await expectSessionTitle(page, title)
+  await panel.getByRole("button", { name: "Edit" }).click()
+  await editor.click()
+  await editor.press("End")
+  await editor.type("\nNewer draft.")
+  if (!releaseWrite) throw new Error("The delayed save must be waiting before another Session edits")
+  releaseWrite()
+  await response
+  await expect(editor).toContainText("Newer draft.")
+  await expect(panel.getByLabel("Unsaved changes")).toBeVisible()
+})
+
+test("clears a restored Preview dirty indicator when its save finishes", async ({ page }) => {
+  await openPreview(page, {
+    sessions: [
+      { id: sessionID, title },
+      { id: otherSessionID, title: otherTitle },
+    ],
+  })
+
+  let releaseWrite: (() => void) | undefined
+  let writeArrived = false
+  const response = page.waitForResponse(
+    (response) => new URL(response.url()).pathname.endsWith("/file/write") && response.request().method() === "POST",
+  )
+  await page.route("**/file/write", async (route) => {
+    writeArrived = true
+    await new Promise<void>((resolve) => {
+      releaseWrite = resolve
+    })
+    await route.fulfill({ status: 200, contentType: "application/json", body: "{}" })
+  })
+
+  const panel = page.locator("#review-panel")
+  await panel.getByRole("button", { name: "Edit" }).click()
+  const editor = panel.locator(`[data-preview-host="${markdownFile}"] .cm-content`)
+  await editor.click()
+  await editor.press("End")
+  await editor.type("\nSaving through a Session switch.")
+  await editor.press(await page.evaluate(() => (navigator.platform.includes("Mac") ? "Meta+s" : "Control+s")))
+  await expect.poll(() => writeArrived).toBe(true)
+
+  await page.locator("[data-titlebar-tab-slot]", { hasText: otherTitle }).click()
+  await expectSessionTitle(page, otherTitle)
+  await openPreviewFile(page, markdownFile)
+  await page.locator("[data-titlebar-tab-slot]", { hasText: title }).click()
+  await expectSessionTitle(page, title)
+  await expect(panel.getByLabel("Unsaved changes")).toBeVisible()
+  if (!releaseWrite) throw new Error("The delayed save must be waiting after the Session remount")
+  releaseWrite()
+  await response
+  await expect(panel.getByLabel("Unsaved changes")).toHaveCount(0)
+  await panel.getByRole("button", { name: "Close baseline.md" }).click()
+  await expect(panel.getByRole("tab", { name: "baseline.md" })).toHaveCount(0)
+})
+
+test("keeps saved content when a remount file read arrives late", async ({ page }) => {
+  await openPreview(page, {
+    sessions: [
+      { id: sessionID, title },
+      { id: otherSessionID, title: otherTitle },
+    ],
+  })
+
+  const panel = page.locator("#review-panel")
+  await panel.getByRole("button", { name: "Edit" }).click()
+  const editor = panel.locator(`[data-preview-host="${markdownFile}"] .cm-content`)
+  await editor.click()
+  await editor.press("End")
+  await editor.type("\nSaved before the stale read.")
+
+  await page.locator("[data-titlebar-tab-slot]", { hasText: otherTitle }).click()
+  await expectSessionTitle(page, otherTitle)
+  await openPreviewFile(page, markdownFile)
+
+  let releaseRead: (() => void) | undefined
+  let readArrived = false
+  const readResponse = page.waitForResponse((response) => new URL(response.url()).pathname.endsWith("/file/content"))
+  await page.route("**/file/content*", async (route) => {
+    readArrived = true
+    await new Promise<void>((resolve) => {
+      releaseRead = resolve
+    })
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ type: "text", content: markdownContent }) })
+  })
+
+  await page.locator("[data-titlebar-tab-slot]", { hasText: title }).click()
+  await expectSessionTitle(page, title)
+  await expect.poll(() => readArrived).toBe(true)
+  await panel.getByRole("button", { name: "Edit" }).click()
+  const writeResponse = page.waitForResponse(
+    (response) => new URL(response.url()).pathname.endsWith("/file/write") && response.request().method() === "POST",
+  )
+  await editor.press(await page.evaluate(() => (navigator.platform.includes("Mac") ? "Meta+s" : "Control+s")))
+  await writeResponse
+  if (!releaseRead) throw new Error("The remount read must still be waiting after Save")
+  releaseRead()
+  await readResponse
+  await expect(editor).toContainText("Saved before the stale read.")
+  await expect(panel.getByLabel("Unsaved changes")).toHaveCount(0)
+})
+
+test("serializes repeated Preview saves", async ({ page }) => {
+  await openPreview(page)
+
+  let releaseFirstWrite: (() => void) | undefined
+  const writes: string[] = []
+  await page.route("**/file/write", async (route) => {
+    const content = route.request().postDataJSON().content as string
+    writes.push(content)
+    if (writes.length === 1) {
+      await new Promise<void>((resolve) => {
+        releaseFirstWrite = resolve
+      })
+    }
+    await route.fulfill({ status: 200, contentType: "application/json", body: "{}" })
+  })
+
+  const panel = page.locator("#review-panel")
+  await panel.getByRole("button", { name: "Edit" }).click()
+  const editor = panel.locator(`[data-preview-host="${markdownFile}"] .cm-content`)
+  await editor.click()
+  await editor.press("End")
+  await editor.type("\nFirst save.")
+  await editor.press(await page.evaluate(() => (navigator.platform.includes("Mac") ? "Meta+s" : "Control+s")))
+  await expect.poll(() => writes.length).toBe(1)
+  await editor.type("\nSecond save.")
+  await editor.press(await page.evaluate(() => (navigator.platform.includes("Mac") ? "Meta+s" : "Control+s")))
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())))
+  expect(writes).toHaveLength(1)
+  if (!releaseFirstWrite) throw new Error("The first save must be waiting before the second starts")
+  releaseFirstWrite()
+  await expect.poll(() => writes.length).toBe(2)
+  expect(writes[0]).toContain("First save.")
+  expect(writes[0]).not.toContain("Second save.")
+  expect(writes[1]).toContain("Second save.")
+  await expect(panel.getByLabel("Unsaved changes")).toHaveCount(0)
+})
+
+test("does not write a discarded queued Preview draft", async ({ page }) => {
+  await openPreview(page)
+
+  let releaseFirstWrite: (() => void) | undefined
+  const writes: string[] = []
+  const firstResponse = page.waitForResponse(
+    (response) => new URL(response.url()).pathname.endsWith("/file/write") && response.request().method() === "POST",
+  )
+  await page.route("**/file/write", async (route) => {
+    writes.push(route.request().postDataJSON().content as string)
+    if (writes.length === 1) {
+      await new Promise<void>((resolve) => {
+        releaseFirstWrite = resolve
+      })
+    }
+    await route.fulfill({ status: 200, contentType: "application/json", body: "{}" })
+  })
+
+  const panel = page.locator("#review-panel")
+  await panel.getByRole("button", { name: "Edit" }).click()
+  const editor = panel.locator(`[data-preview-host="${markdownFile}"] .cm-content`)
+  await editor.click()
+  await editor.press("End")
+  await editor.type("\nFirst queued save.")
+  await editor.press(await page.evaluate(() => (navigator.platform.includes("Mac") ? "Meta+s" : "Control+s")))
+  await expect.poll(() => writes.length).toBe(1)
+  await editor.type("\nDiscard this queued save.")
+  await editor.press(await page.evaluate(() => (navigator.platform.includes("Mac") ? "Meta+s" : "Control+s")))
+  await panel.getByRole("button", { name: "Close baseline.md" }).click()
+  await panel.getByRole("dialog", { name: "Unsaved changes" }).getByRole("button", { name: "Discard" }).click()
+  if (!releaseFirstWrite) throw new Error("The first queued save must be in flight before discard")
+  releaseFirstWrite()
+  await firstResponse
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())))
+  expect(writes).toHaveLength(1)
+})
+
+test("joins a close-save with an in-flight Preview save", async ({ page }) => {
+  await openPreview(page)
+
+  let releaseWrite: (() => void) | undefined
+  const writes: string[] = []
+  await page.route("**/file/write", async (route) => {
+    writes.push(route.request().postDataJSON().content as string)
+    await new Promise<void>((resolve) => {
+      releaseWrite = resolve
+    })
+    await route.fulfill({ status: 200, contentType: "application/json", body: "{}" })
+  })
+
+  const panel = page.locator("#review-panel")
+  await panel.getByRole("button", { name: "Edit" }).click()
+  const editor = panel.locator(`[data-preview-host="${markdownFile}"] .cm-content`)
+  await editor.click()
+  await editor.press("End")
+  await editor.type("\nSave once before closing.")
+  await editor.press(await page.evaluate(() => (navigator.platform.includes("Mac") ? "Meta+s" : "Control+s")))
+  await expect.poll(() => writes.length).toBe(1)
+  await panel.getByRole("button", { name: "Close baseline.md" }).click()
+  const dialog = panel.getByRole("dialog", { name: "Unsaved changes" })
+  await dialog.getByRole("button", { name: "Save" }).click()
+  if (!releaseWrite) throw new Error("The first save must be waiting before close-save joins it")
+  releaseWrite()
+  await expect(panel.getByRole("tab", { name: "baseline.md" })).toHaveCount(0)
+  expect(writes).toHaveLength(1)
+})
+
+test("closes a Preview after its save finishes across a Session switch", async ({ page }) => {
+  await openPreview(page, {
+    sessions: [
+      { id: sessionID, title },
+      { id: otherSessionID, title: otherTitle },
+    ],
+  })
+
+  let releaseWrite: (() => void) | undefined
+  let writeArrived = false
+  const response = page.waitForResponse(
+    (response) => new URL(response.url()).pathname.endsWith("/file/write") && response.request().method() === "POST",
+  )
+  await page.route("**/file/write", async (route) => {
+    writeArrived = true
+    await new Promise<void>((resolve) => {
+      releaseWrite = resolve
+    })
+    await route.fulfill({ status: 200, contentType: "application/json", body: "{}" })
+  })
+
+  const panel = page.locator("#review-panel")
+  await panel.getByRole("button", { name: "Edit" }).click()
+  const editor = panel.locator(`[data-preview-host="${markdownFile}"] .cm-content`)
+  await editor.click()
+  await editor.press("End")
+  await editor.type("\nClose after saving through a Session switch.")
+  await panel.getByRole("button", { name: "Close baseline.md" }).click()
+  const dialog = panel.getByRole("dialog", { name: "Unsaved changes" })
+  await dialog.getByRole("button", { name: "Save" }).click()
+  await expect.poll(() => writeArrived).toBe(true)
+
+  await page.locator("[data-titlebar-tab-slot]", { hasText: otherTitle }).click()
+  await expectSessionTitle(page, otherTitle)
+  await page.locator("[data-titlebar-tab-slot]", { hasText: title }).click()
+  await expectSessionTitle(page, title)
+  await expect(panel.getByRole("tab", { name: "baseline.md" })).toBeVisible()
+  if (!releaseWrite) throw new Error("The close-save must remain in flight while switching Sessions")
+  releaseWrite()
+  await response
+
+  await expect(panel.getByRole("tab", { name: "baseline.md" })).toHaveCount(0)
+})
+
+test("honors a close request after an in-flight direct save across a Session switch", async ({ page }) => {
+  await openPreview(page, {
+    sessions: [
+      { id: sessionID, title },
+      { id: otherSessionID, title: otherTitle },
+    ],
+  })
+
+  let releaseWrite: (() => void) | undefined
+  let writeArrived = false
+  const response = page.waitForResponse(
+    (response) => new URL(response.url()).pathname.endsWith("/file/write") && response.request().method() === "POST",
+  )
+  await page.route("**/file/write", async (route) => {
+    writeArrived = true
+    await new Promise<void>((resolve) => {
+      releaseWrite = resolve
+    })
+    await route.fulfill({ status: 200, contentType: "application/json", body: "{}" })
+  })
+
+  const panel = page.locator("#review-panel")
+  await panel.getByRole("button", { name: "Edit" }).click()
+  const editor = panel.locator(`[data-preview-host="${markdownFile}"] .cm-content`)
+  await editor.click()
+  await editor.press("End")
+  await editor.type("\nSave directly, then close.")
+  await editor.press(await page.evaluate(() => (navigator.platform.includes("Mac") ? "Meta+s" : "Control+s")))
+  await expect.poll(() => writeArrived).toBe(true)
+  await panel.getByRole("button", { name: "Close baseline.md" }).click()
+  await expect(panel.getByRole("dialog", { name: "Unsaved changes" })).toBeVisible()
+
+  await page.locator("[data-titlebar-tab-slot]", { hasText: otherTitle }).click()
+  await expectSessionTitle(page, otherTitle)
+  await page.locator("[data-titlebar-tab-slot]", { hasText: title }).click()
+  await expectSessionTitle(page, title)
+  if (!releaseWrite) throw new Error("The direct save must remain in flight while switching Sessions")
+  releaseWrite()
+  await response
+  await expect(panel.getByRole("tab", { name: "baseline.md" })).toHaveCount(0)
+})
+
+test("keeps the first close decision when another dirty Preview tab is clicked", async ({ page }) => {
+  await openPreview(page)
+  await openPreviewFile(page, secondMarkdownFile)
+
+  const panel = page.locator("#review-panel")
+  await panel.getByRole("tab", { name: "baseline.md" }).click()
+  await panel.getByRole("button", { name: "Edit" }).click()
+  const baselineEditor = panel.locator(`[data-preview-host="${markdownFile}"] .cm-content`)
+  await baselineEditor.click()
+  await baselineEditor.press("End")
+  await baselineEditor.type("\nFirst close request.")
+  await panel.getByRole("tab", { name: "second.md" }).click()
+  await panel.getByRole("button", { name: "Edit" }).click()
+  const secondEditor = panel.locator(`[data-preview-host="${secondMarkdownFile}"] .cm-content`)
+  await secondEditor.click()
+  await secondEditor.press("End")
+  await secondEditor.type("\nSecond dirty tab.")
+
+  await panel.getByRole("button", { name: "Close baseline.md" }).click()
+  const dialog = panel.getByRole("dialog", { name: "Unsaved changes" })
+  await expect(dialog).toContainText("baseline.md")
+  await panel.getByRole("button", { name: "Close second.md" }).click()
+  await expect(dialog).toContainText("baseline.md")
+  await dialog.getByRole("button", { name: "Cancel" }).click()
+  await expect(panel.getByRole("tab", { name: "baseline.md" })).toBeVisible()
+  await expect(panel.getByRole("tab", { name: "second.md" })).toBeVisible()
+})
+
+test("keeps tabs opened after a remount when an older close-save finishes", async ({ page }) => {
+  await openPreview(page, {
+    sessions: [
+      { id: sessionID, title },
+      { id: otherSessionID, title: otherTitle },
+    ],
+  })
+  await openPreviewFile(page, secondMarkdownFile)
+
+  let releaseWrite: (() => void) | undefined
+  let writeArrived = false
+  const response = page.waitForResponse(
+    (response) => new URL(response.url()).pathname.endsWith("/file/write") && response.request().method() === "POST",
+  )
+  await page.route("**/file/write", async (route) => {
+    writeArrived = true
+    await new Promise<void>((resolve) => {
+      releaseWrite = resolve
+    })
+    await route.fulfill({ status: 200, contentType: "application/json", body: "{}" })
+  })
+
+  const panel = page.locator("#review-panel")
+  await panel.getByRole("tab", { name: "baseline.md" }).click()
+  await panel.getByRole("button", { name: "Edit" }).click()
+  const editor = panel.locator(`[data-preview-host="${markdownFile}"] .cm-content`)
+  await editor.click()
+  await editor.press("End")
+  await editor.type("\nClose without changing later tabs.")
+  await panel.getByRole("button", { name: "Close baseline.md" }).click()
+  await panel.getByRole("dialog", { name: "Unsaved changes" }).getByRole("button", { name: "Save" }).click()
+  await expect.poll(() => writeArrived).toBe(true)
+
+  await page.locator("[data-titlebar-tab-slot]", { hasText: otherTitle }).click()
+  await expectSessionTitle(page, otherTitle)
+  await page.locator("[data-titlebar-tab-slot]", { hasText: title }).click()
+  await expectSessionTitle(page, title)
+  await openPreviewFile(page, "notes/third.md")
+  if (!releaseWrite) throw new Error("The older close-save must remain in flight after opening another tab")
+  releaseWrite()
+  await response
+  await expect(panel.getByRole("tab", { name: "baseline.md" })).toHaveCount(0)
+  await expect(panel.getByRole("tab", { name: "second.md" })).toBeVisible()
+  await expect(panel.getByRole("tab", { name: "third.md" })).toBeVisible()
+})
+
+test("closes an open Preview dialog when an existing save finishes", async ({ page }) => {
+  await openPreview(page)
+
+  let releaseWrite: (() => void) | undefined
+  let writeArrived = false
+  const response = page.waitForResponse(
+    (response) => new URL(response.url()).pathname.endsWith("/file/write") && response.request().method() === "POST",
+  )
+  await page.route("**/file/write", async (route) => {
+    writeArrived = true
+    await new Promise<void>((resolve) => {
+      releaseWrite = resolve
+    })
+    await route.fulfill({ status: 200, contentType: "application/json", body: "{}" })
+  })
+
+  const panel = page.locator("#review-panel")
+  await panel.getByRole("button", { name: "Edit" }).click()
+  const editor = panel.locator(`[data-preview-host="${markdownFile}"] .cm-content`)
+  await editor.click()
+  await editor.press("End")
+  await editor.type("\nFinish the existing save before closing.")
+  await editor.press(await page.evaluate(() => (navigator.platform.includes("Mac") ? "Meta+s" : "Control+s")))
+  await expect.poll(() => writeArrived).toBe(true)
+  await panel.getByRole("button", { name: "Close baseline.md" }).click()
+  await expect(panel.getByRole("dialog", { name: "Unsaved changes" })).toBeVisible()
+  if (!releaseWrite) throw new Error("The explicit save must remain in flight while closing")
+  releaseWrite()
+  await response
+  await expect(panel.getByRole("tab", { name: "baseline.md" })).toHaveCount(0)
+})
+
+test("keeps a Preview open after canceling an in-flight close-save", async ({ page }) => {
+  await openPreview(page)
+
+  let releaseWrite: (() => void) | undefined
+  let writeArrived = false
+  const response = page.waitForResponse(
+    (response) => new URL(response.url()).pathname.endsWith("/file/write") && response.request().method() === "POST",
+  )
+  await page.route("**/file/write", async (route) => {
+    writeArrived = true
+    await new Promise<void>((resolve) => {
+      releaseWrite = resolve
+    })
+    await route.fulfill({ status: 200, contentType: "application/json", body: "{}" })
+  })
+
+  const panel = page.locator("#review-panel")
+  await panel.getByRole("button", { name: "Edit" }).click()
+  const editor = panel.locator(`[data-preview-host="${markdownFile}"] .cm-content`)
+  await editor.click()
+  await editor.press("End")
+  await editor.type("\nSave, but do not close.")
+  await panel.getByRole("button", { name: "Close baseline.md" }).click()
+  const dialog = panel.getByRole("dialog", { name: "Unsaved changes" })
+  await dialog.getByRole("button", { name: "Save" }).click()
+  await expect.poll(() => writeArrived).toBe(true)
+  await dialog.getByRole("button", { name: "Cancel" }).click()
+  if (!releaseWrite) throw new Error("The close-save must remain in flight before cancellation")
+  releaseWrite()
+  await response
+  await expect(panel.getByRole("tab", { name: "baseline.md" })).toBeVisible()
+  await expect(panel.getByRole("dialog", { name: "Unsaved changes" })).toHaveCount(0)
+})
+
 test("keeps a dirty tab open on cancel and delegates save before closing", async ({ page }) => {
   await openPreview(page)
 
@@ -737,6 +1367,10 @@ test("keeps a dirty tab open on cancel and delegates save before closing", async
   await panel.getByRole("button", { name: "Close baseline.md" }).click()
   await dialog.getByRole("button", { name: "Discard" }).click()
   await expect(panel.getByRole("tab", { name: "baseline.md" })).toHaveCount(0)
+
+  await openPreviewFile(page, markdownFile)
+  await panel.getByRole("button", { name: "Edit" }).click()
+  await expect(panel.locator('[data-preview-host="notes/baseline.md"] .cm-content')).not.toContainText("Discard this draft.")
 })
 
 test("reuses an open path and refuses a ninth renderer host", async ({ page }) => {
@@ -1485,6 +2119,8 @@ test("opens a later Preview file in the leaf the researcher focused", async ({ p
 })
 
 test("closing clean tabs selects the previous tab then the empty placeholder", async ({ page }) => {
+  const errors: Error[] = []
+  page.on("pageerror", (error) => errors.push(error))
   await openPreview(page)
   await openPreviewFile(page, secondMarkdownFile)
 
@@ -1495,9 +2131,15 @@ test("closing clean tabs selects the previous tab then the empty placeholder", a
 
   await panel.getByRole("button", { name: "Close baseline.md" }).click()
   await expect(panel.getByText("Select a file from the sidebar", { exact: true })).toBeVisible()
+  expect(errors).toEqual([])
 })
 
-async function openPreview(page: Parameters<typeof mockOpenCodeServer>[0]) {
+async function openPreview(
+  page: Parameters<typeof mockOpenCodeServer>[0],
+  options?: { sessions?: Array<{ id: string; title: string }> },
+) {
+  const sessions = options?.sessions ?? [{ id: sessionID, title }]
+  const initial = sessions[0] ?? { id: sessionID, title }
   await mockOpenCodeServer(page, {
     directory,
     project: {
@@ -1519,17 +2161,15 @@ async function openPreview(page: Parameters<typeof mockOpenCodeServer>[0]) {
       connected: ["opencode"],
       default: { providerID: "opencode", modelID: "test" },
     },
-    sessions: [
-      {
-        id: sessionID,
-        slug: sessionID,
-        projectID,
-        directory,
-        title,
-        version: "dev",
-        time: { created: 1700000000000, updated: 1700000000000 },
-      },
-    ],
+    sessions: sessions.map((session, index) => ({
+      id: session.id,
+      slug: session.id,
+      projectID,
+      directory,
+      title: session.title,
+      version: "dev",
+      time: { created: 1700000000000 + index, updated: 1700000000000 + index },
+    })),
     fileContent: (path) => {
       if (path === markdownFile) return { type: "text", content: markdownContent }
       if (path === secondMarkdownFile) return { type: "text", content: secondMarkdownContent }
@@ -1555,7 +2195,7 @@ async function openPreview(page: Parameters<typeof mockOpenCodeServer>[0]) {
   })
 
   await page.addInitScript(
-    ({ directory, server, sessionID }) => {
+    ({ directory, server, sessionIDs }) => {
       localStorage.setItem("settings.v3", JSON.stringify({ general: { newLayoutDesigns: true } }))
       localStorage.setItem(
         "opencode.global.dat:server",
@@ -1570,14 +2210,14 @@ async function openPreview(page: Parameters<typeof mockOpenCodeServer>[0]) {
       )
       localStorage.setItem(
         "opencode.window.browser.dat:tabs",
-        JSON.stringify([{ type: "session", server, sessionId: sessionID }]),
+        JSON.stringify(sessionIDs.map((sessionId: string) => ({ type: "session", server, sessionId }))),
       )
     },
-    { directory, server, sessionID },
+    { directory, server, sessionIDs: sessions.map((session) => session.id) },
   )
 
-  await page.goto(`/server/${base64Encode(server)}/session/${sessionID}`)
-  await expectSessionTitle(page, title)
+  await page.goto(`/server/${base64Encode(server)}/session/${initial.id}`)
+  await expectSessionTitle(page, initial.title)
   await openPreviewFile(page, markdownFile)
   await expect(page.getByText("The renderer must keep focus.", { exact: true })).toBeVisible()
 }

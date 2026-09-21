@@ -2,8 +2,10 @@ import { createPromptProjectController } from "@/components/prompt-project-selec
 import { SessionPreviewTab } from "@/components/session/session-preview-tab"
 import { useTitlebarControlMount } from "@/components/titlebar"
 import { useSettings } from "@/context/settings"
+import type { PreviewDraft, PreviewDraftCache } from "@/context/layout"
 import { Icon as IconV2 } from "@opencode-ai/ui/v2/icon"
 import { createEffect, createResource, createSignal, onCleanup, onMount, Show } from "solid-js"
+import { createStore } from "solid-js/store"
 import { useLocation } from "@solidjs/router"
 import { createNewSessionDraftController } from "./new-session/new-session-draft-controller"
 import { NewSessionStatus, NewSessionView } from "./new-session/new-session-view"
@@ -12,6 +14,8 @@ import { useNewSessionCommands } from "./new-session/use-new-session-commands"
 import { postRouteInfo } from "@/utils/amicode-route-info"
 import { sessionContextMessage } from "@/utils/amicode-session-relay"
 import { useAmicodeCommands } from "@/pages/session/use-amicode-commands"
+
+let newSessionPreviewCacheID = 0
 
 /** The draft-only V2 session page. Submitting promotes the draft into a real session. */
 export default function NewSessionPage() {
@@ -36,6 +40,24 @@ export default function NewSessionPage() {
   })
   const location = useLocation()
   const [previewFile, setPreviewFile] = createSignal<string | null>(null)
+  const [previewDrafts, setPreviewDrafts] = createStore<Record<string, PreviewDraft | undefined>>({})
+  let previewDraftRevision = 0
+  const previewDraftSource = `new-session-${++newSessionPreviewCacheID}`
+  const previewDraftCache: PreviewDraftCache = {
+    get(path) {
+      return previewDrafts[path]
+    },
+    set(path, content) {
+      const draft = { content, revision: ++previewDraftRevision, source: previewDraftSource }
+      setPreviewDrafts(path, draft)
+      return draft
+    },
+    clear(path, draft) {
+      const current = previewDrafts[path]
+      if (!current || (draft && (current.revision !== draft.revision || current.source !== draft.source))) return
+      setPreviewDrafts(path, undefined)
+    },
+  }
 
   // amicode: register the Amico ops commands here too — the draft page has no
   // palette, so restart/update-memory are reachable via their direct keybinds.
@@ -95,7 +117,7 @@ export default function NewSessionPage() {
                 </button>
               </div>
               <div class="min-h-0 flex-1">
-                <SessionPreviewTab previewFile={previewFile} />
+                <SessionPreviewTab previewFile={previewFile} drafts={previewDraftCache} />
               </div>
             </div>
           </aside>

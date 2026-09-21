@@ -18,7 +18,7 @@
  * @module
  */
 
-import { createEffect, createMemo, createSignal, on, onCleanup, Show, Switch, Match } from "solid-js"
+import { createEffect, createMemo, createSignal, on, onCleanup, onMount, Show, Switch, Match } from "solid-js"
 import { Markdown } from "@opencode-ai/session-ui/markdown"
 import { SegmentedControlV2, SegmentedControlItemV2 } from "@opencode-ai/ui/v2/segmented-control-v2"
 import { TooltipV2 } from "@opencode-ai/ui/v2/tooltip-v2"
@@ -27,6 +27,7 @@ import { preprocessMarkdown } from "@opencode-ai/session-ui/v2/markdown-utils"
 import { RENDERABLE_EXTENSIONS } from "@opencode-ai/session-ui/v2/markdown-utils"
 import { useSDK } from "@/context/sdk"
 import { useServerSDK } from "@/context/server-sdk"
+import type { PreviewDraft, PreviewViewState } from "@/context/layout"
 import { PreviewEditor } from "@opencode-ai/session-ui/v2/preview-editor"
 import { PdfCanvasView } from "./pdf-canvas-view"
 
@@ -65,6 +66,8 @@ type PdfPageNavigation = {
 }
 
 const MAX_FILE_SIZE = 1_000_000
+const previewSaveQueues = new Map<string, Promise<boolean>>()
+const previewSaves = new Map<string, Promise<boolean>>()
 
 // Wrapper padding: p-4 = 16px each side = 32px total
 const IMAGE_WRAPPER_PADDING = 32
@@ -75,10 +78,14 @@ const IMAGE_WRAPPER_PADDING = 32
 
 export function PreviewFileView(props: {
   filePath: string
-  onDirtyChange: (dirty: boolean) => void
-  onSaveComplete?: () => void
+  onSaveComplete?: (request: number) => void
   saveRequest?: () => number
   onSaveStatusChange?: (status: "idle" | "saving" | "saved") => void
+  draft: () => PreviewDraft | undefined
+  onDraftChange: (content: string) => void
+  onDraftClear: (draft: PreviewDraft) => void
+  viewState?: () => PreviewViewState | undefined
+  onViewStateChange?: (state: PreviewViewState) => void
   zoom: () => number
   zoomIn: (maximum: number) => void
   zoomOut: () => void
@@ -93,9 +100,26 @@ export function PreviewFileView(props: {
   const [fileType, setFileType] = createSignal<FileType>(null)
   const [pdfNavigation, setPdfNavigation] = createSignal<PdfPageNavigation | null>(null)
   const pageInputID = `pdf-page-input-${props.filePath}`
+  let loadGeneration = 0
 
   // Binary data for image/PDF rendering (data URI / blob URL)
   const [binaryData, setBinaryData] = createSignal<{ base64: string; mime: string } | null>(null)
+
+  // ─── LaTeX compile status (#1253) ───────────────────────────────────────
+  // A .tex Cmd+S posts `run-latex` to the extension host; the host relays
+  // `run-latex-status` back. The .tex view shows the status; the companion
+  // .pdf view (matching on the produced pdf path) re-reads on "done" (#1254).
+  const [compileStatus, setCompileStatus] = createSignal<
+    null | "compiling" | "done" | "error" | "unavailable"
+  >(null)
+  const [compileError, setCompileError] = createSignal<string | null>(null)
+  const isLatex = () => /\.(tex|ltx)$/i.test(props.filePath)
+  const toAbsolute = (p: string) => {
+    if (p.startsWith("/")) return p
+    const dir = (sdk().directory ?? "").replace(/\/$/, "")
+    return dir ? `${dir}/${p}` : p
+  }
+  const selfAbsolute = () => toAbsolute(props.filePath)
 
   // ─── Container width for absolute-pixel image sizing ───────────────────
   // Same pattern as PdfCanvasView: measure the scroll container's width via
@@ -113,13 +137,29 @@ export function PreviewFileView(props: {
     on(
       () => props.filePath,
       (path) => {
-        setLoading(true)
+        const generation = ++loadGeneration
+        const initialDraft = props.draft()
+        setLoading(!initialDraft)
         setFileType(null)
         setBinaryData(null)
+        setUnsavedContent(initialDraft?.content ?? null)
+        if (initialDraft) {
+          setFileType("text")
+          setFileContent(initialDraft.content)
+        }
         sdk()
           .client.file.read({ path })
           .then((result) => {
+            if (generation !== loadGeneration) return
             const content = result.data
+            const draft = props.draft()
+            if (draft) {
+              setUnsavedContent(draft.content)
+              setFileType("text")
+              setFileContent(draft.content)
+              return
+            }
+            if (initialDraft) return
             if (!content) {
               setFileType("error")
               setFileContent("")
@@ -151,11 +191,20 @@ export function PreviewFileView(props: {
             setFileContent(content.content)
           })
           .catch(() => {
+            if (generation !== loadGeneration) return
+            const draft = props.draft()
+            if (draft) {
+              setUnsavedContent(draft.content)
+              setFileType("text")
+              setFileContent(draft.content)
+              return
+            }
+            if (initialDraft) return
             setFileType("error")
             setFileContent("")
           })
           .finally(() => {
-            setLoading(false)
+            if (generation === loadGeneration) setLoading(false)
           })
       },
     ),
@@ -170,6 +219,54 @@ export function PreviewFileView(props: {
     return `data:${data.mime};base64,${data.base64}`
   })
 
+  // ─── PDF refresh after compile (#1254) ─────────────────────────────────
+  // Re-read the file from disk and swap the base64 payload. Used when the
+  // companion .pdf's producer (latexmk) reports "done". Guards stale reads via
+  // the shared load generation so a refresh can't clobber a newer navigation.
+  const reloadBinary = () => {
+    const path = props.filePath
+    const generation = ++loadGeneration
+    sdk()
+      .client.file.read({ path })
+      .then((result) => {
+        if (generation !== loadGeneration) return
+        const content = result.data
+        if (!content || content.type === "text") return
+        const cat = getFileCategory(path)
+        if ((cat === "image" || cat === "pdf") && (content as any).encoding === "base64") {
+          setBinaryData({
+            base64: content.content,
+            mime: (content as any).mimeType ?? "application/octet-stream",
+          })
+        }
+      })
+      .catch(() => {})
+  }
+
+  // Listen for compile status from the extension host. The .tex view reflects
+  // status; the .pdf view refreshes itself when its producer finishes.
+  onMount(() => {
+    const handler = (event: MessageEvent) => {
+      const d = event.data as
+        | { source?: string; kind?: string; file?: string; pdf?: string; state?: string; error?: string }
+        | null
+      if (!d || d.source !== "amicode" || d.kind !== "run-latex-status") return
+      const me = selfAbsolute()
+      if (typeof d.file === "string" && d.file === me) {
+        setCompileStatus((d.state as ReturnType<typeof compileStatus>) ?? null)
+        setCompileError(d.state === "error" && typeof d.error === "string" ? d.error : null)
+        if (d.state === "done" || d.state === "unavailable") {
+          setTimeout(() => setCompileStatus((prev) => (prev === "done" || prev === "unavailable" ? null : prev)), 2500)
+        }
+      }
+      if (typeof d.pdf === "string" && d.pdf === me && d.state === "done") {
+        reloadBinary()
+      }
+    }
+    window.addEventListener("message", handler)
+    onCleanup(() => window.removeEventListener("message", handler))
+  })
+
   // ─── Save logic ────────────────────────────────────────────────────────
 
   const [saveStatus, setSaveStatus] = createSignal<"idle" | "saving" | "saved">("idle")
@@ -180,30 +277,68 @@ export function PreviewFileView(props: {
     props.onSaveStatusChange?.(saveStatus())
   })
 
-  const saveFile = async (filePath: string, content: string, closeAfterSave = false) => {
-    setSaveStatus("saving")
-    try {
-      await serverSDK().client.file.write({ path: filePath, content })
-      setSaveStatus("saved")
-      setUnsavedContent(null)
-      props.onDirtyChange(false)
-      if (closeAfterSave) props.onSaveComplete?.()
-      if (savedTimer) clearTimeout(savedTimer)
-      savedTimer = setTimeout(() => setSaveStatus("idle"), 2000)
-    } catch {
-      setSaveStatus("idle")
+  const saveFile = (filePath: string, draft: PreviewDraft, closeAfterSave = false, request?: number) => {
+    const pending = { ...draft }
+    const server = serverSDK()
+    const target = sdk()
+    const key = `${server.scope}\0${server.url}\0${target.directory}\0${filePath}`
+    const saveKey = `${key}\0${pending.source}\0${pending.revision}`
+    let save = previewSaves.get(saveKey)
+    if (!save) {
+      const previous = previewSaveQueues.get(key) ?? Promise.resolve(true)
+      save = previous.catch(() => false).then(async () => {
+        setSaveStatus("saving")
+        try {
+          const current = props.draft()
+          if (!current || current.revision !== pending.revision || current.source !== pending.source) {
+            setSaveStatus("idle")
+            return false
+          }
+          await target.client.file.write({ path: filePath, content: pending.content })
+          const saved = props.draft()
+          if (!saved || saved.revision !== pending.revision || saved.source !== pending.source) {
+            setSaveStatus("idle")
+            return false
+          }
+          setSaveStatus("saved")
+          setUnsavedContent(null)
+          props.onDraftClear(pending)
+          // #1253: a saved .tex asks the extension host to run latexmk. The
+          // host compiles in the file's own directory and relays status back;
+          // the companion .pdf view refreshes on "done" (#1254).
+          if (isLatex()) {
+            try {
+              window.parent?.postMessage({ source: "amicode", kind: "run-latex", file: toAbsolute(filePath) }, "*")
+            } catch {}
+          }
+          if (savedTimer) clearTimeout(savedTimer)
+          savedTimer = setTimeout(() => setSaveStatus("idle"), 2000)
+          return true
+        } catch {
+          setSaveStatus("idle")
+          return false
+        }
+      })
+      previewSaves.set(saveKey, save)
+      previewSaveQueues.set(key, save)
+      void save.finally(() => {
+        if (previewSaves.get(saveKey) === save) previewSaves.delete(saveKey)
+        if (previewSaveQueues.get(key) === save) previewSaveQueues.delete(key)
+      })
     }
+    if (closeAfterSave && request !== undefined) void save.then((saved) => saved && props.onSaveComplete?.(request))
+    return save
   }
 
   const handleEdit = (content: string) => {
     setUnsavedContent(content)
-    props.onDirtyChange(true)
+    props.onDraftChange(content)
     setFileContent(content)
   }
 
   const handleImmediateSave = () => {
-    const content = unsavedContent()
-    if (content !== null) void saveFile(props.filePath, content)
+    const draft = props.draft()
+    if (draft) void saveFile(props.filePath, draft)
   }
 
   createEffect(
@@ -211,13 +346,14 @@ export function PreviewFileView(props: {
       () => props.saveRequest?.() ?? 0,
       (request) => {
         if (request === 0) return
-        const content = unsavedContent()
-        if (content !== null) void saveFile(props.filePath, content, true)
+        const draft = props.draft()
+        if (draft) void saveFile(props.filePath, draft, true, request)
       },
     ),
   )
 
   onCleanup(() => {
+    loadGeneration++
     if (savedTimer) clearTimeout(savedTimer)
   })
 
@@ -417,6 +553,43 @@ export function PreviewFileView(props: {
       onMouseMove={handleWrapperMouseMove}
       onMouseLeave={handleWrapperMouseLeave}
     >
+      {/* LaTeX compile status chip (#1253) — bottom-left, only while relevant. */}
+      <Show when={compileStatus()}>
+        {(status) => (
+          <div
+            data-latex-status={status()}
+            class="absolute bottom-2 left-2 z-30 flex items-center gap-1.5 h-7 px-2.5 rounded-md border border-border-base shadow-sm text-12-regular"
+            style={{
+              background: "color-mix(in srgb, var(--background-base) 85%, transparent)",
+              "backdrop-filter": "blur(4px)",
+              color:
+                status() === "error"
+                  ? "var(--text-danger, var(--text-base))"
+                  : "var(--text-weak, var(--text-base))",
+            }}
+            title={compileError() ?? undefined}
+          >
+            <Switch>
+              <Match when={status() === "compiling"}>
+                <Icon name="context-ring" size="small" class="animate-spin" />
+                <span>Compiling LaTeX…</span>
+              </Match>
+              <Match when={status() === "done"}>
+                <Icon name="circle-check" size="small" />
+                <span>Compiled</span>
+              </Match>
+              <Match when={status() === "error"}>
+                <Icon name="circle-x" size="small" />
+                <span>Compile failed</span>
+              </Match>
+              <Match when={status() === "unavailable"}>
+                <Icon name="circle-x" size="small" />
+                <span>latexmk not found</span>
+              </Match>
+            </Switch>
+          </div>
+        )}
+      </Show>
       {/* Floating controls — top-right overlay */}
       <div
         data-preview-controls
@@ -649,6 +822,9 @@ export function PreviewFileView(props: {
                 zoom={props.zoom()}
                 filePath={props.filePath}
                 onPageNavigationChange={setPdfNavigation}
+                initialPage={props.viewState?.()?.pdf?.page}
+                initialScrollTop={props.viewState?.()?.pdf?.scrollTop}
+                onViewStateChange={(pdf) => props.onViewStateChange?.({ pdf })}
               />
             </Match>
 
@@ -673,6 +849,8 @@ export function PreviewFileView(props: {
                     filePath={props.filePath}
                     onChange={handleEdit}
                     onSave={handleImmediateSave}
+                    viewState={() => props.viewState?.()?.editor}
+                    onViewStateChange={(editor) => props.onViewStateChange?.({ editor })}
                   />
                 }
               >
@@ -692,6 +870,8 @@ export function PreviewFileView(props: {
                 filePath={props.filePath}
                 onChange={handleEdit}
                 onSave={handleImmediateSave}
+                viewState={() => props.viewState?.()?.editor}
+                onViewStateChange={(editor) => props.onViewStateChange?.({ editor })}
               />
             </Match>
           </Switch>

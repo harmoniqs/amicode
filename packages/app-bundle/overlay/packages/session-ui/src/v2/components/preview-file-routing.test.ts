@@ -642,9 +642,8 @@ describe("dirty dot indicator (#937)", () => {
     "utf8",
   )
 
-  test("shows an unsaved dot based on workspace dirty state", () => {
-    // The workspace owns only a dirty flag; PreviewFileView owns draft text.
-    expect(previewTabSrc).toContain("dirtyPaths")
+  test("shows an unsaved dot based on the session draft cache", () => {
+    expect(previewTabSrc).toContain("drafts.get(tab.path)")
   })
 
   test("unsaved dot has aria-label for accessibility", () => {
@@ -655,6 +654,20 @@ describe("dirty dot indicator (#937)", () => {
     // The old saving spinner and saved green dot should be removed
     expect(previewTabSrc).not.toMatch(/aria-label="Saving"/)
     expect(previewTabSrc).not.toMatch(/aria-label="Saved"/)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Dirty preview lifetime (#1249)
+// ---------------------------------------------------------------------------
+
+describe("dirty Preview lifetime (#1249)", () => {
+  const layoutSrc = fs.readFileSync(path.resolve(__dirname, "../../../../app/src/context/layout.tsx"), "utf8")
+
+  test("session pruning preserves dirty Preview state", () => {
+    expect(layoutSrc).toContain("preservePreview")
+    expect(layoutSrc).toContain("Object.values(ephemeral.sessionPreviewDrafts[key] ?? {}).some(Boolean)")
+    expect(layoutSrc).toContain("if (!preservePreview.has(key)) delete draft[key]")
   })
 })
 
@@ -687,8 +700,9 @@ describe("file save uses SDK client (#937)", () => {
   const cleanupEnd = fileViewSrc.indexOf("savedTimer) clearTimeout(savedTimer)", cleanupStart)
   const cleanupBlock = fileViewSrc.slice(cleanupStart, cleanupEnd + 50)
 
-  test("saveFile uses SDK client.file.write, not raw fetch to /file/write", () => {
-    expect(saveFileBody).toContain("file.write")
+  test("saveFile uses the directory-scoped SDK client, not raw fetch to /file/write", () => {
+    expect(saveFileBody).toContain("const target = sdk()")
+    expect(saveFileBody).toContain("target.client.file.write")
     expect(saveFileBody).not.toContain('fetch(new URL("/file/write"')
   })
 
@@ -704,11 +718,9 @@ describe("file save uses SDK client (#937)", () => {
   })
 
   test("saveFile uses try/catch for error handling", () => {
-    // The SDK throws on non-2xx — must use try/catch, not bare .then()
+    // The SDK throws on non-2xx, so the queued write still needs a catch path.
     expect(saveFileBody).toContain("try")
     expect(saveFileBody).toContain("catch")
-    // Should NOT use .then() on the SDK call (that's the raw-fetch pattern)
-    expect(saveFileBody).not.toContain(".then(")
   })
 })
 

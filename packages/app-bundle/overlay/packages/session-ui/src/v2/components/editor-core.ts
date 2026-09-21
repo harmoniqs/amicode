@@ -154,13 +154,24 @@ export function buildThemeExtension(mode: "light" | "dark"): Extension {
         borderLeftColor: "var(--v2-text-text-base, var(--text-strong))",
       },
       // Selection highlight — override CM6's built-in defaults (#d7d4f0 light,
-      // #233 dark) with our theme tokens. The child-combinator selector matches
-      // CM6's internal specificity so our rule wins.
+      // #233 dark) with a semi-transparent accent that's visible in both modes.
+      // The child-combinator selector matches CM6's internal specificity so our
+      // rule wins. The previous token (--v2-background-bg-layer-03 = #3a3a3a in
+      // dark) was nearly invisible against the editor background (#1247).
       "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground": {
-        background: "var(--v2-background-bg-layer-03, var(--background-weak))",
+        background: "color-mix(in srgb, var(--v2-accent-accent-base, #f5c000) 30%, transparent)",
       },
       ".cm-selectionBackground": {
-        backgroundColor: "var(--v2-background-bg-layer-03, var(--background-weak))",
+        backgroundColor: "color-mix(in srgb, var(--v2-accent-accent-base, #f5c000) 25%, transparent)",
+      },
+      // Native text-level selection — covers single-line inline selections.
+      // Uses !important to override the .cm-activeLine background on the
+      // current line, so the accent selection is always clearly visible (#1247).
+      ".cm-content ::selection": {
+        background: "color-mix(in srgb, var(--v2-accent-accent-base, #f5c000) 50%, transparent) !important",
+      },
+      ".cm-line::selection, .cm-line *::selection": {
+        background: "color-mix(in srgb, var(--v2-accent-accent-base, #f5c000) 50%, transparent) !important",
       },
       ".cm-panels": {
         backgroundColor: "var(--v2-background-bg-base, var(--background-base))",
@@ -175,7 +186,7 @@ export function buildThemeExtension(mode: "light" | "dark"): Extension {
         backgroundColor: "var(--v2-background-bg-layer-02, var(--background-weak))",
       },
       ".cm-activeLine": {
-        backgroundColor: "var(--v2-background-bg-layer-01, var(--background-weak))",
+        backgroundColor: "color-mix(in srgb, var(--v2-background-bg-layer-01, var(--background-weak)) 50%, transparent)",
       },
       ".cm-foldPlaceholder": {
         backgroundColor: "transparent",

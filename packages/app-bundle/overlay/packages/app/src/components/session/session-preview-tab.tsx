@@ -15,6 +15,7 @@ import { Icon } from "@opencode-ai/ui/icon"
 import { Tabs } from "@opencode-ai/ui/tabs"
 import { MenuV2 } from "@opencode-ai/ui/v2/menu-v2"
 import { usePlatform } from "@/context/platform"
+import type { PreviewCloseRequest, PreviewDraft, PreviewDraftCache, PreviewViewState, PreviewViewStateCache } from "@/context/layout"
 import { PreviewFileView } from "./preview-file-view"
 import { FileVisual } from "./session-sortable-tab"
 import {
@@ -38,6 +39,8 @@ import {
 const MAX_PREVIEW_TABS = 8
 const DROP_EDGE_PX = 32
 const RAIL_CAPTURE_PX = 24
+let localPreviewCacheID = 0
+let previewCloseRequestID = 0
 
 type PreviewDrop = {
   leafID: string
@@ -89,13 +92,24 @@ class PreviewRailSnapModifier extends Modifier<DragDropManager, { rails: () => I
   }
 }
 
-export function SessionPreviewTab(props: { previewFile: Accessor<string | null> }) {
+export function SessionPreviewTab(props: {
+  previewFile: Accessor<string | null>
+  onPreviewFileClose?: () => void
+  openPaths?: Accessor<string[]>
+  onOpenPath?: (path: string) => void
+  onClosePath?: (path: string) => void
+  closeRequest?: Accessor<PreviewCloseRequest | null>
+  onCloseRequestChange?: (request: PreviewCloseRequest | null) => void
+  drafts?: PreviewDraftCache
+  viewState?: PreviewViewStateCache
+}) {
   const platform = usePlatform()
-  const [dirtyPaths, setDirtyPaths] = createStore<Record<string, boolean>>({})
+  const [localDrafts, setLocalDrafts] = createStore<Record<string, PreviewDraft | undefined>>({})
+  const [localViewState, setLocalViewState] = createStore<Record<string, PreviewViewState | undefined>>({})
   const [saveRequests, setSaveRequests] = createStore<Record<string, number>>({})
   const [workspace, setWorkspace] = createSignal(createPreviewWorkspace())
   const [capacityMessage, setCapacityMessage] = createSignal<string | null>(null)
-  const [closingPath, setClosingPath] = createSignal<string | null>(null)
+  const [localClosingRequest, setLocalClosingRequest] = createSignal<PreviewCloseRequest | null>(null)
   const [previewDrag, setPreviewDrag] = createSignal<PreviewDrag | null>(null)
   const [resizingSplitID, setResizingSplitID] = createSignal<string | null>(null)
   const [tabContextMenu, setTabContextMenu] = createSignal<{ path: string; x: number; y: number } | null>(null)
@@ -107,27 +121,60 @@ export function SessionPreviewTab(props: { previewFile: Accessor<string | null> 
   let previewDragFocus:
     | { target: HTMLElement; scroller?: HTMLElement; scrollTop?: number }
     | undefined
+  let localDraftRevision = 0
+  const closeSaveRequests = new Map<string, number>()
+  const localDraftSource = `local-preview-${++localPreviewCacheID}`
+
+  const drafts: PreviewDraftCache =
+    props.drafts ?? {
+      get(path) {
+        return localDrafts[path]
+      },
+      set(path, content) {
+        const draft = { content, revision: ++localDraftRevision, source: localDraftSource }
+        setLocalDrafts(path, draft)
+        return draft
+      },
+      clear(path, draft) {
+        const current = localDrafts[path]
+        if (!current || (draft && (current.revision !== draft.revision || current.source !== draft.source))) return
+        setLocalDrafts(path, undefined)
+      },
+    }
+
+  const viewStates: PreviewViewStateCache =
+    props.viewState ?? {
+      get(path) {
+        return localViewState[path]
+      },
+      set(path, state) {
+        setLocalViewState(path, (existing: PreviewViewState | undefined) => ({ ...existing, ...state }))
+      },
+    }
+
+  const closingRequest = () => props.closeRequest?.() ?? localClosingRequest()
+  const setClosingRequest = (request: PreviewCloseRequest | null) => {
+    if (props.onCloseRequestChange) {
+      props.onCloseRequestChange(request)
+      return
+    }
+    setLocalClosingRequest(request)
+  }
 
   const openedPaths = () => previewLeaves(workspace().tree).flatMap((leaf) => leaf.tabs)
 
-  const openPath = (path: string) => {
+  const openPath = (path: string, persist = true) => {
     const current = workspace()
     if (!previewLeafContaining(current.tree, path) && previewTabCount(current.tree) === MAX_PREVIEW_TABS) {
       setCapacityMessage("Close an existing Preview tab before opening another file.")
       return
     }
-    setWorkspace(openPreviewPath(current, path))
+    const alreadyOpen = !!previewLeafContaining(current.tree, path)
+    const next = openPreviewPath(current, path)
+    setWorkspace(next)
+    if (persist && !alreadyOpen) props.onOpenPath?.(path)
     setCapacityMessage(null)
   }
-
-  createEffect(
-    on(
-      () => props.previewFile(),
-      (path) => {
-        if (path) openPath(path)
-      },
-    ),
-  )
 
   onMount(() => {
     const handlePreviewFile = (event: MessageEvent) => {
@@ -159,19 +206,59 @@ export function SessionPreviewTab(props: { previewFile: Accessor<string | null> 
     if (leaf) setWorkspace((current) => setPreviewLeafZoom(current, leaf.id, value, maximum))
   }
 
-  const removePath = (path: string) => {
-    setWorkspace((current) => removePreviewPath(current, path))
-    setDirtyPaths(path, false)
+  const removePath = (path: string, persist = true) => {
+    if (!previewLeafContaining(workspace().tree, path)) return
+    const next = removePreviewPath(workspace(), path)
+    setWorkspace(next)
+    if (persist) props.onClosePath?.(path)
+    drafts.clear(path)
+    if (props.previewFile() === path) props.onPreviewFileClose?.()
     setHostMounts(path, undefined)
   }
 
   const closePath = (path: string) => {
-    if (dirtyPaths[path]) {
-      setClosingPath(path)
+    if (closingRequest()) return
+    if (drafts.get(path)) {
+      setClosingRequest({ path, id: ++previewCloseRequestID })
       return
     }
     removePath(path)
   }
+
+  createEffect(
+    on(
+      () => props.openPaths?.(),
+      (paths) => {
+        if (!paths) return
+        for (const path of openedPaths()) {
+          if (!paths.includes(path)) removePath(path, false)
+        }
+        for (const path of paths) {
+          if (!previewLeafContaining(workspace().tree, path)) openPath(path, false)
+        }
+      },
+    ),
+  )
+
+  createEffect(
+    on(
+      () => props.previewFile(),
+      (path, previous) => {
+        if (path) {
+          openPath(path)
+          return
+        }
+        if (previous && previewLeafContaining(workspace().tree, previous)) removePath(previous)
+      },
+    ),
+  )
+
+  createEffect(() => {
+    const request = closingRequest()
+    if (!request || drafts.get(request.path)) return
+    removePath(request.path)
+    setClosingRequest(null)
+  })
 
   const copyPreviewPath = async (value: string) => {
     if (platform.writeClipboardText && (await platform.writeClipboardText(value))) return
@@ -357,7 +444,7 @@ export function SessionPreviewTab(props: { previewFile: Accessor<string | null> 
               aria-label={`Close ${tab.path.split("/").pop()}`}
               onClick={() => closePath(tab.path)}
             >
-              <Show when={dirtyPaths[tab.path]} fallback={<Icon name="close-small" size="small" />}>
+              <Show when={drafts.get(tab.path)} fallback={<Icon name="close-small" size="small" />}>
                 <span
                   data-preview-unsaved
                   role="status"
@@ -500,20 +587,25 @@ export function SessionPreviewTab(props: { previewFile: Accessor<string | null> 
           </div>
         </Show>
 
-        <Show when={closingPath()}>
-          {(path) => (
+        <Show when={closingRequest()}>
+          {(request) => (
             <div
               class="shrink-0 mx-3 mb-3 p-3 border border-border-base rounded-md bg-background-base"
               role="dialog"
               aria-modal="true"
               aria-label="Unsaved changes"
             >
-              <p class="text-12-regular text-text-base">Save changes to {path().split("/").pop()} before closing?</p>
+              <p class="text-12-regular text-text-base">Save changes to {request().path.split("/").pop()} before closing?</p>
               <div class="mt-2 flex justify-end gap-2">
                 <button
                   type="button"
                   class="px-2 py-1 text-12-regular text-text-weak hover:text-text-base focus-visible:outline focus-visible:outline-2 focus-visible:outline-border-focus"
-                  onClick={() => setClosingPath(null)}
+                  onClick={() => {
+                    for (const [key, id] of closeSaveRequests) {
+                      if (id === request().id) closeSaveRequests.delete(key)
+                    }
+                    setClosingRequest(null)
+                  }}
                 >
                   Cancel
                 </button>
@@ -521,8 +613,8 @@ export function SessionPreviewTab(props: { previewFile: Accessor<string | null> 
                   type="button"
                   class="px-2 py-1 text-12-regular text-text-weak hover:text-text-base focus-visible:outline focus-visible:outline-2 focus-visible:outline-border-focus"
                   onClick={() => {
-                    removePath(path())
-                    setClosingPath(null)
+                    removePath(request().path)
+                    setClosingRequest(null)
                   }}
                 >
                   Discard
@@ -530,7 +622,12 @@ export function SessionPreviewTab(props: { previewFile: Accessor<string | null> 
                 <button
                   type="button"
                   class="px-2 py-1 text-12-regular text-text-base border border-border-strong rounded-md hover:bg-background-stronger focus-visible:outline focus-visible:outline-2 focus-visible:outline-border-focus"
-                  onClick={() => setSaveRequests(path(), (request) => (request ?? 0) + 1)}
+                  onClick={() => {
+                    const path = request().path
+                    const next = (saveRequests[path] ?? 0) + 1
+                    closeSaveRequests.set(`${path}:${next}`, request().id)
+                    setSaveRequests(path, next)
+                  }}
                 >
                   Save
                 </button>
@@ -594,11 +691,18 @@ export function SessionPreviewTab(props: { previewFile: Accessor<string | null> 
                           >
                             <PreviewFileView
                               filePath={path}
-                              onDirtyChange={(dirty) => setDirtyPaths(path, dirty)}
+                              draft={() => drafts.get(path)}
+                              onDraftChange={(content) => drafts.set(path, content)}
+                              onDraftClear={(draft) => drafts.clear(path, draft)}
+                              viewState={() => viewStates.get(path)}
+                              onViewStateChange={(state) => viewStates.set(path, state)}
                               saveRequest={() => saveRequests[path] ?? 0}
-                              onSaveComplete={() => {
+                              onSaveComplete={(saveRequest) => {
+                                const request = closeSaveRequests.get(`${path}:${saveRequest}`)
+                                closeSaveRequests.delete(`${path}:${saveRequest}`)
+                                if (request === undefined || request !== closingRequest()?.id) return
                                 removePath(path)
-                                setClosingPath(null)
+                                setClosingRequest(null)
                               }}
                               zoom={() => zoomForPath(path)}
                               zoomIn={(maximum) => setZoomForPath(path, zoomForPath(path) + 10, maximum)}

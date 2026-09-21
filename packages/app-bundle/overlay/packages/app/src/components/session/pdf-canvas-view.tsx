@@ -17,7 +17,7 @@
  * @module
  */
 
-import { createEffect, createSignal, For, on, onCleanup } from "solid-js"
+import { createEffect, createSignal, For, on, onCleanup, untrack } from "solid-js"
 import * as pdfjsLib from "pdfjs-dist"
 // @ts-expect-error — no type declarations for the worker bundle; Vite resolves it at build time
 import * as pdfjsWorker from "pdfjs-dist/build/pdf.worker.min.mjs"
@@ -44,6 +44,12 @@ interface PdfCanvasViewProps {
   filePath: string
   /** Reports the current PDF page state to the Preview controls. */
   onPageNavigationChange?: (navigation: PdfPageNavigation | null) => void
+  /** Page to restore after a (re)load. Defaults to 1. */
+  initialPage?: number
+  /** Scroll offset to restore after a (re)load. Defaults to 0. */
+  initialScrollTop?: number
+  /** Reports page/scroll changes for persistence (#1250/#1254). */
+  onViewStateChange?: (state: { page: number; scrollTop: number }) => void
 }
 
 type PdfPageNavigation = {
@@ -258,6 +264,14 @@ export function PdfCanvasView(props: PdfCanvasViewProps) {
   let navigationFrame: number | undefined
   const pageAnchors = new Map<number, HTMLDivElement>()
 
+  // ─── Restore state (#1250/#1254) ────────────────────────────────────
+  // On base64 change (reload or new file), seed the target page/scroll
+  // from props. The restore effect applies them once anchors exist.
+  // `restoreDone` gates reporting so the transient reset-to-page-1 never
+  // leaks into the persistence cache.
+  let restoreTarget: { page: number; scrollTop: number } | null = null
+  let restoreDone = true
+
   const setPageAnchor = (page: number, anchor: HTMLDivElement | null) => {
     if (anchor) pageAnchors.set(page, anchor)
     else pageAnchors.delete(page)
@@ -286,6 +300,7 @@ export function PdfCanvasView(props: PdfCanvasViewProps) {
         }
       }
       setCurrentPage(closestPage)
+      reportViewState()
     })
   }
 
@@ -297,6 +312,7 @@ export function PdfCanvasView(props: PdfCanvasViewProps) {
     const target = scroll.scrollTop + anchor.getBoundingClientRect().top - scroll.getBoundingClientRect().top
     setCurrentPage(page)
     scroll.scrollTo({ top: target, behavior: "smooth" })
+    reportViewState()
     return true
   }
 
@@ -333,9 +349,17 @@ export function PdfCanvasView(props: PdfCanvasViewProps) {
       () => props.base64,
       (b64) => {
         if (!b64) return
+        // Seed the restore target from props BEFORE clearing state, so the
+        // restore effect can apply them once pages render.
+        const targetPage = untrack(() => props.initialPage ?? 1)
+        const targetScroll = untrack(() => props.initialScrollTop ?? 0)
+        const needsRestore = targetPage > 1 || targetScroll > 0
+        restoreTarget = needsRestore ? { page: targetPage, scrollTop: targetScroll } : null
+        restoreDone = !needsRestore
+
         setError(false)
         setPageCount(0)
-        setCurrentPage(1)
+        setCurrentPage(targetPage)
         pageAnchors.clear()
         setAnchorVersion((version) => version + 1)
         setPdfDoc(null)
@@ -402,6 +426,52 @@ export function PdfCanvasView(props: PdfCanvasViewProps) {
     updateCurrentPage()
     onCleanup(() => scroll.removeEventListener("scroll", updateCurrentPage))
   })
+
+  // ─── Restore scroll position after (re)load (#1250/#1254) ───────────
+  // Wait until anchors exist for the target page, then scroll there
+  // instantly (no smooth behavior — this is a restore, not a navigation).
+  // Once done, open the reporting gate so user-driven scroll fires
+  // onViewStateChange.
+  createEffect(() => {
+    anchorVersion() // re-run when anchors change
+    if (restoreDone || !restoreTarget) return
+    const target = restoreTarget
+    const scroll = wrapperRef?.parentElement
+    if (!scroll) return
+    // Need at least the target page's anchor to exist
+    if (!pageAnchors.has(target.page)) return
+
+    // Navigate to page first (instant, no smooth scroll)
+    const anchor = pageAnchors.get(target.page)
+    if (anchor) {
+      const offset = scroll.scrollTop + anchor.getBoundingClientRect().top - scroll.getBoundingClientRect().top
+      scroll.scrollTop = offset
+    }
+    // Then fine-tune with the saved absolute scrollTop if it's meaningful.
+    // The saved scrollTop is from the scroll container's own coordinate
+    // space, so it is directly applicable once content height permits.
+    if (target.scrollTop > 0 && scroll.scrollHeight >= target.scrollTop) {
+      scroll.scrollTop = target.scrollTop
+    }
+    setCurrentPage(target.page)
+    restoreTarget = null
+    restoreDone = true
+  })
+
+  // ─── Report view-state changes for persistence (#1250/#1254) ────────
+  // Piggyback on the rAF inside updateCurrentPage: after the page is
+  // computed from scroll position, report the page + scrollTop to the
+  // parent cache. Suppressed until restore is done so a transient
+  // page-1 never clobbers the saved state.
+  const reportViewState = () => {
+    if (!restoreDone) return
+    const scroll = wrapperRef?.parentElement
+    if (!scroll) return
+    props.onViewStateChange?.({
+      page: currentPage(),
+      scrollTop: scroll.scrollTop,
+    })
+  }
 
   const textAvailabilityMessage = () => {
     const availability = textAvailability()

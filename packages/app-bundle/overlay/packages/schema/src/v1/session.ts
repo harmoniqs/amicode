@@ -6,6 +6,7 @@ import { FileDiff } from "../file-diff"
 import { Project } from "../project"
 import { Provider } from "../provider"
 import { Model } from "../model"
+import { ResponsePresentation } from "../prompt"
 import { NonNegativeInt, optional, statics } from "../schema"
 import { ascending } from "../identifier"
 import { SessionID } from "../session-id"
@@ -367,6 +368,7 @@ export const User = Schema.Struct({
   }),
   system: Schema.optional(Schema.String),
   tools: Schema.optional(Schema.Record(Schema.String, Schema.Boolean)),
+  response_presentation: ResponsePresentation.pipe(Schema.optional, Schema.withDecodingDefault(Effect.succeed("standard"))),
 }).annotate({ identifier: "UserMessage" })
 export type User = Types.DeepMutable<Schema.Schema.Type<typeof User>>
 

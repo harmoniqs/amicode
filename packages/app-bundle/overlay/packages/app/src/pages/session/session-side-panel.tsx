@@ -920,7 +920,24 @@ export function SessionSidePanel(props: {
                             inert={activeTab() !== SESSION_PREVIEW_TAB}
                           >
                             <div class="relative flex-1 min-h-0 overflow-hidden">
-                              <SessionPreviewTab previewFile={previewFile} />
+                              <Show when={sessionKey()} keyed>
+                                {(key) => {
+                                  const sessionView = layout.view(key)
+                                  return (
+                                    <SessionPreviewTab
+                                      previewFile={sessionView.previewFile.get}
+                                      onPreviewFileClose={() => sessionView.previewFile.set(null)}
+                                      openPaths={sessionView.previewOpen.get}
+                                      onOpenPath={sessionView.previewOpen.open}
+                                      onClosePath={sessionView.previewOpen.close}
+                                      closeRequest={sessionView.previewClose.get}
+                                      onCloseRequestChange={sessionView.previewClose.set}
+                                      drafts={sessionView.previewDrafts}
+                                      viewState={sessionView.previewViewState}
+                                    />
+                                  )
+                                }}
+                              </Show>
                             </div>
                           </Tabs.Content>
 
@@ -1250,7 +1267,24 @@ export function SessionSidePanel(props: {
                         inert={activeTab() !== SESSION_PREVIEW_TAB}
                       >
                         <div class="relative flex-1 min-h-0 overflow-hidden">
-                          <SessionPreviewTab previewFile={previewFile} />
+                          <Show when={sessionKey()} keyed>
+                            {(key) => {
+                              const sessionView = layout.view(key)
+                              return (
+                                <SessionPreviewTab
+                                  previewFile={sessionView.previewFile.get}
+                                  onPreviewFileClose={() => sessionView.previewFile.set(null)}
+                                  openPaths={sessionView.previewOpen.get}
+                                  onOpenPath={sessionView.previewOpen.open}
+                                  onClosePath={sessionView.previewOpen.close}
+                                  closeRequest={sessionView.previewClose.get}
+                                  onCloseRequestChange={sessionView.previewClose.set}
+                                  drafts={sessionView.previewDrafts}
+                                  viewState={sessionView.previewViewState}
+                                />
+                              )
+                            }}
+                          </Show>
                         </div>
                       </Tabs.Content>
 

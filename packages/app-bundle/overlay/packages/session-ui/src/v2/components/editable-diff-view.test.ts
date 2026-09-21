@@ -1320,7 +1320,12 @@ describe("selection highlight visibility", () => {
     parent.remove()
   })
 
-  test("theme injects a high-specificity .cm-selectionBackground rule that beats CM6 defaults", () => {
+  // #1247: dark-mode selection was invisible — a grey token (--v2-background-bg-layer-03,
+  // ~#3a3a3a) for the block-selection layer, and NO native ::selection rule for single-line
+  // inline selections (the active-line background hid them). The fix uses a semi-transparent
+  // accent for both the CM6 selection layer AND native ::selection, and a semi-transparent
+  // active line so it never obscures the selection.
+  test("theme injects a high-specificity accent selection rule that beats CM6 defaults", () => {
     const theme = buildThemeExtension("dark")
     handle = createDiffEditor({
       parent,
@@ -1337,22 +1342,28 @@ describe("selection highlight visibility", () => {
       .join("\n")
     const ruleRegex = /([^{}]+)\{([^{}]+)\}/g
     let match: RegExpExecArray | null
-    let foundCustomHighSpecRule = false
+    let foundHighSpecAccentRule = false
+    let foundNativeSelectionRule = false
     while ((match = ruleRegex.exec(allCss))) {
       const selector = match[1]!.trim()
       const declarations = match[2]!.trim()
-      // Look for a rule that has BOTH the high-specificity selector (child combinators)
-      // AND our CSS variable — proving our theme overrides CM6's hardcoded #233.
+      // (a) The high-specificity CM6 selection-layer rule (block selection) must use the
+      // accent token, not the near-invisible grey layer-03 token.
       if (
         selector.includes("> .cm-scroller > .cm-selectionLayer .cm-selectionBackground") &&
-        declarations.includes("--v2-background-bg-layer-03")
+        declarations.includes("--v2-accent-accent-base")
       ) {
-        foundCustomHighSpecRule = true
-        break
+        foundHighSpecAccentRule = true
+      }
+      // (b) A native ::selection rule (single-line inline selection) must exist and use the
+      // accent token, so a one-line selection is visible over the active line.
+      if (selector.includes("::selection") && declarations.includes("--v2-accent-accent-base")) {
+        foundNativeSelectionRule = true
       }
     }
 
-    expect(foundCustomHighSpecRule).toBe(true)
+    expect(foundHighSpecAccentRule).toBe(true)
+    expect(foundNativeSelectionRule).toBe(true)
   })
 })
 
