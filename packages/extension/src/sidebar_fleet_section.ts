@@ -378,6 +378,20 @@ function healthLabel(health: RosterHealth): string {
   return health; // reachable | degraded | down — the vocabulary is already legible
 }
 
+/** Focused tooltip for the status indicator dot: human-readable health +
+ *  relative last-seen age, so you can hover just the dot and learn when the
+ *  machine last reported without reading the full row tooltip. */
+function dotStatusTooltip(device: FleetDeviceRow, now?: number): string {
+  const status = device.health === "reachable" ? "Connected"
+    : device.health === "degraded" ? "Connection degraded"
+    : "Disconnected";
+  if (now !== undefined) {
+    const ts = Date.parse(device.lastSeen);
+    if (Number.isFinite(ts)) return `${status} · last seen ${formatAge(now - ts)}`;
+  }
+  return status;
+}
+
 // ── DOM render helpers ───────────────────────────────────────────────────────
 
 /** Render one read-only device row: a file-list-style line — status dot,
@@ -396,6 +410,7 @@ function renderDeviceRow(device: FleetDeviceRow, now?: number): HTMLElement {
   dot.className = "fleet-status-dot";
   dot.setAttribute("data-health", device.health);
   dot.setAttribute("aria-label", healthLabel(device.health));
+  dot.setAttribute("data-tooltip", dotStatusTooltip(device, now));
   rowEl.appendChild(dot);
 
   // middle: the device name + optional "(This Machine)" badge.

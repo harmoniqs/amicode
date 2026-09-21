@@ -1459,14 +1459,49 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
     .fleet-device-row:hover { background: var(--vscode-list-hoverBackground); }
     .fleet-device-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .fleet-local-badge { flex-shrink: 0; font-size: 11px; color: var(--vscode-descriptionForeground); white-space: nowrap; }
-    /* Left: a status dot. No inline text label (the row's tooltip + this
-       element's aria-label carry the tri-state for a11y instead). */
+    /* Left: a status dot. No inline text label — the dot's own CSS tooltip
+       (data-tooltip + ::before) and aria-label carry the tri-state for a11y.
+       The dot renders at 7px; ::after extends the hover target to ~17px so the
+       tooltip triggers without pixel-hunting. */
     .fleet-status-dot {
       width: 7px;
       height: 7px;
       border-radius: 999px;
       background: currentColor;
       flex-shrink: 0;
+      position: relative;
+      cursor: default;
+    }
+    /* Invisible hover-area expansion (the 7px dot is too small otherwise). */
+    .fleet-status-dot::after {
+      content: '';
+      position: absolute;
+      inset: -5px;
+      border-radius: 999px;
+    }
+    /* CSS tooltip — appears above the dot on hover. Uses VS Code's hover-widget
+       tokens so it looks native. */
+    .fleet-status-dot[data-tooltip]::before {
+      content: attr(data-tooltip);
+      position: absolute;
+      bottom: calc(100% + 6px);
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 4px 8px;
+      border-radius: 4px;
+      background: var(--vscode-editorHoverWidget-background, #2d2d30);
+      border: 1px solid var(--vscode-editorHoverWidget-border, #454545);
+      color: var(--vscode-editorHoverWidget-foreground, #cccccc);
+      font-size: 11px;
+      line-height: 1.4;
+      white-space: nowrap;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.15s ease-in-out;
+      z-index: 100;
+    }
+    .fleet-status-dot:hover::before {
+      opacity: 1;
     }
     .fleet-status-dot[data-health="reachable"] { color: var(--vscode-testing-iconPassed, var(--vscode-terminal-ansiGreen)); }
     .fleet-status-dot[data-health="degraded"] { color: var(--vscode-editorWarning-foreground, var(--vscode-terminal-ansiYellow)); }
