@@ -39,6 +39,11 @@ export interface FleetHeartbeatDeps {
     setInterval: (fn: () => void, ms: number) => unknown;
     clearInterval: (handle: unknown) => void;
   };
+  /** Peer roster sync — push this machine's row to each peer's hub service.
+   *  Each peer listens on loopback, so we go through SSH. The callback
+   *  receives the JSON-serialized row and pushes it to all known peers.
+   *  Absent → local-only (no cross-machine sync). */
+  pushToPeers?: (rowJson: string) => Promise<void>;
 }
 
 export class FleetHeartbeat {
@@ -80,7 +85,8 @@ export class FleetHeartbeat {
     this.stop();
   }
 
-  /** One heartbeat tick: resolve identity, build roster row, POST it. */
+  /** One heartbeat tick: resolve identity, build roster row, POST it locally
+   *  AND push to peers (when wired). */
   async tick(): Promise<void> {
     try {
       const identity = this.deps.resolveIdentity();
@@ -97,14 +103,22 @@ export class FleetHeartbeat {
         health: "reachable" as const,
         last_report: new Date(now).toISOString(),
       };
+      const rowJson = JSON.stringify(row);
+      // Local POST — updates this machine's own roster.
       await this.deps.fetchImpl(`${this.deps.serviceUrl}/amicode/roster`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: this.deps.authHeader,
         },
-        body: JSON.stringify(row),
+        body: rowJson,
       });
+      // Peer sync — push the same row to every known peer's hub service.
+      // Swallowed independently: a peer being unreachable never blocks the
+      // local update or other peers.
+      if (this.deps.pushToPeers) {
+        await this.deps.pushToPeers(rowJson).catch(() => {});
+      }
     } catch {
       // Swallow silently — next tick is the retry.
     }

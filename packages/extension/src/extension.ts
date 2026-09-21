@@ -576,6 +576,39 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       return amicodeService?.authHeader ?? "";
     },
     now: () => Date.now(),
+    // Peer roster sync: push this machine's heartbeat row to every known
+    // peer's hub service via SSH. Each peer listens on loopback, so we
+    // exec `ssh <alias> curl ...` to POST the row. Failures are swallowed
+    // independently — an unreachable peer never blocks the local update.
+    pushToPeers: async (rowJson: string) => {
+      try {
+        const rosterFile = (await import("./amicode_service/roster")).rosterFilePath();
+        const raw = fs.readFileSync(rosterFile, "utf8");
+        const doc = JSON.parse(raw);
+        const rows: Array<{ machine_id: string; sshAlias?: string }> = doc?.rows ?? [];
+        const topology = readFleetTopology();
+        const localAlias = (topology.kind === "ok" ? topology.canonical?.sshAlias : undefined) ?? "";
+        const localId = (topology.kind === "ok" ? topology.canonical?.host : undefined) ?? "";
+        const port = (topology.kind === "ok" ? topology.canonical?.port : undefined) ?? 4096;
+        const { execFile } = await import("node:child_process");
+        for (const row of rows) {
+          const alias = row.sshAlias;
+          if (!alias) continue;
+          // Skip self — don't SSH to ourselves.
+          if (alias === localAlias || row.machine_id === localId) continue;
+          // Fire-and-forget SSH to the peer's hub service.
+          const escaped = rowJson.replace(/'/g, "'\\''");
+          execFile("ssh", [
+            "-o", "BatchMode=yes",
+            "-o", "ConnectTimeout=5",
+            alias,
+            `curl -sf -X POST http://127.0.0.1:${port}/amicode/roster -H 'Content-Type: application/json' -d '${escaped}'`,
+          ], { timeout: 10_000 }, () => { /* swallow */ });
+        }
+      } catch {
+        // swallow — peer sync is best-effort
+      }
+    },
   });
   fleetHeartbeat.start();
   ctx.subscriptions.push({ dispose: () => { fleetHeartbeat?.dispose(); fleetHeartbeat = undefined; } });
