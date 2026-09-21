@@ -9,8 +9,8 @@ import { mkdtempSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createAmicodeService } from "../src/amicode_service";
-import { rosterReportResponse, rosterReadResponse } from "../src/amicode_service/roster";
-import { placementDescriptor, fleetTopologyPath } from "@amicode/schema";
+import { rosterReportResponse, rosterReadResponse, buildBootSelfReportRow } from "../src/amicode_service/roster";
+import { placementDescriptor, parseRosterRow, fleetTopologyPath } from "@amicode/schema";
 
 const ROW_A = {
   machine_id: "mac-studio-01",
@@ -256,5 +256,140 @@ describe("roster route — #1341 AC4: advertising `serving` never touches server
     const modulePath = fileURLToPath(new URL("../src/amicode_service/roster.ts", import.meta.url));
     const src = readFileSync(modulePath, "utf8");
     expect(src).not.toMatch(/writeFleetConfig|fleetTopologyPath|FLEET_TOPOLOGY_RELPATH/);
+  });
+});
+
+// #1379: the boot-time `serving` advertisement — an engine-armed machine writes
+// `serving` to its roster row's capabilities[] on boot; a client (never-fork,
+// hosted-only) does NOT. The row also carries `device_type` from the #1368
+// self-report vocabulary.
+describe("boot self-report — #1379: the `serving` advertisement on boot", () => {
+  let dir: string;
+  let file: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "roster-boot-"));
+    file = join(dir, "roster.json");
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  // AC1: an engine-armed machine writes `serving` to capabilities
+  it("an engine-armed machine's boot row carries `serving` in capabilities", () => {
+    const row = buildBootSelfReportRow({
+      machineId: "studio-01",
+      name: "Studio",
+      serverMode: "server",
+      sshAlias: "studio-ssh",
+      transport: "tailscale",
+      engineArmed: true,
+    });
+    expect(row.capabilities).toContain("serving");
+  });
+
+  // AC4: the composed row passes parseRosterRow validation
+  it("the composed boot row passes parseRosterRow validation", () => {
+    const row = buildBootSelfReportRow({
+      machineId: "studio-01",
+      name: "Studio",
+      serverMode: "server",
+      sshAlias: "studio-ssh",
+      transport: "tailscale",
+      engineArmed: true,
+    });
+    const parsed = parseRosterRow(row);
+    expect(parsed.ok).toBe(true);
+  });
+
+  // AC2: the row's device_type is populated when the caller provides it
+  it("the boot row carries device_type when the caller provides a detected form factor", () => {
+    const row = buildBootSelfReportRow({
+      machineId: "studio-01",
+      name: "Studio",
+      serverMode: "server",
+      sshAlias: "studio-ssh",
+      transport: "tailscale",
+      engineArmed: true,
+      deviceType: "desktop",
+    });
+    expect(row.device_type).toBe("desktop");
+  });
+
+  // AC2 (absent case): device_type is absent, not fabricated, when unknown
+  it("the boot row omits device_type when the caller has no form factor (never fabricated)", () => {
+    const row = buildBootSelfReportRow({
+      machineId: "studio-01",
+      name: "Studio",
+      serverMode: "server",
+      sshAlias: "studio-ssh",
+      transport: "tailscale",
+      engineArmed: true,
+    });
+    expect(row.device_type).toBeUndefined();
+  });
+
+  // AC3: placementDescriptor reads `serving: true` off an engine-armed boot row
+  it("placementDescriptor(row) returns serving:true for an engine-armed boot row", () => {
+    const row = buildBootSelfReportRow({
+      machineId: "studio-01",
+      name: "Studio",
+      serverMode: "server",
+      sshAlias: "studio-ssh",
+      transport: "tailscale",
+      engineArmed: true,
+    });
+    const d = placementDescriptor(row);
+    expect(d.serving).toBe(true);
+  });
+
+  // AC5: a client (NOT engine-armed) does NOT write `serving`
+  it("a non-engine-armed client's boot row does NOT carry `serving`", () => {
+    const row = buildBootSelfReportRow({
+      machineId: "macbook-02",
+      name: "MacBook",
+      serverMode: "client",
+      sshAlias: "macbook-ssh",
+      transport: "ssh",
+      engineArmed: false,
+    });
+    expect(row.capabilities).not.toContain("serving");
+    expect(placementDescriptor(row).serving).toBe(false);
+  });
+
+  // AC5 + AC4: the client boot row still validates
+  it("a non-engine-armed client's boot row passes parseRosterRow validation", () => {
+    const row = buildBootSelfReportRow({
+      machineId: "macbook-02",
+      name: "MacBook",
+      serverMode: "client",
+      sshAlias: "macbook-ssh",
+      transport: "ssh",
+      engineArmed: false,
+    });
+    const parsed = parseRosterRow(row);
+    expect(parsed.ok).toBe(true);
+  });
+
+  // AC1 + persistence: the boot self-report writes to the roster file
+  it("bootSelfReport writes the row to the roster file and reads back with `serving`", () => {
+    const result = JSON.parse(
+      rosterReportResponse(
+        JSON.stringify(
+          buildBootSelfReportRow({
+            machineId: "studio-01",
+            name: "Studio",
+            serverMode: "server",
+            sshAlias: "studio-ssh",
+            transport: "tailscale",
+            engineArmed: true,
+            deviceType: "desktop",
+          }),
+        ),
+        { rosterFile: file },
+      ),
+    );
+    expect(result.ok).toBe(true);
+    const rows = JSON.parse(rosterReadResponse({ rosterFile: file })).rows;
+    expect(rows).toHaveLength(1);
+    expect(rows[0].capabilities).toContain("serving");
+    expect(rows[0].device_type).toBe("desktop");
   });
 });

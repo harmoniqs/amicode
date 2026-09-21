@@ -22,6 +22,7 @@ import {
   parseRosterRow,
   upsertRosterRow,
   type RosterDocument,
+  type RosterRow,
 } from "@amicode/schema";
 import { atomicWriteFileSync } from "./credentials";
 import { getBindHostname, isLoopbackHostname } from "./bind_host";
@@ -101,4 +102,53 @@ export function rosterReportResponse(rawBody: string, deps: RosterDeps = {}): st
     return refuse("write_failed", "the roster self-report could not be persisted");
   }
   return JSON.stringify({ ok: true, machine_id: row.row.machine_id, error: null });
+}
+
+// ── boot-time self-report (#1379, ADR 0027 §5/D8) ──────────────────────────
+// An engine-armed machine (standalone or server — NOT a hosted-only client)
+// advertises `serving` in its roster row's capabilities[] on boot, signalling
+// that its already-running engine is placement-ready. The `device_type` is
+// populated from the #1368 self-report vocabulary (ADR 0028) when the caller
+// detects one. This is the COMPOSITION half; the wiring half (calling this at
+// boot + POSTing the row) lives with the extension's activation sequence.
+
+/** The inputs for a boot-time roster self-report — the machine's identity,
+ *  whether it has a local engine, and the optional detected form factor.
+ *  Every field mirrors the RosterRow contract, minus `capabilities` (derived
+ *  from `engineArmed`), `health` (always `reachable` for the reporting
+ *  machine itself), and `last_report` (stamped at call time). */
+export interface BootSelfReportInput {
+  machineId: string;
+  name: string;
+  serverMode: string;
+  sshAlias: string;
+  transport: string;
+  /** Whether this machine has a local engine (true for standalone/server,
+   *  false for a hosted-only / never-fork client). Drives the `serving` tag. */
+  engineArmed: boolean;
+  /** The detected device form factor from the #1368 vocabulary (ADR 0028).
+   *  Absent when detection failed or was not attempted — never fabricated. */
+  deviceType?: string;
+}
+
+/** Build the roster self-report row a machine writes on boot. An engine-armed
+ *  machine includes `serving` in capabilities (a placement-ready fact a future
+ *  scheduler reads via `placementDescriptor`); a hosted-only client does NOT.
+ *  The row is valid per `parseRosterRow` by construction. */
+export function buildBootSelfReportRow(input: BootSelfReportInput): RosterRow {
+  const capabilities: string[] = [];
+  if (input.engineArmed) {
+    capabilities.push("serving");
+  }
+  return {
+    machine_id: input.machineId,
+    name: input.name,
+    server_mode: input.serverMode,
+    capabilities,
+    sshAlias: input.sshAlias,
+    transport: input.transport,
+    last_report: new Date().toISOString(),
+    health: "reachable",
+    ...(input.deviceType !== undefined ? { device_type: input.deviceType } : {}),
+  };
 }
