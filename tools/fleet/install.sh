@@ -219,11 +219,18 @@ elif [[ "$(uname -s)" == "Darwin" ]]; then
         die "no sshAlias in the fleet topology (the projection carries no canonical.sshAlias) — refusing to install a tunnel that cannot resolve its host (add canonical.sshAlias and re-enroll)"
       fi
       mkdir -p "$(dirname "$PLIST_DST")"
-      sed -e "s/FLEET_SSH_ALIAS/${SSH_ALIAS}/g" -e "s/127\.0\.0\.1:4096:127\.0\.0\.1:4096/127.0.0.1:${FLEET_PORT}:127.0.0.1:${FLEET_PORT}/g" "$PLIST_SRC" > "$PLIST_DST"
-      # reload
-      launchctl unload "$PLIST_DST" 2>/dev/null || true
-      launchctl load "$PLIST_DST" 2>/dev/null || launchctl bootstrap "gui/$(id -u)" "$PLIST_DST" 2>/dev/null || true
-      say "installed tunnel $PLIST_DST and (re)loaded (alias ${SSH_ALIAS}, port ${FLEET_PORT})"
+      _plist_tmp="$(mktemp)"
+      sed -e "s/FLEET_SSH_ALIAS/${SSH_ALIAS}/g" -e "s/127\.0\.0\.1:4096:127\.0\.0\.1:4096/127.0.0.1:${FLEET_PORT}:127.0.0.1:${FLEET_PORT}/g" "$PLIST_SRC" > "$_plist_tmp"
+      if [[ -f "$PLIST_DST" ]] && cmp -s "$_plist_tmp" "$PLIST_DST"; then
+        say "tunnel plist unchanged — skipping reload"
+      else
+        cp "$_plist_tmp" "$PLIST_DST"
+        # reload
+        launchctl unload "$PLIST_DST" 2>/dev/null || true
+        launchctl load "$PLIST_DST" 2>/dev/null || launchctl bootstrap "gui/$(id -u)" "$PLIST_DST" 2>/dev/null || true
+        say "installed tunnel $PLIST_DST and (re)loaded (alias ${SSH_ALIAS}, port ${FLEET_PORT})"
+      fi
+      rm -f "$_plist_tmp"
     fi
   fi
 fi
