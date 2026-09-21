@@ -8,8 +8,15 @@
 //   - renderFleetSection(): the view-model → DOM (rows, posture badge, the
 //     single Manage affordance), and the read-only click contract.
 import { describe, it, expect, vi } from "vitest";
-import { buildFleetSectionModel, renderFleetSection } from "../src/sidebar_fleet_section";
-import type { FleetSectionModel } from "../src/sidebar_fleet_section";
+import {
+  buildFleetSectionModel,
+  renderFleetSection,
+  effectiveHealth,
+  formatAge,
+  DEGRADED_AGE_MS,
+  DOWN_AGE_MS,
+} from "../src/sidebar_fleet_section";
+import type { FleetSectionModel, RosterHealth } from "../src/sidebar_fleet_section";
 
 // A lawful roster row (the #1318 / @amicode/schema RosterRow shape).
 function row(over: Partial<Record<string, unknown>> = {}) {
@@ -26,7 +33,9 @@ function row(over: Partial<Record<string, unknown>> = {}) {
   };
 }
 
-/** Default FleetSectionInput with only the fields you want to override. */
+/** Default FleetSectionInput with only the fields you want to override.
+ *  `now` is pinned to the test row's `last_report` so effectiveHealth sees
+ *  0 age and existing assertions pass unchanged (#1375). */
 function input(over: Record<string, unknown> = {}) {
   return {
     roster: [] as ReturnType<typeof row>[],
@@ -34,6 +43,7 @@ function input(over: Record<string, unknown> = {}) {
     posture: null,
     manageAvailable: false,
     troubleshootAvailable: false,
+    now: Date.parse("2026-09-20T12:00:00.000Z"),
     ...over,
   };
 }
@@ -273,6 +283,7 @@ function populatedModel(over: Partial<FleetSectionModel> = {}): FleetSectionMode
     posture: { serverMode: "server", hostname: "mac-studio-01", mode: "fleet", reachable: true, hub: { name: "hub", base_url: "u" } },
     manageAvailable: true,
     troubleshootAvailable: true,
+    now: Date.parse("2026-09-20T12:00:00.000Z"),
     ...(over as any),
   });
 }
@@ -346,7 +357,8 @@ describe("renderFleetSection — per-device rows + posture badge (AC1, AC2)", ()
     expect(r.querySelector(".fleet-last-seen")).toBeNull();
     const title = r.getAttribute("title") ?? "";
     expect(title).toContain("server");
-    expect(title).toContain("2026-09-20T12:00:00.000Z");
+    // #1375: tooltip shows relative age ("just now") via formatAge, not raw ISO.
+    expect(title).toContain("just now");
     expect(title).toContain("compute");
     expect(title).toContain("gpu-rig");
   });
@@ -506,5 +518,161 @@ describe("buildFleetSectionModel — server self-registration collapses to one r
     const serverRows = model.devices.filter((d) => d.machineId === "Mac.mynetworksettings.com");
     expect(serverRows).toHaveLength(1);
     expect(serverRows[0].isLocal).toBe(true); // the roster row IS the self-row (collapsed)
+  });
+});
+
+// ── #1375: staleness-derived display health ──────────────────────────────────
+
+describe("effectiveHealth — staleness-derived display health (#1375)", () => {
+  const NOW = Date.parse("2026-09-20T12:00:00.000Z");
+
+  it("reachable + fresh (< DEGRADED_AGE_MS) → reachable", () => {
+    const fresh = new Date(NOW - 30_000).toISOString(); // 30s ago
+    expect(effectiveHealth("reachable", fresh, NOW)).toBe("reachable");
+  });
+
+  it("reachable + stale (>= DEGRADED_AGE_MS, < DOWN_AGE_MS) → degraded", () => {
+    const stale = new Date(NOW - 200_000).toISOString(); // 200s (~3.3min)
+    expect(effectiveHealth("reachable", stale, NOW)).toBe("degraded");
+  });
+
+  it("reachable + very stale (>= DOWN_AGE_MS) → down", () => {
+    const old = new Date(NOW - 400_000).toISOString(); // 400s (~6.7min)
+    expect(effectiveHealth("reachable", old, NOW)).toBe("down");
+  });
+
+  it("degraded from enrollment + any age → degraded (unchanged)", () => {
+    const old = new Date(NOW - 999_999).toISOString();
+    expect(effectiveHealth("degraded", old, NOW)).toBe("degraded");
+  });
+
+  it("down from enrollment + any age → down (unchanged)", () => {
+    const fresh = new Date(NOW - 1_000).toISOString();
+    expect(effectiveHealth("down", fresh, NOW)).toBe("down");
+  });
+
+  it("reachable + unparseable lastSeen → reachable (trust raw)", () => {
+    expect(effectiveHealth("reachable", "not-a-date", NOW)).toBe("reachable");
+  });
+
+  it("reachable + future timestamp → reachable (trust raw)", () => {
+    const future = new Date(NOW + 60_000).toISOString();
+    expect(effectiveHealth("reachable", future, NOW)).toBe("reachable");
+  });
+
+  it("reachable + exactly at DEGRADED_AGE_MS boundary → degraded", () => {
+    const exact = new Date(NOW - DEGRADED_AGE_MS).toISOString();
+    expect(effectiveHealth("reachable", exact, NOW)).toBe("degraded");
+  });
+
+  it("reachable + exactly at DOWN_AGE_MS boundary → down", () => {
+    const exact = new Date(NOW - DOWN_AGE_MS).toISOString();
+    expect(effectiveHealth("reachable", exact, NOW)).toBe("down");
+  });
+});
+
+describe("formatAge", () => {
+  it("<5s → 'just now'", () => {
+    expect(formatAge(3_000)).toBe("just now");
+  });
+
+  it("30s → '30s ago'", () => {
+    expect(formatAge(30_000)).toBe("30s ago");
+  });
+
+  it("90s → '1m 30s ago'", () => {
+    expect(formatAge(90_000)).toBe("1m 30s ago");
+  });
+
+  it("300s → '5m ago'", () => {
+    expect(formatAge(300_000)).toBe("5m ago");
+  });
+
+  it("negative → 'just now'", () => {
+    expect(formatAge(-1000)).toBe("just now");
+  });
+});
+
+describe("buildFleetSectionModel — staleness integration (#1375)", () => {
+  const NOW = Date.parse("2026-09-20T12:00:00.000Z");
+
+  it("maps a roster row through effectiveHealth (fresh → reachable)", () => {
+    const freshReport = new Date(NOW - 10_000).toISOString();
+    const model = buildFleetSectionModel(input({
+      roster: [row({ last_report: freshReport, health: "reachable" })],
+      now: NOW,
+    }));
+    expect(model.devices[0].health).toBe("reachable");
+  });
+
+  it("maps a roster row through effectiveHealth (stale → degraded)", () => {
+    const staleReport = new Date(NOW - 200_000).toISOString();
+    const model = buildFleetSectionModel(input({
+      roster: [row({ last_report: staleReport, health: "reachable" })],
+      now: NOW,
+    }));
+    expect(model.devices[0].health).toBe("degraded");
+    // rosterHealth carries the raw enrollment health
+    expect(model.devices[0].rosterHealth).toBe("reachable");
+  });
+
+  it("carries `now` through to the model", () => {
+    const model = buildFleetSectionModel(input({ now: NOW }));
+    expect(model.now).toBe(NOW);
+  });
+
+  it("self-row is EXEMPT from staleness (always reachable)", () => {
+    const model = buildFleetSectionModel(input({
+      localDevice: { machineId: "me", name: "Me", serveStance: "server", deviceType: undefined },
+      now: NOW,
+    }));
+    expect(model.devices[0].health).toBe("reachable");
+  });
+
+  it("synthesized canonical-server row is EXEMPT from staleness", () => {
+    const model = buildFleetSectionModel(input({
+      roster: [],
+      localDevice: { machineId: "laptop", name: "Laptop", serveStance: "client", deviceType: "laptop" },
+      canonicalServer: { machineId: "server-01", name: "Server" },
+      now: NOW,
+    }));
+    const server = model.devices.find((d) => d.machineId === "server-01");
+    expect(server!.health).toBe("reachable"); // from reachable roster, not staleness-derived
+  });
+});
+
+describe("renderFleetSection — enhanced tooltip with staleness (#1375)", () => {
+  const NOW = Date.parse("2026-09-20T12:00:00.000Z");
+
+  it("tooltip shows relative age via formatAge when now is available", () => {
+    const report = new Date(NOW - 90_000).toISOString(); // 1m 30s ago
+    const model = buildFleetSectionModel({
+      roster: [{ machine_id: "a", name: "A", server_mode: "server", capabilities: [], last_report: report, health: "reachable" }],
+      rosterReachable: true,
+      posture: null,
+      manageAvailable: false,
+      troubleshootAvailable: false,
+      now: NOW,
+    });
+    const el = document.createElement("div");
+    renderFleetSection(el, model, () => {});
+    const row = el.querySelector(".fleet-device-row") as HTMLElement;
+    expect(row.title).toContain("1m 30s ago");
+  });
+
+  it("tooltip annotates staleness-degraded health: 'degraded (no heartbeat)'", () => {
+    const stale = new Date(NOW - 200_000).toISOString(); // > 3min → degraded
+    const model = buildFleetSectionModel({
+      roster: [{ machine_id: "a", name: "A", server_mode: "server", capabilities: [], last_report: stale, health: "reachable" }],
+      rosterReachable: true,
+      posture: null,
+      manageAvailable: false,
+      troubleshootAvailable: false,
+      now: NOW,
+    });
+    const el = document.createElement("div");
+    renderFleetSection(el, model, () => {});
+    const row = el.querySelector(".fleet-device-row") as HTMLElement;
+    expect(row.title).toContain("degraded (no heartbeat)");
   });
 });

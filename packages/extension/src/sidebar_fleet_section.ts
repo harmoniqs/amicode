@@ -20,6 +20,36 @@
 /** The per-device reachability tri-state (schema HEALTH_VOCABULARY, #1318). */
 export type RosterHealth = "reachable" | "degraded" | "down";
 
+/** Age (ms) at which a "reachable" row degrades to "degraded" (~3 missed heartbeats). */
+export const DEGRADED_AGE_MS = 180_000;
+
+/** Age (ms) at which a "reachable" row degrades to "down" (~5 missed heartbeats). */
+export const DOWN_AGE_MS = 300_000;
+
+/** Derive display health from roster health + last_report age. Pure.
+ *  Enrollment-time failures (degraded/down) pass through unchanged.
+ *  Only "reachable" rows are subject to staleness decay. */
+export function effectiveHealth(health: RosterHealth, lastSeen: string, now: number): RosterHealth {
+  if (health !== "reachable") return health;
+  const ts = Date.parse(lastSeen);
+  if (!Number.isFinite(ts) || ts > now) return health;
+  const age = now - ts;
+  if (age >= DOWN_AGE_MS) return "down";
+  if (age >= DEGRADED_AGE_MS) return "degraded";
+  return "reachable";
+}
+
+/** Format millisecond age into a human-readable relative timestamp. */
+export function formatAge(ms: number): string {
+  if (ms < 0 || !Number.isFinite(ms)) return "just now";
+  const totalSec = Math.floor(ms / 1000);
+  if (totalSec < 5) return "just now";
+  const min = Math.floor(totalSec / 60);
+  const sec = totalSec % 60;
+  if (min === 0) return `${sec}s ago`;
+  return sec > 0 ? `${min}m ${sec}s ago` : `${min}m ago`;
+}
+
 /** The KNOWN behavior-adjacent capability tags (schema KNOWN_CAPABILITY_TAGS,
  *  ADR 0026 §1) — re-declared here to keep this module node-import-free. Any
  *  OTHER tag is a valid descriptive label (known:false), never rejected. */
@@ -67,6 +97,9 @@ export interface FleetDeviceRow {
   lastSeen: string;
   /** True when this row represents the local machine (the self-row). */
   isLocal: boolean;
+  /** The raw roster health before staleness folding (#1375). Only set on
+   *  roster-sourced rows; undefined on synthesized rows (self, canonical). */
+  rosterHealth?: RosterHealth;
 }
 
 /** The state of the section as a whole. `unreachable` is the honest host-down
@@ -127,6 +160,8 @@ export interface FleetSectionInput {
    *  or standalone machine (the server is its own self-row; a standalone has
    *  no canonical). */
   canonicalServer?: CanonicalServerInput | null;
+  /** Injectable clock for staleness computation (#1375). Defaults to Date.now(). */
+  now?: number;
 }
 
 /** The canonical-server seed — the machine a client points at, from fleet.json
@@ -160,6 +195,8 @@ export interface FleetSectionModel {
   /** The Troubleshoot affordance — enabled when session-launch is available
    *  AND this machine is part of a fleet (non-standalone). */
   troubleshoot: { enabled: boolean };
+  /** Injectable clock timestamp for tooltip rendering (#1375). */
+  now?: number;
 }
 
 /** Fold the attach posture into the badge's link-health signal: an attached,
@@ -174,6 +211,7 @@ function linkHealthOf(posture: FleetPostureInput): "ok" | "degraded" | "down" {
 /** Build the fleet-section view-model. Pure. */
 export function buildFleetSectionModel(input: FleetSectionInput): FleetSectionModel {
   const local = input.localDevice ?? null;
+  const now = input.now ?? Date.now();
   // No fleet.json at all (serve-stance standalone) ⇒ this machine was never
   // part of a fleet — the peer roster's reachability is irrelevant to that
   // fact, so this collapse takes PRIORITY over the unreachable check below
@@ -186,6 +224,7 @@ export function buildFleetSectionModel(input: FleetSectionInput): FleetSectionMo
       posture: buildPostureBadge(input.posture),
       manage: { enabled: input.manageAvailable },
       troubleshoot: { enabled: false },
+      now,
     };
   }
   // Host down / roster read failed ⇒ the honest unreachable state. A stale
@@ -206,6 +245,7 @@ export function buildFleetSectionModel(input: FleetSectionInput): FleetSectionMo
       posture: buildPostureBadge(input.posture),
       manage: { enabled: input.manageAvailable },
       troubleshoot: { enabled: input.troubleshootAvailable },
+      now,
     };
   }
   const localId = local?.machineId ?? null;
@@ -215,7 +255,8 @@ export function buildFleetSectionModel(input: FleetSectionInput): FleetSectionMo
     role: r.server_mode,
     typeLabel: r.device_type ?? r.server_mode,
     capabilities: r.capabilities.map((tag) => ({ tag, known: isKnownCapability(tag) })),
-    health: r.health,
+    health: effectiveHealth(r.health as RosterHealth, r.last_report, now),
+    rosterHealth: r.health as RosterHealth,
     lastSeen: r.last_report,
     isLocal: localId !== null && r.machine_id === localId,
   }));
@@ -244,6 +285,7 @@ export function buildFleetSectionModel(input: FleetSectionInput): FleetSectionMo
     posture: buildPostureBadge(input.posture),
     manage: { enabled: input.manageAvailable },
     troubleshoot: { enabled: input.troubleshootAvailable },
+    now,
   };
 }
 
@@ -340,12 +382,13 @@ function healthLabel(health: RosterHealth): string {
 
 /** Render one read-only device row: a file-list-style line — status dot,
  *  name, type pill (#1359). `role` / `last-seen` / `capabilities` move to the
- *  row's `title` tooltip rather than cluttering the row body. */
-function renderDeviceRow(device: FleetDeviceRow): HTMLElement {
+ *  row's `title` tooltip rather than cluttering the row body.
+ *  `now` is the injectable clock for relative-age tooltips (#1375). */
+function renderDeviceRow(device: FleetDeviceRow, now?: number): HTMLElement {
   const rowEl = document.createElement("div");
   rowEl.className = "fleet-device-row";
   rowEl.setAttribute("data-machine-id", device.machineId);
-  rowEl.title = deviceTooltip(device);
+  rowEl.title = deviceTooltip(device, device.rosterHealth, now);
 
   // left: a status dot — color is never the only signal, so the same
   // tri-state also carries as an aria-label (a11y) even without inline text.
@@ -378,9 +421,21 @@ function renderDeviceRow(device: FleetDeviceRow): HTMLElement {
 }
 
 /** The row's hover tooltip: role, last-seen, and capabilities — demoted from
- *  inline text (#1359) but not lost. */
-function deviceTooltip(device: FleetDeviceRow): string {
-  const parts = [`role: ${device.role}`, `last-seen: ${device.lastSeen}`];
+ *  inline text (#1359) but not lost. When `now` is available, last-seen shows
+ *  relative age via formatAge (#1375). When staleness changed the display
+ *  health (rosterHealth ≠ device.health), the change is annotated. */
+function deviceTooltip(device: FleetDeviceRow, rosterHealth?: RosterHealth, now?: number): string {
+  let lastSeenText: string;
+  if (now !== undefined) {
+    const ts = Date.parse(device.lastSeen);
+    lastSeenText = Number.isFinite(ts) ? formatAge(now - ts) : device.lastSeen;
+  } else {
+    lastSeenText = device.lastSeen;
+  }
+  const parts = [`role: ${device.role}`, `last-seen: ${lastSeenText}`];
+  if (rosterHealth !== undefined && device.health !== rosterHealth) {
+    parts.push(`${device.health} (no heartbeat)`);
+  }
   if (device.capabilities.length > 0) {
     parts.push(`capabilities: ${device.capabilities.map((c) => c.tag).join(", ")}`);
   }
@@ -474,7 +529,7 @@ export function renderFleetSection(
       const list = document.createElement("div");
       list.className = "fleet-device-list";
       for (const device of model.devices) {
-        list.appendChild(renderDeviceRow(device));
+        list.appendChild(renderDeviceRow(device, model.now));
       }
       container.appendChild(list);
     }

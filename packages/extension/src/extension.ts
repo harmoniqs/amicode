@@ -8,6 +8,7 @@ import { resolveSelectedLaunch, HARNESS_REGISTRY } from "./harness";
 import { ChatPanel } from "./chat_panel";
 import { DeckPanel } from "./deck_panel";
 import { SidebarViewProvider, createNewProject, createNewEnvironment, defaultFleetSectionDeps } from "./sidebar_view";
+import { FleetHeartbeat } from "./fleet_heartbeat";
 import { StatusBarManager } from "./status_bar";
 import {
   prepareOpencodeProject,
@@ -138,6 +139,9 @@ let distillerSetup: DistillerSetup | undefined;
 let devicePollTimer: ReturnType<typeof setInterval> | undefined;
 /** Fleet client tunnel poll — when the machine is a fleet client (guard `exit 1`), we don't spawn. */
 let fleetClientPoll: ReturnType<typeof setInterval> | undefined;
+/** Fleet heartbeat producer (#1375) — periodically POSTs this machine's roster
+ *  row with a fresh last_report so peers see it as reachable. */
+let fleetHeartbeat: FleetHeartbeat | undefined;
 
 const DEVICE_POLL_MS = 2500; // mirror the RunsManager cadence
 
@@ -526,6 +530,41 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // Manager Work Column tab. registerFleetPanel stays a no-op (retired).
   registerFleetPanel(ctx);
   registerFleetManagerCommands(ctx);
+
+  // #1375: fleet heartbeat producer — periodically re-POSTs this machine's
+  // roster row with a fresh last_report so peers see it as reachable. Lazy
+  // resolution: identity + service endpoint resolve at tick time (not at
+  // construction) because the service may not be up yet. Start unconditionally —
+  // resolveIdentity returns null for standalone/unenrolled and tick no-ops.
+  fleetHeartbeat = new FleetHeartbeat({
+    resolveIdentity: () => {
+      try {
+        const localDeps = defaultFleetSectionDeps({});
+        const local = localDeps.readLocalDevice?.();
+        if (!local || local.serveStance === "standalone") return null;
+        return {
+          machine_id: local.machineId,
+          name: local.name,
+          server_mode: local.serveStance,
+          capabilities: [],
+          device_type: local.deviceType,
+        };
+      } catch {
+        return null;
+      }
+    },
+    fetchImpl: fetch,
+    get serviceUrl() {
+      return amicodeService ? new URL(amicodeService.url).origin : "http://127.0.0.1:4095";
+    },
+    get authHeader() {
+      return amicodeService?.authHeader ?? "";
+    },
+    now: () => Date.now(),
+  });
+  fleetHeartbeat.start();
+  ctx.subscriptions.push({ dispose: () => { fleetHeartbeat?.dispose(); fleetHeartbeat = undefined; } });
+
   statusBar = new StatusBarManager();
   ctx.subscriptions.push({ dispose: () => statusBar?.dispose() });
 
@@ -2774,6 +2813,8 @@ export function deactivate(): void {
     clearInterval(fleetClientPoll);
     fleetClientPoll = undefined;
   }
+  fleetHeartbeat?.dispose();
+  fleetHeartbeat = undefined;
   if (devicePollTimer) {
     clearInterval(devicePollTimer);
     devicePollTimer = undefined;
