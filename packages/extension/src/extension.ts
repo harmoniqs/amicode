@@ -542,12 +542,16 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         const localDeps = defaultFleetSectionDeps({});
         const local = localDeps.readLocalDevice?.();
         if (!local || local.serveStance === "standalone") return null;
+        const topology = readFleetTopology();
+        const sshAlias = (topology.kind === "ok" ? topology.canonical?.sshAlias : undefined) ?? local.machineId;
         return {
           machine_id: local.machineId,
           name: local.name,
           server_mode: local.serveStance,
-          capabilities: [],
+          capabilities: local.serveStance === "server" ? ["serving"] : [],
           device_type: local.deviceType,
+          sshAlias,
+          transport: "ssh",
         };
       } catch {
         return null;

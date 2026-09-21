@@ -10,6 +10,8 @@ function makeDeps(overrides: Record<string, unknown> = {}) {
       server_mode: "server",
       capabilities: ["compute"],
       device_type: "desktop",
+      sshAlias: "mac-studio-01",
+      transport: "ssh",
     })),
     fetchImpl: vi.fn(async () => ({ ok: true })),
     serviceUrl: "http://127.0.0.1:4095",
@@ -35,6 +37,8 @@ describe("FleetHeartbeat (#1375)", () => {
     expect(body.machine_id).toBe("mac-studio-01");
     expect(body.name).toBe("Mac Studio");
     expect(body.server_mode).toBe("server");
+    expect(body.sshAlias).toBe("mac-studio-01");
+    expect(body.transport).toBe("ssh");
   });
 
   it("tick sends health: 'reachable' and a fresh last_report", async () => {

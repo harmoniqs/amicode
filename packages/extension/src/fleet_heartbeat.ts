@@ -21,6 +21,8 @@ export interface FleetHeartbeatDeps {
     server_mode: string;
     capabilities: string[];
     device_type?: string;
+    sshAlias: string;
+    transport: string;
   } | null;
   /** The fetch implementation (injectable for tests). */
   fetchImpl: typeof fetch;
@@ -90,6 +92,8 @@ export class FleetHeartbeat {
         server_mode: identity.server_mode,
         capabilities: identity.capabilities,
         device_type: identity.device_type,
+        sshAlias: identity.sshAlias,
+        transport: identity.transport,
         health: "reachable" as const,
         last_report: new Date(now).toISOString(),
       };
