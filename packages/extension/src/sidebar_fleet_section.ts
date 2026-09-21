@@ -20,11 +20,11 @@
 /** The per-device reachability tri-state (schema HEALTH_VOCABULARY, #1318). */
 export type RosterHealth = "reachable" | "degraded" | "down";
 
-/** Age (ms) at which a "reachable" row degrades to "degraded" (~3 missed heartbeats). */
-export const DEGRADED_AGE_MS = 180_000;
+/** Age (ms) at which a "reachable" row degrades to "degraded" (~2 missed heartbeats). */
+export const DEGRADED_AGE_MS = 60_000;
 
-/** Age (ms) at which a "reachable" row degrades to "down" (~5 missed heartbeats). */
-export const DOWN_AGE_MS = 300_000;
+/** Age (ms) at which a "reachable" row degrades to "down" (~4 missed heartbeats). */
+export const DOWN_AGE_MS = 120_000;
 
 /** Derive display health from roster health + last_report age. Pure.
  *  Enrollment-time failures (degraded/down) pass through unchanged.

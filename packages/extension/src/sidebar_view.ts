@@ -813,7 +813,7 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
       // #1375: staleness sweep — re-push every 60s so display health degrades
       // even when roster.json is static (no fs.watch event). The model's
       // effectiveHealth re-evaluates staleness against the current clock.
-      this.fleetStalenessTimer = setInterval(() => this.pushFleetStatus(), 60_000);
+      this.fleetStalenessTimer = setInterval(() => this.pushFleetStatus(), 30_000);
     }
 
     webviewView.onDidDispose(() => {

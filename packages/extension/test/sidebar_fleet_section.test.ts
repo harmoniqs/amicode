@@ -157,9 +157,9 @@ describe("buildFleetSectionModel — peer fleet posture override (ADR 0029)", ()
   });
 
   it("overrides linkHealth to 'degraded' when peers are degraded", () => {
-    // 200s old → past DEGRADED_AGE_MS (180s) but under DOWN_AGE_MS (300s)
+    // 90s old → past DEGRADED_AGE_MS (60s) but under DOWN_AGE_MS (120s)
     const model = buildFleetSectionModel(input({
-      roster: [row({ machine_id: "macbook", name: "MacBook", last_report: "2026-09-20T11:56:40.000Z" })],
+      roster: [row({ machine_id: "macbook", name: "MacBook", last_report: "2026-09-20T11:58:30.000Z" })],
       localDevice: serverLocal,
       posture: stalePosture,
     }));
@@ -579,7 +579,7 @@ describe("effectiveHealth — staleness-derived display health (#1375)", () => {
   });
 
   it("reachable + stale (>= DEGRADED_AGE_MS, < DOWN_AGE_MS) → degraded", () => {
-    const stale = new Date(NOW - 200_000).toISOString(); // 200s (~3.3min)
+    const stale = new Date(NOW - 90_000).toISOString(); // 90s (~1.5min)
     expect(effectiveHealth("reachable", stale, NOW)).toBe("degraded");
   });
 
@@ -653,7 +653,7 @@ describe("buildFleetSectionModel — staleness integration (#1375)", () => {
   });
 
   it("maps a roster row through effectiveHealth (stale → degraded)", () => {
-    const staleReport = new Date(NOW - 200_000).toISOString();
+    const staleReport = new Date(NOW - 90_000).toISOString();
     const model = buildFleetSectionModel(input({
       roster: [row({ last_report: staleReport, health: "reachable" })],
       now: NOW,
@@ -708,7 +708,7 @@ describe("renderFleetSection — enhanced tooltip with staleness (#1375)", () =>
   });
 
   it("tooltip annotates staleness-degraded health: 'degraded (no heartbeat)'", () => {
-    const stale = new Date(NOW - 200_000).toISOString(); // > 3min → degraded
+    const stale = new Date(NOW - 90_000).toISOString(); // > 1min → degraded
     const model = buildFleetSectionModel({
       roster: [{ machine_id: "a", name: "A", server_mode: "server", capabilities: [], last_report: stale, health: "reachable" }],
       rosterReachable: true,

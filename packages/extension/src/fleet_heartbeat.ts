@@ -8,8 +8,8 @@
 // returns null). Error handling: swallow failures silently; next tick is the
 // retry. Semantic: "this machine's Amicode instance is active".
 
-/** Default heartbeat interval: 60 seconds. */
-export const HEARTBEAT_INTERVAL_MS = 60_000;
+/** Default heartbeat interval: 30 seconds. */
+export const HEARTBEAT_INTERVAL_MS = 30_000;
 
 /** DI seams for testability — every impure operation is injectable. */
 export interface FleetHeartbeatDeps {
