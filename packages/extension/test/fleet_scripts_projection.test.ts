@@ -465,7 +465,8 @@ describe("#1258 the installer provisions the canonical hub service (reboot-survi
     chmodSync(guardDst, 0o755);
     const settings = join(tmp, "Library", "Application Support", "Code", "User", "settings.json");
     mkdirSync(join(tmp, "Library", "Application Support", "Code", "User"), { recursive: true });
-    writeFileSync(settings, JSON.stringify({ "amicode.opencodeBinary": guardDst, "amicode.opencodePort": 4096 }, null, 2));
+    // #1354: server role uses FLEET_PORT - 1 for the engine port and no guard binary
+    writeFileSync(settings, JSON.stringify({ "amicode.opencodePort": 4095 }, null, 2));
     const r = runScript(INSTALL, ["--check"], installEnv());
     expect(r.code).toBe(1);
     expect(r.out).toMatch(/hub service/i);
