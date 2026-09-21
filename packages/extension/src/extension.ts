@@ -2303,12 +2303,11 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   };
   ctx.subscriptions.push(vscode.commands.registerCommand("amicode.fleet.connectRemoteSsh", () => void runConnectRemoteSsh()));
 
-  // Activation-time fleet drift warning (#1261 AC4: cross-platform). If this
-  // machine is a fleet client but the guard is missing/stale or the settings
-  // are wrong, surface ONE warning with a Fix action — don't silently fork.
-  // The guard/settings/role checks run on mac, linux, AND WSL; only the
-  // launchd-plist tunnel check is darwin-specific (it self-skips elsewhere,
-  // #1260 owns the linux tunnel).
+  // Activation-time fleet health warning. If the health report surfaces a
+  // failure (e.g. a client missing the guard or tunnel), show ONE warning with
+  // a Troubleshoot action that opens a new chat session invoking the
+  // troubleshoot-fleet skill — the same path the sidebar's Troubleshoot button
+  // takes. The detail is always logged to the output channel.
   void (() => {
     try {
       const repoGuardPath = path.resolve(ctx.extensionPath, FLEET_GUARD_REL);
@@ -2334,10 +2333,18 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       const detail = failed.map((c) => `${c.name}: ${c.detail}`).join("; ");
       opencodeChannel.appendLine(`[fleet] drift detected: ${detail}`);
       void vscode.window
-        .showWarningMessage(`Amicode fleet drift — ${failed.map((c) => c.name).join(", ")}: ${failed[0].detail}`, "Fix fleet", "Show details")
+        .showWarningMessage(
+          `Amicode fleet issue — ${failed.map((c) => c.name).join(", ")}: ${failed[0].detail}`,
+          "Troubleshoot",
+        )
         .then((pick) => {
-          if (pick === "Fix fleet") void runFleetRepair();
-          else if (pick === "Show details") opencodeChannel.show();
+          if (pick === "Troubleshoot") {
+            const panel = ChatPanel.peek();
+            if (panel) {
+              const navPath = `/new-session?prompt=${encodeURIComponent("/troubleshoot-fleet")}&autoSend=1`;
+              void panel.postMessage({ source: "amicode", kind: "navigate", path: navPath });
+            }
+          }
         });
     } catch (e) {
       opencodeChannel.appendLine(`[fleet] drift check failed: ${(e as Error).message}`);
