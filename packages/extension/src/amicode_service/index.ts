@@ -57,6 +57,8 @@ import {
 } from "./connections";
 import { solverModeResponse } from "./solver_mode";
 import { rosterReadResponse, rosterReportResponse } from "./roster";
+import { attachmentStatusResponse } from "./attachment_pointer";
+import { attachActionResponse, detachActionResponse } from "./attach_action";
 import { postureResponse, savePostureResponse, dismissPostureResponse } from "./posture";
 import {
   modelRoutingResponse,
@@ -256,6 +258,43 @@ export function registerRosterRoutes(server: AmicodeServiceServer): AmicodeServi
   return server;
 }
 
+// Attachment routes (#1344, ADR 0027 §3/D5-D6, Slice 4): the switch-control
+// pointer's own never-proxied endpoint + the attach/detach VERBS that drive it.
+// Registered UNCONDITIONALLY (alongside registerProfileRoutes / registerRosterRoutes),
+// NOT inside the entitlement-gated fleet block — ADR 0027: a peer stays
+// `standalone` (no fleet.json, no entitlement) and MUST still attach, so a
+// gated registration would 404 the attach verb on exactly the boot that needs
+// it. Under /amicode/fleet/* they inherit the EXISTING shouldProxyAmicodeToHost
+// exclusion (never proxied → served locally) with ZERO server.ts change.
+//   GET  /amicode/fleet/attachment — the pointer's local honesty surface (#1342).
+//   POST /amicode/fleet/attach     — add an upstream + set the pointer (roster
+//                                    is the candidate source); a switch resets
+//                                    the SSE cursor via resetCursorOnSwitch.
+//   POST /amicode/fleet/detach     — clear the pointer + credential.
+// `resetCursorOnSwitch` is the D4 seam: present only when a multiplexer SSE
+// cursor store exists (the staged client relay); a standalone peer passes none
+// and the pointer still flips.
+export interface AttachmentRouteDeps {
+  resetCursorOnSwitch?: () => void;
+}
+
+export function registerAttachmentRoutes(
+  server: AmicodeServiceServer,
+  deps: AttachmentRouteDeps = {},
+): AmicodeServiceServer {
+  server.add("GET", "/amicode/fleet/attachment", () => ({ body: attachmentStatusResponse() }));
+
+  server.add("POST", "/amicode/fleet/attach", ({ body }) => ({
+    body: attachActionResponse(body, { resetCursorOnSwitch: deps.resetCursorOnSwitch }),
+  }));
+
+  server.add("POST", "/amicode/fleet/detach", ({ body }) => ({
+    body: detachActionResponse(body, { resetCursorOnSwitch: deps.resetCursorOnSwitch }),
+  }));
+
+  return server;
+}
+
 // Posture routes (S2, spec-20260907-011500 D2, #859): the plan-exit posture
 // surface. GET /amicode/posture — the latest compiled plan's STAMPED
 // posture_recommendation (a dumb reader: the indicator reads data, never
@@ -345,9 +384,15 @@ export interface FleetRouteDeps {
  *  routing mode, the D6 posture (a steady state with its named entry
  *  condition — mid-session live, never boot-frozen), the D7 tunnel stamp,
  *  the three named mints (D5), the hub credential's NAMED outcome, and the
- *  staging receipt. GET /amicode/fleet/sessions — the MERGED projection
- *  (D2): both stores, provenance-tagged, currency derived over what is
- *  actually fetched. */
+ *  staging receipt. GET /amicode/fleet/attachment (#1342, ADR 0027 §3/D6):
+ *  the SWITCH-CONTROL pointer's own local honesty surface — the currently
+ *  attached server's coordinate, or `attached:false` for the empty/local
+ *  default. Deliberately under the SAME /amicode/fleet/* prefix as `status`
+ *  so it inherits the EXISTING shouldProxyAmicodeToHost's never-proxied
+ *  exclusion for free — zero server.ts changes needed for this route to stay
+ *  local on a fleet client (AC3, `honesty_surface_stays_local`). GET
+ *  /amicode/fleet/sessions — the MERGED projection (D2): both stores,
+ *  provenance-tagged, currency derived over what is actually fetched. */
 export function registerFleetRoutes(server: AmicodeServiceServer, deps: FleetRouteDeps): AmicodeServiceServer {
   server.add("GET", "/amicode/fleet/status", () => {
     const mode = deps.getMode();
@@ -365,6 +410,14 @@ export function registerFleetRoutes(server: AmicodeServiceServer, deps: FleetRou
       }),
     };
   });
+
+  // #1342 (ADR 0027 §3/D6): the switch-control (attachment) pointer's own
+  // never-proxied local endpoint — plus the #1344 attach/detach VERBS — are
+  // registered UNCONDITIONALLY by registerAttachmentRoutes (below, alongside
+  // registerProfileRoutes), NOT here: ADR 0027 says a peer stays `standalone`
+  // (no fleet.json, no entitlement) and must still attach, so those routes
+  // cannot live behind this entitlement-gated block. They stay local for free
+  // under the EXISTING shouldProxyAmicodeToHost /amicode/fleet/* exclusion.
 
   server.add("GET", "/amicode/fleet/sessions", async () => {
     const started = Date.now();
@@ -480,6 +533,13 @@ export function createAmicodeService(
   });
   if (opts.shelf !== undefined) server.attachAppShelf(new AppShelf(opts.shelf));
   if (opts.engine?.getUrl !== undefined) server.attachEngineProxy(new EngineProxy({ getUrl: opts.engine.getUrl }));
+  // #1344 (Slice 4): the multiplexer's per-session SSE cursor store lives with
+  // the staged client relay (assigned in the fleet block below), but the
+  // attach/detach verb that must RESET it on a switch (AC3) is registered
+  // UNCONDITIONALLY (a standalone peer attaches too). Hoist a ref so the
+  // always-on route can reach the store when it exists; a standalone boot
+  // leaves it undefined and the reset is a no-op (nothing to reset).
+  let sessionResumeRef: SessionEventResume | undefined;
   // #391: the fleet plane stages ONLY through the resolver's dispatch. No
   // entitlement → this block never arms anything → zero fleet surfaces,
   // byte-identical.
@@ -527,6 +587,9 @@ export function createAmicodeService(
       // on hub-down (never relies on the tunnel for its stream), so its
       // steady-state stays byte-identical.
       const sessionResume = isClient ? new SessionEventResume() : undefined;
+      // #1344 (Slice 4): expose the client relay's cursor store to the always-on
+      // attach/detach verb so a switch (pointer flip) resets it (AC3).
+      sessionResumeRef = sessionResume;
       // D6: the hub-down posture IS the base standalone posture — the
       // effective mode falls back to the local engine (a session created in
       // a hub-down window is a LOCAL session, D3), and recovery re-enters
@@ -591,6 +654,11 @@ export function createAmicodeService(
   registerConnectionRoutes(server);
   registerSolverModeRoutes(server);
   registerRosterRoutes(server);
+  // #1344 (Slice 4): the attach/detach verb + the switch-control pointer's own
+  // endpoint — ALWAYS-ON (a standalone peer must attach; the entitlement-gated
+  // fleet block above cannot own these). The SSE-cursor reset is wired to the
+  // client relay's store when one exists, else a no-op.
+  registerAttachmentRoutes(server, { resetCursorOnSwitch: () => sessionResumeRef?.reset() });
   registerPostureRoutes(server);
   registerModelRoutingRoutes(server, opts.modelRouting);
   return server;

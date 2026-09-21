@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createAmicodeService } from "../src/amicode_service";
 import { rosterReportResponse, rosterReadResponse } from "../src/amicode_service/roster";
+import { placementDescriptor, fleetTopologyPath } from "@amicode/schema";
 
 const ROW_A = {
   machine_id: "mac-studio-01",
@@ -158,5 +159,102 @@ describe("roster route — served through the amicode service (wiring)", () => {
       else process.env.AMICO_FLEET_ROSTER_FILE = saved;
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+// #1341 (ADR 0027 §4–§5, D7/D8) — Slice 1: the `serving` advertisement is a
+// placement-ready descriptor (reachable + serving), and advertising it is
+// inert with respect to `server_mode` / `fleet.json`. The roster route needs
+// NO code change to carry `serving` (capabilities[] is already an open set —
+// ADR 0026) — these tests pin the ROUTE-level contract end to end, through the
+// placementDescriptor helper that only exists once #1341's schema change lands.
+describe("roster route — #1341 AC1: a `serving` advertisement carries the tag + reach coordinates through GET", () => {
+  let dir: string;
+  let file: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "roster-serving-"));
+    file = join(dir, "roster.json");
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it("a peer that advertises writes a row whose GET carries the `serving` tag + sshAlias/transport, present and readable as a placement descriptor", () => {
+    const advertising = {
+      ...ROW_A,
+      machine_id: "peer-01",
+      capabilities: ["serving"],
+      sshAlias: "peer-01-ssh",
+      transport: "ssh",
+      health: "reachable",
+    };
+    const post = JSON.parse(rosterReportResponse(JSON.stringify(advertising), { rosterFile: file }));
+    expect(post).toEqual({ ok: true, machine_id: "peer-01", error: null });
+
+    const rows = rowsOf(rosterReadResponse({ rosterFile: file }));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].capabilities).toContain("serving"); // the tag is present
+    expect(rows[0].sshAlias).toBe("peer-01-ssh"); // reach coordinates present
+    expect(rows[0].transport).toBe("ssh");
+
+    // AC2: the row reads as a placement-ready descriptor, not a display chip —
+    // reachable + serving are the facts a future scheduler would consume.
+    const d = placementDescriptor(rows[0]);
+    expect(d).toEqual({
+      machine_id: "peer-01",
+      serving: true,
+      reachable: true,
+      sshAlias: "peer-01-ssh",
+      transport: "ssh",
+    });
+    expect(Object.prototype.hasOwnProperty.call(d, "headroom")).toBe(false); // H2-only, not asserted here
+  });
+
+  it("a peer that is NOT serving reads placementDescriptor(row).serving === false — the tag is what drives it, not presence on the roster", () => {
+    rosterReportResponse(JSON.stringify({ ...ROW_A, capabilities: ["compute"] }), { rosterFile: file });
+    const rows = rowsOf(rosterReadResponse({ rosterFile: file }));
+    expect(placementDescriptor(rows[0]).serving).toBe(false);
+  });
+});
+
+describe("roster route — #1341 AC4: advertising `serving` never touches server_mode or fleet.json", () => {
+  it("server_mode round-trips byte-identical — advertising serving never derives or coerces a role", () => {
+    const dir = mkdtempSync(join(tmpdir(), "roster-servermode-"));
+    const file = join(dir, "roster.json");
+    try {
+      const advertising = { ...ROW_A, server_mode: "standalone", capabilities: ["serving"] };
+      rosterReportResponse(JSON.stringify(advertising), { rosterFile: file });
+      const rows = rowsOf(rosterReadResponse({ rosterFile: file }));
+      // NOT coerced to "server" just because it advertised serving:
+      expect(rows[0].server_mode).toBe("standalone");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("advertising serving writes ONLY the roster file — the fleet.json topology path is never created", () => {
+    const home = mkdtempSync(join(tmpdir(), "roster-fakehome-"));
+    const rosterDir = mkdtempSync(join(tmpdir(), "roster-file-"));
+    const file = join(rosterDir, "roster.json");
+    const savedHome = process.env.HOME;
+    process.env.HOME = home;
+    try {
+      const topologyPathBefore = fleetTopologyPath();
+      expect(existsSync(topologyPathBefore)).toBe(false); // fresh fake $HOME, nothing there yet
+      rosterReportResponse(JSON.stringify({ ...ROW_A, capabilities: ["serving"] }), { rosterFile: file });
+      expect(existsSync(file)).toBe(true); // the roster write landed
+      expect(existsSync(fleetTopologyPath())).toBe(false); // fleet.json was NEVER written
+    } finally {
+      if (savedHome === undefined) delete process.env.HOME;
+      else process.env.HOME = savedHome;
+      rmSync(home, { recursive: true, force: true });
+      rmSync(rosterDir, { recursive: true, force: true });
+    }
+  });
+
+  it("the roster route module contains no reference to the fleet.json writer (module discipline — never a second parser/writer of fleet.json, ADR 0023)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { fileURLToPath } = await import("node:url");
+    const modulePath = fileURLToPath(new URL("../src/amicode_service/roster.ts", import.meta.url));
+    const src = readFileSync(modulePath, "utf8");
+    expect(src).not.toMatch(/writeFleetConfig|fleetTopologyPath|FLEET_TOPOLOGY_RELPATH/);
   });
 });

@@ -216,6 +216,7 @@ export {
   parseRosterDocument,
   emptyRoster,
   upsertRosterRow,
+  placementDescriptor,
   FLEET_ROSTER_CACHE_RELPATH,
   fleetRosterCachePath,
   type RosterHealth,
@@ -223,6 +224,7 @@ export {
   type RosterDocument,
   type ParseRosterRowResult,
   type ParseRosterDocumentResult,
+  type PlacementDescriptor,
   type KnownDeviceType,
 } from "./fleet_roster.js";
 

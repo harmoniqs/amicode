@@ -36,14 +36,18 @@ export const ROSTER_SCHEMA_VERSION = 1;
 export const HEALTH_VOCABULARY = ["reachable", "degraded", "down"] as const;
 export type RosterHealth = (typeof HEALTH_VOCABULARY)[number];
 
-/** The KNOWN, behavior-adjacent capability tags (ADR 0026 §Decision.1):
- *  `compute` (a solve-target hint — declared-but-inert until a fleet-peer
- *  executor exists, an explicit non-goal here) and `roaming` (a transport hint
- *  that defaults a machine to tailscale). This is NOT a closed set: it names
- *  only the tags with meaning. Any OTHER tag is a valid descriptive label — the
- *  capability set is OPEN, and an arbitrary tag round-trips verbatim
- *  (parseRosterRow never rejects a tag for being unknown). */
-export const KNOWN_CAPABILITY_TAGS = ["compute", "roaming"] as const;
+/** The KNOWN, behavior-adjacent capability tags (ADR 0026 §Decision.1; ADR
+ *  0027 §5/D8 adds the third): `compute` (a solve-target hint — declared-but-
+ *  inert until a fleet-peer executor exists, an explicit non-goal here),
+ *  `roaming` (a transport hint that defaults a machine to tailscale), and
+ *  `serving` (#1341 — a peer advertises its already-running engine; a
+ *  placement-ready fact a future scheduler reads via `placementDescriptor`,
+ *  orthogonal to `server_mode`, which remains the sole serve-stance
+ *  authority). This is NOT a closed set: it names only the tags with meaning.
+ *  Any OTHER tag is a valid descriptive label — the capability set is OPEN,
+ *  and an arbitrary tag round-trips verbatim (parseRosterRow never rejects a
+ *  tag for being unknown). */
+export const KNOWN_CAPABILITY_TAGS = ["compute", "roaming", "serving"] as const;
 export type KnownCapability = (typeof KNOWN_CAPABILITY_TAGS)[number];
 
 /** Whether a tag is one of the known behavior tags. A false answer is NOT a
@@ -88,6 +92,43 @@ export interface RosterRow {
    *  `server_mode` when unset. Open, like `capabilities` — an unrecognized
    *  value still round-trips (see KNOWN_DEVICE_TYPES). */
   device_type?: string;
+}
+
+// ── the placement-ready descriptor (#1341, ADR 0027 §5/D8) ──────────────────
+
+/** The placement-ready descriptor a future scheduler reads off a roster row:
+ *  is this machine serving, and is it reachable? Reach coordinates
+ *  (`sshAlias`/`transport`) already live on the row — this helper does not
+ *  duplicate them so much as CARRY them alongside the two derived placement
+ *  facts, so a scheduler can act on one small, self-contained object instead
+ *  of re-deriving `serving` from `capabilities[]` and `reachable` from
+ *  `health` itself. Deliberately excludes `headroom` — ADR 0027 §5/D8 names
+ *  it explicitly as a Horizon-2 field, not asserted here. This is placement
+ *  data, not a display-only chip: it never derives from or feeds back into
+ *  `server_mode`, which remains the sole serve-stance authority. */
+export interface PlacementDescriptor {
+  machine_id: string;
+  /** Derived from `capabilities.includes("serving")` — never a separate field. */
+  serving: boolean;
+  /** Derived from `health === "reachable"` — the SAME closed tri-state every
+   *  other roster consumer reads, never a second reachability signal. */
+  reachable: boolean;
+  sshAlias: string;
+  transport: string;
+}
+
+/** Build the placement-ready descriptor by reading it off an already-valid
+ *  `RosterRow` — a pure, side-effect-free projection (two calls on the same
+ *  row are `toEqual`). Callers pass a `parseRosterRow`-validated row; this
+ *  does not itself validate (that is `parseRosterRow`'s job). */
+export function placementDescriptor(row: RosterRow): PlacementDescriptor {
+  return {
+    machine_id: row.machine_id,
+    serving: row.capabilities.includes("serving"),
+    reachable: row.health === "reachable",
+    sshAlias: row.sshAlias,
+    transport: row.transport,
+  };
 }
 
 /** A parse outcome — a Result, never a throw: the self-report route collapses a

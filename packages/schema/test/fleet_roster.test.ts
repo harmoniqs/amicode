@@ -23,6 +23,7 @@ import {
   KNOWN_DEVICE_TYPES,
   isKnownCapability,
   parseRosterRow,
+  placementDescriptor,
   type RosterRow,
 } from "../src/fleet_roster.js";
 
@@ -111,10 +112,11 @@ describe("device_type — optional per-row form factor (fleet sidebar type pill,
 });
 
 describe("capabilities — AC2: known behavior tags + an open descriptive set", () => {
-  it("`compute` and `roaming` are the recognized known tags", () => {
-    expect(KNOWN_CAPABILITY_TAGS).toEqual(["compute", "roaming"]);
+  it("`compute`, `roaming`, and `serving` are the recognized known tags", () => {
+    expect(KNOWN_CAPABILITY_TAGS).toEqual(["compute", "roaming", "serving"]);
     expect(isKnownCapability("compute")).toBe(true);
     expect(isKnownCapability("roaming")).toBe(true);
+    expect(isKnownCapability("serving")).toBe(true);
   });
 
   it("an arbitrary descriptive tag is NOT known, yet is accepted (the set is open)", () => {
@@ -133,5 +135,49 @@ describe("capabilities — AC2: known behavior tags + an open descriptive set", 
 
   it("an empty capability set is valid (a machine may declare nothing)", () => {
     expect(parseRosterRow({ ...ROW, capabilities: [] }).ok).toBe(true);
+  });
+});
+
+// #1341 (ADR 0027 §5, D8) — the `serving` advertisement + the placement-ready
+// descriptor. `serving` rides the SAME open capabilities[] axis as `compute`
+// and `roaming` (no new row field); reach coordinates (sshAlias/transport)
+// and reachability (health) already exist on every row. placementDescriptor
+// is the small helper a future scheduler reads: reachable? serving? — never
+// a display-only chip, and deliberately WITHOUT `headroom` (Horizon-2 only).
+describe("placementDescriptor — AC1/AC2 (#1341): a placement-ready fact, not a display chip", () => {
+  it("a row advertising `serving` with health=reachable reads back serving:true, reachable:true", () => {
+    const advertising: RosterRow = { ...ROW, capabilities: ["serving"], health: "reachable" };
+    const d = placementDescriptor(advertising);
+    expect(d.serving).toBe(true);
+    expect(d.reachable).toBe(true);
+  });
+
+  it("a row WITHOUT `serving` in capabilities reads back serving:false, regardless of health", () => {
+    const notAdvertising: RosterRow = { ...ROW, capabilities: ["compute"], health: "reachable" };
+    expect(placementDescriptor(notAdvertising).serving).toBe(false);
+  });
+
+  it("reachable derives from health OUTSIDE the reachable state — degraded and down both read reachable:false", () => {
+    expect(placementDescriptor({ ...ROW, capabilities: ["serving"], health: "degraded" }).reachable).toBe(false);
+    expect(placementDescriptor({ ...ROW, capabilities: ["serving"], health: "down" }).reachable).toBe(false);
+  });
+
+  it("carries the row's existing reach coordinates (sshAlias, transport, machine_id) through unchanged", () => {
+    const row: RosterRow = { ...ROW, capabilities: ["serving"], sshAlias: "keeper-host", transport: "ssh" };
+    const d = placementDescriptor(row);
+    expect(d.machine_id).toBe(row.machine_id);
+    expect(d.sshAlias).toBe("keeper-host");
+    expect(d.transport).toBe("ssh");
+  });
+
+  it("NEVER carries a `headroom` field — Horizon-2 only, not asserted in H1 (D8)", () => {
+    const d = placementDescriptor({ ...ROW, capabilities: ["serving"] });
+    expect(Object.prototype.hasOwnProperty.call(d, "headroom")).toBe(false);
+    expect(Object.keys(d).sort()).toEqual(["machine_id", "reachable", "serving", "sshAlias", "transport"]);
+  });
+
+  it("is a pure read off the row — two calls on an unmodified row produce equal descriptors", () => {
+    const row: RosterRow = { ...ROW, capabilities: ["serving", "compute"] };
+    expect(placementDescriptor(row)).toEqual(placementDescriptor(row));
   });
 });

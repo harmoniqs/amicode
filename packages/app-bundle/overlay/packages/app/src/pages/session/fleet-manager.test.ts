@@ -10,6 +10,13 @@ import {
   CREATE_FLEET_COMMAND,
   fleetTransportMessage,
   shapeVersionRows,
+  attachControlFor,
+  buildAttachRequest,
+  buildDetachRequest,
+  switchReloadPlan,
+  performAttachControl,
+  ATTACH_ROUTE,
+  DETACH_ROUTE,
   type RosterRowLike,
 } from "./fleet-manager"
 
@@ -166,5 +173,114 @@ describe("shapeVersionRows (AC5 — Versions renders the retired panel's doctor 
   test("no report ⇒ no rows (honest empty, never fabricated)", () => {
     expect(shapeVersionRows(null)).toEqual([])
     expect(shapeVersionRows(undefined)).toEqual([])
+  })
+})
+
+// ── #1344 (ADR 0027 §3, Slice 4): the Fleet Manager Attach control ────────────
+// The per-row control that drives the backend attach/detach VERB. NOT a
+// FleetManagerAction (that closed union is VS-Code-command invocations via
+// postAmicode); attach/detach is a backend API call on server.current's SAME
+// loopback origin (the webview stays single-origin — the ADR EXPLICITLY rejected
+// reusing the multi-server switcher's setActive for the data plane).
+
+describe("attachControlFor (AC2 — the per-row Attach/Detach control state)", () => {
+  test("a row that is NOT the attached one shows the Attach action", () => {
+    expect(attachControlFor("peer-b", "peer-a")).toEqual({
+      machineId: "peer-b",
+      action: "attach",
+      label: "Attach",
+      attached: false,
+    })
+  })
+
+  test("the currently-attached row shows the Detach action", () => {
+    expect(attachControlFor("peer-a", "peer-a")).toEqual({
+      machineId: "peer-a",
+      action: "detach",
+      label: "Detach",
+      attached: true,
+    })
+  })
+
+  test("with nothing attached, every row shows Attach", () => {
+    expect(attachControlFor("peer-a", null).action).toBe("attach")
+  })
+})
+
+describe("buildAttachRequest / buildDetachRequest (AC2 — the verb bodies; machine_id is the candidate key)", () => {
+  test("attach body carries the machine_id (the roster candidate the backend resolves to a pointer)", () => {
+    expect(buildAttachRequest("peer-a")).toEqual({ machine_id: "peer-a" })
+  })
+  test("detach body carries the machine_id", () => {
+    expect(buildDetachRequest("peer-a")).toEqual({ machine_id: "peer-a" })
+  })
+  test("the routes are the backend fleet verbs (never proxied — the /amicode/fleet/* honesty surface)", () => {
+    expect(ATTACH_ROUTE).toBe("/amicode/fleet/attach")
+    expect(DETACH_ROUTE).toBe("/amicode/fleet/detach")
+  })
+})
+
+describe("switchReloadPlan (AC5 + AC3 — full reload of scoped surfaces, single-origin, fresh cursor)", () => {
+  test("a switch re-keys scoped /amicode/* surfaces on the attached machine_id (full reload → no previous-studio cache leak)", () => {
+    expect(switchReloadPlan("peer-b")).toEqual({
+      singleOrigin: true,
+      reloadScopedKey: "peer-b",
+      clearEventCursor: true,
+    })
+  })
+  test("attaching a DIFFERENT peer yields a DIFFERENT reload key — the resources refetch (no stale data survives a switch)", () => {
+    expect(switchReloadPlan("peer-a").reloadScopedKey).not.toBe(switchReloadPlan("peer-b").reloadScopedKey)
+  })
+  test("detach (back to local) re-keys to null and still clears the cursor; the origin never changes (single-origin)", () => {
+    const plan = switchReloadPlan(null)
+    expect(plan.reloadScopedKey).toBeNull()
+    expect(plan.singleOrigin).toBe(true)
+    expect(plan.clearEventCursor).toBe(true) // AC3: a stale lastEventID must not carry to a new origin
+  })
+})
+
+describe("performAttachControl (AC2 — the control drives attach AND detach end-to-end; AC5 single-origin)", () => {
+  test("Attach drives POST /amicode/fleet/attach {machine_id} and returns a reload keyed on the attached peer", async () => {
+    const posted: { route: string; body: unknown }[] = []
+    const result = await performAttachControl({
+      control: attachControlFor("peer-b", "peer-a"), // peer-b not attached → Attach
+      post: async (route, body) => {
+        posted.push({ route, body })
+        return { ok: true, attached: true }
+      },
+    })
+    expect(posted).toEqual([{ route: "/amicode/fleet/attach", body: { machine_id: "peer-b" } }])
+    expect(result.posted).toEqual({ route: "/amicode/fleet/attach", body: { machine_id: "peer-b" } })
+    expect(result.reload).toEqual({ singleOrigin: true, reloadScopedKey: "peer-b", clearEventCursor: true })
+  })
+
+  test("Detach drives POST /amicode/fleet/detach {machine_id} and returns a reload back to local (null key)", async () => {
+    const posted: { route: string; body: unknown }[] = []
+    const result = await performAttachControl({
+      control: attachControlFor("peer-a", "peer-a"), // the attached row → Detach
+      post: async (route, body) => {
+        posted.push({ route, body })
+        return { ok: true, attached: false }
+      },
+    })
+    expect(posted).toEqual([{ route: "/amicode/fleet/detach", body: { machine_id: "peer-a" } }])
+    expect(result.reload.reloadScopedKey).toBeNull()
+    expect(result.reload.singleOrigin).toBe(true)
+  })
+
+  test("single-origin by construction: the driver is given ONLY a `post` (server.current's origin) — it has NO capability to repoint the app to another server (no setActive/add)", async () => {
+    // The only injected capability is `post`; there is structurally no
+    // server-switch function to call. This is the ADR's data-plane rule: a
+    // switch is a backend pointer flip, never an SDK-origin swap.
+    let calls = 0
+    const result = await performAttachControl({
+      control: attachControlFor("peer-b", null),
+      post: async () => {
+        calls++
+        return { ok: true }
+      },
+    })
+    expect(calls).toBe(1)
+    expect(result.reload.singleOrigin).toBe(true)
   })
 })

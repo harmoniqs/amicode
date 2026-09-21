@@ -216,6 +216,100 @@ export function shapeVersionRows(
   }))
 }
 
+// ── Devices: the Attach control (#1344, ADR 0027 §3, Slice 4) ────────────────
+//
+// The per-row control that INVOKES switching: attach adds an upstream + sets the
+// backend D6 pointer (the roster row is the candidate); detach clears it. This
+// is NOT a FleetManagerAction — that closed union is VS-Code-command
+// invocations (postAmicode). Attach/detach is a BACKEND API call on
+// server.current's SAME loopback origin: the webview stays SINGLE-ORIGIN. The
+// ADR explicitly rejected reusing the multi-server switcher (useServer's
+// add/setActive) for the data plane — a "switch" is a backend pointer flip, not
+// an SDK-origin swap. So this module never touches a server-switch surface; the
+// driver below is given ONLY a `post`, which the tab wires to
+// amicodePost(server.current, …) (resolved per call, so the flip is picked up by
+// the next fetch).
+
+/** The backend fleet verbs — under /amicode/fleet/* so they inherit the
+ *  never-proxied local-honesty-surface exclusion (served on this origin). */
+export const ATTACH_ROUTE = "/amicode/fleet/attach"
+export const DETACH_ROUTE = "/amicode/fleet/detach"
+
+/** One device row's Attach/Detach control state. `attached` marks the row that
+ *  is the CURRENT attachment (it shows Detach); every other row shows Attach. */
+export interface AttachControlState {
+  machineId: string
+  action: "attach" | "detach"
+  /** the button label — "Attach" for a candidate, "Detach" for the attached row. */
+  label: string
+  /** true only for the currently-attached row. */
+  attached: boolean
+}
+
+/** Resolve a row's control against the currently-attached machine_id (from GET
+ *  /amicode/fleet/attachment). The attached row detaches; all others attach. */
+export function attachControlFor(machineId: string, attachedMachineId: string | null): AttachControlState {
+  const attached = attachedMachineId !== null && machineId === attachedMachineId
+  return attached
+    ? { machineId, action: "detach", label: "Detach", attached: true }
+    : { machineId, action: "attach", label: "Attach", attached: false }
+}
+
+/** The POST /amicode/fleet/attach body — the machine_id is the candidate key the
+ *  backend resolves (against the roster) into the pointer's reach coordinates. */
+export function buildAttachRequest(machineId: string): { machine_id: string } {
+  return { machine_id: machineId }
+}
+
+/** The POST /amicode/fleet/detach body. */
+export function buildDetachRequest(machineId: string): { machine_id: string } {
+  return { machine_id: machineId }
+}
+
+/** The reload a SWITCH triggers in the app (AC5 + AC3). The switch NEVER swaps
+ *  SDK origins — `singleOrigin` is always true (the webview stays single-origin;
+ *  the flip is a backend pointer re-target of what /amicode/* proxies to).
+ *  Scoped /amicode/* surfaces RE-KEY on `reloadScopedKey` (the attached
+ *  machine_id, or null for local) so they fully refetch — no previous studio's
+ *  cached data leaks across a switch. `clearEventCursor` says the stale SSE
+ *  cursor (a prior origin's lastEventID) must not carry to the new origin. */
+export interface SwitchReloadPlan {
+  singleOrigin: true
+  reloadScopedKey: string | null
+  clearEventCursor: true
+}
+
+export function switchReloadPlan(attachedMachineId: string | null): SwitchReloadPlan {
+  return { singleOrigin: true, reloadScopedKey: attachedMachineId, clearEventCursor: true }
+}
+
+/** The end-to-end result of driving the control: what was POSTed, and the reload
+ *  the switch now warrants. */
+export interface AttachControlResult {
+  posted: { route: string; body: { machine_id: string } }
+  reload: SwitchReloadPlan
+}
+
+/** Drive the Attach control end-to-end (AC2). Picks the verb by the control's
+ *  action, POSTs the {machine_id} body via the injected `post` (the tab supplies
+ *  amicodePost(server.current, …) — server.current's SAME origin), and returns
+ *  the reload plan the switch warrants. The ONLY injected capability is `post`:
+ *  there is structurally no server-switch function here, so the control can
+ *  never repoint the app to another origin (AC5 single-origin, by construction).
+ *  attach → reload keyed on the newly-attached peer; detach → reload back to
+ *  local (null key). */
+export async function performAttachControl(input: {
+  control: AttachControlState
+  post: (route: string, body: unknown) => Promise<unknown>
+}): Promise<AttachControlResult> {
+  const { control, post } = input
+  const route = control.action === "detach" ? DETACH_ROUTE : ATTACH_ROUTE
+  const body = control.action === "detach" ? buildDetachRequest(control.machineId) : buildAttachRequest(control.machineId)
+  await post(route, body)
+  const reload = switchReloadPlan(control.action === "attach" ? control.machineId : null)
+  return { posted: { route, body }, reload }
+}
+
 
 
 
