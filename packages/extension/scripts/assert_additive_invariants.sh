@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
 # assert_additive_invariants.sh — the ADR 0027 cross-cutting "peer studios stay
 # ADDITIVE" gate (#1346). Peer slices ADD files; their whole safety story is that
-# the merged hub/star path — `amico fleet enroll`, the never-fork guard shim, the
-# one-parser rule, single-writer-per-DB — is left BYTE-UNCHANGED, and that peer
+# the merged hub/star path — the never-fork guard shim, the one-parser rule,
+# single-writer-per-DB — is left BYTE-UNCHANGED, and that peer
 # machines never take the never-fork `client` stance. This gate makes that a
 # STANDING MECHANICAL check that runs on every peer slice's CI, so a regression in
 # any peer slice is caught. It is a SIBLING of assert_fleet_guard.sh (which stays
 # intact); this one adds the four ADR-0027 additive invariants.
 #
 # Four machine invariants (issue #1346):
-#   AC1 hub_enroll_guard_bytes_changed == 0   the enroll verb, the never-fork guard
-#                                             shim, and the enroll test suite are an
-#                                             EMPTY diff vs the MERGE-BASE.
+#   AC1 never_fork_guard_bytes_changed == 0   both copies of the never-fork guard
+#                                             shim are an EMPTY diff vs the
+#                                             MERGE-BASE. (ADR 0028/#1368 lifts the
+#                                             enroll-verb byte-freeze — see the
+#                                             FROZEN note below.)
 #   AC2 new_fleet_json_parsers        == 0    no NEW parser of fleet.json; peer reads
 #                                             go through the existing @amicode/schema
 #                                             reader (parseFleetTopology).
@@ -29,9 +31,9 @@
 # fail (e.g. #1357/#1355 rewrote the enroll verb on the base). The merge-base is
 # our true branch point: an empty diff there proves WE touched nothing, and it
 # moves correctly under a future rebase onto the advanced base (the merge-base
-# tracks the rebase; our diff stays empty). If AC1 ever reds on the enroll/guard
+# tracks the rebase; our diff stays empty). If AC1 ever reds on the guard
 # set, the BASELINE is wrong (it must be the merge-base) — never "fix" it by
-# editing the hub path, excluding files, or weakening the assertion.
+# editing the guard, excluding files, or weakening the assertion.
 #
 # DELIBERATE, director-tracked: the live proxy/SSE re-target to an attached peer
 # is intentionally UNWIRED (server.ts held byte-identical, the D3 resolver not in
@@ -56,18 +58,22 @@ ac1_unverifiable=0
 fail() { echo "[additive-gate] FAIL $*" >&2; fails=$((fails + 1)); }
 ok() { echo "[additive-gate] ok $*"; }
 
-# ── AC1 — hub/enroll/guard byte-unchanged vs the MERGE-BASE ──────────────────
+# ── AC1 — never-fork guard byte-unchanged vs the MERGE-BASE ──────────────────
 BASE_REF="${INVARIANT_BASE_REF:-origin/feature/free-tier-fleet}"
 
-# The enroll/guard frozen set (issue #1346's literal list): the enroll verb, the
-# enroll test suite, and BOTH copies of the never-fork guard shim (canonical +
-# the VSIX-shipped mirror). The guard's INSTALLER (deploy_guard.mjs) and ASSERT
-# (assert_fleet_guard.sh) are NOT frozen here — that "the attach flow never
-# installs the guard" concern is AC4's (structural + behavioral), the right home
-# for it; AC1 pins the hub path's BYTES.
+# The never-fork guard frozen set: BOTH copies of the guard shim (canonical +
+# the VSIX-shipped mirror). ADR 0028 (#1368) SUPERSEDES ADR 0027's byte-freeze of
+# the enroll verb — `fleet_enroll_verb.ts` (+ its test) legitimately evolve to
+# produce self-reported device identity (friendly name + device_type) on the
+# roster row, so they are NO LONGER frozen here. ADR 0027 froze the enroll verb to
+# prove ITS peer-studio work was additive; that proof is discharged (merged), and
+# the enroll path's REAL invariants are still enforced elsewhere: the never-fork
+# guard bytes below stay frozen, and one-parser / single-writer / no-client-stance
+# are AC2 / AC3 / AC4 (+ the separate assert_fleet_guard.sh). The guard's INSTALLER
+# (deploy_guard.mjs) and ASSERT (assert_fleet_guard.sh) are NOT frozen here — that
+# "the attach flow never installs the guard" concern is AC4's; AC1 pins the
+# never-fork guard's BYTES.
 FROZEN=(
-  "packages/amico-run/src/fleet_enroll_verb.ts"
-  "packages/amico-run/test/fleet_enroll_verb.test.ts"
   "tools/fleet/amico-opencode-fleet-guard"
   "packages/extension/tools/fleet/amico-opencode-fleet-guard"
 )
@@ -104,9 +110,9 @@ else
     echo "[additive-gate] AC1 UNVERIFIABLE: no merge-base between HEAD and $BASE" >&2
     ac1_unverifiable=1
   elif git diff --quiet "$MERGE_BASE"..HEAD -- "${FROZEN[@]}"; then
-    ok "AC1 hub/enroll/guard byte-unchanged vs merge-base ${MERGE_BASE:0:12} (base=$BASE)"
+    ok "AC1 never-fork guard byte-unchanged vs merge-base ${MERGE_BASE:0:12} (base=$BASE)"
   else
-    fail "AC1 hub/enroll/guard CHANGED vs merge-base ${MERGE_BASE:0:12}:"
+    fail "AC1 never-fork guard CHANGED vs merge-base ${MERGE_BASE:0:12}:"
     git --no-pager diff --stat "$MERGE_BASE"..HEAD -- "${FROZEN[@]}" >&2
     echo "     if this is base DRIFT not your edit, your BASELINE is wrong — it MUST be" >&2
     echo "     the merge-base, not the base tip (issue #1346 ★). Never weaken this." >&2

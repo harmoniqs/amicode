@@ -8,7 +8,14 @@
   #1319 (enroll primitive, merged), #1321 (sidebar section, merged), #1359 (`device_type`
   field + type pill, merged), #1363 (client peer visibility — proxy-read + server-node
   synthesis, merged).
-- **Supersedes:** nothing. Additive to the roster contract.
+- **Supersedes / amends:** ADR 0027's byte-freeze of the enroll verb. ADR 0027 (#1346)
+  froze `packages/amico-run/src/fleet_enroll_verb.ts` (+ its test) byte-for-byte to prove
+  *its* peer-studio work was additive; producing self-reported device identity requires the
+  enroll producer to write `name`/`device_type` onto the roster row, so this ADR lifts that
+  whole-file freeze — the additive-invariants gate's AC1 `FROZEN` set drops the enroll verb.
+  ADR 0027's *actual* safety invariants are untouched: the never-fork guard shims stay
+  byte-frozen, and one-parser / single-writer / no-client-stance remain enforced (the gate's
+  AC2 / AC3 / AC4 + `assert_fleet_guard.sh`). Otherwise additive to the roster contract.
 
 ## Context
 
@@ -133,6 +140,11 @@ server does not self-register a roster row at all.
   `classifyDeviceType` is rehomed to schema and imported back, removing a soon-to-drift copy.
 - Already-enrolled machines keep their old rows until they **re-enroll once** (idempotent) — the
   documented refresh path until a self-report heartbeat lands.
+- ADR 0027's additive-invariants gate (`assert_additive_invariants.sh`) drops the enroll verb from
+  AC1's `FROZEN` set (the never-fork guard shims stay frozen; AC2/AC3/AC4 unchanged). The enroll
+  verb's never-fork / single-writer semantics are still enforced — by the guard freeze and the
+  one-parser / single-writer / no-client-stance checks — so relaxing the whole-file byte-freeze does
+  not weaken any real invariant.
 
 ## Non-goals
 
