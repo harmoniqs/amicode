@@ -86,6 +86,8 @@ import { registerAmicodeTerminal } from "./terminal";
 import { amicodeServiceDisposal, startAmicodeService, frameOriginUrl } from "./amicode_service_wiring";
 import { resolveAppDistRoot } from "./amicode_service/app_shelf";
 import { resolveFleetActivation, type FleetActivationConfig } from "./fleet_activation";
+import { recoverBootAttachment } from "./boot_attachment_recovery";
+import { bringUpSshAttachment } from "./amicode_service/attachment_transport";
 import { registerOpencodeUpdater } from "./opencode_updater_wiring";
 import { stageOpencodeCliLink } from "./opencode_cli_link";
 import { resolveMountStack, personalMount, defaultVaultsRoot } from "./substrate/mount_store";
@@ -1212,6 +1214,19 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     });
     ctx.subscriptions.push({ dispose: () => serverManager?.detach() });
 
+    // #1410 (ADR 0030 §D3): boot-time attachment pointer recovery. Read the
+    // on-disk attachment pointer and, when valid, spin up the per-attachment
+    // transport so the D3 resolver routes to the attached device after a
+    // window reload. Never throws — all failures degrade to local sessions
+    // with a log line.
+    const bootRecovery = await recoverBootAttachment({
+      bringUpTransport: bringUpSshAttachment,
+      log: opencodeChannel,
+    });
+    if (bootRecovery) {
+      ctx.subscriptions.push({ dispose: () => { void bootRecovery.stop(); } });
+    }
+
     // Amicode service (#451 M1; #822 added the shelf + the engine proxy; #823
     // is the M3 cutover): the extension-host owner of the 31 ported amicode
     // routes — the vendored engine is now STOCK canonical opencode, which
@@ -1268,6 +1283,10 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       // titlebar positions, developer tool paths). Falls back to ephemeral if
       // the derived port is busy.
       port: configuredPort > 0 ? configuredPort + 1 : undefined,
+      // #1410 (ADR 0030 §D3): boot-time attachment recovery. When a prior
+      // attachment pointer was found on disk, pass the recovered transport's
+      // getUrl so the fleet plane's D3 resolver routes to the attached device.
+      ...(bootRecovery ? { bootAttached: { getUrl: bootRecovery.getUrl } } : {}),
     });
     amicodeService = serviceBoot ?? undefined;
     ctx.subscriptions.push(amicodeServiceDisposal(serviceBoot));

@@ -149,4 +149,98 @@ describe("startAmicodeService", () => {
       await boot.service.stop();
     }
   });
+
+  it("#1410 bootAttached threads into the fleet plane's attached field when activation is armed", async () => {
+    // Mock attached upstream: answers /amicode/vaults with a marker.
+    const attachedServer = http.createServer((req, res) => {
+      if (req.url?.startsWith("/amicode/vaults")) {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: true, vaults: [], boot_attached_marker: true }));
+        return;
+      }
+      res.writeHead(404, { "content-type": "application/json" });
+      res.end(JSON.stringify({ message: "not found" }));
+    });
+    await new Promise<void>((r) => attachedServer.listen(0, "127.0.0.1", r));
+    const attachedPort = (attachedServer.address() as AddressInfo).port;
+    const attachedUrl = `http://127.0.0.1:${attachedPort}`;
+
+    const root = mkdtempSync(join(tmpdir(), "amicode-boot-attached-"));
+    const dist = join(root, "dist");
+    mkdirSync(dist, { recursive: true });
+    writeFileSync(join(dist, "index.html"), "<!doctype html><html><body>test</body></html>");
+
+    // Write a lawful data-plane overlay manifest so entitlement staging passes.
+    const overlayDir = join(root, "overlay-source", "fleet_overlay", "overlays");
+    mkdirSync(overlayDir, { recursive: true });
+    writeFileSync(
+      join(overlayDir, "fleet-data-plane.json"),
+      JSON.stringify({
+        overlay_id: "fleet-data-plane",
+        overlay_version: 1,
+        base_version: "v1.18.29",
+        surfaces: [{ surface_id: "data-plane-routing", fleet_class: "data-plane routing", fields: [{ name: "upstream_mode", base_default: "engine" }] }],
+      }),
+    );
+
+    const entitledDir = join(root, "entitled");
+    mkdirSync(entitledDir, { recursive: true });
+    writeFileSync(join(entitledDir, "entitlements.toml"), `codes = ["amicissimo"]\n`);
+
+    // Hub credential must be present for fleet proxy to try the upstream.
+    const { writeHubCredential } = await import("../src/amicode_service/hub_credential");
+    const hubFile = join(root, "hub-cred.json");
+    writeHubCredential({ baseUrl: "http://127.0.0.1:9", token: "dead-hub" }, { env: { AMICO_FLEET_HUB_FILE: hubFile } });
+    const savedHubFileEnv = process.env.AMICO_FLEET_HUB_FILE;
+    process.env.AMICO_FLEET_HUB_FILE = hubFile;
+
+    // Write the on-disk attachment pointer so the D3 resolver sees an
+    // attached server and routes /amicode/vaults to the attached upstream.
+    const attachmentFile = join(root, "attachment.json");
+    writeFileSync(attachmentFile, JSON.stringify({ sshAlias: "test-peer", transport: "ssh", machine_id: "peer-01" }));
+    const savedAttachmentFileEnv = process.env.AMICO_FLEET_ATTACHMENT_FILE;
+    process.env.AMICO_FLEET_ATTACHMENT_FILE = attachmentFile;
+
+    const { log } = sinkLog();
+    const boot = await startAmicodeService(log, {
+      engine: { password: "engine-boot-attached", getUrl: () => undefined },
+      appDistRoot: dist,
+      // Use a real fleet activation so the fleet plane is created.
+      fleetActivation: {
+        armed: true,
+        hubUrl: "http://127.0.0.1:9",
+        tunnelAlias: "fleet-hub",
+        posture: {
+          degradedLatencyP95Ms: 3000,
+          degradedWindowSamples: 10,
+          hubDownConsecutiveNoResponses: 3,
+          recoveryConsecutiveHealthy: 2,
+        },
+        notes: [],
+        entitlements: ["amicissimo"],
+        entitlementConfigDir: entitledDir,
+        overlaySource: join(root, "overlay-source"),
+      },
+      // #1410: the boot-recovered transport's getUrl.
+      bootAttached: { getUrl: () => attachedUrl },
+    });
+    expect(boot).toBeDefined();
+    if (!boot) return;
+    try {
+      const auth = serverAuthHeader("engine-boot-attached");
+      // /amicode/vaults routes to the ATTACHED upstream (the D3 resolver).
+      const res = await fetch(`${boot.url}/amicode/vaults`, { headers: { Authorization: auth } });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { ok: boolean; boot_attached_marker?: boolean };
+      expect(body.boot_attached_marker).toBe(true);
+    } finally {
+      await boot.service.stop();
+      await new Promise<void>((r) => attachedServer.close(() => r()));
+      if (savedHubFileEnv === undefined) delete process.env.AMICO_FLEET_HUB_FILE;
+      else process.env.AMICO_FLEET_HUB_FILE = savedHubFileEnv;
+      if (savedAttachmentFileEnv === undefined) delete process.env.AMICO_FLEET_ATTACHMENT_FILE;
+      else process.env.AMICO_FLEET_ATTACHMENT_FILE = savedAttachmentFileEnv;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

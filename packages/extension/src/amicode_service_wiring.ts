@@ -89,6 +89,10 @@ export interface AmicodeServiceWiringOptions {
     dataPlaneTimeoutMs?: number;
     writeTimeoutMs?: number;
     writeMaxRetries?: number;
+    /** #1410 (ADR 0030 §D3): boot-time attachment recovery — the recovered
+     *  transport's getUrl, threaded to createAmicodeService's fleet.attached
+     *  so the D3 resolver routes to the attached device on reload. */
+    attached?: { getUrl: () => string | undefined };
   };
   /** #398 (slice 4e): the fleet activation — config/env-driven (see
    *  fleet_activation.ts). A resolved snapshot OR a late-bound resolver
@@ -134,6 +138,13 @@ export interface AmicodeServiceWiringOptions {
    *  downstream timeout). Matching — or an unreadable host version (host down,
    *  deferred to hub-down) — boots normally. Absent = no gate (base boots). */
   versionGate?: RelayVersionGateOptions;
+  /** #1410 (ADR 0030 §D3): boot-time attachment recovery. When a prior
+   *  attachment pointer is found on disk at activation, the caller spins up
+   *  the per-attachment transport and hands the result here. The wiring
+   *  threads `getUrl` into the fleet plane's `attached` field — independent
+   *  of the fleet activation state (the pointer can be valid on a machine
+   *  whose activation config is not yet armed). */
+  bootAttached?: { getUrl: () => string | undefined };
 }
 
 /**
@@ -225,6 +236,13 @@ export async function startAmicodeService(
           : {}),
         ...(opts.fleetTransport?.writeMaxRetries !== undefined
           ? { writeMaxRetries: opts.fleetTransport.writeMaxRetries }
+          : {}),
+        // #1410 (ADR 0030 §D3): boot-time attachment recovery — thread the
+        // caller's recovered transport into the fleet plane so the D3 resolver
+        // routes to the attached device after a window reload. fleet.attached
+        // (direct pass) wins over the top-level bootAttached (production path).
+        ...((opts.fleet?.attached ?? opts.bootAttached) !== undefined
+          ? { attached: opts.fleet?.attached ?? opts.bootAttached }
           : {}),
       };
     }
