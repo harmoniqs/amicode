@@ -24,7 +24,7 @@
     "packages/app/public/amico.svg": "7c64b145bdd063bacd53318336a423f0654ec702de2b4e0c4a4a384694052804",
     "packages/app/public/oc-theme-preload.js": "27227e802b3494e7c545da903e679efdb30ccc754cd4eb5cdf08005a40d560b6",
     "packages/app/src/app-desktop-commands.test.ts": "1d2057f238dc14e4407ff5c4e53afe091784790bc0fd0dbfde0eacd91e2bd968",
-    "packages/app/src/app.tsx": "c78c9088a6f4905d360479881a7af761782b53fad3e8eeab0b5a5a0b5703d773",
+    "packages/app/src/app.tsx": "b8b8e98f51ee887c8a4351815ba88c87ce5cc55168013d70bb3f4b1b25676e63",
     "packages/app/src/design-polish.css": "6b860316d2d57a4a9a89c1ff2772de45eca0d0cef2bd3e2ea8572d817e1d1910",
     "packages/app/src/desktop-menu.ts": "55481604f4fd5dcb74b0678347076c42fda7f928590d90bc2c3d1633bea8bc36",
     "packages/app/src/entry.tsx": "f35e1017f4c9d478d254b2a38043e5750064b6bef25169c3e07ae9f72ff1049c",
@@ -191,6 +191,7 @@
     "packages/app/src/i18n/uk.ts": "4135f6142c419dad6455e858a3d20b7f42180c054422dc8808213bd609f166ac",
     "packages/app/src/i18n/zh.ts": "600507ffc843bad3f85102000b97f0b29e0ee1aa82cd67d67e12ffbf8eb04165",
     "packages/app/src/i18n/zht.ts": "11a18096ad1369c92c8895d129d150d20ce18db05ff9a11aa3eec868388d8e22",
+    "packages/app/src/pages/empty-workspace-landing.tsx": "8bd76387aaa75b5f5c10832c1c464340f0eb29e0f96db534abd432258a7d1099",
     "packages/app/src/pages/error.tsx": "db9ba0847cfb205100ad6133cce30c6ea2ce983802af44947e6d2b746c2a6ec5",
     "packages/app/src/pages/home-projects.test.ts": "a90155c37210a0e5b7a095bbfc3ba2d40681f02927d9726148a706bed5ba7891",
     "packages/app/src/pages/home-projects.ts": "d55124578dc839b98e2084b488d818e30e4a1abf1ae264499b83e403c2aabca7",
@@ -845,10 +846,10 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-09-20T22:35:07.113Z",
+  "extracted_at": "2026-09-20T23:56:49.982Z",
   "per_package": {
     "packages/app": {
-      "A": 168,
+      "A": 169,
       "M": 158,
       "D": 0
     },
@@ -889,7 +890,7 @@
     }
   },
   "counts": {
-    "overlay_total": 823,
+    "overlay_total": 824,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1077,6 +1078,7 @@
     "packages/app/src/i18n/uk.ts": "M",
     "packages/app/src/i18n/zh.ts": "M",
     "packages/app/src/i18n/zht.ts": "M",
+    "packages/app/src/pages/empty-workspace-landing.tsx": "A",
     "packages/app/src/pages/error.tsx": "M",
     "packages/app/src/pages/home-projects.test.ts": "A",
     "packages/app/src/pages/home-projects.ts": "A",
