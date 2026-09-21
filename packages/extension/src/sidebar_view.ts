@@ -388,6 +388,9 @@ function friendlyHostname(): string | undefined {
   /** Spawn a new chat session with the given prompt. Used by the Troubleshoot
    *  button to invoke the troubleshoot-fleet skill. */
   launchSession: (prompt: string) => void;
+  /** #1413 — connect to a fleet device (show the Quick Pick). Optional: the
+   *  sidebar degrades honestly when the handler is absent. */
+  connectToDevice?: (msg: { machineId: string; deviceName: string; isLocal: boolean }) => void;
 }
 
 /** The roster read result — rows + whether the read succeeded (false ⇒ host
@@ -784,6 +787,9 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
         },
         troubleshootFleet: () => {
           this.fleetDeps?.launchSession("/troubleshoot-fleet");
+        },
+        connectToDevice: (msg) => {
+          this.fleetDeps?.connectToDevice?.(msg);
         },
       };
       void handleSidebarMessage(msg, handlers);
@@ -1455,6 +1461,7 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
       padding: 3px 8px 3px 8px;
       font-size: 12px;
       color: var(--vscode-foreground);
+      cursor: pointer;
     }
     .fleet-device-row:hover { background: var(--vscode-list-hoverBackground); }
     .fleet-device-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

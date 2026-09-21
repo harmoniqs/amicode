@@ -401,8 +401,18 @@ export interface TroubleshootFleetRequest {
   kind: "troubleshoot-fleet";
 }
 
-/** The union of navigation messages the fleet section can emit. */
-export type FleetSectionMessage = OpenFleetManagerRequest | TroubleshootFleetRequest;
+/** The union of navigation messages the fleet section can emit. Navigation
+ *  actions only — no roster-write path (ADR 0026, updated for #1413). */
+export type FleetSectionMessage = OpenFleetManagerRequest | TroubleshootFleetRequest | ConnectToDeviceRequest;
+
+/** #1413 — connect to a fleet device. Posted on device row click. The message
+ *  carries identity only; all precondition data is resolved host-side. */
+export interface ConnectToDeviceRequest {
+  kind: "connect-to-device";
+  machineId: string;
+  deviceName: string;
+  isLocal: boolean;
+}
 
 /** Human-readable label for a per-device health tri-state (color is never the
  *  only signal — the label always accompanies the indicator). */
@@ -426,15 +436,28 @@ function dotStatusTooltip(device: FleetDeviceRow, now?: number): string {
 
 // ── DOM render helpers ───────────────────────────────────────────────────────
 
-/** Render one read-only device row: a file-list-style line — status dot,
- *  name, type pill (#1359). `role` / `last-seen` / `capabilities` move to the
- *  row's `title` tooltip rather than cluttering the row body.
- *  `now` is the injectable clock for relative-age tooltips (#1375). */
-function renderDeviceRow(device: FleetDeviceRow, now?: number): HTMLElement {
+/** Render one device row: a file-list-style line — status dot, name, type pill
+ *  (#1359). Clickable: posts a `connect-to-device` message (#1413, ADR 0030 §D1).
+ *  `role` / `last-seen` / `capabilities` move to the row's `title` tooltip. */
+function renderDeviceRow(
+  device: FleetDeviceRow,
+  now: number | undefined,
+  post: (msg: FleetSectionMessage) => void,
+): HTMLElement {
   const rowEl = document.createElement("div");
   rowEl.className = "fleet-device-row";
   rowEl.setAttribute("data-machine-id", device.machineId);
   rowEl.title = deviceTooltip(device, device.rosterHealth, now);
+
+  // #1413: click → connect-to-device message
+  rowEl.addEventListener("click", () => {
+    post({
+      kind: "connect-to-device",
+      machineId: device.machineId,
+      deviceName: device.name,
+      isLocal: device.isLocal,
+    });
+  });
 
   // left: a status dot — color is never the only signal, so the same
   // tri-state also carries as an aria-label (a11y) even without inline text.
@@ -586,7 +609,7 @@ export function renderFleetSection(
       const list = document.createElement("div");
       list.className = "fleet-device-list";
       for (const device of model.devices) {
-        list.appendChild(renderDeviceRow(device, model.now));
+        list.appendChild(renderDeviceRow(device, model.now, post));
       }
       container.appendChild(list);
     }
