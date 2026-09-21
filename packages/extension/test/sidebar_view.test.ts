@@ -226,11 +226,25 @@ describe("sidebar bridge — handleSidebarMessage", () => {
     expect(() => handleSidebarMessage({ kind: "open-fleet-manager" }, {} as any)).not.toThrow();
   });
 
+  it("routes troubleshoot-fleet to the troubleshootFleet handler", () => {
+    const troubleshootFleet = vi.fn();
+    const fileOp = vi.fn();
+    expect(() =>
+      handleSidebarMessage({ kind: "troubleshoot-fleet" }, { troubleshootFleet, fileOp } as any)
+    ).not.toThrow();
+    expect(troubleshootFleet).toHaveBeenCalledTimes(1);
+    expect(fileOp).not.toHaveBeenCalled();
+  });
+
+  it("troubleshoot-fleet degrades honestly when no handler is wired (no throw)", () => {
+    expect(() => handleSidebarMessage({ kind: "troubleshoot-fleet" }, {} as any)).not.toThrow();
+  });
+
   it("treats fleet-status as a down-only message — no host-side handler, no throw (#1321)", () => {
     // fleet-status flows host→webview only; the host handler must ignore it.
     const openFleetManager = vi.fn();
     expect(() =>
-      handleSidebarMessage({ kind: "fleet-status", model: { state: "empty", devices: [], posture: null, manage: { enabled: false } } } as any, { openFleetManager } as any)
+      handleSidebarMessage({ kind: "fleet-status", model: { state: "empty", devices: [], posture: null, manage: { enabled: false }, troubleshoot: { enabled: false } } } as any, { openFleetManager } as any)
     ).not.toThrow();
     expect(openFleetManager).not.toHaveBeenCalled();
   });
@@ -264,6 +278,7 @@ describe("SidebarViewProvider — fleet section host wiring (#1321)", () => {
       postureCb: (() => {}) as () => void,
     };
     const openFleetManager = vi.fn();
+    const launchSession = vi.fn();
     const deps = {
       readRoster: () => state.roster,
       readPosture: () => state.posture,
@@ -271,8 +286,9 @@ describe("SidebarViewProvider — fleet section host wiring (#1321)", () => {
       onPostureChange: (cb: () => void) => { state.postureCb = cb; return { dispose() {} }; },
       isFleetManagerAvailable: () => state.managerAvailable,
       openFleetManager,
+      launchSession,
     };
-    return { state, deps, openFleetManager };
+    return { state, deps, openFleetManager, launchSession };
   }
 
   function lastFleetStatus(view: any) {
@@ -480,9 +496,9 @@ describe("defaultFleetSectionDeps — production readers (#1321)", () => {
     expect(p.reachable).toBe(true);
   });
 
-  it("isFleetManagerAvailable honestly reports false when the Fleet Manager tab (#1322) is absent", () => {
+  it("isFleetManagerAvailable honestly reports true (the Fleet Manager is always available)", () => {
     const deps = defaultFleetSectionDeps({});
-    expect(deps.isFleetManagerAvailable()).toBe(false);
+    expect(deps.isFleetManagerAvailable()).toBe(true);
   });
 });
 
@@ -520,9 +536,9 @@ describe("sidebar webview — fleet section styling (#1321, design-system tokens
     expect(css).toMatch(/\.fleet-type-pill[^{]*\{[^}]*var\(--vscode-badge-/);
   });
 
-  it("the Manage affordance is a plain clickable control — no disabled visual state to style (#1359: hidden, not disabled)", () => {
+  it("the action bar buttons use a shared transparent-border style, never a disabled visual state (#1359: hidden, not disabled)", () => {
     const css = html();
-    expect(css).toMatch(/\.fleet-manage\s*\{/);
+    expect(css).toMatch(/\.fleet-action-bar button\s*\{/);
     expect(css).not.toMatch(/\.fleet-manage:disabled/);
   });
 });

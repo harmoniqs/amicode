@@ -948,7 +948,7 @@ function createIconEl(icon: string): HTMLElement {
   // #1321 — the last fleet view-model the host pushed. Defaults to the honest
   // empty state so the section renders something real before the first
   // fleet-status arrives (never a spinner, never a fabricated device list).
-  let lastFleetModel: FleetSectionModel = { state: "empty", devices: [], posture: null, manage: { enabled: false } };
+  let lastFleetModel: FleetSectionModel = { state: "empty", devices: [], posture: null, manage: { enabled: false }, troubleshoot: { enabled: false } };
 
   /** Walk all rendered nodes and apply/remove git-status CSS classes. */
   function applyGitStatus(statusMap: Record<string, string>): void {

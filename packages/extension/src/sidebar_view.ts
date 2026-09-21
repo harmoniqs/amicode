@@ -362,6 +362,9 @@ function friendlyHostname(): string | undefined {
   isFleetManagerAvailable: () => boolean;
   /** Open the Fleet Manager tab (#1322). Only invoked when available. */
   openFleetManager: () => void;
+  /** Spawn a new chat session with the given prompt. Used by the Troubleshoot
+   *  button to invoke the troubleshoot-fleet skill. */
+  launchSession: (prompt: string) => void;
 }
 
 /** Options for {@link defaultFleetSectionDeps} — every file path is injectable
@@ -372,8 +375,8 @@ export interface DefaultFleetDepsOptions {
   postureFile?: string;
   fleetConfigFile?: string;
   fleetManagerCommandId?: string;
-  /** Override the availability probe; default honestly reports false until the
-   *  Fleet Manager tab (#1322) lands and flips this. */
+  /** Override the availability probe; default honestly reports true (the Fleet
+   *  Manager is always available). */
   isFleetManagerAvailable?: () => boolean;
   /** Override the change subscription (default: fs.watch on the ops/fleet dir). */
   onPostureChange?: (cb: () => void) => vscode.Disposable;
@@ -381,6 +384,9 @@ export interface DefaultFleetDepsOptions {
    *  memoized `detectDeviceType` (macOS `system_profiler`, undefined
    *  elsewhere/on failure). Inject for tests — never shells out in a test run. */
   detectDeviceType?: () => string | undefined;
+  /** Override session launch; default navigates the chat panel to a new session
+   *  with the given prompt (same pattern as New Project / New Environment). */
+  launchSession?: (prompt: string) => void;
 }
 
 /**
@@ -451,8 +457,19 @@ export function defaultFleetSectionDeps(opts: DefaultFleetDepsOptions = {}): Fle
           return { dispose() { /* dir absent — nothing to watch */ } };
         }
       }),
-    isFleetManagerAvailable: opts.isFleetManagerAvailable ?? (() => false),
+    isFleetManagerAvailable: opts.isFleetManagerAvailable ?? (() => true),
     openFleetManager: () => { void vscode.commands.executeCommand(commandId); },
+    launchSession: opts.launchSession ?? ((prompt: string) => {
+      // Late-bound: the chat panel may not exist at deps-construction time, but
+      // it will by the time the user clicks the button. Same navigate pattern
+      // as New Project / New Environment — post a navigate message to the chat
+      // panel that opens a new session with the given prompt auto-sent.
+      const panel = ChatPanel.peek();
+      if (!panel) return;
+      const encodedPrompt = encodeURIComponent(prompt);
+      const navPath = `/new-session?prompt=${encodedPrompt}&autoSend=1`;
+      void panel.postMessage({ source: "amicode", kind: "navigate", path: navPath });
+    }),
     readLocalDevice: () => {
       // THIS machine's own identity, independent of the roster (#1359): the
       // serve-stance mirrors fleet.json (same reader readPosture uses), the
@@ -644,6 +661,9 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
         openFleetManager: () => {
           if (this.fleetDeps?.isFleetManagerAvailable()) this.fleetDeps.openFleetManager();
         },
+        troubleshootFleet: () => {
+          this.fleetDeps?.launchSession("/troubleshoot-fleet");
+        },
       };
       void handleSidebarMessage(msg, handlers);
     });
@@ -756,6 +776,7 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
       rosterReachable: roster.reachable,
       posture: this.fleetDeps.readPosture(),
       manageAvailable: this.fleetDeps.isFleetManagerAvailable(),
+      troubleshootAvailable: true,
       localDevice: this.fleetDeps.readLocalDevice?.() ?? null,
     });
     this.postDown({ kind: "fleet-status", model });
@@ -1319,8 +1340,8 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
       color: var(--vscode-badge-foreground, var(--vscode-foreground));
       background: var(--vscode-badge-background);
     }
-    .fleet-manage {
-      margin: 6px 8px 4px 32px;
+    .fleet-action-bar { display: flex; gap: 6px; margin: 4px 8px; }
+    .fleet-action-bar button {
       padding: 2px 10px;
       font-size: 11px;
       border: 1px solid var(--vscode-button-border, var(--vscode-panel-border));
@@ -1329,8 +1350,8 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
       background: transparent;
       cursor: pointer;
     }
-    .fleet-manage:hover { background: var(--vscode-list-hoverBackground); }
-    .fleet-manage:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+    .fleet-action-bar button:hover { background: var(--vscode-list-hoverBackground); }
+    .fleet-action-bar button:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
     .context-menu {
       position: fixed;
       z-index: 1000;

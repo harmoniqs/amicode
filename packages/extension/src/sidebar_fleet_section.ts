@@ -109,6 +109,10 @@ export interface FleetSectionInput {
   rosterReachable: boolean;
   posture: FleetPostureInput | null;
   manageAvailable: boolean;
+  /** Whether the Troubleshoot action is available — the host gates this on
+   *  session-launch capability. Disabled ⇒ the button is absent (same honest
+   *  degrade as Manage). */
+  troubleshootAvailable: boolean;
   /** THIS machine's own identity, known independent of the roster (fleet.json
    *  serve-stance + hostname/config, #1359) — never fabricated: null/omitted
    *  when local identity can't be resolved. Drives the self-row synthesis and
@@ -135,6 +139,9 @@ export interface FleetSectionModel {
   /** The single Manage affordance — enabled only when the Fleet Manager tab
    *  (#1322) is present. Disabled ⇒ honest degrade, no dead click. */
   manage: { enabled: boolean };
+  /** The Troubleshoot affordance — enabled when session-launch is available
+   *  AND this machine is part of a fleet (non-standalone). */
+  troubleshoot: { enabled: boolean };
 }
 
 /** Fold the attach posture into the badge's link-health signal: an attached,
@@ -160,6 +167,7 @@ export function buildFleetSectionModel(input: FleetSectionInput): FleetSectionMo
       devices: [],
       posture: buildPostureBadge(input.posture),
       manage: { enabled: input.manageAvailable },
+      troubleshoot: { enabled: false },
     };
   }
   // Host down / roster read failed ⇒ the honest unreachable state. A stale
@@ -174,6 +182,7 @@ export function buildFleetSectionModel(input: FleetSectionInput): FleetSectionMo
       devices: local ? [localDeviceRow(local)] : [],
       posture: buildPostureBadge(input.posture),
       manage: { enabled: input.manageAvailable },
+      troubleshoot: { enabled: input.troubleshootAvailable },
     };
   }
   const localId = local?.machineId ?? null;
@@ -206,6 +215,7 @@ export function buildFleetSectionModel(input: FleetSectionInput): FleetSectionMo
     devices,
     posture: buildPostureBadge(input.posture),
     manage: { enabled: input.manageAvailable },
+    troubleshoot: { enabled: input.troubleshootAvailable },
   };
 }
 
@@ -246,6 +256,16 @@ function localDeviceRow(local: LocalDeviceInput): FleetDeviceRow {
 export interface OpenFleetManagerRequest {
   kind: "open-fleet-manager";
 }
+
+/** Request to spawn a troubleshoot-fleet session — the Troubleshoot button's
+ *  click payload. The host handler opens a new chat session that invokes the
+ *  troubleshoot-fleet skill. */
+export interface TroubleshootFleetRequest {
+  kind: "troubleshoot-fleet";
+}
+
+/** The union of navigation messages the fleet section can emit. */
+export type FleetSectionMessage = OpenFleetManagerRequest | TroubleshootFleetRequest;
 
 /** Human-readable label for a per-device health tri-state (color is never the
  *  only signal — the label always accompanies the indicator). */
@@ -309,7 +329,7 @@ function deviceTooltip(device: FleetDeviceRow): string {
  *  (#1322) is absent, `renderFleetSection` skips this entirely — no dead
  *  disabled control sitting in the DOM (AC3, sharpened from "disabled" to
  *  "absent"). */
-function renderManage(post: (msg: OpenFleetManagerRequest) => void): HTMLElement {
+function renderManage(post: (msg: FleetSectionMessage) => void): HTMLElement {
   const btn = document.createElement("button");
   btn.type = "button";
   btn.className = "fleet-manage";
@@ -317,6 +337,31 @@ function renderManage(post: (msg: OpenFleetManagerRequest) => void): HTMLElement
   btn.setAttribute("aria-label", "Manage fleet");
   btn.addEventListener("click", () => post({ kind: "open-fleet-manager" }));
   return btn;
+}
+
+/** The Troubleshoot affordance — a button that spawns a new session invoking
+ *  the troubleshoot-fleet skill. Same honest-degrade pattern as Manage:
+ *  absent when disabled, never a dead click. */
+function renderTroubleshoot(post: (msg: FleetSectionMessage) => void): HTMLElement {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "fleet-troubleshoot";
+  btn.textContent = "Troubleshoot";
+  btn.setAttribute("aria-label", "Troubleshoot fleet");
+  btn.addEventListener("click", () => post({ kind: "troubleshoot-fleet" }));
+  return btn;
+}
+
+/** The action bar: Manage + Troubleshoot, rendered at the TOP of the fleet
+ *  section (before the device list). Returns null when neither button is
+ *  enabled — the caller omits the bar entirely. */
+function renderActionBar(model: FleetSectionModel, post: (msg: FleetSectionMessage) => void): HTMLElement | null {
+  if (!model.manage.enabled && !model.troubleshoot.enabled) return null;
+  const bar = document.createElement("div");
+  bar.className = "fleet-action-bar";
+  if (model.manage.enabled) bar.appendChild(renderManage(post));
+  if (model.troubleshoot.enabled) bar.appendChild(renderTroubleshoot(post));
+  return bar;
 }
 
 /**
@@ -327,7 +372,7 @@ function renderManage(post: (msg: OpenFleetManagerRequest) => void): HTMLElement
 export function renderFleetSection(
   container: HTMLElement,
   model: FleetSectionModel,
-  post: (msg: OpenFleetManagerRequest) => void,
+  post: (msg: FleetSectionMessage) => void,
 ): void {
   container.innerHTML = "";
 
@@ -340,23 +385,23 @@ export function renderFleetSection(
   if (model.state === "standalone") {
     // No fleet.json at all — there is no fleet to list devices for (#1359).
     // Never a device row here; the model guarantees devices is empty too.
+    // No action bar either — there's no fleet to manage or troubleshoot.
     const notice = document.createElement("div");
     notice.className = "fleet-standalone fleet-placeholder-text";
     notice.textContent = "Current device not registered with a fleet.";
     container.appendChild(notice);
   } else {
+    // Action bar (Manage + Troubleshoot) renders at the TOP, before the
+    // device list — absent entirely when neither button is enabled.
+    const bar = renderActionBar(model, post);
+    if (bar) container.appendChild(bar);
+
     if (model.state === "unreachable") {
-      // Honest degraded state — the PEER roster host is unreachable. Never a
-      // spinner and never a stale/fabricated peer list — but the self-row
-      // below (when local identity is known) is independently-verified local
-      // truth, not a read of the down roster (#1359).
       const down = document.createElement("div");
       down.className = "fleet-unreachable fleet-placeholder-text";
       down.textContent = "Fleet host unreachable";
       container.appendChild(down);
     } else if (model.state === "empty") {
-      // Honest empty state — the fleet is reachable, no devices are reporting.
-      // Never a spinner or a fabricated list.
       const empty = document.createElement("div");
       empty.className = "fleet-empty fleet-placeholder-text";
       empty.textContent = "No devices reporting yet";
@@ -370,12 +415,5 @@ export function renderFleetSection(
       }
       container.appendChild(list);
     }
-  }
-
-  // The single, section-level Manage affordance — read-only navigation to the
-  // Fleet Manager tab (#1322). Rendered ONLY when enabled; absent (not merely
-  // disabled) when that tab isn't present on this build — no dead click, AC3.
-  if (model.manage.enabled) {
-    container.appendChild(renderManage(post));
   }
 }
