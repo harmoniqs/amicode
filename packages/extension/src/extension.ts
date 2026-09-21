@@ -559,9 +559,20 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     },
     fetchImpl: fetch,
     get serviceUrl() {
+      // On a server, the roster route lives on the hub service (canonical port,
+      // auth=open). On a client, it proxies through the local extension service.
+      // The hub service is always localhost — it runs on this machine.
+      const topology = readFleetTopology();
+      if (topology.kind === "ok" && topology.role === "server") {
+        const port = topology.canonical?.port ?? 4096;
+        return `http://127.0.0.1:${port}`;
+      }
       return amicodeService ? new URL(amicodeService.url).origin : "http://127.0.0.1:4095";
     },
     get authHeader() {
+      // The hub service runs with auth=open — no header needed for servers.
+      const topology = readFleetTopology();
+      if (topology.kind === "ok" && topology.role === "server") return "";
       return amicodeService?.authHeader ?? "";
     },
     now: () => Date.now(),
