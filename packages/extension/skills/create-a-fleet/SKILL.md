@@ -8,11 +8,21 @@ surface: public
 # Create a Fleet
 
 An **agentic orchestrator** that turns one machine into a working Amicode fleet
-(a canonical server + attached clients) by driving the enroll primitive
-`amico fleet enroll` (#1319) across machines. Building a fleet by hand is N
-separate enroll runs where the hard parts — finding the machines, confirming
-2-way reachability, and un-sticking a broken SSH/Tailscale link — are left to you.
-This skill runs that loop for you, one confirmed machine at a time.
+in the **hub / star** topology (a canonical `role=server` + attached never-fork
+`role=client` machines) by driving the enroll primitive `amico fleet enroll`
+(#1319) across machines. Building a fleet by hand is N separate enroll runs where
+the hard parts — finding the machines, confirming 2-way reachability, and
+un-sticking a broken SSH/Tailscale link — are left to you. This skill runs that
+loop for you, one confirmed machine at a time.
+
+> **Scope: this skill builds the hub/star topology only.** As of #1353 (ADR 0027)
+> there is a second, **additive** topology — **peer studios**, where each machine
+> runs its own engine and you attach/switch between them. Peer entry does **not**
+> go through `amico fleet enroll` (a peer stays `standalone`, never `client`), so
+> it is **not** what this loop provisions. If the user wants "no single point of
+> failure" or "either machine can serve," read
+> [Peer studios vs hub/star](#peer-studios-vs-hubstar) below before defaulting to
+> enroll — the answer is often peer, not a bigger star.
 
 It **drives** the primitive; it never re-implements enroll logic. The only code
 it owns is the small read-only discovery helper `discoverFleetCandidates`
@@ -200,6 +210,58 @@ Then offer the hand-off: anything still stuck after its guided step is a job for
 `/fleet` (deep diagnosis) — say so and stop; don't loop forever on a link the
 human step didn't fix.
 
+## Peer studios vs hub/star
+
+Since #1353 (ADR 0027, Horizon 1) there are **two additive topologies**. Pick the
+one that matches the user's goal — do not reflexively enroll a client.
+
+| | **Hub / star** (this skill) | **Peer studios** (ADR 0027) |
+|---|---|---|
+| Engines | ONE (the hub); clients are never-fork | EACH machine runs its OWN engine on its own DB |
+| `fleet.json` role | `server` + N `client` | `standalone` (a peer never becomes `client`) |
+| Built by | `amico fleet enroll` (this loop) | **no enroll, no CLI verb, no wizard** — see below |
+| If a machine is off | its clients are **dead** (nothing to tunnel to) | the others **keep working** (no single point of failure) |
+| Attach/switch | n/a (fixed hub) | Fleet Manager **Attach** control + `POST /amicode/fleet/attach` |
+
+**When the user says "peer," "no single point of failure," or "either machine can
+serve" — that is peer studios, not a bigger star.** In a star, a client is a thin
+window onto the one hub engine and dies whenever the hub is off; peers each run
+their own engine, so neither is a dependency for the other.
+
+### What peer studios ship today (all merged) — and the one honest gap
+
+- **Shipped:** independent per-machine studios; the `serving` capability tag +
+  `placementDescriptor` (`@amicode/schema` `fleet_roster.ts`); the directory keeper
+  bootstrap pointer (`~/.amico/ops/fleet/keeper.json`); the switch-control pointer
+  + honesty surface (`GET /amicode/fleet/attachment`); the attach/detach routes
+  (`POST /amicode/fleet/attach|detach`, registered unconditionally); per-attachment
+  SSH transport + credential; and the Fleet Manager per-row **Attach** control.
+- **NOT wired yet (state it plainly):** `server.ts` is held byte-identical, so the
+  three-way resolver is not in the live proxy's `dispatch()`. An attach flips the
+  pointer and resets the SSE cursor, but the **live proxy/SSE still target the
+  local/hub engine** — clicking Attach does not yet run your live session on the
+  peer's engine. End-to-end live re-target is a flagged follow-up.
+- **Declared, not built:** compute federation (Horizon 2) — server-to-server
+  agent dispatch. The `compute` capability tag stays inert.
+
+### Converting an existing hub/client pair to peers
+
+There is no enroll-style orchestrator for this yet, so guide it by hand:
+
+1. On the **client**, run `Amicode: Fleet — Go Standalone` (Command Palette) — it
+   writes `role: standalone`, clears the guard override + tunnel, and spawns a
+   local engine. That machine now runs its own studio and no longer depends on the
+   hub.
+2. The **former hub** already has its own engine as `role=server`; it can stay
+   `server` (and double as the roster keeper) or `Go Standalone` too. Either way it
+   keeps its own engine, so it stops being a single point of failure for the other.
+3. Optionally have each advertise `serving` (via its roster self-report) and point
+   `~/.amico/ops/fleet/keeper.json` at the roster host so both appear in the Fleet
+   Manager with the Attach control.
+
+For deep diagnosis of a peer or hub link that is genuinely broken, hand off to
+`/fleet`. For the full mechanics, see `tools/fleet/README.md` § Peer studios.
+
 ## What this skill does NOT do
 
 - **Re-implement enroll.** No fleet.json writes, no roster POSTs, no health
@@ -207,6 +269,10 @@ human step didn't fix.
 - **Silent fan-out.** Never enroll multiple machines from one confirmation.
 - **Automated bare-machine bootstrap.** A client with no amicode is *guided*
   through install, not auto-provisioned.
-- **The roster route (#1318) or the fleet-peer executor.** Out of scope; the
-  `compute` capability is recorded but inert.
+- **Build peer studios.** Peer entry (ADR 0027) does not go through `amico fleet
+  enroll` and has no orchestrator — this loop builds the hub/star topology only.
+  See [Peer studios vs hub/star](#peer-studios-vs-hubstar) for the guided path.
+- **The roster route (#1318) or the Horizon-2 compute-federation executor.** Out of
+  scope; the `compute` capability is recorded but inert (peer studios ship the
+  substrate for it, not the executor).
 - **Deep diagnosis.** A genuinely broken fleet is `/fleet`'s job — hand off.
