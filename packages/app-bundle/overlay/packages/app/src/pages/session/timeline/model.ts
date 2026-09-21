@@ -39,7 +39,7 @@ export function createTimelineModel(input: {
       // cached data sat on screen). The SSE reducers keep live sessions
       // fresh; the warm pass reconciles in the background; only a
       // genuinely-empty session takes the sync path.
-      const cached = untrack(() => sync().data.message[id] !== undefined)
+      const cached = untrack(() => (sync().data.message[id]?.length ?? 0) > 0)
       if (cached) {
         // The resource resolves NOW (the cached messages are on screen);
         // the sync still runs as a TRUE background task — it may join an
@@ -55,7 +55,7 @@ export function createTimelineModel(input: {
       // data). Hydrate (an IDB read, milliseconds) → resolve; the sync
       // runs in the background as above.
       await sync().session.hydrate(id)
-      if (untrack(() => sync().data.message[id] !== undefined)) {
+      if (untrack(() => (sync().data.message[id]?.length ?? 0) > 0)) {
         void sync().session.sync(id).catch(() => {})
         return
       }

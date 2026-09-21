@@ -701,7 +701,7 @@ ${text.slice(0, 12000)}` }).catch(() => {})  // #1294: 2400 truncated snapshots 
     let lastPath = location.pathname
     let renderT0 = 0
     let renderId = ""
-    setInterval(() => {
+    const renderScanTimer = setInterval(() => {
       try {
         const path = location.pathname
         if (path !== lastPath) {
@@ -731,7 +731,7 @@ ${text.slice(0, 12000)}` }).catch(() => {})  // #1294: 2400 truncated snapshots 
       const w = globalThis as { __renderRing?: unknown }
       w.__renderRing = renderRing.slice(-8)
     }
-    setInterval(shipRenderRing, 1_000)
+    const renderShipTimer = setInterval(shipRenderRing, 1_000)
     let lastHtml = -1
     let lastKids = -1
     const ring: string[] = []
@@ -779,6 +779,8 @@ ${text.slice(0, 12000)}` }).catch(() => {})  // #1294: 2400 truncated snapshots 
       window.removeEventListener("unhandledrejection", onRejection)
       clearTimeout(shipTimeout)
       clearInterval(shipInterval)
+      clearInterval(renderScanTimer)
+      clearInterval(renderShipTimer)
       cancelAnimationFrame(rafId)
       clearInterval(timer)
     })

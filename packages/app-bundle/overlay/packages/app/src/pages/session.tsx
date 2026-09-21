@@ -486,16 +486,22 @@ function SessionProviders(props: ParentProps) {
  *  remount cost and decides keep-alive vs remount-tuning. */
 function TimelinePaintProbe(props: ParentProps<{ id: string }>) {
   const w = globalThis as { __paintT0?: number; __paintRing?: { id: string; ms: number }[] }
+  let outerRaf = 0
+  let innerRaf = 0
   onMount(() => {
     const t0 = w.__paintT0
     if (t0 === undefined) return
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
+    outerRaf = requestAnimationFrame(() => {
+      innerRaf = requestAnimationFrame(() => {
         w.__paintRing = w.__paintRing ?? []
         w.__paintRing.push({ id: props.id.slice(-14), ms: Math.round(performance.now() - t0) })
         if (w.__paintRing.length > 16) w.__paintRing.shift()
       })
     })
+  })
+  onCleanup(() => {
+    cancelAnimationFrame(outerRaf)
+    cancelAnimationFrame(innerRaf)
   })
   return <>{props.children}</>
 }
