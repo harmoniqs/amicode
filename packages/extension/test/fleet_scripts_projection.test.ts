@@ -400,7 +400,8 @@ describe("the installer writes the platform-correct settings path (#1261 AC4)", 
 // runner the editor adopts, pinned to the canonical OPENCODE_DB. A CLIENT never
 // gets it (never-fork). The role gate rides the ONE topology reader (ADR 0023):
 // the SAME parsed projection role that decides guard/settings/tunnel decides this.
-describe("#1258 the installer provisions the canonical hub service (reboot-survival)", () => {
+const HUB_RUNNER_BUNDLE = join(REPO, "packages", "extension", "bin", "dist", "amicode-service-runner.mjs");
+describe.skipIf(!existsSync(HUB_RUNNER_BUNDLE))("#1258 the installer provisions the canonical hub service (reboot-survival)", () => {
   const installEnv = (): { path: string } => ({
     path: `${join(tmp, "fakebin")}:${process.env.PATH ?? ""}`,
   });

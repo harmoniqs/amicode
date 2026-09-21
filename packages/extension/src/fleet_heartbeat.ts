@@ -49,8 +49,8 @@ export class FleetHeartbeat {
     this.deps = deps;
     this.intervalMs = deps.intervalMs ?? HEARTBEAT_INTERVAL_MS;
     this.timerApi = deps.timer ?? {
-      setInterval: globalThis.setInterval.bind(globalThis),
-      clearInterval: globalThis.clearInterval.bind(globalThis),
+      setInterval: (fn: () => void, ms: number) => globalThis.setInterval(fn, ms),
+      clearInterval: (handle: unknown) => globalThis.clearInterval(handle as any),
     };
   }
 
