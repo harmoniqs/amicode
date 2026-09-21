@@ -9,11 +9,15 @@
 // test/support/stub_hub.ts, so this is its sibling.
 import { describe, it, expect, afterEach } from "vitest";
 import * as http from "node:http";
+import { hostname as osHostname } from "node:os";
 import type { AddressInfo } from "node:net";
-import { parseRosterRow, type RosterRow } from "@amicode/schema";
+import { parseRosterRow, normalizeDeviceName, type RosterRow } from "@amicode/schema";
 import {
   fleetEnroll,
   parseJoinToken,
+  detectDeviceTypeVia,
+  detectDeviceNameVia,
+  type CommandRunner,
   type FleetEnrollDeps,
   type JoinToken,
   type EnrollResult,
@@ -181,6 +185,10 @@ function recorder(over: Partial<FleetEnrollDeps> = {}): Recorder {
       engine.spawns += 1;
     },
     retryDelayMs: [0, 0, 0],
+    // Keep device-identity detection hermetic by default: no shelling out, no
+    // real settings.json read. Individual cases override these seams.
+    commandRunner: () => "",
+    readDeviceSetting: () => undefined,
     ...over,
   };
   return { deps, fleetWrites, joinTokenWrites, installerCalls, transportSets, engine };
@@ -562,5 +570,139 @@ describe("amico fleet enroll — verify-attach retries on transient transport-do
     expect(r.code).not.toBe(0);
     expect(j(r).cause).toBe("auth-rejected");
     expect(rejecting.healthHits()).toBe(1); // no retries — fails immediately
+  });
+});
+
+// ── device identity on the client roster row (#1371 / #1368, ADR 0028) ─────────
+// The producer half of the shared self-report: the client enroll POSTs a row
+// whose `name` is the resolved friendly name and whose `device_type` is the
+// resolved form factor, per the precedence setting-override → OS-detection →
+// prettified-hostname (name) / undefined (type). The impure OS detection hides
+// behind ONE injectable command-runner seam; classification is the shared
+// @amicode/schema pure functions.
+describe("amico fleet enroll — client row carries friendly name + device_type (#1371 AC8)", () => {
+  it("POSTs a row whose name is the resolved friendly name and device_type the resolved type", async () => {
+    const s = await stub({ version: "v1.18.29" });
+    const rec = recorder({
+      machineName: () => "JJ's MacBook Pro", // OS-detected friendly name (scutil ComputerName)
+      deviceType: () => "laptop", // OS-detected form factor
+    });
+    const r = await fleetEnroll(["--join-token-json", JSON.stringify(tokenFor(s))], rec.deps);
+
+    expect(r.code).toBe(0);
+    const row = s.rosterRows()[0];
+    expect(row.name).toBe("JJ's MacBook Pro");
+    expect(row.device_type).toBe("laptop");
+  });
+});
+
+describe("amico fleet enroll — device-identity resolution precedence (#1371 AC9)", () => {
+  it("override-wins: an explicit amicode.device.name / amicode.device.type setting beats OS detection", async () => {
+    const s = await stub({ version: "v1.18.29" });
+    const rec = recorder({
+      machineName: () => "detected-name",
+      deviceType: () => "laptop",
+      readDeviceSetting: (k) =>
+        k === "amicode.device.name" ? "Lab Rig" : k === "amicode.device.type" ? "server" : undefined,
+    });
+    const r = await fleetEnroll(["--join-token-json", JSON.stringify(tokenFor(s))], rec.deps);
+
+    expect(r.code).toBe(0);
+    const row = s.rosterRows()[0];
+    expect(row.name).toBe("Lab Rig");
+    expect(row.device_type).toBe("server");
+  });
+
+  it("honest fallback: no override + no detected type → name is the prettified hostname, device_type omitted", async () => {
+    const s = await stub({ version: "v1.18.29" });
+    const rec = recorder({
+      machineName: undefined, // exercise the default name detector
+      deviceType: undefined, // exercise the default type detector
+      commandRunner: () => "", // detection yields nothing
+      readDeviceSetting: () => undefined, // no override
+    });
+    const r = await fleetEnroll(["--join-token-json", JSON.stringify(tokenFor(s))], rec.deps);
+
+    expect(r.code).toBe(0);
+    const row = s.rosterRows()[0];
+    expect(row.name).toBe(normalizeDeviceName(osHostname()));
+    expect(row.device_type).toBeUndefined();
+  });
+});
+
+describe("amico fleet enroll — the friendly name never leaks into canonical/join token (#1371 AC11)", () => {
+  it("wiring a friendly name does NOT change canonical.host or the minted join token", async () => {
+    // A friendly, space-bearing display name; NO --host → canonical.host must be
+    // the RAW hostname, never the friendly name (the seam is decoupled).
+    const rec = recorder({ machineName: () => "JJ's Mac Studio" });
+    const r = await fleetEnroll(["--as-server", "--port", "4096", "--ssh-alias", "hub"], rec.deps);
+
+    expect(r.code).toBe(0);
+    const canonicalHost = (rec.fleetWrites[0].config as { canonical: { host: string } }).canonical.host;
+    expect(canonicalHost).toBe(osHostname());
+    expect(canonicalHost).not.toBe("JJ's Mac Studio");
+    expect(j(r).join_token?.canonical.host).toBe(osHostname());
+  });
+});
+
+// ── the impure detector: canned command output through the REAL caller (#1371 AC6/AC7) ──
+// AC6: a per-package test feeds canned command output through the real
+// command-runner caller into the shared pure classifier — so "on macOS/Linux/WSL
+// the row reflects X" is failing-test-able without shelling out.
+describe("detectDeviceTypeVia / detectDeviceNameVia — the amico-run impure detector (#1371 AC6/AC7)", () => {
+  it("darwin: system_profiler Model Name → type; scutil ComputerName → name", () => {
+    const run: CommandRunner = (cmd) =>
+      cmd === "system_profiler"
+        ? "      Model Name: Mac Studio\n      Model Identifier: Mac14,13\n"
+        : cmd === "scutil"
+          ? "JJ's Mac Studio\n"
+          : "";
+    expect(detectDeviceTypeVia(run, "darwin")).toBe("desktop");
+    expect(detectDeviceNameVia(run, "Mac.mynetworksettings.com", "darwin")).toBe("JJ's Mac Studio");
+  });
+
+  it("darwin: an unrecognized Model Name abstains; a missing ComputerName falls to the prettified hostname", () => {
+    const run: CommandRunner = () => ""; // both commands yield nothing
+    expect(detectDeviceTypeVia(run, "darwin")).toBeUndefined();
+    expect(detectDeviceNameVia(run, "Mac.mynetworksettings.com", "darwin")).toBe("Mac");
+  });
+
+  it("linux source order: hostnamectl chassis is consulted first (#1371 AC7)", () => {
+    const run: CommandRunner = (cmd, args) => {
+      if (cmd === "cat" && args[0] === "/proc/version") return "Linux version 6.8.0-generic";
+      if (cmd === "hostnamectl" && args[0] === "chassis") return "server\n";
+      return "";
+    };
+    expect(detectDeviceTypeVia(run, "linux")).toBe("server");
+  });
+
+  it("linux: /sys/class/dmi/id/chassis_type is the second source when hostnamectl gives nothing", () => {
+    const run: CommandRunner = (cmd, args) => {
+      if (cmd === "cat" && args[0] === "/proc/version") return "Linux version 6.8.0-generic";
+      if (cmd === "hostnamectl") return ""; // no systemd / no chassis
+      if (cmd === "cat" && args[0] === "/sys/class/dmi/id/chassis_type") return "9\n"; // 9 = Laptop
+      return "";
+    };
+    expect(detectDeviceTypeVia(run, "linux")).toBe("laptop");
+  });
+
+  it("linux WSL abstains on device_type (#1371 AC7 / ADR 0028)", () => {
+    const run: CommandRunner = (cmd, args) =>
+      cmd === "cat" && args[0] === "/proc/version"
+        ? "Linux version 5.15.90.1-microsoft-standard-WSL2"
+        : "hostnamectl-should-not-be-consulted";
+    expect(detectDeviceTypeVia(run, "linux")).toBeUndefined();
+  });
+
+  it("linux: hostnamectl absent ⇒ device_type omitted; name is the prettified hostname (#1371 AC7)", () => {
+    const run: CommandRunner = () => ""; // nothing detected at all
+    expect(detectDeviceTypeVia(run, "linux")).toBeUndefined();
+    expect(detectDeviceNameVia(run, "box.local", "linux")).toBe("box");
+  });
+
+  it("linux: hostnamectl --pretty (PRETTY_HOSTNAME) drives the name when present", () => {
+    const run: CommandRunner = (cmd, args) =>
+      cmd === "hostnamectl" && args[0] === "--pretty" ? "Lab Server\n" : "";
+    expect(detectDeviceNameVia(run, "box.local", "linux")).toBe("Lab Server");
   });
 });
