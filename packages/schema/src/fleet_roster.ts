@@ -65,6 +65,77 @@ export function isKnownCapability(tag: string): tag is KnownCapability {
 export const KNOWN_DEVICE_TYPES = ["server", "desktop", "laptop"] as const;
 export type KnownDeviceType = (typeof KNOWN_DEVICE_TYPES)[number];
 
+// ── the shared device-identity classifiers (#1371 / #1368, ADR 0028) ─────────
+// The PURE core of a machine's self-report. The impure shell (execSync of
+// scutil/system_profiler on darwin, hostnamectl/DMI on linux, the /proc/version
+// read) stays in each node package (amico-run + the extension host) behind an
+// injectable command-runner seam; all JUDGMENT lives here so the enroll producer
+// and the extension self-row share ONE derivation and cannot drift. Every
+// function is string-in/value-out — no `child_process`, no fs — keeping
+// @amicode/schema side-effect-free (ADR 0028 §invariant 3).
+
+/** Map a macOS `system_profiler SPHardwareDataType` "Model Name" value (e.g.
+ *  "MacBook Pro", "Mac Studio") to the device-type vocabulary: MacBook* →
+ *  `laptop`; iMac / Mac mini / Mac Studio / Mac Pro → `desktop`; anything else
+ *  (or empty) → `undefined`. An honest abstention, never a guess — the fleet
+ *  sidebar's type pill falls back to `server_mode` when this is undefined.
+ *  Rehomed verbatim from the extension's `classifyDeviceType` inner match
+ *  (#1359), now taking the extracted Model Name string (the impure caller does
+ *  the `Model Name:` line extraction). */
+export function classifyMacModel(modelName: string): KnownDeviceType | undefined {
+  const model = (modelName ?? "").trim();
+  if (!model) return undefined;
+  if (/macbook/i.test(model)) return "laptop";
+  if (/mac studio|imac|mac mini|mac pro/i.test(model)) return "desktop";
+  return undefined;
+}
+
+/** Map a Linux chassis token (from `hostnamectl` chassis or the DMI
+ *  chassis-type name) to the device-type vocabulary: `laptop`/`notebook`/
+ *  `portable` → `laptop`; `desktop`/`tower` → `desktop`; `server`/`rack` →
+ *  `server`; anything else → `undefined` (honest abstain). Case-insensitive. */
+export function classifyLinuxChassis(chassis: string): KnownDeviceType | undefined {
+  const c = (chassis ?? "").trim().toLowerCase();
+  if (c === "laptop" || c === "notebook" || c === "portable") return "laptop";
+  if (c === "desktop" || c === "tower") return "desktop";
+  if (c === "server" || c === "rack") return "server";
+  return undefined;
+}
+
+/** Prettify a raw hostname into a display name. Rule: strip from the first `.`
+ *  onward ONLY when the remainder is a DNS-suffix-shaped label sequence (labels
+ *  of `[A-Za-z0-9-]` joined by dots) — so `Mac.mynetworksettings.com → Mac` and
+ *  `host.local → host`. A name that carries a space is treated as a human-set
+ *  display name (a macOS ComputerName like "JJ's Mac Studio") and is left intact
+ *  even if it contains a dot; a dot-free name is returned unchanged; `""` → `""`.
+ *  Never fabricates — the fallback is always the raw input. */
+export function normalizeDeviceName(raw: string): string {
+  const s = raw ?? "";
+  if (s === "") return "";
+  // A space-bearing name is a display name, not a hostname — never strip it.
+  if (/\s/.test(s)) return s;
+  const dot = s.indexOf(".");
+  if (dot < 0) return s; // dot-free — nothing to strip
+  const head = s.slice(0, dot);
+  const remainder = s.slice(dot + 1);
+  // Strip the suffix only when the remainder is a DNS-suffix-shaped label run.
+  if (head.length > 0 && /^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*$/.test(remainder)) {
+    return head;
+  }
+  return s;
+}
+
+/** Detect whether a `/proc/version` string is a WSL kernel — true when it
+ *  carries a Microsoft or WSL2 marker (case-insensitive), false otherwise.
+ *  Extracted as a pure function from the proven inline regex in the extension's
+ *  `detectWSLVersion` (`rebuild/host_matrix.ts`). A WSL machine abstains on
+ *  device_type — the VM's chassis does not reflect the physical machine
+ *  (ADR 0028 §Decision.3). */
+export function isWslKernel(procVersion: string): boolean {
+  const v = procVersion ?? "";
+  return /microsoft/i.test(v) || /wsl2/i.test(v);
+}
+
 /** One roster row — the reconciled self-report of one machine. `server_mode`
  *  mirrors that machine's own fleet.json role (read-only here; the UI labels it
  *  "role"), `last_report` renders as "last-seen". Every field is a string

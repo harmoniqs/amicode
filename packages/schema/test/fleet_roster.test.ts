@@ -24,6 +24,10 @@ import {
   isKnownCapability,
   parseRosterRow,
   placementDescriptor,
+  classifyMacModel,
+  classifyLinuxChassis,
+  normalizeDeviceName,
+  isWslKernel,
   type RosterRow,
 } from "../src/fleet_roster.js";
 
@@ -179,5 +183,103 @@ describe("placementDescriptor — AC1/AC2 (#1341): a placement-ready fact, not a
   it("is a pure read off the row — two calls on an unmodified row produce equal descriptors", () => {
     const row: RosterRow = { ...ROW, capabilities: ["serving", "compute"] };
     expect(placementDescriptor(row)).toEqual(placementDescriptor(row));
+  });
+});
+
+// ── the shared device-identity classifiers (#1371 / #1368, ADR 0028) ─────────
+// The PURE core of a machine's self-report: mapping the OS's raw name/form-factor
+// strings to the `device_type` vocabulary + a friendly display name. Rehomed
+// here so the enroll producer (amico-run) and the extension host self-row share
+// ONE derivation and cannot drift. Every function is string-in/value-out — no
+// child_process, no fs — so it is unit-testable on any OS.
+describe("classifyMacModel — the rehomed macOS Model-Name classifier (#1371 AC1)", () => {
+  it("maps every MacBook Model Name to `laptop`", () => {
+    for (const model of ["MacBook Pro", "MacBook Air", "MacBook"]) {
+      expect(classifyMacModel(model)).toBe("laptop");
+    }
+  });
+
+  it("maps the desktop-form Macs (iMac, Mac mini, Mac Studio, Mac Pro) to `desktop`", () => {
+    for (const model of ["iMac", "Mac mini", "Mac Studio", "Mac Pro"]) {
+      expect(classifyMacModel(model)).toBe("desktop");
+    }
+  });
+
+  it("is case- and whitespace-tolerant (the value comes off a `system_profiler` line)", () => {
+    expect(classifyMacModel("  macbook pro  ")).toBe("laptop");
+    expect(classifyMacModel("MAC STUDIO")).toBe("desktop");
+  });
+
+  it("abstains (undefined) on an unrecognized or empty Model Name — never a guess", () => {
+    for (const model of ["Some Future Device", "", "   ", "Xserve"]) {
+      expect(classifyMacModel(model)).toBeUndefined();
+    }
+  });
+
+  it("only returns values in the KNOWN_DEVICE_TYPES vocabulary (or undefined)", () => {
+    const out = ["MacBook Pro", "Mac Studio", "nonsense"].map(classifyMacModel);
+    for (const v of out) {
+      expect(v === undefined || (KNOWN_DEVICE_TYPES as readonly string[]).includes(v)).toBe(true);
+    }
+  });
+});
+
+describe("classifyLinuxChassis — the hostnamectl/DMI chassis classifier (#1371 AC2)", () => {
+  const table: [string, string | undefined][] = [
+    ["laptop", "laptop"],
+    ["notebook", "laptop"],
+    ["portable", "laptop"],
+    ["desktop", "desktop"],
+    ["tower", "desktop"],
+    ["server", "server"],
+    ["rack", "server"],
+    ["convertible", undefined],
+    ["handset", undefined],
+    ["vm", undefined],
+    ["", undefined],
+  ];
+  for (const [chassis, expected] of table) {
+    it(`maps chassis "${chassis}" → ${expected ?? "undefined"}`, () => {
+      expect(classifyLinuxChassis(chassis)).toBe(expected);
+    });
+  }
+
+  it("is case-insensitive", () => {
+    expect(classifyLinuxChassis("Laptop")).toBe("laptop");
+    expect(classifyLinuxChassis("SERVER")).toBe("server");
+  });
+});
+
+describe("normalizeDeviceName — the friendly-name prettifier (#1371 AC3)", () => {
+  const table: [string, string][] = [
+    ["Mac.mynetworksettings.com", "Mac"],
+    ["host.local", "host"],
+    ["JJ's Mac Studio", "JJ's Mac Studio"],
+    ["", ""],
+    ["workbench", "workbench"],
+    ["JVs-MacBook-Pro.local", "JVs-MacBook-Pro"],
+  ];
+  for (const [raw, expected] of table) {
+    it(`normalizes ${JSON.stringify(raw)} → ${JSON.stringify(expected)}`, () => {
+      expect(normalizeDeviceName(raw)).toBe(expected);
+    });
+  }
+
+  it("leaves a space-bearing name intact even if it carries a dot (a human display name, not a hostname)", () => {
+    expect(normalizeDeviceName("JJ's Mac Studio")).toBe("JJ's Mac Studio");
+    expect(normalizeDeviceName("Conf Room 3.5")).toBe("Conf Room 3.5");
+  });
+});
+
+describe("isWslKernel — the pure /proc/version WSL detector (#1371 AC4)", () => {
+  it("is true for a Microsoft/WSL marker in the kernel string", () => {
+    expect(isWslKernel("Linux version 5.15.90.1-microsoft-standard-WSL2")).toBe(true);
+    expect(isWslKernel("... Microsoft ...")).toBe(true);
+    expect(isWslKernel("something WSL2 something")).toBe(true);
+  });
+
+  it("is false for a native Linux kernel or empty input", () => {
+    expect(isWslKernel("Linux version 6.8.0-generic (buildd@lcy02) ...")).toBe(false);
+    expect(isWslKernel("")).toBe(false);
   });
 });
