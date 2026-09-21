@@ -95,6 +95,13 @@ jobs:
     needs: [build-binary]
     steps:
       - uses: actions/checkout@v7
+        # full history: the #1346 additive-invariants-gate diffs the enroll/guard
+        # set vs `git merge-base HEAD <base>` — a shallow (depth-1) checkout has no
+        # common ancestor, so the merge-base is empty and the gate (correctly)
+        # refuses to pass an UNVERIFIABLE AC1 under INVARIANT_STRICT=1. Full history
+        # lets it actually verify. (#1346)
+        with:
+          fetch-depth: 0
       - uses: pnpm/action-setup@v6   # version pinned by packageManager in package.json
       - uses: actions/setup-node@v7
         with: { node-version: 20, cache: pnpm }
