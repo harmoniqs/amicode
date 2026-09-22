@@ -21,6 +21,7 @@ import { createEffect, createSignal, For, on, onCleanup, untrack } from "solid-j
 import * as pdfjsLib from "pdfjs-dist"
 // @ts-expect-error — no type declarations for the worker bundle; Vite resolves it at build time
 import * as pdfjsWorker from "pdfjs-dist/build/pdf.worker.min.mjs"
+import { clampRestorePage } from "./pdf-restore"
 
 // Inject the worker module on globalThis — the one code path in pdfjs-dist v6
 // that bypasses BOTH `new Worker()` AND the `workerSrc` getter. PDF.js sees
@@ -392,6 +393,11 @@ export function PdfCanvasView(props: PdfCanvasViewProps) {
             .then((doc) => {
               setPdfDoc(doc)
               setPageCount(doc.numPages)
+              // #1414: clamp the restore target to the loaded page count so a
+              // regenerated, shorter PDF can still complete its restore.
+              const page = clampRestorePage(restoreTarget?.page ?? targetPage, doc.numPages)
+              if (restoreTarget) restoreTarget = { ...restoreTarget, page }
+              setCurrentPage(page)
             })
             .catch(() => {
               setError(true)
@@ -465,7 +471,8 @@ export function PdfCanvasView(props: PdfCanvasViewProps) {
     const page = untrack(() => props.initialPage ?? 1)
     const scrollTop = untrack(() => props.initialScrollTop ?? 0)
     if (page <= 1 && scrollTop <= 0) return
-    restoreTarget = { page, scrollTop }
+    // #1414: clamp against the currently-loaded page count when re-arming.
+    restoreTarget = { page: clampRestorePage(page, pageCount()), scrollTop }
     restoreDone = false
     setAnchorVersion((v) => v + 1)
   })
