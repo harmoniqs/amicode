@@ -614,8 +614,8 @@
     "packages/app/src/components/session/pdf-canvas-view.tsx": "a9ffd505014fae1acb794924ae2446ebd42947b49981b81e5d0ee83090cebd78",
     "packages/app/src/components/session/pdf-restore.test.ts": "4cd4cabbdc8063deb5fe95b5e637cf154ccdf864c5ff9f2f6833826bd69e4f90",
     "packages/app/src/components/session/pdf-restore.ts": "e5c92096b9302a452439babfc2732610a7e0d18e23793ce3bf6352fa32f91a36",
-    "packages/app/src/components/session/preview-file-helpers.test.ts": "785a5ec6f9b295c5b0c54ac5d1520680830f674fb738fd3a4fec06fa2153bf17",
-    "packages/app/src/components/session/preview-file-helpers.ts": "173e11bb8cb4afb9c7d56ba0fc8a28dbe1d5de6ff8c7d189f4f28a0fb1cb095b",
+    "packages/app/src/components/session/preview-file-helpers.test.ts": "c2a872f26c716426b5ec25aeb98bae3af50d2dbd61fd87d59601d96471df5926",
+    "packages/app/src/components/session/preview-file-helpers.ts": "1f28969aefcb05969826112bf78903e561e54d4bf01cd219a3c68def383b01c0",
     "packages/app/src/components/session/preview-file-view.tsx": "6acac19cd3d264cfe14f412e6dc2e50e5c84028d5f57ddbaae6d9def0a0a57c6",
     "packages/app/src/components/session/session-chats-dropdown.test.ts": "2003d2a15781337ea6bff2c68e730cc5b6df38697f15d927ab26913936444db7",
     "packages/app/src/components/session/session-context-tab.tsx": "227243b178b517f067d9ae0ae0eec3c559beeb6681828158b0600a17e98e7f81",
@@ -856,7 +856,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-09-22T16:50:52.011Z",
+  "extracted_at": "2026-09-22T17:07:05.987Z",
   "per_package": {
     "packages/app": {
       "A": 175,
