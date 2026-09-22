@@ -239,6 +239,8 @@ async function handleRemoteDevice(device: ResolvedDevice, deps: FleetConnectDeps
     const result = await deps.attachToDevice(payload);
     if (result.ok) {
       await deps.reloadWindow();
+    } else {
+      await deps.showWarningMessage(`Could not attach to ${device.name}. The local Amicode service may not be running.`);
     }
     return;
   }
