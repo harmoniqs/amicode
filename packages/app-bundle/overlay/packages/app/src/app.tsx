@@ -615,6 +615,24 @@ function HoldDebugBadge() {
     const ship = (kind: string, text: string) => {
       if (shipped.has(text)) return
       shipped.add(text)
+      // #1312: flush the boot-error buffer (entry.tsx captures before we
+      // install — the boundary-masked boot throws).
+      {
+        const g = globalThis as { __bootErrors?: string[] }
+        if (g.__bootErrors && g.__bootErrors.length) {
+          const pending = g.__bootErrors.splice(0)
+          for (const line of pending) {
+            if (!shipped.has(line)) {
+              shipped.add(line)
+              void fetch(target, {
+                headers: auth ? { Authorization: `Basic ${auth}` } : {},
+                method: "POST",
+                body: `${line.slice(0, 600)}`,
+              }).catch(() => {})
+            }
+          }
+        }
+      }
       try {
         // The same-origin service 404s unknown routes (no proxy passthrough
         // for POSTs). Post DIRECTLY to the data server's own origin (the

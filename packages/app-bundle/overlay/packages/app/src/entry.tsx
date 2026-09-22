@@ -2,6 +2,30 @@
 
 import * as Sentry from "@sentry/solid"
 import { render } from "solid-js/web"
+
+// #1312: BOOT-ERROR BUFFER — errors thrown before the diagnostics shipper
+// installs (the route boundary catches + masks them as the frozen hold, and
+// the shipper's console patch isn't there yet) were invisible remotely. The
+// live panel's boot crashes shipped NOTHING. Buffer every capture from the
+// earliest possible moment; the shipper (app.tsx) flushes the buffer once it
+// installs.
+{
+  const g = globalThis as { __bootErrors?: string[] }
+  g.__bootErrors = []
+  const push = (kind: string, text: string) => {
+    try {
+      if (g.__bootErrors && g.__bootErrors.length < 30) g.__bootErrors.push(`${kind} ${text}`.slice(0, 600))
+    } catch {}
+  }
+  window.addEventListener("error", (e) => push("E", `${e.message}
+${(e.error && e.error.stack) || e.filename || ""}`))
+  window.addEventListener("unhandledrejection", (e) => push("R", String(e.reason).slice(0, 300)))
+  const origErr = console.error.bind(console)
+  console.error = (...args: unknown[]) => {
+    push("C", args.map((a) => (a && (a as { stack?: string }).stack) || String(a)).join(" | "))
+    origErr(...args)
+  }
+}
 import { AppBaseProviders, AppInterface } from "@/app"
 import { adoptHiddenProject } from "@/utils/amicode-hidden-project"
 import { adoptBugReportFlag } from "@/utils/amicode-bug-report"
