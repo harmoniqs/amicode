@@ -270,6 +270,29 @@ describe("FileWatcherBridge LaTeX auto-recompile (#1424)", () => {
     bridge.dispose();
   });
 
+  it("does NOT save when the buffer-sync edit is rejected (applyEdit → false)", async () => {
+    // #1414: a WorkspaceEdit can be rejected if the document version advanced
+    // between the disk read and the apply. Saving anyway would persist a
+    // half-applied / stale buffer — only save after a successful edit.
+    const doc = mockDoc("/paper/main.tex");
+    workspace.textDocuments = [doc];
+    const origApplyEdit = workspace.applyEdit;
+    workspace.applyEdit = () => Promise.resolve(false);
+    try {
+      const bridge = new FileWatcherBridge(() => {});
+      bridge.updateWatchSet(["/paper/main.tex"]);
+
+      patch.cbs.change[0]({ fsPath: "/paper/main.tex" });
+      vi.advanceTimersByTime(300);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(doc.save).not.toHaveBeenCalled();
+      bridge.dispose();
+    } finally {
+      workspace.applyEdit = origApplyEdit;
+    }
+  });
+
   it("does NOT sync or save for .tex if the buffer is dirty", async () => {
     const doc = mockDoc("/paper/main.tex", { isDirty: true });
     workspace.textDocuments = [doc];

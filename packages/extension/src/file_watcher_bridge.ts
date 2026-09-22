@@ -183,7 +183,10 @@ export class FileWatcherBridge implements vscode.Disposable {
       );
       const edit = new vscode.WorkspaceEdit();
       edit.replace(doc.uri, fullRange, diskContent);
-      await vscode.workspace.applyEdit(edit);
+      // #1414: the edit is rejected if the document version advanced between
+      // the read and the apply — don't save a half-applied / stale buffer.
+      const applied = await vscode.workspace.applyEdit(edit);
+      if (!applied) return;
 
       // Save the document so the buffer is clean again (not marked dirty
       // from the edit we just applied) and so that extension hooks
