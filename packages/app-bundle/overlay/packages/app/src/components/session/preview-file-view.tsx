@@ -30,6 +30,7 @@ import { useServerSDK } from "@/context/server-sdk"
 import { PreviewEditor } from "@opencode-ai/session-ui/v2/preview-editor"
 import type { PreviewViewState } from "@opencode-ai/session-ui/v2/preview-view-state"
 import { PdfCanvasView } from "./pdf-canvas-view"
+import { toAbsolutePath, shouldApplyWatcherRead } from "./preview-file-helpers"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -170,6 +171,9 @@ export function PreviewFileView(props: {
   // changes on disk — e.g. latexmk rewriting a PDF, an external editor
   // saving a .tex, or any tool (including the agent) modifying a previewed
   // file. This makes the preview a live view, not a one-shot snapshot.
+  // #1414: reads are async — guard their completion so a read finishing after a
+  // file switch, a newer read, or a fresh edit can't clobber the view.
+  let watcherReadGen = 0
   createEffect(() => {
     const filePath = props.filePath
     const unsub = sdk().event.listen((e) => {
@@ -183,10 +187,21 @@ export function PreviewFileView(props: {
       if (!changedPath.endsWith(filePath) && !filePath.endsWith(changedPath)) return
       // Skip if the user has unsaved edits — don't clobber their work
       if (unsavedContent() !== null) return
-      // Re-read the file
+      // Re-read the file, tagging this read so a stale completion is discarded.
+      const capturedGeneration = ++watcherReadGen
       sdk()
         .client.file.read({ path: filePath })
         .then((result) => {
+          if (
+            !shouldApplyWatcherRead({
+              capturedPath: filePath,
+              currentPath: props.filePath,
+              capturedGeneration,
+              latestGeneration: watcherReadGen,
+              hasUnsavedEdits: unsavedContent() !== null,
+            })
+          )
+            return
           const content = result.data
           if (!content) return
           if (content.type !== "text") {
@@ -210,11 +225,7 @@ export function PreviewFileView(props: {
   // ─── PDF refresh after compile (#1254) ─────────────────────────────────
   // Re-read the file from disk and swap the base64 payload when the companion
   // PDF's producer (latexmk) reports "done" via run-latex-status.
-  const toAbsolute = (p: string) => {
-    if (p.startsWith("/")) return p
-    const dir = (sdk().directory ?? "").replace(/\/$/, "")
-    return dir ? `${dir}/${p}` : p
-  }
+  const toAbsolute = (p: string) => toAbsolutePath(p, sdk().directory)
   const selfAbsolute = () => toAbsolute(props.filePath)
 
   const reloadBinary = () => {
@@ -279,10 +290,11 @@ export function PreviewFileView(props: {
       if (closeAfterSave) props.onSaveComplete?.()
       if (savedTimer) clearTimeout(savedTimer)
       savedTimer = setTimeout(() => setSaveStatus("idle"), 2000)
-      // #1253: trigger LaTeX compilation after saving a .tex file
+      // #1253: trigger LaTeX compilation after saving a .tex file. #1414: post
+      // an ABSOLUTE path — the compile bridge silently rejects relative paths.
       if (/\.(tex|ltx)$/i.test(filePath)) {
         try {
-          window.parent?.postMessage({ source: "amicode", kind: "run-latex", file: filePath }, "*")
+          window.parent?.postMessage({ source: "amicode", kind: "run-latex", file: toAbsolute(filePath) }, "*")
         } catch {}
       }
     } catch {
