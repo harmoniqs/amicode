@@ -24,10 +24,9 @@
 // bidirectional courtesy hub_credential.ts already carries); a per-key read
 // is a NAMED outcome (absent | malformed | incomplete), never a throw, never
 // a fabricated credential.
-import { existsSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { atomicWriteFileSync } from "./credentials";
+import { readKeyedCollection, upsertKeyedEntry, deleteKeyedEntry, clearKeyedStoreFile } from "./keyed_store";
 import { hubUpstreamAuthHeader } from "./hub_credential";
 
 export const ATTACHMENT_CREDENTIAL_STORE_VERSION = 1;
@@ -68,33 +67,11 @@ export type AttachmentCredentialRead =
   | { ok: true; credential: AttachmentCredential }
   | { ok: false; reason: AttachmentCredentialReadReason };
 
-interface StoreDoc {
-  store_version?: number;
-  peers?: Record<string, unknown>;
-  [key: string]: unknown;
-}
-
-function readStoreDoc(file: string): StoreDoc {
-  if (!existsSync(file)) return {};
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(readFileSync(file, "utf8"));
-  } catch {
-    return {}; // corrupt whole-file JSON degrades to empty — tolerant read, never a throw
-  }
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return {};
-  return parsed as StoreDoc;
-}
-
-function peersOf(doc: StoreDoc): Record<string, unknown> {
-  return typeof doc.peers === "object" && doc.peers !== null && !Array.isArray(doc.peers)
-    ? (doc.peers as Record<string, unknown>)
-    : {};
-}
+const COLLECTION = "peers";
 
 /** Look up the injected credential for ONE target machine_id. */
 export function readAttachmentCredential(machineId: string, deps: AttachmentCredentialDeps = {}): AttachmentCredentialRead {
-  const peers = peersOf(readStoreDoc(attachmentCredentialFilePath(deps)));
+  const peers = readKeyedCollection(attachmentCredentialFilePath(deps), COLLECTION);
   const entry = peers[machineId];
   if (entry === undefined) return { ok: false, reason: "absent" };
   if (typeof entry !== "object" || entry === null || Array.isArray(entry)) return { ok: false, reason: "malformed" };
@@ -107,36 +84,32 @@ export function readAttachmentCredential(machineId: string, deps: AttachmentCred
 
 /** Inject (write) the credential for ONE target machine_id — an upsert
  *  keyed by machine_id; every OTHER target's entry, and every unknown
- *  top-level key, is preserved untouched. Atomic 0600 via the shared writer
- *  (the same credentials.ts primitive hub_credential.ts uses). */
+ *  top-level key, is preserved untouched. Atomic 0600 via the shared
+ *  keyed-store primitive (keyed_store.ts) — the SAME primitive the reader
+ *  peer-store and hub credential ride. */
 export function writeAttachmentCredential(
   machineId: string,
   value: AttachmentCredential,
   deps: AttachmentCredentialDeps = {},
 ): void {
-  const file = attachmentCredentialFilePath(deps);
-  const doc = readStoreDoc(file);
-  const peers = { ...peersOf(doc), [machineId]: { base_url: value.baseUrl.trim(), token: value.token.trim() } };
-  const out: StoreDoc = { ...doc, store_version: ATTACHMENT_CREDENTIAL_STORE_VERSION, peers };
-  atomicWriteFileSync(file, JSON.stringify(out, null, 2) + "\n");
+  upsertKeyedEntry(
+    attachmentCredentialFilePath(deps),
+    COLLECTION,
+    machineId,
+    { base_url: value.baseUrl.trim(), token: value.token.trim() },
+    ATTACHMENT_CREDENTIAL_STORE_VERSION,
+  );
 }
 
 /** Remove ONE target's credential (the detach counterpart write). An absent
  *  key, or an absent store, is an idempotent no-op. */
 export function clearAttachmentCredential(machineId: string, deps: AttachmentCredentialDeps = {}): void {
-  const file = attachmentCredentialFilePath(deps);
-  const doc = readStoreDoc(file);
-  const peers = peersOf(doc);
-  if (!(machineId in peers)) return;
-  const remaining = { ...peers };
-  delete remaining[machineId];
-  const out: StoreDoc = { ...doc, store_version: ATTACHMENT_CREDENTIAL_STORE_VERSION, peers: remaining };
-  atomicWriteFileSync(file, JSON.stringify(out, null, 2) + "\n");
+  deleteKeyedEntry(attachmentCredentialFilePath(deps), COLLECTION, machineId, ATTACHMENT_CREDENTIAL_STORE_VERSION);
 }
 
 /** Remove the ENTIRE store file; absent is a no-op (mirrors clearHubCredential). */
 export function clearAllAttachmentCredentials(deps: AttachmentCredentialDeps = {}): void {
-  rmSync(attachmentCredentialFilePath(deps), { force: true });
+  clearKeyedStoreFile(attachmentCredentialFilePath(deps));
 }
 
 /** The Authorization header an attach injects to authenticate to the peer
