@@ -206,11 +206,32 @@ const isAmicode = (msg: unknown): msg is { source: "amicode"; kind: string; tab?
 // PDF so rapid saves never overlap. Availability is detected once. Status
 // (compiling / done / error / unavailable) is relayed back so the Preview can
 // show a spinner and, on done, refresh the companion PDF (#1254).
-type LatexCompileState = { timer?: ReturnType<typeof setTimeout>; running: boolean; pending: boolean };
+type LatexTargetRef = { dir: string; base: string; pdf: string };
+// #1414: the coalesced re-run remembers the LATEST request's target+tab, not a
+// bare boolean — otherwise the rerun replays the stale target/tab captured by
+// the original in-flight call's closure.
+type LatexCompileState = {
+  timer?: ReturnType<typeof setTimeout>;
+  running: boolean;
+  pending?: { target: LatexTargetRef; tab: string | undefined };
+};
 const latexCompiles = new Map<string, LatexCompileState>();
 let latexmkAvailable: boolean | undefined;
 const LATEX_DEBOUNCE_MS = 150;
 const LATEX_TIMEOUT_MS = 120_000;
+
+/** child_process.execFile shape, injectable so the coordinator is testable
+ *  without spawning a real latexmk (#1414). Production passes nothing. */
+export type LatexExec = (
+  cmd: string,
+  args: string[],
+  opts: { cwd?: string; timeout?: number },
+  cb: (err: (Error & { code?: string | number }) | null, stdout: string | null, stderr: string | null) => void,
+) => void;
+export interface LatexDeps {
+  exec?: LatexExec;
+  detect?: () => Promise<boolean>;
+}
 
 function detectLatexmk(): Promise<boolean> {
   if (latexmkAvailable !== undefined) return Promise.resolve(latexmkAvailable);
@@ -219,8 +240,9 @@ function detectLatexmk(): Promise<boolean> {
       ({ execFile }) =>
         new Promise<boolean>((resolve) => {
           execFile("latexmk", ["-version"], { timeout: 8000 }, (err) => {
-            latexmkAvailable = !err;
-            resolve(latexmkAvailable);
+            const { available, cache } = classifyLatexmkProbe(err);
+            if (cache) latexmkAvailable = available;
+            resolve(available);
           });
         }),
     )
@@ -230,30 +252,49 @@ function detectLatexmk(): Promise<boolean> {
     });
 }
 
-async function runLatexmk(
-  target: { dir: string; base: string; pdf: string },
+/**
+ * #1414: classify a `latexmk -version` probe result into whether latexmk is
+ * available and whether that verdict may be cached for the session. A success
+ * caches `true`; a definitive not-installed (ENOENT) caches `false`; any other
+ * failure (transient spawn error, a non-zero `-version` exit) is left UNCACHED
+ * and treated as available so the real compile call surfaces its own result —
+ * one flaky probe must not disable LaTeX for the whole session.
+ */
+export function classifyLatexmkProbe(
+  err: { code?: string | number } | null | undefined,
+): { available: boolean; cache: boolean } {
+  if (!err) return { available: true, cache: true };
+  if (err.code === "ENOENT") return { available: false, cache: true };
+  return { available: true, cache: false };
+}
+
+export async function runLatexmk(
+  target: LatexTargetRef,
   tab: string | undefined,
   io: BridgeIo,
+  deps: LatexDeps = {},
 ): Promise<void> {
   const texFile = path.join(target.dir, target.base);
-  const state = latexCompiles.get(target.pdf) ?? { running: false, pending: false };
+  const state = latexCompiles.get(target.pdf) ?? { running: false };
   latexCompiles.set(target.pdf, state);
   if (state.running) {
-    // A compile is already in flight for this output — coalesce to one re-run.
-    state.pending = true;
+    // A compile is already in flight for this output — coalesce to one re-run,
+    // remembering the LATEST request so the rerun uses its target/tab (#1414).
+    state.pending = { target, tab };
     return;
   }
   const post = (extra: Record<string, unknown>) =>
     io.postToWebview({ source: "amicode", kind: "run-latex-status", tab, file: texFile, pdf: target.pdf, ...extra });
 
-  if (!(await detectLatexmk())) {
+  const detect = deps.detect ?? detectLatexmk;
+  if (!(await detect())) {
     post({ state: "unavailable" });
     return;
   }
   state.running = true;
   post({ state: "compiling" });
-  const { execFile } = await import("node:child_process");
-  execFile(
+  const exec: LatexExec = deps.exec ?? ((await import("node:child_process")).execFile as unknown as LatexExec);
+  exec(
     "latexmk",
     ["-pdf", "-interaction=nonstopmode", target.base],
     { cwd: target.dir, timeout: LATEX_TIMEOUT_MS },
@@ -263,20 +304,19 @@ async function runLatexmk(
         state: err ? "error" : "done",
         error: err ? (stderr?.trim().slice(0, 500) || err.message) : undefined,
       });
-      if (state.pending) {
-        state.pending = false;
-        void runLatexmk(target, tab, io);
-      }
+      const next = state.pending;
+      state.pending = undefined;
+      if (next) void runLatexmk(next.target, next.tab, io, deps);
     },
   );
 }
 
 function scheduleLatexCompile(
-  target: { dir: string; base: string; pdf: string },
+  target: LatexTargetRef,
   tab: string | undefined,
   io: BridgeIo,
 ): void {
-  const state = latexCompiles.get(target.pdf) ?? { running: false, pending: false };
+  const state = latexCompiles.get(target.pdf) ?? { running: false };
   latexCompiles.set(target.pdf, state);
   if (state.timer) clearTimeout(state.timer);
   state.timer = setTimeout(() => {
