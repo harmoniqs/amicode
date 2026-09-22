@@ -215,6 +215,16 @@ export function PreviewFileView(props: {
           } else {
             // Text file — update content
             setFileContent(content.content)
+            // #1423: If a .tex/.ltx file was updated on disk (e.g. by the
+            // agent), trigger a LaTeX recompile so the PDF auto-refreshes.
+            if (/\.(tex|ltx)$/i.test(filePath)) {
+              try {
+                window.parent?.postMessage(
+                  { source: "amicode", kind: "run-latex", file: toAbsolute(filePath) },
+                  "*",
+                )
+              } catch {}
+            }
           }
         })
         .catch(() => {})
