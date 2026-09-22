@@ -140,13 +140,13 @@ export function buildRemoteQuickPickItems(device: ResolvedDevice, remoteSshAvail
   const isDown = device.health === "down";
   const hasAlias = typeof device.sshAlias === "string" && device.sshAlias.trim() !== "";
 
-  // Thin Client option
+  // Thin Client option — gated on serving + reachable; a missing credential is
+  // NOT a gate (the attach flow proceeds uncredentialed and provisions on first
+  // connect — blocking here locked out devices with no Fleet Manager path #1413).
   if (!hasServing) {
     items.push({ label: "$(cloud) Thin Client (Poor Connection)", description: "Not running a server", action: "thin-client" });
   } else if (isDown) {
     items.push({ label: "$(cloud) Thin Client (Poor Connection)", description: "Device unreachable", action: "thin-client" });
-  } else if (!device.hasStoredCredential) {
-    items.push({ label: "$(cloud) Thin Client (Poor Connection)", description: "No credentials available — use the Fleet Manager to connect", action: "thin-client" });
   } else {
     items.push({ label: "$(cloud) Thin Client (Poor Connection)", detail: "Re-attach to this device and reload the window", action: "thin-client" });
   }

@@ -142,12 +142,14 @@ describe("buildRemoteQuickPickItems — precondition gating (#1413)", () => {
     expect(items[0].description).toBe("Device unreachable");
   });
 
-  it("thin client disabled when no stored credential", () => {
+  it("thin client enabled even without stored credential (credential is not a gate)", () => {
     const items = buildRemoteQuickPickItems({
       machineId: "p", name: "P", isLocal: false,
       capabilities: ["serving"], health: "reachable", hasStoredCredential: false,
     }, true);
-    expect(items[0].description).toContain("No credentials");
+    expect(items[0].action).toBe("thin-client");
+    expect(items[0].description).toBeUndefined(); // enabled — no description
+    expect(items[0].detail).toBeDefined();
   });
 
   it("remote ssh disabled when extension not installed", () => {
