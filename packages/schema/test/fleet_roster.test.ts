@@ -115,6 +115,30 @@ describe("device_type — optional per-row form factor (fleet sidebar type pill,
   });
 });
 
+describe("peer_origin — optional per-row reach URL for non-SSH transports", () => {
+  it("round-trips a peer_origin when the reporting machine includes one", () => {
+    const r = parseRosterRow({ ...ROW, peer_origin: "https://jjs-mac-studio.tail570504.ts.net" });
+    expect(r.ok).toBe(true);
+    if (!r.ok) throw new Error("expected a valid row");
+    expect(r.row.peer_origin).toBe("https://jjs-mac-studio.tail570504.ts.net");
+  });
+
+  it("parses a row that omits peer_origin entirely — absent is lawful (SSH peers never need it)", () => {
+    const r = parseRosterRow(ROW); // ROW carries no peer_origin key
+    expect(r.ok).toBe(true);
+    if (!r.ok) throw new Error("expected a valid row");
+    expect(r.row.peer_origin).toBeUndefined();
+    expect("peer_origin" in r.row).toBe(false); // never fabricated onto the row
+  });
+
+  it("rejects a non-string peer_origin, never coercing it", () => {
+    const r = parseRosterRow({ ...ROW, peer_origin: 42 });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("expected rejection");
+    expect(r.error).toMatch(/peer_origin/i);
+  });
+});
+
 describe("capabilities — AC2: known behavior tags + an open descriptive set", () => {
   it("`compute`, `roaming`, and `serving` are the recognized known tags", () => {
     expect(KNOWN_CAPABILITY_TAGS).toEqual(["compute", "roaming", "serving"]);

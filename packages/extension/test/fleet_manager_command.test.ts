@@ -75,7 +75,10 @@ describe("registerFleetManagerCommands — routes to the Work Column tab", () =>
 
   it("amicode.fleet.versions still routes even when doctor is unavailable (honest, report omitted)", async () => {
     const posted: Array<Record<string, unknown>> = [];
-    registerFleetManagerCommands(ctx() as never, { postToAll: (m) => posted.push(m as Record<string, unknown>) });
+    registerFleetManagerCommands(ctx() as never, {
+      postToAll: (m) => posted.push(m as Record<string, unknown>),
+      doctor: async () => ({ ok: false, report: null, error: "doctor unavailable" }),
+    });
     await vscode.commands.executeCommand("amicode.fleet.versions");
     expect(posted).toHaveLength(1);
     expect(posted[0].section).toBe("versions");

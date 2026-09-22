@@ -11,6 +11,25 @@
 /** Default heartbeat interval: 30 seconds. */
 export const HEARTBEAT_INTERVAL_MS = 30_000;
 
+/** Resolve this machine's Tailscale MagicDNS name from `tailscale status
+ *  --self --json`. Returns the DNS name (without trailing dot) or undefined
+ *  when tailscale CLI is unavailable or the response lacks a DNSName. Pure
+ *  string transform over an injectable command runner. */
+export function resolveTailscaleDnsName(
+  runCommand: (cmd: string, args: string[]) => string,
+): string | undefined {
+  try {
+    const raw = runCommand("tailscale", ["status", "--self", "--json"]);
+    const self = JSON.parse(raw)?.Self;
+    const dns: string | undefined = self?.DNSName;
+    if (!dns || dns.trim() === "") return undefined;
+    // Tailscale appends a trailing dot — strip it for URL construction.
+    return dns.replace(/\.$/, "");
+  } catch {
+    return undefined;
+  }
+}
+
 /** DI seams for testability — every impure operation is injectable. */
 export interface FleetHeartbeatDeps {
   /** Resolve this machine's identity for the roster row. Returns null when
@@ -23,6 +42,9 @@ export interface FleetHeartbeatDeps {
     device_type?: string;
     sshAlias: string;
     transport: string;
+    /** The URL peers should use to reach this machine's fleet service directly
+     *  (e.g. MagicDNS HTTPS origin for tailscale). Absent for SSH peers. */
+    peer_origin?: string;
   } | null;
   /** The fetch implementation (injectable for tests). */
   fetchImpl: typeof fetch;
@@ -102,6 +124,7 @@ export class FleetHeartbeat {
         transport: identity.transport,
         health: "reachable" as const,
         last_report: new Date(now).toISOString(),
+        ...(identity.peer_origin !== undefined ? { peer_origin: identity.peer_origin } : {}),
       };
       const rowJson = JSON.stringify(row);
       // Local POST — updates this machine's own roster.
@@ -122,5 +145,51 @@ export class FleetHeartbeat {
     } catch {
       // Swallow silently — next tick is the retry.
     }
+  }
+}
+
+// ── transport-aware peer push ───────────────────────────────────────────────
+
+/** The minimal peer shape pushRowToPeer reads from a roster row. */
+export interface PushPeerTarget {
+  machine_id: string;
+  sshAlias?: string;
+  transport?: string;
+  peer_origin?: string;
+}
+
+/** Push a serialized roster row to a single peer, dispatching on the peer's
+ *  declared transport. When the peer has a `peer_origin` URL (tailscale or
+ *  direct), POST via HTTPS directly; otherwise fall back to SSH + curl to
+ *  the peer's loopback. Fire-and-forget: errors are swallowed silently.
+ *
+ *  Injectable deps for testability: `fetchImpl` for HTTPS, `execSsh` for
+ *  the SSH + curl path (receives alias and the remote curl command string). */
+export async function pushRowToPeer(opts: {
+  rowJson: string;
+  peer: PushPeerTarget;
+  localPort: number;
+  fetchImpl: (url: string, init: { method: string; headers: Record<string, string>; body: string }) => Promise<{ ok: boolean }>;
+  execSsh: (alias: string, remoteCmd: string) => void;
+}): Promise<void> {
+  try {
+    const { rowJson, peer, localPort, fetchImpl, execSsh } = opts;
+    if (peer.peer_origin) {
+      // HTTPS path — tailscale (MagicDNS origin) or direct (operator URL).
+      await fetchImpl(`${peer.peer_origin}/amicode/roster`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: rowJson,
+      });
+    } else {
+      // SSH path — the legacy default: ssh <alias> curl ... 127.0.0.1.
+      const alias = peer.sshAlias;
+      if (!alias) return;
+      const escaped = rowJson.replace(/'/g, "'\\''");
+      const remoteCmd = `curl -sf -X POST http://127.0.0.1:${localPort}/amicode/roster -H 'Content-Type: application/json' -d '${escaped}'`;
+      execSsh(alias, remoteCmd);
+    }
+  } catch {
+    // swallow — peer sync is best-effort
   }
 }

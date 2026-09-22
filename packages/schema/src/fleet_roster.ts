@@ -163,6 +163,13 @@ export interface RosterRow {
    *  `server_mode` when unset. Open, like `capabilities` — an unrecognized
    *  value still round-trips (see KNOWN_DEVICE_TYPES). */
   device_type?: string;
+  /** The URL peers should use to reach this machine's fleet service directly
+   *  — the MagicDNS HTTPS origin for tailscale, the operator URL for direct,
+   *  absent for SSH (SSH uses sshAlias instead). Each machine self-reports its
+   *  own peer_origin; peers read it from the roster row to know HOW to push
+   *  heartbeats and other fleet traffic. Absent is lawful (SSH peers never
+   *  need it; a tailscale peer that hasn't resolved its MagicDNS name yet). */
+  peer_origin?: string;
 }
 
 // ── the placement-ready descriptor (#1341, ADR 0027 §5/D8) ──────────────────
@@ -240,6 +247,9 @@ export function parseRosterRow(candidate: unknown): ParseRosterRowResult {
   if (o.device_type !== undefined && typeof o.device_type !== "string") {
     return { ok: false, error: `roster row: "device_type" must be a string when present (got ${describe(o.device_type)})` };
   }
+  if (o.peer_origin !== undefined && typeof o.peer_origin !== "string") {
+    return { ok: false, error: `roster row: "peer_origin" must be a string when present (got ${describe(o.peer_origin)})` };
+  }
   const row: RosterRow = {
     machine_id: o.machine_id as string,
     name: o.name as string,
@@ -250,6 +260,7 @@ export function parseRosterRow(candidate: unknown): ParseRosterRowResult {
     last_report: o.last_report as string,
     health: o.health as RosterHealth,
     ...(typeof o.device_type === "string" ? { device_type: o.device_type } : {}),
+    ...(typeof o.peer_origin === "string" ? { peer_origin: o.peer_origin } : {}),
   };
   return { ok: true, row };
 }
