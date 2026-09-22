@@ -556,3 +556,39 @@ describe("AC3 structural — the service validator routes through timingSafeEqua
     expect(src).not.toMatch(/\.password\.value\s*===/);
   });
 });
+
+// ── the peer-side receiving revoke endpoint (the §D5 fan-out lands here) ──────
+import { peerRevokeHandler, PEER_REVOKE_PATH } from "../src/amicode_service/fleet_mint_route";
+
+describe("AC2 — the fan-out lands: a peer applies a revocation to its OWN registry", () => {
+  it("POST /amicode/fleet/revoke drops + bars the machine_id; its token then 401s and re-mint is barred", async () => {
+    const b = await bootAcceptSet();
+    server: {
+      b.server.add(
+        "POST",
+        PEER_REVOKE_PATH,
+        peerRevokeHandler({ issuedRegistryFile: b.files.issued }),
+      );
+    }
+    mintPeerToken("victim", { registryFile: b.files.issued, tokenFactory: () => "VICTIM-TOK-0000000000" });
+    closeAcceptSet({ phaseStateFile: b.files.phase });
+    // the victim authenticates before the fan-out
+    expect((await fetch(`${b.origin}/amicode/ping`, { headers: peerHeader("VICTIM-TOK-0000000000") })).status).toBe(200);
+    // the fan-out lands (authorized by the local mint — the revoking operator's hop)
+    const revoke = await fetch(`${b.origin}${PEER_REVOKE_PATH}?machine_id=victim`, {
+      method: "POST",
+      headers: peerHeader("service-own-mint"),
+    });
+    expect(revoke.status).toBe(200);
+    // the victim's token is gone from the accept-set → 401 on the next request
+    expect((await fetch(`${b.origin}/amicode/ping`, { headers: peerHeader("VICTIM-TOK-0000000000") })).status).toBe(401);
+    // and the victim is barred from re-minting (the §D4 mint-list bar)
+    const nonce = mintEnrollmentNonce({ storeFile: b.files.nonce, nonceFactory: () => "N-RE", ttlMs: 60_000 });
+    const remint = await fetch(`${b.origin}${MINT_ENDPOINT_PATH}?machine_id=victim&enrollment_nonce=${nonce}`, {
+      method: "POST",
+      headers: peerHeader("service-own-mint"),
+    });
+    expect(remint.status).toBe(403);
+    await b.stop();
+  });
+});

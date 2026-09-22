@@ -13,9 +13,14 @@
 // behavioral suite both `server.add("POST", MINT_ENDPOINT_PATH, ...)` it.
 import type { AmicodeHandler } from "./server";
 import { consumeEnrollmentNonce } from "./fleet_enrollment_nonce";
-import { mintPeerToken } from "./fleet_issued_tokens";
+import { mintPeerToken, revokePeerToken } from "./fleet_issued_tokens";
 
 export { MINT_ENDPOINT_PATH } from "./fleet_accept_set";
+
+/** The peer-side receiving endpoint the §D5 fan-out targets: an operator's
+ *  `amico fleet revoke X` reaches every serving peer here, and each peer applies
+ *  the revocation to its OWN registry (no machine writes another's). */
+export const PEER_REVOKE_PATH = "/amicode/fleet/revoke";
 
 export interface PeerTokenMintDeps {
   issuedRegistryFile?: string;
@@ -47,5 +52,22 @@ export function peerTokenMintHandler(deps: PeerTokenMintDeps = {}): AmicodeHandl
       return json(403, { ok: false, error: "machine_id is barred from minting (revoked)", reason: minted.reason });
     }
     return json(200, { ok: true, machine_id: machineId, token: minted.token });
+  };
+}
+
+export interface PeerRevokeDeps {
+  issuedRegistryFile?: string;
+}
+
+/** The receiving side of `amico fleet revoke <machine_id>` (§D5): drop the
+ *  peer's issued grant AND add it to the mint-list bar, on THIS machine's own
+ *  registry. Idempotent — revoking an unknown machine_id still bars it. The
+ *  caller is authenticated by the accept-set (a local mint or peer token). */
+export function peerRevokeHandler(deps: PeerRevokeDeps = {}): AmicodeHandler {
+  return (ctx) => {
+    const machineId = ctx.url.searchParams.get("machine_id")?.trim() ?? "";
+    if (machineId === "") return json(400, { ok: false, error: "machine_id is required" });
+    revokePeerToken(machineId, { registryFile: deps.issuedRegistryFile });
+    return json(200, { ok: true, machine_id: machineId, revoked: true });
   };
 }
