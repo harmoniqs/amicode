@@ -223,23 +223,28 @@ describe("LLMRequestPrep.prepare - harmoniqs idempotency headers", () => {
 
   test("sends Idempotency-Key header for harmoniqs provider", async () => {
     const result = await Effect.runPromise(LLMRequestPrep.prepare(baseInput(harmoniqsModel)))
-    expect(result.headers["Idempotency-Key"]).toBeDefined()
-    expect(result.headers["Idempotency-Key"]).toMatch(/^amicode:/)
+    const h = result.headers as Record<string, string | undefined>
+    expect(h["Idempotency-Key"]).toBeDefined()
+    expect(h["Idempotency-Key"]).toMatch(/^amicode:/)
   })
 
   test("sends X-Session-Id header for harmoniqs provider", async () => {
     const result = await Effect.runPromise(LLMRequestPrep.prepare(baseInput(harmoniqsModel)))
-    expect(result.headers["X-Session-Id"]).toBe(sessionID)
+    const h = result.headers as Record<string, string | undefined>
+    expect(h["X-Session-Id"]).toBe(sessionID)
   })
 
   test("does not send Idempotency-Key for non-harmoniqs providers", async () => {
     const result = await Effect.runPromise(LLMRequestPrep.prepare(baseInput(anthropicModel)))
-    expect(result.headers["Idempotency-Key"]).toBeUndefined()
+    const h = result.headers as Record<string, string | undefined>
+    expect(h["Idempotency-Key"]).toBeUndefined()
   })
 
   test("generates unique Idempotency-Key per request", async () => {
     const a = await Effect.runPromise(LLMRequestPrep.prepare(baseInput(harmoniqsModel)))
     const b = await Effect.runPromise(LLMRequestPrep.prepare(baseInput(harmoniqsModel)))
-    expect(a.headers["Idempotency-Key"]).not.toBe(b.headers["Idempotency-Key"])
+    const ha = a.headers as Record<string, string | undefined>
+    const hb = b.headers as Record<string, string | undefined>
+    expect(ha["Idempotency-Key"]).not.toBe(hb["Idempotency-Key"])
   })
 })
