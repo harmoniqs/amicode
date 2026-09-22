@@ -310,6 +310,9 @@ export const dict = {
   "prompt.toast.commandSendFailed.title": "Neuspješno slanje komande",
   "prompt.toast.promptSendFailed.title": "Neuspješno slanje upita",
   "prompt.toast.promptSendFailed.description": "Nije moguće dohvatiti sesiju",
+  "prompt.toast.connectionDropped.title": "Connection dropped",
+  "prompt.toast.connectionDropped.description":
+    "The connection to the server dropped, so your message wasn't sent. It's still in the composer — try again once reconnected.",
 
   "dialog.mcp.title": "MCP-ovi",
   "dialog.mcp.description": "{{enabled}} od {{total}} omogućeno",
@@ -624,6 +627,7 @@ export const dict = {
   "session.error.notFound.description": "Ova kartica upućuje na sesiju koja više ne postoji na ovom serveru.",
   "session.error.notFound.closeTab": "Zatvori karticu",
   "session.error.serverConnection": "Nije moguće povezati se s ovim serverom",
+  "session.stream.reconnecting": "Connection lost — showing your last synced messages",
   "session.review.filesChanged": "Izmijenjeno {{count}} datoteka",
   "session.review.change.one": "Izmjena",
   "session.review.change.other": "Izmjene",

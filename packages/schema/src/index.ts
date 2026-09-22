@@ -184,6 +184,8 @@ export {
   renderFleetStatus,
   fleetProjectionCachePath,
   FLEET_PROJECTION_CACHE_RELPATH,
+  fleetTopologyPath,
+  FLEET_TOPOLOGY_RELPATH,
   type FleetFreshness,
   type FleetProjection,
   type FleetProvenance,

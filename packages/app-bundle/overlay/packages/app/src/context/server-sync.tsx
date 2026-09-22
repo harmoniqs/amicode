@@ -226,6 +226,9 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
 
   const session = createServerSession(serverSDK.client, serverSDK.api.session, serverSDK.api.message, {
     protocol: serverSDK.protocol,
+    // #1291 durable mirror: the scope string keys the IndexedDB mirror
+    // (per server; session IDs are unique on their own).
+    mirrorScope: serverSDK.scope,
   })
   const queryOptionsApi = makeQueryOptionsApi(
     serverSDK.scope,
@@ -298,6 +301,13 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
   let bootedAt = 0
   let bootingRoot = false
   let eventFrame: number | undefined
+  // #1264/#1289 (reconnect-storm debounce): the SSE preamble replays
+  // `server.connected` to EVERY reconnecting member — over a flaky link a
+  // reconnect flurry would re-bootstrap all active directories once per
+  // blip. A real server restart still queues (after the debounce window),
+  // and the session-list refetch above still covers new/disposed sessions
+  // immediately.
+  let lastConnectedQueueAt = 0
   let eventTimer: ReturnType<typeof setTimeout> | undefined
 
   onCleanup(() => {
@@ -568,6 +578,10 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
         bootstrap.refetch()
       if (eventType === "server.connected" || eventType === "global.disposed") {
         if (recent) return
+        // #1264/#1289: debounce — skip if a connected-triggered queue ran
+        // within the window (reconnect flurry), queue otherwise.
+        if (eventType === "server.connected" && Date.now() - lastConnectedQueueAt < 30_000) return
+        lastConnectedQueueAt = Date.now()
         for (const directory of Object.keys(children.children)) {
           if (!children.active(directory)) continue
           queue.push(directory)

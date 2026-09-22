@@ -62,6 +62,8 @@ macOS note: the vendored binary is unsigned — if Gatekeeper blocks it:
 | Gate | Command | Expect |
 |---|---|---|
 | Fast suite | `pnpm --filter amicode test` | all pass |
+| Engine typecheck | `pnpm test:engine` | opencode typecheck clean (base-drift errors allowlisted, tracked in #1229) |
+| Engine unit tests | `pnpm test:engine:unit` | opencode suite green (minus base-drift `llm-native-recorded`, #1229) |
 | Boot smoke | `pnpm --filter amicode run test:smoke` | `[smoke] PASS` |
 | Julia solve E2E | `AMICO_TEST_JULIA_PROJECT=$HOME/.amico/julia pnpm --filter amicode run test:slow` | template vet passes, F > 0.999 |
 | Live interview E2E | `cd packages/extension && AMICODE_E2E_LIVE=1 npx vitest run test/slow/interview_e2e.test.ts` | tiers A/B/C pass (C needs a provider; flaky on free tier) |

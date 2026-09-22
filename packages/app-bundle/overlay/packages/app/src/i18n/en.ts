@@ -312,6 +312,9 @@ export const dict = {
   "prompt.toast.commandSendFailed.title": "Failed to send command",
   "prompt.toast.promptSendFailed.title": "Failed to send prompt",
   "prompt.toast.promptSendFailed.description": "Unable to retrieve session",
+  "prompt.toast.connectionDropped.title": "Connection dropped",
+  "prompt.toast.connectionDropped.description":
+    "The connection to the server dropped, so your message wasn't sent. It's still in the composer — try again once reconnected.",
 
   "dialog.mcp.title": "MCPs",
   "dialog.mcp.description": "{{enabled}} of {{total}} enabled",
@@ -655,6 +658,7 @@ export const dict = {
   "session.error.notFound.description": "This tab points to a session that no longer exists on this server.",
   "session.error.notFound.closeTab": "Close Tab",
   "session.error.serverConnection": "Can't connect to this server",
+  "session.stream.reconnecting": "Connection lost — showing your last synced messages",
   "session.review.filesChanged": "Files Changed {{count}}",
   "session.review.change.one": "Change",
   "session.review.change.other": "Changes",

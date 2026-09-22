@@ -309,6 +309,9 @@ export const dict = {
   "prompt.toast.commandSendFailed.title": "Не удалось отправить команду",
   "prompt.toast.promptSendFailed.title": "Не удалось отправить запрос",
   "prompt.toast.promptSendFailed.description": "Не удалось получить сессию",
+  "prompt.toast.connectionDropped.title": "Connection dropped",
+  "prompt.toast.connectionDropped.description":
+    "The connection to the server dropped, so your message wasn't sent. It's still in the composer — try again once reconnected.",
 
   "dialog.mcp.title": "MCP",
   "dialog.mcp.description": "{{enabled}} из {{total}} включено",
@@ -625,6 +628,7 @@ export const dict = {
   "session.error.notFound.description": "Эта вкладка указывает на сессию, которой больше нет на этом сервере.",
   "session.error.notFound.closeTab": "Закрыть вкладку",
   "session.error.serverConnection": "Не удаётся подключиться к этому серверу",
+  "session.stream.reconnecting": "Connection lost — showing your last synced messages",
   "session.review.filesChanged": "{{count}} файлов изменено",
   "session.review.change.one": "Изменение",
   "session.review.change.other": "Изменения",

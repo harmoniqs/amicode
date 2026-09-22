@@ -866,21 +866,32 @@ describe("real fleet regressions (amicode#1002 lint false positives)", () => {
     }
   });
 
-  it("the live hardware-loop regression: all ten fence claims VERIFY against the real fleet packages when scoped to Strumento", () => {
+  it("the live hardware-loop regression: all nine live claims VERIFY against the real fleet packages when scoped to Intonato", () => {
     const root = realPackagesRoot();
     const skill = path.join(os.homedir(), ".amico", "vaults", "armonissima", "skills", "hardware-loop", "SKILL.md");
     if (!root || !fs.existsSync(skill)) return; // CI — mount-gated skip
-    const ten = [
+    // amicode#1193 adjudication: the fence-scope re-scope was DELIBERATE — the
+    // 2026-09-10 freshness audit (armonissima#88, vault 10a93ce) updated the
+    // skill's fence from the stale v0.2 idiom `using Strumento # reexports
+    // Intonato` to `using Intonato` (the seam inverted in Strumento v0.2:
+    // Intonato, the chassis, now reexports the substrate Strumento, not vice
+    // versa — same inversion the reexport-chain test below pins). The skill
+    // moved correctly; this test's pin was the drifted side.
+    // Inventory fallout of that re-scope: the old `Intonato` claim was minted
+    // by the OLD fence comment (`# reexports Intonato`) — the new fence comment
+    // doesn't name a symbol, so the extracted claim set is nine, not ten. The
+    // Intonato reference itself is now covered by the fence-scope pin below.
+    const nine = [
       "MockSoc", "StrumentoBackend", "QickChannelMap", "QickGenChannel", "StrumentoExperiment",
-      "MeasurementModel", "PulseTuningProblem", "Intonato", "QuantumSystem", "PiPulseReference",
+      "MeasurementModel", "PulseTuningProblem", "QuantumSystem", "PiPulseReference",
     ];
     const claims = extractClaims(fs.readFileSync(skill, "utf8"));
-    // the fence scope is Strumento now (comment-stripped) — pin that first
+    // the fence scope is Intonato (comment-stripped) — pin that first
     const mockSoc = claims.find((c) => c.text === "MockSoc")!;
-    expect(mockSoc.packages).toEqual(["Strumento"]);
-    const results = checkClaims(claims.filter((c) => c.kind === "symbol" && ten.includes(c.text)), [root]);
+    expect(mockSoc.packages).toEqual(["Intonato"]);
+    const results = checkClaims(claims.filter((c) => c.kind === "symbol" && nine.includes(c.text)), [root]);
     const verifiedTexts = new Set(results.filter((r) => r.verdict === "VERIFIED").map((r) => r.claim.text));
-    for (const text of ten) {
+    for (const text of nine) {
       expect(verifiedTexts, `${text} must VERIFY (was a #1002 false positive)`).toContain(text);
     }
     for (const r of results) {

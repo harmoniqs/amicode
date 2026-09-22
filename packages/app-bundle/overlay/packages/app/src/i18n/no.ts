@@ -298,6 +298,9 @@ export const dict = {
   "prompt.toast.commandSendFailed.title": "Kunne ikke sende kommando",
   "prompt.toast.promptSendFailed.title": "Kunne ikke sende forespørsel",
   "prompt.toast.promptSendFailed.description": "Kunne ikke hente økt",
+  "prompt.toast.connectionDropped.title": "Connection dropped",
+  "prompt.toast.connectionDropped.description":
+    "The connection to the server dropped, so your message wasn't sent. It's still in the composer — try again once reconnected.",
 
   "dialog.mcp.title": "MCP-er",
   "dialog.mcp.description": "{{enabled}} av {{total}} aktivert",
@@ -1079,6 +1082,7 @@ export const dict = {
   "session.error.notFound.description": "Denne fanen peker til en sesjon som ikke lenger finnes på denne serveren.",
   "session.error.notFound.closeTab": "Lukk fane",
   "session.error.serverConnection": "Kan ikke koble til denne serveren",
+  "session.stream.reconnecting": "Connection lost — showing your last synced messages",
   "session.review.noUncommittedChanges": "Ingen ucommittede endringer ennå",
   "session.review.noBranchChanges": "Ingen grenendringer ennå",
   "session.question.minimize": "Minimer spørsmål",

@@ -40,6 +40,8 @@ import {
   renderFleetStatus,
   fleetProjectionCachePath,
   FLEET_PROJECTION_CACHE_RELPATH,
+  fleetTopologyPath,
+  FLEET_TOPOLOGY_RELPATH,
   type FleetProjection,
 } from "../src/fleet_projection.js";
 
@@ -280,6 +282,13 @@ describe("the reader never computes age from a wall clock (D1 source guard)", ()
 describe("the stable projection-cache path convention (#1106)", () => {
   it("fleetProjectionCachePath resolves the live-layout precedent: <home>/.amico/ops/fleet/projection.json", () => {
     expect(fleetProjectionCachePath("/home/tester")).toBe("/home/tester/.amico/ops/fleet/projection.json");
+  });
+
+  // #1194: the topology source the publisher's --topology flag consumes.
+  it("fleetTopologyPath resolves beside the cache: <home>/.amico/ops/fleet/fleet.json (#1194)", () => {
+    expect(fleetTopologyPath("/home/tester")).toBe("/home/tester/.amico/ops/fleet/fleet.json");
+    expect(fleetTopologyPath()).toBe(join(homedir(), ".amico", "ops", "fleet", "fleet.json"));
+    expect(FLEET_TOPOLOGY_RELPATH).toBe(join(".amico", "ops", "fleet", "fleet.json"));
   });
 
   it("the default home is the process home — the ONE path every consumer (verb, extension, guard) reads", () => {

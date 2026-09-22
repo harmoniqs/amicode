@@ -328,6 +328,9 @@ export const dict = {
   "prompt.toast.commandSendFailed.title": "发送命令失败",
   "prompt.toast.promptSendFailed.title": "发送提示失败",
   "prompt.toast.promptSendFailed.description": "无法获取会话",
+  "prompt.toast.connectionDropped.title": "Connection dropped",
+  "prompt.toast.connectionDropped.description":
+    "The connection to the server dropped, so your message wasn't sent. It's still in the composer — try again once reconnected.",
 
   "dialog.mcp.title": "MCPs",
   "dialog.mcp.description": "已启用 {{enabled}} / {{total}}",
@@ -620,6 +623,7 @@ export const dict = {
   "session.error.notFound.description": "此标签页指向的会话已不存在于此服务器上。",
   "session.error.notFound.closeTab": "关闭标签页",
   "session.error.serverConnection": "无法连接到此服务器",
+  "session.stream.reconnecting": "Connection lost — showing your last synced messages",
   "session.review.filesChanged": "{{count}} 个文件变更",
   "session.review.change.one": "更改",
   "session.review.change.other": "更改",

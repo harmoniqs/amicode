@@ -1,4 +1,4 @@
-import type { FilePart, Project, SessionAssessedDiffResponse, SnapshotFileDiff, UserMessage } from "@opencode-ai/sdk/v2"
+import type { FilePart, Project, SnapshotFileDiff, UserMessage } from "@opencode-ai/sdk/v2"
 import { getFilename } from "@opencode-ai/core/util/path"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { createQuery, skipToken, useMutation } from "@tanstack/solid-query"
@@ -27,6 +27,7 @@ import { FileProvider, selectionFromLines, useFile, type FileSelection, type Sel
 import { createStore } from "solid-js/store"
 import type { SessionReviewLineComment } from "@opencode-ai/session-ui/session-review"
 import { ResizeHandle } from "@opencode-ai/ui/resize-handle"
+import { Spinner } from "@opencode-ai/ui/spinner"
 import { isScrollKeyTarget, scrollKey, scrollKeyOwner } from "@opencode-ai/ui/scroll-view"
 import { Tabs } from "@opencode-ai/ui/tabs"
 import { ButtonV2 } from "@opencode-ai/ui/v2/button-v2"
@@ -103,7 +104,6 @@ import { authTokenFromCredentials } from "@/utils/server"
 import { formatServerError, isLocalSessionNotFoundError, isSessionNotFoundError } from "@/utils/server-errors"
 import { legacySessionHref, requireServerKey, sessionHref } from "@/utils/session-route"
 import { postRouteInfo } from "@/utils/amicode-route-info"
-import { assessedDiffInvalidation, sessionContextMessage } from "@/utils/amicode-session-relay"
 import { notifyProjectSelected } from "@/utils/amicode-workspace-projects"
 import { setSessionCopyProvider } from "@/utils/global-clipboard"
 import { serializeSession } from "@/utils/serialize-session"
@@ -148,6 +148,132 @@ async function runPromptRollbackMutation<T, R>(input: {
     })
 }
 
+// #1288 (never unmount first, cross-instance): the last live session panel
+// view — its root element (intentionally outliving SessionPage unmounts and
+// remounts) plus the scroller's captured scroll position — so remounting
+// gates (cross-workspace re-root, draft→session handoff) can render a frozen
+// snapshot of the outgoing view instead of wiping to white while the new
+// instance resolves. The scroller is tagged (data-amicode-hold) so the deep
+// clone can restore its scroll position.
+let heldPanelEl: HTMLElement | undefined
+let heldPanelScrollTop = 0
+
+/** #1288: register the last-view content element for the frozen holds.
+ *  Session views register through setScrollRef (content-present moments
+ *  only — never the mid-mount empty frame); the draft route registers its
+ *  wrapper so a send holds the composer + the sent message until the
+ *  session view is ready. */
+export function registerHeldPanelView(el: HTMLElement | undefined): void {
+  if (el !== undefined) heldPanelEl = el
+}
+
+/** #1290 debug: the frozen-hold registry state, for the on-screen hold
+ *  diagnostics badge while the send-blank is being chased live. */
+export function heldPanelViewState(): boolean {
+  return heldPanelEl !== undefined
+}
+
+// #1288 (never unmount first): the fallback for the lineage gate. While the
+// target's lineage resolves (or the instance re-roots across a workspace
+// switch), hold a pixel-frozen snapshot of the last session panel — the
+// whole column, chat + composer — dimmed, inert, with a loading pill. First
+// ever boot (no prior view exists) falls back to the centered spinner.
+export function SessionPanelHold() {
+  return (
+    <Show
+      when={heldPanelEl}
+      fallback={
+        <div class="flex h-full w-full items-center justify-center bg-v2-background-bg-base">
+          <Spinner class="size-5 text-v2-icon-icon-muted" />
+        </div>
+      }
+    >
+      <div class="relative h-full w-full overflow-hidden bg-v2-background-bg-base">
+        <div
+          ref={(host) => {
+            const source = heldPanelEl
+            if (!source) return
+            const clone = source.cloneNode(true) as HTMLElement
+            // #1290: fixed-position at the source's exact captured rect — the
+            // clone lands pixel-true regardless of the CSS context it renders
+            // into (a display:contents or flex-item clone could collapse to
+            // zero-height in the host; fixed placement never can).
+            const rect = source.getBoundingClientRect()
+            clone.style.cssText += `;position:fixed;left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${rect.height}px;margin:0;`
+            host.appendChild(clone)
+            const restore = () => {
+              const scroller = clone.querySelector<HTMLElement>("[data-amicode-hold]")
+              if (scroller) scroller.scrollTop = heldPanelScrollTop
+            }
+            restore()
+            requestAnimationFrame(restore)
+          }}
+          class="absolute inset-0 overflow-hidden pointer-events-none"
+          style={{ opacity: "0.85" }}
+        />
+        <div class="absolute inset-x-0 bottom-6 flex justify-center pointer-events-none">
+          <div
+            class="flex items-center gap-2 rounded-full px-3 py-1.5 shadow-lg"
+            style={{
+              "backdrop-filter": "blur(8px)",
+              background: "color-mix(in oklch, var(--v2-bg-bg-base, #171717) 55%, transparent)",
+              border: "1px solid var(--v2-border-border-weak-base, rgba(128, 128, 128, 0.35))",
+            }}
+          >
+            <Spinner class="size-3.5 text-v2-icon-icon-muted" />
+          </div>
+        </div>
+      </div>
+    </Show>
+  )
+}
+
+// #1288 (never unmount first): the fallback slot for the keyed timeline gate.
+// While the next session's messages load, render a pixel-frozen snapshot of
+// the outgoing timeline (cloned from the last live scroller at its captured
+// scroll position) with a small loading pill — the swap happens the instant
+// the new view is ready, so a cold switch over a fleet link never wipes to a
+// blank or a bare spinner. The very first mount (no prior view exists yet)
+// falls back to the centered spinner exactly as before.
+function SessionTimelineHold(props: { getEl: () => HTMLDivElement | undefined; getScrollTop: () => number }) {
+  return (
+    <Show when={props.getEl()} fallback={<SessionPanelHold />}>
+      <div class="relative h-full overflow-hidden bg-v2-background-bg-base">
+        <div
+          ref={(host) => {
+            const source = props.getEl()
+            if (!source) return
+            const clone = source.cloneNode(true) as HTMLDivElement
+            // #1290: fixed-position at the source's exact rect — never collapses.
+            const rect = source.getBoundingClientRect()
+            clone.style.cssText += `;position:fixed;left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${rect.height}px;margin:0;`
+            host.appendChild(clone)
+            const restore = () => {
+              clone.scrollTop = props.getScrollTop()
+            }
+            restore()
+            requestAnimationFrame(restore)
+          }}
+          class="absolute inset-0 overflow-hidden pointer-events-none"
+          style={{ opacity: "0.85" }}
+        />
+        <div class="absolute inset-x-0 bottom-6 flex justify-center pointer-events-none">
+          <div
+            class="flex items-center gap-2 rounded-full px-3 py-1.5 shadow-lg"
+            style={{
+              "backdrop-filter": "blur(8px)",
+              background: "color-mix(in oklch, var(--v2-bg-bg-base, #171717) 55%, transparent)",
+              border: "1px solid var(--v2-border-border-weak-base, rgba(128, 128, 128, 0.35))",
+            }}
+          >
+            <Spinner class="size-3.5 text-v2-icon-icon-muted" />
+          </div>
+        </div>
+      </div>
+    </Show>
+  )
+}
+
 export function SessionPage() {
   return (
     <SessionProviders>
@@ -187,8 +313,15 @@ export function SessionRouteErrorBoundary(
   const settings = useSettings()
   return (
     <ErrorBoundary
-      fallback={(error) =>
-        settings.general.newLayoutDesigns() ? (
+      fallback={(error) => {
+        // Solid swallows errors thrown inside memo computations (query option
+        // accessors, context memos) and hands them here, then lets the
+        // surrounding render continue — the visible error is often a SECONDARY
+        // throw (e.g. TanStack's "reading '_defaulted'") that masks the root
+        // cause. Log every error that reaches this boundary so the first,
+        // real one is always in the console.
+        console.error("[session] error boundary caught:", error)
+        return settings.general.newLayoutDesigns() ? (
           <SessionRouteFrame padded={props.padded}>
             <SessionPanelFrame newLayout raised={!!props.sessionID}>
               <SessionErrorFallback error={error} sessionID={props.sessionID} serverKey={props.serverKey} />
@@ -197,7 +330,7 @@ export function SessionRouteErrorBoundary(
         ) : (
           <ErrorPage error={error} />
         )
-      }
+      }}
     >
       {props.children}
     </ErrorBoundary>
@@ -257,7 +390,15 @@ function ResolvedTargetSessionRoute() {
     () => sync().session.lineage,
   )
   const directory = createMemo(() => current()?.session.directory)
-  const targetDirectory = () => directory()!
+  // #1288 (never unmount first): once the target's lineage has resolved once,
+  // hold the last resolved directory through cold windows (uncached lineage
+  // mid-resolution — 0.5-3s over a fleet link) so the workspace subtree stays
+  // mounted instead of tearing down and destroying the terminal/providers.
+  // The keyed gate in TargetSessionPage sees a frozen key and does not
+  // re-root; warm switches pass straight through. The Show below therefore
+  // never closes again after its first open.
+  const heldDirectory = createMemo((prev: string | undefined) => directory() ?? prev, undefined)
+  const targetDirectory = () => heldDirectory()!
 
   createEffect(() => {
     const session = current()
@@ -277,11 +418,10 @@ function ResolvedTargetSessionRoute() {
   })
 
   return (
-    // Non-keyed: closes only while the target's directory is unknown (uncached
-    // lineage mid-resolution), which tears down the workspace subtree including
-    // the terminal. Same-workspace tab switches keep it open because warm
-    // targets resolve synchronously from the sync cache.
-    <Show when={directory()}>
+    // Non-keyed: the held memo above means this gate only truly closes before
+    // the FIRST lineage resolve (cold deep link on app boot) — afterwards it
+    // stays open for the life of the route.
+    <Show when={heldDirectory()} fallback={<SessionPanelHold />}>
       <SDKProvider directory={targetDirectory}>
         <DirectoryDataProvider directory={targetDirectory} server={serverKey}>
           <TargetSessionPage />
@@ -340,6 +480,32 @@ function SessionProviders(props: ParentProps) {
   )
 }
 
+/** #1298 paint probe: t0 = the timeline model's fetcher stamp on the
+ *  route change; t1 = the new timeline's first settled paint (two rAFs
+ *  after mount). Rides the ring snapshots — the number that names the
+ *  remount cost and decides keep-alive vs remount-tuning. */
+function TimelinePaintProbe(props: ParentProps<{ id: string }>) {
+  const w = globalThis as { __paintT0?: number; __paintRing?: { id: string; ms: number }[] }
+  let outerRaf = 0
+  let innerRaf = 0
+  onMount(() => {
+    const t0 = w.__paintT0
+    if (t0 === undefined) return
+    outerRaf = requestAnimationFrame(() => {
+      innerRaf = requestAnimationFrame(() => {
+        w.__paintRing = w.__paintRing ?? []
+        w.__paintRing.push({ id: props.id.slice(-14), ms: Math.round(performance.now() - t0) })
+        if (w.__paintRing.length > 16) w.__paintRing.shift()
+      })
+    })
+  })
+  onCleanup(() => {
+    cancelAnimationFrame(outerRaf)
+    cancelAnimationFrame(innerRaf)
+  })
+  return <>{props.children}</>
+}
+
 function SessionRouteFrame(props: ParentProps<{ padded?: boolean }>) {
   return (
     <div class="relative size-full overflow-hidden flex flex-col" classList={{ "p-2": props.padded }}>
@@ -351,6 +517,7 @@ function SessionRouteFrame(props: ParentProps<{ padded?: boolean }>) {
 function SessionPanelFrame(props: ParentProps<{ newLayout: boolean; raised?: boolean }>) {
   return (
     <div
+      data-amicode-panel="1"
       classList={{
         "flex-1 min-h-0 flex flex-col": true,
         "bg-v2-background-bg-base": props.newLayout,
@@ -389,15 +556,6 @@ export default function Page() {
   const newSessionDesign = createMemo(() => settings.general.newLayoutDesigns())
 
   createEffect(() => {
-    if (window.parent === window) return
-    window.parent.postMessage(sessionContextMessage(params.id), "*")
-  })
-  onCleanup(() => {
-    if (window.parent === window) return
-    window.parent.postMessage(sessionContextMessage(), "*")
-  })
-
-  createEffect(() => {
     if (!prompt.ready()) return
     untrack(() => {
       if (params.id) return
@@ -427,7 +585,20 @@ export default function Page() {
   })
 
   const workspaceTabs = createMemo(() => layout.tabs(workspaceKey))
-  const sessionPanelKey = createMemo(() => (params.id ? `${serverSDK().scope}\0${params.id}` : undefined))
+  // #1288 N1 (stop re-instantiating the panel per switch): the frame key is
+  // the WORKSPACE (scope+directory), never the session id — same as
+  // TargetSessionPage's gate one level up. Keying on the id remounted the
+  // ENTIRE panel (timeline, virtualization, scroll, composer) on every
+  // session switch — the "the UI is being reloaded every time" feel, and
+  // the surface where the panel died mid-remount. SessionPage re-targets
+  // reactively (its controllers derive from params.id per the doctrine in
+  // the TargetSessionPage comment); the frame re-roots only on genuine
+  // workspace changes. No session (draft view) keeps rendering nothing.
+  const sessionPanelKey = createMemo(() => {
+    if (!params.id) return undefined
+    const directory = sdk().directory
+    return `${serverSDK().scope}\0${directory ?? "pending"}`
+  })
 
   createEffect(
     on(
@@ -491,7 +662,10 @@ export default function Page() {
   const [panelRowWidth, setPanelRowWidth] = createSignal<number>()
   createResizeObserver(
     () => panelRow,
-    ({ width }) => setPanelRowWidth(width),
+    ({ width }) => {
+      // #1290: same deferral — never mutate layout state inside the resize frame.
+      requestAnimationFrame(() => setPanelRowWidth(width))
+    },
   )
   const splitReview = createMemo(
     () => (newSessionDesign() ? desktopV2ReviewOpen() : desktopReviewOpen()) && layout.review.diffStyle() === "split",
@@ -591,6 +765,76 @@ export default function Page() {
   const lastUserMessage = timeline.lastUserMessage
   const messages = timeline.messages
   const messagesReady = timeline.ready
+  // #1288 (transient-empty hold): a re-sync (send, abort/interrupt,
+  // reconnect backfill) can swap a previously-populated session's message
+  // list to empty while the refetch is in flight — the array is DEFINED
+  // (so the ready gate passes) and the timeline renders nothing: a
+  // data-level blank no view gate can catch. Track "has had messages" per
+  // session; a had-messages session reading EMPTY holds (frozen view)
+  // while a load is pending OR for a short grace window after the count
+  // dropped — after that the emptiness is real and renders.
+  // (Must live AFTER messagesReady above: createMemo evaluates eagerly —
+  // a forward reference is a TDZ ReferenceError at render.)
+  const hadTimelineMessages = new Map<string, boolean>()
+  const emptiedAt = new Map<string, number>()
+  const EMPTY_GRACE_MS = 3_000
+  /** #1294 diagnostic: WHY the timeline gate holds, per session — bounded
+   *  ring, read via window.__gateDebug from the e2e rig. (Must live BEFORE
+   *  timelineGateReady: createMemo evaluates eagerly at setup — a forward
+   *  const reference is a TDZ ReferenceError at render, the exact trap
+   *  messagesReady's comment above warns about.) */
+  const gateDebug = (id: string, reason: string, detail: Record<string, unknown>) => {
+    const w = globalThis as { __gateDebug?: Map<string, unknown[]> }
+    w.__gateDebug = w.__gateDebug ?? new Map()
+    const ring = w.__gateDebug.get(id) ?? []
+    const last = ring[ring.length - 1] as { reason: string } | undefined
+    if (last?.reason !== reason) {
+      ring.push({ reason, ...detail, t: Date.now() })
+      if (ring.length > 12) ring.shift()
+      w.__gateDebug.set(id, ring)
+    }
+  }
+
+  // #1287: bumped when a grace window expires, so timelineGateReady (which
+  // reads it) re-evaluates into the real empty state without a store update.
+  const [graceTick, setGraceTick] = createSignal(0)
+
+  const timelineGateReady = createMemo(() => {
+    const id = params.id
+    if (!id) return messagesReady()
+    const count = sync().data.message[id]?.length ?? 0
+    if (count > 0) {
+      hadTimelineMessages.set(id, true)
+      emptiedAt.delete(id)
+      return messagesReady()
+    }
+    if (hadTimelineMessages.get(id)) {
+      let at = emptiedAt.get(id)
+      if (at === undefined) {
+        at = Date.now()
+        emptiedAt.set(id, at)
+        // #1287: Date.now() is not reactive — if the session goes empty and
+        // no further store update arrives, nothing re-runs this memo when the
+        // grace window ends, so the frozen snapshot would hold forever. Wake
+        // the memo at expiry via a signal bump.
+        setTimeout(() => setGraceTick((value) => value + 1), EMPTY_GRACE_MS)
+      }
+      graceTick()
+      if (historyLoading() || Date.now() - at < EMPTY_GRACE_MS) return false
+    }
+    // #1290: the sync seeds `[]` for every session on SSE events — an
+    // empty list that has NEVER been fetched is not ready (it rendered an
+    // empty timeline: "the session history is missing until it comes
+    // back"). Hold the frozen view until the real history loads.
+    if (!serverSync().session.loaded(id)) {
+      gateDebug(id, "not-loaded", { count })
+      return false
+    }
+    const ready = messagesReady()
+    if (!ready) gateDebug(id, "messages-not-ready", { count, loading: historyLoading() })
+    return ready
+  })
+
   const sessionSync = timeline.resource
   const userMessages = timeline.userMessages
   const visibleUserMessages = timeline.visibleUserMessages
@@ -789,23 +1033,12 @@ export default function Page() {
   window.addEventListener("message", onFsDiffInvalidate)
   onCleanup(() => window.removeEventListener("message", onFsDiffInvalidate))
 
-  // Server-owned external references are invalidated opaquely: the app keeps
-  // no client-side lifecycle or path state and refetches assessed detail.
-  const onAssessedDiffInvalidate = (e: MessageEvent) => {
-    if (!assessedDiffInvalidation(e.data)) return
-    const sessionID = params.id
-    if (!sessionID) return
-    sync().set("diff_version", sessionID, (v: number | undefined) => (v ?? 0) + 1)
-  }
-  window.addEventListener("message", onAssessedDiffInvalidate)
-  onCleanup(() => window.removeEventListener("message", onAssessedDiffInvalidate))
-
   // Refetch when the session transitions to idle (assistant finished, snapshot taken)
   // or when a file-editing tool completes mid-turn (diff_version bumps)
   const sessionDiffVersion = () => {
     const id = params.id
     const status = id ? sync().data.session_status[id]?.type ?? "idle" : "idle"
-    const version = id ? sync().data.diff_version[id] ?? 0 : 0
+    const version = id ? sync().data.diff_version?.[id] ?? 0 : 0
     return `${status}:${version}`
   }
   const sessionDiffKey = () => ["session-diff", params.id ?? "", sessionDiffVersion()] as const
@@ -814,6 +1047,10 @@ export default function Page() {
     return {
       queryKey: sessionDiffKey(),
       enabled: !!sessionID,
+      // #1289: without a stale window this refetched on EVERY mount — every
+      // tab switch re-paid a wire round-trip for data it had seconds ago.
+      // The version in the key still invalidates on real changes.
+      staleTime: 30_000,
       // Keep previous data only for intra-session refetches (e.g. diff_version
       // bumps), NOT across session switches. Cross-session keepPreviousData was
       // the secondary leak vector: the old session's diffs appeared as
@@ -828,25 +1065,6 @@ export default function Page() {
               .client.session.diff({ sessionID, directory: sdk().directory })
               .then((result) => (result.data ?? []) as Array<SnapshotFileDiff>)
               .catch(() => [] as SnapshotFileDiff[])
-        : skipToken,
-    }
-  })
-  const assessedExternalDiffQuery = createQuery(() => {
-    const sessionID = params.id
-    return {
-      queryKey: ["session-assessed-external-diff", params.id ?? "", sessionDiffVersion()] as const,
-      enabled: !!sessionID,
-        // Generated external patches are sensitive, one-response render data.
-        // Do not retain them in the persistent query cache or telemetry cache.
-        gcTime: 0,
-        staleTime: 0,
-        retry: false,
-      queryFn: sessionID
-        ? () =>
-            sdk()
-              .client.session
-              .assessedDiff({ sessionID, directory: sdk().directory, patch: "true" })
-              .then((result) => result.data)
         : skipToken,
     }
   })
@@ -886,17 +1104,10 @@ export default function Page() {
     // --- Server diffs (authoritative for in-project files) ---
     const serverDiffs = sessionDiffQuery.data ?? []
     const serverResponded = sessionDiffQuery.status === "success" || sessionDiffQuery.isPlaceholderData
-    // External metadata is never a current-diff fallback. It is visible only
-    // after this session's authenticated, server-assessed detail request settles.
-    const assessedDiffs =
-      assessedExternalDiffQuery.status === "success"
-        ? (assessedExternalDiffQuery.data?.assessments ?? [])
-        : []
 
     return mergeServerAndToolDiffs({
       serverDiffs,
       toolDiffs,
-      assessedDiffs,
       serverResponded,
       directory: dir,
       home,
@@ -904,11 +1115,13 @@ export default function Page() {
     })
   })
 
-  // #844: Preserve raw watch-files only for the server's in-worktree diff rows.
-  // External paths stay in the extension host behind opaque assessed references.
+  // #844: Send watch-files to the extension host whenever the file list changes.
+  // The FileWatcherBridge watches these paths for external create/change/delete.
+  // We resolve ~/... paths back to absolute for the OS-level watcher.
   createEffect(() => {
+    const diffs = reviewDiffs()
     const home = typeof globalThis.process !== "undefined" ? globalThis.process.env?.HOME : undefined
-    const files = (sessionDiffQuery.data ?? [])
+    const files = diffs
       .map((d) => {
         if (!d.file) return ""
         // Resolve ~/... back to absolute
@@ -941,7 +1154,7 @@ export default function Page() {
             if (httpServer.password) {
               headers.Authorization = `Basic ${authTokenFromCredentials({ username: httpServer.username, password: httpServer.password })}`
             }
-            const res = await fetch(url.toString(), { headers })
+            const res = await fetch(url.toString(), { headers, signal: AbortSignal.timeout(15_000) })
             if (!res.ok) return [] as Array<{ file: string; status: string }>
             return (await res.json()) as Array<{ file: string; status: string }>
           }
@@ -1754,10 +1967,36 @@ export default function Page() {
 
   let fill = () => {}
 
+  // #1288 frozen hold: keep the last live timeline scroller and its scroll
+  // position so a cold session switch can render a pixel-frozen snapshot of
+  // the outgoing view while the next one loads, instead of wiping to a bare
+  // spinner. The element intentionally outlives the keyed unmount.
+  let timelineHoldEl: HTMLDivElement | undefined
+  let timelineHoldScrollTop = 0
+
   const setScrollRef = (el: HTMLDivElement | undefined) => {
     scroller = el
     autoScroll.scrollRef(el)
     if (!el) return
+    timelineHoldEl = el
+    // Tag the scroller so the panel-level frozen clone can restore its scroll.
+    el.dataset.amicodeHold = "1"
+    // #1288 (race fix): register the panel frame ONLY at content-present
+    // moments (a timeline scroller has mounted). Registering via the
+    // frame's ref instead raced: the fresh frame's ref fires BEFORE the
+    // timeline gate reads heldPanelEl, so the hold cloned the NEW EMPTY
+    // frame — the blank it was meant to hide. From here the frame is the
+    // one actually showing content.
+    const frame = el.closest("[data-amicode-panel]")
+    if (frame instanceof HTMLElement) heldPanelEl = frame
+    el.addEventListener(
+      "scroll",
+      () => {
+        timelineHoldScrollTop = el.scrollTop
+        heldPanelScrollTop = el.scrollTop
+      },
+      { passive: true },
+    )
     scheduleScrollState(el)
     fill()
   }
@@ -1769,9 +2008,14 @@ export default function Page() {
   createResizeObserver(
     () => content,
     () => {
-      const el = scroller
-      if (el) scheduleScrollState(el)
-      fill()
+      // #1290: defer the state mutations out of the resize frame — the
+      // synchronous mutate→layout→mutate cycle is the loop that throws and
+      // aborts surrounding keyed-Show transitions.
+      requestAnimationFrame(() => {
+        const el = scroller
+        if (el) scheduleScrollState(el)
+        fill()
+      })
     },
   )
 
@@ -2126,22 +2370,29 @@ export default function Page() {
   createResizeObserver(
     () => promptDock,
     ({ height }) => {
-      const next = Math.ceil(height)
+      // #1290: defer ALL layout reads + state mutations out of the resize
+      // frame. The dock resizes constantly while the agent streams (the
+      // composer changes state during thinking) — a synchronous read-mutate
+      // loop here throws inside Solid's reactive update and tears the route
+      // tree from above every boundary.
+      requestAnimationFrame(() => {
+        const next = Math.ceil(height)
 
-      if (next === dockHeight) return
+        if (next === dockHeight) return
 
-      const el = scroller
-      const delta = next - dockHeight
-      const stick = el
-        ? !autoScroll.userScrolled() || el.scrollHeight - el.clientHeight - el.scrollTop < 10 + Math.max(0, delta)
-        : false
+        const el = scroller
+        const delta = next - dockHeight
+        const stick = el
+          ? !autoScroll.userScrolled() || el.scrollHeight - el.clientHeight - el.scrollTop < 10 + Math.max(0, delta)
+          : false
 
-      dockHeight = next
+        dockHeight = next
 
-      if (stick) scrollToEnd()
+        if (stick) scrollToEnd()
 
-      if (el) scheduleScrollState(el)
-      fill()
+        if (el) scheduleScrollState(el)
+        fill()
+      })
     },
   )
 
@@ -2271,8 +2522,20 @@ export default function Page() {
             </div>
           </Match>
           <Match when={params.id}>
-            <Show when={messagesReady() ? params.id : undefined} keyed>
+            <Show
+              when={timelineGateReady() ? params.id : undefined}
+              keyed
+              fallback={
+                // #1288 (never unmount first): a cold message load is a wire
+                // round-trip — hold a pixel-frozen snapshot of the outgoing
+                // timeline at its captured scroll position instead of wiping
+                // to a bare spinner; the swap happens the moment the new
+                // session is ready.
+                <SessionTimelineHold getEl={() => timelineHoldEl} getScrollTop={() => timelineHoldScrollTop} />
+              }
+            >
               {(_id) => (
+                <TimelinePaintProbe id={_id}>
                 <Show
                   when={visibleUserMessages().length > 0 || rolled().length === 0}
                   fallback={
@@ -2321,6 +2584,7 @@ export default function Page() {
                     }}
                   />
                 </Show>
+                </TimelinePaintProbe>
               )}
             </Show>
           </Match>
@@ -2488,7 +2752,7 @@ export default function Page() {
           }}
         >
           {settings.general.newLayoutDesigns() ? (
-            <Show when={sessionPanelKey()} keyed>
+            <Show when={sessionPanelKey()} keyed fallback={<SessionPanelHold />}>
               {(_) => (
                 <SessionPanelFrame newLayout raised={!!params.id}>
                   <ErrorBoundary fallback={sessionErrorFallback}>{sessionPanelContent()}</ErrorBoundary>

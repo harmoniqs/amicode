@@ -17,8 +17,10 @@
 //                 silent ones)
 //
 // #992 DEPLOY GUARD: before any build/stage, fetch origin and refuse (exit 1,
-// named reason + remedy) when HEAD ≠ origin/main or the tree is dirty, and
-// when the tree is missing a #964 known-fixed hunk. Every deploy stamps
+// named reason + remedy) when HEAD ≠ origin/<default-branch> (#1196: the
+// DEFAULT BRANCH, resolved from the remote — the dev workflow's integration
+// trunk, not the literal "main") or the tree is dirty, and when the tree is
+// missing a #964 known-fixed hunk. Every deploy stamps
 // dist-app/deploy.json {commit, branch, dirty, override_reason, built_at,
 // deployed_by} so the served dist always traces to a recorded commit.
 // EXCEPTION: under CI (the vsix-gate's packaging lane, a merge-ref build that
@@ -46,6 +48,7 @@ import {
   checkKnownFixes,
   evaluatePreflight,
   headRelation,
+  resolveDefaultBranch,
 } from "./deploy_guard.mjs";
 
 const EXT_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -79,40 +82,60 @@ const gitOut = (cmdArgs, note) => {
   return r.stdout.trim();
 };
 
-// ── #992 pre-flight: recorded main is canonical for the served dist ─────────
-// Fetch origin; refuse when HEAD ≠ origin/main or the tree is dirty. An
-// override (AMICODE_DEPLOY_OVERRIDE) MUST carry a non-empty reason and is
-// recorded in the deploy manifest. Also the #964 known-fixes check at deploy
-// time: a tree missing a recorded fix refuses with the named-remedy shape.
+// ── #992 pre-flight: the recorded default branch is canonical for the served dist
+// Fetch origin; resolve the repository's DEFAULT BRANCH (#1196: dev workflow —
+// dev = integration target; never the literal "main") and refuse when HEAD ≠
+// origin/<default> or the tree is dirty. An override (AMICODE_DEPLOY_OVERRIDE)
+// MUST carry a non-empty reason and is recorded in the deploy manifest. Also
+// the #964 known-fixes check at deploy time: a tree missing a recorded fix
+// refuses with the named-remedy shape.
 //
 // CI EXCEPTION (honest, never silent): the vsix-gate's packaging lane runs
-// build:app from the PR MERGE REF — legitimately ahead of origin/main and
-// shallow-cloned (ancestry probes can't decide). That is a packaging build,
+// build:app from the PR MERGE REF — legitimately ahead of the default branch
+// and shallow-cloned (ancestry probes can't decide). That is a packaging build,
 // not a deploy: under CI the stale/dirty checks run ADVISORY (printed, and
 // recorded as the manifest's override_reason) while the #964 known-fixes
-// check stays ENFORCING — a merge ref containing main carries main's fixes,
-// so a regression there still refuses. Locally, CI is not set: the guard is
-// always a hard refusal, overridable only via a recorded AMICODE_DEPLOY_OVERRIDE.
+// check stays ENFORCING — a merge ref containing the default branch carries
+// its fixes, so a regression there still refuses. Locally, CI is not set: the
+// guard is always a hard refusal, overridable only via a recorded
+// AMICODE_DEPLOY_OVERRIDE.
 const preflight = () => {
   const ciPackaging = process.env.CI === "true" || process.env.CI === "1";
-  console.log("[build:app] pre-flight (#992): fetch origin, compare HEAD to origin/main, check the tree");
+  console.log("[build:app] pre-flight (#992): fetch origin, resolve the default branch, compare HEAD, check the tree");
   if (gitOut(["rev-parse", "--is-shallow-repository"], "shallow check") === "true") {
-    console.log("[build:app] shallow clone — unshallowing so the origin/main ancestry probes are honest");
+    console.log("[build:app] shallow clone — unshallowing so the baseline ancestry probes are honest");
     run("git", ["fetch", "--unshallow", "origin"], REPO_ROOT, "git fetch --unshallow origin");
   } else {
     run("git", ["fetch", "origin"], REPO_ROOT, "git fetch origin");
   }
+  // #1196: the ahead-of-trunk baseline is the repository's DEFAULT BRANCH,
+  // resolved from the remote — `git remote show origin`'s HEAD branch first
+  // (authoritative; a stale local refs/remotes/origin/HEAD loses), then the
+  // symbolic ref, then the "main" fallback. symbolic-ref/remote-show may
+  // legitimately fail (unset ref, offline) — probed softly, never gitOut'd.
+  const remoteShowOut = (() => {
+    const r = spawnSync("git", ["remote", "show", "origin"], { cwd: REPO_ROOT, encoding: "utf8" });
+    return r.status === 0 ? r.stdout : "";
+  })();
+  const symbolicRefOut = (() => {
+    const r = spawnSync("git", ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], { cwd: REPO_ROOT, encoding: "utf8" });
+    return r.status === 0 ? r.stdout : "";
+  })();
+  const baseline = resolveDefaultBranch({ remoteShowOutput: remoteShowOut, symbolicRefOutput: symbolicRefOut });
+  const baselineRef = `origin/${baseline.branch}`;
+  console.log(`[build:app] pre-flight baseline: ${baselineRef} (default branch via ${baseline.source})`);
   const headSha = gitOut(["rev-parse", "HEAD"], "rev-parse HEAD");
-  const originSha = gitOut(["rev-parse", "origin/main"], "rev-parse origin/main");
+  const baselineSha = gitOut(["rev-parse", baselineRef], `rev-parse ${baselineRef}`);
   const headIsAncestor =
-    spawnSync("git", ["merge-base", "--is-ancestor", "HEAD", "origin/main"], { cwd: REPO_ROOT }).status === 0;
-  const originIsAncestor =
-    spawnSync("git", ["merge-base", "--is-ancestor", "origin/main", "HEAD"], { cwd: REPO_ROOT }).status === 0;
+    spawnSync("git", ["merge-base", "--is-ancestor", "HEAD", baselineRef], { cwd: REPO_ROOT }).status === 0;
+  const baselineIsAncestor =
+    spawnSync("git", ["merge-base", "--is-ancestor", baselineRef, "HEAD"], { cwd: REPO_ROOT }).status === 0;
   const dirtyEntries = gitOut(["status", "--porcelain"], "git status").split("\n").filter(Boolean);
   const decision = evaluatePreflight({
     headSha,
-    originMainSha: originSha,
-    relation: headRelation(headSha, originSha, headIsAncestor, originIsAncestor),
+    baselineSha,
+    baselineRef,
+    relation: headRelation(headSha, baselineSha, headIsAncestor, baselineIsAncestor),
     dirtyEntries,
     overrideReason: process.env.AMICODE_DEPLOY_OVERRIDE,
   });

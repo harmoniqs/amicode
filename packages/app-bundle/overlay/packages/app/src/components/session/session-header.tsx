@@ -1151,6 +1151,22 @@ function SessionDropdownRow(props: {
   const language = useLanguage()
   const title = createMemo(() => sessionTitle(props.session.title) || props.session.id)
   const rowServer = useServer()
+  // #1292 hover prewarm: a hovered row is a click away — pull its first
+  // message page the instant the pointer lands, so the open renders from
+  // the local store (the bulk warm covers recency; hover covers intent).
+  // Once per row per flyout; prefetch's own guards make repeats free.
+  const serverSync = useServerSync()
+  let prewarmed = false
+  const prewarmOnHover = () => {
+    if (prewarmed || props.isCurrent) return
+    prewarmed = true
+    try {
+      const ctx = serverSync().ensureDirSyncContext(props.session.directory)
+      void ctx.session.prefetch?.(props.session.id, 20).catch(() => {})
+    } catch {
+      /* best-effort — a failed prewarm must never break the flyout */
+    }
+  }
   const status = useSessionTabAvatarState(
     () => rowServer.key,
     () => props.session.directory,
@@ -1171,6 +1187,7 @@ function SessionDropdownRow(props: {
         type="button"
         data-component="session-dropdown-row"
         class={SESSION_DROPDOWN_ROW}
+        onMouseEnter={prewarmOnHover}
         onClick={() => props.onOpen(props.session)}
       >
         <Show when={props.isOpenTab || dotStatus() !== "idle"}>

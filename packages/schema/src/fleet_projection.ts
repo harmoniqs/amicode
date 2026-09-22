@@ -53,10 +53,22 @@ export const FLEET_CONTRACT_VERSION = 1;
  *  $HOME with this exact fragment. */
 export const FLEET_PROJECTION_CACHE_RELPATH = join(".amico", "ops", "fleet", "projection.json");
 
+/** #1194: the machine's fleet topology file — the human-confirmed membership
+ *  record the ONE parser reads (amicissimo's fleet_authority). Lives beside
+ *  the projection cache; the publisher's --topology source on enrolled
+ *  machines. Absent = unenrolled (the honest base-default standalone). */
+export const FLEET_TOPOLOGY_RELPATH = join(".amico", "ops", "fleet", "fleet.json");
+
 /** The cache path under a given home (default: the process home). ONE
  *  definition, consumed by the verb (writer) and the extension (reader). */
 export function fleetProjectionCachePath(home: string = homedir()): string {
   return join(home, FLEET_PROJECTION_CACHE_RELPATH);
+}
+
+/** The topology path under a given home (default: the process home). ONE
+ *  definition, consumed by the verb (the publisher's --topology source). */
+export function fleetTopologyPath(home: string = homedir()): string {
+  return join(home, FLEET_TOPOLOGY_RELPATH);
 }
 
 export const SUPPORTED_PROJECTION_SCHEMA_VERSIONS: readonly number[] = [1];

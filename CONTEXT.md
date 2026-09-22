@@ -98,6 +98,22 @@ The typed set of gates + phase templates an autonomous mode binds — the entire
 One of the three director postures — copilot (the zeroth: default, interactive, packless), research, develop. A mode binds a gate pack iff it is autonomous; the copilot mode binds none.
 _Avoid_: surface, rail (they render and switch modes; a mode is a posture, not a surface)
 
+**Pause**:
+The deliberate interruption of a Session's in-flight turn to a safe, resumable stopping point. Reuses the existing cancel path (fiber interruption, dangling-tool-call reconciliation) but settles the Session to **Paused** rather than idle or done. Scoped: targets one Session, a lineage, or all in-flight turns. A no-running-turn target is a benign no-op.
+_Avoid_: cancel, stop, abort (all of those end work; Pause makes it resumable)
+
+**Paused**:
+The durable Session state after a Pause — visibly distinct from idle, finished, error, and working on every surface. Stored in the Session's metadata JSON column; survives an engine restart. A Paused Session is discoverable and filterable. Paused is never silently read as done.
+_Avoid_: stopped (implies finality), suspended (implies mid-fiber checkpoint, which this is not)
+
+**Resume (session control)**:
+Clearing the Paused marker and starting a fresh continuing turn on a Paused Session. Re-dispatch, not resurrection of a killed fiber: for a Task subagent it rides the existing `task_id` continue; for any Session it is a message-initiated turn. Accepts an optional steer message injected before the continuing turn. The UI verb is **"Continue"** to avoid collision with the "Resume session" navigation widget.
+_Avoid_: restart (implies a cold start), reconnect (that is Server adoption), resume (unqualified, in UI — use "Continue")
+
+**Redirect**:
+The composition of Pause + Resume(message) on a running Session — a single action expressing "send a correction to a running subagent." Never a distinct mechanism; always decomposes to Pause then Resume with a steer.
+_Avoid_: interrupt (too vague), override (implies replacing, not steering)
+
 **Mutation Context**:
 A short-lived, server-issued capability that binds a declared local mutation to an authenticated initiating panel and Session Lineage, origin, exact operation, canonical authorized resources, and evidence policy. Known local mutators require a valid Mutation Context before changing session-visible storage; an invalid context denies before filesystem access, while an exact idempotent retry returns the prior operation result. It is server or extension-host local and never part of a browser, transcript, share, telemetry, log, or error payload.
 _Avoid_: write token, filesystem permission
@@ -121,6 +137,37 @@ _Avoid_: receipt status, mutable receipt
 **Mutation Evidence**:
 The bounded host-local patch, preimage, or structured metadata a Mutation Receipt may reference. Evidence is distinct from the compact Mutation Ledger, follows explicit redaction and retention policy, and never enters ordinary session sharing by default. Root quotas, pagination, retention, and compaction bound both receipt metadata and evidence.
 _Avoid_: ledger blob, session attachment
+
+### Development and installation
+
+**Rebuild candidate**:
+A complete platform-specific VSIX tied to an immutable source-pair manifest and
+independently verified before installation. A candidate identifies the Amicode
+main SHA, promoted fork SHA, overlay-manifest fingerprint, target platform, UI
+channel, artifact digest, and CI provenance. It is adopted only after a matching
+health receipt; it is never a directory of files copied into a live extension.
+_Avoid_: Rebuild output, partial deploy, local binary (when the complete VSIX is
+meant)
+
+**Managed rebuild environment**:
+The user-scoped toolchain cache, source cache, and owned temporary worktrees
+used by the rebuild coordinator. It contains pinned, integrity-checked tools and
+may never alter a developer checkout, global PATH, or system package-manager
+state.
+_Avoid_: Developer checkout, global toolchain, build folder
+
+**Rebuild operation**:
+One durable user-initiated lifecycle that preflights, resolves, builds or
+downloads, verifies, adopts, rolls back, or refuses one rebuild candidate. Its
+status survives a VS Code reload and has a receipt-backed terminal outcome.
+_Avoid_: Spinner, background rebuild (when the durable operation is meant)
+
+**Promoted fork SHA**:
+The immutable fork revision recorded by the merged Amicode main overlay
+manifest. It is the only fork revision a Main rebuild may consume. A newer
+`local/amicode` head is pending-promotion information, never a rebuild source.
+_Avoid_: Latest fork head, current branch (when referring to the Main rebuild
+source)
 
 ### Fleet & serving
 
@@ -211,6 +258,14 @@ _Avoid_: Rebuild Remotely / Rebuild from Latest (retired wordings), remote rebui
 **binary live-swap (retired)**:
 The retired mechanism by which the developer-tools "opencode repo path" field resolved a fork binary from a path on disk and set the `opencodeBinary` override to it, restarting the server. Retired with fork absorption (#1091/#1115): the binary is now produced by the in-repo overlay build, so the full local Rebuild is the single dev build path. The general `opencodeBinary` override itself survives — it is consumed by the boot/health paths and still cleared on the developer-mode toggle-off; only the path-field-fed swap is gone.
 _Avoid_: opencode repo path field (removed), binary override (the general override is not the live-swap)
+
+**Canary**:
+The fleet service that pre-tests the `dev` integration branch on real fleet state each night — CI-green artifacts installed on always-on arms (hub server-half, mini client-half), never on a daily driver — reporting a wave-ready verdict through the morning brief and filing findings to the board. Complements CI: clean runners prove the PR; the Canary proves the integration on live fleet state.
+_Avoid_: nightly build (it installs, never builds), CI (what it builds on, not what it is), test machine
+
+**Wave**:
+The deliberate `dev` → `main` graduation act — the human acceptance that makes main the trunk Aaron has personally tested. Preceded by the Canary's mechanical verdict; never replaced by it.
+_Avoid_: release (that is the tag flow), promote (reserved for the alpha-promotion act), merge (too generic — a Wave is a specific, human merge)
 
 ### Orthogonal axes
 

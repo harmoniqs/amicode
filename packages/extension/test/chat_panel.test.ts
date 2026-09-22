@@ -153,6 +153,7 @@ describe("ChatPanel — Preview bridge relays", () => {
       expect(html).toContain("syntax-theme");
       expect(html).toContain("connect-harmoniqs-provider");
       expect(html).toContain("connect-harmoniqs-provider-result");
+      expect(html).toContain("connect-harmoniqs-provider-ack");
     }
   });
 

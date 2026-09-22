@@ -100,6 +100,7 @@ import { SchusterJobServer } from "./qick_client";
 import { adoptOrSpawn, buildLiveDeps, isPidAlive, reclaimOrphanPort, auditAdoptedEngine, restartAdoptedEngine } from "./server_lifecycle";
 import { handshakePath, readHandshake, deleteHandshake, serverLogPath, coldSpawnHandshakeHook, hashFile, hashString } from "./server_handshake";
 import { startKeepalive, stopKeepalive, readGraceSeconds, pingKeepalive } from "./server_keepalive";
+import { FleetPollHysteresis } from "./fleet_poll_hysteresis";
 import { stopServer } from "./stop_server";
 import type { QueueView } from "./qick_job_server";
 import { postDeviceStatus, postDeviceActions, postDeviceActivate } from "./inspector_bridge";
@@ -748,71 +749,83 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     });
     ctx.subscriptions.push(sseClient);
     // Poll the tunnel — when the canonical server is reachable the forward answers 200.
-    let fleetReady = false;
-    let fleetChecks = 0;
-    let fleetNotified = false;
+    // #1202: hysteresis via FleetPollHysteresis (the #1187 keepalive's pattern) —
+    // ONE lost probe must not flip fleetReady (the old code detached on the first
+    // 1.5s-timeout failure and offered standalone after 10s, repeatedly, through
+    // multi-minute tunnel degradation windows). The thresholds ride the
+    // amicode.fleet* settings (0 = the default, the D6 tuning precedent).
+    const fleetNum = (key: string): number | undefined => {
+      const v = vscode.workspace.getConfiguration("amicode").get<number>(key, 0);
+      return Number.isFinite(v) && v > 0 ? v : undefined;
+    };
+    // #777: the FIRST-attach probe needs a wide budget — on a ~750ms-RTT link
+    // every tunnel request runs ~2.5s against the fixed 1500ms (GET / measured
+    // 1.6-2.9s), so a healthy hub was unattachable: the probe itself timed out,
+    // the attach never fired, and the panel parked with chrome only. Once
+    // attached, the steady-state probe stays fast (1500ms) — SSE liveness
+    // covers the up-state, and #1202's hysteresis rides the failure pattern,
+    // not the probe budget. 0 = the old fixed 1500ms.
+    const attachBudgetCfg = fleetNum("fleetProbeTimeoutMs") ?? 1500;
+    // #777: GET / returns the SPA index — the heaviest page the engine serves.
+    // A cheap engine route (e.g. /session, measured 2x faster) halves the
+    // probe cost on degraded links. Default keeps the current / behavior.
+    const fleetProbePath = vscode.workspace.getConfiguration("amicode").get<string>("fleetProbePath", "/") || "/";
+    const downCfg = fleetNum("fleetTunnelDownConsecutiveFailures");
+    const offerCfg = fleetNum("fleetStandaloneOfferConsecutiveFailures");
+    const cooldownCfg = fleetNum("fleetStandaloneOfferCooldownMinutes");
+    const fleetPoll = new FleetPollHysteresis({
+      ...(downCfg !== undefined ? { downThreshold: downCfg } : {}),
+      ...(offerCfg !== undefined ? { offerThreshold: offerCfg } : {}),
+      ...(cooldownCfg !== undefined ? { offerCooldownMs: cooldownCfg * 60_000 } : {}),
+    });
+    const offerStandalonePopup = (failures: number): void => {
+      opencodeChannel.appendLine(`[fleet] tunnel down for ${failures} consecutive probes — offering standalone`);
+      void vscode.window
+        .showWarningMessage(`Amicode: fleet tunnel down — canonical unreachable. Go standalone?`, `Go Standalone`, `Show log`)
+        .then((pick) => {
+          if (pick === `Go Standalone`) void vscode.commands.executeCommand(`amicode.fleet.goStandalone`);
+          else if (pick === `Show log`) opencodeChannel.show();
+        });
+    };
     const checkFleet = async () => {
-      fleetChecks++;
+      let up = false;
       try {
-        const r = await fetch(`http://127.0.0.1:${fleetPort}/`, {
-          signal: AbortSignal.timeout(1500),
+        const r = await fetch(`http://127.0.0.1:${fleetPort}${fleetProbePath}`, {
+          signal: AbortSignal.timeout(fleetPoll.isReady ? 1500 : attachBudgetCfg),
           headers: serverAuthHeaders,
         });
-        const up = r.ok || (r.status >= 200 && r.status < 400);
-        if (up && !fleetReady) {
-          fleetReady = true;
-          fleetNotified = false;
-          opencodeReadyUrl = new URL(`http://127.0.0.1:${fleetPort}`);
-          statusBar?.setServerReady(true);
-          sseClient?.connect(opencodeReadyUrl);
-          if (vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true)) {
-            // Fleet client: no local service boots in this mode, so frameUrl()
-            // resolves the tunnel engine origin — the honest available frame.
-            ChatPanel.openOrReveal(ctx, frameUrl() ?? opencodeReadyUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
-          }
-          void fetchProviderSignal(opencodeReadyUrl.toString(), { headers: serverAuthHeaders }).then((sig) => {
-            opencodeChannel.appendLine(sig.ok ? `[fleet] LLM provider: configured (${sig.provider})` : `[fleet] LLM provider: ${sig.reason} → ${sig.fix}`);
-          });
-          opencodeChannel.appendLine(`[fleet] tunnel up at ${opencodeReadyUrl} — chat attached`);
-        } else if (!up && fleetReady) {
-          fleetReady = false;
-          opencodeReadyUrl = undefined;
-          statusBar?.setServerReady(false);
-          opencodeChannel.appendLine(`[fleet] tunnel down — canonical unreachable (go standalone to work locally)`);
-        } else if (!up && !fleetReady && fleetChecks === 1) {
-          opencodeChannel.appendLine(`[fleet] waiting for tunnel 127.0.0.1:${fleetPort} — canonical unreachable, will retry`);
-        }
-        // After ~10s (5 checks) still down → offer standalone visibly, not just a log
-        if (!up && !fleetReady && !fleetNotified && fleetChecks >= 5) {
-          fleetNotified = true;
-          opencodeChannel.appendLine(`[fleet] tunnel still down after ${fleetChecks} checks — offering standalone`);
-          void vscode.window
-            .showWarningMessage(`Amicode: fleet tunnel down — canonical unreachable. Go standalone?`, `Go Standalone`, `Show log`)
-            .then((pick) => {
-              if (pick === `Go Standalone`) void vscode.commands.executeCommand(`amicode.fleet.goStandalone`);
-              else if (pick === `Show log`) opencodeChannel.show();
-            });
-        }
+        up = r.ok || (r.status >= 200 && r.status < 400);
       } catch {
-        if (fleetReady) {
-          fleetReady = false;
-          opencodeReadyUrl = undefined;
-          statusBar?.setServerReady(false);
-          opencodeChannel.appendLine(`[fleet] tunnel down — will retry`);
-        } else if (fleetChecks === 1) {
-          opencodeChannel.appendLine(`[fleet] waiting for tunnel 127.0.0.1:${fleetPort} — will retry`);
-        }
-        if (!fleetReady && !fleetNotified && fleetChecks >= 5) {
-          fleetNotified = true;
-          opencodeChannel.appendLine(`[fleet] tunnel still down after ${fleetChecks} checks — offering standalone`);
-          void vscode.window
-            .showWarningMessage(`Amicode: fleet tunnel down — canonical unreachable. Go standalone?`, `Go Standalone`, `Show log`)
-            .then((pick) => {
-              if (pick === `Go Standalone`) void vscode.commands.executeCommand(`amicode.fleet.goStandalone`);
-              else if (pick === `Show log`) opencodeChannel.show();
-            });
-        }
+        up = false; // connection refused / timeout — the same hysteresis applies
       }
+      const d = fleetPoll.onProbe(up);
+      if (d.transition === "attach") {
+        opencodeReadyUrl = new URL(`http://127.0.0.1:${fleetPort}`);
+        statusBar?.setServerReady(true);
+        sseClient?.connect(opencodeReadyUrl);
+        if (vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true)) {
+          // Fleet client: no local service boots in this mode, so frameUrl()
+          // resolves the tunnel engine origin — the honest available frame.
+          ChatPanel.openOrReveal(ctx, frameUrl() ?? opencodeReadyUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
+        }
+        void fetchProviderSignal(opencodeReadyUrl.toString(), { headers: serverAuthHeaders }).then((sig) => {
+          opencodeChannel.appendLine(sig.ok ? `[fleet] LLM provider: configured (${sig.provider})` : `[fleet] LLM provider: ${sig.reason} → ${sig.fix}`);
+        });
+        opencodeChannel.appendLine(`[fleet] tunnel up at ${opencodeReadyUrl} — chat attached`);
+      } else if (d.transition === "detach") {
+        opencodeReadyUrl = undefined;
+        statusBar?.setServerReady(false);
+        opencodeChannel.appendLine(
+          `[fleet] tunnel down — ${d.failures} consecutive failed probes (threshold ${d.downThreshold}) — go standalone to work locally`,
+        );
+      } else if (!up && d.ready && d.failures === 1) {
+        // A failure streak just started while up — log the hold once, then stay
+        // quiet until the threshold (no per-probe log spam across a blip).
+        opencodeChannel.appendLine(`[fleet] tunnel probe failed (1/${d.downThreshold}) — holding`);
+      } else if (d.bootProbe && !up) {
+        opencodeChannel.appendLine(`[fleet] waiting for tunnel 127.0.0.1:${fleetPort} — canonical unreachable, will retry`);
+      }
+      if (d.offerStandalone) offerStandalonePopup(d.failures);
     };
     fleetClientPoll = setInterval(() => void checkFleet(), 2000);
     ctx.subscriptions.push({ dispose: () => { if (fleetClientPoll) clearInterval(fleetClientPoll); fleetClientPoll = undefined; } });

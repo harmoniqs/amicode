@@ -260,7 +260,7 @@ export namespace SessionLineage {
       const parentIDs = [...new Set(
         orphans
           .map((row) => row.legacy_parent_id)
-          .filter((id): id is string => id != null),
+          .filter((id): id is SessionID => id != null),
       )]
 
       for (const parentID of parentIDs) {

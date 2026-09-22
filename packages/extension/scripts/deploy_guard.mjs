@@ -1,9 +1,11 @@
 // deploy_guard.mjs — amicode#992: the deploy pre-flight + the deploy manifest,
 // as pure functions so both build_app_bundle.mjs and the vitest suite
 // (test/deploy_guard.test.ts) drive the SAME logic. The doctrine: recorded
-// main is canonical; anything deploying stale or unrecorded state must fail
+// trunk is canonical; anything deploying stale or unrecorded state must fail
 // loudly (#992, same class as #964 — recorded state is canonical,
-// reference-20260907-021500-agentic-substrate-doctrine).
+// reference-20260907-021500-agentic-substrate-doctrine). #1196: "trunk" is the
+// repository's DEFAULT BRANCH, resolved dynamically from the remote (dev
+// workflow: dev = integration target) — never the literal string "main".
 import { checkKnownFixes } from "../../app-bundle/scripts/known_fixes.mjs";
 
 // The #964 known-fixes check now lives in ONE shared module
@@ -12,14 +14,39 @@ import { checkKnownFixes } from "../../app-bundle/scripts/known_fixes.mjs";
 // (build_app_bundle.mjs) and its test. See #842.
 export { checkKnownFixes };
 
+// ── #1196: the default-branch baseline resolution (pure) ────────────────────
+// The caller gathers the two git observations; the RESOLUTION lives here so
+// the tests drive every branch without shelling out. Preference order:
+//   1. `git remote show origin`'s "HEAD branch: <name>" — the remote's own
+//      answer, authoritative (a stale local refs/remotes/origin/HEAD — the
+//      exact failure that forced AMICODE_DEPLOY_OVERRIDE on the fleet macbook,
+//      PR #1195 — loses to this).
+//   2. `git symbolic-ref refs/remotes/origin/HEAD` — the local cache of the
+//      remote's HEAD (full refs/remotes/origin/<b> or short origin/<b>).
+//   3. the "main" fallback — yesterday's behavior, never a silent upgrade of
+//      the guard's strictness.
+export function resolveDefaultBranch({ remoteShowOutput, symbolicRefOutput, fallback = "main" }) {
+  const fromRemoteShow = String(remoteShowOutput ?? "").match(/^[ \t]*HEAD branch:[ \t]*(\S+)[ \t]*$/m);
+  if (fromRemoteShow) return { branch: fromRemoteShow[1], source: "remote-show" };
+  const symref = String(symbolicRefOutput ?? "").trim();
+  const fromSymref = symref.match(/^(?:refs\/remotes\/)?(?:[^/]+)\/([^\s/]+)$/);
+  if (fromSymref) return { branch: fromSymref[1], source: "symbolic-ref" };
+  return { branch: fallback, source: "fallback" };
+}
+
 // ── Pre-flight evaluation (pure) ────────────────────────────────────────────
 // Inputs are gathered by the caller (git, fs); the decision lives here so the
 // tests can drive every branch without shelling out.
 //
 //   headSha        — the local HEAD's full sha
-//   originMainSha  — origin/main's full sha (after a fetch)
-//   relation       — "at" | "BEHIND" | "DIVERGED" (caller computes via
-//                    `git merge-base --is-ancestor`; headRelation below)
+//   baselineSha    — the default branch's remote ref sha, e.g. origin/dev's
+//                    (#1196: resolved via resolveDefaultBranch; after a fetch)
+//   baselineRef    — the resolved baseline's name (e.g. "origin/dev") — named
+//                    verbatim in the refusal + remedy so the operator knows
+//                    WHICH trunk the guard compared against
+//   relation       — "at" | "BEHIND" | "AHEAD of" | "DIVERGED from" (caller
+//                    computes via `git merge-base --is-ancestor`; headRelation
+//                    below)
 //   dirtyEntries   — `git status --porcelain` lines ([] when clean)
 //   overrideReason — $AMICODE_DEPLOY_OVERRIDE (undefined when unset)
 //
@@ -31,17 +58,17 @@ export { checkKnownFixes };
 // in the returned decision so the manifest stamps it. The #964 known-fixes
 // refusal is NEVER overridable — a tree missing a recorded fix does not build
 // a deploy, hotfix or not.
-export function evaluatePreflight({ headSha, originMainSha, relation, dirtyEntries, overrideReason }) {
+export function evaluatePreflight({ headSha, baselineSha, baselineRef, relation, dirtyEntries, overrideReason }) {
   const reasons = [];
   const hasOverrideFlag = overrideReason !== undefined;
   const validOverride = hasOverrideFlag && String(overrideReason).trim() !== "";
 
-  if (!validOverride && headSha !== originMainSha) {
+  if (!validOverride && headSha !== baselineSha) {
     const rel = relation && relation !== "at" ? relation : "≠";
     reasons.push(
-      `REFUSED: HEAD ${headSha.slice(0, 12)} is ${rel} origin/main (${originMainSha.slice(0, 12)}) — ` +
-        `a deploy from a non-recorded-main tree can serve unrecorded state over a recorded fix (the 2026-09-10 deploy race, #992). ` +
-        `REMEDY: pull/rebase onto origin/main and land any local work via a PR, then redeploy ` +
+      `REFUSED: HEAD ${headSha.slice(0, 12)} is ${rel} ${baselineRef} (${baselineSha.slice(0, 12)}) — ` +
+        `a deploy from a non-recorded tree can serve unrecorded state over a recorded fix (the 2026-09-10 deploy race, #992). ` +
+        `REMEDY: pull/rebase onto ${baselineRef} and land any local work via a PR, then redeploy ` +
         `(or set AMICODE_DEPLOY_OVERRIDE=<reason> to proceed with the hotfix recorded).`,
     );
   }
@@ -66,9 +93,9 @@ export function evaluatePreflight({ headSha, originMainSha, relation, dirtyEntri
   const reason = validOverride ? String(overrideReason).trim() : null;
   const recorded = [];
   if (validOverride) {
-    if (headSha !== originMainSha)
+    if (headSha !== baselineSha)
       recorded.push(
-        `OVERRIDE (stale tree: HEAD ${headSha.slice(0, 12)} ${relation ?? "≠"} origin/main): ${reason}`,
+        `OVERRIDE (stale tree: HEAD ${headSha.slice(0, 12)} ${relation ?? "≠"} ${baselineRef}): ${reason}`,
       );
     if (dirtyEntries.length > 0)
       recorded.push(`OVERRIDE (dirty tree: ${dirtyEntries.length} entries): ${reason}`);
@@ -81,12 +108,14 @@ export function evaluatePreflight({ headSha, originMainSha, relation, dirtyEntri
 
 // A thin helper the script uses after `git merge-base --is-ancestor` probes —
 // pure: it just picks the relation label.
-//   headIsAncestor    — merge-base --is-ancestor HEAD origin/main
-//   originIsAncestor  — merge-base --is-ancestor origin/main HEAD
-export function headRelation(headSha, originMainSha, headIsAncestor, originIsAncestor) {
-  if (headSha === originMainSha) return "at";
+//   headSha            — the local HEAD's full sha
+//   baselineSha        — the default branch's remote ref sha (#1196)
+//   headIsAncestor     — merge-base --is-ancestor HEAD <baseline-ref>
+//   baselineIsAncestor — merge-base --is-ancestor <baseline-ref> HEAD
+export function headRelation(headSha, baselineSha, headIsAncestor, baselineIsAncestor) {
+  if (headSha === baselineSha) return "at";
   if (headIsAncestor) return "BEHIND";
-  if (originIsAncestor) return "AHEAD of";
+  if (baselineIsAncestor) return "AHEAD of";
   return "DIVERGED from";
 }
 

@@ -18,17 +18,16 @@ import { message as cleanMessage } from "@/utils/diffs"
 import { sessionNotFoundError } from "@/utils/server-errors"
 import { rootSession } from "@/utils/session-route"
 import { normalizeSessionInfo } from "@/utils/session"
-import { normalizeSessionMessages } from "@/utils/session-message"
+import { compareMessages, messageKey, normalizeSessionMessages } from "@/utils/session-message"
 import { dropSessionCaches, pickSessionCacheEvictions, SESSION_CACHE_LIMIT } from "./global-sync/session-cache"
 import { createV2SessionReducer, type V2SessionReduction } from "./server-session-v2-reducer"
+import { deleteMirror, loadMirror, mirrorSlice, saveMirror } from "./session-mirror"
 import type { ServerApi } from "@/utils/server"
 
 type MessageApi = ServerApi["message"]
 
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
-const cmpMessage = (a: Message, b: Message) => a.time.created - b.time.created || cmp(a.id, b.id)
 const SKIP_PARTS = new Set(["patch", "step-start", "step-finish"])
-const EDIT_TOOLS = new Set(["edit", "write", "patch", "apply_patch"])
 const initialMessagePageSize = 20
 const historyMessagePageSize = 200
 const sessionInfoLimit = 2_048
@@ -65,7 +64,7 @@ type MessagePage = {
 function legacyMessageSource(items: { info: Message; parts: Part[] }[]): SessionMessageInfo[] {
   return items
     .slice()
-    .sort((a, b) => cmp(a.info.id, b.info.id))
+    .sort((a, b) => compareMessages(a.info, b.info))
     .map((item) => {
       if (item.info.role === "user") {
         return {
@@ -112,17 +111,24 @@ function mergeOptimisticPage(page: MessagePage, items: OptimisticItem[]) {
   const part = new Map(page.part.map((item) => [item.id, item.part]))
   const observed: { messageID: string; parts: Part[] }[] = []
   for (const item of items) {
-    const result = Binary.search(session, item.message.id, (message) => message.id)
-    if (!result.found) session.splice(result.index, 0, item.message)
+    // Ordering invariant: `session` is kept in `compareMessages` order
+    // (time.created, tie-broken by id), and we search/insert it here by id
+    // (`messageKey`). That is valid because opencode message ids are
+    // ULID-style monotonic — `Identifier.ascending("message")` emits a
+    // fixed-width, zero-padded, big-endian hex time prefix (timestamp*0x1000
+    // + a per-ms counter), so lexicographic id order equals creation-time
+    // order. Thus id order agrees with the time-then-id sort. This matches
+    // main's cmpMessage (time sort, id search) — parity, not new behavior.
+    const result = Binary.search(session, messageKey(item.message), messageKey)
+    const found = result.found
+    if (!found) session.splice(result.index, 0, item.message)
     const current = part.get(item.message.id)
-    const confirmed = result.found
-      ? item.parts.filter((part) => Binary.search(current ?? [], part.id, (value) => value.id).found)
-      : []
-    if (result.found) observed.push({ messageID: item.message.id, parts: confirmed })
+    const confirmed = found ? item.parts.filter((part) => current?.some((value) => value.id === part.id)) : []
+    if (found) observed.push({ messageID: item.message.id, parts: confirmed })
     part.set(
       item.message.id,
       merge(
-        result.found ? (current ?? []) : merge(item.confirmedParts ?? [], current ?? []),
+        found ? (current ?? []) : merge(item.confirmedParts ?? [], current ?? []),
         item.parts.filter((part) => !confirmed.includes(part)),
       ),
     )
@@ -159,6 +165,7 @@ function reconcileFetched<T extends { id: string }>(
     retained?: ReadonlySet<string>
     removed?: ReadonlySet<string>
     preserveUnfetched?: boolean | ((item: T) => boolean)
+    compare?: (a: T, b: T) => number
   } = {},
 ) {
   const result = new Map(fetched.map((item) => [item.id, item]))
@@ -181,10 +188,18 @@ function reconcileFetched<T extends { id: string }>(
     if (!item) result.delete(id)
   }
   for (const id of options.removed ?? emptyIDs) result.delete(id)
-  return [...result.values()].sort((a, b) => cmp(a.id, b.id))
+  const items = [...result.values()]
+  return options.compare ? items.sort(options.compare) : items
 }
 
-type ServerSessionOptions = { retry?: typeof retry; protocol?: Promise<"v1" | "v2"> }
+type ServerSessionOptions = {
+  retry?: typeof retry
+  protocol?: Promise<"v1" | "v2">
+  /** #1291 durable mirror: the server-scope key for the IndexedDB mirror.
+   *  When set, message loads persist the latest page to disk and sync()
+   *  hydrates from it before the wire — reloads render instantly. */
+  mirrorScope?: string
+}
 
 export function createServerSession(
   client: OpencodeClient,
@@ -220,7 +235,6 @@ export function createServerSession(
   const orphanParts = new Map<string, Set<string>>()
   const removedMessages = new Map<string, Set<string>>()
   const deltaBases = new Map<string, { base: string; sessionID: string }>()
-  const parentOf = new Map<string, string>()
   const deleteMessageParts = (
     cache: { part: Record<string, Part[] | undefined>; part_text_accum_delta: Record<string, string | undefined> },
     messageID: string,
@@ -416,8 +430,7 @@ export function createServerSession(
     if (!load) return
     // A part event keeps an existing parent when the fetched page omits it without overriding fetched metadata.
     const messages = data.message[sessionID]
-    if (messages && Binary.search(messages, messageID, (message) => message.id).found)
-      load.retainedMessages.add(messageID)
+    if (messages?.some((message) => message.id === messageID)) load.retainedMessages.add(messageID)
     const parts = load.touchedParts.get(messageID)
     if (parts) {
       parts.add(partID)
@@ -440,16 +453,14 @@ export function createServerSession(
       load.touchedParts.set(messageID, new Set(parts))
       load.carriedDeltaParts.set(messageID, new Set(parts))
       const messages = data.message[sessionID]
-      if (messages && Binary.search(messages, messageID, (message) => message.id).found)
-        load.retainedMessages.add(messageID)
+      if (messages?.some((message) => message.id === messageID)) load.retainedMessages.add(messageID)
     }
     for (const [messageID, parts] of load.removedParts) {
       const touched = load.touchedParts.get(messageID) ?? new Set<string>()
       parts.forEach((partID) => touched.add(partID))
       load.touchedParts.set(messageID, touched)
       const messages = data.message[sessionID]
-      if (messages && Binary.search(messages, messageID, (message) => message.id).found)
-        load.retainedMessages.add(messageID)
+      if (messages?.some((message) => message.id === messageID)) load.retainedMessages.add(messageID)
     }
     for (const [messageID, parts] of load.optimisticParts) {
       load.removedMessages.delete(messageID)
@@ -558,7 +569,7 @@ export function createServerSession(
       const source = pages.flatMap((page) => page.data).toReversed()
       const normalized = normalizeSessionMessages(sessionID, source)
       return {
-        session: normalized.messages.sort((a, b) => cmp(a.id, b.id)),
+        session: normalized.messages.sort(compareMessages),
         part: [...normalized.parts.entries()]
           .map(([id, part]) => ({ id, part: part.sort((a, b) => cmp(a.id, b.id)) }))
           .sort((a, b) => cmp(a.id, b.id)),
@@ -575,7 +586,7 @@ export function createServerSession(
     })
     const items = (response.data ?? []).filter((item) => !!item?.info?.id)
     return {
-      session: items.map((item) => cleanMessage(item.info)).sort((a, b) => cmp(a.id, b.id)),
+      session: items.map((item) => cleanMessage(item.info)).sort(compareMessages),
       part: items.map((item) => ({
         id: item.info.id,
         part: item.parts.filter((part) => !!part?.id).sort((a, b) => cmp(a.id, b.id)),
@@ -699,7 +710,7 @@ export function createServerSession(
             const normalized = normalizeSessionMessages(sessionID, source)
             return {
               ...page,
-              session: normalized.messages.sort((a, b) => cmp(a.id, b.id)),
+              session: normalized.messages.sort(compareMessages),
               part: [...normalized.parts.entries()]
                 .map(([id, part]) => ({ id, part: part.sort((a, b) => cmp(a.id, b.id)) }))
                 .sort((a, b) => cmp(a.id, b.id)),
@@ -716,6 +727,7 @@ export function createServerSession(
       retained: load?.retainedMessages,
       removed: load?.removedMessages,
       preserveUnfetched,
+      compare: compareMessages,
     })
     batch(() => {
       if (source) setData("session_message", sessionID, reconcile(source))
@@ -735,8 +747,49 @@ export function createServerSession(
     })
   }
 
+  const loadDebug = (sessionID: string, step: string, detail: Record<string, unknown> = {}) => {
+    const w = globalThis as { __loadDebug?: Map<string, unknown[]> }
+    w.__loadDebug = w.__loadDebug ?? new Map()
+    const ring = w.__loadDebug.get(sessionID) ?? []
+    ring.push({ step, ...detail, t: Date.now() })
+    if (ring.length > 16) ring.shift()
+    w.__loadDebug.set(sessionID, ring)
+  }
+
   const loadMessages = async (sessionID: string, limit: number, before?: string, mode?: "replace" | "prepend") => {
-    if (meta.loading[sessionID]) return
+    loadDebug(sessionID, "enter", { limit, mode: mode ?? "latest", loading: meta.loading[sessionID] ?? false, count: data.message[sessionID]?.length ?? -1 })
+    if (meta.loading[sessionID]) {
+      loadDebug(sessionID, "skip-loading")
+      return
+    }
+    // #1291 durable mirror: EVERY cold path funnels here — sync(), the
+    // warm's prefetch(), history loads. Hydrate from disk BEFORE the wire
+    // fetch so the timeline renders instantly; the fetch (which continues
+    // below) reconciles into truth. Only the FIRST load of a session this
+    // document hydrates; later loads have data.message defined already.
+    if ((data.message[sessionID]?.length ?? 0) < 20) {
+      // #1300: hydrate over sparse-or-missing lists — an SSE seed (a
+      // running session's single streaming message) must not veto the
+      // mirror; hydrateFromMirror itself refuses only when the store
+      // already holds at least as much as the record.
+      await hydrateFromMirror(sessionID).catch(() => {})
+      loadDebug(sessionID, "hydrated", { count: data.message[sessionID]?.length ?? -1 })
+      if (meta.loading[sessionID]) return
+      if ((data.message[sessionID]?.length ?? 0) > 0) {
+        // #1295d: the mirror satisfied the render — the caller (the
+        // timeline resource!) resolves NOW; the wire reconcile runs
+        // DETACHED. Before this, every session not yet in this document's
+        // store (at boot: ALL of them) awaited a full wire fetch before
+        // first paint even though the hydrated data was in the store —
+        // the "frozen pane then a couple seconds of chat loading" on
+        // boot and cold switches, at exactly the wire RTT.
+        void wireReconcile().catch(() => {})
+        return
+      }
+    }
+    return wireReconcile()
+
+    async function wireReconcile() {
     const active = generation(sessionID)
     const load: MessageLoadState = {
       touchedMessages: new Set(),
@@ -756,8 +809,9 @@ export function createServerSession(
     let applied = false
     try {
       const page = await fetchMessages(sessionID, limit, before, () => resetMessageLoad(sessionID, load))
+      loadDebug(sessionID, "fetched", { n: page.session.length, complete: page.complete, before: before ?? null })
       const first = page.session.reduce<Message | undefined>(
-        (oldest, message) => (!oldest || cmpMessage(message, oldest) < 0 ? message : oldest),
+        (oldest, message) => (!oldest || compareMessages(message, oldest) < 0 ? message : oldest),
         undefined,
       )
       if (generations.get(sessionID) !== active) return
@@ -781,20 +835,29 @@ export function createServerSession(
             ),
           ),
         ]
-        for (const parentID of parentIDs) {
-          if (generations.get(sessionID) !== active) break
-          const parent = await fetchMessage(sessionID, parentID, () =>
-            resetMessageLoad(sessionID, load, messageLoadBaseline(load, parentID)),
-          ).catch((error) => {
-            const cause = error instanceof Error && typeof error.cause === "object" ? error.cause : undefined
-            if (cause && "status" in cause && cause.status === 404) {
-              load.removedMessages.add(parentID)
-              return
-            }
-            throw error
-          })
+        // #1297: PARALLELIZE the parent fetches. The sequential loop was
+        // THE switch-delay for big sessions: each parent missing from the
+        // fetched page cost a full wire round-trip, one after another —
+        // the render ring measured a 12.7s route-change-to-first-paint on
+        // the user's research session (5-7 parents x ~2s each, joined by
+        // any switch that landed mid-chain). All parents in one flight.
+        const parentResults = await Promise.all(
+          parentIDs.map((parentID) =>
+            fetchMessage(sessionID, parentID, () =>
+              resetMessageLoad(sessionID, load, messageLoadBaseline(load, parentID)),
+            ).catch((error) => {
+              const cause = error instanceof Error && typeof error.cause === "object" ? error.cause : undefined
+              if (cause && "status" in cause && cause.status === 404) {
+                load.removedMessages.add(parentID)
+                return
+              }
+              throw error
+            }),
+          ),
+        )
+        for (const parent of parentResults) {
           if (!parent) continue
-          if (parent.message.role !== "user") throw new Error(`Assistant parent is not a user message: ${parentID}`)
+          if (parent.message.role !== "user") throw new Error(`Assistant parent is not a user message: ${parent.message.id}`)
           parents.push(parent)
         }
       }
@@ -807,14 +870,15 @@ export function createServerSession(
               session: merge(
                 page.session,
                 parents.map((parent) => parent.message),
-              ),
+              ).sort(compareMessages),
               part: merge(
                 page.part,
                 parents.map((parent) => ({ id: parent.message.id, part: parent.parts })),
               ),
             }
       const preserveUnfetched =
-        mode === "prepend" || (!result.complete && (!first || ((message: Message) => cmpMessage(message, first) < 0)))
+        mode === "prepend" ||
+        (!result.complete && (!first || ((message: Message) => compareMessages(message, first) < 0)))
       applyMessagePage(
         sessionID,
         result,
@@ -823,6 +887,10 @@ export function createServerSession(
         mode !== "prepend",
       )
       applied = true
+      loadDebug(sessionID, "applied", { n: data.message[sessionID]?.length ?? -1 })
+      // #1291 durable mirror: a successful load (open / switch / warm
+      // prefetch / older-page fetch) is the natural persistence point.
+      persistMirror(sessionID)
     } finally {
       if (!applied && generations.get(sessionID) === active && messageLoads.get(sessionID) === load) {
         for (const messageID of load.orphanParents) {
@@ -835,13 +903,107 @@ export function createServerSession(
       if (messageLoads.get(sessionID) === load) messageLoads.delete(sessionID)
       if (generations.get(sessionID) === active) setMeta("loading", sessionID, false)
     }
+    }
+  }
+
+  /** #1291 durable mirror: persist the current store state for a session
+   *  (debounced, best-effort). Called after successful message loads —
+   *  manual opens, tab switches, and the bulk warm's prefetch all land
+   *  here, so the mirror tracks the most recently touched sessions. */
+  const persistMirror = (sessionID: string) => {
+    const scope = options?.mirrorScope
+    if (!scope) return
+    try {
+      const messages = data.message[sessionID]
+      if (!messages?.length) return
+      saveMirror(scope, sessionID, {
+        info: data.info[sessionID],
+        messages: mirrorSlice(
+          messages.map((info) => ({ info, parts: (data.part[info.id] ?? []).slice() })),
+        ),
+        source: (data.session_message[sessionID] ?? []).slice(),
+      })
+    } catch {
+      /* best-effort: mirror failures never break the session view */
+    }
+  }
+
+  /** #1291 durable mirror: on a cold boot (nothing loaded yet this
+   *  document), seed the store from the IndexedDB mirror BEFORE the wire
+   *  fetch, so the timeline renders instantly and the fetch reconciles
+   *  into truth. meta.limit stays unset → the network load still runs
+   *  (background revalidate, not a cache hit). */
+  const hydrateFromMirror = async (sessionID: string) => {
+    const scope = options?.mirrorScope
+    if (!scope) return
+    const record = await loadMirror(scope, sessionID)
+    if (!record) return
+    // #1300: hydrate over SPARSE SSE seeds. A running session's event
+    // stream seeds data.message with a SINGLE message before any real
+    // load; the old guard (> 0 = refuse) let that 1-message seed veto a
+    // 40-message mirror record — the switch rendered the ghost of one
+    // message and waited on the wire for history the disk already had.
+    // Only refuse when the store holds at least as much as the record.
+    const storeCount = data.message[sessionID]?.length ?? 0
+    if (storeCount >= record.messages.length) return
+    ;(globalThis as { __mirrorHydrated?: string[] }).__mirrorHydrated = (
+      (globalThis as { __mirrorHydrated?: string[] }).__mirrorHydrated ?? []
+    ).concat([sessionID])
+    batch(() => {
+      if (record.info) setData("info", sessionID, record.info)
+      setData("message", sessionID, record.messages.map((item) => item.info))
+      for (const item of record.messages) {
+        if (item.parts.length) setData("part", item.info.id, item.parts.slice())
+      }
+      if (record.source.length) setData("session_message", sessionID, record.source.slice())
+      // #1294: mark the hydrated page as APPLIED — sync()'s cache check
+      // requires meta.limit, and without this a mirror-hydrated session
+      // (40 messages on screen) still failed the check and re-fetched on
+      // every switch: the timeline held the frozen previous-session clone
+      // for a full wire round-trip while the same data came back.
+      setMeta("limit", sessionID, record.messages.length)
+      setMeta("at", sessionID, Date.now())
+    })
+  }
+
+  /** #1297: satisfy the render from the mirror WITHOUT joining any
+   *  in-flight task (a mid-deep-warm prefetch can hold a runInflight slot
+   *  for many seconds; a switch that joins it shows the frozen pane for
+   *  the whole chain even though the mirror can paint NOW). */
+  const hydrate = (sessionID: string) => {
+    if ((data.message[sessionID]?.length ?? 0) > 0) return Promise.resolve()
+    return hydrateFromMirror(sessionID)
+      .catch(() => {})
+      .then(() => undefined)
   }
 
   const sync = (sessionID: string, options?: { force?: boolean; messageLimit?: number }) => {
     touch(sessionID)
     return runInflight(inflight, sessionID, async () => {
-      const cached = data.message[sessionID] !== undefined && meta.limit[sessionID] !== undefined
-      if (cached && data.info[sessionID] && !options?.force) return
+      // #1294: a session whose message list SHRANK below its last applied
+      // page must NOT read as a cache hit. SSE event reducers can empty a
+      // list or seed it with just the latest message(s) between warm
+      // passes; the old check (defined + limit) treated those as cached,
+      // sync() early-returned, and NOTHING ever reloaded — a switch
+      // rendered an empty or truncated timeline until the next warm pass
+      // happened to refresh it ("the session history is missing until it
+      // comes back"). meta.limit stores the APPLIED count, so
+      // count >= limit means the real page is still intact.
+      const count = data.message[sessionID]?.length ?? 0
+      const cached =
+        count > 0 && meta.limit[sessionID] !== undefined && count >= (meta.limit[sessionID] ?? 0)
+      if (cached && !options?.force) {
+        // #1295: info is METADATA (title, model) — the messages are the
+        // content. A cached session with missing info (outside the warm's
+        // window, never wire-resolved this document) must not block the
+        // timeline on the info's wire round-trip: resolve it in the
+        // background and render the cached messages now. The header/title
+        // fill in when the info lands. (The bare /session/:id fetches on
+        // every such switch + the Suspense holding the panel for them was
+        // the remaining "missing chat" on switches.)
+        if (!data.info[sessionID]) void resolve(sessionID).catch(() => {})
+        return
+      }
       await Promise.all([
         resolve(sessionID, options),
         cached && !options?.force
@@ -854,9 +1016,24 @@ export function createServerSession(
   const prefetch = async (sessionID: string, limit: number) => {
     touch(sessionID)
     await inflight.get(sessionID)
+    const count = data.message[sessionID]?.length ?? 0
     if (
-      Date.now() - (meta.at[sessionID] ?? 0) <= 15_000 &&
-      (meta.complete[sessionID] || (data.message[sessionID]?.length ?? 0) >= limit)
+      // #1294: an empty list is never "fresh enough" — the SSE reducers
+      // can empty a warmed session; the next warm pass must re-pull it.
+      // A COMPLETE session (the whole history fits one page) with data
+      // never re-prefetches: the ring data showed 3-message sessions
+      // re-fetched every ~80s forever (30 sessions of pure wire churn —
+      // the SSE reducers keep them current). Incomplete ones re-pull
+      // after the 60s window. The warm pass is a reconciliation
+      // backstop, not the freshness mechanism.
+      count > 0 &&
+      // #1294 final: the ring data showed the three long incomplete sessions
+      // (31/40/41 messages, done=False) still re-fetched every ~80s — the
+      // 60s window was the last refetch trigger left. Any session holding a
+      // full page never re-prefetches: the SSE reducers keep live sessions
+      // current, history deepens on demand, and the boot deep-warm covers
+      // depth once per document.
+      (meta.complete[sessionID] || count >= limit)
     )
       return
     await runInflight(inflight, sessionID, () => loadMessages(sessionID, limit))
@@ -931,7 +1108,7 @@ export function createServerSession(
       .message({ sessionID, messageID })
       .then((message) => {
         const current = data.session_message[sessionID] ?? []
-        const messages = [...current.filter((item) => item.id !== message.id), message].sort((a, b) => cmp(a.id, b.id))
+        const messages = [...current.filter((item) => item.id !== message.id), message].sort(compareMessages)
         projectV2({ sessionID, messages, touched: [message.id] })
       })
       .catch(() => {})
@@ -998,14 +1175,19 @@ export function createServerSession(
         event.type !== "session.deleted"
       )
         void resolve(eventID).catch(() => {})
+      // #1291 durable mirror: streams and edits mutate the store live —
+      // keep the mirror following (saveMirror's per-session trailing
+      // debounce collapses a token stream into ~1 write/s). Schedule it in a
+      // microtask so it captures the store AFTER this event's reducer
+      // mutation lands — persisting before the switch would mirror a
+      // still-present message on message.removed, or omit a just-inserted
+      // one on message.updated (#1287).
+      if (event.type === "session.updated" || event.type.startsWith("message."))
+        queueMicrotask(() => persistMirror(eventID))
     }
     switch (event.type) {
       case "session.created":
         remember((event.properties as { info: Session }).info)
-        {
-          const info = (event.properties as { info: Session }).info
-          if (info.parentID) parentOf.set(info.id, info.parentID)
-        }
         return
       case "session.updated": {
         const info = (event.properties as { info: Session }).info
@@ -1017,13 +1199,16 @@ export function createServerSession(
         const properties = event.properties as { sessionID?: string; info?: Session }
         const sessionID = properties.info?.id ?? properties.sessionID
         if (!sessionID) return
-        parentOf.delete(sessionID)
         infoSeen.delete(sessionID)
         setData(
           "info",
           produce((draft) => void delete draft[sessionID]),
         )
         evict([sessionID])
+        // #1287 privacy (CWE-922): evict() only clears in-memory state — the
+        // durable mirror must be dropped too, or the deleted session's
+        // messages stay readable in IndexedDB until pruning ages them out.
+        if (options?.mirrorScope) deleteMirror(options.mirrorScope, sessionID)
         return
       }
       case "todo.updated": {
@@ -1059,9 +1244,13 @@ export function createServerSession(
           setData("message", info.sessionID, [info])
           return
         }
-        const result = Binary.search(messages, info.id, (message) => message.id)
+        const result = Binary.search(messages, messageKey(info), messageKey)
         if (result.found) setData("message", info.sessionID, result.index, reconcile(info))
         if (!result.found)
+          // `messages` is compareMessages-sorted (time.created, tie-broken by
+          // id) yet searched/inserted here by id. Safe because opencode
+          // message ids are ULID-style monotonic (see mergeOptimisticPage) —
+          // id order == creation-time order — so the two orderings agree.
           setData("message", info.sessionID, (value = []) => {
             const next = value.slice()
             next.splice(result.index, 0, info)
@@ -1092,8 +1281,8 @@ export function createServerSession(
           produce((draft) => {
             const messages = draft.message[props.sessionID]
             if (messages) {
-              const result = Binary.search(messages, props.messageID, (message) => message.id)
-              if (result.found) messages.splice(result.index, 1)
+              const index = messages.findIndex((message) => message.id === props.messageID)
+              if (index >= 0) messages.splice(index, 1)
             }
             deleteMessageParts(draft, props.messageID)
           }),
@@ -1105,7 +1294,7 @@ export function createServerSession(
         if (SKIP_PARTS.has(part.type)) return
         const messages = data.message[part.sessionID]
         const load = messageLoads.get(part.sessionID)
-        const missing = !messages || !Binary.search(messages, part.messageID, (message) => message.id).found
+        const missing = !messages?.some((message) => message.id === part.messageID)
         // Outside a page load, accepting a part without its ordered parent event would create an unbounded orphan.
         if (
           missing &&
@@ -1156,23 +1345,6 @@ export function createServerSession(
             next.splice(result.index, 0, part)
             return next
           })
-        // Bump diff_version when a file-editing tool completes so the diff
-        // query refetches mid-turn. The equivalent logic in event-reducer.ts
-        // is unreachable because the SSE path skips SESSION_CONTENT_EVENTS.
-        if (
-          part.type === "tool" &&
-          EDIT_TOOLS.has(part.tool) &&
-          part.state.status === "completed" &&
-          (part.state as { metadata?: Record<string, unknown> }).metadata?.filediff
-        ) {
-          setData("diff_version", part.sessionID, (v = 0) => v + 1)
-          // Propagate up the parent chain
-          let ancestor = parentOf.get(part.sessionID)
-          while (ancestor) {
-            setData("diff_version", ancestor, (v = 0) => v + 1)
-            ancestor = parentOf.get(ancestor)
-          }
-        }
         return
       }
       case "message.part.removed": {
@@ -1344,6 +1516,14 @@ export function createServerSession(
     fresh(sessionID: string, ttl: number) {
       return Date.now() - (meta.at[sessionID] ?? 0) <= ttl
     },
+    // #1290: has this session's message history EVER been loaded? The sync
+    // seeds `[]` for every session on SSE events — an empty array that was
+    // never fetched must not read as "ready" (it renders an empty timeline:
+    // "the session history is missing until it comes back").
+    hydrate,
+    loaded(sessionID: string) {
+      return meta.at[sessionID] !== undefined
+    },
     optimistic: {
       add(input: { sessionID: string; message: Message; parts: Part[] }) {
         const parts = input.parts
@@ -1366,7 +1546,7 @@ export function createServerSession(
         if (items) items.set(input.message.id, { ...input, parts, confirmedParts: [] })
         if (!items)
           optimistic.set(input.sessionID, new Map([[input.message.id, { ...input, parts, confirmedParts: [] }]]))
-        setData("message", input.sessionID, (messages = []) => merge(messages, [input.message]))
+        setData("message", input.sessionID, (messages = []) => merge(messages, [input.message]).sort(compareMessages))
         setData(
           "part_text_accum_delta",
           produce((draft) => {

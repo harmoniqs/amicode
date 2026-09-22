@@ -2361,6 +2361,105 @@ describe("ProviderTransform.message - anthropic empty content filtering", () => 
     expect(result[1].content[0]).toEqual({ type: "text", text: "Answer" })
   })
 
+  test("converts bedrock reasoning with text but no signature to text part", () => {
+    const bedrockModel = {
+      ...anthropicModel,
+      id: "amazon-bedrock/anthropic.claude-opus-4-8",
+      providerID: "amazon-bedrock",
+      api: {
+        id: "anthropic.claude-opus-4-8",
+        url: "https://bedrock-runtime.us-east-1.amazonaws.com",
+        npm: "@ai-sdk/amazon-bedrock",
+      },
+    }
+
+    const msgs = [
+      { role: "user", content: "Hello" },
+      {
+        role: "assistant",
+        content: [
+          { type: "reasoning", text: "Let me think about this..." },
+        ],
+      },
+      { role: "user", content: "World" },
+    ] as any[]
+
+    const result = ProviderTransform.message(msgs, bedrockModel, {})
+
+    // The reasoning part has text but no bedrock signature — the SDK adapter
+    // would silently drop it, leaving empty content. Our transform converts
+    // it to a text part instead.
+    expect(result).toHaveLength(3)
+    expect(result[1].content).toHaveLength(1)
+    expect(result[1].content[0]).toEqual({ type: "text", text: "Let me think about this..." })
+  })
+
+  test("preserves bedrock reasoning with valid signature", () => {
+    const bedrockModel = {
+      ...anthropicModel,
+      id: "amazon-bedrock/anthropic.claude-opus-4-8",
+      providerID: "amazon-bedrock",
+      api: {
+        id: "anthropic.claude-opus-4-8",
+        url: "https://bedrock-runtime.us-east-1.amazonaws.com",
+        npm: "@ai-sdk/amazon-bedrock",
+      },
+    }
+
+    const msgs = [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "reasoning",
+            text: "thinking...",
+            providerOptions: { bedrock: { signature: "abc123" } },
+          },
+          { type: "text", text: "Answer" },
+        ],
+      },
+    ] as any[]
+
+    const result = ProviderTransform.message(msgs, bedrockModel, {})
+
+    expect(result).toHaveLength(1)
+    expect(result[0].content).toHaveLength(2)
+    expect((result[0].content[0] as any).type).toBe("reasoning")
+    expect((result[0].content[1] as any).type).toBe("text")
+  })
+
+  test("drops bedrock reasoning-only message when text is empty and no signature", () => {
+    const bedrockModel = {
+      ...anthropicModel,
+      id: "amazon-bedrock/anthropic.claude-opus-4-8",
+      providerID: "amazon-bedrock",
+      api: {
+        id: "anthropic.claude-opus-4-8",
+        url: "https://bedrock-runtime.us-east-1.amazonaws.com",
+        npm: "@ai-sdk/amazon-bedrock",
+      },
+    }
+
+    const msgs = [
+      { role: "user", content: "Hello" },
+      {
+        role: "assistant",
+        content: [
+          { type: "reasoning", text: "" },
+          { type: "reasoning", text: "   " },
+        ],
+      },
+      { role: "user", content: "World" },
+    ] as any[]
+
+    const result = ProviderTransform.message(msgs, bedrockModel, {})
+
+    // Both reasoning parts have empty/whitespace text and no signature — dropped entirely
+    expect(result).toHaveLength(2)
+    expect(result[0].content).toBe("Hello")
+    expect(result[1].content).toBe("World")
+  })
+
   test("does not filter for non-anthropic providers", () => {
     const openaiModel = {
       ...anthropicModel,

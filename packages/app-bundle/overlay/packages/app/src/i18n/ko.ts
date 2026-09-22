@@ -274,6 +274,9 @@ export const dict = {
   "prompt.toast.commandSendFailed.title": "명령 전송 실패",
   "prompt.toast.promptSendFailed.title": "프롬프트 전송 실패",
   "prompt.toast.promptSendFailed.description": "세션을 가져올 수 없습니다",
+  "prompt.toast.connectionDropped.title": "Connection dropped",
+  "prompt.toast.connectionDropped.description":
+    "The connection to the server dropped, so your message wasn't sent. It's still in the composer — try again once reconnected.",
   "dialog.mcp.title": "MCP",
   "dialog.mcp.description": "{{total}}개 중 {{enabled}}개 활성화됨",
   "dialog.mcp.empty": "구성된 MCP 없음",
@@ -985,6 +988,7 @@ export const dict = {
   "session.error.notFound.description": "이 탭은 이 서버에 더 이상 존재하지 않는 세션을 가리킵니다.",
   "session.error.notFound.closeTab": "탭 닫기",
   "session.error.serverConnection": "이 서버에 연결할 수 없습니다",
+  "session.stream.reconnecting": "Connection lost — showing your last synced messages",
   "session.review.noUncommittedChanges": "아직 커밋되지 않은 변경 사항이 없습니다",
   "session.review.noBranchChanges": "아직 브랜치 변경 사항이 없습니다",
   "session.question.minimize": "질문 최소화",

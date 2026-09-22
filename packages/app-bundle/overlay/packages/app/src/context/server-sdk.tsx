@@ -20,6 +20,10 @@ const isAbortError = (error: unknown) =>
 const isStreamClosed = (error: unknown, signal?: AbortSignal) => isAbortError(error) || signal?.aborted === true
 export type ServerEvent = Event & { current?: OpenCodeEvent }
 type QueuedServerEvent = { directory: string; payload: ServerEvent }
+/** A minimal fetch call signature. Newer lib types make `typeof fetch` require
+ *  a `preconnect` member our plain wrappers don't implement (lib drift);
+ *  consumers that insist on `typeof fetch` cast at the call site. */
+type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
 type CurrentDelta = Extract<
   OpenCodeEvent,
   { type: "session.text.delta" | "session.reasoning.delta" | "session.tool.input.delta" | "session.compaction.delta" }
@@ -219,10 +223,56 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
     }
   })()
 
-  const eventApi = createApiForServer({ server: server.http, fetch: eventFetch })
+  // #1264 lossless reconnect: the frontdoor buffers recent events and
+  // replays the gap when the stream is re-opened with ?lastEventID=<id>.
+  // Track the last payload id seen (the server ids every event; id-less
+  // events just don't advance the cursor — replay may over-deliver, which
+  // the reconcile-based reducers tolerate by design).
+  // #1264: the cursor must survive RELOADS — module state died with every
+  // document, so a drop right after a reload reconnected cursor-less and
+  // the gap's events were lost (the harness caught it: the sse-gap flow
+  // failed only in the post-reload context). sessionStorage is per-tab,
+  // cheap, and exactly the lifetime the cursor wants.
+  const CURSOR_KEY = "amicode.sse.lastEventID"
+  let lastEventID: string | undefined
+  try {
+    lastEventID = sessionStorage.getItem(CURSOR_KEY) ?? undefined
+  } catch {
+    /* private mode etc. — degrade to module state */
+  }
+  const trackEventID = (payload: unknown) => {
+    const id = (payload as { id?: unknown } | undefined)?.id
+    if (typeof id === "string" && id) {
+      lastEventID = id
+      try {
+        sessionStorage.setItem(CURSOR_KEY, id)
+      } catch {
+        /* best-effort */
+      }
+    }
+  }
+  const sseFetch: FetchLike = (input, init) => {
+    const base = eventFetch ?? globalThis.fetch
+    try {
+      if (lastEventID) {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url
+        const u = new URL(url, server.http.url)
+        if (u.pathname === "/event" || u.pathname === "/global/event") {
+          u.searchParams.set("lastEventID", lastEventID)
+          const modified = u.toString()
+          if (typeof input === "string" || input instanceof URL) return base(modified, init)
+          return base(new Request(modified, input), init)
+        }
+      }
+    } catch {
+      /* fall through unmodified */
+    }
+    return base(input as Parameters<typeof fetch>[0], init as Parameters<typeof fetch>[1])
+  }
+  const eventApi = createApiForServer({ server: server.http, fetch: sseFetch as typeof fetch })
   const eventSdk = createSdkForServer({
     signal: abort.signal,
-    fetch: eventFetch,
+    fetch: sseFetch as typeof fetch,
     server: server.http,
   })
   const protocol = detectServerProtocol(server.http, platform.fetch ?? globalThis.fetch)
@@ -326,6 +376,7 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
             if (legacy && event.payload.type === "sync") continue
             const directory = legacy ? (event.directory ?? "global") : (event.location?.directory ?? "global")
             const payload = legacy ? (event.payload as Event) : adaptServerEvent(event)
+            trackEventID(legacy ? event.payload : (event as { id?: string }))
             if (enqueueServerEvent(queue, { directory, payload })) schedule()
 
             if (Date.now() - yielded < STREAM_YIELD_MS) continue
@@ -376,16 +427,29 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
     flush()
   })
 
+  // #1290: every SDK call is a request/reply — a stalled tunnel must not
+  // hang the caller forever ("the panel dies" was a view gate waiting on a
+  // fetch with no timeout; over a flaky intercontinental link, hangs are a
+  // weather condition). 30s is generous for high-RTT paths and far below
+  // the old forever. A timed-out call rejects; the sync layer's retry
+  // paths (and the frozen holds) carry the view until it lands.
+  const platformFetch = platform.fetch ?? globalThis.fetch
+  const fetchWithTimeout: FetchLike = (input, init) =>
+    platformFetch(input, {
+      ...init,
+      signal: init?.signal ?? AbortSignal.timeout(30_000),
+    })
+
   const sdk = createSdkForServer({
     server: server.http,
-    fetch: platform.fetch,
+    fetch: fetchWithTimeout as typeof fetch,
     throwOnError: true,
   })
-  const currentApi: ServerApi = createApiForServer({ server: server.http, fetch: platform.fetch })
+  const currentApi: ServerApi = createApiForServer({ server: server.http, fetch: fetchWithTimeout as typeof fetch })
   const legacy = (directory?: string) =>
     createSdkForServer({
       server: server.http,
-      fetch: platform.fetch,
+      fetch: fetchWithTimeout as typeof fetch,
       throwOnError: true,
       directory,
     })
@@ -409,7 +473,7 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
     createClient(opts: Omit<Parameters<typeof createSdkForServer>[0], "server" | "fetch">) {
       return createSdkForServer({
         server: server.http,
-        fetch: platform.fetch,
+        fetch: fetchWithTimeout as typeof fetch,
         ...opts,
       })
     },

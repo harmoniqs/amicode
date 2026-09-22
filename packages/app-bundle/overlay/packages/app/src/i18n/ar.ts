@@ -289,6 +289,9 @@ export const dict = {
   "prompt.toast.commandSendFailed.title": "فشل إرسال الأمر",
   "prompt.toast.promptSendFailed.title": "فشل إرسال الموجه",
   "prompt.toast.promptSendFailed.description": "تعذر استرداد الجلسة",
+  "prompt.toast.connectionDropped.title": "Connection dropped",
+  "prompt.toast.connectionDropped.description":
+    "The connection to the server dropped, so your message wasn't sent. It's still in the composer — try again once reconnected.",
   "dialog.mcp.title": "MCPs",
   "dialog.mcp.description": "{{enabled}} من {{total}} مفعل",
   "dialog.mcp.empty": "لم يتم تكوين MCPs",
@@ -567,6 +570,7 @@ export const dict = {
   "session.error.notFound.description": "يشير هذا التبويب إلى جلسة لم تعد موجودة على هذا الخادم.",
   "session.error.notFound.closeTab": "إغلاق علامة التبويب",
   "session.error.serverConnection": "تعذر الاتصال بهذا الخادم",
+  "session.stream.reconnecting": "Connection lost — showing your last synced messages",
   "session.review.filesChanged": "تم تغيير {{count}} ملفات",
   "session.review.change.one": "تغيير",
   "session.review.change.other": "تغييرات",

@@ -309,6 +309,9 @@ export const dict = {
   "prompt.toast.commandSendFailed.title": "傳送命令失敗",
   "prompt.toast.promptSendFailed.title": "傳送提示失敗",
   "prompt.toast.promptSendFailed.description": "無法取得工作階段",
+  "prompt.toast.connectionDropped.title": "Connection dropped",
+  "prompt.toast.connectionDropped.description":
+    "The connection to the server dropped, so your message wasn't sent. It's still in the composer — try again once reconnected.",
 
   "dialog.mcp.title": "MCP",
   "dialog.mcp.description": "已啟用 {{enabled}} / {{total}}",
@@ -615,6 +618,7 @@ export const dict = {
   "session.error.notFound.description": "此分頁指向的工作階段已不存在於此伺服器。",
   "session.error.notFound.closeTab": "關閉分頁",
   "session.error.serverConnection": "無法連線至此伺服器",
+  "session.stream.reconnecting": "Connection lost — showing your last synced messages",
   "session.review.filesChanged": "{{count}} 個檔案變更",
   "session.review.change.one": "變更",
   "session.review.change.other": "變更",

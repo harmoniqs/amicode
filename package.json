@@ -5,6 +5,8 @@
     "build": "pnpm -r run build",
     "typecheck": "pnpm -r run typecheck",
     "test": "pnpm -r run test",
+    "test:engine": "pnpm --filter @amicode/app-bundle run materialize && (cd packages/app-bundle/.materialized && bun install --ignore-scripts) && bash packages/app-bundle/scripts/engine_typecheck_gate.sh",
+    "test:engine:unit": "pnpm --filter @amicode/app-bundle run materialize && (cd packages/app-bundle/.materialized && bun install --ignore-scripts) && bash packages/app-bundle/scripts/engine_test_gate.sh",
     "sync": "bash scripts/repo-sync.sh --check",
     "sync:fix": "bash scripts/repo-sync.sh --fix",
     "sync:fork": "bash scripts/repo-sync.sh --fork"

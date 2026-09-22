@@ -288,6 +288,9 @@ export const dict = {
   "prompt.toast.commandSendFailed.title": "コマンドの送信に失敗しました",
   "prompt.toast.promptSendFailed.title": "プロンプトの送信に失敗しました",
   "prompt.toast.promptSendFailed.description": "セッションを取得できませんでした",
+  "prompt.toast.connectionDropped.title": "Connection dropped",
+  "prompt.toast.connectionDropped.description":
+    "The connection to the server dropped, so your message wasn't sent. It's still in the composer — try again once reconnected.",
   "dialog.mcp.title": "MCP",
   "dialog.mcp.description": "{{total}}個中{{enabled}}個が有効",
   "dialog.mcp.empty": "MCPが設定されていません",
@@ -569,6 +572,7 @@ export const dict = {
   "session.error.notFound.description": "このタブが参照するセッションは、このサーバーには存在しません。",
   "session.error.notFound.closeTab": "タブを閉じる",
   "session.error.serverConnection": "このサーバーに接続できません",
+  "session.stream.reconnecting": "Connection lost — showing your last synced messages",
   "session.review.filesChanged": "{{count}} ファイル変更",
   "session.review.change.one": "変更",
   "session.review.change.other": "変更",

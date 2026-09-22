@@ -40,6 +40,7 @@ import {
   readProjection,
   renderFleetStatus,
   fleetProjectionCachePath,
+  fleetTopologyPath,
   type FleetProjection,
 } from "@amicode/schema";
 import { PREMIUM_CODE, readCodes } from "./premium.js";
@@ -77,6 +78,13 @@ export interface FleetProjectionDeps {
    *  consumers. Default: the stable convention path
    *  (`~/.amico/ops/fleet/projection.json` — the live-layout precedent). */
   cachePath?: string;
+  /** #1194: the machine's fleet topology file — the publisher's --topology
+   *  source. Default: the live-layout convention
+   *  (`~/.amico/ops/fleet/fleet.json`). Absent file = no flag (the honest
+   *  base-default standalone for unenrolled machines). */
+  topologyPath?: string;
+  /** #1194: the topology-file existence check (injectable, hermetic tests). */
+  checkFile?: (p: string) => boolean;
   /** #1106: the cache write (injectable). Default: mkdir -p + atomic
    *  tmp+rename, mirroring the extension's writeFleetConfig discipline. */
   writeCache?: (p: string, content: string) => void;
@@ -212,11 +220,20 @@ export function fleetProjectionStatus(argv: string[], deps: FleetProjectionDeps 
   }
 
   // ── the invocation seam: publish, then read ──
+  // #1194: the publish needs the topology SOURCE — a topology-less publish
+  // renders the mode from its base default (standalone) and, once validated,
+  // clobbers an enrolled machine's cached projection on every run. The
+  // machine's fleet.json (the human-confirmed membership record) is the
+  // source whenever it exists; absent = unenrolled, and the publish stays
+  // flag-less (the honest base-default standalone, unchanged).
+  const topologyPath = deps.topologyPath ?? fleetTopologyPath();
+  const fileExists = deps.checkFile ?? ((p: string) => fs.existsSync(p));
+  const topologyArgs = fileExists(topologyPath) ? ["--topology", topologyPath] : [];
   const outDir = mkdtempSync(path.join(tmpdir(), "fleet-projection-"));
   try {
     const inv: PublisherInvocation = {
       program: "python3",
-      args: ["-m", "fleet_authority", "publish", "--out", path.join(outDir, "projection.json")],
+      args: ["-m", "fleet_authority", "publish", "--out", path.join(outDir, "projection.json"), ...topologyArgs],
       cwd: checkout,
       outPath: path.join(outDir, "projection.json"),
     };

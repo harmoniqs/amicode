@@ -25,7 +25,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fleetVerb } from "../src/fleet_verb.js";
 import { fleetProjectionStatus, FLEET_BOOTSTRAP_EXIT, type FleetProjectionDeps } from "../src/fleet_projection_verb.js";
-import { fleetProjectionCachePath } from "@amicode/schema";
+import { fleetProjectionCachePath, fleetTopologyPath } from "@amicode/schema";
 
 const E1 = "44444444-4444-4444-8444-444444444444";
 
@@ -52,6 +52,11 @@ function grantedWorld(over: Partial<FleetProjectionDeps> = {}, fixture: string =
   const deps: FleetProjectionDeps = {
     readFile: (p) => (p === entitlements ? 'codes = ["amicissimo"]' : fixtureFileSafe(p, fixture)),
     checkDir: (p) => p === checkout,
+    // Hermetic #1194: the machine's real ~/.amico/ops/fleet/fleet.json must
+    // never leak a --topology flag into suite runs — the default world has
+    // NO topology file; the present-topology tests inject one explicitly.
+    checkFile: () => false,
+    topologyPath: join(tmp, "fleet.json"),
     cachePath: join(tmp, "hermetic-cache.json"),
     runPublisher: (inv) => {
       calls.push(inv);
@@ -85,6 +90,42 @@ describe("the publisher invocation seam (python3 -m fleet_authority)", () => {
     expect(w.calls[0].args[3]).toBe("--out");
     expect(w.calls[0].outPath.endsWith(".json")).toBe(true);
     expect(w.calls[0].cwd).toBe(w.checkout);
+  });
+
+  // #1194: a publish WITHOUT the topology source renders mode from the base
+  // default (standalone) and clobbers enrolled machines' cached projections.
+  it("passes --topology <fleet.json> when the machine's topology file exists (#1194)", () => {
+    const topologyPath = join(tmp, "enrolled", "fleet.json");
+    const w = grantedWorld({
+      checkFile: (p) => p === topologyPath,
+      topologyPath,
+    });
+    const r = run(["--checkout", w.checkout, "--config", w.entitlements], w.deps);
+    expect(r.code).toBe(0);
+    expect(w.calls).toHaveLength(1);
+    const args = w.calls[0].args;
+    const i = args.indexOf("--topology");
+    expect(i).toBeGreaterThan(0);
+    expect(args[i + 1]).toBe(topologyPath);
+  });
+
+  it("omits --topology when no topology file exists — the honest base-default standalone, unchanged (#1194)", () => {
+    const w = grantedWorld(); // default world: checkFile → false, no fleet.json
+    const r = run(["--checkout", w.checkout, "--config", w.entitlements], w.deps);
+    expect(r.code).toBe(0);
+    expect(w.calls).toHaveLength(1);
+    expect(w.calls[0].args).not.toContain("--topology");
+  });
+
+  it("the default topologyPath is the live-layout convention (~/.amico/ops/fleet/fleet.json), never guessed per-call (#1194)", () => {
+    const w = grantedWorld();
+    const seen: string[] = [];
+    const { topologyPath: _omit, ...rest } = w.deps; // hermetic default stays out — assert the convention path
+    const deps: FleetProjectionDeps = { ...rest, checkFile: (p) => (seen.push(p), true) };
+    const r = run(["--checkout", w.checkout, "--config", w.entitlements], deps);
+    expect(r.code).toBe(0);
+    expect(seen).toContain(fleetTopologyPath());
+    expect(w.calls[0].args).toContain("--topology");
   });
 
   it("resolves the checkout through the AMICISSIMO_ROOT ladder (flag → env → org-home default)", () => {

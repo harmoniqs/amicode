@@ -314,6 +314,9 @@ export const dict = {
   "prompt.toast.commandSendFailed.title": "Komut gönderilemedi",
   "prompt.toast.promptSendFailed.title": "Komut gönderilemedi",
   "prompt.toast.promptSendFailed.description": "Oturum alınamadı",
+  "prompt.toast.connectionDropped.title": "Connection dropped",
+  "prompt.toast.connectionDropped.description":
+    "The connection to the server dropped, so your message wasn't sent. It's still in the composer — try again once reconnected.",
 
   "dialog.mcp.title": "MCP'ler",
   "dialog.mcp.description": "{{total}} içerisinden {{enabled}} etkin",
@@ -628,6 +631,7 @@ export const dict = {
   "session.error.notFound.description": "Bu sekme, artık bu sunucuda bulunmayan bir oturuma yönlendiriyor.",
   "session.error.notFound.closeTab": "Sekmeyi Kapat",
   "session.error.serverConnection": "Bu sunucuya bağlanılamıyor",
+  "session.stream.reconnecting": "Connection lost — showing your last synced messages",
   "session.review.filesChanged": "{{count}} Dosya Değişti",
   "session.review.change.one": "Değişiklik",
   "session.review.change.other": "Değişiklik",

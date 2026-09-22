@@ -229,6 +229,10 @@ type PromptSubmitInput = {
   onQueue?: (draft: FollowupDraft) => void
   onAbort?: () => void
   onSubmit?: () => void
+  /** amicode#1203 — true while the #638 stream machine is in the gap (a loss
+   *  after a first successful connect); a send is then refused with an honest
+   *  notice instead of optimistically posting into a dead tunnel. */
+  streamGap?: Accessor<boolean>
   model?: ModelSelection
 }
 
@@ -333,6 +337,19 @@ export function createPromptSubmit(input: PromptSubmitInput) {
 
     if (text.trim().length === 0 && images.length === 0 && input.commentCount() === 0) {
       if (input.working()) void abort()
+      return
+    }
+
+    // amicode#1203 AC3 — a send during the stream gap refuses with an honest
+    // reason: nothing was sent, the draft is untouched in the composer, nothing
+    // was pushed to history. Never a fake success, never a silent loss. The gap
+    // is injected (the composers derive it from the #638 machine via
+    // context/stream-gap.ts) so submission stays testable without the provider tree.
+    if (input.streamGap?.()) {
+      showToast({
+        title: language.t("prompt.toast.connectionDropped.title"),
+        description: language.t("prompt.toast.connectionDropped.description"),
+      })
       return
     }
 

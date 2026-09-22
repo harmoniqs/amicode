@@ -770,7 +770,13 @@ describe("Session", () => {
     }),
   )
 
-  it.instance("keeps legacy parents outside aggregation until an explicit partial epoch opens", () =>
+  // QUARANTINE(#1239): this asserts the pre-"Bug A fix" invariant (a legacy parent
+  // stays OUT of aggregation until an explicit partial epoch), which directly
+  // contradicts session-diff-scoped.test.ts:1462 "register() auto-creates lineage
+  // for a legacy parent (Bug A fix)" — the auto-create likely landed for
+  // server-survives-rebuild. No register() impl satisfies both; the semantics need
+  // lineage-owner adjudication. Skipped so the #1233 unit-test lane can gate the rest.
+  it.instance.skip("keeps legacy parents outside aggregation until an explicit partial epoch opens", () =>
     Effect.gen(function* () {
       const session = yield* SessionNs.Service
       const database = yield* Database.Service

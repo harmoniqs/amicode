@@ -12,13 +12,18 @@
 // `$AMICODE_OPS_DIR/session-retention.json` (default `~/.amico/amicode/`),
 // the same ops-dir convention as solver-mode.json. Reads fail SAFE to the 30-day
 // default on an absent, malformed, or out-of-range file — a corrupt preference
-// must never widen what gets archived.
+// must never widen what gets archived. The #1304 autoarchive age gate (hours)
+// shares this file under `autoarchive_hours` (default 48 h, same fail-safe).
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
 export const DEFAULT_ARCHIVE_DAYS = 30;
+
+/** The autoarchive age gate in hours (#1304): a junk-bucket session must be
+ *  silent this long before the nightly curation relocates it. */
+export const DEFAULT_AUTOARCHIVE_HOURS = 48;
 
 function amicodeOpsDir(env: NodeJS.ProcessEnv): string {
   const v = env.AMICODE_OPS_DIR;
@@ -29,28 +34,52 @@ export function retentionPrefsFile(env: NodeJS.ProcessEnv = process.env): string
   return join(amicodeOpsDir(env), "session-retention.json");
 }
 
+/** The parsed preference file, or {} on absence/malformation — every reader
+ *  fails SAFE to its own default; a corrupt preference must never widen what
+ *  gets archived. */
+function readPrefs(env: NodeJS.ProcessEnv): Record<string, unknown> {
+  try {
+    return JSON.parse(readFileSync(retentionPrefsFile(env), "utf8")) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
+function positiveInteger(v: unknown): number | null {
+  return typeof v === "number" && Number.isInteger(v) && v >= 1 ? v : null;
+}
+
 /** The archive cutoff in days. Fails safe to DEFAULT_ARCHIVE_DAYS. */
 export function readArchiveDays(env: NodeJS.ProcessEnv = process.env): number {
-  try {
-    const parsed = JSON.parse(readFileSync(retentionPrefsFile(env), "utf8")) as { archive_days?: unknown };
-    const d = parsed.archive_days;
-    if (typeof d === "number" && Number.isInteger(d) && d >= 1) return d;
-    return DEFAULT_ARCHIVE_DAYS;
-  } catch {
-    return DEFAULT_ARCHIVE_DAYS;
-  }
+  return positiveInteger(readPrefs(env).archive_days) ?? DEFAULT_ARCHIVE_DAYS;
+}
+
+/** The autoarchive age gate in hours. Fails safe to DEFAULT_AUTOARCHIVE_HOURS. */
+export function readAutoArchiveHours(env: NodeJS.ProcessEnv = process.env): number {
+  return positiveInteger(readPrefs(env).autoarchive_hours) ?? DEFAULT_AUTOARCHIVE_HOURS;
 }
 
 export type WritePrefsResult = { ok: true; file: string; days: number } | { ok: false; error: string };
 
-export function writeArchiveDays(days: number, env: NodeJS.ProcessEnv = process.env): WritePrefsResult {
-  if (!Number.isInteger(days) || days < 1) {
-    return { ok: false, error: `archive_days must be a positive integer, got ${days}` };
+/** Write one numeric preference key, preserving the file's other keys (the
+ *  archive-days and autoarchive-hours gates share one ops-dir JSON file). */
+function writePrefsValue(key: string, value: number, label: string, env: NodeJS.ProcessEnv): WritePrefsResult {
+  if (!Number.isInteger(value) || value < 1) {
+    return { ok: false, error: `${label} must be a positive integer, got ${value}` };
   }
   const file = retentionPrefsFile(env);
+  const next = { schema_version: 1, ...readPrefs(env), [key]: value };
   mkdirSync(join(file, ".."), { recursive: true });
-  writeFileSync(file, `${JSON.stringify({ schema_version: 1, archive_days: days }, null, 2)}\n`);
-  return { ok: true, file, days };
+  writeFileSync(file, `${JSON.stringify(next, null, 2)}\n`);
+  return { ok: true, file, days: value };
+}
+
+export function writeArchiveDays(days: number, env: NodeJS.ProcessEnv = process.env): WritePrefsResult {
+  return writePrefsValue("archive_days", days, "archive_days", env);
+}
+
+export function writeAutoArchiveHours(hours: number, env: NodeJS.ProcessEnv = process.env): WritePrefsResult {
+  return writePrefsValue("autoarchive_hours", hours, "autoarchive_hours", env);
 }
 
 // ── the generated session index (pure renderer) ─────────────────────────────

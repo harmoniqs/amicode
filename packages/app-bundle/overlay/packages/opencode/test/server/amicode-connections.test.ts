@@ -57,6 +57,11 @@ const respond =
 const ENV_KEYS = [
   "AMICO_CLOUD_FILE",
   "AMICO_PASQAL_FILE",
+  "AMICO_SLACK_FILE",
+  "AMICO_GITHUB_FILE",
+  "AMICO_LINEAR_FILE",
+  "AMICO_GOOGLE_FILE",
+  "AMICO_GOOGLE_DRIVE_FILE",
   "AMICODE_CONNECTIONS_FILE",
   "AMICODE_OPS_DIR",
   "AMICO_PYTHON",
@@ -76,6 +81,16 @@ beforeEach(() => {
   dir = mkdtempSync(path.join(tmpdir(), "amicode-conn-"))
   process.env.AMICO_CLOUD_FILE = path.join(dir, "cloud.json")
   process.env.AMICO_PASQAL_FILE = path.join(dir, "pasqal.json")
+  // Token connections (slack/github/linear/google/google-drive, #327) resolve
+  // their credential files via AMICO_*_FILE too — redirect them into the tmp dir
+  // so a real ~/.amico/<svc>.json on the host never leaks a stored token into a
+  // hermetic test (an un-redirected slack.json rendered connected+stale here and
+  // fired a SECOND background revalidate — probes=2 and a hung settle).
+  process.env.AMICO_SLACK_FILE = path.join(dir, "slack.json")
+  process.env.AMICO_GITHUB_FILE = path.join(dir, "github.json")
+  process.env.AMICO_LINEAR_FILE = path.join(dir, "linear.json")
+  process.env.AMICO_GOOGLE_FILE = path.join(dir, "google.json")
+  process.env.AMICO_GOOGLE_DRIVE_FILE = path.join(dir, "google-drive.json")
   process.env.AMICODE_CONNECTIONS_FILE = path.join(dir, "connections.json")
   process.env.AMICODE_OPS_DIR = path.join(dir, "amicode-ops") // flip artifacts (#167) stay hermetic
   process.env.AMICO_PYTHON = "/opt/venvs/amico/bin/python3" // never resolved: every pasqal spawn is injected

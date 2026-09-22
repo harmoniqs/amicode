@@ -5,7 +5,7 @@ import { base64Decode } from "@opencode-ai/core/util/encode"
 import { createStore, produce } from "solid-js/store"
 import { Persist, persisted, removePersisted, draftPersistedKeys } from "@/utils/persist"
 import { ServerConnection, useServer } from "./server"
-import { createEffect, getOwner, onCleanup, startTransition } from "solid-js"
+import { batch, createEffect, getOwner, onCleanup, startTransition } from "solid-js"
 import { useLocation, useNavigate, useParams } from "@solidjs/router"
 import { usePlatform } from "./platform"
 import { workspaceProjects } from "@/utils/amicode-workspace-projects"
@@ -139,6 +139,19 @@ export const { use: useTabs, provider: TabsProvider } = createSimpleContext({
     createEffect(() => {
       if (!ready() || !recentReady()) return
       const servers = new Set(server.list.map(ServerConnection.key))
+      // #1295: rebase stale-era tab server keys to a live server BEFORE
+      // the filter removes them. Without this, the filter drops ghost-key
+      // tabs before the prewarmer child's rebase effect ever fires.
+      if (servers.size > 0) {
+        const target = [...servers][0]
+        const seenGhost = new Set<string>()
+        for (const [index, tab] of store.entries()) {
+          if (tab.type === "session" && tab.server !== undefined && !servers.has(tab.server)) {
+            if (!seenGhost.has(tab.server)) seenGhost.add(tab.server)
+            setStore(index, "server", target)
+          }
+        }
+      }
       const next = store.filter((tab) => servers.has(tab.server))
       if (next.length !== store.length) {
         for (const tab of store) {
@@ -306,6 +319,21 @@ export const { use: useTabs, provider: TabsProvider } = createSimpleContext({
           navigate(draftHref(draftID))
         })
         return tab
+      },
+      /** #1295: rebase stale-era tab server keys to a live server. Called
+       *  from the app-level prewarmer (a safe context with the global
+       *  registry) once the server list lands — the persisted migrate runs
+       *  too early (empty registry) and the provider init must not touch
+       *  the global context. */
+      rebaseServer(fromServer: string, toServer: ServerConnection.Key) {
+        if (fromServer === toServer) return
+        batch(() => {
+          for (const [index, tab] of store.entries()) {
+            if (tab.type === "session" && tab.server === fromServer) {
+              setStore(index, "server", toServer)
+            }
+          }
+        })
       },
       updateDraft(draftID: string, draft: Partial<Omit<DraftTab, "type" | "draftID">>) {
         void startTransition(() => {

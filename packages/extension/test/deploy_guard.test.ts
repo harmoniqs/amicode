@@ -7,9 +7,14 @@ import {
   checkKnownFixes,
   evaluatePreflight,
   headRelation,
+  resolveDefaultBranch,
 } from "../scripts/deploy_guard.mjs"
 
-// amicode#992 — the deploy guard.
+// amicode#992 — the deploy guard. #1196: the ahead-of-trunk baseline is the
+// repository's DEFAULT BRANCH, resolved dynamically from the remote (dev
+// workflow: dev = integration target, main = tested trunk) — not the literal
+// string "main". A tree merged into the default branch is recorded state and
+// builds plain; a tree AHEAD of the default branch is the #992 race.
 //
 // The 2026-09-10 deploy race: a local-tree deploy (build_app_bundle.mjs from a
 // tree predating #988) overwrote the recorded-main dist-app swap and the
@@ -17,28 +22,33 @@ import {
 // recorded fix. The guard's contract, tested here as pure functions (the
 // script gathers git's observations; the DECISION lives in deploy_guard.mjs):
 //
-//   1. refuse when HEAD ≠ origin/main (behind or diverged) — named reason + remedy
+//   1. refuse when HEAD ≠ the default branch's remote ref (behind or diverged)
+//      — named reason + remedy, naming the RESOLVED baseline
 //   2. refuse when the tree is dirty — named reason + remedy
 //   3. refuse an override with an empty/missing reason (no silent overrides)
 //   4. a VALID override proceeds but is RECORDED (stamped into deploy.json)
-//   5. a clean, at-origin tree proceeds with no override
+//   5. a clean tree AT the default branch proceeds with no override (#1196)
 //   6. the manifest shape: {commit, branch, dirty, override_reason, built_at, deployed_by}
 //   7. the #964 known-fixes check: missing hunk → named-remedy refusal; full
 //      overlay → clean
+//   8. #1196: the default branch resolves from `git remote show origin`'s HEAD
+//      branch first, then refs/remotes/origin/HEAD, then the "main" fallback
 
 const HEAD = "aaaabbbbccccddddeeeeffff0000111122223333"
-const ORIGIN = "9999888877776666555544443333222211110000"
+const BASELINE = "9999888877776666555544443333222211110000"
+const BASELINE_REF = "origin/dev"
 
 const proceed = (d: ReturnType<typeof evaluatePreflight>) => {
   expect(d.ok).toBe(true)
   return d as { ok: true; overrideReason: string | null; recorded: string[] }
 }
 
-describe("#992 pre-flight: HEAD vs origin/main", () => {
-  test("refuses a tree BEHIND origin/main with a named reason and remedy", () => {
+describe("#992 pre-flight: HEAD vs the default branch (#1196 baseline)", () => {
+  test("refuses a tree BEHIND the default branch with a named reason and remedy", () => {
     const d = evaluatePreflight({
       headSha: HEAD,
-      originMainSha: ORIGIN,
+      baselineSha: BASELINE,
+      baselineRef: BASELINE_REF,
       relation: "BEHIND",
       dirtyEntries: [],
       overrideReason: undefined,
@@ -52,7 +62,8 @@ describe("#992 pre-flight: HEAD vs origin/main", () => {
   test("refuses a DIVERGED tree with a named reason and remedy", () => {
     const d = evaluatePreflight({
       headSha: HEAD,
-      originMainSha: ORIGIN,
+      baselineSha: BASELINE,
+      baselineRef: BASELINE_REF,
       relation: "DIVERGED from",
       dirtyEntries: [],
       overrideReason: undefined,
@@ -63,11 +74,33 @@ describe("#992 pre-flight: HEAD vs origin/main", () => {
     expect(d.reasons[0]).toContain("pull/rebase")
   })
 
-  test("proceeds when HEAD is at origin/main and the tree is clean", () => {
+  test("a tree AHEAD of the default branch still refuses — and the remedy names the RESOLVED baseline", () => {
+    // The #1196 acceptance: dev-workflow trees are ahead of main by definition;
+    // the guard must refuse against the DEFAULT branch (origin/dev here), and
+    // the refusal must say WHICH baseline it compared against.
+    const d = evaluatePreflight({
+      headSha: HEAD,
+      baselineSha: BASELINE,
+      baselineRef: BASELINE_REF,
+      relation: "AHEAD of",
+      dirtyEntries: [],
+      overrideReason: undefined,
+    })
+    expect(d.ok).toBe(false)
+    if (d.ok) return
+    expect(d.reasons[0]).toContain("AHEAD of")
+    expect(d.reasons[0]).toContain(BASELINE_REF)
+    expect(d.reasons[0]).not.toContain("origin/main")
+    expect(d.reasons[0]).toContain("pull/rebase")
+    expect(d.reasons[0]).toContain(BASELINE_REF)
+  })
+
+  test("a tree merged into the default branch (HEAD == baseline) builds without the override (#1196)", () => {
     const d = proceed(
       evaluatePreflight({
         headSha: HEAD,
-        originMainSha: HEAD,
+        baselineSha: HEAD,
+        baselineRef: BASELINE_REF,
         relation: "at",
         dirtyEntries: [],
         overrideReason: undefined,
@@ -76,13 +109,29 @@ describe("#992 pre-flight: HEAD vs origin/main", () => {
     expect(d.overrideReason).toBeNull()
     expect(d.recorded).toEqual([])
   })
+
+  test("the stale-tree OVERRIDE record names the resolved baseline, not origin/main", () => {
+    const d = proceed(
+      evaluatePreflight({
+        headSha: HEAD,
+        baselineSha: BASELINE,
+        baselineRef: BASELINE_REF,
+        relation: "AHEAD of",
+        dirtyEntries: [],
+        overrideReason: "hotfix recorded",
+      }),
+    )
+    expect(d.recorded[0]).toContain(BASELINE_REF)
+    expect(d.recorded[0]).not.toContain("origin/main")
+  })
 })
 
 describe("#992 pre-flight: dirty tree", () => {
   test("refuses a dirty tree with a named reason and remedy", () => {
     const d = evaluatePreflight({
       headSha: HEAD,
-      originMainSha: HEAD,
+      baselineSha: HEAD,
+      baselineRef: BASELINE_REF,
       relation: "at",
       dirtyEntries: [" M packages/app/src/foo.ts", "?? scratch.md"],
       overrideReason: undefined,
@@ -100,7 +149,8 @@ describe("#992 pre-flight: the override gate", () => {
   test("refuses an override whose reason is EMPTY (flag set, no silent overrides)", () => {
     const d = evaluatePreflight({
       headSha: HEAD,
-      originMainSha: ORIGIN,
+      baselineSha: BASELINE,
+      baselineRef: BASELINE_REF,
       relation: "BEHIND",
       dirtyEntries: [],
       overrideReason: "",
@@ -113,7 +163,8 @@ describe("#992 pre-flight: the override gate", () => {
   test("refuses an override whose reason is WHITESPACE only", () => {
     const d = evaluatePreflight({
       headSha: HEAD,
-      originMainSha: ORIGIN,
+      baselineSha: BASELINE,
+      baselineRef: BASELINE_REF,
       relation: "BEHIND",
       dirtyEntries: [],
       overrideReason: "   ",
@@ -125,7 +176,8 @@ describe("#992 pre-flight: the override gate", () => {
     const d = proceed(
       evaluatePreflight({
         headSha: HEAD,
-        originMainSha: ORIGIN,
+        baselineSha: BASELINE,
+        baselineRef: BASELINE_REF,
         relation: "BEHIND",
         dirtyEntries: [],
         overrideReason: "hotfix: rollback dist to last known good while #1000 is debugged",
@@ -137,17 +189,64 @@ describe("#992 pre-flight: the override gate", () => {
     expect(d.recorded[0]).toContain("stale tree")
   })
 
-  test("a valid override on a clean at-origin tree also proceeds, recorded", () => {
+  test("a valid override on a clean at-baseline tree also proceeds, recorded", () => {
     const d = proceed(
       evaluatePreflight({
         headSha: HEAD,
-        originMainSha: HEAD,
+        baselineSha: HEAD,
+        baselineRef: BASELINE_REF,
         relation: "at",
         dirtyEntries: [],
         overrideReason: "not needed but stated",
       }),
     )
     expect(d.overrideReason).toBe("not needed but stated")
+  })
+})
+
+describe("#1196 the default-branch baseline resolution", () => {
+  test("prefers `git remote show origin`'s HEAD branch — the remote's own answer (a stale local origin/HEAD loses)", () => {
+    // The observed failure mode on the fleet macbook (#1195 ref-build): local
+    // refs/remotes/origin/HEAD still said main while the remote's HEAD is dev.
+    const resolved = resolveDefaultBranch({
+      remoteShowOutput: "* remote origin\n  Fetch URL: git@github.com:harmoniqs/amicode.git\n  HEAD branch: dev\n",
+      symbolicRefOutput: "origin/main",
+    })
+    expect(resolved).toEqual({ branch: "dev", source: "remote-show" })
+  })
+
+  test("falls back to refs/remotes/origin/HEAD when the remote show carries no HEAD branch", () => {
+    const resolved = resolveDefaultBranch({
+      remoteShowOutput: "",
+      symbolicRefOutput: "origin/dev",
+    })
+    expect(resolved).toEqual({ branch: "dev", source: "symbolic-ref" })
+  })
+
+  test("accepts the full ref form refs/remotes/origin/<branch> as the symbolic-ref output", () => {
+    const resolved = resolveDefaultBranch({
+      remoteShowOutput: "",
+      symbolicRefOutput: "refs/remotes/origin/dev",
+    })
+    expect(resolved).toEqual({ branch: "dev", source: "symbolic-ref" })
+  })
+
+  test("falls back to main when neither probe yields a branch — the sane fallback", () => {
+    const resolved = resolveDefaultBranch({
+      remoteShowOutput: "",
+      symbolicRefOutput: "",
+    })
+    expect(resolved).toEqual({ branch: "main", source: "fallback" })
+  })
+
+  test("a remote show whose HEAD branch line is absent (detached/unborn) falls through to the symbolic ref, then main", () => {
+    const unresolvedRemote = "  Push URL: git@github.com:harmoniqs/amicode.git\n"
+    expect(
+      resolveDefaultBranch({ remoteShowOutput: unresolvedRemote, symbolicRefOutput: "origin/trunk" }),
+    ).toEqual({ branch: "trunk", source: "symbolic-ref" })
+    expect(
+      resolveDefaultBranch({ remoteShowOutput: unresolvedRemote, symbolicRefOutput: "" }),
+    ).toEqual({ branch: "main", source: "fallback" })
   })
 })
 
@@ -280,13 +379,13 @@ describe("#992 headRelation (the git probe → label mapping)", () => {
   test("equal shas → at", () => {
     expect(headRelation(HEAD, HEAD, true, true)).toBe("at")
   })
-  test("HEAD behind origin/main → BEHIND", () => {
-    expect(headRelation(HEAD, ORIGIN, true, false)).toBe("BEHIND")
+  test("HEAD behind the baseline → BEHIND", () => {
+    expect(headRelation(HEAD, BASELINE, true, false)).toBe("BEHIND")
   })
-  test("HEAD ahead of origin/main → AHEAD of", () => {
-    expect(headRelation(HEAD, ORIGIN, false, true)).toBe("AHEAD of")
+  test("HEAD ahead of the baseline → AHEAD of", () => {
+    expect(headRelation(HEAD, BASELINE, false, true)).toBe("AHEAD of")
   })
   test("diverged → DIVERGED from", () => {
-    expect(headRelation(HEAD, ORIGIN, false, false)).toBe("DIVERGED from")
+    expect(headRelation(HEAD, BASELINE, false, false)).toBe("DIVERGED from")
   })
 })

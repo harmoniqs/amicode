@@ -2,13 +2,21 @@ import type { Message, Part, PermissionRequest, QuestionRequest, SessionStatus, 
 import type { FileDiffInfo } from "@opencode-ai/client/promise"
 import type { SessionMessageInfo } from "@opencode-ai/client/promise"
 
-export const SESSION_CACHE_LIMIT = 40
+/**
+ * #1294: raised from 40. The bulk warm alone covers the 30 most recent
+ * sessions; at 40 the warm itself evicted everything else — including
+ * OPEN TABS' message data (open tabs were never on the protection list,
+ * and the active-session pin unpins the moment you switch away). The
+ * result: every back-and-forth tab switch was a cold wire reload. With
+ * open tabs pinned (the prewarmer) plus the raised limit, tab switching
+ * stays local; ~128 sessions x 20-60 messages is a few MB.
+ */
+export const SESSION_CACHE_LIMIT = 128
 
 type SessionCache = {
   session_status: Record<string, SessionStatus | undefined>
   session_diff: Record<string, FileDiffInfo[] | undefined>
   diff_version: Record<string, number | undefined>
-  parent_of: Record<string, string | undefined>
   todo: Record<string, Todo[] | undefined>
   message: Record<string, Message[] | undefined>
   session_message: Record<string, SessionMessageInfo[] | undefined>
@@ -37,7 +45,6 @@ export function dropSessionCaches(store: SessionCache, sessionIDs: Iterable<stri
     delete store.session_message[sessionID]
     delete store.session_diff[sessionID]
     delete store.diff_version[sessionID]
-    delete store.parent_of[sessionID]
     delete store.session_status[sessionID]
     delete store.permission[sessionID]
     delete store.question[sessionID]

@@ -26,6 +26,8 @@ import { type ImageAttachmentPart, usePrompt } from "@/context/prompt"
 import { usePlatform } from "@/context/platform"
 import { useSDK } from "@/context/sdk"
 import { useSync } from "@/context/sync"
+import { useServerSDK } from "@/context/server-sdk"
+import { createStreamGap } from "@/context/stream-gap"
 import { createSessionTabs } from "@/pages/session/helpers"
 import { showToast } from "@/utils/toast"
 import { bugReportEnabled } from "@/utils/amicode-bug-report"
@@ -89,6 +91,11 @@ export function PromptInputV2Composer(props: PromptInputV2ComposerProps) {
 export function usePromptInputV2Controller(props: PromptInputV2ControllerProps): PromptInputV2ComposerController {
   const sdk = useSDK()
   const sync = useSync()
+  // amicode#1203 — the composer reads the same #638 stream machine the session
+  // veil does: during the gap a send cannot honestly succeed, so it is refused
+  // with the reason instead of optimistically posting into a dead tunnel.
+  const serverSDK = useServerSDK()
+  const streamGap = createStreamGap(() => serverSDK().event.status())
   const files = useFile()
   const layout = useLayout()
   const comments = useComments()
@@ -232,6 +239,7 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
     onQueue: props.onQueue,
     onAbort: props.onAbort,
     onSubmit: props.onSubmit,
+    streamGap,
     model: props.controls.model.selection,
   })
 
