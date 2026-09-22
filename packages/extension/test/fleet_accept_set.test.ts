@@ -419,3 +419,140 @@ describe("accept-set — the enrollment-nonce mint endpoint (ADR 0032 §D4/AC1/A
     await b.stop();
   });
 });
+
+// ── the reader-side outcome split + the readiness gate + the rollback ────────
+import { readFileSync as _rf } from "node:fs";
+import {
+  classifyPeerOutcome,
+  evaluateReadiness,
+  PEER_OUTCOME_NO_PERMISSIONS,
+  PEER_OUTCOME_HUB_DOWN,
+} from "../src/amicode_service/fleet_accept_set";
+import { writePeerToken } from "../src/amicode_service/fleet_peer_store";
+import type { RosterRow } from "@amicode/schema";
+
+function servingReachable(machineId: string): RosterRow {
+  return {
+    machine_id: machineId,
+    name: machineId,
+    server_mode: "server",
+    capabilities: ["serving"],
+    sshAlias: machineId,
+    transport: "ssh",
+    last_report: "2026-09-22T00:00:00Z",
+    health: "reachable",
+  };
+}
+
+describe("AC2 — reader-side outcome split (revoked→NoPermissions vs unreachable→HubDown, never conflated)", () => {
+  it("a 401 on the peer hop is REVOKED (NoPermissions) — a suspected compromise reads as revocation, not an outage", () => {
+    const o = classifyPeerOutcome({ httpStatus: 401 });
+    expect(o.kind).toBe("revoked");
+    if (o.kind === "revoked") expect(o.outcome).toBe(PEER_OUTCOME_NO_PERMISSIONS);
+  });
+
+  it("a transport failure is UNREACHABLE (HubDown) — a DISTINCT external outcome", () => {
+    const o = classifyPeerOutcome({ transportError: true });
+    expect(o.kind).toBe("unreachable");
+    if (o.kind === "unreachable") expect(o.outcome).toBe(PEER_OUTCOME_HUB_DOWN);
+  });
+
+  it("the two outcomes are never the same string (the split is observable)", () => {
+    expect(PEER_OUTCOME_NO_PERMISSIONS).not.toBe(PEER_OUTCOME_HUB_DOWN);
+  });
+
+  it("a 2xx is authorized", () => {
+    expect(classifyPeerOutcome({ httpStatus: 200 }).kind).toBe("authorized");
+  });
+});
+
+describe("AC6 — the readiness gate (single machine_id vocabulary, both stores, refuses vacuously)", () => {
+  let issued: string;
+  let peerStore: string;
+  beforeEach(() => {
+    const root = tmproot();
+    issued = join(root, "fleet-peer-tokens.json");
+    peerStore = join(root, "fleet-peer-tokens-reader.json");
+  });
+
+  function bothSides(id: string): void {
+    mintPeerToken(id, { registryFile: issued, tokenFactory: () => `${id}-tok` });
+    writePeerToken(id, { baseUrl: `http://${id}`, token: `${id}-peer` }, { storeFile: peerStore });
+  }
+
+  it("a 3-peer fixture with one side MISSING refuses close (401-equivalent verdict)", () => {
+    bothSides("p1");
+    bothSides("p2");
+    // p3: minter side only — the reader peer-store entry is missing
+    mintPeerToken("p3", { registryFile: issued, tokenFactory: () => "p3-tok" });
+    const v = evaluateReadiness({
+      rosterRows: [servingReachable("p1"), servingReachable("p2"), servingReachable("p3")],
+      issuedRegistryFile: issued,
+      peerStoreFile: peerStore,
+    });
+    expect(v.closeable).toBe(false);
+    if (!v.closeable) expect(v.blockers.some((b) => b.machine_id === "p3" && b.reason === "missing-peer-token")).toBe(true);
+  });
+
+  it("adding the missing side makes close SUCCEED", () => {
+    bothSides("p1");
+    bothSides("p2");
+    bothSides("p3"); // now both sides present for all three
+    const v = evaluateReadiness({
+      rosterRows: [servingReachable("p1"), servingReachable("p2"), servingReachable("p3")],
+      issuedRegistryFile: issued,
+      peerStoreFile: peerStore,
+    });
+    expect(v.closeable).toBe(true);
+    if (v.closeable) expect(v.resolved.sort()).toEqual(["p1", "p2", "p3"]);
+  });
+
+  it("a serving row whose machine_id cannot be resolved REFUSES close (never satisfies it vacuously)", () => {
+    const unresolvable = { ...servingReachable("x"), machine_id: "  " };
+    const v = evaluateReadiness({ rosterRows: [unresolvable], issuedRegistryFile: issued, peerStoreFile: peerStore });
+    expect(v.closeable).toBe(false);
+    if (!v.closeable) expect(v.blockers.some((b) => b.reason === "unresolvable-machine-id")).toBe(true);
+  });
+
+  it("non-serving / unreachable rows are ignored; self is excluded", () => {
+    const notServing: RosterRow = { ...servingReachable("q1"), capabilities: [] };
+    const unreachable: RosterRow = { ...servingReachable("q2"), health: "down" };
+    const v = evaluateReadiness({
+      rosterRows: [notServing, unreachable, servingReachable("self")],
+      issuedRegistryFile: issued,
+      peerStoreFile: peerStore,
+      selfMachineId: "self",
+    });
+    expect(v.closeable).toBe(true); // nothing to gate on
+  });
+});
+
+describe("AC9 — the documented rollback (401→200 deterministic transition)", () => {
+  it("a peer stranded post-close (registry missing one side) 401s; rollback re-opens additive and it 200s", async () => {
+    const b = await bootAcceptSet();
+    // the stranded peer holds NO issued token here — post-close it cannot authenticate
+    closeAcceptSet({ phaseStateFile: b.files.phase });
+    const stranded = await fetch(`${b.origin}/amicode/ping`, { headers: peerHeader("stranded-peer-token") });
+    expect(stranded.status).toBe(401); // stranded under close
+    // the documented rollback re-opens the additive posture
+    rollbackAcceptSet({ phaseStateFile: b.files.phase });
+    expect(acceptSetPhase({ phaseStateFile: b.files.phase })).toBe("additive");
+    const afterRollback = await fetch(`${b.origin}/amicode/ping`, { headers: peerHeader("stranded-peer-token") });
+    expect(afterRollback.status).toBe(200); // the same request that 401'd now succeeds
+    await b.stop();
+  });
+});
+
+describe("AC3 structural — the service validator routes through timingSafeEqual + a length guard (not ===)", () => {
+  it("server.ts uses crypto timingSafeEqual with a length guard, and never a raw === token compare", () => {
+    const src = _rf(join(__dirname, "..", "src", "amicode_service", "server.ts"), "utf8");
+    // the length guard precedes the constant-time compare (mirroring :244)
+    expect(src).toMatch(/given\.length === want\.length && timingSafeEqual\(given, want\)/);
+    // the accept-set membership test lives on the constant-time helper
+    expect(src).toMatch(/matchesConstantTime/);
+    // no plaintext string-equality of the decoded credential (the base-opencode
+    // `===` anti-pattern the overlay replaces) — comparisons go through the buffer
+    expect(src).not.toMatch(/given\.toString\(\)\s*===/);
+    expect(src).not.toMatch(/\.password\.value\s*===/);
+  });
+});
