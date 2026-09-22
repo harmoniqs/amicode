@@ -9,7 +9,7 @@
 // (amicode_service_fleet_posture.test.ts) — the PRD rejected that model for
 // this credential; the revoked→NoPermissions vs unreachable→HubDown split is
 // the app-layer accept-set outcome asserted here instead.
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, readFileSync, statSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -231,5 +231,191 @@ describe("the enrollment nonce (ADR 0032 §D4 — single-use, short-TTL bootstra
     mintEnrollmentNonce({ storeFile: file, ttlMs: 60_000, now: () => 1000, nonceFactory: () => "N1" });
     expect(validateEnrollmentNonce("N1", { storeFile: file, now: () => 2000 })).toBe(true);
     expect(consumeEnrollmentNonce("N1", { storeFile: file, now: () => 2000 })).toBe(true);
+  });
+});
+
+// ── the accept-set validator on the SERVICE boundary (ADR 0032 §D2/§D3) ──────
+import { AmicodeServiceServer } from "../src/amicode_service/server";
+import { serverAuthHeader } from "../src/server_auth";
+import { hubUpstreamAuthHeader } from "../src/amicode_service/hub_credential";
+import {
+  buildAcceptSet,
+  acceptSetPhase,
+  closeAcceptSet,
+  rollbackAcceptSet,
+} from "../src/amicode_service/fleet_accept_set";
+import { peerTokenMintHandler, MINT_ENDPOINT_PATH } from "../src/amicode_service/fleet_mint_route";
+
+interface Booted {
+  origin: string;
+  server: AmicodeServiceServer;
+  files: { issued: string; phase: string; nonce: string; peerStore: string };
+  hubToken: string;
+  stop: () => Promise<void>;
+}
+
+async function bootAcceptSet(opts: { authMode?: "open" | "credential"; password?: string } = {}): Promise<Booted> {
+  const root = tmproot();
+  const files = {
+    issued: join(root, "fleet-peer-tokens.json"),
+    phase: join(root, "fleet-accept-set.json"),
+    nonce: join(root, "fleet-enrollment-nonces.json"),
+    peerStore: join(root, "fleet-peer-tokens-reader.json"),
+  };
+  const hubToken = "hub-transitional-token";
+  const acceptSet = buildAcceptSet({
+    issuedRegistryFile: files.issued,
+    phaseStateFile: files.phase,
+    enrollmentNonceFile: files.nonce,
+    hubCredentialToken: () => hubToken,
+  });
+  const server = new AmicodeServiceServer({
+    password: opts.password ?? "service-own-mint",
+    authMode: opts.authMode ?? "open", // a server today runs auth=open — additive layers on top
+    acceptSet,
+  });
+  server.add("GET", "/amicode/ping", () => ({ body: JSON.stringify({ ok: true }) }));
+  server.add(
+    "POST",
+    MINT_ENDPOINT_PATH,
+    peerTokenMintHandler({ issuedRegistryFile: files.issued, enrollmentNonceFile: files.nonce }),
+  );
+  const origin = (await server.start()).toString().replace(/\/$/, "");
+  return { origin, server, files, hubToken, stop: () => server.stop() };
+}
+
+const peerHeader = (token: string) => ({ Authorization: serverAuthHeader(token) });
+
+describe("accept-set — ADDITIVE posture (ADR 0032 §D3.1: peer tokens accepted in addition to auth=open)", () => {
+  let b: Booted;
+  beforeEach(async () => {
+    b = await bootAcceptSet();
+  });
+
+  it("phase defaults to additive", () => {
+    expect(acceptSetPhase({ phaseStateFile: b.files.phase })).toBe("additive");
+  });
+
+  it("AC5: a peer-token request AND a hub-credential request both succeed (backcompat mid-migration)", async () => {
+    const mint = mintPeerToken("peer-a", { registryFile: b.files.issued, tokenFactory: () => "PEER-A-TOK" });
+    expect(mint.ok).toBe(true);
+    const peer = await fetch(`${b.origin}/amicode/ping`, { headers: peerHeader("PEER-A-TOK") });
+    expect(peer.status).toBe(200);
+    const hub = await fetch(`${b.origin}/amicode/ping`, { headers: { Authorization: hubUpstreamAuthHeader(b.hubToken) } });
+    expect(hub.status).toBe(200);
+  });
+
+  it("additive still accepts anonymous (auth=open is not yet withdrawn)", async () => {
+    const res = await fetch(`${b.origin}/amicode/ping`);
+    expect(res.status).toBe(200);
+  });
+
+  afterEach(() => b?.stop());
+});
+
+describe("accept-set — CLOSED posture (ADR 0032 §D3.2: require an accept-set member)", () => {
+  let b: Booted;
+  beforeEach(async () => {
+    b = await bootAcceptSet();
+    // seed a valid peer token, then close
+    mintPeerToken("peer-a", { registryFile: b.files.issued, tokenFactory: () => "PEER-A-TOK-000000000000" });
+    closeAcceptSet({ phaseStateFile: b.files.phase });
+  });
+
+  it("AC7: after close an UNAUTHENTICATED request is refused (401); the local mint still authenticates", async () => {
+    const anon = await fetch(`${b.origin}/amicode/ping`);
+    expect(anon.status).toBe(401);
+    const local = await fetch(`${b.origin}/amicode/ping`, { headers: peerHeader("service-own-mint") });
+    expect(local.status).toBe(200);
+  });
+
+  it("a non-revoked peer token still authenticates after close", async () => {
+    const res = await fetch(`${b.origin}/amicode/ping`, { headers: peerHeader("PEER-A-TOK-000000000000") });
+    expect(res.status).toBe(200);
+  });
+
+  it("AC8: the transitional hub credential is REFUSED after close (withdrawn in the close step)", async () => {
+    const res = await fetch(`${b.origin}/amicode/ping`, { headers: { Authorization: hubUpstreamAuthHeader(b.hubToken) } });
+    expect(res.status).toBe(401);
+  });
+
+  it("AC2: a revoked peer token is refused (401) after close", async () => {
+    revokePeerToken("peer-a", { registryFile: b.files.issued });
+    const res = await fetch(`${b.origin}/amicode/ping`, { headers: peerHeader("PEER-A-TOK-000000000000") });
+    expect(res.status).toBe(401);
+  });
+
+  afterEach(() => b?.stop());
+
+  it("AC3 observable: a wrong-LENGTH token AND an equal-length-WRONG token both 401 (constant-time proxy)", async () => {
+    const wrongLen = await fetch(`${b.origin}/amicode/ping`, { headers: peerHeader("short") });
+    expect(wrongLen.status).toBe(401);
+    // same length as PEER-A-TOK-000000000000, different bytes
+    const equalLenWrong = await fetch(`${b.origin}/amicode/ping`, { headers: peerHeader("XXXXXXXXXXXXXXXXXXXXXXX") });
+    expect("PEER-A-TOK-000000000000".length).toBe("XXXXXXXXXXXXXXXXXXXXXXX".length);
+    expect(equalLenWrong.status).toBe(401);
+  });
+});
+
+describe("accept-set — revocation CURRENCY (ADR 0032 §D2/AC4: per-request read, no cache)", () => {
+  it("AC4: mint → 200; delete the registry entry; the IMMEDIATELY following request → 401", async () => {
+    const b = await bootAcceptSet();
+    closeAcceptSet({ phaseStateFile: b.files.phase });
+    mintPeerToken("peer-x", { registryFile: b.files.issued, tokenFactory: () => "PEER-X-TOK" });
+    const first = await fetch(`${b.origin}/amicode/ping`, { headers: peerHeader("PEER-X-TOK") });
+    expect(first.status).toBe(200);
+    revokePeerToken("peer-x", { registryFile: b.files.issued }); // delete the entry
+    const next = await fetch(`${b.origin}/amicode/ping`, { headers: peerHeader("PEER-X-TOK") });
+    expect(next.status).toBe(401); // no cache — the very next request sees the revocation
+    await b.stop();
+  });
+});
+
+describe("accept-set — the enrollment-nonce mint endpoint (ADR 0032 §D4/AC1/AC10)", () => {
+  it("AC1: a joining machine mints its peer token via a single-use nonce; the token is recorded", async () => {
+    const b = await bootAcceptSet();
+    const nonce = mintEnrollmentNonce({ storeFile: b.files.nonce, nonceFactory: () => "NONCE-1", ttlMs: 60_000 });
+    const res = await fetch(`${b.origin}${MINT_ENDPOINT_PATH}?machine_id=joiner&enrollment_nonce=${nonce}`, {
+      method: "POST",
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; token: string };
+    expect(body.ok).toBe(true);
+    expect(typeof body.token).toBe("string");
+    expect(issuedTokenFor("joiner", { registryFile: b.files.issued })).toBe(body.token);
+    // single-use: the same nonce cannot mint again
+    const again = await fetch(`${b.origin}${MINT_ENDPOINT_PATH}?machine_id=joiner2&enrollment_nonce=${nonce}`, {
+      method: "POST",
+    });
+    expect(again.status).toBe(401);
+    await b.stop();
+  });
+
+  it("AC10: after CLOSE, a newly-enrolling machine still obtains its peer token via the nonce endpoint", async () => {
+    const b = await bootAcceptSet();
+    closeAcceptSet({ phaseStateFile: b.files.phase });
+    const nonce = mintEnrollmentNonce({ storeFile: b.files.nonce, nonceFactory: () => "NONCE-2", ttlMs: 60_000 });
+    const res = await fetch(`${b.origin}${MINT_ENDPOINT_PATH}?machine_id=late-joiner&enrollment_nonce=${nonce}`, {
+      method: "POST",
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; token: string };
+    expect(body.ok).toBe(true);
+    // and the freshly-minted token authenticates on the closed boundary
+    const ping = await fetch(`${b.origin}/amicode/ping`, { headers: peerHeader(body.token) });
+    expect(ping.status).toBe(200);
+    await b.stop();
+  });
+
+  it("a mint for a mint-barred machine_id is refused (403), even with a valid nonce", async () => {
+    const b = await bootAcceptSet();
+    mintPeerToken("bad", { registryFile: b.files.issued, tokenFactory: () => "T" });
+    revokePeerToken("bad", { registryFile: b.files.issued });
+    const nonce = mintEnrollmentNonce({ storeFile: b.files.nonce, nonceFactory: () => "NONCE-3", ttlMs: 60_000 });
+    const res = await fetch(`${b.origin}${MINT_ENDPOINT_PATH}?machine_id=bad&enrollment_nonce=${nonce}`, {
+      method: "POST",
+    });
+    expect(res.status).toBe(403);
+    await b.stop();
   });
 });
