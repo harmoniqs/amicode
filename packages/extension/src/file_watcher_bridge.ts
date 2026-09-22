@@ -119,7 +119,7 @@ export class FileWatcherBridge implements vscode.Disposable {
 
     this.debounceTimers.set(
       key,
-      setTimeout(() => {
+      setTimeout(async () => {
         this.debounceTimers.delete(key);
         if (this.disposed) return;
         if (external) {
@@ -137,8 +137,52 @@ export class FileWatcherBridge implements vscode.Disposable {
           file: filePath,
           changeType,
         });
+
+        // #1423: Revert any open VS Code editor buffer so the agent's disk
+        // write is picked up. Without this, the stale in-memory buffer
+        // silently overwrites the agent's changes on save.
+        if (changeType === "changed" || changeType === "created") {
+          await this.revertOpenBuffer(filePath);
+        }
       }, 300),
     );
+  }
+
+  /**
+   * Force VS Code to re-read a file from disk if it has an open, non-dirty
+   * editor buffer. If the buffer is dirty (user has unsaved edits), we do NOT
+   * revert — user intent takes priority over agent writes. (#1423)
+   *
+   * For `.tex`/`.ltx` files, we also trigger a save after the revert so that
+   * LaTeX Workshop's `onDidSave` compile hook fires and the PDF preview
+   * auto-refreshes. (#1424)
+   */
+  private async revertOpenBuffer(filePath: string): Promise<void> {
+    const doc = vscode.workspace.textDocuments.find(
+      (d) => d.uri.fsPath === filePath,
+    );
+    if (!doc || doc.isDirty) return;
+
+    const uri = vscode.Uri.file(filePath);
+    try {
+      await vscode.commands.executeCommand("workbench.action.files.revert", uri);
+
+      // #1424: LaTeX Workshop triggers on onDidSave, not on revert. Saving
+      // after the revert kicks the compile hook so the PDF auto-refreshes.
+      if (/\.(?:tex|ltx)$/i.test(filePath)) {
+        // Re-fetch the document after revert (the reference may have changed).
+        const refreshed = vscode.workspace.textDocuments.find(
+          (d) => d.uri.fsPath === filePath,
+        );
+        if (refreshed && !refreshed.isDirty) {
+          await refreshed.save();
+        }
+      }
+    } catch {
+      // If the revert or save fails (e.g., file deleted between watcher
+      // event and revert), silently continue — the webview message was
+      // already posted, and the diff panel will still update.
+    }
   }
 
   dispose(): void {

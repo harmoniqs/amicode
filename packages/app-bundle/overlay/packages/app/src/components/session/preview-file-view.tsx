@@ -165,27 +165,41 @@ export function PreviewFileView(props: {
     ),
   )
 
-  // ─── PDF auto-reload on companion file change (#1254) ─────────────────
-  // When this is a .pdf file, subscribe to watcher events and re-read when
-  // the file changes on disk (e.g. after latexmk finishes compiling).
+  // ─── Live file tracking (#1254) ─────────────────────────────────────
+  // Subscribe to file watcher events so the preview updates when the file
+  // changes on disk — e.g. latexmk rewriting a PDF, an external editor
+  // saving a .tex, or any tool modifying a previewed file. This makes the
+  // preview a live view, not a one-shot snapshot.
   createEffect(() => {
     const filePath = props.filePath
-    if (getFileCategory(filePath) !== "pdf") return
     const unsub = sdk().event.listen((e) => {
       if (e.details.type !== "file.watcher.updated") return
       const props_ = e.details.properties as Record<string, unknown> | undefined
       const changedPath = typeof props_?.file === "string" ? props_.file : undefined
-      if (!changedPath || !changedPath.endsWith(filePath)) return
-      // Re-read the PDF
+      const kind = typeof props_?.event === "string" ? props_.event : undefined
+      if (!changedPath || !kind || kind !== "change") return
+      // Match: the watcher reports absolute paths, filePath may be relative.
+      // Check if the changed path ends with our file path.
+      if (!changedPath.endsWith(filePath) && !filePath.endsWith(changedPath)) return
+      // Skip if the user has unsaved edits — don't clobber their work
+      if (unsavedContent() !== null) return
+      // Re-read the file
       sdk()
         .client.file.read({ path: filePath })
         .then((result) => {
           const content = result.data
-          if (content && content.type !== "text" && (content as any).encoding === "base64") {
-            setBinaryData({
-              base64: content.content,
-              mime: (content as any).mimeType ?? "application/pdf",
-            })
+          if (!content) return
+          if (content.type !== "text") {
+            // Binary file (PDF, image) — update binary data
+            if ((content as any).encoding === "base64") {
+              setBinaryData({
+                base64: content.content,
+                mime: (content as any).mimeType ?? "application/octet-stream",
+              })
+            }
+          } else {
+            // Text file — update content
+            setFileContent(content.content)
           }
         })
         .catch(() => {})

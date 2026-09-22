@@ -128,6 +128,7 @@ export const extensions = {
 };
 export const workspace = {
   workspaceFolders: [] as unknown[],
+  textDocuments: [] as Array<{ uri: { fsPath: string }; isDirty: boolean; save: () => Promise<boolean> }>,
   configUpdates: [] as Array<[string, unknown]>,
   getConfiguration: () => ({
     get: (_k: string, d?: unknown) => d ?? "",
