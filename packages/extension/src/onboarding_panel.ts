@@ -57,7 +57,13 @@ export const HARMONIQS_MIN_OUTPUT_TOKENS = 16;
 // this same file already works around). Reproduced live: a plain "hello?"
 // turn failed this exact way before this constant existed.
 export const HARMONIQS_MAX_OUTPUT_TOKENS = 4096;
-export const HARMONIQS_CONTEXT_TOKENS = 128_000;
+// The app-harmoniqs-ai router (app-harmoniqs-ai/src/worker/routing/candidates.ts)
+// only ever selects models with a >=500k-token context window (Claude Opus
+// 4.6/4.8, Sonnet 5, GPT-5.6 Terra, GLM-5.3), so advertise 500k. This is the
+// ceiling opencode compares session tokens against to decide when to
+// auto-compact; too low a value forces premature compaction, too high risks a
+// provider-side context overflow before compaction fires.
+export const HARMONIQS_CONTEXT_TOKENS = 500_000;
 
 // ─── Provider → Model data (data-driven, not hard-coded conditionals) ────────
 
