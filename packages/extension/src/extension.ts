@@ -603,17 +603,14 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           ].find((bin) => {
             try { execFileSync(bin, ["version"], { encoding: "utf8", timeout: 3_000 }); return true; } catch { return false; }
           }) ?? "tailscale";
-          opencodeChannel?.appendLine?.(`[fleet] tailscale binary resolved: ${tailscaleBin}`);
           const dnsName = resolveTailscaleDnsName(
             (cmd: string, args: string[]) => execFileSync(tailscaleBin, args, { encoding: "utf8", timeout: 5_000 }),
           );
-          opencodeChannel?.appendLine?.(`[fleet] tailscale DNS name: ${dnsName ?? "(undefined)"}`);
           if (dnsName) {
             const port = (topology.kind === "ok" ? topology.canonical?.port : undefined) ?? 4096;
             const { tailscaleServeMapping } = require("./amicode_service/fleet_transport");
             const mapping = tailscaleServeMapping({ magicDnsName: dnsName, port });
             peer_origin = mapping.magicDnsOrigin;
-            opencodeChannel?.appendLine?.(`[fleet] peer_origin: ${peer_origin}`);
           }
         }
         return {
