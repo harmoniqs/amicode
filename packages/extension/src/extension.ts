@@ -594,8 +594,17 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         let peer_origin: string | undefined;
         if (transport === "tailscale") {
           const { execFileSync } = require("node:child_process");
+          // macOS GUI apps don't inherit the shell PATH — try known locations.
+          const tailscaleBin = [
+            "tailscale",
+            "/opt/homebrew/bin/tailscale",
+            "/usr/local/bin/tailscale",
+            "/usr/bin/tailscale",
+          ].find((bin) => {
+            try { execFileSync(bin, ["version"], { encoding: "utf8", timeout: 3_000 }); return true; } catch { return false; }
+          }) ?? "tailscale";
           const dnsName = resolveTailscaleDnsName(
-            (cmd: string, args: string[]) => execFileSync(cmd, args, { encoding: "utf8", timeout: 5_000 }),
+            (cmd: string, args: string[]) => execFileSync(tailscaleBin, args, { encoding: "utf8", timeout: 5_000 }),
           );
           if (dnsName) {
             const port = (topology.kind === "ok" ? topology.canonical?.port : undefined) ?? 4096;
