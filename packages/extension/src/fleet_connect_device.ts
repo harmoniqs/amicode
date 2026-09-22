@@ -54,7 +54,7 @@ export interface ResolvedDevice {
 export interface FleetConnectDeps extends AttachmentCredentialDeps {
   readRoster: () => RosterRow[];
   readTopology: () => FleetTopologyState;
-  attachToDevice: (payload: { machine_id: string; base_url?: string; token?: string }) => Promise<{ ok: boolean; switched?: boolean }>;
+  attachToDevice: (payload: { machine_id: string; base_url?: string; token?: string }) => Promise<{ ok: boolean; switched?: boolean; reason?: string }>;
   connectRemoteSsh: (sshAlias: string) => Promise<RemoteSshResolution>;
   goStandalone: () => void;
   isRemoteSshAvailable: () => boolean;
@@ -240,7 +240,8 @@ async function handleRemoteDevice(device: ResolvedDevice, deps: FleetConnectDeps
     if (result.ok) {
       await deps.reloadWindow();
     } else {
-      await deps.showWarningMessage(`Could not attach to ${device.name}. The local Amicode service may not be running.`);
+      const reason = result.reason ?? "unknown";
+      await deps.showWarningMessage(`Could not attach to ${device.name}: ${reason}`);
     }
     return;
   }

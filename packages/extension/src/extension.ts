@@ -523,15 +523,33 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         readTopology: () => readFleetTopology(),
         attachToDevice: async (payload) => {
           const svc = amicodeService;
-          if (!svc) return { ok: false };
-          const res = await fetch(`${svc.url}/fleet/attach`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", Authorization: svc.authHeader },
-            body: JSON.stringify(payload),
-          });
-          if (!res.ok) return { ok: false };
-          const body = await res.json() as { ok?: boolean; switched?: boolean };
-          return { ok: !!body.ok, switched: body.switched };
+          if (!svc) {
+            opencodeChannel.appendLine("[fleet] attach failed: amicodeService is not set (service not booted?)");
+            return { ok: false, reason: "Amicode service not running on this machine" };
+          }
+          const url = `${svc.url}/fleet/attach`;
+          opencodeChannel.appendLine(`[fleet] attach: POST ${url} machine_id=${payload.machine_id}`);
+          try {
+            const res = await fetch(url, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", Authorization: svc.authHeader },
+              body: JSON.stringify(payload),
+            });
+            if (!res.ok) {
+              opencodeChannel.appendLine(`[fleet] attach failed: HTTP ${res.status} from ${url}`);
+              return { ok: false, reason: `local service returned HTTP ${res.status}` };
+            }
+            const body = await res.json() as { ok?: boolean; switched?: boolean; error?: string };
+            if (!body.ok) {
+              opencodeChannel.appendLine(`[fleet] attach failed: server refused — ${body.error ?? "no reason"}`);
+              return { ok: false, reason: body.error ?? "server refused the request" };
+            }
+            return { ok: true, switched: body.switched };
+          } catch (e) {
+            const msg = (e as Error).message;
+            opencodeChannel.appendLine(`[fleet] attach failed: fetch error — ${msg}`);
+            return { ok: false, reason: `could not reach local service at ${url} (${msg})` };
+          }
         },
         connectRemoteSsh: (sshAlias) => connectToDeviceOverRemoteSsh(sshAlias),
         goStandalone: () => { void vscode.commands.executeCommand("amicode.fleet.goStandalone"); },

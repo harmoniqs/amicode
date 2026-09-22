@@ -213,19 +213,19 @@ describe("handleConnectToDevice — remote device (#1413)", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("thin client: shows warning when attach fails", async () => {
+  it("thin client: shows warning with reason when attach fails", async () => {
     let warningMsg = "";
     const deps = makeDeps({
       readRoster: () => [rosterRow({ machine_id: "peer-01", capabilities: ["serving"] })],
       showQuickPick: async (items: ConnectQuickPickItem[]) =>
         items.find((i) => i.action === "thin-client" && !i.description),
       showInformationMessage: async () => "Continue",
-      attachToDevice: async () => ({ ok: false }),
+      attachToDevice: async () => ({ ok: false, reason: "service not running" }),
       showWarningMessage: async (msg: string) => { warningMsg = msg; return undefined; },
     });
     await handleConnectToDevice(remoteMsg("peer-01", "Peer One"), deps);
-    expect(warningMsg).toContain("Could not attach");
     expect(warningMsg).toContain("Peer One");
+    expect(warningMsg).toContain("service not running");
   });
 
   it("remote ssh: calls connectRemoteSsh with the alias", async () => {
