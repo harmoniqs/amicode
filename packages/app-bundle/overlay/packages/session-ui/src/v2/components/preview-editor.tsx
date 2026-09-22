@@ -28,6 +28,8 @@ import { clampEditorSelection, shouldCaptureOnUpdate, type PreviewEditorViewStat
 export function PreviewEditor(props: {
   content: string
   filePath: string
+  /** #1365/#1366: true when this preview tab is selected (retained-pool visibility). */
+  active?: () => boolean
   onChange: (content: string) => void
   onSave: () => void
   zoom?: () => number

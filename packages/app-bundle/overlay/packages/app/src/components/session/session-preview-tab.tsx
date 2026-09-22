@@ -610,7 +610,7 @@ export function SessionPreviewTab(props: {
                                 setClosingPath(null)
                               }}
                               viewState={() => localViewState[path]}
-                              onViewStateChange={(state) => setLocalViewState(path, (existing) => ({ ...existing, ...state }))}
+                              onViewStateChange={(state) => setLocalViewState(path, (existing: PreviewViewState | undefined) => ({ ...existing, ...state }))}
                               zoom={() => zoomForPath(path)}
                               zoomIn={(maximum) => setZoomForPath(path, zoomForPath(path) + 10, maximum)}
                               zoomOut={() => setZoomForPath(path, zoomForPath(path) - 10)}

@@ -18,7 +18,7 @@
     "packages/opencode/pasqal-live-test.sh": "0bb0089eb413956f0252939f933a139c2f11520466887ad91fcae362f1698e41",
     "packages/session-ui/bunfig.toml": "468114e9b52c3cf926d2385c12d93385992cd70c97ea9e32ed22154617b7799d",
     "packages/session-ui/happydom.ts": "d81d6b14e988f058fa502c841df34b55307c57fc94a26fb4f8a5deb6aa0d4834",
-    "packages/session-ui/package.json": "15edfe2287a76b544bb359c809da056087bf00e71684a34d22cdcc405a77868a",
+    "packages/session-ui/package.json": "a649df752182533f4f50462ccedd2264042e18be5517bff633fbe707c5e37479",
     "packages/session-ui/preload-worker-mock.ts": "b53280029a042575734d7bfdf27713f6c5cd6a6665599dc429d839a3e3372bd1",
     "packages/ui/package.json": "b1d168d0371e9094faae1107fc6c00be197f09bc69daa2247a3890d607f4b629",
     "packages/app/public/amico.svg": "7c64b145bdd063bacd53318336a423f0654ec702de2b4e0c4a4a384694052804",
@@ -617,7 +617,7 @@
     "packages/app/src/components/session/session-context-tab.tsx": "227243b178b517f067d9ae0ae0eec3c559beeb6681828158b0600a17e98e7f81",
     "packages/app/src/components/session/session-header.tsx": "7113b3eca8ec950d4a547a2b7e2661b5e47f593653e12fca659b5b5f92cb90a6",
     "packages/app/src/components/session/session-new-view.tsx": "9510a4f550a3f0d4791e98e8025666f09d70a60fb66f193e48ee61feddae5a57",
-    "packages/app/src/components/session/session-preview-tab.tsx": "75ca11a22407ace3a267beedc69e0327b08db1db7605458f41912f1d54220bc4",
+    "packages/app/src/components/session/session-preview-tab.tsx": "d3a210598d181c0aa29e9f3b5db3cd691169f3ee467001313a3d9a24bee93dbe",
     "packages/app/src/components/session/session-preview-tabs.test.ts": "773fc0116c5f61302eaa4a09fd5f91e6b26dee978c89e29c21714243ae3a5653",
     "packages/app/src/components/session/session-preview-tabs.ts": "672d147a6f1f46a7ac2eff7aff9da6cc069c476ff918e5ff4aed3a997310e6fe",
     "packages/app/src/components/session/session-preview-tree.test.ts": "6d1677caa56ec89fa5fcc8fc2f26fdcc1bc0a23217ce9c6d92888b272523c00a",
@@ -736,7 +736,7 @@
     "packages/session-ui/src/v2/components/markdown-utils.test.ts": "10e1034293bf385cf50d860bf1667d8370abc61dcee0c5a93295f21f5f55876a",
     "packages/session-ui/src/v2/components/markdown-utils.ts": "3bc47cfed5b99ab23f857d5324be3189f3a7e800d991103d72ef1c2f970b910b",
     "packages/session-ui/src/v2/components/preview-editor.test.ts": "b8da9320a594aaa680ed3848612fcea66f41c0a046a673f0cf6155c2a0b697dd",
-    "packages/session-ui/src/v2/components/preview-editor.tsx": "f0a2d60f42e730ced988ae2730930de6de0894e39d027829270d234969c5686b",
+    "packages/session-ui/src/v2/components/preview-editor.tsx": "f18be14444ad2cfbdab36f033b6ff3dad988e6f9ecd09433cdca2866dd8afb24",
     "packages/session-ui/src/v2/components/preview-file-routing.test.ts": "fca02a21261b291fd94001baa2294e7b2fa45b18b0c0403848f045763b41bf15",
     "packages/session-ui/src/v2/components/preview-nav-state.test.ts": "cec09a8b3c08ab16581d3d5b6ff704584b3c87d81c25e8af20f6f00272f3593f",
     "packages/session-ui/src/v2/components/preview-nav-state.ts": "ccaeb94d1ab39271f5dcd49c935c8fc7b54d4ffbd66e1352e4d797c9205553fc",
@@ -850,7 +850,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-09-22T14:25:05.056Z",
+  "extracted_at": "2026-09-22T14:42:28.567Z",
   "per_package": {
     "packages/app": {
       "A": 171,
