@@ -21,6 +21,15 @@ describe("toAbsolutePath", () => {
   test("returns the relative path unchanged when no directory is known", () => {
     expect(toAbsolutePath("main.tex", undefined)).toBe("main.tex")
   })
+
+  test("leaves a Windows drive-letter path untouched (backslash and forward slash)", () => {
+    expect(toAbsolutePath("C:\\work\\main.tex", "C:\\work")).toBe("C:\\work\\main.tex")
+    expect(toAbsolutePath("C:/work/main.tex", "/w")).toBe("C:/work/main.tex")
+  })
+
+  test("leaves a Windows UNC path untouched", () => {
+    expect(toAbsolutePath("\\\\server\\share\\main.tex", "/w")).toBe("\\\\server\\share\\main.tex")
+  })
 })
 
 // #1414 (CodeRabbit, Major·Data integrity): the watcher's async read completion

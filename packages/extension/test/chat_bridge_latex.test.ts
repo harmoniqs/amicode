@@ -68,4 +68,29 @@ describe("runLatexmk coalescing", () => {
     const compiling = io.posted.filter((m) => m.kind === "run-latex-status" && m.state === "compiling");
     expect(compiling.at(-1)?.tab).toBe("tabB");
   });
+
+  it("claims the compile slot before the async availability probe (no double-spawn)", async () => {
+    const { exec, calls } = captureExec();
+    const io = sink();
+    // A deferred probe: two saves for the same PDF arrive while it is pending.
+    const resolvers: Array<(v: boolean) => void> = [];
+    const detect = () => new Promise<boolean>((r) => resolvers.push(r));
+    const target = { dir: "/w", base: "a.tex", pdf: "/w/slot-claim-s9.pdf" };
+
+    const pA = runLatexmk(target, "tabA", io, { exec, detect });
+    const pB = runLatexmk(target, "tabB", io, { exec, detect });
+    // Probe still pending → nothing spawned yet.
+    expect(calls.length).toBe(0);
+
+    // Release the probe(s) and let both calls settle.
+    resolvers.forEach((r) => r(true));
+    await pA;
+    await pB;
+    await flush();
+
+    // Exactly ONE latexmk spawned despite two concurrent saves — the slot must
+    // be claimed synchronously, before the awaited probe, so the second save
+    // coalesces instead of starting its own probe+compile.
+    expect(calls.length).toBe(1);
+  });
 });

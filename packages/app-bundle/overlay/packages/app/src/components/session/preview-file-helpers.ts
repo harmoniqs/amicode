@@ -3,13 +3,23 @@
 // preview-file-view.tsx.
 
 /**
+ * Is this an absolute path the extension host can act on as-is? POSIX (`/…`),
+ * a Windows drive-letter (`C:\…` or `C:/…`), or a Windows UNC path (`\\…`) —
+ * VS Code runs on Windows too, and joining a drive-letter path onto a directory
+ * would mangle it.
+ */
+export function isAbsolutePreviewPath(p: string): boolean {
+  return p.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(p) || p.startsWith("\\\\")
+}
+
+/**
  * Resolve a possibly-relative preview path against the workspace directory.
  * The extension host (and the latexmk compile bridge) only accept ABSOLUTE
  * paths — a relative path posted across the bridge is silently rejected.
  */
 export function toAbsolutePath(filePath: string, directory: string | undefined): string {
-  if (filePath.startsWith("/")) return filePath
-  const dir = (directory ?? "").replace(/\/$/, "")
+  if (isAbsolutePreviewPath(filePath)) return filePath
+  const dir = (directory ?? "").replace(/[/\\]$/, "")
   return dir ? `${dir}/${filePath}` : filePath
 }
 

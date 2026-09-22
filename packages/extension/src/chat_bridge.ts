@@ -283,32 +283,45 @@ export async function runLatexmk(
     state.pending = { target, tab };
     return;
   }
+  // #1414: claim the slot synchronously, BEFORE the awaited probe, so a
+  // concurrent save for the same output PDF coalesces instead of racing past
+  // the running check and spawning a second latexmk.
+  state.running = true;
   const post = (extra: Record<string, unknown>) =>
     io.postToWebview({ source: "amicode", kind: "run-latex-status", tab, file: texFile, pdf: target.pdf, ...extra });
 
   const detect = deps.detect ?? detectLatexmk;
   if (!(await detect())) {
+    state.running = false;
+    state.pending = undefined;
     post({ state: "unavailable" });
     return;
   }
-  state.running = true;
   post({ state: "compiling" });
-  const exec: LatexExec = deps.exec ?? ((await import("node:child_process")).execFile as unknown as LatexExec);
-  exec(
-    "latexmk",
-    ["-pdf", "-interaction=nonstopmode", target.base],
-    { cwd: target.dir, timeout: LATEX_TIMEOUT_MS },
-    (err, _stdout, stderr) => {
-      state.running = false;
-      post({
-        state: err ? "error" : "done",
-        error: err ? (stderr?.trim().slice(0, 500) || err.message) : undefined,
-      });
-      const next = state.pending;
-      state.pending = undefined;
-      if (next) void runLatexmk(next.target, next.tab, io, deps);
-    },
-  );
+  try {
+    const exec: LatexExec = deps.exec ?? ((await import("node:child_process")).execFile as unknown as LatexExec);
+    exec(
+      "latexmk",
+      ["-pdf", "-interaction=nonstopmode", target.base],
+      { cwd: target.dir, timeout: LATEX_TIMEOUT_MS },
+      (err, _stdout, stderr) => {
+        state.running = false;
+        post({
+          state: err ? "error" : "done",
+          error: err ? (stderr?.trim().slice(0, 500) || err.message) : undefined,
+        });
+        const next = state.pending;
+        state.pending = undefined;
+        if (next) void runLatexmk(next.target, next.tab, io, deps);
+      },
+    );
+  } catch (e) {
+    // Process setup failed (e.g. the dynamic import threw) — release the slot so
+    // the coordinator isn't wedged, and surface the error.
+    state.running = false;
+    state.pending = undefined;
+    post({ state: "error", error: e instanceof Error ? e.message : String(e) });
+  }
 }
 
 function scheduleLatexCompile(
