@@ -277,6 +277,7 @@
     "packages/opencode/src/provider/error.ts": "7f3c8210c775e2ce98140bf015dc97e61192912af062c75e18ecb09ee2736a0f",
     "packages/opencode/src/provider/provider.ts": "671f6d8de83f919ddaa69b8240cacd82e2b8202ab505d4334175f2858bbd8c32",
     "packages/opencode/src/provider/transform.ts": "d35a95a6092b5dd9cc8e37adb4d52f9ad9880d021cb3119c1d4abbc4b4fb0772",
+    "packages/opencode/src/server/auth.ts": "a054aff2ea06a303a99f326275332a68089c58916356a26d66af44f048f597cc",
     "packages/opencode/src/server/server.ts": "56b3c2047917aa80d1dfb29bfa9839bcc2ad7f5a6f4db12103cd962a98fba866",
     "packages/opencode/src/session/business-record.ts": "d82db061055d0dd26ad95b34bff688ce23fd06a8fb9248dd335c6726c6ff0f5e",
     "packages/opencode/src/session/compaction.ts": "fd6159a8b04050706b6968c7a1b091f79d06e6e4aa988a12629a7616b8128e94",

@@ -592,3 +592,33 @@ describe("AC2 — the fan-out lands: a peer applies a revocation to its OWN regi
     await b.stop();
   });
 });
+
+describe("AC3 structural — the ENGINE overlay validator also routes through timingSafeEqual (two boundaries, one accept-set)", () => {
+  const overlay = join(
+    __dirname,
+    "..",
+    "..",
+    "app-bundle",
+    "overlay",
+    "packages",
+    "opencode",
+    "src",
+    "server",
+    "auth.ts",
+  );
+  it("the engine overlay exists and replaces the base plaintext === with a constant-time compare", () => {
+    const src = _rf(overlay, "utf8");
+    expect(src).toMatch(/timingSafeEqual/);
+    expect(src).toMatch(/constantTimeEqual/);
+    // the base anti-pattern (Redacted.value(...) === config.password.value) is gone
+    expect(src).not.toMatch(/Redacted\.value\([^)]*\)\s*===\s*config\.password\.value/);
+  });
+  it("the engine overlay reads the SAME accept-set stores as the service boundary (per-request, no cache)", () => {
+    const src = _rf(overlay, "utf8");
+    expect(src).toMatch(/fleet-peer-tokens\.json/);
+    expect(src).toMatch(/fleet-accept-set\.json/);
+    expect(src).toMatch(/AMICO_FLEET_ISSUED_TOKEN_FILE/);
+    // closing the boundary makes auth REQUIRED even on an unarmed engine (AC7 engine side)
+    expect(src).toMatch(/acceptSetClosed/);
+  });
+});
