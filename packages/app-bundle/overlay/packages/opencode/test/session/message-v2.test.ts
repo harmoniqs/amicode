@@ -1538,6 +1538,56 @@ describe("session.message-v2.fromError", () => {
     expect(SessionV1.APIError.isInstance(result)).toBe(true)
   })
 
+  test("does not classify Bedrock 429 throttling with overflow-matching body as context overflow", () => {
+    // Bedrock's @ai-sdk/amazon-bedrock adapter coerces undefined to "undefined",
+    // stripping the SDK's "429 Too Many Requests" prefix that would otherwise
+    // trigger the "too many requests" exclusion in isContextOverflow. The status
+    // code guard in parseAPICallError must prevent the raw Bedrock message
+    // (which matches /token limit exceeded/i) from being misclassified.
+    const bedrockMessages = [
+      "Token throughput limit exceeded",
+      "Too many tokens per minute for model anthropic.claude-opus-4-8-20250808-v1:0",
+      "You have exceeded the model invocation throughput limit of 100000 tokens per minute",
+    ]
+
+    for (const bodyMessage of bedrockMessages) {
+      const result = MessageV2.fromError(
+        new APICallError({
+          message: "undefined",
+          url: "https://bedrock-runtime.us-east-1.amazonaws.com/model/anthropic.claude-opus-4-8-20250808-v1%3A0/converse-stream",
+          requestBodyValues: {},
+          statusCode: 429,
+          responseHeaders: { "content-type": "application/json" },
+          responseBody: JSON.stringify({ message: bodyMessage }),
+          isRetryable: true,
+        }),
+        { providerID: ProviderV2.ID.make("amazon-bedrock") },
+      )
+      expect(SessionV1.ContextOverflowError.isInstance(result)).toBe(false)
+      expect(SessionV1.APIError.isInstance(result)).toBe(true)
+    }
+  })
+
+  test("does not classify Bedrock 400 throttling with overflow-matching body as context overflow", () => {
+    // Bedrock ValidationException (HTTP 400) can carry throughput messages that
+    // match context-overflow patterns. The broadened exclusions in
+    // isContextOverflow must prevent these from being misclassified.
+    const result = MessageV2.fromError(
+      new APICallError({
+        message: "undefined",
+        url: "https://bedrock-runtime.us-east-1.amazonaws.com/model/anthropic.claude-opus-4-8-20250808-v1%3A0/converse-stream",
+        requestBodyValues: {},
+        statusCode: 400,
+        responseHeaders: { "content-type": "application/json" },
+        responseBody: JSON.stringify({ message: "Token throughput limit exceeded" }),
+        isRetryable: false,
+      }),
+      { providerID: ProviderV2.ID.make("amazon-bedrock") },
+    )
+    expect(SessionV1.ContextOverflowError.isInstance(result)).toBe(false)
+    expect(SessionV1.APIError.isInstance(result)).toBe(true)
+  })
+
   test("serializes unknown inputs", () => {
     const result = MessageV2.fromError(123, { providerID })
 

@@ -176,7 +176,15 @@ export type ParsedAPICallError =
 export function parseAPICallError(input: { providerID: ProviderV2.ID; error: APICallError }): ParsedAPICallError {
   const m = message(input.providerID, input.error)
   const body = json(input.error.responseBody)
-  if (isContextOverflow(m) || input.error.statusCode === 413 || body?.error?.code === "context_length_exceeded") {
+  // Status-code guard: 429 (rate limit) and 5xx (server error) are never
+  // context overflow, even when the error message text happens to match the
+  // heuristic patterns (e.g. Bedrock ThrottlingException "token throughput
+  // limit exceeded" matches /token limit exceeded/i but is a rate limit).
+  // The `undefined` status case (stream errors without HTTP metadata) still
+  // runs the heuristic — only known non-overflow statuses are excluded.
+  const status = input.error.statusCode
+  const overflowEligible = status === undefined || (status >= 400 && status < 500 && status !== 429)
+  if (overflowEligible && (isContextOverflow(m) || status === 413 || body?.error?.code === "context_length_exceeded")) {
     return {
       type: "context_overflow",
       message: m,

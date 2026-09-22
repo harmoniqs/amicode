@@ -43,7 +43,9 @@
     "packages/core/test/location-mutation.test.ts": "2c4c8faa220cc8fabfe12d57bd74ec8dd8aac8485d0ecafd2761cdee1806d6b0",
     "packages/core/test/tool-question.test.ts": "4df41393f15104a1d3a9c3d06e30cef515108490b41fcf4d9a7d9399fd4ed945",
     "packages/llm/src/cache-policy.ts": "04c1fb5d3d061cfa95d04e54df0a1c2cdaafac921224242446eaa2968bff7857",
+    "packages/llm/src/provider-error.ts": "65b9124905f0755c1e368df5150aa211bea3cc29afb66845b5ceaccba10042dd",
     "packages/llm/test/cache-policy.test.ts": "e921095c4301440c786105063439e49b2fedbaf6d46f30457e0a96388d268f4b",
+    "packages/llm/test/provider-error.test.ts": "ac3bf099319acdc27ff47ea79fd74357d55e12ab95131a07a72a5a2a9bc0c08f",
     "packages/opencode/script/build.ts": "876e7d569aa71ce060c1d4b24c96e9bf13245cbf4ca743828d645560a95aa641",
     "packages/opencode/script/httpapi-exercise.ts": "772bd2cf5748ca90c5d5790c2d044237518cc8ede0411fc4ba28b9d7440ba28c",
     "packages/opencode/test/amicode-release-workflow.test.ts": "f6dfcb3ed9c572ca8e8b21ff82e038872b635b25c68f9580f6d6f51ee2813189",
@@ -274,7 +276,7 @@
     "packages/opencode/src/project/instance-context.ts": "65a35792e50e96a50ea14cd9f928045c0e2fc15eb49506f5bbceee38c4af1457",
     "packages/opencode/src/project/instance-store.ts": "c22d3e2499e63dd8d9395d58189df75444d306774df833e746f22e327edcf2ab",
     "packages/opencode/src/provider/auth.ts": "b0ab1322c1039e27176bf9e3500603eae27506065ac141a69710220f3361f6b8",
-    "packages/opencode/src/provider/error.ts": "7f3c8210c775e2ce98140bf015dc97e61192912af062c75e18ecb09ee2736a0f",
+    "packages/opencode/src/provider/error.ts": "d72310be26cfae5c2943f9939a6461e848532a5646ff405d628e9a50fc1ebe91",
     "packages/opencode/src/provider/provider.ts": "671f6d8de83f919ddaa69b8240cacd82e2b8202ab505d4334175f2858bbd8c32",
     "packages/opencode/src/provider/transform.ts": "d35a95a6092b5dd9cc8e37adb4d52f9ad9880d021cb3119c1d4abbc4b4fb0772",
     "packages/opencode/src/server/server.ts": "56b3c2047917aa80d1dfb29bfa9839bcc2ad7f5a6f4db12103cd962a98fba866",
@@ -344,7 +346,7 @@
     "packages/opencode/test/session/business-record.test.ts": "7857094479408bcfd6ea8d9f5b425c6384bcf8490f930674bc1c203e82782d75",
     "packages/opencode/test/session/instruction.test.ts": "8b4d954eb10afa852a671e6c0a94d19604deacc9a62f9c3651c7456cc32736b7",
     "packages/opencode/test/session/llm-native-recorded.test.ts": "7139b58569af0172862af521e8f8d7a78132f40f06dcceb4baf8ca3a2f07d3bd",
-    "packages/opencode/test/session/message-v2.test.ts": "9edc16ae57b7f2d34aaed7378d82fcf9d07a82075a05730bfb3caae39d70ac7f",
+    "packages/opencode/test/session/message-v2.test.ts": "d1b930b4b57243387920b76fb68680e507e3a288d50d06c357d83eb7931da735",
     "packages/opencode/test/session/mutation.test.ts": "ccb82b6858ac097d2af09a94497d05f6a0ff843b928a69e763fdb510905a10cd",
     "packages/opencode/test/session/prompt.test.ts": "e3d0748edb833640ef284857ae725e4b974843480d4128f56239e3fd1e6d481f",
     "packages/opencode/test/session/prose-guard.test.ts": "7239a758cbf27df4c3879fa9ee0374964559c1461773c2f5a85196f64632e6c4",
@@ -849,7 +851,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-09-21T02:29:31.939Z",
+  "extracted_at": "2026-09-21T17:30:46.454Z",
   "per_package": {
     "packages/app": {
       "A": 171,
@@ -863,7 +865,7 @@
     },
     "packages/llm": {
       "A": 0,
-      "M": 4,
+      "M": 6,
       "D": 0
     },
     "packages/opencode": {
@@ -893,7 +895,7 @@
     }
   },
   "counts": {
-    "overlay_total": 827,
+    "overlay_total": 829,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -933,7 +935,9 @@
     "packages/core/test/location-mutation.test.ts": "M",
     "packages/core/test/tool-question.test.ts": "M",
     "packages/llm/src/cache-policy.ts": "M",
+    "packages/llm/src/provider-error.ts": "M",
     "packages/llm/test/cache-policy.test.ts": "M",
+    "packages/llm/test/provider-error.test.ts": "M",
     "packages/opencode/script/build.ts": "M",
     "packages/opencode/script/httpapi-exercise.ts": "M",
     "packages/opencode/test/amicode-release-workflow.test.ts": "A",
