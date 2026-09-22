@@ -1,4 +1,7 @@
 import { describe, expect, test } from "vitest";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { resolveLatexTarget } from "../src/latex_compile";
 
 // #1253: the compile bridge must run latexmk in the .tex file's own directory,
@@ -53,5 +56,73 @@ describe("resolveLatexTarget", () => {
   test("rejects when there are no roots", () => {
     const r = resolveLatexTarget("/repo/main.tex", []);
     expect(r.ok).toBe(false);
+  });
+});
+
+// #1414 (CodeRabbit): the lexical containment check above can be defeated by a
+// symlink that sits INSIDE a root but resolves OUTSIDE it. Resolve symlinks
+// (best-effort — a not-yet-existing path keeps its lexical form) so a link can't
+// point the compile at a file outside the configured roots, and derive the
+// compile dir/base from the RESOLVED path.
+describe("resolveLatexTarget symlink containment", () => {
+  const mk = () => fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "latex-esc-"));
+
+  test("rejects a symlink inside a root that resolves outside it", () => {
+    const base = mk();
+    try {
+      const root = path.join(base, "root");
+      const outside = path.join(base, "outside");
+      fs.mkdirSync(root);
+      fs.mkdirSync(outside);
+      const secret = path.join(outside, "secret.tex");
+      fs.writeFileSync(secret, "\\documentclass{article}");
+      const link = path.join(root, "evil.tex");
+      fs.symlinkSync(secret, link);
+
+      const r = resolveLatexTarget(link, [root]);
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.reason).toBe("not-contained");
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  test("accepts a real .tex inside a root and derives the resolved dir/base/pdf", () => {
+    const base = mk();
+    try {
+      const root = path.join(base, "root");
+      fs.mkdirSync(root);
+      const file = path.join(root, "main.tex");
+      fs.writeFileSync(file, "\\documentclass{article}");
+
+      const r = resolveLatexTarget(file, [root]);
+      expect(r.ok).toBe(true);
+      if (r.ok) {
+        expect(r.dir).toBe(fs.realpathSync(root));
+        expect(r.base).toBe("main.tex");
+        expect(r.pdf).toBe(path.join(fs.realpathSync(root), "main.pdf"));
+      }
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  test("accepts a real .tex reached through a symlinked root (resolves to the same tree)", () => {
+    const base = mk();
+    try {
+      const realRoot = path.join(base, "realroot");
+      fs.mkdirSync(realRoot);
+      const linkedRoot = path.join(base, "linkedroot");
+      fs.symlinkSync(realRoot, linkedRoot);
+      const file = path.join(realRoot, "doc.tex");
+      fs.writeFileSync(file, "\\documentclass{article}");
+
+      // Root supplied as the symlink; file supplied by its real path — must be
+      // recognised as contained once both are resolved.
+      const r = resolveLatexTarget(file, [linkedRoot]);
+      expect(r.ok).toBe(true);
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
   });
 });
