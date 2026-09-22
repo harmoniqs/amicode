@@ -611,8 +611,12 @@
     "packages/app/src/components/session/context-warning-banner.tsx": "f5fab4d7a9536238b70d64488fc30d44f6a4948fdcffd910a9666f4b6c296019",
     "packages/app/src/components/session/index.ts": "21473290d4a1a3d0670fd878372ddf21ff22d4a0b30d1aef6c81ea906c1488b4",
     "packages/app/src/components/session/panel-menu.tsx": "42f323046b7375ae158023a51506038eb15f2e1545c407f45acd47446a8ef3e0",
-    "packages/app/src/components/session/pdf-canvas-view.tsx": "f108d45b9cda49150ddcf92fc153aca0988d94e7ccfd518b093475e87dfe18be",
-    "packages/app/src/components/session/preview-file-view.tsx": "c300cfe8a611c42c0bc6e3dd2f6ff16bf395b482eab2e90273218e5192197041",
+    "packages/app/src/components/session/pdf-canvas-view.tsx": "a9ffd505014fae1acb794924ae2446ebd42947b49981b81e5d0ee83090cebd78",
+    "packages/app/src/components/session/pdf-restore.test.ts": "4cd4cabbdc8063deb5fe95b5e637cf154ccdf864c5ff9f2f6833826bd69e4f90",
+    "packages/app/src/components/session/pdf-restore.ts": "e5c92096b9302a452439babfc2732610a7e0d18e23793ce3bf6352fa32f91a36",
+    "packages/app/src/components/session/preview-file-helpers.test.ts": "785a5ec6f9b295c5b0c54ac5d1520680830f674fb738fd3a4fec06fa2153bf17",
+    "packages/app/src/components/session/preview-file-helpers.ts": "173e11bb8cb4afb9c7d56ba0fc8a28dbe1d5de6ff8c7d189f4f28a0fb1cb095b",
+    "packages/app/src/components/session/preview-file-view.tsx": "6acac19cd3d264cfe14f412e6dc2e50e5c84028d5f57ddbaae6d9def0a0a57c6",
     "packages/app/src/components/session/session-chats-dropdown.test.ts": "2003d2a15781337ea6bff2c68e730cc5b6df38697f15d927ab26913936444db7",
     "packages/app/src/components/session/session-context-tab.tsx": "227243b178b517f067d9ae0ae0eec3c559beeb6681828158b0600a17e98e7f81",
     "packages/app/src/components/session/session-header.tsx": "7113b3eca8ec950d4a547a2b7e2661b5e47f593653e12fca659b5b5f92cb90a6",
@@ -735,8 +739,10 @@
     "packages/session-ui/src/v2/components/file-name-picker.test.tsx": "1ce9741e315b549165d390c74b5885a43580aa70e24de987f9ba8388cd521b41",
     "packages/session-ui/src/v2/components/markdown-utils.test.ts": "10e1034293bf385cf50d860bf1667d8370abc61dcee0c5a93295f21f5f55876a",
     "packages/session-ui/src/v2/components/markdown-utils.ts": "3bc47cfed5b99ab23f857d5324be3189f3a7e800d991103d72ef1c2f970b910b",
+    "packages/session-ui/src/v2/components/preview-editor-helpers.test.ts": "6e242cabfded1ce2edddfa3c181fb709ce4408448bc2c1251707297ef633d64e",
+    "packages/session-ui/src/v2/components/preview-editor-helpers.ts": "7f61e97e54286af1bbf5e88538e9c73995eb30f19868c6f43694422205aeda4b",
     "packages/session-ui/src/v2/components/preview-editor.test.ts": "b8da9320a594aaa680ed3848612fcea66f41c0a046a673f0cf6155c2a0b697dd",
-    "packages/session-ui/src/v2/components/preview-editor.tsx": "f18be14444ad2cfbdab36f033b6ff3dad988e6f9ecd09433cdca2866dd8afb24",
+    "packages/session-ui/src/v2/components/preview-editor.tsx": "96cfbfbbe06cc797f71ac667a29ece3c44a192c9cd94d91e90f79359cdab932b",
     "packages/session-ui/src/v2/components/preview-file-routing.test.ts": "fca02a21261b291fd94001baa2294e7b2fa45b18b0c0403848f045763b41bf15",
     "packages/session-ui/src/v2/components/preview-nav-state.test.ts": "cec09a8b3c08ab16581d3d5b6ff704584b3c87d81c25e8af20f6f00272f3593f",
     "packages/session-ui/src/v2/components/preview-nav-state.ts": "ccaeb94d1ab39271f5dcd49c935c8fc7b54d4ffbd66e1352e4d797c9205553fc",
@@ -850,10 +856,10 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-09-22T14:42:28.567Z",
+  "extracted_at": "2026-09-22T16:50:52.011Z",
   "per_package": {
     "packages/app": {
-      "A": 171,
+      "A": 175,
       "M": 159,
       "D": 0
     },
@@ -883,7 +889,7 @@
       "D": 0
     },
     "packages/session-ui": {
-      "A": 40,
+      "A": 42,
       "M": 32,
       "D": 0
     },
@@ -894,7 +900,7 @@
     }
   },
   "counts": {
-    "overlay_total": 828,
+    "overlay_total": 834,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1503,6 +1509,10 @@
     "packages/app/src/components/session/index.ts": "M",
     "packages/app/src/components/session/panel-menu.tsx": "A",
     "packages/app/src/components/session/pdf-canvas-view.tsx": "A",
+    "packages/app/src/components/session/pdf-restore.test.ts": "A",
+    "packages/app/src/components/session/pdf-restore.ts": "A",
+    "packages/app/src/components/session/preview-file-helpers.test.ts": "A",
+    "packages/app/src/components/session/preview-file-helpers.ts": "A",
     "packages/app/src/components/session/preview-file-view.tsx": "A",
     "packages/app/src/components/session/session-chats-dropdown.test.ts": "A",
     "packages/app/src/components/session/session-context-tab.tsx": "M",
@@ -1626,6 +1636,8 @@
     "packages/session-ui/src/v2/components/file-name-picker.test.tsx": "A",
     "packages/session-ui/src/v2/components/markdown-utils.test.ts": "A",
     "packages/session-ui/src/v2/components/markdown-utils.ts": "A",
+    "packages/session-ui/src/v2/components/preview-editor-helpers.test.ts": "A",
+    "packages/session-ui/src/v2/components/preview-editor-helpers.ts": "A",
     "packages/session-ui/src/v2/components/preview-editor.test.ts": "A",
     "packages/session-ui/src/v2/components/preview-editor.tsx": "A",
     "packages/session-ui/src/v2/components/preview-file-routing.test.ts": "A",
