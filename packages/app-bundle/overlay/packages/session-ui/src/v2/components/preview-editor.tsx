@@ -24,6 +24,7 @@ import {
   externalUpdate,
 } from "./editor-core"
 import { clampEditorSelection, shouldCaptureOnUpdate, type PreviewEditorViewState } from "./preview-view-state"
+import { clampVisibleLine, anchoredScrollTop, initialHidden } from "./preview-editor-helpers"
 
 export function PreviewEditor(props: {
   content: string
@@ -51,7 +52,7 @@ export function PreviewEditor(props: {
   // focus, it stays true for this instance's lifetime so we always refocus on
   // return from any tab switch (side-panel, session, or preview-tab). Clearing
   // it on focusout was unreliable across all transition types.
-  let hidden = false
+  let hidden = initialHidden(props.active)
   let hadFocus = false
   let prevActive = props.active ? props.active() : true
   const onFocusIn = () => { hadFocus = true }
@@ -209,9 +210,10 @@ export function PreviewEditor(props: {
 
   // Update content when it changes externally (e.g. file reload after compile,
   // agent edit, external tool). Preserve the user's reading position by
-  // anchoring to the line number at the cursor — a full doc replacement shifts
-  // absolute scrollTop when lines are added/removed above the viewport, but
-  // the line number stays semantically correct. (#1250)
+  // anchoring to the FIRST VISIBLE line and its viewport offset — a full doc
+  // replacement shifts absolute scrollTop when lines are added/removed above the
+  // viewport, and anchoring to the cursor jumps the view when the user has
+  // scrolled away from it. (#1250, #1414)
   createEffect(() => {
     const content = props.content
     if (!editorView) return
@@ -222,8 +224,10 @@ export function PreviewEditor(props: {
     const before = snapshot(view)
     const selection = clampEditorSelection(before, content.length)
 
-    // Record the line number at the cursor before the swap
-    const cursorLine = view.state.doc.lineAt(Math.min(before.head, view.state.doc.length)).number
+    // Record the first visible line + its offset within the viewport before swap
+    const firstVisiblePos = view.viewport.from
+    const firstVisibleLine = view.state.doc.lineAt(firstVisiblePos).number
+    const viewportOffset = before.scrollTop - view.lineBlockAt(firstVisiblePos).top
 
     // External update — don't trigger onChange — with selection preserved in
     // the same transaction so it never resets to offset 0.
@@ -233,11 +237,11 @@ export function PreviewEditor(props: {
       annotations: [externalUpdate.of(true)],
     })
 
-    // Scroll to the same line number in the new document (line-anchored
-    // restore). Double-rAF ensures CM6 has fully laid out the new content
-    // before we read coordinates and scroll.
+    // Scroll so the same first-visible line sits at the same viewport offset in
+    // the new document. Double-rAF ensures CM6 has fully laid out the new
+    // content before we read coordinates and scroll.
     const newDoc = view.state.doc
-    const targetLine = Math.min(cursorLine, newDoc.lines)
+    const targetLine = clampVisibleLine(firstVisibleLine, newDoc.lines)
     const targetPos = newDoc.line(targetLine).from
     requestAnimationFrame(() => requestAnimationFrame(() => {
       if (!editorView) return
@@ -245,8 +249,7 @@ export function PreviewEditor(props: {
       if (!scroller) return
       try {
         const lineBlock = editorView.lineBlockAt(targetPos)
-        const targetScroll = lineBlock.top - scroller.clientHeight / 3
-        scroller.scrollTop = Math.max(0, targetScroll)
+        scroller.scrollTop = anchoredScrollTop(lineBlock.top, viewportOffset)
         scroller.scrollLeft = before.scrollLeft
       } catch {}
     }))
