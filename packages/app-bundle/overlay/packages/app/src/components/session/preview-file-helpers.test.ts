@@ -18,6 +18,12 @@ describe("toAbsolutePath", () => {
     expect(toAbsolutePath("main.tex", "/work/")).toBe("/work/main.tex")
   })
 
+  test("resolves against the POSIX root directory without dropping to a relative path", () => {
+    // #1414: stripping the trailing separator must not turn "/" into "" — that
+    // would make the path relative and the compile bridge would reject it.
+    expect(toAbsolutePath("main.tex", "/")).toBe("/main.tex")
+  })
+
   test("returns the relative path unchanged when no directory is known", () => {
     expect(toAbsolutePath("main.tex", undefined)).toBe("main.tex")
   })

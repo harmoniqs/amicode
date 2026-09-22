@@ -19,8 +19,11 @@ export function isAbsolutePreviewPath(p: string): boolean {
  */
 export function toAbsolutePath(filePath: string, directory: string | undefined): string {
   if (isAbsolutePreviewPath(filePath)) return filePath
-  const dir = (directory ?? "").replace(/[/\\]$/, "")
-  return dir ? `${dir}/${filePath}` : filePath
+  if (!directory) return filePath
+  const dir = directory.replace(/[/\\]+$/, "")
+  // A directory of just "/" (or "\\") strips to "" — resolve from the root
+  // rather than dropping back to a relative path the bridge would reject.
+  return dir ? `${dir}/${filePath}` : `/${filePath}`
 }
 
 /**
