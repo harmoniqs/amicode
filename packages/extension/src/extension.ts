@@ -527,7 +527,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
             opencodeChannel.appendLine("[fleet] attach failed: amicodeService is not set (service not booted?)");
             return { ok: false, reason: "Amicode service not running on this machine" };
           }
-          const url = `${svc.url}/fleet/attach`;
+          const url = `${svc.url}/amicode/fleet/attach`;
           opencodeChannel.appendLine(`[fleet] attach: POST ${url} machine_id=${payload.machine_id}`);
           try {
             const res = await fetch(url, {
