@@ -616,7 +616,7 @@
     "packages/app/src/components/session/pdf-restore.ts": "e5c92096b9302a452439babfc2732610a7e0d18e23793ce3bf6352fa32f91a36",
     "packages/app/src/components/session/preview-file-helpers.test.ts": "c2a872f26c716426b5ec25aeb98bae3af50d2dbd61fd87d59601d96471df5926",
     "packages/app/src/components/session/preview-file-helpers.ts": "1f28969aefcb05969826112bf78903e561e54d4bf01cd219a3c68def383b01c0",
-    "packages/app/src/components/session/preview-file-view.tsx": "6acac19cd3d264cfe14f412e6dc2e50e5c84028d5f57ddbaae6d9def0a0a57c6",
+    "packages/app/src/components/session/preview-file-view.tsx": "7b221de755b851170e4b3dfc4d78d8446f6dfa40116b7529466db24e714d90f5",
     "packages/app/src/components/session/session-chats-dropdown.test.ts": "2003d2a15781337ea6bff2c68e730cc5b6df38697f15d927ab26913936444db7",
     "packages/app/src/components/session/session-context-tab.tsx": "227243b178b517f067d9ae0ae0eec3c559beeb6681828158b0600a17e98e7f81",
     "packages/app/src/components/session/session-header.tsx": "7113b3eca8ec950d4a547a2b7e2661b5e47f593653e12fca659b5b5f92cb90a6",
@@ -856,7 +856,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-09-22T17:07:05.987Z",
+  "extracted_at": "2026-09-22T18:49:09.546Z",
   "per_package": {
     "packages/app": {
       "A": 175,
