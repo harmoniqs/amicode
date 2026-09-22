@@ -223,19 +223,34 @@ describe("handleConnectToDevice — remote device (#1413)", () => {
     expect(calledWith).toBe("studio");
   });
 
-  it("disabled item (with description) is a no-op", async () => {
+  it("disabled item shows a warning toast with the reason", async () => {
     let attached = false;
     let sshCalled = false;
+    let warningMsg = "";
     const deps = makeDeps({
       readRoster: () => [rosterRow({ machine_id: "peer-01", capabilities: [] })], // no serving
       showQuickPick: async (items: ConnectQuickPickItem[]) =>
         items.find((i) => i.action === "thin-client"), // the disabled one
       attachToDevice: async () => { attached = true; return { ok: true }; },
       connectRemoteSsh: async () => { sshCalled = true; return { ok: true, authority: "", path: "", uri: "" }; },
+      showWarningMessage: async (msg: string) => { warningMsg = msg; return undefined; },
     });
     await handleConnectToDevice(remoteMsg("peer-01"), deps);
     expect(attached).toBe(false);
     expect(sshCalled).toBe(false);
+    expect(warningMsg).toBe("Not running a server");
+  });
+
+  it("disabled 'device unreachable' item shows the right toast", async () => {
+    let warningMsg = "";
+    const deps = makeDeps({
+      readRoster: () => [rosterRow({ machine_id: "peer-01", capabilities: ["serving"], health: "down" })],
+      showQuickPick: async (items: ConnectQuickPickItem[]) =>
+        items.find((i) => i.action === "thin-client"),
+      showWarningMessage: async (msg: string) => { warningMsg = msg; return undefined; },
+    });
+    await handleConnectToDevice(remoteMsg("peer-01"), deps);
+    expect(warningMsg).toBe("Device unreachable");
   });
 
   it("dismissed quick pick (undefined) is a no-op", async () => {

@@ -215,7 +215,10 @@ async function handleRemoteDevice(device: ResolvedDevice, deps: FleetConnectDeps
   });
   if (!pick) return;
 
-  if (!isItemEnabled(pick)) return; // disabled items are no-ops
+  if (!isItemEnabled(pick)) {
+    await deps.showWarningMessage(pick.description!);
+    return;
+  }
 
   if (pick.action === "thin-client") {
     // Resolve credential
