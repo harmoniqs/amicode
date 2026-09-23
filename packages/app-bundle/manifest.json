@@ -335,6 +335,7 @@
     "packages/opencode/test/server/amicode-widgets.test.ts": "14fc6ccff4e83a5b005a724936e9f0d7ce411fab74109f319e8bc748665f7ab8",
     "packages/opencode/test/server/auth-accept-set.test.ts": "8fe698812ed9a809d21ace1a9751bd3f1976ab1e58ad5bda65dbfff58df8e3bc",
     "packages/opencode/test/server/httpapi-compression.test.ts": "5f7603d7018e0b95f1c2f36c01dd297c01770bfcdd91ce29778e03b7d6143f75",
+    "packages/opencode/test/server/httpapi-file-write-gate.test.ts": "0c91b7417e615850edfde3f2878207dab6b6624d4cfbb6e6783b2e6d9aa4dff0",
     "packages/opencode/test/server/httpapi-file.test.ts": "d3386129bc81467ecbcc57a3861f53767ee56ac41b4ff6ad58d8b168fb3b3373",
     "packages/opencode/test/server/httpapi-instance-route-auth.test.ts": "4b73a89d2431c02bc3b665d93f9002914e51eb1add979dc1867efbcbc0c36e25",
     "packages/opencode/test/server/httpapi-provider.test.ts": "9e8b3e085b478e3f99b689ffff600e10c0b4b50b3cabdbd749f88dae19bf5904",
@@ -674,12 +675,12 @@
     "packages/app/src/pages/layout/worktree-auto-rename.test.ts": "fb6fac363b8bee1225bbcff8098019c02f19b095b5cd96c29f7e673acb1e4e89",
     "packages/app/src/pages/layout/worktree-auto-rename.ts": "2ef3e506b96b972cb55799a89aa54ca6453fc31c80bc022aa16db6ecfe9cdced",
     "packages/app/src/pages/new-session/new-session-draft-controller.ts": "3607771a22b6855afd0b0d666de662c9070a2dcd56ae96ba51d89c9e11018e81",
-    "packages/app/src/pages/new-session/new-session-machine-picker.test.ts": "2f2adf9d738aee98f2989c5453c97eeba0e48522b7863c99d9c0be9a6c11ff3b",
-    "packages/app/src/pages/new-session/new-session-view.test.ts": "eb337485bf03facbc59d9eadac37cfeb04f75bf97814df80d3be4d0ec9455047",
-    "packages/app/src/pages/new-session/new-session-view.tsx": "8fa065e3d792f99de6fdb6f0de8c6205fab519159342655fe59fc09ea67691b1",
     "packages/app/src/pages/new-session/new-session-machine-mount.test.ts": "30c360ecf2464258f3e97fb5aaa1ca37145c6f62b200f3c5f524b58bc9534837",
     "packages/app/src/pages/new-session/new-session-machine-mount.ts": "f7c3cdbd0ab92749e4c99432b87c7703050dd909b8f0e138188c4b264ba06b46",
     "packages/app/src/pages/new-session/new-session-machine-picker-mount.tsx": "8d8c8aacefab02269b7e5f97b7a60cda1e6a12b4da1d15c4775fdf0eb5800b4a",
+    "packages/app/src/pages/new-session/new-session-machine-picker.test.ts": "2f2adf9d738aee98f2989c5453c97eeba0e48522b7863c99d9c0be9a6c11ff3b",
+    "packages/app/src/pages/new-session/new-session-view.test.ts": "eb337485bf03facbc59d9eadac37cfeb04f75bf97814df80d3be4d0ec9455047",
+    "packages/app/src/pages/new-session/new-session-view.tsx": "8fa065e3d792f99de6fdb6f0de8c6205fab519159342655fe59fc09ea67691b1",
     "packages/app/src/pages/session/amicode-session-relay.integration.test.ts": "4991e775d3a6c63a514072ccfa5aad190c586383b77ef41689c853fb271d3bf4",
     "packages/app/src/pages/session/fleet-manager-tab.tsx": "c491728b054df461854db9b53f7ab551e89993dca15acf75f01fad26c22d97dd",
     "packages/app/src/pages/session/fleet-manager.test.ts": "9cbbde7d41351bf59d50cd6ffc6aa318bb8cc1de6d5b980c0c87ab795a668722",
@@ -842,12 +843,12 @@
     "packages/opencode/test/server/fixtures/credentials/cloud.json": "431bdf114031da38975538384e21ab0ec7206a0859859f0bf87345b8c360829e",
     "packages/opencode/test/server/fixtures/credentials/pasqal.json": "d3c775cc498fe3029d9ac234d9eaa9eaffa1ad8656e12a5aca1355c733276736",
     "packages/sdk/js/src/v2/gen/sdk.gen.ts": "6610638b4fb71bac498da98d232ef9adcd4b011b63e5e81a63fc6dc20d311b17",
-    "packages/sdk/js/src/v2/gen/types.gen.ts": "0c23b262085d1e14b89bd03292a380c9ec8b52e66c4308304a05173362b79339",
+    "packages/sdk/js/src/v2/gen/types.gen.ts": "c6ee51f0c15ac34fb4b3ccfa9f0a0592835d270340988fabbb76003374d34ca7",
     "packages/session-ui/src/v2/components/prompt-input/attachments.ts": "ff66078f2edc9a67a4df0d7dfd76a49be5eab27ac332b303f3412721ef7268ea",
     "packages/session-ui/src/v2/components/prompt-input/index.tsx": "6cbd3a1e3a4fd789284526e5981c6fd2d4952f3926c5a1be0609bb6832453997",
-    "packages/opencode/src/server/routes/instance/httpapi/server.ts": "85c200797fed41c0cd08e7aa699ce13aeb8a3d23aa2b9eddc4d72e72b8b5082c",
+    "packages/opencode/src/server/routes/instance/httpapi/server.ts": "b753be7b2cc886acb591bdf2a458e7e776ee4823a50424bbb13d0f7550edec30",
     "packages/opencode/src/server/routes/instance/httpapi/groups/experimental.ts": "944a0aee215a917e867fd9482f3c2bd40f49082bd3174c8a7d967ca40e34ec15",
-    "packages/opencode/src/server/routes/instance/httpapi/groups/file.ts": "ed165131c62eeb29375db39edf89db8f87488e24ef99fc6f2cf19705ba35751a",
+    "packages/opencode/src/server/routes/instance/httpapi/groups/file.ts": "a96fdc55ddb95ca7c481c86f67e37ed88d4cf2a190a482765ab55ce4409f3a59",
     "packages/opencode/src/server/routes/instance/httpapi/groups/mcp.ts": "048efa7b74d43c4ad4a75d0f8421c808760c8c0dcd593f0051a87044e40487d6",
     "packages/opencode/src/server/routes/instance/httpapi/groups/provider.ts": "34c6f1ab1a085d1b047c220bbff32a36032dc5e924784e9272cda166cf0ec84b",
     "packages/opencode/src/server/routes/instance/httpapi/groups/session.ts": "1421f8c07948b121c7e2005bd9b0fcd6b2c456565ddd1da32d8e6c35d03fac9c",
@@ -855,7 +856,8 @@
     "packages/opencode/src/server/routes/instance/httpapi/handlers/file.ts": "10bcb79b117beebee04184fb48c1ad789e782e2f7ae4b0c68603edc00f03aee9",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/mcp.ts": "7da08d58765cdf2b6ce4648fc70de371402949f5bb7b75696f674d43f2d5365b",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/provider.ts": "8baf16cad0992c5351b61b0c0fb27903bb25b17e1b25fc7c5d77f807c24413a6",
-    "packages/opencode/src/server/routes/instance/httpapi/handlers/session.ts": "b37ff4136c4aea85b23083bf441f03e09820e3e4cdd95e4118ca570d8435b94f"
+    "packages/opencode/src/server/routes/instance/httpapi/handlers/session.ts": "b37ff4136c4aea85b23083bf441f03e09820e3e4cdd95e4118ca570d8435b94f",
+    "packages/opencode/src/server/routes/instance/httpapi/middleware/file-write-workspace.ts": "665c33633173ee89c6da1d4a0eaacaf4eebe3ccdd04eb36b063515cb4c093e4a"
   },
   "symlinks": [
     "packages/app/public/amico.svg"
@@ -870,7 +872,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-09-23T04:31:22.123Z",
+  "extracted_at": "2026-09-23T15:57:41.972Z",
   "per_package": {
     "packages/app": {
       "A": 187,
@@ -888,7 +890,7 @@
       "D": 0
     },
     "packages/opencode": {
-      "A": 69,
+      "A": 71,
       "M": 81,
       "D": 0
     },
@@ -914,7 +916,7 @@
     }
   },
   "counts": {
-    "overlay_total": 848,
+    "overlay_total": 850,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1246,6 +1248,7 @@
     "packages/opencode/test/server/amicode-widgets.test.ts": "A",
     "packages/opencode/test/server/auth-accept-set.test.ts": "A",
     "packages/opencode/test/server/httpapi-compression.test.ts": "M",
+    "packages/opencode/test/server/httpapi-file-write-gate.test.ts": "A",
     "packages/opencode/test/server/httpapi-file.test.ts": "M",
     "packages/opencode/test/server/httpapi-instance-route-auth.test.ts": "M",
     "packages/opencode/test/server/httpapi-provider.test.ts": "M",
@@ -1585,12 +1588,12 @@
     "packages/app/src/pages/layout/worktree-auto-rename.test.ts": "A",
     "packages/app/src/pages/layout/worktree-auto-rename.ts": "A",
     "packages/app/src/pages/new-session/new-session-draft-controller.ts": "M",
-    "packages/app/src/pages/new-session/new-session-machine-picker.test.ts": "A",
-    "packages/app/src/pages/new-session/new-session-view.test.ts": "A",
-    "packages/app/src/pages/new-session/new-session-view.tsx": "M",
     "packages/app/src/pages/new-session/new-session-machine-mount.test.ts": "A",
     "packages/app/src/pages/new-session/new-session-machine-mount.ts": "A",
     "packages/app/src/pages/new-session/new-session-machine-picker-mount.tsx": "A",
+    "packages/app/src/pages/new-session/new-session-machine-picker.test.ts": "A",
+    "packages/app/src/pages/new-session/new-session-view.test.ts": "A",
+    "packages/app/src/pages/new-session/new-session-view.tsx": "M",
     "packages/app/src/pages/session/amicode-session-relay.integration.test.ts": "A",
     "packages/app/src/pages/session/fleet-manager-tab.tsx": "A",
     "packages/app/src/pages/session/fleet-manager.test.ts": "A",
@@ -1766,7 +1769,8 @@
     "packages/opencode/src/server/routes/instance/httpapi/handlers/file.ts": "M",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/mcp.ts": "M",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/provider.ts": "M",
-    "packages/opencode/src/server/routes/instance/httpapi/handlers/session.ts": "M"
+    "packages/opencode/src/server/routes/instance/httpapi/handlers/session.ts": "M",
+    "packages/opencode/src/server/routes/instance/httpapi/middleware/file-write-workspace.ts": "A"
   },
   "upstream_base_archive_sha256": "6ae708a289bf8957f928e59ec5f3fc8a61e56290a9f12f47b916c9a26a517e9b"
 }
