@@ -37,7 +37,7 @@ import { EngineProxy } from "./engine_proxy";
 import { HubProxy } from "./hub_proxy";
 import { SessionEventResume } from "./session_event_resume";
 import { HubCredentialRead, mintRegistry, readHubCredential } from "./hub_credential";
-import { buildMergedProjection, type UpstreamMode } from "./merged_projection";
+import { buildMergedProjection, buildFleetProjection, type UpstreamMode, type MergedProjection, type FleetProjection } from "./merged_projection";
 import { FleetPostureDetector, type FleetPostureTuning } from "./fleet_posture";
 import { handleFleetWrite, type FleetWriteDeps } from "./fleet_writes";
 import { inspectTunnelConfigFile, TUNNEL_GENERATION_HEADER } from "./fleet_tunnel";
@@ -415,6 +415,15 @@ export interface FleetRouteDeps {
   /** #392 (D7): the installed tunnel config's path — read per request so
    *  a rejoin is visible mid-session. */
   tunnelConfigPath?: string;
+  /** #1439: fleet-wide peer data for the N-peer projection. When present,
+   *  the sessions route uses buildFleetProjection (N-peer, machine-keyed);
+   *  when absent, falls back to the existing 2-source buildMergedProjection. */
+  fleetPeers?: {
+    localMachineId: string;
+    getServingPeers(): Array<{ machineId: string }>;
+    readPeerToken(machineId: string): { ok: true; credential: { baseUrl: string; token: string } } | { ok: false };
+    rosterLookup(machineId: string): { name: string; device_type?: string } | undefined;
+  };
 }
 
 /** GET /amicode/fleet/status — the plane's honesty surface: the current
@@ -458,20 +467,44 @@ export function registerFleetRoutes(server: AmicodeServiceServer, deps: FleetRou
 
   server.add("GET", "/amicode/fleet/sessions", async () => {
     const started = Date.now();
-    const projection = await buildMergedProjection({
-      local: { getUrl: deps.engine.getUrl, password: deps.engine.password },
-      hub: { getUrl: deps.hub.getUrl, credential: deps.readCredential() },
-    });
-    if (deps.monitor) {
+
+    // #1439: fleet-wide N-peer projection when peer data is available;
+    // otherwise fall back to the legacy 2-source (local+hub) projection.
+    let projection: MergedProjection | FleetProjection;
+    if (deps.fleetPeers) {
+      const peers = deps.fleetPeers.getServingPeers().map((p) => {
+        const tokenRead = deps.fleetPeers!.readPeerToken(p.machineId);
+        return {
+          machineId: p.machineId,
+          getUrl: () => (tokenRead.ok ? tokenRead.credential.baseUrl : undefined),
+          token: tokenRead.ok ? tokenRead.credential.token : undefined,
+        };
+      });
+      projection = await buildFleetProjection({
+        localMachineId: deps.fleetPeers.localMachineId,
+        local: { getUrl: deps.engine.getUrl, password: deps.engine.password },
+        peers,
+        rosterLookup: deps.fleetPeers.rosterLookup,
+      });
+    } else {
+      projection = await buildMergedProjection({
+        local: { getUrl: deps.engine.getUrl, password: deps.engine.password },
+        hub: { getUrl: deps.hub.getUrl, credential: deps.readCredential() },
+      });
+    }
+
+    if (deps.monitor && !deps.fleetPeers) {
       // the projection IS a data-plane request: its hub side feeds the
       // posture detector's outcome stream (transport-level absences only —
       // a missing credential or a 401 is D5's honesty surface, not D6's
       // degradation) and re-asserts D7's hub build parity.
-      const hubRecord = projection.sources.hub;
-      if (hubRecord.present) {
+      // NOTE: hub-specific monitoring applies to the legacy 2-source path
+      // only; the N-peer path (#1439) does not carry a single "hub" source.
+      const hubRecord = (projection as MergedProjection).sources.hub;
+      if (hubRecord?.present) {
         deps.monitor.record({ kind: "responded", latencyMs: Date.now() - started });
         deps.monitor.noteHubVersion(hubRecord.version ?? null);
-      } else if (hubRecord.reason === "no-upstream" || hubRecord.reason === "fetch-failed") {
+      } else if (hubRecord?.reason === "no-upstream" || hubRecord?.reason === "fetch-failed") {
         deps.monitor.record({ kind: "no-response", detail: hubRecord.reason });
       }
     }
@@ -574,6 +607,16 @@ export function createAmicodeService(
        *  the pointer value for the peer-unreachable 503. Absent → the
        *  FLEET_PEER_UNREACHABLE_POINTER default. */
       peerUnreachablePointer?: () => string | null;
+      /** #1439: fleet-wide N-peer session projection inputs. When present,
+       *  the GET /amicode/fleet/sessions route uses buildFleetProjection
+       *  (N-peer, machine-keyed fan-out); when absent, the legacy 2-source
+       *  (local+hub) projection is used. */
+      fleetPeers?: {
+        localMachineId: string;
+        getServingPeers(): Array<{ machineId: string }>;
+        readPeerToken(machineId: string): { ok: true; credential: { baseUrl: string; token: string } } | { ok: false };
+        rosterLookup(machineId: string): { name: string; device_type?: string } | undefined;
+      };
     };
   } = {},
 ): AmicodeServiceServer {
@@ -737,6 +780,7 @@ export function createAmicodeService(
         engineArmed: opts.engine !== undefined,
         monitor,
         ...(tunnelConfigPath !== undefined ? { tunnelConfigPath } : {}),
+        ...(opts.fleet.fleetPeers !== undefined ? { fleetPeers: opts.fleet.fleetPeers } : {}),
       });
     }
   }

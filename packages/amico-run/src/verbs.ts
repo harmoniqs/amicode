@@ -22,6 +22,7 @@ import { ledgerVerb } from "./ledger_verb.js";
 import { profileVerb } from "./profile_verb.js";
 import { fleetVerb } from "./fleet_verb.js";
 import { fleetEnroll } from "./fleet_enroll_verb.js";
+import { fleetRevoke } from "./fleet_revoke_verb.js";
 import { specVerb } from "./spec_verb.js";
 import { planVerb } from "./plan_verb.js";
 import { handoffVerb } from "./handoff_verb.js";
@@ -154,7 +155,7 @@ const profile: Verb = {
 const fleet: Verb = {
   name: "fleet",
   summary:
-    "fleet registry: list/status read verbs, steer/stop/re-tier as signal enqueuers (never a record write), sweep with a pid-liveness guard, digest as the Slack projection; status --projection reads the fleet-authority projection (entitlement-gated, #1068); enroll joins a machine to a fleet (server mint / client redeem, #1319)",
+    "fleet registry: list/status read verbs, steer/stop/re-tier as signal enqueuers (never a record write), sweep with a pid-liveness guard, digest as the Slack projection; status --projection reads the fleet-authority projection (entitlement-gated, #1068); enroll joins a machine to a fleet (server mint / client redeem, #1319); revoke <machine_id> expels one peer — local drop + mint-list bar + fan-out to serving peers (ADR 0032 §D5, #1438)",
   generalizes: "the fleet view + in-chat /fleet + Amico's conversational fleet questions + the Slack digest, over ~/.amico/ops/fleet",
   slice: "fleet substrate (§9 step 2)",
   // `enroll` (#1319) is the ONE async sub-verb (real HTTP: roster POST +
@@ -162,7 +163,12 @@ const fleet: Verb = {
   // from the session-registry fleetVerb. It is dispatched HERE at the registry
   // seam so the synchronous fleetVerb router keeps its pinned VerbResult
   // contract; Verb.run already permits a Promise and both callers await it.
-  run: (args) => (args[0] === "enroll" ? fleetEnroll(args.slice(1)) : fleetVerb(args)),
+  run: (args) =>
+    args[0] === "enroll"
+      ? fleetEnroll(args.slice(1))
+      : args[0] === "revoke"
+        ? fleetRevoke(args.slice(1))
+        : fleetVerb(args),
 };
 
 // spec — the deliberation front half: adversarially review a Spec before it compiles to a

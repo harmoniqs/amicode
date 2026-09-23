@@ -7,12 +7,22 @@ import { describe, expect, test } from "bun:test"
  * flyout (amicode#273).
  */
 
+type SessionOwnerTag = {
+  owner_machine_id: string
+  owner_name: string
+  device_type?: string
+  directory?: string
+  is_local: boolean
+}
+
 type Session = {
   id: string
   title?: string
   directory: string
   parentID?: string
   time: { created: number; updated?: number; archived?: number | null }
+  /** Fleet-wide owner overlay (#1439 — absent on pre-fleet sessions). */
+  amicode_owner?: SessionOwnerTag
 }
 
 // --- Helpers under test (pure logic extracted from the component) ---
@@ -43,6 +53,27 @@ function filterSessionsByQuery(
   const q = query.trim().toLowerCase()
   if (!q) return sessions
   return sessions.filter((session) => getTitle(session).toLowerCase().includes(q))
+}
+
+/** Derive the machine badge label for a session (#1439).
+ *  Local sessions are unbadged (absence = local, ADR 0031 §D6);
+ *  remote sessions show the owner's name as the badge. */
+function deriveBadge(session: Session): string | undefined {
+  if (!session.amicode_owner) return undefined
+  if (session.amicode_owner.is_local) return undefined
+  return session.amicode_owner.owner_name
+}
+
+/** Filter sessions to a specific machine (#1439).
+ *  null/undefined = all machines (the "clear" state). */
+function filterSessionsByMachine(
+  sessions: Session[],
+  machineId: string | null | undefined,
+): Session[] {
+  if (machineId == null) return sessions
+  return sessions.filter(
+    (s) => s.amicode_owner?.owner_machine_id === machineId,
+  )
 }
 
 /**
@@ -230,6 +261,123 @@ describe("Session Chats Dropdown", () => {
 
       expect(state.open).toBe(false) // flyout closed BEFORE navigation
       expect(action.type).toBe("navigate") // would navigate after close
+    })
+  })
+
+  // ── fleet-wide machine badges (#1439, AC2) ─────────────────────────────────
+
+  describe("deriveBadge — machine badge for fleet sessions", () => {
+    const localSession: Session = {
+      id: "ses_local",
+      title: "Local work",
+      directory: "/proj",
+      time: { created: 100 },
+      amicode_owner: {
+        owner_machine_id: "macbook-pro",
+        owner_name: "MacBook Pro",
+        device_type: "laptop",
+        is_local: true,
+      },
+    }
+
+    const remoteSession: Session = {
+      id: "ses_remote",
+      title: "Remote work",
+      directory: "/proj",
+      time: { created: 200 },
+      amicode_owner: {
+        owner_machine_id: "mac-studio",
+        owner_name: "Mac Studio",
+        device_type: "desktop",
+        is_local: false,
+      },
+    }
+
+    const preFleetsession: Session = {
+      id: "ses_old",
+      title: "Legacy",
+      directory: "/proj",
+      time: { created: 50 },
+      // no amicode_owner — pre-fleet session
+    }
+
+    test("local session is unbadged (absence = local)", () => {
+      expect(deriveBadge(localSession)).toBeUndefined()
+    })
+
+    test("remote session shows the owner machine name as badge", () => {
+      expect(deriveBadge(remoteSession)).toBe("Mac Studio")
+    })
+
+    test("pre-fleet session (no owner tag) is unbadged", () => {
+      expect(deriveBadge(preFleetsession)).toBeUndefined()
+    })
+  })
+
+  // ── per-machine filter (#1439, AC3) ────────────────────────────────────────
+
+  describe("filterSessionsByMachine — per-machine narrowing", () => {
+    const fleetSessions: Session[] = [
+      {
+        id: "ses_a",
+        title: "Local session",
+        directory: "/proj",
+        time: { created: 100 },
+        amicode_owner: { owner_machine_id: "macbook", owner_name: "MacBook", is_local: true },
+      },
+      {
+        id: "ses_b",
+        title: "Studio session 1",
+        directory: "/proj",
+        time: { created: 200 },
+        amicode_owner: { owner_machine_id: "mac-studio", owner_name: "Mac Studio", is_local: false },
+      },
+      {
+        id: "ses_c",
+        title: "Studio session 2",
+        directory: "/proj",
+        time: { created: 300 },
+        amicode_owner: { owner_machine_id: "mac-studio", owner_name: "Mac Studio", is_local: false },
+      },
+      {
+        id: "ses_d",
+        title: "Mini session",
+        directory: "/proj",
+        time: { created: 400 },
+        amicode_owner: { owner_machine_id: "mac-mini", owner_name: "Mac Mini", is_local: false },
+      },
+    ]
+
+    test("null machineId returns all sessions (the 'all machines' state)", () => {
+      expect(filterSessionsByMachine(fleetSessions, null)).toHaveLength(4)
+    })
+
+    test("undefined machineId returns all sessions (the 'clear filter' state)", () => {
+      expect(filterSessionsByMachine(fleetSessions, undefined)).toHaveLength(4)
+    })
+
+    test("a specific machineId narrows to that machine's sessions only", () => {
+      const studio = filterSessionsByMachine(fleetSessions, "mac-studio")
+      expect(studio).toHaveLength(2)
+      expect(studio.every((s) => s.amicode_owner?.owner_machine_id === "mac-studio")).toBe(true)
+    })
+
+    test("the local machine's sessions are filterable by its machine_id", () => {
+      const local = filterSessionsByMachine(fleetSessions, "macbook")
+      expect(local).toHaveLength(1)
+      expect(local[0].id).toBe("ses_a")
+    })
+
+    test("a machineId with no sessions returns an empty list", () => {
+      expect(filterSessionsByMachine(fleetSessions, "nonexistent")).toHaveLength(0)
+    })
+
+    test("filter composes with filterSessionsByQuery", () => {
+      const getTitle = (s: Session) => s.title || s.id
+      const studioSessions = filterSessionsByMachine(fleetSessions, "mac-studio")
+      const searched = filterSessionsByQuery(studioSessions, "session 2", getTitle)
+      expect(searched).toHaveLength(1)
+      expect(searched[0].id).toBe("ses_c")
     })
   })
 })
