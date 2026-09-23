@@ -20,6 +20,7 @@ import { AddressInfo } from "node:net";
 import { createAmicodeService } from "../src/amicode_service";
 import { startAmicodeService } from "../src/amicode_service_wiring";
 import type { AmicodeServiceBoot } from "../src/amicode_service_wiring";
+import type { FleetActivation } from "../src/fleet_activation";
 import { serverAuthToken, serverAuthHeader } from "../src/server_auth";
 import {
   fleetHubFile,
@@ -1414,6 +1415,333 @@ describe("W2 — present-but-empty peers ≠ undefined peers (#1447)", () => {
       expect(res.status).toBe(200);
       const body = (await res.json()) as { mode: string; sources: Record<string, unknown> };
       expect(Object.keys(body.sources).sort()).toEqual(["hub", "local"]); // legacy 2-source
+    } finally {
+      await boot.service.stop();
+    }
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// #1478 — BASE peer-studio activation (AC1/AC2/AC5): an unentitled INDEPENDENT
+// SERVING PEER mounts the base peer-studio OBSERVATION routes
+// (/amicode/fleet/status + /amicode/fleet/sessions) WITHOUT an amicissimo
+// entitlement and WITHOUT the premium data-plane overlay. Base peer-studio and
+// the managed premium overlay are DISTINCT authorities: the routes mount for a
+// verified peer through the base authority, and the staging receipt still reads
+// entitlement:"absent" (NO entitlement forgery). A no-peer base install and a
+// fleet-of-one stay local-only (byte-compatible); a client relay is never
+// base-activated (its /amicode/* relay is governed by the attached FleetPlane,
+// untouched here → AC5).
+//
+// SCOPE (Binding Amendment): this slice owns base peer-studio activation ONLY.
+// AC3 (production service/engine accept-set parity) and AC4 (headless reboot
+// posture) are owned by #1485 / #1487 — deliberately NOT implemented or
+// asserted here.
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe("#1478 base peer-studio activation — unentitled serving peer (AC1/AC2/AC5)", () => {
+  let root: string;
+  let dist: string;
+  let overlaySource: string;
+  let localEngine: MockOrigin;
+  let studioPeer: MockOrigin;
+  let engineToken: string;
+  let savedHubFile: string | undefined;
+
+  const ROSTER_1478: Record<string, { name: string; device_type?: string }> = {
+    "my-macbook": { name: "My MacBook", device_type: "laptop" },
+    "the-studio": { name: "The Studio", device_type: "desktop" },
+  };
+
+  // A serving-peer provider: one reachable serving peer beyond self.
+  function servingPeerProvider() {
+    return {
+      localMachineId: "my-macbook",
+      getServingPeers: () => [{ machineId: "the-studio" }],
+      readPeerToken: (id: string) =>
+        id === "the-studio"
+          ? { ok: true as const, credential: { baseUrl: studioPeer.url, token: "tok-studio-1478" } }
+          : { ok: false as const },
+      rosterLookup: (id: string) => ROSTER_1478[id],
+    };
+  }
+
+  // A no-peer provider: fleet-configured but ZERO serving peers beyond self
+  // (the no-peer base install / fleet-of-one shape).
+  function noPeerProvider() {
+    return {
+      localMachineId: "my-macbook",
+      getServingPeers: () => [] as Array<{ machineId: string }>,
+      readPeerToken: () => ({ ok: false as const }),
+      rosterLookup: (id: string) => ROSTER_1478[id],
+    };
+  }
+
+  function bootBase(fleet: Parameters<typeof createAmicodeService>[0]["fleet"]) {
+    return createAmicodeService({
+      password: "service-own-mint",
+      engine: { password: "engine-mint-password", getUrl: () => localEngine.url },
+      shelf: { distRoot: dist },
+      fleet,
+    });
+  }
+
+  beforeAll(async () => {
+    root = mkdtempSync(join(tmpdir(), "amicode-1478-base-"));
+    dist = buildMockDist(root);
+    overlaySource = join(root, "overlay-source");
+    writeDataPlaneManifest(overlaySource); // present but NEVER read (unentitled)
+    localEngine = await startMockEngine([
+      { id: "ses-1478-local", title: "local", time: { created: 1, updated: 2 } },
+    ]);
+    studioPeer = await startMockPeer(
+      [{ id: "ses-1478-studio", title: "studio", time: { created: 3, updated: 4 } }],
+      "tok-studio-1478",
+    );
+    engineToken = serverAuthToken("engine-mint-password");
+    // Isolate the hub-credential read (status route) from any real machine file.
+    savedHubFile = process.env.AMICO_FLEET_HUB_FILE;
+    process.env.AMICO_FLEET_HUB_FILE = join(root, "hub-cred-absent.json");
+  });
+
+  afterAll(async () => {
+    await localEngine.stop();
+    await studioPeer.stop();
+    if (savedHubFile === undefined) delete process.env.AMICO_FLEET_HUB_FILE;
+    else process.env.AMICO_FLEET_HUB_FILE = savedHubFile;
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("AC1: an unentitled independent serving peer mounts the base peer-studio routes (status + sessions)", async () => {
+    const svc = bootBase({
+      entitlements: [], // NO amicissimo entitlement
+      overlaySource,
+      hub: { getUrl: () => undefined }, // a base peer, NOT a premium hub relay
+      fleetPeers: servingPeerProvider(),
+    });
+    const o = (await svc.start()).toString().replace(/\/$/, "");
+    try {
+      const status = await fetch(`${o}/amicode/fleet/status`, {
+        headers: { Authorization: `Basic ${engineToken}` },
+      });
+      expect(status.status).toBe(200);
+      const sbody = (await status.json()) as { ok: boolean; mode: string };
+      expect(sbody.ok).toBe(true);
+      // honest routing mode: a base peer has NO hub upstream → engine routing
+      // (it never falsely claims fleet hub-routing).
+      expect(sbody.mode).toBe("engine");
+
+      const sessions = await fetch(`${o}/amicode/fleet/sessions`, {
+        headers: { Authorization: `Basic ${engineToken}` },
+      });
+      expect(sessions.status).toBe(200);
+      const body = (await sessions.json()) as FleetProjection;
+      // the N-peer machine-keyed projection — the verified peer is observable
+      expect(body.sources["the-studio"].present).toBe(true);
+      expect(body.sources["my-macbook"].present).toBe(true);
+    } finally {
+      await svc.stop();
+    }
+  });
+
+  it("AC1: a no-peer base install (fleet configured, ZERO serving peers) remains local-only — the peer-studio routes 404", async () => {
+    const svc = bootBase({
+      entitlements: [],
+      overlaySource,
+      hub: { getUrl: () => undefined },
+      fleetPeers: noPeerProvider(),
+    });
+    const o = (await svc.start()).toString().replace(/\/$/, "");
+    try {
+      const status = await fetch(`${o}/amicode/fleet/status`, {
+        headers: { Authorization: `Basic ${engineToken}` },
+      });
+      expect(status.status).toBe(404);
+      const sessions = await fetch(`${o}/amicode/fleet/sessions`, {
+        headers: { Authorization: `Basic ${engineToken}` },
+      });
+      expect(sessions.status).toBe(404);
+    } finally {
+      await svc.stop();
+    }
+  });
+
+  it("AC2: the premium overlay is NOT the sole route-mount authority — base routes mount with the entitlement ABSENT (no forgery)", async () => {
+    const svc = bootBase({
+      entitlements: [],
+      overlaySource,
+      hub: { getUrl: () => undefined },
+      fleetPeers: servingPeerProvider(),
+    });
+    const o = (await svc.start()).toString().replace(/\/$/, "");
+    try {
+      const status = await fetch(`${o}/amicode/fleet/status`, {
+        headers: { Authorization: `Basic ${engineToken}` },
+      });
+      expect(status.status).toBe(200);
+      const sbody = (await status.json()) as { staging: { entitlement: string; staged: boolean } };
+      // the base authority mounted the routes WITHOUT an entitlement — the
+      // staging receipt honestly reports absent / not-staged (no forged flag).
+      expect(sbody.staging.entitlement).toBe("absent");
+      expect(sbody.staging.staged).toBe(false);
+    } finally {
+      await svc.stop();
+    }
+  });
+
+  it("AC2: the premium overlay remains ADDITIVE — an entitled boot still mounts the peer-studio routes (a second, coexisting authority)", async () => {
+    const svc = createAmicodeService({
+      password: "service-own-mint",
+      engine: { password: "engine-mint-password", getUrl: () => localEngine.url },
+      shelf: { distRoot: dist },
+      fleet: {
+        entitlements: ["amicissimo"],
+        overlaySource,
+        hub: { getUrl: () => undefined },
+        getMode: () => "fleet",
+      },
+    });
+    const o = (await svc.start()).toString().replace(/\/$/, "");
+    try {
+      const status = await fetch(`${o}/amicode/fleet/status`, {
+        headers: { Authorization: `Basic ${engineToken}` },
+      });
+      expect(status.status).toBe(200);
+      const sbody = (await status.json()) as { staging: { entitlement: string; staged: boolean } };
+      expect(sbody.staging.entitlement).toBe("present");
+      expect(sbody.staging.staged).toBe(true);
+    } finally {
+      await svc.stop();
+    }
+  });
+
+  it("AC5: a client relay is never base-activated — its /amicode/fleet/* honesty surface stays local (404 unentitled), relay behavior unchanged", async () => {
+    const svc = bootBase({
+      entitlements: [],
+      overlaySource,
+      client: true, // a fleet CLIENT (no-local-engine relay)
+      hub: { getUrl: () => undefined },
+      fleetPeers: servingPeerProvider(), // even WITH serving peers…
+    });
+    const o = (await svc.start()).toString().replace(/\/$/, "");
+    try {
+      // base activation must NOT fire for a client — the route stays a local 404
+      // (byte-compatible with today; a client's relay is governed by the
+      // attached FleetPlane, which base activation never attaches).
+      const status = await fetch(`${o}/amicode/fleet/status`, {
+        headers: { Authorization: `Basic ${engineToken}` },
+      });
+      expect(status.status).toBe(404);
+    } finally {
+      await svc.stop();
+    }
+  });
+});
+
+describe("#1478 base peer-studio activation — the real wiring seam (AC1 production path)", () => {
+  let root: string;
+  let dist: string;
+  let overlaySource: string;
+  let unentitledDir: string;
+  let localEngine: MockOrigin;
+  let studioPeer: MockOrigin;
+  let engineToken: string;
+  const savedEnv: Record<string, string | undefined> = {};
+
+  beforeAll(async () => {
+    root = mkdtempSync(join(tmpdir(), "amicode-1478-wiring-"));
+    dist = buildMockDist(root);
+    overlaySource = join(root, "overlay-source");
+    writeDataPlaneManifest(overlaySource);
+    // an UNENTITLED entitlements dir (no amicissimo) — the base peer path
+    unentitledDir = join(root, "unentitled");
+    mkdirSync(unentitledDir, { recursive: true });
+    writeFileSync(join(unentitledDir, "entitlements.toml"), `codes = []\n`);
+
+    localEngine = await startMockEngine([{ id: "ses-w-local", title: "local", time: { created: 1, updated: 2 } }]);
+    studioPeer = await startMockPeer(
+      [{ id: "ses-w-studio", title: "studio", time: { created: 3, updated: 4 } }],
+      "tok-studio-wire",
+    );
+
+    const rosterFile = join(root, "roster.json");
+    writeFileSync(
+      rosterFile,
+      JSON.stringify({
+        schema_version: 1,
+        rows: [
+          w0RosterRow({ id: "self-mac", name: "My Mac", serving: true, reachable: true, device_type: "laptop" }),
+          w0RosterRow({ id: "studio-peer", name: "Mac Studio", serving: true, reachable: true, device_type: "desktop" }),
+        ],
+      }),
+    );
+    const peerStoreFile = join(root, "peer-tokens.json");
+    writePeerToken("studio-peer", { baseUrl: studioPeer.url, token: "tok-studio-wire" }, { storeFile: peerStoreFile });
+
+    for (const k of ["AMICO_FLEET_ROSTER_FILE", "AMICO_FLEET_PEER_TOKEN_FILE", "AMICO_FLEET_HUB_FILE"]) {
+      savedEnv[k] = process.env[k];
+    }
+    process.env.AMICO_FLEET_ROSTER_FILE = rosterFile;
+    process.env.AMICO_FLEET_PEER_TOKEN_FILE = peerStoreFile;
+    process.env.AMICO_FLEET_HUB_FILE = join(root, "hub-cred-absent.json");
+
+    engineToken = serverAuthToken("engine-mint-password");
+  });
+
+  afterAll(async () => {
+    await localEngine.stop();
+    await studioPeer.stop();
+    for (const [k, v] of Object.entries(savedEnv)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("AC1 (production): an unentitled armed activation + localMachineId + a serving-peer roster mounts the base peer-studio routes, entitlement ABSENT", async () => {
+    const activation: FleetActivation = {
+      armed: true,
+      hubUrl: "http://127.0.0.1:9",
+      tunnelAlias: "fleet-hub",
+      posture: {
+        degradedLatencyP95Ms: 3000,
+        degradedWindowSamples: 10,
+        hubDownConsecutiveNoResponses: 3,
+        recoveryConsecutiveHealthy: 2,
+      },
+      notes: [],
+      entitlements: [],
+      entitlementConfigDir: unentitledDir,
+      overlaySource,
+    };
+    const boot = await startAmicodeService(
+      { appendLine: () => undefined },
+      {
+        engine: { password: "engine-mint-password", getUrl: () => localEngine.url },
+        appDistRoot: dist,
+        fleetActivation: activation,
+        localMachineId: "self-mac",
+      },
+    );
+    expect(boot).toBeDefined();
+    if (!boot) return;
+    try {
+      const status = await fetch(`${boot.url}/amicode/fleet/status`, {
+        headers: { Authorization: `Basic ${engineToken}` },
+      });
+      expect(status.status).toBe(200);
+      const sbody = (await status.json()) as { ok: boolean; staging: { entitlement: string; staged: boolean } };
+      expect(sbody.ok).toBe(true);
+      // no forgery through the REAL wiring — the receipt reads entitlement absent
+      expect(sbody.staging.entitlement).toBe("absent");
+      expect(sbody.staging.staged).toBe(false);
+
+      const sessions = await fetch(`${boot.url}/amicode/fleet/sessions`, {
+        headers: { Authorization: `Basic ${engineToken}` },
+      });
+      expect(sessions.status).toBe(200);
+      const body = (await sessions.json()) as FleetProjection;
+      expect(body.sources["studio-peer"].present).toBe(true);
     } finally {
       await boot.service.stop();
     }
