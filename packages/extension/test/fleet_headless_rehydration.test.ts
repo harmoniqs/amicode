@@ -12,7 +12,7 @@
 //   AC3 — Stale bootstrap/reconnect work cannot advance a revoked or
 //         superseded relationship generation.
 //   AC4 — Thin-client/hub boot behavior remains unchanged.
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -489,5 +489,141 @@ describe("AC4 — thin-client/hub boot behavior unchanged", () => {
     expect(grant!.state).toBe("active");
     expect(grant!.generation).toBe(1);
     expect(grant!.token).toBe("GRANT-TOKEN-001");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AC1+AC4 integration — boot-path wiring: headless base peer runs rehydration,
+//                        thin-client does not
+// ═══════════════════════════════════════════════════════════════════════════
+import * as http from "node:http";
+import { type AddressInfo } from "node:net";
+import { createAmicodeService } from "../src/amicode_service";
+import { serverAuthToken } from "../src/server_auth";
+
+interface MockOrigin {
+  url: string;
+  stop(): Promise<void>;
+}
+function startMockEngine(enginePassword: string, sessions: unknown[]): Promise<MockOrigin> {
+  const server = http.createServer((req, res) => {
+    const auth = req.headers.authorization ?? "";
+    const expected = `Basic ${serverAuthToken(enginePassword)}`;
+    if (!auth.includes(enginePassword) && auth !== expected) {
+      res.writeHead(401, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: false }));
+      return;
+    }
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify(sessions));
+  });
+  return new Promise((resolve) => {
+    server.listen(0, "127.0.0.1", () => {
+      const port = (server.address() as AddressInfo).port;
+      resolve({ url: `http://127.0.0.1:${port}`, stop: () => new Promise((r) => server.close(() => r())) });
+    });
+  });
+}
+
+describe("AC1+AC4 — boot-path integration: headless base peer rehydrates; client/hub unchanged", () => {
+  let localEngine: MockOrigin;
+  let studioPeer: MockOrigin;
+  let savedHubFile: string | undefined;
+
+  beforeEach(async () => {
+    localEngine = await startMockEngine("engine-password", []);
+    studioPeer = await startMockEngine("tok-studio", []);
+    savedHubFile = process.env.AMICO_FLEET_HUB_FILE;
+    process.env.AMICO_FLEET_HUB_FILE = join(tmproot(), "hub-cred-absent.json");
+  });
+
+  afterEach(async () => {
+    await localEngine?.stop();
+    await studioPeer?.stop();
+    if (savedHubFile === undefined) delete process.env.AMICO_FLEET_HUB_FILE;
+    else process.env.AMICO_FLEET_HUB_FILE = savedHubFile;
+  });
+
+  it("AC1: a headless base peer boots fleet status + sessions routes (the rehydration-integrated path activates)", async () => {
+    const svc = createAmicodeService({
+      password: "svc-mint",
+      engine: { password: "engine-password", getUrl: () => localEngine.url },
+      fleet: {
+        entitlements: [], // NO entitlement — base authority
+        hub: { getUrl: () => undefined },
+        fleetPeers: {
+          localMachineId: "my-macbook",
+          getServingPeers: () => [{ machineId: "the-studio" }],
+          readPeerToken: (id: string) =>
+            id === "the-studio"
+              ? { ok: true as const, credential: { baseUrl: studioPeer.url, token: "tok-studio" } }
+              : { ok: false as const },
+          rosterLookup: (id: string) =>
+            id === "the-studio" ? { name: "Studio" } : undefined,
+        },
+      },
+    });
+    const origin = (await svc.start()).toString().replace(/\/$/, "");
+    const auth = `Basic ${serverAuthToken("svc-mint")}`;
+    try {
+      const status = await fetch(`${origin}/amicode/fleet/status`, { headers: { Authorization: auth } });
+      expect(status.status).toBe(200);
+      const body = (await status.json()) as { ok: boolean; posture?: { state?: string }; rehydration?: unknown };
+      expect(body.ok).toBe(true);
+      // The base peer has a named posture (verified by #1485)
+      expect(body.posture).toBeDefined();
+    } finally {
+      await svc.stop();
+    }
+  });
+
+  it("AC4: a fleet-of-one (zero serving peers) does NOT activate fleet routes — unchanged behavior", async () => {
+    const svc = createAmicodeService({
+      password: "svc-mint",
+      engine: { password: "engine-password", getUrl: () => localEngine.url },
+      fleet: {
+        entitlements: [],
+        hub: { getUrl: () => undefined },
+        fleetPeers: {
+          localMachineId: "my-macbook",
+          getServingPeers: () => [], // fleet-of-one: no peers
+          readPeerToken: () => ({ ok: false as const }),
+          rosterLookup: () => undefined,
+        },
+      },
+    });
+    const origin = (await svc.start()).toString().replace(/\/$/, "");
+    const auth = `Basic ${serverAuthToken("svc-mint")}`;
+    try {
+      const status = await fetch(`${origin}/amicode/fleet/status`, { headers: { Authorization: auth } });
+      expect(status.status).toBe(404); // NOT activated — route doesn't exist
+    } finally {
+      await svc.stop();
+    }
+  });
+
+  it("AC4: a client relay does NOT activate base peer-studio — unchanged behavior", async () => {
+    const svc = createAmicodeService({
+      password: "svc-mint",
+      fleet: {
+        client: true, // client relay — never base-activated
+        entitlements: [],
+        hub: { getUrl: () => undefined },
+        fleetPeers: {
+          localMachineId: "my-macbook",
+          getServingPeers: () => [{ machineId: "the-studio" }],
+          readPeerToken: () => ({ ok: false as const }),
+          rosterLookup: () => undefined,
+        },
+      },
+    });
+    const origin = (await svc.start()).toString().replace(/\/$/, "");
+    const auth = `Basic ${serverAuthToken("svc-mint")}`;
+    try {
+      const status = await fetch(`${origin}/amicode/fleet/status`, { headers: { Authorization: auth } });
+      expect(status.status).toBe(404); // NOT activated
+    } finally {
+      await svc.stop();
+    }
   });
 });

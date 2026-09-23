@@ -52,6 +52,7 @@ import { inspectTunnelConfigFile, TUNNEL_GENERATION_HEADER } from "./fleet_tunne
 import { stageFleetDataPlane, type FleetStagingReceipt } from "./fleet_staging";
 import { resolveFleetProgram, type FleetProgramReceipt } from "./fleet_program";
 import { createProject, listProjects } from "./project";
+import { rehydratePeerRelationships, type RehydrationResult } from "./fleet_headless_rehydration";
 import {
   MINT_ENDPOINT_PATH,
   PEER_REVOKE_PATH,
@@ -943,8 +944,19 @@ export function createAmicodeService(
       // fleetMultiplexerArmed stays false and a base peer routes proxied
       // requests to its OWN local engine (mode "engine") while observing peers
       // through the N-peer projection. AC3 (service/engine accept-set parity)
-      // and AC4 (headless reboot posture) are owned by #1485 / #1487 — NOT
-      // implemented here.
+      // is owned by #1485.
+      //
+      // #1487 (AC1): HEADLESS PEER REHYDRATION — on base-activation, run
+      // rehydration to restore persisted peer relationships into named recovery
+      // states. The result is a read-only snapshot of the rehydration outcome,
+      // available on the /amicode/fleet/rehydration route. The rehydration is
+      // READ-ONLY (never writes/mints/modifies grants) and runs ONCE at boot.
+      let rehydration: RehydrationResult | undefined;
+      if (opts.fleet.fleetPeers) {
+        rehydration = rehydratePeerRelationships({
+          peerProvider: opts.fleet.fleetPeers as Parameters<typeof rehydratePeerRelationships>[0]["peerProvider"],
+        });
+      }
       registerFleetRoutes(server, {
         getMode: (): UpstreamMode => "engine",
         readCredential: (): HubCredentialRead => readHubCredential(),
@@ -967,6 +979,14 @@ export function createAmicodeService(
         monitor: new FleetPostureDetector({ tuning: opts.fleet.posture }),
         ...(opts.fleet.fleetPeers !== undefined ? { fleetPeers: opts.fleet.fleetPeers } : {}),
       });
+      // #1487 (AC1): expose the rehydration snapshot on a dedicated route.
+      // Read-only, boot-time snapshot — the route returns the same result
+      // until the next reboot. The route lives alongside /amicode/fleet/status
+      // in the SAME /amicode/fleet/* namespace (never-proxied).
+      if (rehydration) {
+        const snap = JSON.stringify({ ok: true, ...rehydration });
+        server.add("GET", "/amicode/fleet/rehydration", () => ({ body: snap }));
+      }
     }
   }
   registerProfileRoutes(server);
