@@ -34,6 +34,7 @@
 import { createAmicodeService } from "./amicode_service";
 import type { AmicodeServiceServer } from "./amicode_service/server";
 import { fleetStagingSummary, stageFleetDataPlane } from "./amicode_service/fleet_staging";
+import { buildFleetPeerProvider, type FleetPeerProvider } from "./amicode_service/fleet_peer_provider";
 import { relayVersionGate, type RelayVersionGateOptions } from "./amicode_service/fleet_version_skew";
 import {
   transportForSelection,
@@ -93,6 +94,12 @@ export interface AmicodeServiceWiringOptions {
      *  transport's getUrl, threaded to createAmicodeService's fleet.attached
      *  so the D3 resolver routes to the attached device on reload. */
     attached?: { getUrl: () => string | undefined };
+    /** #1447 (W2): the N-peer fleet-peer provider (#1446's W0 shape). Set at
+     *  the armed-activation assembly below when `localMachineId` is supplied;
+     *  its presence is what flips the fleet-sessions route to the machine-keyed
+     *  N-peer projection (index.ts:474). Never assigned when localMachineId is
+     *  absent — the legacy 2-source projection stays byte-identical. */
+    fleetPeers?: FleetPeerProvider;
   };
   /** #398 (slice 4e): the fleet activation — config/env-driven (see
    *  fleet_activation.ts). A resolved snapshot OR a late-bound resolver
@@ -145,6 +152,16 @@ export interface AmicodeServiceWiringOptions {
    *  of the fleet activation state (the pointer can be valid on a machine
    *  whose activation config is not yet armed). */
   bootAttached?: { getUrl: () => string | undefined };
+  /** #1447 (W2): this machine's own stable id — the local source in the
+   *  N-peer fan-out and the anchor of the machine-keyed projection. The CALLER
+   *  (extension.ts) resolves it via readLocalDevice().machineId (canonical.host
+   *  on a server/standalone, else os.hostname()) — the SAME id
+   *  buildBootSelfReportRow and the fleet heartbeat consume — so the peer set's
+   *  self-exclusion and the owner tags line up with the rest of the fleet.
+   *  Threaded into the armed-activation fleet assembly to build the fleet-peer
+   *  provider (#1446). Absent → no provider is built → the fleet-sessions route
+   *  keeps serving the legacy 2-source projection, byte-identical. */
+  localMachineId?: string;
 }
 
 /**
@@ -243,6 +260,20 @@ export async function startAmicodeService(
         // (direct pass) wins over the top-level bootAttached (production path).
         ...((opts.fleet?.attached ?? opts.bootAttached) !== undefined
           ? { attached: opts.fleet?.attached ?? opts.bootAttached }
+          : {}),
+        // #1447 (W2): the single production flip. W0 (#1446) CONSTRUCTS the
+        // fleet-peer provider; W2 ASSIGNS it here so the fleet-sessions route
+        // takes the N-peer machine-keyed branch (index.ts:474→483) instead of
+        // the dormant legacy 2-source else. Gated on localMachineId (the caller
+        // resolves the SAME id readLocalDevice/buildBootSelfReportRow use): when
+        // present, the provider reads the roster (serving∧reachable peers) and
+        // the reader peer-store LATE, per request. When ABSENT, fleetPeers stays
+        // undefined and the legacy 2-source projection serves — byte-identical.
+        // Note the distinction the route pins: a present provider with an EMPTY
+        // serving-peer set still yields the 1-source machine-keyed projection
+        // (local only) — present-but-empty ≠ undefined.
+        ...(opts.localMachineId !== undefined && opts.localMachineId.trim() !== ""
+          ? { fleetPeers: buildFleetPeerProvider({ localMachineId: opts.localMachineId }) }
           : {}),
       };
     }

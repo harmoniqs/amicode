@@ -341,6 +341,21 @@ const pendingStops = new Set<string>();
 // auto-offer) moved to agent-driven, on-block surfacing — the domain stays
 // implicit until a second domain pack exists.
 
+/** #1447 (W2): this machine's own stable id for the fleet-peer provider —
+ *  the SAME value readLocalDevice()/buildBootSelfReportRow/the heartbeat use
+ *  (canonical.host on a server/standalone, else os.hostname()). Threaded into
+ *  startAmicodeService so the fleet-sessions route serves the machine-keyed
+ *  N-peer projection. Defensive: any resolution failure yields undefined, and
+ *  the service then keeps the legacy 2-source projection (byte-identical). */
+function resolveLocalMachineId(): string | undefined {
+  try {
+    const id = defaultFleetSectionDeps({}).readLocalDevice?.()?.machineId;
+    return typeof id === "string" && id.trim() !== "" ? id : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   const opencodeChannel = vscode.window.createOutputChannel("Amicode — opencode");
   const runsChannel = vscode.window.createOutputChannel("Amicode — runs");
@@ -1380,6 +1395,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       // attachment pointer was found on disk, pass the recovered transport's
       // getUrl so the fleet plane's D3 resolver routes to the attached device.
       ...(bootRecovery ? { bootAttached: { getUrl: bootRecovery.getUrl } } : {}),
+      // #1447 (W2): this machine's stable id — flips the fleet-sessions route
+      // to the machine-keyed N-peer projection (undefined → legacy 2-source).
+      localMachineId: resolveLocalMachineId(),
     });
     amicodeService = serviceBoot ?? undefined;
     ctx.subscriptions.push(amicodeServiceDisposal(serviceBoot));
@@ -1694,6 +1712,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         // #1260: the pluggable transport provider selector (default ssh).
         fleetTransport: readFleetTransportOption(vscode.workspace.getConfiguration("amicode")),
         port: configuredPort > 0 ? configuredPort + 1 : undefined,
+        // #1447 (W2): this machine's stable id — flips the fleet-sessions route
+        // to the machine-keyed N-peer projection (undefined → legacy 2-source).
+        localMachineId: resolveLocalMachineId(),
       });
       amicodeService = adoptedServiceBoot ?? undefined;
       ctx.subscriptions.push(amicodeServiceDisposal(adoptedServiceBoot));
