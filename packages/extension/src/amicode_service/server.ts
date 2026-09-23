@@ -46,6 +46,27 @@ export interface AmicodeHandlerResult {
 
 export type AmicodeHandler = (ctx: AmicodeRequestCtx) => AmicodeHandlerResult | Promise<AmicodeHandlerResult>;
 
+/** #1438 (ADR 0032 §D2/§D3): the accept-set the boundary validates every caller
+ *  against, replacing full `auth=open`. Injected into the service so the
+ *  behavioral suite boots the real server with fixture stores. Every method is
+ *  read PER REQUEST (no boot-time cache) so a revocation / close / rollback
+ *  takes effect on the immediately-following request (§D2 currency). */
+export interface AcceptSet {
+  /** additive (accept-set members OR still-open auth) | closed (members only). */
+  phase(): "additive" | "closed";
+  /** The non-revoked peer tokens THIS machine issued (its own registry). */
+  issuedTokens(): string[];
+  /** The transitional hub credential token — accepted in ADDITIVE only,
+   *  withdrawn at close (§D3). undefined when none is configured. */
+  hubCredentialToken(): string | undefined;
+  /** Is this the enrollment-nonce mint endpoint (the ONE path a bearer-less
+   *  joiner may reach)? */
+  isMintEndpoint(method: string, pathname: string): boolean;
+  /** Whether a presented enrollment nonce is presently redeemable (validate,
+   *  never consume — the handler consumes on a successful mint). */
+  validateNonce(nonce: string): boolean;
+}
+
 /** #391 (the local-shell data plane, D1): the fleet plane the staged path
  *  arms. Mode selection is DATA-DRIVEN (read per request, like every
  *  late-bound upstream here); "degraded" is Slice B's steady state of the
@@ -143,10 +164,17 @@ export class AmicodeServiceServer {
    *  single-mint, byte-compatible with the pre-#822 contract). */
   private readonly enginePassword?: string;
 
-  constructor(opts: { password?: string; enginePassword?: string; authMode?: "open" | "credential" } = {}) {
+  /** #1438 (ADR 0032): the accept-set validator. When present, authorized()
+   *  routes through it (peer tokens, hub credential, enrollment nonce, phase);
+   *  absent → the pre-#1438 behavior (authMode open/credential) is byte-
+   *  identical. */
+  private readonly acceptSet?: AcceptSet;
+
+  constructor(opts: { password?: string; enginePassword?: string; authMode?: "open" | "credential"; acceptSet?: AcceptSet } = {}) {
     this.password = opts.password ?? mintServerPassword();
     this.enginePassword = opts.enginePassword;
     this.authMode = opts.authMode ?? "credential";
+    this.acceptSet = opts.acceptSet;
   }
 
   get port(): number | undefined {
@@ -222,15 +250,18 @@ export class AmicodeServiceServer {
   }
 
   private authorized(req: http.IncomingMessage, url: URL): boolean {
+    // The anonymous sub-resource surface (fork public-ui parity): GET-only
+    // static UI paths a browser cannot credential — exempt BEFORE anything
+    // else, exactly like the engine's middleware does for them.
+    if (isPublicUiPath(req.method ?? "GET", url.pathname)) return true;
+    // #1438 (ADR 0032 §D2/§D3): the accept-set REPLACES full auth=open. When
+    // armed, every caller is validated against it — constant-time, per-request.
+    if (this.acceptSet !== undefined) return this.acceptSetAuthorized(req, url);
     // #955: the open-boundary mode accepts every request — the fork hub's
     // deployed tunnel/LAN posture (anonymous 200 on the canonical /session;
     // the SSH mesh is the boundary, not HTTP auth). Present mints keep
     // working: everything a credential-mode boot would accept, this accepts.
     if (this.authMode === "open") return true;
-    // The anonymous sub-resource surface (fork public-ui parity): GET-only
-    // static UI paths a browser cannot credential — exempt BEFORE anything
-    // else, exactly like the engine's middleware does for them.
-    if (isPublicUiPath(req.method ?? "GET", url.pathname)) return true;
     const given = this.credential(req, url);
     if (given === undefined) return false;
     // #822: accept BOTH mints — the service's own AND the engine's (the
@@ -244,6 +275,53 @@ export class AmicodeServiceServer {
       if (given.length === want.length && timingSafeEqual(given, want)) return true;
     }
     return false;
+  }
+
+  /** #1438 (ADR 0032 §D2): validate one caller against the accept-set —
+   *  constant-time, per-request, both phases. The order is:
+   *    local mint  ∨  non-revoked peer token  ∨  (mint endpoint) enrollment nonce
+   *    ∨  ADDITIVE: hub credential ∨ still-open (auth=open)   [never in CLOSED].
+   *  Every token compare is length-guarded then timingSafeEqual (mirroring the
+   *  #822 mint loop at :244) so a wrong-mint probe learns nothing. */
+  private acceptSetAuthorized(req: http.IncomingMessage, url: URL): boolean {
+    const method = req.method ?? "GET";
+    const given = this.credential(req, url);
+    // 1. local service/engine mint — always an accept-set member (the framed
+    //    app authenticates with the local mint, so it is never locked out).
+    if (given !== undefined && this.matchesConstantTime(given, [this.password, this.enginePassword])) return true;
+    // 2. a non-revoked peer token this machine issued — constant-time, no
+    //    early exit over the registry (read fresh: currency, §D2).
+    if (given !== undefined && this.matchesConstantTime(given, this.acceptSet!.issuedTokens())) return true;
+    // 3. the enrollment-nonce mint endpoint — the ONE bearer-less path a
+    //    joiner reaches (both phases; the nonce IS the credential, §D4).
+    if (this.acceptSet!.isMintEndpoint(method, url.pathname)) {
+      const nonce = url.searchParams.get("enrollment_nonce");
+      if (nonce !== null && this.acceptSet!.validateNonce(nonce)) return true;
+    }
+    if (this.acceptSet!.phase() === "additive") {
+      // ADDITIVE: the transitional hub credential is a member, and auth=open
+      // still holds ("peer tokens accepted IN ADDITION TO auth=open", §D3.1).
+      const hub = this.acceptSet!.hubCredentialToken();
+      if (given !== undefined && hub !== undefined && this.matchesConstantTime(given, [hub])) return true;
+      if (this.authMode === "open") return true;
+      return false;
+    }
+    // CLOSED: only the members above — anonymous and hub credential refused.
+    return false;
+  }
+
+  /** Length-guarded constant-time membership test of a presented `opencode:<secret>`
+   *  credential against a set of candidate secrets. No early exit on a
+   *  mismatch (§D2): every candidate is compared, the match accumulated — so
+   *  the compare leaks neither which secret matched nor that none did. */
+  private matchesConstantTime(given: Buffer, secrets: Array<string | undefined>): boolean {
+    let ok = false;
+    for (const secret of secrets) {
+      if (secret === undefined) continue;
+      const want = Buffer.from(`opencode:${secret}`, "utf8");
+      if (given.length === want.length && timingSafeEqual(given, want)) ok = true;
+    }
+    return ok;
   }
 
   private async readBody(req: http.IncomingMessage): Promise<string> {

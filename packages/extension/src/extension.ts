@@ -554,10 +554,10 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         connectRemoteSsh: (sshAlias) => connectToDeviceOverRemoteSsh(sshAlias),
         goStandalone: () => { void vscode.commands.executeCommand("amicode.fleet.goStandalone"); },
         isRemoteSshAvailable: () => isRemoteSshAvailable(),
-        reloadWindow: () => vscode.commands.executeCommand("workbench.action.reloadWindow"),
-        showQuickPick: (items, opts) => vscode.window.showQuickPick(items, opts) as any,
-        showWarningMessage: (m, ...items) => vscode.window.showWarningMessage(m, ...items),
-        showInformationMessage: (m, ...items) => vscode.window.showInformationMessage(m, ...items),
+        reloadWindow: () => Promise.resolve(vscode.commands.executeCommand("workbench.action.reloadWindow")) as Promise<void>,
+        showQuickPick: (items, opts) => Promise.resolve(vscode.window.showQuickPick(items, opts)) as any,
+        showWarningMessage: (m, ...items) => Promise.resolve(vscode.window.showWarningMessage(m, ...items)),
+        showInformationMessage: (m, ...items) => Promise.resolve(vscode.window.showInformationMessage(m, ...items)),
       };
       void handleConnectToDevice(msg as ConnectToDeviceMessage, connectDeps).catch((e) => {
         opencodeChannel.appendLine(`[fleet] connect-to-device error: ${(e as Error).message}`);
@@ -622,7 +622,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
             try { execFileSync(bin, ["version"], { encoding: "utf8", timeout: 3_000 }); return true; } catch { return false; }
           }) ?? "tailscale";
           const dnsName = resolveTailscaleDnsName(
-            (cmd: string, args: string[]) => execFileSync(tailscaleBin, args, { encoding: "utf8", timeout: 5_000 }),
+            (_cmd: string, args: string[]) => execFileSync(tailscaleBin, args, { encoding: "utf8", timeout: 5_000 }),
           );
           if (dnsName) {
             const port = (topology.kind === "ok" ? topology.canonical?.port : undefined) ?? 4096;

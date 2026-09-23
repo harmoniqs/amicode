@@ -10,7 +10,7 @@
 // host-side from the roster and topology — the webview message carries identity only.
 
 import type { RosterRow } from "@amicode/schema";
-import type { FleetTopologyState, FleetCanonical } from "./fleet_topology";
+import type { FleetTopologyState } from "./fleet_topology";
 import { canonicalMachineId } from "./fleet_topology";
 import type { RemoteSshResolution } from "./fleet_connect_remote_ssh";
 import { readAttachmentCredential, type AttachmentCredentialDeps } from "./amicode_service/attachment_credential";

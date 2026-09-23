@@ -32,6 +32,11 @@ import {
   resolveAmicodeTarget,
   type AttachmentPointer,
 } from "../src/amicode_service/attachment_pointer";
+import {
+  SessionOwnerMap,
+  SessionMultiplexProxy,
+  OWNER_ROUTING_HEADER,
+} from "../src/amicode_service/session_multiplexer";
 
 // ── a stub HOST (the far end of the tunnel — an opencode server expecting its
 //    OWN hub mint; it 401s anything else, so a 200 proves the translation) ────
@@ -959,6 +964,46 @@ describe("fleet-client relay skeleton (#1261) — a client holds NO local engine
         await svc.stop();
         await attachedWS.stop();
         await keeperWS.stop();
+      }
+    });
+  });
+
+  // ── #1440 (Slice 3): the session multiplexer's honesty surface guard ──────
+  // The multiplexer routes session-scoped requests to each session's owner. The
+  // honesty surface (/amicode/fleet/*, posture requests) must NEVER be proxied
+  // to a peer — it is the machine's own truth, just like the existing
+  // shouldProxyAmicodeToHost exclusion guarantees for the client→hub path.
+  describe("#1440 — session multiplexer honesty surface: /amicode/fleet/* and posture NEVER proxied", () => {
+    it("/amicode/fleet/* paths are excluded by the D3 resolver — resolveAmicodeTarget returns 'local' regardless of session owner", () => {
+      const keeperResult = resolveKeeperPointer({ keeperFile: join(mkdtempSync(join(tmpdir(), "amicode-1440-honest-")), "keeper.json") });
+      const attachedResult = resolveAttachmentPointer({ attachmentFile: join(mkdtempSync(join(tmpdir(), "amicode-1440-honest2-")), "attachment.json") });
+      for (const p of [
+        "/amicode/fleet",
+        "/amicode/fleet/status",
+        "/amicode/fleet/attachment",
+        "/amicode/fleet/sessions",
+        "/amicode/fleet/attach",
+        "/amicode/fleet/detach",
+      ]) {
+        const decision = resolveAmicodeTarget(p, { attached: attachedResult, keeper: keeperResult });
+        expect(decision.target).toBe("local");
+      }
+    });
+
+    it("the session multiplexer's resolveTarget returns undefined (local) for /amicode/fleet/* paths even when a session header is set", () => {
+      const ownerMap = new SessionOwnerMap();
+      ownerMap.update([
+        { id: "ses-remote", amicode_owner: { owner_machine_id: "peer-x", owner_name: "X", is_local: false } },
+      ]);
+      const proxy = new SessionMultiplexProxy({
+        ownerMap,
+        peers: { "peer-x": { getUrl: () => "http://127.0.0.1:9999" } },
+        localMachineId: "local",
+      });
+      // /amicode/fleet/* paths should ALWAYS resolve local, even with the owner header
+      for (const p of ["/amicode/fleet/status", "/amicode/fleet/attachment", "/amicode/fleet/sessions"]) {
+        const target = proxy.resolveTarget("GET", p, { [OWNER_ROUTING_HEADER]: "peer-x" });
+        expect(target).toBeUndefined(); // local
       }
     });
   });
