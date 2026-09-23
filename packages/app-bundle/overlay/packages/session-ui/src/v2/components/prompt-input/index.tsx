@@ -435,7 +435,7 @@ export function PromptInputV2Attachments(props: {
                     }
                   >
                     <img
-                      src={attachment.blob.url}
+                      src={(attachment as unknown as { blob: { url: string } }).blob.url}
                       alt={attachment.filename}
                       class="w-[58px] h-[46px] rounded-sm object-cover"
                       onClick={() => props.onAttachmentClick?.(attachment)}

@@ -510,7 +510,10 @@ export function createServerSession(
     })
     setData(
       produce((draft) => {
-        dropSessionCaches(draft, sessionIDs)
+        // #1457: parity cast — the v1.18.x base's State predates the
+        // session-cache diff_version field; dropSessionCaches only reads
+        // the keys it knows.
+        dropSessionCaches(draft as unknown as Parameters<typeof dropSessionCaches>[0], sessionIDs)
       }),
     )
     setMeta(

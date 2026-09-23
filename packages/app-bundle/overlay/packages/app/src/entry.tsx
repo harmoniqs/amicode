@@ -23,7 +23,7 @@ import { render } from "solid-js/web"
   // AND ITS CALLER at the source.
   {
     const origFetch = window.fetch.bind(window)
-    window.fetch = (input: RequestInfo | URL, init?: RequestInit) =>
+    window.fetch = ((input: RequestInfo | URL, init?: RequestInit) =>
       origFetch(input, init).then((res: Response) => {
         const ct = res.headers.get("content-type") || ""
         if (ct.includes("text/html")) {
@@ -33,7 +33,7 @@ import { render } from "solid-js/web"
           }
         }
         return res
-      })
+      })) as typeof window.fetch
   }
   window.addEventListener("error", (e) => push("E", `${e.message}
 ${(e.error && e.error.stack) || e.filename || ""}`))

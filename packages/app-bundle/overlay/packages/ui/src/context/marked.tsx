@@ -576,7 +576,10 @@ async function highlightCodeBlocks(html: string): Promise<string> {
     // previous view for the highlighter's lifetime (~8s on the hub, forever in
     // the rig). The JS regex engine is shiki's default, ships zero assets,
     // and initializes synchronously.
-    preferredHighlighter: "javascript",
+    // (the v1.18.x shiki type union predates the "javascript" engine name;
+    // the runtime value is valid — cast past the stale union for typecheck
+    // parity on older bases; newer bases accept it directly)
+    preferredHighlighter: "javascript" as unknown as never,
   })
 
   let result = html
@@ -636,7 +639,10 @@ export const { use: useMarked, provider: MarkedProvider } = createSimpleContext(
     // previous view for the highlighter's lifetime (~8s on the hub, forever in
     // the rig). The JS regex engine is shiki's default, ships zero assets,
     // and initializes synchronously.
-    preferredHighlighter: "javascript",
+    // (the v1.18.x shiki type union predates the "javascript" engine name;
+    // the runtime value is valid — cast past the stale union for typecheck
+    // parity on older bases; newer bases accept it directly)
+    preferredHighlighter: "javascript" as unknown as never,
           })
           if (!(lang in bundledLanguages)) {
             lang = "text"

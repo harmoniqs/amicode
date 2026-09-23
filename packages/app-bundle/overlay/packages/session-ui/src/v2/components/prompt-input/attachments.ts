@@ -116,7 +116,7 @@ export function createPromptInputV2Attachments(
       .some(
         (part) =>
           part.type === "image" &&
-          part.blob.id === blob.id &&
+          (part as unknown as { blob: { id: string } }).blob.id === blob.id &&
           (sourcePath
             ? part.sourcePath === sourcePath
             : !part.sourcePath && (clipboard || part.filename === file.name)),
@@ -132,7 +132,7 @@ export function createPromptInputV2Attachments(
       sourcePath,
       mime,
       blob,
-    }
+    } as unknown as PromptInputV2Attachment
     target.prompt.set([...target.prompt.current(), attachment], target.cursor)
     return true
   }

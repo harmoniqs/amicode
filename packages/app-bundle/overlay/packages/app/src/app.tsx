@@ -40,7 +40,6 @@ import {
   onMount,
   type ParentProps,
   Show,
-  Suspense,
 } from "solid-js"
 import { Dynamic } from "solid-js/web"
 import { Spinner } from "@opencode-ai/ui/spinner"
@@ -699,12 +698,12 @@ ${text.slice(0, 12000)}` }).catch(() => {})  // #1294: 2400 truncated snapshots 
             load: briefMap(w.__loadDebug),
             gate: briefMap(w.__gateDebug),
             render: (globalThis as { __renderRing?: unknown }).__renderRing ?? null,
-            paint: (globalThis as { __paintRing?: unknown }).__paintRing?.slice(-12) ?? null,
-          longtask: (globalThis as { __longtaskRing?: unknown }).__longtaskRing?.slice(-40) ?? null,
-          gates: (globalThis as { __gateRing?: unknown }).__gateRing?.slice(-40) ?? null,
-          boot: (globalThis as { __bootErrors?: unknown }).__bootErrors?.length ? (globalThis as { __bootErrors?: unknown }).__bootErrors : null,
-            clone: (globalThis as { __cloneRing?: unknown }).__cloneRing?.slice(-12) ?? null,
-            hold: (globalThis as { __holdRing?: unknown }).__holdRing?.slice(-8) ?? null,
+            paint: (globalThis as { __paintRing?: unknown[] }).__paintRing?.slice(-12) ?? null,
+          longtask: (globalThis as { __longtaskRing?: unknown[] }).__longtaskRing?.slice(-40) ?? null,
+          gates: (globalThis as { __gateRing?: unknown[] }).__gateRing?.slice(-40) ?? null,
+          boot: (globalThis as { __bootErrors?: unknown[] }).__bootErrors?.length ? (globalThis as { __bootErrors?: unknown[] }).__bootErrors : null,
+            clone: (globalThis as { __cloneRing?: unknown[] }).__cloneRing?.slice(-12) ?? null,
+            hold: (globalThis as { __holdRing?: unknown[] }).__holdRing?.slice(-8) ?? null,
             mirror: w.__mirrorDebug?.slice(-4) ?? null,
             hydrated: w.__mirrorHydrated?.slice(-40) ?? null,
           }),
@@ -900,17 +899,13 @@ function SessionLineagePrewarmer() {
       }
       // Messages too: the timeline gates on the sync store holding the
       // session's messages — a cold message load is the same wire gap.
-      if (session.prefetch) {
-        // #1299: the RENDER PAGE FIRST, the deep warm behind it. The
-        // previous order (60 deep, immediately) meant a quick first switch
-        // #1306: the per-tab prefetch chain is GONE. The snapshot seeds
-        // every open tab's render page at boot; the SSE keeps live tabs
-        // current; the mirror persists depth; history deepens on scroll
-        // (loadOlder). The old 20-then-60 chain re-fired whenever a tab's
-        // page aged past 15s — background wire churn that queued behind
-        // nothing useful and made the harness's zero-fetch assertion
-        // timing-fragile. Foreground only now.
-      }
+      // #1306: the per-tab prefetch chain is GONE. The snapshot seeds
+      // every open tab's render page at boot; the SSE keeps live tabs
+      // current; the mirror persists depth; history deepens on scroll
+      // (loadOlder). The old 20-then-60 chain re-fired whenever a tab's
+      // page aged past 15s — background wire churn that queued behind
+      // nothing useful and made the harness's zero-fetch assertion
+      // timing-fragile. Foreground only now.
     }
   })
   // #1306: SNAPSHOT boot — ONE request carries the recent fleet state:
@@ -958,7 +953,7 @@ function SessionLineagePrewarmer() {
           // normalizeSessionInfo maps the wire shape at the boundary (raw
           // objects crash the tab strip's render).
           try {
-            sync.session.remember(normalizeSessionInfo(info))
+            sync.session.remember(normalizeSessionInfo(info as Parameters<typeof normalizeSessionInfo>[0]))
           } catch {
             /* best-effort */
           }
@@ -1289,7 +1284,7 @@ export function AppInterface(props: {
                                   return <HoldSpy which="errboundary" />
                                 }}
                               >
-                                <Suspense fallback={() => <SuspenseHoldProbe />}>
+                                <Suspense fallback={<SuspenseHoldProbe />}>
                                   {routerProps.children}
                                 </Suspense>
                               </ErrorBoundary>

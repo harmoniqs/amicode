@@ -34,11 +34,9 @@ const tokenTotal = (msg: AssistantMessage) => {
   const t = (msg as { tokens?: Record<string, number | Record<string, number>> }).tokens
   if (!t) return 0
   const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0)
-  const cache = t.cache
-  return (
-    num(t.input) + num(t.output) + num(t.reasoning) +
-    (cache ? num(cache.read) + num(cache.write) : 0)
-  )
+  const cacheScore = (cache: number | Record<string, number> | undefined) =>
+    typeof cache === "number" ? num(cache) : num(cache?.read) + num(cache?.write)
+  return num(t.input) + num(t.output) + num(t.reasoning) + cacheScore(t.cache)
 }
 
 const lastAssistantWithTokens = (messages: Message[]) => {
@@ -66,7 +64,7 @@ const build = (messages: Message[] = [], providers: Provider[] = []): Context | 
     providerLabel: provider?.name ?? message.providerID,
     modelLabel: model?.name ?? message.modelID,
     limit,
-    input: tokenTotal(message) > 0 ? ((message.tokens as Record<string, number>).input ?? 0) : 0,
+    input: tokenTotal(message) > 0 ? ((message.tokens as unknown as Record<string, number>).input ?? 0) : 0,
     total,
     usage: limit ? Math.round((total / limit) * 100) : null,
   }

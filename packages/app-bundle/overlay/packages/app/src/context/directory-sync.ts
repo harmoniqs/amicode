@@ -124,10 +124,6 @@ export const createDirSyncContext = (
       },
       // #1297: the render path hydrates from the mirror WITHOUT joining
       // an in-flight task — see createServerSession's hydrate.
-      hydrate(sessionID: string) {
-        return serverSync.session.hydrate(sessionID)
-        index(sessionID)
-      },
       // #1297: the render path hydrates from the mirror WITHOUT joining
       // an in-flight task — see createServerSession's hydrate.
       async hydrate(sessionID: string) {

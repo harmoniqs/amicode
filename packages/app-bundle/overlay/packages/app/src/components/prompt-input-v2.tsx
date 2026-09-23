@@ -227,7 +227,8 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
     editor: () => editor,
     queueScroll: () => requestAnimationFrame(() => editor?.scrollIntoView({ block: "nearest" })),
     promptLength,
-    addToHistory: (value, mode) => controller.addHistory(value, mode),
+    // #1457 parity: the v1.18.x session-ui types predate the v2 prompt evolution
+    addToHistory: (value, mode) => controller.addHistory(value as never, mode),
     resetHistoryNavigation: () => controller.resetHistory(),
     setMode: (next) => controller.dispatch({ type: next === "shell" ? "mode.shell" : "mode.normal" }),
     setPopover: (popover) => {
@@ -342,18 +343,18 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
   )
   const variants = createMemo(() => ["default", ...props.controls.model.selection.variant.list()])
   const controller = createPromptInputV2Controller({
-    store: () => prompt.capture().store,
+    store: (() => prompt.capture().store) as never,
     state: interaction,
     identity: () => prompt.capture(),
     history: {
       entries: (mode) =>
         history.entries(mode).map((value) => {
           const entry = normalizePromptHistoryEntry(value)
-          return { prompt: entry.prompt, metadata: entry.comments }
+          return { prompt: entry.prompt, metadata: entry.comments } as never
         }),
-      add: (value, mode) => history.add(value, mode, mode === "shell" ? [] : historyComments()),
+      add: (value, mode) => history.add(value as never, mode, mode === "shell" ? [] : historyComments()),
       capture: historyComments,
-      restore: (metadata) => restoreHistoryComments(metadata as PromptHistoryComment[]),
+      restore: (metadata) => restoreHistoryComments(metadata as never as PromptHistoryComment[]),
     },
     commands,
     context,
@@ -369,7 +370,7 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
       if (item?.commentID) comments.remove(item.path, item.commentID)
     },
     openAttachment: (attachment) =>
-      dialog.show(() => <ImagePreview src={attachment.blob.url} alt={attachment.filename} />),
+      dialog.show(() => <ImagePreview src={(attachment as unknown as { blob: { url: string } }).blob.url} alt={attachment.filename} />),
     openContext(key) {
       const item = controller.contextItem(key)
       if (item) openComment(item, props, sync, layout, files, comments)

@@ -1,13 +1,5 @@
 import { MarkDetailed } from "@opencode-ai/ui/logo"
 import { Icon as IconV2 } from "@opencode-ai/ui/v2/icon"
-import { TooltipV2 } from "@opencode-ai/ui/v2/tooltip-v2"
-import { Portal } from "solid-js/web"
-import { Show } from "solid-js"
-import { useTitlebarControlMount } from "@/components/titlebar"
-import { SessionChatsDropdown } from "@/components/session/session-header"
-import { StatusPopoverV2 } from "@/components/status-popover"
-import { useLanguage } from "@/context/language"
-import { useSettings } from "@/context/settings"
 import { requestAddWorkspaceProject } from "@/utils/amicode-workspace-projects"
 import { NEW_SESSION_CONTENT_WIDTH } from "@/pages/session/new-session-layout"
 
@@ -20,35 +12,19 @@ import { NEW_SESSION_CONTENT_WIDTH } from "@/pages/session/new-session-layout"
  *  landing effect in app.tsx creates a proper draft and this component
  *  unmounts automatically. */
 export default function EmptyWorkspaceLanding() {
-  const settings = useSettings()
-  const language = useLanguage()
-  const sessionsMount = useTitlebarControlMount("sessions")
-  const statusMount = useTitlebarControlMount("status")
+  // #1458: the titlebar portals (sessions dropdown + status popover) are GONE.
+  // They rendered SessionChatsDropdown/StatusPopoverV2 — components that read
+  // the per-directory SYNC context — at the "/" route, which never sits inside
+  // a SyncProvider. At real-boot timing (workspace projects arrive over the
+  // wire AFTER the app mounts) the no-directory window renders this landing
+  // for a moment on EVERY boot, and the popover's useSync() throw killed the
+  // whole route tree — including the reactive landing effect, so the draft was
+  // never created and the app stayed frozen at "/" (caught live by the e2e
+  // rig; unit tests mock the contexts and never saw it). The chrome dots are
+  // transient niceties on a momentary landing; the content below is the UX.
 
   return (
     <div class="relative size-full overflow-hidden flex flex-col">
-      {/* Titlebar controls — sessions + status */}
-      <Show when={sessionsMount()} keyed>
-        {(mount) => (
-          <Portal mount={mount}>
-            <span class="flex shrink-0" data-tour-target="sessions">
-              <SessionChatsDropdown />
-            </span>
-          </Portal>
-        )}
-      </Show>
-      <Show when={statusMount()} keyed>
-        {(mount) => (
-          <Portal mount={mount}>
-            <span class="flex shrink-0" data-tour-target="status">
-              <TooltipV2 placement="bottom" value={language.t("status.popover.trigger")} class="shrink-0">
-                <StatusPopoverV2 />
-              </TooltipV2>
-            </span>
-          </Portal>
-        )}
-      </Show>
-
       {/* Content — matches the new-session-view layout */}
       <div class="flex-1 min-h-0 flex flex-col gap-2 p-2">
         <div class="@container relative flex flex-col min-h-0 h-full flex-1">

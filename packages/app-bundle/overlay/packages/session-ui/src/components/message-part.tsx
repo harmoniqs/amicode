@@ -2492,7 +2492,8 @@ ToolRegistry.register({
     const childSessionId = createMemo(() => {
       const value = props.metadata.sessionId
       if (typeof value === "string" && value) return value
-      return taskSession(props.input, data.sessionID, data.store.session, data.store.agent)
+      // #1457 parity: the v1.18.x base context lacks the sessionID member
+      return taskSession(props.input, (data as unknown as { sessionID?: string }).sessionID, data.store.session, data.store.agent)
     })
     const agent = createMemo(() => taskAgent(props.input.subagent_type, data.store.agent))
     const title = createMemo(() => agent().name ?? i18n.t("ui.tool.agent.default"))

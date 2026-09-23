@@ -249,7 +249,10 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
       }
     }
   }
-  const sseFetch: typeof fetch = (input, init) => {
+  // #1457: a plain browser-fetch signature — the bun-types' fetch carries
+  // a preconnect member the browser wrapper can't have.
+  type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
+  const sseFetch: FetchLike = (input, init) => {
     const base = eventFetch ?? globalThis.fetch
     try {
       if (lastEventID) {
@@ -267,10 +270,10 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
     }
     return base(input as Parameters<typeof fetch>[0], init as Parameters<typeof fetch>[1])
   }
-  const eventApi = createApiForServer({ server: server.http, fetch: sseFetch })
+  const eventApi = createApiForServer({ server: server.http, fetch: sseFetch as unknown as typeof fetch })
   const eventSdk = createSdkForServer({
     signal: abort.signal,
-    fetch: sseFetch,
+    fetch: sseFetch as unknown as typeof fetch,
     server: server.http,
   })
   const protocol = detectServerProtocol(server.http, platform.fetch ?? globalThis.fetch)
@@ -444,7 +447,7 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
   // the old forever. A timed-out call rejects; the sync layer's retry
   // paths (and the frozen holds) carry the view until it lands.
   const platformFetch = platform.fetch ?? globalThis.fetch
-  const fetchWithTimeout: typeof fetch = (input, init) =>
+  const fetchWithTimeout: FetchLike = (input, init) =>
     platformFetch(input, {
       ...init,
       signal: init?.signal ?? AbortSignal.timeout(30_000),
@@ -452,14 +455,14 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
 
   const sdk = createSdkForServer({
     server: server.http,
-    fetch: fetchWithTimeout,
+    fetch: fetchWithTimeout as unknown as typeof fetch,
     throwOnError: true,
   })
-  const currentApi: ServerApi = createApiForServer({ server: server.http, fetch: fetchWithTimeout })
+  const currentApi: ServerApi = createApiForServer({ server: server.http, fetch: fetchWithTimeout as unknown as typeof fetch })
   const legacy = (directory?: string) =>
     createSdkForServer({
       server: server.http,
-      fetch: fetchWithTimeout,
+      fetch: fetchWithTimeout as unknown as typeof fetch,
       throwOnError: true,
       directory,
     })
@@ -483,7 +486,7 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
     createClient(opts: Omit<Parameters<typeof createSdkForServer>[0], "server" | "fetch">) {
       return createSdkForServer({
         server: server.http,
-        fetch: fetchWithTimeout,
+        fetch: fetchWithTimeout as unknown as typeof fetch,
         ...opts,
       })
     },

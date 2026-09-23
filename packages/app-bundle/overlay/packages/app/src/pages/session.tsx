@@ -524,7 +524,7 @@ function SessionProviders(props: ParentProps) {
  *  ("frozen pane, scrollable, loading icon") is THIS Show's fallback, not
  *  the outlet Suspense's (which never mounts). Stamp mount/unmount per id. */
 function TimelineHoldFallbackProbe(props: {
-  getEl: () => HTMLElement | undefined
+  getEl: () => HTMLDivElement | undefined
   getScrollTop: () => number
 }) {
   const w = globalThis as { __cloneRing?: { id: string; at: number; ms: number | null }[] }
@@ -541,7 +541,7 @@ function TimelineHoldFallbackProbe(props: {
   return <SessionTimelineHold getEl={props.getEl} getScrollTop={props.getScrollTop} />
 }
 
-function TimelinePaintProbe(props: { id: string; children: JSX.Element }) {
+function TimelinePaintProbe(props: ParentProps<{ id: string }>) {
   const w = globalThis as {
     __paintT0?: Record<string, number>
     __paintRing?: { id: string; ms: number; at: number; seg?: Record<string, number>; firstFrame?: number }[]
@@ -560,7 +560,7 @@ function TimelinePaintProbe(props: { id: string; children: JSX.Element }) {
         w.__paintRing = w.__paintRing ?? []
         w.__paintRing.push({
           id: props.id.slice(-14),
-          ms: Math.round(performance.now() - t0),
+          ms: Math.round(performance.now() - (t0 ?? tMount)),
           at: Date.now(),
           seg,
           firstFrame: Math.round(performance.now() - tMount),
@@ -569,7 +569,7 @@ function TimelinePaintProbe(props: { id: string; children: JSX.Element }) {
       })
     })
   })
-  return props.children as unknown as JSX.Element
+  return <>{props.children}</>
 }
 
 /** #1305: the browser's own longtask (>50ms) report — names the duration
