@@ -90,3 +90,94 @@ export function consumeEnrollmentNonce(nonce: string, deps: EnrollmentNonceDeps 
   );
   return true;
 }
+
+// ── IDENTITY-BOUND enrollment nonce (#1480, ADR 0034) ────────────────────────
+// The #1475 trust audit found the #1438 nonce above URL-carried, identity-
+// UNBOUND, and non-transactional. This is the FIX for the Observe bootstrap
+// path: a nonce minted here is BOUND to (target, requesting identity_key) —
+// redemption requires the SAME target+identity, and the consume is a single
+// synchronous read-check-write critical section (no `await` between the used
+// check and the used write), so two concurrent redemptions of one nonce can
+// never both mint. It rides the same 0600 keyed store, a distinct collection
+// so a bound record is never mistaken for an unbound one.
+
+const BOUND_NONCES = "bound_nonces";
+
+/** The binding a bound nonce is minted for and redeemed against: the target
+ *  machine the joiner is enrolling WITH, and the joiner's stable identity_key
+ *  fingerprint (#1477). Both must match at redemption. */
+export interface NonceBinding {
+  /** The target machine_id the nonce authorizes bootstrap toward. */
+  target: string;
+  /** The requesting peer's stable identity_key (#1477 fingerprint). */
+  identityKey: string;
+}
+
+interface BoundNonceRecord {
+  expires_at: number;
+  used: boolean;
+  target: string;
+  identity_key: string;
+}
+
+function readBoundNonce(nonce: string, deps: EnrollmentNonceDeps): BoundNonceRecord | undefined {
+  const entry = readKeyedCollection(enrollmentNonceStorePath(deps), BOUND_NONCES)[nonce];
+  if (typeof entry !== "object" || entry === null) return undefined;
+  const e = entry as Record<string, unknown>;
+  const expires_at = typeof e.expires_at === "number" ? e.expires_at : NaN;
+  const target = typeof e.target === "string" ? e.target : "";
+  const identity_key = typeof e.identity_key === "string" ? e.identity_key : "";
+  if (!Number.isFinite(expires_at) || target === "" || identity_key === "") return undefined;
+  return { expires_at, used: e.used === true, target, identity_key };
+}
+
+/** Mint a fresh single-use nonce BOUND to a (target, identity_key). Returns the
+ *  nonce value — the CALLER carries it OFF the URL (a request header / body),
+ *  never a query string (AC1). */
+export function mintBoundEnrollmentNonce(binding: NonceBinding, deps: EnrollmentNonceDeps = {}): string {
+  const now = (deps.now ?? Date.now)();
+  const ttl = deps.ttlMs ?? ENROLLMENT_NONCE_DEFAULT_TTL_MS;
+  const nonce = (deps.nonceFactory ?? (() => randomBytes(32).toString("base64url")))();
+  upsertKeyedEntry(
+    enrollmentNonceStorePath(deps),
+    BOUND_NONCES,
+    nonce,
+    { expires_at: now + ttl, used: false, target: binding.target, identity_key: binding.identityKey },
+    ENROLLMENT_NONCE_STORE_VERSION,
+  );
+  return nonce;
+}
+
+/** Whether a bound nonce is presently redeemable FOR THIS binding — present,
+ *  unused, unexpired, AND bound to the SAME target and identity_key. A wrong
+ *  target or wrong identity is a miss (never a match). Does NOT consume. */
+export function validateBoundEnrollmentNonce(nonce: string, binding: NonceBinding, deps: EnrollmentNonceDeps = {}): boolean {
+  const rec = readBoundNonce(nonce, deps);
+  if (rec === undefined) return false;
+  if (rec.used) return false;
+  if (rec.target !== binding.target || rec.identity_key !== binding.identityKey) return false;
+  return (deps.now ?? Date.now)() <= rec.expires_at;
+}
+
+/** Redeem a bound nonce single-use FOR THIS binding: validate against the
+ *  target+identity AND mark it used, as ONE synchronous read-check-write
+ *  critical section. Because there is no `await` between the used check and the
+ *  used write, two concurrent redemptions of the same nonce cannot both pass —
+ *  the event loop serializes them, so exactly one wins (atomic consume, AC2). A
+ *  wrong-identity/wrong-target attempt returns false WITHOUT burning the nonce,
+ *  so the rightful owner can still redeem it. */
+export function consumeBoundEnrollmentNonce(nonce: string, binding: NonceBinding, deps: EnrollmentNonceDeps = {}): boolean {
+  const rec = readBoundNonce(nonce, deps);
+  if (rec === undefined) return false;
+  if (rec.used) return false;
+  if (rec.target !== binding.target || rec.identity_key !== binding.identityKey) return false;
+  if ((deps.now ?? Date.now)() > rec.expires_at) return false;
+  upsertKeyedEntry(
+    enrollmentNonceStorePath(deps),
+    BOUND_NONCES,
+    nonce,
+    { expires_at: rec.expires_at, used: true, target: rec.target, identity_key: rec.identity_key },
+    ENROLLMENT_NONCE_STORE_VERSION,
+  );
+  return true;
+}
