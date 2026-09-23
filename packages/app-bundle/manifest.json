@@ -348,8 +348,10 @@
     "packages/opencode/test/server/httpapi-file.test.ts": "d3386129bc81467ecbcc57a3861f53767ee56ac41b4ff6ad58d8b168fb3b3373",
     "packages/opencode/test/server/httpapi-instance-route-auth.test.ts": "4b73a89d2431c02bc3b665d93f9002914e51eb1add979dc1867efbcbc0c36e25",
     "packages/opencode/test/server/httpapi-provider.test.ts": "9e8b3e085b478e3f99b689ffff600e10c0b4b50b3cabdbd749f88dae19bf5904",
+    "packages/opencode/test/server/httpapi-session.test.ts": "eda6fd763ac4c17891cedaa4ccd49597c03e7227fcfdcf0f94a1b4545ba623ed",
     "packages/opencode/test/server/httpapi-ui.test.ts": "d029e959cfd9347fff4cf17c5686dd125b0bd3a41afb3408a23b31418f12e3b0",
     "packages/opencode/test/server/pasqal-secret.test.ts": "54be8c666160dad22cd37bbf041f5bd40aec120271818f3c56c94107d987b9fb",
+    "packages/opencode/test/server/session-compact-errors.test.ts": "2ae2044d66db1ba41a5e294afedea5271f11d5bf384685a06ea05ac515b16fb2",
     "packages/opencode/test/server/session-diff-missing-patch.test.ts": "70526ca7fb86741843fd167f8f2f9c6f6d7e5e415a20a5448d17d24229bdd65b",
     "packages/opencode/test/server/session-diff-scoped.test.ts": "20ef80b92ad872573b371540575f028be8f1ad3c9f34d72f814b621e14e7a59e",
     "packages/opencode/test/server/workspace-routing.test.ts": "2574731ac379c540f450edc15f8750ac5360e8c33b4a0dad7c61e8eb686137bb",
@@ -377,6 +379,7 @@
     "packages/schema/src/v1/question.ts": "3ba37742dbd5ef322b7edb42fea0dacf43a1322747dfe997af909bf564bffd35",
     "packages/schema/src/v1/session.ts": "5804deda9cfcf2a015c759a6905b5bdfac74897239994c7facb246a60dbcf285",
     "packages/sdk/js/test/session-history.test.ts": "f10913af3157694465273d54e05c03cf96a0002df0e34898d9808f92977b11fd",
+    "packages/server/src/handlers/session.ts": "dc4209e999902a4d9d7d513c7718db587435a3e525bebc32fe3ac7513cd76bd0",
     "packages/session-ui/src/components/basic-tool.css": "0bcf0592ce8af0d902bd69da26ecad2f00f5a7890275392abbffe6f4d80c7853",
     "packages/session-ui/src/components/basic-tool.stories.tsx": "059c4bdce6a9ddc93c69949f5baf7323631ef0d5e69f04030fde0f2771a9fc09",
     "packages/session-ui/src/components/basic-tool.tsx": "ff2678cc17510e1b39657469f6dd1a0311843664cfd5161d385256e617b4e759",
@@ -871,7 +874,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-09-23T22:20:15.018Z",
+  "extracted_at": "2026-09-23T22:20:19.214Z",
   "per_package": {
     "packages/app": {
       "A": 187,
@@ -889,8 +892,8 @@
       "D": 0
     },
     "packages/opencode": {
-      "A": 68,
-      "M": 80,
+      "A": 69,
+      "M": 81,
       "D": 0
     },
     "packages/schema": {
@@ -901,6 +904,11 @@
     "packages/sdk": {
       "A": 0,
       "M": 3,
+      "D": 0
+    },
+    "packages/server": {
+      "A": 0,
+      "M": 1,
       "D": 0
     },
     "packages/session-ui": {
@@ -915,7 +923,7 @@
     }
   },
   "counts": {
-    "overlay_total": 849,
+    "overlay_total": 852,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1260,8 +1268,10 @@
     "packages/opencode/test/server/httpapi-file.test.ts": "M",
     "packages/opencode/test/server/httpapi-instance-route-auth.test.ts": "M",
     "packages/opencode/test/server/httpapi-provider.test.ts": "M",
+    "packages/opencode/test/server/httpapi-session.test.ts": "M",
     "packages/opencode/test/server/httpapi-ui.test.ts": "M",
     "packages/opencode/test/server/pasqal-secret.test.ts": "A",
+    "packages/opencode/test/server/session-compact-errors.test.ts": "A",
     "packages/opencode/test/server/session-diff-missing-patch.test.ts": "M",
     "packages/opencode/test/server/session-diff-scoped.test.ts": "A",
     "packages/opencode/test/server/workspace-routing.test.ts": "M",
@@ -1289,6 +1299,7 @@
     "packages/schema/src/v1/question.ts": "M",
     "packages/schema/src/v1/session.ts": "M",
     "packages/sdk/js/test/session-history.test.ts": "M",
+    "packages/server/src/handlers/session.ts": "M",
     "packages/session-ui/src/components/basic-tool.css": "M",
     "packages/session-ui/src/components/basic-tool.stories.tsx": "M",
     "packages/session-ui/src/components/basic-tool.tsx": "M",
