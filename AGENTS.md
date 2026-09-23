@@ -156,8 +156,15 @@ where the workspace is (that is also VS Code's inferred default for a `main` ext
 declared so the placement is explicit rather than inferred).
 
 Needs the **`VSCE_PAT`** repo secret (an Azure DevOps PAT: org = all accessible, scope
-Marketplace → Manage, <=1yr expiry, so rotate). Open VSX is deferred — issue #176 (needs
-`OVSX_TOKEN`).
+Marketplace → Manage, <=1yr expiry, so rotate).
+
+The same six platform VSIXes also publish to the **Open VSX Registry** (Cursor, VSCodium,
+Windsurf, and other non-Microsoft VS Code distros), gated on the identical clean-`vX.Y.Z`
+rule — alphas never reach Open VSX. Needs the **`OVSX_TOKEN`** repo secret (open-vsx.org →
+user settings → Access Tokens; the token's account must have signed the Eclipse publisher
+agreement and own the `harmoniqs` namespace). Like the Marketplace step, the Open VSX publish
+is idempotent — a per-target "already exists/published" counts as success, so a blind re-run
+is safe.
 
 **`.github/workflows/promote.yml`** — the deliberate "this alpha is good enough" act.
 `workflow_dispatch`, input `alpha_tag` (e.g. `v0.0.3-alpha.5`). Validates it (real pre-release

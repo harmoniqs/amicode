@@ -140,3 +140,15 @@ jobs:
             echo "$OUTPUT" | grep -q "already exists" || FAILED=1
           done
           [ "$FAILED" -eq 0 ]
+      - name: Publish to Open VSX Registry
+        if: ${{ steps.meta.outputs.publishable == 'true' }}
+        env:
+          OVSX_TOKEN: ${{ secrets.OVSX_TOKEN }}
+        run: |
+          FAILED=0
+          for V in packages/extension/amicode-linux-x64.vsix packages/extension/amicode-linux-arm64.vsix packages/extension/amicode-darwin-arm64.vsix packages/extension/amicode-win32-x64.vsix packages/extension/amicode-win32-arm64.vsix packages/extension/amicode-darwin-x64.vsix; do
+            OUTPUT=$(npx --yes ovsx publish "$V" -p "$OVSX_TOKEN" 2>&1) && { echo "$OUTPUT"; continue; }
+            echo "$OUTPUT"
+            echo "$OUTPUT" | grep -qiE "already (exists|published)" || FAILED=1
+          done
+          [ "$FAILED" -eq 0 ]
