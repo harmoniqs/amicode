@@ -150,7 +150,7 @@ describe("session warming", () => {
     await scheduled
   })
 
-  test("awaits lineage before the first-page bulk prefetch and never asks bulk warming for a deeper page", async () => {
+  test("starts lineage resolution and first-page bulk prefetch independently", async () => {
     const lineage = deferred()
     const calls: number[] = []
     const warming = warmBulkSession({
@@ -164,10 +164,27 @@ describe("session warming", () => {
     })
 
     await settle()
-    expect(calls).toEqual([])
+    expect(calls).toEqual([BULK_WARM_MESSAGES])
 
     lineage.resolve()
     await warming
+    expect(calls).toEqual([BULK_WARM_MESSAGES])
+  })
+
+  test("prefetches an eligible session when lineage resolution never settles", async () => {
+    const calls: number[] = []
+
+    void warmBulkSession({
+      remember: () => {},
+      hasLineage: () => false,
+      resolveLineage: () => new Promise(() => {}),
+      shouldPrefetch: () => true,
+      prefetch: async (limit) => {
+        calls.push(limit)
+      },
+    })
+
+    await settle()
     expect(calls).toEqual([BULK_WARM_MESSAGES])
   })
 
