@@ -22,43 +22,43 @@ describe("preview human write gate (#1442 AC5)", () => {
   test("a workspace-relative path is allowed", () => {
     const result = validateHumanWritePath("src/main.ts", workspace)
     expect(result.allowed).toBe(true)
-    expect(result.resolvedPath).toBe("/home/user/project/src/main.ts")
+    if (result.allowed) expect(result.resolvedPath).toBe("/home/user/project/src/main.ts")
   })
 
   test("a simple filename is allowed", () => {
     const result = validateHumanWritePath("README.md", workspace)
     expect(result.allowed).toBe(true)
-    expect(result.resolvedPath).toBe("/home/user/project/README.md")
+    if (result.allowed) expect(result.resolvedPath).toBe("/home/user/project/README.md")
   })
 
   test("an absolute path is rejected server-side", () => {
     const result = validateHumanWritePath("/etc/passwd", workspace)
     expect(result.allowed).toBe(false)
-    expect(result.reason).toBe("absolute-path-rejected")
+    if (!result.allowed) expect(result.reason).toBe("absolute-path-rejected")
   })
 
   test("an absolute path inside the workspace is still rejected (must be relative)", () => {
     const result = validateHumanWritePath("/home/user/project/src/main.ts", workspace)
     expect(result.allowed).toBe(false)
-    expect(result.reason).toBe("absolute-path-rejected")
+    if (!result.allowed) expect(result.reason).toBe("absolute-path-rejected")
   })
 
   test("a path with ../ that escapes the workspace is rejected", () => {
     const result = validateHumanWritePath("../../etc/passwd", workspace)
     expect(result.allowed).toBe(false)
-    expect(result.reason).toBe("path-escapes-workspace")
+    if (!result.allowed) expect(result.reason).toBe("path-escapes-workspace")
   })
 
   test("a path with ../ that stays in the workspace is allowed", () => {
     const result = validateHumanWritePath("src/../lib/util.ts", workspace)
     expect(result.allowed).toBe(true)
-    expect(result.resolvedPath).toBe("/home/user/project/lib/util.ts")
+    if (result.allowed) expect(result.resolvedPath).toBe("/home/user/project/lib/util.ts")
   })
 
   test("an empty path is rejected", () => {
     const result = validateHumanWritePath("", workspace)
     expect(result.allowed).toBe(false)
-    expect(result.reason).toBe("empty-path")
+    if (!result.allowed) expect(result.reason).toBe("empty-path")
   })
 
   test("the gate is distinct from the engine file.write handler (contract assertion)", () => {
@@ -68,6 +68,6 @@ describe("preview human write gate (#1442 AC5)", () => {
     // shared handler would allow.
     const absOutsideWorkspace = validateHumanWritePath("/tmp/agent-output.txt", workspace)
     expect(absOutsideWorkspace.allowed).toBe(false)
-    expect(absOutsideWorkspace.reason).toBe("absolute-path-rejected")
+    if (!absOutsideWorkspace.allowed) expect(absOutsideWorkspace.reason).toBe("absolute-path-rejected")
   })
 })

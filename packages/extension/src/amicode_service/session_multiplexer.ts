@@ -138,7 +138,7 @@ export class SessionMultiplexProxy {
    *   5. Owner not in peers → local (undefined)
    *   6. Peer URL undefined → undefined (honest degraded) */
   resolveTarget(
-    method: string,
+    _method: string,
     pathname: string,
     headers: Record<string, string | string[] | undefined>,
   ): ResolvedTarget | undefined {

@@ -13,6 +13,7 @@ import {
   resolveSessionProvenance,
   provenanceMenuItems,
   type ProvenanceMenuAction,
+  type ProvenanceMenuInfo,
 } from "./session-header-provenance"
 
 describe("session-header provenance (#1442 AC1)", () => {
@@ -67,9 +68,10 @@ describe("session-header provenance caret menu (#1442 AC2)", () => {
       workspace: "/home/user/remote-project",
       branch: "feature/fleet",
     })
-    const machineItem = items.find((i) => i.kind === "info" && i.label === "Machine")
-    const wsItem = items.find((i) => i.kind === "info" && i.label === "Workspace")
-    const branchItem = items.find((i) => i.kind === "info" && i.label === "Branch")
+    const infoItems = items.filter((i): i is ProvenanceMenuInfo => i.kind === "info")
+    const machineItem = infoItems.find((i) => i.label === "Machine")
+    const wsItem = infoItems.find((i) => i.label === "Workspace")
+    const branchItem = infoItems.find((i) => i.label === "Branch")
     expect(machineItem?.value).toBe("Mac Studio")
     expect(wsItem?.value).toBe("/home/user/remote-project")
     expect(branchItem?.value).toBe("feature/fleet")
