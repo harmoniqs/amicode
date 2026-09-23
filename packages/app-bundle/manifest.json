@@ -212,7 +212,7 @@
     "packages/app/src/i18n/zh.ts": "600507ffc843bad3f85102000b97f0b29e0ee1aa82cd67d67e12ffbf8eb04165",
     "packages/app/src/i18n/zht.ts": "11a18096ad1369c92c8895d129d150d20ce18db05ff9a11aa3eec868388d8e22",
     "packages/app/src/index.css": "2c11df3dcebb381358e06626094b5dda3c35688ad7940d643b2cbb6cff1ea9e9",
-    "packages/app/src/pages/empty-workspace-landing.guard.test.ts": "a68e04ecb398d11350a86b310990e50b471fb54908102c4e164b50772c74aaf3",
+    "packages/app/src/pages/empty-workspace-landing.guard.test.ts": "5a16c2249c399d00e01b64e67d39bddeb7e9460261b36df58de7b63047ccd617",
     "packages/app/src/pages/empty-workspace-landing.tsx": "fc8ee43e3089c3586b0e22c346eb1077241b91fc05212ffbeb352ebb408dbf1d",
     "packages/app/src/pages/error.tsx": "db9ba0847cfb205100ad6133cce30c6ea2ce983802af44947e6d2b746c2a6ec5",
     "packages/app/src/pages/hold-debug-badge-gate.test.ts": "661f59e172a5b074a6807896f46c18338faa59b6d9c0912fd824df2dae4a5730",

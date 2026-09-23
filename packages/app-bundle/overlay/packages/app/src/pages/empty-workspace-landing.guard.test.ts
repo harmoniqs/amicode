@@ -19,11 +19,16 @@ describe("EmptyWorkspaceLanding context-freedom (#1458)", () => {
     "utf8",
   )
 
-  test("no sync-context components in the landing module", () => {
-    expect(source).not.toContain("SessionChatsDropdown")
-    expect(source).not.toContain("StatusPopover")
-    expect(source).not.toContain("session-header")
-    expect(source).not.toContain("status-popover")
+  test("no sync-context component imports in the landing module", () => {
+    // Import-graph assertions (not raw text — the fix's explanatory comment
+    // legitimately names the removed components).
+    const imports = [...source.matchAll(/^import .*$/gm)].map((m) => m[0])
+    for (const line of imports) {
+      expect(line).not.toContain("session-header")
+      expect(line).not.toContain("status-popover")
+    }
+    expect(imports.some((l) => /SessionChatsDropdown/.test(l))).toBe(false)
+    expect(imports.some((l) => /StatusPopover/.test(l))).toBe(false)
   })
 
   test("the landing still owns its content: the open-folder prompt", () => {
