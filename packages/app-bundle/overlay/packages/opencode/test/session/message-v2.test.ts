@@ -1395,6 +1395,140 @@ describe("session.message-v2.toModelMessage", () => {
     expect(strippedParts.some((p) => p.type === "text" && p.text === "deep thinking about the problem")).toBe(true)
     expect(strippedParts.some((p) => p.type === "text" && p.text === "the answer")).toBe(true)
   })
+
+  test("flattens tool calls to text when forCompaction is true", async () => {
+    // When building messages for compaction, tool_calls and tool results must be
+    // flattened to text. The compaction request sends tools: {} (no definitions),
+    // but Bedrock Converse requires toolConfig for any toolUse/toolResult content
+    // blocks. Flattening avoids the gateway's invalid_tools rejection.
+    const assistantID = "m-assistant-tool-compaction"
+    const input: SessionV1.WithParts[] = [
+      {
+        info: assistantInfo(assistantID, "m-parent"),
+        parts: [
+          { ...basePart(assistantID, "p1"), type: "text", text: "Let me look that up." },
+          {
+            ...basePart(assistantID, "p2"),
+            type: "tool",
+            tool: "search",
+            callID: "call_123",
+            state: {
+              status: "completed",
+              input: { query: "hello" },
+              output: "Found: hello world",
+              title: "Search",
+              time: { start: 0, end: 1, compacted: undefined },
+              metadata: {},
+              attachments: [],
+            },
+            metadata: {},
+          },
+        ] as SessionV1.Part[],
+      },
+    ]
+
+    // Without forCompaction, tool calls are preserved as protocol messages
+    const preserved = await MessageV2.toModelMessages(input, model)
+    const preservedParts = (preserved[0].content as any[])
+    expect(preservedParts.some((p) => p.type === "tool-call")).toBe(true)
+
+    // With forCompaction, tool calls are flattened to text
+    const stripped = await MessageV2.toModelMessages(input, model, { forCompaction: true })
+    const strippedParts = (stripped[0].content as any[])
+    expect(strippedParts.every((p) => p.type === "text")).toBe(true)
+    expect(strippedParts.some((p) => p.type === "tool-call")).toBe(false)
+    // The flattened text includes the tool name, input, and output
+    const toolText = strippedParts.find((p) => p.text?.includes("[Tool: search]"))
+    expect(toolText).toBeDefined()
+    expect(toolText.text).toContain("hello")
+    expect(toolText.text).toContain("Found: hello world")
+  })
+
+  test("flattened tool compaction produces no tool role messages", async () => {
+    // The critical property: after compaction flattening, convertToModelMessages
+    // must not emit any tool-call or tool-result ModelMessage parts, so the
+    // AI SDK won't serialize tool_calls or role: "tool" messages on the wire.
+    const assistantID = "m-assistant-tool-wire"
+    const input: SessionV1.WithParts[] = [
+      {
+        info: userInfo("m-user"),
+        parts: [
+          { ...basePart("m-user", "p0"), type: "text", text: "Search for cats" },
+        ] as SessionV1.Part[],
+      },
+      {
+        info: assistantInfo(assistantID, "m-user"),
+        parts: [
+          {
+            ...basePart(assistantID, "p1"),
+            type: "tool",
+            tool: "search",
+            callID: "call_456",
+            state: {
+              status: "completed",
+              input: { q: "cats" },
+              output: "Cats are great",
+              title: "Search",
+              time: { start: 0, end: 1, compacted: undefined },
+              metadata: {},
+              attachments: [],
+            },
+            metadata: {},
+          },
+          { ...basePart(assistantID, "p2"), type: "text", text: "Here are the results." },
+        ] as SessionV1.Part[],
+      },
+    ]
+
+    const messages = await MessageV2.toModelMessages(input, model, { forCompaction: true })
+    // No message should have role "tool" (tool results)
+    expect(messages.some((m) => m.role === "tool")).toBe(false)
+    // No assistant message content should have tool-call parts
+    for (const msg of messages) {
+      if (msg.role !== "assistant") continue
+      const parts = msg.content as any[]
+      expect(parts.some((p) => p.type === "tool-call")).toBe(false)
+    }
+  })
+
+  test("compacted tool outputs are not restored during compaction flattening", async () => {
+    // Tools whose output was previously cleared (time.compacted is set) must
+    // stay cleared when flattened to text. Restoring large outputs would
+    // recreate the context overflow that compaction is meant to fix.
+    const assistantID = "m-assistant-compacted-tool"
+    const input: SessionV1.WithParts[] = [
+      {
+        info: assistantInfo(assistantID, "m-parent"),
+        parts: [
+          {
+            ...basePart(assistantID, "p1"),
+            type: "tool",
+            tool: "large_search",
+            callID: "call_789",
+            state: {
+              status: "completed",
+              input: { query: "big data" },
+              output: "This output should NOT appear — it was already compacted away",
+              title: "Large Search",
+              time: { start: 0, end: 1, compacted: 2 },
+              metadata: {},
+              attachments: [],
+            },
+            metadata: {},
+          },
+        ] as SessionV1.Part[],
+      },
+    ]
+
+    const messages = await MessageV2.toModelMessages(input, model, { forCompaction: true })
+    const parts = (messages[0].content as any[])
+    expect(parts.every((p) => p.type === "text")).toBe(true)
+    const toolText = parts.find((p) => p.text?.includes("[Tool: large_search]"))
+    expect(toolText).toBeDefined()
+    // Must use the cleared placeholder, not the original output
+    expect(toolText.text).toContain("[Old tool result content cleared]")
+    expect(toolText.text).not.toContain("This output should NOT appear")
+  })
 })
 
 describe("session.message-v2.fromError", () => {

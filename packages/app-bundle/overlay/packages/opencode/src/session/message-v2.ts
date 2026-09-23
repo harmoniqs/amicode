@@ -296,6 +296,31 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
             type: "step-start",
           })
         if (part.type === "tool") {
+          // During compaction, flatten tool calls/results to text instead of
+          // preserving them as protocol messages. The compaction request sends
+          // tools: {} (no tool definitions), but Bedrock Converse requires
+          // toolConfig for any toolUse/toolResult content blocks. Flattening
+          // avoids the gateway's invalid_tools rejection — same treatment as
+          // reasoning blocks above.
+          if (options?.forCompaction) {
+            const toolLabel = `[Tool: ${part.tool}]`
+            const inputText = typeof part.state.input === "string" ? part.state.input : JSON.stringify(part.state.input)
+            let outputText: string
+            if (part.state.status === "completed") {
+              outputText = part.state.time.compacted
+                ? "[Old tool result content cleared]"
+                : truncateToolOutput(part.state.output, options?.toolOutputMaxChars)
+            } else if (part.state.status === "error") {
+              outputText = `[Error: ${part.state.error}]`
+            } else {
+              outputText = "[Tool execution was interrupted]"
+            }
+            assistantMessage.parts.push({
+              type: "text",
+              text: `${toolLabel}\nInput: ${inputText}\nOutput: ${outputText}`,
+            })
+            continue
+          }
           toolNames.add(part.tool)
           if (part.state.status === "completed") {
             const outputText = part.state.time.compacted

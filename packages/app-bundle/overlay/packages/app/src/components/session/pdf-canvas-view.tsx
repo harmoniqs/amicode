@@ -23,6 +23,11 @@ import * as pdfjsLib from "pdfjs-dist"
 import * as pdfjsWorker from "pdfjs-dist/build/pdf.worker.min.mjs"
 import { clampRestorePage } from "./pdf-restore"
 
+// AnnotationLayer renders clickable link annotations (hyperref cross-references,
+// external URLs) as positioned <a> elements over the canvas. Without it, PDF
+// hyperlinks are inert (#1435).
+const { AnnotationLayer, setLayerDimensions } = pdfjsLib
+
 // Inject the worker module on globalThis — the one code path in pdfjs-dist v6
 // that bypasses BOTH `new Worker()` AND the `workerSrc` getter. PDF.js sees
 // `globalThis.pdfjsWorker.WorkerMessageHandler`, routes through LoopbackPort,
@@ -114,6 +119,34 @@ const PDF_TEXT_LAYER_STYLE = `
 }
 `
 
+// Annotation layer — positioned link overlays for clickable hyperlinks (#1435).
+// Must sit above the text layer (z-index: 2 > 1) so links are clickable, but
+// pointer-events: none on the container passes through to text selection on
+// non-link areas. Individual annotation sections re-enable pointer events.
+const PDF_ANNOTATION_LAYER_STYLE = `
+[data-pdf-annotation-layer] {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  z-index: 2;
+  pointer-events: none;
+}
+[data-pdf-annotation-layer] section {
+  position: absolute;
+  pointer-events: auto;
+}
+[data-pdf-annotation-layer] a {
+  display: block;
+  width: 100%;
+  height: 100%;
+  text-decoration: none;
+  cursor: pointer;
+}
+[data-pdf-annotation-layer] a:hover {
+  background: rgba(255, 255, 0, 0.15);
+}
+`
+
 // ---------------------------------------------------------------------------
 // Single page renderer
 // ---------------------------------------------------------------------------
@@ -126,12 +159,16 @@ function PdfPage(props: {
   containerWidth: number
   onTextAvailability: (available: boolean) => void
   onAnchorChange: (anchor: HTMLDivElement | null) => void
+  /** Navigate to a page (for internal PDF links) */
+  navigateToPage: (page: number) => boolean
 }) {
   const [page, setPage] = createSignal<pdfjsLib.PDFPageProxy | null>(null)
   let canvasRef: HTMLCanvasElement | undefined
   let textLayerRef: HTMLDivElement | undefined
+  let annotationLayerRef: HTMLDivElement | undefined
   let activeRender: { cancel(): void } | null = null
   let activeTextLayer: pdfjsLib.TextLayer | null = null
+  let activeAnnotationLayer: InstanceType<typeof AnnotationLayer> | null = null
   let renderTimer: ReturnType<typeof setTimeout> | undefined
 
   // Load the PDF page and text stream once. Zoom and resize retain the text
@@ -145,6 +182,8 @@ function PdfPage(props: {
     activeTextLayer?.cancel()
     activeTextLayer = null
     textLayerRef?.replaceChildren()
+    activeAnnotationLayer = null
+    annotationLayerRef?.replaceChildren()
 
     let cancelled = false
 
@@ -158,6 +197,8 @@ function PdfPage(props: {
       activeTextLayer?.cancel()
       activeTextLayer = null
       textLayerRef?.replaceChildren()
+      activeAnnotationLayer = null
+      annotationLayerRef?.replaceChildren()
     })
   })
 
@@ -167,7 +208,7 @@ function PdfPage(props: {
     const currentPage = page()
     const zoom = props.zoom
     const containerWidth = props.containerWidth
-    if (!canvasRef || !textLayerRef || !currentPage || containerWidth <= 0) return
+    if (!canvasRef || !textLayerRef || !annotationLayerRef || !currentPage || containerWidth <= 0) return
 
     const dpr = window.devicePixelRatio || 1
     const intrinsic = currentPage.getViewport({ scale: 1 })
@@ -193,6 +234,78 @@ function PdfPage(props: {
         props.onTextAvailability(false)
       })
     }
+
+    // ── Annotation layer — render clickable link overlays (#1435) ─────
+    // Rebuilt on every zoom/resize so link hit areas match the canvas.
+    if (activeAnnotationLayer) {
+      // Update existing layer dimensions for the new viewport
+      setLayerDimensions(annotationLayerRef, viewport)
+    }
+    // Re-render annotations from scratch when the page loads or zoom changes
+    // (AnnotationLayer doesn't have an incremental update — it's cheap).
+    activeAnnotationLayer = null
+    annotationLayerRef.replaceChildren()
+
+    // Minimal link service — pdfjs only calls these methods at runtime for
+    // link annotations. Typed as `any` to avoid importing the full
+    // PDFLinkService class (20+ members) that the render/constructor types
+    // nominally require but never exercise for our link-only use.
+    const linkService: any = {
+      getDestinationHash: () => "#",
+      getAnchorUrl: () => "#",
+      addLinkAttributes: (link: HTMLAnchorElement, url: string, _newWindow: boolean) => {
+        link.href = url
+        link.target = "_blank"
+        link.rel = "noopener noreferrer"
+        // In the VS Code webview, external links must be posted to the host
+        link.addEventListener("click", (e) => {
+          e.preventDefault()
+          window.open(url, "_blank")
+        })
+      },
+      goToDestination: async (dest: unknown) => {
+        try {
+          const doc = props.doc
+          // dest can be a string (named destination) or an explicit array
+          const resolved = typeof dest === "string" ? await doc.getDestination(dest) : dest
+          if (!Array.isArray(resolved) || resolved.length === 0) return
+          const pageIndex = await doc.getPageIndex(resolved[0])
+          props.navigateToPage(pageIndex + 1) // 0-based → 1-based
+        } catch { /* best-effort — degrade silently */ }
+      },
+      externalLinkEnabled: true,
+      externalLinkTarget: 2, // BLANK
+      externalLinkRel: "noopener noreferrer",
+    }
+
+    void currentPage.getAnnotations().then((annotations) => {
+      if (page() !== currentPage || !annotationLayerRef) return
+      if (annotations.length === 0) return
+
+      const annotLayer = new AnnotationLayer({
+        div: annotationLayerRef,
+        page: currentPage,
+        viewport,
+        linkService,
+        accessibilityManager: null,
+        annotationCanvasMap: null,
+        annotationEditorUIManager: null,
+        structTreeLayer: null,
+        commentManager: null,
+        annotationStorage: null,
+      })
+      activeAnnotationLayer = annotLayer
+
+      void annotLayer.render({
+        annotations,
+        div: annotationLayerRef,
+        page: currentPage,
+        viewport,
+        linkService,
+        imageResourcesPath: "",
+        renderForms: false,
+      }).catch(() => { /* degrade silently */ })
+    }).catch(() => { /* no annotations — fine */ })
 
     // Scale the last completed bitmap immediately; it preserves the page's
     // geometry during the gesture while the crisp replacement is rendered.
@@ -245,6 +358,7 @@ function PdfPage(props: {
         style={{ background: "white" }}
       />
       <div ref={textLayerRef} data-pdf-text-layer />
+      <div ref={annotationLayerRef} data-pdf-annotation-layer />
     </div>
   )
 }
@@ -489,6 +603,7 @@ export function PdfCanvasView(props: PdfCanvasViewProps) {
   return (
     <div ref={wrapperRef} class="inline-flex flex-col items-center gap-3 p-4 min-w-full min-h-full">
       <style>{PDF_TEXT_LAYER_STYLE}</style>
+      <style>{PDF_ANNOTATION_LAYER_STYLE}</style>
       {textAvailabilityMessage() && (
         <p role="status" class="self-start text-12-regular text-text-weak">
           {textAvailabilityMessage()}
@@ -506,6 +621,7 @@ export function PdfCanvasView(props: PdfCanvasViewProps) {
               setTextAvailability((current) => ({ ...current, [pageNum]: available }))
             }}
             onAnchorChange={(anchor) => setPageAnchor(pageNum, anchor)}
+            navigateToPage={navigateToPage}
           />
         )}
       </For>

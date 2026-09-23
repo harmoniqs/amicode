@@ -383,10 +383,18 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
       return
     }
 
-    await sdk().api.session.compact({
-      sessionID,
-      model: { providerID: model.provider.id, modelID: model.id },
-    })
+    await sdk()
+      .api.session.compact({
+        sessionID,
+        model: { providerID: model.provider.id, modelID: model.id },
+      })
+      .catch(() => {
+        showToast({
+          variant: "error",
+          title: language.t("command.session.compact"),
+          description: "Failed to compact session",
+        })
+      })
   }
 
   const fork = () => {

@@ -34,6 +34,9 @@ export const BUG_REPORT_TITLE = "Bug report";
 /** The staged skill whose name is also its slash-command (opencode command
  *  API: skills register as commands under their frontmatter `name`). */
 export const REPORT_A_BUG_SKILL = "report-a-bug";
+/** Bug sessions run on the build agent — never plan (which is read-only and
+ *  cannot execute the diagnostic collection the skill needs). */
+export const BUG_REPORT_AGENT = "build";
 
 export const OPEN_BUG_REPORT_KIND = "open-bug-report";
 export const CLOSE_BUG_REPORT_KIND = "close-bug-report";
@@ -356,6 +359,7 @@ export class BugReportManager {
       method: "POST",
       body: {
         title: BUG_REPORT_TITLE,
+        agent: BUG_REPORT_AGENT,
         metadata: { bug_report: envelope },
         // Hard guardrail: the question tool is hidden from the model for
         // bug sessions (amicode#249). The bug dock handles dialogue via the
@@ -379,7 +383,7 @@ export class BugReportManager {
    *  live variant travels with its model; the configured pin cannot express a
    *  variant. */
   private async armSession(server: BugReportServer, sessionID: string, liveModel?: ReportBugModel, originModel?: ReportBugModel): Promise<void> {
-    const body: Record<string, unknown> = { command: REPORT_A_BUG_SKILL, arguments: "" };
+    const body: Record<string, unknown> = { command: REPORT_A_BUG_SKILL, arguments: "", agent: BUG_REPORT_AGENT };
     // Precedence: live → origin → configured → omit. Validation mirrors the
     // bridge's bounded-string checks; a malformed live value never blocks the
     // command.

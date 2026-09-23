@@ -21,6 +21,7 @@ import {
   highlightSpecialChars,
 } from "@codemirror/view"
 import { history, defaultKeymap, historyKeymap } from "@codemirror/commands"
+import { search, searchKeymap, highlightSelectionMatches } from "@codemirror/search"
 import { type LanguageSupport, bracketMatching } from "@codemirror/language"
 import {
   HighlightStyle,
@@ -307,7 +308,9 @@ export function baseExtensions(opts: {
     highlightSpecialChars(),
     drawSelection(),
     bracketMatching(),
-    keymap.of([...defaultKeymap, ...historyKeymap]),
+    keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap]),
+    search(),
+    highlightSelectionMatches(),
     EditorView.lineWrapping,
     buildSyntaxHighlightStyle(), // first-paint bridge: lezer colors until Shiki responds
     opts.theme,
