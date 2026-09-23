@@ -26,7 +26,7 @@ import {
   clearHubCredential,
   hubUpstreamAuthHeader,
 } from "../src/amicode_service/hub_credential";
-import { deriveCurrency } from "../src/amicode_service/merged_projection";
+import { deriveCurrency, buildFleetProjection, type SessionOwnerTag, type FleetProjection } from "../src/amicode_service/merged_projection";
 import { stageFleetDataPlane } from "../src/amicode_service/fleet_staging";
 
 // ── mock dist (the app-shelf test's shape) ───────────────────────────────────
@@ -720,5 +720,203 @@ describe("currency token — derived over what is fetched, tagged with its data 
     const localOnly = deriveCurrency([{ source: "local", present: true, count: 1, max: 1, sum: 1, version: "v1" }]);
     expect(withAbsent.token).toBe(localOnly.token);
     expect(withAbsent.sources).toEqual(["local"]);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Fleet-wide projection — N-peer, machine-keyed fan-out (#1439)
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Mock peer: accepts the peer token via the same Basic auth scheme as the engine
+function startMockPeer(sessions: unknown[], peerToken: string): Promise<MockOrigin> {
+  const requests: string[] = [];
+  const server = http.createServer((req, res) => {
+    requests.push(`${req.method} ${req.url}`);
+    const auth = req.headers.authorization ?? "";
+    if (auth !== serverAuthHeader(peerToken)) {
+      res.writeHead(401, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: false, error: "unauthorized" }));
+      return;
+    }
+    if (req.method === "GET" && req.url?.startsWith("/session")) {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(sessions));
+      return;
+    }
+    if (req.method === "GET" && req.url?.startsWith("/global/health")) {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ healthy: true, version: "v1.18.29" }));
+      return;
+    }
+    res.writeHead(404, { "content-type": "application/json" });
+    res.end(JSON.stringify({ message: "not found" }));
+  });
+  return new Promise((resolve) => {
+    server.listen(0, "127.0.0.1", () => {
+      const port = (server.address() as AddressInfo).port;
+      resolve({ url: `http://127.0.0.1:${port}`, requests, stop: () => new Promise((r) => server.close(() => r())) });
+    });
+  });
+}
+
+describe("fleet-wide projection — N-peer, machine-keyed fan-out (#1439)", () => {
+  // ≥3-source fixture: local + 2 reachable peers + 1 unreachable peer = 4 sources
+  const STUDIO_SESSIONS = [
+    { id: "ses-studio-1", title: "studio session", directory: "/studio/proj", time: { created: 1000, updated: 5000 } },
+    { id: "ses-studio-2", title: "another studio", directory: "/studio/proj", time: { created: 1500, updated: 5500 } },
+  ];
+  const MINI_SESSIONS = [
+    { id: "ses-mini-1", title: "mini session", directory: "/mini/proj", time: { created: 2000, updated: 6000 } },
+  ];
+  const LOCAL_FLEET_SESSIONS = [
+    { id: "ses-local-1", title: "local session", directory: "/local/proj", time: { created: 3000, updated: 7000 } },
+  ];
+
+  const ROSTER: Record<string, { name: string; device_type?: string }> = {
+    "macbook-pro-local": { name: "MacBook Pro", device_type: "laptop" },
+    "mac-studio-peer": { name: "Mac Studio", device_type: "desktop" },
+    "mac-mini-peer": { name: "Mac Mini", device_type: "server" },
+    "unreachable-box": { name: "Unreachable Box", device_type: "server" },
+  };
+  const rosterLookup = (id: string) => ROSTER[id];
+
+  let localEngine: MockOrigin;
+  let studioPeer: MockOrigin;
+  let miniPeer: MockOrigin;
+
+  beforeAll(async () => {
+    localEngine = await startMockEngine(LOCAL_FLEET_SESSIONS);
+    studioPeer = await startMockPeer(STUDIO_SESSIONS, "tok-studio");
+    miniPeer = await startMockPeer(MINI_SESSIONS, "tok-mini");
+  });
+
+  afterAll(async () => {
+    await localEngine.stop();
+    await studioPeer.stop();
+    await miniPeer.stop();
+  });
+
+  function buildOpts(overrides: Partial<Parameters<typeof buildFleetProjection>[0]> = {}) {
+    return {
+      localMachineId: "macbook-pro-local",
+      local: { getUrl: () => localEngine.url, password: "engine-mint-password" },
+      peers: [
+        { machineId: "mac-studio-peer", getUrl: () => studioPeer.url, token: "tok-studio" },
+        { machineId: "mac-mini-peer", getUrl: () => miniPeer.url, token: "tok-mini" },
+        { machineId: "unreachable-box", getUrl: () => undefined as string | undefined },
+      ],
+      rosterLookup,
+      ...overrides,
+    };
+  }
+
+  it("returns sessions from every reachable serving peer (≥3 sources), each tagged with owner", async () => {
+    const projection = await buildFleetProjection(buildOpts());
+
+    expect(projection.ok).toBe(true);
+    expect(projection.mode).toBe("fleet");
+    // 2 studio + 1 mini + 1 local = 4 sessions total
+    expect(projection.sessions).toHaveLength(4);
+
+    // Local session tagged with is_local: true
+    const localSes = projection.sessions.find((s) => s.id === "ses-local-1");
+    expect(localSes).toBeDefined();
+    expect(localSes!.amicode_owner).toMatchObject({
+      owner_machine_id: "macbook-pro-local",
+      owner_name: "MacBook Pro",
+      device_type: "laptop",
+      directory: "/local/proj",
+      is_local: true,
+    });
+
+    // Remote studio session tagged with is_local: false
+    const studioSes = projection.sessions.find((s) => s.id === "ses-studio-1");
+    expect(studioSes).toBeDefined();
+    expect(studioSes!.amicode_owner).toMatchObject({
+      owner_machine_id: "mac-studio-peer",
+      owner_name: "Mac Studio",
+      device_type: "desktop",
+      directory: "/studio/proj",
+      is_local: false,
+    });
+
+    // Remote mini session
+    const miniSes = projection.sessions.find((s) => s.id === "ses-mini-1");
+    expect(miniSes).toBeDefined();
+    expect(miniSes!.amicode_owner).toMatchObject({
+      owner_machine_id: "mac-mini-peer",
+      owner_name: "Mac Mini",
+      device_type: "server",
+      directory: "/mini/proj",
+      is_local: false,
+    });
+  });
+
+  it("unreachable peer is a named absence — reachable peers still render", async () => {
+    const projection = await buildFleetProjection(buildOpts());
+
+    // Unreachable peer: named, not silently dropped
+    expect(projection.sources["unreachable-box"]).toBeDefined();
+    expect(projection.sources["unreachable-box"].present).toBe(false);
+    expect(projection.sources["unreachable-box"].reason).toBe("no-upstream");
+
+    // Reachable peers and local: all present
+    expect(projection.sources["macbook-pro-local"].present).toBe(true);
+    expect(projection.sources["mac-studio-peer"].present).toBe(true);
+    expect(projection.sources["mac-mini-peer"].present).toBe(true);
+
+    // Reachable sessions are in the list
+    expect(projection.sessions.some((s) => s.id === "ses-studio-1")).toBe(true);
+    expect(projection.sessions.some((s) => s.id === "ses-mini-1")).toBe(true);
+    expect(projection.sessions.some((s) => s.id === "ses-local-1")).toBe(true);
+  });
+
+  it("currency derives over contributing sources only — unreachable excluded", async () => {
+    const projection = await buildFleetProjection(buildOpts());
+
+    const sorted = [...projection.currency.sources].sort();
+    expect(sorted).toContain("macbook-pro-local");
+    expect(sorted).toContain("mac-studio-peer");
+    expect(sorted).toContain("mac-mini-peer");
+    expect(sorted).not.toContain("unreachable-box");
+    expect(projection.currency.derived_over).toBe("fetched");
+  });
+
+  it("roster lookup enriches the owner tag — fallback to machine_id when roster entry is absent", async () => {
+    const sparseRoster = (id: string) => {
+      if (id === "macbook-pro-local") return { name: "MacBook Pro", device_type: "laptop" as string | undefined };
+      return undefined; // no roster entry for peers
+    };
+    const projection = await buildFleetProjection(buildOpts({ rosterLookup: sparseRoster }));
+
+    // Local session: has roster entry
+    const localSes = projection.sessions.find((s) => s.id === "ses-local-1");
+    expect(localSes!.amicode_owner!.owner_name).toBe("MacBook Pro");
+
+    // Remote session: no roster entry → falls back to machine_id
+    const studioSes = projection.sessions.find((s) => s.id === "ses-studio-1");
+    expect(studioSes!.amicode_owner!.owner_name).toBe("mac-studio-peer");
+    expect(studioSes!.amicode_owner!.device_type).toBeUndefined();
+  });
+
+  it("a peer with revoked credential (unauthorized) is a named absence — reachable peers still render", async () => {
+    const projection = await buildFleetProjection(buildOpts({
+      peers: [
+        { machineId: "mac-studio-peer", getUrl: () => studioPeer.url, token: "tok-studio" },
+        { machineId: "mac-mini-peer", getUrl: () => miniPeer.url, token: "WRONG-TOKEN" }, // revoked/wrong
+        { machineId: "unreachable-box", getUrl: () => undefined as string | undefined },
+      ],
+    }));
+
+    // Mini peer: named unauthorized
+    expect(projection.sources["mac-mini-peer"].present).toBe(false);
+    expect(projection.sources["mac-mini-peer"].reason).toBe("unauthorized");
+
+    // Studio and local still render
+    expect(projection.sources["mac-studio-peer"].present).toBe(true);
+    expect(projection.sources["macbook-pro-local"].present).toBe(true);
+    expect(projection.sessions.some((s) => s.id === "ses-studio-1")).toBe(true);
+    expect(projection.sessions.some((s) => s.id === "ses-local-1")).toBe(true);
+    expect(projection.sessions.some((s) => s.id === "ses-mini-1")).toBe(false);
   });
 });
