@@ -4,6 +4,7 @@ import socket, threading, time
 APP_DIST = "/home/aaron/.amico/server/app-dist"
 BACKEND = ("127.0.0.1", 4095)
 LOG = open("/home/aaron/.amico/server/frontdoor.log", "a", buffering=1)
+_last_req = {}
 def log(m): LOG.write(time.strftime("%H:%M:%S ") + m + "\n")
 
 # --- #1311: UA census — the GET / storm (484 doc fetches / 2min observed) must
@@ -480,11 +481,25 @@ def passthrough_capture(c, first_chunk, key=None, force_close=False):
     log(f"be+{bid} opened")
     done = threading.Event()
     cap = {"buf": bytearray(), "ok": False}
-    def pipe(src, dst, capture=False):
+    _sniffed = [False]
+    def pipe(src, dst, capture=False, sniff=False):
         try:
             while True:
                 d = src.recv(65536)
                 if not d: break
+                if sniff and not _sniffed[0]:
+                    _sniffed[0] = True
+                    try:
+                        if b"content-type: text/html" in d[:1024].lower():
+                            log(f"HTML-RESPONSE for: {_last_req.get(cid, '?')[:130]}")
+                            # #1457: HTML crossing the tunnel must NEVER be
+                            # cacheable — a 200 text/html response is cacheable
+                            # by default, and a cached HTML body for a data or
+                            # chunk URL poisons it client-side forever (the
+                            # "Failed to fetch dynamically imported module" and
+                            # "Unexpected token '<'" classes). Stamp no-store.
+                            d = _no_store_html(d)
+                    except Exception: pass
                 if capture:
                     if len(cap["buf"]) + len(d) <= CACHE_MAX + 65536:
                         cap["buf"] += d
@@ -497,7 +512,7 @@ def passthrough_capture(c, first_chunk, key=None, force_close=False):
             try: dst.shutdown(socket.SHUT_WR)
             except: pass
     t1 = threading.Thread(target=pipe, args=(c, u), daemon=True)
-    t2 = threading.Thread(target=pipe, args=(u, c, key is not None), daemon=True)
+    t2 = threading.Thread(target=pipe, args=(u, c, key is not None, True), daemon=True)
     t2.start()
     try: u.sendall(first_chunk)
     except Exception: pass
@@ -505,10 +520,30 @@ def passthrough_capture(c, first_chunk, key=None, force_close=False):
     t1.join(); t2.join()
     c.close(); u.close()
     log(f"be-{bid} closed")
+    # #1313: name every HTML response to a non-asset path — the opencode SPA
+    # fallback serves index.html (200) for routes it doesn't know; clients
+    # that JSON.parse it throw "Unexpected token '<'" with no stack frames.
+    # The path list in the log IS the culprit list.
     if key is not None and done.is_set() and cap["ok"] and len(cap["buf"]) <= CACHE_MAX:
         b = bytes(cap["buf"])
         if b.startswith(b"HTTP/1.1 200"):
             with cache_lock: cache[key] = (time.time(), b)
+
+def _no_store_html(chunk: bytes) -> bytes:
+    """#1457: rewrite an HTML response's headers to Cache-Control: no-store."""
+    try:
+        import re as _re_nostore
+        head, sep, body = chunk.partition(b"\r\n\r\n")
+        if not sep:
+            return chunk
+        if b"cache-control:" in head.lower():
+            head = _re_nostore.sub(rb"[Cc]ache-[Cc]ontrol:[^\r\n]*",
+                                  b"Cache-Control: no-store", head)
+        else:
+            head = head + b"\r\nCache-Control: no-store"
+        return head + sep + body
+    except Exception:
+        return chunk
 
 def passthrough(c, first_chunk):
     passthrough_capture(c, first_chunk, key=None)
@@ -524,6 +559,11 @@ def handle(c, addr, cid):
         parts = line.split()
         path = parts[1] if len(parts) > 1 else "/"
         path = path.split("?")[0]
+        try:
+            if not hasattr(_last_req, "setdefault") if False else False: pass
+        except Exception:
+            pass
+        _last_req[cid] = line[:140]
         ua_census(first, path)
         if path == "/snapshot" and parts[0] == "GET":
             log(f"#{cid} SNAPSHOT {line.split('?')[1] if '?' in line else ''}")
@@ -684,8 +724,18 @@ def handle(c, addr, cid):
             # Serve the CURRENT app for all of them — the embedded app is
             # dead forever.
             import re as _re0
+            # #1313: the SPA fallback serves the index ONLY to document
+            # NAVIGATIONS (sec-fetch-dest: document). #1309's blanket form
+            # served HTML to app FETCHES that previously got honest 404s —
+            # the client's JSON.parse blew up with "Unexpected token '<'"
+            # and the route boundary masked the whole panel as the frozen
+            # hold ("stuck loading a new session"). A navigation reloads the
+            # app; a fetch wants data.
+            _dest = b"sec-fetch-dest: document" in first.lower()
             if ("." not in path.split("?")[0].split("/")[-1]
+                and _dest
                 and not path.startswith(("/api/", "/event", "/global/", "/experimental/", "/session", "/config", "/provider", "/path", "/project", "/command", "/agent", "/permission", "/question", "/mcp", "/lsp", "/vcs", "/file", "/touched", "/amico", "/snapshot", "/__amicode", "/__test", "/asset"))):
+                log(f"#{cid} SPA-INDEX {path[:60]} (nav)")
                 if app_dist_serve(c, "/"):
                     return
             key = path
