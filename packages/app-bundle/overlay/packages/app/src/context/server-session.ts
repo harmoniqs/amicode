@@ -538,6 +538,7 @@ export function createServerSession(
     sessionIDs.forEach((sessionID) => {
       generations.delete(sessionID)
       clearOptimistic(sessionID)
+      completedFileDiffParts.delete(sessionID)
       requests.delete(sessionID)
       inflight.delete(sessionID)
       inflightTodo.delete(sessionID)

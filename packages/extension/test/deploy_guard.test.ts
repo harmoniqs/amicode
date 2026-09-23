@@ -51,6 +51,8 @@ type Missing832Protection =
   | "task-spawn-ancestor-invalidation"
   | "shared-eviction-cleanup"
   | "directory-owned-copy"
+  | "directory-owned-optional-copy"
+  | "directory-owned-quoted-copy"
 
 const runFixtureCommand = (command: string, args: string[], cwd: string) => {
   const result = spawnSync(command, args, { cwd, encoding: "utf8" })
@@ -81,10 +83,18 @@ const serverSessionFixture = (missing?: Missing832Protection) =>
     missing === "shared-eviction-cleanup" ? "" : "for (const sessionID of sessionIDs) delete draft.diff_version[sessionID]",
   ].join("\n")
 
-const directoryCacheFixture = (missing?: Missing832Protection) =>
-  missing === "directory-owned-copy"
-    ? "type SessionCache = { diff_version: Record<string, number | undefined> }"
-    : "type SessionCache = { session_status: Record<string, unknown> }"
+const directoryCacheFixture = (missing?: Missing832Protection) => {
+  switch (missing) {
+    case "directory-owned-copy":
+      return "type SessionCache = { diff_version: Record<string, number | undefined> }"
+    case "directory-owned-optional-copy":
+      return "type SessionCache = { diff_version?: Record<string, number | undefined> }"
+    case "directory-owned-quoted-copy":
+      return 'type SessionCache = { "diff_version": Record<string, number | undefined> }'
+    default:
+      return "type SessionCache = { session_status: Record<string, unknown> }"
+  }
+}
 
 const makePackagingFixture = ({ missing832 }: { missing832?: Missing832Protection } = {}): PackagingFixture => {
   const root = mkdtempSync(join(tmpdir(), "ci-packaging-"))
@@ -481,6 +491,8 @@ describe("#992 the #964 known-fixes check at deploy time", () => {
     ["task-spawn ancestor invalidation", "context/server-session.ts", serverSessionFixture("task-spawn-ancestor-invalidation")],
     ["shared eviction cleanup", "context/server-session.ts", serverSessionFixture("shared-eviction-cleanup")],
     ["restored directory-owned diff-version copy", "context/global-sync/session-cache.ts", directoryCacheFixture("directory-owned-copy")],
+    ["restored optional directory-owned diff-version copy", "context/global-sync/session-cache.ts", directoryCacheFixture("directory-owned-optional-copy")],
+    ["restored quoted directory-owned diff-version copy", "context/global-sync/session-cache.ts", directoryCacheFixture("directory-owned-quoted-copy")],
   ])("a missing #832 %s refuses with the shared-ownership remedy", (_protection, file, content) => {
     const dir = writeOverlay({ ...HEALTHY, [file]: content })
     try {
@@ -551,6 +563,8 @@ describe("#1469 CI packaging preflight", () => {
     ["task-spawn ancestor invalidation", "task-spawn-ancestor-invalidation"],
     ["shared eviction cleanup", "shared-eviction-cleanup"],
     ["restored directory-owned diff-version copy", "directory-owned-copy"],
+    ["restored optional directory-owned diff-version copy", "directory-owned-optional-copy"],
+    ["restored quoted directory-owned diff-version copy", "directory-owned-quoted-copy"],
   ] as const)("refuses a diverged CI fixture with %s before staging", (_protection, missing832) => {
     const fixture = makePackagingFixture({ missing832 })
     try {

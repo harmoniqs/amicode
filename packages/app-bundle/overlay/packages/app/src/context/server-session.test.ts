@@ -130,10 +130,10 @@ describe("ServerSession live file-edit route", () => {
     expect(generic.data.diff_version["generic-root"]).toBeUndefined()
   })
 
-  test("evicts the ServerSession-owned diff version with the session cache", () => {
+  test("an evicted session can invalidate again when its completed file part is seen again", () => {
     const session = createSession()
     session.apply({ type: "session.created", properties: { info: sessionInfo("worker") } })
-    session.apply({
+    const workerEdit = {
       type: "message.part.updated",
       properties: {
         part: toolPart({
@@ -143,10 +143,14 @@ describe("ServerSession live file-edit route", () => {
           metadata: { filediff: { file: "changed.ts", status: "modified" } },
         }),
       },
-    })
+    }
+    session.apply(workerEdit)
 
     expect(session.data.diff_version.worker).toBe(1)
     session.evict("worker")
     expect(session.data.diff_version.worker).toBeUndefined()
+
+    session.apply(workerEdit)
+    expect(session.data.diff_version.worker).toBe(1)
   })
 })

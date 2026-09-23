@@ -49,7 +49,7 @@ export const KNOWN_FIXED_HUNKS = [
   {
     fix: "#832 (faac5bdf; #1466) — the directory cache does not own a diff-version record",
     file: "context/global-sync/session-cache.ts",
-    signature: /^(?![\s\S]*\bdiff_version\s*:)/,
+    signature: /^(?![\s\S]*\bdiff_version["']?\s*\??\s*:)/,
   },
   {
     fix: "#832 (872a5218) — session.exportTrace restored in the non-English app locales",
