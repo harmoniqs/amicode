@@ -103,6 +103,24 @@ describe("session warming", () => {
     await Promise.all([firstPass, overlappingPass])
   })
 
+  test("coalesces overlapping work for the same stable session identity", async () => {
+    const scheduler = createSessionWarmScheduler()
+    const gate = deferred()
+    let calls = 0
+    const chain = async () => {
+      calls += 1
+      await gate.promise
+    }
+
+    const firstPass = scheduler.warm("https://hub.example", [{ id: "session-a", chain }])
+    const overlappingPass = scheduler.warm("https://hub.example", [{ id: "session-a", chain }])
+    await settle()
+
+    expect(calls).toBe(1)
+    gate.resolve()
+    await Promise.all([firstPass, overlappingPass])
+  })
+
   test("awaits lineage before the first-page bulk prefetch and never asks bulk warming for a deeper page", async () => {
     const lineage = deferred()
     const calls: number[] = []
@@ -121,6 +139,24 @@ describe("session warming", () => {
 
     lineage.resolve()
     await warming
+    expect(calls).toEqual([BULK_WARM_MESSAGES])
+  })
+
+  test("prefetches an eligible session even when its lineage lookup fails", async () => {
+    const calls: number[] = []
+
+    await warmBulkSession({
+      remember: () => {},
+      hasLineage: () => false,
+      resolveLineage: async () => {
+        throw new Error("lineage unavailable")
+      },
+      shouldPrefetch: () => true,
+      prefetch: async (limit) => {
+        calls.push(limit)
+      },
+    })
+
     expect(calls).toEqual([BULK_WARM_MESSAGES])
   })
 

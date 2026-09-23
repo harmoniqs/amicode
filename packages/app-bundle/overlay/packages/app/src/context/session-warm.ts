@@ -3,6 +3,7 @@ export const OPEN_TAB_WARM_MESSAGES = 60
 export const WARM_CONCURRENCY = 3
 
 type WarmChain = () => Promise<void>
+type WarmTask = { id: string; chain: WarmChain }
 
 /** Returns the shared HTTP-origin pool key, or isolates an unparseable/non-origin
  * server URL so it cannot abort a bulk warm pass for later connections. */
@@ -18,6 +19,7 @@ export function sessionWarmSchedulerKey(serverURL: string, pageURL = globalThis.
 type WarmPool = {
   active: number
   queue: Array<{ chain: WarmChain; resolve: () => void }>
+  pending: Map<string, Promise<void>>
 }
 
 /** Shares the browser's background budget across every server context that
@@ -46,17 +48,31 @@ export function createSessionWarmScheduler() {
   }
 
   return {
-    warm(origin: string, chains: WarmChain[]) {
+    warm(origin: string, chains: Array<WarmChain | WarmTask>) {
       if (chains.length === 0) return Promise.resolve()
-      const pool = pools.get(origin) ?? { active: 0, queue: [] }
+      const pool: WarmPool = pools.get(origin) ?? { active: 0, queue: [], pending: new Map() }
       pools.set(origin, pool)
       const complete = Promise.all(
-        chains.map(
-          (chain) =>
-            new Promise<void>((resolve) => {
-              pool.queue.push({ chain, resolve })
-            }),
-        ),
+        chains.map((task) => {
+          if (typeof task === "function") {
+            return new Promise<void>((resolve) => {
+              pool.queue.push({ chain: task, resolve })
+            })
+          }
+          const existing = pool.pending.get(task.id)
+          if (existing) return existing
+          const queued = new Promise<void>((resolve) => {
+            pool.queue.push({
+              chain: task.chain,
+              resolve: () => {
+                pool.pending.delete(task.id)
+                resolve()
+              },
+            })
+          })
+          pool.pending.set(task.id, queued)
+          return queued
+        }),
       )
       drain(origin, pool)
       return complete
@@ -78,6 +94,10 @@ export async function warmBulkSession(input: {
   }
   try {
     if (!input.hasLineage()) await input.resolveLineage()
+  } catch {
+    /* lineage is best effort and must not suppress message warming */
+  }
+  try {
     if (input.shouldPrefetch()) await input.prefetch(BULK_WARM_MESSAGES)
   } catch {
     /* bulk warming is best effort */
