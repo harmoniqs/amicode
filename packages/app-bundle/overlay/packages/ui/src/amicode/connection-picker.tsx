@@ -237,7 +237,7 @@ export function ConnectionPicker(props: {
                 class="amc-input amc-input--compact"
               />
               <div class="flex gap-2">
-                <Button type="button" variant="primary" size="small" onClick={async (e) => {
+                <Button type="button" variant="primary" size="small" onClick={async (e: MouseEvent) => {
                   e.preventDefault()
                   const cid = slackClientId().trim()
                   const csecret = slackClientSecret().trim()

@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import * as path from "node:path";
+import * as fs from "node:fs";
 
 // ============================================================================
 // FileWatcherBridge — per-session targeted file watcher (#844)
@@ -8,7 +9,8 @@ import * as path from "node:path";
 // disk (in-project or cross-project). Uses VS Code's FileSystemWatcher with
 // RelativePattern(dir, '*') per parent directory, filtering events against the
 // watched file set. When a watched file changes, it posts an
-// `fs-diff-invalidate` message to the chat panel's webview.
+// `fs-diff-invalidate` message to the chat panel's webview AND syncs any
+// open editor buffer (#1423) so the agent's disk write is picked up.
 //
 // The watch set is idempotent: calling updateWatchSet() with a new set of
 // paths replaces the previous set, adding watchers for new directories and
@@ -119,7 +121,7 @@ export class FileWatcherBridge implements vscode.Disposable {
 
     this.debounceTimers.set(
       key,
-      setTimeout(() => {
+      setTimeout(async () => {
         this.debounceTimers.delete(key);
         if (this.disposed) return;
         if (external) {
@@ -137,8 +139,63 @@ export class FileWatcherBridge implements vscode.Disposable {
           file: filePath,
           changeType,
         });
+
+        // #1423: Sync any open VS Code editor buffer so the agent's disk
+        // write is picked up. Without this, the stale in-memory buffer
+        // silently overwrites the agent's changes on save.
+        if (changeType === "changed" || changeType === "created") {
+          await this.syncOpenBuffer(filePath);
+        }
       }, 300),
     );
+  }
+
+  /**
+   * Sync an open VS Code editor buffer with the file's current disk content.
+   * If the buffer is dirty (user has unsaved edits), we do NOT touch it —
+   * user intent takes priority over agent writes. (#1423)
+   *
+   * Uses a WorkspaceEdit to replace the entire buffer content with what's on
+   * disk. This works regardless of whether the file is the active editor,
+   * unlike `workbench.action.files.revert` which only operates on the
+   * focused document.
+   *
+   * For `.tex`/`.ltx` files, we also trigger a save after the sync so that
+   * LaTeX Workshop's `onDidSave` compile hook fires and the PDF preview
+   * auto-refreshes. (#1424)
+   */
+  private async syncOpenBuffer(filePath: string): Promise<void> {
+    const doc = vscode.workspace.textDocuments.find(
+      (d) => d.uri.fsPath === filePath,
+    );
+    if (!doc || doc.isDirty) return;
+
+    try {
+      // Read the current disk content and compare to the buffer.
+      const diskContent = fs.readFileSync(filePath, "utf-8");
+      const bufferContent = doc.getText();
+      if (diskContent === bufferContent) return; // Already in sync.
+
+      // Replace the entire buffer with the disk content via WorkspaceEdit.
+      const fullRange = new vscode.Range(
+        doc.positionAt(0),
+        doc.positionAt(bufferContent.length),
+      );
+      const edit = new vscode.WorkspaceEdit();
+      edit.replace(doc.uri, fullRange, diskContent);
+      // #1414: the edit is rejected if the document version advanced between
+      // the read and the apply — don't save a half-applied / stale buffer.
+      const applied = await vscode.workspace.applyEdit(edit);
+      if (!applied) return;
+
+      // Save the document so the buffer is clean again (not marked dirty
+      // from the edit we just applied) and so that extension hooks
+      // (e.g., LaTeX Workshop's onDidSave) fire.
+      await doc.save();
+    } catch {
+      // If the sync fails (e.g., file deleted between watcher event and
+      // read), silently continue — the webview message was already posted.
+    }
   }
 
   dispose(): void {

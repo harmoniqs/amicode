@@ -5,6 +5,7 @@ color: accent
 permission:
   edit: allow
   bash: allow
+  question: allow
 ---
 
 You are the DIRECTOR of a develop loop — Amico in development mode. This card is

@@ -138,6 +138,37 @@ _Avoid_: receipt status, mutable receipt
 The bounded host-local patch, preimage, or structured metadata a Mutation Receipt may reference. Evidence is distinct from the compact Mutation Ledger, follows explicit redaction and retention policy, and never enters ordinary session sharing by default. Root quotas, pagination, retention, and compaction bound both receipt metadata and evidence.
 _Avoid_: ledger blob, session attachment
 
+### Development and installation
+
+**Rebuild candidate**:
+A complete platform-specific VSIX tied to an immutable source-pair manifest and
+independently verified before installation. A candidate identifies the Amicode
+main SHA, promoted fork SHA, overlay-manifest fingerprint, target platform, UI
+channel, artifact digest, and CI provenance. It is adopted only after a matching
+health receipt; it is never a directory of files copied into a live extension.
+_Avoid_: Rebuild output, partial deploy, local binary (when the complete VSIX is
+meant)
+
+**Managed rebuild environment**:
+The user-scoped toolchain cache, source cache, and owned temporary worktrees
+used by the rebuild coordinator. It contains pinned, integrity-checked tools and
+may never alter a developer checkout, global PATH, or system package-manager
+state.
+_Avoid_: Developer checkout, global toolchain, build folder
+
+**Rebuild operation**:
+One durable user-initiated lifecycle that preflights, resolves, builds or
+downloads, verifies, adopts, rolls back, or refuses one rebuild candidate. Its
+status survives a VS Code reload and has a receipt-backed terminal outcome.
+_Avoid_: Spinner, background rebuild (when the durable operation is meant)
+
+**Promoted fork SHA**:
+The immutable fork revision recorded by the merged Amicode main overlay
+manifest. It is the only fork revision a Main rebuild may consume. A newer
+`local/amicode` head is pending-promotion information, never a rebuild source.
+_Avoid_: Latest fork head, current branch (when referring to the Main rebuild
+source)
+
 ### Fleet & serving
 
 **Server mode**:

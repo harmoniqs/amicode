@@ -17,10 +17,11 @@
  * @module
  */
 
-import { createEffect, createSignal, For, on, onCleanup } from "solid-js"
+import { createEffect, createSignal, For, on, onCleanup, untrack } from "solid-js"
 import * as pdfjsLib from "pdfjs-dist"
 // @ts-expect-error — no type declarations for the worker bundle; Vite resolves it at build time
 import * as pdfjsWorker from "pdfjs-dist/build/pdf.worker.min.mjs"
+import { clampRestorePage } from "./pdf-restore"
 
 // Inject the worker module on globalThis — the one code path in pdfjs-dist v6
 // that bypasses BOTH `new Worker()` AND the `workerSrc` getter. PDF.js sees
@@ -44,6 +45,14 @@ interface PdfCanvasViewProps {
   filePath: string
   /** Reports the current PDF page state to the Preview controls. */
   onPageNavigationChange?: (navigation: PdfPageNavigation | null) => void
+  /** #1365: true when this tab is selected (retained-pool visibility). */
+  active?: () => boolean
+  /** Page to restore after a (re)load. Defaults to 1. */
+  initialPage?: number
+  /** Scroll offset to restore after a (re)load. Defaults to 0. */
+  initialScrollTop?: number
+  /** Reports page/scroll changes for persistence. */
+  onViewStateChange?: (state: { page: number; scrollTop: number }) => void
 }
 
 type PdfPageNavigation = {
@@ -258,6 +267,11 @@ export function PdfCanvasView(props: PdfCanvasViewProps) {
   let navigationFrame: number | undefined
   const pageAnchors = new Map<number, HTMLDivElement>()
 
+  // Restore state for page/scroll preservation across reload and tab switch.
+  let restoreTarget: { page: number; scrollTop: number } | null = null
+  let restoreDone = true
+  let prevActive = props.active ? props.active() : true
+
   const setPageAnchor = (page: number, anchor: HTMLDivElement | null) => {
     if (anchor) pageAnchors.set(page, anchor)
     else pageAnchors.delete(page)
@@ -286,6 +300,7 @@ export function PdfCanvasView(props: PdfCanvasViewProps) {
         }
       }
       setCurrentPage(closestPage)
+      reportViewState()
     })
   }
 
@@ -297,7 +312,21 @@ export function PdfCanvasView(props: PdfCanvasViewProps) {
     const target = scroll.scrollTop + anchor.getBoundingClientRect().top - scroll.getBoundingClientRect().top
     setCurrentPage(page)
     scroll.scrollTo({ top: target, behavior: "smooth" })
+    reportViewState()
     return true
+  }
+
+  // Report view-state changes for persistence. Suppressed while hidden
+  // (display:none resets scroll) and during a restore (transient page-1).
+  const reportViewState = () => {
+    if (!restoreDone) return
+    if (props.active && !props.active()) return
+    const scroll = wrapperRef?.parentElement
+    if (!scroll) return
+    props.onViewStateChange?.({
+      page: currentPage(),
+      scrollTop: scroll.scrollTop,
+    })
   }
 
   // ─── Track container width via ResizeObserver ───────────────────────
@@ -333,9 +362,15 @@ export function PdfCanvasView(props: PdfCanvasViewProps) {
       () => props.base64,
       (b64) => {
         if (!b64) return
+        const targetPage = untrack(() => props.initialPage ?? 1)
+        const targetScroll = untrack(() => props.initialScrollTop ?? 0)
+        const needsRestore = targetPage > 1 || targetScroll > 0
+        restoreTarget = needsRestore ? { page: targetPage, scrollTop: targetScroll } : null
+        restoreDone = !needsRestore
+
         setError(false)
         setPageCount(0)
-        setCurrentPage(1)
+        setCurrentPage(targetPage)
         pageAnchors.clear()
         setAnchorVersion((version) => version + 1)
         setPdfDoc(null)
@@ -358,6 +393,11 @@ export function PdfCanvasView(props: PdfCanvasViewProps) {
             .then((doc) => {
               setPdfDoc(doc)
               setPageCount(doc.numPages)
+              // #1414: clamp the restore target to the loaded page count so a
+              // regenerated, shorter PDF can still complete its restore.
+              const page = clampRestorePage(restoreTarget?.page ?? targetPage, doc.numPages)
+              if (restoreTarget) restoreTarget = { ...restoreTarget, page }
+              setCurrentPage(page)
             })
             .catch(() => {
               setError(true)
@@ -401,6 +441,40 @@ export function PdfCanvasView(props: PdfCanvasViewProps) {
     scroll.addEventListener("scroll", updateCurrentPage, { passive: true })
     updateCurrentPage()
     onCleanup(() => scroll.removeEventListener("scroll", updateCurrentPage))
+  })
+
+  // Restore scroll position after (re)load — waits for anchors.
+  createEffect(() => {
+    anchorVersion()
+    if (restoreDone || !restoreTarget) return
+    const target = restoreTarget
+    const scroll = wrapperRef?.parentElement
+    if (!scroll || !pageAnchors.has(target.page)) return
+    const anchor = pageAnchors.get(target.page)
+    if (anchor) {
+      scroll.scrollTop = scroll.scrollTop + anchor.getBoundingClientRect().top - scroll.getBoundingClientRect().top
+    }
+    if (target.scrollTop > 0 && scroll.scrollHeight >= target.scrollTop) {
+      scroll.scrollTop = target.scrollTop
+    }
+    setCurrentPage(target.page)
+    restoreTarget = null
+    restoreDone = true
+  })
+
+  // #1367: on the inactive→active transition, re-apply saved page/scroll.
+  createEffect(() => {
+    const isActive = props.active ? props.active() : true
+    const wasActive = prevActive
+    prevActive = isActive
+    if (isActive === wasActive || !isActive) return
+    const page = untrack(() => props.initialPage ?? 1)
+    const scrollTop = untrack(() => props.initialScrollTop ?? 0)
+    if (page <= 1 && scrollTop <= 0) return
+    // #1414: clamp against the currently-loaded page count when re-arming.
+    restoreTarget = { page: clampRestorePage(page, pageCount()), scrollTop }
+    restoreDone = false
+    setAnchorVersion((v) => v + 1)
   })
 
   const textAvailabilityMessage = () => {

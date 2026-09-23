@@ -19,6 +19,7 @@ import {
   chmodSync,
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -93,10 +94,16 @@ if (existsSync(manifestPath)) {
 // ── materialized tree (reuse build:app's tree or create one) ────────────────
 const work = flag("work") ?? process.env.AMICODE_APP_BUNDLE_WORK ?? join(BUNDLE_PKG, ".materialized");
 
-// Overlay staleness check — same mechanism as build_app_bundle.mjs.
-// Includes a hash of manifest.files so local overlay edits invalidate the cache
-// (overlay_sha/promoted_at alone don't change on local edits).
+// Overlay staleness check — TWO layers:
+//   1. Manifest-based: overlay_sha + promoted_at + manifest.files hash (catches
+//      promote-from-upstream and file-list changes).
+//   2. Content-based: SHA-256 of every overlay file's relative path + content
+//      (catches direct edits that don't touch the manifest — the gap that let
+//      stale .materialized trees survive a rebuild, #1290 debug-badge chase).
+// Either mismatch clears the materialized tree.
 const OVERLAY_STAMP = join(work, ".overlay-stamp");
+const OVERLAY_CONTENT_STAMP = join(work, ".overlay-content-stamp");
+
 const overlayVersion = (() => {
   try {
     const m = JSON.parse(readFileSync(manifestPath, "utf8"));
@@ -105,17 +112,57 @@ const overlayVersion = (() => {
     return `${base}:${filesHash}`;
   } catch { return null; }
 })();
+
+// Content hash: walk the overlay directory tree, hash relPath+content for each
+// file, sort by relPath for determinism. Same algorithm as rebuild_amicode.sh's
+// overlay-change gate so the two always agree.
+const overlayDir = join(BUNDLE_PKG, "overlay");
+const overlayContentHash = (() => {
+  try {
+    const entries = [];
+    const walk = (dir) => {
+      for (const ent of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, ent.name);
+        if (ent.isDirectory()) walk(full);
+        else if (ent.isFile()) {
+          const rel = full.slice(overlayDir.length + 1);
+          const h = createHash("sha256").update(readFileSync(full)).digest("hex");
+          entries.push({ rel, h });
+        }
+      }
+    };
+    walk(overlayDir);
+    entries.sort((a, b) => a.rel.localeCompare(b.rel));
+    const digest = createHash("sha256");
+    for (const { rel, h } of entries) digest.update(`${rel}\0${h}\0`);
+    return digest.digest("hex");
+  } catch { return null; }
+})();
+
 const cachedVersion = (() => {
   try { return readFileSync(OVERLAY_STAMP, "utf8").trim(); }
   catch { return null; }
 })();
+const cachedContentHash = (() => {
+  try { return readFileSync(OVERLAY_CONTENT_STAMP, "utf8").trim(); }
+  catch { return null; }
+})();
 const cacheExists = existsSync(join(work, "package.json"));
-const cacheStale = cacheExists && overlayVersion && cachedVersion !== overlayVersion;
+const manifestStale = cacheExists && overlayVersion && cachedVersion !== overlayVersion;
+const contentStale = cacheExists && overlayContentHash && cachedContentHash !== overlayContentHash;
+const cacheStale = manifestStale || contentStale;
 
 if (cacheStale) {
-  console.log("[build:binary] overlay changed (manifest overlay_sha differs from cached stamp) — clearing stale .materialized");
-  console.log(`[build:binary]   cached:  ${cachedVersion ?? "(none)"}`);
-  console.log(`[build:binary]   current: ${overlayVersion}`);
+  const reason = manifestStale ? "manifest" : "content";
+  console.log(`[build:binary] overlay changed (${reason} hash differs from cached stamp) — clearing stale .materialized`);
+  if (manifestStale) {
+    console.log(`[build:binary]   manifest cached:  ${cachedVersion ?? "(none)"}`);
+    console.log(`[build:binary]   manifest current: ${overlayVersion}`);
+  }
+  if (contentStale) {
+    console.log(`[build:binary]   content cached:  ${cachedContentHash ?? "(none)"}`);
+    console.log(`[build:binary]   content current: ${overlayContentHash?.slice(0, 16)}…`);
+  }
   rmSync(work, { recursive: true, force: true });
 }
 
@@ -128,12 +175,17 @@ if (!existsSync(join(work, "package.json"))) {
   );
   // Stamp so subsequent builds can detect staleness
   if (overlayVersion) writeFileSync(OVERLAY_STAMP, overlayVersion + "\n");
+  if (overlayContentHash) writeFileSync(OVERLAY_CONTENT_STAMP, overlayContentHash + "\n");
 } else {
   console.log(`[build:binary] reusing materialized tree at ${work}`);
-  // Backfill stamp for trees materialized before this check existed
+  // Backfill stamps for trees materialized before these checks existed
   if (!cachedVersion && overlayVersion) {
     writeFileSync(OVERLAY_STAMP, overlayVersion + "\n");
     console.log("[build:binary] backfilled .overlay-stamp for existing .materialized tree");
+  }
+  if (!cachedContentHash && overlayContentHash) {
+    writeFileSync(OVERLAY_CONTENT_STAMP, overlayContentHash + "\n");
+    console.log("[build:binary] backfilled .overlay-content-stamp for existing .materialized tree");
   }
 }
 

@@ -116,6 +116,8 @@ const REQUIRED = [
   "extension/opencode-plugin/amicode_context.ts", // live stack-state injection plugin (system.transform hook)
   "extension/opencode-plugin/stack_state.ts", // its sibling readers/builders (imported by amicode_context)
   "extension/opencode-plugin/mode_block.ts", // the Active-mode block (posture-aware injection, #808) — imported by amicode_context
+  "extension/opencode-plugin/session_recap.ts", // the recent-sessions recap block — imported by amicode_context
+  "extension/opencode-plugin/open_threads.ts", // the derived open-thread digest block (#1305) — imported by amicode_context
   "extension/opencode-plugin/session_spawn.ts", // the spawn policy + the unwrap idiom (imported by mode_block)
   "extension/opencode-plugin/entities.ts",
   "extension/opencode-plugin/problems.ts",

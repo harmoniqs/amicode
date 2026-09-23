@@ -634,8 +634,13 @@ describe("applyDirectoryEvent", () => {
             messageID: "msg_1",
             type: "tool",
             tool: "edit",
+            callID: "call_1",
             state: {
               status: "completed",
+              input: {},
+              output: "",
+              title: "edit",
+              time: { start: 1, end: 2 },
               metadata: { filediff: { file: "test.ts", status: "modified" } },
             },
           } as Part,

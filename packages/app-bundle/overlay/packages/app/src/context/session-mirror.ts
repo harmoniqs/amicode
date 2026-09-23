@@ -71,6 +71,11 @@ export function mirrorKey(scope: string, sessionID: string) {
  *  collapse into one small write per settle. */
 const pending = new Map<string, ReturnType<typeof setTimeout>>()
 
+/** #1287 privacy (CWE-922): keys whose session was deleted. A save that
+ *  already fired its timer but has not yet written checks this before its
+ *  put, so a deleted session can never be re-persisted after deleteMirror. */
+const tombstoned = new Set<string>()
+
 /** #1303: one prune per scope per minute, max. */
 const pruneTimers = new Map<string, ReturnType<typeof setTimeout>>()
 function schedulePrune(scope: string) {
@@ -104,6 +109,9 @@ export function saveMirror(scope: string, sessionID: string, record: Omit<Mirror
       void (async () => {
         const db = await openDB()
         if (!db) return
+        // #1287: the session was deleted after this save's timer fired but
+        // before it could write — skip the put so it is never re-persisted.
+        if (tombstoned.has(key)) return
         try {
           // Solid store values are PROXIES — IDB's structured clone rejects
           // them (DataCloneError). This data is JSON-origin (API
@@ -138,6 +146,29 @@ export function saveMirror(scope: string, sessionID: string, record: Omit<Mirror
   )
 }
 
+/** #1287 privacy (CWE-922): drop a session's mirror the moment it is
+ *  deleted. Cancels a pending debounced save, tombstones the key so an
+ *  already-fired save skips its write, and deletes the persisted record — so
+ *  deleted messages/parts never linger in IndexedDB until pruning ages them
+ *  out. Best-effort, like the rest of the mirror. */
+export function deleteMirror(scope: string, sessionID: string) {
+  const key = mirrorKey(scope, sessionID)
+  const existing = pending.get(key)
+  if (existing) clearTimeout(existing)
+  pending.delete(key)
+  tombstoned.add(key)
+  void (async () => {
+    const db = await openDB()
+    if (!db) return
+    try {
+      db.transaction(STORE, "readwrite").objectStore(STORE).delete(key)
+      mirrorDebug("deleted", key)
+    } catch {
+      /* best-effort: a failed mirror delete never surfaces */
+    }
+  })()
+}
+
 export async function loadMirror(scope: string, sessionID: string): Promise<MirrorRecord | undefined> {
   const db = await openDB()
   if (!db) return undefined
@@ -146,13 +177,46 @@ export async function loadMirror(scope: string, sessionID: string): Promise<Mirr
       const tx = db.transaction(STORE, "readonly")
       const request = tx.objectStore(STORE).get(mirrorKey(scope, sessionID))
       request.onsuccess = () => {
-        const value = request.result as MirrorRecord | undefined
-        resolve(value && value.v === 1 ? value : undefined)
+        const value = request.result as unknown
+        if (isValidMirrorRecord(value)) return resolve(value)
+        // #1287: a malformed/legacy record would make hydrateFromMirror
+        // partially apply then throw (reading item.parts / item.info.id).
+        // Drop it and hydrate from nothing so only the wire fills the view.
+        if (value !== undefined) {
+          try {
+            db.transaction(STORE, "readwrite").objectStore(STORE).delete(mirrorKey(scope, sessionID))
+          } catch {
+            /* best-effort */
+          }
+        }
+        resolve(undefined)
       }
       request.onerror = () => resolve(undefined)
     } catch {
       resolve(undefined)
     }
+  })
+}
+
+/** #1287: a persisted record is only safe to hydrate if the whole v1 shape
+ *  is intact — every messages item needs a string-id `info` and an array of
+ *  `parts` (both dereferenced by hydrateFromMirror). `info` (Session) is set
+ *  as-is and never read there, so it is not deep-validated. */
+function isValidMirrorRecord(value: unknown): value is MirrorRecord {
+  if (!value || typeof value !== "object") return false
+  const record = value as Record<string, unknown>
+  if (record.v !== 1 || typeof record.savedAt !== "number") return false
+  if (!Array.isArray(record.messages) || !Array.isArray(record.source)) return false
+  return record.messages.every((item) => {
+    const entry = item as { info?: { id?: unknown }; parts?: unknown } | null
+    return (
+      !!entry &&
+      typeof entry === "object" &&
+      !!entry.info &&
+      typeof entry.info === "object" &&
+      typeof entry.info.id === "string" &&
+      Array.isArray(entry.parts)
+    )
   })
 }
 

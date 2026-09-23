@@ -1,6 +1,7 @@
 // sessions_verb.ts — `amico sessions` (D4 slice 3, issue #795): the retention
 // lifecycle as a CLI verb — list (visibility rules), archive (relocate, never
-// delete), restore (clear one field), index (generate SESSION-INDEX.md).
+// delete), autoarchive (the #1304 classification-gated nightly flow), restore
+// (clear one field), index (generate SESSION-INDEX.md).
 //
 // The engine owns the archived-field mechanics (time_archived on the session
 // table; its list endpoint's archived query param). THIS is the product layer:
@@ -24,10 +25,14 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import {
   readArchiveDays,
+  readAutoArchiveHours,
   renderSessionIndex,
+  retentionPrefsFile,
   writeArchiveDays,
+  writeAutoArchiveHours,
   type IndexSession,
 } from "./session_retention.js";
+import { classifySession, type SessionFeatures } from "./session_junk.js";
 import { sqliteBatch, type BridgeStatement } from "./sqlite_bridge.js";
 import type { VerbResult } from "./verbs.js";
 
@@ -165,6 +170,95 @@ function sessionsArchive(argv: string[], env: NodeJS.ProcessEnv): VerbResult {
   };
 }
 
+// ── autoarchive (#1304: classification-gated, age-gated curation) ───────────
+
+// The feature query: per age-eligible unarchived session, map the DB rows into
+// the #1303 classifier's SessionFeatures — message roles live in message.data
+// JSON, user text in the type:"text" parts of user messages, pending todos in
+// the todo plane (status != 'completed', the open-threads reader convention).
+const AUTOARCHIVE_FEATURES_SQL = `
+  SELECT s.id, s.title, s.time_updated,
+    (SELECT COUNT(*) FROM message m WHERE m.session_id = s.id
+       AND json_extract(m.data, '$.role') = 'user') AS user_message_count,
+    (SELECT COUNT(*) FROM message m WHERE m.session_id = s.id
+       AND json_extract(m.data, '$.role') = 'assistant') AS assistant_message_count,
+    (SELECT COALESCE(SUM(length(json_extract(p.data, '$.text'))), 0)
+       FROM part p JOIN message m ON m.id = p.message_id
+       WHERE p.session_id = s.id AND json_extract(m.data, '$.role') = 'user'
+         AND json_extract(p.data, '$.type') = 'text') AS user_text_chars,
+    (SELECT COUNT(*) FROM todo t WHERE t.session_id = s.id
+       AND t.status != 'completed') AS todo_count
+  FROM session s
+  WHERE s.time_archived IS NULL AND s.time_updated < ?
+  ORDER BY s.time_updated DESC, s.id`;
+
+function sessionsAutoarchive(argv: string[], env: NodeJS.ProcessEnv): VerbResult {
+  const dbPath = resolveSessionDb(argv);
+  if (!existsSync(dbPath)) return fail(`session DB not found: ${dbPath}`);
+  const hours = flagValue(argv, "--hours") ? Number(flagValue(argv, "--hours")) : readAutoArchiveHours(env);
+  if (!Number.isInteger(hours) || hours < 1) return fail(`--hours must be a positive integer, got ${hours}`);
+  const apply = hasFlag(argv, "--apply");
+  const cutoff = Date.now() - hours * 3_600_000;
+
+  let batch;
+  try {
+    batch = sqliteBatch(dbPath, "ro", [{ sql: AUTOARCHIVE_FEATURES_SQL, params: [cutoff] }]);
+  } catch (e) {
+    return fail(e instanceof Error ? e.message : String(e));
+  }
+
+  // The caller-side mapping the #1303 classifier requires: rows → features →
+  // bucket, in THIS module (the classifier stays a pure function of features).
+  const judged = batch.results[0].rows.map((r) => {
+    const features: SessionFeatures = {
+      title: String(r.title),
+      user_message_count: Number(r.user_message_count),
+      user_text_chars: Number(r.user_text_chars),
+      assistant_message_count: Number(r.assistant_message_count),
+      todo_count: Number(r.todo_count),
+    };
+    return { id: String(r.id), bucket: classifySession(features) };
+  });
+  const buckets = judged.reduce<Record<string, number>>((acc, j) => {
+    acc[j.bucket] = (acc[j.bucket] ?? 0) + 1;
+    return acc;
+  }, {});
+  // Junk buckets only — curation archives the deterministic noise, never a
+  // substantive session (the classifier's closed-set default guards work).
+  const ids = judged.filter((j) => j.bucket !== "substantive").map((j) => j.id);
+
+  if (apply && ids.length > 0) {
+    try {
+      sqliteBatch(dbPath, "rw", [
+        {
+          sql: `UPDATE session SET time_archived = ? WHERE time_archived IS NULL AND id IN (${ids.map(() => "?").join(",")})`,
+          params: [Date.now(), ...ids],
+        },
+      ]);
+    } catch (e) {
+      return fail(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  return {
+    json: {
+      verb: "sessions",
+      subcommand: "autoarchive",
+      dry_run: !apply,
+      hours,
+      cutoff_ms: cutoff,
+      cutoff_iso: new Date(cutoff).toISOString(),
+      scanned: judged.length,
+      buckets,
+      candidates: ids.length,
+      candidate_ids: ids.slice(0, 50),
+      archived: apply ? ids.length : 0,
+      note: apply ? undefined : "dry-run: nothing written — pass --apply to stamp time_archived",
+    },
+    code: 0,
+  };
+}
+
 // ── restore (clear the one field) ───────────────────────────────────────────
 
 function sessionsRestore(argv: string[]): VerbResult {
@@ -234,14 +328,37 @@ function sessionsIndex(argv: string[]): VerbResult {
 
 function sessionsPrefs(argv: string[], env: NodeJS.ProcessEnv): VerbResult {
   const days = flagValue(argv, "--days");
-  if (days !== undefined) {
-    const n = Number(days);
-    const w = writeArchiveDays(n, env);
-    if (!w.ok) return fail(w.error);
-    return { json: { verb: "sessions", subcommand: "prefs", archive_days: w.days, file: w.file }, code: 0 };
+  const hours = flagValue(argv, "--autoarchive-hours");
+  if (days !== undefined || hours !== undefined) {
+    if (days !== undefined) {
+      const n = Number(days);
+      const w = writeArchiveDays(n, env);
+      if (!w.ok) return fail(w.error);
+    }
+    if (hours !== undefined) {
+      const n = Number(hours);
+      const w = writeAutoArchiveHours(n, env);
+      if (!w.ok) return fail(w.error);
+    }
+    return {
+      json: {
+        verb: "sessions",
+        subcommand: "prefs",
+        archive_days: readArchiveDays(env),
+        autoarchive_hours: readAutoArchiveHours(env),
+        file: retentionPrefsFile(env),
+      },
+      code: 0,
+    };
   }
   return {
-    json: { verb: "sessions", subcommand: "prefs", archive_days: readArchiveDays(env), file: join(env.AMICODE_OPS_DIR && env.AMICODE_OPS_DIR.trim() !== "" ? env.AMICODE_OPS_DIR : join(homedir(), ".amico", "amicode"), "session-retention.json") },
+    json: {
+      verb: "sessions",
+      subcommand: "prefs",
+      archive_days: readArchiveDays(env),
+      autoarchive_hours: readAutoArchiveHours(env),
+      file: retentionPrefsFile(env),
+    },
     code: 0,
   };
 }
@@ -257,6 +374,8 @@ export async function sessionsVerb(argv: string[]): Promise<VerbResult> {
       return sessionsList(rest);
     case "archive":
       return sessionsArchive(rest, env);
+    case "autoarchive":
+      return sessionsAutoarchive(rest, env);
     case "restore":
       return sessionsRestore(rest);
     case "index":
@@ -269,7 +388,7 @@ export async function sessionsVerb(argv: string[]): Promise<VerbResult> {
           verb: "sessions",
           error: `unknown subcommand ${sub ? `"${sub}"` : "(none)"}`,
           usage:
-            "amico sessions list [--archived] [--limit <n>] [--cursor <c>] [--db <path>]  |  amico sessions archive [--days <n>] [--apply]  |  amico sessions restore <id>  |  amico sessions index [--out <path>]  |  amico sessions prefs [--days <n>]",
+            "amico sessions list [--archived] [--limit <n>] [--cursor <c>] [--db <path>]  |  amico sessions archive [--days <n>] [--apply]  |  amico sessions autoarchive [--hours <n>] [--apply]  |  amico sessions restore <id>  |  amico sessions index [--out <path>]  |  amico sessions prefs [--days <n>] [--autoarchive-hours <n>]",
         },
         code: 64,
       };

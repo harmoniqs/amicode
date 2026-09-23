@@ -10,8 +10,11 @@ import { join } from "node:path";
 
 import {
   DEFAULT_ARCHIVE_DAYS,
+  DEFAULT_AUTOARCHIVE_HOURS,
   readArchiveDays,
+  readAutoArchiveHours,
   writeArchiveDays,
+  writeAutoArchiveHours,
   retentionPrefsFile,
 } from "../src/session_retention.js";
 
@@ -83,10 +86,18 @@ interface SeedOpts {
   id: string;
   title?: string;
   directory?: string;
-  updatedDaysAgo: number;
+  updatedDaysAgo?: number;
+  /** Hour resolution for the 48 h autoarchive age gate (#1304); wins over updatedDaysAgo. */
+  updatedHoursAgo?: number;
   createdDaysAgo?: number;
   archived?: boolean;
   parent?: string;
+  /** User message texts — implies the message/part planes (one text part per user message). */
+  userMessages?: string[];
+  /** Assistant message count (no parts — the classifier only counts turns). */
+  assistantMessages?: number;
+  /** Pending todo rows (status 'pending', the open-threads convention). */
+  pendingTodos?: number;
 }
 
 /** Seed a minimal session table shaped like the live DB's (the columns the verb
@@ -101,6 +112,7 @@ import json, sqlite3, sys
 seeds = json.loads(sys.argv[2])
 now = int(sys.argv[3])
 day = ${DAY}
+
 con = sqlite3.connect(sys.argv[1], timeout=5)
 con.executescript("""
 CREATE TABLE session (
@@ -121,21 +133,84 @@ CREATE TABLE project (
   time_created INTEGER,
   time_updated INTEGER
 );
+CREATE TABLE message (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  time_created INTEGER NOT NULL,
+  time_updated INTEGER NOT NULL,
+  data TEXT NOT NULL
+);
+CREATE TABLE part (
+  id TEXT PRIMARY KEY,
+  message_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  time_created INTEGER NOT NULL,
+  time_updated INTEGER NOT NULL,
+  data TEXT NOT NULL
+);
+CREATE TABLE todo (
+  session_id TEXT NOT NULL,
+  content TEXT NOT NULL,
+  status TEXT NOT NULL,
+  priority TEXT NOT NULL,
+  position INTEGER NOT NULL,
+  time_created INTEGER NOT NULL,
+  time_updated INTEGER NOT NULL,
+  PRIMARY KEY (session_id, position)
+);
 """)
 con.execute("INSERT INTO project (id, worktree, vcs, name, time_created, time_updated) VALUES (?,?,?,?,?,?)",
             ("proj_armonia", "/home/aaron/armonia", None, "armonia", now - 100 * day, now - 1 * day))
 for s in seeds:
-    updated = now - s["updatedDaysAgo"] * day
-    created = now - (s["createdDaysAgo"] if s.get("createdDaysAgo") is not None else s["updatedDaysAgo"] + 1) * day
+    if s.get("updatedHoursAgo") is not None:
+        updated = now - int(round(s["updatedHoursAgo"] * 3600000))
+    else:
+        updated = now - s["updatedDaysAgo"] * day
+    if s.get("createdDaysAgo") is not None:
+        created = now - s["createdDaysAgo"] * day
+    elif s.get("updatedDaysAgo") is not None:
+        created = now - (s["updatedDaysAgo"] + 1) * day
+    else:
+        created = updated - day
     con.execute(
         "INSERT INTO session (id, parent_id, directory, title, time_created, time_updated, time_archived) VALUES (?,?,?,?,?,?,?)",
         (s["id"], s.get("parent"), s.get("directory", "/home/aaron/armonia"), s.get("title", "session " + s["id"]),
          created, updated, now - s["updatedDaysAgo"] * day if s.get("archived") else None),
     )
+    for i, text in enumerate(s.get("userMessages") or []):
+        mid = "msg_%s_%d" % (s["id"], i)
+        con.execute("INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?,?,?,?,?)",
+                    (mid, s["id"], created, updated, json.dumps({"role": "user"})))
+        con.execute("INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?,?,?,?,?,?)",
+                    ("part_" + mid, mid, s["id"], created, updated, json.dumps({"type": "text", "text": text})))
+    for i in range(s.get("assistantMessages") or 0):
+        con.execute("INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?,?,?,?,?)",
+                    ("msg_%s_a%d" % (s["id"], i), s["id"], created, updated, json.dumps({"role": "assistant"})))
+    for i in range(s.get("pendingTodos") or 0):
+        con.execute("INSERT INTO todo (session_id, content, status, priority, position, time_created, time_updated) VALUES (?,?,?,?,?,?,?)",
+                    (s["id"], "todo %d" % i, "pending", "medium", i, created, updated))
 con.commit()
 con.close()
   `;
   execFileSync(pythonBin(), ["-c", script, dbPath, JSON.stringify(seeds), String(Date.now())], { encoding: "utf8" });
+}
+
+/** Full-row dump of a seeded DB (python3 stdlib, read-only) — the ONLY-fields-
+ *  changed assertions diff this snapshot. */
+function dbRows(dbPath: string): string {
+  return execFileSync(
+    pythonBin(),
+    ["-c", `
+import json, sqlite3, sys
+con = sqlite3.connect("file:" + sys.argv[1] + "?mode=ro", uri=True, timeout=5)
+con.row_factory = sqlite3.Row
+print(json.dumps({
+  "sessions": [dict(r) for r in con.execute("SELECT * FROM session ORDER BY id").fetchall()],
+  "projects": [dict(r) for r in con.execute("SELECT * FROM project ORDER BY id").fetchall()],
+}))
+      `, dbPath],
+    { encoding: "utf8" },
+  );
 }
 
 /** The interpreter the verb's bridge resolves: $AMICO_PYTHON → python3. */
@@ -392,22 +467,6 @@ describe("amico sessions archive — disjointness from the vault/coordination pl
   });
   afterEach(() => rmSync(tmp, { recursive: true, force: true }));
 
-  function dbRows(dbPath: string): string {
-    return execFileSync(
-      pythonBin(),
-      ["-c", `
-import json, sqlite3, sys
-con = sqlite3.connect("file:" + sys.argv[1] + "?mode=ro", uri=True, timeout=5)
-con.row_factory = sqlite3.Row
-print(json.dumps({
-  "sessions": [dict(r) for r in con.execute("SELECT * FROM session ORDER BY id").fetchall()],
-  "projects": [dict(r) for r in con.execute("SELECT * FROM project ORDER BY id").fetchall()],
-}))
-      `, dbPath],
-      { encoding: "utf8" },
-    );
-  }
-
   it("archive --apply and restore change ONLY time_archived on session rows; sibling planes are byte-identical", () => {
     seedDb(db, [
       { id: "ses_active", updatedDaysAgo: 1 },
@@ -492,5 +551,263 @@ describe("amico sessions prefs/archive — the cutoff is the preference (bundle)
     const r = run(["sessions", "bogus"], { AMICODE_OPS_DIR: ops });
     expect(r.code).toBe(64);
     expect(JSON.parse(r.stdout).usage).toMatch(/archive/);
+  });
+});
+
+// ══ #1304: the age-gated, classification-aware autoarchive ══════════════════
+// The archive verb relocates by age alone; #1304 gates it on the #1303
+// classifier (junk buckets only), a 48 h age gate, and the todo protection —
+// wrapped by the nightly ops job (ops/session-archive/). Same harness rules:
+// seeded temp DBs, never the live chat DB.
+
+const HOUR = 3_600_000;
+
+/** The junk-shaped feature seeds, per the #1303 classifier's buckets. */
+function junkSeeds(): SeedOpts[] {
+  return [
+    { id: "ses_greet", title: "Friendly greeting", userMessages: ["hi there"], assistantMessages: 2, updatedHoursAgo: 72 },
+    { id: "ses_dead", title: "Deep refactor of the ingestion pipeline", userMessages: ["please continue"], assistantMessages: 0, updatedHoursAgo: 72 },
+    { id: "ses_probe", title: "New session - 2026-09-20T08:31", updatedHoursAgo: 72 },
+    { id: "ses_real", title: "Campaign solve", userMessages: ["optimize this gate with the usual care and full context"], assistantMessages: 20, updatedHoursAgo: 72 },
+    { id: "ses_young", title: "hello", userMessages: ["hi"], assistantMessages: 1, updatedHoursAgo: 2 },
+  ];
+}
+
+const JUNK_OLD_IDS = ["ses_greet", "ses_dead", "ses_probe"];
+
+describe("amico sessions autoarchive — classification-gated archive (#1304, bundle)", () => {
+  let tmp: string;
+  let db: string;
+  let ops: string;
+
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), "amico-autoarchive-"));
+    db = join(tmp, "opencode.db");
+    ops = join(tmp, "ops");
+    mkdirSync(ops, { recursive: true });
+  });
+  afterEach(() => rmSync(tmp, { recursive: true, force: true }));
+
+  function ids(r: { stdout: string }): string[] {
+    return (JSON.parse(r.stdout).sessions as { id: string }[]).map((s) => s.id);
+  }
+
+  it("AC 1: --apply archives junk-bucket sessions past the age gate — and ONLY time_archived changes", () => {
+    seedDb(db, junkSeeds());
+    const env = { OPENCODE_DB: db, AMICODE_OPS_DIR: ops };
+    const before = JSON.parse(dbRows(db)) as { sessions: Record<string, unknown>[] };
+
+    const a = JSON.parse(run(["sessions", "autoarchive", "--apply"], env).stdout);
+    expect(a).toMatchObject({ subcommand: "autoarchive", dry_run: false, scanned: 4, candidates: 3, archived: 3 });
+    expect(new Set(a.candidate_ids as string[])).toEqual(new Set(JUNK_OLD_IDS));
+
+    // the junk buckets relocated; substantive + young stay visible
+    expect(new Set(ids(run(["sessions", "list"], env)))).toEqual(new Set(["ses_real", "ses_young"]));
+    expect(new Set(ids(run(["sessions", "list", "--archived"], env)))).toEqual(new Set([...JUNK_OLD_IDS]));
+
+    // the DB delta is exactly the time_archived stamp — every other column
+    // of every row byte-identical (the engine owns the field; the verb writes ONE field)
+    const after = JSON.parse(dbRows(db)) as { sessions: Record<string, unknown>[] };
+    for (const row of after.sessions) {
+      const was = before.sessions.find((r) => r.id === row.id)!;
+      for (const k of Object.keys(was)) {
+        if (k === "time_archived") continue;
+        expect(String(row[k]), `${row.id}.${k}`).toBe(String(was[k]));
+      }
+    }
+    for (const id of JUNK_OLD_IDS) {
+      expect(Number(after.sessions.find((r) => r.id === id)!.time_archived)).toBeGreaterThan(0);
+    }
+    expect(after.sessions.find((r) => r.id === "ses_real")!.time_archived).toBeNull();
+    expect(after.sessions.find((r) => r.id === "ses_young")!.time_archived).toBeNull();
+  });
+
+  it("AC 2: a session with pending todos is never archived, regardless of bucket or age", () => {
+    seedDb(db, [
+      { id: "ses_todo_greet", title: "hello", userMessages: ["hi"], assistantMessages: 1, pendingTodos: 1, updatedHoursAgo: 200 },
+      { id: "ses_todo_dead", title: "follow-up queue", userMessages: ["one prompt"], assistantMessages: 0, pendingTodos: 2, updatedHoursAgo: 200 },
+    ]);
+    const env = { OPENCODE_DB: db, AMICODE_OPS_DIR: ops };
+    const dry = JSON.parse(run(["sessions", "autoarchive"], env).stdout);
+    expect(dry).toMatchObject({ candidates: 0 });
+    expect(JSON.parse(run(["sessions", "autoarchive", "--apply"], env).stdout)).toMatchObject({ archived: 0 });
+    expect(new Set(ids(run(["sessions", "list"], env)))).toEqual(new Set(["ses_todo_greet", "ses_todo_dead"]));
+    expect(ids(run(["sessions", "list", "--archived"], env))).toEqual([]);
+  });
+
+  it("AC 3: a session updated within the default 48 h age gate is never archived — the gate rides the retention preference", () => {
+    seedDb(db, [
+      { id: "ses_fresh", title: "hello", userMessages: ["hi"], assistantMessages: 1, updatedHoursAgo: 12 },
+      { id: "ses_stale", title: "hello", userMessages: ["hi"], assistantMessages: 1, updatedHoursAgo: 49 },
+      { id: "ses_edge", title: "hello", userMessages: ["hi"], assistantMessages: 1, updatedHoursAgo: 47 },
+    ]);
+    const env = { OPENCODE_DB: db, AMICODE_OPS_DIR: ops };
+    expect(JSON.parse(run(["sessions", "autoarchive"], env).stdout)).toMatchObject({ hours: 48, candidates: 1, candidate_ids: ["ses_stale"] });
+
+    // the gate is the same ops-dir preference pattern — configurable, fail-safe
+    const p = JSON.parse(run(["sessions", "prefs", "--autoarchive-hours", "6"], env).stdout);
+    expect(p).toMatchObject({ autoarchive_hours: 6 });
+    // a 6 h gate crosses all three greeting sessions (12 / 47 / 49 h old)
+    const six = JSON.parse(run(["sessions", "autoarchive"], env).stdout);
+    expect(six).toMatchObject({ hours: 6, candidates: 3 });
+  });
+
+  it("AC 4: dry-run is the DEFAULT — reports count + ids, writes nothing", () => {
+    seedDb(db, junkSeeds());
+    const env = { OPENCODE_DB: db, AMICODE_OPS_DIR: ops };
+    const dry = JSON.parse(run(["sessions", "autoarchive"], env).stdout);
+    expect(dry).toMatchObject({ dry_run: true, candidates: 3, archived: 0 });
+    expect(new Set(dry.candidate_ids as string[])).toEqual(new Set(JUNK_OLD_IDS));
+    // nothing moved
+    expect(new Set(ids(run(["sessions", "list"], env)))).toEqual(new Set(["ses_greet", "ses_dead", "ses_probe", "ses_real", "ses_young"]));
+    const after = JSON.parse(dbRows(db)) as { sessions: Record<string, unknown>[] };
+    for (const row of after.sessions) expect(row.time_archived).toBeNull();
+  });
+
+  it("AC 6: an autoarchived session restores through the existing unarchive path (round-trip)", () => {
+    seedDb(db, junkSeeds());
+    const env = { OPENCODE_DB: db, AMICODE_OPS_DIR: ops };
+    run(["sessions", "autoarchive", "--apply"], env);
+    expect(ids(run(["sessions", "list"], env)).sort()).toEqual(["ses_real", "ses_young"].sort());
+
+    const r = JSON.parse(run(["sessions", "restore", "ses_greet"], env).stdout);
+    expect(r).toMatchObject({ restored: true });
+    expect(new Set(ids(run(["sessions", "list"], env)))).toEqual(new Set(["ses_real", "ses_young", "ses_greet"]));
+  });
+
+  it("usage: a missing DB is an honest 64; bad --hours is a usage error", () => {
+    seedDb(db, junkSeeds());
+    const env = { OPENCODE_DB: db, AMICODE_OPS_DIR: ops };
+    expect(run(["sessions", "autoarchive"], { OPENCODE_DB: join(tmp, "nope.db"), AMICODE_OPS_DIR: ops }).code).toBe(64);
+    expect(run(["sessions", "autoarchive", "--hours", "0"], env).code).toBe(64);
+    expect(run(["sessions", "autoarchive", "--hours", "half"], env).code).toBe(64);
+  });
+});
+
+describe("autoarchive hours — the retention preference (unit)", () => {
+  let ops: string;
+  beforeEach(() => {
+    ops = mkdtempSync(join(tmpdir(), "amico-autoarchive-prefs-"));
+  });
+  afterEach(() => rmSync(ops, { recursive: true, force: true }));
+
+  it("defaults to 48 hours and fails safe on a malformed or out-of-range file", () => {
+    expect(DEFAULT_AUTOARCHIVE_HOURS).toBe(48);
+    expect(readAutoArchiveHours({ AMICODE_OPS_DIR: ops })).toBe(48);
+    writeFileSync(join(ops, "session-retention.json"), "{not json");
+    expect(readAutoArchiveHours({ AMICODE_OPS_DIR: ops })).toBe(48);
+    writeFileSync(join(ops, "session-retention.json"), JSON.stringify({ autoarchive_hours: 0 }));
+    expect(readAutoArchiveHours({ AMICODE_OPS_DIR: ops })).toBe(48);
+    writeFileSync(join(ops, "session-retention.json"), JSON.stringify({ autoarchive_hours: -1 }));
+    expect(readAutoArchiveHours({ AMICODE_OPS_DIR: ops })).toBe(48);
+    writeFileSync(join(ops, "session-retention.json"), JSON.stringify({ autoarchive_hours: "48" }));
+    expect(readAutoArchiveHours({ AMICODE_OPS_DIR: ops })).toBe(48);
+  });
+
+  it("reads a written preference and PRESERVES the sibling archive_days key", () => {
+    writeArchiveDays(7, { AMICODE_OPS_DIR: ops });
+    writeAutoArchiveHours(24, { AMICODE_OPS_DIR: ops });
+    expect(readAutoArchiveHours({ AMICODE_OPS_DIR: ops })).toBe(24);
+    expect(readArchiveDays({ AMICODE_OPS_DIR: ops })).toBe(7);
+    const parsed = JSON.parse(readFileSync(retentionPrefsFile({ AMICODE_OPS_DIR: ops }), "utf8"));
+    expect(parsed).toMatchObject({ schema_version: 1, archive_days: 7, autoarchive_hours: 24 });
+  });
+
+  it("refuses a non-positive or non-integer gate", () => {
+    expect(writeAutoArchiveHours(0, { AMICODE_OPS_DIR: ops }).ok).toBe(false);
+    expect(writeAutoArchiveHours(2.5, { AMICODE_OPS_DIR: ops }).ok).toBe(false);
+    expect(existsSync(join(ops, "session-retention.json"))).toBe(false);
+  });
+});
+
+// ── the nightly ops job: ops/session-archive/run-session-archive.sh ─────────
+// Smoke path per the issue's testing decision: dry-run green on a seeded temp
+// DB fixture, one JSON receipt line per run, nonzero on a hard failure.
+describe("ops/session-archive job — the nightly wrapper (smoke, #1304)", () => {
+  const SCRIPT = join(__dirname, "..", "..", "..", "ops", "session-archive", "run-session-archive.sh");
+  let tmp: string;
+  let db: string;
+  let ops: string;
+  let receipts: string;
+
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), "amico-autoarchive-ops-"));
+    db = join(tmp, "opencode.db");
+    ops = join(tmp, "ops");
+    receipts = join(tmp, "receipts.jsonl");
+    mkdirSync(ops, { recursive: true });
+  });
+  afterEach(() => rmSync(tmp, { recursive: true, force: true }));
+
+  function jobEnv(): Record<string, string> {
+    return {
+      SESSION_ARCHIVE_DB: db,
+      SESSION_ARCHIVE_RECEIPTS: receipts,
+      SESSION_ARCHIVE_AMICO: BUNDLE,
+      AMICODE_OPS_DIR: ops,
+    };
+  }
+
+  function job(args: string[], env: Record<string, string>): { code: number; stdout: string; stderr: string } {
+    try {
+      const stdout = execFileSync("bash", [SCRIPT, ...args], { encoding: "utf8", env: { ...process.env, ...env } });
+      return { code: 0, stdout, stderr: "" };
+    } catch (e) {
+      const err = e as { status?: number; stdout?: string; stderr?: string };
+      return { code: err.status ?? -1, stdout: err.stdout ?? "", stderr: err.stderr ?? "" };
+    }
+  }
+
+  function receiptLines(): Record<string, unknown>[] {
+    return readFileSync(receipts, "utf8")
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l) as Record<string, unknown>);
+  }
+
+  it("AC 4+5: dry-run (the default) exits 0, appends exactly ONE receipt line (mode, scanned, archived 0, ids), and writes nothing to the DB", () => {
+    seedDb(db, junkSeeds());
+    const r = job([], jobEnv());
+    expect(r.code).toBe(0);
+
+    const lines = receiptLines();
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({
+      receipt_version: 1,
+      kind: "session-archive",
+      mode: "dry-run",
+      scanned: 4,
+      archived: 0,
+    });
+    expect(new Set(lines[0].ids as string[])).toEqual(new Set(JUNK_OLD_IDS));
+    expect(typeof lines[0].ts).toBe("string");
+
+    // nothing relocated
+    const env = { OPENCODE_DB: db, AMICODE_OPS_DIR: ops };
+    const vis = JSON.parse(run(["sessions", "list"], env).stdout);
+    expect(vis.total).toBe(5);
+    const rows = JSON.parse(dbRows(db)) as { sessions: Record<string, unknown>[] };
+    for (const row of rows.sessions) expect(row.time_archived).toBeNull();
+  });
+
+  it("AC 5: an apply run appends ONE receipt line (mode apply, archived count + ids) and the junk sessions relocate", () => {
+    seedDb(db, junkSeeds());
+    const r = job(["--apply"], jobEnv());
+    expect(r.code).toBe(0);
+
+    const lines = receiptLines();
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({ kind: "session-archive", mode: "apply", scanned: 4, archived: 3 });
+    expect(new Set(lines[0].ids as string[])).toEqual(new Set(JUNK_OLD_IDS));
+
+    const env = { OPENCODE_DB: db, AMICODE_OPS_DIR: ops };
+    const vis = JSON.parse(run(["sessions", "list"], env).stdout);
+    expect(new Set((vis.sessions as { id: string }[]).map((s) => s.id))).toEqual(new Set(["ses_real", "ses_young"]));
+  });
+
+  it("hard failure — a missing DB exits NONZERO and never touches the receipts journal", () => {
+    const r = job([], { ...jobEnv(), SESSION_ARCHIVE_DB: join(tmp, "missing", "opencode.db") });
+    expect(r.code).not.toBe(0);
+    expect(existsSync(receipts)).toBe(false);
   });
 });

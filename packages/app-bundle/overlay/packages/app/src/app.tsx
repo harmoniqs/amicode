@@ -1,7 +1,7 @@
 import "@/index.css"
 import * as Sentry from "@sentry/solid"
 import { requestComputeConnect } from "@/components/amicode-defaults-capsule"
-import { adoptWorkspaceProjects, workspaceProjects } from "@/utils/amicode-workspace-projects"
+import { adoptWorkspaceProjects, workspaceProjects, requestAddWorkspaceProject } from "@/utils/amicode-workspace-projects"
 import { I18nProvider } from "@opencode-ai/ui/context"
 import { DialogProvider } from "@opencode-ai/ui/context/dialog"
 import { FileComponentProvider } from "@opencode-ai/ui/context/file"
@@ -35,6 +35,7 @@ import {
   For,
   type JSX,
   lazy,
+  Suspense,
   onCleanup,
   onMount,
   type ParentProps,
@@ -550,6 +551,19 @@ function AmicodeThemeBridge() {
 // switches resolve synchronously from the sync cache. resolve() dedupes
 // in-flight requests and short-circuits already-cached sessions, so this is
 // a no-op on warm state.
+
+/** Safe localStorage read for the debug badge gate. When browser storage is
+ *  restricted (incognito, iframe sandbox, storage policy), the getter or
+ *  getItem can throw — optional chaining alone doesn't catch that. Return
+ *  false on any failure so the app stays renderable. */
+function isDebugBadgeEnabled(): boolean {
+  try {
+    return globalThis.localStorage?.getItem("amicode_debug_badge") === "1"
+  } catch {
+    return false
+  }
+}
+
 /** #1290 debug badge (temporary — the send-blank chase): bottom-right, tiny,
  *  inert. Shows the running build + whether the frozen-hold registry has a
  *  snapshot. When the pane disappears, read this: `hold:n` = the registry
@@ -632,14 +646,16 @@ function HoldDebugBadge() {
       }
       originalError(...(args as Parameters<typeof console.error>))
     }
-    window.addEventListener("error", (e) => {
+    const onWindowError = (e: ErrorEvent) => {
       setLastErr(`E:${(e.message || "unknown").slice(0, 70)}`)
       ship("E", `${e.message ?? "unknown"}\n${(e.error as Error | undefined)?.stack ?? ""}`)
-    })
-    window.addEventListener("unhandledrejection", (e) => {
+    }
+    const onRejection = (e: PromiseRejectionEvent) => {
       setLastErr(`R:${String(e.reason).slice(0, 70)}`)
       ship("R", `${String(e.reason)}\n${e.reason instanceof Error ? e.reason.stack ?? "" : ""}`)
-    })
+    }
+    window.addEventListener("error", onWindowError)
+    window.addEventListener("unhandledrejection", onRejection)
     const entry = performance
       .getEntriesByType("resource")
       .map((r) => r.name)
@@ -695,8 +711,8 @@ ${text.slice(0, 12000)}` }).catch(() => {})  // #1294: 2400 truncated snapshots 
         )
       } catch {}
     }
-    setTimeout(shipRings, 8_000)
-    setInterval(shipRings, 30_000)
+    const shipTimeout = setTimeout(shipRings, 8_000)
+    const shipInterval = setInterval(shipRings, 30_000)
 
     // #1296 render timing: the data layer is clean on switches (zero
     // loads, zero gate holds in the rings) — the remaining perceived
@@ -707,7 +723,7 @@ ${text.slice(0, 12000)}` }).catch(() => {})  // #1294: 2400 truncated snapshots 
     let lastPath = location.pathname
     let renderT0 = 0
     let renderId = ""
-    setInterval(() => {
+    const renderScanTimer = setInterval(() => {
       try {
         const path = location.pathname
         if (path !== lastPath) {
@@ -737,10 +753,11 @@ ${text.slice(0, 12000)}` }).catch(() => {})  // #1294: 2400 truncated snapshots 
       const w = globalThis as { __renderRing?: unknown }
       w.__renderRing = renderRing.slice(-8)
     }
-    setInterval(shipRenderRing, 1_000)
+    const renderShipTimer = setInterval(shipRenderRing, 1_000)
     let lastHtml = -1
     let lastKids = -1
     const ring: string[] = []
+    let rafId = 0
     const tickFast = () => {
       const frame = document.querySelector("[data-amicode-panel]")
       const html = frame ? frame.innerHTML.length : -1
@@ -760,9 +777,9 @@ ${text.slice(0, 12000)}` }).catch(() => {})  // #1294: 2400 truncated snapshots 
       } else if (html !== lastHtml) {
         lastHtml = html
       }
-      requestAnimationFrame(tickFast)
+      rafId = requestAnimationFrame(tickFast)
     }
-    requestAnimationFrame(tickFast)
+    rafId = requestAnimationFrame(tickFast)
     const timer = setInterval(() => {
       const frame = document.querySelector("[data-amicode-panel]")
       const pill = document.querySelectorAll('[style*="backdrop-filter"]').length
@@ -775,7 +792,20 @@ ${text.slice(0, 12000)}` }).catch(() => {})  // #1294: 2400 truncated snapshots 
         : `warm:none${prewarmErr ? "!" + prewarmErr.slice(0, 40) : ""}`
       setState(`${build} | up:${Math.round(performance.now() / 1000)}s | ${warmState} | hold:${heldPanelViewState() ? "Y" : "n"} | now:${frame ? frame.childElementCount + "k/" + frame.innerHTML.length + "h" : "none"} | main:${mainKids} | p${pill} | ${location.pathname.slice(-34)}${lastErr() ? "\n" + lastErr() : ""}`)
     }, 500)
-    onCleanup(() => clearInterval(timer))
+    // #1287: clean up EVERY effect this badge installs, not just the 500ms
+    // interval — restore console.error, drop both window listeners, and clear
+    // the diagnostic timeout/interval and the animation-frame loop.
+    onCleanup(() => {
+      console.error = originalError
+      window.removeEventListener("error", onWindowError)
+      window.removeEventListener("unhandledrejection", onRejection)
+      clearTimeout(shipTimeout)
+      clearInterval(shipInterval)
+      clearInterval(renderScanTimer)
+      clearInterval(renderShipTimer)
+      cancelAnimationFrame(rafId)
+      clearInterval(timer)
+    })
   }
   return (
     <div
@@ -1224,7 +1254,14 @@ export function AppInterface(props: {
                   <TabsProvider>
                     <AmicodeNavigateBridge />
                     <SessionLineagePrewarmer />
-                    <HoldDebugBadge />
+                    {/* #1287/#1290 debug badge — opt-in via localStorage so it
+                        never shows to users by default. Enable:
+                        localStorage.setItem("amicode_debug_badge","1") + reload.
+                        The badge, its RAF ring, error shipper, and diagnostic
+                        intervals only mount when the flag is set. */}
+                    <Show when={useSettings().general.newLayoutDesigns() && isDebugBadgeEnabled()}>
+                      <HoldDebugBadge />
+                    </Show>
                     <PermissionProvider>
                       <NotificationProvider>
                         <ServerShell>
@@ -1327,6 +1364,7 @@ function NewSessionLanding() {
   const tabs = useTabs()
   const global = useGlobal()
   const navigate = useNavigate()
+  const [showEmpty, setShowEmpty] = createSignal(false)
 
   const land = () => {
     // #1310: THE LANDING ONLY ACTS ON THE LANDING ROUTE — read from the
@@ -1355,6 +1393,7 @@ function NewSessionLanding() {
     // If there's already a session or draft tab, navigate to it
     const existing = tabs.store.find((tab) => tab.type === "session" || tab.type === "draft")
     if (existing) {
+      setShowEmpty(false)
       dbg({ gate: "existing-tab", href: tabHref(existing) })
       navigate(tabHref(existing), { replace: true })
       return
@@ -1372,13 +1411,26 @@ function NewSessionLanding() {
     // on a fresh profile and for servers running outside any registered project
     // (the amicode chat server spawns in an internal scaffold dir). Falling back
     // to a server-known worktree keeps this route from rendering nothing at all.
+    //
+    // Read workspaceProjects() FIRST so the createEffect in LandingEffect
+    // subscribes to the reactive store that adoptWorkspaceProjects writes.
+    // Without this read, adding a folder via the extension host updates the
+    // store but the effect never re-runs — showEmpty stays true forever.
     const ctx = global.ensureServerCtx(conn)
-    const directory = resolveLandingDirectory(ctx.projects.list(), ctx.sync.data.project[0]?.worktree)
+    const wsProjects = workspaceProjects()
+    const directory = resolveLandingDirectory(
+      wsProjects.length > 0 ? wsProjects : ctx.projects.list(),
+      ctx.sync.data.project[0]?.worktree,
+    )
     if (!directory) {
-      dbg({ gate: "no-directory", projects: ctx.projects.list().length, syncProjects: ctx.sync.data.project?.length ?? -1 })
-      return // nothing to land on yet — re-renders when sync arrives
+      dbg({ gate: "no-directory", projects: ctx.projects.list().length, wsProjects: wsProjects.length, syncProjects: ctx.sync.data.project?.length ?? -1 })
+      // No workspace folder open — show the v2 empty-workspace landing
+      // instead of rendering nothing at all (the blank-screen gap).
+      setShowEmpty(true)
+      return
     }
 
+    setShowEmpty(false)
     dbg({ gate: "newDraft", directory })
     tabs.newDraft({ server: ServerConnection.key(conn), directory }, "").catch((err) => {
       dbg({ gate: "newDraft-error", err: String(err?.message ?? err) })
@@ -1388,9 +1440,25 @@ function NewSessionLanding() {
   return (
     <Show when={tabs.ready()} fallback={null}>
       <LandingEffect land={land} />
+      <Show when={showEmpty()}>
+        <Suspense>
+          <EmptyWorkspaceLanding />
+        </Suspense>
+      </Show>
     </Show>
   )
 }
+
+/** Lightweight v2 landing shown when no workspace folder is open. Renders the
+ *  Amicode mark + an "Open a folder" prompt in the same visual frame as the
+ *  normal new-session view, and populates the titlebar controls so the app
+ *  never appears empty. The createEffect in LandingEffect keeps running: the
+ *  moment a workspace folder arrives (the extension pushes it), the draft
+ *  resolves and this component unmounts.
+ *
+ *  lazy() keeps the chunk off the critical path; the <Suspense> in the parent
+ *  catches the suspension while the chunk loads. */
+const EmptyWorkspaceLanding = lazy(() => import("@/pages/empty-workspace-landing"))
 
 /** #1291: the landing's resolve used to run as a bare IIFE inside <Show> —
  *  evaluated ONCE at mount, never again. When the server connected (or the

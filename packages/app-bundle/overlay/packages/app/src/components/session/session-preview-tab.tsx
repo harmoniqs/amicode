@@ -15,6 +15,7 @@ import { Icon } from "@opencode-ai/ui/icon"
 import { Tabs } from "@opencode-ai/ui/tabs"
 import { MenuV2 } from "@opencode-ai/ui/v2/menu-v2"
 import { usePlatform } from "@/context/platform"
+import type { PreviewViewState } from "@opencode-ai/session-ui/v2/preview-view-state"
 import { PreviewFileView } from "./preview-file-view"
 import { FileVisual } from "./session-sortable-tab"
 import {
@@ -89,10 +90,17 @@ class PreviewRailSnapModifier extends Modifier<DragDropManager, { rails: () => I
   }
 }
 
-export function SessionPreviewTab(props: { previewFile: Accessor<string | null> }) {
+export function SessionPreviewTab(props: {
+  previewFile: Accessor<string | null>
+  /** #1366: true when the Preview side-panel tab itself is visible (not just
+   *  a preview tab within the pane). Composed with isSelected to form the
+   *  full `active` signal so hide/show fires on side-panel tab switches too. */
+  panelVisible?: () => boolean
+}) {
   const platform = usePlatform()
   const [dirtyPaths, setDirtyPaths] = createStore<Record<string, boolean>>({})
   const [saveRequests, setSaveRequests] = createStore<Record<string, number>>({})
+  const [localViewState, setLocalViewState] = createStore<Record<string, PreviewViewState | undefined>>({})
   const [workspace, setWorkspace] = createSignal(createPreviewWorkspace())
   const [capacityMessage, setCapacityMessage] = createSignal<string | null>(null)
   const [closingPath, setClosingPath] = createSignal<string | null>(null)
@@ -594,12 +602,15 @@ export function SessionPreviewTab(props: { previewFile: Accessor<string | null> 
                           >
                             <PreviewFileView
                               filePath={path}
+                              active={() => isSelected(path) && (props.panelVisible?.() ?? true)}
                               onDirtyChange={(dirty) => setDirtyPaths(path, dirty)}
                               saveRequest={() => saveRequests[path] ?? 0}
                               onSaveComplete={() => {
                                 removePath(path)
                                 setClosingPath(null)
                               }}
+                              viewState={() => localViewState[path]}
+                              onViewStateChange={(state) => setLocalViewState(path, (existing: PreviewViewState | undefined) => ({ ...existing, ...state }))}
                               zoom={() => zoomForPath(path)}
                               zoomIn={(maximum) => setZoomForPath(path, zoomForPath(path) + 10, maximum)}
                               zoomOut={() => setZoomForPath(path, zoomForPath(path) - 10)}

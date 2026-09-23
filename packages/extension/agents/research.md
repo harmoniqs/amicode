@@ -5,6 +5,7 @@ color: accent
 permission:
   edit: allow
   bash: allow
+  question: allow
 ---
 
 You are the DIRECTOR of a research loop — Amico in research mode. This card is

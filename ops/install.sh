@@ -11,7 +11,7 @@ set -euo pipefail
 DEST="$HOME/.amico/ops"
 SRC="$(cd "$(dirname "$0")" && pwd)"
 
-mkdir -p "$DEST/papers-digest" "$DEST/skill-freshness" "$DEST/role-parity"
+mkdir -p "$DEST/papers-digest" "$DEST/skill-freshness" "$DEST/role-parity" "$DEST/session-archive" "$DEST/shard-watch"
 
 install -m 0755 "$SRC/fleet-status.sh"          "$DEST/fleet-status.sh"
 install -m 0755 "$SRC/fleet-alert.sh"           "$DEST/fleet-alert.sh"
@@ -21,6 +21,9 @@ install -m 0755 "$SRC/papers-digest/daily.sh"   "$DEST/papers-digest/daily.sh"
 install -m 0755 "$SRC/hunt.sh"                  "$DEST/hunt.sh"
 install -m 0755 "$SRC/skill-freshness/run-skill-freshness.sh" "$DEST/skill-freshness/run-skill-freshness.sh"
 install -m 0755 "$SRC/role-parity/run-role-parity-check.sh"   "$DEST/role-parity/run-role-parity-check.sh"
+install -m 0755 "$SRC/session-archive/run-session-archive.sh" "$DEST/session-archive/run-session-archive.sh"
+
+install -m 0755 "$SRC/shard-watch/run-shard-watch.sh"         "$DEST/shard-watch/run-shard-watch.sh"
 
 echo "deployed to $DEST:"
 echo "  fleet-status.sh   (launchd co.harmoniqs.fleet-status, every 5 min)"
@@ -28,6 +31,9 @@ echo "  fleet-alert.sh    (launchd co.harmoniqs.fleet-alert, every 15 min)"
 echo "  papers-digest/daily.sh (launchd co.harmoniqs.amicode-papers-digest, daily ~09:00)"
 echo "  skill-freshness/run-skill-freshness.sh (launchd co.harmoniqs.skill-freshness, daily ~04:30)"
 echo "  role-parity/run-role-parity-check.sh (erlich: systemd co.harmoniqs.role-parity.timer, daily ~04:45 — see ops/README.md; macOS machines: the launchd plist)"
+echo "  session-archive/run-session-archive.sh (launchd co.harmoniqs.session-archive daily ~04:00 --apply; systemd pair co.harmoniqs.session-archive.{service,timer} — see ops/README.md)"
+
+echo "  shard-watch/run-shard-watch.sh (launchd co.harmoniqs.shard-watch, daily ~04:15 — the nightly client shard-divergence watch, amicode#1306)"
 echo "  hunt.sh           (on demand — the hardened hunt wrapper; also copy to erlich, see ops/README.md)"
 echo "state files, plists, systemd units, and the frozen bundle were left untouched."
 echo "to activate before the next interval: launchctl kickstart -k gui/$(id -u)/<agent-label> (or on erlich: systemctl --user start co.harmoniqs.role-parity.service)"

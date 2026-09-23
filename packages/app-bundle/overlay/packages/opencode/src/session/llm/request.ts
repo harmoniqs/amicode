@@ -215,6 +215,9 @@ export const prepare = Effect.fn("LLMRequestPrep.prepare")(function* (input: Pre
             "x-session-affinity": input.sessionID,
             "X-Session-Id": input.sessionID,
             ...(input.parentSessionID ? { "x-parent-session-id": input.parentSessionID } : {}),
+            ...(input.model.providerID === "harmoniqs"
+              ? { "Idempotency-Key": `amicode:${input.sessionID}:${crypto.randomUUID()}` }
+              : {}),
             "User-Agent": USER_AGENT,
           }),
       ...input.model.headers,

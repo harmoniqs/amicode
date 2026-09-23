@@ -18,7 +18,7 @@
  * @module
  */
 
-import { createEffect, createMemo, createSignal, on, onCleanup, Show, Switch, Match } from "solid-js"
+import { createEffect, createMemo, createSignal, on, onCleanup, onMount, Show, Switch, Match } from "solid-js"
 import { Markdown } from "@opencode-ai/session-ui/markdown"
 import { SegmentedControlV2, SegmentedControlItemV2 } from "@opencode-ai/ui/v2/segmented-control-v2"
 import { TooltipV2 } from "@opencode-ai/ui/v2/tooltip-v2"
@@ -28,7 +28,9 @@ import { RENDERABLE_EXTENSIONS } from "@opencode-ai/session-ui/v2/markdown-utils
 import { useSDK } from "@/context/sdk"
 import { useServerSDK } from "@/context/server-sdk"
 import { PreviewEditor } from "@opencode-ai/session-ui/v2/preview-editor"
+import type { PreviewViewState } from "@opencode-ai/session-ui/v2/preview-view-state"
 import { PdfCanvasView } from "./pdf-canvas-view"
+import { toAbsolutePath, shouldApplyWatcherRead } from "./preview-file-helpers"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -75,10 +77,13 @@ const IMAGE_WRAPPER_PADDING = 32
 
 export function PreviewFileView(props: {
   filePath: string
+  active?: () => boolean
   onDirtyChange: (dirty: boolean) => void
   onSaveComplete?: () => void
   saveRequest?: () => number
   onSaveStatusChange?: (status: "idle" | "saving" | "saved") => void
+  viewState?: () => PreviewViewState | undefined
+  onViewStateChange?: (state: PreviewViewState) => void
   zoom: () => number
   zoomIn: (maximum: number) => void
   zoomOut: () => void
@@ -161,6 +166,111 @@ export function PreviewFileView(props: {
     ),
   )
 
+  // ─── Live file tracking (#1254) ─────────────────────────────────────
+  // Subscribe to file watcher events so the preview updates when the file
+  // changes on disk — e.g. latexmk rewriting a PDF, an external editor
+  // saving a .tex, or any tool (including the agent) modifying a previewed
+  // file. This makes the preview a live view, not a one-shot snapshot.
+  // #1414: reads are async — guard their completion so a read finishing after a
+  // file switch, a newer read, or a fresh edit can't clobber the view.
+  let watcherReadGen = 0
+  createEffect(() => {
+    const filePath = props.filePath
+    const unsub = sdk().event.listen((e) => {
+      if (e.details.type !== "file.watcher.updated") return
+      const props_ = e.details.properties as Record<string, unknown> | undefined
+      const changedPath = typeof props_?.file === "string" ? props_.file : undefined
+      const kind = typeof props_?.event === "string" ? props_.event : undefined
+      if (!changedPath || !kind || kind !== "change") return
+      // Match: the watcher reports absolute paths, filePath may be relative.
+      // Check if the changed path ends with our file path.
+      if (!changedPath.endsWith(filePath) && !filePath.endsWith(changedPath)) return
+      // Skip if the user has unsaved edits — don't clobber their work
+      if (unsavedContent() !== null) return
+      // Re-read the file, tagging this read so a stale completion is discarded.
+      const capturedGeneration = ++watcherReadGen
+      sdk()
+        .client.file.read({ path: filePath })
+        .then((result) => {
+          if (
+            !shouldApplyWatcherRead({
+              capturedPath: filePath,
+              currentPath: props.filePath,
+              capturedGeneration,
+              latestGeneration: watcherReadGen,
+              hasUnsavedEdits: unsavedContent() !== null,
+            })
+          )
+            return
+          const content = result.data
+          if (!content) return
+          if (content.type !== "text") {
+            // Binary file (PDF, image) — update binary data
+            if ((content as any).encoding === "base64") {
+              setBinaryData({
+                base64: content.content,
+                mime: (content as any).mimeType ?? "application/octet-stream",
+              })
+            }
+          } else {
+            // Text file — update content
+            setFileContent(content.content)
+            // #1423: If a .tex/.ltx file was updated on disk (e.g. by the
+            // agent), trigger a LaTeX recompile so the PDF auto-refreshes.
+            if (/\.(tex|ltx)$/i.test(filePath)) {
+              try {
+                window.parent?.postMessage(
+                  { source: "amicode", kind: "run-latex", file: toAbsolute(filePath) },
+                  "*",
+                )
+              } catch {}
+            }
+          }
+        })
+        .catch(() => {})
+    })
+    onCleanup(unsub)
+  })
+
+  // ─── PDF refresh after compile (#1254) ─────────────────────────────────
+  // Re-read the file from disk and swap the base64 payload when the companion
+  // PDF's producer (latexmk) reports "done" via run-latex-status.
+  const toAbsolute = (p: string) => toAbsolutePath(p, sdk().directory)
+  const selfAbsolute = () => toAbsolute(props.filePath)
+
+  const reloadBinary = () => {
+    const path = props.filePath
+    sdk()
+      .client.file.read({ path })
+      .then((result) => {
+        const content = result.data
+        if (!content || content.type === "text") return
+        const cat = getFileCategory(path)
+        if ((cat === "image" || cat === "pdf") && (content as any).encoding === "base64") {
+          setBinaryData({
+            base64: content.content,
+            mime: (content as any).mimeType ?? "application/octet-stream",
+          })
+        }
+      })
+      .catch(() => {})
+  }
+
+  onMount(() => {
+    const handler = (event: MessageEvent) => {
+      const d = event.data as
+        | { source?: string; kind?: string; file?: string; pdf?: string; state?: string }
+        | null
+      if (!d || d.source !== "amicode" || d.kind !== "run-latex-status") return
+      // When the companion PDF is done compiling, refresh it
+      if (typeof d.pdf === "string" && d.pdf === selfAbsolute() && d.state === "done") {
+        reloadBinary()
+      }
+    }
+    window.addEventListener("message", handler)
+    onCleanup(() => window.removeEventListener("message", handler))
+  })
+
   // ─── Binary URLs ───────────────────────────────────────────────────────
 
   // Data URI for images (small enough for inline base64)
@@ -190,6 +300,13 @@ export function PreviewFileView(props: {
       if (closeAfterSave) props.onSaveComplete?.()
       if (savedTimer) clearTimeout(savedTimer)
       savedTimer = setTimeout(() => setSaveStatus("idle"), 2000)
+      // #1253: trigger LaTeX compilation after saving a .tex file. #1414: post
+      // an ABSOLUTE path — the compile bridge silently rejects relative paths.
+      if (/\.(tex|ltx)$/i.test(filePath)) {
+        try {
+          window.parent?.postMessage({ source: "amicode", kind: "run-latex", file: toAbsolute(filePath) }, "*")
+        } catch {}
+      }
     } catch {
       setSaveStatus("idle")
     }
@@ -648,7 +765,11 @@ export function PreviewFileView(props: {
                 mime={binaryData()!.mime}
                 zoom={props.zoom()}
                 filePath={props.filePath}
+                active={props.active}
                 onPageNavigationChange={setPdfNavigation}
+                initialPage={props.viewState?.()?.pdf?.page}
+                initialScrollTop={props.viewState?.()?.pdf?.scrollTop}
+                onViewStateChange={(pdf) => props.onViewStateChange?.({ pdf })}
               />
             </Match>
 
@@ -671,8 +792,11 @@ export function PreviewFileView(props: {
                   <PreviewEditor
                     content={fileContent()}
                     filePath={props.filePath}
+                    active={props.active}
                     onChange={handleEdit}
                     onSave={handleImmediateSave}
+                    viewState={() => props.viewState?.()?.editor}
+                    onViewStateChange={(editor) => props.onViewStateChange?.({ editor })}
                   />
                 }
               >
@@ -690,8 +814,11 @@ export function PreviewFileView(props: {
               <PreviewEditor
                 content={fileContent()}
                 filePath={props.filePath}
+                active={props.active}
                 onChange={handleEdit}
                 onSave={handleImmediateSave}
+                viewState={() => props.viewState?.()?.editor}
+                onViewStateChange={(editor) => props.onViewStateChange?.({ editor })}
               />
             </Match>
           </Switch>

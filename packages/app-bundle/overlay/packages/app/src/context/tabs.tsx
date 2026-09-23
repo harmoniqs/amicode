@@ -139,6 +139,19 @@ export const { use: useTabs, provider: TabsProvider } = createSimpleContext({
     createEffect(() => {
       if (!ready() || !recentReady()) return
       const servers = new Set(server.list.map(ServerConnection.key))
+      // #1295: rebase stale-era tab server keys to a live server BEFORE
+      // the filter removes them. Without this, the filter drops ghost-key
+      // tabs before the prewarmer child's rebase effect ever fires.
+      if (servers.size > 0) {
+        const target = [...servers][0]
+        const seenGhost = new Set<string>()
+        for (const [index, tab] of store.entries()) {
+          if (tab.type === "session" && tab.server !== undefined && !servers.has(tab.server)) {
+            if (!seenGhost.has(tab.server)) seenGhost.add(tab.server)
+            setStore(index, "server", target)
+          }
+        }
+      }
       const next = store.filter((tab) => servers.has(tab.server))
       if (next.length !== store.length) {
         for (const tab of store) {

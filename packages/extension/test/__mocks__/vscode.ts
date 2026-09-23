@@ -128,6 +128,7 @@ export const extensions = {
 };
 export const workspace = {
   workspaceFolders: [] as unknown[],
+  textDocuments: [] as Array<{ uri: { fsPath: string }; isDirty: boolean; save: () => Promise<boolean> }>,
   configUpdates: [] as Array<[string, unknown]>,
   getConfiguration: () => ({
     get: (_k: string, d?: unknown) => d ?? "",
@@ -178,6 +179,11 @@ export const workspace = {
     delete: (_u: unknown, _opts?: unknown) => Promise.resolve(),
     rename: (_old: unknown, _new: unknown) => Promise.resolve(),
   },
+  appliedEdits: [] as unknown[],
+  applyEdit: (edit: unknown) => {
+    workspace.appliedEdits.push(edit);
+    return Promise.resolve(true);
+  },
 };
 export const Uri = {
   file: (p: string) => ({ fsPath: p, toString: () => p }),
@@ -195,6 +201,18 @@ export class EventEmitter {
 }
 export class Disposable {
   dispose() {}
+}
+export class Range {
+  constructor(
+    public start: { line: number; character: number },
+    public end: { line: number; character: number },
+  ) {}
+}
+export class WorkspaceEdit {
+  _edits: Array<{ uri: unknown; range: unknown; newText: string }> = [];
+  replace(uri: unknown, range: unknown, newText: string) {
+    this._edits.push({ uri, range, newText });
+  }
 }
 export class TreeItem {
   description?: string;

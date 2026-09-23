@@ -10,6 +10,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
+import { randomUUID } from "node:crypto";
 import * as vscode from "vscode";
 
 import {
@@ -56,6 +57,13 @@ export const HARMONIQS_MIN_OUTPUT_TOKENS = 16;
 // this same file already works around). Reproduced live: a plain "hello?"
 // turn failed this exact way before this constant existed.
 export const HARMONIQS_MAX_OUTPUT_TOKENS = 4096;
+// The app-harmoniqs-ai router (app-harmoniqs-ai/src/worker/routing/candidates.ts)
+// only ever selects models with a >=500k-token context window (Claude Opus
+// 4.6/4.8, Sonnet 5, GPT-5.6 Terra, GLM-5.3), so advertise 500k. This is the
+// ceiling opencode compares session tokens against to decide when to
+// auto-compact; too low a value forces premature compaction, too high risks a
+// provider-side context overflow before compaction fires.
+export const HARMONIQS_CONTEXT_TOKENS = 500_000;
 
 // ─── Provider → Model data (data-driven, not hard-coded conditionals) ────────
 
@@ -182,9 +190,13 @@ function healStaleHarmoniqsModelShape(existing: Record<string, unknown>): boolea
       model.tool_call = true;
       changed = true;
     }
-    const limit = model.limit as { output?: unknown } | undefined;
-    if (!limit || limit.output !== HARMONIQS_MAX_OUTPUT_TOKENS) {
-      model.limit = { output: HARMONIQS_MAX_OUTPUT_TOKENS };
+    const limit = model.limit as { context?: unknown; output?: unknown } | undefined;
+    if (
+      !limit ||
+      limit.context !== HARMONIQS_CONTEXT_TOKENS ||
+      limit.output !== HARMONIQS_MAX_OUTPUT_TOKENS
+    ) {
+      model.limit = { context: HARMONIQS_CONTEXT_TOKENS, output: HARMONIQS_MAX_OUTPUT_TOKENS };
       changed = true;
     }
   }
@@ -343,7 +355,7 @@ function buildProviderConfigEntry(
           // See HARMONIQS_MAX_OUTPUT_TOKENS's comment -- without this,
           // opencode's own maxOutputTokens fallback sends 32000 and every
           // real turn 400s.
-          limit: { output: HARMONIQS_MAX_OUTPUT_TOKENS },
+          limit: { context: HARMONIQS_CONTEXT_TOKENS, output: HARMONIQS_MAX_OUTPUT_TOKENS },
           // The gateway accepts OpenAI-compatible tool calls and returns the
           // model's tool-call IDs unchanged, so OpenCode executes local
           // tools and continues the session on the next provider turn.
@@ -565,6 +577,7 @@ function buildTestRequest(
   // guaranteed every real test connection would fail with a generic
   // "invalid_request" -- reproduced against production before this fix.
   if (config.provider === HARMONIQS_PROVIDER_ID) {
+    const probeID = randomUUID();
     return {
       url: endpoint,
       options: {
@@ -572,11 +585,20 @@ function buildTestRequest(
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${config.apiKey}`,
+          "X-Session-Id": `onboarding:${probeID}`,
+          "Idempotency-Key": `onboarding:${probeID}`,
         },
         body: JSON.stringify({
           model: config.model.replace(/^[^/]+\//, ""),
           max_tokens: HARMONIQS_MIN_OUTPUT_TOKENS,
           messages: [{ role: "user", content: "hi" }],
+          tools: [
+            {
+              type: "function",
+              function: { name: "connection_probe", parameters: { type: "object", properties: {} } },
+            },
+          ],
+          tool_choice: "auto",
         }),
       },
     };

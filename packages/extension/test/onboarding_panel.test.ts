@@ -20,6 +20,7 @@ import {
   HARMONIQS_BASE_URL,
   HARMONIQS_MIN_OUTPUT_TOKENS,
   HARMONIQS_MAX_OUTPUT_TOKENS,
+  HARMONIQS_CONTEXT_TOKENS,
   type OnboardingConfig,
   writeOnboardingConfig,
   reconcileHarmoniqsProviderConfig,
@@ -430,7 +431,10 @@ describe("Harmoniqs AI — branded provider preset", () => {
       // unset 0 as "no cap" and sends max_tokens: 32000 on every real turn --
       // which exceeds this gateway's real ceiling and 400s generically.
       // Reproduced live before this fix existed.
-      expect(entry.models[HARMONIQS_MODEL_ID].limit).toEqual({ output: HARMONIQS_MAX_OUTPUT_TOKENS });
+      expect(entry.models[HARMONIQS_MODEL_ID].limit).toEqual({
+        context: HARMONIQS_CONTEXT_TOKENS,
+        output: HARMONIQS_MAX_OUTPUT_TOKENS,
+      });
       expect(written.model).toBe(`${HARMONIQS_PROVIDER_ID}/${HARMONIQS_MODEL_ID}`);
     });
 
@@ -495,7 +499,10 @@ describe("Harmoniqs AI — branded provider preset", () => {
       expect(entry.models["harmoniqs-fast"]).toBeDefined();
       expect(entry.models[HARMONIQS_MODEL_ID]).toBeUndefined();
       expect(entry.models["harmoniqs-fast"].tool_call).toBe(true);
-      expect(entry.models["harmoniqs-fast"].limit).toEqual({ output: HARMONIQS_MAX_OUTPUT_TOKENS });
+      expect(entry.models["harmoniqs-fast"].limit).toEqual({
+        context: HARMONIQS_CONTEXT_TOKENS,
+        output: HARMONIQS_MAX_OUTPUT_TOKENS,
+      });
       // The gateway shape (npm/baseURL) is protocol-level, not model-specific,
       // and must stay identical regardless of which model was selected.
       expect(entry.npm).toBe("@ai-sdk/openai-compatible");
@@ -656,6 +663,7 @@ describe("Harmoniqs AI — branded provider preset", () => {
 
       const healed = JSON.parse(fs.readFileSync(configPath, "utf8"));
       expect(healed.provider[HARMONIQS_PROVIDER_ID].models[HARMONIQS_MODEL_ID].limit).toEqual({
+        context: HARMONIQS_CONTEXT_TOKENS,
         output: HARMONIQS_MAX_OUTPUT_TOKENS,
       });
       // The chat-only flag the old writer planted gets healed to tool-capable too.
@@ -682,7 +690,7 @@ describe("Harmoniqs AI — branded provider preset", () => {
       const healed = JSON.parse(fs.readFileSync(configPath, "utf8"));
       const model = healed.provider[HARMONIQS_PROVIDER_ID].models["harmoniqs-fast"];
       expect(model.tool_call).toBe(true);
-      expect(model.limit).toEqual({ output: HARMONIQS_MAX_OUTPUT_TOKENS });
+      expect(model.limit).toEqual({ context: HARMONIQS_CONTEXT_TOKENS, output: HARMONIQS_MAX_OUTPUT_TOKENS });
     });
 
     it("is a no-op — doesn't touch the file at all — when the entry is already correct", () => {
@@ -695,7 +703,7 @@ describe("Harmoniqs AI — branded provider preset", () => {
               [HARMONIQS_MODEL_ID]: {
                 name: "Harmoniqs Auto",
                 tool_call: true,
-                limit: { output: HARMONIQS_MAX_OUTPUT_TOKENS },
+                limit: { context: HARMONIQS_CONTEXT_TOKENS, output: HARMONIQS_MAX_OUTPUT_TOKENS },
               },
             },
           },
@@ -739,6 +747,7 @@ describe("Harmoniqs AI — branded provider preset", () => {
 
       const written = JSON.parse(fs.readFileSync(configPath, "utf8"));
       expect(written.provider[HARMONIQS_PROVIDER_ID].models[HARMONIQS_MODEL_ID].limit).toEqual({
+        context: HARMONIQS_CONTEXT_TOKENS,
         output: HARMONIQS_MAX_OUTPUT_TOKENS,
       });
       expect(written.provider[HARMONIQS_PROVIDER_ID].models[HARMONIQS_MODEL_ID].tool_call).toBe(true);
@@ -762,9 +771,17 @@ describe("Harmoniqs AI — branded provider preset", () => {
       const [url, options] = fetchMock.mock.calls[0];
       expect(url).toBe(`${HARMONIQS_BASE_URL}/chat/completions`);
       expect(options.headers.Authorization).toBe(`Bearer ${config.apiKey}`);
+      expect(options.headers["X-Session-Id"]).toMatch(/^onboarding:/);
+      expect(options.headers["Idempotency-Key"]).toBe(options.headers["X-Session-Id"]);
       const body = JSON.parse(options.body);
       expect(body.model).toBe(HARMONIQS_MODEL_ID);
-      expect(body.tools).toBeUndefined();
+      expect(body.tools).toEqual([
+        {
+          type: "function",
+          function: { name: "connection_probe", parameters: { type: "object", properties: {} } },
+        },
+      ]);
+      expect(body.tool_choice).toBe("auto");
       // Regression: the test probe must satisfy the gateway's own minimum —
       // a lower value (the generic openai/openrouter/vercel probe used 1)
       // guaranteed every real connection test failed with a generic 400
@@ -794,7 +811,8 @@ describe("Harmoniqs AI — branded provider preset", () => {
       expect(url).toBe(`${HARMONIQS_BASE_URL}/chat/completions`);
       const body = JSON.parse(options.body);
       expect(body.model).toBe("harmoniqs-fast");
-      expect(body.tools).toBeUndefined();
+      expect(body.tools).toHaveLength(1);
+      expect(body.tool_choice).toBe("auto");
       expect(body.max_tokens).toBe(HARMONIQS_MIN_OUTPUT_TOKENS);
     });
 
