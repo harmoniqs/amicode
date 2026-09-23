@@ -148,6 +148,30 @@ export type ReadinessVerdict =
   | { closeable: true; resolved: string[] }
   | { closeable: false; blockers: ReadinessBlocker[] };
 
+/** One serving∧reachable roster row resolved to its (trimmed) `machine_id`.
+ *  `machineId === ""` marks a serving∧reachable row whose id could not be
+ *  resolved — the caller decides whether that refuses close (readiness) or is
+ *  simply skipped (the peer provider). */
+export interface ServingPeer {
+  machineId: string;
+}
+
+/** The ONE serving∧reachable resolution (§D3.2): every roster row with
+ *  `capabilities ∋ serving` ∧ `health = reachable`, in roster order, resolved
+ *  to its trimmed `machine_id` (`""` when unresolvable). Both the readiness
+ *  gate AND the fleet-peer provider (#1446) read the serving peer set through
+ *  this single derivation rather than re-deriving `placementDescriptor` twice
+ *  with subtly different rules. Pure: no store reads, no I/O. */
+export function servingReachablePeers(rosterRows: RosterRow[]): ServingPeer[] {
+  const out: ServingPeer[] = [];
+  for (const row of rosterRows) {
+    const d = placementDescriptor(row);
+    if (!d.serving || !d.reachable) continue;
+    out.push({ machineId: d.machine_id?.trim() ?? "" });
+  }
+  return out;
+}
+
 /** Resolve every roster row with `capabilities ∋ serving` ∧ `health = reachable`
  *  to its `machine_id`; close is permitted IFF, for every such machine_id
  *  (other than self), BOTH this machine's issued-token registry AND its reader
@@ -158,10 +182,7 @@ export type ReadinessVerdict =
 export function evaluateReadiness(deps: ReadinessDeps): ReadinessVerdict {
   const blockers: ReadinessBlocker[] = [];
   const resolved: string[] = [];
-  for (const row of deps.rosterRows) {
-    const d = placementDescriptor(row);
-    if (!d.serving || !d.reachable) continue;
-    const machineId = d.machine_id?.trim() ?? "";
+  for (const { machineId } of servingReachablePeers(deps.rosterRows)) {
     if (machineId === "") {
       blockers.push({ reason: "unresolvable-machine-id" });
       continue;

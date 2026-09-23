@@ -72,6 +72,15 @@ export function rosterReadResponse(deps: RosterDeps = {}): string {
   return JSON.stringify({ ok: true, schema_version: doc.schema_version, rows: doc.rows, error: null });
 }
 
+/** The fleet-wide roster rows this host holds — the same tolerant load the read
+ *  route uses (absent/malformed → empty), surfaced as the typed rows the
+ *  fleet-peer provider (#1446) composes its serving-peer set from. Reading
+ *  through this ONE loader keeps the provider's production path free of a
+ *  second, drifting roster reader. */
+export function readRosterRows(deps: RosterDeps = {}): RosterRow[] {
+  return loadRoster(rosterFilePath(deps)).rows;
+}
+
 /** Fixed-string refusal — sibling discipline, never echoes the caller's bytes. */
 function refuse(code: string, detail: string): string {
   return JSON.stringify({ ok: false, machine_id: null, error: `${code}: ${detail}` });

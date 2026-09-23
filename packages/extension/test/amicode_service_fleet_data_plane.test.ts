@@ -28,6 +28,9 @@ import {
 } from "../src/amicode_service/hub_credential";
 import { deriveCurrency, buildFleetProjection, type SessionOwnerTag, type FleetProjection } from "../src/amicode_service/merged_projection";
 import { stageFleetDataPlane } from "../src/amicode_service/fleet_staging";
+import { buildFleetPeerProvider, fleetPeerTransports } from "../src/amicode_service/fleet_peer_provider";
+import { writePeerToken } from "../src/amicode_service/fleet_peer_store";
+import type { RosterRow } from "@amicode/schema";
 
 // ── mock dist (the app-shelf test's shape) ───────────────────────────────────
 
@@ -461,6 +464,21 @@ describe("fleet mode staged — routing, merged projection, hub credential", () 
     expect(body.sources.hub.version).toBe("v1.18.29");
     // currency is tagged with the sources it was derived over
     expect([...body.currency.sources].sort()).toEqual(["hub", "local"]);
+  });
+
+  it("W0 invariant (#1446): fleet configured but fleetPeers UNSET → the sessions route still serves the legacy 2-source projection (deps.fleetPeers undefined at index.ts:474)", async () => {
+    // `service` here is booted via bootService() — a full fleet plane with NO
+    // `fleetPeers` set (W0 constructs the provider but never assigns it; that
+    // flip is W2, #1447). The legacy buildMergedProjection keys sources by the
+    // "local"/"hub" pair; the N-peer buildFleetProjection would key by
+    // machine_id and carry NO "hub" source. A "hub"-keyed source is therefore
+    // proof the else-branch (index.ts:489) served — production byte-identical.
+    const res = await fetch(`${origin}/amicode/fleet/sessions`, {
+      headers: { Authorization: `Basic ${engineToken}` },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { sources: Record<string, unknown> };
+    expect(Object.keys(body.sources).sort()).toEqual(["hub", "local"]);
   });
 
   it("the merged projection's currency is derived over what is FETCHED (the hub gone → local-tagged token)", async () => {
@@ -1028,5 +1046,124 @@ describe("GET /amicode/fleet/sessions — fleet-wide tagged list via the route (
     expect(body.sources["my-macbook"].present).toBe(true);
     expect(body.sources["the-studio"].present).toBe(true);
     expect(body.sources["the-mini"].present).toBe(true);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// W0 — the production fleet-peer provider (#1446): the roster + reader
+// peer-store composed into the 4-method provider object the fleet-sessions
+// route (index.ts:474) and the W1 multiplexer both consume — plus its
+// projection into the Record<string, PeerTransport> shape. This slice builds
+// the provider; it does NOT assign opts.fleet.fleetPeers (that flip is W2,
+// #1447), so production stays byte-identical (the AC3 block below pins that).
+// ══════════════════════════════════════════════════════════════════════════════
+
+function w0RosterRow(opts: {
+  id: string;
+  name: string;
+  serving: boolean;
+  reachable: boolean;
+  device_type?: string;
+}): RosterRow {
+  return {
+    machine_id: opts.id,
+    name: opts.name,
+    server_mode: "fleet",
+    capabilities: opts.serving ? ["serving"] : [],
+    sshAlias: opts.id,
+    transport: "ssh",
+    last_report: "2026-09-22T00:00:00Z",
+    health: opts.reachable ? "reachable" : "down",
+    ...(opts.device_type !== undefined ? { device_type: opts.device_type } : {}),
+  };
+}
+
+describe("W0 — production fleet-peer provider from roster + peer-store (#1446)", () => {
+  let root: string;
+  let rosterFile: string;
+  let peerStoreFile: string;
+
+  beforeAll(() => {
+    root = mkdtempSync(join(tmpdir(), "amicode-w0-provider-"));
+    rosterFile = join(root, "roster.json");
+    peerStoreFile = join(root, "peer-tokens.json");
+    // A REAL roster document on disk — the production default reader parses it
+    // (no test stubs in the production path). self + one serving∧reachable peer
+    // with a stored token + one serving-but-down peer + one reachable non-server.
+    writeFileSync(
+      rosterFile,
+      JSON.stringify({
+        schema_version: 1,
+        rows: [
+          w0RosterRow({ id: "self-mac", name: "My Mac", serving: true, reachable: true, device_type: "laptop" }),
+          w0RosterRow({ id: "studio-peer", name: "Mac Studio", serving: true, reachable: true, device_type: "desktop" }),
+          w0RosterRow({ id: "mini-peer", name: "Mac Mini", serving: true, reachable: false, device_type: "server" }),
+          w0RosterRow({ id: "laptop-peer", name: "Laptop", serving: false, reachable: true }),
+        ],
+      }),
+    );
+    // A REAL reader peer-store entry for the studio peer (the production reader).
+    writePeerToken("studio-peer", { baseUrl: "http://127.0.0.1:5555", token: "tok-studio" }, { storeFile: peerStoreFile });
+  });
+
+  afterAll(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("composes the 4-method object from the real roster + real peer-store (no stubs): a serving∧reachable peer with a stored token is yielded by getServingPeers() and its credential by readPeerToken()", () => {
+    const provider = buildFleetPeerProvider({ localMachineId: "self-mac", rosterFile, peerStoreFile });
+
+    // localMachineId is the composed provider's own id
+    expect(provider.localMachineId).toBe("self-mac");
+
+    // getServingPeers() = serving∧reachable rows, MINUS self, MINUS unreachable,
+    // MINUS non-serving — resolved from the real roster on disk.
+    const servingIds = provider.getServingPeers().map((p) => p.machineId).sort();
+    expect(servingIds).toEqual(["studio-peer"]);
+
+    // readPeerToken() surfaces the studio peer's stored credential (real store).
+    const studio = provider.readPeerToken("studio-peer");
+    expect(studio.ok).toBe(true);
+    if (studio.ok) {
+      expect(studio.credential.baseUrl).toBe("http://127.0.0.1:5555");
+      expect(studio.credential.token).toBe("tok-studio");
+    }
+    // a peer with no stored token is a named miss, never a fabricated credential
+    expect(provider.readPeerToken("mini-peer").ok).toBe(false);
+
+    // rosterLookup() enriches from the same roster (name + device_type)
+    expect(provider.rosterLookup("studio-peer")).toEqual({ name: "Mac Studio", device_type: "desktop" });
+    expect(provider.rosterLookup("nobody")).toBeUndefined();
+  });
+
+  it("projects the SAME peer set into both production-consumed shapes — getServingPeers() and the Record<string, PeerTransport> map list the same machine_ids", () => {
+    const provider = buildFleetPeerProvider({
+      localMachineId: "self-mac",
+      rosterRows: () => [
+        w0RosterRow({ id: "self-mac", name: "My Mac", serving: true, reachable: true }),
+        w0RosterRow({ id: "studio-peer", name: "Mac Studio", serving: true, reachable: true }),
+        w0RosterRow({ id: "mini-peer", name: "Mac Mini", serving: true, reachable: true }),
+        w0RosterRow({ id: "down-peer", name: "Down", serving: true, reachable: false }),
+      ],
+      readPeerToken: (id) => {
+        if (id === "studio-peer") return { ok: true as const, credential: { baseUrl: "http://studio", token: "t-studio" } };
+        if (id === "mini-peer") return { ok: true as const, credential: { baseUrl: "http://mini", token: "t-mini" } };
+        return { ok: false as const, reason: "absent" as const };
+      },
+    });
+
+    const servingIds = provider.getServingPeers().map((p) => p.machineId).sort();
+    const transports = fleetPeerTransports(provider);
+    const transportIds = Object.keys(transports).sort();
+
+    // the two shapes are two VIEWS of the ONE serving-peer set — same ids
+    expect(transportIds).toEqual(servingIds);
+    expect(servingIds).toEqual(["mini-peer", "studio-peer"]);
+
+    // each transport resolves the peer's late-bound URL + token from that set
+    expect(transports["studio-peer"].getUrl()).toBe("http://studio");
+    expect(transports["studio-peer"].token).toBe("t-studio");
+    expect(transports["mini-peer"].getUrl()).toBe("http://mini");
+    expect(transports["mini-peer"].token).toBe("t-mini");
   });
 });
