@@ -102,3 +102,151 @@ describe("#1480 AC2 — the identity-bound enrollment nonce (single-use, short-T
     expect(consumeBoundEnrollmentNonce("N1", { target: TARGET, identityKey: IDENTITY }, { storeFile: file, now: () => 2000 })).toBe(true);
   });
 });
+
+// ── the NON-URL carrier at the mint route + the accept-set (#1480 AC1/AC2) ───
+import { AmicodeServiceServer } from "../src/amicode_service/server";
+import { buildAcceptSet, MINT_ENDPOINT_PATH } from "../src/amicode_service/fleet_accept_set";
+import {
+  boundPeerTokenMintHandler,
+  BOUND_NONCE_HEADER,
+  BOUND_IDENTITY_HEADER,
+} from "../src/amicode_service/fleet_mint_route";
+import { issuedTokenFor } from "../src/amicode_service/fleet_issued_tokens";
+
+interface BoundBooted {
+  origin: string;
+  files: { issued: string; phase: string; nonce: string };
+  target: string;
+  stop: () => Promise<void>;
+}
+
+async function bootBound(): Promise<BoundBooted> {
+  const root = tmproot();
+  const files = {
+    issued: join(root, "fleet-peer-tokens.json"),
+    phase: join(root, "fleet-accept-set.json"),
+    nonce: join(root, "fleet-enrollment-nonces.json"),
+  };
+  const target = "target-machine";
+  const acceptSet = buildAcceptSet({
+    issuedRegistryFile: files.issued,
+    phaseStateFile: files.phase,
+    enrollmentNonceFile: files.nonce,
+    selfMachineId: target,
+  });
+  const server = new AmicodeServiceServer({
+    password: "service-own-mint",
+    authMode: "credential", // no auth=open — the bound nonce is the ONLY bearer-less path
+    acceptSet,
+  });
+  server.add(
+    "POST",
+    MINT_ENDPOINT_PATH,
+    boundPeerTokenMintHandler({ issuedRegistryFile: files.issued, enrollmentNonceFile: files.nonce, selfMachineId: target }),
+  );
+  const origin = (await server.start()).toString().replace(/\/$/, "");
+  return { origin, files, target, stop: () => server.stop() };
+}
+
+describe("#1480 AC1/AC2 — the bound nonce rides a NON-URL carrier at the mint route", () => {
+  const JOINER_ID = "SHA256:joiner-identity";
+
+  it("AC2: a header-carried bound nonce (bound to target+identity) mints a peer token", async () => {
+    const b = await bootBound();
+    const nonce = mintBoundEnrollmentNonce(
+      { target: b.target, identityKey: JOINER_ID },
+      { storeFile: b.files.nonce, nonceFactory: () => "BOUND-NONCE-1", ttlMs: 60_000 },
+    );
+    const res = await fetch(`${b.origin}${MINT_ENDPOINT_PATH}?machine_id=joiner`, {
+      method: "POST",
+      headers: { [BOUND_NONCE_HEADER]: nonce, [BOUND_IDENTITY_HEADER]: JOINER_ID },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; token: string };
+    expect(body.ok).toBe(true);
+    expect(typeof body.token).toBe("string");
+    expect(issuedTokenFor("joiner", { registryFile: b.files.issued })).toBe(body.token);
+    await b.stop();
+  });
+
+  it("AC1: a bound nonce presented on the URL query string is REFUSED (401) — the carrier moved off the URL", async () => {
+    const b = await bootBound();
+    const nonce = mintBoundEnrollmentNonce(
+      { target: b.target, identityKey: JOINER_ID },
+      { storeFile: b.files.nonce, nonceFactory: () => "BOUND-NONCE-URL", ttlMs: 60_000 },
+    );
+    // the audited-away pattern: nonce in the query string. It must NOT authenticate.
+    const res = await fetch(`${b.origin}${MINT_ENDPOINT_PATH}?machine_id=joiner&enrollment_nonce=${nonce}`, {
+      method: "POST",
+    });
+    expect(res.status).toBe(401);
+    // and it was NOT consumed by the failed attempt — the rightful header path still works
+    const good = await fetch(`${b.origin}${MINT_ENDPOINT_PATH}?machine_id=joiner`, {
+      method: "POST",
+      headers: { [BOUND_NONCE_HEADER]: nonce, [BOUND_IDENTITY_HEADER]: JOINER_ID },
+    });
+    expect(good.status).toBe(200);
+    await b.stop();
+  });
+
+  it("AC2: a bound nonce presented with the WRONG identity header is REFUSED (401)", async () => {
+    const b = await bootBound();
+    const nonce = mintBoundEnrollmentNonce(
+      { target: b.target, identityKey: JOINER_ID },
+      { storeFile: b.files.nonce, nonceFactory: () => "BOUND-NONCE-2", ttlMs: 60_000 },
+    );
+    const res = await fetch(`${b.origin}${MINT_ENDPOINT_PATH}?machine_id=joiner`, {
+      method: "POST",
+      headers: { [BOUND_NONCE_HEADER]: nonce, [BOUND_IDENTITY_HEADER]: "SHA256:attacker" },
+    });
+    expect(res.status).toBe(401);
+    await b.stop();
+  });
+
+  it("AC2: replay — the same bound nonce cannot mint twice (single-use over the wire)", async () => {
+    const b = await bootBound();
+    const nonce = mintBoundEnrollmentNonce(
+      { target: b.target, identityKey: JOINER_ID },
+      { storeFile: b.files.nonce, nonceFactory: () => "BOUND-NONCE-3", ttlMs: 60_000 },
+    );
+    const h = { [BOUND_NONCE_HEADER]: nonce, [BOUND_IDENTITY_HEADER]: JOINER_ID };
+    const first = await fetch(`${b.origin}${MINT_ENDPOINT_PATH}?machine_id=joiner`, { method: "POST", headers: h });
+    expect(first.status).toBe(200);
+    const replay = await fetch(`${b.origin}${MINT_ENDPOINT_PATH}?machine_id=joiner2`, { method: "POST", headers: h });
+    expect(replay.status).toBe(401);
+    await b.stop();
+  });
+
+  it("AC1: no bootstrap secret (nonce or minted token) appears in a REFUSAL body", async () => {
+    const b = await bootBound();
+    const nonce = mintBoundEnrollmentNonce(
+      { target: b.target, identityKey: JOINER_ID },
+      { storeFile: b.files.nonce, nonceFactory: () => "SUPER-SECRET-NONCE", ttlMs: 60_000 },
+    );
+    const res = await fetch(`${b.origin}${MINT_ENDPOINT_PATH}?machine_id=joiner`, {
+      method: "POST",
+      headers: { [BOUND_NONCE_HEADER]: nonce, [BOUND_IDENTITY_HEADER]: "SHA256:attacker" },
+    });
+    expect(res.status).toBe(401);
+    const text = await res.text();
+    expect(text).not.toContain("SUPER-SECRET-NONCE");
+    await b.stop();
+  });
+
+  it("AC1: the minted token appears ONLY in the success body, never echoed into any error path", async () => {
+    const b = await bootBound();
+    const nonce = mintBoundEnrollmentNonce(
+      { target: b.target, identityKey: JOINER_ID },
+      { storeFile: b.files.nonce, nonceFactory: () => "BOUND-NONCE-4", ttlMs: 60_000 },
+    );
+    const h = { [BOUND_NONCE_HEADER]: nonce, [BOUND_IDENTITY_HEADER]: JOINER_ID };
+    const ok = await fetch(`${b.origin}${MINT_ENDPOINT_PATH}?machine_id=joiner`, { method: "POST", headers: h });
+    const okBody = (await ok.json()) as { token: string };
+    const mintedToken = okBody.token;
+    // the replayed refusal must not echo the previously-minted token
+    const replay = await fetch(`${b.origin}${MINT_ENDPOINT_PATH}?machine_id=joiner2`, { method: "POST", headers: h });
+    const replayText = await replay.text();
+    expect(replayText).not.toContain(mintedToken);
+    await b.stop();
+  });
+});
