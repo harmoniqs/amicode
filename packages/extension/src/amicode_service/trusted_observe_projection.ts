@@ -10,7 +10,7 @@
 //
 // This WRAPS #1455's FleetProjection (AC5 — never replaces): it observes a
 // sequence of projections and reconciles the output.
-import type { FleetProjection, SourceFetchRecord, SessionOwnerTag, SourceAbsenceReason } from "./merged_projection";
+import type { FleetProjection, SessionOwnerTag, SourceAbsenceReason } from "./merged_projection";
 import { peerAuthHeader } from "./merged_projection";
 
 // ── types ────────────────────────────────────────────────────────────────────
