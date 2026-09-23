@@ -1,5 +1,6 @@
 import "@/index.css"
 import * as Sentry from "@sentry/solid"
+import { retryImport } from "@/utils/retry-import"
 import { requestComputeConnect } from "@/components/amicode-defaults-capsule"
 import { adoptWorkspaceProjects, workspaceProjects, requestAddWorkspaceProject } from "@/utils/amicode-workspace-projects"
 import { I18nProvider } from "@opencode-ai/ui/context"
@@ -94,7 +95,7 @@ import { LegacyHome } from "@/pages/home/legacy-home"
 import { AmicodeFileRefBridge } from "@/components/amicode-file-ref-bridge"
 import { DevToolsReopenBridge } from "@/components/settings-dialog"
 
-const NewSession = lazy(() => import("@/pages/new-session"))
+const NewSession = lazy(() => retryImport(() => import("@/pages/new-session")))
 
 // #1290: the notorious ResizeObserver-loop exception is thrown at the end of
 // any frame whose resize callbacks changed layout. Benign in most apps — but
@@ -1391,7 +1392,7 @@ function NewSessionLanding() {
  *
  *  lazy() keeps the chunk off the critical path; the <Suspense> in the parent
  *  catches the suspension while the chunk loads. */
-const EmptyWorkspaceLanding = lazy(() => import("@/pages/empty-workspace-landing"))
+const EmptyWorkspaceLanding = lazy(() => retryImport(() => import("@/pages/empty-workspace-landing")))
 
 /** #1291: the landing's resolve used to run as a bare IIFE inside <Show> —
  *  evaluated ONCE at mount, never again. When the server connected (or the
