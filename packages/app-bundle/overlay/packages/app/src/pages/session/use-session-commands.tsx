@@ -393,7 +393,7 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
         showToast({
           variant: "error",
           title: language.t("command.session.compact"),
-          description: "Failed to compact session",
+          description: language.t("toast.session.compact.failed.description"),
         })
       })
   }

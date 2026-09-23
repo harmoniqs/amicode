@@ -491,6 +491,7 @@ export const dict = {
   "toast.session.share.success.description": "Link udostępniania skopiowany do schowka!",
   "toast.session.share.failed.title": "Nie udało się udostępnić sesji",
   "toast.session.share.failed.description": "Wystąpił błąd podczas udostępniania sesji",
+  "toast.session.compact.failed.description": "Nie udało się skompaktować sesji",
   "toast.session.unshare.success.title": "Zatrzymano udostępnianie sesji",
   "toast.session.unshare.success.description": "Udostępnianie sesji zostało pomyślnie zatrzymane!",
   "toast.session.unshare.failed.title": "Nie udało się zatrzymać udostępniania sesji",
