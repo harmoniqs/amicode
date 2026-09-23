@@ -221,6 +221,8 @@ export {
   classifyLinuxChassis,
   normalizeDeviceName,
   isWslKernel,
+  detectIdentityConflicts,
+  IDENTITY_STATE_VOCABULARY,
   FLEET_ROSTER_CACHE_RELPATH,
   fleetRosterCachePath,
   type RosterHealth,
@@ -230,6 +232,8 @@ export {
   type ParseRosterDocumentResult,
   type PlacementDescriptor,
   type KnownDeviceType,
+  type IdentityState,
+  type IdentityConflict,
 } from "./fleet_roster.js";
 
 // The pure version-skew verdict (amicode#1319, hoisted from the extension's

@@ -136,6 +136,19 @@ export function isWslKernel(procVersion: string): boolean {
   return /microsoft/i.test(v) || /wsl2/i.test(v);
 }
 
+// ── stable peer identity (#1477, ADR 0034, binding amendment) ─────────────────
+// identity_key is the cryptographic public-key fingerprint — the trust root.
+// identity_state names the per-row reconciliation/conflict condition.
+
+/** The identity state vocabulary (#1477): the per-row reconciliation outcome.
+ *  `verified` = the fingerprint is confirmed and no conflicts exist.
+ *  `alias-conflict` = the same alias/endpoint is claimed by a different identity.
+ *  `key-changed` = the same machine_id reported a different fingerprint.
+ *  `stale-alias` = the alias no longer resolves to the machine at this identity.
+ *  Closed on purpose: a value outside it is a malformed row, never coerced. */
+export const IDENTITY_STATE_VOCABULARY = ["verified", "alias-conflict", "key-changed", "stale-alias"] as const;
+export type IdentityState = (typeof IDENTITY_STATE_VOCABULARY)[number];
+
 /** One roster row — the reconciled self-report of one machine. `server_mode`
  *  mirrors that machine's own fleet.json role (read-only here; the UI labels it
  *  "role"), `last_report` renders as "last-seen". Every field is a string
@@ -170,6 +183,16 @@ export interface RosterRow {
    *  heartbeats and other fleet traffic. Absent is lawful (SSH peers never
    *  need it; a tailscale peer that hasn't resolved its MagicDNS name yet). */
   peer_origin?: string;
+  /** The stable peer identity (#1477, ADR 0034): a persisted cryptographic
+   *  public-key fingerprint. DISTINCT from machine_id, hostname, sshAlias,
+   *  endpoint, and display name — those are mutable reach/display attributes;
+   *  this is the trust key. Absent is lawful (pre-upgrade peers that have not
+   *  yet generated a keypair). Non-empty when present. */
+  identity_key?: string;
+  /** The per-row identity reconciliation state (#1477). Closed vocabulary:
+   *  verified, alias-conflict, key-changed, stale-alias. Absent is lawful
+   *  (pre-upgrade peers or rows not yet evaluated). */
+  identity_state?: IdentityState;
 }
 
 // ── the placement-ready descriptor (#1341, ADR 0027 §5/D8) ──────────────────
@@ -250,6 +273,24 @@ export function parseRosterRow(candidate: unknown): ParseRosterRowResult {
   if (o.peer_origin !== undefined && typeof o.peer_origin !== "string") {
     return { ok: false, error: `roster row: "peer_origin" must be a string when present (got ${describe(o.peer_origin)})` };
   }
+  // #1477: identity_key — the stable cryptographic fingerprint (optional, non-empty when present)
+  if (o.identity_key !== undefined) {
+    if (typeof o.identity_key !== "string") {
+      return { ok: false, error: `roster row: "identity_key" must be a string when present (got ${describe(o.identity_key)})` };
+    }
+    if ((o.identity_key as string).trim() === "") {
+      return { ok: false, error: `roster row: "identity_key" must be a non-empty string when present` };
+    }
+  }
+  // #1477: identity_state — the reconciliation state (optional, closed vocabulary)
+  if (o.identity_state !== undefined) {
+    if (!(IDENTITY_STATE_VOCABULARY as readonly unknown[]).includes(o.identity_state)) {
+      return {
+        ok: false,
+        error: `roster row: "identity_state" must be one of ${IDENTITY_STATE_VOCABULARY.join(", ")} when present (got ${describe(o.identity_state)})`,
+      };
+    }
+  }
   const row: RosterRow = {
     machine_id: o.machine_id as string,
     name: o.name as string,
@@ -261,6 +302,8 @@ export function parseRosterRow(candidate: unknown): ParseRosterRowResult {
     health: o.health as RosterHealth,
     ...(typeof o.device_type === "string" ? { device_type: o.device_type } : {}),
     ...(typeof o.peer_origin === "string" ? { peer_origin: o.peer_origin } : {}),
+    ...(typeof o.identity_key === "string" ? { identity_key: o.identity_key as string } : {}),
+    ...(o.identity_state !== undefined ? { identity_state: o.identity_state as IdentityState } : {}),
   };
   return { ok: true, row };
 }
@@ -343,4 +386,80 @@ function describe(v: unknown): string {
   if (Array.isArray(v)) return "array";
   if (v === null) return "null";
   return JSON.stringify(v) ?? typeof v;
+}
+
+// ── roster-wide identity conflict detection (#1477, ADR 0034) ────────────────
+
+/** An identity conflict detected in the roster. */
+export interface IdentityConflict {
+  /** The conflict kind: `alias-conflict` = same alias claimed by different
+   *  identity_keys; `key-changed` = same machine_id presented a different
+   *  identity_key. */
+  kind: "alias-conflict" | "key-changed";
+  /** The machine_id(s) involved. */
+  machine_id: string;
+  /** A human-readable description. */
+  detail: string;
+}
+
+/** Detect identity conflicts in a roster document. Two classes of conflict:
+ *
+ *  1. **alias-conflict** (#1477 AC3): the same sshAlias is claimed by rows
+ *     with DIFFERENT identity_keys. Rows without identity_key are ignored
+ *     (pre-upgrade peers that can't yet participate in identity-keyed trust).
+ *
+ *  2. **key-changed** (#1477 AC2): a machine_id's identity_key CHANGED between
+ *     `previous` and `current`. Detected only when `previous` is provided.
+ *
+ *  Returns an empty array when the roster is conflict-free. */
+export function detectIdentityConflicts(
+  current: RosterDocument,
+  previous?: RosterDocument,
+): IdentityConflict[] {
+  const conflicts: IdentityConflict[] = [];
+
+  // 1. alias-conflict: same sshAlias, different identity_keys
+  const aliasByKey = new Map<string, Set<string>>(); // alias → set of identity_keys
+  const aliasMachines = new Map<string, string[]>(); // alias → machine_ids
+  for (const row of current.rows) {
+    if (!row.identity_key) continue;
+    const alias = row.sshAlias;
+    if (!aliasByKey.has(alias)) aliasByKey.set(alias, new Set());
+    aliasByKey.get(alias)!.add(row.identity_key);
+    if (!aliasMachines.has(alias)) aliasMachines.set(alias, []);
+    aliasMachines.get(alias)!.push(row.machine_id);
+  }
+  for (const [alias, keys] of aliasByKey) {
+    if (keys.size > 1) {
+      const machines = aliasMachines.get(alias) ?? [];
+      for (const mid of machines) {
+        conflicts.push({
+          kind: "alias-conflict",
+          machine_id: mid,
+          detail: `sshAlias "${alias}" is claimed by ${keys.size} different identities`,
+        });
+      }
+    }
+  }
+
+  // 2. key-changed: same machine_id, different identity_key vs previous
+  if (previous) {
+    const prevKeyByMachine = new Map<string, string>();
+    for (const row of previous.rows) {
+      if (row.identity_key) prevKeyByMachine.set(row.machine_id, row.identity_key);
+    }
+    for (const row of current.rows) {
+      if (!row.identity_key) continue;
+      const prevKey = prevKeyByMachine.get(row.machine_id);
+      if (prevKey && prevKey !== row.identity_key) {
+        conflicts.push({
+          kind: "key-changed",
+          machine_id: row.machine_id,
+          detail: `machine "${row.machine_id}" changed identity_key`,
+        });
+      }
+    }
+  }
+
+  return conflicts;
 }

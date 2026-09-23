@@ -847,3 +847,73 @@ describe("displayRole — peer label for non-hub servers (#1394, ADR 0029)", () 
     expect(displayRole("standalone", false)).toBe("standalone");
   });
 });
+
+// ── stable peer identity display (#1477, ADR 0034) ───────────────────────────
+
+describe("#1477 AC1/AC2 — identity state is threaded through the fleet section model", () => {
+  it("a roster row with identity_state='verified' is included in the device list with identityState='verified'", () => {
+    const model = buildFleetSectionModel(input({
+      roster: [row({ identity_key: "SHA256:abc", identity_state: "verified" })],
+    }));
+    expect(model.state).toBe("populated");
+    const device = model.devices.find((d) => d.machineId === "mac-studio-01");
+    expect(device).toBeDefined();
+    expect(device!.identityState).toBe("verified");
+  });
+
+  it("a roster row with identity_state='alias-conflict' is included with identityState='alias-conflict'", () => {
+    const model = buildFleetSectionModel(input({
+      roster: [row({ identity_key: "SHA256:abc", identity_state: "alias-conflict" })],
+    }));
+    const device = model.devices.find((d) => d.machineId === "mac-studio-01");
+    expect(device).toBeDefined();
+    expect(device!.identityState).toBe("alias-conflict");
+  });
+
+  it("a roster row with identity_state='key-changed' is included with identityState='key-changed'", () => {
+    const model = buildFleetSectionModel(input({
+      roster: [row({ identity_key: "SHA256:abc", identity_state: "key-changed" })],
+    }));
+    const device = model.devices.find((d) => d.machineId === "mac-studio-01");
+    expect(device).toBeDefined();
+    expect(device!.identityState).toBe("key-changed");
+  });
+
+  it("a roster row without identity_state has identityState undefined (pre-upgrade)", () => {
+    const model = buildFleetSectionModel(input({ roster: [row()] }));
+    const device = model.devices.find((d) => d.machineId === "mac-studio-01");
+    expect(device).toBeDefined();
+    expect(device!.identityState).toBeUndefined();
+  });
+});
+
+describe("#1477 AC6 — existing hub/client semantics remain unchanged", () => {
+  it("a CLIENT with a canonical server still sees the synthesized server row and its own self-row", () => {
+    const model = buildFleetSectionModel(input({
+      roster: [],
+      localDevice: { machineId: "macbook", name: "MacBook", serveStance: "client" },
+      canonicalServer: { machineId: "studio", name: "Studio" },
+    }));
+    expect(model.state).toBe("populated");
+    expect(model.devices.some((d) => d.machineId === "macbook" && d.isLocal)).toBe(true);
+    expect(model.devices.some((d) => d.machineId === "studio" && !d.isLocal)).toBe(true);
+  });
+
+  it("a standalone machine with no fleet still produces the 'standalone' section state", () => {
+    const model = buildFleetSectionModel(input({
+      roster: [],
+      localDevice: { machineId: "mac-solo", name: "Solo Mac", serveStance: "standalone" },
+    }));
+    expect(model.state).toBe("standalone");
+  });
+
+  it("the never-fork guard is unaffected: a client's server_mode is passed through as 'client', never altered", () => {
+    const model = buildFleetSectionModel(input({
+      roster: [row({ machine_id: "client-01", server_mode: "client" })],
+      localDevice: { machineId: "client-01", name: "Client", serveStance: "client" },
+    }));
+    const device = model.devices.find((d) => d.machineId === "client-01");
+    expect(device).toBeDefined();
+    expect(device!.role).toBe("client");
+  });
+});

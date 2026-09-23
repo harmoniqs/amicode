@@ -156,17 +156,27 @@ export interface ServingPeer {
   machineId: string;
 }
 
+/** The identity states that BLOCK peer selection (#1477, ADR 0034):
+ *  alias-conflict and key-changed are trust-breaking — a peer in these
+ *  states must not be selected for service routing until explicitly re-admitted.
+ *  stale-alias is informational (non-blocking); verified and absent pass. */
+const BLOCKING_IDENTITY_STATES: ReadonlySet<string> = new Set(["alias-conflict", "key-changed"]);
+
 /** The ONE serving∧reachable resolution (§D3.2): every roster row with
  *  `capabilities ∋ serving` ∧ `health = reachable`, in roster order, resolved
  *  to its trimmed `machine_id` (`""` when unresolvable). Both the readiness
  *  gate AND the fleet-peer provider (#1446) read the serving peer set through
  *  this single derivation rather than re-deriving `placementDescriptor` twice
- *  with subtly different rules. Pure: no store reads, no I/O. */
+ *  with subtly different rules. #1477: rows with a blocking identity_state
+ *  (alias-conflict, key-changed) are EXCLUDED — no conflicted row reaches
+ *  peer selection. Pure: no store reads, no I/O. */
 export function servingReachablePeers(rosterRows: RosterRow[]): ServingPeer[] {
   const out: ServingPeer[] = [];
   for (const row of rosterRows) {
     const d = placementDescriptor(row);
     if (!d.serving || !d.reachable) continue;
+    // #1477: exclude peers with blocking identity states
+    if (row.identity_state && BLOCKING_IDENTITY_STATES.has(row.identity_state)) continue;
     out.push({ machineId: d.machine_id?.trim() ?? "" });
   }
   return out;

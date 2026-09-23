@@ -393,3 +393,116 @@ describe("boot self-report — #1379: the `serving` advertisement on boot", () =
     expect(rows[0].device_type).toBe("desktop");
   });
 });
+
+// ── stable peer identity (#1477, ADR 0034, binding amendment) ─────────────────
+
+describe("roster route — #1477 AC1/AC2: identity_key round-trips and only-self-update enforcement", () => {
+  let dir: string;
+  let file: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "roster-id-"));
+    file = join(dir, "roster.json");
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  const KEY_A = "SHA256:aaaa";
+  const KEY_B = "SHA256:bbbb";
+
+  it("a self-report with identity_key round-trips the fingerprint through POST→GET", () => {
+    const row = { ...ROW_A, identity_key: KEY_A };
+    const post = JSON.parse(rosterReportResponse(JSON.stringify(row), { rosterFile: file }));
+    expect(post.ok).toBe(true);
+    const rows = rowsOf(rosterReadResponse({ rosterFile: file }));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].identity_key).toBe(KEY_A);
+  });
+
+  it("a re-report from the same machine_id with the SAME identity_key succeeds (normal refresh)", () => {
+    rosterReportResponse(JSON.stringify({ ...ROW_A, identity_key: KEY_A }), { rosterFile: file });
+    const updated = { ...ROW_A, name: "Updated Name", identity_key: KEY_A };
+    const post = JSON.parse(rosterReportResponse(JSON.stringify(updated), { rosterFile: file }));
+    expect(post.ok).toBe(true);
+    const rows = rowsOf(rosterReadResponse({ rosterFile: file }));
+    expect(rows[0].name).toBe("Updated Name");
+    expect(rows[0].identity_key).toBe(KEY_A);
+  });
+
+  it("a re-report from the same machine_id with a DIFFERENT identity_key is refused as key_changed (#1477 AC2)", () => {
+    rosterReportResponse(JSON.stringify({ ...ROW_A, identity_key: KEY_A }), { rosterFile: file });
+    const changed = { ...ROW_A, identity_key: KEY_B };
+    const post = JSON.parse(rosterReportResponse(JSON.stringify(changed), { rosterFile: file }));
+    expect(post.ok).toBe(false);
+    expect(post.error).toMatch(/key_changed/);
+    // The original row is PRESERVED — a key change never mutates the roster.
+    const rows = rowsOf(rosterReadResponse({ rosterFile: file }));
+    expect(rows[0].identity_key).toBe(KEY_A);
+  });
+
+  it("a first report for a machine_id carries no prior — any identity_key is accepted (bootstrap)", () => {
+    const post = JSON.parse(rosterReportResponse(JSON.stringify({ ...ROW_A, identity_key: KEY_A }), { rosterFile: file }));
+    expect(post.ok).toBe(true);
+  });
+
+  it("a re-report from an already-registered machine_id WITHOUT identity_key is accepted (backward compat)", () => {
+    rosterReportResponse(JSON.stringify({ ...ROW_A, identity_key: KEY_A }), { rosterFile: file });
+    // An older peer re-reports without identity_key — accepted, key is preserved from existing row
+    const noKey = { ...ROW_A }; // no identity_key field
+    const post = JSON.parse(rosterReportResponse(JSON.stringify(noKey), { rosterFile: file }));
+    expect(post.ok).toBe(true);
+  });
+});
+
+describe("roster route — #1477 AC3: alias conflict detection through self-report", () => {
+  let dir: string;
+  let file: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "roster-alias-"));
+    file = join(dir, "roster.json");
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  const KEY_A = "SHA256:aaaa";
+  const KEY_B = "SHA256:bbbb";
+
+  it("a self-report claiming an sshAlias already held by a different identity_key is accepted but stamped alias-conflict", () => {
+    // Machine A takes alias "shared"
+    rosterReportResponse(JSON.stringify({ ...ROW_A, sshAlias: "shared", identity_key: KEY_A }), { rosterFile: file });
+    // Machine B tries to claim the same alias with a different identity
+    const rowB = { ...ROW_B, sshAlias: "shared", identity_key: KEY_B };
+    const post = JSON.parse(rosterReportResponse(JSON.stringify(rowB), { rosterFile: file }));
+    expect(post.ok).toBe(true); // The report is accepted (it's B's own row)
+    // But the response carries a conflict warning
+    const rows = rowsOf(rosterReadResponse({ rosterFile: file }));
+    // Both rows are present with the alias-conflict state
+    const conflicted = rows.filter((r) => r.identity_state === "alias-conflict");
+    expect(conflicted.length).toBeGreaterThan(0);
+  });
+});
+
+describe("roster route — #1477 AC5: standalone peer advertises serving without new role", () => {
+  let dir: string;
+  let file: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "roster-sa-"));
+    file = join(dir, "roster.json");
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it("a standalone engine-armed machine reports serving in capabilities while keeping server_mode=standalone", () => {
+    const row = buildBootSelfReportRow({
+      machineId: "standalone-mac",
+      name: "Standalone Mac",
+      serverMode: "standalone",
+      sshAlias: "standalone-ssh",
+      transport: "ssh",
+      engineArmed: true,
+    });
+    expect(row.capabilities).toContain("serving");
+    expect(row.server_mode).toBe("standalone");
+    const post = JSON.parse(rosterReportResponse(JSON.stringify(row), { rosterFile: file }));
+    expect(post.ok).toBe(true);
+    const rows = rowsOf(rosterReadResponse({ rosterFile: file }));
+    expect(rows[0].capabilities).toContain("serving");
+    expect(rows[0].server_mode).toBe("standalone");
+  });
+});

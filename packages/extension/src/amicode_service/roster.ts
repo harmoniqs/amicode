@@ -21,8 +21,10 @@ import {
   parseRosterDocument,
   parseRosterRow,
   upsertRosterRow,
+  detectIdentityConflicts,
   type RosterDocument,
   type RosterRow,
+  type IdentityState,
 } from "@amicode/schema";
 import { atomicWriteFileSync } from "./credentials";
 import { getBindHostname, isLoopbackHostname } from "./bind_host";
@@ -88,7 +90,9 @@ function refuse(code: string, detail: string): string {
 
 /** POST /amicode/roster — the caller self-reports its OWN row. Single-writer:
  *  upsertRosterRow touches only the row whose machine_id matches, so a report
- *  can never mutate a peer's row. Loopback-guarded like the other mutations. */
+ *  can never mutate a peer's row. Loopback-guarded like the other mutations.
+ *  #1477: enforces identity_key only-self-update (a changed fingerprint is
+ *  refused) and stamps identity_state on alias conflicts. */
 export function rosterReportResponse(rawBody: string, deps: RosterDeps = {}): string {
   if (!isLoopbackHostname(deps.bindHostname ?? getBindHostname())) {
     return refuse("non_loopback", "roster self-report serves loopback binds only");
@@ -104,7 +108,35 @@ export function rosterReportResponse(rawBody: string, deps: RosterDeps = {}): st
   // The parse error may carry the caller's bytes — surface a FIXED detail only.
   if (!row.ok) return refuse("bad_request", "body is not a well-formed roster row");
   const file = rosterFilePath(deps);
-  const next = upsertRosterRow(loadRoster(file), row.row);
+  const existing = loadRoster(file);
+
+  // #1477 (binding amendment): only-self-update — refuse a self-report that
+  // changes the identity_key for an already-registered machine_id.
+  const existingRow = existing.rows.find((r) => r.machine_id === row.row.machine_id);
+  if (existingRow?.identity_key && row.row.identity_key && existingRow.identity_key !== row.row.identity_key) {
+    return refuse("key_changed", "identity_key changed for an already-registered machine_id — explicit re-admit required");
+  }
+
+  let next = upsertRosterRow(existing, row.row);
+
+  // #1477 (AC3): detect alias conflicts across the roster and stamp identity_state.
+  const conflicts = detectIdentityConflicts(next, existing);
+  if (conflicts.length > 0) {
+    // Stamp conflicted rows with their identity_state
+    const conflictedMachines = new Map<string, IdentityState>();
+    for (const c of conflicts) {
+      conflictedMachines.set(c.machine_id, c.kind as IdentityState);
+    }
+    next = {
+      ...next,
+      rows: next.rows.map((r) => {
+        const state = conflictedMachines.get(r.machine_id);
+        if (state) return { ...r, identity_state: state };
+        return r;
+      }),
+    };
+  }
+
   try {
     atomicWriteFileSync(file, JSON.stringify({ ...next, schema_version: ROSTER_SCHEMA_VERSION }, null, 2) + "\n");
   } catch {

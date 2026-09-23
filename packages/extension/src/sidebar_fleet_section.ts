@@ -20,6 +20,11 @@
 /** The per-device reachability tri-state (schema HEALTH_VOCABULARY, #1318). */
 export type RosterHealth = "reachable" | "degraded" | "down";
 
+/** The per-device identity state vocabulary (#1477, ADR 0034). Closed:
+ *  verified, alias-conflict, key-changed, stale-alias. Re-declared here to
+ *  keep this module node-import-free. */
+export type IdentityState = "verified" | "alias-conflict" | "key-changed" | "stale-alias";
+
 /** Age (ms) at which a "reachable" row degrades to "degraded" (~2 missed heartbeats). */
 export const DEGRADED_AGE_MS = 60_000;
 
@@ -83,6 +88,10 @@ export interface RosterRowLike {
    *  #1359) — the type-pill's primary source. Absent ⇒ the pill falls back
    *  to `server_mode` (the hybrid fallback). */
   device_type?: string;
+  /** #1477: the stable peer identity fingerprint (optional). */
+  identity_key?: string;
+  /** #1477: the per-row identity reconciliation state (optional). */
+  identity_state?: IdentityState;
 }
 
 /** A capability tag split into known-behavior vs descriptive (ADR 0026 §1). */
@@ -111,6 +120,10 @@ export interface FleetDeviceRow {
   /** The raw roster health before staleness folding (#1375). Only set on
    *  roster-sourced rows; undefined on synthesized rows (self, canonical). */
   rosterHealth?: RosterHealth;
+  /** #1477: the per-row identity reconciliation state. Absent on pre-upgrade
+   *  peers and synthesized rows. Drives the identity-state indicator in the
+   *  fleet section UI. */
+  identityState?: IdentityState;
 }
 
 /** The state of the section as a whole. `unreachable` is the honest host-down
@@ -286,6 +299,7 @@ export function buildFleetSectionModel(input: FleetSectionInput): FleetSectionMo
       rosterHealth: r.health as RosterHealth,
       lastSeen: r.last_report,
       isLocal: localId !== null && r.machine_id === localId,
+      ...(r.identity_state !== undefined ? { identityState: r.identity_state } : {}),
     };
   });
   // Synthesize the self-row when the roster doesn't already carry one for
