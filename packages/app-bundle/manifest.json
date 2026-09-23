@@ -18,7 +18,7 @@
     "packages/opencode/pasqal-live-test.sh": "0bb0089eb413956f0252939f933a139c2f11520466887ad91fcae362f1698e41",
     "packages/session-ui/bunfig.toml": "468114e9b52c3cf926d2385c12d93385992cd70c97ea9e32ed22154617b7799d",
     "packages/session-ui/happydom.ts": "d81d6b14e988f058fa502c841df34b55307c57fc94a26fb4f8a5deb6aa0d4834",
-    "packages/session-ui/package.json": "a649df752182533f4f50462ccedd2264042e18be5517bff633fbe707c5e37479",
+    "packages/session-ui/package.json": "f354c8675067dc8dd1493924cd6c8f561fb838ff97ae6cbd7e024868cbf0e0e8",
     "packages/session-ui/preload-worker-mock.ts": "b53280029a042575734d7bfdf27713f6c5cd6a6665599dc429d839a3e3372bd1",
     "packages/ui/package.json": "b1d168d0371e9094faae1107fc6c00be197f09bc69daa2247a3890d607f4b629",
     "packages/app/public/amico.svg": "7c64b145bdd063bacd53318336a423f0654ec702de2b4e0c4a4a384694052804",
@@ -735,7 +735,7 @@
     "packages/session-ui/src/v2/components/editable-diff-view.test.ts": "ab206fa17779e6e9015d343ae37e3067dfc1821a93b6ba566b7a0dce0fc19acb",
     "packages/session-ui/src/v2/components/editable-diff-view.tsx": "f682e398ece864b5b854ca36698581c7e1cc5964eed96e7b45cabfcb64748b24",
     "packages/session-ui/src/v2/components/editor-core.test.ts": "bd6552c0e7080afd554cb57ad690cc1504555712274c8b02702c64bb09460234",
-    "packages/session-ui/src/v2/components/editor-core.ts": "7c5ff6c9d8291abbe96c0547b487ec333737e315816f7d52f55ac70f3eace83c",
+    "packages/session-ui/src/v2/components/editor-core.ts": "8306fc9b87fffe853c96212664ba5003c4e020c8779fc7d5410c26b543736a7e",
     "packages/session-ui/src/v2/components/file-name-picker.test.tsx": "1ce9741e315b549165d390c74b5885a43580aa70e24de987f9ba8388cd521b41",
     "packages/session-ui/src/v2/components/markdown-utils.test.ts": "10e1034293bf385cf50d860bf1667d8370abc61dcee0c5a93295f21f5f55876a",
     "packages/session-ui/src/v2/components/markdown-utils.ts": "3bc47cfed5b99ab23f857d5324be3189f3a7e800d991103d72ef1c2f970b910b",
@@ -856,7 +856,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-09-22T20:07:04.113Z",
+  "extracted_at": "2026-09-23T14:30:21.544Z",
   "per_package": {
     "packages/app": {
       "A": 175,
