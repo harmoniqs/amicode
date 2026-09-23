@@ -534,6 +534,115 @@ describe("renderFleetSection — read-only navigation contract (AC3, AC4)", () =
   });
 });
 
+// ── #1451 — the sidebar focus selector (render) ──────────────────────────────
+//
+// W3 (#1451): the fleet section gains a per-row FOCUS affordance that posts
+// `{kind:"focus-machine", machineId, isLocal}`, DISTINCT from the row-body
+// connect-to-device click (#1413). The model carries `focusedMachineId` so the
+// focused row renders highlighted. Focus and connect are INDEPENDENT affordances.
+describe("renderFleetSection — focus selector (#1451, AC1)", () => {
+  it("renders a distinct focus affordance per device row", () => {
+    const el = document.createElement("div");
+    renderFleetSection(el, populatedModel(), () => {});
+    const rows = el.querySelectorAll(".fleet-device-row");
+    expect(rows).toHaveLength(1);
+    expect((rows[0] as HTMLElement).querySelector(".fleet-focus-btn")).not.toBeNull();
+  });
+
+  it("clicking the focus affordance posts EXACTLY the focus-machine message (identity + isLocal)", () => {
+    const el = document.createElement("div");
+    const post = vi.fn();
+    renderFleetSection(el, populatedModel(), post);
+    const focusBtn = el.querySelector(".fleet-focus-btn") as HTMLElement;
+    focusBtn.click();
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(post).toHaveBeenCalledWith({
+      kind: "focus-machine",
+      machineId: "mac-studio-01",
+      isLocal: false,
+    });
+  });
+
+  it("marks the focused row when the model names it in focusedMachineId (render reflects focus)", () => {
+    const el = document.createElement("div");
+    renderFleetSection(el, populatedModel({ focusedMachineId: "mac-studio-01" }), () => {});
+    const row = el.querySelector(".fleet-device-row") as HTMLElement;
+    expect(row.getAttribute("data-focused")).toBe("true");
+    expect(row.classList.contains("fleet-device-row-focused")).toBe(true);
+  });
+
+  it("does NOT mark any row when focus is home (focusedMachineId undefined)", () => {
+    const el = document.createElement("div");
+    renderFleetSection(el, populatedModel(), () => {}); // no focusedMachineId → home
+    const row = el.querySelector(".fleet-device-row") as HTMLElement;
+    expect(row.getAttribute("data-focused")).not.toBe("true");
+    expect(row.classList.contains("fleet-device-row-focused")).toBe(false);
+  });
+});
+
+describe("renderFleetSection — connect and focus are INDEPENDENT (#1451, AC2)", () => {
+  it("the device-row body click still posts connect-to-device UNCHANGED (no focus message)", () => {
+    const el = document.createElement("div");
+    const post = vi.fn();
+    renderFleetSection(el, populatedModel(), post);
+    const row = el.querySelector(".fleet-device-row") as HTMLElement;
+    row.click();
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(post).toHaveBeenCalledWith({
+      kind: "connect-to-device",
+      machineId: "mac-studio-01",
+      deviceName: "Mac Studio",
+      isLocal: false,
+    });
+    // A connect click emits ZERO focus-machine messages.
+    expect(post.mock.calls.some((c) => (c[0] as { kind: string }).kind === "focus-machine")).toBe(false);
+  });
+
+  it("clicking focus does NOT emit connect-to-device (focus is a distinct affordance)", () => {
+    const el = document.createElement("div");
+    const post = vi.fn();
+    renderFleetSection(el, populatedModel(), post);
+    const focusBtn = el.querySelector(".fleet-focus-btn") as HTMLElement;
+    focusBtn.click();
+    expect(post.mock.calls.some((c) => (c[0] as { kind: string }).kind === "connect-to-device")).toBe(false);
+  });
+
+  it("focusing then connecting: focus does not suppress a subsequent connect click", () => {
+    const el = document.createElement("div");
+    const post = vi.fn();
+    renderFleetSection(el, populatedModel(), post);
+    (el.querySelector(".fleet-focus-btn") as HTMLElement).click();
+    (el.querySelector(".fleet-device-row") as HTMLElement).click();
+    const kinds = post.mock.calls.map((c) => (c[0] as { kind: string }).kind);
+    expect(kinds).toContain("focus-machine");
+    expect(kinds).toContain("connect-to-device");
+  });
+});
+
+describe("renderFleetSection — fleet-of-one degrades gracefully (#1451)", () => {
+  it("renders the sole local row with a focus affordance (self is the only focusable machine)", () => {
+    const el = document.createElement("div");
+    const post = vi.fn();
+    // A fleet-of-one: only this machine, synthesized as the self-row.
+    const model = buildFleetSectionModel(input({
+      roster: [],
+      localDevice: { machineId: "local-mbp", name: "MacBook Pro", serveStance: "server", deviceType: "laptop" },
+    }));
+    renderFleetSection(el, model, post);
+    const rows = el.querySelectorAll(".fleet-device-row");
+    expect(rows).toHaveLength(1);
+    const focusBtn = (rows[0] as HTMLElement).querySelector(".fleet-focus-btn") as HTMLElement;
+    expect(focusBtn).not.toBeNull();
+    // Focusing the local row posts isLocal:true — the host collapses it to home.
+    focusBtn.click();
+    expect(post).toHaveBeenCalledWith({
+      kind: "focus-machine",
+      machineId: "local-mbp",
+      isLocal: true,
+    });
+  });
+});
+
 // ── #1372 (ADR 0028) — both views render the server exactly ONCE ──────────────
 describe("buildFleetSectionModel — server self-registration collapses to one row (#1372)", () => {
   it("AC3: a CLIENT renders exactly one server row after the server self-registers (keyed canonical.host)", () => {

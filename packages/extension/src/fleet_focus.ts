@@ -159,3 +159,47 @@ export class FleetFocusStore {
     return sessions;
   }
 }
+
+// ── #1451 host→overlay focus transport ───────────────────────────────────────
+//
+// W3 (#1451) owns the host→overlay focus push. On every focus change the host
+// posts ONE down-message over the existing chat_bridge to the overlay (chat
+// panel) webview; W4b (#1453) mounts the overlay-side receiver that consumes
+// it. The message rides the SAME `{source:"amicode", kind, ...}` envelope
+// every other chat_bridge down-message uses (ChatPanel.postMessage → the
+// framed app), so the overlay's existing amicode-envelope listener sees it.
+
+/** The down-message the host posts to the overlay on focus change (#1451).
+ *  Rides chat_bridge (ChatPanel.postMessage). CONSUMED by W4b (#1453). */
+export interface FleetFocusDownMessage {
+  source: "amicode";
+  kind: "fleet-focus";
+  /** The focused machine id, or undefined for home (local). */
+  machineId: string | undefined;
+}
+
+/** Options for {@link createFleetFocusHost}. */
+export interface FleetFocusHostOptions {
+  /** Post one focus down-message to the overlay (chat panel). Production wires
+   *  this to `ChatPanel.peek()?.postMessage`; a no-op when no panel is mounted
+   *  (focus state still updates — the push is best-effort, W4b re-reads on
+   *  mount). */
+  postToOverlay: (msg: FleetFocusDownMessage) => void;
+  /** Optional extra change hook — the host uses this to re-push the sidebar
+   *  render so the focused machine highlights. */
+  onChange?: (event: FleetFocusEvent) => void;
+}
+
+/** Build the host's single FleetFocusStore, wired so every focus change posts
+ *  EXACTLY ONE `{source:"amicode", kind:"fleet-focus", machineId}` down-message
+ *  to the overlay (the chat panel) — the host→overlay focus transport owned by
+ *  W3 (#1451). A no-op focus (same effective target) emits nothing, because
+ *  FleetFocusStore only fires onChange on an effective change. */
+export function createFleetFocusHost(opts: FleetFocusHostOptions): FleetFocusStore {
+  return new FleetFocusStore({
+    onChange: (event) => {
+      opts.postToOverlay({ source: "amicode", kind: "fleet-focus", machineId: event.machineId });
+      opts.onChange?.(event);
+    },
+  });
+}

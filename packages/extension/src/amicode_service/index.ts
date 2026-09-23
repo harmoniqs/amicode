@@ -36,6 +36,14 @@ import { AppShelf } from "./app_shelf";
 import { EngineProxy } from "./engine_proxy";
 import { HubProxy } from "./hub_proxy";
 import { SessionEventResume } from "./session_event_resume";
+import {
+  SessionMultiplexProxy,
+  SessionOwnerMap,
+  OwnerMapFeed,
+  type PeerTransport,
+  type MultiplexResolver,
+  type SessionEntry,
+} from "./session_multiplexer";
 import { HubCredentialRead, mintRegistry, readHubCredential } from "./hub_credential";
 import { buildMergedProjection, buildFleetProjection, type UpstreamMode, type MergedProjection, type FleetProjection } from "./merged_projection";
 import { FleetPostureDetector, type FleetPostureTuning } from "./fleet_posture";
@@ -525,6 +533,30 @@ function authModeFromEnv(): "open" | "credential" | undefined {
   return raw.trim().toLowerCase() === "open" ? "open" : "credential";
 }
 
+/** #1448 (W1a): project the serving-peer set into the session multiplexer's
+ *  Record<machine_id, PeerTransport> shape (the fleetPeerTransports shape,
+ *  #1446 — the SAME serving-peer set the sessions route derives its projection
+ *  from). Reads each peer token ONCE at construction, exactly like the sessions
+ *  route (index.ts). Absent fleetPeers (a single-machine user) → an empty peer
+ *  map, so the multiplexer resolves LOCAL for every path. */
+function buildMultiplexPeers(
+  fleetPeers?: {
+    getServingPeers(): Array<{ machineId: string }>;
+    readPeerToken(machineId: string): { ok: true; credential: { baseUrl: string; token: string } } | { ok: false };
+  },
+): Record<string, PeerTransport> {
+  const peers: Record<string, PeerTransport> = {};
+  if (!fleetPeers) return peers;
+  for (const { machineId } of fleetPeers.getServingPeers()) {
+    const read = fleetPeers.readPeerToken(machineId);
+    peers[machineId] = {
+      getUrl: () => (read.ok ? read.credential.baseUrl : undefined),
+      token: read.ok ? read.credential.token : undefined,
+    };
+  }
+  return peers;
+}
+
 /** The service with every ported slice mounted. The extension wiring slice
  *  boots this at activation; the contract tests boot it in-process.
  *
@@ -734,6 +766,55 @@ export function createAmicodeService(
             ...(opts.fleet.dataPlaneTimeoutMs !== undefined ? { timeoutMs: opts.fleet.dataPlaneTimeoutMs } : {}),
           })
         : undefined;
+      // #1448 (W1a): the session-multiplexer seam — consulted on the ATTACHED
+      // arm ONLY when AMICO_FLEET_MULTIPLEX is ON (default OFF → dispatch never
+      // calls it, so a base boot is byte-identical). #1449 (W1b): built
+      // UNCONDITIONALLY whenever the fleet plane stages (not only when an
+      // attached upstream exists at boot) — AttachLifecycleImpl assigns
+      // `plane.attached` POST-construction, so the multiplex must already be on
+      // the plane to shadow that arm once the attach lands. Peer transports come
+      // from the SAME serving-peer set the sessions route uses (fleetPeers);
+      // absent fleetPeers → an empty peer map, so the multiplexer resolves LOCAL
+      // for every session (the proven no-op).
+      const ownerMap = new SessionOwnerMap();
+      const multiplexResolver: MultiplexResolver = new SessionMultiplexProxy({
+        ownerMap,
+        peers: buildMultiplexPeers(opts.fleet.fleetPeers),
+        localMachineId: opts.fleet.fleetPeers?.localMachineId ?? "",
+      });
+      // #1449 (W1b, AC1): feed the owner-map from a LIVE loop, not a test stub.
+      // The fleet-wide projection is PULL-ONLY (rebuilt per request at the
+      // sessions route), so per-session routing cannot lean on the sidebar being
+      // polled — a timer rebuilds the SAME N-peer projection the sessions route
+      // uses and calls ownerMap.update(projection.sessions). Only meaningful when
+      // fleetPeers is present (else the peer map is empty and the map has nothing
+      // to route); the feed is registered for teardown on server stop so its
+      // timer never outlives the service.
+      const fleetPeers = opts.fleet.fleetPeers;
+      if (fleetPeers) {
+        const ownerMapFeed = new OwnerMapFeed({
+          ownerMap,
+          buildProjection: async (): Promise<{ sessions: SessionEntry[] }> => {
+            const peers = fleetPeers.getServingPeers().map((p) => {
+              const tokenRead = fleetPeers.readPeerToken(p.machineId);
+              return {
+                machineId: p.machineId,
+                getUrl: () => (tokenRead.ok ? tokenRead.credential.baseUrl : undefined),
+                token: tokenRead.ok ? tokenRead.credential.token : undefined,
+              };
+            });
+            const projection = await buildFleetProjection({
+              localMachineId: fleetPeers.localMachineId,
+              local: { getUrl: opts.engine?.getUrl ?? ((): string | undefined => undefined), password: opts.engine?.password },
+              peers,
+              rosterLookup: fleetPeers.rosterLookup,
+            });
+            return { sessions: projection.sessions as SessionEntry[] };
+          },
+        });
+        ownerMapFeed.start();
+        server.registerCleanup(() => ownerMapFeed.stop());
+      }
       const fleetPlaneObj: import("./server").FleetPlane = {
         getMode,
         hub: new HubProxy({
@@ -753,6 +834,7 @@ export function createAmicodeService(
         ...(attachedProxy ? { attached: attachedProxy } : {}),
         ...(keeperProxy ? { keeper: keeperProxy } : {}),
         ...(opts.fleet.peerUnreachablePointer ? { peerUnreachablePointer: opts.fleet.peerUnreachablePointer } : {}),
+        multiplex: multiplexResolver,
       };
       server.attachFleetPlane(fleetPlaneObj);
       // #1381: create the attach lifecycle for non-client fleet machines.

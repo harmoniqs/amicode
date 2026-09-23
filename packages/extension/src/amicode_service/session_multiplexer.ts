@@ -76,6 +76,78 @@ export class SessionOwnerMap {
   }
 }
 
+// ── owner-map feed (#1449, W1b) ──────────────────────────────────────────────
+
+/** The live loop that keeps a SessionOwnerMap populated (#1449, W1b, AC1).
+ *
+ *  The fleet-wide projection is PULL-ONLY — it is rebuilt per request at the
+ *  /amicode/fleet/sessions route (index.ts), there is nothing to subscribe to.
+ *  So per-session routing cannot lean on the sidebar being polled: it needs its
+ *  OWN cadence. This feed rebuilds the projection on an interval and calls
+ *  `ownerMap.update(projection.sessions)` — the caller (createAmicodeService)
+ *  injects a `buildProjection` closure that wraps `buildFleetProjection` with the
+ *  same serving-peer set the sessions route uses.
+ *
+ *  Honesty: a projection BUILD failure (a peer fan-out that threw) leaves the
+ *  LAST-GOOD map intact — it never clears the map on error, so a transient blip
+ *  does not silently reroute owned sessions to local. Only a SUCCESSFUL
+ *  projection re-populates the map (clear + repopulate, the SessionOwnerMap.update
+ *  contract). */
+export interface OwnerMapFeedOpts {
+  ownerMap: SessionOwnerMap;
+  /** Build the fleet-wide projection whose `.sessions` carry the amicode_owner
+   *  overlay. Injected so the feed is unit-testable without a real fan-out. */
+  buildProjection: () => Promise<{ sessions: SessionEntry[] }>;
+  /** The refresh cadence in ms. Default 5000. */
+  intervalMs?: number;
+  /** Observe a build failure (diagnostics only — the feed never throws). */
+  onError?: (err: unknown) => void;
+}
+
+/** The default owner-map refresh cadence. */
+export const OWNER_MAP_REFRESH_MS = 5000;
+
+export class OwnerMapFeed {
+  private timer?: ReturnType<typeof setInterval>;
+  private stopped = false;
+
+  constructor(private readonly opts: OwnerMapFeedOpts) {}
+
+  /** Rebuild the projection ONCE and update the owner-map. Never throws: a
+   *  build failure is reported via `onError` and the last-good map is kept. */
+  async refreshOnce(): Promise<void> {
+    let projection: { sessions: SessionEntry[] };
+    try {
+      projection = await this.opts.buildProjection();
+    } catch (err) {
+      this.opts.onError?.(err);
+      return; // last-good map intact — never clear on a transient failure
+    }
+    if (this.stopped) return; // a stop() raced the in-flight build
+    this.opts.ownerMap.update(projection.sessions ?? []);
+  }
+
+  /** Start the loop: fire an immediate refresh, then re-refresh on the
+   *  interval. Idempotent — a second start() is a no-op. The interval is
+   *  `unref`'d so it never keeps the process alive on its own. */
+  start(): void {
+    if (this.timer) return;
+    this.stopped = false;
+    void this.refreshOnce();
+    this.timer = setInterval(() => void this.refreshOnce(), this.opts.intervalMs ?? OWNER_MAP_REFRESH_MS);
+    this.timer.unref?.();
+  }
+
+  /** Halt the loop. Idempotent; safe to call before start(). */
+  stop(): void {
+    this.stopped = true;
+    if (this.timer) {
+      clearInterval(this.timer);
+      this.timer = undefined;
+    }
+  }
+}
+
 // ── peer transport ───────────────────────────────────────────────────────────
 
 /** A peer's transport coordinates — how to reach a remote machine. The URL is
@@ -89,11 +161,36 @@ export interface PeerTransport {
 
 // ── multiplexing proxy ───────────────────────────────────────────────────────
 
-/** The resolved target for one request: the peer's URL to proxy to, or
- *  undefined for local (fail-safe). */
-export interface ResolvedTarget {
-  machineId: string;
-  url: string;
+/** The resolved target for one request. The `resolveTarget` return is
+ *  `ResolvedTarget | undefined`, with THREE distinct outcomes:
+ *
+ *   - REACHABLE peer — `{ machineId, url }`: proxy the request to `url`.
+ *   - DEGRADED peer (#1448, W1a) — `{ machineId, unreachable: true }`: the owner
+ *     is KNOWN (in the owner-map) but its transport `getUrl()` is currently
+ *     undefined. This is the honest-degraded variant, DISTINCT from the
+ *     `undefined` return below. W1b (#1449) turns it into a
+ *     FLEET_PEER_UNREACHABLE 503 rather than silently serving local (the #1382
+ *     silent-local-fallback the whole design forbids).
+ *   - `undefined` (NOT a ResolvedTarget) — LOCAL, the fail-safe: keyless, the
+ *     owner is local, or the owner is not in the peer set.
+ *
+ *  The two variants are discriminated by `unreachable`; the reachable variant
+ *  carries `url`, the degraded one never does. */
+export type ResolvedTarget =
+  | { machineId: string; url: string; unreachable?: false }
+  | { machineId: string; url?: undefined; unreachable: true };
+
+/** #1448 (W1a): the narrow resolver seam the dispatch peer branch consults on
+ *  the ATTACHED arm when AMICO_FLEET_MULTIPLEX is ON. Deliberately exposes ONLY
+ *  `resolveTarget` — the per-session SSE relay is W1c and is NOT wired into
+ *  dispatch here (AC4 structural guard: no SSE crosses the multiplexer). The
+ *  SessionMultiplexProxy satisfies it structurally. */
+export interface MultiplexResolver {
+  resolveTarget(
+    method: string,
+    pathname: string,
+    headers: Record<string, string | string[] | undefined>,
+  ): ResolvedTarget | undefined;
 }
 
 /** Options for the SessionMultiplexProxy. */
@@ -115,7 +212,7 @@ export interface SseStreamHandle {
  *
  *  Structural: no reloadRequired or attachSwitch signal exists — per-session
  *  routing removes the need for a global attach-swap and its window reload. */
-export class SessionMultiplexProxy {
+export class SessionMultiplexProxy implements MultiplexResolver {
   private readonly ownerMap: SessionOwnerMap;
   private readonly peers: Record<string, PeerTransport>;
   private readonly localMachineId: string;
@@ -136,7 +233,9 @@ export class SessionMultiplexProxy {
    *   3. No session, no header → local (undefined)
    *   4. Owner == localMachineId → local (undefined)
    *   5. Owner not in peers → local (undefined)
-   *   6. Peer URL undefined → undefined (honest degraded) */
+   *   6. Peer URL undefined → the DEGRADED variant (owner known, url undefined
+   *      — #1448, W1a), NEVER undefined/local (the #1382 silent-local-fallback
+   *      the design forbids; W1b turns this into a 503) */
   resolveTarget(
     _method: string,
     pathname: string,
@@ -169,9 +268,11 @@ export class SessionMultiplexProxy {
     // 5. Look up peer transport
     const peer = this.peers[machineId];
     if (!peer) return undefined;
-    // 6. Resolve URL (late-bound)
+    // 6. Resolve URL (late-bound). #1448 (W1a): owner KNOWN but URL undefined
+    //    is the honest DEGRADED variant — NOT undefined/local. W1b (#1449) turns
+    //    it into a 503 rather than silently serving local (the #1382 bug).
     const url = peer.getUrl();
-    if (!url) return undefined;
+    if (!url) return { machineId, unreachable: true };
     return { machineId, url };
   }
 

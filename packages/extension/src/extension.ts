@@ -83,6 +83,7 @@ import {
 import { resolveHubTarget, restartHub } from "./hub_ops";
 import { connectToHubOverRemoteSsh, connectToDeviceOverRemoteSsh, isRemoteSshAvailable } from "./fleet_connect_remote_ssh";
 import { handleConnectToDevice, type ConnectToDeviceMessage, type FleetConnectDeps } from "./fleet_connect_device";
+import { createFleetFocusHost } from "./fleet_focus";
 import { registerAmicodeTerminal } from "./terminal";
 import { amicodeServiceDisposal, startAmicodeService, frameOriginUrl } from "./amicode_service_wiring";
 import { resolveAppDistRoot } from "./amicode_service/app_shelf";
@@ -341,6 +342,21 @@ const pendingStops = new Set<string>();
 // auto-offer) moved to agent-driven, on-block surfacing — the domain stays
 // implicit until a second domain pack exists.
 
+/** #1447 (W2): this machine's own stable id for the fleet-peer provider —
+ *  the SAME value readLocalDevice()/buildBootSelfReportRow/the heartbeat use
+ *  (canonical.host on a server/standalone, else os.hostname()). Threaded into
+ *  startAmicodeService so the fleet-sessions route serves the machine-keyed
+ *  N-peer projection. Defensive: any resolution failure yields undefined, and
+ *  the service then keeps the legacy 2-source projection (byte-identical). */
+function resolveLocalMachineId(): string | undefined {
+  try {
+    const id = defaultFleetSectionDeps({}).readLocalDevice?.()?.machineId;
+    return typeof id === "string" && id.trim() !== "" ? id : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   const opencodeChannel = vscode.window.createOutputChannel("Amicode — opencode");
   const runsChannel = vscode.window.createOutputChannel("Amicode — runs");
@@ -500,6 +516,14 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   //    #1321: the read-only fleet section reads the host-owned roster + this
   //    machine's posture and pushes them to the webview. Manage stays honestly
   //    disabled until the Fleet Manager tab (#1322) registers its command.
+  // #1451 — the single host-held FleetFocusStore. Every focus change posts ONE
+  // `{source:"amicode", kind:"fleet-focus", machineId}` down-message over the
+  // chat_bridge to the overlay (the chat panel); W4b (#1453) is the consumer.
+  // Focusing a machine NEVER connects/attaches it — it only scopes the working
+  // surfaces and pushes focus to the overlay.
+  const fleetFocusStore = createFleetFocusHost({
+    postToOverlay: (m) => { void ChatPanel.peek()?.postMessage(m); },
+  });
   const sidebarProvider = new SidebarViewProvider(ctx.extensionUri, undefined, defaultFleetSectionDeps({
     // #1363 — a CLIENT proxy-reads the host's roster through the live local
     // amicode service. Lazy: the service boots AFTER this construction, so read
@@ -562,6 +586,15 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       void handleConnectToDevice(msg as ConnectToDeviceMessage, connectDeps).catch((e) => {
         opencodeChannel.appendLine(`[fleet] connect-to-device error: ${(e as Error).message}`);
       });
+    },
+    // #1451 — focus a fleet machine: set the host-held FleetFocusStore. A local
+    // machine collapses to home (fleet_focus.setFocus). DISTINCT from connect:
+    // it never attaches — it only scopes the working surfaces, and the store's
+    // onChange pushes focus to the overlay (chat panel) for W4b (#1453).
+    focusMachine: (msg) => {
+      fleetFocusStore.setFocus(
+        msg.isLocal ? null : { machineId: msg.machineId, name: msg.machineId, isLocal: false },
+      );
     },
   }));
   ctx.subscriptions.push(
@@ -1380,6 +1413,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       // attachment pointer was found on disk, pass the recovered transport's
       // getUrl so the fleet plane's D3 resolver routes to the attached device.
       ...(bootRecovery ? { bootAttached: { getUrl: bootRecovery.getUrl } } : {}),
+      // #1447 (W2): this machine's stable id — flips the fleet-sessions route
+      // to the machine-keyed N-peer projection (undefined → legacy 2-source).
+      localMachineId: resolveLocalMachineId(),
     });
     amicodeService = serviceBoot ?? undefined;
     ctx.subscriptions.push(amicodeServiceDisposal(serviceBoot));
@@ -1694,6 +1730,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         // #1260: the pluggable transport provider selector (default ssh).
         fleetTransport: readFleetTransportOption(vscode.workspace.getConfiguration("amicode")),
         port: configuredPort > 0 ? configuredPort + 1 : undefined,
+        // #1447 (W2): this machine's stable id — flips the fleet-sessions route
+        // to the machine-keyed N-peer projection (undefined → legacy 2-source).
+        localMachineId: resolveLocalMachineId(),
       });
       amicodeService = adoptedServiceBoot ?? undefined;
       ctx.subscriptions.push(amicodeServiceDisposal(adoptedServiceBoot));

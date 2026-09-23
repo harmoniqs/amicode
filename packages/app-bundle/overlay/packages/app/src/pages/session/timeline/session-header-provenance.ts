@@ -57,6 +57,24 @@ export interface ProvenanceMenuInput {
   branch: string | undefined
 }
 
+/** The per-session owner overlay served on the fleet-sessions projection
+ *  (W2 #1447, `merged_projection.ts` `tagSessionsWithOwner`). Absent on
+ *  pre-fleet / local-path sessions. */
+export interface SessionOwnerTag {
+  owner_machine_id: string
+  owner_name: string
+  device_type?: string
+  directory?: string
+  is_local: boolean
+}
+
+/** A fleet-sessions projection entry, reduced to what the header needs: the
+ *  session id and its optional owner overlay. */
+export interface FleetSessionEntry {
+  id: string
+  amicode_owner?: SessionOwnerTag
+}
+
 // ── resolvers ────────────────────────────────────────────────────────────────
 
 /** Resolve whether a session is remote or local, and what the icon should show.
@@ -93,4 +111,69 @@ export function provenanceMenuItems(input: ProvenanceMenuInput): ProvenanceMenuI
   )
 
   return items
+}
+
+// ── fleet-sessions mount (#1452 W4a) ─────────────────────────────────────────
+// The live session header fetches GET /amicode/fleet/sessions (W2 #1447), finds
+// the current session's amicode_owner overlay, maps it to a
+// SessionProvenanceInput, and resolves the icon. These pure helpers are the
+// data layer the message-timeline header consumes.
+
+/** Map a session's owner overlay onto a SessionProvenanceInput. A missing tag
+ *  (a pre-fleet / local-path session) degrades to a local input — no icon, no
+ *  bogus owner. */
+export function mapOwnerTagToProvenanceInput(tag: SessionOwnerTag | undefined): SessionProvenanceInput {
+  if (!tag) return { ownerMachineId: undefined, ownerMachineName: undefined, isLocal: true }
+  return {
+    ownerMachineId: tag.owner_machine_id,
+    ownerMachineName: tag.owner_name,
+    isLocal: tag.is_local,
+  }
+}
+
+/** Tolerant reader for one raw owner overlay — returns the tag only when its
+ *  load-bearing fields are well-typed, else undefined (the session keeps its
+ *  id, loses the bogus owner). */
+function readOwnerTag(raw: unknown): SessionOwnerTag | undefined {
+  if (!raw || typeof raw !== "object") return undefined
+  const o = raw as Record<string, unknown>
+  if (typeof o.owner_machine_id !== "string") return undefined
+  if (typeof o.owner_name !== "string") return undefined
+  if (typeof o.is_local !== "boolean") return undefined
+  return {
+    owner_machine_id: o.owner_machine_id,
+    owner_name: o.owner_name,
+    ...(typeof o.device_type === "string" ? { device_type: o.device_type } : {}),
+    ...(typeof o.directory === "string" ? { directory: o.directory } : {}),
+    is_local: o.is_local,
+  }
+}
+
+/** Tolerant reader for the GET /amicode/fleet/sessions response → the header's
+ *  reduced entry list. A malformed / error response (or a fetch that hasn't
+ *  resolved) yields [] — it never throws. Reused by W4b's machine picker. */
+export function fleetSessionsFromResponse(raw: unknown): FleetSessionEntry[] {
+  if (!raw || typeof raw !== "object") return []
+  const sessions = (raw as { sessions?: unknown }).sessions
+  if (!Array.isArray(sessions)) return []
+  return sessions.flatMap((s) => {
+    if (!s || typeof s !== "object") return []
+    const id = (s as { id?: unknown }).id
+    if (typeof id !== "string") return []
+    const owner = readOwnerTag((s as { amicode_owner?: unknown }).amicode_owner)
+    return [{ id, ...(owner ? { amicode_owner: owner } : {}) }]
+  })
+}
+
+/** Resolve the header's provenance from the fetched projection + the current
+ *  session id: find this session, map its owner overlay, resolve the icon.
+ *  Session not found / no projection / no owner → today's no-provenance header
+ *  (never a bogus owner). */
+export function resolveHeaderProvenance(
+  sessions: readonly FleetSessionEntry[] | undefined,
+  currentSessionId: string | undefined,
+): SessionProvenance {
+  const current =
+    currentSessionId && sessions ? sessions.find((s) => s.id === currentSessionId) : undefined
+  return resolveSessionProvenance(mapOwnerTagToProvenanceInput(current?.amicode_owner))
 }

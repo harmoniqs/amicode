@@ -18,6 +18,8 @@ import { join } from "node:path";
 import * as http from "node:http";
 import { AddressInfo } from "node:net";
 import { createAmicodeService } from "../src/amicode_service";
+import { startAmicodeService } from "../src/amicode_service_wiring";
+import type { AmicodeServiceBoot } from "../src/amicode_service_wiring";
 import { serverAuthToken, serverAuthHeader } from "../src/server_auth";
 import {
   fleetHubFile,
@@ -28,6 +30,9 @@ import {
 } from "../src/amicode_service/hub_credential";
 import { deriveCurrency, buildFleetProjection, type SessionOwnerTag, type FleetProjection } from "../src/amicode_service/merged_projection";
 import { stageFleetDataPlane } from "../src/amicode_service/fleet_staging";
+import { buildFleetPeerProvider, fleetPeerTransports } from "../src/amicode_service/fleet_peer_provider";
+import { writePeerToken } from "../src/amicode_service/fleet_peer_store";
+import type { RosterRow } from "@amicode/schema";
 
 // ── mock dist (the app-shelf test's shape) ───────────────────────────────────
 
@@ -461,6 +466,21 @@ describe("fleet mode staged — routing, merged projection, hub credential", () 
     expect(body.sources.hub.version).toBe("v1.18.29");
     // currency is tagged with the sources it was derived over
     expect([...body.currency.sources].sort()).toEqual(["hub", "local"]);
+  });
+
+  it("W0 invariant (#1446): fleet configured but fleetPeers UNSET → the sessions route still serves the legacy 2-source projection (deps.fleetPeers undefined at index.ts:474)", async () => {
+    // `service` here is booted via bootService() — a full fleet plane with NO
+    // `fleetPeers` set (W0 constructs the provider but never assigns it; that
+    // flip is W2, #1447). The legacy buildMergedProjection keys sources by the
+    // "local"/"hub" pair; the N-peer buildFleetProjection would key by
+    // machine_id and carry NO "hub" source. A "hub"-keyed source is therefore
+    // proof the else-branch (index.ts:489) served — production byte-identical.
+    const res = await fetch(`${origin}/amicode/fleet/sessions`, {
+      headers: { Authorization: `Basic ${engineToken}` },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { sources: Record<string, unknown> };
+    expect(Object.keys(body.sources).sort()).toEqual(["hub", "local"]);
   });
 
   it("the merged projection's currency is derived over what is FETCHED (the hub gone → local-tagged token)", async () => {
@@ -1028,5 +1048,374 @@ describe("GET /amicode/fleet/sessions — fleet-wide tagged list via the route (
     expect(body.sources["my-macbook"].present).toBe(true);
     expect(body.sources["the-studio"].present).toBe(true);
     expect(body.sources["the-mini"].present).toBe(true);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// W0 — the production fleet-peer provider (#1446): the roster + reader
+// peer-store composed into the 4-method provider object the fleet-sessions
+// route (index.ts:474) and the W1 multiplexer both consume — plus its
+// projection into the Record<string, PeerTransport> shape. This slice builds
+// the provider; it does NOT assign opts.fleet.fleetPeers (that flip is W2,
+// #1447), so production stays byte-identical (the AC3 block below pins that).
+// ══════════════════════════════════════════════════════════════════════════════
+
+function w0RosterRow(opts: {
+  id: string;
+  name: string;
+  serving: boolean;
+  reachable: boolean;
+  device_type?: string;
+}): RosterRow {
+  return {
+    machine_id: opts.id,
+    name: opts.name,
+    server_mode: "fleet",
+    capabilities: opts.serving ? ["serving"] : [],
+    sshAlias: opts.id,
+    transport: "ssh",
+    last_report: "2026-09-22T00:00:00Z",
+    health: opts.reachable ? "reachable" : "down",
+    ...(opts.device_type !== undefined ? { device_type: opts.device_type } : {}),
+  };
+}
+
+describe("W0 — production fleet-peer provider from roster + peer-store (#1446)", () => {
+  let root: string;
+  let rosterFile: string;
+  let peerStoreFile: string;
+
+  beforeAll(() => {
+    root = mkdtempSync(join(tmpdir(), "amicode-w0-provider-"));
+    rosterFile = join(root, "roster.json");
+    peerStoreFile = join(root, "peer-tokens.json");
+    // A REAL roster document on disk — the production default reader parses it
+    // (no test stubs in the production path). self + one serving∧reachable peer
+    // with a stored token + one serving-but-down peer + one reachable non-server.
+    writeFileSync(
+      rosterFile,
+      JSON.stringify({
+        schema_version: 1,
+        rows: [
+          w0RosterRow({ id: "self-mac", name: "My Mac", serving: true, reachable: true, device_type: "laptop" }),
+          w0RosterRow({ id: "studio-peer", name: "Mac Studio", serving: true, reachable: true, device_type: "desktop" }),
+          w0RosterRow({ id: "mini-peer", name: "Mac Mini", serving: true, reachable: false, device_type: "server" }),
+          w0RosterRow({ id: "laptop-peer", name: "Laptop", serving: false, reachable: true }),
+        ],
+      }),
+    );
+    // A REAL reader peer-store entry for the studio peer (the production reader).
+    writePeerToken("studio-peer", { baseUrl: "http://127.0.0.1:5555", token: "tok-studio" }, { storeFile: peerStoreFile });
+  });
+
+  afterAll(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("composes the 4-method object from the real roster + real peer-store (no stubs): a serving∧reachable peer with a stored token is yielded by getServingPeers() and its credential by readPeerToken()", () => {
+    const provider = buildFleetPeerProvider({ localMachineId: "self-mac", rosterFile, peerStoreFile });
+
+    // localMachineId is the composed provider's own id
+    expect(provider.localMachineId).toBe("self-mac");
+
+    // getServingPeers() = serving∧reachable rows, MINUS self, MINUS unreachable,
+    // MINUS non-serving — resolved from the real roster on disk.
+    const servingIds = provider.getServingPeers().map((p) => p.machineId).sort();
+    expect(servingIds).toEqual(["studio-peer"]);
+
+    // readPeerToken() surfaces the studio peer's stored credential (real store).
+    const studio = provider.readPeerToken("studio-peer");
+    expect(studio.ok).toBe(true);
+    if (studio.ok) {
+      expect(studio.credential.baseUrl).toBe("http://127.0.0.1:5555");
+      expect(studio.credential.token).toBe("tok-studio");
+    }
+    // a peer with no stored token is a named miss, never a fabricated credential
+    expect(provider.readPeerToken("mini-peer").ok).toBe(false);
+
+    // rosterLookup() enriches from the same roster (name + device_type)
+    expect(provider.rosterLookup("studio-peer")).toEqual({ name: "Mac Studio", device_type: "desktop" });
+    expect(provider.rosterLookup("nobody")).toBeUndefined();
+  });
+
+  it("projects the SAME peer set into both production-consumed shapes — getServingPeers() and the Record<string, PeerTransport> map list the same machine_ids", () => {
+    const provider = buildFleetPeerProvider({
+      localMachineId: "self-mac",
+      rosterRows: () => [
+        w0RosterRow({ id: "self-mac", name: "My Mac", serving: true, reachable: true }),
+        w0RosterRow({ id: "studio-peer", name: "Mac Studio", serving: true, reachable: true }),
+        w0RosterRow({ id: "mini-peer", name: "Mac Mini", serving: true, reachable: true }),
+        w0RosterRow({ id: "down-peer", name: "Down", serving: true, reachable: false }),
+      ],
+      readPeerToken: (id) => {
+        if (id === "studio-peer") return { ok: true as const, credential: { baseUrl: "http://studio", token: "t-studio" } };
+        if (id === "mini-peer") return { ok: true as const, credential: { baseUrl: "http://mini", token: "t-mini" } };
+        return { ok: false as const, reason: "absent" as const };
+      },
+    });
+
+    const servingIds = provider.getServingPeers().map((p) => p.machineId).sort();
+    const transports = fleetPeerTransports(provider);
+    const transportIds = Object.keys(transports).sort();
+
+    // the two shapes are two VIEWS of the ONE serving-peer set — same ids
+    expect(transportIds).toEqual(servingIds);
+    expect(servingIds).toEqual(["mini-peer", "studio-peer"]);
+
+    // each transport resolves the peer's late-bound URL + token from that set
+    expect(transports["studio-peer"].getUrl()).toBe("http://studio");
+    expect(transports["studio-peer"].token).toBe("t-studio");
+    expect(transports["mini-peer"].getUrl()).toBe("http://mini");
+    expect(transports["mini-peer"].token).toBe("t-mini");
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// W2 — the wiring assembler assigns opts.fleet.fleetPeers (#1447): the single
+// production flip. W0 (#1446) CONSTRUCTS the provider; W2 assigns it at the
+// wiring site (amicode_service_wiring.ts's fleet={...} assembly) so the
+// fleet-sessions route takes the N-peer branch (index.ts:474→483) instead of the
+// legacy 2-source else (index.ts:489). These tests boot the ACTUAL assembler
+// (startAmicodeService) — NOT createAmicodeService with a hand-set fleetPeers —
+// so they prove the PRODUCTION wiring assigns the provider (the #1439 route
+// describe above, :946-1050, covers the route-level selection with a hand-set
+// provider; this covers the assembler that assigns it).
+//
+// Honesty (issue Constraints & Invariants): these are IN-PROCESS / stub-green —
+// the route SELECTS the N-peer builder and fans out to loopback peer origins; a
+// REAL cross-machine session is NOT proven here.
+// ══════════════════════════════════════════════════════════════════════════════
+
+const w2Sink = () => ({ appendLine: (_l: string) => undefined });
+
+function w2ArmedActivation(opts: { entitledDir: string; overlaySource: string }) {
+  return {
+    armed: true as const,
+    hubUrl: "http://127.0.0.1:9",
+    tunnelAlias: "fleet-hub",
+    posture: {
+      degradedLatencyP95Ms: 3000,
+      degradedWindowSamples: 10,
+      hubDownConsecutiveNoResponses: 3,
+      recoveryConsecutiveHealthy: 2,
+    },
+    notes: [] as string[],
+    entitlements: ["amicissimo"] as string[],
+    entitlementConfigDir: opts.entitledDir,
+    overlaySource: opts.overlaySource,
+  };
+}
+
+/** Write a lawful entitled dir + data-plane overlay so the armed activation
+ *  actually stages the fleet plane (and thus registers the sessions route). */
+function w2StageInputs(root: string): { entitledDir: string; overlaySource: string } {
+  const overlaySource = join(root, "overlay-source");
+  writeDataPlaneManifest(overlaySource);
+  const entitledDir = join(root, "entitled");
+  mkdirSync(entitledDir, { recursive: true });
+  writeFileSync(join(entitledDir, "entitlements.toml"), `codes = ["amicissimo"]\n`);
+  return { entitledDir, overlaySource };
+}
+
+describe("W2 — the wiring assembler assigns the N-peer provider (#1447)", () => {
+  let root: string;
+  let dist: string;
+  let stage: { entitledDir: string; overlaySource: string };
+  let localEngine: MockOrigin;
+  let studioPeer: MockOrigin;
+  let miniPeer: MockOrigin;
+  let boot: AmicodeServiceBoot | undefined;
+  let origin: string;
+  let engineToken: string;
+  const savedEnv: Record<string, string | undefined> = {};
+
+  const W2_LOCAL = [{ id: "ses-w2-local", title: "local", time: { created: 100, updated: 200 } }];
+  const W2_STUDIO = [{ id: "ses-w2-studio", title: "studio", time: { created: 300, updated: 400 } }];
+  const W2_MINI = [{ id: "ses-w2-mini", title: "mini", time: { created: 500, updated: 600 } }];
+
+  beforeAll(async () => {
+    root = mkdtempSync(join(tmpdir(), "amicode-w2-assembler-"));
+    dist = buildMockDist(root);
+    stage = w2StageInputs(root);
+
+    localEngine = await startMockEngine(W2_LOCAL);
+    studioPeer = await startMockPeer(W2_STUDIO, "tok-studio-w2");
+    miniPeer = await startMockPeer(W2_MINI, "tok-mini-w2");
+
+    const rosterFile = join(root, "roster.json");
+    writeFileSync(
+      rosterFile,
+      JSON.stringify({
+        schema_version: 1,
+        rows: [
+          w0RosterRow({ id: "self-mac", name: "My Mac", serving: true, reachable: true, device_type: "laptop" }),
+          w0RosterRow({ id: "studio-peer", name: "Mac Studio", serving: true, reachable: true, device_type: "desktop" }),
+          w0RosterRow({ id: "mini-peer", name: "Mac Mini", serving: true, reachable: true, device_type: "server" }),
+        ],
+      }),
+    );
+    const peerStoreFile = join(root, "peer-tokens.json");
+    writePeerToken("studio-peer", { baseUrl: studioPeer.url, token: "tok-studio-w2" }, { storeFile: peerStoreFile });
+    writePeerToken("mini-peer", { baseUrl: miniPeer.url, token: "tok-mini-w2" }, { storeFile: peerStoreFile });
+
+    for (const k of ["AMICO_FLEET_ROSTER_FILE", "AMICO_FLEET_PEER_TOKEN_FILE", "AMICO_FLEET_HUB_FILE"]) {
+      savedEnv[k] = process.env[k];
+    }
+    process.env.AMICO_FLEET_ROSTER_FILE = rosterFile;
+    process.env.AMICO_FLEET_PEER_TOKEN_FILE = peerStoreFile;
+    process.env.AMICO_FLEET_HUB_FILE = join(root, "hub-cred.json");
+
+    engineToken = serverAuthToken("engine-mint-password");
+    boot = await startAmicodeService(w2Sink(), {
+      engine: { password: "engine-mint-password", getUrl: () => localEngine.url },
+      appDistRoot: dist,
+      fleetActivation: w2ArmedActivation(stage),
+      localMachineId: "self-mac",
+    });
+    if (!boot) throw new Error("W2 assembler boot failed");
+    origin = boot.url;
+  });
+
+  afterAll(async () => {
+    await boot?.service.stop();
+    await localEngine.stop();
+    await studioPeer.stop();
+    await miniPeer.stop();
+    for (const [k, v] of Object.entries(savedEnv)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("AC1: booting the assembler with a configured fleet + a ≥3-machine roster serves the N-peer machine-keyed projection (index.ts:474), never the legacy local|hub else", async () => {
+    const res = await fetch(`${origin}/amicode/fleet/sessions`, { headers: { Authorization: `Basic ${engineToken}` } });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as FleetProjection;
+    expect(body.ok).toBe(true);
+    expect(body.mode).toBe("fleet");
+    // sources keyed by machine_id (the N-peer builder), NEVER the legacy
+    // "local"/"hub" pair — the signature proving the ASSEMBLER assigned the provider.
+    expect(Object.keys(body.sources).sort()).toEqual(["mini-peer", "self-mac", "studio-peer"]);
+    expect(Object.keys(body.sources)).not.toContain("hub");
+    // machine-attributed sessions from the local engine + both serving peers.
+    expect(body.sources["self-mac"].present).toBe(true);
+    expect(body.sources["studio-peer"].present).toBe(true);
+    expect(body.sources["mini-peer"].present).toBe(true);
+    expect(body.sessions.map((s) => s.id).sort()).toEqual(["ses-w2-local", "ses-w2-mini", "ses-w2-studio"]);
+  });
+
+  it("AC3: every session in the assembler-served projection carries its owner machine id (amicode_owner.owner_machine_id)", async () => {
+    const res = await fetch(`${origin}/amicode/fleet/sessions`, { headers: { Authorization: `Basic ${engineToken}` } });
+    const body = (await res.json()) as FleetProjection;
+    expect(body.sessions.length).toBe(3);
+    for (const s of body.sessions) {
+      const owner = (s as { amicode_owner?: SessionOwnerTag }).amicode_owner;
+      expect(owner).toBeDefined();
+      expect(typeof owner!.owner_machine_id).toBe("string");
+      expect(owner!.owner_machine_id.length).toBeGreaterThan(0);
+    }
+    const local = body.sessions.find((s) => s.id === "ses-w2-local") as { amicode_owner?: SessionOwnerTag };
+    expect(local.amicode_owner).toMatchObject({ owner_machine_id: "self-mac", owner_name: "My Mac", is_local: true });
+    const studio = body.sessions.find((s) => s.id === "ses-w2-studio") as { amicode_owner?: SessionOwnerTag };
+    expect(studio.amicode_owner).toMatchObject({ owner_machine_id: "studio-peer", is_local: false });
+  });
+});
+
+describe("W2 — present-but-empty peers ≠ undefined peers (#1447)", () => {
+  let root: string;
+  let dist: string;
+  let stage: { entitledDir: string; overlaySource: string };
+  let localEngine: MockOrigin;
+  const savedEnv: Record<string, string | undefined> = {};
+
+  beforeAll(async () => {
+    root = mkdtempSync(join(tmpdir(), "amicode-w2-empty-"));
+    dist = buildMockDist(root);
+    stage = w2StageInputs(root);
+    localEngine = await startMockEngine([{ id: "ses-w2-el", title: "local", time: { created: 1, updated: 2 } }]);
+    for (const k of ["AMICO_FLEET_ROSTER_FILE", "AMICO_FLEET_PEER_TOKEN_FILE", "AMICO_FLEET_HUB_FILE"]) {
+      savedEnv[k] = process.env[k];
+    }
+    process.env.AMICO_FLEET_HUB_FILE = join(root, "hub-cred.json");
+    process.env.AMICO_FLEET_PEER_TOKEN_FILE = join(root, "no-peer-tokens.json");
+  });
+
+  afterAll(async () => {
+    await localEngine.stop();
+    for (const [k, v] of Object.entries(savedEnv)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("AC2: a present provider with ZERO serving peers → the 1-source machine-keyed projection (local only), explicitly NOT the 2-source local|hub shape", async () => {
+    // A roster whose ONLY serving∧reachable row is self (excluded from the
+    // serving-peer set) → getServingPeers() === [] → the provider is present but
+    // EMPTY. The route must still take the N-peer branch (1 source keyed by the
+    // local machine_id), never fall back to the legacy 2-source builder.
+    const rosterFile = join(root, "roster-empty.json");
+    writeFileSync(
+      rosterFile,
+      JSON.stringify({
+        schema_version: 1,
+        rows: [
+          w0RosterRow({ id: "self-mac", name: "My Mac", serving: true, reachable: true }),
+          w0RosterRow({ id: "down-peer", name: "Down", serving: true, reachable: false }),
+          w0RosterRow({ id: "idle-peer", name: "Idle", serving: false, reachable: true }),
+        ],
+      }),
+    );
+    process.env.AMICO_FLEET_ROSTER_FILE = rosterFile;
+    const boot = await startAmicodeService(w2Sink(), {
+      engine: { password: "engine-mint-password", getUrl: () => localEngine.url },
+      appDistRoot: dist,
+      fleetActivation: w2ArmedActivation(stage),
+      localMachineId: "self-mac",
+    });
+    if (!boot) throw new Error("W2 empty-peers boot failed");
+    try {
+      const engineToken = serverAuthToken("engine-mint-password");
+      const res = await fetch(`${boot.url}/amicode/fleet/sessions`, { headers: { Authorization: `Basic ${engineToken}` } });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as FleetProjection;
+      expect(body.mode).toBe("fleet");
+      expect(Object.keys(body.sources)).toEqual(["self-mac"]); // 1-source, machine-keyed
+      expect(Object.keys(body.sources).sort()).not.toEqual(["hub", "local"]); // NOT the 2-source shape
+    } finally {
+      await boot.service.stop();
+    }
+  });
+
+  it("AC2: fleet armed but NO localMachineId → fleetPeers stays undefined → the legacy 2-source (local|hub) projection (byte-identity holds ONLY here)", async () => {
+    // No localMachineId → the assembler cannot build the provider → the route's
+    // deps.fleetPeers is undefined → the else-branch (index.ts:489) serves. The
+    // "hub"/"local" source keys are the 2-source builder's signature.
+    const rosterFile = join(root, "roster-undef.json");
+    writeFileSync(
+      rosterFile,
+      JSON.stringify({
+        schema_version: 1,
+        rows: [w0RosterRow({ id: "studio-peer", name: "Mac Studio", serving: true, reachable: true })],
+      }),
+    );
+    process.env.AMICO_FLEET_ROSTER_FILE = rosterFile;
+    const boot = await startAmicodeService(w2Sink(), {
+      engine: { password: "engine-mint-password", getUrl: () => localEngine.url },
+      appDistRoot: dist,
+      fleetActivation: w2ArmedActivation(stage),
+      // localMachineId intentionally omitted — the undefined path.
+    });
+    if (!boot) throw new Error("W2 undefined-peers boot failed");
+    try {
+      const engineToken = serverAuthToken("engine-mint-password");
+      const res = await fetch(`${boot.url}/amicode/fleet/sessions`, { headers: { Authorization: `Basic ${engineToken}` } });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { mode: string; sources: Record<string, unknown> };
+      expect(Object.keys(body.sources).sort()).toEqual(["hub", "local"]); // legacy 2-source
+    } finally {
+      await boot.service.stop();
+    }
   });
 });

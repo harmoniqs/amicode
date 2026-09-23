@@ -171,6 +171,11 @@ export interface FleetSectionInput {
    *  or standalone machine (the server is its own self-row; a standalone has
    *  no canonical). */
   canonicalServer?: CanonicalServerInput | null;
+  /** #1451 — the currently focused machine id (FleetFocusStore.scopedMachineId),
+   *  or undefined for home (local). The host stamps this from its focus store
+   *  before building; the builder threads it onto the model verbatim. It is
+   *  focus UI state — NEVER derived from roster data. */
+  focusedMachineId?: string;
   /** Injectable clock for staleness computation (#1375). Defaults to Date.now(). */
   now?: number;
 }
@@ -206,6 +211,11 @@ export interface FleetSectionModel {
   /** The Troubleshoot affordance — enabled when session-launch is available
    *  AND this machine is part of a fleet (non-standalone). */
   troubleshoot: { enabled: boolean };
+  /** #1451 — the currently focused machine id (FleetFocusStore.scopedMachineId),
+   *  or undefined for home (local). The host stamps this before pushing so the
+   *  focused row renders highlighted; it is focus UI state, NOT roster data
+   *  (buildFleetSectionModel threads it from input, never derives it). */
+  focusedMachineId?: string;
   /** Injectable clock timestamp for tooltip rendering (#1375). */
   now?: number;
 }
@@ -235,6 +245,7 @@ export function buildFleetSectionModel(input: FleetSectionInput): FleetSectionMo
       posture: buildPostureBadge(input.posture),
       manage: { enabled: input.manageAvailable },
       troubleshoot: { enabled: false },
+      focusedMachineId: input.focusedMachineId,
       now,
     };
   }
@@ -257,6 +268,7 @@ export function buildFleetSectionModel(input: FleetSectionInput): FleetSectionMo
       posture: buildPostureBadge(input.posture),
       manage: { enabled: input.manageAvailable },
       troubleshoot: { enabled: input.troubleshootAvailable },
+      focusedMachineId: input.focusedMachineId,
       now,
     };
   }
@@ -316,6 +328,7 @@ export function buildFleetSectionModel(input: FleetSectionInput): FleetSectionMo
     posture: postureBadge,
     manage: { enabled: input.manageAvailable },
     troubleshoot: { enabled: input.troubleshootAvailable },
+    focusedMachineId: input.focusedMachineId,
     now,
   };
 }
@@ -402,8 +415,8 @@ export interface TroubleshootFleetRequest {
 }
 
 /** The union of navigation messages the fleet section can emit. Navigation
- *  actions only — no roster-write path (ADR 0026, updated for #1413). */
-export type FleetSectionMessage = OpenFleetManagerRequest | TroubleshootFleetRequest | ConnectToDeviceRequest;
+ *  actions only — no roster-write path (ADR 0026, updated for #1413/#1451). */
+export type FleetSectionMessage = OpenFleetManagerRequest | TroubleshootFleetRequest | ConnectToDeviceRequest | FocusMachineRequest;
 
 /** #1413 — connect to a fleet device. Posted on device row click. The message
  *  carries identity only; all precondition data is resolved host-side. */
@@ -411,6 +424,17 @@ export interface ConnectToDeviceRequest {
   kind: "connect-to-device";
   machineId: string;
   deviceName: string;
+  isLocal: boolean;
+}
+
+/** #1451 — FOCUS a fleet machine (scope Research/Dev/Workspace to it). Posted
+ *  on the per-row focus affordance click. DISTINCT from connect-to-device: it
+ *  neither connects nor attaches — the host sets the FleetFocusStore and pushes
+ *  focus back for render. Identity + isLocal only; a local machine collapses to
+ *  home host-side (fleet-of-one degrades gracefully). */
+export interface FocusMachineRequest {
+  kind: "focus-machine";
+  machineId: string;
   isLocal: boolean;
 }
 
@@ -438,16 +462,27 @@ function dotStatusTooltip(device: FleetDeviceRow, now?: number): string {
 
 /** Render one device row: a file-list-style line — status dot, name, type pill
  *  (#1359). Clickable: posts a `connect-to-device` message (#1413, ADR 0030 §D1).
- *  `role` / `last-seen` / `capabilities` move to the row's `title` tooltip. */
+ *  `role` / `last-seen` / `capabilities` move to the row's `title` tooltip.
+ *  #1451: also carries a DISTINCT focus affordance (posts `focus-machine`) and
+ *  a focused-row marking when `focusedMachineId` names this row. */
 function renderDeviceRow(
   device: FleetDeviceRow,
   now: number | undefined,
   post: (msg: FleetSectionMessage) => void,
+  focusedMachineId?: string,
 ): HTMLElement {
   const rowEl = document.createElement("div");
   rowEl.className = "fleet-device-row";
   rowEl.setAttribute("data-machine-id", device.machineId);
   rowEl.title = deviceTooltip(device, device.rosterHealth, now);
+
+  // #1451: mark the focused row so the render reflects focus state. Focus is
+  // home (undefined) OR a specific machine — only a named match highlights.
+  const isFocused = focusedMachineId !== undefined && device.machineId === focusedMachineId;
+  if (isFocused) {
+    rowEl.classList.add("fleet-device-row-focused");
+    rowEl.setAttribute("data-focused", "true");
+  }
 
   // #1413: click → connect-to-device message
   rowEl.addEventListener("click", () => {
@@ -486,6 +521,27 @@ function renderDeviceRow(
   pill.className = "fleet-type-pill";
   pill.textContent = device.typeLabel;
   rowEl.appendChild(pill);
+
+  // #1451: the DISTINCT focus affordance. Posts `focus-machine` (scope the
+  // working surfaces to this machine) — NEVER connect-to-device. stopPropagation
+  // keeps it independent of the row-body connect click: a focus click emits ONLY
+  // the focus message, and a row-body click still connects (they never suppress
+  // each other). Every row gets one, including the sole self-row on a
+  // fleet-of-one (the host collapses a local focus to home).
+  const focusBtn = document.createElement("button");
+  focusBtn.type = "button";
+  focusBtn.className = "fleet-focus-btn";
+  focusBtn.setAttribute("aria-label", `Focus ${device.name}`);
+  focusBtn.setAttribute("aria-pressed", isFocused ? "true" : "false");
+  focusBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    post({
+      kind: "focus-machine",
+      machineId: device.machineId,
+      isLocal: device.isLocal,
+    });
+  });
+  rowEl.appendChild(focusBtn);
 
   return rowEl;
 }
@@ -609,7 +665,7 @@ export function renderFleetSection(
       const list = document.createElement("div");
       list.className = "fleet-device-list";
       for (const device of model.devices) {
-        list.appendChild(renderDeviceRow(device, model.now, post));
+        list.appendChild(renderDeviceRow(device, model.now, post, model.focusedMachineId));
       }
       container.appendChild(list);
     }

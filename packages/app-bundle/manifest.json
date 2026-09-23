@@ -335,6 +335,7 @@
     "packages/opencode/test/server/amicode-widgets.test.ts": "14fc6ccff4e83a5b005a724936e9f0d7ce411fab74109f319e8bc748665f7ab8",
     "packages/opencode/test/server/auth-accept-set.test.ts": "8fe698812ed9a809d21ace1a9751bd3f1976ab1e58ad5bda65dbfff58df8e3bc",
     "packages/opencode/test/server/httpapi-compression.test.ts": "5f7603d7018e0b95f1c2f36c01dd297c01770bfcdd91ce29778e03b7d6143f75",
+    "packages/opencode/test/server/httpapi-file-write-gate.test.ts": "0c91b7417e615850edfde3f2878207dab6b6624d4cfbb6e6783b2e6d9aa4dff0",
     "packages/opencode/test/server/httpapi-file.test.ts": "d3386129bc81467ecbcc57a3861f53767ee56ac41b4ff6ad58d8b168fb3b3373",
     "packages/opencode/test/server/httpapi-instance-route-auth.test.ts": "4b73a89d2431c02bc3b665d93f9002914e51eb1add979dc1867efbcbc0c36e25",
     "packages/opencode/test/server/httpapi-provider.test.ts": "9e8b3e085b478e3f99b689ffff600e10c0b4b50b3cabdbd749f88dae19bf5904",
@@ -619,8 +620,8 @@
     "packages/app/src/components/session/pdf-restore.ts": "e5c92096b9302a452439babfc2732610a7e0d18e23793ce3bf6352fa32f91a36",
     "packages/app/src/components/session/preview-file-helpers.test.ts": "e0c1ccb40b48990c0c5b87ea62a35de60b860cd760067c7f1327cbb1d36584b1",
     "packages/app/src/components/session/preview-file-helpers.ts": "2244aaef25f7412df7b53a45a7d2f72380d45eb90caefa5e96c48d01e988eb4e",
-    "packages/app/src/components/session/preview-file-view.tsx": "7b221de755b851170e4b3dfc4d78d8446f6dfa40116b7529466db24e714d90f5",
-    "packages/app/src/components/session/preview-human-write-gate.ts": "bf7c76aaf76faf8de871b8036bb24cffe1cbb3938cbb573b2ab07726977a6794",
+    "packages/app/src/components/session/preview-file-view.tsx": "8292f2430d41c3b6a587fcbc6547ab6828445542a8ddc6c4554d115c1340f3f3",
+    "packages/app/src/components/session/preview-human-write-gate.ts": "4c4b1cf258a06b0012d722add0125ecb77a0f4e463dd95d193f21e5e73541098",
     "packages/app/src/components/session/session-chats-dropdown.test.ts": "cc0f96f935cc5681a1fe62875f4538c303b7c0b75744e066180f8805d5160292",
     "packages/app/src/components/session/session-context-tab.tsx": "227243b178b517f067d9ae0ae0eec3c559beeb6681828158b0600a17e98e7f81",
     "packages/app/src/components/session/session-header.tsx": "7113b3eca8ec950d4a547a2b7e2661b5e47f593653e12fca659b5b5f92cb90a6",
@@ -674,16 +675,19 @@
     "packages/app/src/pages/layout/worktree-auto-rename.test.ts": "fb6fac363b8bee1225bbcff8098019c02f19b095b5cd96c29f7e673acb1e4e89",
     "packages/app/src/pages/layout/worktree-auto-rename.ts": "2ef3e506b96b972cb55799a89aa54ca6453fc31c80bc022aa16db6ecfe9cdced",
     "packages/app/src/pages/new-session/new-session-draft-controller.ts": "3607771a22b6855afd0b0d666de662c9070a2dcd56ae96ba51d89c9e11018e81",
+    "packages/app/src/pages/new-session/new-session-machine-mount.test.ts": "30c360ecf2464258f3e97fb5aaa1ca37145c6f62b200f3c5f524b58bc9534837",
+    "packages/app/src/pages/new-session/new-session-machine-mount.ts": "f7c3cdbd0ab92749e4c99432b87c7703050dd909b8f0e138188c4b264ba06b46",
+    "packages/app/src/pages/new-session/new-session-machine-picker-mount.tsx": "8d8c8aacefab02269b7e5f97b7a60cda1e6a12b4da1d15c4775fdf0eb5800b4a",
     "packages/app/src/pages/new-session/new-session-machine-picker.test.ts": "2f2adf9d738aee98f2989c5453c97eeba0e48522b7863c99d9c0be9a6c11ff3b",
-    "packages/app/src/pages/new-session/new-session-view.test.ts": "615110d1a956bb2321ca77c998d6f5da434756d166ee61cf71ca232cc9efb0c4",
-    "packages/app/src/pages/new-session/new-session-view.tsx": "30b0b048f88ce741215e642b0760758638ad36696d2eb8770bc8e6b8b8f3fc29",
+    "packages/app/src/pages/new-session/new-session-view.test.ts": "eb337485bf03facbc59d9eadac37cfeb04f75bf97814df80d3be4d0ec9455047",
+    "packages/app/src/pages/new-session/new-session-view.tsx": "8fa065e3d792f99de6fdb6f0de8c6205fab519159342655fe59fc09ea67691b1",
     "packages/app/src/pages/session/amicode-session-relay.integration.test.ts": "4991e775d3a6c63a514072ccfa5aad190c586383b77ef41689c853fb271d3bf4",
     "packages/app/src/pages/session/fleet-manager-tab.tsx": "c491728b054df461854db9b53f7ab551e89993dca15acf75f01fad26c22d97dd",
     "packages/app/src/pages/session/fleet-manager.test.ts": "9cbbde7d41351bf59d50cd6ffc6aa318bb8cc1de6d5b980c0c87ab795a668722",
     "packages/app/src/pages/session/fleet-manager.ts": "c740e9d020002f9e5c380cdff1bc77a446be8737074bcc3ea1f8849775d3107e",
     "packages/app/src/pages/session/helpers.test.ts": "b6a8bcbb78fe237d3dc347520b596342c9561c45056d1cfa4dd2e15ec34425ed",
     "packages/app/src/pages/session/helpers.ts": "1b777919c8f3c864b52469e90564f873445f9e7877c87f7290db3578823091cd",
-    "packages/app/src/pages/session/preview-human-write-gate.test.ts": "0ee86ff59c5e7842695dec0bce8f35151999cf865d975cb2656c40e027d0602e",
+    "packages/app/src/pages/session/preview-human-write-gate.test.ts": "b657eadc3f2fed1ff7332b17afc6dbe5fb23709a27fd1d36249e5a25788f6bc4",
     "packages/app/src/pages/session/review-tab.tsx": "3c90e6b11fad40ea19a258966c374ee12c05bd0e7891fcea561ba0b965ddc9f5",
     "packages/app/src/pages/session/session-panel-width.test.ts": "9482afba7fbce254cbbd21ef885e9e9620b981616681635376f466478f611155",
     "packages/app/src/pages/session/session-panel-width.ts": "02ee3a02ed78db2eac47c2528055cf78aef95f389641e929ddc56c17471dcbe2",
@@ -805,7 +809,7 @@
     "packages/app/src/pages/session/composer/session-tour.tsx": "da5d807c7efe7aed1140d65d7eddd7982a8c17348d928f5d0a887d1b2a8d3a50",
     "packages/app/src/pages/session/composer/todo-panel-motion.stories.tsx": "70a8267c725af320d78d266b85fd0ff005d067c4d09a21bef824126602e831e7",
     "packages/app/src/pages/session/timeline/last-prompt-bubble.test.ts": "83753b3ec7227570523c2e0b9e82401fae7a20f3a23980bb40deaeb13304327b",
-    "packages/app/src/pages/session/timeline/message-timeline.tsx": "96aa7f175b2b89bad522ac57c0d6e2eb6bc7bedca453f721ddc27fe2c0e7f65d",
+    "packages/app/src/pages/session/timeline/message-timeline.tsx": "92313eb819a9c1dc094f70657f2bb01d7c3f07f27fc04c545c0530c4c0c17707",
     "packages/app/src/pages/session/timeline/model-pure.ts": "50be4ba12d747dd8df9932044ceee29c5f3b6fa6d6ac36791207f91a91067cd4",
     "packages/app/src/pages/session/timeline/model.test.ts": "459e0694409ffcf2530252a65491e1006f982b8f5c78a15573ed41646b2c85cf",
     "packages/app/src/pages/session/timeline/model.ts": "1692edf34c1e829900fb3fadcd3f092598164f353e29fe28a9dfb40debcc36bc",
@@ -813,8 +817,8 @@
     "packages/app/src/pages/session/timeline/projection.ts": "36ab006523de7b695b33d26a0a03b59db9e148b7e979c36f63970cbcb8bcaca2",
     "packages/app/src/pages/session/timeline/rows-current.test.ts": "b6a2d9671cfba970990b36d9ef0d1f107efcee59f0a9863f1280526116299095",
     "packages/app/src/pages/session/timeline/rows.ts": "68581190ff5e51d2dc398298c705fbb5dfdefb7eb4cecf98f1da6ae0bd171f18",
-    "packages/app/src/pages/session/timeline/session-header-provenance.test.ts": "9ca215bbf1bc557d5aec4f0cd8af0a4b4b3abdd3e2e3230d28992f5f6125b574",
-    "packages/app/src/pages/session/timeline/session-header-provenance.ts": "7b8f96809e33ab1ca70b239f1d3981009e8827b2fb4cd1ef20a7178eaed21d4c",
+    "packages/app/src/pages/session/timeline/session-header-provenance.test.ts": "b6ca7ffde2ef5d02b09968c20b5027ceab45506af8b1a49dd3f6c8ffe5912312",
+    "packages/app/src/pages/session/timeline/session-header-provenance.ts": "7b73833aa5a3530c704edef2ca38cb6730aaaa729c23e06b6227788fb5c7e324",
     "packages/app/src/pages/session/timeline/smooth-scroll.test.ts": "79d3bba42ad83c3ab80df907e0acf08665a38c4809468e6c12ac9fcf5e94682f",
     "packages/app/src/pages/session/timeline/smooth-scroll.ts": "a7c16860aa68917b74f5c5c46d239e9a5d7a9a952233407e2ed856b534059828",
     "packages/app/src/pages/session/timeline/thought-rail-pure.ts": "886c10b0de61b0ab64baf8a284758dab8154f279fd9cd509b7b1d8ecc155ad02",
@@ -832,19 +836,19 @@
     "packages/app/src/pages/session/v2/lineage-ledger-view.ts": "6a465a513bf901413c743c83839d0bc8a12bdee780dbdecef86b68460451bc90",
     "packages/app/src/pages/session/v2/review-panel-v2-state.test.ts": "ac0cf1939c164948d9a0c54cc15076b30413612d872237e0fbd0912804c1ced0",
     "packages/app/src/pages/session/v2/review-panel-v2-state.ts": "e27c3aa236d2862e3cbd87128c4e03e6d810974faaaadb12a7e04cdd3b531e1c",
-    "packages/app/src/pages/session/v2/review-panel-v2.tsx": "a3cd899538a738d0236ecbe9e292928ff14e48d3646f2b045dc25880bc7f3ee3",
+    "packages/app/src/pages/session/v2/review-panel-v2.tsx": "d3dedc2d9020d955223142ef47d40da3c508eb79b59aecf2ba27052e51bc0461",
     "packages/opencode/src/cli/cmd/run/footer.question.tsx": "c9a1b335c9c7d8446d15c58c8808ea857f8f238c8a4047121f49599296922f39",
     "packages/opencode/src/cli/cmd/run/question.shared.ts": "f4b8ab69c18e66d3efea505f3d2c8c5476bba78d46b0f30bc52da4386b19e478",
     "packages/opencode/src/server/amicode/widgets-src/jump-back-in.ts": "a82bf11004b71c7ac6e0357c45a0d7532aad4ee6af16e048ae86ef9bf3799fef",
     "packages/opencode/test/server/fixtures/credentials/cloud.json": "431bdf114031da38975538384e21ab0ec7206a0859859f0bf87345b8c360829e",
     "packages/opencode/test/server/fixtures/credentials/pasqal.json": "d3c775cc498fe3029d9ac234d9eaa9eaffa1ad8656e12a5aca1355c733276736",
     "packages/sdk/js/src/v2/gen/sdk.gen.ts": "6610638b4fb71bac498da98d232ef9adcd4b011b63e5e81a63fc6dc20d311b17",
-    "packages/sdk/js/src/v2/gen/types.gen.ts": "0c23b262085d1e14b89bd03292a380c9ec8b52e66c4308304a05173362b79339",
+    "packages/sdk/js/src/v2/gen/types.gen.ts": "c6ee51f0c15ac34fb4b3ccfa9f0a0592835d270340988fabbb76003374d34ca7",
     "packages/session-ui/src/v2/components/prompt-input/attachments.ts": "ff66078f2edc9a67a4df0d7dfd76a49be5eab27ac332b303f3412721ef7268ea",
     "packages/session-ui/src/v2/components/prompt-input/index.tsx": "6cbd3a1e3a4fd789284526e5981c6fd2d4952f3926c5a1be0609bb6832453997",
-    "packages/opencode/src/server/routes/instance/httpapi/server.ts": "85c200797fed41c0cd08e7aa699ce13aeb8a3d23aa2b9eddc4d72e72b8b5082c",
+    "packages/opencode/src/server/routes/instance/httpapi/server.ts": "b753be7b2cc886acb591bdf2a458e7e776ee4823a50424bbb13d0f7550edec30",
     "packages/opencode/src/server/routes/instance/httpapi/groups/experimental.ts": "944a0aee215a917e867fd9482f3c2bd40f49082bd3174c8a7d967ca40e34ec15",
-    "packages/opencode/src/server/routes/instance/httpapi/groups/file.ts": "ed165131c62eeb29375db39edf89db8f87488e24ef99fc6f2cf19705ba35751a",
+    "packages/opencode/src/server/routes/instance/httpapi/groups/file.ts": "a96fdc55ddb95ca7c481c86f67e37ed88d4cf2a190a482765ab55ce4409f3a59",
     "packages/opencode/src/server/routes/instance/httpapi/groups/mcp.ts": "048efa7b74d43c4ad4a75d0f8421c808760c8c0dcd593f0051a87044e40487d6",
     "packages/opencode/src/server/routes/instance/httpapi/groups/provider.ts": "34c6f1ab1a085d1b047c220bbff32a36032dc5e924784e9272cda166cf0ec84b",
     "packages/opencode/src/server/routes/instance/httpapi/groups/session.ts": "1421f8c07948b121c7e2005bd9b0fcd6b2c456565ddd1da32d8e6c35d03fac9c",
@@ -852,7 +856,8 @@
     "packages/opencode/src/server/routes/instance/httpapi/handlers/file.ts": "10bcb79b117beebee04184fb48c1ad789e782e2f7ae4b0c68603edc00f03aee9",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/mcp.ts": "7da08d58765cdf2b6ce4648fc70de371402949f5bb7b75696f674d43f2d5365b",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/provider.ts": "8baf16cad0992c5351b61b0c0fb27903bb25b17e1b25fc7c5d77f807c24413a6",
-    "packages/opencode/src/server/routes/instance/httpapi/handlers/session.ts": "b37ff4136c4aea85b23083bf441f03e09820e3e4cdd95e4118ca570d8435b94f"
+    "packages/opencode/src/server/routes/instance/httpapi/handlers/session.ts": "b37ff4136c4aea85b23083bf441f03e09820e3e4cdd95e4118ca570d8435b94f",
+    "packages/opencode/src/server/routes/instance/httpapi/middleware/file-write-workspace.ts": "665c33633173ee89c6da1d4a0eaacaf4eebe3ccdd04eb36b063515cb4c093e4a"
   },
   "symlinks": [
     "packages/app/public/amico.svg"
@@ -867,10 +872,10 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-09-23T04:31:22.123Z",
+  "extracted_at": "2026-09-23T15:57:41.972Z",
   "per_package": {
     "packages/app": {
-      "A": 184,
+      "A": 187,
       "M": 159,
       "D": 0
     },
@@ -885,7 +890,7 @@
       "D": 0
     },
     "packages/opencode": {
-      "A": 69,
+      "A": 71,
       "M": 81,
       "D": 0
     },
@@ -911,7 +916,7 @@
     }
   },
   "counts": {
-    "overlay_total": 845,
+    "overlay_total": 850,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1243,6 +1248,7 @@
     "packages/opencode/test/server/amicode-widgets.test.ts": "A",
     "packages/opencode/test/server/auth-accept-set.test.ts": "A",
     "packages/opencode/test/server/httpapi-compression.test.ts": "M",
+    "packages/opencode/test/server/httpapi-file-write-gate.test.ts": "A",
     "packages/opencode/test/server/httpapi-file.test.ts": "M",
     "packages/opencode/test/server/httpapi-instance-route-auth.test.ts": "M",
     "packages/opencode/test/server/httpapi-provider.test.ts": "M",
@@ -1582,6 +1588,9 @@
     "packages/app/src/pages/layout/worktree-auto-rename.test.ts": "A",
     "packages/app/src/pages/layout/worktree-auto-rename.ts": "A",
     "packages/app/src/pages/new-session/new-session-draft-controller.ts": "M",
+    "packages/app/src/pages/new-session/new-session-machine-mount.test.ts": "A",
+    "packages/app/src/pages/new-session/new-session-machine-mount.ts": "A",
+    "packages/app/src/pages/new-session/new-session-machine-picker-mount.tsx": "A",
     "packages/app/src/pages/new-session/new-session-machine-picker.test.ts": "A",
     "packages/app/src/pages/new-session/new-session-view.test.ts": "A",
     "packages/app/src/pages/new-session/new-session-view.tsx": "M",
@@ -1760,7 +1769,8 @@
     "packages/opencode/src/server/routes/instance/httpapi/handlers/file.ts": "M",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/mcp.ts": "M",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/provider.ts": "M",
-    "packages/opencode/src/server/routes/instance/httpapi/handlers/session.ts": "M"
+    "packages/opencode/src/server/routes/instance/httpapi/handlers/session.ts": "M",
+    "packages/opencode/src/server/routes/instance/httpapi/middleware/file-write-workspace.ts": "A"
   },
   "upstream_base_archive_sha256": "6ae708a289bf8957f928e59ec5f3fc8a61e56290a9f12f47b916c9a26a517e9b"
 }
