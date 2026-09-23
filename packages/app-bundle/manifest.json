@@ -675,8 +675,11 @@
     "packages/app/src/pages/layout/worktree-auto-rename.ts": "2ef3e506b96b972cb55799a89aa54ca6453fc31c80bc022aa16db6ecfe9cdced",
     "packages/app/src/pages/new-session/new-session-draft-controller.ts": "3607771a22b6855afd0b0d666de662c9070a2dcd56ae96ba51d89c9e11018e81",
     "packages/app/src/pages/new-session/new-session-machine-picker.test.ts": "2f2adf9d738aee98f2989c5453c97eeba0e48522b7863c99d9c0be9a6c11ff3b",
-    "packages/app/src/pages/new-session/new-session-view.test.ts": "615110d1a956bb2321ca77c998d6f5da434756d166ee61cf71ca232cc9efb0c4",
-    "packages/app/src/pages/new-session/new-session-view.tsx": "30b0b048f88ce741215e642b0760758638ad36696d2eb8770bc8e6b8b8f3fc29",
+    "packages/app/src/pages/new-session/new-session-view.test.ts": "eb337485bf03facbc59d9eadac37cfeb04f75bf97814df80d3be4d0ec9455047",
+    "packages/app/src/pages/new-session/new-session-view.tsx": "8fa065e3d792f99de6fdb6f0de8c6205fab519159342655fe59fc09ea67691b1",
+    "packages/app/src/pages/new-session/new-session-machine-mount.test.ts": "30c360ecf2464258f3e97fb5aaa1ca37145c6f62b200f3c5f524b58bc9534837",
+    "packages/app/src/pages/new-session/new-session-machine-mount.ts": "f7c3cdbd0ab92749e4c99432b87c7703050dd909b8f0e138188c4b264ba06b46",
+    "packages/app/src/pages/new-session/new-session-machine-picker-mount.tsx": "8d8c8aacefab02269b7e5f97b7a60cda1e6a12b4da1d15c4775fdf0eb5800b4a",
     "packages/app/src/pages/session/amicode-session-relay.integration.test.ts": "4991e775d3a6c63a514072ccfa5aad190c586383b77ef41689c853fb271d3bf4",
     "packages/app/src/pages/session/fleet-manager-tab.tsx": "c491728b054df461854db9b53f7ab551e89993dca15acf75f01fad26c22d97dd",
     "packages/app/src/pages/session/fleet-manager.test.ts": "9cbbde7d41351bf59d50cd6ffc6aa318bb8cc1de6d5b980c0c87ab795a668722",
@@ -870,7 +873,7 @@
   "extracted_at": "2026-09-23T04:31:22.123Z",
   "per_package": {
     "packages/app": {
-      "A": 184,
+      "A": 187,
       "M": 159,
       "D": 0
     },
@@ -911,7 +914,7 @@
     }
   },
   "counts": {
-    "overlay_total": 845,
+    "overlay_total": 848,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1585,6 +1588,9 @@
     "packages/app/src/pages/new-session/new-session-machine-picker.test.ts": "A",
     "packages/app/src/pages/new-session/new-session-view.test.ts": "A",
     "packages/app/src/pages/new-session/new-session-view.tsx": "M",
+    "packages/app/src/pages/new-session/new-session-machine-mount.test.ts": "A",
+    "packages/app/src/pages/new-session/new-session-machine-mount.ts": "A",
+    "packages/app/src/pages/new-session/new-session-machine-picker-mount.tsx": "A",
     "packages/app/src/pages/session/amicode-session-relay.integration.test.ts": "A",
     "packages/app/src/pages/session/fleet-manager-tab.tsx": "A",
     "packages/app/src/pages/session/fleet-manager.test.ts": "A",
