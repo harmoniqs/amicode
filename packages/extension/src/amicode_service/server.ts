@@ -26,7 +26,7 @@ import { isPublicUiPath } from "./public_ui";
 import { resolveAttachmentPointer } from "./attachment_pointer";
 import { resolveKeeperPointer } from "./keeper_pointer";
 import { resolveAmicodeTarget, type MultiplexTarget } from "./attachment_pointer";
-import type { MultiplexResolver } from "./session_multiplexer";
+import type { MultiplexResolver, ResolvedTarget } from "./session_multiplexer";
 
 export interface AmicodeRequestCtx {
   /** Fully-parsed request URL (query params included — POST /amicode/profile
@@ -194,6 +194,11 @@ export class AmicodeServiceServer {
    *  identical. */
   private readonly acceptSet?: AcceptSet;
 
+  /** #1449 (W1b): teardown callbacks the wiring registers for resources whose
+   *  lifetime is the service's (e.g. the owner-map feed's interval timer). Run
+   *  once on stop() so a background loop never outlives the server. */
+  private readonly cleanups: Array<() => void> = [];
+
   constructor(opts: { password?: string; enginePassword?: string; authMode?: "open" | "credential"; acceptSet?: AcceptSet } = {}) {
     this.password = opts.password ?? mintServerPassword();
     this.enginePassword = opts.enginePassword;
@@ -241,6 +246,14 @@ export class AmicodeServiceServer {
    *  it never carries a fleet surface. */
   attachFleetPlane(plane: FleetPlane): this {
     this.fleetPlane = plane;
+    return this;
+  }
+
+  /** #1449 (W1b): register a teardown callback run once on stop() (idempotent
+   *  per callback via the caller). The owner-map feed's timer registers here so
+   *  it is halted when the service stops. */
+  registerCleanup(fn: () => void): this {
+    this.cleanups.push(fn);
     return this;
   }
 
@@ -420,6 +433,19 @@ export class AmicodeServiceServer {
       // (/amicode/roster) and honesty (/amicode/fleet/*) arms are untouched.
       const multiplexOn = fleetMultiplexEnabled();
       let peerTarget: MultiplexTarget | undefined;
+      // #1449 (W1b): the per-session resolution the multiplexer produced on the
+      // attached arm — the REACHABLE variant (route to its `url`) or the
+      // DEGRADED variant (owner known, transport down → the named 503, NEVER
+      // local). Set only when the flag is ON and the arm is "attached"; an
+      // `undefined` resolution leaves BOTH this and peerTarget undefined (LOCAL
+      // identity — the multiplexer resolves keyless / owner-local / unowned).
+      let multiplexResolved: ResolvedTarget | undefined;
+      // #1449 (W1b): the multiplexer resolved this attached-arm request LOCAL
+      // (keyless / owner-local / unowned). The single attachment pointer is
+      // RETIRED, so a LOCAL resolution is served by THIS machine's own engine —
+      // it bypasses the fleet hub block below and falls through to the local
+      // EngineProxy, never the pointer, never the hub.
+      let multiplexLocal = false;
       if (
         !proxyAmicodeToHost &&
         this.routingMode === "fleet" &&
@@ -431,18 +457,24 @@ export class AmicodeServiceServer {
         const keeperResult = resolveKeeperPointer();
         const { target } = resolveAmicodeTarget(url.pathname, { attached: attachedResult, keeper: keeperResult });
         if (target === "attached" && multiplexOn && this.fleetPlane.multiplex) {
-          // #1448 (W1a): shadow the attached arm with the per-session
-          // multiplexer. Empty owner-map (W1b #1449 populates it) → resolveTarget
-          // returns undefined → LOCAL (identity), so peerTarget stays undefined.
-          // A reachable/degraded resolution routes the attached arm today (the
-          // single attachment pointer's proxy); W1b refines it — a reachable
-          // resolution to the per-session peer URL, and the degraded
-          // (unreachable) variant to a 503, never a silent local fall-through
-          // (the #1382 bug). The keeper + honesty arms decided above are never
-          // consulted through the multiplexer.
+          // #1449 (W1b): the per-session multiplexer RETIRES the single
+          // attachment pointer on the attached arm. A REACHABLE resolution routes
+          // to the per-session peer URL (below); the DEGRADED (unreachable)
+          // variant becomes a FLEET_PEER_UNREACHABLE 503 — never a silent local
+          // fall-through (the #1382 bug). Only `undefined` (keyless / owner-local
+          // / unowned) resolves local. The keeper + honesty arms decided above
+          // are never consulted through the multiplexer.
           const resolved = this.fleetPlane.multiplex.resolveTarget(req.method ?? "GET", url.pathname, req.headers);
-          if (resolved) peerTarget = "attached";
-          // resolved === undefined → LOCAL identity (peerTarget stays undefined)
+          if (resolved) {
+            // reachable → route to resolved.url; degraded → the named 503. Both
+            // land in the peer branch below (peerTarget "attached").
+            multiplexResolved = resolved;
+            peerTarget = "attached";
+          } else {
+            // undefined → LOCAL: this machine owns the session; serve it from the
+            // local engine, NOT the single attachment pointer, NOT the hub.
+            multiplexLocal = true;
+          }
         } else if (target !== "local") {
           peerTarget = target;
         }
@@ -477,7 +509,7 @@ export class AmicodeServiceServer {
       // boot with the tunnel down answers its OWN named 503, never the
       // engine's.
       const mode = this.routingMode;
-      if (mode === "fleet" && this.fleetPlane) {
+      if (mode === "fleet" && this.fleetPlane && !multiplexLocal) {
         // #1378: peer branch — the resolver already decided the target above.
         // Routes to the named upstream; if unreachable, answers the peer's OWN
         // named 503 — NEVER falls through to the local engine (the sessions
@@ -487,7 +519,23 @@ export class AmicodeServiceServer {
           if (peerTarget === "keeper" && this.fleetPlane.keeper) {
             if (this.fleetPlane.keeper.handle(req, res)) return;
           } else if (peerTarget === "attached" && this.fleetPlane.attached) {
-            if (this.fleetPlane.attached.handle(req, res)) return;
+            // #1449 (W1b): when the per-session multiplexer resolved this
+            // request (flag ON), the single attachment pointer is RETIRED. A
+            // REACHABLE resolution proxies to the RESOLVED peer URL (not the
+            // pointer's own upstream); a DEGRADED (unreachable) resolution skips
+            // the proxy entirely and falls to the named 503 below — NEVER local,
+            // NEVER the single pointer (the #1382 invariant). With no multiplex
+            // resolution (flag OFF / non-multiplex attached arm) the single
+            // attachment pointer routes as today (byte-identical).
+            if (multiplexResolved) {
+              if (multiplexResolved.unreachable !== true && multiplexResolved.url !== undefined) {
+                if (this.fleetPlane.attached.handle(req, res, multiplexResolved.url)) return;
+              }
+              // unreachable, or the per-session proxy reported no upstream →
+              // fall through to the named 503 (never the pointer, never local).
+            } else if (this.fleetPlane.attached.handle(req, res)) {
+              return;
+            }
           }
           // #1382: upstream unreachable → named 503, hold, no silent local.
           // Same shape as the client's hub-down 503 (consumers handle both
@@ -572,10 +620,29 @@ export class AmicodeServiceServer {
           const keeperResult = resolveKeeperPointer();
           const { target } = resolveAmicodeTarget(upgradeUrl.pathname, { attached: attachedResult, keeper: keeperResult });
           if (target === "attached") {
-            this.fleetPlane.attached.handleUpgrade(req, socket, head);
-            return;
-          }
-          if (target === "keeper" && this.fleetPlane.keeper) {
+            // #1449 (W1b): the upgrade path retires the single attachment pointer
+            // on the attached arm too. When the multiplexer is ON, a REACHABLE
+            // resolution tunnels the WebSocket to the RESOLVED peer; a DEGRADED
+            // (unreachable) resolution tears the socket down honestly (no silent
+            // local); a LOCAL resolution falls through to socket.destroy (the
+            // engine handles its own upgrades). Flag OFF → the single pointer, as
+            // today (byte-identical).
+            if (fleetMultiplexEnabled() && this.fleetPlane.multiplex) {
+              const resolved = this.fleetPlane.multiplex.resolveTarget(req.method ?? "GET", upgradeUrl.pathname, req.headers);
+              if (resolved) {
+                if (resolved.unreachable !== true && resolved.url !== undefined) {
+                  this.fleetPlane.attached.handleUpgrade(req, socket, head, resolved.url);
+                } else {
+                  socket.destroy(); // owned-but-unreachable → honest teardown
+                }
+                return;
+              }
+              // resolved === undefined → LOCAL: fall through to socket.destroy
+            } else {
+              this.fleetPlane.attached.handleUpgrade(req, socket, head);
+              return;
+            }
+          } else if (target === "keeper" && this.fleetPlane.keeper) {
             this.fleetPlane.keeper.handleUpgrade(req, socket, head);
             return;
           }
@@ -616,6 +683,16 @@ export class AmicodeServiceServer {
   }
 
   async stop(): Promise<void> {
+    // #1449 (W1b): run registered teardowns FIRST (halt background loops like
+    // the owner-map feed's timer) so nothing outlives the server. splice(0) so
+    // each callback runs exactly once even across repeated stop() calls.
+    for (const fn of this.cleanups.splice(0)) {
+      try {
+        fn();
+      } catch {
+        /* a teardown must never throw out of stop() */
+      }
+    }
     const server = this.server;
     if (!server) return;
     this.server = undefined;

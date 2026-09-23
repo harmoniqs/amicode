@@ -71,9 +71,16 @@ export class HubProxy {
    * Returns false when no upstream is bound (the caller sends the honest
    * named 503); true once handled — including the NAMED
    * `hub-credential-missing` 503 this proxy sends itself. Never throws.
+   *
+   * #1449 (W1b): `urlOverride` re-targets THIS proxy at a per-request base
+   * URL — the session multiplexer's REACHABLE resolution routes the attached
+   * arm to the RESOLVED peer (`resolved.url`) rather than the single
+   * attachment pointer's own `getUrl()`. Absent → the pointer's `getUrl()`
+   * as before (byte-identical). Only the base URL changes; the credential
+   * translation (H1: this proxy's mint) is unchanged.
    */
-  handle(req: http.IncomingMessage, res: http.ServerResponse): boolean {
-    const upstreamBase = this.opts.getUrl();
+  handle(req: http.IncomingMessage, res: http.ServerResponse, urlOverride?: string): boolean {
+    const upstreamBase = urlOverride ?? this.opts.getUrl();
     if (!upstreamBase) return false;
     const cred = this.opts.credential();
     if (!cred.ok) {
@@ -243,8 +250,12 @@ export class HubProxy {
    *   - preserve `?ticket=`/`?cursor=`/`Origin` and the `sec-websocket-*` set.
    * The host's PTY route authorizes by ticket OR Basic — the attached hub mint
    * satisfies the Basic arm; the preserved `?ticket=` satisfies the other.
+   *
+   * #1449 (W1b): `urlOverride` re-targets the upgrade at a per-request base URL
+   * (the multiplexer's resolved peer for a session-pathed WebSocket), mirroring
+   * `handle`. Absent → the pointer's `getUrl()` as before.
    */
-  handleUpgrade(req: http.IncomingMessage, clientSocket: Duplex, head: Buffer): void {
+  handleUpgrade(req: http.IncomingMessage, clientSocket: Duplex, head: Buffer, urlOverride?: string): void {
     // A pre-upgrade failure: answer the raw socket honestly, then destroy it
     // (a WS client reads a non-101 status line as a failed handshake).
     const fail = (code: number, reason: string): void => {
@@ -262,7 +273,7 @@ export class HubProxy {
       }
     };
 
-    const upstreamBase = this.opts.getUrl();
+    const upstreamBase = urlOverride ?? this.opts.getUrl();
     if (!upstreamBase) {
       // tunnel down — a client holds no local engine (never-fork); the socket
       // is torn down cleanly (no leak). The honest hub-down surface for the
