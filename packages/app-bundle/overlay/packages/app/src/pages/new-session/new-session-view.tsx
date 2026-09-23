@@ -1,3 +1,4 @@
+// #1457: cache-bust — the webview's HTTP disk cache held a poisoned entry for this chunk's URL (HTML cached during a mid-ship window); a content change rotates the hash and the fresh URL fetches clean.
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { Tooltip } from "@opencode-ai/ui/tooltip"
 import { Icon as IconV2 } from "@opencode-ai/ui/v2/icon"
