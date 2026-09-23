@@ -1166,6 +1166,46 @@ describe("SessionRunnerLLM", () => {
     }),
   )
 
+  it.effect("manually compacts tool history with a tools-free summary request", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const session = yield* SessionV2.Service
+      const execution = yield* SessionExecution.Service
+      yield* session.prompt({
+        sessionID,
+        prompt: Prompt.make({ text: "Echo before compacting ".repeat(500) }),
+        resume: false,
+      })
+
+      requests.length = 0
+      responses = [
+        [
+          LLMEvent.stepStart({ index: 0 }),
+          LLMEvent.toolCall({ id: "call-before-compact", name: "echo", input: { text: "history" } }),
+          LLMEvent.stepFinish({ index: 0, reason: "tool-calls" }),
+          LLMEvent.finish({ reason: "tool-calls" }),
+        ],
+        fragmentFixture("text", "text-before-compact", ["Done"]).completeEvents,
+      ]
+      yield* session.resume(sessionID)
+      expect(requests[1]?.messages.map((message) => message.role)).toEqual(["user", "assistant", "tool"])
+
+      currentModel = recoveryModel
+      requests.length = 0
+      responses = [
+        fragmentFixture("text", "text-manual-summary", ["## Objective\n- Preserve tool history"]).completeEvents,
+      ]
+      expect(yield* execution.compact(sessionID)).toBe(true)
+
+      expect(requests).toHaveLength(1)
+      expect(requests[0]?.tools).toEqual([])
+      expect(requests[0]?.messages.map((message) => message.role)).toEqual(["user"])
+      expect(yield* session.context(sessionID)).toMatchObject([
+        { type: "compaction", summary: "## Objective\n- Preserve tool history" },
+      ])
+    }),
+  )
+
   it.effect("forces one compaction and retries after provider context overflow", () =>
     Effect.gen(function* () {
       const session = yield* setupOverflowRecovery
@@ -2832,6 +2872,7 @@ describe("SessionRunnerLLM", () => {
     Effect.gen(function* () {
       yield* setup
       const session = yield* SessionV2.Service
+      executions.length = 0
       yield* session.prompt({ sessionID, prompt: Prompt.make({ text: "Settle before failing" }), resume: false })
       const failure = providerUnavailable()
       toolExecutionGate = yield* Deferred.make<void>()
