@@ -1,4 +1,5 @@
 import { useNavigate } from "@solidjs/router"
+import { retryImport } from "@/utils/retry-import"
 import { useCommand, type CommandOption } from "@/context/command"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { previewSelectedLines } from "@opencode-ai/session-ui/pierre/selection-bridge"
@@ -241,7 +242,7 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
 
   const openFile = () => {
     void openDialog(
-      () => import("@/components/dialog-select-file"),
+      () => retryImport(() => import("@/components/dialog-select-file")),
       (x) => dialog.show(() => <x.DialogSelectFile onOpenFile={showAllFiles} />),
     )
   }
@@ -287,7 +288,7 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
 
   const chooseMcp = () => {
     void openDialog(
-      () => import("@/components/dialog-select-mcp"),
+      () => retryImport(() => import("@/components/dialog-select-mcp")),
       (x) => dialog.show(() => <x.DialogSelectMcp />),
     )
   }
@@ -399,7 +400,7 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
 
   const fork = () => {
     void openDialog(
-      () => import("@/components/dialog-fork"),
+      () => retryImport(() => import("@/components/dialog-fork")),
       (x) => dialog.show(() => <x.DialogFork />),
     )
   }
