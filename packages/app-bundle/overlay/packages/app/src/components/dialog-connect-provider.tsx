@@ -430,9 +430,9 @@ function ProviderConnection(props: {
   const dialog = useDialog()
   const serverSync = useServerSync()
   const serverSDK = useServerSDK()
-  const platform = usePlatform()
   const params = useParams()
   const language = useLanguage()
+  const platform = usePlatform()
   const settings = useSettings()
   const newLayout = settings.general.newLayoutDesigns
   const providers = useProviders(() => props.directory?.())
@@ -556,7 +556,12 @@ function ProviderConnection(props: {
     const hint = suffix?.[1]
     return {
       label: suffix ? label.slice(0, -suffix[0].length) : label,
-      hint: hint ? hint[0].toUpperCase() + hint.slice(1) : value?.type === "key" ? "Browser" : undefined,
+      hint:
+        hint?.toLowerCase() === "headless"
+          ? language.t("provider.connect.method.headless")
+          : hint?.toLowerCase() === "browser" || (!hint && value?.type === "key")
+            ? language.t("provider.connect.method.browser")
+            : undefined,
     }
   }
 
