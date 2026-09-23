@@ -391,6 +391,9 @@ function friendlyHostname(): string | undefined {
   /** #1413 — connect to a fleet device (show the Quick Pick). Optional: the
    *  sidebar degrades honestly when the handler is absent. */
   connectToDevice?: (msg: { machineId: string; deviceName: string; isLocal: boolean }) => void;
+  /** #1451 — FOCUS a fleet machine (set the host FleetFocusStore). Distinct
+   *  from connectToDevice: never connects/attaches. Optional; honest degrade. */
+  focusMachine?: (msg: { machineId: string; isLocal: boolean }) => void;
 }
 
 /** The roster read result — rows + whether the read succeeded (false ⇒ host
@@ -439,6 +442,9 @@ export interface DefaultFleetDepsOptions {
    *  sidebar degrades honestly when absent). Production wires the real Quick
    *  Pick handler from extension.ts. */
   connectToDevice?: (msg: { machineId: string; deviceName: string; isLocal: boolean }) => void;
+  /** #1451 — override the focus-machine handler. Default: undefined (honest
+   *  degrade). Production wires the host FleetFocusStore from extension.ts. */
+  focusMachine?: (msg: { machineId: string; isLocal: boolean }) => void;
 }
 
 /** The proxied route a CLIENT reads the host's authoritative roster from — the
@@ -608,6 +614,7 @@ export function defaultFleetSectionDeps(opts: DefaultFleetDepsOptions = {}): Fle
       return { machineId, name, serveStance, deviceType };
     },
     connectToDevice: opts.connectToDevice,
+    focusMachine: opts.focusMachine,
   };
 }
 
@@ -795,6 +802,9 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
         },
         connectToDevice: (msg) => {
           this.fleetDeps?.connectToDevice?.(msg);
+        },
+        focusMachine: (msg) => {
+          this.fleetDeps?.focusMachine?.(msg);
         },
       };
       void handleSidebarMessage(msg, handlers);

@@ -131,6 +131,15 @@ export type ConnectToDeviceMessage = {
   deviceName: string;
   isLocal: boolean;
 };
+/** #1451 — FOCUS a fleet machine (scope Research/Dev/Workspace to it). Posted
+ *  on the per-row focus affordance click. DISTINCT from connect-to-device: it
+ *  neither connects nor attaches — the host sets the FleetFocusStore. Identity
+ *  + isLocal only; a local machine collapses to home host-side. */
+export type FocusMachineMessage = {
+  kind: "focus-machine";
+  machineId: string;
+  isLocal: boolean;
+};
 
 // ── Environment action messages (#887) ───────────────────────────────────────
 
@@ -162,7 +171,8 @@ export type SidebarUpMessage =
   | PromoteToEnvironmentMessage
   | OpenFleetManagerMessage
   | TroubleshootFleetMessage
-  | ConnectToDeviceMessage;
+  | ConnectToDeviceMessage
+  | FocusMachineMessage;
 
 // ── Fleet section view-model (host→webview payload) ──────────────────────────
 // The model type is defined in sidebar_fleet_section.ts (the browser-safe
@@ -294,6 +304,9 @@ export interface SidebarMessageHandlers {
   troubleshootFleet?: () => void;
   /** #1413 — connect to a fleet device (show the Quick Pick). */
   connectToDevice?: (msg: ConnectToDeviceMessage) => void;
+  /** #1451 — FOCUS a fleet machine (set the host-held FleetFocusStore). Distinct
+   *  from connectToDevice: it never connects/attaches. */
+  focusMachine?: (msg: FocusMachineMessage) => void;
 }
 
 /**
@@ -365,6 +378,9 @@ export function handleSidebarMessage(
       break;
     case "connect-to-device":
       handlers.connectToDevice?.(msg);
+      break;
+    case "focus-machine":
+      handlers.focusMachine?.(msg);
       break;
     case "file-op": {
       const { kind: _k, ...req } = msg;

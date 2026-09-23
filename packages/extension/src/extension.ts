@@ -83,6 +83,7 @@ import {
 import { resolveHubTarget, restartHub } from "./hub_ops";
 import { connectToHubOverRemoteSsh, connectToDeviceOverRemoteSsh, isRemoteSshAvailable } from "./fleet_connect_remote_ssh";
 import { handleConnectToDevice, type ConnectToDeviceMessage, type FleetConnectDeps } from "./fleet_connect_device";
+import { createFleetFocusHost } from "./fleet_focus";
 import { registerAmicodeTerminal } from "./terminal";
 import { amicodeServiceDisposal, startAmicodeService, frameOriginUrl } from "./amicode_service_wiring";
 import { resolveAppDistRoot } from "./amicode_service/app_shelf";
@@ -515,6 +516,14 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   //    #1321: the read-only fleet section reads the host-owned roster + this
   //    machine's posture and pushes them to the webview. Manage stays honestly
   //    disabled until the Fleet Manager tab (#1322) registers its command.
+  // #1451 — the single host-held FleetFocusStore. Every focus change posts ONE
+  // `{source:"amicode", kind:"fleet-focus", machineId}` down-message over the
+  // chat_bridge to the overlay (the chat panel); W4b (#1453) is the consumer.
+  // Focusing a machine NEVER connects/attaches it — it only scopes the working
+  // surfaces and pushes focus to the overlay.
+  const fleetFocusStore = createFleetFocusHost({
+    postToOverlay: (m) => { void ChatPanel.peek()?.postMessage(m); },
+  });
   const sidebarProvider = new SidebarViewProvider(ctx.extensionUri, undefined, defaultFleetSectionDeps({
     // #1363 — a CLIENT proxy-reads the host's roster through the live local
     // amicode service. Lazy: the service boots AFTER this construction, so read
@@ -577,6 +586,15 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       void handleConnectToDevice(msg as ConnectToDeviceMessage, connectDeps).catch((e) => {
         opencodeChannel.appendLine(`[fleet] connect-to-device error: ${(e as Error).message}`);
       });
+    },
+    // #1451 — focus a fleet machine: set the host-held FleetFocusStore. A local
+    // machine collapses to home (fleet_focus.setFocus). DISTINCT from connect:
+    // it never attaches — it only scopes the working surfaces, and the store's
+    // onChange pushes focus to the overlay (chat panel) for W4b (#1453).
+    focusMachine: (msg) => {
+      fleetFocusStore.setFocus(
+        msg.isLocal ? null : { machineId: msg.machineId, name: msg.machineId, isLocal: false },
+      );
     },
   }));
   ctx.subscriptions.push(

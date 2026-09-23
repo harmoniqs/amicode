@@ -8,12 +8,14 @@
 // AC2: project-roots fan-out — remote machine's roots; unreachable = absence
 // AC3: focus-decoupling — session list unaffected by focus change
 // AC4: focus-follows-tab — remote session tab → set focused machine to owner, reveal folder
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   FleetFocusStore,
+  createFleetFocusHost,
   type FocusedMachine,
   type ProjectRootsProvider,
   type FleetFocusEvent,
+  type FleetFocusDownMessage,
 } from "../src/fleet_focus";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -249,5 +251,80 @@ describe("#1441 AC4 — focus-follows-tab: remote session tab → set focus to o
       isLocal: false,
     });
     expect(rosterWriteCalled).toBe(false);
+  });
+});
+
+// ── #1451 AC3: host→overlay focus transport (owned by W3) ────────────────────
+//
+// createFleetFocusHost wires the single host-held FleetFocusStore so every
+// focus change posts EXACTLY ONE `{source:"amicode", kind:"fleet-focus",
+// machineId}` down-message to the overlay (the chat panel). W4b (#1453) is the
+// consumer of that push; here we only assert it is EMITTED, once, with the
+// focused machineId.
+
+describe("#1451 AC3 — createFleetFocusHost: onChange → fleet-focus down-message", () => {
+  it("posts exactly one fleet-focus message with the focused machineId on a remote focus", () => {
+    const postToOverlay = vi.fn<[FleetFocusDownMessage], void>();
+    const store = createFleetFocusHost({ postToOverlay });
+
+    store.setFocus({ machineId: "mac-studio-01", name: "Mac Studio", isLocal: false });
+
+    expect(postToOverlay).toHaveBeenCalledTimes(1);
+    expect(postToOverlay).toHaveBeenCalledWith({
+      source: "amicode",
+      kind: "fleet-focus",
+      machineId: "mac-studio-01",
+    });
+  });
+
+  it("carries an undefined machineId when focus returns to home (local)", () => {
+    const postToOverlay = vi.fn<[FleetFocusDownMessage], void>();
+    const store = createFleetFocusHost({ postToOverlay });
+
+    store.setFocus({ machineId: "mac-studio-01", name: "Mac Studio", isLocal: false });
+    postToOverlay.mockClear();
+    store.setFocus(null); // back to home
+
+    expect(postToOverlay).toHaveBeenCalledTimes(1);
+    expect(postToOverlay).toHaveBeenCalledWith({
+      source: "amicode",
+      kind: "fleet-focus",
+      machineId: undefined,
+    });
+  });
+
+  it("does NOT post on a no-op focus (same machine selected twice)", () => {
+    const postToOverlay = vi.fn<[FleetFocusDownMessage], void>();
+    const store = createFleetFocusHost({ postToOverlay });
+
+    store.setFocus({ machineId: "mac-studio-01", name: "Mac Studio", isLocal: false });
+    postToOverlay.mockClear();
+    store.setFocus({ machineId: "mac-studio-01", name: "Mac Studio", isLocal: false });
+
+    expect(postToOverlay).not.toHaveBeenCalled();
+  });
+
+  it("also invokes the optional onChange (sidebar re-render hook) on change", () => {
+    const postToOverlay = vi.fn<[FleetFocusDownMessage], void>();
+    const events: FleetFocusEvent[] = [];
+    const store = createFleetFocusHost({ postToOverlay, onChange: (e) => events.push(e) });
+
+    store.setFocus({ machineId: "mac-studio-01", name: "Mac Studio", isLocal: false });
+
+    expect(events).toHaveLength(1);
+    expect(events[0].machineId).toBe("mac-studio-01");
+  });
+
+  it("fleet-of-one: focusing the local machine collapses to home and posts undefined machineId", () => {
+    const postToOverlay = vi.fn<[FleetFocusDownMessage], void>();
+    const store = createFleetFocusHost({ postToOverlay });
+
+    // The sole real row on a fleet-of-one is local; setFocus collapses it to
+    // home, so the push carries undefined (home), never a fabricated remote id.
+    store.setFocus({ machineId: "local-mbp", name: "MacBook Pro", isLocal: true });
+
+    expect(store.isHome).toBe(true);
+    // No effective change from the home default → no message emitted.
+    expect(postToOverlay).not.toHaveBeenCalled();
   });
 });

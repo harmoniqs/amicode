@@ -100,6 +100,56 @@ describe("sidebar bridge — handleSidebarMessage dispatches new-project with sl
   });
 });
 
+describe("sidebar bridge — handleSidebarMessage dispatches focus-machine (#1451)", () => {
+  it("routes a focus-machine up-message to the focusMachine handler, never to connect-to-device", async () => {
+    const { handleSidebarMessage } = await import("../src/sidebar_bridge");
+    const focusMachine = vi.fn();
+    const connectToDevice = vi.fn();
+    const handlers = {
+      openChat: vi.fn(),
+      newProject: vi.fn(),
+      addExisting: vi.fn(),
+      newEnvironment: vi.fn(),
+      addExistingEnvironment: vi.fn(),
+      getRoots: vi.fn(() => []),
+      getChildren: vi.fn(async () => []),
+      openFile: vi.fn(),
+      fileOp: vi.fn(async () => ({ ok: true })),
+      postMessage: vi.fn(),
+      setSectionOrder: vi.fn(),
+      reorderRoot: vi.fn(),
+      connectToDevice,
+      focusMachine,
+    };
+
+    handleSidebarMessage(
+      { kind: "focus-machine", machineId: "mac-studio-01", isLocal: false } as any,
+      handlers as any,
+    );
+    expect(focusMachine).toHaveBeenCalledTimes(1);
+    expect(focusMachine).toHaveBeenCalledWith({
+      kind: "focus-machine",
+      machineId: "mac-studio-01",
+      isLocal: false,
+    });
+    // Focus and connect are INDEPENDENT (AC2): a focus-machine dispatch never
+    // fires the connect-to-device handler.
+    expect(connectToDevice).not.toHaveBeenCalled();
+  });
+
+  it("routes connect-to-device to connectToDevice, never to focusMachine (the other direction)", async () => {
+    const { handleSidebarMessage } = await import("../src/sidebar_bridge");
+    const focusMachine = vi.fn();
+    const connectToDevice = vi.fn();
+    handleSidebarMessage(
+      { kind: "connect-to-device", machineId: "mac-studio-01", deviceName: "Mac Studio", isLocal: false } as any,
+      { connectToDevice, focusMachine } as any,
+    );
+    expect(connectToDevice).toHaveBeenCalledTimes(1);
+    expect(focusMachine).not.toHaveBeenCalled();
+  });
+});
+
 // ── Section-label actions: New Project / Add Existing on Research + Development ──
 
 describe("section header actions (Research / Development label bars)", () => {
