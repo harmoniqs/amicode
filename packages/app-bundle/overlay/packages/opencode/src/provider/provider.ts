@@ -872,11 +872,21 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
           // so point an OpenAI-compatible client at the REST endpoint and bind it to the gateway with
           // cf-aig-gateway-id — that keeps requests gateway-routed (analytics/caching/BYOK), not a
           // bypass. models.dev ids (provider/model, dotted) pass through unchanged.
+          // The native routes above get their gateway options via createAiGateway's `options`; this
+          // REST fallback bypasses that wrapper, so forward the same options as their cf-aig-* header
+          // equivalents (CodeRabbit #1506) — otherwise caching/logging/metadata are silently dropped
+          // for third-party models.
+          const cfAigHeaders: Record<string, string> = { "cf-aig-gateway-id": gateway }
+          if (opts.metadata !== undefined) cfAigHeaders["cf-aig-metadata"] = JSON.stringify(opts.metadata)
+          if (opts.cacheTtl !== undefined) cfAigHeaders["cf-aig-cache-ttl"] = String(opts.cacheTtl)
+          if (opts.cacheKey !== undefined) cfAigHeaders["cf-aig-cache-key"] = String(opts.cacheKey)
+          if (opts.skipCache !== undefined) cfAigHeaders["cf-aig-skip-cache"] = String(opts.skipCache)
+          if (opts.collectLog !== undefined) cfAigHeaders["cf-aig-collect-log"] = String(opts.collectLog)
           return createOpenAICompatible({
             name: "cloudflare-ai-gateway",
             baseURL: `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/v1`,
             apiKey: apiToken,
-            headers: { "cf-aig-gateway-id": gateway },
+            headers: cfAigHeaders,
           })(modelID)
         },
         options: {},

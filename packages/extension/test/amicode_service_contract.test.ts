@@ -219,7 +219,7 @@ describe("amicode service — golden-fixture parity with the fork", () => {
     expect(meta.entries.length).toBeGreaterThan(0);
     // Post-absorption: the lock has version + base_commit + overlay_hash.
     const lock = JSON.parse(readFileSync(fileURLToPath(new URL("../opencode.lock.json", import.meta.url)), "utf8"));
-    expect(lock.version).toBe("1.18.29");
+    expect(lock.version).toBe("1.18.30");
     expect(lock.base_commit).toMatch(/^[0-9a-f]{40}$/);
     expect(lock.overlay_hash).toMatch(/^[0-9a-f]{64}$/);
   });
