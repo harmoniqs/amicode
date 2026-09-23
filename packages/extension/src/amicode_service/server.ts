@@ -27,6 +27,19 @@ import { resolveAttachmentPointer } from "./attachment_pointer";
 import { resolveKeeperPointer } from "./keeper_pointer";
 import { resolveAmicodeTarget, type MultiplexTarget } from "./attachment_pointer";
 import type { MultiplexResolver, ResolvedTarget } from "./session_multiplexer";
+import { BOUND_NONCE_HEADER, BOUND_IDENTITY_HEADER } from "./fleet_bootstrap_headers";
+
+/** #1480: read ONE request header as a trimmed non-empty string, else
+ *  undefined. node:http lower-cases header keys and may deliver an array (a
+ *  repeated header) — take the first, and treat empty/whitespace as absent so a
+ *  blank carrier never counts as presented. */
+function headerValue(req: http.IncomingMessage, name: string): string | undefined {
+  const raw = req.headers[name.toLowerCase()];
+  const v = Array.isArray(raw) ? raw[0] : raw;
+  if (typeof v !== "string") return undefined;
+  const t = v.trim();
+  return t === "" ? undefined : t;
+}
 
 export interface AmicodeRequestCtx {
   /** Fully-parsed request URL (query params included — POST /amicode/profile
@@ -34,6 +47,12 @@ export interface AmicodeRequestCtx {
   url: URL;
   /** Raw request body ("" when none). Capped at 1 MiB. */
   body: string;
+  /** #1480: the request's headers (lower-cased keys, as node:http delivers
+   *  them). Threaded so the bound-nonce mint handler can read its OFF-URL
+   *  carrier (the enrollment nonce + requesting identity_key live in headers,
+   *  never a query string — the #1475 audit fix). Optional so every existing
+   *  handler that only reads `url`/`body` is untouched. */
+  headers?: http.IncomingHttpHeaders;
 }
 
 export interface AmicodeHandlerResult {
@@ -66,6 +85,14 @@ export interface AcceptSet {
   /** Whether a presented enrollment nonce is presently redeemable (validate,
    *  never consume — the handler consumes on a successful mint). */
   validateNonce(nonce: string): boolean;
+  /** #1480: whether a presented BOUND enrollment nonce is presently redeemable
+   *  for THIS target and requesting identity_key — the OFF-URL Observe bootstrap
+   *  path. Validate only (the mint handler consumes atomically on success).
+   *  Absent binding material → false (never a match). */
+  validateBoundNonce?(nonce: string, target: string, identityKey: string): boolean;
+  /** #1480: this machine's own machine_id — the `target` a bound nonce must be
+   *  bound to (a joiner enrolls WITH this machine). undefined when unknown. */
+  selfMachineId?(): string | undefined;
 }
 
 /** #391 (the local-shell data plane, D1): the fleet plane the staged path
@@ -332,6 +359,22 @@ export class AmicodeServiceServer {
     // 3. the enrollment-nonce mint endpoint — the ONE bearer-less path a
     //    joiner reaches (both phases; the nonce IS the credential, §D4).
     if (this.acceptSet!.isMintEndpoint(method, url.pathname)) {
+      // #1480: the BOUND path FIRST — the nonce + requesting identity_key ride
+      // OFF-URL HEADERS (the #1475 audit fix), bound to THIS machine as target.
+      // A query-string nonce is NOT consulted for the bound path, so the
+      // audited-away URL carrier can never authenticate a bound bootstrap.
+      const validateBound = this.acceptSet!.validateBoundNonce?.bind(this.acceptSet);
+      const target = this.acceptSet!.selfMachineId?.();
+      if (validateBound !== undefined && target !== undefined) {
+        const hdrNonce = headerValue(req, BOUND_NONCE_HEADER);
+        const hdrIdentity = headerValue(req, BOUND_IDENTITY_HEADER);
+        if (hdrNonce !== undefined && hdrIdentity !== undefined && validateBound(hdrNonce, target, hdrIdentity)) {
+          return true;
+        }
+      }
+      // legacy unbound path (#1438): the URL-carried nonce still authenticates
+      // pre-#1480 joiners (no regression). New Observe bootstrap uses the bound
+      // header path above.
       const nonce = url.searchParams.get("enrollment_nonce");
       if (nonce !== null && this.acceptSet!.validateNonce(nonce)) return true;
     }
@@ -483,7 +526,7 @@ export class AmicodeServiceServer {
         const route = this.routes.get(`${req.method} ${url.pathname}`);
         if (route) {
           const body = await this.readBody(req);
-          const result = await route.handler({ url, body });
+          const result = await route.handler({ url, body, headers: req.headers });
           send(result);
           return;
         }

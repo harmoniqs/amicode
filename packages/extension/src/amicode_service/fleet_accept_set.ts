@@ -17,7 +17,7 @@ import { join } from "node:path";
 import { atomicWriteFileSync } from "./credentials";
 import type { AcceptSet } from "./server";
 import { readIssuedTokens } from "./fleet_issued_tokens";
-import { validateEnrollmentNonce } from "./fleet_enrollment_nonce";
+import { validateEnrollmentNonce, validateBoundEnrollmentNonce } from "./fleet_enrollment_nonce";
 import { hasIssuedToken } from "./fleet_issued_tokens";
 import { hasPeerToken } from "./fleet_peer_store";
 import { placementDescriptor, type RosterRow } from "@amicode/schema";
@@ -78,6 +78,10 @@ export interface BuildAcceptSetDeps {
   hubCredentialToken?: () => string | undefined;
   /** Override the mint endpoint path (default MINT_ENDPOINT_PATH). */
   mintEndpointPath?: string;
+  /** #1480: this machine's own machine_id — the `target` a bound Observe
+   *  bootstrap nonce must be bound to (a joiner enrolls WITH this machine).
+   *  Absent → the bound path never matches (only the legacy unbound path). */
+  selfMachineId?: string;
 }
 
 /** Build the AcceptSet the service boundary consumes. Every method reads its
@@ -90,6 +94,12 @@ export function buildAcceptSet(deps: BuildAcceptSetDeps = {}): AcceptSet {
     hubCredentialToken: () => deps.hubCredentialToken?.(),
     isMintEndpoint: (method, pathname) => method === "POST" && pathname === mintPath,
     validateNonce: (nonce) => validateEnrollmentNonce(nonce, { storeFile: deps.enrollmentNonceFile }),
+    // #1480: the OFF-URL bound Observe bootstrap path — validate the nonce
+    // against THIS machine as target and the requesting identity_key (read
+    // fresh per request, §D2). Consume happens in the mint handler.
+    validateBoundNonce: (nonce, target, identityKey) =>
+      validateBoundEnrollmentNonce(nonce, { target, identityKey }, { storeFile: deps.enrollmentNonceFile }),
+    selfMachineId: () => deps.selfMachineId,
   };
 }
 
