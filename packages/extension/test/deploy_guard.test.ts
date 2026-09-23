@@ -46,6 +46,12 @@ type PackagingFixture = {
   stage: string
 }
 
+type Missing832Protection =
+  | "shared-version-initialization"
+  | "task-spawn-ancestor-invalidation"
+  | "shared-eviction-cleanup"
+  | "directory-owned-copy"
+
 const runFixtureCommand = (command: string, args: string[], cwd: string) => {
   const result = spawnSync(command, args, { cwd, encoding: "utf8" })
   if (result.error || result.status !== 0) {
@@ -65,7 +71,22 @@ const writeFixtureFile = (root: string, relative: string, content: string) => {
 // This is deliberately a real, local git topology rather than a preflight
 // helper fixture: build_app_bundle.mjs must fetch, classify a diverged HEAD,
 // validate the overlay, and then decide whether staging may happen.
-const makePackagingFixture = ({ omitDiffVersion = false }: { omitDiffVersion?: boolean } = {}): PackagingFixture => {
+const serverSessionFixture = (missing?: Missing832Protection) =>
+  [
+    missing === "shared-version-initialization" ? "const data = {}" : "diff_version: {} as Record<string, number>,",
+    "const taskSpawnParent = new Map<string, string>()",
+    missing === "task-spawn-ancestor-invalidation"
+      ? ""
+      : 'taskSpawnParent.set(sessionId, parentSessionId)\nsetData("diff_version", ancestor, (version = 0) => version + 1)',
+    missing === "shared-eviction-cleanup" ? "" : "for (const sessionID of sessionIDs) delete draft.diff_version[sessionID]",
+  ].join("\n")
+
+const directoryCacheFixture = (missing?: Missing832Protection) =>
+  missing === "directory-owned-copy"
+    ? "type SessionCache = { diff_version: Record<string, number | undefined> }"
+    : "type SessionCache = { session_status: Record<string, unknown> }"
+
+const makePackagingFixture = ({ missing832 }: { missing832?: Missing832Protection } = {}): PackagingFixture => {
   const root = mkdtempSync(join(tmpdir(), "ci-packaging-"))
   const remote = join(root, "origin.git")
   const repo = join(root, "repo")
@@ -99,10 +120,13 @@ const makePackagingFixture = ({ omitDiffVersion = false }: { omitDiffVersion?: b
   )
   writeFixtureFile(
     repo,
+    "packages/app-bundle/overlay/packages/app/src/context/server-session.ts",
+    serverSessionFixture(missing832),
+  )
+  writeFixtureFile(
+    repo,
     "packages/app-bundle/overlay/packages/app/src/context/global-sync/session-cache.ts",
-    omitDiffVersion
-      ? "delete store.diff_version[sessionID]"
-      : "const diff_version: Record<string, number | undefined> = {}\ndelete store.diff_version[sessionID]",
+    directoryCacheFixture(missing832),
   )
   writeFixtureFile(
     repo,
@@ -407,8 +431,8 @@ describe("#992 the #964 known-fixes check at deploy time", () => {
 
   const HEALTHY = {
     "components/prompt-input-v2.tsx": "export const x = promptDesignPlaceholder(\n  mode(),\n  placeholder(),\n)",
-    "context/global-sync/session-cache.ts":
-      "const diff_version: Record<string, number | undefined> = {}\ndelete store.diff_version[sessionID]",
+    "context/server-session.ts": serverSessionFixture(),
+    "context/global-sync/session-cache.ts": directoryCacheFixture(),
     "i18n/en.ts": 'export const dict = { "session.exportTrace": "Export trace" }',
     "i18n/de.ts": 'export const dict = { "session.exportTrace": "Trace exportieren" }',
   }
@@ -452,23 +476,43 @@ describe("#992 the #964 known-fixes check at deploy time", () => {
     }
   })
 
+  test.each([
+    ["shared diff-version initialization", "context/server-session.ts", serverSessionFixture("shared-version-initialization")],
+    ["task-spawn ancestor invalidation", "context/server-session.ts", serverSessionFixture("task-spawn-ancestor-invalidation")],
+    ["shared eviction cleanup", "context/server-session.ts", serverSessionFixture("shared-eviction-cleanup")],
+    ["restored directory-owned diff-version copy", "context/global-sync/session-cache.ts", directoryCacheFixture("directory-owned-copy")],
+  ])("a missing #832 %s refuses with the shared-ownership remedy", (_protection, file, content) => {
+    const dir = writeOverlay({ ...HEALTHY, [file]: content })
+    try {
+      const regressed = checkKnownFixes(dir)
+      expect(regressed).toHaveLength(1)
+      expect(regressed[0]).toContain("KNOWN-FIX MISSING")
+      expect(regressed[0]).toContain("#832")
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   test("the shared fixture list matches the #964 guard's source of record", () => {
     // The shared module (packages/app-bundle/scripts/known_fixes.mjs) is the
     // single machine-usable copy both deploy_guard.mjs and overlay-sync.mjs
     // consume; overlay_known_fixes_964.test.ts is the source of record. This
-    // cross-checks the two lists can't drift silently: same file set.
+    // cross-checks the two lists can't drift silently: identical fixtures.
     const guardSource = readFileSync(
       join(__dirname, "overlay_known_fixes_964.test.ts"),
       "utf8",
     )
+    const guardFixes = [...guardSource.matchAll(/fix: "([^"]+)"/g)].map((m) => m[1])
     const guardFiles = [...guardSource.matchAll(/file: "([^"]+)"/g)].map((m) => m[1])
     const guardSig = [...guardSource.matchAll(/signature: (\/.+\/[a-z]*)/g)].map((m) => m[1])
     const sharedSource = readFileSync(
       join(__dirname, "..", "..", "app-bundle", "scripts", "known_fixes.mjs"),
       "utf8",
     )
+    const sharedFixes = [...sharedSource.matchAll(/fix: "([^"]+)"/g)].map((m) => m[1])
     const sharedFiles = [...sharedSource.matchAll(/file: "([^"]+)"/g)].map((m) => m[1])
     const sharedSig = [...sharedSource.matchAll(/signature: (\/.+\/[a-z]*)/g)].map((m) => m[1])
+    expect(sharedFixes).toEqual(guardFixes)
     expect(sharedFiles).toEqual(guardFiles)
     expect(sharedSig).toEqual(guardSig)
   })
@@ -486,7 +530,7 @@ describe("#992 the #964 known-fixes check at deploy time", () => {
 })
 
 describe("#1469 CI packaging preflight", () => {
-  test("validates a healthy overlay before advising on a diverged CI merge topology", () => {
+  test("stages a healthy #832 shared-ownership contract before advising on a diverged CI merge topology", () => {
     const fixture = makePackagingFixture()
     try {
       const result = packageFixture(fixture, true)
@@ -502,8 +546,13 @@ describe("#1469 CI packaging preflight", () => {
     }
   })
 
-  test("refuses a diverged CI fixture with only the #832 diff-version signature removed before staging", () => {
-    const fixture = makePackagingFixture({ omitDiffVersion: true })
+  test.each([
+    ["shared diff-version initialization", "shared-version-initialization"],
+    ["task-spawn ancestor invalidation", "task-spawn-ancestor-invalidation"],
+    ["shared eviction cleanup", "shared-eviction-cleanup"],
+    ["restored directory-owned diff-version copy", "directory-owned-copy"],
+  ] as const)("refuses a diverged CI fixture with %s before staging", (_protection, missing832) => {
+    const fixture = makePackagingFixture({ missing832 })
     try {
       const result = packageFixture(fixture, true)
       const output = `${result.stdout}\n${result.stderr}`
