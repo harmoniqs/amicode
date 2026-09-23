@@ -942,6 +942,13 @@ describe("fleet-client relay skeleton (#1261) — a client holds NO local engine
               path: url.pathname,
               method: "GET",
               headers: {
+                // #1485 (AC1): the upgrade path now enforces the SAME membership
+                // decision as request dispatch — a real webview always attaches
+                // the origin's service mint, so the raw upgrade probe must too
+                // (an unauthenticated upgrade is refused identically to an
+                // unauthenticated request; the resolver routing under test is
+                // reached only once the caller is authorized).
+                Authorization: serverAuthHeader(SERVICE_PASSWORD),
                 Connection: "Upgrade",
                 Upgrade: "websocket",
                 "Sec-WebSocket-Key": "dGVzdA==",
