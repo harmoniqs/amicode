@@ -68,7 +68,13 @@ import { SDKProvider, useSDK } from "@/context/sdk"
 import { resolveLandingDirectory } from "@/pages/new-session-landing"
 import { authTokenFromCredentials } from "@/utils/server"
 import { normalizeSessionInfo } from "@/utils/session"
-import { BULK_WARM_MESSAGES, createSessionWarmScheduler, warmBulkSession, warmOpenSessionTab } from "@/context/session-warm"
+import {
+  BULK_WARM_MESSAGES,
+  createSessionWarmScheduler,
+  sessionWarmSchedulerKey,
+  warmBulkSession,
+  warmOpenSessionTab,
+} from "@/context/session-warm"
 import type { SessionV2Info } from "@opencode-ai/sdk/v2/client"
 import type { SessionInfo } from "@opencode-ai/client/promise"
 import { WslServersProvider } from "@/wsl/context"
@@ -925,7 +931,7 @@ function SessionLineagePrewarmer() {
         ;(globalThis as { __amicodePrewarmErr?: string }).__amicodePrewarmErr = String(e).slice(0, 90)
         continue
       }
-      const origin = new URL(conn.http.url).origin
+      const origin = sessionWarmSchedulerKey(conn.http.url)
       await warmScheduler.warm(
         origin,
         recent.map((info) => async () => {

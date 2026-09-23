@@ -4,6 +4,17 @@ export const WARM_CONCURRENCY = 3
 
 type WarmChain = () => Promise<void>
 
+/** Returns the shared HTTP-origin pool key, or isolates an unparseable/non-origin
+ * server URL so it cannot abort a bulk warm pass for later connections. */
+export function sessionWarmSchedulerKey(serverURL: string, pageURL = globalThis.location?.href) {
+  try {
+    const origin = new URL(serverURL, pageURL).origin
+    return origin === "null" ? serverURL : origin
+  } catch {
+    return serverURL
+  }
+}
+
 type WarmPool = {
   active: number
   queue: Array<{ chain: WarmChain; resolve: () => void }>

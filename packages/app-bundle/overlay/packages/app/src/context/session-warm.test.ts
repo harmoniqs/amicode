@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import {
   BULK_WARM_MESSAGES,
   createSessionWarmScheduler,
+  sessionWarmSchedulerKey,
   warmBulkSession,
   warmOpenSessionTab,
 } from "./session-warm"
@@ -44,6 +45,18 @@ async function settle() {
 }
 
 describe("session warming", () => {
+  test("derives safe scheduler keys for absolute, relative, malformed, and opaque server URLs", () => {
+    const pageURL = "https://studio.example/app/session"
+    const malformed = "http://[::1"
+    const opaque = "data:text/plain,session"
+
+    expect(
+      ["https://hub.example:43117/api", "/gateway", malformed, opaque, "https://later.example/api"].map((url) =>
+        sessionWarmSchedulerKey(url, pageURL),
+      ),
+    ).toEqual(["https://hub.example:43117", "https://studio.example", malformed, opaque, "https://later.example"])
+  })
+
   test("caps overlapping shared-origin warm chains at three while foreground work can enter the shared six-request pool", async () => {
     const scheduler = createSessionWarmScheduler()
     const blocked = [deferred(), deferred(), deferred(), deferred()]
