@@ -43,6 +43,12 @@ export interface FleetPeerSource {
   getUrl(): string | undefined;
   /** The peer token (from the reader peer-token store). */
   token?: string;
+  /** #1481 (AC1): whether THIS machine holds a valid Observe grant for the peer
+   *  — TRUST, not reachability, gates observation. `false` means untrusted: the
+   *  peer contributes NO session metadata and is recorded as `untrusted` (never
+   *  fetched). Omitted/`true` = trusted (the #1455 back-compat default, so every
+   *  existing caller behaves exactly as before). */
+  trusted?: boolean;
 }
 
 /** Roster entry for name/device_type enrichment. */
@@ -59,6 +65,11 @@ export interface FleetProjectionOptions {
   local: ProjectionSourceOptions;
   /** Remote peers to fan out to (keyed by machineId). */
   peers: FleetPeerSource[];
+  /** #1481 (AC3): peers EXCLUDED from selection by a blocking identity state
+   *  (alias-conflict / key-changed). They are NOT fetched, but each is recorded
+   *  as a NAMED source (default reason `identity-conflict`) so a conflicted peer
+   *  never silently vanishes from the projection — the central AC3 invariant. */
+  blockedPeers?: Array<{ machineId: string; reason?: SourceAbsenceReason; detail?: string }>;
   /** Roster lookup for owner_name/device_type enrichment. */
   rosterLookup: (machineId: string) => RosterEntry | undefined;
   fetchImpl?: typeof fetch;
@@ -76,7 +87,20 @@ export interface FleetProjection {
   currency: { token: string; sources: string[]; derived_over: "fetched" };
 }
 
-export type SourceAbsenceReason = "credential-missing" | "no-upstream" | "fetch-failed" | "unauthorized";
+export type SourceAbsenceReason =
+  | "credential-missing"
+  | "no-upstream"
+  | "fetch-failed"
+  | "unauthorized"
+  // #1481 (AC1): the peer is reachable but this machine holds NO Observe grant
+  // for it — trust, not reachability, gates observation. A DISTINCT state from
+  // `no-upstream` (a trusted peer whose URL is down); an untrusted peer is never
+  // fetched, so no session metadata can leak.
+  | "untrusted"
+  // #1481 (AC3): a blocking identity reconciliation state (alias-conflict /
+  // key-changed) — the peer is NAMED (never silently excluded from the
+  // projection), but is not selected for observation until re-admitted.
+  | "identity-conflict";
 
 /** One source's fetch record: the NAMED outcome plus, when fetched, the
  *  currency aggregates derived over exactly what came back. */
@@ -349,6 +373,16 @@ export async function buildFleetProjection(opts: FleetProjectionOptions): Promis
   // Fan out: local + all peers in parallel
   const localPromise = fetchSessions(opts.localMachineId, opts.local, localAuth, fetchImpl, timeoutMs);
   const peerPromises = opts.peers.map((peer) => {
+    // #1481 (AC1): TRUST gates Observe. An untrusted peer (no Observe grant) is
+    // never contacted — it resolves to a NAMED `untrusted` record with zero
+    // entries, so no session metadata can leak. Trust is checked BEFORE the
+    // fetch, upstream of the URL/token, so reachability is irrelevant here.
+    if (peer.trusted === false) {
+      return Promise.resolve({
+        record: { source: peer.machineId, present: false, reason: "untrusted" as const } satisfies SourceFetchRecord,
+        entries: [] as Record<string, unknown>[],
+      });
+    }
     const auth = peer.token !== undefined ? peerAuthHeader(peer.token) : undefined;
     return fetchSessions(peer.machineId, { getUrl: peer.getUrl }, auth, fetchImpl, timeoutMs);
   });
@@ -360,6 +394,17 @@ export async function buildFleetProjection(opts: FleetProjectionOptions): Promis
   sources[opts.localMachineId] = localResult.record;
   for (let i = 0; i < opts.peers.length; i++) {
     sources[opts.peers[i].machineId] = peerResults[i].record;
+  }
+  // #1481 (AC3): blocked-identity peers are NAMED (never fetched, never
+  // silently dropped) so a conflicted peer stays visible as a source state
+  // rather than vanishing from the projection.
+  for (const blocked of opts.blockedPeers ?? []) {
+    sources[blocked.machineId] = {
+      source: blocked.machineId,
+      present: false,
+      reason: blocked.reason ?? "identity-conflict",
+      ...(blocked.detail !== undefined ? { detail: blocked.detail } : {}),
+    };
   }
 
   // Tag each source's sessions with owner info (roster join)

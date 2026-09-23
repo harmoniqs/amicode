@@ -25,7 +25,7 @@
 // configured fleet (empty roster) yields no peers.
 import type { RosterRow } from "@amicode/schema";
 import { readPeerToken as readPeerTokenFromStore, type PeerTokenRead } from "./fleet_peer_store";
-import { servingReachablePeers } from "./fleet_accept_set";
+import { servingReachablePeers, servingButBlockedPeers } from "./fleet_accept_set";
 import { readRosterRows } from "./roster";
 import type { PeerTransport } from "./session_multiplexer";
 import type { RosterEntry } from "./merged_projection";
@@ -38,6 +38,10 @@ export interface FleetPeerProvider {
   localMachineId: string;
   /** The serving∧reachable peers (roster-derived), MINUS self. */
   getServingPeers(): Array<{ machineId: string }>;
+  /** #1481 (AC3): serving∧reachable peers EXCLUDED from selection by a blocking
+   *  identity state (alias-conflict / key-changed). These are NAMED source
+   *  states in the projection — a conflicted peer never silently vanishes. */
+  getBlockedPeers(): Array<{ machineId: string; reason: "identity-conflict" }>;
   /** The reader peer-store credential this machine holds for a target peer. */
   readPeerToken(machineId: string): PeerTokenRead;
   /** Roster name/device_type enrichment for the owner tag. */
@@ -77,6 +81,15 @@ export function buildFleetPeerProvider(deps: FleetPeerProviderDeps): FleetPeerPr
       return servingReachablePeers(rosterRows())
         .filter((p) => p.machineId !== "" && p.machineId !== deps.localMachineId)
         .map((p) => ({ machineId: p.machineId }));
+    },
+    getBlockedPeers() {
+      // #1481 (AC3): serving∧reachable rows EXCLUDED only by a blocking identity
+      // state — NAMED as identity-conflict source states so they never silently
+      // vanish. Self is excluded (a machine never conflicts with itself here).
+      return servingButBlockedPeers(rosterRows(), deps.localMachineId).map((p) => ({
+        machineId: p.machineId,
+        reason: "identity-conflict" as const,
+      }));
     },
     readPeerToken(machineId) {
       return readToken(machineId);

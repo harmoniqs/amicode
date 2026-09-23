@@ -943,6 +943,356 @@ describe("fleet-wide projection — N-peer, machine-keyed fan-out (#1439)", () =
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
+// #1481 — trusted Observe projection: trust gates Observe. A peer WITHOUT a
+// valid Observe grant (an UNTRUSTED peer) contributes NO session metadata, and
+// is named `untrusted` — a DISTINCT source state from `no-upstream` (a trusted
+// peer whose URL is momentarily down). This is the no-metadata-leak invariant
+// (AC1): trust, not reachability, gates whether a peer's sessions are observed.
+// Additive over #1455's buildFleetProjection (AC5 — wraps, never replaces).
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe("#1481 trust gate — untrusted peers contribute no session metadata (AC1)", () => {
+  // A peer that WOULD serve sessions if asked — its URL is live and its token
+  // valid. The trust gate must keep the projection from ever asking it.
+  const SECRET_SESSIONS = [
+    { id: "ses-secret-1", title: "confidential", directory: "/secret", time: { created: 1, updated: 9 } },
+    { id: "ses-secret-2", title: "also confidential", directory: "/secret", time: { created: 2, updated: 8 } },
+  ];
+  const LOCAL_ONLY = [{ id: "ses-local-only", title: "mine", directory: "/local", time: { created: 3, updated: 7 } }];
+
+  let localEngine: MockOrigin;
+  let untrustedPeer: MockOrigin;
+
+  beforeAll(async () => {
+    localEngine = await startMockEngine(LOCAL_ONLY);
+    untrustedPeer = await startMockPeer(SECRET_SESSIONS, "tok-secret");
+  });
+
+  afterAll(async () => {
+    await localEngine.stop();
+    await untrustedPeer.stop();
+  });
+
+  const rosterLookup = (id: string): { name: string; device_type?: string } | undefined =>
+    id === "macbook-local" ? { name: "MacBook", device_type: "laptop" }
+    : id === "untrusted-box" ? { name: "Untrusted Box", device_type: "desktop" }
+    : undefined;
+
+  it("an untrusted peer (trusted:false) with a REACHABLE url + valid token still contributes ZERO sessions and is named `untrusted`", async () => {
+    const projection = await buildFleetProjection({
+      localMachineId: "macbook-local",
+      local: { getUrl: () => localEngine.url, password: "engine-mint-password" },
+      peers: [
+        // the peer is reachable and its token is valid — ONLY trust:false gates it
+        { machineId: "untrusted-box", getUrl: () => untrustedPeer.url, token: "tok-secret", trusted: false },
+      ],
+      rosterLookup,
+    });
+
+    // named as a DISTINCT untrusted state — never `no-upstream` (which would
+    // imply a trusted-but-down peer) and never silently absent.
+    expect(projection.sources["untrusted-box"].present).toBe(false);
+    expect(projection.sources["untrusted-box"].reason).toBe("untrusted");
+
+    // NO session metadata leaks: not one of the peer's sessions appears, and no
+    // owner tag names the untrusted machine anywhere in the list.
+    expect(projection.sessions.some((s) => s.id === "ses-secret-1")).toBe(false);
+    expect(projection.sessions.some((s) => s.id === "ses-secret-2")).toBe(false);
+    expect(projection.sessions.some((s) => s.amicode_owner?.owner_machine_id === "untrusted-box")).toBe(false);
+
+    // the untrusted source contributes no currency aggregates either (nothing fetched)
+    expect(projection.sources["untrusted-box"].count).toBeUndefined();
+    expect(projection.currency.sources).not.toContain("untrusted-box");
+
+    // the untrusted peer's server was NEVER contacted — the gate is upstream of the fetch
+    expect(untrustedPeer.requests.length).toBe(0);
+
+    // the local source still contributes normally (one peer's state never hides another's)
+    expect(projection.sources["macbook-local"].present).toBe(true);
+    expect(projection.sessions.some((s) => s.id === "ses-local-only")).toBe(true);
+  });
+
+  it("a TRUSTED peer (trusted omitted / true) contributes all its sessions with owner provenance — the additive default is unchanged (AC5)", async () => {
+    const projection = await buildFleetProjection({
+      localMachineId: "macbook-local",
+      local: { getUrl: () => localEngine.url, password: "engine-mint-password" },
+      // trusted omitted → back-compat default is trusted (existing #1455 callers)
+      peers: [{ machineId: "untrusted-box", getUrl: () => untrustedPeer.url, token: "tok-secret" }],
+      rosterLookup,
+    });
+    expect(projection.sources["untrusted-box"].present).toBe(true);
+    expect(projection.sessions.some((s) => s.id === "ses-secret-1")).toBe(true);
+    const s = projection.sessions.find((x) => x.id === "ses-secret-1");
+    expect(s!.amicode_owner).toMatchObject({ owner_machine_id: "untrusted-box", is_local: false });
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// #1481 — dynamic projection inputs (AC4): the projection re-reads current peer
+// credentials + endpoints on EACH build. Token rotation and endpoint recovery
+// take effect WITHOUT a service restart — one running service, mutated stores,
+// visibly different projections on the next request.
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe("#1481 dynamic inputs (AC4) — token rotation + endpoint recovery, no restart", () => {
+  let root: string;
+  let dist: string;
+  let overlaySource: string;
+  let localEngine: MockOrigin;
+  let peer: MockOrigin;
+  let engineToken: string;
+  let service: ReturnType<typeof createAmicodeService>;
+  let origin: string;
+  let savedHubFile: string | undefined;
+
+  // A MUTABLE reader peer-store the provider reads FRESH per request — this is
+  // the seam the real provider hits (readPeerToken late, never a boot snapshot).
+  const store: { url: string | undefined; token: string | undefined } = { url: undefined, token: undefined };
+
+  beforeAll(async () => {
+    root = mkdtempSync(join(tmpdir(), "amicode-1481-ac4-"));
+    dist = buildMockDist(root);
+    overlaySource = join(root, "overlay-source");
+    writeDataPlaneManifest(overlaySource);
+    localEngine = await startMockEngine([{ id: "ses-ac4-local", title: "local", time: { created: 1, updated: 2 } }]);
+    peer = await startMockPeer([{ id: "ses-ac4-peer", title: "peer", time: { created: 3, updated: 4 } }], "rotated-token");
+    engineToken = serverAuthToken("engine-mint-password");
+    savedHubFile = process.env.AMICO_FLEET_HUB_FILE;
+    process.env.AMICO_FLEET_HUB_FILE = join(root, "hub-cred-absent.json");
+    service = createAmicodeService({
+      password: "service-own-mint",
+      engine: { password: "engine-mint-password", getUrl: () => localEngine.url },
+      shelf: { distRoot: dist },
+      fleet: {
+        entitlements: ["amicissimo"],
+        overlaySource,
+        hub: { getUrl: () => undefined },
+        getMode: () => "fleet",
+        fleetPeers: {
+          localMachineId: "self-ac4",
+          getServingPeers: () => [{ machineId: "peer-ac4" }],
+          // read FRESH from the mutable store every call — the late-read seam
+          readPeerToken: () =>
+            store.token !== undefined && store.url !== undefined
+              ? { ok: true as const, credential: { baseUrl: store.url, token: store.token } }
+              : { ok: false as const },
+          rosterLookup: (id) => (id === "peer-ac4" ? { name: "Peer" } : id === "self-ac4" ? { name: "Self" } : undefined),
+        },
+      },
+    });
+    origin = (await service.start()).toString().replace(/\/$/, "");
+  });
+
+  afterAll(async () => {
+    await service.stop();
+    await localEngine.stop();
+    await peer.stop();
+    if (savedHubFile === undefined) delete process.env.AMICO_FLEET_HUB_FILE;
+    else process.env.AMICO_FLEET_HUB_FILE = savedHubFile;
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  async function sessionsBody() {
+    const res = await fetch(`${origin}/amicode/fleet/sessions`, { headers: { Authorization: `Basic ${engineToken}` } });
+    expect(res.status).toBe(200);
+    return (await res.json()) as FleetProjection;
+  }
+
+  it("no credential yet → the peer is a named untrusted absence; the endpoint recovers WITHOUT restart on the next request", async () => {
+    // start: no token, no url
+    let body = await sessionsBody();
+    expect(body.sources["peer-ac4"].present).toBe(false);
+    expect(body.sessions.some((s) => s.id === "ses-ac4-peer")).toBe(false);
+
+    // endpoint + credential recover — SAME running service, no restart
+    store.url = peer.url;
+    store.token = "rotated-token";
+    body = await sessionsBody();
+    expect(body.sources["peer-ac4"].present).toBe(true);
+    expect(body.sessions.some((s) => s.id === "ses-ac4-peer")).toBe(true);
+  });
+
+  it("a rotated (now-wrong) token → the very next request reflects the revoked/unauthorized state; re-rotating to the valid token recovers — all without restart", async () => {
+    // valid first
+    store.url = peer.url;
+    store.token = "rotated-token";
+    expect((await sessionsBody()).sources["peer-ac4"].present).toBe(true);
+
+    // rotate to a stale/wrong token → the peer 401s → NAMED unauthorized on the next build
+    store.token = "stale-wrong-token";
+    let body = await sessionsBody();
+    expect(body.sources["peer-ac4"].present).toBe(false);
+    expect(body.sources["peer-ac4"].reason).toBe("unauthorized");
+    expect(body.sessions.some((s) => s.id === "ses-ac4-peer")).toBe(false);
+
+    // re-rotate to the valid token → recovers, still no restart
+    store.token = "rotated-token";
+    body = await sessionsBody();
+    expect(body.sources["peer-ac4"].present).toBe(true);
+    expect(body.sessions.some((s) => s.id === "ses-ac4-peer")).toBe(true);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// #1481 — the identity-conflict source state (AC3): a serving∧reachable peer
+// flagged with a BLOCKING identity_state (alias-conflict / key-changed) must
+// surface as a NAMED `identity-conflict` source — NEVER silently excluded from
+// the projection (the pre-#1481 servingReachablePeers behaviour dropped it, so
+// its known sessions VANISHED). The central AC3 invariant: source absence is
+// visible data, and one peer's conflict never hides another peer's sessions.
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe("#1481 identity-conflict named source (AC3) — a conflicted peer never vanishes", () => {
+  const GOOD_SESSIONS = [{ id: "ses-good-1", title: "healthy peer", directory: "/good", time: { created: 1, updated: 9 } }];
+  const LOCAL = [{ id: "ses-local-c", title: "mine", directory: "/local", time: { created: 2, updated: 8 } }];
+
+  let localEngine: MockOrigin;
+  let goodPeer: MockOrigin;
+
+  beforeAll(async () => {
+    localEngine = await startMockEngine(LOCAL);
+    goodPeer = await startMockPeer(GOOD_SESSIONS, "tok-good");
+  });
+
+  afterAll(async () => {
+    await localEngine.stop();
+    await goodPeer.stop();
+  });
+
+  const rosterLookup = (id: string): { name: string; device_type?: string } | undefined =>
+    id === "self-c" ? { name: "Self" } : id === "good-peer" ? { name: "Good Peer" } : id === "conflicted-peer" ? { name: "Conflicted Peer" } : undefined;
+
+  it("a blocked (identity-conflict) peer is a NAMED source state; the healthy peer + local still render (one conflict never hides another)", async () => {
+    const projection = await buildFleetProjection({
+      localMachineId: "self-c",
+      local: { getUrl: () => localEngine.url, password: "engine-mint-password" },
+      peers: [{ machineId: "good-peer", getUrl: () => goodPeer.url, token: "tok-good" }],
+      // the conflicted peer is NOT fetched, but must appear as a named source
+      blockedPeers: [{ machineId: "conflicted-peer" }],
+      rosterLookup,
+    });
+
+    // NAMED, never silently dropped
+    expect(projection.sources["conflicted-peer"]).toBeDefined();
+    expect(projection.sources["conflicted-peer"].present).toBe(false);
+    expect(projection.sources["conflicted-peer"].reason).toBe("identity-conflict");
+
+    // the healthy peer + local are unaffected — one peer's conflict never hides another's
+    expect(projection.sources["good-peer"].present).toBe(true);
+    expect(projection.sessions.some((s) => s.id === "ses-good-1")).toBe(true);
+    expect(projection.sessions.some((s) => s.id === "ses-local-c")).toBe(true);
+
+    // the conflicted peer's currency is not folded in (nothing was fetched)
+    expect(projection.currency.sources).not.toContain("conflicted-peer");
+  });
+
+  it("the provider derives blocked peers from real roster rows carrying a blocking identity_state (alias-conflict / key-changed), excluding self", () => {
+    const provider = buildFleetPeerProvider({
+      localMachineId: "self-c",
+      rosterRows: () => [
+        { ...w0RosterRow({ id: "self-c", name: "Self", serving: true, reachable: true }), identity_state: "alias-conflict" },
+        { ...w0RosterRow({ id: "good-peer", name: "Good", serving: true, reachable: true }) },
+        { ...w0RosterRow({ id: "conflicted-peer", name: "Conflicted", serving: true, reachable: true }), identity_state: "alias-conflict" },
+        { ...w0RosterRow({ id: "keychanged-peer", name: "Key Changed", serving: true, reachable: true }), identity_state: "key-changed" },
+      ],
+      readPeerToken: () => ({ ok: false as const, reason: "absent" as const }),
+    });
+
+    // serving-peer set EXCLUDES the conflicted rows (the #1477 behaviour)…
+    expect(provider.getServingPeers().map((p) => p.machineId).sort()).toEqual(["good-peer"]);
+    // …but getBlockedPeers() NAMES them (both blocking states), never self.
+    const blocked = provider.getBlockedPeers().map((p) => p.machineId).sort();
+    expect(blocked).toEqual(["conflicted-peer", "keychanged-peer"]);
+    expect(provider.getBlockedPeers().every((p) => p.reason === "identity-conflict")).toBe(true);
+    expect(blocked).not.toContain("self-c");
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// #1481 — AC3 REMAINDER: peer loss, revoked trust, and transport failure are
+// DISTINCT named source states. Each carries its own `reason` through the
+// projection — they never collapse into a single "absent" or silently vanish.
+// Combined with the identity-conflict tests above, this covers all four AC3
+// failure modes.
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe("#1481 AC3 remainder — peer loss / revoked trust / transport failure source states", () => {
+  const LOCAL = [{ id: "ses-ac3r-local", title: "mine", directory: "/local", time: { created: 1, updated: 9 } }];
+  const PEER_SESSIONS = [{ id: "ses-ac3r-peer", title: "peer work", directory: "/peer", time: { created: 2, updated: 8 } }];
+
+  let localEngine: MockOrigin;
+  let peer: MockOrigin;
+
+  beforeAll(async () => {
+    localEngine = await startMockEngine(LOCAL);
+    peer = await startMockPeer(PEER_SESSIONS, "tok-ac3r");
+  });
+
+  afterAll(async () => {
+    await localEngine.stop();
+    await peer.stop();
+  });
+
+  const rosterLookup = (id: string): { name: string; device_type?: string } | undefined =>
+    id === "self-ac3r" ? { name: "Self" } : id === "alive-peer" ? { name: "Alive Peer" } : undefined;
+
+  it("a peer with a TRANSPORT FAILURE (unreachable URL) is a named `no-upstream` — DISTINCT from `unauthorized` or `identity-conflict`", async () => {
+    const projection = await buildFleetProjection({
+      localMachineId: "self-ac3r",
+      local: { getUrl: () => localEngine.url, password: "engine-mint-password" },
+      peers: [{ machineId: "alive-peer", getUrl: () => undefined, token: "tok-ac3r" }],
+      rosterLookup,
+    });
+    expect(projection.sources["alive-peer"].present).toBe(false);
+    expect(projection.sources["alive-peer"].reason).toBe("no-upstream");
+    // local is unaffected
+    expect(projection.sources["self-ac3r"].present).toBe(true);
+  });
+
+  it("a peer whose token was REVOKED (returns 401) is a named `unauthorized` — DISTINCT from `no-upstream` (transport) and `identity-conflict` (identity)", async () => {
+    const projection = await buildFleetProjection({
+      localMachineId: "self-ac3r",
+      local: { getUrl: () => localEngine.url, password: "engine-mint-password" },
+      peers: [{ machineId: "alive-peer", getUrl: () => peer.url, token: "WRONG-revoked-token" }],
+      rosterLookup,
+    });
+    expect(projection.sources["alive-peer"].present).toBe(false);
+    expect(projection.sources["alive-peer"].reason).toBe("unauthorized");
+  });
+
+  it("ALL THREE absence reasons are DISTINCT and coexist in the same projection — one failure never masks another", async () => {
+    const projection = await buildFleetProjection({
+      localMachineId: "self-ac3r",
+      local: { getUrl: () => localEngine.url, password: "engine-mint-password" },
+      peers: [
+        // transport failure: no URL
+        { machineId: "peer-transport", getUrl: () => undefined, token: "tok" },
+        // revoked trust: wrong token → 401
+        { machineId: "peer-revoked", getUrl: () => peer.url, token: "WRONG" },
+        // untrusted: explicitly not trusted
+        { machineId: "peer-untrusted", getUrl: () => peer.url, token: "tok-ac3r", trusted: false },
+      ],
+      // identity-conflict: via blockedPeers
+      blockedPeers: [{ machineId: "peer-conflict" }],
+      rosterLookup,
+    });
+    // Each has its OWN distinct reason
+    expect(projection.sources["peer-transport"].reason).toBe("no-upstream");
+    expect(projection.sources["peer-revoked"].reason).toBe("unauthorized");
+    expect(projection.sources["peer-untrusted"].reason).toBe("untrusted");
+    expect(projection.sources["peer-conflict"].reason).toBe("identity-conflict");
+    // NONE are silently absent — all four are named in the projection
+    for (const id of ["peer-transport", "peer-revoked", "peer-untrusted", "peer-conflict"]) {
+      expect(projection.sources[id]).toBeDefined();
+      expect(projection.sources[id].present).toBe(false);
+    }
+    // the local source is unaffected
+    expect(projection.sources["self-ac3r"].present).toBe(true);
+    expect(projection.sessions.some((s) => s.id === "ses-ac3r-local")).toBe(true);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
 // Integration: GET /amicode/fleet/sessions returns fleet-wide tagged list (#1439)
 // ══════════════════════════════════════════════════════════════════════════════
 
