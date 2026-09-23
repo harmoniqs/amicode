@@ -917,3 +917,164 @@ describe("#1477 AC6 — existing hub/client semantics remain unchanged", () => {
     expect(device!.role).toBe("client");
   });
 });
+
+// ── #1484 AC1 — peer relationship states + scoped server actions ─────────────
+
+describe("#1484 AC1 — fleet rows derive peer relationship from grant + identity state", () => {
+  it("a peer with an active control grant shows 'control-enabled'", () => {
+    const model = buildFleetSectionModel(input({
+      roster: [row({ machine_id: "peer-a", name: "Peer A" })],
+      peerGrants: {
+        "peer-a": { scope: "control", state: "active" },
+      },
+    }));
+    const device = model.devices.find((d) => d.machineId === "peer-a");
+    expect(device).toBeDefined();
+    expect(device!.peerRelationship).toBe("control-enabled");
+  });
+
+  it("a peer with an active observe grant shows 'trusted'", () => {
+    const model = buildFleetSectionModel(input({
+      roster: [row({ machine_id: "peer-a", name: "Peer A" })],
+      peerGrants: {
+        "peer-a": { scope: "observe", state: "active" },
+      },
+    }));
+    const device = model.devices.find((d) => d.machineId === "peer-a");
+    expect(device!.peerRelationship).toBe("trusted");
+  });
+
+  it("a peer with no grant shows 'known'", () => {
+    const model = buildFleetSectionModel(input({
+      roster: [row({ machine_id: "peer-a", name: "Peer A" })],
+    }));
+    const device = model.devices.find((d) => d.machineId === "peer-a");
+    expect(device!.peerRelationship).toBe("known");
+  });
+
+  it("a peer with a revoked grant shows 'revoked'", () => {
+    const model = buildFleetSectionModel(input({
+      roster: [row({ machine_id: "peer-a", name: "Peer A" })],
+      peerGrants: {
+        "peer-a": { scope: "control", state: "revoked" },
+      },
+    }));
+    const device = model.devices.find((d) => d.machineId === "peer-a");
+    expect(device!.peerRelationship).toBe("revoked");
+  });
+
+  it("a peer with a revocation-pending grant shows 'revoked' (pending is still revoked from UI perspective)", () => {
+    const model = buildFleetSectionModel(input({
+      roster: [row({ machine_id: "peer-a", name: "Peer A" })],
+      peerGrants: {
+        "peer-a": { scope: "control", state: "revocation-pending" },
+      },
+    }));
+    const device = model.devices.find((d) => d.machineId === "peer-a");
+    expect(device!.peerRelationship).toBe("revoked");
+  });
+
+  it("a peer with identity_state 'key-changed' shows 'needs-repair' regardless of grant", () => {
+    const model = buildFleetSectionModel(input({
+      roster: [row({ machine_id: "peer-a", name: "Peer A", identity_state: "key-changed" })],
+      peerGrants: {
+        "peer-a": { scope: "control", state: "active" },
+      },
+    }));
+    const device = model.devices.find((d) => d.machineId === "peer-a");
+    expect(device!.peerRelationship).toBe("needs-repair");
+    expect(device!.peerRelationshipReason).toBe("key-changed");
+  });
+
+  it("a peer with identity_state 'alias-conflict' shows 'needs-repair'", () => {
+    const model = buildFleetSectionModel(input({
+      roster: [row({ machine_id: "peer-a", name: "Peer A", identity_state: "alias-conflict" })],
+    }));
+    const device = model.devices.find((d) => d.machineId === "peer-a");
+    expect(device!.peerRelationship).toBe("needs-repair");
+    expect(device!.peerRelationshipReason).toBe("alias-conflict");
+  });
+
+  it("the local machine (self-row) has no peerRelationship", () => {
+    const model = buildFleetSectionModel(input({
+      roster: [row({ machine_id: "this-mac", name: "Me" })],
+      localDevice: { machineId: "this-mac", name: "Me", serveStance: "server" },
+    }));
+    const device = model.devices.find((d) => d.machineId === "this-mac");
+    expect(device!.peerRelationship).toBeUndefined();
+  });
+
+  it("carries the exact reason on peerRelationshipReason for revoked grants", () => {
+    const model = buildFleetSectionModel(input({
+      roster: [row({ machine_id: "peer-a", name: "Peer A" })],
+      peerGrants: {
+        "peer-a": { scope: "control", state: "revoked" },
+      },
+    }));
+    const device = model.devices.find((d) => d.machineId === "peer-a");
+    expect(device!.peerRelationshipReason).toBe("grant-revoked");
+  });
+});
+
+describe("#1484 AC1 — scoped server actions per peer relationship", () => {
+  it("'known' peer offers grant-observe action", () => {
+    const model = buildFleetSectionModel(input({
+      roster: [row({ machine_id: "peer-a", name: "Peer A" })],
+    }));
+    const device = model.devices.find((d) => d.machineId === "peer-a");
+    expect(device!.availableActions).toContain("grant-observe");
+    expect(device!.availableActions).not.toContain("revoke");
+  });
+
+  it("'trusted' peer offers grant-control and revoke actions", () => {
+    const model = buildFleetSectionModel(input({
+      roster: [row({ machine_id: "peer-a", name: "Peer A" })],
+      peerGrants: {
+        "peer-a": { scope: "observe", state: "active" },
+      },
+    }));
+    const device = model.devices.find((d) => d.machineId === "peer-a");
+    expect(device!.availableActions).toContain("grant-control");
+    expect(device!.availableActions).toContain("revoke");
+  });
+
+  it("'control-enabled' peer offers revoke action", () => {
+    const model = buildFleetSectionModel(input({
+      roster: [row({ machine_id: "peer-a", name: "Peer A" })],
+      peerGrants: {
+        "peer-a": { scope: "control", state: "active" },
+      },
+    }));
+    const device = model.devices.find((d) => d.machineId === "peer-a");
+    expect(device!.availableActions).toContain("revoke");
+    expect(device!.availableActions).not.toContain("grant-control");
+  });
+
+  it("'revoked' peer offers re-admit action", () => {
+    const model = buildFleetSectionModel(input({
+      roster: [row({ machine_id: "peer-a", name: "Peer A" })],
+      peerGrants: {
+        "peer-a": { scope: "control", state: "revoked" },
+      },
+    }));
+    const device = model.devices.find((d) => d.machineId === "peer-a");
+    expect(device!.availableActions).toContain("re-admit");
+  });
+
+  it("'needs-repair' peer offers repair action", () => {
+    const model = buildFleetSectionModel(input({
+      roster: [row({ machine_id: "peer-a", name: "Peer A", identity_state: "key-changed" })],
+    }));
+    const device = model.devices.find((d) => d.machineId === "peer-a");
+    expect(device!.availableActions).toContain("repair");
+  });
+
+  it("self-row has empty availableActions", () => {
+    const model = buildFleetSectionModel(input({
+      roster: [row({ machine_id: "this-mac", name: "Me" })],
+      localDevice: { machineId: "this-mac", name: "Me", serveStance: "server" },
+    }));
+    const device = model.devices.find((d) => d.machineId === "this-mac");
+    expect(device!.availableActions).toEqual([]);
+  });
+});

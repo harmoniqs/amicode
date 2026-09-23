@@ -102,6 +102,22 @@ export interface FleetCapabilityChip {
   known: boolean;
 }
 
+/** #1484: the peer relationship state vocabulary — derived from grant scope +
+ *  grant state + identity state. Drives the relationship pill and scoped server
+ *  actions in the fleet section UI. */
+export type PeerRelationship = "known" | "trusted" | "control-enabled" | "needs-repair" | "revoked";
+
+/** #1484: the server actions available for a peer in its current relationship
+ *  state. Scoped: each relationship offers only the actions that make sense. */
+export type PeerAction = "grant-observe" | "grant-control" | "revoke" | "re-admit" | "repair";
+
+/** #1484: the narrowed grant shape the sidebar consumes — injected so the
+ *  sidebar stays node-import-free (no lifecycle store dependency). */
+export interface PeerGrantInput {
+  scope: "observe" | "control" | "lifecycle-admin";
+  state: "active" | "revocation-pending" | "revoked";
+}
+
 /** One rendered device row — the roster row after display-labelling. */
 export interface FleetDeviceRow {
   machineId: string;
@@ -124,6 +140,15 @@ export interface FleetDeviceRow {
    *  peers and synthesized rows. Drives the identity-state indicator in the
    *  fleet section UI. */
   identityState?: IdentityState;
+  /** #1484: the derived peer relationship state. Undefined for the self-row
+   *  (you don't have a "relationship" with yourself). */
+  peerRelationship?: PeerRelationship;
+  /** #1484: the exact reason for the relationship state — human-readable
+   *  reason string for needs-repair / revoked states. */
+  peerRelationshipReason?: string;
+  /** #1484: the scoped server actions available for this peer in its current
+   *  relationship state. Empty for the self-row. */
+  availableActions: PeerAction[];
 }
 
 /** The state of the section as a whole. `unreachable` is the honest host-down
@@ -189,6 +214,10 @@ export interface FleetSectionInput {
    *  before building; the builder threads it onto the model verbatim. It is
    *  focus UI state — NEVER derived from roster data. */
   focusedMachineId?: string;
+  /** #1484: per-peer grant inputs keyed by machine_id. The host injects
+   *  these from the lifecycle grant store; absent = no grant data available.
+   *  Drives the peerRelationship derivation on each device row. */
+  peerGrants?: Record<string, PeerGrantInput>;
   /** Injectable clock for staleness computation (#1375). Defaults to Date.now(). */
   now?: number;
 }
@@ -287,8 +316,13 @@ export function buildFleetSectionModel(input: FleetSectionInput): FleetSectionMo
   }
   const localId = local?.machineId ?? null;
   const canonicalId = input.canonicalServer?.machineId ?? null;
+  const grants = input.peerGrants ?? {};
   const devices: FleetDeviceRow[] = input.roster.map((r) => {
     const isHub = canonicalId !== null && r.machine_id === canonicalId;
+    const isLocal = localId !== null && r.machine_id === localId;
+    const peerRel = isLocal
+      ? { relationship: undefined as PeerRelationship | undefined, reason: undefined as string | undefined }
+      : derivePeerRelationship(r.identity_state as IdentityState | undefined, grants[r.machine_id]);
     return {
       machineId: r.machine_id,
       name: r.name,
@@ -298,8 +332,11 @@ export function buildFleetSectionModel(input: FleetSectionInput): FleetSectionMo
       health: effectiveHealth(r.health as RosterHealth, r.last_report, now),
       rosterHealth: r.health as RosterHealth,
       lastSeen: r.last_report,
-      isLocal: localId !== null && r.machine_id === localId,
+      isLocal,
       ...(r.identity_state !== undefined ? { identityState: r.identity_state } : {}),
+      ...(peerRel.relationship !== undefined ? { peerRelationship: peerRel.relationship } : {}),
+      ...(peerRel.reason !== undefined ? { peerRelationshipReason: peerRel.reason } : {}),
+      availableActions: scopedActionsForRelationship(peerRel.relationship, isLocal),
     };
   });
   // Synthesize the self-row when the roster doesn't already carry one for
@@ -375,6 +412,7 @@ function localDeviceRow(local: LocalDeviceInput, isCanonicalHub = false): FleetD
     health: "reachable",
     lastSeen: "now",
     isLocal: true,
+    availableActions: [],
   };
 }
 
@@ -410,6 +448,7 @@ function canonicalServerRow(server: CanonicalServerInput, health: RosterHealth):
     health,
     lastSeen: "now",
     isLocal: false,
+    availableActions: scopedActionsForRelationship("known", false),
   };
 }
 
@@ -568,6 +607,54 @@ function renderDeviceRow(
 export function displayRole(serverMode: string, isCanonicalHub: boolean): string {
   if (serverMode === "server" && !isCanonicalHub) return "peer";
   return serverMode;
+}
+
+// ── #1484: peer relationship derivation ──────────────────────────────────────
+
+/** Identity states that block the relationship — any grant is overridden. */
+const BLOCKING_IDENTITY_STATES: ReadonlySet<IdentityState> = new Set(["alias-conflict", "key-changed"]);
+
+/** Derive the peer relationship from grant + identity state. Pure.
+ *
+ *  Priority: identity-blocking → needs-repair (overrides any grant);
+ *  then grant state: revoked/pending → revoked; active observe → trusted;
+ *  active control → control-enabled; no grant → known. */
+export function derivePeerRelationship(
+  identityState: IdentityState | undefined,
+  grant: PeerGrantInput | undefined,
+): { relationship: PeerRelationship; reason?: string } {
+  // Identity-blocking states override everything
+  if (identityState !== undefined && BLOCKING_IDENTITY_STATES.has(identityState)) {
+    return { relationship: "needs-repair", reason: identityState };
+  }
+  // No grant → known
+  if (!grant) {
+    return { relationship: "known" };
+  }
+  // Grant state: revoked or revocation-pending → revoked
+  if (grant.state === "revoked" || grant.state === "revocation-pending") {
+    return { relationship: "revoked", reason: "grant-revoked" };
+  }
+  // Active grant: scope determines relationship
+  if (grant.scope === "control") {
+    return { relationship: "control-enabled" };
+  }
+  return { relationship: "trusted" };
+}
+
+/** Derive the scoped server actions for a peer in its current relationship. */
+export function scopedActionsForRelationship(
+  relationship: PeerRelationship | undefined,
+  isLocal: boolean,
+): PeerAction[] {
+  if (isLocal || relationship === undefined) return [];
+  switch (relationship) {
+    case "known": return ["grant-observe"];
+    case "trusted": return ["grant-control", "revoke"];
+    case "control-enabled": return ["revoke"];
+    case "revoked": return ["re-admit"];
+    case "needs-repair": return ["repair"];
+  }
 }
 
 /** The row's hover tooltip: role, last-seen, and capabilities — demoted from
