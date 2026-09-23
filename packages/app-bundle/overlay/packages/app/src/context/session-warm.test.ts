@@ -122,12 +122,13 @@ describe("session warming", () => {
     await Promise.all([firstPass, overlappingPass])
   })
 
-  test("remembers each valid list row before scheduling every server batch", async () => {
+  test("remembers all valid list rows before scheduling either server batch", async () => {
     const stalled = deferred()
     const events: string[] = []
     const scheduled = warmSessionServerBatches({
       servers: ["slow", "ready"],
-      list: async (server) => (server === "slow" ? [{ id: "slow-a" }] : [{ id: "ready-a" }]),
+      list: async (server) =>
+        server === "slow" ? [{ id: "slow-a" }, { id: "slow-b" }] : [{ id: "ready-a" }, { id: "ready-b" }],
       normalize: (row) => row,
       remember: (server, row) => events.push(`remember:${server}:${row.id}`),
       warm: async (server, rows) => {
@@ -137,7 +138,14 @@ describe("session warming", () => {
     })
 
     await settle()
-    expect(events).toEqual(["remember:slow:slow-a", "remember:ready:ready-a", "warm:slow:slow-a", "warm:ready:ready-a"])
+    expect(events).toEqual([
+      "remember:slow:slow-a",
+      "remember:slow:slow-b",
+      "remember:ready:ready-a",
+      "remember:ready:ready-b",
+      "warm:slow:slow-a,slow-b",
+      "warm:ready:ready-a,ready-b",
+    ])
     stalled.resolve()
     await scheduled
   })
