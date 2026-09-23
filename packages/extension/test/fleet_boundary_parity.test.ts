@@ -436,3 +436,179 @@ describe("AC2 — the mint bootstrap route accepts ONLY its bound bootstrap prin
     expect(issuedTokenFor("member-y-clone", { registryFile: b.files.issued })).toBeUndefined();
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AC3 — a HEADLESS independent peer boots base observation infra + records a
+//       NAMED posture (reusing the #1478 base-activation authority)
+//
+// "Headless" means no editor host present — createAmicodeService is vscode-free
+// by construction (it boots in-process here with no VS Code host), so a
+// successful boot IS the headless boot. The base-activation authority
+// (baseStudioActivates: a non-client with ≥1 verified serving peer) mounts the
+// OBSERVATION routes (/amicode/fleet/status + /amicode/fleet/sessions) with NO
+// entitlement. #1478 deferred the NAMED POSTURE to this slice: the base peer's
+// status surface must report a named posture snapshot (the D6 vocabulary:
+// "fleet" | "degraded" | "standalone"), not omit it.
+// ═══════════════════════════════════════════════════════════════════════════
+import * as http from "node:http";
+import { AddressInfo } from "node:net";
+import { createAmicodeService } from "../src/amicode_service";
+import { serverAuthToken } from "../src/server_auth";
+import type { FleetPostureState } from "../src/amicode_service/fleet_posture";
+
+interface MockOrigin {
+  url: string;
+  stop(): Promise<void>;
+}
+function startMockEngine(enginePassword: string, sessions: unknown[]): Promise<MockOrigin> {
+  const server = http.createServer((req, res) => {
+    const auth = req.headers.authorization ?? "";
+    if (auth !== serverAuthHeader(enginePassword)) {
+      res.writeHead(401, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: false, error: "unauthorized" }));
+      return;
+    }
+    if (req.method === "GET" && req.url?.startsWith("/session")) {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(sessions));
+      return;
+    }
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ ok: true }));
+  });
+  return new Promise((resolve) => {
+    server.listen(0, "127.0.0.1", () => {
+      const port = (server.address() as AddressInfo).port;
+      resolve({ url: `http://127.0.0.1:${port}`, stop: () => new Promise((r) => server.close(() => r())) });
+    });
+  });
+}
+function startMockPeer(token: string, sessions: unknown[]): Promise<MockOrigin> {
+  const server = http.createServer((req, res) => {
+    if ((req.headers.authorization ?? "") !== serverAuthHeader(token)) {
+      res.writeHead(401);
+      res.end("{}");
+      return;
+    }
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify(sessions));
+  });
+  return new Promise((resolve) => {
+    server.listen(0, "127.0.0.1", () => {
+      const port = (server.address() as AddressInfo).port;
+      resolve({ url: `http://127.0.0.1:${port}`, stop: () => new Promise((r) => server.close(() => r())) });
+    });
+  });
+}
+
+describe("AC3 — a headless base peer boots the observation infra and records a named posture", () => {
+  let localEngine: MockOrigin;
+  let studioPeer: MockOrigin;
+  let savedHubFile: string | undefined;
+  let hubRoot: string;
+
+  const NAMED_POSTURE_STATES: ReadonlySet<FleetPostureState> = new Set(["fleet", "degraded", "standalone"]);
+
+  beforeEach(async () => {
+    localEngine = await startMockEngine("engine-mint-password", [
+      { id: "ses-local", title: "local", time: { created: 1, updated: 2 } },
+    ]);
+    studioPeer = await startMockPeer("tok-studio", [
+      { id: "ses-studio", title: "studio", time: { created: 3, updated: 4 } },
+    ]);
+    hubRoot = tmproot();
+    savedHubFile = process.env.AMICO_FLEET_HUB_FILE;
+    process.env.AMICO_FLEET_HUB_FILE = join(hubRoot, "hub-cred-absent.json");
+  });
+  afterEach(async () => {
+    await localEngine.stop();
+    await studioPeer.stop();
+    if (savedHubFile === undefined) delete process.env.AMICO_FLEET_HUB_FILE;
+    else process.env.AMICO_FLEET_HUB_FILE = savedHubFile;
+  });
+
+  // The base-activation authority: a NON-client peer with ≥1 verified serving
+  // peer beyond self — NO amicissimo entitlement (baseStudioActivates true).
+  function bootHeadlessBase() {
+    return createAmicodeService({
+      password: "service-own-mint",
+      engine: { password: "engine-mint-password", getUrl: () => localEngine.url },
+      fleet: {
+        entitlements: [], // NO entitlement — the base authority, not premium
+        hub: { getUrl: () => undefined }, // a base peer, no hub upstream
+        fleetPeers: {
+          localMachineId: "my-macbook",
+          getServingPeers: () => [{ machineId: "the-studio" }],
+          readPeerToken: (id: string) =>
+            id === "the-studio"
+              ? { ok: true as const, credential: { baseUrl: studioPeer.url, token: "tok-studio" } }
+              : { ok: false as const },
+          rosterLookup: (id: string) => (id === "the-studio" ? { name: "The Studio" } : undefined),
+        },
+      },
+    });
+  }
+
+  it("boots the observation routes headless (no editor host) — status + sessions serve", async () => {
+    const svc = bootHeadlessBase();
+    const o = (await svc.start()).toString().replace(/\/$/, "");
+    const engineHeader = { Authorization: `Basic ${serverAuthToken("engine-mint-password")}` };
+    try {
+      const status = await fetch(`${o}/amicode/fleet/status`, { headers: engineHeader });
+      expect(status.status).toBe(200);
+      const sessions = await fetch(`${o}/amicode/fleet/sessions`, { headers: engineHeader });
+      expect(sessions.status).toBe(200);
+      const body = (await sessions.json()) as { sources: Record<string, { present: boolean }> };
+      // the verified peer is observable from the headless base peer
+      expect(body.sources["the-studio"].present).toBe(true);
+    } finally {
+      await svc.stop();
+    }
+  });
+
+  it("records a NAMED posture on its status surface (the #1478-deferred contract)", async () => {
+    const svc = bootHeadlessBase();
+    const o = (await svc.start()).toString().replace(/\/$/, "");
+    const engineHeader = { Authorization: `Basic ${serverAuthToken("engine-mint-password")}` };
+    try {
+      const status = await fetch(`${o}/amicode/fleet/status`, { headers: engineHeader });
+      const body = (await status.json()) as { ok: boolean; posture?: { state?: string } };
+      expect(body.ok).toBe(true);
+      // AC3: the base peer records a NAMED posture — not an omitted field.
+      expect(body.posture).toBeDefined();
+      expect(body.posture!.state).toBeDefined();
+      expect(NAMED_POSTURE_STATES.has(body.posture!.state as FleetPostureState)).toBe(true);
+    } finally {
+      await svc.stop();
+    }
+  });
+
+  // AC4: hub/client compatibility unchanged — a fleet-of-one (zero serving
+  // peers beyond self) is NOT base-activated, so its /amicode/fleet/status 404s
+  // exactly as before (local-only, byte-compatible). The named-posture addition
+  // must not accidentally activate a no-peer base install.
+  it("AC4: a fleet-of-one (zero serving peers) is NOT base-activated — status 404s (local-only, unchanged)", async () => {
+    const svc = createAmicodeService({
+      password: "service-own-mint",
+      engine: { password: "engine-mint-password", getUrl: () => localEngine.url },
+      fleet: {
+        entitlements: [],
+        hub: { getUrl: () => undefined },
+        fleetPeers: {
+          localMachineId: "my-macbook",
+          getServingPeers: () => [], // fleet-of-one: no serving peer beyond self
+          readPeerToken: () => ({ ok: false as const }),
+          rosterLookup: () => undefined,
+        },
+      },
+    });
+    const o = (await svc.start()).toString().replace(/\/$/, "");
+    const engineHeader = { Authorization: `Basic ${serverAuthToken("engine-mint-password")}` };
+    try {
+      const status = await fetch(`${o}/amicode/fleet/status`, { headers: engineHeader });
+      expect(status.status).toBe(404); // never activated → the route does not exist
+    } finally {
+      await svc.stop();
+    }
+  });
+});

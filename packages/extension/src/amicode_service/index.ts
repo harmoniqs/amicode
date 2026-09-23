@@ -938,6 +938,16 @@ export function createAmicodeService(
         hub: opts.fleet.hub,
         receipt: staging.receipt,
         engineArmed: opts.engine !== undefined,
+        // #1485 (AC3): a headless base peer RECORDS A NAMED POSTURE. #1478
+        // mounted the base observation routes but deferred the posture surface
+        // here — without a monitor, /amicode/fleet/status omitted `posture`
+        // entirely. A base peer observes its verified peers over the N-peer
+        // projection while routing its own traffic to the local engine (mode
+        // "engine"); it holds no premium data-plane, so its steady state is the
+        // detector's named default ("fleet"). Passing the detector makes the
+        // named posture (the D6 vocabulary) present on the status surface — a
+        // headless peer boots WITH a named posture, never a missing field.
+        monitor: new FleetPostureDetector({ tuning: opts.fleet.posture }),
         ...(opts.fleet.fleetPeers !== undefined ? { fleetPeers: opts.fleet.fleetPeers } : {}),
       });
     }
