@@ -584,39 +584,39 @@ function HoldDebugBadge() {
     // them off the screen: POST /__amicode_client_log (the frontdoor
     // appends to ~/.amico/server/client-errors.log on the hub).
     const shipped = new Set<string>()
+    // #1315: ship() must NEVER throw — it runs inside console.error and event
+    // listeners, and the #1312 flush referenced target/auth outside their
+    // scope, so the FIRST console.error with a non-empty boot buffer threw
+    // "ReferenceError: target is not defined", crashing the boundary
+    // fallback mid-render (the frozen hold). Diagnostics crash nothing.
+    const postLine = (body: string) => {
+      try {
+        const target = new URL("/__amicode_client_log", dataUrl())
+        const auth = dataAuth()
+        void fetch(target, {
+          headers: auth ? { Authorization: `Basic ${auth}` } : {},
+          method: "POST",
+          body,
+        }).catch(() => {})
+      } catch {}
+    }
     const ship = (kind: string, text: string) => {
-      if (shipped.has(text)) return
-      shipped.add(text)
-      // #1312: flush the boot-error buffer (entry.tsx captures before we
-      // install — the boundary-masked boot throws).
-      {
+      try {
+        if (shipped.has(text)) return
+        shipped.add(text)
+        // #1312: flush the boot-error buffer (entry.tsx captures before we
+        // install — the boundary-masked boot throws).
         const g = globalThis as { __bootErrors?: string[] }
         if (g.__bootErrors && g.__bootErrors.length) {
           const pending = g.__bootErrors.splice(0)
           for (const line of pending) {
             if (!shipped.has(line)) {
               shipped.add(line)
-              void fetch(target, {
-                headers: auth ? { Authorization: `Basic ${auth}` } : {},
-                method: "POST",
-                body: `${line.slice(0, 600)}`,
-              }).catch(() => {})
+              postLine(line.slice(0, 600))
             }
           }
         }
-      }
-      try {
-        // The same-origin service 404s unknown routes (no proxy passthrough
-        // for POSTs). Post DIRECTLY to the data server's own origin (the
-        // fleet tunnel / the engine itself) — a simple text/plain POST so
-        // no CORS preflight is required; the frontdoor logs it regardless.
-        const target = new URL("/__amicode_client_log", dataUrl())
-        const auth = dataAuth()
-        void fetch(target, {
-          headers: auth ? { Authorization: `Basic ${auth}` } : {},
-          method: "POST",
-          body: `${kind} ${build}\n${text.slice(0, 600)}`,
-        }).catch(() => {})
+        postLine(`${kind} ${build}\n${text.slice(0, 600)}`)
       } catch {}
     }
     const originalError = console.error

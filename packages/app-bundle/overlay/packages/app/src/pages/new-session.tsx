@@ -1,3 +1,4 @@
+(globalThis).__amicodeNewSessionBust = "1457" // #1457 cache-bust: rotate the lazy chunk hash — the webview HTTP cache held a poisoned entry for the old URL
 import { createPromptProjectController } from "@/components/prompt-project-selector"
 import { SessionPreviewTab } from "@/components/session/session-preview-tab"
 import { useTitlebarControlMount } from "@/components/titlebar"

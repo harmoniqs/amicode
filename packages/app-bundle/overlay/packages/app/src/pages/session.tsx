@@ -344,7 +344,11 @@ export function SessionRouteErrorBoundary(
         // throw (e.g. TanStack's "reading '_defaulted'") that masks the root
         // cause. Log every error that reaches this boundary so the first,
         // real one is always in the console.
-        console.error("[session] error boundary caught:", error)
+        // #1315: the fallback itself must never throw — a console/diagnostics
+        // failure inside it crashes the fallback render (blank outlet).
+        try {
+          console.error("[session] error boundary caught:", error)
+        } catch {}
         return settings.general.newLayoutDesigns() ? (
           <SessionRouteFrame padded={props.padded}>
             <SessionPanelFrame newLayout raised={!!props.sessionID}>
@@ -1218,7 +1222,12 @@ export default function Page() {
         ? async () => {
             const server = serverSDK()
             const url = new URL(`/session/${sessionID}/touched-files`, server.url)
-            url.searchParams.set("directory", sdk().directory)
+            // #1456: the session's OWN directory (lineage truth), not the ambient
+            // sdk().directory — at boot/switch time the ambient is the home dir,
+            // an unserved directory that returns the SPA HTML page and sends the
+            // query into a ~7s TanStack retry loop while the mount suspense waits.
+            const sessionDirectory = serverSync().session.lineage.peek(sessionID)?.session.directory
+            url.searchParams.set("directory", sessionDirectory ?? sdk().directory)
             const headers: Record<string, string> = {}
             const httpServer = server.server.http
             if (httpServer.password) {
@@ -1226,6 +1235,10 @@ export default function Page() {
             }
             const res = await fetch(url.toString(), { headers, signal: AbortSignal.timeout(15_000) })
             if (!res.ok) return [] as Array<{ file: string; status: string }>
+            // #1456: an HTML/SPA fallback (200 text/html) must resolve to [] —
+            // never reach res.json()'s SyntaxError and the retry loop.
+            const contentType = res.headers.get("content-type") ?? ""
+            if (!contentType.includes("json")) return [] as Array<{ file: string; status: string }>
             return (await res.json()) as Array<{ file: string; status: string }>
           }
         : skipToken,
