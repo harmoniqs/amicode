@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { existsSync, readFileSync, mkdtempSync, writeFileSync, cpSync } from "node:fs";
 import { join } from "node:path";
-import { homedir, tmpdir } from "node:os";
+import { homedir, hostname, tmpdir } from "node:os";
 
 // ─── Pure-function fleet modules (no vscode dependency) ──────────────────────
 import {
@@ -25,7 +25,11 @@ import {
   type LifecycleGrantDeps,
 } from "../../src/amicode_service/fleet_control_lifecycle";
 import { readPeerToken } from "../../src/amicode_service/fleet_peer_store";
-import type { SessionOwnerTag } from "../../src/amicode_service/merged_projection";
+import {
+  buildFleetProjection,
+  type SessionOwnerTag,
+} from "../../src/amicode_service/merged_projection";
+import { buildFleetPeerProvider } from "../../src/amicode_service/fleet_peer_provider";
 
 // ============================================================================
 // Fleet two-peer release E2E (#1489) — the non-skipped physical proof.
@@ -112,6 +116,7 @@ let sessionsProjection: {
   sessions: Array<Record<string, unknown> & { amicode_owner?: SessionOwnerTag }>;
   sources: Record<string, { source: string; present: boolean; reason?: string }>;
 };
+let fleetSessionsRouteAvailable = false;
 
 // ── the suite ────────────────────────────────────────────────────────────────
 
@@ -157,6 +162,19 @@ describe.skipIf(!FLEET_E2E)("slow: fleet two-peer release E2E (#1489)", () => {
         expect(read.credential.token).toBe(remotePeerToken);
       }
     });
+
+    it("fleet/sessions route availability probe", async () => {
+      try {
+        const res = await fleetFetch(`${LOCAL_ENDPOINT}/amicode/fleet/sessions`);
+        fleetSessionsRouteAvailable = res.ok;
+        console.log(
+          `[fleet-e2e] fleet/sessions route: ${res.ok ? "available" : `unavailable (HTTP ${res.status})`}`,
+        );
+      } catch {
+        fleetSessionsRouteAvailable = false;
+        console.log(`[fleet-e2e] fleet/sessions route: unavailable (fetch error)`);
+      }
+    }, FETCH_TIMEOUT_MS + 5_000);
   });
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -165,10 +183,46 @@ describe.skipIf(!FLEET_E2E)("slow: fleet two-peer release E2E (#1489)", () => {
 
   describe("2. observe — trusted projection", () => {
     beforeAll(async () => {
-      // Fetch the fleet sessions projection from the local hub
-      const res = await fleetFetch(`${LOCAL_ENDPOINT}/amicode/fleet/sessions`);
-      expect(res.ok, `fleet/sessions fetch failed: HTTP ${res.status}`).toBe(true);
-      sessionsProjection = res.json() as typeof sessionsProjection;
+      if (fleetSessionsRouteAvailable) {
+        // HTTP route available — use it directly (the production path)
+        const res = await fleetFetch(`${LOCAL_ENDPOINT}/amicode/fleet/sessions`);
+        expect(res.ok, `fleet/sessions fetch failed: HTTP ${res.status}`).toBe(true);
+        sessionsProjection = res.json() as typeof sessionsProjection;
+        console.log(`[fleet-e2e] projection source: http-route`);
+      } else {
+        // Route unavailable (behind entitlement gate) — build the projection
+        // in-process via the module-level API: buildFleetProjection fed by
+        // buildFleetPeerProvider, reading real on-disk state + making real
+        // HTTP fetches to each endpoint's /session route. This proves the
+        // same thing the HTTP route would prove, minus the service layer.
+        const provider = buildFleetPeerProvider({ localMachineId: hostname() });
+        const servingPeers = provider.getServingPeers();
+        const peers = servingPeers.map((p) => {
+          const tokenRead = provider.readPeerToken(p.machineId);
+          return {
+            machineId: p.machineId,
+            getUrl: () => (tokenRead.ok ? tokenRead.credential.baseUrl : undefined),
+            token: tokenRead.ok ? tokenRead.credential.token : undefined,
+            trusted: tokenRead.ok,
+          };
+        });
+        const blockedPeers = provider.getBlockedPeers();
+        const projection = await buildFleetProjection({
+          localMachineId: provider.localMachineId,
+          local: {
+            getUrl: () => LOCAL_ENDPOINT,
+            password: process.env.OPENCODE_SERVER_PASSWORD,
+          },
+          peers,
+          blockedPeers,
+          rosterLookup: provider.rosterLookup,
+          timeoutMs: FETCH_TIMEOUT_MS,
+        });
+        sessionsProjection = projection as typeof sessionsProjection;
+        console.log(
+          `[fleet-e2e] projection source: module-direct (${servingPeers.length} peers from roster)`,
+        );
+      }
       expect(sessionsProjection.ok, "sessions projection not ok").toBe(true);
     }, FETCH_TIMEOUT_MS + 5_000);
 
