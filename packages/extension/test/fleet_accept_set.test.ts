@@ -425,6 +425,7 @@ import { readFileSync as _rf } from "node:fs";
 import {
   classifyPeerOutcome,
   evaluateReadiness,
+  servingReachablePeers,
   PEER_OUTCOME_NO_PERMISSIONS,
   PEER_OUTCOME_HUB_DOWN,
 } from "../src/amicode_service/fleet_accept_set";
@@ -620,5 +621,54 @@ describe("AC3 structural — the ENGINE overlay validator also routes through ti
     expect(src).toMatch(/AMICO_FLEET_ISSUED_TOKEN_FILE/);
     // closing the boundary makes auth REQUIRED even on an unarmed engine (AC7 engine side)
     expect(src).toMatch(/acceptSetClosed/);
+  });
+});
+
+// ── stable peer identity — peer selection filtering (#1477, ADR 0034) ────────
+describe("#1477 AC3 — peer selection excludes peers with alias-conflict identity_state", () => {
+  it("servingReachablePeers includes a peer with identity_state='verified'", () => {
+    const row: RosterRow = {
+      ...servingReachable("peer-a"),
+      identity_key: "SHA256:aaa",
+      identity_state: "verified",
+    };
+    const peers = servingReachablePeers([row]);
+    expect(peers.length).toBe(1);
+  });
+
+  it("servingReachablePeers EXCLUDES a peer with identity_state='alias-conflict' — no conflicted row reaches selection", () => {
+    const row: RosterRow = {
+      ...servingReachable("peer-a"),
+      identity_key: "SHA256:aaa",
+      identity_state: "alias-conflict",
+    };
+    const peers = servingReachablePeers([row]);
+    expect(peers.length).toBe(0);
+  });
+
+  it("servingReachablePeers EXCLUDES a peer with identity_state='key-changed' — a key-change suspends selection", () => {
+    const row: RosterRow = {
+      ...servingReachable("peer-a"),
+      identity_key: "SHA256:aaa",
+      identity_state: "key-changed",
+    };
+    const peers = servingReachablePeers([row]);
+    expect(peers.length).toBe(0);
+  });
+
+  it("servingReachablePeers includes a peer without identity_state (pre-upgrade)", () => {
+    const row: RosterRow = servingReachable("peer-a"); // no identity_state
+    const peers = servingReachablePeers([row]);
+    expect(peers.length).toBe(1);
+  });
+
+  it("servingReachablePeers includes a peer with identity_state='stale-alias' — stale is informational, not blocking", () => {
+    const row: RosterRow = {
+      ...servingReachable("peer-a"),
+      identity_key: "SHA256:aaa",
+      identity_state: "stale-alias",
+    };
+    const peers = servingReachablePeers([row]);
+    expect(peers.length).toBe(1);
   });
 });

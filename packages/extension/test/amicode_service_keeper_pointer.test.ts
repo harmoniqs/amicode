@@ -22,6 +22,7 @@ import {
   resolveKeeperPointer,
   keeperPointerFilePath,
   writeKeeperPointerFile,
+  validateKeeperIdentity,
   KEEPER_POINTER_RELPATH,
   type KeeperPointer,
 } from "../src/amicode_service/keeper_pointer";
@@ -147,5 +148,63 @@ describe("resolveKeeperPointer — AC3 (#1341): NON-CIRCULAR — never resolves 
       expect(line).not.toMatch(/roster/i);
       expect(line).not.toMatch(/@amicode\/schema/);
     }
+  });
+});
+
+// ── stable keeper identity (#1477, ADR 0034) ────────────────────────────────
+// The keeper pointer now carries an optional `identity_key` (the fingerprint
+// of the machine that holds keeper authority). A stale/missing/conflicting
+// keeper is a NAMED repair state, not a silent resolution failure.
+
+describe("resolveKeeperPointer — #1477 AC4: keeper authority binds to stable identity", () => {
+  let dir: string;
+  let file: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "keeper-id-"));
+    file = join(dir, "keeper.json");
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it("a keeper pointer with identity_key round-trips the fingerprint", () => {
+    writeKeeperPointerFile({ sshAlias: "keeper-host", transport: "ssh", identity_key: "SHA256:keeper-fp" }, { keeperFile: file });
+    const result = resolveKeeperPointer({ keeperFile: file });
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected resolved pointer");
+    expect(result.pointer.identity_key).toBe("SHA256:keeper-fp");
+  });
+
+  it("a keeper pointer without identity_key is still valid (pre-upgrade)", () => {
+    writeKeeperPointerFile({ sshAlias: "keeper-host", transport: "ssh" }, { keeperFile: file });
+    const result = resolveKeeperPointer({ keeperFile: file });
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected resolved pointer");
+    expect(result.pointer.identity_key).toBeUndefined();
+  });
+
+  it("validateKeeperIdentity returns 'verified' when the keeper identity matches the roster row", () => {
+    const pointer = { sshAlias: "keeper-host", transport: "ssh", identity_key: "SHA256:keeper-fp" };
+    const rosterRow = { machine_id: "keeper-01", identity_key: "SHA256:keeper-fp", sshAlias: "keeper-host" };
+    const result = validateKeeperIdentity(pointer, rosterRow);
+    expect(result).toBe("verified");
+  });
+
+  it("validateKeeperIdentity returns 'keeper-mismatch' when the keeper identity does not match the roster row", () => {
+    const pointer = { sshAlias: "keeper-host", transport: "ssh", identity_key: "SHA256:keeper-fp" };
+    const rosterRow = { machine_id: "keeper-01", identity_key: "SHA256:different-fp", sshAlias: "keeper-host" };
+    const result = validateKeeperIdentity(pointer, rosterRow);
+    expect(result).toBe("keeper-mismatch");
+  });
+
+  it("validateKeeperIdentity returns 'keeper-absent' when there is no matching roster row", () => {
+    const pointer = { sshAlias: "keeper-host", transport: "ssh", identity_key: "SHA256:keeper-fp" };
+    const result = validateKeeperIdentity(pointer, undefined);
+    expect(result).toBe("keeper-absent");
+  });
+
+  it("validateKeeperIdentity returns 'verified' when pointer has no identity_key (pre-upgrade, backward compat)", () => {
+    const pointer = { sshAlias: "keeper-host", transport: "ssh" };
+    const rosterRow = { machine_id: "keeper-01", identity_key: "SHA256:any", sshAlias: "keeper-host" };
+    const result = validateKeeperIdentity(pointer, rosterRow);
+    expect(result).toBe("verified");
   });
 });

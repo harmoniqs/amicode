@@ -27,12 +27,18 @@ import { atomicWriteFileSync } from "./credentials";
 /** The keeper bootstrap pointer's on-disk shape: a resolvable reach
  *  coordinate for the directory keeper. Mirrors RosterRow's own reach
  *  vocabulary (sshAlias + transport, ADR 0026) rather than inventing a new
- *  one — but this is NOT a roster row, and is never read from one. */
+ *  one — but this is NOT a roster row, and is never read from one.
+ *  #1477: optionally carries the keeper's identity_key (fingerprint) so
+ *  keeper authority can be verified against the roster row. */
 export interface KeeperPointer {
   /** The ssh target the keeper is reachable at (its fleet.json canonical alias). */
   sshAlias: string;
   /** The transport hint (e.g. ssh, tailscale, local). */
   transport: string;
+  /** #1477: the keeper's stable identity fingerprint. When present, the
+   *  keeper's roster row must carry the SAME identity_key — a mismatch is
+   *  the `keeper-mismatch` repair state. Absent is lawful (pre-upgrade). */
+  identity_key?: string;
 }
 
 export interface KeeperPointerDeps {
@@ -90,14 +96,49 @@ export function resolveKeeperPointer(deps: KeeperPointerDeps = {}): ResolveKeepe
   if (typeof o.transport !== "string" || o.transport.trim() === "") {
     return { ok: false, error: `keeper_pointer_malformed: "transport" must be a non-empty string` };
   }
-  return { ok: true, pointer: { sshAlias: o.sshAlias, transport: o.transport } };
+  const pointer: KeeperPointer = {
+    sshAlias: o.sshAlias,
+    transport: o.transport,
+    ...(typeof o.identity_key === "string" && o.identity_key.trim() !== "" ? { identity_key: o.identity_key } : {}),
+  };
+  return { ok: true, pointer };
 }
 
 /** Write the keeper bootstrap pointer (the bootstrap/ops act of naming the
  *  keeper — not a self-report; there is exactly one keeper coordinate, not a
  *  per-machine row). Atomic tmp+rename, the same discipline as the roster
- *  self-report writer. */
+ *  self-report writer. #1477: carries identity_key when present. */
 export function writeKeeperPointerFile(pointer: KeeperPointer, deps: KeeperPointerDeps = {}): void {
   const file = keeperPointerFilePath(deps);
-  atomicWriteFileSync(file, JSON.stringify(pointer, null, 2) + "\n");
+  const doc: Record<string, string> = { sshAlias: pointer.sshAlias, transport: pointer.transport };
+  if (pointer.identity_key) doc.identity_key = pointer.identity_key;
+  atomicWriteFileSync(file, JSON.stringify(doc, null, 2) + "\n");
+}
+
+// ── keeper identity validation (#1477, ADR 0034) ────────────────────────────
+// Validate that the keeper pointer's identity_key (when present) matches the
+// roster row for the keeper's sshAlias. Named repair states:
+//   - verified: the fingerprint matches (or is absent — pre-upgrade compat)
+//   - keeper-mismatch: the pointer and roster row carry different fingerprints
+//   - keeper-absent: no roster row found for the keeper's sshAlias
+
+/** The keeper identity validation vocabulary (#1477 AC4). */
+export type KeeperIdentityState = "verified" | "keeper-mismatch" | "keeper-absent";
+
+/** Validate the keeper's identity against its roster row. The pointer carries
+ *  the keeper's identity_key; the rosterRow is the roster entry resolved by
+ *  sshAlias. Returns a named repair state, never throws. */
+export function validateKeeperIdentity(
+  pointer: KeeperPointer,
+  rosterRow: { machine_id: string; identity_key?: string; sshAlias: string } | undefined,
+): KeeperIdentityState {
+  // Pre-upgrade pointer (no identity_key) — verified by default (backward compat)
+  if (!pointer.identity_key) return "verified";
+  // No roster row for this keeper — keeper-absent repair state
+  if (!rosterRow) return "keeper-absent";
+  // Roster row has no identity_key — pre-upgrade peer, can't verify
+  if (!rosterRow.identity_key) return "verified";
+  // Compare fingerprints
+  if (pointer.identity_key === rosterRow.identity_key) return "verified";
+  return "keeper-mismatch";
 }

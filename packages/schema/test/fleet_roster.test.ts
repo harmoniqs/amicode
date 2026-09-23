@@ -21,14 +21,20 @@ import {
   HEALTH_VOCABULARY,
   KNOWN_CAPABILITY_TAGS,
   KNOWN_DEVICE_TYPES,
+  IDENTITY_STATE_VOCABULARY,
   isKnownCapability,
   parseRosterRow,
+  upsertRosterRow,
+  emptyRoster,
   placementDescriptor,
   classifyMacModel,
   classifyLinuxChassis,
   normalizeDeviceName,
   isWslKernel,
+  detectIdentityConflicts,
   type RosterRow,
+  type RosterDocument,
+  type IdentityState,
 } from "../src/fleet_roster.js";
 
 const ROW: RosterRow = {
@@ -292,6 +298,156 @@ describe("normalizeDeviceName — the friendly-name prettifier (#1371 AC3)", () 
   it("leaves a space-bearing name intact even if it carries a dot (a human display name, not a hostname)", () => {
     expect(normalizeDeviceName("JJ's Mac Studio")).toBe("JJ's Mac Studio");
     expect(normalizeDeviceName("Conf Room 3.5")).toBe("Conf Room 3.5");
+  });
+});
+
+// ── stable peer identity (#1477, ADR 0034, binding amendment) ─────────────────
+// identity_key is the persisted cryptographic public-key fingerprint — the trust
+// root that is DISTINCT from hostname, alias, endpoint, and display name.
+// identity_state names the repair/conflict conditions honestly.
+
+describe("identity_key — stable peer identity (#1477 AC1)", () => {
+  const FINGERPRINT = "SHA256:abc123def456ghi789jkl012mno345pqr678stu901vwx";
+
+  it("round-trips an identity_key when the reporting machine includes one", () => {
+    const r = parseRosterRow({ ...ROW, identity_key: FINGERPRINT });
+    expect(r.ok).toBe(true);
+    if (!r.ok) throw new Error("expected a valid row");
+    expect(r.row.identity_key).toBe(FINGERPRINT);
+  });
+
+  it("parses a row that omits identity_key entirely — absent is lawful (pre-upgrade peers)", () => {
+    const r = parseRosterRow(ROW); // ROW carries no identity_key
+    expect(r.ok).toBe(true);
+    if (!r.ok) throw new Error("expected a valid row");
+    expect(r.row.identity_key).toBeUndefined();
+    expect("identity_key" in r.row).toBe(false);
+  });
+
+  it("rejects a non-string identity_key, never coercing it", () => {
+    const r = parseRosterRow({ ...ROW, identity_key: 42 });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("expected rejection");
+    expect(r.error).toMatch(/identity_key/i);
+  });
+
+  it("rejects an empty identity_key — a fingerprint must be non-empty when present", () => {
+    const r = parseRosterRow({ ...ROW, identity_key: "" });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("expected rejection");
+    expect(r.error).toMatch(/identity_key/i);
+  });
+});
+
+describe("identity_state — named repair/conflict states (#1477 AC2/AC4)", () => {
+  it("names the identity state vocabulary", () => {
+    expect(IDENTITY_STATE_VOCABULARY).toEqual(["verified", "alias-conflict", "key-changed", "stale-alias"]);
+  });
+
+  it("round-trips an identity_state when the reporting machine includes one", () => {
+    const r = parseRosterRow({ ...ROW, identity_key: "SHA256:abc", identity_state: "verified" });
+    expect(r.ok).toBe(true);
+    if (!r.ok) throw new Error("expected a valid row");
+    expect(r.row.identity_state).toBe("verified");
+  });
+
+  it("parses a row that omits identity_state — absent is lawful (pre-upgrade peers)", () => {
+    const r = parseRosterRow(ROW);
+    expect(r.ok).toBe(true);
+    if (!r.ok) throw new Error("expected a valid row");
+    expect(r.row.identity_state).toBeUndefined();
+  });
+
+  it("rejects an identity_state outside the vocabulary, never coercing it", () => {
+    const r = parseRosterRow({ ...ROW, identity_key: "SHA256:abc", identity_state: "maybe-ok" });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("expected rejection");
+    expect(r.error).toMatch(/identity_state/i);
+  });
+});
+
+describe("detectIdentityConflicts — roster-wide conflict detection (#1477 AC2/AC3)", () => {
+  const KEY_A = "SHA256:aaaa";
+  const KEY_B = "SHA256:bbbb";
+
+  function makeRow(overrides: Partial<RosterRow> & { machine_id: string }): RosterRow {
+    return { ...ROW, ...overrides };
+  }
+
+  it("returns no conflicts for a clean roster with distinct aliases", () => {
+    const doc: RosterDocument = {
+      schema_version: ROSTER_SCHEMA_VERSION,
+      rows: [
+        makeRow({ machine_id: "m1", sshAlias: "alias-a", identity_key: KEY_A }),
+        makeRow({ machine_id: "m2", sshAlias: "alias-b", identity_key: KEY_B }),
+      ],
+    };
+    expect(detectIdentityConflicts(doc)).toEqual([]);
+  });
+
+  it("detects alias-conflict: same sshAlias claimed by different identity_keys (#1477 AC3)", () => {
+    const doc: RosterDocument = {
+      schema_version: ROSTER_SCHEMA_VERSION,
+      rows: [
+        makeRow({ machine_id: "m1", sshAlias: "shared-alias", identity_key: KEY_A }),
+        makeRow({ machine_id: "m2", sshAlias: "shared-alias", identity_key: KEY_B }),
+      ],
+    };
+    const conflicts = detectIdentityConflicts(doc);
+    expect(conflicts.length).toBeGreaterThan(0);
+    expect(conflicts.some((c) => c.kind === "alias-conflict")).toBe(true);
+  });
+
+  it("detects key-changed: same machine_id with a different identity_key (#1477 AC2)", () => {
+    const existing: RosterDocument = {
+      schema_version: ROSTER_SCHEMA_VERSION,
+      rows: [makeRow({ machine_id: "m1", sshAlias: "alias-a", identity_key: KEY_A })],
+    };
+    const incoming = makeRow({ machine_id: "m1", sshAlias: "alias-a", identity_key: KEY_B });
+    const updated = upsertRosterRow(existing, incoming);
+    const conflicts = detectIdentityConflicts(updated, existing);
+    expect(conflicts.some((c) => c.kind === "key-changed" && c.machine_id === "m1")).toBe(true);
+  });
+
+  it("a changed hostname for the same identity_key is NOT a conflict — it is reconciled (#1477 AC2)", () => {
+    const doc: RosterDocument = {
+      schema_version: ROSTER_SCHEMA_VERSION,
+      rows: [makeRow({ machine_id: "m1", sshAlias: "new-alias", name: "New Name", identity_key: KEY_A })],
+    };
+    // Same identity key, different name/alias — no conflict
+    expect(detectIdentityConflicts(doc)).toEqual([]);
+  });
+
+  it("rows without identity_key are ignored in conflict detection (pre-upgrade peers)", () => {
+    const doc: RosterDocument = {
+      schema_version: ROSTER_SCHEMA_VERSION,
+      rows: [
+        makeRow({ machine_id: "m1", sshAlias: "same-alias" }),
+        makeRow({ machine_id: "m2", sshAlias: "same-alias" }),
+      ],
+    };
+    expect(detectIdentityConflicts(doc)).toEqual([]);
+  });
+});
+
+describe("upsertRosterRow — only-self-update with identity_key (#1477 binding amendment)", () => {
+  it("preserves identity_key on round-trip through upsert", () => {
+    const doc = emptyRoster();
+    const row: RosterRow = { ...ROW, identity_key: "SHA256:xyz" };
+    const updated = upsertRosterRow(doc, row);
+    expect(updated.rows.length).toBe(1);
+    expect(updated.rows[0].identity_key).toBe("SHA256:xyz");
+  });
+
+  it("upsert replaces a row for the same machine_id, carrying identity_key forward", () => {
+    const doc: RosterDocument = {
+      schema_version: ROSTER_SCHEMA_VERSION,
+      rows: [{ ...ROW, identity_key: "SHA256:original" }],
+    };
+    const updated = upsertRosterRow(doc, { ...ROW, name: "Updated Name", identity_key: "SHA256:original" });
+    expect(updated.rows.length).toBe(1);
+    expect(updated.rows[0].name).toBe("Updated Name");
+    expect(updated.rows[0].identity_key).toBe("SHA256:original");
   });
 });
 
