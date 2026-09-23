@@ -80,6 +80,36 @@ export function createSessionWarmScheduler() {
   }
 }
 
+export async function warmSessionServerBatches<Server, Row, Session>(input: {
+  servers: Server[]
+  list: (server: Server) => Promise<Row[]>
+  normalize: (row: Row) => Session
+  remember: (server: Server, session: Session) => void
+  warm: (server: Server, rows: Row[]) => Promise<void>
+}) {
+  const batches = await Promise.all(
+    input.servers.map(async (server) => {
+      let rows: Row[]
+      try {
+        rows = await input.list(server)
+      } catch {
+        return { server, rows: [] as Row[] }
+      }
+      const valid: Row[] = []
+      for (const row of rows) {
+        try {
+          input.remember(server, input.normalize(row))
+          valid.push(row)
+        } catch {
+          /* one malformed list row must not block its server batch */
+        }
+      }
+      return { server, rows: valid }
+    }),
+  )
+  await Promise.all(batches.map((batch) => input.warm(batch.server, batch.rows)))
+}
+
 export async function warmBulkSession(input: {
   remember: () => void
   hasLineage: () => boolean

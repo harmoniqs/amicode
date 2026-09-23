@@ -3,6 +3,7 @@ import {
   BULK_WARM_MESSAGES,
   createSessionWarmScheduler,
   sessionWarmSchedulerKey,
+  warmSessionServerBatches,
   warmBulkSession,
   warmOpenSessionTab,
 } from "./session-warm"
@@ -119,6 +120,26 @@ describe("session warming", () => {
     expect(calls).toBe(1)
     gate.resolve()
     await Promise.all([firstPass, overlappingPass])
+  })
+
+  test("remembers each valid list row before scheduling every server batch", async () => {
+    const stalled = deferred()
+    const events: string[] = []
+    const scheduled = warmSessionServerBatches({
+      servers: ["slow", "ready"],
+      list: async (server) => (server === "slow" ? [{ id: "slow-a" }] : [{ id: "ready-a" }]),
+      normalize: (row) => row,
+      remember: (server, row) => events.push(`remember:${server}:${row.id}`),
+      warm: async (server, rows) => {
+        events.push(`warm:${server}:${rows.map((row) => row.id).join(",")}`)
+        if (server === "slow") await stalled.promise
+      },
+    })
+
+    await settle()
+    expect(events).toEqual(["remember:slow:slow-a", "remember:ready:ready-a", "warm:slow:slow-a", "warm:ready:ready-a"])
+    stalled.resolve()
+    await scheduled
   })
 
   test("awaits lineage before the first-page bulk prefetch and never asks bulk warming for a deeper page", async () => {
