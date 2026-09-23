@@ -99,6 +99,7 @@ jobs:
             bash packages/extension/scripts/assert_ui_gate.sh "packages/extension/vendor/opencode/$P/opencode"
           done
       - name: Package universal and platform VSIX files
+        id: package
         run: |
           set -euo pipefail
           V=packages/extension/vendor/opencode
@@ -141,7 +142,7 @@ jobs:
           done
           [ "$FAILED" -eq 0 ]
       - name: Publish to Open VSX Registry
-        if: ${{ steps.meta.outputs.publishable == 'true' }}
+        if: ${{ !cancelled() && steps.meta.outputs.publishable == 'true' && steps.package.outcome == 'success' }}
         env:
           OVSX_TOKEN: ${{ secrets.OVSX_TOKEN }}
         run: |
