@@ -130,6 +130,7 @@ export class SessionMultiplexProxy {
    *  resolved URL + machine_id, or undefined for local (fail-safe).
    *
    *  Resolution order:
+   *   0. Honesty surface (/amicode/fleet/*) → local ALWAYS (never proxied)
    *   1. Extract session ID from the path → look up owner
    *   2. Read X-Amicode-Owner header → use as owner
    *   3. No session, no header → local (undefined)
@@ -141,6 +142,13 @@ export class SessionMultiplexProxy {
     pathname: string,
     headers: Record<string, string | string[] | undefined>,
   ): ResolvedTarget | undefined {
+    // 0. Honesty surface: /amicode/fleet/* is the machine's OWN truth — NEVER
+    //    proxied to a peer, regardless of session owner or routing header.
+    //    This is the multiplexer's equivalent of shouldProxyAmicodeToHost's
+    //    /amicode/fleet/* exclusion (ADR 0027 §4).
+    if (pathname === "/amicode/fleet" || pathname.startsWith("/amicode/fleet/")) {
+      return undefined;
+    }
     // 1. Path-based: extract session ID → owner
     const sessionId = extractSessionIdFromPath(pathname);
     let machineId: string | undefined;
