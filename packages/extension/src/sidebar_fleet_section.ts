@@ -17,6 +17,42 @@
 // as literal unions rather than importing across the node seam — the same
 // seam-crossing precedent fleet_posture_feed.ts sets for the posture vocabulary.
 
+/** #1477: the result of a self-report update validation. */
+export type SelfReportValidation =
+  | { ok: true }
+  | { ok: false; reason: "identity-mismatch" | "reporter-unidentified" | "invalid-reporter-identity" };
+
+/** #1477 binding amendment: validate that a roster self-report update comes from
+ *  the identity that owns the row. A peer may update only its OWN identity record.
+ *  - A reporter with a matching stable_id is accepted.
+ *  - A reporter with a different stable_id is rejected (identity-mismatch).
+ *  - A reporter with no stable_id updating a row that has one is rejected.
+ *  - An update to a legacy row (no stable_id) is accepted from any reporter.
+ *  - A reporter with an invalid fingerprint format is rejected. */
+export function validateSelfReportUpdate(opts: {
+  reporterStableId: string | undefined;
+  row: RosterRowLike;
+}): SelfReportValidation {
+  // Legacy rows (no stable_id on the row) accept any update — backwards compat
+  if (opts.row.stable_id === undefined) return { ok: true };
+  // Reporter must be identified to update an identity-bearing row
+  if (opts.reporterStableId === undefined) return { ok: false, reason: "reporter-unidentified" };
+  // Reporter must have a valid fingerprint
+  if (!isValidStableId(opts.reporterStableId)) return { ok: false, reason: "invalid-reporter-identity" };
+  // The reporter's identity must match the row's identity
+  if (opts.reporterStableId !== opts.row.stable_id) return { ok: false, reason: "identity-mismatch" };
+  return { ok: true };
+}
+
+/** #1477: validate that a stable_id is a well-formed cryptographic public-key
+ *  fingerprint. The canonical format is `fp:sha256:<hex>` — a hash-algorithm-
+ *  tagged hex string. Returns false for undefined, null, empty, bare hostnames,
+ *  or any string not matching the fingerprint format. */
+export function isValidStableId(id: string | undefined | null): boolean {
+  if (id == null || id === "") return false;
+  return /^fp:sha256:[0-9a-fA-F]+$/.test(id);
+}
+
 /** The per-device reachability tri-state (schema HEALTH_VOCABULARY, #1318). */
 export type RosterHealth = "reachable" | "degraded" | "down";
 
@@ -88,6 +124,14 @@ export interface RosterRowLike {
    *  reconciled metadata; only this key identifies a peer for trust, grants,
    *  and keeper authority. Absent on legacy rows (pre-#1477). */
   stable_id?: string;
+  /** The SSH alias this peer is reachable at. Mutable metadata — reconciled,
+   *  not identity. Two different stable_ids claiming the same sshAlias is a
+   *  conflict (#1477). */
+  sshAlias?: string;
+  /** The endpoint URL this peer serves on. Mutable metadata — reconciled,
+   *  not identity. Two different stable_ids claiming the same endpoint is a
+   *  conflict (#1477). */
+  endpoint?: string;
 }
 
 /** A capability tag split into known-behavior vs descriptive (ADR 0026 §1). */
@@ -186,6 +230,10 @@ export interface FleetSectionInput {
   focusedMachineId?: string;
   /** Injectable clock for staleness computation (#1375). Defaults to Date.now(). */
   now?: number;
+  /** #1477: the keeper's stable identity (cryptographic fingerprint), if known.
+   *  When provided, the builder runs resolveKeeper against the roster and
+   *  surfaces the result on the model. Absent/null ⇒ no keeper resolution. */
+  keeperId?: string | null;
 }
 
 /** The canonical-server seed — the machine a client points at, from fleet.json
@@ -233,15 +281,26 @@ export interface FleetSectionModel {
   /** #1477: true when this standalone peer can serve sessions (engine-owning)
    *  without taking a new fleet.json role. Only set on standalone state. */
   servingAdvertisement?: boolean;
+  /** #1477: reconciliation repairs the host should surface to the operator.
+   *  Undefined when no reconciliation was performed (e.g. empty roster, standalone). */
+  repairs?: RosterRepair[];
+  /** #1477: the result of keeper resolution against the roster's stable identities.
+   *  Undefined when no keeperId was provided (legacy/no keeper). */
+  keeper?: KeeperResolution;
+  /** #1477 binding amendment: stable_ids whose grants/tokens are suspended pending
+   *  explicit re-admit. Populated from reconciliation repairs (identity-change,
+   *  alias-conflict, invalid-identity). Undefined when no reconciliation ran. */
+  suspendedIds?: string[];
 }
 
 /** #1477: a roster repair — a named state produced by reconciliation.
  *  `identity-change`: the same stable_id appeared under two different
  *  machine_ids (hostname changed). `alias-conflict`: two different stable_ids
- *  claimed the same machine_id. */
+ *  claimed the same machine_id. `invalid-identity`: a row carried a stable_id
+ *  that is not a valid cryptographic fingerprint. */
 export interface RosterRepair {
-  kind: "identity-change" | "alias-conflict";
-  /** The stable_id involved (identity-change) or undefined (alias-conflict). */
+  kind: "identity-change" | "alias-conflict" | "invalid-identity";
+  /** The stable_id involved (identity-change / invalid-identity) or undefined (alias-conflict). */
   stableId?: string;
   /** The stale row that was superseded (identity-change). */
   staleRow?: RosterRowLike;
@@ -251,6 +310,12 @@ export interface RosterRepair {
   conflictingIds?: string[];
   /** The contested machine_id (alias-conflict). */
   contestedMachineId?: string;
+  /** The invalid row (invalid-identity). */
+  invalidRow?: RosterRowLike;
+  /** #1477 binding amendment: true when this repair requires explicit human
+   *  re-admit before grants can be restored. Set on identity-change and
+   *  alias-conflict repairs. */
+  requiresReAdmit?: boolean;
 }
 
 /** #1477: the result of roster reconciliation — live rows plus named repairs. */
@@ -259,6 +324,10 @@ export interface RosterReconciliation {
   live: RosterRowLike[];
   /** Named repair states for the operator to resolve. */
   repairs: RosterRepair[];
+  /** #1477 binding amendment: stable_ids whose grants/tokens must be suspended
+   *  pending explicit re-admit. Populated from identity-change, alias-conflict,
+   *  and invalid-identity repairs. Empty when reconciliation is clean. */
+  suspendedIds: string[];
 }
 
 /** #1477: reconcile a raw roster into de-duplicated live rows plus named
@@ -277,36 +346,72 @@ export function reconcileRoster(rows: RosterRowLike[]): RosterReconciliation {
   const withId: RosterRowLike[] = [];
   const legacy: RosterRowLike[] = [];
   for (const r of rows) {
-    if (r.stable_id !== undefined) withId.push(r);
-    else legacy.push(r);
+    if (r.stable_id !== undefined) {
+      // Validate fingerprint format — invalid identities are excluded and surfaced
+      if (isValidStableId(r.stable_id)) {
+        withId.push(r);
+      } else {
+        repairs.push({
+          kind: "invalid-identity",
+          stableId: r.stable_id,
+          invalidRow: r,
+        });
+      }
+    } else {
+      legacy.push(r);
+    }
   }
 
-  // Step 1: detect alias conflicts — same machine_id, different stable_ids
+  // Step 1: detect alias conflicts — same machine_id, sshAlias, or endpoint
+  // claimed by different stable_ids. Check all three reach attributes (#1477
+  // gap #5: not just machine_id).
   const byMachineId = new Map<string, RosterRowLike[]>();
+  const bySshAlias = new Map<string, RosterRowLike[]>();
+  const byEndpoint = new Map<string, RosterRowLike[]>();
   for (const r of withId) {
     const existing = byMachineId.get(r.machine_id);
     if (existing) existing.push(r);
     else byMachineId.set(r.machine_id, [r]);
+    if (r.sshAlias) {
+      const existingA = bySshAlias.get(r.sshAlias);
+      if (existingA) existingA.push(r);
+      else bySshAlias.set(r.sshAlias, [r]);
+    }
+    if (r.endpoint) {
+      const existingE = byEndpoint.get(r.endpoint);
+      if (existingE) existingE.push(r);
+      else byEndpoint.set(r.endpoint, [r]);
+    }
   }
 
   const conflictedMachineIds = new Set<string>();
   const conflictedStableIds = new Set<string>();
-  for (const [machineId, group] of byMachineId) {
-    const uniqueIds = new Set(group.map((r) => r.stable_id!));
-    if (uniqueIds.size > 1) {
-      conflictedMachineIds.add(machineId);
-      for (const id of uniqueIds) conflictedStableIds.add(id);
-      repairs.push({
-        kind: "alias-conflict",
-        conflictingIds: [...uniqueIds],
-        contestedMachineId: machineId,
-      });
+
+  // Helper: check a grouping map for alias conflicts
+  function checkConflicts(byKey: Map<string, RosterRowLike[]>, keyLabel: string) {
+    for (const [key, group] of byKey) {
+      const uniqueIds = new Set(group.map((r) => r.stable_id!));
+      if (uniqueIds.size > 1) {
+        for (const r of group) conflictedMachineIds.add(r.machine_id);
+        for (const id of uniqueIds) conflictedStableIds.add(id);
+        repairs.push({
+          kind: "alias-conflict",
+          conflictingIds: [...uniqueIds],
+          contestedMachineId: key,
+          requiresReAdmit: true,
+        });
+      }
     }
   }
 
-  // Filter out conflicted rows
+  checkConflicts(byMachineId, "machine_id");
+  checkConflicts(bySshAlias, "sshAlias");
+  checkConflicts(byEndpoint, "endpoint");
+
+  // Filter out conflicted rows — by machine_id AND stable_id (sshAlias/endpoint
+  // conflicts mark the stable_ids as conflicted even when machine_ids differ)
   const nonConflicted = withId.filter(
-    (r) => !conflictedMachineIds.has(r.machine_id),
+    (r) => !conflictedMachineIds.has(r.machine_id) && !conflictedStableIds.has(r.stable_id!),
   );
 
   // Step 2: detect identity changes — same stable_id, different machine_ids
@@ -335,11 +440,29 @@ export function reconcileRoster(rows: RosterRowLike[]): RosterReconciliation {
         stableId,
         staleRow: sorted[i],
         liveRow: sorted[0],
+        requiresReAdmit: true,
       });
     }
   }
 
-  return { live, repairs };
+  // #1477 binding amendment: collect suspended ids from all repairs.
+  // Identity changes, alias conflicts, and invalid identities all suspend
+  // the associated stable_ids — grants/tokens for these ids must not be
+  // honored until explicit re-admit.
+  const suspendedIds: string[] = [];
+  for (const repair of repairs) {
+    if (repair.kind === "identity-change" && repair.stableId) {
+      if (!suspendedIds.includes(repair.stableId)) suspendedIds.push(repair.stableId);
+    } else if (repair.kind === "alias-conflict" && repair.conflictingIds) {
+      for (const id of repair.conflictingIds) {
+        if (!suspendedIds.includes(id)) suspendedIds.push(id);
+      }
+    } else if (repair.kind === "invalid-identity" && repair.stableId) {
+      if (!suspendedIds.includes(repair.stableId)) suspendedIds.push(repair.stableId);
+    }
+  }
+
+  return { live, repairs, suspendedIds };
 }
 
 /** #1477: the state of keeper resolution. */
@@ -441,7 +564,14 @@ export function buildFleetSectionModel(input: FleetSectionInput): FleetSectionMo
   }
   const localId = local?.machineId ?? null;
   const canonicalId = input.canonicalServer?.machineId ?? null;
-  const devices: FleetDeviceRow[] = input.roster.map((r) => {
+  // #1477: reconcile the roster BEFORE building device rows — de-duplicate
+  // identity changes, refuse alias conflicts, validate fingerprints. The
+  // reconciled `live` rows drive the device list; repairs are surfaced on the
+  // model for the host to act on.
+  const hasAnyStableId = input.roster.some(r => r.stable_id !== undefined);
+  const reconciled = hasAnyStableId ? reconcileRoster(input.roster) : null;
+  const effectiveRoster = reconciled ? reconciled.live : input.roster;
+  const devices: FleetDeviceRow[] = effectiveRoster.map((r) => {
     const isHub = canonicalId !== null && r.machine_id === canonicalId;
     return {
       machineId: r.machine_id,
@@ -490,6 +620,10 @@ export function buildFleetSectionModel(input: FleetSectionInput): FleetSectionMo
       linkHealth: hasPeerUp ? "ok" : allPeersDown ? "down" : "degraded",
     };
   }
+  // #1477: resolve keeper against the roster when a keeperId is provided.
+  const keeperResult = input.keeperId != null
+    ? resolveKeeper({ keeperId: input.keeperId, roster: input.roster })
+    : undefined;
   return {
     state,
     devices,
@@ -498,6 +632,9 @@ export function buildFleetSectionModel(input: FleetSectionInput): FleetSectionMo
     troubleshoot: { enabled: input.troubleshootAvailable },
     focusedMachineId: input.focusedMachineId,
     now,
+    ...(reconciled && reconciled.repairs.length > 0 ? { repairs: reconciled.repairs } : {}),
+    ...(reconciled && reconciled.suspendedIds.length > 0 ? { suspendedIds: reconciled.suspendedIds } : {}),
+    ...(keeperResult ? { keeper: keeperResult } : {}),
   };
 }
 
@@ -812,6 +949,13 @@ export function renderFleetSection(
     notice.className = "fleet-standalone fleet-placeholder-text";
     notice.textContent = "Current device not registered with a fleet.";
     container.appendChild(notice);
+    // #1477: render a serving badge when this standalone peer can serve sessions.
+    if (model.servingAdvertisement) {
+      const badge = document.createElement("div");
+      badge.className = "fleet-serving-badge";
+      badge.textContent = "This device is serving sessions";
+      container.appendChild(badge);
+    }
   } else {
     // Action bar (Manage + Troubleshoot) renders at the TOP, before the
     // device list — absent entirely when neither button is enabled.

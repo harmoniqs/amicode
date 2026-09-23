@@ -16,6 +16,8 @@ import {
   displayRole,
   reconcileRoster,
   resolveKeeper,
+  isValidStableId,
+  validateSelfReportUpdate,
   DEGRADED_AGE_MS,
   DOWN_AGE_MS,
 } from "../src/sidebar_fleet_section";
@@ -884,6 +886,44 @@ function idRow(over: Partial<RosterRowLike> = {}): RosterRowLike {
   };
 }
 
+describe("stable identity fingerprint validation — AC1: cryptographic public-key fingerprint (#1477)", () => {
+  it("accepts a valid fp:sha256:<hex> fingerprint", () => {
+    expect(isValidStableId("fp:sha256:aabbccdd0011eeff")).toBe(true);
+  });
+
+  it("rejects a bare string that is not a fingerprint", () => {
+    expect(isValidStableId("mac-studio-01")).toBe(false);
+  });
+
+  it("rejects an empty string", () => {
+    expect(isValidStableId("")).toBe(false);
+  });
+
+  it("rejects undefined/null", () => {
+    expect(isValidStableId(undefined)).toBe(false);
+    expect(isValidStableId(null as any)).toBe(false);
+  });
+
+  it("rejects a fingerprint with non-hex characters", () => {
+    expect(isValidStableId("fp:sha256:ZZZZ")).toBe(false);
+  });
+
+  it("accepts uppercase hex in fingerprints", () => {
+    expect(isValidStableId("fp:sha256:AABBCCDD")).toBe(true);
+  });
+
+  it("reconcileRoster rejects rows with invalid stable_id format as a named repair", () => {
+    const result = reconcileRoster([
+      idRow({ machine_id: "a", stable_id: "not-a-fingerprint" }),
+      idRow({ machine_id: "b", stable_id: "fp:sha256:aabb" }),
+    ]);
+    // The invalid row is excluded from live, surfaced as a repair
+    expect(result.live.some(r => r.machine_id === "a")).toBe(false);
+    expect(result.live.some(r => r.machine_id === "b")).toBe(true);
+    expect(result.repairs.some(r => r.kind === "invalid-identity")).toBe(true);
+  });
+});
+
 describe("stable peer identity — AC1: stable_id is the trust key (#1477)", () => {
   it("a roster row carrying stable_id surfaces it on the device model", () => {
     const model = buildFleetSectionModel(input({
@@ -985,7 +1025,7 @@ describe("keeper resolution — AC4: keeper resolves to one stable serving ident
 
   it("a missing keeper (no matching stable_id in roster) is a named repair state", () => {
     const result = resolveKeeper({
-      keeperId: "fp:sha256:GONE",
+      keeperId: "fp:sha256:dead0000",
       roster: [
         idRow({ machine_id: "studio", stable_id: "fp:sha256:1111" }),
       ],
@@ -1010,7 +1050,7 @@ describe("keeper resolution — AC4: keeper resolves to one stable serving ident
       roster: [
         // Same machine_id, different stable_ids — a conflict (AC3)
         idRow({ machine_id: "studio.local", stable_id: "fp:sha256:1111" }),
-        idRow({ machine_id: "studio.local", stable_id: "fp:sha256:IMPOSTER" }),
+        idRow({ machine_id: "studio.local", stable_id: "fp:sha256:2222" }),
       ],
     });
     expect(result.state).toBe("keeper-conflict");
@@ -1029,6 +1069,42 @@ describe("keeper resolution — AC4: keeper resolves to one stable serving ident
     // The keeper resolves to the live row (new-host), not the stale one
     expect(result.state).toBe("resolved");
     expect(result.keeperRow?.machine_id).toBe("new-host");
+  });
+});
+
+describe("standalone serving rendered in DOM — gap #6: production-wired rendering (#1477)", () => {
+  it("renders a serving-capable badge when standalone peer can serve sessions", () => {
+    const el = document.createElement("div");
+    const model = buildFleetSectionModel(input({
+      localDevice: {
+        machineId: "studio",
+        name: "Mac Studio",
+        serveStance: "standalone",
+        deviceType: "desktop",
+        servingCapable: true,
+      },
+    }));
+    renderFleetSection(el, model, () => {});
+    const notice = el.querySelector(".fleet-standalone");
+    expect(notice).not.toBeNull();
+    // The serving badge must be rendered alongside the standalone notice
+    const badge = el.querySelector(".fleet-serving-badge");
+    expect(badge).not.toBeNull();
+    expect(badge!.textContent).toContain("serving");
+  });
+
+  it("does NOT render a serving badge when standalone peer is NOT serving-capable", () => {
+    const el = document.createElement("div");
+    const model = buildFleetSectionModel(input({
+      localDevice: {
+        machineId: "laptop",
+        name: "MacBook",
+        serveStance: "standalone",
+        deviceType: "laptop",
+      },
+    }));
+    renderFleetSection(el, model, () => {});
+    expect(el.querySelector(".fleet-serving-badge")).toBeNull();
   });
 });
 
@@ -1068,6 +1144,254 @@ describe("standalone serving advertisement — AC5: engine-owning standalone can
       localDevice: { machineId: "studio", name: "Studio", serveStance: "server", deviceType: "desktop" },
     }));
     expect(model.servingAdvertisement).toBeFalsy();
+  });
+});
+
+describe("only-self-update enforcement — binding amendment: a peer may only update its own record (#1477)", () => {
+  it("accepts an update where the reporter's stable_id matches the row's stable_id", () => {
+    const result = validateSelfReportUpdate({
+      reporterStableId: "fp:sha256:aaaa",
+      row: idRow({ stable_id: "fp:sha256:aaaa" }),
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it("rejects an update where the reporter's stable_id does NOT match the row's stable_id", () => {
+    const result = validateSelfReportUpdate({
+      reporterStableId: "fp:sha256:aaaa",
+      row: idRow({ stable_id: "fp:sha256:bbbb" }),
+    });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("identity-mismatch");
+  });
+
+  it("rejects an update from a reporter with no stable_id when the row has one", () => {
+    const result = validateSelfReportUpdate({
+      reporterStableId: undefined,
+      row: idRow({ stable_id: "fp:sha256:aaaa" }),
+    });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("reporter-unidentified");
+  });
+
+  it("accepts an update to a legacy row (no stable_id) from any reporter", () => {
+    const result = validateSelfReportUpdate({
+      reporterStableId: "fp:sha256:aaaa",
+      row: { ...idRow(), stable_id: undefined },
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it("rejects an update with an invalid reporter fingerprint", () => {
+    const result = validateSelfReportUpdate({
+      reporterStableId: "not-a-fingerprint",
+      row: idRow({ stable_id: "fp:sha256:aaaa" }),
+    });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("invalid-reporter-identity");
+  });
+});
+
+describe("grant suspension on conflict/key-change — gap #4: binding amendment enforcement (#1477)", () => {
+  it("identity-change repairs carry suspendedIds — the stale identity's grants must be suspended", () => {
+    const result = reconcileRoster([
+      idRow({ machine_id: "old-host", stable_id: "fp:sha256:aaaa", last_report: "2026-09-20T11:00:00.000Z" }),
+      idRow({ machine_id: "new-host", stable_id: "fp:sha256:aaaa", last_report: "2026-09-20T12:00:00.000Z" }),
+    ]);
+    expect(result.suspendedIds).toBeDefined();
+    expect(result.suspendedIds).toContain("fp:sha256:aaaa");
+  });
+
+  it("alias-conflict repairs carry suspendedIds — both conflicting identities are suspended", () => {
+    const result = reconcileRoster([
+      idRow({ machine_id: "studio.local", stable_id: "fp:sha256:1111" }),
+      idRow({ machine_id: "studio.local", stable_id: "fp:sha256:2222" }),
+    ]);
+    expect(result.suspendedIds).toBeDefined();
+    expect(result.suspendedIds).toContain("fp:sha256:1111");
+    expect(result.suspendedIds).toContain("fp:sha256:2222");
+  });
+
+  it("invalid-identity repairs carry suspendedIds", () => {
+    const result = reconcileRoster([
+      idRow({ machine_id: "a", stable_id: "not-a-fingerprint" }),
+    ]);
+    expect(result.suspendedIds).toBeDefined();
+    expect(result.suspendedIds).toContain("not-a-fingerprint");
+  });
+
+  it("clean reconciliation has empty suspendedIds", () => {
+    const result = reconcileRoster([
+      idRow({ machine_id: "a", stable_id: "fp:sha256:1111" }),
+      idRow({ machine_id: "b", stable_id: "fp:sha256:2222" }),
+    ]);
+    expect(result.suspendedIds).toEqual([]);
+  });
+
+  it("the model surfaces suspendedIds for the host to enforce grant suspension", () => {
+    const model = buildFleetSectionModel(input({
+      roster: [
+        idRow({ machine_id: "old-host", stable_id: "fp:sha256:aaaa", last_report: "2026-09-20T11:00:00.000Z" }),
+        idRow({ machine_id: "new-host", stable_id: "fp:sha256:aaaa", last_report: "2026-09-20T12:00:00.000Z" }),
+      ],
+    }));
+    expect(model.suspendedIds).toBeDefined();
+    expect(model.suspendedIds).toContain("fp:sha256:aaaa");
+  });
+});
+
+describe("buildFleetSectionModel integrates resolveKeeper — gap #3: keeper resolution in production path (#1477)", () => {
+  it("resolves a keeper by stable_id and surfaces its state on the model", () => {
+    const model = buildFleetSectionModel(input({
+      roster: [
+        idRow({ machine_id: "studio", stable_id: "fp:sha256:1111", server_mode: "server" }),
+        idRow({ machine_id: "laptop", stable_id: "fp:sha256:2222", server_mode: "client" }),
+      ],
+      keeperId: "fp:sha256:1111",
+    }));
+    expect(model.keeper).toBeDefined();
+    expect(model.keeper!.state).toBe("resolved");
+    expect(model.keeper!.keeperRow?.machine_id).toBe("studio");
+  });
+
+  it("surfaces keeper-missing when no matching stable_id exists in roster", () => {
+    const model = buildFleetSectionModel(input({
+      roster: [
+        idRow({ machine_id: "studio", stable_id: "fp:sha256:1111" }),
+      ],
+      keeperId: "fp:sha256:dead0000",
+    }));
+    expect(model.keeper).toBeDefined();
+    expect(model.keeper!.state).toBe("keeper-missing");
+  });
+
+  it("does not surface keeper state when no keeperId is provided (legacy/no keeper)", () => {
+    const model = buildFleetSectionModel(input({
+      roster: [idRow()],
+    }));
+    expect(model.keeper).toBeUndefined();
+  });
+
+  it("surfaces keeper-conflict when the keeper's identity is involved in an alias conflict", () => {
+    const model = buildFleetSectionModel(input({
+      roster: [
+        idRow({ machine_id: "studio.local", stable_id: "fp:sha256:1111" }),
+        idRow({ machine_id: "studio.local", stable_id: "fp:sha256:2222" }),
+      ],
+      keeperId: "fp:sha256:1111",
+    }));
+    expect(model.keeper).toBeDefined();
+    expect(model.keeper!.state).toBe("keeper-conflict");
+  });
+});
+
+describe("buildFleetSectionModel integrates reconcileRoster — gap #2: reconciliation in production path (#1477)", () => {
+  it("duplicate identity rows are reconciled — only the live row appears in devices", () => {
+    const model = buildFleetSectionModel(input({
+      roster: [
+        idRow({ machine_id: "old-host", name: "Old", stable_id: "fp:sha256:aaaa", last_report: "2026-09-20T11:00:00.000Z" }),
+        idRow({ machine_id: "new-host", name: "New", stable_id: "fp:sha256:aaaa", last_report: "2026-09-20T12:00:00.000Z" }),
+      ],
+    }));
+    // Only the live row (new-host) should appear — old-host was reconciled away
+    expect(model.devices).toHaveLength(1);
+    expect(model.devices[0].machineId).toBe("new-host");
+    expect(model.devices[0].name).toBe("New");
+  });
+
+  it("alias-conflicted rows are excluded from devices — no arbitrary selection", () => {
+    const model = buildFleetSectionModel(input({
+      roster: [
+        idRow({ machine_id: "studio.local", name: "A", stable_id: "fp:sha256:1111" }),
+        idRow({ machine_id: "studio.local", name: "B", stable_id: "fp:sha256:2222" }),
+      ],
+    }));
+    // Neither row should appear — both are suspended
+    expect(model.devices).toHaveLength(0);
+  });
+
+  it("the model carries reconciliation repairs for the host to surface", () => {
+    const model = buildFleetSectionModel(input({
+      roster: [
+        idRow({ machine_id: "old-host", stable_id: "fp:sha256:aaaa", last_report: "2026-09-20T11:00:00.000Z" }),
+        idRow({ machine_id: "new-host", stable_id: "fp:sha256:aaaa", last_report: "2026-09-20T12:00:00.000Z" }),
+      ],
+    }));
+    expect(model.repairs).toBeDefined();
+    expect(model.repairs!.length).toBeGreaterThan(0);
+    expect(model.repairs![0].kind).toBe("identity-change");
+  });
+
+  it("legacy rows without stable_id pass through unchanged alongside reconciled rows", () => {
+    const model = buildFleetSectionModel(input({
+      roster: [
+        row({ machine_id: "legacy-a", name: "Legacy A" }) as RosterRowLike,
+        idRow({ machine_id: "modern-b", name: "Modern B", stable_id: "fp:sha256:bbbb" }),
+      ],
+    }));
+    expect(model.devices).toHaveLength(2);
+    expect(model.devices.some(d => d.machineId === "legacy-a")).toBe(true);
+    expect(model.devices.some(d => d.machineId === "modern-b")).toBe(true);
+  });
+});
+
+describe("reconcileRoster for peer provider integration — gap #2: serving peer selection must use reconciled rows (#1477)", () => {
+  it("provides reconciled live rows suitable for serving-peer derivation", () => {
+    // The peer provider (fleet_peer_provider.ts) derives serving peers from
+    // roster rows. After reconciliation, only live rows should reach it — 
+    // duplicates and conflicts must be excluded.
+    const result = reconcileRoster([
+      idRow({ machine_id: "old-host", stable_id: "fp:sha256:aaaa", server_mode: "server", last_report: "2026-09-20T11:00:00.000Z" }),
+      idRow({ machine_id: "new-host", stable_id: "fp:sha256:aaaa", server_mode: "server", last_report: "2026-09-20T12:00:00.000Z" }),
+      idRow({ machine_id: "laptop", stable_id: "fp:sha256:bbbb", server_mode: "client" }),
+    ]);
+    // Only 2 live rows: new-host (latest for aaaa) + laptop
+    expect(result.live).toHaveLength(2);
+    expect(result.live.map(r => r.machine_id)).toContain("new-host");
+    expect(result.live.map(r => r.machine_id)).toContain("laptop");
+    expect(result.live.map(r => r.machine_id)).not.toContain("old-host");
+  });
+
+  it("excludes conflicted rows from the serving set — peer provider never selects an arbitrary row", () => {
+    const result = reconcileRoster([
+      idRow({ machine_id: "studio.local", stable_id: "fp:sha256:1111", server_mode: "server" }),
+      idRow({ machine_id: "studio.local", stable_id: "fp:sha256:2222", server_mode: "server" }),
+      idRow({ machine_id: "laptop", stable_id: "fp:sha256:bbbb", server_mode: "client" }),
+    ]);
+    // Only laptop survives — studio.local is contested
+    expect(result.live).toHaveLength(1);
+    expect(result.live[0].machine_id).toBe("laptop");
+  });
+});
+
+describe("reconciliation checks sshAlias and endpoint — gap #5: not just machine_id (#1477)", () => {
+  it("detects alias conflict when two stable_ids claim the same sshAlias", () => {
+    const result = reconcileRoster([
+      idRow({ machine_id: "host-a", stable_id: "fp:sha256:1111", sshAlias: "studio" }),
+      idRow({ machine_id: "host-b", stable_id: "fp:sha256:2222", sshAlias: "studio" }),
+    ]);
+    expect(result.repairs.some(r => r.kind === "alias-conflict")).toBe(true);
+    // Both should be suspended — the alias is contested
+    expect(result.suspendedIds).toContain("fp:sha256:1111");
+    expect(result.suspendedIds).toContain("fp:sha256:2222");
+  });
+
+  it("detects alias conflict when two stable_ids claim the same endpoint", () => {
+    const result = reconcileRoster([
+      idRow({ machine_id: "host-a", stable_id: "fp:sha256:1111", endpoint: "http://10.0.0.1:43117" }),
+      idRow({ machine_id: "host-b", stable_id: "fp:sha256:2222", endpoint: "http://10.0.0.1:43117" }),
+    ]);
+    expect(result.repairs.some(r => r.kind === "alias-conflict")).toBe(true);
+  });
+
+  it("identity-change repairs are marked as requiring re-admit (not auto-accepted)", () => {
+    const result = reconcileRoster([
+      idRow({ machine_id: "old-host", stable_id: "fp:sha256:aaaa", last_report: "2026-09-20T11:00:00.000Z" }),
+      idRow({ machine_id: "new-host", stable_id: "fp:sha256:aaaa", last_report: "2026-09-20T12:00:00.000Z" }),
+    ]);
+    const repair = result.repairs.find(r => r.kind === "identity-change");
+    expect(repair).toBeDefined();
+    expect(repair!.requiresReAdmit).toBe(true);
   });
 });
 
