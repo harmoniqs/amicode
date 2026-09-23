@@ -132,6 +132,47 @@ describe("startAmicodeService", () => {
     }
   });
 
+  it("#1470 registers the fleet peer-token mint + revoke routes at boot (reachable on a plain standalone boot, not the base no-route 404)", async () => {
+    const { log } = sinkLog();
+    const boot = await startAmicodeService(log);
+    expect(boot).toBeDefined();
+    if (!boot) return;
+    try {
+      // A reachable route hands the request to its HANDLER; the base
+      // no-route path answers 404 with a `no route: …` payload. The two
+      // routes are ALWAYS-ON (a standalone joining peer holds no fleet
+      // entitlement yet must reach the mint endpoint), so a plain boot with
+      // NO fleet activation must still wire them. We probe with the local
+      // mint (an accept-set member) and NO query params — the mint/revoke
+      // handlers answer 400 "machine_id is required", which is a handler
+      // response, i.e. the route is reached. On the unwired tree the same
+      // request 404s at the base no-route catch-all.
+      const mint = await fetch(`${boot.url}/amicode/fleet/peer-token`, {
+        method: "POST",
+        headers: { Authorization: boot.authHeader },
+      });
+      expect(mint.status).not.toBe(404);
+      const mintBody = (await mint.json()) as { ok: boolean; error?: string };
+      expect(mintBody.error ?? "").not.toMatch(/^no route:/);
+      // The mint handler's own contract: no machine_id → 400 "machine_id is required".
+      expect(mint.status).toBe(400);
+      expect(mintBody.error).toContain("machine_id is required");
+
+      const revoke = await fetch(`${boot.url}/amicode/fleet/revoke`, {
+        method: "POST",
+        headers: { Authorization: boot.authHeader },
+      });
+      expect(revoke.status).not.toBe(404);
+      const revokeBody = (await revoke.json()) as { ok: boolean; error?: string };
+      expect(revokeBody.error ?? "").not.toMatch(/^no route:/);
+      // The revoke handler's own contract: no machine_id → 400 "machine_id is required".
+      expect(revoke.status).toBe(400);
+      expect(revokeBody.error).toContain("machine_id is required");
+    } finally {
+      await boot.service.stop();
+    }
+  });
+
   it("#822 without options the boot keeps its pre-#822 shape (no engine note, no shelf)", async () => {
     const { lines, log } = sinkLog();
     const boot = await startAmicodeService(log);

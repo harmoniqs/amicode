@@ -53,6 +53,12 @@ import { stageFleetDataPlane, type FleetStagingReceipt } from "./fleet_staging";
 import { resolveFleetProgram, type FleetProgramReceipt } from "./fleet_program";
 import { createProject, listProjects } from "./project";
 import {
+  MINT_ENDPOINT_PATH,
+  PEER_REVOKE_PATH,
+  peerRevokeHandler,
+  peerTokenMintHandler,
+} from "./fleet_mint_route";
+import {
   addCustomConnectionResponse,
   catalogResponse,
   chooseProjectResponse,
@@ -886,6 +892,18 @@ export function createAmicodeService(
     resetCursorOnSwitch: () => sessionResumeRef?.reset(),
     lifecycle: attachLifecycle,
   });
+  // #1470: the peer-token MINT + REVOKE routes — ALWAYS-ON siblings of
+  // roster/attach, NOT inside the entitlement-gated fleet block above. A
+  // joining machine is `standalone` (no fleet.json, no entitlement) and holds
+  // no standing credential; it MUST still reach the mint endpoint to bootstrap
+  // its first reader peer-token (ADR 0032 §D2/§D4). The service accept-set
+  // already validates the enrollment nonce for the mint path (server.ts
+  // isMintEndpoint) and gates revoke as an accept-set member — so wiring the
+  // route opens no unauthenticated surface. The handlers are pure (no server
+  // dep); they read their stores from the machine's real resolution when no
+  // dep override is supplied — the production path.
+  server.add("POST", MINT_ENDPOINT_PATH, peerTokenMintHandler());
+  server.add("POST", PEER_REVOKE_PATH, peerRevokeHandler());
   registerPostureRoutes(server);
   registerModelRoutingRoutes(server, opts.modelRouting);
   return server;
