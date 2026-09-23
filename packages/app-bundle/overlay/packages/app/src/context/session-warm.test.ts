@@ -122,6 +122,33 @@ describe("session warming", () => {
     await Promise.all([firstPass, overlappingPass])
   })
 
+  test("releases scheduler slots after prefetch when lineage never settles", async () => {
+    const scheduler = createSessionWarmScheduler()
+    const prefetched: string[] = []
+    const warm = (id: string) => ({
+      id,
+      chain: () =>
+        warmBulkSession({
+          remember: () => {},
+          hasLineage: () => false,
+          resolveLineage: () => new Promise(() => {}),
+          shouldPrefetch: () => true,
+          prefetch: async () => {
+            prefetched.push(id)
+          },
+        }),
+    })
+
+    void scheduler.warm("https://hub.example", [warm("one"), warm("two"), warm("three")])
+    await settle()
+    expect(prefetched).toEqual(["one", "two", "three"])
+
+    const fourth = scheduler.warm("https://hub.example", [warm("four")])
+    await settle()
+    expect(prefetched).toEqual(["one", "two", "three", "four"])
+    await fourth
+  })
+
   test("remembers all valid list rows before scheduling either server batch", async () => {
     const stalled = deferred()
     const events: string[] = []

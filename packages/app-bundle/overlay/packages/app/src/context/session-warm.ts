@@ -122,17 +122,16 @@ export async function warmBulkSession(input: {
   } catch {
     /* a malformed list row must not block its background chain */
   }
-  const lineage = Promise.resolve()
+  void Promise.resolve()
     .then(() => (input.hasLineage() ? undefined : input.resolveLineage()))
     .catch(() => {
       /* lineage is best effort and must not suppress message warming */
     })
-  const prefetch = Promise.resolve()
-    .then(() => (input.shouldPrefetch() ? input.prefetch(BULK_WARM_MESSAGES) : undefined))
-    .catch(() => {
-      /* bulk warming is best effort */
-    })
-  await Promise.all([lineage, prefetch])
+  try {
+    if (input.shouldPrefetch()) await input.prefetch(BULK_WARM_MESSAGES)
+  } catch {
+    /* bulk warming is best effort */
+  }
 }
 
 export async function warmOpenSessionTab(
