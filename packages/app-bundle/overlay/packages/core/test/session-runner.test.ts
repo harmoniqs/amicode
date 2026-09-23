@@ -152,7 +152,7 @@ const echo = Layer.effectDiscard(
   ),
 )
 const echoNode = makeLocationNode({ name: "test/session-runner-tools", layer: echo, deps: [ToolRegistry.node] })
-let modelResolveHook = Effect.void
+let modelResolveHook: Effect.Effect<void, SessionRunnerModel.Error> = Effect.void
 let currentModel = model
 const models = SessionRunnerModel.layerWith((session) =>
   modelResolveHook.pipe(Effect.as(session.model?.id === "replacement" ? replacementModel : currentModel)),
@@ -291,6 +291,15 @@ const it = testEffect(
 )
 const sessionID = SessionV2.ID.make("ses_runner_test")
 const otherSessionID = SessionV2.ID.make("ses_runner_other")
+
+const compactInput = { sessionID } satisfies Parameters<SessionV2.Interface["compact"]>[0]
+void compactInput
+const rejectedCompactPrompt = {
+  sessionID,
+  // @ts-expect-error Compaction derives its prompt from recorded session history.
+  prompt: Prompt.make({ text: "unused" }),
+} satisfies Parameters<SessionV2.Interface["compact"]>[0]
+void rejectedCompactPrompt
 
 const insertSession = (id: SessionV2.ID) =>
   Effect.gen(function* () {
@@ -1143,6 +1152,17 @@ describe("SessionRunnerLLM", () => {
         type: "compaction",
         summary: "## Objective\n- Preserve the updated task",
       })
+    }),
+  )
+
+  it.effect("surfaces compact model-resolution errors through the public Session channel", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const session = yield* SessionV2.Service
+      const failure = new SessionRunnerModel.ModelNotSelectedError({ sessionID })
+      modelResolveHook = Effect.fail(failure)
+
+      expect(yield* session.compact({ sessionID }).pipe(Effect.flip)).toBe(failure)
     }),
   )
 
