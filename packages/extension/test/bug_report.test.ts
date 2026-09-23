@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import * as vscode from "vscode";
-import { BugReportManager, bugReportSkillStaged, type BugReportDeps } from "../src/bug_report";
+import { BugReportManager, BUG_REPORT_AGENT, bugReportSkillStaged, type BugReportDeps } from "../src/bug_report";
 
 // ============================================================================
 // amicode#250 — the extension owns the bug session end-to-end: create (title
@@ -77,6 +77,7 @@ describe("amicode.reportBug — create, arm, open (AC1)", () => {
     expect(creates).toHaveLength(1);
     expect(creates[0].body).toEqual({
       title: "Bug report",
+      agent: BUG_REPORT_AGENT,
       metadata: {
         bug_report: {
           project: "emerald-q3",
@@ -92,7 +93,7 @@ describe("amicode.reportBug — create, arm, open (AC1)", () => {
     });
     const arm = calls.filter((c) => c.url.endsWith("/session/ses_bug1/command"));
     expect(arm).toHaveLength(1);
-    expect(arm[0].body).toEqual({ command: "report-a-bug", arguments: "" });
+    expect(arm[0].body).toEqual({ command: "report-a-bug", arguments: "", agent: BUG_REPORT_AGENT });
     expect(posted).toEqual([{ source: "amicode", kind: "open-bug-report", sessionID: "ses_bug1" }]);
   });
 
@@ -110,7 +111,7 @@ describe("amicode.reportBug — create, arm, open (AC1)", () => {
     expect(arm).toHaveLength(1);
     // Omitted, not sent as empty/null: `model` is optional on the route, and an
     // empty string would pin the session to a nonexistent model.
-    expect(arm[0].body).toEqual({ command: "report-a-bug", arguments: "" });
+    expect(arm[0].body).toEqual({ command: "report-a-bug", arguments: "", agent: BUG_REPORT_AGENT });
   });
 
   it("treats a whitespace-only defaultModel as unset", async () => {
@@ -124,7 +125,7 @@ describe("amicode.reportBug — create, arm, open (AC1)", () => {
     await new BugReportManager(d).reportBug();
 
     const arm = calls.filter((c) => c.url.endsWith("/session/ses_bug_ws/command"));
-    expect(arm[0].body).toEqual({ command: "report-a-bug", arguments: "" });
+    expect(arm[0].body).toEqual({ command: "report-a-bug", arguments: "", agent: BUG_REPORT_AGENT });
   });
 
   it("omits run_pointer when no run is active, and never sends an absolute path", async () => {
@@ -621,7 +622,7 @@ describe("composer live model selection onto bug session (amicode#277)", () => {
 
     const arm = calls.filter((c) => c.url.endsWith("/session/ses_bug_live/command"));
     expect(arm).toHaveLength(1);
-    expect(arm[0].body).toEqual({ command: "report-a-bug", arguments: "", model: "openai/gpt-4o" });
+    expect(arm[0].body).toEqual({ command: "report-a-bug", arguments: "", agent: BUG_REPORT_AGENT, model: "openai/gpt-4o" });
   });
 
   it("variant travels with the live selection (AC2)", async () => {
@@ -635,7 +636,7 @@ describe("composer live model selection onto bug session (amicode#277)", () => {
     await new BugReportManager(d).reportBug({ providerID: "anthropic", modelID: "claude-sonnet-4", variant: "thinking" });
 
     const arm = calls.filter((c) => c.url.endsWith("/session/ses_bug_var/command"));
-    expect(arm[0].body).toEqual({ command: "report-a-bug", arguments: "", model: "anthropic/claude-sonnet-4", variant: "thinking" });
+    expect(arm[0].body).toEqual({ command: "report-a-bug", arguments: "", agent: BUG_REPORT_AGENT, model: "anthropic/claude-sonnet-4", variant: "thinking" });
   });
 
   it("live selection takes precedence over configured default (AC1 + AC3)", async () => {
@@ -677,7 +678,7 @@ describe("composer live model selection onto bug session (amicode#277)", () => {
     await new BugReportManager(d).reportBug();
 
     const arm = calls.filter((c) => c.url.endsWith("/session/ses_bug_none/command"));
-    expect(arm[0].body).toEqual({ command: "report-a-bug", arguments: "" });
+    expect(arm[0].body).toEqual({ command: "report-a-bug", arguments: "", agent: BUG_REPORT_AGENT });
   });
 
   it("a malformed live payload never blocks — falls back to configured default (AC4)", async () => {
@@ -753,7 +754,7 @@ describe("origin session model fallback (amicode#606)", () => {
     await new BugReportManager(d).reportBug();
 
     const arm = calls.filter((c) => c.url.endsWith("/session/ses_bug_bare/command"));
-    expect(arm[0].body).toEqual({ command: "report-a-bug", arguments: "" });
+    expect(arm[0].body).toEqual({ command: "report-a-bug", arguments: "", agent: BUG_REPORT_AGENT });
   });
 
   it("liveModel still wins over origin session model", async () => {
