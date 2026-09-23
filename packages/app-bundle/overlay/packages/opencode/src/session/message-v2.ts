@@ -311,7 +311,11 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
                 ? "[Old tool result content cleared]"
                 : truncateToolOutput(part.state.output, options?.toolOutputMaxChars)
             } else if (part.state.status === "error") {
-              outputText = `[Error: ${part.state.error}]`
+              const interruptedOutput = part.state.metadata?.interrupted === true ? part.state.metadata.output : undefined
+              outputText =
+                typeof interruptedOutput === "string"
+                  ? truncateToolOutput(interruptedOutput, options?.toolOutputMaxChars)
+                  : `[Error: ${part.state.error}]`
             } else {
               outputText = "[Tool execution was interrupted]"
             }

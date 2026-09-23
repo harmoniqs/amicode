@@ -1444,6 +1444,40 @@ describe("session.message-v2.toModelMessage", () => {
     expect(toolText.text).toContain("Found: hello world")
   })
 
+  test("preserves and truncates interrupted tool output during compaction", async () => {
+    const assistantID = "m-assistant-interrupted-tool-compaction"
+    const input: SessionV1.WithParts[] = [
+      {
+        info: assistantInfo(assistantID, "m-parent"),
+        parts: [
+          {
+            ...basePart(assistantID, "p1"),
+            type: "tool",
+            tool: "bash",
+            callID: "call_interrupted",
+            state: {
+              status: "error",
+              input: { command: "long-running-command" },
+              error: "Tool execution aborted",
+              metadata: { interrupted: true, output: "abcdefghij" },
+              time: { start: 0, end: 1 },
+            },
+          },
+        ] as SessionV1.Part[],
+      },
+    ]
+
+    const messages = await MessageV2.toModelMessages(input, model, {
+      forCompaction: true,
+      toolOutputMaxChars: 4,
+    })
+    const parts = messages[0].content as any[]
+    const toolText = parts.find((part) => part.text?.includes("[Tool: bash]"))
+
+    expect(toolText).toBeDefined()
+    expect(toolText.text).toContain("abcd\n[Tool output truncated for compaction: omitted 6 chars]")
+  })
+
   test("flattened tool compaction produces no tool role messages", async () => {
     // The critical property: after compaction flattening, convertToModelMessages
     // must not emit any tool-call or tool-result ModelMessage parts, so the
