@@ -3,7 +3,18 @@ import { Icon } from "@opencode-ai/ui/icon"
 import { IconButtonV2 } from "@opencode-ai/ui/v2/icon-button-v2"
 import { Icon as IconV2 } from "@opencode-ai/ui/v2/icon"
 import { Popover } from "@opencode-ai/ui/popover"
-import { Suspense, batch, createEffect, createMemo, createSignal, lazy, Show, type ComponentProps, type JSX } from "solid-js"
+import {
+  Suspense,
+  batch,
+  createEffect,
+  createMemo,
+  createSignal,
+  lazy,
+  Show,
+  type ComponentProps,
+  type JSX,
+} from "solid-js"
+import { retryImport } from "@/utils/retry-import"
 import { announceChromeDropdown, chromeDropdownOpenId, clearChromeDropdown } from "@/utils/chrome-dropdown"
 import { statusPopoverLayout } from "./status-popover-model"
 import { useLanguage } from "@/context/language"
@@ -17,9 +28,15 @@ import {
   serverStatusDotClass,
 } from "./status-popover-indicator"
 
-const Body = lazy(() => import("./status-popover-body").then((x) => ({ default: x.StatusPopoverBody })))
-const ServerBody = lazy(() => import("./status-popover-body").then((x) => ({ default: x.StatusPopoverServerBody })))
-const GlobalBody = lazy(() => import("./status-popover-body").then((x) => ({ default: x.StatusPopoverGlobalBody })))
+const Body = lazy(() =>
+  retryImport(() => import("./status-popover-body").then((x) => ({ default: x.StatusPopoverBody }))),
+)
+const ServerBody = lazy(() =>
+  retryImport(() => import("./status-popover-body").then((x) => ({ default: x.StatusPopoverServerBody }))),
+)
+const GlobalBody = lazy(() =>
+  retryImport(() => import("./status-popover-body").then((x) => ({ default: x.StatusPopoverGlobalBody }))),
+)
 
 export function StatusPopover(props: { healthDot?: boolean }) {
   const language = useLanguage()
