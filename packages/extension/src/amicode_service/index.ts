@@ -449,6 +449,10 @@ export interface FleetRouteDeps {
   fleetPeers?: {
     localMachineId: string;
     getServingPeers(): Array<{ machineId: string }>;
+    /** #1481 (AC3): blocked-identity peers (alias-conflict / key-changed),
+     *  surfaced as NAMED source states rather than silently dropped. Optional
+     *  for back-compat — an older provider without it simply names no conflicts. */
+    getBlockedPeers?(): Array<{ machineId: string; reason: "identity-conflict" }>;
     readPeerToken(machineId: string): { ok: true; credential: { baseUrl: string; token: string } } | { ok: false };
     rosterLookup(machineId: string): { name: string; device_type?: string } | undefined;
   };
@@ -506,12 +510,22 @@ export function registerFleetRoutes(server: AmicodeServiceServer, deps: FleetRou
           machineId: p.machineId,
           getUrl: () => (tokenRead.ok ? tokenRead.credential.baseUrl : undefined),
           token: tokenRead.ok ? tokenRead.credential.token : undefined,
+          // #1481 (AC1): TRUST gates Observe — holding a valid Observe grant
+          // (a reader peer-token) IS the trust relationship. A serving∧reachable
+          // peer we hold NO grant for is untrusted: it is NAMED `untrusted` and
+          // contributes no session metadata, DISTINCT from a trusted peer whose
+          // URL is momentarily down (`no-upstream`).
+          trusted: tokenRead.ok,
         };
       });
+      // #1481 (AC3): blocked-identity peers (alias-conflict / key-changed) are
+      // NAMED source states, never silently dropped from the projection.
+      const blockedPeers = deps.fleetPeers.getBlockedPeers?.() ?? [];
       projection = await buildFleetProjection({
         localMachineId: deps.fleetPeers.localMachineId,
         local: { getUrl: deps.engine.getUrl, password: deps.engine.password },
         peers,
+        blockedPeers,
         rosterLookup: deps.fleetPeers.rosterLookup,
       });
     } else {
@@ -696,6 +710,9 @@ export function createAmicodeService(
       fleetPeers?: {
         localMachineId: string;
         getServingPeers(): Array<{ machineId: string }>;
+        /** #1481 (AC3): blocked-identity peers surfaced as NAMED source states.
+         *  Optional for back-compat. */
+        getBlockedPeers?(): Array<{ machineId: string; reason: "identity-conflict" }>;
         readPeerToken(machineId: string): { ok: true; credential: { baseUrl: string; token: string } } | { ok: false };
         rosterLookup(machineId: string): { name: string; device_type?: string } | undefined;
       };

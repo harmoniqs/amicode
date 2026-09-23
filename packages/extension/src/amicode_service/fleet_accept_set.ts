@@ -192,6 +192,30 @@ export function servingReachablePeers(rosterRows: RosterRow[]): ServingPeer[] {
   return out;
 }
 
+/** #1481 (AC3): the COMPLEMENT of `servingReachablePeers` — rows that ARE
+ *  serving∧reachable but are EXCLUDED from selection solely by a blocking
+ *  identity state (alias-conflict / key-changed). `servingReachablePeers`
+ *  silently drops these; the trusted-Observe projection needs them NAMED so a
+ *  conflicted peer surfaces as an `identity-conflict` source state rather than
+ *  vanishing (the central AC3 invariant: source absence is visible data). Pure:
+ *  no store reads, no I/O. Self is the caller's to exclude (as with the
+ *  serving-peer set), so a self-row in conflict is dropped by `selfMachineId`. */
+export function servingButBlockedPeers(
+  rosterRows: RosterRow[],
+  selfMachineId?: string,
+): Array<{ machineId: string }> {
+  const out: Array<{ machineId: string }> = [];
+  for (const row of rosterRows) {
+    const d = placementDescriptor(row);
+    if (!d.serving || !d.reachable) continue;
+    if (!(row.identity_state && BLOCKING_IDENTITY_STATES.has(row.identity_state))) continue;
+    const machineId = d.machine_id?.trim() ?? "";
+    if (machineId === "" || machineId === selfMachineId) continue;
+    out.push({ machineId });
+  }
+  return out;
+}
+
 /** Resolve every roster row with `capabilities ∋ serving` ∧ `health = reachable`
  *  to its `machine_id`; close is permitted IFF, for every such machine_id
  *  (other than self), BOTH this machine's issued-token registry AND its reader
