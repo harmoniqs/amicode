@@ -615,7 +615,7 @@
     "packages/app/src/components/session/context-warning-banner.tsx": "f5fab4d7a9536238b70d64488fc30d44f6a4948fdcffd910a9666f4b6c296019",
     "packages/app/src/components/session/index.ts": "21473290d4a1a3d0670fd878372ddf21ff22d4a0b30d1aef6c81ea906c1488b4",
     "packages/app/src/components/session/panel-menu.tsx": "42f323046b7375ae158023a51506038eb15f2e1545c407f45acd47446a8ef3e0",
-    "packages/app/src/components/session/pdf-canvas-view.tsx": "ecb0877213cab7dec0f7ca10cd7b95bfc0c25874c5791827fb343e758da5b4bb",
+    "packages/app/src/components/session/pdf-canvas-view.tsx": "591bac93a2e1e10a1b42404a29bcc5222ebbc5faf734c80556fbca35c90551dd",
     "packages/app/src/components/session/pdf-restore.test.ts": "4cd4cabbdc8063deb5fe95b5e637cf154ccdf864c5ff9f2f6833826bd69e4f90",
     "packages/app/src/components/session/pdf-restore.ts": "e5c92096b9302a452439babfc2732610a7e0d18e23793ce3bf6352fa32f91a36",
     "packages/app/src/components/session/preview-file-helpers.test.ts": "e0c1ccb40b48990c0c5b87ea62a35de60b860cd760067c7f1327cbb1d36584b1",
@@ -862,7 +862,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-09-23T15:31:34.572Z",
+  "extracted_at": "2026-09-23T15:39:46.254Z",
   "per_package": {
     "packages/app": {
       "A": 175,

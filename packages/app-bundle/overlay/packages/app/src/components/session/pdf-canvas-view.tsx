@@ -246,7 +246,11 @@ function PdfPage(props: {
     activeAnnotationLayer = null
     annotationLayerRef.replaceChildren()
 
-    const linkService = {
+    // Minimal link service — pdfjs only calls these methods at runtime for
+    // link annotations. Typed as `any` to avoid importing the full
+    // PDFLinkService class (20+ members) that the render/constructor types
+    // nominally require but never exercise for our link-only use.
+    const linkService: any = {
       getDestinationHash: () => "#",
       getAnchorUrl: () => "#",
       addLinkAttributes: (link: HTMLAnchorElement, url: string, _newWindow: boolean) => {
