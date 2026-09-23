@@ -89,11 +89,36 @@ export interface PeerTransport {
 
 // ── multiplexing proxy ───────────────────────────────────────────────────────
 
-/** The resolved target for one request: the peer's URL to proxy to, or
- *  undefined for local (fail-safe). */
-export interface ResolvedTarget {
-  machineId: string;
-  url: string;
+/** The resolved target for one request. The `resolveTarget` return is
+ *  `ResolvedTarget | undefined`, with THREE distinct outcomes:
+ *
+ *   - REACHABLE peer — `{ machineId, url }`: proxy the request to `url`.
+ *   - DEGRADED peer (#1448, W1a) — `{ machineId, unreachable: true }`: the owner
+ *     is KNOWN (in the owner-map) but its transport `getUrl()` is currently
+ *     undefined. This is the honest-degraded variant, DISTINCT from the
+ *     `undefined` return below. W1b (#1449) turns it into a
+ *     FLEET_PEER_UNREACHABLE 503 rather than silently serving local (the #1382
+ *     silent-local-fallback the whole design forbids).
+ *   - `undefined` (NOT a ResolvedTarget) — LOCAL, the fail-safe: keyless, the
+ *     owner is local, or the owner is not in the peer set.
+ *
+ *  The two variants are discriminated by `unreachable`; the reachable variant
+ *  carries `url`, the degraded one never does. */
+export type ResolvedTarget =
+  | { machineId: string; url: string; unreachable?: false }
+  | { machineId: string; url?: undefined; unreachable: true };
+
+/** #1448 (W1a): the narrow resolver seam the dispatch peer branch consults on
+ *  the ATTACHED arm when AMICO_FLEET_MULTIPLEX is ON. Deliberately exposes ONLY
+ *  `resolveTarget` — the per-session SSE relay is W1c and is NOT wired into
+ *  dispatch here (AC4 structural guard: no SSE crosses the multiplexer). The
+ *  SessionMultiplexProxy satisfies it structurally. */
+export interface MultiplexResolver {
+  resolveTarget(
+    method: string,
+    pathname: string,
+    headers: Record<string, string | string[] | undefined>,
+  ): ResolvedTarget | undefined;
 }
 
 /** Options for the SessionMultiplexProxy. */
@@ -115,7 +140,7 @@ export interface SseStreamHandle {
  *
  *  Structural: no reloadRequired or attachSwitch signal exists — per-session
  *  routing removes the need for a global attach-swap and its window reload. */
-export class SessionMultiplexProxy {
+export class SessionMultiplexProxy implements MultiplexResolver {
   private readonly ownerMap: SessionOwnerMap;
   private readonly peers: Record<string, PeerTransport>;
   private readonly localMachineId: string;
@@ -136,7 +161,9 @@ export class SessionMultiplexProxy {
    *   3. No session, no header → local (undefined)
    *   4. Owner == localMachineId → local (undefined)
    *   5. Owner not in peers → local (undefined)
-   *   6. Peer URL undefined → undefined (honest degraded) */
+   *   6. Peer URL undefined → the DEGRADED variant (owner known, url undefined
+   *      — #1448, W1a), NEVER undefined/local (the #1382 silent-local-fallback
+   *      the design forbids; W1b turns this into a 503) */
   resolveTarget(
     _method: string,
     pathname: string,
@@ -169,9 +196,11 @@ export class SessionMultiplexProxy {
     // 5. Look up peer transport
     const peer = this.peers[machineId];
     if (!peer) return undefined;
-    // 6. Resolve URL (late-bound)
+    // 6. Resolve URL (late-bound). #1448 (W1a): owner KNOWN but URL undefined
+    //    is the honest DEGRADED variant — NOT undefined/local. W1b (#1449) turns
+    //    it into a 503 rather than silently serving local (the #1382 bug).
     const url = peer.getUrl();
-    if (!url) return undefined;
+    if (!url) return { machineId, unreachable: true };
     return { machineId, url };
   }
 

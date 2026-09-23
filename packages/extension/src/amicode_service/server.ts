@@ -26,6 +26,7 @@ import { isPublicUiPath } from "./public_ui";
 import { resolveAttachmentPointer } from "./attachment_pointer";
 import { resolveKeeperPointer } from "./keeper_pointer";
 import { resolveAmicodeTarget, type MultiplexTarget } from "./attachment_pointer";
+import type { MultiplexResolver } from "./session_multiplexer";
 
 export interface AmicodeRequestCtx {
   /** Fully-parsed request URL (query params included — POST /amicode/profile
@@ -104,6 +105,13 @@ export interface FleetPlane {
    *  honest 503 — the posture snapshot's pointer when attached; a default
    *  otherwise. Absent → the FLEET_PEER_UNREACHABLE_POINTER default. */
   peerUnreachablePointer?: () => string | null;
+  /** #1448 (W1a): the per-session multiplexer seam. When present AND the
+   *  AMICO_FLEET_MULTIPLEX flag is ON, `dispatch()` consults it on the ATTACHED
+   *  arm of the D3 resolver (never the keeper / honesty arms). With an empty
+   *  owner-map (W1b #1449 populates it) it resolves LOCAL for every path — the
+   *  proven no-op. Deliberately typed as the narrow `MultiplexResolver` (only
+   *  `resolveTarget`) so the SSE relay cannot be wired here (AC4). */
+  multiplex?: MultiplexResolver;
 }
 
 /** #1261 (AC6): a client's own named hub-down state — distinct from the base
@@ -120,6 +128,22 @@ export const FLEET_PEER_UNREACHABLE_ERROR = "attached server unreachable";
 export const FLEET_PEER_UNREACHABLE_POINTER =
   "the attached server is unreachable — check the peer's tunnel / service, " +
   "or detach to work locally";
+
+/** #1448 (W1a): the session-multiplexer feature-flag env var. Default OFF. */
+export const FLEET_MULTIPLEX_FLAG = "AMICO_FLEET_MULTIPLEX";
+
+/** #1448 (W1a): is the session multiplexer armed? Read ONCE at the dispatch
+ *  decision point, default OFF (absent / empty / any non-truthy value). Mirrors
+ *  the AMICO_FLEET_* env precedence (attachment_pointer.ts:83): read the env,
+ *  treat only an explicit truthy token as ON. When OFF, `dispatch()` never
+ *  calls the multiplexer's resolveTarget, so byte-identity is STRUCTURAL. A
+ *  rollback is a flag flip / single-hunk revert. */
+export function fleetMultiplexEnabled(): boolean {
+  const raw = process.env[FLEET_MULTIPLEX_FLAG];
+  if (raw === undefined) return false;
+  const v = raw.trim().toLowerCase();
+  return v === "1" || v === "true" || v === "on" || v === "yes";
+}
 
 interface RouteEntry {
   method: "GET" | "POST";
@@ -388,6 +412,13 @@ export class AmicodeServiceServer {
       // the fleet branch and route to the resolver's target (keeper or attached).
       // A "local" result keeps the route table's normal behavior, which is D3's
       // fail-safe default (empty/corrupt pointer → local engine).
+      //
+      // #1448 (W1a): the session-multiplexer feature flag, read ONCE here,
+      // default OFF. When OFF the multiplexer's resolveTarget is NEVER called
+      // and this block is byte-identical to today (structural byte-identity).
+      // When ON it shadows ONLY the attached arm below — the keeper
+      // (/amicode/roster) and honesty (/amicode/fleet/*) arms are untouched.
+      const multiplexOn = fleetMultiplexEnabled();
       let peerTarget: MultiplexTarget | undefined;
       if (
         !proxyAmicodeToHost &&
@@ -399,7 +430,20 @@ export class AmicodeServiceServer {
         const attachedResult = resolveAttachmentPointer();
         const keeperResult = resolveKeeperPointer();
         const { target } = resolveAmicodeTarget(url.pathname, { attached: attachedResult, keeper: keeperResult });
-        if (target !== "local") {
+        if (target === "attached" && multiplexOn && this.fleetPlane.multiplex) {
+          // #1448 (W1a): shadow the attached arm with the per-session
+          // multiplexer. Empty owner-map (W1b #1449 populates it) → resolveTarget
+          // returns undefined → LOCAL (identity), so peerTarget stays undefined.
+          // A reachable/degraded resolution routes the attached arm today (the
+          // single attachment pointer's proxy); W1b refines it — a reachable
+          // resolution to the per-session peer URL, and the degraded
+          // (unreachable) variant to a 503, never a silent local fall-through
+          // (the #1382 bug). The keeper + honesty arms decided above are never
+          // consulted through the multiplexer.
+          const resolved = this.fleetPlane.multiplex.resolveTarget(req.method ?? "GET", url.pathname, req.headers);
+          if (resolved) peerTarget = "attached";
+          // resolved === undefined → LOCAL identity (peerTarget stays undefined)
+        } else if (target !== "local") {
           peerTarget = target;
         }
       }
