@@ -577,6 +577,36 @@ function buildMultiplexPeers(
   return peers;
 }
 
+/** #1478 (AC1/AC2, ADR 0034): the BASE peer-studio activation predicate — a
+ *  narrow, entitlement-FREE authority for self-owned peer control. A machine
+ *  base-activates the peer-studio OBSERVATION routes (/amicode/fleet/status +
+ *  /amicode/fleet/sessions) when it is an unentitled INDEPENDENT SERVING PEER:
+ *  a NON-client machine whose fleet-peer provider resolves at least one
+ *  serving∧reachable peer beyond itself. This is a DISTINCT authority from the
+ *  managed premium overlay (AC2), and it is NOT entitlement forgery — the
+ *  caller passes the honest `entitlement:"absent"` staging receipt and attaches
+ *  NO premium FleetPlane.
+ *
+ *  Predicate FALSE (stays local-only / byte-compatible):
+ *   - a no-peer base install (no fleetPeers provider) and a fleet-of-one
+ *     (a present provider resolving ZERO serving peers beyond self);
+ *   - a fleet CLIENT relay — its /amicode/* relay is governed by the attached
+ *     FleetPlane, which base activation never attaches, so its behavior is
+ *     unchanged (AC5).
+ *
+ *  Scope (Binding Amendment): AC3 (production service/engine accept-set parity)
+ *  and AC4 (headless reboot posture) are owned by #1485 / #1487 — NOT decided
+ *  here. */
+function baseStudioActivates(fleet: {
+  client?: boolean;
+  fleetPeers?: { getServingPeers(): Array<{ machineId: string }> };
+}): boolean {
+  if (fleet.client === true) return false; // AC5: a client relay is never base-activated
+  const peers = fleet.fleetPeers;
+  if (peers === undefined) return false; // a no-peer base install stays local-only
+  return peers.getServingPeers().length > 0; // ≥1 verified serving peer beyond self
+}
+
 /** The service with every ported slice mounted. The extension wiring slice
  *  boots this at activation; the contract tests boot it in-process.
  *
@@ -884,6 +914,30 @@ export function createAmicodeService(
         engineArmed: opts.engine !== undefined,
         monitor,
         ...(tunnelConfigPath !== undefined ? { tunnelConfigPath } : {}),
+        ...(opts.fleet.fleetPeers !== undefined ? { fleetPeers: opts.fleet.fleetPeers } : {}),
+      });
+    } else if (baseStudioActivates(opts.fleet)) {
+      // #1478 (AC1/AC2): BASE peer-studio activation. The premium overlay did
+      // NOT stage (entitlement absent), but a verified INDEPENDENT SERVING PEER
+      // still mounts the base peer-studio OBSERVATION routes. NO entitlement
+      // forgery — the honest staging.receipt (entitlement:"absent") rides the
+      // status surface. NO premium FleetPlane is attached: the data-plane proxy,
+      // posture detector, and session multiplexer stay premium-only, so
+      // fleetMultiplexerArmed stays false and a base peer routes proxied
+      // requests to its OWN local engine (mode "engine") while observing peers
+      // through the N-peer projection. AC3 (service/engine accept-set parity)
+      // and AC4 (headless reboot posture) are owned by #1485 / #1487 — NOT
+      // implemented here.
+      registerFleetRoutes(server, {
+        getMode: (): UpstreamMode => "engine",
+        readCredential: (): HubCredentialRead => readHubCredential(),
+        engine: {
+          getUrl: opts.engine?.getUrl ?? ((): string | undefined => undefined),
+          password: opts.engine?.password,
+        },
+        hub: opts.fleet.hub,
+        receipt: staging.receipt,
+        engineArmed: opts.engine !== undefined,
         ...(opts.fleet.fleetPeers !== undefined ? { fleetPeers: opts.fleet.fleetPeers } : {}),
       });
     }
