@@ -224,10 +224,7 @@ const layer = Layer.effect(
         system: [agent.info?.system, filteredSystem.baseline]
           .filter((part): part is string => part !== undefined && part.length > 0)
           .map(SystemPart.make),
-        // Use a user message (not assistant prefill) so providers that reject
-        // trailing assistant messages (e.g. Bedrock Converse) still receive
-        // the max-steps instruction.
-        messages: [...toLLMMessages(context, model), ...(isLastStep ? [Message.user(MAX_STEPS_PROMPT)] : [])],
+        messages: [...toLLMMessages(context, model), ...(isLastStep ? [Message.assistant(MAX_STEPS_PROMPT)] : [])],
         tools: toolMaterialization?.definitions ?? [],
         toolChoice: isLastStep ? "none" : undefined,
       })
@@ -424,8 +421,30 @@ const layer = Layer.effect(
       }
     })
 
+    const compact = Effect.fn("SessionRunner.compact")(function* (sessionID: SessionSchema.ID) {
+      const session = yield* getSession(sessionID)
+      const agent = yield* agents.select(session.agent)
+      const system = yield* SessionContextEpoch.prepare(db, events, loadSystemContext(agent), session.id)
+      const model = yield* models.resolve(session)
+      const entries = yield* SessionHistory.entriesForRunner(db, session.id, system.baselineSeq)
+      // Build a minimal request — compactAfterOverflow only reads
+      // request.generation.maxTokens and model.route.defaults.limits from it;
+      // it constructs its own single-user-message summary prompt internally.
+      // Passing the full toLLMMessages history would include tool_calls /
+      // tool-result messages that OpenAI-compatible proxies reject when the
+      // tools config is empty.
+      const request = LLM.request({
+        model,
+        system: [],
+        messages: [],
+        tools: [],
+      })
+      return yield* compaction.compactAfterOverflow({ sessionID, entries, model, request })
+    })
+
     return Service.of({
       run,
+      compact,
     })
   }),
 )

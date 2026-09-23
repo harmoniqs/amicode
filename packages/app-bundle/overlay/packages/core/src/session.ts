@@ -458,7 +458,7 @@ const layer = Layer.effect(
       }),
       compact: Effect.fn("V2Session.compact")(function* (input) {
         yield* result.get(input.sessionID)
-        return yield* new OperationUnavailableError({ operation: "compact" })
+        yield* execution.compact(input.sessionID).pipe(Effect.orDie)
       }),
       wait: Effect.fn("V2Session.wait")(function* (sessionID) {
         yield* result.get(sessionID)
