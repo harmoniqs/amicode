@@ -17,10 +17,11 @@
 import { describe, it, expect } from "vitest";
 import {
   ControlGatedResolver,
+  controlGatedMultiplexAdapter,
   type ControlGatedTarget,
   type ControlGatedResolverOpts,
 } from "../src/amicode_service/control_gated_routing";
-import { SessionOwnerMap } from "../src/amicode_service/session_multiplexer";
+import { SessionOwnerMap, type MultiplexResolver, type ResolvedTarget } from "../src/amicode_service/session_multiplexer";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -437,5 +438,141 @@ describe("#1482 AC6 — Control revoke, identity mismatch, or transport loss sus
     const targetB = resolver.resolve("POST", "/api/session/ses-b/message", {});
     expect(targetB.kind).toBe("peer");
     if (targetB.kind === "peer") expect(targetB.machineId).toBe(PEER_B_ID);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// STRUCTURAL — no-local-fallback for ANY known remote owner
+// ═══════════════════════════════════════════════════════════════════════════
+describe("#1482 structural — known remote owner NEVER resolves local", () => {
+  const remotePaths = [
+    "/api/session/ses-a/message",
+    "/api/session/ses-a/event",
+    "/api/session/ses-a/prompt",
+    "/api/session/ses-a/tool",
+    "/api/session/ses-a/permission",
+  ];
+  const grantVariants: Array<{
+    label: string;
+    reader: (peerId: string) => { scope: "control" | "observe"; state: "active" | "revoked" | "revocation-pending"; token: string; machineId: string } | undefined;
+  }> = [
+    { label: "no grant", reader: () => undefined },
+    { label: "observe-only grant", reader: (id) => id === PEER_A_ID ? { scope: "observe", state: "active", token: "T", machineId: id } : undefined },
+    { label: "revoked grant", reader: (id) => id === PEER_A_ID ? { scope: "control", state: "revoked", token: "T", machineId: id } : undefined },
+    { label: "revocation-pending grant", reader: (id) => id === PEER_A_ID ? { scope: "control", state: "revocation-pending", token: "T", machineId: id } : undefined },
+  ];
+
+  for (const { label, reader } of grantVariants) {
+    for (const path of remotePaths) {
+      it(`${label} + ${path} → NEVER local`, () => {
+        const resolver = new ControlGatedResolver(
+          defaultOpts({ grantReader: reader }),
+        );
+        const target = resolver.resolve("POST", path, {});
+        expect(target.kind).not.toBe("local");
+      });
+    }
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ADAPTER — controlGatedMultiplexAdapter satisfies MultiplexResolver
+// ═══════════════════════════════════════════════════════════════════════════
+describe("#1482 adapter — controlGatedMultiplexAdapter wires into MultiplexResolver", () => {
+  it("the adapter satisfies the MultiplexResolver interface", () => {
+    const adapter = controlGatedMultiplexAdapter(new ControlGatedResolver(defaultOpts()));
+    const resolver: MultiplexResolver = adapter;
+    expect(typeof resolver.resolveTarget).toBe("function");
+  });
+
+  it("peer target → ResolvedTarget with machineId + url", () => {
+    const adapter = controlGatedMultiplexAdapter(new ControlGatedResolver(defaultOpts()));
+    const target = adapter.resolveTarget("POST", "/api/session/ses-a/message", {});
+    expect(target).toBeDefined();
+    expect(target?.machineId).toBe(PEER_A_ID);
+    expect(target?.url).toBe(PEER_A_URL);
+    expect(target?.unreachable).toBeFalsy();
+  });
+
+  it("local target → undefined (the MultiplexResolver 'local' convention)", () => {
+    const adapter = controlGatedMultiplexAdapter(new ControlGatedResolver(defaultOpts()));
+    const target = adapter.resolveTarget("POST", "/api/session/ses-local/message", {});
+    expect(target).toBeUndefined();
+  });
+
+  it("unavailable target → ResolvedTarget with unreachable: true", () => {
+    const adapter = controlGatedMultiplexAdapter(
+      new ControlGatedResolver(defaultOpts({ grantReader: () => undefined })),
+    );
+    const target = adapter.resolveTarget("POST", "/api/session/ses-a/message", {});
+    expect(target).toBeDefined();
+    expect(target?.machineId).toBe(PEER_A_ID);
+    expect(target?.unreachable).toBe(true);
+  });
+
+  it("read-only target → ResolvedTarget with unreachable: true (the server delivers the 503)", () => {
+    const adapter = controlGatedMultiplexAdapter(
+      new ControlGatedResolver(
+        defaultOpts({
+          grantReader: (peerId: string) => {
+            if (peerId === PEER_A_ID) return { scope: "control" as const, state: "revocation-pending" as const, token: "T", machineId: PEER_A_ID };
+            return undefined;
+          },
+        }),
+      ),
+    );
+    const target = adapter.resolveTarget("POST", "/api/session/ses-a/message", {});
+    expect(target).toBeDefined();
+    expect(target?.unreachable).toBe(true);
+  });
+
+  it("adapter never returns a ResolvedTarget carrying the hub credential", () => {
+    const adapter = controlGatedMultiplexAdapter(new ControlGatedResolver(defaultOpts()));
+    const target = adapter.resolveTarget("POST", "/api/session/ses-a/message", {});
+    const serialized = JSON.stringify(target);
+    expect(serialized).not.toContain(HUB_CREDENTIAL);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BINDING AMENDMENT — forged owner header cannot bypass Control
+// ═══════════════════════════════════════════════════════════════════════════
+describe("#1482 binding amendment — forged owner header cannot bypass Control", () => {
+  it("a header naming a real peer without an active control grant is rejected", () => {
+    const resolver = new ControlGatedResolver(
+      defaultOpts({ grantReader: () => undefined }),
+    );
+    const target = resolver.resolve("POST", "/file/write", { "x-amicode-owner": PEER_A_ID });
+    expect(target.kind).toBe("unavailable");
+    expect(target.kind).not.toBe("peer");
+  });
+
+  it("a header naming a non-existent peer is rejected (no grant, no transport)", () => {
+    const resolver = new ControlGatedResolver(defaultOpts());
+    const target = resolver.resolve("POST", "/file/write", { "x-amicode-owner": "attacker-machine" });
+    expect(target.kind).toBe("unavailable");
+  });
+
+  it("a header naming a peer with an observe (not control) grant is rejected for routing", () => {
+    const resolver = new ControlGatedResolver(
+      defaultOpts({
+        grantReader: (peerId: string) => {
+          if (peerId === PEER_A_ID) return { scope: "observe" as const, state: "active" as const, token: "OBS-TOK", machineId: PEER_A_ID };
+          return undefined;
+        },
+      }),
+    );
+    const target = resolver.resolve("POST", "/file/write", { "x-amicode-owner": PEER_A_ID });
+    expect(target.kind).toBe("unavailable");
+  });
+
+  it("even a well-formed header with valid peer+grant resolves through the FULL pipeline (credential from grant, not header)", () => {
+    const resolver = new ControlGatedResolver(defaultOpts());
+    const target = resolver.resolve("POST", "/file/write", { "x-amicode-owner": PEER_A_ID });
+    expect(target.kind).toBe("peer");
+    if (target.kind === "peer") {
+      // The credential comes from the grant, not from the header
+      expect(target.peerCredential).toBe(PEER_A_GRANT_TOKEN);
+    }
   });
 });

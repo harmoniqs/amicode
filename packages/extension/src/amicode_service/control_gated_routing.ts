@@ -26,6 +26,8 @@ import {
   extractSessionIdFromPath,
   OWNER_ROUTING_HEADER,
   type PeerTransport,
+  type MultiplexResolver,
+  type ResolvedTarget,
 } from "./session_multiplexer";
 
 // ── narrowed grant shape (injectable, no store dependency) ───────────────────
@@ -167,4 +169,41 @@ export class ControlGatedResolver {
 function isReadMethod(method: string): boolean {
   const m = method.toUpperCase();
   return m === "GET" || m === "HEAD" || m === "OPTIONS";
+}
+
+// ── MultiplexResolver adapter ────────────────────────────────────────────────
+
+/** Adapt a ControlGatedResolver into the MultiplexResolver interface the
+ *  existing server.ts dispatch consumes. The four-state ControlGatedTarget
+ *  maps to the two-state ResolvedTarget | undefined:
+ *
+ *   - "local"       → undefined (the MultiplexResolver "local" convention)
+ *   - "peer"        → { machineId, url }
+ *   - "unavailable" → { machineId, unreachable: true }
+ *   - "read-only"   → { machineId, unreachable: true } (503 at dispatch)
+ *
+ *  The peer credential rides on the target object (the ResolvedTarget type does
+ *  NOT carry it — a future integration slice will thread it through the proxy). */
+export function controlGatedMultiplexAdapter(
+  resolver: ControlGatedResolver,
+): MultiplexResolver {
+  return {
+    resolveTarget(
+      method: string,
+      pathname: string,
+      headers: Record<string, string | string[] | undefined>,
+    ): ResolvedTarget | undefined {
+      const target = resolver.resolve(method, pathname, headers);
+      switch (target.kind) {
+        case "local":
+          return undefined;
+        case "peer":
+          return { machineId: target.machineId, url: target.url };
+        case "unavailable":
+          return { machineId: target.machineId, unreachable: true };
+        case "read-only":
+          return { machineId: target.machineId, unreachable: true };
+      }
+    },
+  };
 }
