@@ -294,6 +294,10 @@ function PdfPage(props: {
 
       void annotLayer.render({
         annotations,
+        div: annotationLayerRef,
+        page: currentPage,
+        viewport,
+        linkService,
         imageResourcesPath: "",
         renderForms: false,
       }).catch(() => { /* degrade silently */ })
