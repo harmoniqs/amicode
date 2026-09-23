@@ -1,54 +1,19 @@
 import { MarkDetailed } from "@opencode-ai/ui/logo"
 import { Icon as IconV2 } from "@opencode-ai/ui/v2/icon"
-import { TooltipV2 } from "@opencode-ai/ui/v2/tooltip-v2"
-import { Portal } from "solid-js/web"
-import { Show } from "solid-js"
-import { useTitlebarControlMount } from "@/components/titlebar"
-import { SessionChatsDropdown } from "@/components/session/session-header"
-import { StatusPopoverV2 } from "@/components/status-popover"
-import { useLanguage } from "@/context/language"
-import { useSettings } from "@/context/settings"
 import { requestAddWorkspaceProject } from "@/utils/amicode-workspace-projects"
 import { NEW_SESSION_CONTENT_WIDTH } from "@/pages/session/new-session-layout"
 
 /** Lightweight landing shown when no workspace folder is open.
  *
  *  Renders the Amicode mark + an "Open a folder" prompt in the same visual
- *  frame as the normal new-session view, and populates the titlebar controls
- *  (sessions, status) so the chrome never appears empty. Once a workspace
+ *  frame as the normal new-session view. It intentionally avoids titlebar
+ *  controls because this route has no directory provider. Once a workspace
  *  folder arrives (the extension pushes it via postMessage), the reactive
  *  landing effect in app.tsx creates a proper draft and this component
  *  unmounts automatically. */
 export default function EmptyWorkspaceLanding() {
-  const settings = useSettings()
-  const language = useLanguage()
-  const sessionsMount = useTitlebarControlMount("sessions")
-  const statusMount = useTitlebarControlMount("status")
-
   return (
     <div class="relative size-full overflow-hidden flex flex-col">
-      {/* Titlebar controls — sessions + status */}
-      <Show when={sessionsMount()} keyed>
-        {(mount) => (
-          <Portal mount={mount}>
-            <span class="flex shrink-0" data-tour-target="sessions">
-              <SessionChatsDropdown />
-            </span>
-          </Portal>
-        )}
-      </Show>
-      <Show when={statusMount()} keyed>
-        {(mount) => (
-          <Portal mount={mount}>
-            <span class="flex shrink-0" data-tour-target="status">
-              <TooltipV2 placement="bottom" value={language.t("status.popover.trigger")} class="shrink-0">
-                <StatusPopoverV2 />
-              </TooltipV2>
-            </span>
-          </Portal>
-        )}
-      </Show>
-
       {/* Content — matches the new-session-view layout */}
       <div class="flex-1 min-h-0 flex flex-col gap-2 p-2">
         <div class="@container relative flex flex-col min-h-0 h-full flex-1">
