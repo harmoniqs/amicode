@@ -841,7 +841,13 @@
     "packages/opencode/src/server/routes/instance/httpapi/handlers/file.ts": "10bcb79b117beebee04184fb48c1ad789e782e2f7ae4b0c68603edc00f03aee9",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/mcp.ts": "7da08d58765cdf2b6ce4648fc70de371402949f5bb7b75696f674d43f2d5365b",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/provider.ts": "8baf16cad0992c5351b61b0c0fb27903bb25b17e1b25fc7c5d77f807c24413a6",
-    "packages/opencode/src/server/routes/instance/httpapi/handlers/session.ts": "b37ff4136c4aea85b23083bf441f03e09820e3e4cdd95e4118ca570d8435b94f"
+    "packages/opencode/src/server/routes/instance/httpapi/handlers/session.ts": "b37ff4136c4aea85b23083bf441f03e09820e3e4cdd95e4118ca570d8435b94f",
+    "packages/core/src/session/execution.ts": "a5255896a0feacaa40ec1d8ad30b0d439dd44474a01c20f4211320b57a03c0d5",
+    "packages/core/src/session/execution/local.ts": "a5101e97c78384a0109ba6e5a8cb4af9f914f5d21e123ab21d1ee70c0690a2d6",
+    "packages/core/src/session/runner/index.ts": "b723fbd7f3fc8e7afeebae936e917341511600301c0a8993d25d5c27756bd373",
+    "packages/core/test/session-prompt.test.ts": "2af05be037473266c7b38721abbf7f865a4dfe35c9e779282cb7f697ba0a2adc",
+    "packages/core/test/session-runner-recorded.test.ts": "962301989a4a315379819bc3d4600d56c3e646b1a9390d02d01556578fc66adc",
+    "packages/core/test/session-runner.test.ts": "6130d8a60843914bc3685e623de0f00d4598b25954ea1d197ddbe073bd069d38"
   },
   "symlinks": [
     "packages/app/public/amico.svg"
