@@ -626,4 +626,39 @@ describe("AC1+AC4 — boot-path integration: headless base peer rehydrates; clie
       await svc.stop();
     }
   });
+
+  it("AC1: the /amicode/fleet/rehydration route serves the boot-time rehydration snapshot", async () => {
+    const svc = createAmicodeService({
+      password: "svc-mint",
+      engine: { password: "engine-password", getUrl: () => localEngine.url },
+      fleet: {
+        entitlements: [],
+        hub: { getUrl: () => undefined },
+        fleetPeers: {
+          localMachineId: "my-macbook",
+          getServingPeers: () => [{ machineId: "the-studio" }],
+          readPeerToken: (id: string) =>
+            id === "the-studio"
+              ? { ok: true as const, credential: { baseUrl: studioPeer.url, token: "tok-studio" } }
+              : { ok: false as const },
+          rosterLookup: (id: string) =>
+            id === "the-studio" ? { name: "Studio" } : undefined,
+        },
+      },
+    });
+    const origin = (await svc.start()).toString().replace(/\/$/, "");
+    const auth = `Basic ${serverAuthToken("svc-mint")}`;
+    try {
+      const res = await fetch(`${origin}/amicode/fleet/rehydration`, { headers: { Authorization: auth } });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { ok: boolean; headless: boolean; peers: unknown[] };
+      expect(body.ok).toBe(true);
+      expect(body.headless).toBe(true);
+      // The rehydration ran — peers may be empty (no grants persisted in this
+      // test's temp dir) but the structure is correct
+      expect(Array.isArray(body.peers)).toBe(true);
+    } finally {
+      await svc.stop();
+    }
+  });
 });
