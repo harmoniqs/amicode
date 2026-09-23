@@ -27,8 +27,6 @@ describe("app session cache", () => {
     const store: {
       session_status: Record<string, SessionStatus | undefined>
       session_diff: Record<string, FileDiffInfo[] | undefined>
-      diff_version: Record<string, number | undefined>
-      parent_of: Record<string, string | undefined>
       todo: Record<string, Todo[] | undefined>
       message: Record<string, Message[] | undefined>
       session_message: Record<string, never[] | undefined>
@@ -39,8 +37,6 @@ describe("app session cache", () => {
     } = {
       session_status: { ses_1: { type: "busy" } as SessionStatus },
       session_diff: { ses_1: [] },
-      diff_version: { ses_1: 0 },
-      parent_of: {},
       todo: { ses_1: [] as Todo[] },
       message: {},
       session_message: {},
@@ -67,8 +63,6 @@ describe("app session cache", () => {
     const store: {
       session_status: Record<string, SessionStatus | undefined>
       session_diff: Record<string, FileDiffInfo[] | undefined>
-      diff_version: Record<string, number | undefined>
-      parent_of: Record<string, string | undefined>
       todo: Record<string, Todo[] | undefined>
       message: Record<string, Message[] | undefined>
       session_message: Record<string, never[] | undefined>
@@ -79,8 +73,6 @@ describe("app session cache", () => {
     } = {
       session_status: {},
       session_diff: {},
-      diff_version: {},
-      parent_of: {},
       todo: {},
       message: { ses_1: [m] },
       session_message: {},

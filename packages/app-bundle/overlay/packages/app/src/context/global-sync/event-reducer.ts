@@ -17,7 +17,6 @@ import { dropSessionCaches } from "./session-cache"
 import { diffs as list, message as clean } from "@/utils/diffs"
 
 const SKIP_PARTS = new Set(["patch", "step-start", "step-finish"])
-const EDIT_TOOLS = new Set(["edit", "write", "patch", "apply_patch"])
 const SESSION_CONTENT_EVENTS = new Set([
   "session.diff",
   "todo.updated",
@@ -141,7 +140,6 @@ export function applyDirectoryEvent(input: {
       input.setStore("session", reconcile(trimmed, { key: "id" }))
       cleanupDroppedSessionCaches(input.store, input.setStore, trimmed, input.setSessionTodo)
       if (!info.parentID) input.setStore("sessionTotal", (value) => value + 1)
-      if (info.parentID) input.setStore("parent_of", info.id, info.parentID)
       break
     }
     case "session.updated": {
@@ -187,12 +185,6 @@ export function applyDirectoryEvent(input: {
         )
       }
       cleanupSessionCaches(input.setStore, sessionID, input.setSessionTodo)
-      input.setStore(
-        "parent_of",
-        produce((draft) => {
-          delete draft[sessionID]
-        }),
-      )
       if (info?.parentID) break
       input.setStore("sessionTotal", (value) => Math.max(0, value - 1))
       break
@@ -320,21 +312,6 @@ export function applyDirectoryEvent(input: {
     case "message.part.updated": {
       const part = (event.properties as { part: Part }).part
       if (SKIP_PARTS.has(part.type)) break
-      // Bump diff_version when a file-editing tool completes so the diff query refetches mid-turn
-      if (
-        part.type === "tool" &&
-        EDIT_TOOLS.has(part.tool) &&
-        part.state.status === "completed" &&
-        (part.state as { metadata?: Record<string, unknown> }).metadata?.filediff
-      ) {
-        input.setStore("diff_version", part.sessionID, (v) => (v ?? 0) + 1)
-        // Propagate up the parent chain so parent sessions refetch their diff
-        let ancestor = input.store.parent_of[part.sessionID]
-        while (ancestor) {
-          input.setStore("diff_version", ancestor, (v) => (v ?? 0) + 1)
-          ancestor = input.store.parent_of[ancestor]
-        }
-      }
       input.setStore(
         produce((draft) => {
           delete draft.part_text_accum_delta[part.id]
