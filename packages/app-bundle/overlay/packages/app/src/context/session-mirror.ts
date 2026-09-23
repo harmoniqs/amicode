@@ -26,6 +26,7 @@ const STORE = "sessions"
 const MAX_MIRRORED_SESSIONS = 60
 const MAX_MESSAGES_PER_SESSION = 40
 const SAVE_DEBOUNCE_MS = 1_000
+const PRUNE_DEBOUNCE_MS = 60_000
 
 export interface MirrorRecord {
   v: 1
@@ -71,6 +72,22 @@ export function mirrorKey(scope: string, sessionID: string) {
  *  collapse into one small write per settle. */
 const pending = new Map<string, ReturnType<typeof setTimeout>>()
 
+/** A stream can complete a mirror save every second. Pruning is full-store
+ *  read/write work, so defer one run per scope instead of making its own
+ *  hydration reads queue behind every completed save. */
+const pendingPrunes = new Map<string, ReturnType<typeof setTimeout>>()
+
+function schedulePrune(scope: string) {
+  if (pendingPrunes.has(scope)) return
+  pendingPrunes.set(
+    scope,
+    setTimeout(() => {
+      pendingPrunes.delete(scope)
+      void pruneMirror(scope)
+    }, PRUNE_DEBOUNCE_MS),
+  )
+}
+
 /** #1287 privacy (CWE-922): keys whose session was deleted. A save that
  *  already fired its timer but has not yet written checks this before its
  *  put, so a deleted session can never be re-persisted after deleteMirror. */
@@ -114,7 +131,7 @@ export function saveMirror(scope: string, sessionID: string, record: Omit<Mirror
           }
           tx.oncomplete = () => {
             mirrorDebug("saved", key)
-            void pruneMirror(scope)
+            schedulePrune(scope)
           }
         } catch (error) {
           mirrorDebug("sync-error", String(error))

@@ -68,6 +68,7 @@ import { SDKProvider, useSDK } from "@/context/sdk"
 import { resolveLandingDirectory } from "@/pages/new-session-landing"
 import { authTokenFromCredentials } from "@/utils/server"
 import { normalizeSessionInfo } from "@/utils/session"
+import { BULK_WARM_MESSAGES, createSessionWarmScheduler, warmBulkSession, warmOpenSessionTab } from "@/context/session-warm"
 import type { SessionV2Info } from "@opencode-ai/sdk/v2/client"
 import type { SessionInfo } from "@opencode-ai/client/promise"
 import { WslServersProvider } from "@/wsl/context"
@@ -813,6 +814,7 @@ ${text.slice(0, 12000)}` }).catch(() => {})  // #1294: 2400 truncated snapshots 
 function SessionLineagePrewarmer() {
   const global = useGlobal()
   const tabs = useTabs()
+  const warmScheduler = createSessionWarmScheduler()
   // #1294: pin OPEN TABS for their lifetime — the route-level pin unpins
   // the session the moment you switch away, and without a pin the cache
   // evictor can drop an idle tab's message data between warm passes
@@ -885,10 +887,7 @@ function SessionLineagePrewarmer() {
         // (measured: the paint ring's 11,949ms / 8,034ms sessions). The
         // 20-message page lands in one round trip and satisfies the
         // timeline; the 60-deep pass continues behind it and fills history.
-        void session
-          .prefetch(tab.sessionId, 20)
-          .then(() => session.prefetch(tab.sessionId, 60))
-          .catch(() => {})
+        void warmOpenSessionTab(tab.sessionId, (sessionID, limit) => session.prefetch(sessionID, limit)).catch(() => {})
       }
     }
   })
@@ -899,7 +898,6 @@ function SessionLineagePrewarmer() {
   // recency-ordered list page per pass (the server sorts); the
   // lineage-peek + shouldPrefetch guards make repeat passes free.
   const BULK_WARM_SESSIONS = 30
-  const BULK_WARM_MESSAGES = 20
   const bulkWarm = async () => {
     for (const conn of global.servers.list()) {
       // #1290: same ctx fix — conn.sync is undefined on raw list entries.
@@ -927,24 +925,24 @@ function SessionLineagePrewarmer() {
         ;(globalThis as { __amicodePrewarmErr?: string }).__amicodePrewarmErr = String(e).slice(0, 90)
         continue
       }
-      for (const info of recent) {
-        // #1294c: seed data.info from the list payload — zero wire cost.
-        // The v2 list objects carry location:{directory} with NO
-        // top-level directory/slug/path — normalizeSessionInfo maps them
-        // (every other consumer normalizes at the boundary; the raw
-        // object crashed the tab strip's render on the real hub).
-        try {
-          sync.session.remember(normalizeSessionInfo(info as SessionInfo))
-        } catch {
-          /* best-effort */
-        }
-        if (sync.session.lineage && !sync.session.lineage.peek(info.id)) {
-          void sync.session.lineage.resolve(info.id).catch(() => {})
-        }
-        if (sync.session.prefetch && sync.session.shouldPrefetch(info.id, BULK_WARM_MESSAGES)) {
-          void sync.session.prefetch(info.id, BULK_WARM_MESSAGES).catch(() => {})
-        }
-      }
+      const origin = new URL(conn.http.url).origin
+      await warmScheduler.warm(
+        origin,
+        recent.map((info) => async () => {
+          // #1294c: seed data.info from the list payload — zero wire cost.
+          // The v2 list objects carry location:{directory} with NO
+          // top-level directory/slug/path — normalizeSessionInfo maps them
+          // (every other consumer normalizes at the boundary; the raw
+          // object crashed the tab strip's render on the real hub).
+          await warmBulkSession({
+            remember: () => sync.session.remember(normalizeSessionInfo(info as SessionInfo)),
+            hasLineage: () => !sync.session.lineage || !!sync.session.lineage.peek(info.id),
+            resolveLineage: () => sync.session.lineage?.resolve(info.id) ?? Promise.resolve(),
+            shouldPrefetch: () => !!sync.session.prefetch && sync.session.shouldPrefetch(info.id, BULK_WARM_MESSAGES),
+            prefetch: () => sync.session.prefetch?.(info.id, BULK_WARM_MESSAGES) ?? Promise.resolve(),
+          })
+        }),
+      )
     }
   }
   void bulkWarm()
