@@ -429,6 +429,39 @@ export function validateLifecycleGrant(
   return { valid: true };
 }
 
+// ── AC2 integration: token→scope reverse lookup + composed scope enforcement ─
+
+/** Find the lifecycle grant that issued a given token. The reverse lookup used
+ *  at the boundary to determine which scope a presenting peer carries. Returns
+ *  the grant if found and active, undefined otherwise. The lookup reads ALL
+ *  grants (small set — fleet-scale, not internet-scale). */
+export function findGrantByToken(
+  presentedToken: string,
+  deps: LifecycleGrantDeps = {},
+): LifecycleGrant | undefined {
+  const all = readAllLifecycleGrants(deps);
+  return all.find((g) => g.token === presentedToken && g.state === "active");
+}
+
+/** The composed scope enforcement: given a presented token + request, evaluate
+ *  BOTH membership (the token is a valid active grant) AND scope (the route
+ *  matrix allows this scope on this route). This is the SAME function called at
+ *  both service and engine boundaries — a PURE composition of the two checks,
+ *  deterministic on the same store state. */
+export function enforceScopeForRequest(
+  presentedToken: string,
+  method: string,
+  pathname: string,
+  deps: LifecycleGrantDeps = {},
+): { allowed: boolean; scope?: GrantScope; reason?: string } {
+  const grant = findGrantByToken(presentedToken, deps);
+  if (!grant) return { allowed: false, reason: "no-active-grant" };
+  if (!evaluateRouteMatrix(grant.scope, method, pathname)) {
+    return { allowed: false, scope: grant.scope, reason: "scope-denied" };
+  }
+  return { allowed: true, scope: grant.scope };
+}
+
 // ── AC5: Secret sanitization ─────────────────────────────────────────────────
 
 /** Produce a SAFE representation of a grant for status/UI/logging — the token

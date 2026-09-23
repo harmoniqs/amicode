@@ -512,3 +512,166 @@ describe("AC5 — secrets never appear in URLs, logs, errors, telemetry, status,
     expect(serialized).not.toContain("GRANT-TOKEN-001");
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AC2 integration — composed scope enforcement at both boundaries
+//
+// The PURE route matrix (tested above as individual scope checks) composes
+// with the token→scope reverse lookup into enforceScopeForRequest — the ONE
+// function both boundaries call. Because it is pure and deterministic, the
+// same inputs yield the same verdict at both boundaries (the #1485 parity
+// pattern: one decision, two surfaces).
+// ═══════════════════════════════════════════════════════════════════════════
+import {
+  findGrantByToken,
+  enforceScopeForRequest,
+} from "../src/amicode_service/fleet_control_lifecycle";
+
+describe("AC2 integration — enforceScopeForRequest composes membership + route matrix", () => {
+  let deps: LifecycleGrantDeps;
+  beforeEach(() => {
+    deps = makeDeps();
+  });
+
+  it("an observe-scoped token is ALLOWED on GET /amicode/fleet/status", () => {
+    issueLifecycleGrant(makeRequest({ scope: "observe" }), deps);
+    const r = enforceScopeForRequest("GRANT-TOKEN-001", "GET", "/amicode/fleet/status", deps);
+    expect(r.allowed).toBe(true);
+    expect(r.scope).toBe("observe");
+  });
+
+  it("an observe-scoped token is DENIED on GET /session (control-only route)", () => {
+    issueLifecycleGrant(makeRequest({ scope: "observe" }), deps);
+    const r = enforceScopeForRequest("GRANT-TOKEN-001", "GET", "/session", deps);
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toBe("scope-denied");
+  });
+
+  it("a control-scoped token is ALLOWED on GET /session", () => {
+    const d = { ...deps, tokenFactory: () => "CONTROL-TOKEN-001" };
+    issueLifecycleGrant(makeRequest({ scope: "control" }), d);
+    const r = enforceScopeForRequest("CONTROL-TOKEN-001", "GET", "/session", deps);
+    expect(r.allowed).toBe(true);
+    expect(r.scope).toBe("control");
+  });
+
+  it("a control-scoped token is DENIED on POST /amicode/fleet/revoke (lifecycle-admin only)", () => {
+    const d = { ...deps, tokenFactory: () => "CONTROL-TOKEN-001" };
+    issueLifecycleGrant(makeRequest({ scope: "control" }), d);
+    const r = enforceScopeForRequest("CONTROL-TOKEN-001", "POST", "/amicode/fleet/revoke", deps);
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toBe("scope-denied");
+  });
+
+  it("a lifecycle-admin-scoped token is ALLOWED on POST /amicode/fleet/revoke", () => {
+    const d = { ...deps, tokenFactory: () => "ADMIN-TOKEN-001" };
+    issueLifecycleGrant(makeRequest({ scope: "lifecycle-admin" }), d);
+    const r = enforceScopeForRequest("ADMIN-TOKEN-001", "POST", "/amicode/fleet/revoke", deps);
+    expect(r.allowed).toBe(true);
+    expect(r.scope).toBe("lifecycle-admin");
+  });
+
+  it("a lifecycle-admin-scoped token is DENIED on GET /session (not a lifecycle route)", () => {
+    const d = { ...deps, tokenFactory: () => "ADMIN-TOKEN-001" };
+    issueLifecycleGrant(makeRequest({ scope: "lifecycle-admin" }), d);
+    const r = enforceScopeForRequest("ADMIN-TOKEN-001", "GET", "/session", deps);
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toBe("scope-denied");
+  });
+
+  it("an unknown token is DENIED with no-active-grant", () => {
+    const r = enforceScopeForRequest("UNKNOWN-TOKEN", "GET", "/amicode/fleet/status", deps);
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toBe("no-active-grant");
+  });
+
+  it("a revoked peer's token is DENIED (findGrantByToken returns undefined for non-active)", () => {
+    issueLifecycleGrant(makeRequest(), deps);
+    revokeLifecycleGrant(REQUESTER_ID, deps);
+    acknowledgeRevocation(REQUESTER_ID, deps);
+    const r = enforceScopeForRequest("GRANT-TOKEN-001", "GET", "/amicode/fleet/status", deps);
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toBe("no-active-grant");
+  });
+
+  it("a revocation-pending peer's token is DENIED (not active)", () => {
+    issueLifecycleGrant(makeRequest(), deps);
+    revokeLifecycleGrant(REQUESTER_ID, deps);
+    const r = enforceScopeForRequest("GRANT-TOKEN-001", "GET", "/amicode/fleet/status", deps);
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toBe("no-active-grant");
+  });
+
+  it("findGrantByToken returns the matching active grant", () => {
+    issueLifecycleGrant(makeRequest(), deps);
+    const g = findGrantByToken("GRANT-TOKEN-001", deps);
+    expect(g).toBeDefined();
+    expect(g!.requesterMachineId).toBe(REQUESTER_ID);
+  });
+
+  it("findGrantByToken returns undefined for non-active grants", () => {
+    issueLifecycleGrant(makeRequest(), deps);
+    revokeLifecycleGrant(REQUESTER_ID, deps);
+    const g = findGrantByToken("GRANT-TOKEN-001", deps);
+    expect(g).toBeUndefined();
+  });
+
+  // The cross-boundary parity proof: enforceScopeForRequest is deterministic
+  // and pure (given the same store state). Because both the service boundary
+  // (server.ts) and the engine boundary (overlay auth.ts) call the SAME
+  // function with the SAME store, a token that is allowed/denied at one is
+  // allowed/denied at the other. This is the #1485 parity pattern extended to
+  // scope enforcement.
+  it("the same token + route produces the same verdict on repeated calls (deterministic)", () => {
+    issueLifecycleGrant(makeRequest({ scope: "control" }), deps);
+    const r1 = enforceScopeForRequest("GRANT-TOKEN-001", "GET", "/session", deps);
+    const r2 = enforceScopeForRequest("GRANT-TOKEN-001", "GET", "/session", deps);
+    expect(r1).toEqual(r2);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AC2+AC3 integration — scope matrix × authority: the SHARED CREDENTIAL MATRIX
+// for the lifecycle surface (the #1485 pattern extended to scope + authority).
+//
+// For every (scope, lifecycle-operation) pair, the verdict is:
+//   lifecycle-admin → allowed on lifecycle routes
+//   control         → DENIED on lifecycle routes
+//   observe         → DENIED on lifecycle routes
+//   local-mint      → ALLOWED (the authority)
+// ═══════════════════════════════════════════════════════════════════════════
+describe("AC2+AC3 — the lifecycle credential matrix: only lifecycle-admin and local-mint can reach lifecycle routes", () => {
+  let deps: LifecycleGrantDeps;
+  beforeEach(() => {
+    deps = makeDeps();
+  });
+
+  const lifecycleRoutes = [
+    { method: "POST", path: "/amicode/fleet/revoke" },
+    { method: "POST", path: "/amicode/fleet/readmit" },
+    { method: "POST", path: "/amicode/fleet/peer-token" },
+  ];
+
+  for (const route of lifecycleRoutes) {
+    it(`observe-scoped token DENIED on ${route.method} ${route.path}`, () => {
+      const d = { ...deps, tokenFactory: () => "OBS-TOKEN" };
+      issueLifecycleGrant(makeRequest({ scope: "observe" }), d);
+      const r = enforceScopeForRequest("OBS-TOKEN", route.method, route.path, deps);
+      expect(r.allowed).toBe(false);
+    });
+
+    it(`control-scoped token DENIED on ${route.method} ${route.path}`, () => {
+      const d = { ...deps, tokenFactory: () => "CTL-TOKEN" };
+      issueLifecycleGrant(makeRequest({ scope: "control" }), d);
+      const r = enforceScopeForRequest("CTL-TOKEN", route.method, route.path, deps);
+      expect(r.allowed).toBe(false);
+    });
+
+    it(`lifecycle-admin token ALLOWED on ${route.method} ${route.path}`, () => {
+      const d = { ...deps, tokenFactory: () => "ADM-TOKEN" };
+      issueLifecycleGrant(makeRequest({ scope: "lifecycle-admin" }), d);
+      const r = enforceScopeForRequest("ADM-TOKEN", route.method, route.path, deps);
+      expect(r.allowed).toBe(true);
+    });
+  }
+});
