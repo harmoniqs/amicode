@@ -250,3 +250,100 @@ describe("#1480 AC1/AC2 — the bound nonce rides a NON-URL carrier at the mint 
     await b.stop();
   });
 });
+
+// ── AC3: self-owned reciprocal Observe vs shared-peer approval + reciprocal
+//    Observe grant issuance with ATOMIC issuer mutation (#1480) ──────────────
+import {
+  evaluateObserveBootstrap,
+  issueReciprocalObserveGrant,
+} from "../src/amicode_service/fleet_observe_bootstrap";
+import { readPeerToken } from "../src/amicode_service/fleet_peer_store";
+import { hasIssuedToken, revokePeerToken } from "../src/amicode_service/fleet_issued_tokens";
+
+describe("#1480 AC3 — self-owned reciprocal Observe vs shared-peer target approval", () => {
+  it("a SELF-OWNED peer with verified management access establishes reciprocal Observe automatically", () => {
+    const d = evaluateObserveBootstrap({ ownership: "self-owned", managementVerified: true, targetApproved: false });
+    expect(d.decision).toBe("reciprocal-observe");
+  });
+
+  it("a self-owned peer WITHOUT verified management access does NOT auto-establish (management access is the gate)", () => {
+    const d = evaluateObserveBootstrap({ ownership: "self-owned", managementVerified: false, targetApproved: false });
+    // no verified management access → it cannot ride the self-owned fast path;
+    // it falls to the shared rule (needs target approval), never silently granted
+    expect(d.decision).toBe("requires-approval");
+  });
+
+  it("a SHARED peer requires target-side approval — unapproved is refused, not granted", () => {
+    const d = evaluateObserveBootstrap({ ownership: "shared", managementVerified: false, targetApproved: false });
+    expect(d.decision).toBe("requires-approval");
+  });
+
+  it("a SHARED peer WITH target-side approval establishes reciprocal Observe", () => {
+    const d = evaluateObserveBootstrap({ ownership: "shared", managementVerified: false, targetApproved: true });
+    expect(d.decision).toBe("reciprocal-observe");
+  });
+
+  it("management access on a self-owned peer is NOT a substitute for a shared peer's approval (no privilege bleed)", () => {
+    // a shared peer cannot borrow the self-owned fast path even if it claims
+    // management access — ownership must be self-owned for that path
+    const d = evaluateObserveBootstrap({ ownership: "shared", managementVerified: true, targetApproved: false });
+    expect(d.decision).toBe("requires-approval");
+  });
+});
+
+describe("#1480 — reciprocal Observe grant issuance with ATOMIC issuer mutation", () => {
+  let files: { issued: string; peerStore: string };
+  beforeEach(() => {
+    const root = tmproot();
+    files = { issued: join(root, "fleet-peer-tokens.json"), peerStore: join(root, "fleet-peer-tokens-reader.json") };
+  });
+
+  const REQUESTER = "requester-machine";
+
+  it("issues an OBSERVE-scoped grant to the requester AND persists the local reciprocal Observe grant", () => {
+    const r = issueReciprocalObserveGrant(
+      { requesterMachineId: REQUESTER, peerBaseUrl: "http://requester:43117", reciprocalToken: "RECIP-TOK" },
+      { issuedRegistryFile: files.issued, peerStoreFile: files.peerStore, tokenFactory: () => "OBSERVE-TOK" },
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.scope).toBe("observe");
+    // the target issued the requester an observe grant
+    expect(hasIssuedToken(REQUESTER, { registryFile: files.issued })).toBe(true);
+    // and the reciprocal Observe grant (the token the requester minted for us) is persisted locally
+    const local = readPeerToken(REQUESTER, { storeFile: files.peerStore });
+    expect(local).toEqual({ ok: true, credential: { baseUrl: "http://requester:43117", token: "RECIP-TOK" } });
+  });
+
+  it("a barred requester is refused the grant AND leaves NO local reciprocal grant (no half-effective grant)", () => {
+    // pre-bar the requester (revoked)
+    revokePeerToken(REQUESTER, { registryFile: files.issued });
+    const r = issueReciprocalObserveGrant(
+      { requesterMachineId: REQUESTER, peerBaseUrl: "http://requester:43117", reciprocalToken: "RECIP-TOK" },
+      { issuedRegistryFile: files.issued, peerStoreFile: files.peerStore, tokenFactory: () => "OBSERVE-TOK" },
+    );
+    expect(r.ok).toBe(false);
+    // neither side landed — no issued grant, no local reciprocal grant
+    expect(hasIssuedToken(REQUESTER, { registryFile: files.issued })).toBe(false);
+    expect(readPeerToken(REQUESTER, { storeFile: files.peerStore }).ok).toBe(false);
+  });
+
+  it("if the local persistence FAILS, the issued grant is ROLLED BACK — no half-effective grant survives", () => {
+    const r = issueReciprocalObserveGrant(
+      { requesterMachineId: REQUESTER, peerBaseUrl: "http://requester:43117", reciprocalToken: "RECIP-TOK" },
+      {
+        issuedRegistryFile: files.issued,
+        peerStoreFile: files.peerStore,
+        tokenFactory: () => "OBSERVE-TOK",
+        // inject a persistence failure on the local reciprocal write
+        persistLocalGrant: () => {
+          throw new Error("disk full");
+        },
+      },
+    );
+    expect(r.ok).toBe(false);
+    // the issued half must have been rolled back — no dangling grant to the requester
+    expect(hasIssuedToken(REQUESTER, { registryFile: files.issued })).toBe(false);
+    expect(readPeerToken(REQUESTER, { storeFile: files.peerStore }).ok).toBe(false);
+  });
+});
+

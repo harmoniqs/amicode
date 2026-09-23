@@ -106,3 +106,13 @@ export function revokePeerToken(machineId: string, deps: IssuedTokenDeps = {}): 
   const revoked_at = (deps.now ?? (() => new Date().toISOString()))();
   upsertKeyedEntry(file, REVOKED, machineId, { revoked_at }, ISSUED_TOKEN_STORE_VERSION);
 }
+
+/** #1480: drop an issued grant WITHOUT barring the machine_id — the ROLLBACK
+ *  counterpart of a mint. Used when a reciprocal-grant transaction fails after
+ *  the mint: the issued half must be undone so no half-effective grant
+ *  survives, but a transient failure must NOT permanently bar a legitimate
+ *  requester from re-attempting (that is what the §D4 revoke bar is for, not a
+ *  rollback). Absent entry → idempotent no-op. */
+export function deleteIssuedToken(machineId: string, deps: IssuedTokenDeps = {}): void {
+  deleteKeyedEntry(issuedTokenRegistryPath(deps), ISSUED, machineId, ISSUED_TOKEN_STORE_VERSION);
+}
