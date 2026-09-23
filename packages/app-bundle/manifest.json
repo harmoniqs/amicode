@@ -24,7 +24,7 @@
     "packages/app/public/amico.svg": "7c64b145bdd063bacd53318336a423f0654ec702de2b4e0c4a4a384694052804",
     "packages/app/public/oc-theme-preload.js": "27227e802b3494e7c545da903e679efdb30ccc754cd4eb5cdf08005a40d560b6",
     "packages/app/src/app-desktop-commands.test.ts": "1d2057f238dc14e4407ff5c4e53afe091784790bc0fd0dbfde0eacd91e2bd968",
-    "packages/app/src/app.tsx": "a55585b8142c13c127d33fbe807488de12a528156e498fc9f532b0a036ce3b25",
+    "packages/app/src/app.tsx": "63f27bed54cdb0564de458910e22ae976089dcd0664d0ce5b0ddb7f25200cc94",
     "packages/app/src/design-polish.css": "6b860316d2d57a4a9a89c1ff2772de45eca0d0cef2bd3e2ea8572d817e1d1910",
     "packages/app/src/desktop-menu.ts": "55481604f4fd5dcb74b0678347076c42fda7f928590d90bc2c3d1633bea8bc36",
     "packages/app/src/entry.tsx": "f35e1017f4c9d478d254b2a38043e5750064b6bef25169c3e07ae9f72ff1049c",
@@ -130,7 +130,7 @@
     "packages/app/src/components/status-popover-indicator.ts": "887b3e659ff49fd0d2a8715fad6562dc7e9402b80d06442058502306bdb108f5",
     "packages/app/src/components/status-popover-model.test.ts": "10634035bab0f31de24564e0d6c8413a0f7434fb2c08ac3ef722981a69dd08e7",
     "packages/app/src/components/status-popover-model.ts": "ec5a5a3caf9344fe617c7bc668af81d96ad4290378c34186cd4cd959821f1c85",
-    "packages/app/src/components/status-popover.tsx": "663b3ab44218780b3415120c42d89a2a410ba0054231e8fdd0887a97a1b75b23",
+    "packages/app/src/components/status-popover.tsx": "520c9e33b072cca1470508531eba194c690f0be86028f1b5abcbad0fe591bd5e",
     "packages/app/src/components/terminal.tsx": "2ce242034ae129c1f475c7a24fdec3facdd9bb1f49ba8c6b503643b07ae241e5",
     "packages/app/src/components/titlebar-channel.test.ts": "184238871c46f586dcc21081f710e37a77914c983fccf250665c7317212e41d8",
     "packages/app/src/components/titlebar-channel.ts": "385ace91d3c69c92f5b442bf15d2040e35df855f1d4ece47312c1ff8e1b01780",
@@ -236,6 +236,8 @@
     "packages/app/src/utils/project-type-helpers.ts": "5b9eb86b6fa271186e49d380249f7dce13879106a2e68a503aeaacee2f7d6ba0",
     "packages/app/src/utils/provider-disconnect.test.ts": "809971964ed28564d379dce2e590bd4727f45eb597e46234c28d25dd2485df26",
     "packages/app/src/utils/provider-disconnect.ts": "209c9b44970cfa3cd150cc20bf7bff34b773b148739e3d6beb314969b6bb1bbc",
+    "packages/app/src/utils/retry-import.test.ts": "06c0ef022c7c688737f9126d408b5f9be2804fd98255b2f740b4c983f8a3c9bd",
+    "packages/app/src/utils/retry-import.ts": "591bfd3e28f8afa9c4d9f0ca118d20e875cb1dce574c0ae25615994c4fe57a99",
     "packages/app/src/utils/serialize-session.test.ts": "f8fe318f195dca251eae3f4899f4a5881c3523522f59e02fef208588391f4048",
     "packages/app/src/utils/serialize-session.ts": "c303c678500cdb64c7aa6928a0bd984c441a36705fe8152368a0e575cbcb459f",
     "packages/app/src/utils/server-compat.ts": "01413e13b87485770eb3dbec0b882aec4c8247dafc4dc74b7b4669fa5b20cf1a",
@@ -694,7 +696,7 @@
     "packages/app/src/pages/session/use-amicode-commands.tsx": "88bfdad9ae6dfd920b8e6a14ffebd2cf9e52b8f67bb9284cb358ad940643ca67",
     "packages/app/src/pages/session/use-composer-commands.test.ts": "cc970bec6b208786987a4179e86b63ece1031c71c00d65bcba8fb08e2a5d2237",
     "packages/app/src/pages/session/use-composer-commands.tsx": "4a8c20f706385071bfddefa245cc71a84459d0a38da9aaa6896aa101f4de5c3d",
-    "packages/app/src/pages/session/use-session-commands.tsx": "1721ecc2eb62982f74eb7e476b319afef6e9b0b249d959ece436ec87206df027",
+    "packages/app/src/pages/session/use-session-commands.tsx": "21c1263af264a1302e6e1141f370261f26751824fac3e0dde5687e6cc6462f3e",
     "packages/core/src/database/migration/20260813162312_shocking_karnak.ts": "f4e901f79e3f660b3809e336599a5ba7da7794ff595e6accf6218739c046ab68",
     "packages/core/src/database/migration/20260820000001_add_session_directories.ts": "bd8ab86f36281b8ccd6d02a6971b81a0a1e877544fac68f969a9a16b559f3f91",
     "packages/core/src/database/migration/20260828201050_normal_stryfe.ts": "cbf63b27785b76d64d83e4c7fea341278c736985a6e21e4bd6cc816360a84154",
@@ -870,7 +872,7 @@
   "extracted_at": "2026-09-23T15:39:46.254Z",
   "per_package": {
     "packages/app": {
-      "A": 175,
+      "A": 177,
       "M": 159,
       "D": 0
     },
@@ -911,7 +913,7 @@
     }
   },
   "counts": {
-    "overlay_total": 840,
+    "overlay_total": 842,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1139,6 +1141,8 @@
     "packages/app/src/utils/project-type-helpers.ts": "A",
     "packages/app/src/utils/provider-disconnect.test.ts": "A",
     "packages/app/src/utils/provider-disconnect.ts": "A",
+    "packages/app/src/utils/retry-import.test.ts": "A",
+    "packages/app/src/utils/retry-import.ts": "A",
     "packages/app/src/utils/serialize-session.test.ts": "A",
     "packages/app/src/utils/serialize-session.ts": "A",
     "packages/app/src/utils/server-compat.ts": "M",
