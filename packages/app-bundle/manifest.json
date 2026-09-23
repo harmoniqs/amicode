@@ -47,7 +47,6 @@
     "packages/opencode/script/build.ts": "876e7d569aa71ce060c1d4b24c96e9bf13245cbf4ca743828d645560a95aa641",
     "packages/opencode/script/httpapi-exercise.ts": "772bd2cf5748ca90c5d5790c2d044237518cc8ede0411fc4ba28b9d7440ba28c",
     "packages/opencode/test/amicode-release-workflow.test.ts": "f6dfcb3ed9c572ca8e8b21ff82e038872b635b25c68f9580f6d6f51ee2813189",
-    "packages/opencode/test/server/auth-accept-set.test.ts": "8fe698812ed9a809d21ace1a9751bd3f1976ab1e58ad5bda65dbfff58df8e3bc",
     "packages/opencode/test/event-manifest.test.ts": "e2f1542c3ee8e981934044bb14cb87a58a676f3b6eb5d160f6e854f136ba445c",
     "packages/opencode/test/preload.ts": "5a3c7e7a8341dc735513b0cbeac6029ee406ad64767a1b883bdcb3e99269dd7e",
     "packages/schema/src/index.ts": "73df02fa179fc218606b05ec1507dae0dacef638bde36801d6a1a3f7899780bd",
@@ -333,6 +332,7 @@
     "packages/opencode/test/server/amicode-widget-manifest.test.ts": "ac404d1737bdde8ea3464cf0b5fa12f0a6f9e630a0698ca5fdec38449cb66d0f",
     "packages/opencode/test/server/amicode-widgets-src.test.ts": "fa95521084f95e0c421e7f7f13bf61de7e6b5cc9f42aa9fade486f5c1b53a65d",
     "packages/opencode/test/server/amicode-widgets.test.ts": "14fc6ccff4e83a5b005a724936e9f0d7ce411fab74109f319e8bc748665f7ab8",
+    "packages/opencode/test/server/auth-accept-set.test.ts": "8fe698812ed9a809d21ace1a9751bd3f1976ab1e58ad5bda65dbfff58df8e3bc",
     "packages/opencode/test/server/httpapi-compression.test.ts": "5f7603d7018e0b95f1c2f36c01dd297c01770bfcdd91ce29778e03b7d6143f75",
     "packages/opencode/test/server/httpapi-file.test.ts": "d3386129bc81467ecbcc57a3861f53767ee56ac41b4ff6ad58d8b168fb3b3373",
     "packages/opencode/test/server/httpapi-instance-route-auth.test.ts": "4b73a89d2431c02bc3b665d93f9002914e51eb1add979dc1867efbcbc0c36e25",
@@ -615,7 +615,7 @@
     "packages/app/src/components/session/panel-menu.tsx": "42f323046b7375ae158023a51506038eb15f2e1545c407f45acd47446a8ef3e0",
     "packages/app/src/components/session/pdf-canvas-view.tsx": "89a2c67262d16f262a185bf9c20a44038c6e97abb72c8206d12e720efa4ec6bb",
     "packages/app/src/components/session/preview-file-view.tsx": "7dad448cf6a166ede82b8908efd028eeb649139b59c7b996780c3f61c6a860ee",
-    "packages/app/src/components/session/session-chats-dropdown.test.ts": "2003d2a15781337ea6bff2c68e730cc5b6df38697f15d927ab26913936444db7",
+    "packages/app/src/components/session/session-chats-dropdown.test.ts": "cc0f96f935cc5681a1fe62875f4538c303b7c0b75744e066180f8805d5160292",
     "packages/app/src/components/session/session-context-tab.tsx": "227243b178b517f067d9ae0ae0eec3c559beeb6681828158b0600a17e98e7f81",
     "packages/app/src/components/session/session-header.tsx": "7113b3eca8ec950d4a547a2b7e2661b5e47f593653e12fca659b5b5f92cb90a6",
     "packages/app/src/components/session/session-new-view.tsx": "9510a4f550a3f0d4791e98e8025666f09d70a60fb66f193e48ee61feddae5a57",
@@ -854,11 +854,11 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-09-21T02:33:51.332Z",
+  "extracted_at": "2026-09-23T02:15:16.117Z",
   "per_package": {
     "packages/app": {
       "A": 174,
-      "M": 158,
+      "M": 159,
       "D": 0
     },
     "packages/core": {
@@ -872,8 +872,8 @@
       "D": 0
     },
     "packages/opencode": {
-      "A": 68,
-      "M": 80,
+      "A": 69,
+      "M": 81,
       "D": 0
     },
     "packages/schema": {
@@ -898,7 +898,7 @@
     }
   },
   "counts": {
-    "overlay_total": 829,
+    "overlay_total": 832,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1172,6 +1172,7 @@
     "packages/opencode/src/provider/error.ts": "M",
     "packages/opencode/src/provider/provider.ts": "M",
     "packages/opencode/src/provider/transform.ts": "M",
+    "packages/opencode/src/server/auth.ts": "M",
     "packages/opencode/src/server/server.ts": "M",
     "packages/opencode/src/session/business-record.ts": "A",
     "packages/opencode/src/session/compaction.ts": "M",
@@ -1226,6 +1227,7 @@
     "packages/opencode/test/server/amicode-widget-manifest.test.ts": "A",
     "packages/opencode/test/server/amicode-widgets-src.test.ts": "A",
     "packages/opencode/test/server/amicode-widgets.test.ts": "A",
+    "packages/opencode/test/server/auth-accept-set.test.ts": "A",
     "packages/opencode/test/server/httpapi-compression.test.ts": "M",
     "packages/opencode/test/server/httpapi-file.test.ts": "M",
     "packages/opencode/test/server/httpapi-instance-route-auth.test.ts": "M",
