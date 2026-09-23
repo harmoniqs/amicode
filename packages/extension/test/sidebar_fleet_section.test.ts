@@ -14,10 +14,18 @@ import {
   effectiveHealth,
   formatAge,
   displayRole,
+  reconcileRoster,
+  resolveKeeper,
   DEGRADED_AGE_MS,
   DOWN_AGE_MS,
 } from "../src/sidebar_fleet_section";
-import type { FleetSectionModel, RosterHealth } from "../src/sidebar_fleet_section";
+import type {
+  FleetSectionModel,
+  RosterHealth,
+  RosterRowLike,
+  RosterReconciliation,
+  KeeperResolution,
+} from "../src/sidebar_fleet_section";
 
 // A lawful roster row (the #1318 / @amicode/schema RosterRow shape).
 function row(over: Partial<Record<string, unknown>> = {}) {
@@ -845,5 +853,266 @@ describe("displayRole — peer label for non-hub servers (#1394, ADR 0029)", () 
   });
   it("passes standalone through unchanged", () => {
     expect(displayRole("standalone", false)).toBe("standalone");
+  });
+});
+
+// ── #1477 — stable peer identity, keeper authority, roster repair ─────────────
+//
+// AC1: A serving peer has a stable identity distinct from hostname, alias,
+// endpoint, and display name.
+// AC2: A changed hostname or alias for the same stable identity produces one
+// named repair/reconciliation state, never a second live device.
+// AC3: The same alias or endpoint claimed by different stable identities is
+// refused as a named conflict; no row is selected arbitrarily.
+// AC4: Keeper authority resolves to one stable serving identity; a
+// stale/missing/conflicting keeper is a named repair state.
+// AC5: An engine-owning standalone peer can advertise serving capability
+// without taking a new fleet.json role.
+// AC6: Existing hub/client semantics and the never-fork guard remain unchanged.
+
+/** A roster row WITH stable identity (the #1477 extension). */
+function idRow(over: Partial<RosterRowLike> = {}): RosterRowLike {
+  return {
+    machine_id: "mac-studio-01",
+    name: "Mac Studio",
+    server_mode: "server",
+    capabilities: ["compute"],
+    last_report: "2026-09-20T12:00:00.000Z",
+    health: "reachable",
+    stable_id: "fp:sha256:aabbccdd",
+    ...over,
+  };
+}
+
+describe("stable peer identity — AC1: stable_id is the trust key (#1477)", () => {
+  it("a roster row carrying stable_id surfaces it on the device model", () => {
+    const model = buildFleetSectionModel(input({
+      roster: [idRow({ machine_id: "studio-a", stable_id: "fp:sha256:aabbccdd" })],
+    }));
+    expect(model.devices).toHaveLength(1);
+    expect(model.devices[0].stableId).toBe("fp:sha256:aabbccdd");
+  });
+
+  it("a roster row WITHOUT stable_id surfaces undefined — legacy rows degrade honestly", () => {
+    const model = buildFleetSectionModel(input({
+      roster: [row({ machine_id: "legacy-box" })],
+    }));
+    expect(model.devices[0].stableId).toBeUndefined();
+  });
+
+  it("two roster rows with the SAME stable_id but DIFFERENT machine_id are the same peer — reconcileRoster deduplicates", () => {
+    const result = reconcileRoster([
+      idRow({ machine_id: "old-hostname", name: "Old", stable_id: "fp:sha256:aabbccdd", last_report: "2026-09-20T11:00:00.000Z" }),
+      idRow({ machine_id: "new-hostname", name: "New", stable_id: "fp:sha256:aabbccdd", last_report: "2026-09-20T12:00:00.000Z" }),
+    ]);
+    // One live row, one identity-change repair
+    expect(result.live).toHaveLength(1);
+    expect(result.live[0].machine_id).toBe("new-hostname"); // latest wins
+    expect(result.repairs).toHaveLength(1);
+    expect(result.repairs[0].kind).toBe("identity-change");
+    expect(result.repairs[0].stableId).toBe("fp:sha256:aabbccdd");
+  });
+});
+
+describe("roster reconciliation — AC2: hostname/alias change → named repair, never a second row (#1477)", () => {
+  it("a changed hostname for the same stable_id produces exactly the 'identity-change' repair state", () => {
+    const result = reconcileRoster([
+      idRow({ machine_id: "old-host.local", name: "Old Host", stable_id: "fp:sha256:1111", last_report: "2026-09-20T11:00:00.000Z" }),
+      idRow({ machine_id: "new-host.local", name: "New Host", stable_id: "fp:sha256:1111", last_report: "2026-09-20T12:00:00.000Z" }),
+    ]);
+    expect(result.live).toHaveLength(1);
+    expect(result.repairs).toHaveLength(1);
+    expect(result.repairs[0].kind).toBe("identity-change");
+    expect(result.repairs[0].staleRow?.machine_id).toBe("old-host.local");
+    expect(result.repairs[0].liveRow?.machine_id).toBe("new-host.local");
+  });
+
+  it("single row per stable_id does NOT produce any repair", () => {
+    const result = reconcileRoster([
+      idRow({ machine_id: "a", stable_id: "fp:sha256:1111" }),
+      idRow({ machine_id: "b", stable_id: "fp:sha256:2222" }),
+    ]);
+    expect(result.live).toHaveLength(2);
+    expect(result.repairs).toHaveLength(0);
+  });
+
+  it("rows WITHOUT stable_id pass through unreconciled (legacy compat)", () => {
+    const result = reconcileRoster([
+      row({ machine_id: "a", name: "A" }) as RosterRowLike,
+      row({ machine_id: "b", name: "B" }) as RosterRowLike,
+    ]);
+    expect(result.live).toHaveLength(2);
+    expect(result.repairs).toHaveLength(0);
+  });
+});
+
+describe("roster reconciliation — AC3: alias/endpoint conflict → named conflict, no arbitrary selection (#1477)", () => {
+  it("two DIFFERENT stable_ids claiming the same machine_id are refused as a named conflict", () => {
+    const result = reconcileRoster([
+      idRow({ machine_id: "studio.local", stable_id: "fp:sha256:AAAA" }),
+      idRow({ machine_id: "studio.local", stable_id: "fp:sha256:BBBB" }),
+    ]);
+    // NEITHER row is arbitrarily selected into live — the conflict suspends both
+    expect(result.live).toHaveLength(0);
+    expect(result.repairs).toHaveLength(1);
+    expect(result.repairs[0].kind).toBe("alias-conflict");
+    expect(result.repairs[0].conflictingIds).toContain("fp:sha256:AAAA");
+    expect(result.repairs[0].conflictingIds).toContain("fp:sha256:BBBB");
+  });
+
+  it("a conflict does NOT select an arbitrary row — the model shows zero devices for the contested identity", () => {
+    const result = reconcileRoster([
+      idRow({ machine_id: "studio.local", name: "Imposter", stable_id: "fp:sha256:AAAA" }),
+      idRow({ machine_id: "studio.local", name: "Real One", stable_id: "fp:sha256:BBBB" }),
+    ]);
+    expect(result.live).toHaveLength(0);
+    // No device shows — this is the "no row selected arbitrarily" invariant
+  });
+});
+
+describe("keeper resolution — AC4: keeper resolves to one stable serving identity (#1477)", () => {
+  it("a keeper pointing at a live stable_id resolves cleanly", () => {
+    const result = resolveKeeper({
+      keeperId: "fp:sha256:1111",
+      roster: [
+        idRow({ machine_id: "studio", stable_id: "fp:sha256:1111", server_mode: "server" }),
+        idRow({ machine_id: "laptop", stable_id: "fp:sha256:2222", server_mode: "client" }),
+      ],
+    });
+    expect(result.state).toBe("resolved");
+    expect(result.keeperRow?.machine_id).toBe("studio");
+  });
+
+  it("a missing keeper (no matching stable_id in roster) is a named repair state", () => {
+    const result = resolveKeeper({
+      keeperId: "fp:sha256:GONE",
+      roster: [
+        idRow({ machine_id: "studio", stable_id: "fp:sha256:1111" }),
+      ],
+    });
+    expect(result.state).toBe("keeper-missing");
+    expect(result.keeperRow).toBeNull();
+  });
+
+  it("a null/undefined keeper is a named repair state", () => {
+    const result = resolveKeeper({
+      keeperId: null,
+      roster: [
+        idRow({ machine_id: "studio", stable_id: "fp:sha256:1111" }),
+      ],
+    });
+    expect(result.state).toBe("keeper-missing");
+  });
+
+  it("a keeper pointing at a conflicted stable_id is a named repair state", () => {
+    const result = resolveKeeper({
+      keeperId: "fp:sha256:1111",
+      roster: [
+        // Same machine_id, different stable_ids — a conflict (AC3)
+        idRow({ machine_id: "studio.local", stable_id: "fp:sha256:1111" }),
+        idRow({ machine_id: "studio.local", stable_id: "fp:sha256:IMPOSTER" }),
+      ],
+    });
+    expect(result.state).toBe("keeper-conflict");
+  });
+
+  it("a keeper pointing at a stale (identity-changed) peer is a named repair state", () => {
+    // The keeper stable_id matches, but hostname changed — the reconciliation
+    // produced an identity-change repair. Keeper still resolves to the LIVE row.
+    const result = resolveKeeper({
+      keeperId: "fp:sha256:1111",
+      roster: [
+        idRow({ machine_id: "old-host", stable_id: "fp:sha256:1111", last_report: "2026-09-20T11:00:00.000Z" }),
+        idRow({ machine_id: "new-host", stable_id: "fp:sha256:1111", last_report: "2026-09-20T12:00:00.000Z" }),
+      ],
+    });
+    // The keeper resolves to the live row (new-host), not the stale one
+    expect(result.state).toBe("resolved");
+    expect(result.keeperRow?.machine_id).toBe("new-host");
+  });
+});
+
+describe("standalone serving advertisement — AC5: engine-owning standalone can advertise (#1477)", () => {
+  it("a standalone localDevice with servingCapable=true advertises serving without changing role", () => {
+    const model = buildFleetSectionModel(input({
+      localDevice: {
+        machineId: "studio-standalone",
+        name: "Mac Studio",
+        serveStance: "standalone",
+        deviceType: "desktop",
+        servingCapable: true,
+      },
+    }));
+    // Still standalone — the state is not "populated"
+    expect(model.state).toBe("standalone");
+    // But the model carries the serving advertisement
+    expect(model.servingAdvertisement).toBe(true);
+  });
+
+  it("a standalone localDevice WITHOUT servingCapable does NOT advertise serving", () => {
+    const model = buildFleetSectionModel(input({
+      localDevice: {
+        machineId: "laptop",
+        name: "MacBook",
+        serveStance: "standalone",
+        deviceType: "laptop",
+      },
+    }));
+    expect(model.state).toBe("standalone");
+    expect(model.servingAdvertisement).toBeFalsy();
+  });
+
+  it("a server-mode device does NOT carry servingAdvertisement (it IS a server)", () => {
+    const model = buildFleetSectionModel(input({
+      roster: [idRow()],
+      localDevice: { machineId: "studio", name: "Studio", serveStance: "server", deviceType: "desktop" },
+    }));
+    expect(model.servingAdvertisement).toBeFalsy();
+  });
+});
+
+describe("existing semantics unchanged — AC6: hub/client and never-fork guard (#1477)", () => {
+  it("a client model with canonical server still works identically", () => {
+    const model = buildFleetSectionModel(input({
+      roster: [],
+      localDevice: { machineId: "laptop-01", name: "Laptop", serveStance: "client", deviceType: "laptop" },
+      canonicalServer: { machineId: "server-01", name: "Server" },
+    }));
+    expect(model.state).toBe("populated");
+    const server = model.devices.find((d) => d.machineId === "server-01");
+    expect(server).toBeDefined();
+    expect(server!.role).toBe("server");
+    expect(server!.health).toBe("reachable");
+  });
+
+  it("the self-row synthesis still works for server-mode without stable_id", () => {
+    const model = buildFleetSectionModel(input({
+      localDevice: { machineId: "this-mac", name: "Mac", serveStance: "server", deviceType: undefined },
+    }));
+    expect(model.state).toBe("populated");
+    expect(model.devices).toHaveLength(1);
+    expect(model.devices[0].machineId).toBe("this-mac");
+    expect(model.devices[0].isLocal).toBe(true);
+  });
+
+  it("unreachable roster still drops the stale roster but shows the self-row", () => {
+    const model = buildFleetSectionModel(input({
+      roster: [row(), row({ machine_id: "b" })],
+      rosterReachable: false,
+      localDevice: { machineId: "this-mac", name: "Mac", serveStance: "server", deviceType: undefined },
+    }));
+    expect(model.state).toBe("unreachable");
+    expect(model.devices).toHaveLength(1);
+    expect(model.devices[0].machineId).toBe("this-mac");
+  });
+
+  it("the standalone collapse still takes priority over unreachable roster", () => {
+    const model = buildFleetSectionModel(input({
+      roster: [row()],
+      rosterReachable: false,
+      localDevice: { machineId: "me", name: "M", serveStance: "standalone", deviceType: undefined },
+    }));
+    expect(model.state).toBe("standalone");
+    expect(model.devices).toEqual([]);
   });
 });

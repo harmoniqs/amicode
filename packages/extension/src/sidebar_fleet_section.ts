@@ -83,6 +83,11 @@ export interface RosterRowLike {
    *  #1359) — the type-pill's primary source. Absent ⇒ the pill falls back
    *  to `server_mode` (the hybrid fallback). */
   device_type?: string;
+  /** #1477: the persisted cryptographic public-key fingerprint — the stable
+   *  identity key. Mutable hostname, alias, endpoint, and display name are
+   *  reconciled metadata; only this key identifies a peer for trust, grants,
+   *  and keeper authority. Absent on legacy rows (pre-#1477). */
+  stable_id?: string;
 }
 
 /** A capability tag split into known-behavior vs descriptive (ADR 0026 §1). */
@@ -111,6 +116,9 @@ export interface FleetDeviceRow {
   /** The raw roster health before staleness folding (#1375). Only set on
    *  roster-sourced rows; undefined on synthesized rows (self, canonical). */
   rosterHealth?: RosterHealth;
+  /** #1477: the stable identity key (cryptographic fingerprint). Undefined on
+   *  legacy rows and synthesized rows (self, canonical). */
+  stableId?: string;
 }
 
 /** The state of the section as a whole. `unreachable` is the honest host-down
@@ -198,6 +206,10 @@ export interface LocalDeviceInput {
   serveStance: string;
   /** Optional detected form factor — the type-pill's primary source. */
   deviceType?: string;
+  /** #1477: true when this standalone peer owns a running engine and can
+   *  serve sessions — advertised without taking a new fleet.json role (AC5).
+   *  Irrelevant when serveStance is not "standalone". */
+  servingCapable?: boolean;
 }
 
 /** The complete view-model handed to the webview. */
@@ -218,6 +230,160 @@ export interface FleetSectionModel {
   focusedMachineId?: string;
   /** Injectable clock timestamp for tooltip rendering (#1375). */
   now?: number;
+  /** #1477: true when this standalone peer can serve sessions (engine-owning)
+   *  without taking a new fleet.json role. Only set on standalone state. */
+  servingAdvertisement?: boolean;
+}
+
+/** #1477: a roster repair — a named state produced by reconciliation.
+ *  `identity-change`: the same stable_id appeared under two different
+ *  machine_ids (hostname changed). `alias-conflict`: two different stable_ids
+ *  claimed the same machine_id. */
+export interface RosterRepair {
+  kind: "identity-change" | "alias-conflict";
+  /** The stable_id involved (identity-change) or undefined (alias-conflict). */
+  stableId?: string;
+  /** The stale row that was superseded (identity-change). */
+  staleRow?: RosterRowLike;
+  /** The live row that superseded it (identity-change). */
+  liveRow?: RosterRowLike;
+  /** The conflicting stable_ids (alias-conflict). */
+  conflictingIds?: string[];
+  /** The contested machine_id (alias-conflict). */
+  contestedMachineId?: string;
+}
+
+/** #1477: the result of roster reconciliation — live rows plus named repairs. */
+export interface RosterReconciliation {
+  /** The de-duplicated live rows (one per stable identity). */
+  live: RosterRowLike[];
+  /** Named repair states for the operator to resolve. */
+  repairs: RosterRepair[];
+}
+
+/** #1477: reconcile a raw roster into de-duplicated live rows plus named
+ *  repair states. The reconciliation rules:
+ *  - Rows WITHOUT stable_id pass through unmodified (legacy compat).
+ *  - Two rows with the SAME stable_id but DIFFERENT machine_ids ⇒ the newer
+ *    one (by last_report) wins; the other becomes an `identity-change` repair.
+ *  - Two rows with DIFFERENT stable_ids but the SAME machine_id ⇒ both are
+ *    suspended (neither selected) and an `alias-conflict` repair is produced.
+ *  No display-name, hostname-similarity, IP-address, or raw alias heuristic
+ *  may merge two identities (Constraints & Invariants). */
+export function reconcileRoster(rows: RosterRowLike[]): RosterReconciliation {
+  const repairs: RosterRepair[] = [];
+
+  // Partition: rows with stable_id vs legacy rows
+  const withId: RosterRowLike[] = [];
+  const legacy: RosterRowLike[] = [];
+  for (const r of rows) {
+    if (r.stable_id !== undefined) withId.push(r);
+    else legacy.push(r);
+  }
+
+  // Step 1: detect alias conflicts — same machine_id, different stable_ids
+  const byMachineId = new Map<string, RosterRowLike[]>();
+  for (const r of withId) {
+    const existing = byMachineId.get(r.machine_id);
+    if (existing) existing.push(r);
+    else byMachineId.set(r.machine_id, [r]);
+  }
+
+  const conflictedMachineIds = new Set<string>();
+  const conflictedStableIds = new Set<string>();
+  for (const [machineId, group] of byMachineId) {
+    const uniqueIds = new Set(group.map((r) => r.stable_id!));
+    if (uniqueIds.size > 1) {
+      conflictedMachineIds.add(machineId);
+      for (const id of uniqueIds) conflictedStableIds.add(id);
+      repairs.push({
+        kind: "alias-conflict",
+        conflictingIds: [...uniqueIds],
+        contestedMachineId: machineId,
+      });
+    }
+  }
+
+  // Filter out conflicted rows
+  const nonConflicted = withId.filter(
+    (r) => !conflictedMachineIds.has(r.machine_id),
+  );
+
+  // Step 2: detect identity changes — same stable_id, different machine_ids
+  const byStableId = new Map<string, RosterRowLike[]>();
+  for (const r of nonConflicted) {
+    const existing = byStableId.get(r.stable_id!);
+    if (existing) existing.push(r);
+    else byStableId.set(r.stable_id!, [r]);
+  }
+
+  const live: RosterRowLike[] = [...legacy];
+  for (const [stableId, group] of byStableId) {
+    if (group.length === 1) {
+      live.push(group[0]);
+      continue;
+    }
+    // Multiple machine_ids for the same stable_id → identity change.
+    // The newest by last_report wins.
+    const sorted = [...group].sort(
+      (a, b) => Date.parse(b.last_report) - Date.parse(a.last_report),
+    );
+    live.push(sorted[0]);
+    for (let i = 1; i < sorted.length; i++) {
+      repairs.push({
+        kind: "identity-change",
+        stableId,
+        staleRow: sorted[i],
+        liveRow: sorted[0],
+      });
+    }
+  }
+
+  return { live, repairs };
+}
+
+/** #1477: the state of keeper resolution. */
+export interface KeeperResolution {
+  /** `resolved`: the keeper points at a live peer.
+   *  `keeper-missing`: no keeper specified or no matching stable_id.
+   *  `keeper-conflict`: the keeper's stable_id is involved in an alias conflict. */
+  state: "resolved" | "keeper-missing" | "keeper-conflict";
+  /** The keeper's live roster row (only when `resolved`). */
+  keeperRow: RosterRowLike | null;
+}
+
+/** #1477: resolve the keeper pointer against a reconciled roster. The keeper
+ *  is identified by stable_id — the cryptographic fingerprint. A missing,
+ *  null, or unmatched keeper is a named repair state; a keeper whose identity
+ *  is conflicted (AC3) is a distinct repair. */
+export function resolveKeeper(opts: {
+  keeperId: string | null | undefined;
+  roster: RosterRowLike[];
+}): KeeperResolution {
+  if (opts.keeperId == null) {
+    return { state: "keeper-missing", keeperRow: null };
+  }
+
+  // Reconcile the roster first to detect conflicts
+  const reconciled = reconcileRoster(opts.roster);
+
+  // Check if the keeper's stable_id is involved in a conflict
+  for (const repair of reconciled.repairs) {
+    if (
+      repair.kind === "alias-conflict" &&
+      repair.conflictingIds?.includes(opts.keeperId)
+    ) {
+      return { state: "keeper-conflict", keeperRow: null };
+    }
+  }
+
+  // Look for the keeper in the live rows
+  const keeper = reconciled.live.find((r) => r.stable_id === opts.keeperId);
+  if (!keeper) {
+    return { state: "keeper-missing", keeperRow: null };
+  }
+
+  return { state: "resolved", keeperRow: keeper };
 }
 
 /** Fold the attach posture into the badge's link-health signal: an attached,
@@ -247,6 +413,7 @@ export function buildFleetSectionModel(input: FleetSectionInput): FleetSectionMo
       troubleshoot: { enabled: false },
       focusedMachineId: input.focusedMachineId,
       now,
+      servingAdvertisement: local.servingCapable === true ? true : undefined,
     };
   }
   // Host down / roster read failed ⇒ the honest unreachable state. A stale
@@ -286,6 +453,7 @@ export function buildFleetSectionModel(input: FleetSectionInput): FleetSectionMo
       rosterHealth: r.health as RosterHealth,
       lastSeen: r.last_report,
       isLocal: localId !== null && r.machine_id === localId,
+      ...(r.stable_id !== undefined ? { stableId: r.stable_id } : {}),
     };
   });
   // Synthesize the self-row when the roster doesn't already carry one for
