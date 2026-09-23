@@ -1028,6 +1028,112 @@ describe("#1481 trust gate — untrusted peers contribute no session metadata (A
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
+// #1481 — dynamic projection inputs (AC4): the projection re-reads current peer
+// credentials + endpoints on EACH build. Token rotation and endpoint recovery
+// take effect WITHOUT a service restart — one running service, mutated stores,
+// visibly different projections on the next request.
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe("#1481 dynamic inputs (AC4) — token rotation + endpoint recovery, no restart", () => {
+  let root: string;
+  let dist: string;
+  let overlaySource: string;
+  let localEngine: MockOrigin;
+  let peer: MockOrigin;
+  let engineToken: string;
+  let service: ReturnType<typeof createAmicodeService>;
+  let origin: string;
+  let savedHubFile: string | undefined;
+
+  // A MUTABLE reader peer-store the provider reads FRESH per request — this is
+  // the seam the real provider hits (readPeerToken late, never a boot snapshot).
+  const store: { url: string | undefined; token: string | undefined } = { url: undefined, token: undefined };
+
+  beforeAll(async () => {
+    root = mkdtempSync(join(tmpdir(), "amicode-1481-ac4-"));
+    dist = buildMockDist(root);
+    overlaySource = join(root, "overlay-source");
+    writeDataPlaneManifest(overlaySource);
+    localEngine = await startMockEngine([{ id: "ses-ac4-local", title: "local", time: { created: 1, updated: 2 } }]);
+    peer = await startMockPeer([{ id: "ses-ac4-peer", title: "peer", time: { created: 3, updated: 4 } }], "rotated-token");
+    engineToken = serverAuthToken("engine-mint-password");
+    savedHubFile = process.env.AMICO_FLEET_HUB_FILE;
+    process.env.AMICO_FLEET_HUB_FILE = join(root, "hub-cred-absent.json");
+    service = createAmicodeService({
+      password: "service-own-mint",
+      engine: { password: "engine-mint-password", getUrl: () => localEngine.url },
+      shelf: { distRoot: dist },
+      fleet: {
+        entitlements: ["amicissimo"],
+        overlaySource,
+        hub: { getUrl: () => undefined },
+        getMode: () => "fleet",
+        fleetPeers: {
+          localMachineId: "self-ac4",
+          getServingPeers: () => [{ machineId: "peer-ac4" }],
+          // read FRESH from the mutable store every call — the late-read seam
+          readPeerToken: () =>
+            store.token !== undefined && store.url !== undefined
+              ? { ok: true as const, credential: { baseUrl: store.url, token: store.token } }
+              : { ok: false as const },
+          rosterLookup: (id) => (id === "peer-ac4" ? { name: "Peer" } : id === "self-ac4" ? { name: "Self" } : undefined),
+        },
+      },
+    });
+    origin = (await service.start()).toString().replace(/\/$/, "");
+  });
+
+  afterAll(async () => {
+    await service.stop();
+    await localEngine.stop();
+    await peer.stop();
+    if (savedHubFile === undefined) delete process.env.AMICO_FLEET_HUB_FILE;
+    else process.env.AMICO_FLEET_HUB_FILE = savedHubFile;
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  async function sessionsBody() {
+    const res = await fetch(`${origin}/amicode/fleet/sessions`, { headers: { Authorization: `Basic ${engineToken}` } });
+    expect(res.status).toBe(200);
+    return (await res.json()) as FleetProjection;
+  }
+
+  it("no credential yet → the peer is a named untrusted absence; the endpoint recovers WITHOUT restart on the next request", async () => {
+    // start: no token, no url
+    let body = await sessionsBody();
+    expect(body.sources["peer-ac4"].present).toBe(false);
+    expect(body.sessions.some((s) => s.id === "ses-ac4-peer")).toBe(false);
+
+    // endpoint + credential recover — SAME running service, no restart
+    store.url = peer.url;
+    store.token = "rotated-token";
+    body = await sessionsBody();
+    expect(body.sources["peer-ac4"].present).toBe(true);
+    expect(body.sessions.some((s) => s.id === "ses-ac4-peer")).toBe(true);
+  });
+
+  it("a rotated (now-wrong) token → the very next request reflects the revoked/unauthorized state; re-rotating to the valid token recovers — all without restart", async () => {
+    // valid first
+    store.url = peer.url;
+    store.token = "rotated-token";
+    expect((await sessionsBody()).sources["peer-ac4"].present).toBe(true);
+
+    // rotate to a stale/wrong token → the peer 401s → NAMED unauthorized on the next build
+    store.token = "stale-wrong-token";
+    let body = await sessionsBody();
+    expect(body.sources["peer-ac4"].present).toBe(false);
+    expect(body.sources["peer-ac4"].reason).toBe("unauthorized");
+    expect(body.sessions.some((s) => s.id === "ses-ac4-peer")).toBe(false);
+
+    // re-rotate to the valid token → recovers, still no restart
+    store.token = "rotated-token";
+    body = await sessionsBody();
+    expect(body.sources["peer-ac4"].present).toBe(true);
+    expect(body.sessions.some((s) => s.id === "ses-ac4-peer")).toBe(true);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
 // #1481 — the identity-conflict source state (AC3): a serving∧reachable peer
 // flagged with a BLOCKING identity_state (alias-conflict / key-changed) must
 // surface as a NAMED `identity-conflict` source — NEVER silently excluded from
