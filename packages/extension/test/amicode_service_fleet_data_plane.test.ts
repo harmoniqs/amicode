@@ -920,3 +920,113 @@ describe("fleet-wide projection — N-peer, machine-keyed fan-out (#1439)", () =
     expect(projection.sessions.some((s) => s.id === "ses-mini-1")).toBe(false);
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Integration: GET /amicode/fleet/sessions returns fleet-wide tagged list (#1439)
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe("GET /amicode/fleet/sessions — fleet-wide tagged list via the route (#1439)", () => {
+  let root: string;
+  let dist: string;
+  let overlaySource: string;
+  let localEngine: MockOrigin;
+  let studioPeer: MockOrigin;
+  let miniPeer: MockOrigin;
+  let service: ReturnType<typeof createAmicodeService>;
+  let origin: string;
+  let engineToken: string;
+
+  const FLEET_LOCAL = [
+    { id: "ses-local-x", title: "local work", directory: "/local", time: { created: 100, updated: 200 } },
+  ];
+  const FLEET_STUDIO = [
+    { id: "ses-studio-x", title: "studio work", directory: "/studio", time: { created: 300, updated: 400 } },
+  ];
+  const FLEET_MINI = [
+    { id: "ses-mini-x", title: "mini work", directory: "/mini", time: { created: 500, updated: 600 } },
+  ];
+
+  const ROSTER: Record<string, { name: string; device_type?: string }> = {
+    "my-macbook": { name: "My MacBook", device_type: "laptop" },
+    "the-studio": { name: "The Studio", device_type: "desktop" },
+    "the-mini": { name: "The Mini", device_type: "server" },
+  };
+
+  beforeAll(async () => {
+    root = mkdtempSync(join(tmpdir(), "amicode-fleet-route-1439-"));
+    dist = buildMockDist(root);
+    overlaySource = join(root, "overlay-source");
+    writeDataPlaneManifest(overlaySource);
+    localEngine = await startMockEngine(FLEET_LOCAL);
+    studioPeer = await startMockPeer(FLEET_STUDIO, "tok-studio-route");
+    miniPeer = await startMockPeer(FLEET_MINI, "tok-mini-route");
+    engineToken = serverAuthToken("engine-mint-password");
+    service = createAmicodeService({
+      password: "service-own-mint",
+      engine: { password: "engine-mint-password", getUrl: () => localEngine.url },
+      shelf: { distRoot: dist },
+      fleet: {
+        entitlements: ["amicissimo"],
+        overlaySource,
+        hub: { getUrl: () => "http://127.0.0.1:9" }, // unused — fleetPeers takes over
+        getMode: () => "fleet",
+        fleetPeers: {
+          localMachineId: "my-macbook",
+          getServingPeers: () => [{ machineId: "the-studio" }, { machineId: "the-mini" }],
+          readPeerToken: (id) => {
+            if (id === "the-studio") return { ok: true as const, credential: { baseUrl: studioPeer.url, token: "tok-studio-route" } };
+            if (id === "the-mini") return { ok: true as const, credential: { baseUrl: miniPeer.url, token: "tok-mini-route" } };
+            return { ok: false as const };
+          },
+          rosterLookup: (id) => ROSTER[id],
+        },
+      },
+    });
+    origin = (await service.start()).toString().replace(/\/$/, "");
+  });
+
+  afterAll(async () => {
+    await service.stop();
+    await localEngine.stop();
+    await studioPeer.stop();
+    await miniPeer.stop();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("the route returns sessions from all reachable peers, each with amicode_owner tags", async () => {
+    const res = await fetch(`${origin}/amicode/fleet/sessions`, {
+      headers: { Authorization: `Basic ${engineToken}` },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as FleetProjection;
+    expect(body.ok).toBe(true);
+    expect(body.mode).toBe("fleet");
+    expect(body.sessions).toHaveLength(3);
+
+    // Local session: tagged is_local
+    const local = body.sessions.find((s) => s.id === "ses-local-x") as Record<string, unknown> & { amicode_owner?: SessionOwnerTag };
+    expect(local).toBeDefined();
+    expect(local!.amicode_owner).toMatchObject({
+      owner_machine_id: "my-macbook",
+      owner_name: "My MacBook",
+      device_type: "laptop",
+      is_local: true,
+    });
+
+    // Remote studio session: tagged is_local: false
+    const studio = body.sessions.find((s) => s.id === "ses-studio-x") as Record<string, unknown> & { amicode_owner?: SessionOwnerTag };
+    expect(studio).toBeDefined();
+    expect(studio!.amicode_owner).toMatchObject({
+      owner_machine_id: "the-studio",
+      owner_name: "The Studio",
+      device_type: "desktop",
+      is_local: false,
+    });
+
+    // Sources keyed by machine_id, not "local"/"hub"
+    expect(body.sources["my-macbook"]).toBeDefined();
+    expect(body.sources["my-macbook"].present).toBe(true);
+    expect(body.sources["the-studio"].present).toBe(true);
+    expect(body.sources["the-mini"].present).toBe(true);
+  });
+});
