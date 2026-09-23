@@ -47,6 +47,7 @@
     "packages/opencode/script/build.ts": "876e7d569aa71ce060c1d4b24c96e9bf13245cbf4ca743828d645560a95aa641",
     "packages/opencode/script/httpapi-exercise.ts": "772bd2cf5748ca90c5d5790c2d044237518cc8ede0411fc4ba28b9d7440ba28c",
     "packages/opencode/test/amicode-release-workflow.test.ts": "f6dfcb3ed9c572ca8e8b21ff82e038872b635b25c68f9580f6d6f51ee2813189",
+    "packages/opencode/test/server/auth-accept-set.test.ts": "8fe698812ed9a809d21ace1a9751bd3f1976ab1e58ad5bda65dbfff58df8e3bc",
     "packages/opencode/test/event-manifest.test.ts": "e2f1542c3ee8e981934044bb14cb87a58a676f3b6eb5d160f6e854f136ba445c",
     "packages/opencode/test/preload.ts": "5a3c7e7a8341dc735513b0cbeac6029ee406ad64767a1b883bdcb3e99269dd7e",
     "packages/schema/src/index.ts": "73df02fa179fc218606b05ec1507dae0dacef638bde36801d6a1a3f7899780bd",
