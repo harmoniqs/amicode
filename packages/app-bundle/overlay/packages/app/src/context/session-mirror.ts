@@ -77,6 +77,17 @@ const pending = new Map<string, ReturnType<typeof setTimeout>>()
  *  hydration reads queue behind every completed save. */
 const pendingPrunes = new Map<string, ReturnType<typeof setTimeout>>()
 
+/** Test-only reset seam. Keeps IndexedDB fixture state from leaking between
+ * module tests while leaving the production mirror state encapsulated. */
+export function _resetForTesting(): void {
+  for (const timer of pending.values()) clearTimeout(timer)
+  for (const timer of pendingPrunes.values()) clearTimeout(timer)
+  pending.clear()
+  pendingPrunes.clear()
+  tombstoned.clear()
+  dbPromise = undefined
+}
+
 function schedulePrune(scope: string) {
   if (pendingPrunes.has(scope)) return
   pendingPrunes.set(
@@ -166,8 +177,13 @@ export function deleteMirror(scope: string, sessionID: string) {
 }
 
 export async function loadMirror(scope: string, sessionID: string): Promise<MirrorRecord | undefined> {
+  // A fresh page can inherit records from a short-lived predecessor whose
+  // deferred prune never fired. Amortize that recovery on the first database
+  // use of this visit instead of adding a full-store scan to every save.
+  const openingDatabase = !dbPromise
   const db = await openDB()
   if (!db) return undefined
+  if (openingDatabase) void pruneMirror(scope)
   return new Promise((resolve) => {
     try {
       const tx = db.transaction(STORE, "readonly")

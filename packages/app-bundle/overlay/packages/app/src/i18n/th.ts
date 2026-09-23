@@ -530,6 +530,7 @@ export const dict = {
   "toast.session.share.success.description": "คัดลอก URL แชร์ไปยังคลิปบอร์ดแล้ว!",
   "toast.session.share.failed.title": "ไม่สามารถแชร์เซสชัน",
   "toast.session.share.failed.description": "เกิดข้อผิดพลาดระหว่างการแชร์เซสชัน",
+  "toast.session.compact.failed.description": "ไม่สามารถย่อเซสชันได้",
 
   "toast.session.unshare.success.title": "ยกเลิกการแชร์เซสชันแล้ว",
   "toast.session.unshare.success.description": "ยกเลิกการแชร์เซสชันสำเร็จ!",

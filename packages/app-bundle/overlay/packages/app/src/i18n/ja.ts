@@ -489,6 +489,7 @@ export const dict = {
   "toast.session.share.success.description": "共有URLをクリップボードにコピーしました！",
   "toast.session.share.failed.title": "セッションの共有に失敗しました",
   "toast.session.share.failed.description": "セッションの共有中にエラーが発生しました",
+  "toast.session.compact.failed.description": "セッションを圧縮できませんでした",
   "toast.session.unshare.success.title": "セッションの共有を解除しました",
   "toast.session.unshare.success.description": "セッションの共有解除に成功しました！",
   "toast.session.unshare.failed.title": "セッションの共有解除に失敗しました",

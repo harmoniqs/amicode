@@ -152,7 +152,7 @@ const echo = Layer.effectDiscard(
   ),
 )
 const echoNode = makeLocationNode({ name: "test/session-runner-tools", layer: echo, deps: [ToolRegistry.node] })
-let modelResolveHook = Effect.void
+let modelResolveHook: Effect.Effect<void, SessionRunnerModel.Error> = Effect.void
 let currentModel = model
 const models = SessionRunnerModel.layerWith((session) =>
   modelResolveHook.pipe(Effect.as(session.model?.id === "replacement" ? replacementModel : currentModel)),
@@ -291,6 +291,15 @@ const it = testEffect(
 )
 const sessionID = SessionV2.ID.make("ses_runner_test")
 const otherSessionID = SessionV2.ID.make("ses_runner_other")
+
+const compactInput = { sessionID } satisfies Parameters<SessionV2.Interface["compact"]>[0]
+void compactInput
+const rejectedCompactPrompt = {
+  sessionID,
+  // @ts-expect-error Compaction derives its prompt from recorded session history.
+  prompt: Prompt.make({ text: "unused" }),
+} satisfies Parameters<SessionV2.Interface["compact"]>[0]
+void rejectedCompactPrompt
 
 const insertSession = (id: SessionV2.ID) =>
   Effect.gen(function* () {
@@ -1143,6 +1152,57 @@ describe("SessionRunnerLLM", () => {
         type: "compaction",
         summary: "## Objective\n- Preserve the updated task",
       })
+    }),
+  )
+
+  it.effect("surfaces compact model-resolution errors through the public Session channel", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const session = yield* SessionV2.Service
+      const failure = new SessionRunnerModel.ModelNotSelectedError({ sessionID })
+      modelResolveHook = Effect.fail(failure)
+
+      expect(yield* session.compact({ sessionID }).pipe(Effect.flip)).toBe(failure)
+    }),
+  )
+
+  it.effect("manually compacts tool history with a tools-free summary request", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const session = yield* SessionV2.Service
+      const execution = yield* SessionExecution.Service
+      yield* session.prompt({
+        sessionID,
+        prompt: Prompt.make({ text: "Echo before compacting ".repeat(500) }),
+        resume: false,
+      })
+
+      requests.length = 0
+      responses = [
+        [
+          LLMEvent.stepStart({ index: 0 }),
+          LLMEvent.toolCall({ id: "call-before-compact", name: "echo", input: { text: "history" } }),
+          LLMEvent.stepFinish({ index: 0, reason: "tool-calls" }),
+          LLMEvent.finish({ reason: "tool-calls" }),
+        ],
+        fragmentFixture("text", "text-before-compact", ["Done"]).completeEvents,
+      ]
+      yield* session.resume(sessionID)
+      expect(requests[1]?.messages.map((message) => message.role)).toEqual(["user", "assistant", "tool"])
+
+      currentModel = recoveryModel
+      requests.length = 0
+      responses = [
+        fragmentFixture("text", "text-manual-summary", ["## Objective\n- Preserve tool history"]).completeEvents,
+      ]
+      expect(yield* execution.compact(sessionID)).toBe(true)
+
+      expect(requests).toHaveLength(1)
+      expect(requests[0]?.tools).toEqual([])
+      expect(requests[0]?.messages.map((message) => message.role)).toEqual(["user"])
+      expect(yield* session.context(sessionID)).toMatchObject([
+        { type: "compaction", summary: "## Objective\n- Preserve tool history" },
+      ])
     }),
   )
 
@@ -2812,6 +2872,7 @@ describe("SessionRunnerLLM", () => {
     Effect.gen(function* () {
       yield* setup
       const session = yield* SessionV2.Service
+      executions.length = 0
       yield* session.prompt({ sessionID, prompt: Prompt.make({ text: "Settle before failing" }), resume: false })
       const failure = providerUnavailable()
       toolExecutionGate = yield* Deferred.make<void>()
@@ -2988,7 +3049,7 @@ describe("SessionRunnerLLM", () => {
       expect(requests[1]?.toolChoice).toMatchObject({ type: "none" })
       expect(requests[1]?.tools).toEqual([])
       expect(requests[1]?.messages.at(-1)).toMatchObject({
-        role: "assistant",
+        role: "user",
         content: [{ type: "text", text: expect.stringContaining("MAXIMUM STEPS REACHED") }],
       })
       expect(executions).toEqual(["done"])
