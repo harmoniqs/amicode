@@ -649,6 +649,20 @@ export class AmicodeServiceServer {
     // behavior — the socket is destroyed — so loopback/never-fork is unchanged.
     server.on("upgrade", (req, socket, head) => {
       try {
+        // #1485 (AC1): the upgrade path enforces the SAME membership decision
+        // as request dispatch. Before ANY tunneling (client relay, peer branch,
+        // or local), a caller the accept-set rejects is refused with a raw 401 —
+        // so direct-engine, proxied-engine, SSE, and upgrade produce identical
+        // allow/deny for every credential state. Without this an upgrade slipped
+        // past the boundary (the client relay tunneled it, non-members elsewhere
+        // were merely dropped with no status) — an authorization gap, not parity.
+        // isPublicUiPath (GET-only static) is honored by authorized() itself.
+        const upgradeUrl0 = new URL(req.url ?? "/", `http://${req.headers.host ?? "127.0.0.1"}`);
+        if (!this.authorized(req, upgradeUrl0)) {
+          socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
+          socket.destroy();
+          return;
+        }
         if (this.fleetPlane?.client && this.routingMode === "fleet") {
           this.fleetPlane.hub.handleUpgrade(req, socket, head);
           return;
