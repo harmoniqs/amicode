@@ -28,6 +28,7 @@ import {
   writeAttachmentPointerFile,
   clearAttachmentPointerFile,
   attachmentStatusResponse,
+  effectiveStreamSignalResponse,
   resolveAmicodeTarget,
   ATTACHMENT_POINTER_RELPATH,
   type AttachmentPointer,
@@ -170,6 +171,60 @@ describe("attachmentStatusResponse — the /amicode/fleet/attachment local hones
     expect(body.attached).toBe(false);
     expect(body.pointer).toBeNull();
     expect(body.error).toBeTruthy();
+  });
+});
+
+describe("effectiveStreamSignalResponse — the transport-bound legacy global-stream signal (#1468)", () => {
+  let dir: string;
+  let file: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "effective-stream-"));
+    file = join(dir, "attachment.json");
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it("reports local with a null identity while no pointer is attached", () => {
+    expect(JSON.parse(effectiveStreamSignalResponse({ attachmentFile: file }))).toEqual({
+      ok: true,
+      mode: "local",
+      identity: null,
+    });
+  });
+
+  it("reports a legacy single-pointer identity only when the exact complete pointer has a live bound transport", () => {
+    writeAttachmentPointerFile(ATTACHED, { attachmentFile: file });
+    expect(JSON.parse(effectiveStreamSignalResponse({ attachmentFile: file }))).toEqual({
+      ok: false,
+      error: "attachment_transport_unbound",
+    });
+    expect(JSON.parse(effectiveStreamSignalResponse({ attachmentFile: file, liveAttachment: ATTACHED }))).toEqual({
+      ok: true,
+      mode: "legacy-single-pointer",
+      identity: ATTACHED,
+    });
+    expect(
+      JSON.parse(
+        effectiveStreamSignalResponse({
+          attachmentFile: file,
+          liveAttachment: { ...ATTACHED, transport: "" },
+        }),
+      ),
+    ).toEqual({ ok: false, error: "attachment_transport_unbound" });
+  });
+
+  it("reports multiplexing distinctly and never exposes the attachment pointer as a global effective identity", () => {
+    writeAttachmentPointerFile(ATTACHED, { attachmentFile: file });
+    expect(
+      JSON.parse(effectiveStreamSignalResponse({ attachmentFile: file, liveAttachment: ATTACHED, multiplexed: true })),
+    ).toEqual({ ok: true, mode: "multiplexed", identity: null });
+  });
+
+  it("leaves a malformed pointer unreadable rather than fabricating a transition identity", () => {
+    writeFileSync(file, "not json");
+    expect(JSON.parse(effectiveStreamSignalResponse({ attachmentFile: file, liveAttachment: ATTACHED }))).toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/attachment_pointer_malformed/),
+    });
   });
 });
 

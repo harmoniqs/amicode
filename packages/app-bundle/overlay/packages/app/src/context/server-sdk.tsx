@@ -167,6 +167,98 @@ export function resumeStreamAfterPageShow(_event: PageTransitionEvent, start: ()
   start()
 }
 
+type EffectiveStreamIdentity = { machine_id: string; sshAlias: string; transport: string }
+type ParsedEffectiveStreamSignal =
+  | { mode: "local"; identity: null }
+  | { mode: "legacy-single-pointer"; identity: EffectiveStreamIdentity }
+  | { mode: "multiplexed"; identity: null }
+
+function effectiveStreamIdentity(value: unknown): EffectiveStreamIdentity | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined
+  const input = value as Record<string, unknown>
+  const machine_id = typeof input.machine_id === "string" ? input.machine_id.trim() : ""
+  const sshAlias = typeof input.sshAlias === "string" ? input.sshAlias.trim() : ""
+  const transport = typeof input.transport === "string" ? input.transport.trim() : ""
+  if (!machine_id || !sshAlias || !transport) return undefined
+  return { machine_id, sshAlias, transport }
+}
+
+function parseEffectiveStreamSignal(value: unknown): ParsedEffectiveStreamSignal | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined
+  const input = value as Record<string, unknown>
+  if (input.ok !== true || typeof input.mode !== "string") return undefined
+  if (input.mode === "local" && input.identity === null) return { mode: "local", identity: null }
+  if (input.mode === "multiplexed" && input.identity === null) return { mode: "multiplexed", identity: null }
+  if (input.mode === "legacy-single-pointer") {
+    const identity = effectiveStreamIdentity(input.identity)
+    if (identity) return { mode: "legacy-single-pointer", identity }
+  }
+  return undefined
+}
+
+function parsedSuccessfulControl(value: unknown): boolean {
+  return !!value && typeof value === "object" && !Array.isArray(value) && (value as { ok?: unknown }).ok === true
+}
+
+function sameEffectiveStreamIdentity(a: EffectiveStreamIdentity | null, b: EffectiveStreamIdentity | null): boolean {
+  if (a === null || b === null) return a === b
+  return a.machine_id === b.machine_id && a.sshAlias === b.sshAlias && a.transport === b.transport
+}
+
+/** Whether one attachment control may invalidate the legacy global stream.
+ * The local effective-stream endpoint is authoritative only for its legacy
+ * compatibility mode; Fleet v2 multiplexing owns the per-peer data plane and
+ * must not be reset from an attachment-pointer observation. */
+export function globalStreamResetRequired(input: { control: unknown; before: unknown; after: unknown }): boolean {
+  if (!parsedSuccessfulControl(input.control)) return false
+  const before = parseEffectiveStreamSignal(input.before)
+  const after = parseEffectiveStreamSignal(input.after)
+  if (!before || !after || before.mode === "multiplexed" || after.mode === "multiplexed") return false
+  const beforeIdentity = before.mode === "legacy-single-pointer" ? before.identity : null
+  const afterIdentity = after.mode === "legacy-single-pointer" ? after.identity : null
+  return !sameEffectiveStreamIdentity(beforeIdentity, afterIdentity)
+}
+
+/** A serialized, generation-fenced reset for the compatibility global stream.
+ * Invalidating the generation precedes the old request's abort, so a late
+ * frame has no authority to restore the cursor or mutate session state. */
+export function createGlobalStreamResetCoordinator(input: {
+  abort: () => void
+  clearCursor: () => void
+  waitForOldStream: () => Promise<void>
+  reconnect: () => void
+}) {
+  let generation = 0
+  let serial = Promise.resolve()
+
+  const resetAfterControl = (change: { control: unknown; before: unknown; after: unknown }): Promise<boolean> => {
+    if (!globalStreamResetRequired(change)) return Promise.resolve(false)
+    const requestedGeneration = ++generation
+    const task = serial.then(async () => {
+      // A second valid transition supersedes a reset still waiting to reconnect.
+      if (requestedGeneration !== generation) return false
+      input.abort()
+      input.clearCursor()
+      await input.waitForOldStream()
+      if (requestedGeneration !== generation) return false
+      input.reconnect()
+      return true
+    })
+    serial = task.then(
+      () => undefined,
+      () => undefined,
+    )
+    return task
+  }
+
+  return {
+    current: () => generation,
+    accepts: (candidate: number) => candidate === generation,
+    invalidate: () => ++generation,
+    resetAfterControl,
+  }
+}
+
 /** What an SSE stream error must do, extracted so the ABORT — the part that
  *  reads as redundant and is easy to delete — is covered by a test.
  *
@@ -202,6 +294,9 @@ type ServerSDKBase = {
     /** amicode webview: live stream visibility for the ConnectionBanner —
      *  "connected" only while the SSE loop is actively subscribed. */
     status: Accessor<"connected" | "disconnected">
+    /** Reset only the legacy single-pointer global stream after a successful
+     * attachment control changes the local effective data-plane identity. */
+    resetForAttachmentChange: (input: { control: unknown; before: unknown; after: unknown }) => Promise<boolean>
   }
   createClient: (
     opts: Omit<Parameters<typeof createSdkForServer>[0], "server" | "fetch">,
@@ -325,7 +420,6 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
   let attempt: AbortController | undefined
   let run: Promise<void> | undefined
   let started = false
-  let generation = 0
   // Amicode webview: connection visibility for the ConnectionBanner. The loop
   // below reconnects silently every RECONNECT_DELAY_MS, so without a signal a
   // dead server reads as an endless "thinking" wave. (The branch's 15s
@@ -336,24 +430,27 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
   const start = () => {
     if (started) return run
     started = true
-    const active = ++generation
+    const active = streamGeneration.current()
     const previous = run
     const current = (async () => {
       if (previous) await previous
       // oxlint-disable-next-line no-unmodified-loop-condition -- `started` is set to false by stop() which also aborts; both flags are checked to allow graceful exit
-      while (!abort.signal.aborted && started && generation === active) {
-        attempt = new AbortController()
+      while (!abort.signal.aborted && started && streamGeneration.accepts(active)) {
+        const currentAttempt = new AbortController()
+        attempt = currentAttempt
         const onAbort = () => {
-          attempt?.abort()
+          currentAttempt.abort()
         }
         abort.signal.addEventListener("abort", onAbort)
         try {
           const kind = await protocol
+          if (!streamGeneration.accepts(active)) return
           const onSseError = (error: unknown) => {
+            if (!streamGeneration.accepts(active)) return
             const real = applySseError({
-              closed: isStreamClosed(error, attempt?.signal),
+              closed: isStreamClosed(error, currentAttempt.signal),
               disconnect: () => setStreamStatus("disconnected"),
-              abort: () => attempt?.abort(),
+              abort: () => currentAttempt.abort(),
             })
             if (!real) return
             if (streamErrorLogged) return
@@ -366,11 +463,16 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
           }
           const events =
             kind === "v1"
-              ? (await eventSdk.global.event({ signal: attempt.signal, onSseError })).stream
-              : eventApi.event.subscribe({ signal: attempt.signal })
+              ? (await eventSdk.global.event({ signal: currentAttempt.signal, onSseError })).stream
+              : eventApi.event.subscribe({ signal: currentAttempt.signal })
+          if (!streamGeneration.accepts(active)) return
           setStreamStatus("connected")
           let yielded = Date.now()
           for await (const event of events) {
+            // A buffered frame can arrive after AbortController.abort(). The
+            // reset invalidates first, so it cannot restore a stale cursor or
+            // mutate the new effective stream's session state.
+            if (!streamGeneration.accepts(active)) return
             streamErrorLogged = false
             const legacy = "payload" in event
             if (legacy && event.payload.type === "sync") continue
@@ -384,8 +486,9 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
             await wait(0)
           }
         } catch (error) {
-          if (!isStreamClosed(error, attempt?.signal)) setStreamStatus("disconnected")
-          if (!isStreamClosed(error, attempt?.signal) && !streamErrorLogged) {
+          if (streamGeneration.accepts(active) && !isStreamClosed(error, currentAttempt.signal))
+            setStreamStatus("disconnected")
+          if (streamGeneration.accepts(active) && !isStreamClosed(error, currentAttempt.signal) && !streamErrorLogged) {
             streamErrorLogged = true
             console.error("[global-sdk] event stream failed", {
               url: server.http.url,
@@ -395,10 +498,10 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
           }
         } finally {
           abort.signal.removeEventListener("abort", onAbort)
-          attempt = undefined
+          if (attempt === currentAttempt) attempt = undefined
         }
 
-        if (abort.signal.aborted || !started || generation !== active) return
+        if (abort.signal.aborted || !started || !streamGeneration.accepts(active)) return
         await wait(RECONNECT_DELAY_MS)
       }
     })().finally(() => {
@@ -410,9 +513,39 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
     return run
   }
 
+  const clearGlobalStreamCursor = () => {
+    lastEventID = undefined
+    try {
+      sessionStorage.removeItem(CURSOR_KEY)
+    } catch {
+      /* private mode etc. — memory was still cleared */
+    }
+    queue.length = 0
+    buffer.length = 0
+    if (timer) clearTimeout(timer)
+    timer = undefined
+    setStreamStatus("disconnected")
+  }
+
+  const streamGeneration = createGlobalStreamResetCoordinator({
+    abort: () => attempt?.abort(),
+    clearCursor: clearGlobalStreamCursor,
+    waitForOldStream: async () => {
+      const previous = run
+      if (previous) await previous
+    },
+    reconnect: () => {
+      if (abort.signal.aborted) return
+      // waitForOldStream settled the active loop. Clearing this latch is what
+      // makes the replacement call start(), and its fetch sees no cursor.
+      started = false
+      void start()
+    },
+  })
+
   const stop = () => {
     started = false
-    generation++
+    streamGeneration.invalidate()
     attempt?.abort()
   }
 
@@ -469,6 +602,7 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
       listen: emitter.listen.bind(emitter),
       start,
       status: streamStatus,
+      resetForAttachmentChange: streamGeneration.resetAfterControl,
     },
     createClient(opts: Omit<Parameters<typeof createSdkForServer>[0], "server" | "fetch">) {
       return createSdkForServer({

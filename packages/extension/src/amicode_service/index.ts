@@ -14,7 +14,7 @@
 // stays the single writer), GET /amicode/vault-files + /amicode/vault-file
 // (read-only mount browser with the fail-closed loopback gate), and
 // GET /amicode/resolve-file (chat file-reference resolver).
-import { AmicodeServiceServer } from "./server";
+import { AmicodeServiceServer, fleetMultiplexEnabled } from "./server";
 import { profileResponse, saveProfile } from "./profile";
 import { attachVault, status as vaultsStatus } from "./vaults";
 import { approveBody, warrantsBody, type ApproveInput } from "./warrants";
@@ -71,7 +71,7 @@ import {
 } from "./connections";
 import { solverModeResponse } from "./solver_mode";
 import { rosterReadResponse, rosterReportResponse } from "./roster";
-import { attachmentStatusResponse } from "./attachment_pointer";
+import { attachmentStatusResponse, effectiveStreamSignalResponse } from "./attachment_pointer";
 import { attachActionResponse, detachActionResponse } from "./attach_action";
 import type { AttachLifecycle } from "./attach_lifecycle";
 import { AttachLifecycle as AttachLifecycleImpl, type TransportFactory } from "./attach_lifecycle";
@@ -297,6 +297,10 @@ export interface AttachmentRouteDeps {
    *  register/clear the HubProxy on FleetPlane.attached. Absent on a plain
    *  standalone boot (no fleet plane to manage). */
   lifecycle?: AttachLifecycle;
+  /** True only when this service has the Fleet v2 multiplexer armed. The
+   * effective-stream endpoint must never use an attachment pointer as a global
+   * data-plane identity while this mode owns routing. */
+  isMultiplexed?: () => boolean;
 }
 
 export function registerAttachmentRoutes(
@@ -304,9 +308,19 @@ export function registerAttachmentRoutes(
   deps: AttachmentRouteDeps = {},
 ): AmicodeServiceServer {
   server.add("GET", "/amicode/fleet/attachment", () => ({ body: attachmentStatusResponse() }));
+  server.add("GET", "/amicode/fleet/effective-stream", () => ({
+    body: effectiveStreamSignalResponse({
+      liveAttachment: deps.lifecycle?.effectiveStreamIdentity,
+      multiplexed: deps.isMultiplexed?.() ?? false,
+    }),
+  }));
 
   server.add("POST", "/amicode/fleet/attach", async ({ body }) => {
-    const result = attachActionResponse(body, { resetCursorOnSwitch: deps.resetCursorOnSwitch });
+    // The pointer write is not a successful attachment control until its live
+    // transport binds. Keep the per-session reset on the successful path too:
+    // a failed lifecycle must not invalidate either resume behavior or the
+    // browser's legacy global-stream cursor.
+    const result = attachActionResponse(body);
     // #1381: if the pointer write succeeded and a lifecycle is armed, spin up
     // the SSH forward and register the HubProxy. A failed attach (unknown
     // machine, bad body) never invokes the lifecycle — no half-started
@@ -316,11 +330,11 @@ export function registerAttachmentRoutes(
         const parsed = JSON.parse(result) as { ok?: boolean; pointer?: { sshAlias: string; transport: string; machine_id: string } };
         if (parsed.ok && parsed.pointer) {
           await deps.lifecycle.attach(parsed.pointer);
+          const switched = (parsed as { switched?: unknown }).switched === true;
+          if (switched) deps.resetCursorOnSwitch?.();
         }
       } catch {
-        // lifecycle failure does not mask the pointer write's success; the
-        // pointer is the source of truth for the resolver, the lifecycle is
-        // the LIVE transport layer on top.
+        return { body: JSON.stringify({ ok: false, attached: false, pointer: null, error: "attachment_transport_failed" }) };
       }
     }
     return { body: result };
@@ -682,6 +696,7 @@ export function createAmicodeService(
   // wire it regardless of whether the fleet plane staged. A standalone boot
   // leaves it undefined; the route handler checks for its presence.
   let attachLifecycle: AttachLifecycleImpl | undefined;
+  let fleetMultiplexerArmed = false;
   // #391: the fleet plane stages ONLY through the resolver's dispatch. No
   // entitlement → this block never arms anything → zero fleet surfaces,
   // byte-identical.
@@ -692,6 +707,7 @@ export function createAmicodeService(
       overlaySource: opts.fleet.overlaySource,
     });
     if (staging.staged) {
+      fleetMultiplexerArmed = true;
       // #1131: the staged fleet program (amicissimo#418) — resolved through
       // the same entitlement gate inputs; its receipt rides the fleet status
       // detail (the cockpit says where the tuning came from). The composed
@@ -891,6 +907,7 @@ export function createAmicodeService(
   registerAttachmentRoutes(server, {
     resetCursorOnSwitch: () => sessionResumeRef?.reset(),
     lifecycle: attachLifecycle,
+    isMultiplexed: () => fleetMultiplexerArmed && fleetMultiplexEnabled(),
   });
   // #1470: the peer-token MINT + REVOKE routes — ALWAYS-ON siblings of
   // roster/attach, NOT inside the entitlement-gated fleet block above. A

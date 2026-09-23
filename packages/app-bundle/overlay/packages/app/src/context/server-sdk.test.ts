@@ -3,7 +3,9 @@ import {
   adaptServerEvent,
   applySseError,
   coalesceServerEvents,
+  createGlobalStreamResetCoordinator,
   enqueueServerEvent,
+  globalStreamResetRequired,
   resumeStreamAfterPageShow,
 } from "./server-sdk"
 import type { OpenCodeEvent } from "@opencode-ai/client/promise"
@@ -243,5 +245,117 @@ describe("enqueueServerEvent", () => {
     enqueue("busy")
 
     expect(events).toHaveLength(2)
+  })
+})
+
+describe("legacy attachment global-stream reset (#1468)", () => {
+  const local = { ok: true, mode: "local", identity: null } as const
+  const legacy = (machine_id: string) => ({
+    ok: true as const,
+    mode: "legacy-single-pointer" as const,
+    identity: { machine_id, sshAlias: `${machine_id}.ssh`, transport: "ssh" },
+  })
+
+  test("only a parsed successful control response and a valid legacy effective-identity transition require a reset", () => {
+    expect(globalStreamResetRequired({ control: { ok: true }, before: local, after: legacy("peer-a") })).toBe(true)
+    expect(globalStreamResetRequired({ control: { ok: true }, before: legacy("peer-a"), after: legacy("peer-b") })).toBe(true)
+    expect(globalStreamResetRequired({ control: { ok: true }, before: legacy("peer-a"), after: local })).toBe(true)
+
+    expect(globalStreamResetRequired({ control: { ok: true }, before: legacy("peer-a"), after: legacy("peer-a") })).toBe(false)
+    expect(globalStreamResetRequired({ control: { ok: false }, before: legacy("peer-a"), after: legacy("peer-b") })).toBe(false)
+    expect(globalStreamResetRequired({ control: { ok: true }, before: { nope: true }, after: legacy("peer-b") })).toBe(false)
+    expect(
+      globalStreamResetRequired({
+        control: { ok: true },
+        before: legacy("peer-a"),
+        after: { ok: true, mode: "legacy-single-pointer", identity: { machine_id: "peer-b" } },
+      }),
+    ).toBe(false)
+    expect(
+      globalStreamResetRequired({
+        control: { ok: true },
+        before: legacy("peer-a"),
+        after: { ok: true, mode: "multiplexed", identity: null },
+      }),
+    ).toBe(false)
+    // Fleet v2's owner-aware data plane may change attachment pointers while
+    // its empty owner map still resolves every global path locally. It owns its
+    // own per-peer cursor set; the legacy global cursor is intentionally inert.
+    expect(
+      globalStreamResetRequired({
+        control: { ok: true },
+        before: { ok: true, mode: "multiplexed", identity: null },
+        after: { ok: true, mode: "multiplexed", identity: null },
+      }),
+    ).toBe(false)
+  })
+
+  test("a reset fences late frames, clears both cursors, aborts the old stream, and opens its replacement cursorless", async () => {
+    let aborts = 0
+    let memoryCursor: string | undefined = "predecessor"
+    let persistedCursor: string | undefined = "predecessor"
+    let resolveOldStream: (() => void) | undefined
+    const oldStream = new Promise<void>((resolve) => {
+      resolveOldStream = resolve
+    })
+    const replacementRequests: URL[] = []
+    let sessionStateUpdates = 0
+
+    const coordinator = createGlobalStreamResetCoordinator({
+      abort: () => aborts++,
+      clearCursor: () => {
+        memoryCursor = undefined
+        persistedCursor = undefined
+      },
+      waitForOldStream: () => oldStream,
+      reconnect: () => {
+        const request = new URL("http://127.0.0.1:43117/global/event")
+        if (memoryCursor) request.searchParams.set("lastEventID", memoryCursor)
+        replacementRequests.push(request)
+      },
+    })
+    const oldGeneration = coordinator.current()
+    const reset = coordinator.resetAfterControl({ control: { ok: true }, before: legacy("peer-a"), after: legacy("peer-b") })
+
+    await Promise.resolve()
+    expect(aborts).toBe(1)
+    expect(memoryCursor).toBeUndefined()
+    expect(persistedCursor).toBeUndefined()
+    // A frame that arrives after abort belongs to the fenced generation: it
+    // cannot resurrect the predecessor cursor or mutate session state.
+    if (coordinator.accepts(oldGeneration)) {
+      memoryCursor = "late-frame"
+      persistedCursor = "late-frame"
+      sessionStateUpdates++
+    }
+    expect(memoryCursor).toBeUndefined()
+    expect(persistedCursor).toBeUndefined()
+    expect(sessionStateUpdates).toBe(0)
+
+    resolveOldStream?.()
+    await reset
+    expect(replacementRequests).toHaveLength(1)
+    expect(replacementRequests[0]?.pathname).toBe("/global/event")
+    expect(replacementRequests[0]?.searchParams.has("lastEventID")).toBe(false)
+  })
+
+  test("failed, unreadable, and Fleet-v2 multiplexed controls leave the live stream and cursor untouched", async () => {
+    const calls = { abort: 0, clear: 0, reconnect: 0 }
+    const coordinator = createGlobalStreamResetCoordinator({
+      abort: () => calls.abort++,
+      clearCursor: () => calls.clear++,
+      waitForOldStream: async () => {},
+      reconnect: () => calls.reconnect++,
+    })
+    expect(await coordinator.resetAfterControl({ control: { ok: false }, before: legacy("peer-a"), after: legacy("peer-b") })).toBe(false)
+    expect(await coordinator.resetAfterControl({ control: { ok: true }, before: undefined, after: legacy("peer-b") })).toBe(false)
+    expect(
+      await coordinator.resetAfterControl({
+        control: { ok: true },
+        before: { ok: true, mode: "multiplexed", identity: null },
+        after: { ok: true, mode: "multiplexed", identity: null },
+      }),
+    ).toBe(false)
+    expect(calls).toEqual({ abort: 0, clear: 0, reconnect: 0 })
   })
 })

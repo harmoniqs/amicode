@@ -67,6 +67,7 @@ function credentialForAttachment(
 export class AttachLifecycle {
   private handle?: AttachmentTransportHandle;
   private currentMachineId?: string;
+  private currentTarget?: AttachmentTarget;
   private readonly opts: Required<Pick<AttachLifecycleOpts, "plane" | "transportFactory">> &
     AttachLifecycleOpts;
 
@@ -77,6 +78,14 @@ export class AttachLifecycle {
   /** The currently-attached machine_id, or undefined when idle. */
   get attachedMachineId(): string | undefined {
     return this.currentMachineId;
+  }
+
+  /** The live transport's complete attachment identity. This remains absent
+   * until the factory resolves and is cleared before a failed re-attach can be
+   * mistaken for a bound pointer by the legacy global-stream compatibility
+   * signal. */
+  get effectiveStreamIdentity(): AttachmentTarget | undefined {
+    return this.currentTarget ? { ...this.currentTarget } : undefined;
   }
 
   /** Attach to a peer: spin up the transport, create the HubProxy with
@@ -113,6 +122,7 @@ export class AttachLifecycle {
 
     this.opts.plane.attached = proxy;
     this.currentMachineId = machineId;
+    this.currentTarget = { ...target };
   }
 
   /** Detach: tear down the SSH forward, clear FleetPlane.attached, and reset
@@ -133,5 +143,6 @@ export class AttachLifecycle {
     }
     this.opts.plane.attached = undefined;
     this.currentMachineId = undefined;
+    this.currentTarget = undefined;
   }
 }

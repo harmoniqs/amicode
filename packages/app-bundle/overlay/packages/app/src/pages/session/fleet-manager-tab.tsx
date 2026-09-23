@@ -12,6 +12,7 @@
 import { For, Show, createMemo, createResource, createSignal, onCleanup } from "solid-js"
 import { Icon } from "@opencode-ai/ui/icon"
 import { useServer } from "@/context/server"
+import { useServerSDK } from "@/context/server-sdk"
 import { amicodeGet, amicodePost } from "@/utils/amicode-fetch"
 import { postAmicode } from "@/utils/amicode-bridge"
 import {
@@ -25,7 +26,7 @@ import {
   fleetTransportMessage,
   shapeVersionRows,
   attachControlFor,
-  performAttachControl,
+  performAttachControlWithEffectiveStream,
   type RosterRowLike,
   type DoctorSurfaceLike,
 } from "@/pages/session/fleet-manager"
@@ -47,6 +48,7 @@ function rosterReachable(raw: unknown): boolean {
 
 export function FleetManagerContent() {
   const server = useServer()
+  const serverSDK = useServerSDK()
   const [section, setSection] = createSignal<FleetManagerSection>("devices")
 
   // The local machine id (single-writer: only this row's capabilities are
@@ -112,10 +114,15 @@ export function FleetManagerContent() {
     return a.attached && a.pointer?.machine_id ? a.pointer.machine_id : null
   })
   const runAttachControl = (machineId: string) => {
-    void performAttachControl({
+    void performAttachControlWithEffectiveStream({
       control: attachControlFor(machineId, attachedMachineId()),
       // server.current's SAME origin — single-origin, never a server switch.
       post: (route, body) => amicodePost(server.current, route, body),
+      // This is this service's local honesty endpoint, not a proxied data-plane
+      // read. Its legacy identity is valid only after the transport lifecycle
+      // bound it; malformed/unreadable state intentionally suppresses reset.
+      readEffectiveStream: () => amicodeGet(server.current, "/amicode/fleet/effective-stream"),
+      resetGlobalStream: (input) => serverSDK().event.resetForAttachmentChange(input),
     })
       .then(() => {
         // the switch's reload: refetch the scoped surfaces (no stale-cache leak).

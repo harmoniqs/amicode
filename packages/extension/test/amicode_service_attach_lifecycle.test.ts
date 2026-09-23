@@ -508,4 +508,108 @@ describe("createAmicodeService with transportFactory wires the attach lifecycle 
       await svc.stop();
     }
   });
+
+  it("reports a legacy effective stream identity only after the attachment transport has bound", async () => {
+    const factory = mockTransportFactory();
+    const svc = createAmicodeService({
+      password: PASSWORD,
+      fleet: {
+        entitlements: ["amicissimo"],
+        overlaySource,
+        hub: { getUrl: () => undefined },
+        getMode: () => "fleet",
+        transportFactory: factory,
+        attachRemotePort: 43117,
+      },
+    });
+    const origin = (await svc.start()).toString().replace(/\/$/, "");
+    const auth = serverAuthHeader(PASSWORD);
+
+    try {
+      const before = await fetch(`${origin}/amicode/fleet/effective-stream`, { headers: { Authorization: auth } });
+      expect(await before.json()).toEqual({ ok: true, mode: "local", identity: null });
+
+      await fetch(`${origin}/amicode/fleet/attach`, {
+        method: "POST",
+        headers: { "content-type": "application/json", Authorization: auth },
+        body: JSON.stringify({ machine_id: "peer-01" }),
+      });
+
+      const after = await fetch(`${origin}/amicode/fleet/effective-stream`, { headers: { Authorization: auth } });
+      expect(await after.json()).toEqual({
+        ok: true,
+        mode: "legacy-single-pointer",
+        identity: { machine_id: "peer-01", sshAlias: "peer-one@host", transport: "ssh" },
+      });
+    } finally {
+      await svc.stop();
+    }
+  });
+
+  it("does not report a successful control when its pointer write cannot bind the attachment lifecycle", async () => {
+    const failingFactory: TransportFactory = async () => {
+      throw new Error("transport unavailable");
+    };
+    const svc = createAmicodeService({
+      password: PASSWORD,
+      fleet: {
+        entitlements: ["amicissimo"],
+        overlaySource,
+        hub: { getUrl: () => undefined },
+        getMode: () => "fleet",
+        transportFactory: failingFactory,
+      },
+    });
+    const origin = (await svc.start()).toString().replace(/\/$/, "");
+    const auth = serverAuthHeader(PASSWORD);
+
+    try {
+      const attach = await fetch(`${origin}/amicode/fleet/attach`, {
+        method: "POST",
+        headers: { "content-type": "application/json", Authorization: auth },
+        body: JSON.stringify({ machine_id: "peer-01" }),
+      });
+      expect(await attach.json()).toMatchObject({ ok: false, error: "attachment_transport_failed" });
+
+      const signal = await fetch(`${origin}/amicode/fleet/effective-stream`, { headers: { Authorization: auth } });
+      expect(await signal.json()).toEqual({ ok: false, error: "attachment_transport_unbound" });
+    } finally {
+      await svc.stop();
+    }
+  });
+
+  it("reports Fleet v2 multiplexing distinctly even when its owner map starts empty and attachment pointers change", async () => {
+    const savedMultiplex = process.env.AMICO_FLEET_MULTIPLEX;
+    process.env.AMICO_FLEET_MULTIPLEX = "1";
+    const svc = createAmicodeService({
+      password: PASSWORD,
+      fleet: {
+        entitlements: ["amicissimo"],
+        overlaySource,
+        hub: { getUrl: () => undefined },
+        getMode: () => "fleet",
+        transportFactory: mockTransportFactory(),
+        // No fleetPeers: the staged owner map is intentionally empty.
+      },
+    });
+    const origin = (await svc.start()).toString().replace(/\/$/, "");
+    const auth = serverAuthHeader(PASSWORD);
+
+    try {
+      const before = await fetch(`${origin}/amicode/fleet/effective-stream`, { headers: { Authorization: auth } });
+      expect(await before.json()).toEqual({ ok: true, mode: "multiplexed", identity: null });
+
+      await fetch(`${origin}/amicode/fleet/attach`, {
+        method: "POST",
+        headers: { "content-type": "application/json", Authorization: auth },
+        body: JSON.stringify({ machine_id: "peer-01" }),
+      });
+      const after = await fetch(`${origin}/amicode/fleet/effective-stream`, { headers: { Authorization: auth } });
+      expect(await after.json()).toEqual({ ok: true, mode: "multiplexed", identity: null });
+    } finally {
+      if (savedMultiplex === undefined) delete process.env.AMICO_FLEET_MULTIPLEX;
+      else process.env.AMICO_FLEET_MULTIPLEX = savedMultiplex;
+      await svc.stop();
+    }
+  });
 });

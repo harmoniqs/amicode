@@ -15,6 +15,7 @@ import {
   buildDetachRequest,
   switchReloadPlan,
   performAttachControl,
+  performAttachControlWithEffectiveStream,
   ATTACH_ROUTE,
   DETACH_ROUTE,
   type RosterRowLike,
@@ -282,5 +283,29 @@ describe("performAttachControl (AC2 — the control drives attach AND detach end
     })
     expect(calls).toBe(1)
     expect(result.reload.singleOrigin).toBe(true)
+  })
+
+  test("reads effective-stream identities around the parsed control response and delegates the generation decision", async () => {
+    const reads = [
+      { ok: true, mode: "legacy-single-pointer", identity: { machine_id: "peer-a", sshAlias: "a", transport: "ssh" } },
+      { ok: true, mode: "legacy-single-pointer", identity: { machine_id: "peer-b", sshAlias: "b", transport: "ssh" } },
+    ]
+    const resets: unknown[] = []
+    await performAttachControlWithEffectiveStream({
+      control: attachControlFor("peer-b", "peer-a"),
+      post: async () => ({ ok: true }),
+      readEffectiveStream: async () => reads.shift(),
+      resetGlobalStream: async (input) => {
+        resets.push(input)
+        return true
+      },
+    })
+    expect(resets).toEqual([
+      {
+        control: { ok: true },
+        before: { ok: true, mode: "legacy-single-pointer", identity: { machine_id: "peer-a", sshAlias: "a", transport: "ssh" } },
+        after: { ok: true, mode: "legacy-single-pointer", identity: { machine_id: "peer-b", sshAlias: "b", transport: "ssh" } },
+      },
+    ])
   })
 })

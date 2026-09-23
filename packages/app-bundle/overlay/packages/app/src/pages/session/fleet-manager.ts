@@ -288,6 +288,9 @@ export function switchReloadPlan(attachedMachineId: string | null): SwitchReload
 export interface AttachControlResult {
   posted: { route: string; body: { machine_id: string } }
   reload: SwitchReloadPlan
+  /** The parsed local-service control response. The stream reset is gated on
+   * this exact value reporting `{ ok: true }`, never merely on a pointer write. */
+  response: unknown
 }
 
 /** Drive the Attach control end-to-end (AC2). Picks the verb by the control's
@@ -305,11 +308,27 @@ export async function performAttachControl(input: {
   const { control, post } = input
   const route = control.action === "detach" ? DETACH_ROUTE : ATTACH_ROUTE
   const body = control.action === "detach" ? buildDetachRequest(control.machineId) : buildAttachRequest(control.machineId)
-  await post(route, body)
+  const response = await post(route, body)
   const reload = switchReloadPlan(control.action === "attach" ? control.machineId : null)
-  return { posted: { route, body }, reload }
+  return { posted: { route, body }, reload, response }
 }
 
+/** Drive an attachment control through the legacy global-stream boundary. The
+ * effective-stream reader is deliberately local and authoritative; an unreadable
+ * signal stays `undefined`, which the reset coordinator rejects without touching
+ * the healthy stream or cursor. */
+export async function performAttachControlWithEffectiveStream(input: {
+  control: AttachControlState
+  post: (route: string, body: unknown) => Promise<unknown>
+  readEffectiveStream: () => Promise<unknown>
+  resetGlobalStream: (input: { control: unknown; before: unknown; after: unknown }) => Promise<boolean>
+}): Promise<AttachControlResult> {
+  const before = await input.readEffectiveStream().catch(() => undefined)
+  const result = await performAttachControl(input)
+  const after = await input.readEffectiveStream().catch(() => undefined)
+  await input.resetGlobalStream({ control: result.response, before, after })
+  return result
+}
 
 
 

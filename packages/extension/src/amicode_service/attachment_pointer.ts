@@ -164,6 +164,72 @@ export function attachmentStatusResponse(deps: AttachmentPointerDeps = {}): stri
   });
 }
 
+/** The sole identity shape the legacy global stream may treat as an effective
+ * remote data plane. A pointer on disk is not sufficient: every field must be
+ * complete and the attachment lifecycle must have bound the same transport. */
+export interface EffectiveStreamIdentity {
+  machine_id: string;
+  sshAlias: string;
+  transport: string;
+}
+
+/** The local signal consumed by the single-origin compatibility stream.
+ * `legacy-single-pointer` exists only while the live transport is bound;
+ * Fleet v2's multiplexed data plane is deliberately a distinct mode. */
+export type EffectiveStreamSignal =
+  | { ok: true; mode: "local"; identity: null }
+  | { ok: true; mode: "legacy-single-pointer"; identity: EffectiveStreamIdentity }
+  | { ok: true; mode: "multiplexed"; identity: null }
+  | { ok: false; error: string };
+
+function completeEffectiveStreamIdentity(value: unknown): EffectiveStreamIdentity | undefined {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const candidate = value as Record<string, unknown>;
+  const machine_id = typeof candidate.machine_id === "string" ? candidate.machine_id.trim() : "";
+  const sshAlias = typeof candidate.sshAlias === "string" ? candidate.sshAlias.trim() : "";
+  const transport = typeof candidate.transport === "string" ? candidate.transport.trim() : "";
+  if (!machine_id || !sshAlias || !transport) return undefined;
+  return { machine_id, sshAlias, transport };
+}
+
+function sameEffectiveStreamIdentity(a: EffectiveStreamIdentity, b: EffectiveStreamIdentity): boolean {
+  return a.machine_id === b.machine_id && a.sshAlias === b.sshAlias && a.transport === b.transport;
+}
+
+/** GET /amicode/fleet/effective-stream's local, authoritative signal. It reads
+ * the existing pointer resolver, but announces its identity only when the
+ * existing attachment lifecycle confirms a live transport for that exact
+ * pointer. This keeps a successful pointer write with a failed transport bind
+ * out of the legacy stream-reset path. */
+export function effectiveStreamSignalResponse(
+  deps: AttachmentPointerDeps & { liveAttachment?: unknown; multiplexed?: boolean } = {},
+): string {
+  if (deps.multiplexed === true) {
+    const signal: EffectiveStreamSignal = { ok: true, mode: "multiplexed", identity: null };
+    return JSON.stringify(signal);
+  }
+
+  const resolved = resolveAttachmentPointer(deps);
+  if (!resolved.ok) {
+    const signal: EffectiveStreamSignal = { ok: false, error: resolved.error };
+    return JSON.stringify(signal);
+  }
+  if (!resolved.attached) {
+    const signal: EffectiveStreamSignal = { ok: true, mode: "local", identity: null };
+    return JSON.stringify(signal);
+  }
+
+  const pointer = completeEffectiveStreamIdentity(resolved.pointer);
+  const live = completeEffectiveStreamIdentity(deps.liveAttachment);
+  if (!pointer || !live || !sameEffectiveStreamIdentity(pointer, live)) {
+    const signal: EffectiveStreamSignal = { ok: false, error: "attachment_transport_unbound" };
+    return JSON.stringify(signal);
+  }
+
+  const signal: EffectiveStreamSignal = { ok: true, mode: "legacy-single-pointer", identity: pointer };
+  return JSON.stringify(signal);
+}
+
 // ── the D3 three-way resolver ────────────────────────────────────────────────
 
 export type MultiplexTarget = "local" | "keeper" | "attached";
