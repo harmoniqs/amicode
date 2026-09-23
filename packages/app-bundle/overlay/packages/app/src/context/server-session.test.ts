@@ -37,6 +37,40 @@ function createSession() {
 }
 
 describe("ServerSession live file-edit route", () => {
+  test("invalidates a task-spawn parent for every completed file-edit tool", () => {
+    for (const tool of ["edit", "write", "patch", "apply_patch"]) {
+      const session = createSession()
+      session.apply({ type: "session.created", properties: { info: sessionInfo("root") } })
+      session.apply({ type: "session.created", properties: { info: sessionInfo("tab", "root") } })
+      session.apply({
+        type: "message.part.updated",
+        properties: {
+          part: toolPart({
+            id: `task_${tool}`,
+            sessionID: "tab",
+            tool: "task",
+            metadata: { parentSessionId: "tab", sessionId: `worker_${tool}` },
+          }),
+        },
+      })
+      session.apply({
+        type: "message.part.updated",
+        properties: {
+          part: toolPart({
+            id: `edit_${tool}`,
+            sessionID: `worker_${tool}`,
+            tool,
+            metadata: { filediff: { file: `${tool}.ts`, status: "modified" } },
+          }),
+        },
+      })
+
+      expect(session.data.diff_version[`worker_${tool}`]).toBe(1)
+      expect(session.data.diff_version.tab).toBe(1)
+      expect(session.data.diff_version.root).toBeUndefined()
+    }
+  })
+
   test("records task ancestry before the child edit and invalidates only task-spawn ancestors while busy", () => {
     const session = createSession()
     session.apply({ type: "session.created", properties: { info: sessionInfo("root") } })
