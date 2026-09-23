@@ -364,3 +364,75 @@ describe("AC1 — direct-engine parity: the engine boundary's verdict equals the
     expect(engineAllow).toBe(serviceAllow);
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AC2 — the service-only bootstrap routes are EXCLUDED from the parity matrix
+//
+// The #1471 peer-token mint endpoint is NOT membership-authorized like session
+// traffic: a joining machine holds NO membership credential, so the mint path
+// is the ONE bearer-less path (its bound bootstrap principal is a valid, single-
+// use enrollment nonce, §D4). It must therefore be governed DIFFERENTLY from the
+// parity matrix — a membership credential does not, by itself, mint a token, and
+// the bootstrap principal (the nonce) is not a member of the session accept-set.
+// ═══════════════════════════════════════════════════════════════════════════
+import { issuedTokenFor } from "../src/amicode_service/fleet_issued_tokens";
+
+describe("AC2 — the mint bootstrap route accepts ONLY its bound bootstrap principal (excluded from the membership matrix)", () => {
+  let b: Booted;
+  beforeEach(async () => {
+    b = await bootBaseStudio();
+    closeAcceptSet({ phaseStateFile: b.files.phase });
+  });
+  afterEach(() => b?.stop());
+
+  it("a valid enrollment nonce mints — even though it is NOT a member of the session accept-set", async () => {
+    // the nonce is NOT a membership credential — a request to a session route
+    // bearing nothing 401s (proven above). Yet on the bootstrap route it mints.
+    const nonce = mintEnrollmentNonce({ storeFile: b.files.nonce, nonceFactory: () => "BOOT-NONCE-1", ttlMs: 60_000 });
+    const res = await fetch(`${b.origin}${MINT_ENDPOINT_PATH}?machine_id=joiner&enrollment_nonce=${nonce}`, {
+      method: "POST",
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; token: string };
+    expect(body.ok).toBe(true);
+    expect(issuedTokenFor("joiner", { registryFile: b.files.issued })).toBe(body.token);
+  });
+
+  it("a MEMBERSHIP credential does NOT mint on the bootstrap route (the bound principal is the nonce, not membership)", async () => {
+    // seed a member, then present it on the mint path WITHOUT a nonce — the
+    // route refuses to mint (401), because the bound bootstrap principal is the
+    // nonce, not a membership credential. The mint route is not membership-
+    // authorized like session traffic (AC2's exclusion).
+    mintPeerToken("member-x", { registryFile: b.files.issued, tokenFactory: () => "MEMBER-X-TOKEN-00000001" });
+    const res = await fetch(`${b.origin}${MINT_ENDPOINT_PATH}?machine_id=usurper`, {
+      method: "POST",
+      headers: peerHeader("MEMBER-X-TOKEN-00000001"),
+    });
+    // no valid nonce presented → the bootstrap principal is absent → refused,
+    // and CRUCIALLY no token was minted for the usurper machine_id.
+    expect(res.status).toBe(401);
+    expect(issuedTokenFor("usurper", { registryFile: b.files.issued })).toBeUndefined();
+  });
+
+  it("an INVALID enrollment nonce is refused (the bound principal must be valid, not merely present)", async () => {
+    const res = await fetch(`${b.origin}${MINT_ENDPOINT_PATH}?machine_id=joiner&enrollment_nonce=never-minted`, {
+      method: "POST",
+    });
+    expect(res.status).toBe(401);
+    expect(issuedTokenFor("joiner", { registryFile: b.files.issued })).toBeUndefined();
+  });
+
+  it("the mint path is NOT in the membership matrix: a member session credential is admitted on session routes but does not confer mint authority", async () => {
+    mintPeerToken("member-y", { registryFile: b.files.issued, tokenFactory: () => "MEMBER-Y-TOKEN-00000001" });
+    // admitted on a session (proxied-engine) route — it IS a member there
+    const session = await fetch(`${b.origin}/session`, { headers: peerHeader("MEMBER-Y-TOKEN-00000001") });
+    expect(session.status).not.toBe(401);
+    // but the SAME credential does not mint on the bootstrap route (no nonce)
+    const mint = await fetch(`${b.origin}${MINT_ENDPOINT_PATH}?machine_id=member-y-clone`, {
+      method: "POST",
+      headers: peerHeader("MEMBER-Y-TOKEN-00000001"),
+    });
+    expect(mint.status).toBe(401);
+    expect(issuedTokenFor("member-y-clone", { registryFile: b.files.issued })).toBeUndefined();
+  });
+});
