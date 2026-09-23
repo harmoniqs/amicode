@@ -41,6 +41,9 @@
     "packages/core/src/session.ts": "1adb7c6471a31d1cc881b78ca56fdda6b07ef4b7ac5258ddc1f6f65c219b0037",
     "packages/core/test/database-migration.test.ts": "e5ffa9b36028a8bf31ae7d3eac7fe34fb0566a609325c8dc29e59021d5ee0b1a",
     "packages/core/test/location-mutation.test.ts": "2c4c8faa220cc8fabfe12d57bd74ec8dd8aac8485d0ecafd2761cdee1806d6b0",
+    "packages/core/test/session-prompt.test.ts": "2af05be037473266c7b38721abbf7f865a4dfe35c9e779282cb7f697ba0a2adc",
+    "packages/core/test/session-runner-recorded.test.ts": "962301989a4a315379819bc3d4600d56c3e646b1a9390d02d01556578fc66adc",
+    "packages/core/test/session-runner.test.ts": "6130d8a60843914bc3685e623de0f00d4598b25954ea1d197ddbe073bd069d38",
     "packages/core/test/tool-question.test.ts": "4df41393f15104a1d3a9c3d06e30cef515108490b41fcf4d9a7d9399fd4ed945",
     "packages/llm/src/cache-policy.ts": "04c1fb5d3d061cfa95d04e54df0a1c2cdaafac921224242446eaa2968bff7857",
     "packages/llm/test/cache-policy.test.ts": "e921095c4301440c786105063439e49b2fedbaf6d46f30457e0a96388d268f4b",
@@ -251,6 +254,7 @@
     "packages/core/src/observability/otlp.ts": "be20b97f84b2a5b4a1663fa3bed0b31c6c387950f7c28b76fbaa8525cd24d6e8",
     "packages/core/src/permission/provider-saved.ts": "029f02a7120fde4ca1d499294f73f22ca8f0dbaba030a901f94093fb36674025",
     "packages/core/src/permission/sql.ts": "c8c44e00cf957511282e35cbb192c0be36ed33d41d6b15e98d79eab4378661cd",
+    "packages/core/src/session/execution.ts": "a5255896a0feacaa40ec1d8ad30b0d439dd44474a01c20f4211320b57a03c0d5",
     "packages/core/src/session/sql.ts": "df6f0a26816037681d649abd70c0d99d0d3502cfd3f4a30ff00c7f62c7c5932b",
     "packages/core/src/system-context/builtins.ts": "c5cba75156723c9f8e670c9ab578e95d0be6f81808000d6f0b854eb883a7c1a3",
     "packages/core/src/tool/bash.ts": "4b56de5f3f7ad3ddbcf1ba756caff49f0a65f0fbc73811cbfc312ea716e0e447",
@@ -611,7 +615,7 @@
     "packages/app/src/components/session/context-warning-banner.tsx": "f5fab4d7a9536238b70d64488fc30d44f6a4948fdcffd910a9666f4b6c296019",
     "packages/app/src/components/session/index.ts": "21473290d4a1a3d0670fd878372ddf21ff22d4a0b30d1aef6c81ea906c1488b4",
     "packages/app/src/components/session/panel-menu.tsx": "42f323046b7375ae158023a51506038eb15f2e1545c407f45acd47446a8ef3e0",
-    "packages/app/src/components/session/pdf-canvas-view.tsx": "a9ffd505014fae1acb794924ae2446ebd42947b49981b81e5d0ee83090cebd78",
+    "packages/app/src/components/session/pdf-canvas-view.tsx": "db665f94c1b0b5806854bff138363a87ab5badf50affc72e07c4bffef9ca2b0a",
     "packages/app/src/components/session/pdf-restore.test.ts": "4cd4cabbdc8063deb5fe95b5e637cf154ccdf864c5ff9f2f6833826bd69e4f90",
     "packages/app/src/components/session/pdf-restore.ts": "e5c92096b9302a452439babfc2732610a7e0d18e23793ce3bf6352fa32f91a36",
     "packages/app/src/components/session/preview-file-helpers.test.ts": "e0c1ccb40b48990c0c5b87ea62a35de60b860cd760067c7f1327cbb1d36584b1",
@@ -692,6 +696,8 @@
     "packages/core/src/database/migration/20260913205004_session-lineage.ts": "f0db98f72e9c1e32257113a033247be69a71ad786bc4bfd71dd719e2536a151a",
     "packages/core/src/database/migration/20260913212936_session-receipt-storage.ts": "cc9570ff52caf718dc517f65c48b2f185cebaefcbf723eb2f74d02eee4d5e0cb",
     "packages/core/src/database/migration/20260913221452_session-receipt-budget-reservation.ts": "a09f5e22bbbd6bdc38f39860e2521bd9ccd338c4d2f15fe20cc78badd5ca893b",
+    "packages/core/src/session/execution/local.ts": "a5101e97c78384a0109ba6e5a8cb4af9f914f5d21e123ab21d1ee70c0690a2d6",
+    "packages/core/src/session/runner/index.ts": "b723fbd7f3fc8e7afeebae936e917341511600301c0a8993d25d5c27756bd373",
     "packages/core/src/session/runner/llm.ts": "17c0dfc2fd8416882bc4d83b3a17f07c585b0d5d7ae3038c8df31068427f3472",
     "packages/core/src/v1/config/config.ts": "6eece12da68ac65a2c8b2fe19b1f2509f397cb63d004dca3998cf6dcc772293e",
     "packages/core/src/v1/config/migrate.ts": "6c960e1245db9a4bb830f0c1ebd6174e50570b4282d4ce5d7bff3333277abcf4",
@@ -841,13 +847,7 @@
     "packages/opencode/src/server/routes/instance/httpapi/handlers/file.ts": "10bcb79b117beebee04184fb48c1ad789e782e2f7ae4b0c68603edc00f03aee9",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/mcp.ts": "7da08d58765cdf2b6ce4648fc70de371402949f5bb7b75696f674d43f2d5365b",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/provider.ts": "8baf16cad0992c5351b61b0c0fb27903bb25b17e1b25fc7c5d77f807c24413a6",
-    "packages/opencode/src/server/routes/instance/httpapi/handlers/session.ts": "b37ff4136c4aea85b23083bf441f03e09820e3e4cdd95e4118ca570d8435b94f",
-    "packages/core/src/session/execution.ts": "a5255896a0feacaa40ec1d8ad30b0d439dd44474a01c20f4211320b57a03c0d5",
-    "packages/core/src/session/execution/local.ts": "a5101e97c78384a0109ba6e5a8cb4af9f914f5d21e123ab21d1ee70c0690a2d6",
-    "packages/core/src/session/runner/index.ts": "b723fbd7f3fc8e7afeebae936e917341511600301c0a8993d25d5c27756bd373",
-    "packages/core/test/session-prompt.test.ts": "2af05be037473266c7b38721abbf7f865a4dfe35c9e779282cb7f697ba0a2adc",
-    "packages/core/test/session-runner-recorded.test.ts": "962301989a4a315379819bc3d4600d56c3e646b1a9390d02d01556578fc66adc",
-    "packages/core/test/session-runner.test.ts": "6130d8a60843914bc3685e623de0f00d4598b25954ea1d197ddbe073bd069d38"
+    "packages/opencode/src/server/routes/instance/httpapi/handlers/session.ts": "b37ff4136c4aea85b23083bf441f03e09820e3e4cdd95e4118ca570d8435b94f"
   },
   "symlinks": [
     "packages/app/public/amico.svg"
@@ -862,7 +862,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-09-23T14:30:21.544Z",
+  "extracted_at": "2026-09-23T15:23:18.350Z",
   "per_package": {
     "packages/app": {
       "A": 175,
@@ -871,7 +871,7 @@
     },
     "packages/core": {
       "A": 8,
-      "M": 36,
+      "M": 42,
       "D": 0
     },
     "packages/llm": {
@@ -906,7 +906,7 @@
     }
   },
   "counts": {
-    "overlay_total": 834,
+    "overlay_total": 840,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -944,6 +944,9 @@
     "packages/core/src/session.ts": "M",
     "packages/core/test/database-migration.test.ts": "M",
     "packages/core/test/location-mutation.test.ts": "M",
+    "packages/core/test/session-prompt.test.ts": "M",
+    "packages/core/test/session-runner-recorded.test.ts": "M",
+    "packages/core/test/session-runner.test.ts": "M",
     "packages/core/test/tool-question.test.ts": "M",
     "packages/llm/src/cache-policy.ts": "M",
     "packages/llm/test/cache-policy.test.ts": "M",
@@ -1154,6 +1157,7 @@
     "packages/core/src/observability/otlp.ts": "M",
     "packages/core/src/permission/provider-saved.ts": "A",
     "packages/core/src/permission/sql.ts": "M",
+    "packages/core/src/session/execution.ts": "M",
     "packages/core/src/session/sql.ts": "M",
     "packages/core/src/system-context/builtins.ts": "M",
     "packages/core/src/tool/bash.ts": "M",
@@ -1595,6 +1599,8 @@
     "packages/core/src/database/migration/20260913205004_session-lineage.ts": "A",
     "packages/core/src/database/migration/20260913212936_session-receipt-storage.ts": "A",
     "packages/core/src/database/migration/20260913221452_session-receipt-budget-reservation.ts": "A",
+    "packages/core/src/session/execution/local.ts": "M",
+    "packages/core/src/session/runner/index.ts": "M",
     "packages/core/src/session/runner/llm.ts": "M",
     "packages/core/src/v1/config/config.ts": "M",
     "packages/core/src/v1/config/migrate.ts": "M",
