@@ -31,6 +31,7 @@ import { PreviewEditor } from "@opencode-ai/session-ui/v2/preview-editor"
 import type { PreviewViewState } from "@opencode-ai/session-ui/v2/preview-view-state"
 import { PdfCanvasView } from "./pdf-canvas-view"
 import { toAbsolutePath, shouldApplyWatcherRead } from "./preview-file-helpers"
+import { validateHumanWritePath } from "./preview-human-write-gate"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -291,6 +292,14 @@ export function PreviewFileView(props: {
   })
 
   const saveFile = async (filePath: string, content: string, closeAfterSave = false) => {
+    // #1454 (W5): human write gate — reject a write that resolves outside the
+    // session workspace (the engine handler stays permissive for the agent; the
+    // gate is applied UPSTREAM here). Only gate when the workspace is known.
+    const workspace = sdk().directory
+    if (workspace && !validateHumanWritePath(filePath, workspace).allowed) {
+      setSaveStatus("idle")
+      return
+    }
     setSaveStatus("saving")
     try {
       await serverSDK().client.file.write({ path: filePath, content })

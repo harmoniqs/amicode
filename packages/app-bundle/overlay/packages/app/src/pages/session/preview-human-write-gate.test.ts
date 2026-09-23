@@ -1,22 +1,22 @@
 /**
- * preview-human-write-gate.test.ts — #1442 AC5
+ * preview-human-write-gate.test.ts — #1442 AC5, extended by #1454 (W5)
  *
- * Tests the server-side workspace-relative gate for the Preview tab's human
- * write path. This gate is SEPARATE from the shared engine `file.write` handler
- * (which deliberately allows absolute paths for agents).
- *
- * The gate validates:
- *   - Workspace-relative paths → allowed, forwarded to the owner
- *   - Absolute paths → rejected server-side (request never reaches the owner)
- *   - Path traversal (../) out of workspace → rejected
+ * The human Preview / review-panel write gate. #1454 (W5) resolves the abs-path
+ * fork toward NORMALIZE-AND-ACCEPT — an absolute path that lands INSIDE the
+ * workspace is accepted (normalized); only writes resolving OUTSIDE the
+ * workspace are rejected. Preview paths are legitimately absolute
+ * (preview-file-helpers.ts:11-21), so a blanket absolute-reject would break real
+ * writes. The gate is browser-safe (no node:path) because it runs in the
+ * webview, and it is mounted UPSTREAM of the shared engine file.write handler at
+ * both human callers (Preview + review panel); the agent's in-process write
+ * (tool/write.ts) is out of scope.
  */
 import { describe, expect, test } from "bun:test"
-import {
-  validateHumanWritePath,
-  type HumanWriteValidation,
-} from "../../components/session/preview-human-write-gate"
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
+import { validateHumanWritePath } from "../../components/session/preview-human-write-gate"
 
-describe("preview human write gate (#1442 AC5)", () => {
+describe("preview human write gate (#1442 AC5 / #1454 W5)", () => {
   const workspace = "/home/user/project"
 
   test("a workspace-relative path is allowed", () => {
@@ -31,28 +31,36 @@ describe("preview human write gate (#1442 AC5)", () => {
     if (result.allowed) expect(result.resolvedPath).toBe("/home/user/project/README.md")
   })
 
-  test("an absolute path is rejected server-side", () => {
+  test("an absolute path OUTSIDE the workspace is rejected", () => {
     const result = validateHumanWritePath("/etc/passwd", workspace)
     expect(result.allowed).toBe(false)
-    if (!result.allowed) expect(result.reason).toBe("absolute-path-rejected")
+    if (!result.allowed) expect(result.reason).toBe("path-escapes-workspace")
   })
 
-  test("an absolute path inside the workspace is still rejected (must be relative)", () => {
+  // #1454: the fork is resolved toward normalize-and-accept — this SUPERSEDES
+  // the #1442 "abs-inside rejected" assertion (Preview paths are often absolute).
+  test("an absolute path INSIDE the workspace is normalized and accepted", () => {
     const result = validateHumanWritePath("/home/user/project/src/main.ts", workspace)
-    expect(result.allowed).toBe(false)
-    if (!result.allowed) expect(result.reason).toBe("absolute-path-rejected")
+    expect(result.allowed).toBe(true)
+    if (result.allowed) expect(result.resolvedPath).toBe("/home/user/project/src/main.ts")
   })
 
-  test("a path with ../ that escapes the workspace is rejected", () => {
+  test("a relative path with ../ that escapes the workspace is rejected", () => {
     const result = validateHumanWritePath("../../etc/passwd", workspace)
     expect(result.allowed).toBe(false)
     if (!result.allowed) expect(result.reason).toBe("path-escapes-workspace")
   })
 
-  test("a path with ../ that stays in the workspace is allowed", () => {
+  test("a relative path with ../ that stays in the workspace is allowed", () => {
     const result = validateHumanWritePath("src/../lib/util.ts", workspace)
     expect(result.allowed).toBe(true)
     if (result.allowed) expect(result.resolvedPath).toBe("/home/user/project/lib/util.ts")
+  })
+
+  test("an absolute path that traverses back out of the workspace is rejected", () => {
+    const result = validateHumanWritePath("/home/user/project/../secret.txt", workspace)
+    expect(result.allowed).toBe(false)
+    if (!result.allowed) expect(result.reason).toBe("path-escapes-workspace")
   })
 
   test("an empty path is rejected", () => {
@@ -61,13 +69,31 @@ describe("preview human write gate (#1442 AC5)", () => {
     if (!result.allowed) expect(result.reason).toBe("empty-path")
   })
 
-  test("the gate is distinct from the engine file.write handler (contract assertion)", () => {
-    // The shared engine file.write handler (file.ts:164) allows absolute paths
-    // for agents. This gate is a SEPARATE service-side route/proxy check that
-    // does NOT modify the shared handler. We verify the gate rejects what the
-    // shared handler would allow.
-    const absOutsideWorkspace = validateHumanWritePath("/tmp/agent-output.txt", workspace)
-    expect(absOutsideWorkspace.allowed).toBe(false)
-    if (!absOutsideWorkspace.allowed) expect(absOutsideWorkspace.reason).toBe("absolute-path-rejected")
+  test("the gate is browser-safe — no node:path import (it runs in the webview)", () => {
+    const src = readFileSync(
+      join(import.meta.dir, "../../components/session/preview-human-write-gate.ts"),
+      "utf8",
+    )
+    expect(/from\s+["']node:path["']/.test(src)).toBe(false)
+    expect(/require\(\s*["']node:path["']\s*\)/.test(src)).toBe(false)
+  })
+})
+
+// #1454: the gate must have LIVE (non-test) importers — both human write callers
+// (Preview + review panel) — killing its dead-module status. The shared engine
+// file.write handler is gated UPSTREAM (at these callers), never edited.
+describe("preview human write gate is mounted at both human callers (#1454 W5)", () => {
+  const read = (rel: string) => readFileSync(join(import.meta.dir, rel), "utf8")
+
+  test("preview-file-view imports and applies the gate before writing", () => {
+    const src = read("../../components/session/preview-file-view.tsx")
+    expect(src.includes("preview-human-write-gate")).toBe(true)
+    expect(src.includes("validateHumanWritePath(")).toBe(true)
+  })
+
+  test("the review panel imports and applies the gate before writing", () => {
+    const src = read("./v2/review-panel-v2.tsx")
+    expect(src.includes("preview-human-write-gate")).toBe(true)
+    expect(src.includes("validateHumanWritePath(")).toBe(true)
   })
 })
