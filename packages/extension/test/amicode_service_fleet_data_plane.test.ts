@@ -21,6 +21,7 @@ import { createAmicodeService } from "../src/amicode_service";
 import { startAmicodeService } from "../src/amicode_service_wiring";
 import type { AmicodeServiceBoot } from "../src/amicode_service_wiring";
 import type { FleetActivation } from "../src/fleet_activation";
+import { resolveFleetActivation } from "../src/fleet_activation";
 import { serverAuthToken, serverAuthHeader } from "../src/server_auth";
 import {
   fleetHubFile,
@@ -2092,6 +2093,330 @@ describe("#1478 base peer-studio activation — the real wiring seam (AC1 produc
       expect(sessions.status).toBe(200);
       const body = (await sessions.json()) as FleetProjection;
       expect(body.sources["studio-peer"].present).toBe(true);
+    } finally {
+      await boot.service.stop();
+    }
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// #1524 — OBSERVATION-ONLY base peer-studio WITHOUT hub-activation. The base
+// peer-observation routes (/amicode/fleet/status + /amicode/fleet/sessions) must
+// mount whenever a fleet-peer provider resolves ≥1 serving peer, INDEPENDENT of
+// hub-activation (amicode.fleetHubUrl/fleetTunnelAlias unset → activation NOT
+// armed). Root cause: startAmicodeService built opts.fleet ONLY inside the armed
+// block, and baseStudioActivates (#1478) was nested inside the premium staging
+// gate — so an unarmed machine with a valid peer roster + reader tokens could
+// not observe its peers at all (fleet/sessions 404'd on a correct roster).
+//
+// Fix seam: an explicit `observationOnly` fleet signal. When set,
+// createAmicodeService BYPASSES stageFleetDataPlane / the premium plane entirely
+// (AC5 — no premium plane even if an entitlement is resolvable) and consults ONLY
+// baseStudioActivates to mount the observation routes. observationOnly undefined
+// → today's exact path (byte-identical, H3). The wiring builds this minimal fleet
+// (fleetPeers + null hub + observationOnly) when activation is unarmed but a
+// localMachineId is present; zero serving peers → nothing mounts (AC2/H3).
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe("#1524 observation-only base peer-studio — routes mount without hub-activation (createAmicodeService seam)", () => {
+  let root: string;
+  let dist: string;
+  let overlaySource: string;
+  let localEngine: MockOrigin;
+  let studioPeer: MockOrigin;
+  let engineToken: string;
+  let savedHubFile: string | undefined;
+
+  const ROSTER_1524: Record<string, { name: string; device_type?: string }> = {
+    "jjs-macbook-pro": { name: "JJ's MacBook Pro", device_type: "laptop" },
+    "jjs-mac-studio": { name: "JJ's Mac Studio", device_type: "desktop" },
+  };
+
+  // A serving-peer provider: one reachable serving peer beyond self, with a
+  // valid reader token — the live-machine shape from the bug report.
+  function servingPeerProvider() {
+    return {
+      localMachineId: "jjs-macbook-pro",
+      getServingPeers: () => [{ machineId: "jjs-mac-studio" }],
+      readPeerToken: (id: string) =>
+        id === "jjs-mac-studio"
+          ? { ok: true as const, credential: { baseUrl: studioPeer.url, token: "tok-studio-1524" } }
+          : { ok: false as const },
+      rosterLookup: (id: string) => ROSTER_1524[id],
+    };
+  }
+
+  // A provider with ZERO serving peers beyond self (the fleet-of-one / no-peer
+  // shape — the AC2 byte-identity case).
+  function noPeerProvider() {
+    return {
+      localMachineId: "jjs-macbook-pro",
+      getServingPeers: () => [] as Array<{ machineId: string }>,
+      readPeerToken: () => ({ ok: false as const }),
+      rosterLookup: (id: string) => ROSTER_1524[id],
+    };
+  }
+
+  function bootObservationOnly(fleet: Parameters<typeof createAmicodeService>[0]["fleet"]) {
+    return createAmicodeService({
+      password: "service-own-mint",
+      engine: { password: "engine-mint-password", getUrl: () => localEngine.url },
+      shelf: { distRoot: dist },
+      fleet,
+    });
+  }
+
+  beforeAll(async () => {
+    root = mkdtempSync(join(tmpdir(), "amicode-1524-"));
+    dist = buildMockDist(root);
+    overlaySource = join(root, "overlay-source");
+    writeDataPlaneManifest(overlaySource); // lawful overlay — present + entitled in AC5, still must NOT stage
+    localEngine = await startMockEngine([{ id: "ses-1524-local", title: "local", time: { created: 1, updated: 2 } }]);
+    studioPeer = await startMockPeer(
+      [{ id: "ses-1524-studio", title: "studio", time: { created: 3, updated: 4 } }],
+      "tok-studio-1524",
+    );
+    engineToken = serverAuthToken("engine-mint-password");
+    savedHubFile = process.env.AMICO_FLEET_HUB_FILE;
+    process.env.AMICO_FLEET_HUB_FILE = join(root, "hub-cred-absent.json");
+  });
+
+  afterAll(async () => {
+    await localEngine.stop();
+    await studioPeer.stop();
+    if (savedHubFile === undefined) delete process.env.AMICO_FLEET_HUB_FILE;
+    else process.env.AMICO_FLEET_HUB_FILE = savedHubFile;
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("AC1: observationOnly + a serving peer + NO hub-activation mounts /amicode/fleet/sessions AND /amicode/fleet/status (200, not 404)", async () => {
+    const svc = bootObservationOnly({
+      // NO entitlement, NO hub — the unarmed base-peer shape
+      hub: { getUrl: () => undefined },
+      observationOnly: true,
+      fleetPeers: servingPeerProvider(),
+    });
+    const o = (await svc.start()).toString().replace(/\/$/, "");
+    try {
+      const status = await fetch(`${o}/amicode/fleet/status`, { headers: { Authorization: `Basic ${engineToken}` } });
+      expect(status.status).toBe(200);
+      const sbody = (await status.json()) as { ok: boolean; mode: string };
+      expect(sbody.ok).toBe(true);
+      expect(sbody.mode).toBe("engine"); // a base peer has no hub → honest engine routing
+
+      const sessions = await fetch(`${o}/amicode/fleet/sessions`, { headers: { Authorization: `Basic ${engineToken}` } });
+      expect(sessions.status).toBe(200);
+      const body = (await sessions.json()) as FleetProjection;
+      expect(body.sources["jjs-mac-studio"].present).toBe(true);
+      expect(body.sources["jjs-macbook-pro"].present).toBe(true);
+    } finally {
+      await svc.stop();
+    }
+  });
+
+  it("AC2: observationOnly with ZERO serving peers is byte-identical to a base service (fleet routes 404, H3)", async () => {
+    const base = createAmicodeService({
+      password: "service-own-mint",
+      engine: { password: "engine-mint-password", getUrl: () => localEngine.url },
+      shelf: { distRoot: dist },
+    });
+    const obs = bootObservationOnly({
+      hub: { getUrl: () => undefined },
+      observationOnly: true,
+      fleetPeers: noPeerProvider(),
+    });
+    const baseO = (await base.start()).toString().replace(/\/$/, "");
+    const obsO = (await obs.start()).toString().replace(/\/$/, "");
+    const paths: Array<{ p: string; auth?: boolean; accept?: string }> = [
+      { p: "/", accept: "text/html" },
+      { p: "/assets/app.js" },
+      { p: "/amicode/profile", auth: true },
+      { p: "/session", auth: true },
+      { p: "/amicode/nope", auth: true },
+      { p: "/amicode/fleet/sessions", auth: true },
+      { p: "/amicode/fleet/status", auth: true },
+    ];
+    async function cap(origin: string) {
+      const out: Array<{ p: string; status: number; body: string }> = [];
+      for (const r of paths) {
+        const res = await fetch(`${origin}${r.p}`, {
+          headers: {
+            ...(r.accept ? { Accept: r.accept } : {}),
+            ...(r.auth ? { Authorization: `Basic ${engineToken}` } : {}),
+          },
+        });
+        out.push({ p: r.p, status: res.status, body: await res.text() });
+      }
+      return out;
+    }
+    try {
+      const baseCap = await cap(baseO);
+      const obsCap = await cap(obsO);
+      // H3: the observation-only-with-no-peers boot is byte-identical to base.
+      expect(obsCap).toEqual(baseCap);
+      // and explicitly: the fleet routes 404 with the base no-route shape.
+      const s = obsCap.find((x) => x.p === "/amicode/fleet/sessions")!;
+      expect(s.status).toBe(404);
+      expect(JSON.parse(s.body)).toEqual({ ok: false, error: "no route: GET /amicode/fleet/sessions" });
+    } finally {
+      await base.stop();
+      await obs.stop();
+    }
+  });
+
+  it("AC3: with a serving peer + valid reader token, /amicode/fleet/sessions returns the peer's session tagged amicode_owner (is_local:false)", async () => {
+    const svc = bootObservationOnly({
+      hub: { getUrl: () => undefined },
+      observationOnly: true,
+      fleetPeers: servingPeerProvider(),
+    });
+    const o = (await svc.start()).toString().replace(/\/$/, "");
+    try {
+      const res = await fetch(`${o}/amicode/fleet/sessions`, { headers: { Authorization: `Basic ${engineToken}` } });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as FleetProjection;
+      const studioSes = body.sessions.find((s) => s.id === "ses-1524-studio") as
+        | (Record<string, unknown> & { amicode_owner?: SessionOwnerTag })
+        | undefined;
+      expect(studioSes).toBeDefined();
+      expect(studioSes!.amicode_owner).toMatchObject({
+        owner_machine_id: "jjs-mac-studio",
+        owner_name: "JJ's Mac Studio",
+        is_local: false,
+      });
+    } finally {
+      await svc.stop();
+    }
+  });
+
+  it("AC5: observationOnly stages NO premium plane even with a resolvable entitlement + lawful overlay (receipt absent/not-staged, mode engine)", async () => {
+    const svc = bootObservationOnly({
+      // an entitlement IS resolvable AND the overlay IS lawful — a premium boot
+      // WOULD stage. observationOnly must bypass staging entirely (no forgery,
+      // no premium control authority): the multiplex/hub-proxy path is untouched.
+      entitlements: ["amicissimo"],
+      overlaySource,
+      hub: { getUrl: () => undefined },
+      observationOnly: true,
+      getMode: () => "fleet", // even a fleet getMode must not confer premium routing
+      fleetPeers: servingPeerProvider(),
+    });
+    const o = (await svc.start()).toString().replace(/\/$/, "");
+    try {
+      const status = await fetch(`${o}/amicode/fleet/status`, { headers: { Authorization: `Basic ${engineToken}` } });
+      expect(status.status).toBe(200);
+      const sbody = (await status.json()) as { mode: string; staging: { entitlement: string; staged: boolean } };
+      // NO premium plane staged despite the resolvable entitlement…
+      expect(sbody.staging.entitlement).toBe("absent");
+      expect(sbody.staging.staged).toBe(false);
+      // …and the routing mode is the base engine posture, never premium fleet routing.
+      expect(sbody.mode).toBe("engine");
+    } finally {
+      await svc.stop();
+    }
+  });
+});
+
+describe("#1524 observation-only base peer-studio — the real wiring seam (unarmed activation)", () => {
+  let root: string;
+  let dist: string;
+  let localEngine: MockOrigin;
+  let studioPeer: MockOrigin;
+  let engineToken: string;
+  const savedEnv: Record<string, string | undefined> = {};
+
+  beforeAll(async () => {
+    root = mkdtempSync(join(tmpdir(), "amicode-1524-wire-"));
+    dist = buildMockDist(root);
+    localEngine = await startMockEngine([{ id: "ses-1524w-local", title: "local", time: { created: 1, updated: 2 } }]);
+    studioPeer = await startMockPeer(
+      [{ id: "ses-1524w-studio", title: "studio", time: { created: 3, updated: 4 } }],
+      "tok-studio-1524w",
+    );
+    const rosterFile = join(root, "roster.json");
+    writeFileSync(
+      rosterFile,
+      JSON.stringify({
+        schema_version: 1,
+        rows: [
+          w0RosterRow({ id: "jjs-macbook-pro", name: "MacBook Pro", serving: true, reachable: true, device_type: "laptop" }),
+          w0RosterRow({ id: "jjs-mac-studio", name: "Mac Studio", serving: true, reachable: true, device_type: "desktop" }),
+        ],
+      }),
+    );
+    const peerStoreFile = join(root, "peer-tokens.json");
+    writePeerToken("jjs-mac-studio", { baseUrl: studioPeer.url, token: "tok-studio-1524w" }, { storeFile: peerStoreFile });
+    for (const k of ["AMICO_FLEET_ROSTER_FILE", "AMICO_FLEET_PEER_TOKEN_FILE", "AMICO_FLEET_HUB_FILE"]) savedEnv[k] = process.env[k];
+    process.env.AMICO_FLEET_ROSTER_FILE = rosterFile;
+    process.env.AMICO_FLEET_PEER_TOKEN_FILE = peerStoreFile;
+    process.env.AMICO_FLEET_HUB_FILE = join(root, "hub-cred-absent.json");
+    engineToken = serverAuthToken("engine-mint-password");
+  });
+
+  afterAll(async () => {
+    await localEngine.stop();
+    await studioPeer.stop();
+    for (const [k, v] of Object.entries(savedEnv)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("AC1 (production): an UNARMED activation + localMachineId + a serving-peer roster mounts the base observation routes (200, not 404)", async () => {
+    // the EXACT live scenario: valid roster + reader tokens, NO amicode.fleetHubUrl
+    // / fleetTunnelAlias → resolveFleetActivation is not armed.
+    const boot = await startAmicodeService(w2Sink(), {
+      engine: { password: "engine-mint-password", getUrl: () => localEngine.url },
+      appDistRoot: dist,
+      fleetActivation: () => resolveFleetActivation({ config: {}, env: {} }), // unarmed — no hub config
+      localMachineId: "jjs-macbook-pro",
+    });
+    expect(boot).toBeDefined();
+    if (!boot) return;
+    try {
+      const status = await fetch(`${boot.url}/amicode/fleet/status`, { headers: { Authorization: `Basic ${engineToken}` } });
+      expect(status.status).toBe(200);
+      const sbody = (await status.json()) as { staging: { entitlement: string; staged: boolean } };
+      // no premium forgery through the REAL wiring — the receipt reads absent
+      expect(sbody.staging.entitlement).toBe("absent");
+      expect(sbody.staging.staged).toBe(false);
+
+      const sessions = await fetch(`${boot.url}/amicode/fleet/sessions`, { headers: { Authorization: `Basic ${engineToken}` } });
+      expect(sessions.status).toBe(200);
+      const body = (await sessions.json()) as FleetProjection;
+      expect(body.sources["jjs-mac-studio"].present).toBe(true);
+      expect(body.sessions.some((s) => s.id === "ses-1524w-studio")).toBe(true);
+    } finally {
+      await boot.service.stop();
+    }
+  });
+
+  it("AC2 (production): an UNARMED activation + localMachineId but NO serving peers keeps the routes 404 (byte-identical, H3)", async () => {
+    // a roster whose only serving∧reachable row is self → getServingPeers() === []
+    // → baseStudioActivates false → nothing mounts → the base no-route 404.
+    const rosterFile = join(root, "roster-empty.json");
+    writeFileSync(
+      rosterFile,
+      JSON.stringify({
+        schema_version: 1,
+        rows: [w0RosterRow({ id: "jjs-macbook-pro", name: "MacBook Pro", serving: true, reachable: true })],
+      }),
+    );
+    process.env.AMICO_FLEET_ROSTER_FILE = rosterFile;
+    const boot = await startAmicodeService(w2Sink(), {
+      engine: { password: "engine-mint-password", getUrl: () => localEngine.url },
+      appDistRoot: dist,
+      fleetActivation: () => resolveFleetActivation({ config: {}, env: {} }),
+      localMachineId: "jjs-macbook-pro",
+    });
+    expect(boot).toBeDefined();
+    if (!boot) return;
+    try {
+      const status = await fetch(`${boot.url}/amicode/fleet/status`, { headers: { Authorization: `Basic ${engineToken}` } });
+      expect(status.status).toBe(404);
+      const sessions = await fetch(`${boot.url}/amicode/fleet/sessions`, { headers: { Authorization: `Basic ${engineToken}` } });
+      expect(sessions.status).toBe(404);
     } finally {
       await boot.service.stop();
     }

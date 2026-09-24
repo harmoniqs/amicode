@@ -50,7 +50,7 @@ import { buildMergedProjection, buildFleetProjection, type UpstreamMode, type Me
 import { FleetPostureDetector, type FleetPostureTuning } from "./fleet_posture";
 import { handleFleetWrite, type FleetWriteDeps } from "./fleet_writes";
 import { inspectTunnelConfigFile, TUNNEL_GENERATION_HEADER } from "./fleet_tunnel";
-import { stageFleetDataPlane, type FleetStagingReceipt } from "./fleet_staging";
+import { stageFleetDataPlane, observationOnlyStagingReceipt, type FleetStagingReceipt } from "./fleet_staging";
 import { resolveFleetProgram, type FleetProgramReceipt } from "./fleet_program";
 import { createProject, listProjects } from "./project";
 import { rehydratePeerRelationships, type RehydrationResult } from "./fleet_headless_rehydration";
@@ -670,6 +670,16 @@ export function createAmicodeService(
        *  engine). Suppresses the standalone→engine mode flip and switches the
        *  no-upstream 503 to the client's own honest hub-down state. */
       client?: boolean;
+      /** #1524 (base peer-observation decoupled from hub-activation): mount the
+       *  base peer-studio OBSERVATION routes (baseStudioActivates) WITHOUT the
+       *  premium data plane. When true, createAmicodeService BYPASSES
+       *  stageFleetDataPlane / the premium plane entirely (AC5 — no premium plane
+       *  stages even if an entitlement is resolvable) and consults ONLY
+       *  baseStudioActivates(opts.fleet) to decide whether to mount the routes.
+       *  The wiring sets this for an UNARMED machine carrying a fleet-peer
+       *  provider (no hub config). Undefined/false → today's exact staging path
+       *  (byte-identical for entitled/armed machines, H3). */
+      observationOnly?: boolean;
       /** The data-driven routing mode; default "fleet" (a staged plane with
        *  no getter runs fleet). */
       getMode?: () => UpstreamMode;
@@ -755,12 +765,22 @@ export function createAmicodeService(
   // entitlement → this block never arms anything → zero fleet surfaces,
   // byte-identical.
   if (opts.fleet !== undefined) {
-    const staging = stageFleetDataPlane({
-      entitlements: opts.fleet.entitlements,
-      entitlementConfigDir: opts.fleet.entitlementConfigDir,
-      overlaySource: opts.fleet.overlaySource,
-    });
-    if (staging.staged) {
+    // #1524: OBSERVATION-ONLY base peer-studio decouples base peer-observation
+    // route mounting from hub-activation/entitlement. When set, BYPASS the
+    // premium staging gate entirely — the base observation authority
+    // (baseStudioActivates) is entitlement-free (AC5: no premium plane stages
+    // even if an entitlement is resolvable) — and ride an honest absent/
+    // not-staged receipt (no forgery). Undefined/false → today's EXACT staging
+    // path, so an entitled/armed machine is byte-identical (H3).
+    const observationOnly = opts.fleet.observationOnly === true;
+    const staging = observationOnly
+      ? { staged: false as const, receipt: observationOnlyStagingReceipt() }
+      : stageFleetDataPlane({
+          entitlements: opts.fleet.entitlements,
+          entitlementConfigDir: opts.fleet.entitlementConfigDir,
+          overlaySource: opts.fleet.overlaySource,
+        });
+    if (!observationOnly && staging.staged) {
       fleetMultiplexerArmed = true;
       // #1131: the staged fleet program (amicissimo#418) — resolved through
       // the same entitlement gate inputs; its receipt rides the fleet status
@@ -983,6 +1003,17 @@ export function createAmicodeService(
       // requests to its OWN local engine (mode "engine") while observing peers
       // through the N-peer projection. AC3 (service/engine accept-set parity)
       // is owned by #1485.
+      //
+      // #1524: this same branch is now the OBSERVATION-ONLY path (observationOnly
+      // true, hub-activation absent). The projection reads roster + peer tokens
+      // LATE per request, so a peer that changes state AFTER boot is reflected on
+      // the next request — PROVIDED the routes were mounted at boot.
+      // #1524 follow-up: the route-MOUNT decision (baseStudioActivates) is
+      // boot-time — a machine that boots with ZERO serving peers stays 404 until
+      // restart even if a peer comes online later (issue AC4). Moving the mount
+      // decision to per-request would need the routes always-mounted-but-
+      // conditionally-404, which would risk the AC2/H3 byte-identity guard; left
+      // as a deliberate follow-up rather than forced here.
       //
       // #1487 (AC1): HEADLESS PEER REHYDRATION — on base-activation, run
       // rehydration to restore persisted peer relationships into named recovery
