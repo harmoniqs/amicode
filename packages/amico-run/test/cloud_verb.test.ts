@@ -148,8 +148,11 @@ describe("amico cloud status", () => {
     expect(r.code).toBe(64);
     expect(out(r).ok).toBe(false);
     const msg = (out(r).errors as string[])[0];
-    expect(msg).toContain("fetch failed");
-    expect(msg).toMatch(/ECONNREFUSED|EADDRNOTAVAIL|connection refused/i); // the cause surfaced, not buried
+    // The unreachable-endpoint wording is the runtime's own (node's undici
+    // says "fetch failed"; bun says "Unable to connect. Is the computer able
+    // to access the url?") — assert the union, never one runner's string.
+    expect(msg).toMatch(/fetch failed|unable to connect/i);
+    expect(msg).toMatch(/ECONNREFUSED|EADDRNOTAVAIL|connection refused|unable to connect/i); // the cause surfaced, not buried
   });
   it("missing --task is a usage error", async () => {
     const r = await cloudVerb(["status"], NO_CONFIG);
@@ -273,7 +276,8 @@ describe("amico cloud abort", () => {
     await fake.stop();
     const r = await cloudVerb(["abort", "--task", fake.taskId], ctx);
     expect(r.code).toBe(64);
-    expect((out(r).errors as string[])[0]).toContain("fetch failed");
+    // Runner-dependent wording — see the status case above for the union.
+    expect((out(r).errors as string[])[0]).toMatch(/fetch failed|unable to connect/i);
     expect(fake.aborts).toBe(0);
   });
 });

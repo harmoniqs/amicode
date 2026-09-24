@@ -145,9 +145,16 @@ describe("parseDoctorArgs", () => {
   });
 
   test("unknown flag / missing value is a usage error", () => {
-    expect(parseDoctorArgs(["--nope"])).toMatchObject({ ok: false, message: /unknown doctor flag/ });
-    expect(parseDoctorArgs(["--root-server"])).toMatchObject({ ok: false, message: /requires a path/ });
-    expect(parseDoctorArgs(["--running-binary"])).toMatchObject({ ok: false, message: /requires a path/ });
+    // The message rides toMatch, NOT a regex nested inside toMatchObject:
+    // vitest substring-matches nested regexes, bun's runner compares them
+    // literally — the portable form carries the same assertion.
+    const usageError = (r: ReturnType<typeof parseDoctorArgs>): string => {
+      expect(r.ok).toBe(false);
+      return r.ok ? "" : r.message;
+    };
+    expect(usageError(parseDoctorArgs(["--nope"]))).toMatch(/unknown doctor flag/);
+    expect(usageError(parseDoctorArgs(["--root-server"]))).toMatch(/requires a path/);
+    expect(usageError(parseDoctorArgs(["--running-binary"]))).toMatch(/requires a path/);
   });
 });
 
