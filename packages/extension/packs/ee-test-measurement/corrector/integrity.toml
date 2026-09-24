@@ -1,0 +1,6 @@
+# sha256 integrity manifest for the corrector paths (relative to the pack dir).
+# Verified at load time (WS1 #369 pattern): a mismatch makes the pack BROKEN.
+# Regenerate: shasum -a 256 <path> from the pack dir.
+[files]
+"FIRST-TASK.md" = "971f100a28f673ccabd73a0662abd58f4dd14c6bcf2d5e4b123febc526891547"
+"VERIFICATION.md" = "3d53456c5a60b266cf79e3d0b09e6f634b6bb3439871f415c0730f706d895eb2"
