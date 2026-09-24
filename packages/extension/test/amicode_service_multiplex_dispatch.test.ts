@@ -13,8 +13,15 @@
 //   AC3 — ResolvedTarget carries a distinct unreachable/degraded variant (owner
 //         known, getUrl() undefined) NOT conflated with the keyless/local
 //         undefined.
-//   AC4 — the local path stays on EngineProxy; the multiplexer's SSE relay is
-//         NOT wired into dispatch (structural guard).
+//   AC4 — the local path stays on EngineProxy; the multiplexer's per-session SSE
+//         PULL relay is NOT wired into dispatch (structural guard). AMENDED by
+//         #1519 AC5: the /event FAN-IN relay is now wired, but ONLY behind the
+//         flag — the flag-OFF "SSE relay not reachable" invariant is preserved
+//         (re-expressed as structural flag-gating + a behavioural spy).
+//
+// #1519 (Fleet Studio wiring W1c) then wires the SSE fan-in aggregator into the
+// /event route behind the same flag; its AC1–AC5 route-level tests live at the
+// bottom of this file (the dispatch suite is the AC4-guard's home).
 //
 // Reuses the SessionOwnerMap / PeerTransport stubs from
 // amicode_session_relay.integration.test.ts (the reuse map).
@@ -319,12 +326,81 @@ describe("#1448 AC2 — flag ON + empty owner-map: LOCAL identity; shadows ONLY 
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
-// AC4 — local stays on EngineProxy; NO SSE crosses the multiplexer (structural)
+// AC4 (amended by #1519 AC5) — local stays on EngineProxy; the multiplexer's
+// per-session SSE PULL relay stays unwired; the /event FAN-IN relay is wired
+// ONLY behind the flag. The flag-OFF "SSE relay not reachable" guarantee is
+// PRESERVED — re-expressed (structural flag-gating + a behavioural spy), not
+// deleted.
 // ══════════════════════════════════════════════════════════════════════════════
-describe("#1448 AC4 — local path on EngineProxy; the multiplexer's SSE relay is NOT wired into dispatch", () => {
-  it("server.ts never wires the multiplexer's SSE relay into dispatch (structural source guard)", () => {
+describe("#1448 AC4 (amended by #1519 AC5) — SSE relay reachable ONLY behind the flag; flag-OFF invariant preserved", () => {
+  it("the multiplexer's per-session SSE PULL relay (openSseStream) is STILL never wired into dispatch (the enduring invariant)", () => {
     const src = readFileSync(join(__dirname, "..", "src", "amicode_service", "server.ts"), "utf8");
+    // #1519 wires the fan-in AGGREGATOR (SseFanInAggregator, via the eventFanIn
+    // seam), never the session multiplexer's openSseStream pull relay — that
+    // per-session relay stays forbidden in dispatch, exactly as #1448 required.
     expect(src.includes("openSseStream")).toBe(false);
+  });
+
+  it("#1519 amendment: the /event fan-in relay IS wired now, but EVERY dispatch reference to it is flag-gated (fleetMultiplexEnabled co-located)", () => {
+    const src = readFileSync(join(__dirname, "..", "src", "amicode_service", "server.ts"), "utf8");
+    // Use-sites of the fan-in seam (`.eventFanIn`) — EXCLUDING the FleetPlane
+    // type field declaration `eventFanIn?:` (a type, not a call).
+    const fanInUseLines = src
+      .split("\n")
+      .filter((l) => l.includes(".eventFanIn") && !l.includes("eventFanIn?:"));
+    // the amendment landed: the relay IS reachable from dispatch now (#1448
+    // forbade this outright; #1519 permits it — behind the flag).
+    expect(fanInUseLines.length).toBeGreaterThan(0);
+    // ...and every use sits in the SAME expression as the flag, so with the flag
+    // OFF the `&&` short-circuits BEFORE the relay — "not reachable when OFF"
+    // stays STRUCTURALLY provable, never just asserted.
+    for (const line of fanInUseLines) {
+      expect(line.includes("fleetMultiplexEnabled()")).toBe(true);
+    }
+  });
+
+  it("flag OFF (behavioural): a GET /event NEVER calls the fan-in relay's handle, and streams byte-identically through the engine proxy", async () => {
+    delete process.env[FLEET_MULTIPLEX_FLAG];
+    const handleSpy = vi.fn(() => false);
+    const F = sseFrame("event: message", 'data: {"z":1}', "id: 4");
+    const engine = await startSseStub([F]);
+    const server = new AmicodeServiceServer({ password: PW });
+    server.attachEngineProxy(new EngineProxy({ getUrl: () => engine.url }));
+    server.attachFleetPlane({
+      getMode: () => "engine",
+      hub: new HubProxy({ getUrl: () => undefined, credential: () => readHubCredential() }),
+      eventFanIn: { handle: handleSpy },
+    });
+    const origin = (await server.start()).toString().replace(/\/$/, "");
+    try {
+      const body = await (await fetch(`${origin}/event`, { headers: { Authorization: serverAuthHeader(PW) } })).text();
+      expect(handleSpy).not.toHaveBeenCalled(); // OFF short-circuits before the relay (structural)
+      expect(body).toBe(F); // and /event is byte-identical to today
+    } finally {
+      await server.stop();
+      await engine.stop();
+    }
+  });
+
+  it("flag ON (behavioural): the fan-in relay's handle IS consulted on /event (the mirror of the flag-OFF guard)", async () => {
+    process.env[FLEET_MULTIPLEX_FLAG] = "1";
+    const handleSpy = vi.fn(() => false); // returns false → fall through to the engine proxy
+    const engine = await startSseStub([sseFrame("data: {}", "id: 1")]);
+    const server = new AmicodeServiceServer({ password: PW });
+    server.attachEngineProxy(new EngineProxy({ getUrl: () => engine.url }));
+    server.attachFleetPlane({
+      getMode: () => "engine",
+      hub: new HubProxy({ getUrl: () => undefined, credential: () => readHubCredential() }),
+      eventFanIn: { handle: handleSpy },
+    });
+    const origin = (await server.start()).toString().replace(/\/$/, "");
+    try {
+      await (await fetch(`${origin}/event`, { headers: { Authorization: serverAuthHeader(PW) } })).text();
+      expect(handleSpy).toHaveBeenCalledTimes(1); // ON → the relay is reached (behind the flag)
+    } finally {
+      await server.stop();
+      await engine.stop();
+    }
   });
 
   it("the multiplex seam the plane exposes has NO SSE method — a resolveTarget-only object is a valid MultiplexResolver", () => {
