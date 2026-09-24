@@ -796,6 +796,98 @@ function extractTomlString(text: string, key: string): string | undefined {
   return m?.[1];
 }
 
+// ── Research direction injection (plan-20260920 step 7 — D6's "direction
+// renders in sessions": a direction surface no live session can read is not
+// the direction surface) ──────────────────────────────────────────────────────
+
+/** The ops checkout that serves direction: the amicissimo clone whose HEAD
+ *  the ops standing check (amicissimo #467/#468) keeps at canonical. The
+ *  serving checkout IS the ops checkout — one artifact (the deliberated
+ *  spec's decision). */
+function opsCheckoutDir(override?: string): string {
+  if (override) return override;
+  const env = process.env.AMICO_OPS_CHECKOUT;
+  if (env && env.trim() !== "") return env.trim();
+  return path.join(os.homedir(), "harmoniqs", "amicissimo");
+}
+
+function parseIntentBets(md: string): Array<{ id: string; title: string; tier?: string }> {
+  const bets: Array<{ id: string; title: string; tier?: string }> = []
+  for (const line of md.split("\n")) {
+    const m = line.match(/^###\s+(D\d)\s*[—-]\s*(.+?)\s*(?:\*\(Tier\s*([^)]+)\)\*\*)?\s*$/)
+    if (m) bets.push({ id: m[1], title: m[2], tier: m[3] })
+  }
+  return bets
+}
+
+function parseIntentMission(md: string): string | undefined {
+  const section = md.match(/^##\s+Mission[^\n]*\n([\s\S]*?)(?=^##\s)/m)
+  const paragraph = section?.[1]
+    .split("\n")
+    .find((l) => l.trim() !== "" && !l.trim().startsWith(">") && !l.trim().startsWith("[") && !l.trim().startsWith("[NET-NEW"))
+  if (paragraph === undefined) return undefined
+  const clipped = paragraph.trim().replace(/\s+/g, " ")
+  return clipped.length > 220 ? clipped.slice(0, 219) + "…" : clipped
+}
+
+/** The live direction section: the mission line, the direction bets (tiers
+ *  from the D-headers), and the direction-sync stamp — the merge receipt's
+ *  intent SHA + merged date. Per-prompt honesty: the stamp proves WHICH
+ *  intent version rendered; clone≈canonical HEAD is the standing check's
+ *  job (amicissimo #467), not a per-prompt git parse. Tolerant like every
+ *  splice: no checkout or no INTENT → empty (the recovery pointer covers
+ *  the fallback read). */
+export function buildDirectionSection(opts?: { checkoutDir?: string }): string {
+  const checkout = opsCheckoutDir(opts?.checkoutDir)
+  const intentPath = path.join(checkout, "vault", "INTENT.md")
+  if (!fs.existsSync(intentPath)) return ""
+  let intent = ""
+  try {
+    intent = fs.readFileSync(intentPath, "utf8")
+  } catch {
+    return ""
+  }
+  const bets = parseIntentBets(intent)
+  if (bets.length === 0) return "" // a direction file with no bets is not the direction surface
+  const mission = parseIntentMission(intent)
+
+  const receiptPath = path.join(checkout, "vault", "INTENT-MERGE-RECEIPT.toml")
+  let receiptSha: string | undefined
+  let receiptDate: string | undefined
+  try {
+    const receipt = fs.readFileSync(receiptPath, "utf8")
+    receiptSha = extractTomlString(receipt, "intent_sha256")
+    receiptDate = extractTomlString(receipt, "merged_date")
+  } catch {
+    // no receipt → the stamp renders unknowns; the section still renders
+  }
+
+  const lines: string[] = [
+    "## Research direction (live)",
+    "",
+    "> PI-owned direction — INTENT is amended only by PR; agents propose (the",
+    "> proposals surface / the hopper), never edit. The portfolio renders from",
+    "> campaign session-ledgers: `amico-run strategy-brief`. Direction-sync:",
+    `> INTENT ${receiptSha ? receiptSha.slice(0, 12) : "unknown"} merged ${
+      receiptDate ?? "unknown"
+    } (merge receipt; the ops standing check keeps the checkout at canonical).`,
+    "",
+  ]
+  if (mission) lines.push(mission, "")
+  for (const b of bets) {
+    lines.push(`- ${b.id} — ${b.title}${b.tier ? ` *(Tier ${b.tier})*` : ""}`)
+  }
+  lines.push(
+    "",
+    "Banned directions and the full direction surface live in INTENT; check",
+    "them before proposing. What is actually being worked on is the derived",
+    "portfolio — never a ranked list.",
+    "",
+  )
+  return lines.join("\n")
+}
+
+
 // ── Active Research Environment injection (#883) ─────────────────────────────
 
 /** Read the resolved environment path from AMICODE_RESOLVED_ENVIRONMENT (set
@@ -928,6 +1020,12 @@ function listSubdirs(dir: string): string[] {
  *  no vault content). */
 export function buildStackStateBlock(): string | null {
   const parts: string[] = [];
+
+  // Direction BEFORE state (plan-20260920 step 7): the frame the session
+  // works within renders before the live problem state. Absent checkout or
+  // INTENT → silence (the recovery pointer covers the fallback read).
+  const direction = buildDirectionSection();
+  if (direction) parts.push(direction);
 
   const solver = buildSolverModeSection();
   if (solver) parts.push(solver);

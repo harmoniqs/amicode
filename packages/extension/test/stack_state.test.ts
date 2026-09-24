@@ -16,7 +16,7 @@ import { describe, it, expect } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { buildStackStateBlock } from "../opencode-plugin/stack_state";
+import { buildStackStateBlock, buildDirectionSection } from "../opencode-plugin/stack_state";
 
 function mkTmp(prefix: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -758,12 +758,17 @@ interface SeamOpts {
   runsDir?: string;
   /** Prebuilt fixture vault flavor for the golden-text cases. */
   vault?: "profile" | "problems" | "demos" | "memory";
+  /** Ops-checkout fixture dir for the direction splice (default: an empty stub). */
+  opsCheckout?: string;
 }
+
+let opsCheckoutStub: string | undefined;
 
 const SEAM_KEYS = [
   "AMICO_VAULTS_ROOT",
   "AMICO_FLEET_PROJECTION",
   "AMICO_FLEET_STATUS",
+  "AMICO_OPS_CHECKOUT",
   "AMICODE_OPS_DIR",
   "AMICODE_CONNECTIONS_FILE",
   "AMICODE_PROBLEMS_DIR",
@@ -780,6 +785,12 @@ function stubAllSeams(opts: SeamOpts): Record<string, string | undefined> {
     saved[k] = process.env[k];
     delete process.env[k];
   }
+  // The ops-checkout seam defaults to the REAL ~/harmoniqs/amicissimo when
+  // unset — stub it to an empty dir so the composition tests stay hermetic
+  // (the machine this suite runs on HAS the checkout; silence must be forced,
+  // not assumed).
+  if (!opsCheckoutStub) opsCheckoutStub = mkTmp("ops-checkout-stub-");
+  process.env["AMICO_OPS_CHECKOUT"] = opts.opsCheckout ?? opsCheckoutStub;
   if (!fixtureRoot) fixtureRoot = mkTmp("stackstate-fixture-");
   const root = opts.vaultsRoot ?? fixtureRoot;
   if (opts.vault) {
@@ -838,3 +849,80 @@ function restoreSeams(saved: Record<string, string | undefined>): void {
     else process.env[k] = saved[k];
   }
 }
+
+// ── Research direction section (plan-20260920 step 7 — D6: direction renders
+// in sessions). The golden text pins the stamp honesty: the merge receipt's
+// SHA + date, unknowns named when the receipt is absent, silence when the
+// checkout or INTENT is missing, and the "no bets → no section" rule.
+describe("buildDirectionSection (live direction splice)", () => {
+  it("renders the mission, the bets with tiers, and the receipt stamp", () => {
+    const checkout = mkTmp("ops-checkout-");
+    fs.mkdirSync(path.join(checkout, "vault"), { recursive: true });
+    fs.writeFileSync(
+      path.join(checkout, "vault", "INTENT.md"),
+      [
+        "---",
+        "type: intent",
+        "---",
+        "# INTENT",
+        "## Mission",
+        "A general engine for physical research, specialized through domain packs.",
+        "",
+        "## Research bets",
+        "### D1 — Fixture bet one *(Tier 1)*",
+        "Body.",
+        "### D2 — Fixture bet two *(Tier 2)*",
+        "Body.",
+      ].join("\n"),
+    );
+    fs.writeFileSync(
+      path.join(checkout, "vault", "INTENT-MERGE-RECEIPT.toml"),
+      'intent_sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"\nmerged_date = "2026-09-06"\n',
+    );
+    const s = buildDirectionSection({ checkoutDir: checkout });
+    expect(s).toBe(
+      [
+        "## Research direction (live)",
+        "",
+        "> PI-owned direction — INTENT is amended only by PR; agents propose (the",
+        "> proposals surface / the hopper), never edit. The portfolio renders from",
+        "> campaign session-ledgers: `amico-run strategy-brief`. Direction-sync:",
+        "> INTENT 0123456789ab merged 2026-09-06 (merge receipt; the ops standing check keeps the checkout at canonical).",
+        "",
+        "A general engine for physical research, specialized through domain packs.",
+        "",
+        "- D1 — Fixture bet one *(Tier 1)*",
+        "- D2 — Fixture bet two *(Tier 2)*",
+        "",
+        "Banned directions and the full direction surface live in INTENT; check",
+        "them before proposing. What is actually being worked on is the derived",
+        "portfolio — never a ranked list.",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  it("renders receipt unknowns when the receipt is missing — the section still renders", () => {
+    const checkout = mkTmp("ops-checkout-2-");
+    fs.mkdirSync(path.join(checkout, "vault"), { recursive: true });
+    fs.writeFileSync(
+      path.join(checkout, "vault", "INTENT.md"),
+      "### D1 — Fixture bet\n\nBody.\n",
+    );
+    const s = buildDirectionSection({ checkoutDir: checkout });
+    expect(s).toContain("INTENT unknown merged unknown");
+    expect(s).toContain("- D1 — Fixture bet");
+  });
+
+  it("is silent when the checkout or INTENT is absent", () => {
+    expect(buildDirectionSection({ checkoutDir: mkTmp("ops-empty-") })).toBe("");
+    expect(buildDirectionSection({ checkoutDir: "/nonexistent/checkout" })).toBe("");
+  });
+
+  it("is silent for an INTENT with no D-bets — not the direction surface", () => {
+    const checkout = mkTmp("ops-checkout-3-");
+    fs.mkdirSync(path.join(checkout, "vault"), { recursive: true });
+    fs.writeFileSync(path.join(checkout, "vault", "INTENT.md"), "# not a direction file\n\n## Nothing\n");
+    expect(buildDirectionSection({ checkoutDir: checkout })).toBe("");
+  });
+});
