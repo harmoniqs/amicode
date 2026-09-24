@@ -47,6 +47,7 @@ import {
   mergePeerSessions,
   deriveSessionBadge,
   isRemotePeerSession,
+  resolveDropdownOpenAction,
   type DropdownSession,
 } from "./session-fleet-peers"
 
@@ -919,25 +920,23 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
   }
 
   async function openSession(session: Session) {
-    // #1525 B1: a REMOTE peer session cannot be opened by a local navigate —
-    // its store lives on the owner machine, so a local open would 404. Owner-
-    // routed open is B2 (#1525); until then, surface where it lives rather than
-    // break. (The row also hides its local archive action for the same reason.)
-    if (isRemotePeerSession(session as DropdownSession)) {
-      const owner = (session as DropdownSession).amicode_owner!
-      showToast({
-        title: `Session on ${owner.owner_name}`,
-        description: `This session lives on ${owner.owner_name}. Opening remote sessions from here is coming soon.`,
-      })
-      setOpen(false)
-      return
-    }
+    // #1537 B2a: OPEN a peer (remote) session by routing through the owner.
+    // Open is a READ — the session store lives on the owner machine and the
+    // multiplex routes reads by owner at the API boundary, so navigating to the
+    // row's raw directory/id IS the owner-routed open. B1's guard toast ("lives
+    // on <machine>, coming soon") was the dead end this replaces; a remote row
+    // now lands in the normal session view, byte-for-byte the same navigate a
+    // local row takes. No remote-write surface is added here (prompt / archive /
+    // delete of a peer row remain absent — that is B2b, design-gated). The row
+    // still hides its LOCAL-only archive action via `isRemotePeerSession`.
 
     // Close flyout first so its Portal unmounts cleanly.
     setOpen(false)
 
     // Mirror the dashboard's project setup: ensure the directory is registered and
-    // touched so the workspace context is warm when the session page mounts.
+    // touched so the workspace context is warm when the session page mounts. For a
+    // remote row this registers the owner's directory string locally — harmless
+    // bookkeeping; the actual session reads route to the owner via the multiplex.
     const conn = server.current
     if (conn) {
       const ctx = globalCtx.ensureServerCtx(conn)
@@ -962,11 +961,15 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
     const existingTab = tabs.store.find(
       (t) => t.type === "session" && t.sessionId === session.id,
     )
-    if (existingTab) {
-      tabs.select(existingTab)
+    const action = resolveDropdownOpenAction(
+      session as DropdownSession,
+      !!existingTab,
+      (dir, id) => `/${base64Encode(dir)}/session/${id}`,
+    )
+    if (action.type === "select-tab") {
+      tabs.select(existingTab!)
     } else {
-      const path = `/${base64Encode(session.directory)}/session/${session.id}`
-      navigate(path)
+      navigate(action.path)
     }
   }
 

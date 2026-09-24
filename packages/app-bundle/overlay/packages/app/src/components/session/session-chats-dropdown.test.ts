@@ -1,4 +1,9 @@
 import { describe, expect, test } from "bun:test"
+// #1537 B2a (AC6): the machine helpers are no longer defined here — they live in
+// the ONE real module the component also imports (`session-fleet-peers.ts`).
+// `deriveBadge` was a stale duplicate of the real `deriveSessionBadge`; the
+// per-machine narrowing `filterSessionsByMachine` is promoted alongside it.
+import { deriveSessionBadge, filterSessionsByMachine } from "./session-fleet-peers"
 
 /**
  * Tests for the Session Chats Dropdown logic (amicode#274).
@@ -7,6 +12,9 @@ import { describe, expect, test } from "bun:test"
  * flyout (amicode#273).
  */
 
+// Local fixture shape for this suite (a superset-tolerant subset of the SDK
+// session — `time.updated` optional, as the dropdown fixtures use it). The
+// promoted helpers are structural, so they accept this shape directly.
 type SessionOwnerTag = {
   owner_machine_id: string
   owner_name: string
@@ -53,27 +61,6 @@ function filterSessionsByQuery(
   const q = query.trim().toLowerCase()
   if (!q) return sessions
   return sessions.filter((session) => getTitle(session).toLowerCase().includes(q))
-}
-
-/** Derive the machine badge label for a session (#1439).
- *  Local sessions are unbadged (absence = local, ADR 0031 §D6);
- *  remote sessions show the owner's name as the badge. */
-function deriveBadge(session: Session): string | undefined {
-  if (!session.amicode_owner) return undefined
-  if (session.amicode_owner.is_local) return undefined
-  return session.amicode_owner.owner_name
-}
-
-/** Filter sessions to a specific machine (#1439).
- *  null/undefined = all machines (the "clear" state). */
-function filterSessionsByMachine(
-  sessions: Session[],
-  machineId: string | null | undefined,
-): Session[] {
-  if (machineId == null) return sessions
-  return sessions.filter(
-    (s) => s.amicode_owner?.owner_machine_id === machineId,
-  )
 }
 
 /**
@@ -266,7 +253,7 @@ describe("Session Chats Dropdown", () => {
 
   // ── fleet-wide machine badges (#1439, AC2) ─────────────────────────────────
 
-  describe("deriveBadge — machine badge for fleet sessions", () => {
+  describe("deriveSessionBadge — machine badge for fleet sessions", () => {
     const localSession: Session = {
       id: "ses_local",
       title: "Local work",
@@ -302,15 +289,15 @@ describe("Session Chats Dropdown", () => {
     }
 
     test("local session is unbadged (absence = local)", () => {
-      expect(deriveBadge(localSession)).toBeUndefined()
+      expect(deriveSessionBadge(localSession)).toBeUndefined()
     })
 
     test("remote session shows the owner machine name as badge", () => {
-      expect(deriveBadge(remoteSession)).toBe("Mac Studio")
+      expect(deriveSessionBadge(remoteSession)).toBe("Mac Studio")
     })
 
     test("pre-fleet session (no owner tag) is unbadged", () => {
-      expect(deriveBadge(preFleetsession)).toBeUndefined()
+      expect(deriveSessionBadge(preFleetsession)).toBeUndefined()
     })
   })
 

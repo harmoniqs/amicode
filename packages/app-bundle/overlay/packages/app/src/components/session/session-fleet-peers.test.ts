@@ -4,6 +4,7 @@ import {
   mergePeerSessions,
   deriveSessionBadge,
   isRemotePeerSession,
+  resolveDropdownOpenAction,
   type DropdownSession,
 } from "./session-fleet-peers"
 
@@ -91,5 +92,56 @@ describe("#1525 mergePeerSessions — dedupe (local wins) + sort by last activit
   test("empty peers → local list unchanged (degrade path)", () => {
     const local = [mk("a", 5), mk("b", 9)]
     expect(mergePeerSessions(local, []).map((s) => s.id)).toEqual(["b", "a"])
+  })
+})
+
+// #1537 B2a (AC4): owner-routed OPEN. `resolveDropdownOpenAction` is the pure
+// decision the dropdown's openSession() dispatches on. A REMOTE peer row must
+// resolve to the owner-routed navigate (the multiplex routes reads by owner) —
+// NOT the B1 "lives on <machine>" guard toast. A LOCAL row is byte-unchanged
+// from B1: existing tab → select-tab; no tab → navigate. No branch produces a
+// mutation/remote-write action — open is a read.
+describe("#1537 resolveDropdownOpenAction — owner-routed open of a peer row", () => {
+  const encodePath = (dir: string, id: string) => `/${btoa(dir)}/session/${id}`
+  const studioTag = { owner_machine_id: "jjs-mac-studio", owner_name: "JJ's Mac Studio", is_local: false }
+
+  const localRow: DropdownSession = { id: "ses_local", directory: "/proj", time: { created: 1 } } as DropdownSession
+  const remoteRow: DropdownSession = {
+    id: "ses_studio",
+    directory: "/studio-proj",
+    time: { created: 2 },
+    amicode_owner: studioTag,
+  } as DropdownSession
+
+  test("REMOTE row → owner-routed navigate to its raw directory/id (never a toast)", () => {
+    const action = resolveDropdownOpenAction(remoteRow, false, encodePath)
+    expect(action.type).toBe("navigate")
+    expect((action as { type: "navigate"; path: string }).path).toBe(`/${btoa("/studio-proj")}/session/ses_studio`)
+  })
+
+  test("REMOTE row with an already-open tab → select that tab (no re-navigate)", () => {
+    const action = resolveDropdownOpenAction(remoteRow, true, encodePath)
+    expect(action.type).toBe("select-tab")
+    expect((action as { type: "select-tab"; sessionId: string }).sessionId).toBe("ses_studio")
+  })
+
+  test("LOCAL row without a tab → navigate (byte-unchanged from B1)", () => {
+    const action = resolveDropdownOpenAction(localRow, false, encodePath)
+    expect(action.type).toBe("navigate")
+    expect((action as { type: "navigate"; path: string }).path).toBe(`/${btoa("/proj")}/session/ses_local`)
+  })
+
+  test("LOCAL row with an existing tab → select-tab (byte-unchanged from B1)", () => {
+    const action = resolveDropdownOpenAction(localRow, true, encodePath)
+    expect(action.type).toBe("select-tab")
+    expect((action as { type: "select-tab"; sessionId: string }).sessionId).toBe("ses_local")
+  })
+
+  test("no branch yields a remote-write action — the union is only navigate | select-tab", () => {
+    for (const row of [localRow, remoteRow]) {
+      for (const hasTab of [true, false]) {
+        expect(["navigate", "select-tab"]).toContain(resolveDropdownOpenAction(row, hasTab, encodePath).type)
+      }
+    }
   })
 })

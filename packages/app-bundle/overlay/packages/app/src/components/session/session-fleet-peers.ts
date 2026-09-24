@@ -50,6 +50,17 @@ export function deriveSessionBadge(session: { amicode_owner?: SessionOwnerTag } 
   return session!.amicode_owner!.owner_name
 }
 
+/** Filter dropdown rows to a specific owner machine (#1439, promoted here in
+ *  #1537 B2a AC6 as the single real home for the dropdown's machine helpers).
+ *  `null`/`undefined` machineId = all machines (the "clear filter" state). */
+export function filterSessionsByMachine<T extends { amicode_owner?: SessionOwnerTag }>(
+  sessions: T[],
+  machineId: string | null | undefined,
+): T[] {
+  if (machineId == null) return sessions
+  return sessions.filter((s) => s.amicode_owner?.owner_machine_id === machineId)
+}
+
 /** Tolerant reader for one raw owner overlay — returns the tag only when its
  *  load-bearing fields are well-typed, else undefined. */
 function readOwnerTag(raw: unknown): SessionOwnerTag | undefined {
@@ -121,4 +132,35 @@ export function mergePeerSessions(local: DropdownSession[], peers: DropdownSessi
     merged.push(p)
   }
   return merged.sort((a, b) => (b.time.updated ?? b.time.created) - (a.time.updated ?? a.time.created))
+}
+
+/** The action the dropdown's openSession() dispatches on when a row is clicked.
+ *  A READ-ONLY union — there is no delete/archive/prompt variant, so a reviewer
+ *  can confirm this open path carries no remote-write surface (#1537 B2a). */
+export type DropdownOpenAction =
+  | { type: "select-tab"; sessionId: string }
+  | { type: "navigate"; path: string }
+
+/** Resolve how to open a dropdown row — the seam #1537 B2a wires for BOTH local
+ *  and REMOTE peer rows.
+ *
+ *  Before B2a, a remote (peer-owned) row short-circuited to a "lives on
+ *  <machine>" guard toast because opening a remote session was never wired.
+ *  B2a removes that dead end: a remote row resolves to the SAME owner-routed
+ *  navigate as a local one — the session store lives on the owner, and the
+ *  multiplex routes reads by owner at the API boundary, so navigating to the
+ *  row's raw `directory`/`id` IS the owner-routed open. This is a read: no
+ *  branch mutates a remote session.
+ *
+ *  - an already-open tab → select it (no re-navigate, no transition);
+ *  - otherwise → navigate to the encoded `directory`/`id` path.
+ *
+ *  Local-row behavior is byte-unchanged from B1 (same two outcomes). */
+export function resolveDropdownOpenAction(
+  session: DropdownSession,
+  hasExistingTab: boolean,
+  encodePath: (directory: string, id: string) => string,
+): DropdownOpenAction {
+  if (hasExistingTab) return { type: "select-tab", sessionId: session.id }
+  return { type: "navigate", path: encodePath(session.directory, session.id) }
 }
