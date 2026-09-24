@@ -83,3 +83,14 @@ The reviewer accepted **D1–D4 as-is** and resolved the three open questions wi
 ## Source
 
 Part of #1436. W1c / #1450 (labeled `hitl`; the design gate). Blocked-by W1b (#1449, landed). This ADR is the design deliverable; the AC's "reviewed before implementation" gate is a **human** review — no implementation issue is opened by the overnight campaign.
+
+## Amendment 1 — base-observation fan-in is a separate, non-multiplexer path (2026-09-24, via ADR 0034 D6)
+
+ADR 0034 (base peer-studio control) pulls live event streaming onto the **observation path**, which raised an apparent conflict with this ADR: D-gate line 3 and the constraint at line 62 tie the fan-in to `AMICO_FLEET_MULTIPLEX` and forbid "SSE crossing the multiplexer until behind the flag," while ADR 0034 D6 wants a base-observation fan-in *not* behind the premium flag. This amendment resolves it:
+
+- The base-observation fan-in is a **new, separately-armed `/event` interception**, armed on **observation readiness** (holding `observe` on ≥1 reachable session-owning peer). It **reuses this ADR's mechanics as a library** (the `SseFanIn*` aggregator/relay/composite-cursor/per-namespace-buffering — D1–D4), but **not** the premium wiring.
+- It is **not behind the multiplexer** and **not** gated by `AMICO_FLEET_MULTIPLEX`. The existing premium `/event` fan-in (`server.ts`, `fleetMultiplexEnabled() && fleetPlane?.eventFanIn`) is **untouched**.
+- Therefore the "no SSE crosses the multiplexer until behind the flag" invariant (line 62) **still holds** — because this path does not cross the multiplexer at all. The flag remains the gate for the *premium/armed* fan-in only.
+- The fleet-of-one **byte-identity** invariant (D4 / #1264) is preserved by the driver **declining at zero non-local owners**, and holds only when no focus-snapshot provider is installed (the aggregator emits a focus frame ahead of the local arm when one is). This is the first implementation test for the base-observation path.
+
+Net: two independently-armed fan-in paths sharing one library — premium (flag + `fleetPlane`) and base-observation (readiness) — neither behind the other's gate.
