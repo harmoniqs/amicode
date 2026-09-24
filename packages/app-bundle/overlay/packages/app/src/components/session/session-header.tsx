@@ -11,7 +11,7 @@ import { Tooltip, TooltipKeybind } from "@opencode-ai/ui/tooltip"
 
 import { ButtonV2 } from "@opencode-ai/ui/v2/button-v2"
 import { getFilename } from "@opencode-ai/core/util/path"
-import { batch, createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js"
+import { batch, createEffect, createMemo, createResource, createSignal, For, onCleanup, onMount, Show } from "solid-js"
 import { createStore } from "solid-js/store"
 import { createMediaQuery } from "@solid-primitives/media"
 import { Portal } from "solid-js/web"
@@ -41,6 +41,14 @@ import { base64Encode } from "@opencode-ai/core/util/encode"
 import { sessionListDirectories, sortedRootSessions } from "@/pages/layout/helpers"
 import { useNavigate } from "@solidjs/router"
 import type { Session } from "@opencode-ai/sdk/v2/client"
+import { amicodeGet } from "@/utils/amicode-fetch"
+import {
+  peerSessionsFromProjection,
+  mergePeerSessions,
+  deriveSessionBadge,
+  isRemotePeerSession,
+  type DropdownSession,
+} from "./session-fleet-peers"
 
 // AMICODE: the MCP/LSP/Plugins/Vaults status popover is opencode-operator
 // noise here ("No MCPs configured"). Hidden, not deleted — the trigger slot is
@@ -715,6 +723,18 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
 
   const currentSessionID = createMemo(() => props.currentSessionID)
 
+  // #1525 B1 (read-only): peer sessions from the fleet-wide projection
+  // (GET /amicode/fleet/sessions). Fetched only while the flyout is open;
+  // tolerant — a 404 (route not mounted / no fleet) or any error resolves to
+  // undefined, so the dropdown degrades to the local list, never blank. The
+  // merge below adds REMOTE (is_local:false) sessions, badged with the owner
+  // machine name; owner-routed open + remote control (prompt/archive/delete)
+  // are B2 (#1525) and deliberately absent here.
+  const [fleetProjection] = createResource(
+    () => (open() ? server.current : undefined),
+    (conn) => amicodeGet(conn, "/amicode/fleet/sessions").catch(() => undefined),
+  )
+
   // Active sessions — only computed when the flyout is open to avoid
   // triggering reactive subscriptions (serverSync().child pins the directory
   // and can cascade re-renders to the parent Portal).
@@ -744,6 +764,15 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
     }
   })
 
+  // #1525 B1: fold the projection's remote peer sessions into the active list
+  // (deduped against local, sorted by last activity). Empty/errored projection
+  // → the local list unchanged.
+  const activeSessionsWithPeers = createMemo<DropdownSession[]>(() => {
+    if (!open()) return []
+    const peers = peerSessionsFromProjection(fleetProjection.latest)
+    return mergePeerSessions(activeSessions() as DropdownSession[], peers)
+  })
+
   // Fresh clients have no bootstrapped child stores for the fallback
   // directories (the dropdown reads with bootstrap: false) — kick the loads
   // once per open. Converges: re-runs find the stores populated and skip.
@@ -762,7 +791,7 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
   // Sort: open-tab sessions first
   const sortedActiveSessions = createMemo(() => {
     if (!open()) return []
-    const all = activeSessions()
+    const all = activeSessionsWithPeers()
     const openTabs: Session[] = []
     const rest: Session[] = []
     for (const session of all) {
@@ -890,6 +919,20 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
   }
 
   async function openSession(session: Session) {
+    // #1525 B1: a REMOTE peer session cannot be opened by a local navigate —
+    // its store lives on the owner machine, so a local open would 404. Owner-
+    // routed open is B2 (#1525); until then, surface where it lives rather than
+    // break. (The row also hides its local archive action for the same reason.)
+    if (isRemotePeerSession(session as DropdownSession)) {
+      const owner = (session as DropdownSession).amicode_owner!
+      showToast({
+        title: `Session on ${owner.owner_name}`,
+        description: `This session lives on ${owner.owner_name}. Opening remote sessions from here is coming soon.`,
+      })
+      setOpen(false)
+      return
+    }
+
     // Close flyout first so its Portal unmounts cleanly.
     setOpen(false)
 
@@ -1150,6 +1193,10 @@ function SessionDropdownRow(props: {
 }) {
   const language = useLanguage()
   const title = createMemo(() => sessionTitle(props.session.title) || props.session.id)
+  // #1525 B1: a remote peer session shows the owner machine name as a badge and
+  // hides local-only actions (archive is B2). Local/unowned rows are unbadged.
+  const badge = createMemo(() => deriveSessionBadge(props.session as DropdownSession))
+  const isRemote = createMemo(() => isRemotePeerSession(props.session as DropdownSession))
   const rowServer = useServer()
   // #1292 hover prewarm: a hovered row is a click away — pull its first
   // message page the instant the pointer lands, so the open renders from
@@ -1196,7 +1243,17 @@ function SessionDropdownRow(props: {
         <span class="min-w-0 flex-[1_1_auto] overflow-hidden text-ellipsis whitespace-nowrap">
           {title()}
         </span>
+        <Show when={badge()}>
+          <span
+            class="shrink-0 ml-1 inline-flex max-w-[40%] items-center gap-1 overflow-hidden text-ellipsis whitespace-nowrap rounded-sm px-1 py-0.5 text-[10px] leading-none text-v2-text-text-faint bg-v2-background-bg-layer-02"
+            title={badge()!}
+          >
+            <IconV2 name="monitor" class="shrink-0 opacity-70" />
+            <span class="overflow-hidden text-ellipsis whitespace-nowrap">{badge()}</span>
+          </span>
+        </Show>
       </button>
+      <Show when={!isRemote()}>
       <div class="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center opacity-0 group-hover/session:opacity-100 focus-within:opacity-100 transition-opacity">
         <TooltipV2 placement="top" value={language.t("common.archive")}>
           <IconButtonV2
@@ -1213,6 +1270,7 @@ function SessionDropdownRow(props: {
           />
         </TooltipV2>
       </div>
+      </Show>
     </div>
   )
 }

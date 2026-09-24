@@ -641,7 +641,9 @@
     "packages/app/src/components/session/preview-human-write-gate.ts": "4c4b1cf258a06b0012d722add0125ecb77a0f4e463dd95d193f21e5e73541098",
     "packages/app/src/components/session/session-chats-dropdown.test.ts": "cc0f96f935cc5681a1fe62875f4538c303b7c0b75744e066180f8805d5160292",
     "packages/app/src/components/session/session-context-tab.tsx": "227243b178b517f067d9ae0ae0eec3c559beeb6681828158b0600a17e98e7f81",
-    "packages/app/src/components/session/session-header.tsx": "7113b3eca8ec950d4a547a2b7e2661b5e47f593653e12fca659b5b5f92cb90a6",
+    "packages/app/src/components/session/session-fleet-peers.test.ts": "f32233cfc7854755431ab8ad545859b3d49bee38cb70dd960d32384e09ea7d21",
+    "packages/app/src/components/session/session-fleet-peers.ts": "e8cd9598e7416e4f1d882f40c846e9d5e26914c41e84189b14bb477ee7995e66",
+    "packages/app/src/components/session/session-header.tsx": "22dbba2406023bca0e72553aa468b06507e5ccad2f521e6ce1e9d1c1c297d238",
     "packages/app/src/components/session/session-new-view.tsx": "9510a4f550a3f0d4791e98e8025666f09d70a60fb66f193e48ee61feddae5a57",
     "packages/app/src/components/session/session-preview-tab.tsx": "d3a210598d181c0aa29e9f3b5db3cd691169f3ee467001313a3d9a24bee93dbe",
     "packages/app/src/components/session/session-preview-tabs.test.ts": "773fc0116c5f61302eaa4a09fd5f91e6b26dee978c89e29c21714243ae3a5653",
@@ -891,10 +893,10 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-09-24T03:35:03.529Z",
+  "extracted_at": "2026-09-24T12:56:52.355Z",
   "per_package": {
     "packages/app": {
-      "A": 199,
+      "A": 201,
       "M": 156,
       "D": 0
     },
@@ -940,7 +942,7 @@
     }
   },
   "counts": {
-    "overlay_total": 869,
+    "overlay_total": 871,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1578,6 +1580,8 @@
     "packages/app/src/components/session/preview-human-write-gate.ts": "A",
     "packages/app/src/components/session/session-chats-dropdown.test.ts": "A",
     "packages/app/src/components/session/session-context-tab.tsx": "M",
+    "packages/app/src/components/session/session-fleet-peers.test.ts": "A",
+    "packages/app/src/components/session/session-fleet-peers.ts": "A",
     "packages/app/src/components/session/session-header.tsx": "M",
     "packages/app/src/components/session/session-new-view.tsx": "M",
     "packages/app/src/components/session/session-preview-tab.tsx": "A",
