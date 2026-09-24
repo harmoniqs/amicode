@@ -216,7 +216,7 @@
     "packages/app/src/pages/new-session-landing.ts": "528d27cd5d441b521674328fb7812fb2acf77233e9e436d081c98ce611e8b268",
     "packages/app/src/pages/new-session.tsx": "c060bbb15569b6da2f67146e6af0879ccb5444345df03dbc2f9b39cb98b9db78",
     "packages/app/src/pages/overlay-content-hash.test.ts": "aa208098213522dcde42434408afe9c8641fad663f44a58c316922dbd0da2f5c",
-    "packages/app/src/pages/session.tsx": "e502d2274c351612aacbed4dbee49e8692da1fb6b3411fbd1491499737772a39",
+    "packages/app/src/pages/session.tsx": "a76358b41641c2568b0904b4260f9d0e0b5747424751859e48957a5b32c46d67",
     "packages/app/src/utils/amicode-bridge.ts": "5104a04c7822f80dc0c564619e7dd2d850ba50035dbc86ea875604ecd97df05f",
     "packages/app/src/utils/amicode-bug-report.test.ts": "b1bbf49230ff3aa6d1a43ffa9165ba5a84ca4ee18a6d49f52ee5cd887c3e6444",
     "packages/app/src/utils/amicode-bug-report.ts": "d55d9cecfe17719c0d4a0ca498345c7eff6fca1de6b645e4bc3fecb40f2f4645",
@@ -692,7 +692,7 @@
     "packages/app/src/pages/session/helpers.ts": "0311f52b7cc34c2c38950512c01397e9672c89a9e61fdfa0e4696192da114f34",
     "packages/app/src/pages/session/review-tab.tsx": "3c90e6b11fad40ea19a258966c374ee12c05bd0e7891fcea561ba0b965ddc9f5",
     "packages/app/src/pages/session/session-panel-width.test.ts": "9482afba7fbce254cbbd21ef885e9e9620b981616681635376f466478f611155",
-    "packages/app/src/pages/session/session-panel-width.ts": "02ee3a02ed78db2eac47c2528055cf78aef95f389641e929ddc56c17471dcbe2",
+    "packages/app/src/pages/session/session-panel-width.ts": "654f84b2b43d9e2b0d5f021a1f859d69fe9ee579c88039a492dd3c645d087bea",
     "packages/app/src/pages/session/session-side-panel-structure.test.ts": "b2d1d007d9200d0ac4a0889e45c2dbe57a324a10cb26ae9ab8f420d3c890402b",
     "packages/app/src/pages/session/session-side-panel.tsx": "b295340d9a39ba37c9e025d6360669d2a879284c4e60df795b7902c5a4cef3fc",
     "packages/app/src/pages/session/terminal-panel-v2.tsx": "68dad9307f1d2abf3ff9248e451bd08005acf01ddc46b30a6d01b58f4a90dce0",
@@ -873,7 +873,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-09-24T04:46:38.771Z",
+  "extracted_at": "2026-09-24T20:34:57.925Z",
   "per_package": {
     "packages/app": {
       "A": 186,

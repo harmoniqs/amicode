@@ -19,15 +19,19 @@ export function clampSessionPanelWidth(input: { width: number; available: number
 }
 
 // amicode#105: the Work Column owns a bounded width of its own. The pre-fix
-// philosophy (above) let the review pane take everything the chat left behind
+// philosophy (above) let the review pane take whatever the chat left behind
 // — a wide monitor squished the chat into the left margin. Now the column is
 // fixed-width (default 320 — DEFAULT_PANEL_COLUMN_WIDTH — user-resizable
 // within these bounds) and the CHAT is the flex remainder.
 export const WORK_COLUMN_WIDTH_MIN = 330
 
-/** The column may never take more than 60% of the measured row. */
+/** Minimum chat width before it collapses entirely (#1434). */
+export const CHAT_COLLAPSE_THRESHOLD = 200
+
+/** The column may expand to fill the full row — the chat collapses when
+ *  squeezed below CHAT_COLLAPSE_THRESHOLD (#1434). */
 export function workColumnWidthMax(available: number) {
-  return Math.max(WORK_COLUMN_WIDTH_MIN, Math.floor(available * 0.6))
+  return Math.max(WORK_COLUMN_WIDTH_MIN, available)
 }
 
 /** `available` is undefined until the layout row is first measured; render the
