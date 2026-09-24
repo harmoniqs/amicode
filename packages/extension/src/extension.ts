@@ -1416,6 +1416,26 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       // #1447 (W2): this machine's stable id — flips the fleet-sessions route
       // to the machine-keyed N-peer projection (undefined → legacy 2-source).
       localMachineId: resolveLocalMachineId(),
+      // #1522 (ADR 0033 decision A): the real focus snapshot provider for the
+      // SSE fan-in connect frame. Adapts the fleet_focus.ts UI-level store into
+      // the structural getFocus interface the wiring needs. The UI store has
+      // `focused`/`isHome`/`scopedMachineId` — this closure computes `absent`
+      // from `availablePeers` at call time (LATE, per connect).
+      focusStore: {
+        getFocus(availablePeers?: ReadonlySet<string>) {
+          const mid = fleetFocusStore.scopedMachineId;
+          if (mid === undefined) {
+            return { machineId: undefined, isHome: true, absent: false };
+          }
+          const absent = availablePeers !== undefined && !availablePeers.has(mid);
+          return {
+            machineId: mid,
+            isHome: false,
+            absent,
+            ...(absent ? { reason: "peer-unavailable" } : {}),
+          };
+        },
+      },
     });
     amicodeService = serviceBoot ?? undefined;
     ctx.subscriptions.push(amicodeServiceDisposal(serviceBoot));
@@ -1733,6 +1753,23 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         // #1447 (W2): this machine's stable id — flips the fleet-sessions route
         // to the machine-keyed N-peer projection (undefined → legacy 2-source).
         localMachineId: resolveLocalMachineId(),
+        // #1522 (ADR 0033 decision A): the real focus snapshot provider (same
+        // adapter as the primary boot path above).
+        focusStore: {
+          getFocus(availablePeers?: ReadonlySet<string>) {
+            const mid = fleetFocusStore.scopedMachineId;
+            if (mid === undefined) {
+              return { machineId: undefined, isHome: true, absent: false };
+            }
+            const absent = availablePeers !== undefined && !availablePeers.has(mid);
+            return {
+              machineId: mid,
+              isHome: false,
+              absent,
+              ...(absent ? { reason: "peer-unavailable" } : {}),
+            };
+          },
+        },
       });
       amicodeService = adoptedServiceBoot ?? undefined;
       ctx.subscriptions.push(amicodeServiceDisposal(adoptedServiceBoot));

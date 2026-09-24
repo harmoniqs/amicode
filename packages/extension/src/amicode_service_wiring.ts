@@ -162,6 +162,15 @@ export interface AmicodeServiceWiringOptions {
    *  provider (#1446). Absent → no provider is built → the fleet-sessions route
    *  keeps serving the legacy 2-source projection, byte-identical. */
   localMachineId?: string;
+  /** #1522 (ADR 0033 decision A): the fleet focus store, providing the real
+   *  focus snapshot for the SSE fan-in connect frame. When present and the
+   *  fleet plane is armed, a `focusSnapshot` closure is threaded into
+   *  `createAmicodeService`'s fleet options so the aggregator emits a REAL
+   *  focus frame (not the named-empty default). The store is created in
+   *  `extension.ts`; this module reads it through this structural interface. */
+  focusStore?: {
+    getFocus(availablePeers?: ReadonlySet<string>): import("./amicode_service/fleet_focus_store").FocusState;
+  };
 }
 
 /**
@@ -275,6 +284,23 @@ export async function startAmicodeService(
         ...(opts.localMachineId !== undefined && opts.localMachineId.trim() !== ""
           ? { fleetPeers: buildFleetPeerProvider({ localMachineId: opts.localMachineId }) }
           : {}),
+        // #1522 (ADR 0033 decision A): wire the real focus snapshot provider so
+        // the SSE fan-in connect frame carries real focus data. The closure reads
+        // the extension.ts-owned FleetFocusStore at call time (LATE, per connect).
+        // FocusState.machineId → FocusSnapshot.focusedMachineId (the only name
+        // difference). Absent focusStore → no provider → the aggregator's
+        // named-empty fallback (the pre-#1522 default, byte-identical).
+        ...(opts.focusStore !== undefined ? {
+          focusSnapshot: (): import("./amicode_service/sse_fanin_aggregator").FocusSnapshot | undefined => {
+            const state = opts.focusStore!.getFocus();
+            return {
+              focusedMachineId: state.machineId,
+              isHome: state.isHome,
+              absent: state.absent,
+              ...(state.reason ? { reason: state.reason } : {}),
+            };
+          },
+        } : {}),
       };
     }
     const service = createAmicodeService({

@@ -135,3 +135,29 @@ export function getFleetFocusReceiver(): FleetFocusReceiver | undefined {
   if (!singleton) singleton = createFleetFocusReceiver(window)
   return singleton
 }
+
+// ── #1522 (ADR 0033 decision A): SSE-sourced focus event dispatch ────────────
+//
+// The SSE fan-in aggregator emits `amicode.fleet.focus` as the FIRST frame on
+// every (re)connect. This function re-emits the SSE data as a window.postMessage
+// with the SAME `{source:"amicode", kind:"fleet-focus", machineId}` envelope the
+// chat_bridge uses — so the EXISTING latch catches it with zero changes.
+// This is the SECOND input to the same seed path (the chat_bridge push is the
+// first), not a new focus store.
+
+/** Dispatch an SSE-sourced `amicode.fleet.focus` event to the existing focus
+ *  latch via `window.postMessage`. If the event is NOT an `amicode.fleet.focus`
+ *  type, this is a no-op (never clobbers the latch with non-focus data). */
+export function dispatchSseFocusEvent(
+  data: { type?: string; focusedMachineId?: string; isHome?: boolean; [key: string]: unknown },
+  win: Window,
+): void {
+  if (data.type !== "amicode.fleet.focus") return
+  // Re-emit with the same envelope parseFleetFocusMessage expects:
+  //   { source: "amicode", kind: "fleet-focus", machineId }
+  // `focusedMachineId` in the SSE data maps to `machineId` on the envelope.
+  win.postMessage(
+    { source: "amicode", kind: "fleet-focus", machineId: data.focusedMachineId },
+    "*",
+  )
+}

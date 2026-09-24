@@ -24,6 +24,7 @@ import {
   createFleetFocusReceiver,
   machineOptionsFromFleetSessions,
   parseFleetFocusMessage,
+  dispatchSseFocusEvent,
   type WindowLike,
 } from "./new-session-machine-mount"
 
@@ -33,9 +34,14 @@ type Listener = (event: MessageEvent) => void
  *  test drive a host `fleet-focus` down-message (the chat_bridge push W3 emits). */
 function fakeWindow() {
   const listeners = new Set<Listener>()
-  const win: WindowLike = {
+  const win: WindowLike & { postMessage(data: unknown, origin: string): void } = {
     addEventListener: (_type: string, fn: Listener) => listeners.add(fn),
     removeEventListener: (_type: string, fn: Listener) => listeners.delete(fn),
+    // #1522: dispatchSseFocusEvent uses postMessage to re-emit focus data.
+    // In the real browser postMessage triggers message event listeners; this
+    // fake does the same synchronously for test determinism.
+    postMessage: (data: unknown, _origin: string) =>
+      listeners.forEach((fn) => fn({ data } as MessageEvent)),
   }
   return {
     win,
@@ -217,5 +223,54 @@ describe("createFleetFocusReceiver — latch + subscribe (best-effort, re-read o
     expect(bridge.listenerCount()).toBe(1)
     receiver.dispose()
     expect(bridge.listenerCount()).toBe(0)
+  })
+})
+
+// ── #1522 AC5 — SSE-sourced focus event feeds the existing latch ────────────
+describe("#1522 AC5 — SSE focus frame seeds the picker through the existing latch", () => {
+  test("dispatchSseFocusEvent re-emits focused-peer data as a chat_bridge envelope the latch catches", () => {
+    const bridge = fakeWindow()
+    const receiver = createFleetFocusReceiver(bridge.win)
+
+    // Simulate the SSE amicode.fleet.focus event data (the JSON payload the
+    // aggregator writes into the `data:` line of the SSE frame).
+    dispatchSseFocusEvent(
+      { type: "amicode.fleet.focus", focusedMachineId: "studio", isHome: false, absent: false },
+      bridge.win as unknown as Window,
+    )
+
+    expect(receiver.current()).toBe("studio")
+    receiver.dispose()
+  })
+
+  test("dispatchSseFocusEvent with home focus (no machineId) → latch returns undefined (home)", () => {
+    const bridge = fakeWindow()
+    const receiver = createFleetFocusReceiver(bridge.win)
+
+    dispatchSseFocusEvent(
+      { type: "amicode.fleet.focus", isHome: true, absent: false },
+      bridge.win as unknown as Window,
+    )
+
+    expect(receiver.current()).toBeUndefined()
+    receiver.dispose()
+  })
+
+  test("dispatchSseFocusEvent with non-focus event is a no-op (latch not clobbered)", () => {
+    const bridge = fakeWindow()
+    const receiver = createFleetFocusReceiver(bridge.win)
+
+    // Pre-seed with a real focus
+    bridge.drive({ source: "amicode", kind: "fleet-focus", machineId: "studio" })
+    expect(receiver.current()).toBe("studio")
+
+    // A non-focus SSE event should be ignored
+    dispatchSseFocusEvent(
+      { type: "session.updated", id: "s1" } as any,
+      bridge.win as unknown as Window,
+    )
+
+    expect(receiver.current()).toBe("studio") // unchanged
+    receiver.dispose()
   })
 })
