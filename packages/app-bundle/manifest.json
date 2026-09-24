@@ -361,7 +361,7 @@
     "packages/opencode/test/server/workspace-routing.test.ts": "2574731ac379c540f450edc15f8750ac5360e8c33b4a0dad7c61e8eb686137bb",
     "packages/opencode/test/session/adversarial-e2e.test.ts": "1b471a69223d040c5d5f4f2ee99c2daa6df56bdf11679b65d902c15bedac3e80",
     "packages/opencode/test/session/business-record.test.ts": "7857094479408bcfd6ea8d9f5b425c6384bcf8490f930674bc1c203e82782d75",
-    "packages/opencode/test/session/instruction.test.ts": "8b4d954eb10afa852a671e6c0a94d19604deacc9a62f9c3651c7456cc32736b7",
+    "packages/opencode/test/session/instruction.test.ts": "06e1b371a08c7d07ed7688b997eb43ca9957ccd07936f601797d7f04a2bf0ab7",
     "packages/opencode/test/session/llm-native-recorded.test.ts": "7139b58569af0172862af521e8f8d7a78132f40f06dcceb4baf8ca3a2f07d3bd",
     "packages/opencode/test/session/message-v2.test.ts": "3a45b7b884a33ee48daf533ac84bf5c0b34d01845b8c1c4cc7e68de88b063ed1",
     "packages/opencode/test/session/mutation.test.ts": "ccb82b6858ac097d2af09a94497d05f6a0ff843b928a69e763fdb510905a10cd",
@@ -891,7 +891,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-09-24T00:42:49.371Z",
+  "extracted_at": "2026-09-24T01:36:39.332Z",
   "per_package": {
     "packages/app": {
       "A": 199,

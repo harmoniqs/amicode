@@ -282,14 +282,20 @@ describe("Instruction.systemPaths multi-root", () => {
 
   it.live("does not walk past a secondary directory into unrelated parent directories", () =>
     Effect.gen(function* () {
-      // Create two independent git-initialized project directories.
-      // Place an AGENTS.md above the secondary's git root — it should NOT be discovered
-      // because the secondary's findUp stops at the secondary root itself.
+      // Place an AGENTS.md above the secondary's boundary — it should NOT be discovered
+      // because findUp for a secondary directory stops at the directory itself (stop=dir),
+      // never walking up into unrelated parents.
       const primary = yield* tmpdirScoped({ git: true })
-      const secondary = yield* tmpdirScoped({ git: true })
       const fs = yield* FileSystem.FileSystem
-      // Put AGENTS.md above the secondary's git root
-      const aboveSecondary = path.dirname(secondary)
+      // Nest the secondary inside its OWN scoped parent, so the "above" AGENTS.md lands
+      // in a scoped (auto-cleaned) directory. Writing to path.dirname(tmpdirScoped())
+      // === os.tmpdir() would leak an UNSCOPED file into the shared $TMPDIR that both
+      // never gets cleaned up AND poisons every sibling test that nests tmp dirs under it.
+      const secondaryParent = yield* tmpdirScoped()
+      const secondary = path.join(secondaryParent, "secondary")
+      yield* fs.makeDirectory(secondary, { recursive: true })
+      // Put AGENTS.md above the secondary's boundary (inside the scoped, auto-cleaned parent).
+      const aboveSecondary = secondaryParent
       yield* fs.writeFileString(path.join(aboveSecondary, "AGENTS.md"), "# Should NOT be found")
 
       yield* Effect.gen(function* () {
