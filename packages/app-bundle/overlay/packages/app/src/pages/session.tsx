@@ -27,7 +27,6 @@ import { FileProvider, selectionFromLines, useFile, type FileSelection, type Sel
 import { createStore } from "solid-js/store"
 import type { SessionReviewLineComment } from "@opencode-ai/session-ui/session-review"
 import { ResizeHandle } from "@opencode-ai/ui/resize-handle"
-import { Icon } from "@opencode-ai/ui/icon"
 import { Spinner } from "@opencode-ai/ui/spinner"
 import { isScrollKeyTarget, scrollKey, scrollKeyOwner } from "@opencode-ai/ui/scroll-view"
 import { Tabs } from "@opencode-ai/ui/tabs"
@@ -2793,7 +2792,7 @@ export default function Page() {
             title={`Show Chat (${navigator.platform.includes("Mac") ? "⌘" : "Ctrl"}⇧M)`}
             onClick={toggleMaximize}
           >
-            <Icon name="chevron-right" size="small" class="text-text-dimmed" />
+            <svg width="16" height="16" viewBox="0 0 20 20" fill="none" class="text-text-dimmed"><path d="M7.5 15L12.5 10L7.5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </button>
         </Show>
 
@@ -2929,11 +2928,10 @@ export default function Page() {
                   }
                   onClick={toggleMaximize}
                 >
-                  <Icon
-                    name={chatEffectivelyCollapsed() ? "collapse" : "expand"}
-                    size="small"
-                    class="text-text-dimmed"
-                  />
+                  {chatEffectivelyCollapsed()
+                    ? <svg width="16" height="16" viewBox="0 0 20 20" fill="none" class="text-text-dimmed"><path d="M12.5 15L7.5 10L12.5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    : <svg width="16" height="16" viewBox="0 0 20 20" fill="none" class="text-text-dimmed"><path d="M7.5 15L12.5 10L7.5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  }
                 </button>
               </Show>
               <Show when={isDesktop() && (desktopV2ReviewOpen() || desktopFileTreeOpen())}>
