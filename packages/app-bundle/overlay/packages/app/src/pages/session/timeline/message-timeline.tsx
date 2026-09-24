@@ -99,7 +99,7 @@ import { notifySessionTabsRemoved } from "@/components/titlebar-session-events"
 import { sessionTitle } from "@/utils/session-title"
 import { scheduleConnectedMeasure } from "./measure"
 import { observeElementOffsetReconnectAware } from "./observe-element-offset"
-import { smoothScrollInterpolate, SMOOTH_SCROLL_DURATION } from "./smooth-scroll"
+import { smoothScrollInterpolate, SMOOTH_SCROLL_DURATION, shouldInstantScroll } from "./smooth-scroll"
 import { createTimelineProjection } from "./projection"
 import { MessageComment, SummaryDiff, TimelineRow, TimelineRowMap } from "./rows"
 import { filterVirtualIndexes } from "./virtual-items"
@@ -788,7 +788,8 @@ export function MessageTimeline(props: {
     // amicode: large delta → instant jump. Animating across more than 1.5×
     // the viewport chases a moving target while the virtualizer is still
     // measuring off-screen items, producing visible jank.
-    if (Math.abs(target - current) > el.clientHeight * 1.5) {
+    if (shouldInstantScroll(target, current, el.clientHeight)) {
+      cancelSmoothScroll()
       virtualizer.scrollToEnd()
       return
     }
