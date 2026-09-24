@@ -196,7 +196,7 @@ The one chat server that owns the fleet's Session store — the single writer ev
 _Avoid_: master, primary, host
 
 **Fleet**:
-The user's machines acting as one logical studio: exactly one Canonical Server plus zero-or-more clients, all attaching to the same Session store.
+The user's machines acting as one logical studio. Two topologies, both "the Fleet": the **single-store** shape — exactly one Canonical Server plus zero-or-more clients, all attaching to the same Session store — and the **independent-peer** shape (ADR 0031/0034), where **Peer studios** each own their own Sessions and reach each other by Observe/Control rather than a shared writer. A keeper/canonical coordinate owns roster and bootstrap authority in both.
 _Avoid_: mesh, cluster
 
 **Go Standalone**:
@@ -230,6 +230,30 @@ _Avoid_: keepalive, lock, busy flag
 **Grace window**:
 The interval after an extension-host teardown during which a detached standalone server stays alive awaiting re-adoption. On expiry with no adoption and no active-work pin the server self-exits and deletes its handshake; a reload re-adopts well within it, a genuine quit does not.
 _Avoid_: timeout, linger period
+
+**Peer studio**:
+An independent serving peer whose Sessions it owns, observed or controlled from another machine's window. The independent-peer complement to the single-store Canonical Server: Peer studios do **not** share one Session store — each owns its own, and cross-machine access is by Observe/Control, never a shared writer (ADR 0031, 0034).
+_Avoid_: remote server (that is transport), replica, node
+
+**Observe (peer observation)**:
+Read-only visibility into a Peer studio's Sessions from another machine — its session list, one session's history and events. Unlocked by **trust** (a reader token seeded at Enroll), not by a Control grant. A peer-owned session's reads route to the owner with the owner's own reader token; a write never routes on the observation path (#1537).
+_Avoid_: view, mirror, follow, spectate
+
+**Control (peer control)**:
+The authority to *drive* a Peer studio's Session from another machine — send prompts, archive, delete. A strictly higher unlock than Observe, carried by a persisted per-peer **Control grant** (`control` scope) and re-armed each session (never auto-restored). Fails closed: no grant, revoked, transport-down, or observe-only → the write is denied, never served locally.
+_Avoid_: write access, remote admin, takeover
+
+**Enable control**:
+The explicit, per-session act that arms Control on a peer. For a **self-owned** peer with verified management access it is one click on the controlling machine, authorized at Enroll — no target-side prompt, since a headless peer has no window. For a **shared** peer it is the far side of a request→approve handshake routed to the peer's Lifecycle-admin authority.
+_Avoid_: grant (that is the record), connect, claim
+
+**Lifecycle-admin authority**:
+The machine/operator that may mint, revoke, and re-admit a Peer studio's grants — the `lifecycle-admin` scope, **not** a superset of Control. Seeded at Enroll (the enroller is recorded as the peer's `authorityIdentityKey`), so a headless peer's Control can be approved from a UI-bearing machine; the peer itself only *enforces* presented tokens, never rendering approval.
+_Avoid_: owner, root, keeper (keeper is roster/bootstrap coordination, a different authority)
+
+**Driving**:
+The live state in which one window is authoring turns on a Peer studio's Session under active Control, marked by a persistent "driving `<peer>`" banner so control is never ambient.
+_Avoid_: remote session, controlling (as a noun), piloting
 
 ### Surfaces
 
