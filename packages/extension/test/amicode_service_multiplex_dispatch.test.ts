@@ -13,8 +13,15 @@
 //   AC3 — ResolvedTarget carries a distinct unreachable/degraded variant (owner
 //         known, getUrl() undefined) NOT conflated with the keyless/local
 //         undefined.
-//   AC4 — the local path stays on EngineProxy; the multiplexer's SSE relay is
-//         NOT wired into dispatch (structural guard).
+//   AC4 — the local path stays on EngineProxy; the multiplexer's per-session SSE
+//         PULL relay is NOT wired into dispatch (structural guard). AMENDED by
+//         #1519 AC5: the /event FAN-IN relay is now wired, but ONLY behind the
+//         flag — the flag-OFF "SSE relay not reachable" invariant is preserved
+//         (re-expressed as structural flag-gating + a behavioural spy).
+//
+// #1519 (Fleet Studio wiring W1c) then wires the SSE fan-in aggregator into the
+// /event route behind the same flag; its AC1–AC5 route-level tests live at the
+// bottom of this file (the dispatch suite is the AC4-guard's home).
 //
 // Reuses the SessionOwnerMap / PeerTransport stubs from
 // amicode_session_relay.integration.test.ts (the reuse map).
@@ -39,6 +46,14 @@ import {
   SessionOwnerMap,
   type MultiplexResolver,
 } from "../src/amicode_service/session_multiplexer";
+import {
+  SseFanInDriver,
+  type OpenUpstream,
+  type SseFanInDriverDeps,
+} from "../src/amicode_service/sse_fanin_driver";
+import type { SseFrameSource } from "../src/amicode_service/sse_fanin_aggregator";
+import { parseCompositeCursor } from "../src/amicode_service/sse_composite_cursor";
+import { peerAuthHeader } from "../src/amicode_service/merged_projection";
 import { writeAttachmentPointerFile } from "../src/amicode_service/attachment_pointer";
 import { writeKeeperPointerFile } from "../src/amicode_service/keeper_pointer";
 import { writeHubCredential, readHubCredential } from "../src/amicode_service/hub_credential";
@@ -311,12 +326,81 @@ describe("#1448 AC2 — flag ON + empty owner-map: LOCAL identity; shadows ONLY 
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
-// AC4 — local stays on EngineProxy; NO SSE crosses the multiplexer (structural)
+// AC4 (amended by #1519 AC5) — local stays on EngineProxy; the multiplexer's
+// per-session SSE PULL relay stays unwired; the /event FAN-IN relay is wired
+// ONLY behind the flag. The flag-OFF "SSE relay not reachable" guarantee is
+// PRESERVED — re-expressed (structural flag-gating + a behavioural spy), not
+// deleted.
 // ══════════════════════════════════════════════════════════════════════════════
-describe("#1448 AC4 — local path on EngineProxy; the multiplexer's SSE relay is NOT wired into dispatch", () => {
-  it("server.ts never wires the multiplexer's SSE relay into dispatch (structural source guard)", () => {
+describe("#1448 AC4 (amended by #1519 AC5) — SSE relay reachable ONLY behind the flag; flag-OFF invariant preserved", () => {
+  it("the multiplexer's per-session SSE PULL relay (openSseStream) is STILL never wired into dispatch (the enduring invariant)", () => {
     const src = readFileSync(join(__dirname, "..", "src", "amicode_service", "server.ts"), "utf8");
+    // #1519 wires the fan-in AGGREGATOR (SseFanInAggregator, via the eventFanIn
+    // seam), never the session multiplexer's openSseStream pull relay — that
+    // per-session relay stays forbidden in dispatch, exactly as #1448 required.
     expect(src.includes("openSseStream")).toBe(false);
+  });
+
+  it("#1519 amendment: the /event fan-in relay IS wired now, but EVERY dispatch reference to it is flag-gated (fleetMultiplexEnabled co-located)", () => {
+    const src = readFileSync(join(__dirname, "..", "src", "amicode_service", "server.ts"), "utf8");
+    // Use-sites of the fan-in seam (`.eventFanIn`) — EXCLUDING the FleetPlane
+    // type field declaration `eventFanIn?:` (a type, not a call).
+    const fanInUseLines = src
+      .split("\n")
+      .filter((l) => l.includes(".eventFanIn") && !l.includes("eventFanIn?:"));
+    // the amendment landed: the relay IS reachable from dispatch now (#1448
+    // forbade this outright; #1519 permits it — behind the flag).
+    expect(fanInUseLines.length).toBeGreaterThan(0);
+    // ...and every use sits in the SAME expression as the flag, so with the flag
+    // OFF the `&&` short-circuits BEFORE the relay — "not reachable when OFF"
+    // stays STRUCTURALLY provable, never just asserted.
+    for (const line of fanInUseLines) {
+      expect(line.includes("fleetMultiplexEnabled()")).toBe(true);
+    }
+  });
+
+  it("flag OFF (behavioural): a GET /event NEVER calls the fan-in relay's handle, and streams byte-identically through the engine proxy", async () => {
+    delete process.env[FLEET_MULTIPLEX_FLAG];
+    const handleSpy = vi.fn(() => false);
+    const F = sseFrame("event: message", 'data: {"z":1}', "id: 4");
+    const engine = await startSseStub([F]);
+    const server = new AmicodeServiceServer({ password: PW });
+    server.attachEngineProxy(new EngineProxy({ getUrl: () => engine.url }));
+    server.attachFleetPlane({
+      getMode: () => "engine",
+      hub: new HubProxy({ getUrl: () => undefined, credential: () => readHubCredential() }),
+      eventFanIn: { handle: handleSpy },
+    });
+    const origin = (await server.start()).toString().replace(/\/$/, "");
+    try {
+      const body = await (await fetch(`${origin}/event`, { headers: { Authorization: serverAuthHeader(PW) } })).text();
+      expect(handleSpy).not.toHaveBeenCalled(); // OFF short-circuits before the relay (structural)
+      expect(body).toBe(F); // and /event is byte-identical to today
+    } finally {
+      await server.stop();
+      await engine.stop();
+    }
+  });
+
+  it("flag ON (behavioural): the fan-in relay's handle IS consulted on /event (the mirror of the flag-OFF guard)", async () => {
+    process.env[FLEET_MULTIPLEX_FLAG] = "1";
+    const handleSpy = vi.fn(() => false); // returns false → fall through to the engine proxy
+    const engine = await startSseStub([sseFrame("data: {}", "id: 1")]);
+    const server = new AmicodeServiceServer({ password: PW });
+    server.attachEngineProxy(new EngineProxy({ getUrl: () => engine.url }));
+    server.attachFleetPlane({
+      getMode: () => "engine",
+      hub: new HubProxy({ getUrl: () => undefined, credential: () => readHubCredential() }),
+      eventFanIn: { handle: handleSpy },
+    });
+    const origin = (await server.start()).toString().replace(/\/$/, "");
+    try {
+      await (await fetch(`${origin}/event`, { headers: { Authorization: serverAuthHeader(PW) } })).text();
+      expect(handleSpy).toHaveBeenCalledTimes(1); // ON → the relay is reached (behind the flag)
+    } finally {
+      await server.stop();
+      await engine.stop();
+    }
   });
 
   it("the multiplex seam the plane exposes has NO SSE method — a resolveTarget-only object is a valid MultiplexResolver", () => {
@@ -390,6 +474,429 @@ describe("#1448 — production dispatch wiring (createAmicodeService)", () => {
       expect(keeperStub.requests.length).toBe(keeperBeforeStatus);
     } finally {
       await svc.stop();
+    }
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// #1519 (Fleet Studio wiring W1c) — wire the SSE fan-in aggregator into the
+// /event route behind AMICO_FLEET_MULTIPLEX (ADR 0033 §D1–D4). Route-level,
+// single-host, hermetic. The live cross-machine delivery is the opt-in two-peer
+// E2E; here the UPSTREAM transport is faked (an injected opener) so the REAL
+// route — dispatch → the flag-gated /event interception → the #1511 aggregator →
+// the real downstream res — is exercised deterministically.
+// ══════════════════════════════════════════════════════════════════════════════
+
+/** An SSE stub: on GET it emits a fixed frame list as text/event-stream then
+ *  ends the response (so a byte-identity read completes). Records the path,
+ *  the ?lastEventID it received (the #1264 cursor), and the Authorization. */
+interface SseStub {
+  url: string;
+  requests: Array<{ path: string; lastEventID: string | null; auth?: string }>;
+  stop(): Promise<void>;
+}
+function startSseStub(frames: string[]): Promise<SseStub> {
+  const requests: SseStub["requests"] = [];
+  const server = http.createServer((req, res) => {
+    const u = new URL(req.url ?? "/", "http://stub");
+    requests.push({
+      path: u.pathname,
+      lastEventID: u.searchParams.get("lastEventID"),
+      auth: typeof req.headers.authorization === "string" ? req.headers.authorization : undefined,
+    });
+    res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
+    for (const f of frames) res.write(f);
+    res.end();
+  });
+  return new Promise((resolve) => {
+    server.listen(0, "127.0.0.1", () => {
+      const port = (server.address() as AddressInfo).port;
+      resolve({ url: `http://127.0.0.1:${port}`, requests, stop: () => new Promise((r) => server.close(() => r())) });
+    });
+  });
+}
+
+/** A single delimiter-inclusive SSE frame block from lines. */
+function sseFrame(...lines: string[]): string {
+  return lines.join("\n") + "\n\n";
+}
+
+/** Bounded, timeout-safe live SSE read of the downstream: pull whole frames
+ *  until `maxFrames` or the window elapses. Never hangs (the fan-in downstream
+ *  never ends on its own). Mirrors the two-peer E2E's readSseFrames. */
+async function readSseFrames(
+  url: string,
+  headers: Record<string, string>,
+  opts: { maxFrames: number; timeoutMs: number },
+): Promise<string[]> {
+  const frames: string[] = [];
+  try {
+    const res = await fetch(url, { headers, signal: AbortSignal.timeout(opts.timeoutMs) });
+    if (!res.ok || res.body === null) return frames;
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    try {
+      while (frames.length < opts.maxFrames) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let idx: number;
+        while ((idx = buf.indexOf("\n\n")) >= 0 && frames.length < opts.maxFrames) {
+          frames.push(buf.slice(0, idx + 2));
+          buf = buf.slice(idx + 2);
+        }
+      }
+    } finally {
+      try {
+        await reader.cancel();
+      } catch {
+        /* already closed */
+      }
+    }
+  } catch {
+    /* timeout / transport blip — return whatever whole frames we got */
+  }
+  return frames;
+}
+
+// ── AC1 — route-level flag-OFF byte-identity (WRITTEN FIRST; the #1264 guard) ──
+describe("#1519 AC1 — /event route flag-OFF byte-identity (#1264 regression guard)", () => {
+  it("flag OFF: /event streams frame-for-frame through the engine proxy, exactly as today", async () => {
+    delete process.env[FLEET_MULTIPLEX_FLAG];
+    const F1 = sseFrame("event: message", 'data: {"a":1}', "id: 1");
+    const F2 = sseFrame("event: message", 'data: {"b":2}', "id: 2");
+    const engine = await startSseStub([F1, F2]);
+    const server = new AmicodeServiceServer({ password: PW });
+    server.attachEngineProxy(new EngineProxy({ getUrl: () => engine.url }));
+    const origin = (await server.start()).toString().replace(/\/$/, "");
+    try {
+      // the stub ends the response, so the full body is finite: assert BYTE identity
+      const body = await (await fetch(`${origin}/event`, { headers: { Authorization: serverAuthHeader(PW) } })).text();
+      expect(body).toBe(F1 + F2); // no id rewrite, no namespacing, no composite — verbatim
+      expect(engine.requests[0].path).toBe("/event");
+    } finally {
+      await server.stop();
+      await engine.stop();
+    }
+  });
+
+  it("flag ON but no fleet plane (fleet-of-one): /event is STILL byte-identical — the flag alone never perturbs a single-machine stream", async () => {
+    process.env[FLEET_MULTIPLEX_FLAG] = "1";
+    expect(fleetMultiplexEnabled()).toBe(true);
+    const F1 = sseFrame("event: message", 'data: {"x":1}', "id: 7");
+    const engine = await startSseStub([F1]);
+    const server = new AmicodeServiceServer({ password: PW }); // no fleet plane → no eventFanIn seam
+    server.attachEngineProxy(new EngineProxy({ getUrl: () => engine.url }));
+    const origin = (await server.start()).toString().replace(/\/$/, "");
+    try {
+      const body = await (await fetch(`${origin}/event`, { headers: { Authorization: serverAuthHeader(PW) } })).text();
+      expect(body).toBe(F1);
+    } finally {
+      await server.stop();
+      await engine.stop();
+    }
+  });
+
+  it("flag OFF: the #1264 ?lastEventID cursor rides through to the engine UNCHANGED (opaque, frame-for-frame path preserved)", async () => {
+    delete process.env[FLEET_MULTIPLEX_FLAG];
+    const engine = await startSseStub([sseFrame("data: {}", "id: 9")]);
+    const server = new AmicodeServiceServer({ password: PW });
+    server.attachEngineProxy(new EngineProxy({ getUrl: () => engine.url }));
+    const origin = (await server.start()).toString().replace(/\/$/, "");
+    try {
+      await (await fetch(`${origin}/event?lastEventID=42`, { headers: { Authorization: serverAuthHeader(PW) } })).text();
+      expect(engine.requests[0].lastEventID).toBe("42"); // the opaque cursor reaches the engine verbatim
+    } finally {
+      await server.stop();
+      await engine.stop();
+    }
+  });
+});
+
+// ── fan-in test scaffolding (AC2–AC5): an injected upstream opener drives the
+//    #1511 aggregator CORE deterministically; the downstream is a REAL /event. ──
+
+/** A controllable frame source: `push(frame)` feeds a frame; `end()` ends it.
+ *  Stays OPEN between pushes (a real SSE stream never ends on its own), so the
+ *  fan-in connection persists until the downstream closes or the arm is closed. */
+interface Ctl {
+  push(frame: string): void;
+  end(): void;
+  closed(): boolean;
+  source: SseFrameSource;
+}
+function controllableSource(preload: string[] = []): Ctl {
+  const queue: string[] = [...preload];
+  const waiters: Array<(v: string | null) => void> = [];
+  let ended = false;
+  let closedByDriver = false;
+  const drainNull = () => {
+    let w: ((v: string | null) => void) | undefined;
+    while ((w = waiters.shift())) w(null);
+  };
+  return {
+    push(frame: string) {
+      if (ended) return;
+      const w = waiters.shift();
+      if (w) w(frame);
+      else queue.push(frame);
+    },
+    end() {
+      ended = true;
+      drainNull();
+    },
+    closed() {
+      return closedByDriver;
+    },
+    source: {
+      next(): Promise<string | null> {
+        const f = queue.shift();
+        if (f !== undefined) return Promise.resolve(f);
+        if (ended) return Promise.resolve(null);
+        return new Promise((resolve) => waiters.push(resolve));
+      },
+      close() {
+        closedByDriver = true;
+        ended = true;
+        drainNull();
+      },
+    },
+  };
+}
+
+/** Read up to `maxFrames` whole SSE frames from an ALREADY-fetched Response
+ *  (fetch-then-push-then-read). The fetch's own AbortSignal.timeout is the hang
+ *  guard: a stalled read rejects and returns whatever whole frames arrived. */
+async function drainSseFrames(res: Response, opts: { maxFrames: number }): Promise<string[]> {
+  const frames: string[] = [];
+  if (res.body === null) return frames;
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  try {
+    while (frames.length < opts.maxFrames) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let idx: number;
+      while ((idx = buf.indexOf("\n\n")) >= 0 && frames.length < opts.maxFrames) {
+        frames.push(buf.slice(0, idx + 2));
+        buf = buf.slice(idx + 2);
+      }
+    }
+  } catch {
+    /* abort / transport end — return the whole frames we got */
+  } finally {
+    try {
+      await reader.cancel();
+    } catch {
+      /* already closed */
+    }
+  }
+  return frames;
+}
+
+/** An engine-armed (non-client) fleet plane in "engine" mode carrying ONLY the
+ *  fan-in seam — so `/event` reaches the flag-gated interception, and every
+ *  other path is untouched. getMode "engine" means a DECLINED fan-in falls to
+ *  the engine proxy (byte-identical), never a fleet-hub detour. */
+function fanInPlane(driver: SseFanInDriver): FleetPlane {
+  return {
+    getMode: () => "engine",
+    hub: new HubProxy({ getUrl: () => undefined, credential: () => readHubCredential() }),
+    eventFanIn: driver,
+  };
+}
+
+/** Build a driver with an injected opener that records each open and returns a
+ *  controllable source per namespace, plus sane owner/token/reachability
+ *  defaults. `owners` seeds the SessionOwnerMap with remote-owned sessions. */
+function makeFanInDriver(opts: {
+  ownerMap: SessionOwnerMap;
+  opened: Array<{ namespace: string; url: string; authHeader?: string; lastEventId?: string }>;
+  arms: Map<string, Ctl>;
+  preload?: Record<string, string[]>;
+  reachable?: (id: string) => boolean;
+  overrides?: Partial<SseFanInDriverDeps>;
+}): SseFanInDriver {
+  const openUpstream: OpenUpstream = (r) => {
+    const c = controllableSource(opts.preload?.[r.namespace] ?? []);
+    opts.arms.set(r.namespace, c);
+    opts.opened.push({ namespace: r.namespace, url: r.url, authHeader: r.authHeader, lastEventId: r.lastEventId });
+    return c.source;
+  };
+  return new SseFanInDriver({
+    ownerMap: opts.ownerMap,
+    localMachineId: "macbook",
+    localEventUrl: () => "http://local.invalid",
+    peerBaseUrl: (id) => `http://${id}.invalid`,
+    peerToken: (id) => ({ ok: true, credential: { baseUrl: `http://${id}.invalid`, token: `tok-${id}` } }),
+    reachable: opts.reachable ?? (() => true),
+    openUpstream,
+    reconcileMs: 1_000_000, // tests drive reconcile() directly — no timer races
+    ...opts.overrides,
+  });
+}
+
+/** Seed a SessionOwnerMap with remote-owned sessions. */
+function ownerMapWith(pairs: Array<[string, string]>): SessionOwnerMap {
+  const m = new SessionOwnerMap();
+  m.update(pairs.map(([id, owner]) => ({ id, amicode_owner: { owner_machine_id: owner, owner_name: owner, is_local: false } })));
+  return m;
+}
+
+const READ_TIMEOUT = 5000;
+
+// ── AC2 — flag-ON fan-in: local arm + one authed upstream per owner-peer ──────
+describe("#1519 AC2 — flag-ON fan-in onto the single downstream /event", () => {
+  it("opens the local arm + one authed upstream SSE per owner-peer, streaming the namespaced composite onto one res", async () => {
+    process.env[FLEET_MULTIPLEX_FLAG] = "1";
+    const ownerMap = ownerMapWith([["s1", "studio"]]);
+    const opened: Array<{ namespace: string; url: string; authHeader?: string; lastEventId?: string }> = [];
+    const arms = new Map<string, Ctl>();
+    const driver = makeFanInDriver({
+      ownerMap,
+      opened,
+      arms,
+      preload: {
+        local: [sseFrame("event: message", 'data: {"src":"local"}', "id: 5")],
+        studio: [sseFrame("event: message", 'data: {"src":"studio"}', "id: 9")],
+      },
+    });
+    const server = new AmicodeServiceServer({ password: PW });
+    server.attachFleetPlane(fanInPlane(driver));
+    const origin = (await server.start()).toString().replace(/\/$/, "");
+    try {
+      const res = await fetch(`${origin}/event`, {
+        headers: { Authorization: serverAuthHeader(PW) },
+        signal: AbortSignal.timeout(READ_TIMEOUT),
+      });
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toContain("text/event-stream");
+      // handle() ran → local + studio arms opened; the peer authed with ITS OWN token
+      expect(opened.map((o) => o.namespace).sort()).toEqual(["local", "studio"]);
+      const studio = opened.find((o) => o.namespace === "studio")!;
+      expect(studio.authHeader).toBe(peerAuthHeader("tok-studio"));
+      // the origin's local/hub credential (PW) is NEVER forwarded to a peer upstream
+      expect(studio.authHeader?.includes(PW)).toBe(false);
+
+      const frames = await drainSseFrames(res, { maxFrames: 2 });
+      const text = frames.join("");
+      // both arms fanned onto the ONE downstream response
+      expect(text).toContain('"src":"local"');
+      expect(text).toContain('"src":"studio"');
+      // the LAST frame carries the full composite id (round-trippable, §D3)
+      const ids = [...text.matchAll(/^id: (.+)$/gm)].map((m) => m[1]);
+      const composite = parseCompositeCursor(ids[ids.length - 1]);
+      expect(composite.get("local")).toBe("5");
+      expect(composite.get("studio")).toBe("9");
+    } finally {
+      await server.stop();
+    }
+  });
+});
+
+// ── AC3 — arm lifecycle: newly-owned arm opens; a lost peer's arm closes + a
+//    honest comment frame; the downstream connection is never dropped ─────────
+describe("#1519 AC3 — live arm lifecycle honours the SessionOwnerMap", () => {
+  it("a newly-owned peer's arm opens; a peer that goes dark closes + emits the honest comment, without dropping the downstream", async () => {
+    process.env[FLEET_MULTIPLEX_FLAG] = "1";
+    const ownerMap = ownerMapWith([["s1", "studio"]]);
+    const dark = new Set<string>(); // peers whose transport has gone dark
+    const opened: Array<{ namespace: string; url: string; authHeader?: string; lastEventId?: string }> = [];
+    const arms = new Map<string, Ctl>();
+    const driver = makeFanInDriver({ ownerMap, opened, arms, reachable: (id) => !dark.has(id) });
+    const server = new AmicodeServiceServer({ password: PW });
+    server.attachFleetPlane(fanInPlane(driver));
+    const origin = (await server.start()).toString().replace(/\/$/, "");
+    try {
+      const res = await fetch(`${origin}/event`, {
+        headers: { Authorization: serverAuthHeader(PW) },
+        signal: AbortSignal.timeout(8000),
+      });
+      expect(res.status).toBe(200);
+      // initial membership: local + the one owner-peer
+      expect(opened.map((o) => o.namespace).sort()).toEqual(["local", "studio"]);
+
+      // (1) a NEWLY-OWNED peer → its arm opens live on the SAME connection.
+      ownerMap.update([
+        { id: "s1", amicode_owner: { owner_machine_id: "studio", owner_name: "studio", is_local: false } },
+        { id: "s2", amicode_owner: { owner_machine_id: "mini", owner_name: "mini", is_local: false } },
+      ]);
+      driver.reconcile();
+      expect(opened.map((o) => o.namespace)).toContain("mini");
+      expect(arms.get("studio")!.closed()).toBe(false); // studio still live
+
+      // (2) a LOST peer (owned but transport dark) → its arm closes + a honest
+      //     comment frame is emitted; the downstream stays open.
+      dark.add("studio");
+      driver.reconcile();
+      expect(arms.get("studio")!.closed()).toBe(true); // the real upstream was torn down
+
+      // (3) the downstream is NOT dropped: mini keeps flowing after studio drops.
+      arms.get("mini")!.push(sseFrame("event: message", 'data: {"src":"mini"}', "id: 3"));
+      const frames = await drainSseFrames(res, { maxFrames: 2 });
+      const text = frames.join("");
+      expect(text).toContain(": amicode.fleet source studio unavailable"); // honest, not a silent gap
+      expect(text).toContain('"src":"mini"'); // the surviving arm still delivers
+    } finally {
+      await server.stop();
+    }
+  }, 15000);
+});
+
+// ── AC4 — reconnect: the opaque composite ?lastEventID re-subscribes each
+//    upstream from its OWN resume id (D3), end-to-end through the real route ───
+describe("#1519 AC4 — reconnect resumes each upstream from its own composite cursor id", () => {
+  it("a reconnect with ?lastEventID=<composite> opens each arm from its OWN D3 resume id", async () => {
+    process.env[FLEET_MULTIPLEX_FLAG] = "1";
+    const ownerMap = ownerMapWith([["s1", "studio"], ["s2", "mini"]]);
+    const opened: Array<{ namespace: string; url: string; authHeader?: string; lastEventId?: string }> = [];
+    const arms = new Map<string, Ctl>();
+    const driver = makeFanInDriver({ ownerMap, opened, arms });
+    const server = new AmicodeServiceServer({ password: PW });
+    server.attachFleetPlane(fanInPlane(driver));
+    const origin = (await server.start()).toString().replace(/\/$/, "");
+    try {
+      const cursor = "local=5;studio=42;mini=7";
+      const res = await fetch(`${origin}/event?lastEventID=${encodeURIComponent(cursor)}`, {
+        headers: { Authorization: serverAuthHeader(PW) },
+        signal: AbortSignal.timeout(READ_TIMEOUT),
+      });
+      expect(res.status).toBe(200);
+      // each arm re-subscribed from ITS OWN resume id (D3) — not one shared scalar
+      const byNs = Object.fromEntries(opened.map((o) => [o.namespace, o.lastEventId]));
+      expect(byNs.local).toBe("5");
+      expect(byNs.studio).toBe("42");
+      expect(byNs.mini).toBe("7");
+      await res.body?.cancel().catch(() => {});
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("a bare #1264 scalar cursor resumes ONLY the local arm; peers subscribe fresh (back-compat)", async () => {
+    process.env[FLEET_MULTIPLEX_FLAG] = "1";
+    const ownerMap = ownerMapWith([["s1", "studio"]]);
+    const opened: Array<{ namespace: string; url: string; authHeader?: string; lastEventId?: string }> = [];
+    const arms = new Map<string, Ctl>();
+    const driver = makeFanInDriver({ ownerMap, opened, arms });
+    const server = new AmicodeServiceServer({ password: PW });
+    server.attachFleetPlane(fanInPlane(driver));
+    const origin = (await server.start()).toString().replace(/\/$/, "");
+    try {
+      const res = await fetch(`${origin}/event?lastEventID=99`, {
+        headers: { Authorization: serverAuthHeader(PW) },
+        signal: AbortSignal.timeout(READ_TIMEOUT),
+      });
+      expect(res.status).toBe(200);
+      const byNs = Object.fromEntries(opened.map((o) => [o.namespace, o.lastEventId]));
+      expect(byNs.local).toBe("99"); // the bare scalar is the local arm's position (#1264)
+      expect(byNs.studio).toBeUndefined(); // a scalar carries no peer position → studio subscribes fresh
+      await res.body?.cancel().catch(() => {});
+    } finally {
+      await server.stop();
     }
   });
 });
