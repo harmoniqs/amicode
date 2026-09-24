@@ -1140,6 +1140,34 @@ export function createAmicodeService(
             ...(opts.fleet.dataPlaneTimeoutMs !== undefined ? { timeoutMs: opts.fleet.dataPlaneTimeoutMs } : {}),
           }),
         );
+        // #1543 (Fleet Studio B2b, SSE fan-in seam): BESIDE the read + write
+        // planes, attach a NEW, SEPARATELY-ARMED observation `/event` fan-in
+        // driver (ADR 0034 D6 / ADR 0033 Amendment 1). It REUSES SseFanInDriver
+        // as a library — it is NOT the premium fleet-plane fan-in wire, NOT
+        // behind AMICO_FLEET_MULTIPLEX, and NOT behind the multiplexer. Armed on
+        // OBSERVATION READINESS: the driver DECLINES at zero non-local owners, so
+        // holding observe on ≥1 reachable session-owning peer (a non-local owner
+        // in the same ownerMap the read/write planes use) is exactly its takeover
+        // gate; fleet-of-one stays byte-identical BY the driver. NO focusSnapshot
+        // is wired here — fleet-of-one byte-identity holds only absent a focus
+        // provider (D6). Per-peer arms auth AS THEMSELVES with their OWN reader
+        // token (decision A); the local arm rides the app's incoming credential.
+        server.attachObservationEventPlane(
+          new SseFanInDriver({
+            ownerMap,
+            localMachineId: fleetPeers.localMachineId,
+            localEventUrl: opts.engine?.getUrl ?? ((): string | undefined => undefined),
+            peerBaseUrl: (machineId) => {
+              if (!fleetPeers.getServingPeers().some((p) => p.machineId === machineId)) return undefined;
+              const r = fleetPeers.readPeerToken(machineId);
+              return r.ok ? r.credential.baseUrl : undefined;
+            },
+            peerToken: (machineId) => {
+              const r = fleetPeers.readPeerToken(machineId);
+              return r.ok ? { ok: true, credential: r.credential } : { ok: false, reason: "absent" };
+            },
+          }),
+        );
       }
     }
   }
