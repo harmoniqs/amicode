@@ -212,7 +212,6 @@ export interface SseFanInOptions {
 
 export class SseFanInAggregator {
   private readonly sink: SseSink;
-  private readonly localMachineId: string;
   private readonly bufferBound: number;
   private readonly focusProvider?: () => FocusSnapshot | undefined;
 
@@ -233,7 +232,6 @@ export class SseFanInAggregator {
 
   constructor(opts: SseFanInOptions) {
     this.sink = opts.sink;
-    this.localMachineId = opts.localMachineId ?? "";
     this.bufferBound = opts.bufferBound ?? 256;
     this.focusProvider = opts.focusSnapshot;
   }
