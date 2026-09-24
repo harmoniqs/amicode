@@ -1,7 +1,7 @@
 # ADR 0033 — Fleet Studio: per-session SSE fan-out and lossless resume
 
-- **Status:** proposed (design gate for W1c / #1450 — **awaiting human review before any implementation issue opens**; authored by the develop-mode director during the overnight wiring campaign, PR #1455)
-- **Date:** 2026-09-23
+- **Status:** **accepted** (design gate #1450 resolved by human review 2026-09-24 — D1–D4 accepted as-is; the three open questions resolved A / A / B, see "Decision record" below; unblocks ONE implementation issue behind `AMICO_FLEET_MULTIPLEX`)
+- **Date:** 2026-09-23 (accepted 2026-09-24)
 - **Context refs:** ADR 0031 (Fleet Studio in-window multi-machine sessions — §D1 retires the single attachment pointer, which W1b/#1449 implemented), ADR 0027 (§7 event-relay seam — **consumed here**; single-origin invariant — **preserved here**), ADR 0032 (peer-trust credential — the per-peer auth this relay will need, see Open Questions), #1264 (global lossless-reconnect cursor — **generalized here**).
 - **Supersedes/blocks:** unblocks a future *implementation* issue for per-session SSE fan-out, to be opened only after this design is reviewed.
 
@@ -67,6 +67,18 @@ Requires a real fleet (deferred, human-in-the-loop, needs the Mac Studio):
 1. **Per-peer auth (ADR 0032).** `ResolvedTarget` carries no token today; W1b's request path reuses the attached hub-mint credential (H1). The upstream SSE connections in D1 need per-peer credentials (H2) before this is real cross-machine. Does the fan-in aggregator read the peer token from the peer-store per upstream, or is a hub-mediated relay credential preferable?
 2. **`GET /amicode/fleet/focus` snapshot.** W4b (#1453) noted the machine picker cannot seed on a cold webview because focus is a best-effort push with no read-back. If this design adds a fleet-state channel, exposing current focus on connect would close that gap cheaply — worth folding in or keeping separate?
 3. **Head-of-line / back-pressure** across N upstreams sharing one downstream `res`: acceptable at expected fleet sizes (2–4 machines), or does D1 need per-namespace buffering bounds?
+
+## Decision record (human review, 2026-09-24)
+
+The reviewer accepted **D1–D4 as-is** and resolved the three open questions with **robustness under a poor network connection as the stated priority**. The core resume mechanism (D2 `id:`-verbatim relay + D3 composite cursor) is the lossless-reconnect foundation and stands unchanged.
+
+1. **Per-peer auth → Option A: the aggregator reads each peer's token from the peer-store per upstream.** Each upstream SSE authenticates *as itself* (H2), matching the independent-peer topology the rest of Fleet Studio adopts (#1477–#1487). Rejected Option B (hub-mediated relay credential): it makes the hub a single trust *and* connectivity chokepoint — a degraded link to the hub would kill every peer stream at once. With A, peer connections fail independently: one dark peer never takes down another's stream or the local arm.
+
+2. **Focus snapshot → Option A: fold a focus-on-connect snapshot into the fan-in channel.** Under a flaky link the webview reconnects often; folding the current focus/picker state into the connect snapshot makes each reconnect **self-healing** (the cold-seed gap W4b flagged closes on every reconnect), rather than leaving a stale picker after a drop. The snapshot is emitted as the first frame on the `local` namespace at connect/reconnect.
+
+3. **Back-pressure → Option B: per-namespace buffering bounds (the robustness-priority choice).** Each peer namespace gets its own bounded buffer on the shared downstream `res`; an overflowing (slow/flapping) peer degrades **in isolation** and resumes from its D3 cursor on recovery, instead of head-of-line-blocking the shared response and freezing every other session (including local). This is deliberately more machinery than the ADR's "defensible at 2–4 machines" Option A, chosen because the reviewer prioritized consistent behavior on a bad connection over v1 simplicity. Buffer-overflow drops are safe precisely because D3 replays the gap on reconnect — B and the composite cursor compose into graceful degradation + lossless catch-up.
+
+**Honest boundary:** this makes a bad connection *recover correctly* (no lost/duplicated events, no one peer freezing the rest), NOT *feel instant* — a peer on a poor link still lags and catches up on reconnect. The first implementation test remains D4's fleet-of-one byte-identity guard.
 
 ## Source
 
