@@ -44,6 +44,7 @@ import {
   type MultiplexResolver,
   type SessionEntry,
 } from "./session_multiplexer";
+import { SseFanInDriver } from "./sse_fanin_driver";
 import { HubCredentialRead, mintRegistry, readHubCredential } from "./hub_credential";
 import { buildMergedProjection, buildFleetProjection, type UpstreamMode, type MergedProjection, type FleetProjection } from "./merged_projection";
 import { FleetPostureDetector, type FleetPostureTuning } from "./fleet_posture";
@@ -885,6 +886,31 @@ export function createAmicodeService(
         ownerMapFeed.start();
         server.registerCleanup(() => ownerMapFeed.stop());
       }
+      // #1519 (W1c, ADR 0033 §D1): the /event fan-in driver — wires the #1511
+      // aggregator to the app's ONE global stream behind AMICO_FLEET_MULTIPLEX
+      // (server.ts gates the call; default OFF → dispatch never invokes it, so
+      // /event is byte-identical). Built ONLY when fleetPeers is present (else
+      // there are no owner-peers to fan in and handle() would always decline).
+      // Per-peer auth reads each peer's OWN token (decision A); the local arm
+      // rides the app's incoming credential — no peer/hub token is ever sent
+      // outward, and a known remote owner never resolves to local.
+      let eventFanIn: SseFanInDriver | undefined;
+      if (fleetPeers) {
+        const peers = fleetPeers;
+        eventFanIn = new SseFanInDriver({
+          ownerMap,
+          localMachineId: peers.localMachineId,
+          localEventUrl: opts.engine?.getUrl ?? ((): string | undefined => undefined),
+          peerBaseUrl: (machineId) => {
+            const r = peers.readPeerToken(machineId);
+            return r.ok ? r.credential.baseUrl : undefined;
+          },
+          peerToken: (machineId) => {
+            const r = peers.readPeerToken(machineId);
+            return r.ok ? { ok: true, credential: r.credential } : { ok: false, reason: "absent" };
+          },
+        });
+      }
       const fleetPlaneObj: import("./server").FleetPlane = {
         getMode,
         hub: new HubProxy({
@@ -905,6 +931,7 @@ export function createAmicodeService(
         ...(keeperProxy ? { keeper: keeperProxy } : {}),
         ...(opts.fleet.peerUnreachablePointer ? { peerUnreachablePointer: opts.fleet.peerUnreachablePointer } : {}),
         multiplex: multiplexResolver,
+        ...(eventFanIn ? { eventFanIn } : {}),
       };
       server.attachFleetPlane(fleetPlaneObj);
       // #1381: create the attach lifecycle for non-client fleet machines.
