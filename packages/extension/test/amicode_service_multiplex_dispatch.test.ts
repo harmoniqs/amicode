@@ -547,12 +547,14 @@ describe("#1519 AC1 — /event route flag-OFF byte-identity (#1264 regression gu
 interface Ctl {
   push(frame: string): void;
   end(): void;
+  closed(): boolean;
   source: SseFrameSource;
 }
 function controllableSource(preload: string[] = []): Ctl {
   const queue: string[] = [...preload];
   const waiters: Array<(v: string | null) => void> = [];
   let ended = false;
+  let closedByDriver = false;
   const drainNull = () => {
     let w: ((v: string | null) => void) | undefined;
     while ((w = waiters.shift())) w(null);
@@ -568,6 +570,9 @@ function controllableSource(preload: string[] = []): Ctl {
       ended = true;
       drainNull();
     },
+    closed() {
+      return closedByDriver;
+    },
     source: {
       next(): Promise<string | null> {
         const f = queue.shift();
@@ -576,6 +581,7 @@ function controllableSource(preload: string[] = []): Ctl {
         return new Promise((resolve) => waiters.push(resolve));
       },
       close() {
+        closedByDriver = true;
         ended = true;
         drainNull();
       },
@@ -713,4 +719,53 @@ describe("#1519 AC2 — flag-ON fan-in onto the single downstream /event", () =>
       await server.stop();
     }
   });
+});
+
+// ── AC3 — arm lifecycle: newly-owned arm opens; a lost peer's arm closes + a
+//    honest comment frame; the downstream connection is never dropped ─────────
+describe("#1519 AC3 — live arm lifecycle honours the SessionOwnerMap", () => {
+  it("a newly-owned peer's arm opens; a peer that goes dark closes + emits the honest comment, without dropping the downstream", async () => {
+    process.env[FLEET_MULTIPLEX_FLAG] = "1";
+    const ownerMap = ownerMapWith([["s1", "studio"]]);
+    const dark = new Set<string>(); // peers whose transport has gone dark
+    const opened: Array<{ namespace: string; url: string; authHeader?: string; lastEventId?: string }> = [];
+    const arms = new Map<string, Ctl>();
+    const driver = makeFanInDriver({ ownerMap, opened, arms, reachable: (id) => !dark.has(id) });
+    const server = new AmicodeServiceServer({ password: PW });
+    server.attachFleetPlane(fanInPlane(driver));
+    const origin = (await server.start()).toString().replace(/\/$/, "");
+    try {
+      const res = await fetch(`${origin}/event`, {
+        headers: { Authorization: serverAuthHeader(PW) },
+        signal: AbortSignal.timeout(8000),
+      });
+      expect(res.status).toBe(200);
+      // initial membership: local + the one owner-peer
+      expect(opened.map((o) => o.namespace).sort()).toEqual(["local", "studio"]);
+
+      // (1) a NEWLY-OWNED peer → its arm opens live on the SAME connection.
+      ownerMap.update([
+        { id: "s1", amicode_owner: { owner_machine_id: "studio", owner_name: "studio", is_local: false } },
+        { id: "s2", amicode_owner: { owner_machine_id: "mini", owner_name: "mini", is_local: false } },
+      ]);
+      driver.reconcile();
+      expect(opened.map((o) => o.namespace)).toContain("mini");
+      expect(arms.get("studio")!.closed()).toBe(false); // studio still live
+
+      // (2) a LOST peer (owned but transport dark) → its arm closes + a honest
+      //     comment frame is emitted; the downstream stays open.
+      dark.add("studio");
+      driver.reconcile();
+      expect(arms.get("studio")!.closed()).toBe(true); // the real upstream was torn down
+
+      // (3) the downstream is NOT dropped: mini keeps flowing after studio drops.
+      arms.get("mini")!.push(sseFrame("event: message", 'data: {"src":"mini"}', "id: 3"));
+      const frames = await drainSseFrames(res, { maxFrames: 2 });
+      const text = frames.join("");
+      expect(text).toContain(": amicode.fleet source studio unavailable"); // honest, not a silent gap
+      expect(text).toContain('"src":"mini"'); // the surviving arm still delivers
+    } finally {
+      await server.stop();
+    }
+  }, 15000);
 });

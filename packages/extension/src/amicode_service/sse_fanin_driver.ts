@@ -169,13 +169,17 @@ class FanInConnection {
 
   start(): void {
     // The fan-in path OWNS the response (the byte-identical path never reaches
-    // here). Set the SSE headers the app expects on the global stream.
+    // here). Set the SSE headers the app expects on the global stream, and
+    // FLUSH them immediately: an SSE client must see the stream open before the
+    // first event, and Node otherwise holds headers until the first body write —
+    // which, with no peer frame yet, would strand a just-connected reader.
     if (!this.res.headersSent) {
       this.res.writeHead(200, {
         "content-type": "text/event-stream",
         "cache-control": "no-cache",
         connection: "keep-alive",
       });
+      this.res.flushHeaders?.();
     }
     // Parse the opaque composite cursor (#1264 / §D3) and seed the aggregator
     // (this also emits the focus snapshot as the first `local` frame — decision A).
