@@ -18,6 +18,7 @@
 
 import * as http from "node:http";
 import type { SessionOwnerTag } from "./merged_projection";
+import { evaluateRemoteWriteGate, type WriteGrantRead } from "./remote_write_gate";
 
 // ── owner-routing header ─────────────────────────────────────────────────────
 
@@ -269,6 +270,138 @@ export class ObservationReadRouter {
     const url = peer.getUrl();
     if (!url || !peer.token) return { kind: "degraded", machineId: owner }; // (6)
     return { kind: "peer", machineId: owner, url, token: peer.token }; // (7)
+  }
+}
+
+// ── observation-only WRITE router (#1542, B2b write seam) ────────────────────
+
+/** An AUTHORIZED peer write target — proxy the write to `url` with `token`.
+ *  `token` is the PEER credential the owner accepts (the reader token, the SAME
+ *  the read plane sources), NOT the self-issued control-grant token — see the
+ *  empirical note on ObservationWriteRouter. */
+export type ObservationWritePeerTarget = { kind: "peer"; machineId: string; url: string; token: string };
+
+/** The gate's NAMED honest deny — never local. `reason` is the write gate's
+ *  own reason vocabulary: `no-control-grant` | `grant-revoked` (the gate
+ *  COLLAPSES `revocation-pending`→`grant-revoked`) | `insufficient-scope` |
+ *  `transport-down`. NOT `read-only`/`unavailable` (those are ControlGatedTarget
+ *  kinds — a different module). */
+export type ObservationWriteDenied = { kind: "denied"; machineId: string; reason: string };
+
+/** The resolution of an observation-mode WRITE:
+ *   - an AUTHORIZED peer target → proxy the write to the owner with the peer
+ *     credential (the reader token);
+ *   - a NAMED deny → the caller answers the gate's honest deny (an auth denial,
+ *     or the peer-unreachable 503 for `transport-down`), NEVER local (#1382);
+ *   - `undefined` (NOT a target) → LOCAL, the fail-safe: a GET/HEAD (the read
+ *     plane owns those — the INVERTED decision), a keyless / non-session path,
+ *     /amicode/*, a local-owned or unowned session, or an owner that is not a
+ *     serving peer. The write falls through BYTE-IDENTICAL to the local engine. */
+export type ObservationWriteResolution = ObservationWritePeerTarget | ObservationWriteDenied;
+
+/** Options for the ObservationWriteRouter. */
+export interface ObservationWriteRouterOpts {
+  ownerMap: SessionOwnerMap;
+  localMachineId: string;
+  /** Late-bound peer transport by owner machine_id (fleet discipline: read per
+   *  request), used for BOTH reachability and the transport credential.
+   *  `undefined` → the owner is NOT a serving peer (→ local). A present
+   *  transport whose `getUrl()`/`token` is absent is transport-down. */
+  peer(machineId: string): PeerTransport | undefined;
+  /** The D2-corrected grant read: the CONTROLLING machine's OWN active `control`
+   *  grant, resolved by `targetMachineId === ownerMachineId` (composed from
+   *  `findControlGrantByTarget` at the wiring, #1541). The naïve
+   *  `requesterMachineId`-keyed lookup on the owner returns undefined and every
+   *  write wrongly denies — this closure fixes that. Injected so the router is
+   *  unit-testable without a grant store. */
+  grantReader(ownerMachineId: string): WriteGrantRead | undefined;
+}
+
+/** The observation-only per-session owner WRITE router (#1542, B2b) — the mirror
+ *  of ObservationReadRouter with the GET/non-GET decision INVERTED. On the
+ *  OBSERVATION machine (no premium fleet plane; getMode "engine"), a NON-GET
+ *  request (prompt / archive / delete) to a PEER-OWNED session must be
+ *  AUTHORIZED by the pure `evaluateRemoteWriteGate` (active `control` grant +
+ *  reachable transport) and, when allowed, ROUTED to the owner peer with the
+ *  credential the owner accepts. A denied write is the gate's NAMED honest deny,
+ *  NEVER executed locally (the #1382 invariant). GET/HEAD are IGNORED here — the
+ *  read plane owns them.
+ *
+ *  EMPIRICAL CREDENTIAL BOUNDARY (resolved against reality, #1537-style trap):
+ *  the control grant is the CLIENT-SIDE authorization gate — it decides whether
+ *  this machine may SEND the write. The transport credential presented to the
+ *  owner is the PEER credential the owner accepts (today: the reader token, the
+ *  SAME credential the read plane sources via `fleetPeers.readPeerToken`). A
+ *  self-issued control-grant token the owner has never seen would 401 — the
+ *  observation-only owner does NOT yet enforce a separate control scope on
+ *  proxied `/session` (it accepts the peer reader token for full CRUD). A
+ *  distinct owner-enforced control token is a future tightening. So the target
+ *  carries `peer.token` (the reader token), never the grant's token.
+ *
+ *  Additive & fail-safe: anything that does not resolve to a peer/deny returns
+ *  undefined and the caller falls through byte-identical to today. */
+export class ObservationWriteRouter {
+  private readonly ownerMap: SessionOwnerMap;
+  private readonly localMachineId: string;
+  private readonly peer: (machineId: string) => PeerTransport | undefined;
+  private readonly grantReader: (ownerMachineId: string) => WriteGrantRead | undefined;
+
+  constructor(opts: ObservationWriteRouterOpts) {
+    this.ownerMap = opts.ownerMap;
+    this.localMachineId = opts.localMachineId;
+    this.peer = opts.peer;
+    this.grantReader = opts.grantReader;
+  }
+
+  /** Resolve a write to its owner-peer target, a named deny, or undefined
+   *  (fall through local).
+   *
+   *  Resolution order (the read router's, with 0 INVERTED):
+   *   0. GET/HEAD → local (the read plane owns reads — writes NEVER touch GET)
+   *   1. /amicode/* (the machine's own surface) → local
+   *   2. no session id extractable from the path → local
+   *   3. owner unknown (unowned) → local
+   *   4. owner == localMachineId (local-owned) → local
+   *   5. owner is not a serving peer → local
+   *   6. owner is a serving peer → AUTHORIZE via the pure write gate:
+   *        allowed → the peer target (with the peer reader token);
+   *        denied  → the gate's NAMED deny (never local). */
+  resolve(method: string, pathname: string): ObservationWriteResolution | undefined {
+    const m = (method || "GET").toUpperCase();
+    if (m === "GET" || m === "HEAD") return undefined; // (0) INVERTED: reads never route here
+    // (1) never proxy the machine's OWN /amicode/* surface (honesty + local).
+    if (pathname === "/amicode" || pathname.startsWith("/amicode/")) return undefined;
+    const sessionId = extractSessionIdFromReadPath(pathname); // (2)
+    if (!sessionId) return undefined;
+    const owner = this.ownerMap.resolveOwner(sessionId); // (3)
+    if (!owner) return undefined;
+    if (owner === this.localMachineId) return undefined; // (4)
+    const peer = this.peer(owner); // (5)
+    if (!peer) return undefined; // owner is not a serving peer → local fall-through
+    // (6) authorize via the pure gate. The gate reads the control grant (D2-
+    //     corrected reader) FIRST, then transport reachability — so it emits the
+    //     honest reason for every denial (no-control-grant / grant-revoked /
+    //     insufficient-scope / transport-down).
+    const gate = evaluateRemoteWriteGate(
+      { ownerMachineId: owner, action: m, path: pathname },
+      {
+        localMachineId: this.localMachineId,
+        grantReader: (id) => this.grantReader(id),
+        peerReachable: (id) => {
+          const p = this.peer(id);
+          return !!(p && p.getUrl() && p.token);
+        },
+      },
+    );
+    if (!gate.allowed) return { kind: "denied", machineId: owner, reason: gate.reason };
+    // Allowed → route to the owner with the PEER credential (reader token), NOT
+    // the control-grant token (the empirical boundary above). Defensive
+    // transport re-read: the gate's peerReachable already guaranteed url+token,
+    // but this narrows the optionals honestly to transport-down if they vanished.
+    const url = peer.getUrl();
+    const token = peer.token;
+    if (!url || !token) return { kind: "denied", machineId: owner, reason: "transport-down" };
+    return { kind: "peer", machineId: owner, url, token };
   }
 }
 

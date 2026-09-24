@@ -46,6 +46,8 @@ import {
 } from "./session_multiplexer";
 import { SseFanInDriver } from "./sse_fanin_driver";
 import { createObservationReadPlane } from "./observation_read_plane";
+import { createObservationWritePlane } from "./observation_write_plane";
+import { findControlGrantByTarget } from "./fleet_control_lifecycle";
 import { HubCredentialRead, mintRegistry, readHubCredential } from "./hub_credential";
 import { buildMergedProjection, buildFleetProjection, type UpstreamMode, type MergedProjection, type FleetProjection } from "./merged_projection";
 import { FleetPostureDetector, type FleetPostureTuning } from "./fleet_posture";
@@ -1103,6 +1105,37 @@ export function createAmicodeService(
               if (!fleetPeers.getServingPeers().some((p) => p.machineId === machineId)) return undefined;
               const r = fleetPeers.readPeerToken(machineId);
               return r.ok ? { getUrl: () => r.credential.baseUrl, token: r.credential.token } : { getUrl: () => undefined };
+            },
+            ...(opts.fleet.dataPlaneTimeoutMs !== undefined ? { timeoutMs: opts.fleet.dataPlaneTimeoutMs } : {}),
+          }),
+        );
+        // #1542 (Fleet Studio B2b, WRITE seam): BESIDE the read plane, attach the
+        // observation-only WRITE router. A NON-GET request to a peer-owned session
+        // is AUTHORIZED by the pure write gate and, when allowed, routed to the
+        // owner with the credential the owner accepts (the SAME peer reader token
+        // the read plane sources). The `grantReader` resolves the CONTROLLING
+        // machine's OWN active `control` grant by `targetMachineId === owner`
+        // (findControlGrantByTarget, #1541 — the D2 fix): the store keys grants by
+        // requesterMachineId, so in the self-owned case the naïve owner-keyed
+        // lookup would miss and every write would wrongly deny. Reads use the SAME
+        // late-bound `peer` closure for reachability + the transport credential.
+        server.attachObservationWritePlane(
+          createObservationWritePlane({
+            ownerMap,
+            localMachineId: fleetPeers.localMachineId,
+            peer: (machineId) => {
+              if (!fleetPeers.getServingPeers().some((p) => p.machineId === machineId)) return undefined;
+              const r = fleetPeers.readPeerToken(machineId);
+              return r.ok ? { getUrl: () => r.credential.baseUrl, token: r.credential.token } : { getUrl: () => undefined };
+            },
+            // The D2-corrected grant read: the controlling machine's OWN active
+            // `control` grant, resolved by target === owner. The transport
+            // credential presented to the owner remains the peer reader token
+            // (above) — the owner accepts that for /session CRUD today; a
+            // distinct owner-enforced control token is a future tightening.
+            grantReader: (owner) => {
+              const g = findControlGrantByTarget(owner);
+              return g ? { scope: g.scope, state: g.state } : undefined;
             },
             ...(opts.fleet.dataPlaneTimeoutMs !== undefined ? { timeoutMs: opts.fleet.dataPlaneTimeoutMs } : {}),
           }),
