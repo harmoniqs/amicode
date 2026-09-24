@@ -99,6 +99,33 @@ export function honestSourceComment(machineId: string, reason: string): string {
   return `: amicode.fleet source ${machineId} unavailable (${reason})\n\n`;
 }
 
+/** Derive the fan-in membership (§D1) from the SessionOwnerMap's owner set. One
+ *  PeerMember per DISTINCT remote owner-peer (local excluded): reachable + its
+ *  OWN peer-store token (decision A). A peer that is unreachable or whose token
+ *  is absent/invalid rides through as a token-less/unreachable member so
+ *  `setMembership` names it unavailable — never silently omitted, never local. */
+export function deriveMembership(opts: {
+  ownerMachineIds: string[];
+  localMachineId: string;
+  reachable: (machineId: string) => boolean;
+  peerToken: (machineId: string) => PeerTokenRead;
+}): PeerMember[] {
+  const out: PeerMember[] = [];
+  for (const machineId of opts.ownerMachineIds) {
+    if (machineId === "" || machineId === opts.localMachineId) continue;
+    const reachable = opts.reachable(machineId);
+    const tokenRead = opts.peerToken(machineId);
+    const reason = !reachable ? "peer-unreachable" : !tokenRead.ok ? `token-${tokenRead.reason}` : undefined;
+    out.push({
+      machineId,
+      reachable,
+      ...(tokenRead.ok ? { token: tokenRead.credential.token } : {}),
+      ...(reason !== undefined ? { reason } : {}),
+    });
+  }
+  return out;
+}
+
 // ── SSE frame helpers (mirrors session_event_resume framing conventions) ─────
 
 /** The end-of-line style a frame uses (CRLF if any `\r\n` present, else LF). */

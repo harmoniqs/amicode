@@ -26,6 +26,9 @@ import {
   SseFanInAggregator,
   pipeToResponse,
   relayFrame,
+  resolveUpstreamAuth,
+  honestSourceComment,
+  deriveMembership,
   LOCAL_NAMESPACE,
   NS_SEP,
   type SseSink,
@@ -35,6 +38,9 @@ import {
   parseCompositeCursor,
   formatCompositeCursor,
 } from "../src/amicode_service/sse_composite_cursor";
+import { SessionOwnerMap } from "../src/amicode_service/session_multiplexer";
+import { peerAuthHeader } from "../src/amicode_service/merged_projection";
+import type { PeerTokenRead } from "../src/amicode_service/fleet_peer_store";
 
 // ── test helpers ──────────────────────────────────────────────────────────────
 
@@ -210,5 +216,148 @@ describe("#1511 AC3 (D2) — namespaced relay + res adapter", () => {
     expect(text.endsWith("\n\n")).toBe(true);
     // one flush per frame (no head-of-line buffering)
     expect(sink.flushes).toBe(2);
+  });
+});
+
+// ── AC2/AC5 shared token fixtures ─────────────────────────────────────────────
+
+const okToken = (baseUrl: string, token: string): PeerTokenRead => ({ ok: true, credential: { baseUrl, token } });
+const absentToken: PeerTokenRead = { ok: false, reason: "absent" };
+
+/** A SessionOwnerMap seeded with the given (sessionId → ownerMachineId) pairs,
+ *  each tagged as a remote (is_local:false) owned session. */
+function ownerMapOf(pairs: Array<[string, string]>): SessionOwnerMap {
+  const m = new SessionOwnerMap();
+  m.update(pairs.map(([id, owner]) => ({ id, amicode_owner: { owner_machine_id: owner, owner_name: owner, is_local: false } })));
+  return m;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// AC2 (D1) — fan-in membership from the SessionOwnerMap; unreachable → comment
+// ══════════════════════════════════════════════════════════════════════════════
+describe("#1511 AC2 (D1) — fan-in membership", () => {
+  const localId = "macbook";
+  const reachableAll = () => true;
+
+  it("opens one arm per reachable owner-peer holding ≥1 owned session (local excluded)", () => {
+    const ownerMap = ownerMapOf([["s1", "studio"], ["s2", "studio"], ["s3", "mini"], ["s4", localId]]);
+    const members = deriveMembership({
+      ownerMachineIds: ownerMap.ownerMachineIds(),
+      localMachineId: localId,
+      reachable: reachableAll,
+      peerToken: (id) => okToken(`http://${id}`, `tok-${id}`),
+    });
+    const sink = collectingSink();
+    const agg = new SseFanInAggregator({ sink });
+    agg.connect();
+    agg.setMembership(members);
+    expect(agg.activeArms().sort()).toEqual(["mini", "studio"]); // NOT the local owner
+  });
+
+  it("peers are added and removed as the SessionOwnerMap changes", () => {
+    const sink = collectingSink();
+    const agg = new SseFanInAggregator({ sink });
+    agg.connect();
+    const derive = (ownerMap: SessionOwnerMap) =>
+      deriveMembership({
+        ownerMachineIds: ownerMap.ownerMachineIds(),
+        localMachineId: localId,
+        reachable: reachableAll,
+        peerToken: (id) => okToken(`http://${id}`, `tok-${id}`),
+      });
+
+    agg.setMembership(derive(ownerMapOf([["s1", "studio"], ["s3", "mini"]])));
+    expect(agg.activeArms().sort()).toEqual(["mini", "studio"]);
+
+    // mini's session ends → mini's arm is removed; studio stays.
+    agg.setMembership(derive(ownerMapOf([["s1", "studio"]])));
+    expect(agg.activeArms()).toEqual(["studio"]);
+
+    // a new owner appears → its arm is added.
+    agg.setMembership(derive(ownerMapOf([["s1", "studio"], ["s9", "lab"]])));
+    expect(agg.activeArms().sort()).toEqual(["lab", "studio"]);
+  });
+
+  it("an unreachable owner emits an honest comment frame, never a silent gap", () => {
+    const ownerMap = ownerMapOf([["s1", "studio"]]);
+    const members = deriveMembership({
+      ownerMachineIds: ownerMap.ownerMachineIds(),
+      localMachineId: localId,
+      reachable: () => false, // studio is dark
+      peerToken: (id) => okToken(`http://${id}`, `tok-${id}`),
+    });
+    const sink = collectingSink();
+    const agg = new SseFanInAggregator({ sink });
+    agg.connect();
+    agg.setMembership(members);
+
+    expect(agg.activeArms()).toEqual([]); // studio is NOT an active arm
+    expect(agg.unavailableSources()).toEqual(["studio"]); // but it is NAMED
+    expect(sink.text()).toBe(honestSourceComment("studio", "peer-unreachable"));
+    expect(sink.text()).toContain(": amicode.fleet source studio unavailable");
+  });
+
+  it("the comment is emitted once on transition, not spammed while the peer stays dark", () => {
+    const ownerMap = ownerMapOf([["s1", "studio"]]);
+    const members = deriveMembership({
+      ownerMachineIds: ownerMap.ownerMachineIds(),
+      localMachineId: localId,
+      reachable: () => false,
+      peerToken: (id) => okToken(`http://${id}`, `tok-${id}`),
+    });
+    const sink = collectingSink();
+    const agg = new SseFanInAggregator({ sink });
+    agg.connect();
+    agg.setMembership(members);
+    agg.setMembership(members); // still dark — no new comment
+    expect(sink.text()).toBe(honestSourceComment("studio", "peer-unreachable"));
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// AC5 (decision A) — per-peer auth: own token, never the hub credential
+// ══════════════════════════════════════════════════════════════════════════════
+describe("#1511 AC5 (A) — per-peer upstream auth", () => {
+  it("each upstream authenticates with THAT peer's own token", () => {
+    const studio = resolveUpstreamAuth("studio", okToken("http://studio", "tok-studio"));
+    const mini = resolveUpstreamAuth("mini", okToken("http://mini", "tok-mini"));
+    expect(studio.ok && studio.authHeader).toBe(peerAuthHeader("tok-studio"));
+    expect(mini.ok && mini.authHeader).toBe(peerAuthHeader("tok-mini"));
+    // distinct peers → distinct credentials
+    expect(studio.ok && mini.ok && studio.authHeader !== mini.authHeader).toBe(true);
+  });
+
+  it("the hub-mint credential is NEVER forwarded to a peer upstream", () => {
+    const hubToken = "HUB-MINT-CREDENTIAL-must-not-leak";
+    const auth = resolveUpstreamAuth("studio", okToken("http://studio", "tok-studio"));
+    // the header is derived solely from the peer's own token — the hub token is
+    // not even an input to resolveUpstreamAuth, so it cannot appear.
+    expect(auth.ok && auth.authHeader).toBe(peerAuthHeader("tok-studio"));
+    expect(auth.ok && auth.authHeader.includes(hubToken)).toBe(false);
+    expect(auth.ok && auth.authHeader).not.toBe(peerAuthHeader(hubToken));
+  });
+
+  it("an absent/invalid peer token is a NAMED unavailable source, never a silent local fallback", () => {
+    const absent = resolveUpstreamAuth("dark", absentToken);
+    expect(absent.ok).toBe(false);
+    expect(!absent.ok && absent.reason).toBe("token-absent");
+    expect(!absent.ok && absent.machineId).toBe("dark"); // named, not dropped
+
+    // and through membership: a token-less owner-peer is named unavailable +
+    // NOT an active arm — it never resolves to local.
+    const ownerMap = ownerMapOf([["s1", "dark"]]);
+    const members = deriveMembership({
+      ownerMachineIds: ownerMap.ownerMachineIds(),
+      localMachineId: "macbook",
+      reachable: () => true, // reachable, but no token
+      peerToken: () => absentToken,
+    });
+    const sink = collectingSink();
+    const agg = new SseFanInAggregator({ sink });
+    agg.connect();
+    agg.setMembership(members);
+    expect(agg.activeArms()).toEqual([]);
+    expect(agg.unavailableSources()).toEqual(["dark"]);
+    expect(sink.text()).toContain(": amicode.fleet source dark unavailable");
   });
 });
