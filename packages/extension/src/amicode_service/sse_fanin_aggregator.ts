@@ -25,6 +25,8 @@ import {
   parseCompositeCursor,
   formatCompositeCursor,
 } from "./sse_composite_cursor";
+import { peerAuthHeader } from "./merged_projection";
+import type { PeerTokenRead } from "./fleet_peer_store";
 
 export { LOCAL_NAMESPACE, NS_SEP } from "./sse_composite_cursor";
 
@@ -51,6 +53,50 @@ export interface FocusSnapshot {
   isHome: boolean;
   absent: boolean;
   reason?: string;
+}
+
+/** One owner-peer in the fan-in membership (§D1). Derived from the
+ *  SessionOwnerMap: a peer holding ≥1 owned session. `reachable` + a usable
+ *  `token` make it an active arm; otherwise it is a NAMED unavailable source,
+ *  never a silent gap and never a local fallback. */
+export interface PeerMember {
+  machineId: string;
+  /** transport reachable (the peer's late-bound URL resolved). */
+  reachable: boolean;
+  /** the peer's OWN token, read from the peer-store per upstream (decision A).
+   *  Absent/empty → the peer is a named unavailable source. */
+  token?: string;
+  /** the reason the peer is unusable, when reachable is false or the token is
+   *  absent/invalid (surfaced in the honest comment frame). */
+  reason?: string;
+}
+
+/** The per-peer upstream auth decision (decision A). Either the peer's OWN
+ *  Authorization header (derived solely from its peer-store token — the hub
+ *  credential is NEVER an input here) or a NAMED unavailable reason. */
+export type UpstreamAuth =
+  | { ok: true; machineId: string; authHeader: string }
+  | { ok: false; machineId: string; reason: "token-absent" | "token-malformed" | "token-incomplete" };
+
+/** Resolve the Authorization header for ONE peer upstream from that peer's own
+ *  peer-store credential (decision A). The hub-mint credential is not a
+ *  parameter and can never be forwarded. An absent/invalid token yields a named
+ *  unavailable reason — never a header, never a silent local fallback. */
+export function resolveUpstreamAuth(machineId: string, tokenRead: PeerTokenRead): UpstreamAuth {
+  if (tokenRead.ok) {
+    return { ok: true, machineId, authHeader: peerAuthHeader(tokenRead.credential.token) };
+  }
+  const reason = tokenRead.reason === "absent" ? "token-absent"
+    : tokenRead.reason === "malformed" ? "token-malformed"
+    : "token-incomplete";
+  return { ok: false, machineId, reason };
+}
+
+/** An honest SSE comment frame naming an unavailable source (§D1 / AC2 —
+ *  mirrors the FLEET_PEER_UNREACHABLE honest-source posture). Carries no `id:`,
+ *  so it never advances any namespace's cursor. */
+export function honestSourceComment(machineId: string, reason: string): string {
+  return `: amicode.fleet source ${machineId} unavailable (${reason})\n\n`;
 }
 
 // ── SSE frame helpers (mirrors session_event_resume framing conventions) ─────
@@ -145,6 +191,8 @@ export class SseFanInAggregator {
   private readonly composite = new Map<string, string>();
   /** the active PEER namespaces (never includes `local`). */
   private readonly peerArms = new Set<string>();
+  /** owner-peers currently NAMED unavailable (unreachable / token-less). */
+  private readonly unavailable = new Set<string>();
 
   constructor(opts: SseFanInOptions) {
     this.sink = opts.sink;
@@ -164,6 +212,46 @@ export class SseFanInAggregator {
     for (const [k, v] of resume) this.composite.set(k, v);
     if (this.focusProvider) this.emitFocusFrame();
     return new Map(resume);
+  }
+
+  /** Reconcile the fan-in membership from the SessionOwnerMap (§D1 / AC2). Each
+   *  reachable owner-peer with a usable token becomes an active upstream arm;
+   *  peers are added/removed as ownership changes. A reachable-but-token-less or
+   *  unreachable owner-peer is a NAMED unavailable source — an honest comment
+   *  frame on transition into unavailable, never a silent gap, never local. */
+  setMembership(peers: PeerMember[]): void {
+    const seen = new Set<string>();
+    for (const peer of peers) {
+      seen.add(peer.machineId);
+      const usable = peer.reachable && typeof peer.token === "string" && peer.token.trim() !== "";
+      if (usable) {
+        this.peerArms.add(peer.machineId);
+        this.unavailable.delete(peer.machineId);
+      } else {
+        this.peerArms.delete(peer.machineId);
+        if (!this.unavailable.has(peer.machineId)) {
+          this.unavailable.add(peer.machineId);
+          const reason = peer.reason ?? (peer.reachable ? "token-absent" : "peer-unreachable");
+          this.sink.write(honestSourceComment(peer.machineId, reason));
+          this.sink.flush?.();
+        }
+      }
+    }
+    // Owner-peers no longer in the map (their sessions ended) drop their arm —
+    // this is not an unavailability, so no comment frame.
+    for (const id of [...this.peerArms]) if (!seen.has(id)) this.peerArms.delete(id);
+    for (const id of [...this.unavailable]) if (!seen.has(id)) this.unavailable.delete(id);
+  }
+
+  /** The active PEER upstream arms (excludes `local`, excludes unavailable
+   *  owner-peers). The driver opens/closes real upstreams to match this set. */
+  activeArms(): string[] {
+    return [...this.peerArms];
+  }
+
+  /** The owner-peers currently NAMED unavailable — surfaced, never dropped. */
+  unavailableSources(): string[] {
+    return [...this.unavailable];
   }
 
   /** Ingest one raw SSE frame from an arm. `namespace === "local"` for the local
