@@ -532,6 +532,7 @@ export const dict = {
   "toast.session.share.success.description": "URL za dijeljenje je kopiran u međuspremnik!",
   "toast.session.share.failed.title": "Neuspjelo dijeljenje sesije",
   "toast.session.share.failed.description": "Došlo je do greške prilikom dijeljenja sesije",
+  "toast.session.compact.failed.description": "Nije moguće sažeti sesiju",
 
   "toast.session.unshare.success.title": "Dijeljenje sesije ukinuto",
   "toast.session.unshare.success.description": "Dijeljenje sesije je uspješno ukinuto!",

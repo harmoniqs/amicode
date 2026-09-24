@@ -51,11 +51,9 @@ export type State = {
   session_diff: {
     [sessionID: string]: FileDiffInfo[]
   }
-  diff_version: {
+  /** ServerSession owns this record; directory caches expose it through their proxy. */
+  diff_version?: {
     [sessionID: string]: number
-  }
-  parent_of: {
-    [childSessionID: string]: string
   }
   todo: {
     [sessionID: string]: Todo[]

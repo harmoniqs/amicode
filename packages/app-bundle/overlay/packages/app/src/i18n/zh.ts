@@ -536,6 +536,7 @@ export const dict = {
   "toast.session.share.success.description": "分享链接已复制到剪贴板",
   "toast.session.share.failed.title": "分享会话失败",
   "toast.session.share.failed.description": "分享会话时发生错误",
+  "toast.session.compact.failed.description": "无法压缩会话",
   "toast.session.unshare.success.title": "已取消分享会话",
   "toast.session.unshare.success.description": "会话已成功取消分享",
   "toast.session.unshare.failed.title": "取消分享失败",

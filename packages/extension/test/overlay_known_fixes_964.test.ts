@@ -38,14 +38,24 @@ const KNOWN_FIXED_HUNKS: KnownFix[] = [
     signature: /promptDesignPlaceholder\(\s*mode\(\),\s*placeholder\(\),/,
   },
   {
-    fix: "#832 (faac5bdf) — the session-cache diff_version reconciliation shape",
-    file: "context/global-sync/session-cache.ts",
-    signature: /diff_version: Record<string, number \| undefined>/,
+    fix: "#832 (faac5bdf; #1466) — ServerSession initializes the shared diff-version record",
+    file: "context/server-session.ts",
+    signature: /diff_version:\s*\{\}\s*as Record<string, number>/,
   },
   {
-    fix: "#832 (faac5bdf) — the session-cache diff_version guarded delete",
+    fix: "#832 (faac5bdf; #1466) — ServerSession records task ancestry and invalidates shared ancestor diff versions",
+    file: "context/server-session.ts",
+    signature: /taskSpawnParent\.set\(sessionId, parentSessionId\)[\s\S]*?setData\("diff_version", ancestor,/,
+  },
+  {
+    fix: "#832 (faac5bdf; #1466) — ServerSession eviction clears the shared diff-version record",
+    file: "context/server-session.ts",
+    signature: /delete draft\.diff_version\[sessionID\]/,
+  },
+  {
+    fix: "#832 (faac5bdf; #1466) — the directory cache does not own a diff-version record",
     file: "context/global-sync/session-cache.ts",
-    signature: /delete store\.diff_version\[sessionID\]/,
+    signature: /^(?![\s\S]*\bdiff_version["']?\s*\??\s*:)/,
   },
   {
     fix: "#832 (872a5218) — session.exportTrace restored in the non-English app locales",
