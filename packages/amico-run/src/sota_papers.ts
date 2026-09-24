@@ -106,7 +106,11 @@ export function curlSotaFetch(url: string): Promise<{ ok: true; status: number; 
   return (async () => {
     let out: string;
     try {
-      out = execFileSync("curl", curlArgs(url), { encoding: "utf8", maxBuffer: 4 << 20 });
+      // env passed EXPLICITLY: bun resolves unqualified executables from the
+      // env option when given, else the process-START env snapshot — the
+      // default inheritance would freeze PATH lookup at startup and ignore
+      // live PATH edits (the fake-transport injection hermetic tests rely on).
+      out = execFileSync("curl", curlArgs(url), { encoding: "utf8", maxBuffer: 4 << 20, env: process.env });
     } catch (e) {
       const err = e as { stdout?: string | Buffer; stderr?: string | Buffer; message: string };
       const stdout = (err.stdout ?? "").toString();
