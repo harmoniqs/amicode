@@ -410,7 +410,7 @@
     "packages/session-ui/src/components/session-turn.css": "792915f3373134eadf3cd51e1d4bfa88ec347e6b037b6caf60b639ec5e74fbd8",
     "packages/session-ui/src/components/session-turn.tsx": "9cbc0d7a35f42e32dad53ace7b3c7d92623fa2d3108edb49e0b7bc868f5c1966",
     "packages/session-ui/src/components/tool-count-label.test.ts": "c62bbe2c662f6740794d25bd7c33fb3b9b46394a1b41d01d6568a8a2ee2b4e75",
-    "packages/session-ui/src/components/tool-count-label.tsx": "296ca8caf5e3d9a131a968cf1c13b386213eb5620b16bdc0f72cf9246fcafb35",
+    "packages/session-ui/src/components/tool-count-label.tsx": "06c96479710314d443d42d4c29a29b46d58a55ee84a844a5b6865b49a0513340",
     "packages/session-ui/src/components/tool-error-card.tsx": "e27b89836b7c709120ac15fbffd2200038944058ea3506e61e5897ffb3537503",
     "packages/session-ui/src/components/tool-status-title.tsx": "ae4561b58f55985d2294a352802e723b18943ac9a6551d97f1c4a6cc95368c8a",
     "packages/session-ui/src/pierre/worker.ts": "7f210f931777956567eaeea15f2f5478befc7874a64a4b685504c59c66503fee",

@@ -2,21 +2,22 @@ import { createMemo } from "solid-js"
 import { AnimatedNumber } from "@opencode-ai/ui/animated-number"
 import { pluralCategory, pluralKey, useI18n, type UiI18nPluralKey } from "@opencode-ai/ui/context/i18n"
 
-function split(text: string) {
-  const match = /{{\s*count\s*}}/.exec(text)
-  if (!match) return { before: "", after: text }
-  if (match.index === undefined) return { before: "", after: text }
-  return {
-    before: text.slice(0, match.index),
-    after: text.slice(match.index + match[0].length),
-  }
-}
-
-// amicode: exported, null-safe wrapper over `split` — kept as a named export so
-// the amicode-added tool-count-label.test.ts (which upstream does not ship) can
-// exercise the {{count}} template-split edge cases directly.
+// amicode#987 — the guarded split. The base renders via split(i18n.t(...)),
+// but i18n.t() returns undefined while the async locale dict is still loading
+// (or for a missing key), and the unguarded split(undefined) crashed the hub
+// panel inside a Solid effect (one().after.startsWith(...) on undefined).
+// splitCountLabel coerces falsy text to "" — an honest empty render until the
+// translation exists, matching the language.tsx fallback discipline. Exported
+// so the #987 guard test extracts and exercises THIS function (not a copy).
 export function splitCountLabel(text?: string) {
-  return split(text ?? "")
+  const value = text ?? ""
+  const match = /{{\s*count\s*}}/.exec(value)
+  if (!match) return { before: "", after: value }
+  if (match.index === undefined) return { before: "", after: value }
+  return {
+    before: value.slice(0, match.index),
+    after: value.slice(match.index + match[0].length),
+  }
 }
 
 function common(one: string, other: string) {
@@ -34,9 +35,9 @@ function common(one: string, other: string) {
 export function AnimatedCountLabel(props: { count: number; plural: UiI18nPluralKey; class?: string }) {
   const i18n = useI18n()
   const category = createMemo(() => pluralCategory(i18n.locale(), Math.round(props.count)))
-  const one = createMemo(() => split(i18n.t(pluralKey(props.plural, "one"))))
-  const other = createMemo(() => split(i18n.t(pluralKey(props.plural, "other"))))
-  const active = createMemo(() => split(i18n.t(pluralKey(props.plural, category()))))
+  const one = createMemo(() => splitCountLabel(i18n.t(pluralKey(props.plural, "one"))))
+  const other = createMemo(() => splitCountLabel(i18n.t(pluralKey(props.plural, "other"))))
+  const active = createMemo(() => splitCountLabel(i18n.t(pluralKey(props.plural, category()))))
   const suffix = createMemo(() => common(one().after, other().after))
   const splitSuffix = createMemo(
     () =>
