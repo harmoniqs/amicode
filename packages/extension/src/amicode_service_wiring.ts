@@ -100,6 +100,12 @@ export interface AmicodeServiceWiringOptions {
      *  N-peer projection (index.ts:474). Never assigned when localMachineId is
      *  absent — the legacy 2-source projection stays byte-identical. */
     fleetPeers?: FleetPeerProvider;
+    /** #1524: mount the base peer-studio OBSERVATION routes without the premium
+     *  data plane, decoupled from hub-activation. Set by the assembly below for
+     *  an UNARMED machine (no hub config) that carries a fleet-peer provider —
+     *  createAmicodeService then consults ONLY baseStudioActivates to mount the
+     *  read/observation surface (no FleetPlane, hub proxy, or multiplex). */
+    observationOnly?: boolean;
   };
   /** #398 (slice 4e): the fleet activation — config/env-driven (see
    *  fleet_activation.ts). A resolved snapshot OR a late-bound resolver
@@ -302,6 +308,23 @@ export async function startAmicodeService(
           },
         } : {}),
       };
+    } else if (opts.localMachineId !== undefined && opts.localMachineId.trim() !== "") {
+      // #1524: OBSERVATION-ONLY base peer-studio. Activation is NOT armed (no
+      // hub config), yet this machine may hold a roster of serving peers +
+      // reader tokens (the live bug: /amicode/fleet/sessions 404'd on a VALID
+      // roster because opts.fleet was built ONLY inside the armed block above).
+      // Decouple base peer-observation route mounting from hub-activation: build
+      // a MINIMAL observation-only fleet — the fleet-peer provider (#1446), a
+      // NULL hub (no upstream), observationOnly:true — and pass it.
+      // createAmicodeService then BYPASSES the premium plane and consults ONLY
+      // baseStudioActivates: ≥1 serving peer → the observation routes mount;
+      // ZERO serving peers → nothing mounts → byte-identical (H3). NO FleetPlane
+      // / hub proxy / multiplex is attached on this path.
+      fleet = {
+        fleetPeers: buildFleetPeerProvider({ localMachineId: opts.localMachineId }),
+        hub: { getUrl: () => undefined },
+        observationOnly: true,
+      };
     }
     const service = createAmicodeService({
       engine: opts.engine,
@@ -344,15 +367,17 @@ export async function startAmicodeService(
     // input is a NAMED outcome (which reason), never a silent no-op.
     const fleetInput = fleet ?? opts.fleet;
     const fleetNote =
-      fleetInput !== undefined
-        ? `; ${fleetStagingSummary(
-            stageFleetDataPlane({
-              entitlements: fleetInput.entitlements,
-              entitlementConfigDir: fleetInput.entitlementConfigDir,
-              overlaySource: fleetInput.overlaySource,
-            }),
-          )}`
-        : "";
+      fleetInput === undefined
+        ? ""
+        : fleetInput.observationOnly === true
+          ? "; fleet observation-only (base peer-studio; hub-activation absent — no premium plane)"
+          : `; ${fleetStagingSummary(
+              stageFleetDataPlane({
+                entitlements: fleetInput.entitlements,
+                entitlementConfigDir: fleetInput.entitlementConfigDir,
+                overlaySource: fleetInput.overlaySource,
+              }),
+            )}`;
     log.appendLine(
       `[amicode-service] listening on ${url.toString()} (${service.routeCount} routes; auth: ${authNote})${engineNote}${shelfNote}${activationNote}${transportNote}${fleetNote}`,
     );
