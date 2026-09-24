@@ -38,6 +38,8 @@ import {
   createPromptInputV2State,
   type PromptInputV2Interaction,
 } from "@opencode-ai/session-ui/v2/prompt-input/interaction"
+import { HarnessComposerControl } from "@/components/prompt-input/harness-control"
+import { harnessDegraded, liveHarnessState } from "@/components/prompt-input/harness"
 
 export type PromptInputV2ComposerProps = {
   class?: string
@@ -64,6 +66,13 @@ export function PromptInputV2Composer(props: PromptInputV2ComposerProps) {
         variantControlVisible={!props.controller.model.loading}
         attachKeybind={command.keybindParts("file.attach")}
         attachShortcut={command.keybind("file.attach")}
+        // amicode#1549: the harness switcher — a fourth select-slot riding the
+        // solver-mode trio. The control self-hides when no registry is
+        // published (stock-opencode behavior, unchanged); the degradation dim
+        // follows the serving harness's contract (telaio accepts no
+        // agent/model/variant).
+        harnessControl={<HarnessComposerControl />}
+        harnessDegraded={harnessDegraded(liveHarnessState())}
         // amicode/opencode#116: report-a-bug, right-anchored immediately left
         // of send. The boot-param gate lives HERE (not inside the button) so a
         // gated-off button passes `undefined` and the row's layout never shifts.
