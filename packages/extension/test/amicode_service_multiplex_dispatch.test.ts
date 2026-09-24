@@ -797,6 +797,123 @@ describe("#1519 AC2 — flag-ON fan-in onto the single downstream /event", () =>
   });
 });
 
+// ── #1522 AC1 — a real focusSnapshot provider: the /event connect frame
+//    carries focusedMachineId / isHome / absent from the wired provider ─────────
+describe("#1522 AC1 — real focus on connect through /event route", () => {
+  it("flag ON + focusSnapshot provider → the first frame is amicode.fleet.focus with real focus data", async () => {
+    process.env[FLEET_MULTIPLEX_FLAG] = "1";
+    const ownerMap = ownerMapWith([["s1", "studio"]]);
+    const opened: Array<{ namespace: string; url: string; authHeader?: string; lastEventId?: string }> = [];
+    const arms = new Map<string, Ctl>();
+    const driver = makeFanInDriver({
+      ownerMap,
+      opened,
+      arms,
+      preload: {
+        local: [sseFrame("event: message", 'data: {"src":"local"}', "id: 1")],
+        studio: [sseFrame("event: message", 'data: {"src":"studio"}', "id: 2")],
+      },
+      overrides: {
+        focusSnapshot: () => ({ focusedMachineId: "studio", isHome: false, absent: false }),
+      },
+    });
+    const server = new AmicodeServiceServer({ password: PW });
+    server.attachFleetPlane(fanInPlane(driver));
+    const origin = (await server.start()).toString().replace(/\/$/, "");
+    try {
+      const res = await fetch(`${origin}/event`, {
+        headers: { Authorization: serverAuthHeader(PW) },
+        signal: AbortSignal.timeout(READ_TIMEOUT),
+      });
+      expect(res.status).toBe(200);
+      // The very first frame is the focus snapshot
+      const frames = await drainSseFrames(res, { maxFrames: 3 });
+      const focusFrame = frames[0];
+      expect(focusFrame).toContain("event: amicode.fleet.focus");
+      const payload = JSON.parse(focusFrame.split("data: ")[1].split("\n")[0]);
+      expect(payload.focusedMachineId).toBe("studio");
+      expect(payload.isHome).toBe(false);
+      expect(payload.absent).toBe(false);
+      expect(payload.empty).toBeUndefined(); // real, NOT the named-empty fallback
+    } finally {
+      await server.stop();
+    }
+  });
+
+  // #1522 AC2 — home distinction: isHome:true, absent:false
+  it("flag ON + home focus → isHome:true, absent:false (distinct from named-empty)", async () => {
+    process.env[FLEET_MULTIPLEX_FLAG] = "1";
+    const ownerMap = ownerMapWith([["s1", "studio"]]);
+    const opened: Array<{ namespace: string; url: string; authHeader?: string; lastEventId?: string }> = [];
+    const arms = new Map<string, Ctl>();
+    const driver = makeFanInDriver({
+      ownerMap,
+      opened,
+      arms,
+      preload: { local: [sseFrame("data: {}", "id: 1")] },
+      overrides: {
+        focusSnapshot: () => ({ isHome: true, absent: false }),
+      },
+    });
+    const server = new AmicodeServiceServer({ password: PW });
+    server.attachFleetPlane(fanInPlane(driver));
+    const origin = (await server.start()).toString().replace(/\/$/, "");
+    try {
+      const res = await fetch(`${origin}/event`, {
+        headers: { Authorization: serverAuthHeader(PW) },
+        signal: AbortSignal.timeout(READ_TIMEOUT),
+      });
+      expect(res.status).toBe(200);
+      const frames = await drainSseFrames(res, { maxFrames: 2 });
+      const payload = JSON.parse(frames[0].split("data: ")[1].split("\n")[0]);
+      expect(payload.isHome).toBe(true);
+      expect(payload.absent).toBe(false);
+      expect(payload.empty).toBeUndefined();
+    } finally {
+      await server.stop();
+    }
+  });
+
+  // #1522 AC3 — named absence: focused peer not in available set
+  it("flag ON + named absence → absent:true with reason", async () => {
+    process.env[FLEET_MULTIPLEX_FLAG] = "1";
+    const ownerMap = ownerMapWith([["s1", "studio"]]);
+    const opened: Array<{ namespace: string; url: string; authHeader?: string; lastEventId?: string }> = [];
+    const arms = new Map<string, Ctl>();
+    const driver = makeFanInDriver({
+      ownerMap,
+      opened,
+      arms,
+      preload: { local: [sseFrame("data: {}", "id: 1")] },
+      overrides: {
+        focusSnapshot: () => ({
+          focusedMachineId: "dark-peer",
+          isHome: false,
+          absent: true,
+          reason: "peer-unavailable",
+        }),
+      },
+    });
+    const server = new AmicodeServiceServer({ password: PW });
+    server.attachFleetPlane(fanInPlane(driver));
+    const origin = (await server.start()).toString().replace(/\/$/, "");
+    try {
+      const res = await fetch(`${origin}/event`, {
+        headers: { Authorization: serverAuthHeader(PW) },
+        signal: AbortSignal.timeout(READ_TIMEOUT),
+      });
+      expect(res.status).toBe(200);
+      const frames = await drainSseFrames(res, { maxFrames: 2 });
+      const payload = JSON.parse(frames[0].split("data: ")[1].split("\n")[0]);
+      expect(payload.focusedMachineId).toBe("dark-peer");
+      expect(payload.absent).toBe(true);
+      expect(payload.reason).toBe("peer-unavailable");
+    } finally {
+      await server.stop();
+    }
+  });
+});
+
 // ── AC3 — arm lifecycle: newly-owned arm opens; a lost peer's arm closes + a
 //    honest comment frame; the downstream connection is never dropped ─────────
 describe("#1519 AC3 — live arm lifecycle honours the SessionOwnerMap", () => {

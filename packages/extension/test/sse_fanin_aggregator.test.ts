@@ -405,6 +405,47 @@ describe("#1511 AC6 (A) — focus-on-connect snapshot", () => {
     expect(sink.text()).toContain("\"empty\":true"); // named empty, not missing
     expect(sink.text()).toContain("\"isHome\":true");
   });
+
+  // #1522 AC2 — home distinction: isHome:true, absent:false (the named-home case
+  // stays distinct from named-empty/absent).
+  it("home focus (no machineId) → isHome:true, absent:false, no empty flag", () => {
+    const sink = collectingSink();
+    const agg = new SseFanInAggregator({
+      sink,
+      focusSnapshot: () => ({ isHome: true, absent: false }),
+    });
+    agg.connect();
+    const payload = JSON.parse(
+      sink.text().split("data: ")[1].split("\n")[0],
+    );
+    expect(payload.isHome).toBe(true);
+    expect(payload.absent).toBe(false);
+    expect(payload.empty).toBeUndefined(); // real provider, NOT the named-empty fallback
+    expect(payload.focusedMachineId).toBeUndefined();
+  });
+
+  // #1522 AC3 — named absence: the focused peer is not in the available set.
+  it("named absence → absent:true with reason from the provider", () => {
+    const sink = collectingSink();
+    const agg = new SseFanInAggregator({
+      sink,
+      focusSnapshot: () => ({
+        focusedMachineId: "dark-peer",
+        isHome: false,
+        absent: true,
+        reason: "peer-unavailable",
+      }),
+    });
+    agg.connect();
+    const payload = JSON.parse(
+      sink.text().split("data: ")[1].split("\n")[0],
+    );
+    expect(payload.focusedMachineId).toBe("dark-peer");
+    expect(payload.isHome).toBe(false);
+    expect(payload.absent).toBe(true);
+    expect(payload.reason).toBe("peer-unavailable");
+    expect(payload.empty).toBeUndefined();
+  });
 });
 
 // ══════════════════════════════════════════════════════════════════════════════

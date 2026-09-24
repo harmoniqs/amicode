@@ -718,6 +718,11 @@ export function createAmicodeService(
         readPeerToken(machineId: string): { ok: true; credential: { baseUrl: string; token: string } } | { ok: false };
         rosterLookup(machineId: string): { name: string; device_type?: string } | undefined;
       };
+      /** #1522 (ADR 0033 decision A): the focus/picker snapshot provider for the
+       *  SSE fan-in connect frame. When present, the aggregator emits a REAL focus
+       *  snapshot as the first local-namespace frame on every (re)connect; when
+       *  absent, the aggregator emits a named-empty snapshot (the pre-#1522 default). */
+      focusSnapshot?: () => import("./sse_fanin_aggregator").FocusSnapshot | undefined;
     };
   } = {},
 ): AmicodeServiceServer {
@@ -911,6 +916,10 @@ export function createAmicodeService(
             const r = peers.readPeerToken(machineId);
             return r.ok ? { ok: true, credential: r.credential } : { ok: false, reason: "absent" };
           },
+          // #1522 (ADR 0033 decision A): pass the real focus provider through to
+          // the aggregator so the connect frame carries real focus data (not the
+          // named-empty default). Absent → the aggregator's named-empty fallback.
+          ...(opts.fleet.focusSnapshot ? { focusSnapshot: opts.fleet.focusSnapshot } : {}),
         });
       }
       const fleetPlaneObj: import("./server").FleetPlane = {

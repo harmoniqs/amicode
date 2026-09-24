@@ -165,7 +165,7 @@
     "packages/app/src/context/models.tsx": "8904525767b36ed5ba93e85a0fddb9bf737a8d066dfff084380ce1a67182f535",
     "packages/app/src/context/platform.tsx": "edd9b1773feb5c084b922a57b6914f6a473eed558b44f9de0eeb1c4d4e2b49da",
     "packages/app/src/context/server-sdk.test.ts": "48ce5243c8c5d42c23c8eadf9eecac777c9330ac1f4d81953042d5ef7d264bd7",
-    "packages/app/src/context/server-sdk.tsx": "ecfd798d118bb3513538c49282fda665dbb21962f22438431b4d5fb7284311da",
+    "packages/app/src/context/server-sdk.tsx": "130d54ea73c7269c0409dee6236b61145493d0c5f562750f8df94a56c10ed8be",
     "packages/app/src/context/server-session.test.ts": "a76d24b0d36d7c6c9ce187d2eb5bba78c90774184adc0398559ee1a417674516",
     "packages/app/src/context/server-session.ts": "4d85011c9ff81cf0470633f6f27cd9f11c234294c31e2c77a990aad135d317ab",
     "packages/app/src/context/server-sync.tsx": "14396d7402d697ab9a10744c9e428b96e483f3a9620a0415246fa840596fd8ed",
@@ -692,8 +692,8 @@
     "packages/app/src/pages/layout/worktree-auto-rename.test.ts": "fb6fac363b8bee1225bbcff8098019c02f19b095b5cd96c29f7e673acb1e4e89",
     "packages/app/src/pages/layout/worktree-auto-rename.ts": "2ef3e506b96b972cb55799a89aa54ca6453fc31c80bc022aa16db6ecfe9cdced",
     "packages/app/src/pages/new-session/new-session-draft-controller.ts": "3607771a22b6855afd0b0d666de662c9070a2dcd56ae96ba51d89c9e11018e81",
-    "packages/app/src/pages/new-session/new-session-machine-mount.test.ts": "30c360ecf2464258f3e97fb5aaa1ca37145c6f62b200f3c5f524b58bc9534837",
-    "packages/app/src/pages/new-session/new-session-machine-mount.ts": "f7c3cdbd0ab92749e4c99432b87c7703050dd909b8f0e138188c4b264ba06b46",
+    "packages/app/src/pages/new-session/new-session-machine-mount.test.ts": "debb3b8b058a88a64e4c2cc56751502b241be53ce5a74b9c81ee51a617675c6f",
+    "packages/app/src/pages/new-session/new-session-machine-mount.ts": "2eb56ed87f78c15a34dae63a95fa1efddbb7395a3d6893d2b148c2f594910b24",
     "packages/app/src/pages/new-session/new-session-machine-picker-mount.tsx": "8d8c8aacefab02269b7e5f97b7a60cda1e6a12b4da1d15c4775fdf0eb5800b4a",
     "packages/app/src/pages/new-session/new-session-machine-picker.test.ts": "2f2adf9d738aee98f2989c5453c97eeba0e48522b7863c99d9c0be9a6c11ff3b",
     "packages/app/src/pages/new-session/new-session-view.test.ts": "eb337485bf03facbc59d9eadac37cfeb04f75bf97814df80d3be4d0ec9455047",
@@ -891,7 +891,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-09-24T01:36:39.332Z",
+  "extracted_at": "2026-09-24T03:35:03.529Z",
   "per_package": {
     "packages/app": {
       "A": 199,

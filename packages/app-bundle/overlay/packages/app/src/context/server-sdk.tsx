@@ -3,6 +3,7 @@ import type { Event } from "@opencode-ai/sdk/v2/client"
 import { createSimpleContext } from "@opencode-ai/ui/context"
 import { createGlobalEmitter } from "@solid-primitives/event-bus"
 import { makeEventListener } from "@solid-primitives/event-listener"
+import { dispatchSseFocusEvent } from "../pages/new-session/new-session-machine-mount"
 import { type Accessor, batch, createMemo, createResource, createSignal, onCleanup, onMount } from "solid-js"
 import { createApiForServer, createSdkForServer, type ServerApi } from "@/utils/server"
 import { useLanguage } from "./language"
@@ -478,6 +479,27 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
             if (legacy && event.payload.type === "sync") continue
             const directory = legacy ? (event.directory ?? "global") : (event.location?.directory ?? "global")
             const payload = legacy ? (event.payload as Event) : adaptServerEvent(event)
+            // #1522 (ADR 0033 decision A): the SSE fan-in aggregator emits
+            // `amicode.fleet.focus` as the first frame on (re)connect. Intercept
+            // it here and dispatch to the existing picker focus latch via
+            // window.postMessage — a SECOND input to the same seed path (the
+            // chat_bridge push is the first). Skip the normal event queue: the
+            // focus frame is not a session event.
+            const focusType = legacy ? (payload as { type?: string }).type : payload.type
+            if (focusType === "amicode.fleet.focus") {
+              if (typeof window !== "undefined") {
+                // The SSE data payload carries the focus fields directly; for the
+                // adapted (non-legacy) path, the data sits in `properties`.
+                const focusData = legacy
+                  ? (payload as Record<string, unknown>)
+                  : ((payload as { properties?: Record<string, unknown> }).properties ?? {})
+                dispatchSseFocusEvent(
+                  { type: "amicode.fleet.focus", ...focusData } as { type: string; focusedMachineId?: string; [k: string]: unknown },
+                  window,
+                )
+              }
+              continue
+            }
             trackEventID(legacy ? event.payload : (event as { id?: string }))
             if (enqueueServerEvent(queue, { directory, payload })) schedule()
 
