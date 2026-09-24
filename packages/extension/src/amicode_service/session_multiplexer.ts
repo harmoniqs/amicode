@@ -70,6 +70,13 @@ export class SessionOwnerMap {
     return this.owners.get(sessionId);
   }
 
+  /** The DISTINCT owner machine_ids currently holding ≥1 owned session (#1511,
+   *  §D1) — the fan-in membership's owner set. Order is unspecified; callers
+   *  exclude `local` themselves. */
+  ownerMachineIds(): string[] {
+    return [...new Set(this.owners.values())];
+  }
+
   /** The number of tracked sessions (for diagnostics). */
   get size(): number {
     return this.owners.size;
