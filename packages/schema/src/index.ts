@@ -255,6 +255,19 @@ export {
   type FleetConfig,
 } from "./fleet_config.js";
 
+// The lifecycle-admin AUTHORITY store (amicode#1541, ADR 0034 D3) — the NET-NEW
+// persistence seeded at `amico fleet enroll` (writer in @amicode/amico-run) and
+// resolved extension-side (#1545 routing). A shared on-disk contract at ONE
+// path, the SAME cross-package pattern as fleet_roster / fleet_config.
+export {
+  LIFECYCLE_AUTHORITY_STORE_VERSION,
+  lifecycleAuthorityStorePath,
+  recordLifecycleAuthority,
+  resolveLifecycleAuthority,
+  readAllLifecycleAuthorities,
+  type LifecycleAuthorityRecord,
+} from "./fleet_lifecycle_authority.js";
+
 // ajv-formats ships a CJS default export; under NodeNext the default import can
 // bind the module namespace rather than the callable, so normalize defensively.
 const addFormats = (typeof addFormatsDefault === "function"

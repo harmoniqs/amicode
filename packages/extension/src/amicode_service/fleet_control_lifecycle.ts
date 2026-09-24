@@ -443,6 +443,24 @@ export function findGrantByToken(
   return all.find((g) => g.token === presentedToken && g.state === "active");
 }
 
+/** #1541 (ADR 0034 D2): resolve the controlling machine's OWN active `control`
+ *  grant by `targetMachineId` — the owner/target-resolvable read #1542's write
+ *  plane composes as its `grantReader`. The store keys grants by
+ *  `requesterMachineId`, but in the self-owned case the controlling machine is
+ *  the REQUESTER and the driven session's owner is the TARGET, so a
+ *  `requesterMachineId`-keyed lookup on the owner would miss. A LifecycleGrant
+ *  already carries `targetMachineId`, so this scans for the active `control`
+ *  grant whose target IS the owner — and returns it WITH its token (the read
+ *  #1542 presents via its own proxyToPeer, not through ControlGatedResolver). */
+export function findControlGrantByTarget(
+  targetMachineId: string,
+  deps: LifecycleGrantDeps = {},
+): LifecycleGrant | undefined {
+  return readAllLifecycleGrants(deps).find(
+    (g) => g.targetMachineId === targetMachineId && g.scope === "control" && g.state === "active",
+  );
+}
+
 /** The composed scope enforcement: given a presented token + request, evaluate
  *  BOTH membership (the token is a valid active grant) AND scope (the route
  *  matrix allows this scope on this route). This is the SAME function called at

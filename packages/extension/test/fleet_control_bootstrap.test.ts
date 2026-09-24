@@ -1,0 +1,253 @@
+// fleet_control_bootstrap.test.ts — #1541 (ADR 0034 D3): the SELF-OWNED CONTROL
+// fast-path. A NEW control-scoped bootstrap decision, structurally mirroring
+// evaluateObserveBootstrap (fleet_observe_bootstrap.ts) — which EXPLICITLY
+// refuses a control outcome. This suite pins:
+//
+//   · evaluateControlBootstrap — self-owned + verified-management-access
+//     AUTHORIZES the explicit enable; every other case requires approval.
+//   · management-verified is a DEFINED predicate (enroll-seeded authority + a
+//     serving peer + a held reader token), not a bare boolean.
+//   · enableSelfOwnedControl mints an ACTIVE `control` grant on the explicit
+//     enable, with NO target-side interaction, and the grant is owner-resolvable
+//     + token-bearing (the read #1542 needs).
+//   · no privilege bleed — a shared peer NEVER borrows the self-owned fast-path.
+import { describe, it, expect, beforeEach } from "vitest";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import {
+  evaluateControlBootstrap,
+  evaluateManagementVerified,
+  establishManagementVerified,
+  enableSelfOwnedControl,
+  type ControlBootstrapRequest,
+} from "../src/amicode_service/fleet_control_bootstrap";
+import {
+  findControlGrantByTarget,
+  readLifecycleGrant,
+  type LifecycleGrantDeps,
+} from "../src/amicode_service/fleet_control_lifecycle";
+import type { LifecycleAuthorityRecord } from "../src/amicode_service/fleet_lifecycle_authority";
+
+function tmproot(): string {
+  return mkdtempSync(join(tmpdir(), "amicode-1541-control-bootstrap-"));
+}
+
+const SELF_ID = "my-macbook";
+const SELF_KEY = "SHA256:self-fingerprint";
+const PEER_ID = "the-studio";
+const PEER_KEY = "SHA256:studio-fingerprint";
+
+function makeDeps(root?: string): LifecycleGrantDeps {
+  const r = root ?? tmproot();
+  return {
+    grantStoreFile: join(r, "lifecycle-grants.json"),
+    tokenFactory: () => "CONTROL-TOKEN-001",
+    now: () => "2026-09-24T00:00:00.000Z",
+  };
+}
+
+// A seeded authority record naming SELF as the target-peer's lifecycle-admin
+// authority (what Enroll persists on the target machine).
+function authorityFor(target: string, authority: string): LifecycleAuthorityRecord {
+  return {
+    targetMachineId: target,
+    authorityMachineId: authority,
+    authorityIdentityKey: authority,
+    recordedAt: "2026-09-24T00:00:00.000Z",
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// evaluateControlBootstrap — the self-owned fast-path predicate
+// ═══════════════════════════════════════════════════════════════════════════
+describe("evaluateControlBootstrap — self-owned + management-verified authorizes; everything else requires approval", () => {
+  it("a SELF-OWNED, management-verified peer authorizes the explicit enable", () => {
+    const req: ControlBootstrapRequest = { ownership: "self-owned", managementVerified: true };
+    expect(evaluateControlBootstrap(req).decision).toBe("authorize-control");
+  });
+
+  it("a self-owned peer WITHOUT verified management access requires approval (management access is the gate)", () => {
+    const req: ControlBootstrapRequest = { ownership: "self-owned", managementVerified: false };
+    expect(evaluateControlBootstrap(req).decision).toBe("requires-approval");
+  });
+
+  it("a SHARED peer requires approval — control never auto-establishes for a different operator's machine", () => {
+    const req: ControlBootstrapRequest = { ownership: "shared", managementVerified: false };
+    expect(evaluateControlBootstrap(req).decision).toBe("requires-approval");
+  });
+
+  it("no privilege bleed: a shared peer CANNOT borrow the self-owned fast-path even claiming management access", () => {
+    const req: ControlBootstrapRequest = { ownership: "shared", managementVerified: true };
+    expect(evaluateControlBootstrap(req).decision).toBe("requires-approval");
+  });
+
+  it("there is NO targetApproved fast-path for control (unlike observe) — a shared peer routes to the handshake, never a direct grant", () => {
+    // control bootstrap only knows two inputs: ownership + managementVerified.
+    // A shared peer is always requires-approval here (the request→approve
+    // handshake is slice 5), so it can never mint control from this decision.
+    expect(evaluateControlBootstrap({ ownership: "shared", managementVerified: true }).decision).toBe(
+      "requires-approval",
+    );
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// management-verified — a DEFINED predicate, not a bare boolean
+// ═══════════════════════════════════════════════════════════════════════════
+describe("evaluateManagementVerified — the named identity/transport/token check", () => {
+  it("all three facts true (authority seeded + serving peer + held reader token) → verified", () => {
+    expect(
+      evaluateManagementVerified({ authoritySeededForSelf: true, peerServing: true, readerTokenHeld: true }),
+    ).toBe(true);
+  });
+
+  it("missing the enroll-seeded authority → NOT verified", () => {
+    expect(
+      evaluateManagementVerified({ authoritySeededForSelf: false, peerServing: true, readerTokenHeld: true }),
+    ).toBe(false);
+  });
+
+  it("the peer is not serving (transport down) → NOT verified", () => {
+    expect(
+      evaluateManagementVerified({ authoritySeededForSelf: true, peerServing: false, readerTokenHeld: true }),
+    ).toBe(false);
+  });
+
+  it("no held reader token (bilateral token state absent) → NOT verified", () => {
+    expect(
+      evaluateManagementVerified({ authoritySeededForSelf: true, peerServing: true, readerTokenHeld: false }),
+    ).toBe(false);
+  });
+});
+
+describe("establishManagementVerified — composes the enroll-seeded authority + serving peer + held reader token", () => {
+  it("verified when SELF holds the enroll-seeded authority for a serving peer we hold a token for", () => {
+    const verified = establishManagementVerified({
+      selfMachineId: SELF_ID,
+      targetMachineId: PEER_ID,
+      getServingPeers: () => [{ machineId: PEER_ID }],
+      readPeerToken: (id) => ({ ok: id === PEER_ID }),
+      resolveAuthority: (t) => (t === PEER_ID ? authorityFor(PEER_ID, SELF_ID) : undefined),
+    });
+    expect(verified).toBe(true);
+  });
+
+  it("NOT verified when no authority is seeded for the peer", () => {
+    const verified = establishManagementVerified({
+      selfMachineId: SELF_ID,
+      targetMachineId: PEER_ID,
+      getServingPeers: () => [{ machineId: PEER_ID }],
+      readPeerToken: () => ({ ok: true }),
+      resolveAuthority: () => undefined,
+    });
+    expect(verified).toBe(false);
+  });
+
+  it("NOT verified when the seeded authority names a DIFFERENT machine (not self)", () => {
+    const verified = establishManagementVerified({
+      selfMachineId: SELF_ID,
+      targetMachineId: PEER_ID,
+      getServingPeers: () => [{ machineId: PEER_ID }],
+      readPeerToken: () => ({ ok: true }),
+      resolveAuthority: () => authorityFor(PEER_ID, "someone-else"),
+    });
+    expect(verified).toBe(false);
+  });
+
+  it("NOT verified when the peer is not in the serving set", () => {
+    const verified = establishManagementVerified({
+      selfMachineId: SELF_ID,
+      targetMachineId: PEER_ID,
+      getServingPeers: () => [],
+      readPeerToken: () => ({ ok: true }),
+      resolveAuthority: () => authorityFor(PEER_ID, SELF_ID),
+    });
+    expect(verified).toBe(false);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// enableSelfOwnedControl — the explicit enable mints an ACTIVE control grant
+// ═══════════════════════════════════════════════════════════════════════════
+describe("enableSelfOwnedControl — a self-owned, management-verified peer mints an active control grant (no target-side interaction)", () => {
+  let deps: LifecycleGrantDeps;
+  beforeEach(() => {
+    deps = makeDeps();
+  });
+
+  it("mints an ACTIVE control grant on the explicit enable — self-issued, keyed by the controlling machine", () => {
+    const result = enableSelfOwnedControl(
+      {
+        ownership: "self-owned",
+        managementVerified: true,
+        self: { machineId: SELF_ID, identityKey: SELF_KEY },
+        target: { machineId: PEER_ID, identityKey: PEER_KEY },
+      },
+      deps,
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.grant.scope).toBe("control");
+    expect(result.grant.state).toBe("active");
+    expect(result.grant.requesterMachineId).toBe(SELF_ID);
+    expect(result.grant.targetMachineId).toBe(PEER_ID);
+    expect(result.grant.token).toBe("CONTROL-TOKEN-001");
+
+    // the grant persisted on the controlling machine, keyed by the requester (self)
+    const stored = readLifecycleGrant(SELF_ID, deps);
+    expect(stored!.scope).toBe("control");
+    expect(stored!.state).toBe("active");
+  });
+
+  it("the minted grant is owner-resolvable + token-bearing (the read #1542 needs)", () => {
+    enableSelfOwnedControl(
+      {
+        ownership: "self-owned",
+        managementVerified: true,
+        self: { machineId: SELF_ID, identityKey: SELF_KEY },
+        target: { machineId: PEER_ID, identityKey: PEER_KEY },
+      },
+      deps,
+    );
+    const found = findControlGrantByTarget(PEER_ID, deps);
+    expect(found).toBeDefined();
+    expect(found!.scope).toBe("control");
+    expect(found!.state).toBe("active");
+    expect(found!.targetMachineId).toBe(PEER_ID);
+    expect(found!.token).toBe("CONTROL-TOKEN-001");
+  });
+
+  it("a self-owned peer WITHOUT management access does NOT mint — held for approval, no grant", () => {
+    const result = enableSelfOwnedControl(
+      {
+        ownership: "self-owned",
+        managementVerified: false,
+        self: { machineId: SELF_ID, identityKey: SELF_KEY },
+        target: { machineId: PEER_ID, identityKey: PEER_KEY },
+      },
+      deps,
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe("requires-approval");
+    expect(findControlGrantByTarget(PEER_ID, deps)).toBeUndefined();
+  });
+
+  it("no privilege bleed: a SHARED peer (even management-verified) does NOT mint — no grant survives", () => {
+    const result = enableSelfOwnedControl(
+      {
+        ownership: "shared",
+        managementVerified: true,
+        self: { machineId: SELF_ID, identityKey: SELF_KEY },
+        target: { machineId: PEER_ID, identityKey: PEER_KEY },
+      },
+      deps,
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe("requires-approval");
+    expect(findControlGrantByTarget(PEER_ID, deps)).toBeUndefined();
+  });
+});

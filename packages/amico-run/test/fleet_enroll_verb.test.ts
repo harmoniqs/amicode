@@ -11,7 +11,12 @@ import { describe, it, expect, afterEach } from "vitest";
 import * as http from "node:http";
 import { hostname as osHostname } from "node:os";
 import type { AddressInfo } from "node:net";
-import { parseRosterRow, normalizeDeviceName, type RosterRow } from "@amicode/schema";
+import {
+  parseRosterRow,
+  normalizeDeviceName,
+  type RosterRow,
+  type LifecycleAuthorityRecord,
+} from "@amicode/schema";
 import {
   fleetEnroll,
   parseJoinToken,
@@ -160,6 +165,7 @@ interface Recorder {
   installerCalls: string[];
   transportSets: string[];
   engine: { spawns: number };
+  authorityRecords: LifecycleAuthorityRecord[];
 }
 function recorder(over: Partial<FleetEnrollDeps> = {}): Recorder {
   const fleetWrites: { config: unknown; path: string }[] = [];
@@ -167,6 +173,7 @@ function recorder(over: Partial<FleetEnrollDeps> = {}): Recorder {
   const installerCalls: string[] = [];
   const transportSets: string[] = [];
   const engine = { spawns: 0 };
+  const authorityRecords: LifecycleAuthorityRecord[] = [];
   const deps: FleetEnrollDeps = {
     machineId: () => "machine-abc",
     machineName: () => "workbench",
@@ -191,9 +198,12 @@ function recorder(over: Partial<FleetEnrollDeps> = {}): Recorder {
     // real settings.json read. Individual cases override these seams.
     commandRunner: () => "",
     readDeviceSetting: () => undefined,
+    // Capture the lifecycle-admin authority record (#1541) instead of writing
+    // the real ~/.amico store — keeps every enroll test hermetic.
+    recordLifecycleAuthority: (rec) => authorityRecords.push(rec),
     ...over,
   };
-  return { deps, fleetWrites, joinTokenWrites, installerCalls, transportSets, engine };
+  return { deps, fleetWrites, joinTokenWrites, installerCalls, transportSets, engine, authorityRecords };
 }
 
 const stubs: EnrollStub[] = [];
@@ -355,6 +365,42 @@ describe("amico fleet enroll <join-token> — client redeem happy path (#1319 AC
     expect(rec.transportSets).toEqual(["tailscale"]);
     expect(s.rosterRows()[0].transport).toBe("tailscale");
     expect(s.rosterRows()[0].capabilities).toEqual(["roaming"]);
+  });
+});
+
+describe("amico fleet enroll — client redeem seeds lifecycle-admin authority (#1541 AC1)", () => {
+  it("records the enroller (canonical.host) as this machine's lifecycle-admin authority — persisted + resolvable", async () => {
+    const s = await stub({ version: "v1.18.29" });
+    const rec = recorder();
+    const token = tokenFor(s); // canonical.host = s.host (the enroller / canonical server)
+    const r = await fleetEnroll(["--join-token-json", JSON.stringify(token)], rec.deps);
+
+    expect(r.code).toBe(0);
+    expect(rec.authorityRecords).toHaveLength(1);
+    const a = rec.authorityRecords[0];
+    // the target is THIS machine (the one running Enroll); the authority is the enroller.
+    expect(a.targetMachineId).toBe("machine-abc");
+    expect(a.authorityMachineId).toBe(token.canonical.host);
+    expect(a.authorityIdentityKey).toBe(token.canonical.host);
+    expect(typeof a.recordedAt).toBe("string");
+  });
+
+  it("a pin-mismatch refusal seeds NO authority (nothing recorded on a refused enroll)", async () => {
+    const s = await stub({ version: "v2.0.0" }); // major skew → refused before any write
+    const rec = recorder();
+    const r = await fleetEnroll(
+      ["--join-token-json", JSON.stringify(tokenFor(s, { pin_version: "v1.18.29" }))],
+      rec.deps,
+    );
+    expect(r.code).not.toBe(0);
+    expect(rec.authorityRecords).toEqual([]);
+  });
+
+  it("the server path (--as-server) records no authority-over-a-target (it establishes the keeper, not a grantee)", async () => {
+    const rec = recorder();
+    const r = await fleetEnroll(["--as-server", "--host", "hub", "--port", "4096", "--ssh-alias", "hub"], rec.deps);
+    expect(r.code).toBe(0);
+    expect(rec.authorityRecords).toEqual([]);
   });
 });
 

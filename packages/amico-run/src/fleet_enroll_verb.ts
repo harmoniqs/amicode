@@ -43,12 +43,14 @@ import { randomUUID } from "node:crypto";
 import {
   versionSkewVerdict,
   writeFleetConfig as schemaWriteFleetConfig,
+  recordLifecycleAuthority as schemaRecordLifecycleAuthority,
   fleetTopologyPath,
   classifyMacModel,
   classifyLinuxChassis,
   normalizeDeviceName,
   isWslKernel,
   type FleetConfig,
+  type LifecycleAuthorityRecord,
   type RosterRow,
   type RosterHealth,
 } from "@amicode/schema";
@@ -134,6 +136,13 @@ export interface FleetEnrollDeps {
   fetchImpl?: typeof fetch;
   /** The fleet.json writer. Default: the hoisted @amicode/schema writeFleetConfig. */
   writeFleetConfig?: (config: FleetConfig, p: string) => void;
+  /** Seed the lifecycle-admin authority (#1541, ADR 0034 D3): record the
+   *  enroller as THIS machine's authority at client redeem — net-new
+   *  persistence, the same injectable-with-real-default pattern as
+   *  writeFleetConfig/mintFleetToken (enroll stays byte-identical when
+   *  defaulted; a test injects a spy). Default: the shared @amicode/schema
+   *  authority-store writer. */
+  recordLifecycleAuthority?: (record: LifecycleAuthorityRecord) => void;
   /** Where fleet.json lives. Default: fleetTopologyPath(). */
   fleetConfigPath?: string;
   /** Write the join token at 0600. Default: atomic 0600 write. */
@@ -616,6 +625,22 @@ async function enrollAsClient(argv: string[], token: JoinToken, deps: FleetEnrol
   const deviceType = typeOverride && typeOverride.trim() !== "" ? typeOverride.trim() : detectedType;
 
   const now = (deps.now ?? (() => new Date().toISOString()))();
+
+  // ── seed lifecycle-admin authority (#1541, ADR 0034 D3) ──
+  // Record the enroller (the canonical server) as THIS machine's lifecycle-admin
+  // authority — the net-new persistence that makes a headless target approvable
+  // from a UI-bearing authority machine (the target only ever ENFORCES). It runs
+  // AFTER the pin check + fleet.json commit (a refused enroll returns before this
+  // and seeds nothing) and is a pure side-addition — the enroll result, roster
+  // row, and join token are byte-identical to before. The authority's identity
+  // anchor is the canonical server's stable id (keypair fingerprints are not
+  // minted at enroll yet — #1477's rollout will thread a real fingerprint here).
+  (deps.recordLifecycleAuthority ?? ((rec: LifecycleAuthorityRecord) => schemaRecordLifecycleAuthority(rec)))({
+    targetMachineId: machineId,
+    authorityMachineId: canonical.host,
+    authorityIdentityKey: canonical.host,
+    recordedAt: now,
+  });
 
   // ── register the roster row (#1318 POST /amicode/roster), provisional ──
   const provisionalRow: RosterRow = {
