@@ -712,7 +712,7 @@
     "packages/core/src/session/runner/llm.ts": "d11a8b4f31b37e16f16a14acd3a12fb45a323a7d8c460c21e67f94c3a2307b45",
     "packages/core/src/v1/config/config.ts": "6eece12da68ac65a2c8b2fe19b1f2509f397cb63d004dca3998cf6dcc772293e",
     "packages/core/src/v1/config/migrate.ts": "6c960e1245db9a4bb830f0c1ebd6174e50570b4282d4ce5d7bff3333277abcf4",
-    "packages/opencode/src/plugin/openai/codex.ts": "7f4342ee6a25eca6b66a47732a154449fbf318f6ce70ed446cf3e6788833954b",
+    "packages/opencode/src/plugin/openai/codex.ts": "e7f3988ad2afca6b0112cc820729372f774bfa04ecf3d348ed82b2bbf1b07c40",
     "packages/opencode/src/server/amicode/connections.ts": "dcfeeeddb380e11d8653c77e0dffa4ac3acabed4091f07f88b6ce0c7ae5772b3",
     "packages/opencode/src/server/amicode/credentials.ts": "f3a15c82496f9a3b6e8c1006a6a4ab419a02156e9a93a43c6c2319632c30063f",
     "packages/opencode/src/server/amicode/dashboard.ts": "031a4f40bfdc847984a1deecfefbe0fd27f42cbd1caf8823dc43c7eb5bcb9af0",
