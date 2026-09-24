@@ -12,6 +12,7 @@ import { ServerConnection, useServer } from "./server"
 import { createRefCountMap } from "@/utils/refcount"
 import { useGlobal } from "./global"
 import { ServerScope } from "@/utils/server-scope"
+import { parseCursorNamespaces, resolveEventOrigin } from "./sse-origin"
 import { detectServerProtocol, type ServerProtocol } from "@/utils/server-protocol"
 import { createCompatibleApi, type CompatibleApi } from "@/utils/server-compat"
 
@@ -19,7 +20,7 @@ const isAbortError = (error: unknown) =>
   error !== null && typeof error === "object" && "name" in error && error.name === "AbortError"
 
 const isStreamClosed = (error: unknown, signal?: AbortSignal) => isAbortError(error) || signal?.aborted === true
-export type ServerEvent = Event & { current?: OpenCodeEvent }
+export type ServerEvent = Event & { current?: OpenCodeEvent; origin?: string }
 type QueuedServerEvent = { directory: string; payload: ServerEvent }
 /** A minimal fetch call signature. Newer lib types make `typeof fetch` require
  *  a `preconnect` member our plain wrappers don't implement (lib drift);
@@ -347,6 +348,10 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
       }
     }
   }
+  // #1539: track the parsed composite cursor to detect event origin (local vs
+  // remote peer). Initialized from the persisted cursor so the first event
+  // after reconnect diffs correctly.
+  let previousParsedCursor = parseCursorNamespaces(lastEventID)
   const sseFetch: FetchLike = (input, init) => {
     const base = eventFetch ?? globalThis.fetch
     try {
@@ -501,7 +506,17 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
               continue
             }
             trackEventID(legacy ? event.payload : (event as { id?: string }))
-            if (enqueueServerEvent(queue, { directory, payload })) schedule()
+            // #1539: resolve origin from the composite cursor diff. Fleet-of-one
+            // (bare scalar id) returns undefined immediately — zero overhead.
+            const sseId: string | undefined = legacy
+              ? (event.payload as { id?: string }).id
+              : (event as { id?: string }).id
+            const resolved = resolveEventOrigin(sseId, previousParsedCursor)
+            previousParsedCursor = resolved.cursor
+            const taggedPayload: ServerEvent = resolved.origin !== undefined
+              ? { ...payload, origin: resolved.origin }
+              : payload
+            if (enqueueServerEvent(queue, { directory, payload: taggedPayload })) schedule()
 
             if (Date.now() - yielded < STREAM_YIELD_MS) continue
             yielded = Date.now()
@@ -537,6 +552,7 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
 
   const clearGlobalStreamCursor = () => {
     lastEventID = undefined
+    previousParsedCursor = {}
     try {
       sessionStorage.removeItem(CURSOR_KEY)
     } catch {

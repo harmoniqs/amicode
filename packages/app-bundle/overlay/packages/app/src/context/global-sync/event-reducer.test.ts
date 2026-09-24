@@ -614,4 +614,46 @@ describe("applyDirectoryEvent", () => {
     expect(lspLoads).toBe(1)
   })
 
+  // #1539: the directory store is local-only. The gate in server-sync.tsx checks
+  // `event.origin` and skips `applyDirectoryEvent` for remote-origin events. This
+  // test verifies the gate's contract: a remote-origin event WOULD mutate the
+  // store if the gate weren't there, proving the gate is necessary.
+  test("#1539 gate contract: session.created WOULD insert into the store (the gate prevents this for remote events)", () => {
+    const [store, setStore] = createStore(baseState({ session: [], sessionTotal: 0 }))
+    const remoteSession = rootSession({ id: "ses_remote" })
+
+    // Without the gate, applyDirectoryEvent inserts the session:
+    applyDirectoryEvent({
+      event: { type: "session.created", properties: { info: remoteSession } },
+      store,
+      setStore,
+      push() {},
+      directory: "/tmp",
+      loadLsp() {},
+    })
+    expect(store.session).toHaveLength(1)
+    expect(store.sessionTotal).toBe(1)
+
+    // The gate in server-sync.tsx: `if (isRemote) return` — skips this call.
+    // A remote-origin event with `origin: "studio"` never reaches here.
+    // This test documents what the gate prevents.
+  })
+
+  test("#1539 gate contract: session.updated WOULD upsert into the store (the gate prevents this for remote events)", () => {
+    const [store, setStore] = createStore(baseState({ session: [], sessionTotal: 0 }))
+    const remoteSession = rootSession({ id: "ses_remote" })
+
+    // Without the gate, session.updated inserts a previously-unknown session:
+    applyDirectoryEvent({
+      event: { type: "session.updated", properties: { info: remoteSession } },
+      store,
+      setStore,
+      push() {},
+      directory: "/tmp",
+      loadLsp() {},
+    })
+    expect(store.session).toHaveLength(1)
+    // The gate prevents this for events with `origin: "studio"`.
+  })
+
 })

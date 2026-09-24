@@ -548,11 +548,17 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
     const event = e.details
     const eventType: string = event.type
     const recent = bootingRoot || Date.now() - bootedAt < 1500
+    // #1539: remote-origin events must NOT mutate the local directory store.
+    // The origin field is set by the SSE loop when the event came from a remote
+    // peer's namespace in the fan-in composite cursor. `undefined` = local.
+    const isRemote = typeof event.origin === "string"
 
     if (event.current) session.applyV2(event.current)
     session.apply(event)
     if (event.type === "session.created" || event.type === "session.updated" || event.type === "session.deleted") {
-      homeSessions.apply(event)
+      // #1539: homeSessions feeds into the session list that mergePeerSessions
+      // deduplicates against; remote events contaminate it the same way.
+      if (!isRemote) homeSessions.apply(event)
     }
     homeSessions.refresh(event.type)
     if (eventType === "integration.connection.updated") void refreshProviders()
@@ -584,21 +590,27 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
         lastConnectedQueueAt = Date.now()
         for (const directory of Object.keys(children.children)) {
           if (!children.active(directory)) continue
-          queue.push(directory)
+          // #1539: a remote server.connected/global.disposed must not trigger
+          // local directory re-bootstraps.
+          if (!isRemote) queue.push(directory)
         }
       }
       return
     }
 
-    if (event.current?.type === "session.moved") {
-      const info = session.get(event.current.data.sessionID)
-      if (info) indexSession(info)
+    // #1539: indexSession inserts synthetic session.created events into the
+    // directory store — skip for remote events.
+    if (!isRemote) {
+      if (event.current?.type === "session.moved") {
+        const info = session.get(event.current.data.sessionID)
+        if (info) indexSession(info)
+      }
+      if (event.current?.type === "session.forked")
+        void session
+          .resolve(event.current.data.sessionID, { force: true })
+          .then(indexSession)
+          .catch(() => {})
     }
-    if (event.current?.type === "session.forked")
-      void session
-        .resolve(event.current.data.sessionID, { force: true })
-        .then(indexSession)
-        .catch(() => {})
 
     const existing = children.children[key]
     if (!existing) return
@@ -610,10 +622,16 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
       eventType === "command.updated" ||
       eventType === "config.updated" ||
       eventType === "agent.updated"
-    )
-      queue.push(key)
+    ) {
+      // #1539: queue.push triggers directory re-fetches that would pull remote
+      // sessions into the local store.
+      if (!isRemote) queue.push(key)
+    }
     if (eventType === "mcp.status.changed") void queryClient.invalidateQueries(queryOptionsApi.mcp(key))
     if (eventType === "mcp.resources.changed") void queryClient.invalidateQueries(queryOptionsApi.mcpResources(key))
+    // #1539: applyDirectoryEvent is the primary contamination point — remote
+    // events must not insert into or update the directory-scoped store.session.
+    if (isRemote) return
     const [store, setStore] = existing
     applyDirectoryEvent({
       event,
