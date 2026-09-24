@@ -26,7 +26,12 @@ import { isPublicUiPath } from "./public_ui";
 import { resolveAttachmentPointer } from "./attachment_pointer";
 import { resolveKeeperPointer } from "./keeper_pointer";
 import { resolveAmicodeTarget, type MultiplexTarget } from "./attachment_pointer";
-import type { MultiplexResolver, ResolvedTarget } from "./session_multiplexer";
+import type {
+  MultiplexResolver,
+  ResolvedTarget,
+  ObservationReadResolution,
+  ObservationReadPeerTarget,
+} from "./session_multiplexer";
 import type { EventFanInDriver } from "./sse_fanin_driver";
 import { BOUND_NONCE_HEADER, BOUND_IDENTITY_HEADER } from "./fleet_bootstrap_headers";
 
@@ -152,6 +157,27 @@ export interface FleetPlane {
   eventFanIn?: EventFanInDriver;
 }
 
+/** #1537 (Fleet Studio B2b, read seam): the OBSERVATION-ONLY per-session
+ *  owner-routing seam. Armed ONLY on a machine running the observation path
+ *  (the base peer-studio READ routes are mounted but NO premium FleetPlane is
+ *  attached, so `getMode` stays "engine"). `dispatch()` consults it JUST BEFORE
+ *  the local engine proxy: a GET/HEAD read for a PEER-OWNED session resolves to
+ *  the owner peer and is proxied there with that peer's OWN reader token; every
+ *  other request (writes, local/unowned reads, /amicode/*) resolves `undefined`
+ *  and falls through BYTE-IDENTICAL to the local engine. A DEGRADED resolution
+ *  (owner is a known peer whose transport is down) answers the peer-unreachable
+ *  503 — NEVER local-dressed-as-peer (the #1382 invariant). Absent on
+ *  standalone / armed / client boots (never attached) → the consult is a
+ *  structural no-op there. */
+export interface ObservationReadPlane {
+  /** Resolve a read to an owner-peer target, or undefined to fall through. */
+  resolve(method: string, pathname: string): ObservationReadResolution | undefined;
+  /** Proxy a REACHABLE read to the owner peer with its reader token. Returns
+   *  true when it owns the response; false when no upstream is bound (→ the
+   *  caller answers a named 503, never local). */
+  proxyToPeer(req: http.IncomingMessage, res: http.ServerResponse, target: ObservationReadPeerTarget): boolean;
+}
+
 /** #1261 (AC6): a client's own named hub-down state — distinct from the base
  *  "hub upstream not available" and never the engine's message. */
 export const FLEET_HUB_DOWN_ERROR = "fleet-hub-down";
@@ -208,6 +234,10 @@ export class AmicodeServiceServer {
    *  path (fleet_staging.ts); absent on every base boot, which is what makes
    *  the no-entitlement byte identity structural. */
   private fleetPlane?: FleetPlane;
+  /** #1537 (B2b read seam): the observation-only per-session read router.
+   *  Armed ONLY on the observation path (index.ts); absent everywhere else, so
+   *  the dispatch consult is a structural no-op unless it is attached. */
+  private observeRead?: ObservationReadPlane;
   readonly password: string;
   /** #955 (the hub cutover): the auth mode. "credential" (the default) is the
    *  per-boot-mint posture — every non-public-UI request 401s without a
@@ -284,6 +314,14 @@ export class AmicodeServiceServer {
    *  it never carries a fleet surface. */
   attachFleetPlane(plane: FleetPlane): this {
     this.fleetPlane = plane;
+    return this;
+  }
+
+  /** #1537 (B2b read seam): arm the observation-only per-session read router.
+   *  Called ONLY by the observation path in index.ts; a boot without it never
+   *  consults the seam (byte-identical). */
+  attachObservationReadPlane(plane: ObservationReadPlane): this {
+    this.observeRead = plane;
     return this;
   }
 
@@ -645,6 +683,30 @@ export class AmicodeServiceServer {
         }
       }
       if (this.engineProxy) {
+        // #1537 (B2b read seam): on the OBSERVATION path (no fleet plane; mode
+        // "engine"), a GET/HEAD read for a PEER-OWNED session proxies to the
+        // owner peer with that peer's OWN reader token, JUST BEFORE the local
+        // engine proxy. A `undefined` resolution (a write, a local/unowned
+        // read, /amicode/*, a non-session path) falls through BYTE-IDENTICAL to
+        // the engine proxy below — the seam is a strict no-op on every boot that
+        // never attaches it (standalone / armed / client). A DEGRADED
+        // resolution (owner is a known peer whose transport is down) answers the
+        // peer-unreachable 503, NEVER the local engine (the #1382 invariant).
+        if (this.observeRead) {
+          const decision = this.observeRead.resolve(req.method ?? "GET", url.pathname);
+          if (decision) {
+            if (decision.kind === "peer") {
+              if (this.observeRead.proxyToPeer(req, res, decision)) return;
+            }
+            // degraded, or the peer proxy reported no upstream → the peer's OWN
+            // honest 503 (never the local engine, never local-dressed-as-peer).
+            send({
+              status: 503,
+              body: JSON.stringify({ ok: false, error: FLEET_PEER_UNREACHABLE_ERROR, reason: "peer-unreachable", machine_id: decision.machineId }),
+            });
+            return;
+          }
+        }
         // Streams method/headers/body through to the engine (SSE included);
         // false = no upstream bound yet → the honest 503 below.
         if (this.engineProxy.handle(req, res)) return;

@@ -45,6 +45,7 @@ import {
   type SessionEntry,
 } from "./session_multiplexer";
 import { SseFanInDriver } from "./sse_fanin_driver";
+import { createObservationReadPlane } from "./observation_read_plane";
 import { HubCredentialRead, mintRegistry, readHubCredential } from "./hub_credential";
 import { buildMergedProjection, buildFleetProjection, type UpstreamMode, type MergedProjection, type FleetProjection } from "./merged_projection";
 import { FleetPostureDetector, type FleetPostureTuning } from "./fleet_posture";
@@ -1055,6 +1056,57 @@ export function createAmicodeService(
       if (rehydration) {
         const snap = JSON.stringify({ ok: true, ...rehydration });
         server.add("GET", "/amicode/fleet/rehydration", () => ({ body: snap }));
+      }
+      // #1537 (Fleet Studio B2b, read seam): the observation machine has NO
+      // premium fleet plane (getMode "engine"), so a PEER-OWNED session's READ
+      // requests fell through to the LOCAL engine — which never held them —
+      // rendering "This session cannot be found" (the B2a regression). Feed a
+      // SessionOwnerMap from the SAME N-peer projection the sessions route uses
+      // (the OwnerMapFeed cadence — the projection is pull-only), and attach the
+      // GET-only owner-routing seam. Additive & fail-safe: only a peer-owned
+      // READ routes; writes, local/unowned reads, and /amicode/* fall through
+      // byte-identical. NO SSE fan-in (that stays flag-gated/premium, ADR 0033).
+      if (opts.fleet.fleetPeers) {
+        const fleetPeers = opts.fleet.fleetPeers;
+        const ownerMap = new SessionOwnerMap();
+        const ownerMapFeed = new OwnerMapFeed({
+          ownerMap,
+          buildProjection: async (): Promise<{ sessions: SessionEntry[] }> => {
+            const peers = fleetPeers.getServingPeers().map((p) => {
+              const tokenRead = fleetPeers.readPeerToken(p.machineId);
+              return {
+                machineId: p.machineId,
+                getUrl: () => (tokenRead.ok ? tokenRead.credential.baseUrl : undefined),
+                token: tokenRead.ok ? tokenRead.credential.token : undefined,
+              };
+            });
+            const projection = await buildFleetProjection({
+              localMachineId: fleetPeers.localMachineId,
+              local: { getUrl: opts.engine?.getUrl ?? ((): string | undefined => undefined), password: opts.engine?.password },
+              peers,
+              rosterLookup: fleetPeers.rosterLookup,
+            });
+            return { sessions: projection.sessions as SessionEntry[] };
+          },
+        });
+        ownerMapFeed.start();
+        server.registerCleanup(() => ownerMapFeed.stop());
+        server.attachObservationReadPlane(
+          createObservationReadPlane({
+            ownerMap,
+            localMachineId: fleetPeers.localMachineId,
+            // Late per request (fleet discipline): only a KNOWN serving peer
+            // resolves a transport → route; a serving peer whose token/url is
+            // gone is the honest DEGRADED case (a transport with no url — 503,
+            // NEVER local); anything else → undefined → local fall-through.
+            peer: (machineId) => {
+              if (!fleetPeers.getServingPeers().some((p) => p.machineId === machineId)) return undefined;
+              const r = fleetPeers.readPeerToken(machineId);
+              return r.ok ? { getUrl: () => r.credential.baseUrl, token: r.credential.token } : { getUrl: () => undefined };
+            },
+            ...(opts.fleet.dataPlaneTimeoutMs !== undefined ? { timeoutMs: opts.fleet.dataPlaneTimeoutMs } : {}),
+          }),
+        );
       }
     }
   }

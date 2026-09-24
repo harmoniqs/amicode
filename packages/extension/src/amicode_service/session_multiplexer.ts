@@ -40,6 +40,33 @@ export function extractSessionIdFromPath(pathname: string): string | undefined {
   return m ? m[1] : undefined;
 }
 
+/** Extract the session ID from ANY real engine session-read path — mirroring
+ *  the engine's OWN authoritative `getWorkspaceRouteSessionID`
+ *  (packages/opencode/src/server/shared/workspace-routing.ts). The app emits
+ *  BOTH client shapes, and — crucially — the BARE session-detail read carries
+ *  NO trailing sub-segment (that is the request that renders "This session
+ *  cannot be found" when it falls through to a local engine that never held the
+ *  peer's session):
+ *    /session/{id}                     (v1 legacy client — bare detail read)
+ *    /session/{id}/message | …         (v1 messages / member calls)
+ *    /api/session/{id}                 (v2 vendored client — bare detail read)
+ *    /api/session/{id}/message | …     (v2 messages / member calls)
+ *    /experimental/session/{id}/background
+ *  `/session/status` is NOT a session id (the status poll), and a bare
+ *  `/session` (the list) carries no id. Returns undefined for both.
+ *
+ *  DISTINCT from `extractSessionIdFromPath` above (the premium multiplexer's
+ *  narrower `/api/session/{id}/<sub>`-only matcher, which misses the v1 shape
+ *  AND the bare detail read) — left untouched so the armed path is unchanged. */
+export function extractSessionIdFromReadPath(pathname: string): string | undefined {
+  if (pathname === "/session/status") return undefined;
+  const id =
+    pathname.match(/^\/session\/([^/]+)(?:\/|$)/)?.[1] ??
+    pathname.match(/^\/api\/session\/([^/]+)(?:\/|$)/)?.[1] ??
+    pathname.match(/^\/experimental\/session\/([^/]+)\/background$/)?.[1];
+  return id ?? undefined;
+}
+
 // ── session→owner map ────────────────────────────────────────────────────────
 
 /** A session entry with owner tag (the fleet-wide projection's shape). */
@@ -164,6 +191,85 @@ export interface PeerTransport {
   getUrl(): string | undefined;
   /** Auth token for the peer (from the peer-token store, slice 1). */
   token?: string;
+}
+
+// ── observation-only read router (#1537, B2b read seam) ──────────────────────
+
+/** A REACHABLE peer read target — proxy the read to `url` with `token`. */
+export type ObservationReadPeerTarget = { kind: "peer"; machineId: string; url: string; token: string };
+
+/** The resolution of an observation-mode read:
+ *   - a REACHABLE peer target → proxy to the owner with its reader token;
+ *   - the honest DEGRADED variant (owner is a KNOWN peer, but its transport is
+ *     down — getUrl() undefined / no token) → the caller answers a named 503,
+ *     NEVER local-dressed-as-peer (the #1382 invariant);
+ *   - `undefined` (NOT a target) → LOCAL, the fail-safe: a write, a keyless /
+ *     non-session path, /amicode/*, a local-owned or unowned session, or an
+ *     owner that is not a known peer. The read falls through BYTE-IDENTICAL to
+ *     the local engine. */
+export type ObservationReadResolution = ObservationReadPeerTarget | { kind: "degraded"; machineId: string };
+
+/** Options for the ObservationReadRouter. */
+export interface ObservationReadRouterOpts {
+  ownerMap: SessionOwnerMap;
+  localMachineId: string;
+  /** Late-bound peer transport by owner machine_id (fleet discipline: read per
+   *  request). `undefined` → the owner is NOT a known/serving peer (→ local).
+   *  A present transport whose `getUrl()`/`token` is absent is the honest
+   *  DEGRADED case (owner known, transport momentarily down). */
+  peer(machineId: string): PeerTransport | undefined;
+}
+
+/** The observation-only per-session owner router (#1537, B2b). On the
+ *  OBSERVATION machine (no premium fleet plane; getMode stays "engine"), a
+ *  peer-owned session's READ requests must reach the owner instead of falling
+ *  through to a local engine that never held them (→ "This session cannot be
+ *  found"). This resolves a GET/HEAD read to its owner peer using ONLY the
+ *  path-borne session id (the empirically-verified owner signal — the app emits
+ *  the id in the URL for both client shapes) resolved against the SessionOwnerMap.
+ *
+ *  Additive & fail-safe: anything that does not resolve to a reachable/degraded
+ *  peer returns undefined and the caller falls through byte-identical to today.
+ *  GET-only: writes NEVER route (remote writes are B2b, design-gated). */
+export class ObservationReadRouter {
+  private readonly ownerMap: SessionOwnerMap;
+  private readonly localMachineId: string;
+  private readonly peer: (machineId: string) => PeerTransport | undefined;
+
+  constructor(opts: ObservationReadRouterOpts) {
+    this.ownerMap = opts.ownerMap;
+    this.localMachineId = opts.localMachineId;
+    this.peer = opts.peer;
+  }
+
+  /** Resolve a read to its owner peer, or undefined for local (fall through).
+   *
+   *  Resolution order:
+   *   0. NON-read (POST/PATCH/DELETE/…) → local (writes NEVER route)
+   *   1. /amicode/* (the machine's own honesty + local surface) → local
+   *   2. no session id extractable from the path → local
+   *   3. owner unknown (unowned) → local
+   *   4. owner == localMachineId (local-owned) → local
+   *   5. owner is not a known peer → local
+   *   6. owner is a known peer, transport down (no url/token) → DEGRADED (503)
+   *   7. owner is a known reachable peer → the peer target */
+  resolve(method: string, pathname: string): ObservationReadResolution | undefined {
+    const m = (method || "GET").toUpperCase();
+    if (m !== "GET" && m !== "HEAD") return undefined; // (0) writes never route
+    // (1) never proxy the machine's OWN /amicode/* surface (honesty + local).
+    //     Reads there are served by the local route table, never a peer.
+    if (pathname === "/amicode" || pathname.startsWith("/amicode/")) return undefined;
+    const sessionId = extractSessionIdFromReadPath(pathname); // (2)
+    if (!sessionId) return undefined;
+    const owner = this.ownerMap.resolveOwner(sessionId); // (3)
+    if (!owner) return undefined;
+    if (owner === this.localMachineId) return undefined; // (4)
+    const peer = this.peer(owner); // (5)
+    if (!peer) return undefined;
+    const url = peer.getUrl();
+    if (!url || !peer.token) return { kind: "degraded", machineId: owner }; // (6)
+    return { kind: "peer", machineId: owner, url, token: peer.token }; // (7)
+  }
 }
 
 // ── multiplexing proxy ───────────────────────────────────────────────────────
