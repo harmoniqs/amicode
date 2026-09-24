@@ -251,3 +251,124 @@ describe("enableSelfOwnedControl — a self-owned, management-verified peer mint
     expect(findControlGrantByTarget(PEER_ID, deps)).toBeUndefined();
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// #1545 — shared-peer arm: the request→approve handshake path
+//
+// When evaluateControlBootstrap returns `requires-approval` for a shared peer,
+// the caller issues a control request (fleet_control_request.ts). Approval
+// (from the lifecycle-admin authority holder) mints a control grant via the
+// SAME issueLifecycleGrant machinery the self-owned path uses — but the shared
+// peer NEVER reaches enableSelfOwnedControl. This is the no-privilege-bleed
+// invariant: two distinct paths, one grant model.
+// ═══════════════════════════════════════════════════════════════════════════
+import {
+  submitControlRequest,
+  approveControlRequest,
+  denyControlRequest,
+  readPendingRequests,
+  type ControlRequestDeps,
+} from "../src/amicode_service/fleet_control_request";
+
+describe("#1545 — shared-peer arm: requires-approval → request→approve handshake → control grant", () => {
+  let deps: ControlRequestDeps;
+  beforeEach(() => {
+    const root = tmproot();
+    deps = {
+      requestStoreFile: join(root, "control-requests.json"),
+      grantDeps: {
+        grantStoreFile: join(root, "lifecycle-grants.json"),
+        tokenFactory: () => "SHARED-CONTROL-TOKEN",
+        now: () => "2026-09-24T12:00:00.000Z",
+      },
+      now: () => "2026-09-24T10:00:00.000Z",
+    };
+  });
+
+  it("the shared-peer path: bootstrap requires-approval → submit request → approve → control grant", () => {
+    // Step 1: the bootstrap decision for a shared peer
+    const decision = evaluateControlBootstrap({ ownership: "shared", managementVerified: false });
+    expect(decision.decision).toBe("requires-approval");
+
+    // Step 2: submit a control request
+    const submitResult = submitControlRequest(
+      {
+        requesterMachineId: SELF_ID,
+        requesterIdentityKey: SELF_KEY,
+        targetMachineId: PEER_ID,
+        targetIdentityKey: PEER_KEY,
+      },
+      deps,
+    );
+    expect(submitResult.ok).toBe(true);
+    expect(submitResult.status).toBe("pending");
+
+    // Step 3: the authority holder sees the pending request
+    const pending = readPendingRequests(deps);
+    expect(pending).toHaveLength(1);
+    expect(pending[0].requesterMachineId).toBe(SELF_ID);
+
+    // Step 4: approve → control grant minted
+    const approveResult = approveControlRequest(SELF_ID, PEER_ID, deps);
+    expect(approveResult.ok).toBe(true);
+    if (!approveResult.ok) return;
+    expect(approveResult.grant.scope).toBe("control");
+    expect(approveResult.grant.state).toBe("active");
+    expect(approveResult.grant.token).toBe("SHARED-CONTROL-TOKEN");
+
+    // Step 5: the requester now has a control grant resolvable by target
+    const grant = findControlGrantByTarget(PEER_ID, deps.grantDeps);
+    expect(grant).toBeDefined();
+    expect(grant!.scope).toBe("control");
+  });
+
+  it("the shared-peer path denied: bootstrap requires-approval → submit → deny → NO grant", () => {
+    const decision = evaluateControlBootstrap({ ownership: "shared", managementVerified: false });
+    expect(decision.decision).toBe("requires-approval");
+
+    submitControlRequest(
+      {
+        requesterMachineId: SELF_ID,
+        requesterIdentityKey: SELF_KEY,
+        targetMachineId: PEER_ID,
+        targetIdentityKey: PEER_KEY,
+      },
+      deps,
+    );
+
+    denyControlRequest(SELF_ID, PEER_ID, deps);
+    const grant = findControlGrantByTarget(PEER_ID, deps.grantDeps);
+    expect(grant).toBeUndefined();
+  });
+
+  it("no privilege bleed: enableSelfOwnedControl REFUSES a shared peer — only the handshake path works", () => {
+    // Attempt the self-owned path with shared ownership
+    const selfOwnedResult = enableSelfOwnedControl(
+      {
+        ownership: "shared",
+        managementVerified: true,
+        self: { machineId: SELF_ID, identityKey: SELF_KEY },
+        target: { machineId: PEER_ID, identityKey: PEER_KEY },
+      },
+      deps.grantDeps,
+    );
+    expect(selfOwnedResult.ok).toBe(false);
+    if (selfOwnedResult.ok) return;
+    expect(selfOwnedResult.reason).toBe("requires-approval");
+
+    // The handshake path works for the same shared peer
+    submitControlRequest(
+      {
+        requesterMachineId: SELF_ID,
+        requesterIdentityKey: SELF_KEY,
+        targetMachineId: PEER_ID,
+        targetIdentityKey: PEER_KEY,
+      },
+      deps,
+    );
+    const approveResult = approveControlRequest(SELF_ID, PEER_ID, deps);
+    expect(approveResult.ok).toBe(true);
+    if (!approveResult.ok) return;
+    expect(approveResult.grant.scope).toBe("control");
+  });
+});

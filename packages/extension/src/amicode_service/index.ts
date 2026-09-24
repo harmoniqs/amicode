@@ -48,6 +48,12 @@ import { SseFanInDriver } from "./sse_fanin_driver";
 import { createObservationReadPlane } from "./observation_read_plane";
 import { createObservationWritePlane } from "./observation_write_plane";
 import { findControlGrantByTarget, readAllLifecycleGrants, sanitizeGrantForDisplay } from "./fleet_control_lifecycle";
+import {
+  submitControlRequest,
+  approveControlRequest,
+  denyControlRequest,
+  readPendingRequests,
+} from "./fleet_control_request";
 import { HubCredentialRead, mintRegistry, readHubCredential } from "./hub_credential";
 import { buildMergedProjection, buildFleetProjection, type UpstreamMode, type MergedProjection, type FleetProjection } from "./merged_projection";
 import { buildControlResolver } from "./remote_session_state";
@@ -584,15 +590,96 @@ export function registerFleetRoutes(server: AmicodeServiceServer, deps: FleetRou
   // the lifecycle grants, SANITIZED (sanitizeGrantForDisplay NEVER includes the
   // token; identity keys are truncated). Under the /amicode/fleet/* prefix so it
   // inherits the never-proxied local-honesty exclusion (grants are this
-  // machine's own state). The pending-requests view is a #1545 stub (empty).
+  // machine's own state). The pending-requests view is populated by #1545.
   server.add("GET", "/amicode/fleet/grants", () => {
     return {
       body: JSON.stringify({
         ok: true,
         grants: readAllLifecycleGrants().map(sanitizeGrantForDisplay),
-        pending_requests: [],
+        pending_requests: readPendingRequests().map((r) => ({
+          requesterMachineId: r.requesterMachineId,
+          targetMachineId: r.targetMachineId,
+          status: r.status,
+          requestedAt: r.requestedAt,
+        })),
       }),
     };
+  });
+
+  // #1545 (slice 5): the shared-peer control request→approve handshake routes.
+  // A shared peer POSTs a control request; the lifecycle-admin authority holder
+  // approves or denies. These live under /amicode/fleet/* (never-proxied).
+  server.add("POST", "/amicode/fleet/control-request", ({ body }) => {
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      return { status: 400, body: JSON.stringify({ ok: false, reason: "invalid-json" }) };
+    }
+    const requesterMachineId = typeof parsed.requesterMachineId === "string" ? parsed.requesterMachineId : "";
+    const requesterIdentityKey = typeof parsed.requesterIdentityKey === "string" ? parsed.requesterIdentityKey : "";
+    const targetMachineId = typeof parsed.targetMachineId === "string" ? parsed.targetMachineId : "";
+    const targetIdentityKey = typeof parsed.targetIdentityKey === "string" ? parsed.targetIdentityKey : "";
+    if (!requesterMachineId || !targetMachineId) {
+      return { status: 400, body: JSON.stringify({ ok: false, reason: "missing-fields" }) };
+    }
+    const result = submitControlRequest({
+      requesterMachineId,
+      requesterIdentityKey,
+      targetMachineId,
+      targetIdentityKey,
+    });
+    return { body: JSON.stringify(result) };
+  });
+
+  server.add("POST", "/amicode/fleet/control-approve", ({ body }) => {
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      return { status: 400, body: JSON.stringify({ ok: false, reason: "invalid-json" }) };
+    }
+    const requesterMachineId = typeof parsed.requesterMachineId === "string" ? parsed.requesterMachineId : "";
+    const targetMachineId = typeof parsed.targetMachineId === "string" ? parsed.targetMachineId : "";
+    if (!requesterMachineId || !targetMachineId) {
+      return { status: 400, body: JSON.stringify({ ok: false, reason: "missing-fields" }) };
+    }
+    const result = approveControlRequest(requesterMachineId, targetMachineId);
+    if (!result.ok) {
+      return { status: 404, body: JSON.stringify(result) };
+    }
+    // Return grant token + metadata (the requester needs the token to present)
+    return {
+      body: JSON.stringify({
+        ok: true,
+        status: result.status,
+        grant: {
+          scope: result.grant.scope,
+          state: result.grant.state,
+          token: result.grant.token,
+          generation: result.grant.generation,
+        },
+      }),
+    };
+  });
+
+  server.add("POST", "/amicode/fleet/control-deny", ({ body }) => {
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      return { status: 400, body: JSON.stringify({ ok: false, reason: "invalid-json" }) };
+    }
+    const requesterMachineId = typeof parsed.requesterMachineId === "string" ? parsed.requesterMachineId : "";
+    const targetMachineId = typeof parsed.targetMachineId === "string" ? parsed.targetMachineId : "";
+    if (!requesterMachineId || !targetMachineId) {
+      return { status: 400, body: JSON.stringify({ ok: false, reason: "missing-fields" }) };
+    }
+    const result = denyControlRequest(requesterMachineId, targetMachineId);
+    if (!result.ok) {
+      return { status: 404, body: JSON.stringify(result) };
+    }
+    return { body: JSON.stringify({ ok: true }) };
   });
 
   return server;

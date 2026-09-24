@@ -258,6 +258,10 @@ const LIFECYCLE_ADMIN_PREFIXES = [
   "/amicode/fleet/revoke",
   "/amicode/fleet/readmit",
   "/amicode/fleet/lifecycle",
+  // #1545: the control-approve/deny routes are lifecycle-admin acts (only the
+  // authority holder may approve or deny a shared peer's control request).
+  "/amicode/fleet/control-approve",
+  "/amicode/fleet/control-deny",
 ];
 
 /** Evaluate whether a scope is authorized for a given method+pathname.
