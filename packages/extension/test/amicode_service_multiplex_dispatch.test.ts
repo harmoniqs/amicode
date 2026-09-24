@@ -393,3 +393,139 @@ describe("#1448 — production dispatch wiring (createAmicodeService)", () => {
     }
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════════════
+// #1519 (Fleet Studio wiring W1c) — wire the SSE fan-in aggregator into the
+// /event route behind AMICO_FLEET_MULTIPLEX (ADR 0033 §D1–D4). Route-level,
+// single-host, hermetic. The live cross-machine delivery is the opt-in two-peer
+// E2E; here the UPSTREAM transport is faked (an injected opener) so the REAL
+// route — dispatch → the flag-gated /event interception → the #1511 aggregator →
+// the real downstream res — is exercised deterministically.
+// ══════════════════════════════════════════════════════════════════════════════
+
+/** An SSE stub: on GET it emits a fixed frame list as text/event-stream then
+ *  ends the response (so a byte-identity read completes). Records the path,
+ *  the ?lastEventID it received (the #1264 cursor), and the Authorization. */
+interface SseStub {
+  url: string;
+  requests: Array<{ path: string; lastEventID: string | null; auth?: string }>;
+  stop(): Promise<void>;
+}
+function startSseStub(frames: string[]): Promise<SseStub> {
+  const requests: SseStub["requests"] = [];
+  const server = http.createServer((req, res) => {
+    const u = new URL(req.url ?? "/", "http://stub");
+    requests.push({
+      path: u.pathname,
+      lastEventID: u.searchParams.get("lastEventID"),
+      auth: typeof req.headers.authorization === "string" ? req.headers.authorization : undefined,
+    });
+    res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
+    for (const f of frames) res.write(f);
+    res.end();
+  });
+  return new Promise((resolve) => {
+    server.listen(0, "127.0.0.1", () => {
+      const port = (server.address() as AddressInfo).port;
+      resolve({ url: `http://127.0.0.1:${port}`, requests, stop: () => new Promise((r) => server.close(() => r())) });
+    });
+  });
+}
+
+/** A single delimiter-inclusive SSE frame block from lines. */
+function sseFrame(...lines: string[]): string {
+  return lines.join("\n") + "\n\n";
+}
+
+/** Bounded, timeout-safe live SSE read of the downstream: pull whole frames
+ *  until `maxFrames` or the window elapses. Never hangs (the fan-in downstream
+ *  never ends on its own). Mirrors the two-peer E2E's readSseFrames. */
+async function readSseFrames(
+  url: string,
+  headers: Record<string, string>,
+  opts: { maxFrames: number; timeoutMs: number },
+): Promise<string[]> {
+  const frames: string[] = [];
+  try {
+    const res = await fetch(url, { headers, signal: AbortSignal.timeout(opts.timeoutMs) });
+    if (!res.ok || res.body === null) return frames;
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    try {
+      while (frames.length < opts.maxFrames) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let idx: number;
+        while ((idx = buf.indexOf("\n\n")) >= 0 && frames.length < opts.maxFrames) {
+          frames.push(buf.slice(0, idx + 2));
+          buf = buf.slice(idx + 2);
+        }
+      }
+    } finally {
+      try {
+        await reader.cancel();
+      } catch {
+        /* already closed */
+      }
+    }
+  } catch {
+    /* timeout / transport blip — return whatever whole frames we got */
+  }
+  return frames;
+}
+
+// ── AC1 — route-level flag-OFF byte-identity (WRITTEN FIRST; the #1264 guard) ──
+describe("#1519 AC1 — /event route flag-OFF byte-identity (#1264 regression guard)", () => {
+  it("flag OFF: /event streams frame-for-frame through the engine proxy, exactly as today", async () => {
+    delete process.env[FLEET_MULTIPLEX_FLAG];
+    const F1 = sseFrame("event: message", 'data: {"a":1}', "id: 1");
+    const F2 = sseFrame("event: message", 'data: {"b":2}', "id: 2");
+    const engine = await startSseStub([F1, F2]);
+    const server = new AmicodeServiceServer({ password: PW });
+    server.attachEngineProxy(new EngineProxy({ getUrl: () => engine.url }));
+    const origin = (await server.start()).toString().replace(/\/$/, "");
+    try {
+      // the stub ends the response, so the full body is finite: assert BYTE identity
+      const body = await (await fetch(`${origin}/event`, { headers: { Authorization: serverAuthHeader(PW) } })).text();
+      expect(body).toBe(F1 + F2); // no id rewrite, no namespacing, no composite — verbatim
+      expect(engine.requests[0].path).toBe("/event");
+    } finally {
+      await server.stop();
+      await engine.stop();
+    }
+  });
+
+  it("flag ON but no fleet plane (fleet-of-one): /event is STILL byte-identical — the flag alone never perturbs a single-machine stream", async () => {
+    process.env[FLEET_MULTIPLEX_FLAG] = "1";
+    expect(fleetMultiplexEnabled()).toBe(true);
+    const F1 = sseFrame("event: message", 'data: {"x":1}', "id: 7");
+    const engine = await startSseStub([F1]);
+    const server = new AmicodeServiceServer({ password: PW }); // no fleet plane → no eventFanIn seam
+    server.attachEngineProxy(new EngineProxy({ getUrl: () => engine.url }));
+    const origin = (await server.start()).toString().replace(/\/$/, "");
+    try {
+      const body = await (await fetch(`${origin}/event`, { headers: { Authorization: serverAuthHeader(PW) } })).text();
+      expect(body).toBe(F1);
+    } finally {
+      await server.stop();
+      await engine.stop();
+    }
+  });
+
+  it("flag OFF: the #1264 ?lastEventID cursor rides through to the engine UNCHANGED (opaque, frame-for-frame path preserved)", async () => {
+    delete process.env[FLEET_MULTIPLEX_FLAG];
+    const engine = await startSseStub([sseFrame("data: {}", "id: 9")]);
+    const server = new AmicodeServiceServer({ password: PW });
+    server.attachEngineProxy(new EngineProxy({ getUrl: () => engine.url }));
+    const origin = (await server.start()).toString().replace(/\/$/, "");
+    try {
+      await (await fetch(`${origin}/event?lastEventID=42`, { headers: { Authorization: serverAuthHeader(PW) } })).text();
+      expect(engine.requests[0].lastEventID).toBe("42"); // the opaque cursor reaches the engine verbatim
+    } finally {
+      await server.stop();
+      await engine.stop();
+    }
+  });
+});
