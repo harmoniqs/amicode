@@ -237,6 +237,42 @@ describe("resolveHeaderProvenance (#1452 W4a) — the header's fetch→resolve p
   })
 })
 
+// #1539: badge persistence after simulated remote SSE events. The bug was that
+// SSE events from a remote peer contaminated the local directory store with an
+// un-tagged copy of the session. On the next dropdown open, the local copy
+// (no amicode_owner) won the dedup, and the badge disappeared. After the fix,
+// the projection remains the sole source of remote sessions, so the badge
+// persists across dropdown opens.
+describe("#1539 badge persistence after remote SSE events", () => {
+  test("a remote session's badge persists when the projection is the sole source", () => {
+    // Simulate multiple consecutive dropdown opens. Each time, the projection
+    // carries the remote session with its owner tag. Without directory-store
+    // contamination, the badge is always present.
+    const projection: FleetSessionEntry[] = [
+      { id: "ses_remote", amicode_owner: { owner_machine_id: "mac-studio", owner_name: "Mac Studio", is_local: false } },
+    ]
+    // First open
+    const p1 = resolveHeaderProvenance(projection, "ses_remote")
+    expect(p1.showIcon).toBe(true)
+    expect(p1.tooltip).toBe("Mac Studio")
+    expect(p1.isRemote).toBe(true)
+    // Second open (same projection, unchanged)
+    const p2 = resolveHeaderProvenance(projection, "ses_remote")
+    expect(p2.showIcon).toBe(true)
+    expect(p2.tooltip).toBe("Mac Studio")
+    // N-th open — indefinitely stable
+    const pN = resolveHeaderProvenance(projection, "ses_remote")
+    expect(pN.isRemote).toBe(true)
+  })
+
+  test("a local session never gains a spurious badge from remote events", () => {
+    const projection: FleetSessionEntry[] = [
+      { id: "ses_local", amicode_owner: { owner_machine_id: "macbook", owner_name: "MacBook", is_local: true } },
+    ]
+    expect(resolveHeaderProvenance(projection, "ses_local").showIcon).toBe(false)
+  })
+})
+
 describe("session-header provenance icon is MOUNTED in the live header (#1452 W4a AC1+AC2)", () => {
   // Structural guard (the app's convention for the untested-by-design SolidJS
   // wiring — mirrors vscode-explorer-file-icon.test.tsx). This is BOTH the AC2
