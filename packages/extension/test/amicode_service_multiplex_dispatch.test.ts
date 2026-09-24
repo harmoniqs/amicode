@@ -39,6 +39,14 @@ import {
   SessionOwnerMap,
   type MultiplexResolver,
 } from "../src/amicode_service/session_multiplexer";
+import {
+  SseFanInDriver,
+  type OpenUpstream,
+  type SseFanInDriverDeps,
+} from "../src/amicode_service/sse_fanin_driver";
+import type { SseFrameSource } from "../src/amicode_service/sse_fanin_aggregator";
+import { parseCompositeCursor } from "../src/amicode_service/sse_composite_cursor";
+import { peerAuthHeader } from "../src/amicode_service/merged_projection";
 import { writeAttachmentPointerFile } from "../src/amicode_service/attachment_pointer";
 import { writeKeeperPointerFile } from "../src/amicode_service/keeper_pointer";
 import { writeHubCredential, readHubCredential } from "../src/amicode_service/hub_credential";
@@ -526,6 +534,183 @@ describe("#1519 AC1 — /event route flag-OFF byte-identity (#1264 regression gu
     } finally {
       await server.stop();
       await engine.stop();
+    }
+  });
+});
+
+// ── fan-in test scaffolding (AC2–AC5): an injected upstream opener drives the
+//    #1511 aggregator CORE deterministically; the downstream is a REAL /event. ──
+
+/** A controllable frame source: `push(frame)` feeds a frame; `end()` ends it.
+ *  Stays OPEN between pushes (a real SSE stream never ends on its own), so the
+ *  fan-in connection persists until the downstream closes or the arm is closed. */
+interface Ctl {
+  push(frame: string): void;
+  end(): void;
+  source: SseFrameSource;
+}
+function controllableSource(preload: string[] = []): Ctl {
+  const queue: string[] = [...preload];
+  const waiters: Array<(v: string | null) => void> = [];
+  let ended = false;
+  const drainNull = () => {
+    let w: ((v: string | null) => void) | undefined;
+    while ((w = waiters.shift())) w(null);
+  };
+  return {
+    push(frame: string) {
+      if (ended) return;
+      const w = waiters.shift();
+      if (w) w(frame);
+      else queue.push(frame);
+    },
+    end() {
+      ended = true;
+      drainNull();
+    },
+    source: {
+      next(): Promise<string | null> {
+        const f = queue.shift();
+        if (f !== undefined) return Promise.resolve(f);
+        if (ended) return Promise.resolve(null);
+        return new Promise((resolve) => waiters.push(resolve));
+      },
+      close() {
+        ended = true;
+        drainNull();
+      },
+    },
+  };
+}
+
+/** Read up to `maxFrames` whole SSE frames from an ALREADY-fetched Response
+ *  (fetch-then-push-then-read). The fetch's own AbortSignal.timeout is the hang
+ *  guard: a stalled read rejects and returns whatever whole frames arrived. */
+async function drainSseFrames(res: Response, opts: { maxFrames: number }): Promise<string[]> {
+  const frames: string[] = [];
+  if (res.body === null) return frames;
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  try {
+    while (frames.length < opts.maxFrames) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let idx: number;
+      while ((idx = buf.indexOf("\n\n")) >= 0 && frames.length < opts.maxFrames) {
+        frames.push(buf.slice(0, idx + 2));
+        buf = buf.slice(idx + 2);
+      }
+    }
+  } catch {
+    /* abort / transport end — return the whole frames we got */
+  } finally {
+    try {
+      await reader.cancel();
+    } catch {
+      /* already closed */
+    }
+  }
+  return frames;
+}
+
+/** An engine-armed (non-client) fleet plane in "engine" mode carrying ONLY the
+ *  fan-in seam — so `/event` reaches the flag-gated interception, and every
+ *  other path is untouched. getMode "engine" means a DECLINED fan-in falls to
+ *  the engine proxy (byte-identical), never a fleet-hub detour. */
+function fanInPlane(driver: SseFanInDriver): FleetPlane {
+  return {
+    getMode: () => "engine",
+    hub: new HubProxy({ getUrl: () => undefined, credential: () => readHubCredential() }),
+    eventFanIn: driver,
+  };
+}
+
+/** Build a driver with an injected opener that records each open and returns a
+ *  controllable source per namespace, plus sane owner/token/reachability
+ *  defaults. `owners` seeds the SessionOwnerMap with remote-owned sessions. */
+function makeFanInDriver(opts: {
+  ownerMap: SessionOwnerMap;
+  opened: Array<{ namespace: string; url: string; authHeader?: string; lastEventId?: string }>;
+  arms: Map<string, Ctl>;
+  preload?: Record<string, string[]>;
+  reachable?: (id: string) => boolean;
+  overrides?: Partial<SseFanInDriverDeps>;
+}): SseFanInDriver {
+  const openUpstream: OpenUpstream = (r) => {
+    const c = controllableSource(opts.preload?.[r.namespace] ?? []);
+    opts.arms.set(r.namespace, c);
+    opts.opened.push({ namespace: r.namespace, url: r.url, authHeader: r.authHeader, lastEventId: r.lastEventId });
+    return c.source;
+  };
+  return new SseFanInDriver({
+    ownerMap: opts.ownerMap,
+    localMachineId: "macbook",
+    localEventUrl: () => "http://local.invalid",
+    peerBaseUrl: (id) => `http://${id}.invalid`,
+    peerToken: (id) => ({ ok: true, credential: { baseUrl: `http://${id}.invalid`, token: `tok-${id}` } }),
+    reachable: opts.reachable ?? (() => true),
+    openUpstream,
+    reconcileMs: 1_000_000, // tests drive reconcile() directly — no timer races
+    ...opts.overrides,
+  });
+}
+
+/** Seed a SessionOwnerMap with remote-owned sessions. */
+function ownerMapWith(pairs: Array<[string, string]>): SessionOwnerMap {
+  const m = new SessionOwnerMap();
+  m.update(pairs.map(([id, owner]) => ({ id, amicode_owner: { owner_machine_id: owner, owner_name: owner, is_local: false } })));
+  return m;
+}
+
+const READ_TIMEOUT = 5000;
+
+// ── AC2 — flag-ON fan-in: local arm + one authed upstream per owner-peer ──────
+describe("#1519 AC2 — flag-ON fan-in onto the single downstream /event", () => {
+  it("opens the local arm + one authed upstream SSE per owner-peer, streaming the namespaced composite onto one res", async () => {
+    process.env[FLEET_MULTIPLEX_FLAG] = "1";
+    const ownerMap = ownerMapWith([["s1", "studio"]]);
+    const opened: Array<{ namespace: string; url: string; authHeader?: string; lastEventId?: string }> = [];
+    const arms = new Map<string, Ctl>();
+    const driver = makeFanInDriver({
+      ownerMap,
+      opened,
+      arms,
+      preload: {
+        local: [sseFrame("event: message", 'data: {"src":"local"}', "id: 5")],
+        studio: [sseFrame("event: message", 'data: {"src":"studio"}', "id: 9")],
+      },
+    });
+    const server = new AmicodeServiceServer({ password: PW });
+    server.attachFleetPlane(fanInPlane(driver));
+    const origin = (await server.start()).toString().replace(/\/$/, "");
+    try {
+      const res = await fetch(`${origin}/event`, {
+        headers: { Authorization: serverAuthHeader(PW) },
+        signal: AbortSignal.timeout(READ_TIMEOUT),
+      });
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toContain("text/event-stream");
+      // handle() ran → local + studio arms opened; the peer authed with ITS OWN token
+      expect(opened.map((o) => o.namespace).sort()).toEqual(["local", "studio"]);
+      const studio = opened.find((o) => o.namespace === "studio")!;
+      expect(studio.authHeader).toBe(peerAuthHeader("tok-studio"));
+      // the origin's local/hub credential (PW) is NEVER forwarded to a peer upstream
+      expect(studio.authHeader?.includes(PW)).toBe(false);
+
+      const frames = await drainSseFrames(res, { maxFrames: 2 });
+      const text = frames.join("");
+      // both arms fanned onto the ONE downstream response
+      expect(text).toContain('"src":"local"');
+      expect(text).toContain('"src":"studio"');
+      // the LAST frame carries the full composite id (round-trippable, §D3)
+      const ids = [...text.matchAll(/^id: (.+)$/gm)].map((m) => m[1]);
+      const composite = parseCompositeCursor(ids[ids.length - 1]);
+      expect(composite.get("local")).toBe("5");
+      expect(composite.get("studio")).toBe("9");
+    } finally {
+      await server.stop();
     }
   });
 });

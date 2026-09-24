@@ -27,6 +27,7 @@ import { resolveAttachmentPointer } from "./attachment_pointer";
 import { resolveKeeperPointer } from "./keeper_pointer";
 import { resolveAmicodeTarget, type MultiplexTarget } from "./attachment_pointer";
 import type { MultiplexResolver, ResolvedTarget } from "./session_multiplexer";
+import type { EventFanInDriver } from "./sse_fanin_driver";
 import { BOUND_NONCE_HEADER, BOUND_IDENTITY_HEADER } from "./fleet_bootstrap_headers";
 
 /** #1480: read ONE request header as a trimmed non-empty string, else
@@ -139,6 +140,16 @@ export interface FleetPlane {
    *  proven no-op. Deliberately typed as the narrow `MultiplexResolver` (only
    *  `resolveTarget`) so the SSE relay cannot be wired here (AC4). */
   multiplex?: MultiplexResolver;
+  /** #1519 (W1c): the SSE fan-in driver for the global `/event` stream (ADR 0033
+   *  §D1–D4). Consulted ONLY when `fleetMultiplexEnabled()` is ON (default OFF).
+   *  Its `handle()` DECLINES (returns false) when zero owner-peers are owned, so
+   *  the flag-OFF / fleet-of-one `/event` path stays byte-identical (#1264, AC1);
+   *  with ≥1 owned peer it takes over the response and fans in local + one authed
+   *  upstream per owner-peer through the #1511 aggregator. Wiring the SSE relay
+   *  here is the deliberate amendment of the #1448 AC4 guard — permitted ONLY
+   *  behind the flag (the flag-OFF "SSE relay not reachable" invariant is kept
+   *  provable by the guard's re-expression + the route-level byte-identity test). */
+  eventFanIn?: EventFanInDriver;
 }
 
 /** #1261 (AC6): a client's own named hub-down state — distinct from the base
@@ -449,6 +460,19 @@ export class AmicodeServiceServer {
         send(unauthorized());
         return;
       }
+      // #1519 (W1c, ADR 0033 §D1): the SSE fan-in interception for the app's
+      // ONE global /event stream (ADR 0027 single-origin). AHEAD of every
+      // downstream path (the fleet hub block, the engine proxy) so a machine
+      // that owns peer sessions fans their events IN onto this one response.
+      // A SINGLE flag-gated expression: with the flag OFF (default) the `&&`
+      // short-circuits BEFORE `eventFanIn`, so this line is a structural no-op
+      // and /event is served byte-identically to today (#1264, AC1). With the
+      // flag ON, `handle()` takes over the response (returns true → we return)
+      // only when ≥1 non-local owner-peer is owned; zero owned peers → it
+      // returns false and dispatch falls through UNCHANGED (fleet-of-one
+      // byte-identity). This is the deliberate amendment of the #1448 AC4
+      // structural guard: the SSE relay is wired ONLY behind the flag.
+      if (url.pathname === "/event" && fleetMultiplexEnabled() && this.fleetPlane?.eventFanIn?.handle(req, res)) return;
       // #1262: in fleet CLIENT mode the HOST owns all /amicode/* state. Bypass
       // the ENTIRE local /amicode/* dispatch (the exact-match route table AND
       // the catch-all 404 below) so a REGISTERED route (GET /amicode/problems,
