@@ -639,11 +639,11 @@
     "packages/app/src/components/session/preview-file-helpers.ts": "2244aaef25f7412df7b53a45a7d2f72380d45eb90caefa5e96c48d01e988eb4e",
     "packages/app/src/components/session/preview-file-view.tsx": "8292f2430d41c3b6a587fcbc6547ab6828445542a8ddc6c4554d115c1340f3f3",
     "packages/app/src/components/session/preview-human-write-gate.ts": "4c4b1cf258a06b0012d722add0125ecb77a0f4e463dd95d193f21e5e73541098",
-    "packages/app/src/components/session/session-chats-dropdown.test.ts": "cc0f96f935cc5681a1fe62875f4538c303b7c0b75744e066180f8805d5160292",
+    "packages/app/src/components/session/session-chats-dropdown.test.ts": "b5f178bea1b52788d6f794d09ccf7ff81f745633ad59e2d438cfc80b96acde55",
     "packages/app/src/components/session/session-context-tab.tsx": "227243b178b517f067d9ae0ae0eec3c559beeb6681828158b0600a17e98e7f81",
-    "packages/app/src/components/session/session-fleet-peers.test.ts": "f32233cfc7854755431ab8ad545859b3d49bee38cb70dd960d32384e09ea7d21",
-    "packages/app/src/components/session/session-fleet-peers.ts": "e8cd9598e7416e4f1d882f40c846e9d5e26914c41e84189b14bb477ee7995e66",
-    "packages/app/src/components/session/session-header.tsx": "22dbba2406023bca0e72553aa468b06507e5ccad2f521e6ce1e9d1c1c297d238",
+    "packages/app/src/components/session/session-fleet-peers.test.ts": "67e03d6f0be79f5d08cb293af2c8d7e1100e5c49d7fd86ce5c7ced1eea93f1d7",
+    "packages/app/src/components/session/session-fleet-peers.ts": "1c9e846668adcff0852a66a6961e393fb9e0cc91dc4103017d70cbad269f791c",
+    "packages/app/src/components/session/session-header.tsx": "c8207d714f01d4fe9f8731b410ff0359e4f9b9f7815967cc654060944af8933e",
     "packages/app/src/components/session/session-new-view.tsx": "9510a4f550a3f0d4791e98e8025666f09d70a60fb66f193e48ee61feddae5a57",
     "packages/app/src/components/session/session-preview-tab.tsx": "d3a210598d181c0aa29e9f3b5db3cd691169f3ee467001313a3d9a24bee93dbe",
     "packages/app/src/components/session/session-preview-tabs.test.ts": "773fc0116c5f61302eaa4a09fd5f91e6b26dee978c89e29c21714243ae3a5653",
@@ -893,7 +893,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-09-24T12:56:52.355Z",
+  "extracted_at": "2026-09-24T13:51:39.015Z",
   "per_package": {
     "packages/app": {
       "A": 201,
