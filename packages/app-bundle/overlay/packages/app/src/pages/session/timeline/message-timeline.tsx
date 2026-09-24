@@ -321,7 +321,7 @@ export function MessageTimeline(props: {
   userMessages: UserMessage[]
   anchor: (id: string) => string
   setRevealMessage?: (fn: (id: string) => void) => void
-  setScrollToEnd?: (fn: () => void) => void
+  setScrollToEnd?: (fn: (opts?: { smooth?: boolean }) => void) => void
   setHistoryAnchor?: (handlers: { capture: () => void; restore: (done: boolean) => void }) => void
 }) {
   let touchGesture: number | undefined
@@ -785,6 +785,13 @@ export function MessageTimeline(props: {
     const target = el.scrollHeight - el.clientHeight
     const current = el.scrollTop
     if (Math.abs(target - current) < 2) return // already there
+    // amicode: large delta → instant jump. Animating across more than 1.5×
+    // the viewport chases a moving target while the virtualizer is still
+    // measuring off-screen items, producing visible jank.
+    if (Math.abs(target - current) > el.clientHeight * 1.5) {
+      virtualizer.scrollToEnd()
+      return
+    }
     // If an animation is in flight, restart from current position
     cancelSmoothScroll()
     smoothStartY = current
@@ -823,7 +830,11 @@ export function MessageTimeline(props: {
     queueMicrotask(() => {
       resizeAnchorScheduled = false
       if (!props.shouldAnchorBottom() || props.hasScrollGesture()) return
-      smoothScrollToEnd()
+      // amicode: use instant scroll to avoid fighting the auto-scroller's
+      // ResizeObserver during streaming — the 180ms animation and the instant
+      // scrollToBottom were competing, causing visible oscillation.
+      cancelSmoothScroll()
+      virtualizer.scrollToEnd()
     })
   }
   virtualizer.resizeItem = (index, size) => {
@@ -932,7 +943,11 @@ export function MessageTimeline(props: {
       if (index === undefined) return
       virtualizer.scrollToIndex(index, { align: "center" })
     })
-    props.setScrollToEnd?.(() => smoothScrollToEnd())
+    props.setScrollToEnd?.((opts?: { smooth?: boolean }) => {
+      cancelSmoothScroll()
+      if (opts?.smooth) smoothScrollToEnd()
+      else virtualizer.scrollToEnd()
+    })
     props.setHistoryAnchor?.({ capture: capturePrependAnchor, restore: restorePrependAnchor })
   })
 
