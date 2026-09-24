@@ -1,5 +1,6 @@
 import { createEffect, createMemo, For, Show, type Accessor, type JSX } from "solid-js"
 import { FileIcon } from "@opencode-ai/ui/file-icon"
+import { useI18n } from "@opencode-ai/ui/context/i18n"
 import { Icon } from "@opencode-ai/ui/icon"
 import { IconButton } from "@opencode-ai/ui/icon-button"
 import { ProviderIcon } from "@opencode-ai/ui/provider-icon"
@@ -387,6 +388,7 @@ export function PromptInputV2Attachments(props: {
   onCommentClick?: (comment: PromptInputV2Comment) => void
   onCommentRemove?: (comment: PromptInputV2Comment) => void
 }) {
+  const i18n = useI18n()
   return (
     <Show when={props.attachments.length > 0 || (props.comments?.length ?? 0) > 0}>
       <div data-component="prompt-input-v2-attachments" data-slot="prompt-attachments" class="relative">
@@ -430,7 +432,7 @@ export function PromptInputV2Attachments(props: {
                     when={attachment.mime.startsWith("image/")}
                     fallback={
                       <AttachmentCardV2 title={attachment.filename}>
-                        {typeLabel(attachment.filename, attachment.mime)}
+                        {typeLabel(attachment.filename, attachment.mime, i18n.t("ui.common.file"))}
                       </AttachmentCardV2>
                     }
                   >
