@@ -535,6 +535,7 @@ export const dict = {
   "toast.session.share.success.description": "Paylaşım URL'si panoya kopyalandı!",
   "toast.session.share.failed.title": "Oturum paylaşılamadı",
   "toast.session.share.failed.description": "Oturum paylaşılırken bir hata oluştu",
+  "toast.session.compact.failed.description": "Oturum sıkıştırılamadı",
 
   "toast.session.unshare.success.title": "Oturum paylaşımı kaldırıldı",
   "toast.session.unshare.success.description": "Oturum paylaşımı başarıyla kaldırıldı!",

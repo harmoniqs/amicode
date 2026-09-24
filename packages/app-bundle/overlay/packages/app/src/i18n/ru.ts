@@ -531,6 +531,7 @@ export const dict = {
   "toast.session.share.success.description": "URL скопирован в буфер обмена!",
   "toast.session.share.failed.title": "Не удалось опубликовать сессию",
   "toast.session.share.failed.description": "Произошла ошибка при публикации сессии",
+  "toast.session.compact.failed.description": "Не удалось сжать сессию",
 
   "toast.session.unshare.success.title": "Публикация отменена",
   "toast.session.unshare.success.description": "Публикация успешно отменена!",

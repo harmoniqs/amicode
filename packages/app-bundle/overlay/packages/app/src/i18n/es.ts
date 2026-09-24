@@ -532,6 +532,7 @@ export const dict = {
   "toast.session.share.success.description": "¡URL compartida copiada al portapapeles!",
   "toast.session.share.failed.title": "Fallo al compartir sesión",
   "toast.session.share.failed.description": "Ocurrió un error al compartir la sesión",
+  "toast.session.compact.failed.description": "No se pudo compactar la sesión",
 
   "toast.session.unshare.success.title": "Sesión dejó de compartirse",
   "toast.session.unshare.success.description": "¡La sesión dejó de compartirse exitosamente!",

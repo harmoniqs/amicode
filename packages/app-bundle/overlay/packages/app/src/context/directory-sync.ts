@@ -12,13 +12,9 @@ const sessionFields = new Set([
   "session_status",
   "session_working",
   "session_diff",
-  // amicode#hotfix: diff_version must NOT ride sessionFields. The shared
-  // ServerSession store never initializes the key, so a proxied read returns
-  // undefined and `data.diff_version[sessionID]` throws on every fresh load —
-  // the throw gets swallowed by the route error boundary, the query-options
-  // memo stays undefined, and TanStack Query surfaces the misleading
-  // "Cannot read properties of undefined (reading '_defaulted')". The child
-  // store owns diff_version (initialized + written by the event reducer).
+  // Diff versions are owned by ServerSession so every directory observes the
+  // same live file-edit invalidation state.
+  "diff_version",
   "todo",
   "permission",
   "question",

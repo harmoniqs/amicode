@@ -99,6 +99,7 @@ jobs:
             bash packages/extension/scripts/assert_ui_gate.sh "packages/extension/vendor/opencode/$P/opencode"
           done
       - name: Package universal and platform VSIX files
+        id: package
         run: |
           set -euo pipefail
           V=packages/extension/vendor/opencode
@@ -138,5 +139,17 @@ jobs:
             OUTPUT=$(npx --yes @vscode/vsce publish --packagePath "$V" 2>&1) && { echo "$OUTPUT"; continue; }
             echo "$OUTPUT"
             echo "$OUTPUT" | grep -q "already exists" || FAILED=1
+          done
+          [ "$FAILED" -eq 0 ]
+      - name: Publish to Open VSX Registry
+        if: ${{ !cancelled() && steps.meta.outputs.publishable == 'true' && steps.package.outcome == 'success' }}
+        env:
+          OVSX_TOKEN: ${{ secrets.OVSX_TOKEN }}
+        run: |
+          FAILED=0
+          for V in packages/extension/amicode-linux-x64.vsix packages/extension/amicode-linux-arm64.vsix packages/extension/amicode-darwin-arm64.vsix packages/extension/amicode-win32-x64.vsix packages/extension/amicode-win32-arm64.vsix packages/extension/amicode-darwin-x64.vsix; do
+            OUTPUT=$(npx --yes ovsx publish "$V" -p "$OVSX_TOKEN" 2>&1) && { echo "$OUTPUT"; continue; }
+            echo "$OUTPUT"
+            echo "$OUTPUT" | grep -qiE "already (exists|published)" || FAILED=1
           done
           [ "$FAILED" -eq 0 ]

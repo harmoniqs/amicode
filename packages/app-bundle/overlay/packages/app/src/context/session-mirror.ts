@@ -26,6 +26,7 @@ const STORE = "sessions"
 const MAX_MIRRORED_SESSIONS = 60
 const MAX_MESSAGES_PER_SESSION = 40
 const SAVE_DEBOUNCE_MS = 1_000
+const PRUNE_DEBOUNCE_MS = 60_000
 
 export interface MirrorRecord {
   v: 1
@@ -71,6 +72,33 @@ export function mirrorKey(scope: string, sessionID: string) {
  *  collapse into one small write per settle. */
 const pending = new Map<string, ReturnType<typeof setTimeout>>()
 
+/** A stream can complete a mirror save every second. Pruning is full-store
+ *  read/write work, so defer one run per scope instead of making its own
+ *  hydration reads queue behind every completed save. */
+const pendingPrunes = new Map<string, ReturnType<typeof setTimeout>>()
+
+/** Test-only reset seam. Keeps IndexedDB fixture state from leaking between
+ * module tests while leaving the production mirror state encapsulated. */
+export function _resetForTesting(): void {
+  for (const timer of pending.values()) clearTimeout(timer)
+  for (const timer of pendingPrunes.values()) clearTimeout(timer)
+  pending.clear()
+  pendingPrunes.clear()
+  tombstoned.clear()
+  dbPromise = undefined
+}
+
+function schedulePrune(scope: string) {
+  if (pendingPrunes.has(scope)) return
+  pendingPrunes.set(
+    scope,
+    setTimeout(() => {
+      pendingPrunes.delete(scope)
+      void pruneMirror(scope)
+    }, PRUNE_DEBOUNCE_MS),
+  )
+}
+
 /** #1287 privacy (CWE-922): keys whose session was deleted. A save that
  *  already fired its timer but has not yet written checks this before its
  *  put, so a deleted session can never be re-persisted after deleteMirror. */
@@ -114,7 +142,7 @@ export function saveMirror(scope: string, sessionID: string, record: Omit<Mirror
           }
           tx.oncomplete = () => {
             mirrorDebug("saved", key)
-            void pruneMirror(scope)
+            schedulePrune(scope)
           }
         } catch (error) {
           mirrorDebug("sync-error", String(error))
@@ -149,8 +177,13 @@ export function deleteMirror(scope: string, sessionID: string) {
 }
 
 export async function loadMirror(scope: string, sessionID: string): Promise<MirrorRecord | undefined> {
+  // A fresh page can inherit records from a short-lived predecessor whose
+  // deferred prune never fired. Amortize that recovery on the first database
+  // use of this visit instead of adding a full-store scan to every save.
+  const openingDatabase = !dbPromise
   const db = await openDB()
   if (!db) return undefined
+  if (openingDatabase) void pruneMirror(scope)
   return new Promise((resolve) => {
     try {
       const tx = db.transaction(STORE, "readonly")

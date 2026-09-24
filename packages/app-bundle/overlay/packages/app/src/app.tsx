@@ -1,5 +1,6 @@
 import "@/index.css"
 import * as Sentry from "@sentry/solid"
+import { retryImport } from "@/utils/retry-import"
 import { requestComputeConnect } from "@/components/amicode-defaults-capsule"
 import { adoptWorkspaceProjects, workspaceProjects, requestAddWorkspaceProject } from "@/utils/amicode-workspace-projects"
 import { I18nProvider } from "@opencode-ai/ui/context"
@@ -68,7 +69,14 @@ import { SDKProvider, useSDK } from "@/context/sdk"
 import { resolveLandingDirectory } from "@/pages/new-session-landing"
 import { authTokenFromCredentials } from "@/utils/server"
 import { normalizeSessionInfo } from "@/utils/session"
-import type { SessionV2Info } from "@opencode-ai/sdk/v2/client"
+import {
+  BULK_WARM_MESSAGES,
+  createSessionWarmScheduler,
+  sessionWarmSchedulerKey,
+  warmBulkSession,
+  warmOpenSessionTab,
+  warmSessionServerBatches,
+} from "@/context/session-warm"
 import type { SessionInfo } from "@opencode-ai/client/promise"
 import { WslServersProvider } from "@/wsl/context"
 import DirectoryLayout, { DirectoryDataProvider } from "@/pages/directory-layout"
@@ -87,7 +95,7 @@ import { LegacyHome } from "@/pages/home/legacy-home"
 import { AmicodeFileRefBridge } from "@/components/amicode-file-ref-bridge"
 import { DevToolsReopenBridge } from "@/components/settings-dialog"
 
-const NewSession = lazy(() => import("@/pages/new-session"))
+const NewSession = lazy(() => retryImport(() => import("@/pages/new-session")))
 
 // #1290: the notorious ResizeObserver-loop exception is thrown at the end of
 // any frame whose resize callbacks changed layout. Benign in most apps — but
@@ -813,6 +821,7 @@ ${text.slice(0, 12000)}` }).catch(() => {})  // #1294: 2400 truncated snapshots 
 function SessionLineagePrewarmer() {
   const global = useGlobal()
   const tabs = useTabs()
+  const warmScheduler = createSessionWarmScheduler()
   // #1294: pin OPEN TABS for their lifetime — the route-level pin unpins
   // the session the moment you switch away, and without a pin the cache
   // evictor can drop an idle tab's message data between warm passes
@@ -885,10 +894,7 @@ function SessionLineagePrewarmer() {
         // (measured: the paint ring's 11,949ms / 8,034ms sessions). The
         // 20-message page lands in one round trip and satisfies the
         // timeline; the 60-deep pass continues behind it and fills history.
-        void session
-          .prefetch(tab.sessionId, 20)
-          .then(() => session.prefetch(tab.sessionId, 60))
-          .catch(() => {})
+        void warmOpenSessionTab(tab.sessionId, (sessionID, limit) => session.prefetch(sessionID, limit)).catch(() => {})
       }
     }
   })
@@ -899,17 +905,16 @@ function SessionLineagePrewarmer() {
   // recency-ordered list page per pass (the server sorts); the
   // lineage-peek + shouldPrefetch guards make repeat passes free.
   const BULK_WARM_SESSIONS = 30
-  const BULK_WARM_MESSAGES = 20
   const bulkWarm = async () => {
-    for (const conn of global.servers.list()) {
-      // #1290: same ctx fix — conn.sync is undefined on raw list entries.
-      const sync = global.ensureServerCtx(conn).sync
-      if (!sync?.session) {
-        ;(globalThis as { __amicodePrewarmErr?: string }).__amicodePrewarmErr = "no-sync-ctx"
-        continue
-      }
-      let recent: Array<SessionV2Info> = []
-      try {
+    await warmSessionServerBatches({
+      servers: global.servers.list(),
+      list: async (conn) => {
+        const sync = global.ensureServerCtx(conn).sync
+        if (!sync?.session) {
+          ;(globalThis as { __amicodePrewarmErr?: string }).__amicodePrewarmErr = "no-sync-ctx"
+          return []
+        }
+        try {
         const ctx = global.ensureServerCtx(conn)
         const page = await ctx.sdk.client.v2.session.list({ limit: BULK_WARM_SESSIONS, order: "desc" })
         // #1294c: keep the FULL session objects — the warm's list response
@@ -917,35 +922,45 @@ function SessionLineagePrewarmer() {
         // sync()'s cache check early-return on a switch. Without it, a
         // warmed+cached session still fetched its info on every switch
         // (wire RTT), and the outlet Suspense held the panel for it.
-        recent = (page.data?.data ?? []).filter((info): info is typeof info & { id: string } => typeof info?.id === "string")
+        const recent = (page.data?.data ?? []).filter((info): info is typeof info & { id: string } => typeof info?.id === "string")
         ;(globalThis as { __amicodePrewarm?: { n: number; at: number } }).__amicodePrewarm = {
           n: recent.length,
           at: Date.now(),
         }
+        return recent
       } catch (e) {
         console.warn("[prewarmer] bulk list failed:", e)
         ;(globalThis as { __amicodePrewarmErr?: string }).__amicodePrewarmErr = String(e).slice(0, 90)
-        continue
+        throw e
       }
-      for (const info of recent) {
-        // #1294c: seed data.info from the list payload — zero wire cost.
-        // The v2 list objects carry location:{directory} with NO
-        // top-level directory/slug/path — normalizeSessionInfo maps them
-        // (every other consumer normalizes at the boundary; the raw
-        // object crashed the tab strip's render on the real hub).
-        try {
-          sync.session.remember(normalizeSessionInfo(info as SessionInfo))
-        } catch {
-          /* best-effort */
-        }
-        if (sync.session.lineage && !sync.session.lineage.peek(info.id)) {
-          void sync.session.lineage.resolve(info.id).catch(() => {})
-        }
-        if (sync.session.prefetch && sync.session.shouldPrefetch(info.id, BULK_WARM_MESSAGES)) {
-          void sync.session.prefetch(info.id, BULK_WARM_MESSAGES).catch(() => {})
-        }
-      }
-    }
+      },
+      normalize: (info) => normalizeSessionInfo(info as SessionInfo),
+      remember: (conn, info) => global.ensureServerCtx(conn).sync!.session!.remember(info),
+      warm: async (conn, recent) => {
+        const sync = global.ensureServerCtx(conn).sync
+        if (!sync?.session) return
+        await warmScheduler.warm(
+          sessionWarmSchedulerKey(conn.http.url),
+          recent.map((info) => ({
+          id: info.id,
+          chain: async () => {
+            // #1294c: seed data.info from the list payload — zero wire cost.
+            // The v2 list objects carry location:{directory} with NO
+            // top-level directory/slug/path — normalizeSessionInfo maps them
+            // (every other consumer normalizes at the boundary; the raw
+            // object crashed the tab strip's render on the real hub).
+            await warmBulkSession({
+              remember: () => {},
+              hasLineage: () => !sync.session.lineage || !!sync.session.lineage.peek(info.id),
+              resolveLineage: () => sync.session.lineage?.resolve(info.id) ?? Promise.resolve(),
+              shouldPrefetch: () => !!sync.session.prefetch && sync.session.shouldPrefetch(info.id, BULK_WARM_MESSAGES),
+              prefetch: () => sync.session.prefetch?.(info.id, BULK_WARM_MESSAGES) ?? Promise.resolve(),
+            })
+          },
+          })),
+        )
+      },
+    })
   }
   void bulkWarm()
   const warmTimer = setInterval(() => void bulkWarm(), 20_000)
@@ -1387,7 +1402,7 @@ function NewSessionLanding() {
  *
  *  lazy() keeps the chunk off the critical path; the <Suspense> in the parent
  *  catches the suspension while the chunk loads. */
-const EmptyWorkspaceLanding = lazy(() => import("@/pages/empty-workspace-landing"))
+const EmptyWorkspaceLanding = lazy(() => retryImport(() => import("@/pages/empty-workspace-landing")))
 
 /** #1291: the landing's resolve used to run as a bare IIFE inside <Show> —
  *  evaluated ONCE at mount, never again. When the server connected (or the

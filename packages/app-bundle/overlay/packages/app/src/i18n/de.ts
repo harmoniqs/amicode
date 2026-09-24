@@ -497,6 +497,7 @@ export const dict = {
   "toast.session.share.success.description": "Teilen-URL in die Zwischenablage kopiert!",
   "toast.session.share.failed.title": "Sitzung konnte nicht geteilt werden",
   "toast.session.share.failed.description": "Beim Teilen der Sitzung ist ein Fehler aufgetreten",
+  "toast.session.compact.failed.description": "Sitzung konnte nicht komprimiert werden",
   "toast.session.unshare.success.title": "Teilen der Sitzung aufgehoben",
   "toast.session.unshare.success.description": "Teilen der Sitzung erfolgreich aufgehoben!",
   "toast.session.unshare.failed.title": "Aufheben des Teilens fehlgeschlagen",

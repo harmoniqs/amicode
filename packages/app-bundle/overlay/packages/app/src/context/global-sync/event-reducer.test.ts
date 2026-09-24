@@ -72,8 +72,6 @@ const baseState = (input: Partial<State> = {}) =>
     sessionTotal: 0,
     session_status: {},
     session_diff: {},
-    diff_version: {},
-    parent_of: {},
     todo: {},
     permission: {},
     question: {},
@@ -616,78 +614,4 @@ describe("applyDirectoryEvent", () => {
     expect(lspLoads).toBe(1)
   })
 
-  test("message.part.updated with filediff bumps diff_version of parent session too", () => {
-    const [store, setStore] = createStore<State>({
-      ...baseState(),
-      session: [rootSession({ id: "parent" }), rootSession({ id: "child", parentID: "parent" })],
-      parent_of: { child: "parent" },
-      diff_version: {},
-    })
-
-    applyDirectoryEvent({
-      event: {
-        type: "message.part.updated",
-        properties: {
-          part: {
-            id: "prt_1",
-            sessionID: "child",
-            messageID: "msg_1",
-            type: "tool",
-            tool: "edit",
-            callID: "call_1",
-            state: {
-              status: "completed",
-              input: {},
-              output: "",
-              title: "edit",
-              time: { start: 1, end: 2 },
-              metadata: { filediff: { file: "test.ts", status: "modified" } },
-            },
-          } as Part,
-        },
-      },
-      store,
-      setStore,
-      push: () => {},
-      directory: "/tmp",
-      loadLsp: () => {},
-    })
-
-    expect(store.diff_version.child).toBe(1)
-    expect(store.diff_version.parent).toBe(1)
-  })
-
-  test("session.created with parentID populates parent_of mapping", () => {
-    const [store, setStore] = createStore<State>(baseState())
-
-    applyDirectoryEvent({
-      event: { type: "session.created", properties: { info: rootSession({ id: "child", parentID: "parent" }) } },
-      store,
-      setStore,
-      push: () => {},
-      directory: "/tmp",
-      loadLsp: () => {},
-    })
-
-    expect(store.parent_of.child).toBe("parent")
-  })
-
-  test("session.deleted cleans up parent_of mapping", () => {
-    const [store, setStore] = createStore<State>({
-      ...baseState(),
-      session: [rootSession({ id: "parent" }), rootSession({ id: "child", parentID: "parent" })],
-      parent_of: { child: "parent" },
-    })
-
-    applyDirectoryEvent({
-      event: { type: "session.deleted", properties: { info: rootSession({ id: "child", parentID: "parent" }) } },
-      store,
-      setStore,
-      push: () => {},
-      directory: "/tmp",
-      loadLsp: () => {},
-    })
-
-    expect(store.parent_of.child).toBeUndefined()
-  })
 })

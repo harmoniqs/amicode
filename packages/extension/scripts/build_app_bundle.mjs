@@ -140,20 +140,10 @@ const preflight = () => {
     overrideReason: process.env.AMICODE_DEPLOY_OVERRIDE,
   });
   for (const line of decision.recorded ?? []) console.log(`[build:app] ${line}`);
-  if (!decision.ok) {
-    if (ciPackaging) {
-      const advisoryReason = `ci-packaging (merge ref ${headSha.slice(0, 12)}, branch ${gitOut(["rev-parse", "--abbrev-ref", "HEAD"], "branch name")}): ${decision.reasons.join(" | ")}`;
-      console.log("[build:app] CI packaging build — stale/dirty guard is ADVISORY here (not a deploy); recorded in the manifest:");
-      for (const r of decision.reasons) console.log(`[build:app]   ADVISORY: ${r}`);
-      return { headSha, dirty: dirtyEntries.length > 0, overrideReason: advisoryReason };
-    }
-    console.error("[build:app] pre-flight FAILED — refusing to build/stage a deploy from this tree:");
-    for (const r of decision.reasons) console.error(`[build:app]   ${r}`);
-    process.exit(1);
-  }
-  // The #964 known-fixes check at deploy time (the guard test
-  // packages/extension/test/overlay_known_fixes_964.test.ts is the source of
-  // record; deploy_guard.mjs mirrors its fixture list).
+  // #1469: validate the semantic known-fix contract before CI can turn a
+  // merge-ref topology refusal into an advisory. CI is permissive only about
+  // branch topology; it must never stage a distribution missing a recorded
+  // overlay fix.
   const overlayApp = join(REPO_ROOT, "packages", "app-bundle", "overlay", "packages", "app", "src");
   if (existsSync(overlayApp)) {
     const regressed = checkKnownFixes(overlayApp);
@@ -165,6 +155,17 @@ const preflight = () => {
     console.log("[build:app] known-fixes check (#964 hunks): all present in the overlay");
   } else {
     console.log("[build:app] known-fixes check skipped: no overlay tree at packages/app-bundle/overlay (non-app-bundle build context)");
+  }
+  if (!decision.ok) {
+    if (ciPackaging) {
+      const advisoryReason = `ci-packaging (merge ref ${headSha.slice(0, 12)}, branch ${gitOut(["rev-parse", "--abbrev-ref", "HEAD"], "branch name")}): ${decision.reasons.join(" | ")}`;
+      console.log("[build:app] CI packaging build — stale/dirty guard is ADVISORY here (not a deploy); recorded in the manifest:");
+      for (const r of decision.reasons) console.log(`[build:app]   ADVISORY: ${r}`);
+      return { headSha, dirty: dirtyEntries.length > 0, overrideReason: advisoryReason };
+    }
+    console.error("[build:app] pre-flight FAILED — refusing to build/stage a deploy from this tree:");
+    for (const r of decision.reasons) console.error(`[build:app]   ${r}`);
+    process.exit(1);
   }
   return { headSha, dirty: dirtyEntries.length > 0, overrideReason: decision.overrideReason };
 };

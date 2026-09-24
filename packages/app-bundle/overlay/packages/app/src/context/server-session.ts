@@ -28,6 +28,7 @@ type MessageApi = ServerApi["message"]
 
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
 const SKIP_PARTS = new Set(["patch", "step-start", "step-finish"])
+const EDIT_TOOLS = new Set(["edit", "write", "patch", "apply_patch"])
 const initialMessagePageSize = 20
 const historyMessagePageSize = 200
 const sessionInfoLimit = 2_048
@@ -235,6 +236,8 @@ export function createServerSession(
   const orphanParts = new Map<string, Set<string>>()
   const removedMessages = new Map<string, Set<string>>()
   const deltaBases = new Map<string, { base: string; sessionID: string }>()
+  const taskSpawnParent = new Map<string, string>()
+  const completedFileDiffParts = new Map<string, Set<string>>()
   const deleteMessageParts = (
     cache: { part: Record<string, Part[] | undefined>; part_text_accum_delta: Record<string, string | undefined> },
     messageID: string,
@@ -272,6 +275,41 @@ export function createServerSession(
       message.sessionID,
       reconcile([...current, ...legacyMessageSource([{ info: message, parts: [] }])]),
     )
+  }
+
+  const toolMetadata = (part: Part) => {
+    if (part.type !== "tool") return
+    const metadata = (part.state as { metadata?: unknown }).metadata
+    if (!metadata || typeof metadata !== "object") return
+    return metadata as Record<string, unknown>
+  }
+
+  const recordTaskSpawn = (part: Part) => {
+    if (part.type !== "tool" || part.tool !== "task") return
+    const metadata = toolMetadata(part)
+    const parentSessionId = metadata?.parentSessionId
+    const sessionId = metadata?.sessionId
+    if (typeof parentSessionId !== "string" || typeof sessionId !== "string") return
+    if (!parentSessionId || !sessionId || parentSessionId !== part.sessionID) return
+    taskSpawnParent.set(sessionId, parentSessionId)
+  }
+
+  const incrementFileDiffVersion = (part: Part) => {
+    if (part.type !== "tool" || !EDIT_TOOLS.has(part.tool) || part.state.status !== "completed") return
+    if (toolMetadata(part)?.filediff === undefined) return
+    const completed = completedFileDiffParts.get(part.sessionID) ?? new Set<string>()
+    if (completed.has(part.id)) return
+    completed.add(part.id)
+    completedFileDiffParts.set(part.sessionID, completed)
+
+    setData("diff_version", part.sessionID, (version = 0) => version + 1)
+    const seen = new Set([part.sessionID])
+    let ancestor = taskSpawnParent.get(part.sessionID)
+    while (ancestor && !seen.has(ancestor)) {
+      seen.add(ancestor)
+      setData("diff_version", ancestor, (version = 0) => version + 1)
+      ancestor = taskSpawnParent.get(ancestor)
+    }
   }
 
   const remember = (session: Session) => {
@@ -500,6 +538,7 @@ export function createServerSession(
     sessionIDs.forEach((sessionID) => {
       generations.delete(sessionID)
       clearOptimistic(sessionID)
+      completedFileDiffParts.delete(sessionID)
       requests.delete(sessionID)
       inflight.delete(sessionID)
       inflightTodo.delete(sessionID)
@@ -511,6 +550,7 @@ export function createServerSession(
     })
     setData(
       produce((draft) => {
+        for (const sessionID of sessionIDs) delete draft.diff_version[sessionID]
         dropSessionCaches(draft, sessionIDs)
       }),
     )
@@ -1199,6 +1239,11 @@ export function createServerSession(
         const properties = event.properties as { sessionID?: string; info?: Session }
         const sessionID = properties.info?.id ?? properties.sessionID
         if (!sessionID) return
+        taskSpawnParent.delete(sessionID)
+        for (const [childSessionID, parentSessionID] of taskSpawnParent) {
+          if (parentSessionID === sessionID) taskSpawnParent.delete(childSessionID)
+        }
+        completedFileDiffParts.delete(sessionID)
         infoSeen.delete(sessionID)
         setData(
           "info",
@@ -1291,6 +1336,8 @@ export function createServerSession(
       }
       case "message.part.updated": {
         const part = (event.properties as { part: Part }).part
+        recordTaskSpawn(part)
+        incrementFileDiffVersion(part)
         if (SKIP_PARTS.has(part.type)) return
         const messages = data.message[part.sessionID]
         const load = messageLoads.get(part.sessionID)
