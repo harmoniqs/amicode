@@ -1315,7 +1315,7 @@ export default function Page() {
   let scroller: HTMLDivElement | undefined
   let content: HTMLDivElement | undefined
   let revealMessage = (_id: string) => {}
-  let scrollToEnd = () => {}
+  let scrollToEnd = (_opts?: { smooth?: boolean }) => {}
   let scrollMark = 0
   let messageMark = 0
 
@@ -1905,7 +1905,11 @@ export default function Page() {
       (id, previous) => {
         if (!id || !previous || id === previous) return
         if (location.hash || store.messageId || ui.pendingMessage) return
-        autoScroll.resume()
+        // amicode: clear the flag only — resume() would scrollToBottom on
+        // the OLD session's element (still mounted) and markAuto its position,
+        // leaving a stale 1500ms mark that could swallow a real user scroll
+        // on the NEW session if the positions happen to be within 2px.
+        autoScroll.clearUserScrolled()
       },
     ),
   )
@@ -1944,7 +1948,11 @@ export default function Page() {
 
   const resumeScroll = () => {
     setStore("messageId", undefined)
-    autoScroll.resume()
+    // amicode: decouple "re-engage auto-follow" from "scroll now" — clear the
+    // flag without triggering createAutoScroll's own instant scrollToBottom,
+    // then let the virtualizer's scrollToEnd() handle positioning cleanly
+    // (no dual-scroll fight, no animation chasing unmeasured items).
+    autoScroll.clearUserScrolled()
     scrollToEnd()
     clearMessageHash()
 
@@ -2388,7 +2396,7 @@ export default function Page() {
 
         dockHeight = next
 
-        if (stick) scrollToEnd()
+        if (stick) scrollToEnd({ smooth: true })
 
         if (el) scheduleScrollState(el)
         fill()
@@ -2411,7 +2419,7 @@ export default function Page() {
     autoScroll: {
       pause: autoScroll.pause,
       forceScrollToBottom: () => {
-        autoScroll.resume()
+        autoScroll.clearUserScrolled()
         scrollToEnd()
       },
     },

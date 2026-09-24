@@ -210,7 +210,7 @@
     "packages/app/src/pages/new-session-landing.ts": "528d27cd5d441b521674328fb7812fb2acf77233e9e436d081c98ce611e8b268",
     "packages/app/src/pages/new-session.tsx": "c060bbb15569b6da2f67146e6af0879ccb5444345df03dbc2f9b39cb98b9db78",
     "packages/app/src/pages/overlay-content-hash.test.ts": "aa208098213522dcde42434408afe9c8641fad663f44a58c316922dbd0da2f5c",
-    "packages/app/src/pages/session.tsx": "e502d2274c351612aacbed4dbee49e8692da1fb6b3411fbd1491499737772a39",
+    "packages/app/src/pages/session.tsx": "d4ad8e9d652f99f9112e220b47dda9b2b9f8e44180cf53924506a2019f326e9e",
     "packages/app/src/utils/amicode-bridge.ts": "5104a04c7822f80dc0c564619e7dd2d850ba50035dbc86ea875604ecd97df05f",
     "packages/app/src/utils/amicode-bug-report.test.ts": "b1bbf49230ff3aa6d1a43ffa9165ba5a84ca4ee18a6d49f52ee5cd887c3e6444",
     "packages/app/src/utils/amicode-bug-report.ts": "d55d9cecfe17719c0d4a0ca498345c7eff6fca1de6b645e4bc3fecb40f2f4645",
@@ -815,7 +815,7 @@
     "packages/app/src/pages/session/composer/session-tour.tsx": "da5d807c7efe7aed1140d65d7eddd7982a8c17348d928f5d0a887d1b2a8d3a50",
     "packages/app/src/pages/session/composer/todo-panel-motion.stories.tsx": "70a8267c725af320d78d266b85fd0ff005d067c4d09a21bef824126602e831e7",
     "packages/app/src/pages/session/timeline/last-prompt-bubble.test.ts": "83753b3ec7227570523c2e0b9e82401fae7a20f3a23980bb40deaeb13304327b",
-    "packages/app/src/pages/session/timeline/message-timeline.tsx": "92313eb819a9c1dc094f70657f2bb01d7c3f07f27fc04c545c0530c4c0c17707",
+    "packages/app/src/pages/session/timeline/message-timeline.tsx": "bb854f8f979eebb645e3209b025174c727196abd836f87540c213f59e9c3bfa6",
     "packages/app/src/pages/session/timeline/model-pure.ts": "50be4ba12d747dd8df9932044ceee29c5f3b6fa6d6ac36791207f91a91067cd4",
     "packages/app/src/pages/session/timeline/model.test.ts": "459e0694409ffcf2530252a65491e1006f982b8f5c78a15573ed41646b2c85cf",
     "packages/app/src/pages/session/timeline/model.ts": "1692edf34c1e829900fb3fadcd3f092598164f353e29fe28a9dfb40debcc36bc",
@@ -826,7 +826,7 @@
     "packages/app/src/pages/session/timeline/session-header-provenance.test.ts": "b6ca7ffde2ef5d02b09968c20b5027ceab45506af8b1a49dd3f6c8ffe5912312",
     "packages/app/src/pages/session/timeline/session-header-provenance.ts": "7b73833aa5a3530c704edef2ca38cb6730aaaa729c23e06b6227788fb5c7e324",
     "packages/app/src/pages/session/timeline/smooth-scroll.test.ts": "79d3bba42ad83c3ab80df907e0acf08665a38c4809468e6c12ac9fcf5e94682f",
-    "packages/app/src/pages/session/timeline/smooth-scroll.ts": "a7c16860aa68917b74f5c5c46d239e9a5d7a9a952233407e2ed856b534059828",
+    "packages/app/src/pages/session/timeline/smooth-scroll.ts": "3f2782f52e36acf86398fb444bc53fcfec2fec9a0684613466ff7d24b8bceb26",
     "packages/app/src/pages/session/timeline/thought-rail-pure.ts": "886c10b0de61b0ab64baf8a284758dab8154f279fd9cd509b7b1d8ecc155ad02",
     "packages/app/src/pages/session/timeline/thought-rail.test.ts": "21960365e57d61de047440c386a18a06607bca74554e89881ef53cb7c00c4519",
     "packages/app/src/pages/session/timeline/thought-rail.tsx": "d42be90ccb75c2efef3a3a2718763165a10336d08f8d48f8b33ba7dbb696128f",
@@ -863,7 +863,8 @@
     "packages/opencode/src/server/routes/instance/httpapi/handlers/mcp.ts": "7da08d58765cdf2b6ce4648fc70de371402949f5bb7b75696f674d43f2d5365b",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/provider.ts": "8baf16cad0992c5351b61b0c0fb27903bb25b17e1b25fc7c5d77f807c24413a6",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/session.ts": "b37ff4136c4aea85b23083bf441f03e09820e3e4cdd95e4118ca570d8435b94f",
-    "packages/opencode/src/server/routes/instance/httpapi/middleware/file-write-workspace.ts": "665c33633173ee89c6da1d4a0eaacaf4eebe3ccdd04eb36b063515cb4c093e4a"
+    "packages/opencode/src/server/routes/instance/httpapi/middleware/file-write-workspace.ts": "665c33633173ee89c6da1d4a0eaacaf4eebe3ccdd04eb36b063515cb4c093e4a",
+    "packages/ui/src/hooks/create-auto-scroll.tsx": "4a8e9aa41f075b5e1815e647ab3a8a5333340d00e20ff7414f5e6c1f9a738337"
   },
   "symlinks": [
     "packages/app/public/amico.svg"
@@ -916,13 +917,13 @@
       "D": 0
     },
     "packages/ui": {
-      "A": 152,
+      "A": 153,
       "M": 62,
       "D": 0
     }
   },
   "counts": {
-    "overlay_total": 856,
+    "overlay_total": 857,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1782,7 +1783,8 @@
     "packages/opencode/src/server/routes/instance/httpapi/handlers/mcp.ts": "M",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/provider.ts": "M",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/session.ts": "M",
-    "packages/opencode/src/server/routes/instance/httpapi/middleware/file-write-workspace.ts": "A"
+    "packages/opencode/src/server/routes/instance/httpapi/middleware/file-write-workspace.ts": "A",
+    "packages/ui/src/hooks/create-auto-scroll.tsx": "A"
   },
   "upstream_base_archive_sha256": "6ae708a289bf8957f928e59ec5f3fc8a61e56290a9f12f47b916c9a26a517e9b"
 }
