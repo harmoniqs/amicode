@@ -10,6 +10,7 @@
 #
 # Format: path:rule[:ref] — a bare path:rule line exempts the whole rule
 # for that file; the :ref form exempts exactly that referenced path.
+create-a-fleet/SKILL.md:companion:tools/fleet/README.md
 develop/SKILL.md:companion:.opencode/agents/implementer.md
 migrate-research-project/SKILL.md:companion:config/system_model.md
 migrate-research-project/SKILL.md:companion:docs/future_directions.md

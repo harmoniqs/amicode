@@ -14,7 +14,7 @@
 // stays the single writer), GET /amicode/vault-files + /amicode/vault-file
 // (read-only mount browser with the fail-closed loopback gate), and
 // GET /amicode/resolve-file (chat file-reference resolver).
-import { AmicodeServiceServer } from "./server";
+import { AmicodeServiceServer, fleetMultiplexEnabled } from "./server";
 import { profileResponse, saveProfile } from "./profile";
 import { attachVault, status as vaultsStatus } from "./vaults";
 import { approveBody, warrantsBody, type ApproveInput } from "./warrants";
@@ -35,14 +35,31 @@ import { widgetFrameHtml, WIDGET_CSP } from "./widget_frame_html";
 import { AppShelf } from "./app_shelf";
 import { EngineProxy } from "./engine_proxy";
 import { HubProxy } from "./hub_proxy";
+import { SessionEventResume } from "./session_event_resume";
+import {
+  SessionMultiplexProxy,
+  SessionOwnerMap,
+  OwnerMapFeed,
+  type PeerTransport,
+  type MultiplexResolver,
+  type SessionEntry,
+} from "./session_multiplexer";
+import { SseFanInDriver } from "./sse_fanin_driver";
 import { HubCredentialRead, mintRegistry, readHubCredential } from "./hub_credential";
-import { buildMergedProjection, type UpstreamMode } from "./merged_projection";
+import { buildMergedProjection, buildFleetProjection, type UpstreamMode, type MergedProjection, type FleetProjection } from "./merged_projection";
 import { FleetPostureDetector, type FleetPostureTuning } from "./fleet_posture";
 import { handleFleetWrite, type FleetWriteDeps } from "./fleet_writes";
 import { inspectTunnelConfigFile, TUNNEL_GENERATION_HEADER } from "./fleet_tunnel";
 import { stageFleetDataPlane, type FleetStagingReceipt } from "./fleet_staging";
 import { resolveFleetProgram, type FleetProgramReceipt } from "./fleet_program";
 import { createProject, listProjects } from "./project";
+import { rehydratePeerRelationships, type RehydrationResult } from "./fleet_headless_rehydration";
+import {
+  MINT_ENDPOINT_PATH,
+  PEER_REVOKE_PATH,
+  peerRevokeHandler,
+  peerTokenMintHandler,
+} from "./fleet_mint_route";
 import {
   addCustomConnectionResponse,
   catalogResponse,
@@ -55,6 +72,11 @@ import {
   submitCredentialResponse,
 } from "./connections";
 import { solverModeResponse } from "./solver_mode";
+import { rosterReadResponse, rosterReportResponse } from "./roster";
+import { attachmentStatusResponse, effectiveStreamSignalResponse } from "./attachment_pointer";
+import { attachActionResponse, detachActionResponse } from "./attach_action";
+import type { AttachLifecycle } from "./attach_lifecycle";
+import { AttachLifecycle as AttachLifecycleImpl, type TransportFactory } from "./attach_lifecycle";
 import { postureResponse, savePostureResponse, dismissPostureResponse } from "./posture";
 import {
   modelRoutingResponse,
@@ -239,6 +261,107 @@ export function registerSolverModeRoutes(server: AmicodeServiceServer): AmicodeS
   return server;
 }
 
+// Roster routes (#1318, ADR 0026): the host-owned, fleet-wide device roster.
+// GET /amicode/roster reads it; POST /amicode/roster is the caller's OWN-row
+// self-report (single-writer, loopback-guarded like the solver-mode mutation).
+// Deliberately on the PROXIED /amicode/* namespace (NOT /amicode/fleet/*): a
+// fleet client reaches the host's authoritative roster through the #1262 proxy,
+// while its own /amicode/fleet/* honesty surface stays local. Own family
+// because the shape is the roster tuple, not a connection card.
+export function registerRosterRoutes(server: AmicodeServiceServer): AmicodeServiceServer {
+  server.add("GET", "/amicode/roster", () => ({ body: rosterReadResponse() }));
+
+  server.add("POST", "/amicode/roster", ({ body }) => ({ body: rosterReportResponse(body) }));
+
+  return server;
+}
+
+// Attachment routes (#1344, ADR 0027 §3/D5-D6, Slice 4): the switch-control
+// pointer's own never-proxied endpoint + the attach/detach VERBS that drive it.
+// Registered UNCONDITIONALLY (alongside registerProfileRoutes / registerRosterRoutes),
+// NOT inside the entitlement-gated fleet block — ADR 0027: a peer stays
+// `standalone` (no fleet.json, no entitlement) and MUST still attach, so a
+// gated registration would 404 the attach verb on exactly the boot that needs
+// it. Under /amicode/fleet/* they inherit the EXISTING shouldProxyAmicodeToHost
+// exclusion (never proxied → served locally) with ZERO server.ts change.
+//   GET  /amicode/fleet/attachment — the pointer's local honesty surface (#1342).
+//   POST /amicode/fleet/attach     — add an upstream + set the pointer (roster
+//                                    is the candidate source); a switch resets
+//                                    the SSE cursor via resetCursorOnSwitch.
+//   POST /amicode/fleet/detach     — clear the pointer + credential.
+// `resetCursorOnSwitch` is the D4 seam: present only when a multiplexer SSE
+// cursor store exists (the staged client relay); a standalone peer passes none
+// and the pointer still flips.
+export interface AttachmentRouteDeps {
+  resetCursorOnSwitch?: () => void;
+  /** #1381: the upstream lifecycle coordinator. When present, the attach/detach
+   *  route handlers invoke it to spin up/tear down the SSH forward and
+   *  register/clear the HubProxy on FleetPlane.attached. Absent on a plain
+   *  standalone boot (no fleet plane to manage). */
+  lifecycle?: AttachLifecycle;
+  /** True only when this service has the Fleet v2 multiplexer armed. The
+   * effective-stream endpoint must never use an attachment pointer as a global
+   * data-plane identity while this mode owns routing. */
+  isMultiplexed?: () => boolean;
+}
+
+export function registerAttachmentRoutes(
+  server: AmicodeServiceServer,
+  deps: AttachmentRouteDeps = {},
+): AmicodeServiceServer {
+  server.add("GET", "/amicode/fleet/attachment", () => ({ body: attachmentStatusResponse() }));
+  server.add("GET", "/amicode/fleet/effective-stream", () => ({
+    body: effectiveStreamSignalResponse({
+      liveAttachment: deps.lifecycle?.effectiveStreamIdentity,
+      multiplexed: deps.isMultiplexed?.() ?? false,
+    }),
+  }));
+
+  server.add("POST", "/amicode/fleet/attach", async ({ body }) => {
+    // The pointer write is not a successful attachment control until its live
+    // transport binds. Keep the per-session reset on the successful path too:
+    // a failed lifecycle must not invalidate either resume behavior or the
+    // browser's legacy global-stream cursor.
+    const result = attachActionResponse(body);
+    // #1381: if the pointer write succeeded and a lifecycle is armed, spin up
+    // the SSH forward and register the HubProxy. A failed attach (unknown
+    // machine, bad body) never invokes the lifecycle — no half-started
+    // transport on a refused pointer.
+    if (deps.lifecycle) {
+      try {
+        const parsed = JSON.parse(result) as { ok?: boolean; pointer?: { sshAlias: string; transport: string; machine_id: string } };
+        if (parsed.ok && parsed.pointer) {
+          await deps.lifecycle.attach(parsed.pointer);
+          const switched = (parsed as { switched?: unknown }).switched === true;
+          if (switched) deps.resetCursorOnSwitch?.();
+        }
+      } catch {
+        return { body: JSON.stringify({ ok: false, attached: false, pointer: null, error: "attachment_transport_failed" }) };
+      }
+    }
+    return { body: result };
+  });
+
+  server.add("POST", "/amicode/fleet/detach", async ({ body }) => {
+    // #1381: tear down the live transport BEFORE clearing the pointer/credential
+    // — the order matters: the resolver reads the pointer per-request, so
+    // clearing the pointer first would route to local while the SSH forward is
+    // still running (a brief window of stale routing). Teardown first, then
+    // clear.
+    if (deps.lifecycle) {
+      try {
+        await deps.lifecycle.detach();
+      } catch {
+        // lifecycle teardown failure is tolerated — proceed to clear the
+        // pointer so the resolver falls back to local.
+      }
+    }
+    return { body: detachActionResponse(body, { resetCursorOnSwitch: deps.resetCursorOnSwitch }) };
+  });
+
+  return server;
+}
+
 // Posture routes (S2, spec-20260907-011500 D2, #859): the plan-exit posture
 // surface. GET /amicode/posture — the latest compiled plan's STAMPED
 // posture_recommendation (a dumb reader: the indicator reads data, never
@@ -322,15 +445,34 @@ export interface FleetRouteDeps {
   /** #392 (D7): the installed tunnel config's path — read per request so
    *  a rejoin is visible mid-session. */
   tunnelConfigPath?: string;
+  /** #1439: fleet-wide peer data for the N-peer projection. When present,
+   *  the sessions route uses buildFleetProjection (N-peer, machine-keyed);
+   *  when absent, falls back to the existing 2-source buildMergedProjection. */
+  fleetPeers?: {
+    localMachineId: string;
+    getServingPeers(): Array<{ machineId: string }>;
+    /** #1481 (AC3): blocked-identity peers (alias-conflict / key-changed),
+     *  surfaced as NAMED source states rather than silently dropped. Optional
+     *  for back-compat — an older provider without it simply names no conflicts. */
+    getBlockedPeers?(): Array<{ machineId: string; reason: "identity-conflict" }>;
+    readPeerToken(machineId: string): { ok: true; credential: { baseUrl: string; token: string } } | { ok: false };
+    rosterLookup(machineId: string): { name: string; device_type?: string } | undefined;
+  };
 }
 
 /** GET /amicode/fleet/status — the plane's honesty surface: the current
  *  routing mode, the D6 posture (a steady state with its named entry
  *  condition — mid-session live, never boot-frozen), the D7 tunnel stamp,
  *  the three named mints (D5), the hub credential's NAMED outcome, and the
- *  staging receipt. GET /amicode/fleet/sessions — the MERGED projection
- *  (D2): both stores, provenance-tagged, currency derived over what is
- *  actually fetched. */
+ *  staging receipt. GET /amicode/fleet/attachment (#1342, ADR 0027 §3/D6):
+ *  the SWITCH-CONTROL pointer's own local honesty surface — the currently
+ *  attached server's coordinate, or `attached:false` for the empty/local
+ *  default. Deliberately under the SAME /amicode/fleet/* prefix as `status`
+ *  so it inherits the EXISTING shouldProxyAmicodeToHost's never-proxied
+ *  exclusion for free — zero server.ts changes needed for this route to stay
+ *  local on a fleet client (AC3, `honesty_surface_stays_local`). GET
+ *  /amicode/fleet/sessions — the MERGED projection (D2): both stores,
+ *  provenance-tagged, currency derived over what is actually fetched. */
 export function registerFleetRoutes(server: AmicodeServiceServer, deps: FleetRouteDeps): AmicodeServiceServer {
   server.add("GET", "/amicode/fleet/status", () => {
     const mode = deps.getMode();
@@ -349,22 +491,64 @@ export function registerFleetRoutes(server: AmicodeServiceServer, deps: FleetRou
     };
   });
 
+  // #1342 (ADR 0027 §3/D6): the switch-control (attachment) pointer's own
+  // never-proxied local endpoint — plus the #1344 attach/detach VERBS — are
+  // registered UNCONDITIONALLY by registerAttachmentRoutes (below, alongside
+  // registerProfileRoutes), NOT here: ADR 0027 says a peer stays `standalone`
+  // (no fleet.json, no entitlement) and must still attach, so those routes
+  // cannot live behind this entitlement-gated block. They stay local for free
+  // under the EXISTING shouldProxyAmicodeToHost /amicode/fleet/* exclusion.
+
   server.add("GET", "/amicode/fleet/sessions", async () => {
     const started = Date.now();
-    const projection = await buildMergedProjection({
-      local: { getUrl: deps.engine.getUrl, password: deps.engine.password },
-      hub: { getUrl: deps.hub.getUrl, credential: deps.readCredential() },
-    });
-    if (deps.monitor) {
+
+    // #1439: fleet-wide N-peer projection when peer data is available;
+    // otherwise fall back to the legacy 2-source (local+hub) projection.
+    let projection: MergedProjection | FleetProjection;
+    if (deps.fleetPeers) {
+      const peers = deps.fleetPeers.getServingPeers().map((p) => {
+        const tokenRead = deps.fleetPeers!.readPeerToken(p.machineId);
+        return {
+          machineId: p.machineId,
+          getUrl: () => (tokenRead.ok ? tokenRead.credential.baseUrl : undefined),
+          token: tokenRead.ok ? tokenRead.credential.token : undefined,
+          // #1481 (AC1): TRUST gates Observe — holding a valid Observe grant
+          // (a reader peer-token) IS the trust relationship. A serving∧reachable
+          // peer we hold NO grant for is untrusted: it is NAMED `untrusted` and
+          // contributes no session metadata, DISTINCT from a trusted peer whose
+          // URL is momentarily down (`no-upstream`).
+          trusted: tokenRead.ok,
+        };
+      });
+      // #1481 (AC3): blocked-identity peers (alias-conflict / key-changed) are
+      // NAMED source states, never silently dropped from the projection.
+      const blockedPeers = deps.fleetPeers.getBlockedPeers?.() ?? [];
+      projection = await buildFleetProjection({
+        localMachineId: deps.fleetPeers.localMachineId,
+        local: { getUrl: deps.engine.getUrl, password: deps.engine.password },
+        peers,
+        blockedPeers,
+        rosterLookup: deps.fleetPeers.rosterLookup,
+      });
+    } else {
+      projection = await buildMergedProjection({
+        local: { getUrl: deps.engine.getUrl, password: deps.engine.password },
+        hub: { getUrl: deps.hub.getUrl, credential: deps.readCredential() },
+      });
+    }
+
+    if (deps.monitor && !deps.fleetPeers) {
       // the projection IS a data-plane request: its hub side feeds the
       // posture detector's outcome stream (transport-level absences only —
       // a missing credential or a 401 is D5's honesty surface, not D6's
       // degradation) and re-asserts D7's hub build parity.
-      const hubRecord = projection.sources.hub;
-      if (hubRecord.present) {
+      // NOTE: hub-specific monitoring applies to the legacy 2-source path
+      // only; the N-peer path (#1439) does not carry a single "hub" source.
+      const hubRecord = (projection as MergedProjection).sources.hub;
+      if (hubRecord?.present) {
         deps.monitor.record({ kind: "responded", latencyMs: Date.now() - started });
         deps.monitor.noteHubVersion(hubRecord.version ?? null);
-      } else if (hubRecord.reason === "no-upstream" || hubRecord.reason === "fetch-failed") {
+      } else if (hubRecord?.reason === "no-upstream" || hubRecord?.reason === "fetch-failed") {
         deps.monitor.record({ kind: "no-response", detail: hubRecord.reason });
       }
     }
@@ -383,6 +567,60 @@ function authModeFromEnv(): "open" | "credential" | undefined {
   const raw = process.env.AMICODE_SERVICE_AUTH;
   if (raw === undefined) return undefined;
   return raw.trim().toLowerCase() === "open" ? "open" : "credential";
+}
+
+/** #1448 (W1a): project the serving-peer set into the session multiplexer's
+ *  Record<machine_id, PeerTransport> shape (the fleetPeerTransports shape,
+ *  #1446 — the SAME serving-peer set the sessions route derives its projection
+ *  from). Reads each peer token ONCE at construction, exactly like the sessions
+ *  route (index.ts). Absent fleetPeers (a single-machine user) → an empty peer
+ *  map, so the multiplexer resolves LOCAL for every path. */
+function buildMultiplexPeers(
+  fleetPeers?: {
+    getServingPeers(): Array<{ machineId: string }>;
+    readPeerToken(machineId: string): { ok: true; credential: { baseUrl: string; token: string } } | { ok: false };
+  },
+): Record<string, PeerTransport> {
+  const peers: Record<string, PeerTransport> = {};
+  if (!fleetPeers) return peers;
+  for (const { machineId } of fleetPeers.getServingPeers()) {
+    const read = fleetPeers.readPeerToken(machineId);
+    peers[machineId] = {
+      getUrl: () => (read.ok ? read.credential.baseUrl : undefined),
+      token: read.ok ? read.credential.token : undefined,
+    };
+  }
+  return peers;
+}
+
+/** #1478 (AC1/AC2, ADR 0034): the BASE peer-studio activation predicate — a
+ *  narrow, entitlement-FREE authority for self-owned peer control. A machine
+ *  base-activates the peer-studio OBSERVATION routes (/amicode/fleet/status +
+ *  /amicode/fleet/sessions) when it is an unentitled INDEPENDENT SERVING PEER:
+ *  a NON-client machine whose fleet-peer provider resolves at least one
+ *  serving∧reachable peer beyond itself. This is a DISTINCT authority from the
+ *  managed premium overlay (AC2), and it is NOT entitlement forgery — the
+ *  caller passes the honest `entitlement:"absent"` staging receipt and attaches
+ *  NO premium FleetPlane.
+ *
+ *  Predicate FALSE (stays local-only / byte-compatible):
+ *   - a no-peer base install (no fleetPeers provider) and a fleet-of-one
+ *     (a present provider resolving ZERO serving peers beyond self);
+ *   - a fleet CLIENT relay — its /amicode/* relay is governed by the attached
+ *     FleetPlane, which base activation never attaches, so its behavior is
+ *     unchanged (AC5).
+ *
+ *  Scope (Binding Amendment): AC3 (production service/engine accept-set parity)
+ *  and AC4 (headless reboot posture) are owned by #1485 / #1487 — NOT decided
+ *  here. */
+function baseStudioActivates(fleet: {
+  client?: boolean;
+  fleetPeers?: { getServingPeers(): Array<{ machineId: string }> };
+}): boolean {
+  if (fleet.client === true) return false; // AC5: a client relay is never base-activated
+  const peers = fleet.fleetPeers;
+  if (peers === undefined) return false; // a no-peer base install stays local-only
+  return peers.getServingPeers().length > 0; // ≥1 verified serving peer beyond self
 }
 
 /** The service with every ported slice mounted. The extension wiring slice
@@ -428,6 +666,10 @@ export function createAmicodeService(
       overlaySource?: string | null;
       /** The hub upstream over the fleet tunnel (late-bound). */
       hub: { getUrl: () => string | undefined };
+      /** #1261 (AC6): this relay is a fleet CLIENT (never-fork, NO local
+       *  engine). Suppresses the standalone→engine mode flip and switches the
+       *  no-upstream 503 to the client's own honest hub-down state. */
+      client?: boolean;
       /** The data-driven routing mode; default "fleet" (a staged plane with
        *  no getter runs fleet). */
       getMode?: () => UpstreamMode;
@@ -444,6 +686,43 @@ export function createAmicodeService(
        *  generation marker) — read per request; proxied responses (SSE
        *  included) carry its generation stamp. */
       tunnelConfigPath?: string;
+      /** #1378 (D3 resolver wiring): the attached server's upstream for the
+       *  peer branch. When set (alongside `keeper`), the D3 resolver routes
+       *  /amicode/* and engine paths to this upstream or the keeper below. */
+      attached?: { getUrl: () => string | undefined };
+      /** #1378 (D3 resolver wiring): the keeper's upstream for the peer
+       *  branch. /amicode/roster resolves here regardless of attachment. */
+      keeper?: { getUrl: () => string | undefined };
+      /** #1381: the SSH transport factory for the attach lifecycle. When
+       *  present, the attach/detach routes dynamically spin up/tear down
+       *  SSH forwards and register HubProxies on FleetPlane.attached.
+       *  Injectable for tests; defaults to bringUpSshAttachment. */
+      transportFactory?: TransportFactory;
+      /** #1381: the remote port the peer engine listens on (for the SSH
+       *  forward's -L target). Default 43117. */
+      attachRemotePort?: number;
+      /** #1382 (peer-unreachable posture): optional callback that supplies
+       *  the pointer value for the peer-unreachable 503. Absent → the
+       *  FLEET_PEER_UNREACHABLE_POINTER default. */
+      peerUnreachablePointer?: () => string | null;
+      /** #1439: fleet-wide N-peer session projection inputs. When present,
+       *  the GET /amicode/fleet/sessions route uses buildFleetProjection
+       *  (N-peer, machine-keyed fan-out); when absent, the legacy 2-source
+       *  (local+hub) projection is used. */
+      fleetPeers?: {
+        localMachineId: string;
+        getServingPeers(): Array<{ machineId: string }>;
+        /** #1481 (AC3): blocked-identity peers surfaced as NAMED source states.
+         *  Optional for back-compat. */
+        getBlockedPeers?(): Array<{ machineId: string; reason: "identity-conflict" }>;
+        readPeerToken(machineId: string): { ok: true; credential: { baseUrl: string; token: string } } | { ok: false };
+        rosterLookup(machineId: string): { name: string; device_type?: string } | undefined;
+      };
+      /** #1522 (ADR 0033 decision A): the focus/picker snapshot provider for the
+       *  SSE fan-in connect frame. When present, the aggregator emits a REAL focus
+       *  snapshot as the first local-namespace frame on every (re)connect; when
+       *  absent, the aggregator emits a named-empty snapshot (the pre-#1522 default). */
+      focusSnapshot?: () => import("./sse_fanin_aggregator").FocusSnapshot | undefined;
     };
   } = {},
 ): AmicodeServiceServer {
@@ -459,6 +738,19 @@ export function createAmicodeService(
   });
   if (opts.shelf !== undefined) server.attachAppShelf(new AppShelf(opts.shelf));
   if (opts.engine?.getUrl !== undefined) server.attachEngineProxy(new EngineProxy({ getUrl: opts.engine.getUrl }));
+  // #1344 (Slice 4): the multiplexer's per-session SSE cursor store lives with
+  // the staged client relay (assigned in the fleet block below), but the
+  // attach/detach verb that must RESET it on a switch (AC3) is registered
+  // UNCONDITIONALLY (a standalone peer attaches too). Hoist a ref so the
+  // always-on route can reach the store when it exists; a standalone boot
+  // leaves it undefined and the reset is a no-op (nothing to reset).
+  let sessionResumeRef: SessionEventResume | undefined;
+  // #1381: the attach lifecycle — hoisted alongside sessionResumeRef so the
+  // always-on registerAttachmentRoutes call (below the fleet block) can
+  // wire it regardless of whether the fleet plane staged. A standalone boot
+  // leaves it undefined; the route handler checks for its presence.
+  let attachLifecycle: AttachLifecycleImpl | undefined;
+  let fleetMultiplexerArmed = false;
   // #391: the fleet plane stages ONLY through the resolver's dispatch. No
   // entitlement → this block never arms anything → zero fleet surfaces,
   // byte-identical.
@@ -469,6 +761,7 @@ export function createAmicodeService(
       overlaySource: opts.fleet.overlaySource,
     });
     if (staging.staged) {
+      fleetMultiplexerArmed = true;
       // #1131: the staged fleet program (amicissimo#418) — resolved through
       // the same entitlement gate inputs; its receipt rides the fleet status
       // detail (the cockpit says where the tuning came from). The composed
@@ -495,6 +788,20 @@ export function createAmicodeService(
           }
         : undefined;
       const rawGetMode = opts.fleet.getMode ?? ((): UpstreamMode => "fleet");
+      // #1261 (AC6): capture the client flag where the `opts.fleet !==
+      // undefined` narrowing holds (the getMode closure cannot re-narrow it).
+      const isClient = opts.fleet.client === true;
+      // #1264 (Slice 4): a fleet CLIENT carries the full data plane over the
+      // tunnel and has NO local engine — a blip drops the whole SSE gap. Arm
+      // per-session SSE resume so `/api/session/{id}/event` reconnects
+      // losslessly (cursor carried across reconnects, boundary deduped). Only
+      // for the client: the engine-armed base machine flips to its local engine
+      // on hub-down (never relies on the tunnel for its stream), so its
+      // steady-state stays byte-identical.
+      const sessionResume = isClient ? new SessionEventResume() : undefined;
+      // #1344 (Slice 4): expose the client relay's cursor store to the always-on
+      // attach/detach verb so a switch (pointer flip) resets it (AC3).
+      sessionResumeRef = sessionResume;
       // D6: the hub-down posture IS the base standalone posture — the
       // effective mode falls back to the local engine (a session created in
       // a hub-down window is a LOCAL session, D3), and recovery re-enters
@@ -502,6 +809,10 @@ export function createAmicodeService(
       // the posture snapshot's refetch_epoch is the client's key).
       const getMode = (): UpstreamMode => {
         if (rawGetMode() !== "fleet") return rawGetMode();
+        // #1261 (AC6): a CLIENT has NO local engine — NEVER flip
+        // standalone→engine. The hub-down posture is an honest hub-down 503,
+        // not a silent local route (the engine-armed machine keeps the flip).
+        if (isClient) return "fleet";
         return monitor.snapshot().state === "standalone" ? "engine" : "fleet";
       };
       const writeDeps: FleetWriteDeps = {
@@ -512,7 +823,106 @@ export function createAmicodeService(
         onOutcome: (o) => monitor.record(o),
         ...(tunnelStampHeaders ? { responseStamp: tunnelStampHeaders } : {}),
       };
-      server.attachFleetPlane({
+      // #1378 (D3 resolver wiring): build the peer branch's upstream proxies
+      // when configured. These use the hub credential for H1 (the real per-peer
+      // credential model is a later slice). Absent when no peer upstream is
+      // configured — the dispatch peer branch activates only when `attached`
+      // exists on the plane.
+      const attachedProxy = opts.fleet.attached
+        ? new HubProxy({
+            getUrl: opts.fleet.attached.getUrl,
+            credential: readCredential,
+            ...(opts.fleet.dataPlaneTimeoutMs !== undefined ? { timeoutMs: opts.fleet.dataPlaneTimeoutMs } : {}),
+          })
+        : undefined;
+      const keeperProxy = opts.fleet.keeper
+        ? new HubProxy({
+            getUrl: opts.fleet.keeper.getUrl,
+            credential: readCredential,
+            ...(opts.fleet.dataPlaneTimeoutMs !== undefined ? { timeoutMs: opts.fleet.dataPlaneTimeoutMs } : {}),
+          })
+        : undefined;
+      // #1448 (W1a): the session-multiplexer seam — consulted on the ATTACHED
+      // arm ONLY when AMICO_FLEET_MULTIPLEX is ON (default OFF → dispatch never
+      // calls it, so a base boot is byte-identical). #1449 (W1b): built
+      // UNCONDITIONALLY whenever the fleet plane stages (not only when an
+      // attached upstream exists at boot) — AttachLifecycleImpl assigns
+      // `plane.attached` POST-construction, so the multiplex must already be on
+      // the plane to shadow that arm once the attach lands. Peer transports come
+      // from the SAME serving-peer set the sessions route uses (fleetPeers);
+      // absent fleetPeers → an empty peer map, so the multiplexer resolves LOCAL
+      // for every session (the proven no-op).
+      const ownerMap = new SessionOwnerMap();
+      const multiplexResolver: MultiplexResolver = new SessionMultiplexProxy({
+        ownerMap,
+        peers: buildMultiplexPeers(opts.fleet.fleetPeers),
+        localMachineId: opts.fleet.fleetPeers?.localMachineId ?? "",
+      });
+      // #1449 (W1b, AC1): feed the owner-map from a LIVE loop, not a test stub.
+      // The fleet-wide projection is PULL-ONLY (rebuilt per request at the
+      // sessions route), so per-session routing cannot lean on the sidebar being
+      // polled — a timer rebuilds the SAME N-peer projection the sessions route
+      // uses and calls ownerMap.update(projection.sessions). Only meaningful when
+      // fleetPeers is present (else the peer map is empty and the map has nothing
+      // to route); the feed is registered for teardown on server stop so its
+      // timer never outlives the service.
+      const fleetPeers = opts.fleet.fleetPeers;
+      if (fleetPeers) {
+        const ownerMapFeed = new OwnerMapFeed({
+          ownerMap,
+          buildProjection: async (): Promise<{ sessions: SessionEntry[] }> => {
+            const peers = fleetPeers.getServingPeers().map((p) => {
+              const tokenRead = fleetPeers.readPeerToken(p.machineId);
+              return {
+                machineId: p.machineId,
+                getUrl: () => (tokenRead.ok ? tokenRead.credential.baseUrl : undefined),
+                token: tokenRead.ok ? tokenRead.credential.token : undefined,
+              };
+            });
+            const projection = await buildFleetProjection({
+              localMachineId: fleetPeers.localMachineId,
+              local: { getUrl: opts.engine?.getUrl ?? ((): string | undefined => undefined), password: opts.engine?.password },
+              peers,
+              rosterLookup: fleetPeers.rosterLookup,
+            });
+            return { sessions: projection.sessions as SessionEntry[] };
+          },
+        });
+        ownerMapFeed.start();
+        server.registerCleanup(() => ownerMapFeed.stop());
+      }
+      // #1519 (W1c, ADR 0033 §D1): the /event fan-in driver — wires the #1511
+      // aggregator to the app's ONE global stream behind AMICO_FLEET_MULTIPLEX
+      // (server.ts gates the call; default OFF → dispatch never invokes it, so
+      // /event is byte-identical). Built ONLY for an engine-armed (non-client)
+      // machine with fleetPeers: a client relay has no local engine and routes
+      // everything through the hub, so it owns no local arm to fan into (the
+      // fan-in is an origin concern). Per-peer auth reads each peer's OWN token
+      // (decision A); the local arm rides the app's incoming credential — no
+      // peer/hub token is ever sent outward, and a known remote owner never
+      // resolves to local.
+      let eventFanIn: SseFanInDriver | undefined;
+      if (fleetPeers && !isClient) {
+        const peers = fleetPeers;
+        eventFanIn = new SseFanInDriver({
+          ownerMap,
+          localMachineId: peers.localMachineId,
+          localEventUrl: opts.engine?.getUrl ?? ((): string | undefined => undefined),
+          peerBaseUrl: (machineId) => {
+            const r = peers.readPeerToken(machineId);
+            return r.ok ? r.credential.baseUrl : undefined;
+          },
+          peerToken: (machineId) => {
+            const r = peers.readPeerToken(machineId);
+            return r.ok ? { ok: true, credential: r.credential } : { ok: false, reason: "absent" };
+          },
+          // #1522 (ADR 0033 decision A): pass the real focus provider through to
+          // the aggregator so the connect frame carries real focus data (not the
+          // named-empty default). Absent → the aggregator's named-empty fallback.
+          ...(opts.fleet.focusSnapshot ? { focusSnapshot: opts.fleet.focusSnapshot } : {}),
+        });
+      }
+      const fleetPlaneObj: import("./server").FleetPlane = {
         getMode,
         hub: new HubProxy({
           getUrl: opts.fleet.hub.getUrl,
@@ -520,10 +930,33 @@ export function createAmicodeService(
           ...(opts.fleet.dataPlaneTimeoutMs !== undefined ? { timeoutMs: opts.fleet.dataPlaneTimeoutMs } : {}),
           onOutcome: (o) => monitor.record(o),
           ...(tunnelStampHeaders ? { responseStamp: tunnelStampHeaders } : {}),
+          ...(sessionResume ? { sessionResume } : {}),
         }),
         writes: { handle: (req, res) => handleFleetWrite(writeDeps, req, res) },
         onNoUpstream: () => monitor.record({ kind: "no-response", detail: "no-upstream" }),
-      });
+        // #1261 (AC6): a client answers hub-down with its OWN honest 503 and
+        // never flips to a (nonexistent) local engine.
+        ...(isClient ? { client: true } : {}),
+        hubDownPointer: () => monitor.snapshot().pointer,
+        ...(attachedProxy ? { attached: attachedProxy } : {}),
+        ...(keeperProxy ? { keeper: keeperProxy } : {}),
+        ...(opts.fleet.peerUnreachablePointer ? { peerUnreachablePointer: opts.fleet.peerUnreachablePointer } : {}),
+        multiplex: multiplexResolver,
+        ...(eventFanIn ? { eventFanIn } : {}),
+      };
+      server.attachFleetPlane(fleetPlaneObj);
+      // #1381: create the attach lifecycle for non-client fleet machines.
+      // Client relays route everything through the hub (never directly to a
+      // peer), so the lifecycle is only meaningful on engine-armed machines.
+      // The transportFactory defaults to bringUpSshAttachment when not injected.
+      if (!isClient && opts.fleet.transportFactory) {
+        attachLifecycle = new AttachLifecycleImpl({
+          plane: fleetPlaneObj,
+          transportFactory: opts.fleet.transportFactory,
+          remotePort: opts.fleet.attachRemotePort,
+          dataPlaneTimeoutMs: opts.fleet.dataPlaneTimeoutMs,
+        });
+      }
       registerFleetRoutes(server, {
         getMode,
         readCredential,
@@ -537,7 +970,61 @@ export function createAmicodeService(
         engineArmed: opts.engine !== undefined,
         monitor,
         ...(tunnelConfigPath !== undefined ? { tunnelConfigPath } : {}),
+        ...(opts.fleet.fleetPeers !== undefined ? { fleetPeers: opts.fleet.fleetPeers } : {}),
       });
+    } else if (baseStudioActivates(opts.fleet)) {
+      // #1478 (AC1/AC2): BASE peer-studio activation. The premium overlay did
+      // NOT stage (entitlement absent), but a verified INDEPENDENT SERVING PEER
+      // still mounts the base peer-studio OBSERVATION routes. NO entitlement
+      // forgery — the honest staging.receipt (entitlement:"absent") rides the
+      // status surface. NO premium FleetPlane is attached: the data-plane proxy,
+      // posture detector, and session multiplexer stay premium-only, so
+      // fleetMultiplexerArmed stays false and a base peer routes proxied
+      // requests to its OWN local engine (mode "engine") while observing peers
+      // through the N-peer projection. AC3 (service/engine accept-set parity)
+      // is owned by #1485.
+      //
+      // #1487 (AC1): HEADLESS PEER REHYDRATION — on base-activation, run
+      // rehydration to restore persisted peer relationships into named recovery
+      // states. The result is a read-only snapshot of the rehydration outcome,
+      // available on the /amicode/fleet/rehydration route. The rehydration is
+      // READ-ONLY (never writes/mints/modifies grants) and runs ONCE at boot.
+      let rehydration: RehydrationResult | undefined;
+      if (opts.fleet.fleetPeers) {
+        rehydration = rehydratePeerRelationships({
+          peerProvider: opts.fleet.fleetPeers as Parameters<typeof rehydratePeerRelationships>[0]["peerProvider"],
+        });
+      }
+      registerFleetRoutes(server, {
+        getMode: (): UpstreamMode => "engine",
+        readCredential: (): HubCredentialRead => readHubCredential(),
+        engine: {
+          getUrl: opts.engine?.getUrl ?? ((): string | undefined => undefined),
+          password: opts.engine?.password,
+        },
+        hub: opts.fleet.hub,
+        receipt: staging.receipt,
+        engineArmed: opts.engine !== undefined,
+        // #1485 (AC3): a headless base peer RECORDS A NAMED POSTURE. #1478
+        // mounted the base observation routes but deferred the posture surface
+        // here — without a monitor, /amicode/fleet/status omitted `posture`
+        // entirely. A base peer observes its verified peers over the N-peer
+        // projection while routing its own traffic to the local engine (mode
+        // "engine"); it holds no premium data-plane, so its steady state is the
+        // detector's named default ("fleet"). Passing the detector makes the
+        // named posture (the D6 vocabulary) present on the status surface — a
+        // headless peer boots WITH a named posture, never a missing field.
+        monitor: new FleetPostureDetector({ tuning: opts.fleet.posture }),
+        ...(opts.fleet.fleetPeers !== undefined ? { fleetPeers: opts.fleet.fleetPeers } : {}),
+      });
+      // #1487 (AC1): expose the rehydration snapshot on a dedicated route.
+      // Read-only, boot-time snapshot — the route returns the same result
+      // until the next reboot. The route lives alongside /amicode/fleet/status
+      // in the SAME /amicode/fleet/* namespace (never-proxied).
+      if (rehydration) {
+        const snap = JSON.stringify({ ok: true, ...rehydration });
+        server.add("GET", "/amicode/fleet/rehydration", () => ({ body: snap }));
+      }
     }
   }
   registerProfileRoutes(server);
@@ -549,6 +1036,30 @@ export function createAmicodeService(
   registerProjectRoutes(server);
   registerConnectionRoutes(server);
   registerSolverModeRoutes(server);
+  registerRosterRoutes(server);
+  // #1344 (Slice 4): the attach/detach verb + the switch-control pointer's own
+  // endpoint — ALWAYS-ON (a standalone peer must attach; the entitlement-gated
+  // fleet block above cannot own these). The SSE-cursor reset is wired to the
+  // client relay's store when one exists, else a no-op.
+  // #1381: the lifecycle is wired when the fleet plane staged with a transport
+  // factory — the route handler invokes it on attach/detach.
+  registerAttachmentRoutes(server, {
+    resetCursorOnSwitch: () => sessionResumeRef?.reset(),
+    lifecycle: attachLifecycle,
+    isMultiplexed: () => fleetMultiplexerArmed && fleetMultiplexEnabled(),
+  });
+  // #1470: the peer-token MINT + REVOKE routes — ALWAYS-ON siblings of
+  // roster/attach, NOT inside the entitlement-gated fleet block above. A
+  // joining machine is `standalone` (no fleet.json, no entitlement) and holds
+  // no standing credential; it MUST still reach the mint endpoint to bootstrap
+  // its first reader peer-token (ADR 0032 §D2/§D4). The service accept-set
+  // already validates the enrollment nonce for the mint path (server.ts
+  // isMintEndpoint) and gates revoke as an accept-set member — so wiring the
+  // route opens no unauthenticated surface. The handlers are pure (no server
+  // dep); they read their stores from the machine's real resolution when no
+  // dep override is supplied — the production path.
+  server.add("POST", MINT_ENDPOINT_PATH, peerTokenMintHandler());
+  server.add("POST", PEER_REVOKE_PATH, peerRevokeHandler());
   registerPostureRoutes(server);
   registerModelRoutingRoutes(server, opts.modelRouting);
   return server;

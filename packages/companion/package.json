@@ -1,0 +1,68 @@
+{
+  "name": "amicode-companion",
+  "displayName": "Amicode Companion (always-local)",
+  "description": "The always-local ui-kind companion to Amicode — a client-side link sensor that survives the main extension relocating to the host under Remote-SSH. Feasibility spike (#1274, ADR 0025 P2). Holds no engine or store.",
+  "version": "0.0.1",
+  "publisher": "harmoniqs",
+  "license": "Apache-2.0",
+  "private": true,
+  "preview": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/harmoniqs/amicode"
+  },
+  "engines": {
+    "vscode": "^1.95.0",
+    "node": ">=20"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/companion.js",
+  "extensionKind": [
+    "ui"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "amicode.companion.reopenWindow",
+        "title": "Amicode Companion: Reopen window (Remote-SSH \u2194 local)"
+      }
+    ],
+    "configuration": {
+      "title": "Amicode Companion",
+      "properties": {
+        "amicode.companion.hubUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Client-side base URL the always-local companion probes for hub liveness (e.g. http://127.0.0.1:4096). The companion bundles its own probe and reads ONLY this client-side setting \u2014 it never reads the host-side running instance or posture file. Empty = the companion reports the honest no-hub-configured state."
+        },
+        "amicode.companion.localWorkspacePath": {
+          "type": "string",
+          "default": "",
+          "description": "Absolute LOCAL folder the auto-DOWN drop reopens into \u2014 the thin-client lifeboat where the host-file mount surfaces your files when the hub link is down. Empty = no local target known; the companion still surfaces the transition and the honest \u2018no local folder\u2019 error rather than opening a half-window."
+        },
+        "amicode.companion.hubSshAlias": {
+          "type": "string",
+          "default": "",
+          "description": "Hub Remote-SSH alias the prompt-UP reopen returns into on a sustained link recovery. On recovery the companion PROMPTS to reopen this window in Remote-SSH (vscode-remote://ssh-remote+<alias>/~) and reopens only if you accept \u2014 never a forced switch. Empty = no Remote-SSH target known; a recovery then surfaces an honest \u2018cannot resolve target\u2019 notice rather than a half-prompt."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.2",
+    "@types/vscode": "^1.95.0",
+    "esbuild": "^0.28.1",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}

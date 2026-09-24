@@ -2,7 +2,7 @@
 //
 // Replaces the native TreeDataProvider (workspace_tree.ts) with a webview that
 // can render custom UI: styled buttons, project metadata, lifecycle pills, and
-// eventually a fleet section. The sidebar is navigation chrome — destinations
+// a read-only fleet section (#1321). The sidebar is navigation chrome — destinations
 // open in the editor area; it never hosts chat or rich visualizations.
 //
 // Pattern: WebviewViewProvider (sidebar view), CSP nonce, typed bridge.
@@ -11,7 +11,11 @@ import * as vscode from "vscode";
 import * as path from "node:path";
 import * as fs from "node:fs";
 import * as os from "node:os";
+import { execSync } from "node:child_process";
 import { handleSidebarMessage, type SidebarMessageHandlers, type SidebarDownMessage, type FileOpRequest, type FileOpResult, type TreeEntry, type TreeRoot } from "./sidebar_bridge";
+import { buildFleetSectionModel, type RosterRowLike, type FleetPostureInput, type LocalDeviceInput, type CanonicalServerInput } from "./sidebar_fleet_section";
+import { parseRosterDocument, fleetRosterCachePath, fleetTopologyPath, classifyMacModel } from "@amicode/schema";
+import { fleetPostureStateFile } from "./fleet_posture_state";
 import { SidebarTreeService, type RawDirEntry } from "./sidebar_tree_service";
 import { ChatPanel } from "./chat_panel";
 import { detectProjectType } from "./project/detect";
@@ -280,6 +284,340 @@ function resolveIconTheme(webview: vscode.Webview): { data: IconThemeData; rootU
   return none;
 }
 
+/** Best-effort device-type classifier from `system_profiler SPHardwareDataType`
+ *  output's "Model Name:" line (#1359) — laptop/desktop, or undefined when
+ *  unrecognized. Pure — takes the raw command output as a string so it's
+ *  testable without shelling out. The MAPPING (Model Name → form factor) is the
+ *  shared `classifyMacModel` in `@amicode/schema` (#1371, ADR 0028): the enroll
+ *  producer and this self-row derive device_type from ONE function and cannot
+ *  drift. This wrapper is the thin extraction shell — it pulls the Model Name
+ *  off the `system_profiler` output and hands it to the schema classifier; no
+ *  model-mapping logic lives here. */
+export function classifyDeviceType(systemProfilerOutput: string): string | undefined {
+  const m = /Model Name:\s*(.+)/i.exec(systemProfilerOutput);
+  const model = m?.[1]?.trim();
+  return model ? classifyMacModel(model) : undefined;
+}
+
+/** The injectable command-runner seam for the extension host's device detection
+ *  (#1371 AC6, ADR 0028): ONE seam per node package hiding the impure shell so a
+ *  test can feed canned command output through the REAL detector into the shared
+ *  pure classifier without shelling out. Default: `execSync`. */
+export type HostCommandRunner = (command: string) => string;
+
+const defaultHostCommandRunner: HostCommandRunner = (command) =>
+  execSync(command, { encoding: "utf8", timeout: 2000 }).toString();
+
+/** Run the device-type detector body through a given command runner: macOS-only
+ *  (`system_profiler` → `classifyDeviceType` → the shared `classifyMacModel`);
+ *  any failure (non-darwin, missing binary, timeout) is a quiet `undefined`. */
+function detectDeviceTypeWith(run: HostCommandRunner): string | undefined {
+  if (process.platform !== "darwin") return undefined;
+  try {
+    return classifyDeviceType(run("system_profiler SPHardwareDataType"));
+  } catch {
+    return undefined;
+  }
+}
+
+/** The real, impure device-type detector: macOS only, `system_profiler`
+ *  (~100ms), memoized for the process lifetime so it never re-shells on every
+ *  posture refresh. Any failure (non-darwin, missing binary, timeout) is a
+ *  quiet `undefined`; the type pill's fallback to `server_mode` covers it. An
+ *  explicitly-injected command runner (tests) bypasses the process-lifetime
+ *  memo and runs the detector body directly (#1371 AC6). */
+let cachedDeviceType: string | undefined | "unset" = "unset";
+export function detectDeviceType(run?: HostCommandRunner): string | undefined {
+  if (run) return detectDeviceTypeWith(run); // explicit runner (tests): no memo
+  if (cachedDeviceType !== "unset") return cachedDeviceType;
+  cachedDeviceType = detectDeviceTypeWith(defaultHostCommandRunner);
+  return cachedDeviceType;
+}
+
+/** The user-facing device name on macOS: `scutil --get ComputerName` returns
+ *  whatever the user set in System Settings → General → About → Name (e.g.
+ *  "JJ's Mac Studio"), which is far friendlier than `os.hostname()` (which
+ *  appends the network domain → "Mac.mynetworksettings.com"). Memoized for
+ *  the process lifetime; quietly returns undefined on non-darwin or failure. */
+let cachedFriendlyHostname: string | undefined | "unset" = "unset";
+function friendlyHostname(): string | undefined {
+  if (cachedFriendlyHostname !== "unset") return cachedFriendlyHostname;
+  cachedFriendlyHostname = undefined;
+  if (process.platform === "darwin") {
+    try {
+      const name = execSync("scutil --get ComputerName", { encoding: "utf8", timeout: 1000 }).trim();
+      if (name) cachedFriendlyHostname = name;
+    } catch {
+      cachedFriendlyHostname = undefined;
+    }
+  }
+  return cachedFriendlyHostname;
+}
+
+/**
+ * Injectable fleet-section data seams (#1321). Kept behind an interface so the
+ * host is testable without real HTTP/fs/events, and so the roster READ can be a
+ * local file read (this machine is the server) or the `GET /amicode/roster`
+ * proxy (a client) without the provider caring which. Read-only by contract:
+ * there is no write seam here.
+ */export interface FleetSectionDeps {
+  /** The fleet-wide roster + whether it could be read (false ⇒ host down).
+   *  Async by contract (#1363): a SERVER/standalone resolves synchronously from
+   *  the local roster cache; a CLIENT proxy-reads the host over HTTP and so
+   *  returns a Promise. `pushFleetStatus` accepts either — the union keeps every
+   *  existing synchronous injection working unchanged. */
+  readRoster: () => RosterRead | Promise<RosterRead>;
+  /** This machine's posture (serve-stance + link-health), or null if unknown. */
+  readPosture: () => FleetPostureInput | null;
+  /** THIS machine's own identity, independent of the roster (fleet.json +
+   *  hostname/config, #1359) — drives the self-row synthesis and the "not
+   *  registered with a fleet" collapse. Optional for backward compatibility
+   *  (older injected deps omit it; treated as null — no self-row). */
+  readLocalDevice?: () => LocalDeviceInput | null;
+  /** The canonical server this machine points at (fleet.json `canonical`),
+   *  or null on a server/standalone (#1363). On a CLIENT the server is never a
+   *  roster row, so this drives the server-node synthesis. Optional for
+   *  backward compatibility (older injected deps omit it — no server row). */
+  readCanonicalServer?: () => CanonicalServerInput | null;
+  /** Subscribe to posture/roster change; the callback re-pushes the section. */
+  onPostureChange: (cb: () => void) => vscode.Disposable;
+  /** Whether the Fleet Manager tab (#1322) exists — gates the Manage affordance. */
+  isFleetManagerAvailable: () => boolean;
+  /** Open the Fleet Manager tab (#1322). Only invoked when available. */
+  openFleetManager: () => void;
+  /** Spawn a new chat session with the given prompt. Used by the Troubleshoot
+   *  button to invoke the troubleshoot-fleet skill. */
+  launchSession: (prompt: string) => void;
+  /** #1413 — connect to a fleet device (show the Quick Pick). Optional: the
+   *  sidebar degrades honestly when the handler is absent. */
+  connectToDevice?: (msg: { machineId: string; deviceName: string; isLocal: boolean }) => void;
+  /** #1451 — FOCUS a fleet machine (set the host FleetFocusStore). Distinct
+   *  from connectToDevice: never connects/attaches. Optional; honest degrade. */
+  focusMachine?: (msg: { machineId: string; isLocal: boolean }) => void;
+}
+
+/** The roster read result — rows + whether the read succeeded (false ⇒ host
+ *  down / unreachable, an honest degraded state, never a fabricated list). */
+export interface RosterRead {
+  rows: RosterRowLike[];
+  reachable: boolean;
+}
+
+/** Options for {@link defaultFleetSectionDeps} — every file path is injectable
+ *  so the readers are unit-testable; production leaves them at the canonical
+ *  `~/.amico/ops/fleet/*` locations. */
+export interface DefaultFleetDepsOptions {
+  rosterFile?: string;
+  postureFile?: string;
+  fleetConfigFile?: string;
+  fleetManagerCommandId?: string;
+  /** Override the availability probe; default honestly reports true (the Fleet
+   *  Manager is always available). */
+  isFleetManagerAvailable?: () => boolean;
+  /** Override the change subscription (default: fs.watch on the ops/fleet dir). */
+  onPostureChange?: (cb: () => void) => vscode.Disposable;
+  /** Override the device-form-factor detector (#1359); default: the real,
+   *  memoized `detectDeviceType` (macOS `system_profiler`, undefined
+   *  elsewhere/on failure). Inject for tests — never shells out in a test run. */
+  detectDeviceType?: () => string | undefined;
+  /** Read a device-identity setting override (#1371 AC10, ADR 0028) — the SAME
+   *  namespace the amico-run enroll producer reads: `amicode.device.name` /
+   *  `amicode.device.type`. Default: the VS Code `amicode` configuration.
+   *  Inject for tests so the override precedence is exercisable. */
+  readDeviceSetting?: (key: string) => string | undefined;
+  /** Override session launch; default navigates the chat panel to a new session
+   *  with the given prompt (same pattern as New Project / New Environment). */
+  launchSession?: (prompt: string) => void;
+  /** Override the HTTP client used for a CLIENT's roster proxy-read (#1363);
+   *  default: the global `fetch`. Inject for tests — never hits the network in
+   *  a test run. */
+  fetchImpl?: typeof fetch;
+  /** The live local amicode-service endpoint (origin + engine credential) a
+   *  CLIENT proxy-reads the host roster through (#1363). Lazy — resolved at
+   *  read time because the service may not be up when the deps are constructed;
+   *  returns null when it isn't, and the read degrades to unreachable. Default:
+   *  a null-returning stub (production wires the live handle from extension.ts). */
+  serviceEndpoint?: () => { origin: string; authHeader: string } | null;
+  /** #1413 — override the connect-to-device handler. Default: undefined (the
+   *  sidebar degrades honestly when absent). Production wires the real Quick
+   *  Pick handler from extension.ts. */
+  connectToDevice?: (msg: { machineId: string; deviceName: string; isLocal: boolean }) => void;
+  /** #1451 — override the focus-machine handler. Default: undefined (honest
+   *  degrade). Production wires the host FleetFocusStore from extension.ts. */
+  focusMachine?: (msg: { machineId: string; isLocal: boolean }) => void;
+}
+
+/** The proxied route a CLIENT reads the host's authoritative roster from — the
+ *  local service forwards `/amicode/*` to the host (shouldProxyAmicodeToHost). */
+const CLIENT_ROSTER_ROUTE = "/amicode/roster";
+
+/**
+ * The production fleet seams (#1321, #1363). READ-ONLY: no write path exists
+ * here by contract. The roster read is role-aware — a SERVER/standalone reads
+ * the local roster cache synchronously; a CLIENT proxy-reads the host's
+ * authoritative roster over `GET /amicode/roster` (forwarded by the local
+ * service) and synthesizes the canonical-server node it points at.
+ */
+export function defaultFleetSectionDeps(opts: DefaultFleetDepsOptions = {}): FleetSectionDeps {
+  const rosterFile = opts.rosterFile ?? fleetRosterCachePath();
+  const postureFile = opts.postureFile ?? fleetPostureStateFile();
+  const fleetConfigFile = opts.fleetConfigFile ?? fleetTopologyPath();
+  const commandId = opts.fleetManagerCommandId ?? "amicode.openFleetManager";
+
+  function readServeStance(): string {
+    try {
+      if (!fs.existsSync(fleetConfigFile)) return "standalone";
+      const cfg = JSON.parse(fs.readFileSync(fleetConfigFile, "utf8"));
+      return cfg && typeof cfg.role === "string" ? cfg.role : "standalone";
+    } catch {
+      return "standalone";
+    }
+  }
+
+  function readCanonical(): { host?: string; port?: number; sshAlias?: string } | null {
+    try {
+      if (!fs.existsSync(fleetConfigFile)) return null;
+      const cfg = JSON.parse(fs.readFileSync(fleetConfigFile, "utf8"));
+      const c = cfg?.canonical;
+      return c && typeof c === "object" ? c : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** The SERVER/standalone path: read the local roster cache synchronously. */
+  function readLocalRoster(): RosterRead {
+    try {
+      // An absent roster file is a fresh/empty fleet (reachable), NOT host-down.
+      if (!fs.existsSync(rosterFile)) return { rows: [] as RosterRowLike[], reachable: true };
+      const parsed = parseRosterDocument(JSON.parse(fs.readFileSync(rosterFile, "utf8")));
+      return { rows: parsed.ok ? parsed.doc.rows : [], reachable: true };
+    } catch {
+      // A genuine I/O error is the honest unreachable signal (AC6).
+      return { rows: [], reachable: false };
+    }
+  }
+
+  /** The CLIENT path (#1363): proxy-read the host's authoritative roster via
+   *  the local service's `GET /amicode/roster` (forwarded to the host). Any
+   *  failure — no live endpoint, network error, non-200, malformed body — is
+   *  the honest unreachable state, never a fabricated or stale list. */
+  async function readHostRoster(): Promise<RosterRead> {
+    const endpoint = (opts.serviceEndpoint ?? (() => null))();
+    if (!endpoint) return { rows: [], reachable: false };
+    const doFetch = opts.fetchImpl ?? fetch;
+    try {
+      const res = await doFetch(`${endpoint.origin}${CLIENT_ROSTER_ROUTE}`, {
+        headers: { Authorization: endpoint.authHeader },
+      });
+      if (!res.ok) return { rows: [], reachable: false };
+      const body = (await res.json()) as { ok?: boolean; rows?: unknown };
+      const parsed = parseRosterDocument(body);
+      return { rows: parsed.ok ? parsed.doc.rows : [], reachable: true };
+    } catch {
+      return { rows: [], reachable: false };
+    }
+  }
+
+  return {
+    readRoster: () => (readServeStance() === "client" ? readHostRoster() : readLocalRoster()),
+    readCanonicalServer: () => {
+      // The server node is a client-only synthesis: a server sees itself as its
+      // self-row; a standalone has no canonical to point at.
+      if (readServeStance() !== "client") return null;
+      const c = readCanonical();
+      const id = c?.host ?? c?.sshAlias;
+      if (!id) return null;
+      return { machineId: id, name: id };
+    },
+    readPosture: () => {
+      const serverMode = readServeStance();
+      try {
+        if (!fs.existsSync(postureFile)) {
+          // No posture recorded yet — report the serve-stance with a standalone,
+          // unreachable link (honest: never a fabricated "healthy").
+          return { serverMode, hostname: os.hostname(), mode: "standalone", reachable: false, hub: { name: null, base_url: null } };
+        }
+        const p = JSON.parse(fs.readFileSync(postureFile, "utf8"));
+        const mode: FleetPostureInput["mode"] =
+          p.mode === "fleet" || p.mode === "degraded" || p.mode === "standalone" ? p.mode : "standalone";
+        return {
+          serverMode,
+          hostname: typeof p.hostname === "string" ? p.hostname : os.hostname(),
+          mode,
+          reachable: !!p.reachable,
+          hub: { name: p.hub?.name ?? null, base_url: p.hub?.base_url ?? null },
+        };
+      } catch {
+        return null;
+      }
+    },
+    onPostureChange:
+      opts.onPostureChange ??
+      ((cb) => {
+        // Watch the ops/fleet dir (posture-state.json + roster.json) — a change
+        // to either re-pushes the section (AC5, no manual reload).
+        try {
+          const watcher = fs.watch(path.dirname(postureFile), { persistent: false }, () => cb());
+          return { dispose() { try { watcher.close(); } catch { /* already closed */ } } };
+        } catch {
+          return { dispose() { /* dir absent — nothing to watch */ } };
+        }
+      }),
+    isFleetManagerAvailable: opts.isFleetManagerAvailable ?? (() => false),
+    openFleetManager: () => { void vscode.commands.executeCommand(commandId); },
+    launchSession: opts.launchSession ?? ((prompt: string) => {
+      // Late-bound: the chat panel may not exist at deps-construction time, but
+      // it will by the time the user clicks the button. Same navigate pattern
+      // as New Project / New Environment — post a navigate message to the chat
+      // panel that opens a new session with the given prompt auto-sent.
+      const panel = ChatPanel.peek();
+      if (!panel) return;
+      const encodedPrompt = encodeURIComponent(prompt);
+      const navPath = `/new-session?prompt=${encodedPrompt}&autoSend=1`;
+      void panel.postMessage({ source: "amicode", kind: "navigate", path: navPath });
+    }),
+    readLocalDevice: () => {
+      // THIS machine's own identity, independent of the roster (#1359): the
+      // serve-stance mirrors fleet.json (same reader readPosture uses), the
+      // name and device_type resolve via the SAME override namespace + precedence
+      // the amico-run enroll producer uses (#1371, ADR 0028): setting override
+      // (amicode.device.name / amicode.device.type) → OS detection → prettified
+      // hostname (name) / undefined (type). deviceType is best-effort (never
+      // blocks on failure — the type pill falls back to serveStance).
+      const serveStance = readServeStance();
+      const hostname = os.hostname();
+      // AC4 (#1372, ADR 0028): on a SERVER/standalone this machine self-registers
+      // its roster row keyed by fleet.json canonical.host (which differs from
+      // os.hostname() under --host / FQDN drift, e.g. Mac.mynetworksettings.com).
+      // Reconcile the self-row identity to that SAME key so the posted row
+      // collapses against the self-row (sidebar_fleet_section's
+      // `r.machine_id === localId`), rendering the server exactly once. A CLIENT
+      // keeps machine_id = os.hostname() (peers reference it by hostname); a
+      // server with no canonical.host falls back to os.hostname() (never fabricated).
+      const canonicalHost = serveStance !== "client" ? readCanonical()?.host : undefined;
+      const machineId =
+        typeof canonicalHost === "string" && canonicalHost.trim() !== "" ? canonicalHost : hostname;
+      const readSetting =
+        opts.readDeviceSetting ??
+        ((key: string) => {
+          // The producer reads flat keys (amicode.device.name); the VS Code API
+          // is section-scoped, so strip the `amicode.` prefix to the sub-key.
+          const sub = key.startsWith("amicode.") ? key.slice("amicode.".length) : key;
+          const v = (vscode.workspace.getConfiguration("amicode").get<string>(sub, "") || "").trim();
+          return v || undefined;
+        });
+      const configuredName = readSetting("amicode.device.name");
+      const configuredType = readSetting("amicode.device.type");
+      const name = configuredName || friendlyHostname() || hostname;
+      const deviceType = configuredType || (opts.detectDeviceType ?? detectDeviceType)();
+      return { machineId, name, serveStance, deviceType };
+    },
+    connectToDevice: opts.connectToDevice,
+    focusMachine: opts.focusMachine,
+  };
+}
+
 /**
  * Provides the sidebar webview for the Amicode workspace panel.
  * Registered as `amicode.workspace` (type: "webview" in package.json).
@@ -302,13 +640,26 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
   private resolvedEnvDebounceTimer?: ReturnType<typeof setTimeout>;
   private treeService: SidebarTreeService;
   private globalState?: { get(key: string, fallback?: unknown): unknown; update(key: string, value: unknown): Thenable<void> };
+  /** Injected fleet seams (#1321); undefined ⇒ the section stays inert (the
+   *  webview shows its own honest empty state and posts nothing). */
+  private fleetDeps?: FleetSectionDeps;
+  private fleetSub?: vscode.Disposable;
+  /** #1375: staleness sweep — re-pushes fleet status on a fixed interval so
+   *  display health transitions (reachable → degraded → down) even when
+   *  roster.json is static and fs.watch fires nothing. */
+  private fleetStalenessTimer?: ReturnType<typeof setInterval>;
 
   static readonly DEFAULT_SECTION_ORDER = ["research", "dev", "fleet"];
   private static readonly SECTION_ORDER_KEY = "amicode.sectionOrder";
 
-  constructor(extensionUri: vscode.Uri, globalState?: { get(key: string, fallback?: unknown): unknown; update(key: string, value: unknown): Thenable<void> }) {
+  constructor(
+    extensionUri: vscode.Uri,
+    globalState?: { get(key: string, fallback?: unknown): unknown; update(key: string, value: unknown): Thenable<void> },
+    fleetDeps?: FleetSectionDeps,
+  ) {
     this.extensionUri = extensionUri;
     this.globalState = globalState;
+    this.fleetDeps = fleetDeps;
     this.treeService = new SidebarTreeService({
       detectProjectType,
       readToml: (dir) => readResearchToml(dir),
@@ -440,6 +791,21 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
             });
           }
         },
+        // #1321 — the ONLY fleet action: navigate to the Fleet Manager tab
+        // (#1322). Honest degrade: navigate only when that tab exists; a stray
+        // message when it doesn't is a no-op (never a dead navigation).
+        openFleetManager: () => {
+          if (this.fleetDeps?.isFleetManagerAvailable()) this.fleetDeps.openFleetManager();
+        },
+        troubleshootFleet: () => {
+          this.fleetDeps?.launchSession("/troubleshoot-fleet");
+        },
+        connectToDevice: (msg) => {
+          this.fleetDeps?.connectToDevice?.(msg);
+        },
+        focusMachine: (msg) => {
+          this.fleetDeps?.focusMachine?.(msg);
+        },
       };
       void handleSidebarMessage(msg, handlers);
     });
@@ -459,6 +825,18 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
       this.pushGitStatus();
     });
 
+    // #1321 — the read-only fleet section: push the initial view-model, then
+    // refresh it on every posture-change (no manual reload). Inert when no
+    // fleet deps were injected (backward compatible).
+    if (this.fleetDeps) {
+      this.pushFleetStatus();
+      this.fleetSub = this.fleetDeps.onPostureChange(() => this.pushFleetStatus());
+      // #1375: staleness sweep — re-push every 60s so display health degrades
+      // even when roster.json is static (no fs.watch event). The model's
+      // effectiveHealth re-evaluates staleness against the current clock.
+      this.fleetStalenessTimer = setInterval(() => this.pushFleetStatus(), 30_000);
+    }
+
     webviewView.onDidDispose(() => {
       clearTimeout(this.fsDebounceTimer);
       clearTimeout(this.resolvedEnvDebounceTimer);
@@ -470,6 +848,12 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
       this.workspaceSub?.dispose();
       for (const sub of this.gitSubs) sub.dispose();
       this.gitSubs = [];
+      this.fleetSub?.dispose();
+      this.fleetSub = undefined;
+      if (this.fleetStalenessTimer) {
+        clearInterval(this.fleetStalenessTimer);
+        this.fleetStalenessTimer = undefined;
+      }
       this.view = undefined;
     });
 
@@ -526,6 +910,40 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
 
   private postDown(msg: SidebarDownMessage): void {
     this.view?.webview.postMessage(msg);
+  }
+
+  /**
+   * #1321 — build the read-only fleet section view-model from the injected
+   * seams and push it to the webview. Honest by construction: an unreachable
+   * roster resolves to the degraded state (never a fabricated list), and Manage
+   * is enabled only when the Fleet Manager tab (#1322) exists.
+   */
+  private pushFleetStatus(): void {
+    if (!this.fleetDeps) return;
+    const deps = this.fleetDeps;
+    const result = deps.readRoster();
+    const build = (roster: RosterRead) => {
+      // Re-check: an async read may resolve after the view/deps were torn down.
+      if (!this.fleetDeps) return;
+      const model = buildFleetSectionModel({
+        roster: roster.rows,
+        rosterReachable: roster.reachable,
+        posture: deps.readPosture(),
+        manageAvailable: deps.isFleetManagerAvailable(),
+        troubleshootAvailable: true,
+        localDevice: deps.readLocalDevice?.() ?? null,
+        canonicalServer: deps.readCanonicalServer?.() ?? null,
+      });
+      this.postDown({ kind: "fleet-status", model });
+    };
+    // The SERVER/standalone read is synchronous — post immediately (keeps every
+    // existing synchronous injection posting in the same tick). The CLIENT read
+    // is a Promise (the host proxy-read) — build when it resolves (#1363).
+    if (result instanceof Promise) {
+      void result.then(build).catch(() => build({ rows: [], reachable: false }));
+    } else {
+      build(result);
+    }
   }
 
   /**
@@ -1026,6 +1444,114 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
       color: var(--vscode-descriptionForeground);
       font-style: italic;
     }
+    /* #1321/#1359 — the read-only fleet section: a file-list-style device
+       list. Token-driven (no raw literals); the status dot pairs its color
+       with an aria-label (a11y: color is never the only signal). */
+    .fleet-section-body { padding: 2px 0; }
+    .fleet-posture-badge {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin: 2px 8px 6px 32px;
+      padding: 2px 8px;
+      border: 1px solid var(--vscode-sideBarSectionHeader-border, var(--vscode-panel-border));
+      border-radius: 4px;
+      font-size: 11px;
+      color: var(--vscode-descriptionForeground);
+      background: var(--vscode-badge-background);
+    }
+    .fleet-posture-mode {
+      color: var(--vscode-badge-foreground, var(--vscode-foreground));
+      font-weight: 600;
+      text-transform: capitalize;
+    }
+    .fleet-posture-link[data-link-health="ok"] { color: var(--vscode-testing-iconPassed, var(--vscode-terminal-ansiGreen)); }
+    .fleet-posture-link[data-link-health="degraded"] { color: var(--vscode-editorWarning-foreground, var(--vscode-terminal-ansiYellow)); }
+    .fleet-posture-link[data-link-health="down"] { color: var(--vscode-errorForeground, var(--vscode-terminal-ansiRed)); }
+    .fleet-device-list { display: flex; flex-direction: column; gap: 2px; }
+    .fleet-device-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 3px 8px 3px 8px;
+      font-size: 12px;
+      color: var(--vscode-foreground);
+      cursor: pointer;
+    }
+    .fleet-device-row:hover { background: var(--vscode-list-hoverBackground); }
+    .fleet-device-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .fleet-local-badge { flex-shrink: 0; font-size: 11px; color: var(--vscode-descriptionForeground); white-space: nowrap; }
+    /* Left: a status dot. No inline text label — the dot's own CSS tooltip
+       (data-tooltip + ::before) and aria-label carry the tri-state for a11y.
+       The dot renders at 7px; ::after extends the hover target to ~17px so the
+       tooltip triggers without pixel-hunting. */
+    .fleet-status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: currentColor;
+      flex-shrink: 0;
+      position: relative;
+      cursor: default;
+    }
+    /* Invisible hover-area expansion (the 7px dot is too small otherwise). */
+    .fleet-status-dot::after {
+      content: '';
+      position: absolute;
+      inset: -5px;
+      border-radius: 999px;
+    }
+    /* CSS tooltip — appears to the top-right of the dot on hover so it is not
+       clipped by the sidebar's left edge. Uses VS Code's hover-widget tokens
+       so it looks native. */
+    .fleet-status-dot[data-tooltip]::before {
+      content: attr(data-tooltip);
+      position: absolute;
+      bottom: calc(100% + 4px);
+      left: calc(100% + 4px);
+      padding: 4px 8px;
+      border-radius: 4px;
+      background: var(--vscode-editorHoverWidget-background, #2d2d30);
+      border: 1px solid var(--vscode-editorHoverWidget-border, #454545);
+      color: var(--vscode-editorHoverWidget-foreground, #cccccc);
+      font-size: 11px;
+      line-height: 1.4;
+      white-space: nowrap;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.15s ease-in-out;
+      z-index: 100;
+    }
+    .fleet-status-dot:hover::before {
+      opacity: 1;
+    }
+    .fleet-status-dot[data-health="reachable"] { color: var(--vscode-testing-iconPassed, var(--vscode-terminal-ansiGreen)); }
+    .fleet-status-dot[data-health="degraded"] { color: var(--vscode-editorWarning-foreground, var(--vscode-terminal-ansiYellow)); }
+    .fleet-status-dot[data-health="down"] { color: var(--vscode-errorForeground, var(--vscode-terminal-ansiRed)); }
+    /* Right: the type pill (device_type, else server_mode — #1359). */
+    .fleet-type-pill {
+      flex-shrink: 0;
+      padding: 0 6px;
+      border: 1px solid var(--vscode-badge-background, var(--vscode-panel-border));
+      border-radius: 999px;
+      font-size: 10px;
+      line-height: 15px;
+      text-transform: capitalize;
+      color: var(--vscode-badge-foreground, var(--vscode-foreground));
+      background: var(--vscode-badge-background);
+    }
+    .fleet-action-bar { display: flex; gap: 6px; margin: 4px 8px; }
+    .fleet-action-bar button {
+      padding: 2px 10px;
+      font-size: 11px;
+      border: 1px solid var(--vscode-button-border, var(--vscode-panel-border));
+      border-radius: 4px;
+      color: var(--vscode-foreground);
+      background: transparent;
+      cursor: pointer;
+    }
+    .fleet-action-bar button:hover { background: var(--vscode-list-hoverBackground); }
+    .fleet-action-bar button:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
     .context-menu {
       position: fixed;
       z-index: 1000;

@@ -109,6 +109,31 @@ function fakeAmico(behavior: { code: number; stdout: string; cacheContent?: stri
   chmodSync(join(bin, "amico"), 0o755);
 }
 
+/** #1261 (AC4): shadow `uname` on the child PATH so the installer's per-OS
+ *  branches (the settings path, the darwin-only tunnel) can be exercised
+ *  deterministically regardless of the test runner's real OS. */
+function fakeUname(os: string): void {
+  const bin = join(tmp, "fakebin");
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, "uname"), `#!/usr/bin/env bash\necho ${os}\n`);
+  chmodSync(join(bin, "uname"), 0o755);
+}
+
+/** #1258: shadow launchctl + systemctl on the child PATH with no-op shims so
+ *  the installer's best-effort load/enable of the hub-service unit NEVER
+ *  touches the real OS service manager. The test asserts the WRITTEN unit, not
+ *  the OS loader (per #1258: "don't fake OS-level launchctl/systemctl calls in
+ *  a unit test") — this keeps the server write-path hermetic, exactly as
+ *  fakeUname/fakeAmico shadow their binaries. */
+function fakeLoaders(): void {
+  const bin = join(tmp, "fakebin");
+  mkdirSync(bin, { recursive: true });
+  for (const name of ["launchctl", "systemctl"]) {
+    writeFileSync(join(bin, name), "#!/usr/bin/env bash\nexit 0\n");
+    chmodSync(join(bin, name), 0o755);
+  }
+}
+
 function writeCache(content: string): void {
   const dir = join(tmp, ".amico", "ops", "fleet");
   mkdirSync(dir, { recursive: true });
@@ -254,16 +279,25 @@ describe("the installer consumes the verb (never greps the raw file)", () => {
     // The BRANCH proof: the parsed role + port flowed through — never the standalone skip.
     expect(r.out).toMatch(/fleet role: client \(port: 4096\)/);
     expect(r.out).not.toMatch(/fleet checks skipped|nothing to install/);
-    // The terminal outcome is platform-specific BY DESIGN: on darwin, --check
-    // fails on the missing installed guard; on non-darwin the installer skips
-    // the host check ("the fleet is a darwin fleet") and completes green.
-    if (process.platform === "darwin") {
-      expect(r.code).toBe(1);
-      expect(r.out).toMatch(/guard not installed/);
-    } else {
-      expect(r.code).toBe(0);
-      expect(r.out).toMatch(/host check skipped/);
-    }
+    // #1261 (AC4): the guard backstop is cross-platform now — a client with no
+    // installed guard fails --check on EVERY OS (was: "host check skipped" on
+    // non-darwin). Unified: exit 1, "guard not installed".
+    expect(r.code).toBe(1);
+    expect(r.out).toMatch(/guard not installed/);
+    expect(r.out).not.toMatch(/host check skipped/);
+  });
+
+  it("verb exit 0 + role server (no sshAlias) → guard+settings, NO tunnel, never dies on the missing alias (ADR 0023)", () => {
+    // A base-tier server projection carries role=server + canonical WITHOUT an
+    // sshAlias (a hub is the tunnel's destination, not its client). The installer
+    // must NOT die demanding an alias, and must install no self-tunnel.
+    fakeAmico({ code: 0, stdout: verbJson("server", { host: "jj@100.77.141.50", port: 4096 }) });
+    fakeLoaders(); // #1258: the server write-path now provisions a hub service — shadow the OS loaders
+    const r = runScript(INSTALL, [], installEnv()); // install mode (not --check)
+    expect(r.code).toBe(0);
+    expect(r.out).toMatch(/fleet role: server \(port: 4096\)/);
+    expect(r.out).toMatch(/no managed tunnel/);
+    expect(r.out).not.toMatch(/no sshAlias in the fleet topology/); // the die we scoped out
   });
 
   it("verb exit 75 → the bootstrap exception: base-standalone STATED with the pointer, exit 0 (identical to CLI-absent)", () => {
@@ -303,8 +337,149 @@ describe("the installer consumes the verb (never greps the raw file)", () => {
   });
 });
 
-// ── both copies ship byte-identical (the VSIX's packaged copy is the installer users run) ──
+// ── #1261 AC4: enrollment writes the platform-correct VS Code settings path ───
+describe("the installer writes the platform-correct settings path (#1261 AC4)", () => {
+  const installEnv = (): { path: string } => ({
+    path: `${join(tmp, "fakebin")}:${process.env.PATH ?? ""}`,
+  });
 
+  it("on LINUX, enrollment writes ~/.config/Code/User/settings.json with the guard binary + port", () => {
+    fakeAmico({ code: 0, stdout: verbJson("client", { host: "hq", port: 4096, sshAlias: "hq" }) });
+    fakeUname("Linux"); // exercise the linux branch regardless of the runner's OS
+    const r = runScript(INSTALL, [], installEnv()); // write mode
+    expect(r.code).toBe(0);
+    const settingsPath = join(tmp, ".config", "Code", "User", "settings.json");
+    expect(existsSync(settingsPath)).toBe(true);
+    const j = JSON.parse(readFileSync(settingsPath, "utf8")) as Record<string, unknown>;
+    expect(String(j["amicode.opencodeBinary"])).toMatch(/amico-opencode-fleet-guard$/);
+    expect(j["amicode.opencodePort"]).toBe(4096);
+    // the darwin Application Support path is NOT used on linux
+    expect(existsSync(join(tmp, "Library", "Application Support", "Code", "User", "settings.json"))).toBe(false);
+  });
+
+  it("on LINUX with a VS Code server present, ALSO writes the Remote-WSL server-side Machine settings", () => {
+    fakeAmico({ code: 0, stdout: verbJson("client", { host: "hq", port: 4096, sshAlias: "hq" }) });
+    fakeUname("Linux");
+    mkdirSync(join(tmp, ".vscode-server"), { recursive: true }); // a Remote-WSL/SSH server is present
+    const r = runScript(INSTALL, [], installEnv());
+    expect(r.code).toBe(0);
+    expect(existsSync(join(tmp, ".config", "Code", "User", "settings.json"))).toBe(true);
+    expect(existsSync(join(tmp, ".vscode-server", "data", "Machine", "settings.json"))).toBe(true);
+  });
+
+  it("on macOS, enrollment writes the Application Support path (unchanged)", () => {
+    fakeAmico({ code: 0, stdout: verbJson("client", { host: "hq", port: 4096, sshAlias: "hq" }) });
+    fakeUname("Darwin");
+    const r = runScript(INSTALL, [], installEnv());
+    expect(r.code).toBe(0);
+    expect(existsSync(join(tmp, "Library", "Application Support", "Code", "User", "settings.json"))).toBe(true);
+  });
+
+  it("--check on LINUX catches settings drift (the check twin runs cross-platform, never 'skipped (not darwin)')", () => {
+    // Guard installed + in sync, but the settings are missing → --check must FAIL.
+    fakeAmico({ code: 0, stdout: verbJson("client", { host: "hq", port: 4096, sshAlias: "hq" }) });
+    fakeUname("Linux");
+    // install the guard so the guard check passes and we reach the settings check
+    mkdirSync(join(tmp, ".local", "bin"), { recursive: true });
+    writeFileSync(join(tmp, ".local", "bin", "amico-opencode-fleet-guard"), readFileSync(GUARD, "utf8"));
+    chmodSync(join(tmp, ".local", "bin", "amico-opencode-fleet-guard"), 0o755);
+    const r = runScript(INSTALL, ["--check"], installEnv());
+    expect(r.code).toBe(1);
+    expect(r.out).toMatch(/settings.*(missing|not set)|opencodeBinary/i);
+    expect(r.out).not.toMatch(/skipped \(not darwin\)/);
+  });
+});
+
+// ── #1258: the canonical hub gets a reboot-surviving service unit (server only) ──
+// The Studio's canonical hub must survive a REBOOT with NO editor opened.
+// Today the hub is the extension-spawned detached server (ADR 0020) — survives
+// a window close, dies on reboot. The installer provisions the EXISTING #955
+// headless runner (bin/dist/amicode-service-runner.mjs) under launchd (macOS) /
+// systemd-user (Linux) with RunAtLoad+KeepAlive — NOT a bespoke `opencode serve`
+// wrapper. One canonical DB / ONE writer (ADR 0005): the unit runs the SAME
+// runner the editor adopts, pinned to the canonical OPENCODE_DB. A CLIENT never
+// gets it (never-fork). The role gate rides the ONE topology reader (ADR 0023):
+// the SAME parsed projection role that decides guard/settings/tunnel decides this.
+const HUB_RUNNER_BUNDLE = join(REPO, "packages", "extension", "bin", "dist", "amicode-service-runner.mjs");
+describe.skipIf(!existsSync(HUB_RUNNER_BUNDLE))("#1258 the installer provisions the canonical hub service (reboot-survival)", () => {
+  const installEnv = (): { path: string } => ({
+    path: `${join(tmp, "fakebin")}:${process.env.PATH ?? ""}`,
+  });
+
+  it("on macOS, a SERVER gets the launchd hub-service unit — RunAtLoad+KeepAlive, runs the #955 runner (never `opencode serve`), pins OPENCODE_DB", () => {
+    fakeAmico({ code: 0, stdout: verbJson("server", { host: "hq", port: 4096 }) });
+    fakeUname("Darwin");
+    fakeLoaders();
+    const r = runScript(INSTALL, [], installEnv());
+    expect(r.code).toBe(0);
+    // the decision rode the ONE topology reader (ADR 0023): parsed role=server.
+    expect(r.out).toMatch(/fleet role: server/);
+    const plist = join(tmp, "Library", "LaunchAgents", "co.harmoniqs.amico-hub.plist");
+    expect(existsSync(plist)).toBe(true);
+    const content = readFileSync(plist, "utf8");
+    expect(content).toMatch(/<key>RunAtLoad<\/key>\s*<true\/>/); // boots on reboot, no editor needed
+    expect(content).toMatch(/<key>KeepAlive<\/key>\s*<true\/>/); // stays up (auto-restart)
+    expect(content).toContain("amicode-service-runner.mjs"); // the #955 runner…
+    expect(content).not.toContain("opencode serve"); // …NOT the withdrawn bespoke wrapper
+    expect(content).toContain("<key>OPENCODE_DB</key>"); // one writer (ADR 0005)
+    expect(content).toContain("/.amico/server/session.db");
+    expect(content).toContain("<key>AMICODE_SERVICE_PORT</key>");
+    expect(content).toContain("<string>4096</string>"); // the canonical fleet port
+  });
+
+  it("on LINUX, a SERVER gets the systemd-user hub-service unit — WantedBy+Restart=always, ExecStart runs the #955 runner, pins OPENCODE_DB", () => {
+    fakeAmico({ code: 0, stdout: verbJson("server", { host: "hq", port: 4096 }) });
+    fakeUname("Linux");
+    fakeLoaders();
+    const r = runScript(INSTALL, [], installEnv());
+    expect(r.code).toBe(0);
+    const unit = join(tmp, ".config", "systemd", "user", "amico-hub.service");
+    expect(existsSync(unit)).toBe(true);
+    const content = readFileSync(unit, "utf8");
+    expect(content).toMatch(/WantedBy=/); // enable → start at boot (RunAtLoad ≙)
+    expect(content).toContain("Restart=always"); // KeepAlive ≙
+    expect(content).toMatch(/ExecStart=.*amicode-service-runner\.mjs/); // the #955 runner…
+    expect(content).not.toContain("opencode serve"); // …NOT the withdrawn bespoke wrapper
+    expect(content).toContain("Environment=OPENCODE_DB="); // one writer (ADR 0005)
+    expect(content).toContain("/.amico/server/session.db");
+    expect(content).toContain("Environment=AMICODE_SERVICE_PORT=4096");
+    // #1354 follow-up: the hub engine is pinned off the extension engine and runs
+    // unarmed so open-auth /global/health works through the tunnel.
+    expect(content).toContain("Environment=AMICODE_ENGINE_PORT=4093");
+    expect(content).toContain("Environment=AMICODE_ENGINE_UNARMED=1");
+  });
+
+  it("never-fork: a CLIENT gets NO hub-service unit — this is the HUB's provisioning, not a client's (role-gated, ADR 0005)", () => {
+    fakeAmico({ code: 0, stdout: verbJson("client", { host: "hq", port: 4096, sshAlias: "hq" }) });
+    fakeUname("Linux"); // a linux client wires no darwin tunnel + no hub service — hermetic
+    fakeLoaders();
+    const r = runScript(INSTALL, [], installEnv());
+    expect(r.code).toBe(0);
+    expect(existsSync(join(tmp, ".config", "systemd", "user", "amico-hub.service"))).toBe(false);
+    expect(existsSync(join(tmp, "Library", "LaunchAgents", "co.harmoniqs.amico-hub.plist"))).toBe(false);
+  });
+
+  it("--check on a SERVER catches a missing/absent hub-service unit (the reboot-survival drift twin)", () => {
+    fakeAmico({ code: 0, stdout: verbJson("server", { host: "hq", port: 4096 }) });
+    fakeUname("Darwin");
+    fakeLoaders();
+    // guard installed + in sync AND settings correct so --check reaches the hub-service check
+    const guardDst = join(tmp, ".local", "bin", "amico-opencode-fleet-guard");
+    mkdirSync(join(tmp, ".local", "bin"), { recursive: true });
+    writeFileSync(guardDst, readFileSync(GUARD, "utf8"));
+    chmodSync(guardDst, 0o755);
+    const settings = join(tmp, "Library", "Application Support", "Code", "User", "settings.json");
+    mkdirSync(join(tmp, "Library", "Application Support", "Code", "User"), { recursive: true });
+    // #1354 follow-up: server role uses FLEET_PORT - 2 for the engine port (app
+    // shelf gets FLEET_PORT - 1, hub service keeps FLEET_PORT) and no guard binary
+    writeFileSync(settings, JSON.stringify({ "amicode.opencodePort": 4094 }, null, 2));
+    const r = runScript(INSTALL, ["--check"], installEnv());
+    expect(r.code).toBe(1);
+    expect(r.out).toMatch(/hub service/i);
+  });
+});
+
+// ── both copies ship byte-identical (the VSIX's packaged copy is the installer users run) ──
 describe("the packaged fleet scripts stay in sync with the repo copies", () => {
   it("guard + installer: packages/extension/tools/fleet copies are byte-identical", () => {
     for (const f of ["amico-opencode-fleet-guard", "install.sh"]) {

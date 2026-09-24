@@ -8149,6 +8149,10 @@ export type FileWriteErrors = {
    * Bad request
    */
   400: BadRequestError
+  /**
+   * ForbiddenError
+   */
+  403: ForbiddenError
 }
 
 export type FileWriteError = FileWriteErrors[keyof FileWriteErrors]

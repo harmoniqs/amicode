@@ -32,6 +32,7 @@ import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import { mkdtempSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
+import { randomUUID } from "node:crypto";
 import * as path from "node:path";
 import {
   FleetContractVersionError,
@@ -41,6 +42,8 @@ import {
   renderFleetStatus,
   fleetProjectionCachePath,
   fleetTopologyPath,
+  buildBaseProjection,
+  parseFleetTopology,
   type FleetProjection,
 } from "@amicode/schema";
 import { PREMIUM_CODE, readCodes } from "./premium.js";
@@ -88,6 +91,14 @@ export interface FleetProjectionDeps {
   /** #1106: the cache write (injectable). Default: mkdir -p + atomic
    *  tmp+rename, mirroring the extension's writeFleetConfig discipline. */
   writeCache?: (p: string, content: string) => void;
+  /** ADR 0023 (base tier): the STABLE per-machine epoch source. Default:
+   *  read-or-mint `~/.amico/ops/fleet/base_epoch`. Injected in tests. */
+  baseEpoch?: () => string;
+  /** ADR 0023: the monotonic publish counter. Default: a persisted counter
+   *  seeded from the publish wall-second. */
+  baseCounter?: () => number;
+  /** ADR 0023: the ISO publish stamp (provenance only). Default: now. */
+  nowIso?: () => string;
 }
 
 function flagValue(argv: string[], name: string): string | undefined {
@@ -150,6 +161,171 @@ function bootstrap(reason: "entitlement" | "checkout", rendered: string, extra: 
   };
 }
 
+/** The default atomic cache writer — mkdir -p + tmp+rename. Shared by the
+ *  amicissimo success path and the base-tier producer. */
+function defaultWriteCache(p: string, content: string): void {
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+  const tmpFile = `${p}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    fs.writeFileSync(tmpFile, content);
+    fs.renameSync(tmpFile, p);
+  } finally {
+    fs.rmSync(tmpFile, { force: true });
+  }
+}
+
+/** The base-tier epoch file — a stable per-machine UUID, minted once and reused
+ *  so freshness comparisons stay within one epoch (ADR 0023). */
+function baseEpochPath(): string {
+  return path.join(homedir(), ".amico", "ops", "fleet", "base_epoch");
+}
+
+/** Read-or-mint the stable base-tier epoch (production default; tests inject
+ *  deps.baseEpoch). Exclusive creation makes concurrent first publishes agree
+ *  on the one epoch that was actually persisted. */
+function defaultBaseEpoch(): string {
+  const p = baseEpochPath();
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+  const epoch = randomUUID();
+  try {
+    fs.writeFileSync(p, epoch, { encoding: "utf8", flag: "wx" });
+    return epoch;
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+    const existing = fs.readFileSync(p, "utf8").trim();
+    if (existing.length === 0) throw new Error(`base-tier epoch file is empty: ${p}`);
+    return existing;
+  }
+}
+
+function baseCounterPath(): string {
+  return path.join(homedir(), ".amico", "ops", "fleet", "base_counter.json");
+}
+
+interface BaseCounterLease {
+  counter: number;
+  release: () => void;
+}
+
+/** Hold the counter lock through projection publication, so concurrent callers
+ *  cannot publish a lower reserved counter after a higher one. */
+function acquireBaseCounterLock(lockPath: string): () => void {
+  const token = `${process.pid}:${randomUUID()}`;
+  const deadline = process.hrtime.bigint() + 5_000_000_000n;
+  for (;;) {
+    try {
+      fs.writeFileSync(lockPath, token, { encoding: "utf8", flag: "wx" });
+      return () => {
+        if (fs.readFileSync(lockPath, "utf8") === token) fs.rmSync(lockPath, { force: true });
+      };
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+      if (process.hrtime.bigint() >= deadline) {
+        throw new Error(`timed out acquiring base-tier counter lock: ${lockPath}`);
+      }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+    }
+  }
+}
+
+/** Persist and reserve the next counter for this epoch. The returned lease is
+ *  released only after the projection cache has been published. */
+function defaultBaseCounter(epoch: string): BaseCounterLease {
+  const p = baseCounterPath();
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+  const release = acquireBaseCounterLock(`${p}.lock`);
+  try {
+    let last: number | undefined;
+    try {
+      const state = JSON.parse(fs.readFileSync(p, "utf8")) as { epoch?: unknown; counter?: unknown };
+      if (state.epoch !== epoch) {
+        last = undefined;
+      } else if (Number.isSafeInteger(state.counter) && (state.counter as number) >= 0) {
+        last = state.counter as number;
+      } else {
+        throw new Error(`base-tier counter file is invalid: ${p}`);
+      }
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+    }
+    const wallSecond = Math.floor(Date.now() / 1000);
+    const counter = last === undefined ? wallSecond : Math.max(wallSecond, last + 1);
+    if (!Number.isSafeInteger(counter)) throw new Error(`base-tier counter exhausted: ${p}`);
+    defaultWriteCache(p, JSON.stringify({ epoch, counter }) + "\n");
+    return { counter, release };
+  } catch (e) {
+    release();
+    throw e;
+  }
+}
+
+/** ADR 0023 — the base-tier producer. When the amicissimo authority is
+ *  unavailable (no entitlement / no checkout) but the machine carries a
+ *  fleet.json declaring a real role (client/server), render + cache a minimal
+ *  contract-v1 projection from that membership file and return success, so the
+ *  base product still gets an enforced client. Returns null when there is no
+ *  usable enrolled role — the caller then keeps the honest bootstrap (exit 75).
+ *  This is a PRODUCER: consumers still read the cached projection through the
+ *  ONE reader, unchanged. */
+function tryBaseTierProjection(
+  deps: FleetProjectionDeps,
+  reason: "entitlement" | "checkout",
+): VerbResult | null {
+  const topologyPath = deps.topologyPath ?? fleetTopologyPath();
+  const read = deps.readFile ?? ((p: string) => (fs.existsSync(p) ? fs.readFileSync(p, "utf8") : null));
+  const raw = read(topologyPath);
+  if (raw === null) return null;
+  const topo = parseFleetTopology(raw);
+  if (topo === null) return null;
+  // Only an ENROLLED role produces a base projection; standalone/unknown keeps
+  // the existing bootstrap-75 behavior verbatim (minimal blast radius).
+  if (topo.role !== "client" && topo.role !== "server") return null;
+
+  const epoch = (deps.baseEpoch ?? defaultBaseEpoch)();
+  const lease = deps.baseCounter === undefined
+    ? defaultBaseCounter(epoch)
+    : { counter: deps.baseCounter(), release: () => {} };
+  try {
+    const publishedAt = (deps.nowIso ?? (() => new Date().toISOString()))();
+    const proj = buildBaseProjection(topo, { epoch, counter: lease.counter, publishedAt });
+    const published = JSON.stringify(proj, null, 2);
+
+    const cachePath = deps.cachePath ?? fleetProjectionCachePath();
+    const writeCache = deps.writeCache ?? defaultWriteCache;
+    writeCache(cachePath, published);
+
+    const topology = objectValue(proj, "topology");
+    const canonical = objectField(topology, "canonical");
+    return {
+      json: {
+        verb: "fleet",
+        subcommand: "status",
+        projection: true,
+        ok: true,
+        base_tier: true,
+        reason,
+        mode: scalarOrBase(proj, "mode", "standalone"),
+        posture: scalarOrBase(proj, "posture", "ok"),
+        ...(topology === undefined ? {} : { role: topology.role }),
+        ...(canonical === undefined ? {} : { canonical }),
+        cache_path: cachePath,
+        publisher: proj.publisher ?? {},
+        sections: proj.sections ?? {},
+        freshness: { counter: proj.freshness?.counter, hub_epoch: proj.freshness?.hub_epoch },
+        summary: renderFleetStatus(proj),
+        note:
+          "base-tier projection (ADR 0023) — the amicissimo authority is unavailable ("
+          + reason
+          + "); this projection was rendered from the machine's fleet.json by the amicode base-tier producer (a public floor, not the authority). amicissimo stays canonical when present; every consumer reads this through the ONE reader, unchanged. Cached at "
+          + cachePath,
+      },
+      code: 0,
+    };
+  } finally {
+    lease.release();
+  }
+}
+
 /** A section's carried value, with the base default applied when the section
  * is absent (mode absent = standalone, posture absent = ok — the projection
  * contract's additive-optional discipline; the base default is applied, not
@@ -201,6 +377,11 @@ export function fleetProjectionStatus(argv: string[], deps: FleetProjectionDeps 
       "",
       "(bootstrap exception, exit 75 — distinct from success and from usage; see `amico premium`)",
     ].join("\n");
+    // ADR 0023: an enrolled machine without amicissimo still gets an honest
+    // base-tier projection from its fleet.json (so the guard enforces client).
+    // Only standalone/unenrolled falls through to the bootstrap exception.
+    const baseTier = tryBaseTierProjection(deps, "entitlement");
+    if (baseTier !== null) return baseTier;
     return bootstrap("entitlement", rendered, { config: configFile });
   }
 
@@ -216,6 +397,10 @@ export function fleetProjectionStatus(argv: string[], deps: FleetProjectionDeps 
       "",
       "(bootstrap exception, exit 75 — distinct from success and from usage)",
     ].join("\n");
+    // ADR 0023: entitled but no checkout — the authority still can't run, so an
+    // enrolled machine gets the base-tier floor from fleet.json all the same.
+    const baseTier = tryBaseTierProjection(deps, "checkout");
+    if (baseTier !== null) return baseTier;
     return bootstrap("checkout", rendered, { checkout });
   }
 
@@ -277,14 +462,7 @@ export function fleetProjectionStatus(argv: string[], deps: FleetProjectionDeps 
     // contract version never clobbers the consumers' artifact. The cached
     // bytes are the publisher's own output, verbatim.
     const cachePath = deps.cachePath ?? fleetProjectionCachePath();
-    const writeCache =
-      deps.writeCache ??
-      ((p: string, content: string) => {
-        fs.mkdirSync(path.dirname(p), { recursive: true });
-        const tmpFile = `${p}.tmp`;
-        fs.writeFileSync(tmpFile, content);
-        fs.renameSync(tmpFile, p);
-      });
+    const writeCache = deps.writeCache ?? defaultWriteCache;
     writeCache(cachePath, published);
 
     // ── the additive machine fields for script consumers (#1106) ──

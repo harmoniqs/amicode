@@ -22,10 +22,85 @@ import { createHash } from "node:crypto";
 import { HubCredentialRead, hubUpstreamAuthHeader } from "./hub_credential";
 import { serverAuthHeader } from "../server_auth";
 
-export type SourceTag = "local" | "hub";
+export type SourceTag = string;
 export type UpstreamMode = "engine" | "fleet";
 
-export type SourceAbsenceReason = "credential-missing" | "no-upstream" | "fetch-failed" | "unauthorized";
+// ── N-peer fleet-wide projection (#1439) ─────────────────────────────────────
+
+/** The owner tag overlaid on each session in a fleet-wide projection —
+ *  an OVERLAY, not a field on Session.Info (ADR 0031 §D3). */
+export interface SessionOwnerTag {
+  owner_machine_id: string;
+  owner_name: string;
+  device_type?: string;
+  directory?: string;
+  is_local: boolean;
+}
+
+/** A remote peer source for the fleet-wide fan-out. */
+export interface FleetPeerSource {
+  machineId: string;
+  getUrl(): string | undefined;
+  /** The peer token (from the reader peer-token store). */
+  token?: string;
+  /** #1481 (AC1): whether THIS machine holds a valid Observe grant for the peer
+   *  — TRUST, not reachability, gates observation. `false` means untrusted: the
+   *  peer contributes NO session metadata and is recorded as `untrusted` (never
+   *  fetched). Omitted/`true` = trusted (the #1455 back-compat default, so every
+   *  existing caller behaves exactly as before). */
+  trusted?: boolean;
+}
+
+/** Roster entry for name/device_type enrichment. */
+export interface RosterEntry {
+  name: string;
+  device_type?: string;
+}
+
+/** Options for the N-peer fleet-wide projection. */
+export interface FleetProjectionOptions {
+  /** This machine's stable id. */
+  localMachineId: string;
+  /** The local engine source. */
+  local: ProjectionSourceOptions;
+  /** Remote peers to fan out to (keyed by machineId). */
+  peers: FleetPeerSource[];
+  /** #1481 (AC3): peers EXCLUDED from selection by a blocking identity state
+   *  (alias-conflict / key-changed). They are NOT fetched, but each is recorded
+   *  as a NAMED source (default reason `identity-conflict`) so a conflicted peer
+   *  never silently vanishes from the projection — the central AC3 invariant. */
+  blockedPeers?: Array<{ machineId: string; reason?: SourceAbsenceReason; detail?: string }>;
+  /** Roster lookup for owner_name/device_type enrichment. */
+  rosterLookup: (machineId: string) => RosterEntry | undefined;
+  fetchImpl?: typeof fetch;
+  timeoutMs?: number;
+}
+
+/** The fleet-wide projection result — N sources, machine-keyed. */
+export interface FleetProjection {
+  ok: true;
+  mode: "fleet";
+  /** Each entry carries `amicode_owner` (the owner tag overlay). */
+  sessions: Array<Record<string, unknown> & { amicode_owner?: SessionOwnerTag }>;
+  /** Keyed by machine_id (string), not the old "local"|"hub" pair. */
+  sources: Record<string, SourceFetchRecord>;
+  currency: { token: string; sources: string[]; derived_over: "fetched" };
+}
+
+export type SourceAbsenceReason =
+  | "credential-missing"
+  | "no-upstream"
+  | "fetch-failed"
+  | "unauthorized"
+  // #1481 (AC1): the peer is reachable but this machine holds NO Observe grant
+  // for it — trust, not reachability, gates observation. A DISTINCT state from
+  // `no-upstream` (a trusted peer whose URL is down); an untrusted peer is never
+  // fetched, so no session metadata can leak.
+  | "untrusted"
+  // #1481 (AC3): a blocking identity reconciliation state (alias-conflict /
+  // key-changed) — the peer is NAMED (never silently excluded from the
+  // projection), but is not selected for observation until re-admitted.
+  | "identity-conflict";
 
 /** One source's fetch record: the NAMED outcome plus, when fetched, the
  *  currency aggregates derived over exactly what came back. */
@@ -231,5 +306,126 @@ export async function buildMergedProjection(opts: BuildProjectionOptions): Promi
   const sources: Record<SourceTag, SourceFetchRecord> = { local: local.record, hub: hub.record };
   const sessions = mergeSessions(local.entries, hub.entries);
   const currency = deriveCurrency([local.record, hub.record]);
+  return { ok: true, mode: "fleet", sessions, sources, currency: { ...currency, derived_over: "fetched" } };
+}
+
+// ── peer auth header (#1439) ─────────────────────────────────────────────────
+
+/** Auth header for a peer-to-peer request (same Basic scheme as the engine/hub). */
+export function peerAuthHeader(token: string): string {
+  return serverAuthHeader(token);
+}
+
+// ── N-peer fleet-wide projection (#1439) ─────────────────────────────────────
+
+/** Tag each session entry with its owner machine's identity, joining the
+ *  roster for name/device_type. */
+function tagSessionsWithOwner(
+  entries: Record<string, unknown>[],
+  machineId: string,
+  isLocal: boolean,
+  rosterLookup: (id: string) => RosterEntry | undefined,
+): Array<Record<string, unknown> & { amicode_owner?: SessionOwnerTag }> {
+  const roster = rosterLookup(machineId);
+  return entries.map((e) => ({
+    ...e,
+    amicode_provenance: machineId,
+    amicode_owner: {
+      owner_machine_id: machineId,
+      owner_name: roster?.name ?? machineId,
+      ...(roster?.device_type !== undefined ? { device_type: roster.device_type } : {}),
+      ...(typeof e.directory === "string" ? { directory: e.directory } : {}),
+      is_local: isLocal,
+    },
+  }));
+}
+
+/** Merge N sources into one deduplicated list. Later sources (by array order)
+ *  win on conflict (same session id in multiple stores). */
+function mergeNSources(
+  taggedSources: Array<{ machineId: string; entries: Array<Record<string, unknown> & { amicode_owner?: SessionOwnerTag }> }>,
+): Array<Record<string, unknown> & { amicode_owner?: SessionOwnerTag }> {
+  const out: Array<Record<string, unknown> & { amicode_owner?: SessionOwnerTag }> = [];
+  const seen = new Map<string, number>();
+  for (const { entries } of taggedSources) {
+    for (const e of entries) {
+      const id = entryId(e);
+      if (id !== undefined && seen.has(id)) {
+        // later source wins — replace
+        out[seen.get(id)!] = e;
+      } else {
+        if (id !== undefined) seen.set(id, out.length);
+        out.push(e);
+      }
+    }
+  }
+  return out;
+}
+
+/** Build the fleet-wide projection (N-peer, machine-keyed fan-out, #1439).
+ *  Never throws: every peer failure is a NAMED record inside an otherwise-valid
+ *  projection — the read path degrades by naming, not by vanishing. */
+export async function buildFleetProjection(opts: FleetProjectionOptions): Promise<FleetProjection> {
+  const fetchImpl = opts.fetchImpl ?? fetch;
+  const timeoutMs = opts.timeoutMs ?? 10_000;
+  const localAuth = opts.local.password !== undefined ? serverAuthHeader(opts.local.password) : undefined;
+
+  // Fan out: local + all peers in parallel
+  const localPromise = fetchSessions(opts.localMachineId, opts.local, localAuth, fetchImpl, timeoutMs);
+  const peerPromises = opts.peers.map((peer) => {
+    // #1481 (AC1): TRUST gates Observe. An untrusted peer (no Observe grant) is
+    // never contacted — it resolves to a NAMED `untrusted` record with zero
+    // entries, so no session metadata can leak. Trust is checked BEFORE the
+    // fetch, upstream of the URL/token, so reachability is irrelevant here.
+    if (peer.trusted === false) {
+      return Promise.resolve({
+        record: { source: peer.machineId, present: false, reason: "untrusted" as const } satisfies SourceFetchRecord,
+        entries: [] as Record<string, unknown>[],
+      });
+    }
+    const auth = peer.token !== undefined ? peerAuthHeader(peer.token) : undefined;
+    return fetchSessions(peer.machineId, { getUrl: peer.getUrl }, auth, fetchImpl, timeoutMs);
+  });
+
+  const [localResult, ...peerResults] = await Promise.all([localPromise, ...peerPromises]);
+
+  // Build the sources record keyed by machine_id
+  const sources: Record<string, SourceFetchRecord> = {};
+  sources[opts.localMachineId] = localResult.record;
+  for (let i = 0; i < opts.peers.length; i++) {
+    sources[opts.peers[i].machineId] = peerResults[i].record;
+  }
+  // #1481 (AC3): blocked-identity peers are NAMED (never fetched, never
+  // silently dropped) so a conflicted peer stays visible as a source state
+  // rather than vanishing from the projection.
+  for (const blocked of opts.blockedPeers ?? []) {
+    sources[blocked.machineId] = {
+      source: blocked.machineId,
+      present: false,
+      reason: blocked.reason ?? "identity-conflict",
+      ...(blocked.detail !== undefined ? { detail: blocked.detail } : {}),
+    };
+  }
+
+  // Tag each source's sessions with owner info (roster join)
+  const taggedSources: Array<{ machineId: string; entries: Array<Record<string, unknown> & { amicode_owner?: SessionOwnerTag }> }> = [];
+  taggedSources.push({
+    machineId: opts.localMachineId,
+    entries: tagSessionsWithOwner(localResult.entries, opts.localMachineId, true, opts.rosterLookup),
+  });
+  for (let i = 0; i < opts.peers.length; i++) {
+    taggedSources.push({
+      machineId: opts.peers[i].machineId,
+      entries: tagSessionsWithOwner(peerResults[i].entries, opts.peers[i].machineId, false, opts.rosterLookup),
+    });
+  }
+
+  // Merge all sources
+  const sessions = mergeNSources(taggedSources);
+
+  // Currency derives over what is actually fetched
+  const allRecords = [localResult.record, ...peerResults.map((r) => r.record)];
+  const currency = deriveCurrency(allRecords);
+
   return { ok: true, mode: "fleet", sessions, sources, currency: { ...currency, derived_over: "fetched" } };
 }

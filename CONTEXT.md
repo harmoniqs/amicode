@@ -175,6 +175,18 @@ source)
 The per-machine stance for where Sessions are served from, in three values. `standalone` — this machine spawns and owns its own chat server, detached and survivable so it outlives an extension-host reload and is re-adopted rather than dying with the editor (the default; the only mode that ever spawns). `server` — this machine runs the Canonical Server as a system service and the panel attaches to it. `client` — this machine never serves; the panel attaches to the Canonical Server through a Managed Tunnel. Determined by `~/.amico/ops/fleet/fleet.json` (no file = standalone). Machine-scoped, never synced.
 _Avoid_: profile, spawn vs attach (as concept names)
 
+**Capability**:
+An orthogonal, open tag describing what a machine is *for* — distinct from its serve-stance (Server mode). Two known, behavior-adjacent tags: `compute` (a solve-target hint — declared-but-inert until a fleet-peer executor exists, an explicit non-goal today) and `roaming` (a transport hint that defaults a machine to Tailscale). Any other tag is a free descriptive label with no behavioral meaning; it round-trips verbatim. A Capability never overrides the guard/tunnel/hub decision — Server mode stays the only serve-stance authority (ADR 0026).
+_Avoid_: role (that is Server mode), type, class
+
+**Roster**:
+The amicode-owned, fleet-wide device list on the Canonical Server (`~/.amico/ops/fleet/roster.json`) — one row per machine, each machine the single writer of its own row (a registry/heartbeat model). A row is `{ machine_id, name, server_mode, capabilities[], sshAlias, transport, last_report, health, device_type? }` with `health ∈ {reachable, degraded, down}`; the UI labels `server_mode` as "role" and `last_report` as "last-seen". Surfaced at `GET /amicode/roster` (read) + `POST /amicode/roster` (self-report), on the proxied `/amicode/*` namespace so a client sees it through the host proxy. Separate from `fleet.json` (untouched — one-parser invariant, ADR 0023) and from the per-machine projection (which carries only this machine's topology). ADR 0026.
+_Avoid_: fleet.json (a different, per-machine file), device table, inventory
+
+**Device identity**:
+The self-reported, human-facing half of a Roster row: the machine's friendly **name** (macOS `scutil` ComputerName / Linux `PRETTY_HOSTNAME` / an explicit `amicode.deviceName` override, else the prettified hostname) and its **device type** (`server | desktop | laptop`, an open set — macOS `system_profiler` model / Linux chassis / an `amicode.deviceType` override, else absent). Derived once by logic shared between the enroll producer and the sidebar self-row so a machine and its peers cannot disagree; absent/undefined values fall back honestly (type → `server_mode`), never fabricated. The Canonical Server self-registers its own device identity keyed by `machine_id = canonical.host`. Refreshed by re-enroll. ADR 0028.
+_Avoid_: hostname (the raw FQDN, not the friendly name), machine_id (the identity key, not the display name)
+
 **Fleet config**:
 The file at `~/.amico/ops/fleet/fleet.json` that declares this machine's fleet role and the canonical server's coordinates (`host`, `port`, `sshAlias`). No file on disk = standalone. The guard script, extension, and installer all resolve role from this file — never from a hardcoded hostname.
 _Avoid_: fleet.toml, fleet settings (those are VS Code settings, a different thing)
@@ -188,8 +200,12 @@ The user's machines acting as one logical studio: exactly one Canonical Server p
 _Avoid_: mesh, cluster
 
 **Go Standalone**:
-The user-invoked mode switch from `client` to `standalone` — the machine leaves the fleet and serves itself permanently. Not an escape hatch: a first-class choice. Sessions made locally stay local. Re-enrollment in a fleet is a separate flow (Enroll, deferred).
+The user-invoked mode switch from `client` to `standalone` — the machine leaves the fleet and serves itself permanently. Not an escape hatch: a first-class choice. Sessions made locally stay local. Re-enrollment in a fleet is a separate flow (Enroll).
 _Avoid_: local fallback, offline mode, degraded mode
+
+**Enroll**:
+The idempotent, verifiable flow that brings one machine into a fleet — the inverse of Go Standalone. Server-first, the standard join-token pattern: `amico fleet enroll --as-server` provisions the durable hub service, mints the Fleet token, and emits a **join token** (`{ canonical, fleet_token, transport_hint, pin_version }` — a secret, 0600, never logged). A client redeems it with `amico fleet enroll --join-token`: it rejects a pin-mismatched token before writing anything, then writes `fleet.json` (role + canonical only — capabilities go to the roster row), registers its roster row, sets the transport (`tailscale` when the machine roams, else the token's hint), runs the installer (which installs the never-fork guard), and **verify-attaches** — reporting success only after a live probe of the just-set transport passes. A re-run repairs in place; a failed verify surfaces the specific cause with its fix and never reports a false success. `amico fleet enroll` is a distinct verb from the session registry — it writes membership, not session records.
+_Avoid_: register (as the verb name), pair, handshake
 
 **Fleet token**:
 The shared secret authenticating a client to the Canonical Server's data routes — minted when the fleet server is enabled, stored at 0600, handed to clients during the ssh-based setup flow. The sibling of the per-boot server password (ADR 0002): that guards a spawned server its extension owns; this guards the service no extension spawns.
@@ -238,7 +254,7 @@ A sandboxed ES-module card rendered in an iframe within Home. Authored by the ag
 _Avoid_: Card (ambiguous — the UI has many cards), tile (as the concept name — tile is a size class)
 
 **Sidebar**:
-The webview in the VS Code activity bar container, showing project navigation and system status. Contains action buttons (open chat, create project), a session-aware unified project tree (Research Projects with lifecycle metadata expanding into file trees; Dev Projects as plain expandable folders), and a collapsible fleet section (deferred). The sidebar is navigation chrome — it follows the active session's project binding but never drives session switching. Single-clicking a file opens it as a tab in Preview (the multi-document file workspace in the side panel); double-clicking opens a native VS Code editor tab.
+The webview in the VS Code activity bar container, showing project navigation and system status. Contains action buttons (open chat, create project), a session-aware unified project tree (Research Projects with lifecycle metadata expanding into file trees; Dev Projects as plain expandable folders), and a collapsible, **read-only** fleet section — a glanceable device list from the host-owned Roster (one row per machine: name, `server_mode` labeled "role" + capability chips, a `reachable`/`degraded`/`down` health indicator, and `last_report` labeled "last-seen"), this machine's posture badge (Server mode + link-health), and a single **Manage** affordance that opens the Fleet Manager tab (degrading honestly when that tab is absent). The section refreshes on posture-change and shows an honest empty/degraded state when the roster host is down — never a fabricated list (#1321, ADR 0026). The sidebar is navigation chrome — it renders state and navigates, never mutating fleet config or driving session switching. Single-clicking a file opens it as a tab in Preview (the multi-document file workspace in the side panel); double-clicking opens a native VS Code editor tab.
 _Avoid_: Explorer (VS Code's native file explorer is separate), Panel (the in-app dismissible drawer is a different concept)
 
 **Preview**:

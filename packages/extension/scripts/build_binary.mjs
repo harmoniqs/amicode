@@ -257,11 +257,33 @@ const destBin = join(destDir, "opencode");
 mkdirSync(destDir, { recursive: true });
 
 const bytes = readFileSync(artifact);
-const hash = sha256(bytes);
 const provenance = `overlay ${manifestSha}`;
 
 writeFileSync(destBin, bytes);
 chmodSync(destBin, 0o755);
+
+// ── ad-hoc codesign (darwin) ────────────────────────────────────────────────
+// A freshly-compiled binary carries an invalid signature that Gatekeeper
+// silently kills on spawn (the process exits immediately with no output). Only
+// the in-app rebuild coordinator signed (gateKeeperClear); this CLI path did
+// not — so every `build:binary` on macOS produced a binary that could not run
+// until hand-signed with `codesign --sign - --force`. Apply the ad-hoc identity
+// here so the build output is runnable. (#1354 follow-up.) codesign is
+// macOS-only, so gate on the host being darwin AND the target being darwin.
+if (process.platform === "darwin" && platformKey.startsWith("darwin")) {
+  const sign = spawnSync("codesign", ["--sign", "-", "--force", destBin], { encoding: "utf8" });
+  if (sign.status !== 0) {
+    console.warn(
+      `[build:binary] WARNING: ad-hoc codesign failed (exit ${sign.status}): ${sign.stderr?.trim() || "(no stderr)"} — Gatekeeper may kill the binary on spawn`,
+    );
+  } else {
+    console.log(`[build:binary] codesigned: ad-hoc identity (darwin)`);
+  }
+}
+
+// Hash the ON-DISK binary (post-sign) so the .sha256 sidecar matches the file
+// that actually ships, not the pre-sign build artifact.
+const hash = sha256(readFileSync(destBin));
 writeFileSync(join(destDir, ".sha256"), hash + "\n");
 writeFileSync(join(destDir, ".source"), provenance + "\n");
 

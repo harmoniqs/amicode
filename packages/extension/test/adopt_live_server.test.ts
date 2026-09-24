@@ -12,6 +12,8 @@ import {
 } from "../src/server_lifecycle";
 import { coldSpawnHandshakeHook, readHandshake, PROTOCOL_VERSION } from "../src/server_handshake";
 import { serverAuthHeader } from "../src/server_auth";
+import { windowModeFromRemoteName } from "../src/fleet_window_mode_state";
+import { divertToFleetRelay, type FleetTopologyState } from "../src/fleet_topology";
 
 // ============================================================================
 // #1185 — adopt-on-reload against a REAL password-armed server.
@@ -137,6 +139,126 @@ describe("#1185 adoptOrSpawn — real seams against a live survivor", () => {
       expect(spawned).toBe(false); // never spawn onto an occupied foreign port
     } finally {
       await s.close();
+    }
+  });
+});
+
+// ============================================================================
+// #1270 — host-side relocation over Remote-SSH: attach to the durable hub,
+// never fork at the handshake seam (ADR 0025, invariants 2 + 5).
+//
+// Scenario: a VS Code Remote-SSH window is opened ONTO the durable-hub host.
+// Because the extension declares `extensionKind: ["workspace"]`, the extension
+// host RELOCATES to the host — where the durable-hub engine (#1258) already runs
+// on the canonical port with its handshake recorded. The host-side activation
+// must ADOPT that engine at the handshake (AC2: no second engine, no second
+// store), and when the running hub presents NO adoptable handshake it must
+// SURFACE the foreign/failed result — never a silent cold-spawn of a rival
+// writer (AC3). ADR 0025 inv.2: "Remote-SSH runs the engine on the host,
+// adopting the durable hub service; it does not spawn a client-side shard."
+//
+// This is a COMPOSITION of the three seams the host-side path walks, end to end
+// — proving the never-fork guarantee holds for the relocation scenario. It adds
+// no production code: the existing adoptOrSpawn primitive + its activation
+// wiring already surface foreign/incompatible outcomes without spawning; this
+// test PINS that they do so for the relocation case specifically.
+//   1. windowModeFromRemoteName — the relocation SIGNAL (#1272): ssh-remote → remote-ssh
+//   2. divertToFleetRelay       — the hub host is role=server, so it does NOT
+//                                 divert to a client relay; it PROCEEDS to adopt-or-spawn
+//   3. adoptOrSpawn             — against the live durable-hub survivor: adopts / surfaces
+//
+// It reuses the #1185 live-server fixtures VERBATIM (startArmedServer /
+// tmpHandshake / plantHandshake): the durable hub is modeled by the same
+// password-armed loopback server on an EPHEMERAL port (never 43117; handshake
+// under a tmpdir) — the same live-session safety this file already holds.
+// ============================================================================
+
+/** A Remote-SSH window onto the hub host reads role=server from the host's own
+ *  fleet projection (this machine IS the canonical server). Mirrors the
+ *  fleet_never_fork.test.ts server fixture. */
+const hubHostServerState: FleetTopologyState = {
+  kind: "ok",
+  role: "server",
+  canonical: { host: "hub", port: 43117, sshAlias: "hub" },
+  mode: "fleet",
+  posture: "ok",
+  freshness: {},
+  provenanceSource: "fleet.json",
+  projection: { schema_version: 1, contract_version: 1, sections: {} },
+};
+/** The installed never-fork guard binary as a host would carry it. */
+const GUARD_BINARY = "/home/user/.local/bin/amico-opencode-fleet-guard";
+
+describe("#1270 host-side relocation over Remote-SSH — adopt the durable hub, never fork", () => {
+  it("detects the host-side relocation SIGNAL: an ssh-remote window is remote-ssh, a local window is not (#1272 seam)", () => {
+    // The signal the host-side path keys on. `ssh-remote…` → the window relocated
+    // onto the host; `undefined`/other remotes → local (not this scenario). This
+    // is the detection the sibling slices (#1271/#1273/#1274) reuse.
+    expect(windowModeFromRemoteName("ssh-remote+deadbeef")).toBe("remote-ssh");
+    expect(windowModeFromRemoteName(undefined)).toBe("local");
+  });
+
+  it("on the hub host the relocated extension does NOT divert to a client relay — it proceeds to adopt-or-spawn", () => {
+    // ADR 0025 inv.2 / mount_policy.ts: a Remote-SSH client runs the extension
+    // host ON THE HOST, which reads role=server — NOT a fleet client. So it never
+    // relays; it reaches the adopt path. A regression that diverted server-role
+    // to the relay would silently break host-side adoption — this pins it shut.
+    expect(divertToFleetRelay(GUARD_BINARY, hubHostServerState)).toBe(false);
+  });
+
+  it("ADOPTS the running durable-hub engine at the handshake — no second engine, no second store (AC2)", async () => {
+    // Relocation signal present (proven above); the durable hub is live on the
+    // canonical (here ephemeral) port with its handshake recorded.
+    expect(windowModeFromRemoteName("ssh-remote+hub")).toBe("remote-ssh");
+
+    const PW = "durable-hub-pw";
+    const hub = await startArmedServer(PW);
+    try {
+      const fp = tmpHandshake();
+      plantHandshake(fp, hub.port, PW); // the durable hub's recorded handshake
+
+      let spawned = false;
+      const deps = buildLiveDeps(async () => {
+        spawned = true; // a SECOND engine spawn — the never-fork violation
+        return { port: 0, pid: 0, password: "rival-should-not-be-used" };
+      }, hub.port);
+
+      const result = await adoptOrSpawn(fp, deps);
+
+      expect(result.outcome).toBe("adopted"); // attached at the handshake, no fork
+      expect(result.port).toBe(hub.port);     // the SAME hub — one canonical writer
+      expect(result.password).toBe(PW);       // recorded credential reused verbatim
+      // No second engine spawned → no second store/DB opened (a store is only
+      // opened by a spawned engine; adoption reuses the survivor's).
+      expect(spawned).toBe(false);
+    } finally {
+      await hub.close();
+    }
+  });
+
+  it("when the running hub presents NO adoptable handshake, SURFACES foreign — never a silent cold-spawn (AC3)", async () => {
+    // The hub is up and reachable, but the recorded handshake credential does not
+    // authenticate (an unrecognized / unadoptable handshake). ADR 0025 inv.5:
+    // this is a SURFACED result (foreign-error carries the message the activation
+    // site shows), NOT a silent cold-spawn of a rival writer onto the hub's port.
+    const hub = await startArmedServer("the-hubs-real-pw");
+    try {
+      const fp = tmpHandshake();
+      plantHandshake(fp, hub.port, "STALE-unadoptable-pw"); // != what the hub accepts
+
+      let spawned = false;
+      const deps = buildLiveDeps(async () => {
+        spawned = true;
+        return { port: 0, pid: 0, password: "rival-should-not-be-used" };
+      }, hub.port);
+
+      const result = await adoptOrSpawn(fp, deps);
+
+      expect(result.outcome).toBe("foreign-error"); // reachable but not adoptable → surfaced
+      expect(result.error).toBeTruthy();             // carries the message the UI surfaces
+      expect(spawned).toBe(false);                   // never cold-spawn a rival onto the hub's port
+    } finally {
+      await hub.close();
     }
   });
 });

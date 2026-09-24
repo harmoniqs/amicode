@@ -95,6 +95,7 @@ import { setSessionHandoff } from "@/pages/session/handoff"
 import { useSessionLayout } from "@/pages/session/session-layout"
 import { floorPanelColumnWidth, WORK_COLUMN_WIDTH_MIN } from "@/pages/session/session-panel-width"
 import { SessionFileBrowserTab, type SessionFileBrowserState } from "@/pages/session/v2/session-file-browser-tab"
+import { FleetManagerContent } from "@/pages/session/fleet-manager-tab"
 
 type PulseInspectorStage = "optimization" | "calibration" | "compilation"
 
@@ -459,6 +460,21 @@ export function SessionSidePanel(props: {
   const contextOpen = tabState.contextOpen
   const previewOpen = tabState.previewOpen
   const pulseInspectorOpen = tabState.pulseInspectorOpen
+  const fleetManagerOpen = tabState.fleetManagerOpen
+  // Bridge listener: open the fleet manager tab when the extension broadcasts
+  // the open-fleet-manager message. This runs at the panel level so the tab
+  // activates even when FleetManagerContent is not yet mounted.
+  if (typeof window !== "undefined") {
+    const onFleetBridge = (e: MessageEvent) => {
+      const d = e.data as { source?: string; kind?: string }
+      if (d?.source !== "amicode" || d.kind !== "open-fleet-manager") return
+      tabs().open("fleetManager")
+      tabs().setActive("fleetManager")
+      openReviewPanel()
+    }
+    window.addEventListener("message", onFleetBridge)
+    onCleanup(() => window.removeEventListener("message", onFleetBridge))
+  }
   const openFileOpen = tabState.openFileOpen
   const panelTabs = tabState.panelTabs
   const openedTabs = tabState.openedTabs
@@ -473,6 +489,7 @@ export function SessionSidePanel(props: {
     if (tab === "review") return reviewTab() && props.canReview() && reviewTabOpen()
     if (tab === "context") return contextOpen()
     if (tab === "pulseInspector") return pulseInspectorOpen()
+    if (tab === "fleetManager") return fleetManagerOpen()
     return previewOpen()
   }
 
@@ -562,6 +579,14 @@ export function SessionSidePanel(props: {
       available: () => true,
       active: () => activeTab() === "pulseInspector",
       group: "Quantum",
+    },
+    {
+      id: "fleetManager",
+      label: "Fleet Manager",
+      icon: "server",
+      available: () => true,
+      active: () => activeTab() === "fleetManager",
+      group: "Fleet",
     },
     {
       id: SESSION_PREVIEW_TAB,
@@ -814,6 +839,39 @@ export function SessionSidePanel(props: {
                               </div>
                               <div
                                 style={{
+                                  display: fleetManagerOpen() ? undefined : "none",
+                                  order: layout.sidePanelTabs.order().indexOf("fleetManager"),
+                                }}
+                              >
+                                <Tabs.Trigger
+                                  value="fleetManager"
+                                  closeButton={
+                                    <TooltipKeybind
+                                      title={language.t("common.closeTab")}
+                                      keybind={command.keybind("tab.close")}
+                                      placement="bottom"
+                                      gutter={10}
+                                    >
+                                      <IconButton
+                                        icon="close-small"
+                                        variant="ghost"
+                                        class="h-5 w-5"
+                                        onClick={() => tabs().close("fleetManager")}
+                                        aria-label={language.t("common.closeTab")}
+                                      />
+                                    </TooltipKeybind>
+                                  }
+                                  hideCloseButton
+                                  onMiddleClick={() => tabs().close("fleetManager")}
+                                >
+                                  <div class="flex items-center gap-1.5">
+                                    <Icon name="server" size="small" />
+                                    <div>Fleet Manager</div>
+                                  </div>
+                                </Tabs.Trigger>
+                              </div>
+                              <div
+                                style={{
                                   display: previewOpen() ? undefined : "none",
                                   order: layout.sidePanelTabs.order().indexOf(SESSION_PREVIEW_TAB),
                                 }}
@@ -909,6 +967,15 @@ export function SessionSidePanel(props: {
                               class="flex flex-col h-full overflow-hidden contain-strict"
                             >
                               <PulseInspectorContent />
+                            </Tabs.Content>
+                          </Show>
+
+                          <Show when={activeTab() === "fleetManager"}>
+                            <Tabs.Content
+                              value="fleetManager"
+                              class="flex flex-col h-full overflow-hidden contain-strict"
+                            >
+                              <FleetManagerContent />
                             </Tabs.Content>
                           </Show>
 
@@ -1104,6 +1171,40 @@ export function SessionSidePanel(props: {
                                         </div>
                                       </Tabs.Trigger>
                                     </Match>
+                                    <Match when={tab === "fleetManager"}>
+                                      <Tabs.Trigger
+                                        value="fleetManager"
+                                        closeButton={
+                                          <TooltipV2
+                                            value={
+                                              <>
+                                                {language.t("common.closeTab")}
+                                                <Show when={closeTabKeybind().length > 0}>
+                                                  <KeybindV2 keys={closeTabKeybind()} variant="neutral" />
+                                                </Show>
+                                              </>
+                                            }
+                                            placement="bottom"
+                                            gutter={10}
+                                          >
+                                            <IconButton
+                                              icon="close-small"
+                                              variant="ghost"
+                                              class="h-5 w-5"
+                                              onClick={() => tabs().close("fleetManager")}
+                                              aria-label={language.t("common.closeTab")}
+                                            />
+                                          </TooltipV2>
+                                        }
+                                        hideCloseButton
+                                        onMiddleClick={() => tabs().close("fleetManager")}
+                                      >
+                                        <div class="flex items-center gap-1.5">
+                                          <Icon name="server" size="small" />
+                                          <div>Fleet Manager</div>
+                                        </div>
+                                      </Tabs.Trigger>
+                                    </Match>
                                     <Match when={tab === SESSION_PREVIEW_TAB}>
                                       <Tabs.Trigger
                                         value={SESSION_PREVIEW_TAB}
@@ -1239,6 +1340,15 @@ export function SessionSidePanel(props: {
                           class="flex flex-col h-full overflow-hidden contain-strict"
                         >
                           <PulseInspectorContent />
+                        </Tabs.Content>
+                      </Show>
+
+                      <Show when={activeTab() === "fleetManager"}>
+                        <Tabs.Content
+                          value="fleetManager"
+                          class="flex flex-col h-full overflow-hidden contain-strict"
+                        >
+                          <FleetManagerContent />
                         </Tabs.Content>
                       </Show>
 

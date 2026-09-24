@@ -48,6 +48,10 @@ export type SpawnArgs = {
   mode: SpawnMode;
   force: boolean;
   workspace: "create" | string | null;
+  // #1345 (ADR-0027 §7 seam 4): the H2 compute-federation "where" dimension.
+  // Non-optional in the PARSED type because it always resolves to at least
+  // "local". INERT in H1 — threaded + defaulted, never routed on.
+  placement: string;
 };
 
 export function parseSpawnArgs(a: {
@@ -60,6 +64,7 @@ export function parseSpawnArgs(a: {
   mode?: string | null;
   force?: boolean | null;
   workspace?: string | null;
+  placement?: string | null;
 }): { ok: true; args: SpawnArgs } | { ok: false; error: string } {
   const prompt = typeof a.prompt === "string" ? a.prompt.trim() : "";
   if (!prompt) return { ok: false, error: "empty prompt" };
@@ -84,6 +89,12 @@ export function parseSpawnArgs(a: {
     if (a.workspace === "") return { ok: false, error: "workspace must be \"create\" or a non-empty path, got empty string" };
     workspace = a.workspace;
   }
+  // placement (#1345, ADR-0027 §7 seam 4): the optional H2 compute-federation
+  // target. absence / null / empty / whitespace-only → "local"; a non-empty
+  // string passes through (trimmed). No error branch — a missing "where" is
+  // simply "here". INERT in H1: nothing below reads or routes on it.
+  const placement =
+    typeof a.placement === "string" && a.placement.trim() !== "" ? a.placement.trim() : "local";
   // the read-resolve alias (spec-20260907-011500 D1, #858): an old director
   // id on the amico_session agent param binds the renamed card. READ-RESOLVE,
   // never migrate-on-write; `build` and every non-aliased id pass through.
@@ -99,6 +110,7 @@ export function parseSpawnArgs(a: {
       mode,
       force: a.force === true,
       workspace,
+      placement,
     },
   };
 }
@@ -170,10 +182,19 @@ let _createCounter = 0;
  *
  * Special: workspace: "create" includes a monotonic counter so two concurrent
  * "create" dispatches are NEVER coalesced — each needs its own worktree.
- * Explicit-path dispatches coalesce normally (same path = same key). */
+ * Explicit-path dispatches coalesce normally (same path = same key).
+ *
+ * #1345 (ADR-0027 §7 seam 4): args.placement is DELIBERATELY absent from the
+ * key in H1. Placement is inert (nothing routes on it), so two spawns that
+ * differ ONLY in placement do the same thing — coalescing them is correct, and
+ * excluding it keeps a default (placement:"local") key byte-identical to the
+ * pre-slice key. WHEN placement goes live (H2 executor reads it), it MUST enter
+ * the key so spawns to DIFFERENT targets no longer wrongly coalesce. */
 export function spawnGateKey(sessionID: string, directory: string, args: SpawnArgs): string {
   // workspace: "create" gets a unique suffix so it never coalesces
   const wsKey = args.workspace === "create" ? `create:${++_createCounter}` : (args.workspace ?? null);
+  // #1345 H2 seam: args.placement is NOT keyed here (see docstring) — add it
+  // to this array only when placement becomes live in H2.
   return JSON.stringify([
     sessionID,
     directory,

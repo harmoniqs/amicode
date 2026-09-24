@@ -4,6 +4,8 @@
 //   host → webview: SidebarDownMessage (state pushes)
 //   webview → host: SidebarUpMessage (user actions)
 
+import type { FleetSectionModel } from "./sidebar_fleet_section";
+
 // ── Data types ───────────────────────────────────────────────────────────────
 
 // ── Color palette utility (#884) ─────────────────────────────────────────────
@@ -84,6 +86,9 @@ export type FileOpOkMessage = { kind: "file-op-ok"; op: string; path: string };
 export type ActiveProjectMessage = { kind: "active-project"; path: string | null; mode?: "none" | "expand" | "reset" };
 export type GitStatusMessage = { kind: "git-status"; statusMap: Record<string, string> };
 export type SectionOrderMessage = { kind: "section-order"; order: string[] };
+/** #1321 — the host pushes the read-only fleet view-model (roster + posture +
+ *  manage-enabled) to the webview's fleet section. Host→webview only. */
+export type FleetStatusMessage = { kind: "fleet-status"; model: FleetSectionModel };
 
 export type SidebarDownMessage =
   | ChatActiveMessage
@@ -94,7 +99,8 @@ export type SidebarDownMessage =
   | FileOpOkMessage
   | ActiveProjectMessage
   | GitStatusMessage
-  | SectionOrderMessage;
+  | SectionOrderMessage
+  | FleetStatusMessage;
 
 // ── Webview → Host (up) ──────────────────────────────────────────────────────
 
@@ -112,6 +118,28 @@ export type OpenFileEditorMessage = { kind: "open-file-editor"; path: string };
 export type FileOpMessage = { kind: "file-op" } & FileOpRequest;
 export type SetSectionOrderMessage = { kind: "set-section-order"; order: string[] };
 export type ReorderRootMessage = { kind: "reorder-root"; sourcePath: string; targetPath: string; position: "before" | "after" };
+/** #1321 — the ONLY message the read-only fleet section emits: navigate to the
+ *  Fleet Manager tab (#1322). No roster-write / management message exists. */
+export type OpenFleetManagerMessage = { kind: "open-fleet-manager" };
+/** Request to spawn a troubleshoot-fleet session from the sidebar. */
+export type TroubleshootFleetMessage = { kind: "troubleshoot-fleet" };
+/** #1413 — connect to a fleet device from the sidebar. The message carries
+ *  identity only; all precondition data is resolved host-side. */
+export type ConnectToDeviceMessage = {
+  kind: "connect-to-device";
+  machineId: string;
+  deviceName: string;
+  isLocal: boolean;
+};
+/** #1451 — FOCUS a fleet machine (scope Research/Dev/Workspace to it). Posted
+ *  on the per-row focus affordance click. DISTINCT from connect-to-device: it
+ *  neither connects nor attaches — the host sets the FleetFocusStore. Identity
+ *  + isLocal only; a local machine collapses to home host-side. */
+export type FocusMachineMessage = {
+  kind: "focus-machine";
+  machineId: string;
+  isLocal: boolean;
+};
 
 // ── Environment action messages (#887) ───────────────────────────────────────
 
@@ -140,7 +168,16 @@ export type SidebarUpMessage =
   | SetSectionOrderMessage
   | ReorderRootMessage
   | BindToEnvironmentMessage
-  | PromoteToEnvironmentMessage;
+  | PromoteToEnvironmentMessage
+  | OpenFleetManagerMessage
+  | TroubleshootFleetMessage
+  | ConnectToDeviceMessage
+  | FocusMachineMessage;
+
+// ── Fleet section view-model (host→webview payload) ──────────────────────────
+// The model type is defined in sidebar_fleet_section.ts (the browser-safe
+// renderer's home); the bridge imports it as a TYPE only (no runtime cycle —
+// sidebar_fleet_section imports nothing from the bridge).
 
 // ── Combined union (for the bridge type) ─────────────────────────────────────
 
@@ -260,6 +297,16 @@ export interface SidebarMessageHandlers {
   bindToEnvironment?: (projectPath: string) => void;
   /** Promote a file to the resolved environment (#892). */
   promoteToEnvironment?: (filePath: string) => void;
+  /** #1321 — navigate to the Fleet Manager tab (#1322). Optional: the read-only
+   *  section degrades honestly when the tab is absent. */
+  openFleetManager?: () => void;
+  /** Spawn a new chat session invoking the troubleshoot-fleet skill. */
+  troubleshootFleet?: () => void;
+  /** #1413 — connect to a fleet device (show the Quick Pick). */
+  connectToDevice?: (msg: ConnectToDeviceMessage) => void;
+  /** #1451 — FOCUS a fleet machine (set the host-held FleetFocusStore). Distinct
+   *  from connectToDevice: it never connects/attaches. */
+  focusMachine?: (msg: FocusMachineMessage) => void;
 }
 
 /**
@@ -323,6 +370,18 @@ export function handleSidebarMessage(
     case "promote-to-environment":
       handlers.promoteToEnvironment?.(msg.filePath);
       break;
+    case "open-fleet-manager":
+      handlers.openFleetManager?.();
+      break;
+    case "troubleshoot-fleet":
+      handlers.troubleshootFleet?.();
+      break;
+    case "connect-to-device":
+      handlers.connectToDevice?.(msg);
+      break;
+    case "focus-machine":
+      handlers.focusMachine?.(msg);
+      break;
     case "file-op": {
       const { kind: _k, ...req } = msg;
       return handlers.fileOp(req as FileOpRequest).then((result) => {
@@ -356,6 +415,7 @@ export function handleSidebarMessage(
     case "active-project":
     case "git-status":
     case "section-order":
+    case "fleet-status":
       // Down-direction messages — no host-side handler needed.
       break;
   }

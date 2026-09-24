@@ -44,6 +44,28 @@ export const FLEET_TOPOLOGY_CACHE_DEFAULT_HINT = ".amico/ops/fleet/projection.js
 /** The refresh verb — the CLI door every consumer uses. */
 export const FLEET_TOPOLOGY_REFRESH_COMMAND = "amico fleet status --projection";
 
+/** The fleet-guard binary's filename suffix — the installed never-fork signal
+ *  (`~/.local/bin/amico-opencode-fleet-guard`). OS-neutral: the guard is the
+ *  same shim on mac, linux, and WSL; a client machine configures it as
+ *  `amicode.opencodeBinary` so a spawn attempt fails closed. */
+export const FLEET_GUARD_BINARY_SUFFIX = "amico-opencode-fleet-guard";
+
+/** The cross-platform never-fork decision (#1261, AC3): should this machine
+ *  DIVERT to the fleet-client relay (and spawn NO local engine) instead of
+ *  cold-spawning one? True iff the guard binary is configured AND the
+ *  projection reads role=client.
+ *
+ *  PLATFORM-AGNOSTIC by construction — it consults no `process.platform`. The
+ *  bug it replaces: the caller early-returned on `process.platform !== "darwin"`,
+ *  so a linux/WSL client silently cold-spawned a local engine (the ADR-0005
+ *  split-brain the guard exists to prevent, #1227). The role read is OS-neutral
+ *  (the projection), so never-fork holds on every platform. Every non-ok
+ *  topology (absent/broken) is NOT a client — the base standalone floor. */
+export function divertToFleetRelay(binary: string | undefined, state: FleetTopologyState): boolean {
+  if (!binary || !binary.endsWith(FLEET_GUARD_BINARY_SUFFIX)) return false;
+  return state.kind === "ok" && state.role === "client";
+}
+
 /** A verb run: `code` null = the CLI itself was absent (ENOENT — the
  *  CLI-absent bootstrap branch); 75 = the bootstrap exception; 0 = the cache
  *  was refreshed; anything else = a verb failure (never bootstrap). */
@@ -294,4 +316,14 @@ function canonicalOf(topology: Record<string, unknown> | undefined): FleetCanoni
   if (typeof rec.port === "number") canonical.port = rec.port;
   if (typeof rec.sshAlias === "string") canonical.sshAlias = rec.sshAlias;
   return Object.keys(canonical).length > 0 ? canonical : undefined;
+}
+
+/** Derive the synthetic machine_id for a FleetCanonical — the same derivation
+ *  the sidebar uses at `sidebar_view.ts:516` to synthesize the canonical-server
+ *  row's `machineId`. Shared so both the sidebar and the attach action use the
+ *  same predicate, preventing synthesis drift. (#1411, ADR 0030 §D4) */
+export function canonicalMachineId(c: FleetCanonical | undefined): string | null {
+  if (!c) return null;
+  const id = c.host ?? c.sshAlias;
+  return typeof id === "string" && id.trim() !== "" ? id.trim() : null;
 }

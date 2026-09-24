@@ -19,13 +19,13 @@
 //      surfaces the reader's LOUD rejection verbatim (both versions named).
 //
 // Run: pnpm --filter @amicode/amico-run test fleet_projection_verb
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fleetVerb } from "../src/fleet_verb.js";
 import { fleetProjectionStatus, FLEET_BOOTSTRAP_EXIT, type FleetProjectionDeps } from "../src/fleet_projection_verb.js";
-import { fleetProjectionCachePath, fleetTopologyPath } from "@amicode/schema";
+import { fleetProjectionCachePath, fleetTopologyPath, freshnessBetween, readProjection, BASE_TIER_PUBLISHER_IDENTITY } from "@amicode/schema";
 
 const E1 = "44444444-4444-4444-8444-444444444444";
 
@@ -37,7 +37,10 @@ let tmp: string;
 beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), "fleet-proj-verb-"));
 });
-afterEach(() => rmSync(tmp, { recursive: true, force: true }));
+afterEach(() => {
+  vi.restoreAllMocks();
+  rmSync(tmp, { recursive: true, force: true });
+});
 
 /** A hermetic world: an entitlements file carrying the `amicissimo` code, a
  *  checkout dir, and a runPublisher that copies the fixture projection to the
@@ -348,5 +351,138 @@ describe("the fleet verb router", () => {
     const plain = fleetVerb(["status"]) as unknown as { json: Record<string, unknown>; code: number };
     expect(plain.code).toBe(64);
     expect((plain.json.errors as string[]).join(" ")).toMatch(/--session <id> is required/);
+  });
+});
+
+// ── ADR 0023: the base-tier producer (a public floor under the authority) ──────
+describe("the base-tier projection (ADR 0023 — enrolled machine, no amicissimo)", () => {
+  const DET = { baseEpoch: () => "epoch-x", baseCounter: () => 7, nowIso: () => "2026-09-18T00:00:00.000Z" };
+
+  it("no entitlement + an enrolled client fleet.json → ok (exit 0), base_tier, role=client, canonical carried, cache written", () => {
+    const topologyPath = join(tmp, "fleet.json");
+    const cachePath = join(tmp, "cache.json");
+    const canonical = { host: "jj@100.77.141.50", port: 4096, sshAlias: "jjs-mac-studio" };
+    const fleetJson = JSON.stringify({ role: "client", canonical });
+    const deps: FleetProjectionDeps = {
+      readFile: (p) => (p === topologyPath ? fleetJson : null), // NO entitlements file
+      topologyPath,
+      cachePath,
+      ...DET,
+    };
+    const r = run(["--config", join(tmp, "entitlements.toml")], deps);
+    expect(r.code).toBe(0);
+    expect(r.json).toMatchObject({ ok: true, base_tier: true, reason: "entitlement", role: "client", mode: "fleet" });
+    expect(r.json.canonical).toEqual(canonical);
+    // the cached projection is readable by the ONE reader, unchanged
+    const cached = readProjection(cachePath);
+    expect(cached.publisher?.identity).toBe(BASE_TIER_PUBLISHER_IDENTITY);
+    expect((cached.sections?.topology?.value as Record<string, unknown>).role).toBe("client");
+  });
+
+  it("no entitlement + role=standalone → the honest bootstrap-75 (base tier does NOT engage)", () => {
+    const topologyPath = join(tmp, "fleet.json");
+    const deps: FleetProjectionDeps = {
+      readFile: (p) => (p === topologyPath ? JSON.stringify({ role: "standalone" }) : null),
+      topologyPath,
+      cachePath: join(tmp, "cache.json"),
+      ...DET,
+    };
+    const r = run(["--config", join(tmp, "entitlements.toml")], deps);
+    expect(r.code).toBe(FLEET_BOOTSTRAP_EXIT);
+    expect(r.json).toMatchObject({ bootstrap: true, reason: "entitlement", mode: "standalone" });
+  });
+
+  it("no entitlement + no fleet.json → the honest bootstrap-75, unchanged", () => {
+    const topologyPath = join(tmp, "fleet.json");
+    const deps: FleetProjectionDeps = {
+      readFile: () => null, // nothing on disk
+      topologyPath,
+      cachePath: join(tmp, "cache.json"),
+      ...DET,
+    };
+    const r = run(["--config", join(tmp, "entitlements.toml")], deps);
+    expect(r.code).toBe(FLEET_BOOTSTRAP_EXIT);
+    expect(r.json).toMatchObject({ bootstrap: true, reason: "entitlement" });
+  });
+
+  it("entitled but NO checkout + an enrolled server fleet.json → base tier engages with reason=checkout", () => {
+    const entitlements = join(tmp, "entitlements.toml");
+    const topologyPath = join(tmp, "fleet.json");
+    const cachePath = join(tmp, "cache.json");
+    const deps: FleetProjectionDeps = {
+      readFile: (p) =>
+        p === entitlements ? 'codes = ["amicissimo"]' : p === topologyPath ? JSON.stringify({ role: "server", canonical: { host: "h", port: 4096 } }) : null,
+      checkDir: () => false, // no amicissimo checkout present
+      topologyPath,
+      cachePath,
+      ...DET,
+    };
+    const r = run(["--checkout", join(tmp, "absent-amicissimo"), "--config", entitlements], deps);
+    expect(r.code).toBe(0);
+    expect(r.json).toMatchObject({ ok: true, base_tier: true, reason: "checkout", role: "server", mode: "fleet" });
+  });
+
+  it("the base-tier freshness is epoch-bound and knowable (no false-fresh, no refetch loop)", () => {
+    const topologyPath = join(tmp, "fleet.json");
+    const deps: FleetProjectionDeps = {
+      readFile: (p) => (p === topologyPath ? JSON.stringify({ role: "client", canonical: { port: 4096 } }) : null),
+      topologyPath,
+      cachePath: join(tmp, "cache.json"),
+      ...DET,
+    };
+    const r = run(["--config", join(tmp, "entitlements.toml")], deps);
+    expect(r.json.freshness).toEqual({ counter: 7, hub_epoch: "epoch-x" });
+  });
+
+  it("the default counter turns an equal wall-second into fresh, not equal-counter stale", () => {
+    const previousHome = process.env.HOME;
+    process.env.HOME = join(tmp, "home");
+    vi.spyOn(Date, "now").mockReturnValue(2_000_000_000_000);
+    try {
+      const topologyPath = join(tmp, "fleet.json");
+      const cachePath = join(tmp, "cache.json");
+      const deps: FleetProjectionDeps = {
+        readFile: (p) => (p === topologyPath ? JSON.stringify({ role: "client" }) : null),
+        topologyPath,
+        cachePath,
+      };
+      run(["--config", join(tmp, "entitlements.toml")], deps);
+      const previous = readProjection(cachePath);
+      run(["--config", join(tmp, "entitlements.toml")], deps);
+      const fetched = readProjection(cachePath);
+
+      expect(previous.freshness?.counter).toBe(2_000_000_000);
+      expect(fetched.freshness?.counter).toBe(2_000_000_001);
+      expect(freshnessBetween(previous, fetched)).toBe("fresh");
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+    }
+  });
+
+  it("the default counter turns a lower wall-second into fresh, not a backwards-counter unknown", () => {
+    const previousHome = process.env.HOME;
+    process.env.HOME = join(tmp, "home");
+    const now = vi.spyOn(Date, "now").mockReturnValue(2_000_000_000_000);
+    try {
+      const topologyPath = join(tmp, "fleet.json");
+      const cachePath = join(tmp, "cache.json");
+      const deps: FleetProjectionDeps = {
+        readFile: (p) => (p === topologyPath ? JSON.stringify({ role: "client" }) : null),
+        topologyPath,
+        cachePath,
+      };
+      run(["--config", join(tmp, "entitlements.toml")], deps);
+      const previous = readProjection(cachePath);
+      now.mockReturnValue(1_000_000_000_000);
+      run(["--config", join(tmp, "entitlements.toml")], deps);
+      const fetched = readProjection(cachePath);
+
+      expect(fetched.freshness?.counter).toBe(2_000_000_001);
+      expect(freshnessBetween(previous, fetched)).toBe("fresh");
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+    }
   });
 });

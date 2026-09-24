@@ -88,6 +88,7 @@ import { usePrompt } from "@/context/prompt"
 import { useSettings } from "@/context/settings"
 import { useTabs } from "@/context/tabs"
 import { amicodeGet, amicodePost } from "@/utils/amicode-fetch"
+import { fleetSessionsFromResponse, resolveHeaderProvenance } from "./session-header-provenance"
 import { draftPrompt } from "@/utils/start-prompt"
 import { inAmicode, postAmicode } from "@/pages/session/use-amicode-commands"
 import { writeClipboardViaBridge } from "@/components/prompt-input/clipboard-bridge"
@@ -98,7 +99,7 @@ import { notifySessionTabsRemoved } from "@/components/titlebar-session-events"
 import { sessionTitle } from "@/utils/session-title"
 import { scheduleConnectedMeasure } from "./measure"
 import { observeElementOffsetReconnectAware } from "./observe-element-offset"
-import { smoothScrollInterpolate, SMOOTH_SCROLL_DURATION } from "./smooth-scroll"
+import { smoothScrollInterpolate, SMOOTH_SCROLL_DURATION, shouldInstantScroll } from "./smooth-scroll"
 import { createTimelineProjection } from "./projection"
 import { MessageComment, SummaryDiff, TimelineRow, TimelineRowMap } from "./rows"
 import { filterVirtualIndexes } from "./virtual-items"
@@ -320,7 +321,7 @@ export function MessageTimeline(props: {
   userMessages: UserMessage[]
   anchor: (id: string) => string
   setRevealMessage?: (fn: (id: string) => void) => void
-  setScrollToEnd?: (fn: () => void) => void
+  setScrollToEnd?: (fn: (opts?: { smooth?: boolean }) => void) => void
   setHistoryAnchor?: (handlers: { capture: () => void; restore: (done: boolean) => void }) => void
 }) {
   let touchGesture: number | undefined
@@ -387,6 +388,15 @@ export function MessageTimeline(props: {
     () => amicodeGet(server.current, "/amicode/run-status"),
   )
   const entityRunStatus = createMemo(() => parseRunStatusResponse(runStatusRaw.latest))
+  // #1452 (W4a): fleet-wide session provenance. Fetch the merged fleet-sessions
+  // projection (W2 #1447) and resolve THIS session's amicode_owner overlay: a
+  // remote-owned session renders a monitor icon + owner-name tooltip left of the
+  // title; a local or owner-less (legacy/local-path) session degrades to today's
+  // no-provenance header. Keyed on server.current — a server switch re-fetches.
+  const [fleetSessionsRaw] = createResource(
+    () => server.current,
+    () => amicodeGet(server.current, "/amicode/fleet/sessions").catch(() => undefined),
+  )
   const openEntityView = (kind: string, seq?: number) => {
     setEntityViewOpen(true)
     dialog.show(
@@ -431,6 +441,12 @@ export function MessageTimeline(props: {
 
   const [listRoot, setListRoot] = createSignal<HTMLDivElement>()
   const sessionID = createMemo(() => params.id)
+  // #1452 (W4a): the header's provenance — this session's owner overlay mapped
+  // through resolveSessionProvenance. Recomputes when the projection resolves or
+  // the session changes; degrades to no-icon when owner-less/local/not-found.
+  const sessionProvenance = createMemo(() =>
+    resolveHeaderProvenance(fleetSessionsFromResponse(fleetSessionsRaw.latest), sessionID()),
+  )
   const sessionStatus = createMemo(() => {
     const id = sessionID()
     if (!id) return idle
@@ -769,6 +785,14 @@ export function MessageTimeline(props: {
     const target = el.scrollHeight - el.clientHeight
     const current = el.scrollTop
     if (Math.abs(target - current) < 2) return // already there
+    // amicode: large delta → instant jump. Animating across more than 1.5×
+    // the viewport chases a moving target while the virtualizer is still
+    // measuring off-screen items, producing visible jank.
+    if (shouldInstantScroll(target, current, el.clientHeight)) {
+      cancelSmoothScroll()
+      virtualizer.scrollToEnd()
+      return
+    }
     // If an animation is in flight, restart from current position
     cancelSmoothScroll()
     smoothStartY = current
@@ -807,7 +831,11 @@ export function MessageTimeline(props: {
     queueMicrotask(() => {
       resizeAnchorScheduled = false
       if (!props.shouldAnchorBottom() || props.hasScrollGesture()) return
-      smoothScrollToEnd()
+      // amicode: use instant scroll to avoid fighting the auto-scroller's
+      // ResizeObserver during streaming — the 180ms animation and the instant
+      // scrollToBottom were competing, causing visible oscillation.
+      cancelSmoothScroll()
+      virtualizer.scrollToEnd()
     })
   }
   virtualizer.resizeItem = (index, size) => {
@@ -916,7 +944,11 @@ export function MessageTimeline(props: {
       if (index === undefined) return
       virtualizer.scrollToIndex(index, { align: "center" })
     })
-    props.setScrollToEnd?.(() => smoothScrollToEnd())
+    props.setScrollToEnd?.((opts?: { smooth?: boolean }) => {
+      cancelSmoothScroll()
+      if (opts?.smooth) smoothScrollToEnd()
+      else virtualizer.scrollToEnd()
+    })
     props.setHistoryAnchor?.({ capture: capturePrependAnchor, restore: restorePrependAnchor })
   })
 
@@ -2041,6 +2073,20 @@ export function MessageTimeline(props: {
                 }}
               >
                 <div class="flex items-center min-w-0 flex-1 w-full">
+                  {/* #1452 (W4a): fleet provenance — a remote-owned session shows
+                      a monitor icon (tooltip = owner machine name) left of the
+                      title; local / owner-less sessions render nothing. */}
+                  <Show when={sessionProvenance().showIcon}>
+                    <TooltipV2 class="shrink-0" placement="bottom" value={sessionProvenance().tooltip}>
+                      <span
+                        data-slot="session-provenance-icon"
+                        class="mr-1.5 flex shrink-0 items-center pl-2 text-v2-text-text-faint"
+                        aria-label={sessionProvenance().tooltip}
+                      >
+                        <IconV2 name="monitor" size="small" />
+                      </span>
+                    </TooltipV2>
+                  </Show>
                   <Show when={parentID()}>
                     <button
                       type="button"

@@ -160,11 +160,19 @@
       },
       {
         "command": "amicode.fleet.versions",
-        "title": "Amicode: Fleet & Versions (doctor's surface report)"
+        "title": "Amicode: Fleet & Versions (open Fleet Manager \u2014 Versions)"
+      },
+      {
+        "command": "amicode.openFleetManager",
+        "title": "Amicode: Open Fleet Manager"
       },
       {
         "command": "amicode.fleet.goStandalone",
         "title": "Amicode: Fleet \u2014 Go Standalone (leave fleet, run locally)"
+      },
+      {
+        "command": "amicode.fleet.enroll",
+        "title": "Amicode: Fleet \u2014 Enroll (join this machine to a fleet)"
       },
       {
         "command": "amicode.repo.sync",
@@ -186,6 +194,10 @@
       {
         "command": "amicode.restartHub",
         "title": "Amicode: Restart Hub Server (fleet)"
+      },
+      {
+        "command": "amicode.fleet.connectRemoteSsh",
+        "title": "Amicode: Connect to Hub over Remote-SSH"
       },
       {
         "command": "amicode.selectHarness",
@@ -230,6 +242,11 @@
           "default": "",
           "description": "Override path to the opencode CLI (dev only). Empty = use the vendored binary."
         },
+        "amicode.fleet.hubWorkspacePath": {
+          "type": "string",
+          "default": "",
+          "description": "Remote folder that 'Amicode: Connect to Hub over Remote-SSH' opens on the hub (an absolute /-rooted path, or a home-relative ~ path). Empty = the hub's home directory (~), where ~/.amico/ lives. The hub host coordinates themselves always come from the fleet projection, never from here."
+        },
         "amicode.harness": {
           "type": "string",
           "enum": [
@@ -267,6 +284,12 @@
           "type": "string",
           "default": "",
           "description": "Fleet activation (beta): the hub's base URL over the fleet tunnel (e.g. http://127.0.0.1:4096). Env override: AMICODE_FLEET_HUB_URL. Fleet mode arms ONLY when BOTH this and amicode.fleetTunnelAlias are set AND the amicissimo entitlement stages — absent config means a byte-identical base."
+        },
+        "amicode.fleetTransport": {
+          "type": "string",
+          "enum": ["ssh", "tailscale", "direct"],
+          "default": "ssh",
+          "description": "Fleet transport provider (#1260): the client↔host data-plane pipe. `ssh` (default) is the current launchd/systemd `-L` forward — zero new dependency. `tailscale` (opt-in) has the host run `tailscale serve` fronting its loopback service and the client resolve the host's MagicDNS origin — WireGuard roaming/NAT/low-latency with no TCP-over-TCP, and the loopback bind-guard stays intact (the app still binds localhost). `direct` (opt-in) targets a supplied URL for a host already reachable on a VPN/LAN — the operator arranges reachability out-of-band, with a health probe and no tunnel-manager lifecycle; the host still binds loopback behind its own edge. A disabled or unknown provider yields the honest hub-down posture, NEVER a silent fallback to another provider. Unset/`ssh` reproduces today's behavior."
         },
         "amicode.fleetTunnelAlias": {
           "type": "string",
@@ -431,7 +454,12 @@
         "amicode.device.name": {
           "type": "string",
           "default": "",
-          "description": "Device to show in the Device Inspector (Spec A \u00a73). Empty = the Device Inspector stays dormant. Ops state is read from ~/.amico/amicode/devices/<name>/state.json."
+          "description": "Friendly name for this machine. Names it in the Device Inspector (Spec A \u00a73) AND labels this machine in the fleet roster/sidebar (its self-reported device name; see \"amicode.device.type\"). Empty = the OS name (macOS ComputerName / Linux PRETTY_HOSTNAME) is used, falling back to the prettified hostname. Ops state is read from ~/.amico/amicode/devices/<name>/state.json."
+        },
+        "amicode.device.type": {
+          "type": "string",
+          "default": "",
+          "description": "Override this machine's fleet device type (form factor) in the roster/sidebar. Suggested values are the open KNOWN_DEVICE_TYPES vocabulary \u2014 server, desktop, or laptop \u2014 but any string round-trips. Empty = the type is detected from the OS (macOS model / Linux chassis; WSL abstains); an undetected type falls back to the machine's serve-stance."
         },
         "amicode.device.graph": {
           "type": "string",
