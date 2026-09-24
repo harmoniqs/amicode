@@ -361,3 +361,141 @@ describe("#1511 AC5 (A) — per-peer upstream auth", () => {
     expect(sink.text()).toContain(": amicode.fleet source dark unavailable");
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════════════
+// AC6 (decision A) — focus snapshot as the FIRST local-namespace frame
+// ══════════════════════════════════════════════════════════════════════════════
+describe("#1511 AC6 (A) — focus-on-connect snapshot", () => {
+  it("emits the current focus as the FIRST frame on the local namespace at connect", () => {
+    const sink = collectingSink();
+    const agg = new SseFanInAggregator({
+      sink,
+      focusSnapshot: () => ({ focusedMachineId: "studio", isHome: false, absent: false }),
+    });
+    agg.connect();
+    // the focus frame is the very first thing written, before any event frame
+    expect(sink.text().startsWith("event: amicode.fleet.focus\n")).toBe(true);
+    expect(sink.text()).toContain("\"focusedMachineId\":\"studio\"");
+
+    // a following local event frame comes AFTER the focus seed
+    agg.ingest(LOCAL_NAMESPACE, frame("data: {}", "id: 1"));
+    const idx = sink.text().indexOf("amicode.fleet.focus");
+    const evtIdx = sink.text().indexOf("id: 1");
+    expect(idx).toBeGreaterThanOrEqual(0);
+    expect(evtIdx).toBeGreaterThan(idx);
+  });
+
+  it("re-emits the focus snapshot on EVERY reconnect (self-healing cold-seed)", () => {
+    const sink = collectingSink();
+    const agg = new SseFanInAggregator({
+      sink,
+      focusSnapshot: () => ({ focusedMachineId: "studio", isHome: false, absent: false }),
+    });
+    agg.connect("local=1"); // first connect
+    agg.connect("local=5"); // reconnect
+    const count = sink.text().split("event: amicode.fleet.focus").length - 1;
+    expect(count).toBe(2); // one focus frame per connect
+  });
+
+  it("absent focus is a NAMED empty snapshot, not a missing frame", () => {
+    const sink = collectingSink();
+    const agg = new SseFanInAggregator({ sink, focusSnapshot: () => undefined });
+    agg.connect();
+    expect(sink.text()).toContain("event: amicode.fleet.focus"); // frame present
+    expect(sink.text()).toContain("\"empty\":true"); // named empty, not missing
+    expect(sink.text()).toContain("\"isHome\":true");
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// AC7 (decision B) — per-namespace bounded back-pressure, degrade in isolation
+// ══════════════════════════════════════════════════════════════════════════════
+describe("#1511 AC7 (B) — per-namespace back-pressure", () => {
+  /** A sink whose downstream can be blocked; `write` returns false while
+   *  blocked (the Node res.write backpressure signal) but still records the
+   *  chunk (a blocked res still queues the current write). */
+  function controllableSink() {
+    const chunks: string[] = [];
+    let blocked = false;
+    return {
+      write(chunk: string): boolean {
+        chunks.push(chunk);
+        return !blocked;
+      },
+      flush() {},
+      block() {
+        blocked = true;
+      },
+      unblock() {
+        blocked = false;
+      },
+      text() {
+        return chunks.join("");
+      },
+      count(ns: string) {
+        return (this.text().match(new RegExp(`"ns":"${ns}"`, "g")) ?? []).length;
+      },
+    };
+  }
+
+  function nsFrame(ns: string, n: number): string {
+    return frame("event: message", `data: {"ns":"${ns}","n":${n}}`, `id: ${n}`);
+  }
+
+  it("one overflowing peer drops in ISOLATION; the other namespaces and local keep flowing", () => {
+    const sink = controllableSink();
+    const agg = new SseFanInAggregator({ sink, bufferBound: 2 });
+    agg.connect();
+    agg.setMembership([
+      { machineId: "studio", reachable: true, token: "tok-studio" },
+      { machineId: "mini", reachable: true, token: "tok-mini" },
+    ]);
+
+    sink.block(); // the shared downstream stalls
+    // studio floods: 1 delivered (fills the pipe), 2 & 3 buffered, 4+ dropped
+    agg.ingest("studio", nsFrame("studio", 1));
+    agg.ingest("studio", nsFrame("studio", 2));
+    agg.ingest("studio", nsFrame("studio", 3));
+    agg.ingest("studio", nsFrame("studio", 4));
+    agg.ingest("studio", nsFrame("studio", 5));
+    // mini + local stay within their independent bounds (no drops)
+    agg.ingest("mini", nsFrame("mini", 1));
+    agg.ingest("mini", nsFrame("mini", 2));
+    agg.ingest(LOCAL_NAMESPACE, nsFrame("local", 1));
+
+    // studio overflowed (its buffer dropped frames); mini + local did NOT
+    expect(agg.dropped("studio")).toBeGreaterThan(0);
+    expect(agg.dropped("mini")).toBe(0);
+    expect(agg.dropped(LOCAL_NAMESPACE)).toBe(0);
+
+    // downstream drains → the buffered frames flush
+    sink.unblock();
+    agg.resume();
+
+    // ISOLATION: mini + local delivered EVERY frame; studio delivered only up to
+    // its bound (the rest dropped — the gap D3 resumes on reconnect).
+    expect(sink.count("mini")).toBe(2);
+    expect(sink.count("local")).toBe(1);
+    expect(sink.count("studio")).toBeLessThan(5);
+    expect(sink.count("studio")).toBeGreaterThanOrEqual(1);
+
+    // studio's cursor sits at the last DELIVERED id, never a dropped one —
+    // so a reconnect with this composite replays the gap losslessly (D3 × B).
+    const studioCursor = Number(parseCompositeCursor(agg.cursor()).get("studio"));
+    expect(studioCursor).toBeLessThan(5);
+    // mini + local cursors reflect full delivery
+    expect(parseCompositeCursor(agg.cursor()).get("mini")).toBe("2");
+    expect(parseCompositeCursor(agg.cursor()).get("local")).toBe("1");
+  });
+
+  it("steady state (downstream flowing) never buffers — frames deliver directly", () => {
+    const sink = controllableSink();
+    const agg = new SseFanInAggregator({ sink, bufferBound: 1 });
+    agg.connect();
+    agg.setMembership([{ machineId: "studio", reachable: true, token: "tok-studio" }]);
+    // never blocked: every frame flows, nothing is dropped even past the bound
+    for (let n = 1; n <= 5; n++) agg.ingest("studio", nsFrame("studio", n));
+    expect(agg.dropped("studio")).toBe(0);
+    expect(sink.count("studio")).toBe(5);
+  });
+});

@@ -40,10 +40,12 @@ export interface SseFrameSource {
 }
 
 /** The downstream response, narrowed to what the relay needs. In production an
- *  `http.ServerResponse`; in tests a collecting fake. `flush` is optional (not
- *  every response object exposes it). */
+ *  `http.ServerResponse`; in tests a collecting fake. `write` returns `false`
+ *  when the downstream is backpressured (the Node `res.write` convention) — the
+ *  aggregator reads that to switch a namespace to its bounded buffer (decision
+ *  B). `flush` is optional (not every response object exposes it). */
 export interface SseSink {
-  write(chunk: string): void;
+  write(chunk: string): boolean | void;
   flush?(): void;
 }
 
@@ -220,6 +222,14 @@ export class SseFanInAggregator {
   private readonly peerArms = new Set<string>();
   /** owner-peers currently NAMED unavailable (unreachable / token-less). */
   private readonly unavailable = new Set<string>();
+  /** decision B — is the shared downstream currently accepting writes? A
+   *  `write()` returning false flips this off; `resume()` flips it back and
+   *  drains the per-namespace buffers. */
+  private flowing = true;
+  /** decision B — per-namespace bounded buffers on the shared downstream. */
+  private readonly buffers = new Map<string, string[]>();
+  /** decision B — per-namespace overflow drop counts (the gap D3 resumes). */
+  private readonly droppedCount = new Map<string, number>();
 
   constructor(opts: SseFanInOptions) {
     this.sink = opts.sink;
@@ -299,10 +309,32 @@ export class SseFanInAggregator {
 
     // Composite mode (≥1 peer arm active): every arm's frames carry the full
     // composite id so the client holds all N namespaces' positions at once.
-    if (rawId !== undefined) this.composite.set(namespace, rawId);
-    const wire = rewriteFrameId(rawFrame, formatCompositeCursor(this.composite));
-    this.sink.write(wire);
-    this.sink.flush?.();
+    // decision B — when the shared downstream is flowing, deliver directly;
+    // when it is backpressured, buffer per-namespace (bounded, isolated).
+    if (this.flowing) {
+      this.deliver(namespace, rawFrame);
+    } else {
+      this.enqueue(namespace, rawFrame);
+    }
+  }
+
+  /** Flush the per-namespace buffers after the downstream drains (decision B).
+   *  Namespaces flush independently; if the sink backpressures again mid-drain,
+   *  the remaining frames stay buffered (its cursor still resumes the gap). */
+  resume(): void {
+    this.flowing = true;
+    for (const [ns, buf] of this.buffers) {
+      while (buf.length > 0 && this.flowing) {
+        this.deliver(ns, buf.shift()!);
+      }
+    }
+    for (const [ns, buf] of [...this.buffers]) if (buf.length === 0) this.buffers.delete(ns);
+  }
+
+  /** The number of frames DROPPED for a namespace on buffer overflow (decision
+   *  B). Nonzero means a gap that the namespace's D3 cursor resumes on recovery. */
+  dropped(namespace: string): number {
+    return this.droppedCount.get(namespace) ?? 0;
   }
 
   /** The current composite cursor string (the last `id:` the client has seen). */
@@ -312,8 +344,42 @@ export class SseFanInAggregator {
 
   // ── internals ────────────────────────────────────────────────────────────
 
+  /** Write one frame downstream in composite mode: advance the namespace's
+   *  cursor from the frame's id, stamp the full composite as the wire `id:`,
+   *  write + flush. A `write()` returning false backpressures the shared
+   *  downstream (subsequent frames buffer per-namespace). */
+  private deliver(namespace: string, rawFrame: string): void {
+    const rawId = frameRawId(rawFrame);
+    if (rawId !== undefined) this.composite.set(namespace, rawId);
+    const wire = rewriteFrameId(rawFrame, formatCompositeCursor(this.composite));
+    const accepted = this.sink.write(wire);
+    this.sink.flush?.();
+    if (accepted === false) this.flowing = false;
+  }
+
+  /** Buffer a frame for a backpressured namespace (decision B). At the bound,
+   *  DROP the frame in ISOLATION — its cursor stays at the last DELIVERED id so
+   *  the upstream replays the gap on reconnect; other namespaces are untouched. */
+  private enqueue(namespace: string, rawFrame: string): void {
+    let buf = this.buffers.get(namespace);
+    if (buf === undefined) {
+      buf = [];
+      this.buffers.set(namespace, buf);
+    }
+    if (buf.length >= this.bufferBound) {
+      this.droppedCount.set(namespace, (this.droppedCount.get(namespace) ?? 0) + 1);
+      return;
+    }
+    buf.push(rawFrame);
+  }
+
   private emitFocusFrame(): void {
-    const snapshot = this.focusProvider?.() ?? { isHome: true, absent: false };
+    // decision A — a focus snapshot is ALWAYS a real frame: an absent provider
+    // (or an undefined return) becomes a NAMED empty snapshot (home), never a
+    // missing frame. `empty: true` marks the named-empty case for the client.
+    const raw = this.focusProvider?.();
+    const snapshot: FocusSnapshot & { empty?: boolean } =
+      raw ?? { isHome: true, absent: false, empty: true };
     const payload = JSON.stringify({ type: "amicode.fleet.focus", ...snapshot });
     // The focus frame rides the `local` namespace. It carries no monotonic id
     // (it is a snapshot, not a resumable event) so it never advances a cursor.
