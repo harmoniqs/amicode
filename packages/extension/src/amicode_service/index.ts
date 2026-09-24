@@ -889,13 +889,15 @@ export function createAmicodeService(
       // #1519 (W1c, ADR 0033 §D1): the /event fan-in driver — wires the #1511
       // aggregator to the app's ONE global stream behind AMICO_FLEET_MULTIPLEX
       // (server.ts gates the call; default OFF → dispatch never invokes it, so
-      // /event is byte-identical). Built ONLY when fleetPeers is present (else
-      // there are no owner-peers to fan in and handle() would always decline).
-      // Per-peer auth reads each peer's OWN token (decision A); the local arm
-      // rides the app's incoming credential — no peer/hub token is ever sent
-      // outward, and a known remote owner never resolves to local.
+      // /event is byte-identical). Built ONLY for an engine-armed (non-client)
+      // machine with fleetPeers: a client relay has no local engine and routes
+      // everything through the hub, so it owns no local arm to fan into (the
+      // fan-in is an origin concern). Per-peer auth reads each peer's OWN token
+      // (decision A); the local arm rides the app's incoming credential — no
+      // peer/hub token is ever sent outward, and a known remote owner never
+      // resolves to local.
       let eventFanIn: SseFanInDriver | undefined;
-      if (fleetPeers) {
+      if (fleetPeers && !isClient) {
         const peers = fleetPeers;
         eventFanIn = new SseFanInDriver({
           ownerMap,
