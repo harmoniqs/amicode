@@ -78,7 +78,7 @@ These are ambiguous and reported for human review:
 
 ## Escalation
 
-Ambiguous issues are logged to `dream-journal.md` with tag `needs-human-review`. If more than 5 unfixable issues are found, append to STRATEGY `## Agent Suggestions`: "Schema issues found in N notes — human review needed (see dream-journal)."
+Ambiguous issues are logged to `dream-journal.md` with tag `needs-human-review`. If more than 5 unfixable issues are found, route the finding to the amicissimo proposals surface (agents never edit INTENT): "Schema issues found in N notes — human review needed (see dream-journal)."
 
 ## Output
 
