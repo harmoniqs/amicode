@@ -769,3 +769,58 @@ describe("#1519 AC3 — live arm lifecycle honours the SessionOwnerMap", () => {
     }
   }, 15000);
 });
+
+// ── AC4 — reconnect: the opaque composite ?lastEventID re-subscribes each
+//    upstream from its OWN resume id (D3), end-to-end through the real route ───
+describe("#1519 AC4 — reconnect resumes each upstream from its own composite cursor id", () => {
+  it("a reconnect with ?lastEventID=<composite> opens each arm from its OWN D3 resume id", async () => {
+    process.env[FLEET_MULTIPLEX_FLAG] = "1";
+    const ownerMap = ownerMapWith([["s1", "studio"], ["s2", "mini"]]);
+    const opened: Array<{ namespace: string; url: string; authHeader?: string; lastEventId?: string }> = [];
+    const arms = new Map<string, Ctl>();
+    const driver = makeFanInDriver({ ownerMap, opened, arms });
+    const server = new AmicodeServiceServer({ password: PW });
+    server.attachFleetPlane(fanInPlane(driver));
+    const origin = (await server.start()).toString().replace(/\/$/, "");
+    try {
+      const cursor = "local=5;studio=42;mini=7";
+      const res = await fetch(`${origin}/event?lastEventID=${encodeURIComponent(cursor)}`, {
+        headers: { Authorization: serverAuthHeader(PW) },
+        signal: AbortSignal.timeout(READ_TIMEOUT),
+      });
+      expect(res.status).toBe(200);
+      // each arm re-subscribed from ITS OWN resume id (D3) — not one shared scalar
+      const byNs = Object.fromEntries(opened.map((o) => [o.namespace, o.lastEventId]));
+      expect(byNs.local).toBe("5");
+      expect(byNs.studio).toBe("42");
+      expect(byNs.mini).toBe("7");
+      await res.body?.cancel().catch(() => {});
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("a bare #1264 scalar cursor resumes ONLY the local arm; peers subscribe fresh (back-compat)", async () => {
+    process.env[FLEET_MULTIPLEX_FLAG] = "1";
+    const ownerMap = ownerMapWith([["s1", "studio"]]);
+    const opened: Array<{ namespace: string; url: string; authHeader?: string; lastEventId?: string }> = [];
+    const arms = new Map<string, Ctl>();
+    const driver = makeFanInDriver({ ownerMap, opened, arms });
+    const server = new AmicodeServiceServer({ password: PW });
+    server.attachFleetPlane(fanInPlane(driver));
+    const origin = (await server.start()).toString().replace(/\/$/, "");
+    try {
+      const res = await fetch(`${origin}/event?lastEventID=99`, {
+        headers: { Authorization: serverAuthHeader(PW) },
+        signal: AbortSignal.timeout(READ_TIMEOUT),
+      });
+      expect(res.status).toBe(200);
+      const byNs = Object.fromEntries(opened.map((o) => [o.namespace, o.lastEventId]));
+      expect(byNs.local).toBe("99"); // the bare scalar is the local arm's position (#1264)
+      expect(byNs.studio).toBeUndefined(); // a scalar carries no peer position → studio subscribes fresh
+      await res.body?.cancel().catch(() => {});
+    } finally {
+      await server.stop();
+    }
+  });
+});
