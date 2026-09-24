@@ -341,6 +341,53 @@ describe("AC2 — identity/transport/trust revalidation precedes Observe; Contro
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// #1541 AC3 REGRESSION GUARD — a control grant is NEVER auto-restored on
+// rehydration. This is NOT new work: the rule already lives in
+// fleet_headless_rehydration.ts (control-scoped grant → suspended,
+// controlSuspended:true). This guard pins the invariant against regression and
+// asserts the store grant itself is untouched (rehydration never self-revives
+// a control session — control lands suspended until an explicit re-enable).
+// ═══════════════════════════════════════════════════════════════════════════
+describe("#1541 AC3 regression guard — control is never auto-restored on rehydration", () => {
+  let grantDeps: LifecycleGrantDeps;
+  beforeEach(() => {
+    grantDeps = makeGrantDeps();
+  });
+
+  it("a persisted active control grant rehydrates SUSPENDED (observe restored, control not), grant untouched", () => {
+    issueLifecycleGrant(
+      {
+        requesterMachineId: PEER_A_ID,
+        requesterIdentityKey: PEER_A_KEY,
+        targetMachineId: LOCAL_ID,
+        targetIdentityKey: LOCAL_KEY,
+        scope: "control",
+      },
+      grantDeps,
+    );
+
+    const result = rehydratePeerRelationships({
+      grantDeps,
+      peerProvider: stubPeerProvider({
+        servingPeers: [{ machineId: PEER_A_ID }],
+        tokens: { [PEER_A_ID]: { baseUrl: "http://studio:43117", token: "tok-a" } },
+      }),
+    });
+
+    const peer = result.peers.find((p) => p.peerId === PEER_A_ID)!;
+    expect(peer.state).toBe("suspended");
+    expect(peer.controlSuspended).toBe(true);
+    expect(peer.observeRestored).toBe(true);
+
+    // read-only: the persisted grant is UNCHANGED — never self-revived to a live
+    // control session by the boot-time rehydration.
+    const stored = readLifecycleGrant(PEER_A_ID, grantDeps);
+    expect(stored!.scope).toBe("control");
+    expect(stored!.state).toBe("active");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // AC3 — stale bootstrap/reconnect work cannot advance a revoked or
 //       superseded relationship generation
 // ═══════════════════════════════════════════════════════════════════════════

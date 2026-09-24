@@ -31,6 +31,8 @@ import type {
   ResolvedTarget,
   ObservationReadResolution,
   ObservationReadPeerTarget,
+  ObservationWriteResolution,
+  ObservationWritePeerTarget,
 } from "./session_multiplexer";
 import type { EventFanInDriver } from "./sse_fanin_driver";
 import { BOUND_NONCE_HEADER, BOUND_IDENTITY_HEADER } from "./fleet_bootstrap_headers";
@@ -178,6 +180,28 @@ export interface ObservationReadPlane {
   proxyToPeer(req: http.IncomingMessage, res: http.ServerResponse, target: ObservationReadPeerTarget): boolean;
 }
 
+/** #1542 (Fleet Studio B2b, WRITE seam): the OBSERVATION-ONLY per-session
+ *  owner-routing seam for WRITES — the mirror of ObservationReadPlane with the
+ *  GET/non-GET decision INVERTED. Armed ONLY on the observation path (index.ts);
+ *  absent everywhere else, so the dispatch consult is a structural no-op unless
+ *  attached. `dispatch()` consults it INSIDE the engine-proxy branch, BESIDE the
+ *  read consult: a NON-GET request to a PEER-OWNED session resolves to either an
+ *  AUTHORIZED peer target (proxied to the owner with the credential the owner
+ *  accepts) or a NAMED honest deny (never local, the #1382 invariant); every
+ *  other request (GET/HEAD — the read plane owns them, local/unowned writes,
+ *  /amicode/*, non-session paths) resolves `undefined` and falls through
+ *  BYTE-IDENTICAL to the local engine. */
+export interface ObservationWritePlane {
+  /** Resolve a write to an owner-peer target, a named deny, or undefined to
+   *  fall through byte-identical to local. */
+  resolve(method: string, pathname: string): ObservationWriteResolution | undefined;
+  /** Proxy an AUTHORIZED write to the owner peer with the credential the owner
+   *  accepts (the peer reader token). Returns true when it owns the response;
+   *  false when no upstream is bound (→ the caller answers a named 503, never
+   *  local). */
+  proxyToPeer(req: http.IncomingMessage, res: http.ServerResponse, target: ObservationWritePeerTarget): boolean;
+}
+
 /** #1261 (AC6): a client's own named hub-down state — distinct from the base
  *  "hub upstream not available" and never the engine's message. */
 export const FLEET_HUB_DOWN_ERROR = "fleet-hub-down";
@@ -238,7 +262,20 @@ export class AmicodeServiceServer {
    *  Armed ONLY on the observation path (index.ts); absent everywhere else, so
    *  the dispatch consult is a structural no-op unless it is attached. */
   private observeRead?: ObservationReadPlane;
-  readonly password: string;
+  /** #1542 (B2b write seam): the observation-only per-session WRITE router.
+   *  Armed ONLY on the observation path (index.ts), BESIDE observeRead; absent
+   *  everywhere else, so the dispatch consult is a structural no-op unless it is
+   *  attached. */
+   private observeWrite?: ObservationWritePlane;
+   /** #1543 (B2b SSE fan-in seam): the observation-only `/event` fan-in driver.
+    *  A NEW, SEPARATELY-ARMED interception (NOT the premium fleet-plane fan-in
+    *  wire, NOT behind AMICO_FLEET_MULTIPLEX, NOT behind the multiplexer — ADR
+    *  0033 Amendment 1). Armed ONLY on the observation path (index.ts); absent
+    *  everywhere else, so the dispatch consult is a structural no-op unless it is
+    *  attached. The driver's own zero-non-local-owner decline is the fleet-of-one
+    *  byte-identity guard (observation readiness = ≥1 reachable owner peer). */
+   private observeEvents?: EventFanInDriver;
+   readonly password: string;
   /** #955 (the hub cutover): the auth mode. "credential" (the default) is the
    *  per-boot-mint posture — every non-public-UI request 401s without a
    *  valid mint. "open" matches the fork hub's DEPLOYED posture on the
@@ -322,6 +359,24 @@ export class AmicodeServiceServer {
    *  consults the seam (byte-identical). */
   attachObservationReadPlane(plane: ObservationReadPlane): this {
     this.observeRead = plane;
+    return this;
+  }
+
+  /** #1542 (B2b write seam): arm the observation-only per-session WRITE router.
+   *  Called ONLY by the observation path in index.ts; a boot without it never
+   *  consults the seam (byte-identical). */
+  attachObservationWritePlane(plane: ObservationWritePlane): this {
+    this.observeWrite = plane;
+    return this;
+  }
+
+  /** #1543 (B2b SSE fan-in seam): arm the observation-only `/event` fan-in
+   *  driver. Called ONLY by the observation path in index.ts; a boot without it
+   *  never consults the seam (byte-identical). This is DISTINCT from the premium
+   *  fleet-plane fan-in wire — the two are mutually exclusive by which
+   *  plane a boot attaches (an observation boot has no fleetPlane). */
+  attachObservationEventPlane(driver: EventFanInDriver): this {
+    this.observeEvents = driver;
     return this;
   }
 
@@ -511,6 +566,18 @@ export class AmicodeServiceServer {
       // byte-identity). This is the deliberate amendment of the #1448 AC4
       // structural guard: the SSE relay is wired ONLY behind the flag.
       if (url.pathname === "/event" && fleetMultiplexEnabled() && this.fleetPlane?.eventFanIn?.handle(req, res)) return;
+      // #1543 (Fleet Studio B2b, SSE fan-in on the OBSERVATION path — ADR 0034 D6
+      // / ADR 0033 Amendment 1): a SEPARATE, separately-armed `/event`
+      // interception BESIDE the premium wire above. It is NOT behind
+      // fleetMultiplexEnabled() and NOT behind the multiplexer — it is armed only
+      // when the observation path attached `observeEvents` (index.ts), and the
+      // driver DECLINES (returns false) at zero non-local owners, so a fleet-of-
+      // one / unattached boot falls through BYTE-IDENTICALLY to the paths below
+      // (the `?.handle` is a structural no-op when unattached). An observation
+      // boot has no `fleetPlane`, so the premium line above already short-
+      // circuited; the two wires never both fire. With ≥1 owned peer the driver
+      // takes over the response (returns true → we return).
+      if (url.pathname === "/event" && this.observeEvents?.handle(req, res)) return;
       // #1262: in fleet CLIENT mode the HOST owns all /amicode/* state. Bypass
       // the ENTIRE local /amicode/* dispatch (the exact-match route table AND
       // the catch-all 404 below) so a REGISTERED route (GET /amicode/problems,
@@ -704,6 +771,48 @@ export class AmicodeServiceServer {
               status: 503,
               body: JSON.stringify({ ok: false, error: FLEET_PEER_UNREACHABLE_ERROR, reason: "peer-unreachable", machine_id: decision.machineId }),
             });
+            return;
+          }
+        }
+        // #1542 (B2b write seam): BESIDE the read consult, on the OBSERVATION
+        // path a NON-GET request (prompt / archive / delete) for a PEER-OWNED
+        // session is AUTHORIZED by the pure write gate and, when allowed, proxied
+        // to the owner peer with the credential the owner accepts (the peer
+        // reader token). A DENIED resolution is the gate's NAMED honest deny —
+        // NEVER executed locally (the #1382 invariant): `transport-down` is the
+        // peer-unreachable 503; the authorization denials (no-control-grant /
+        // grant-revoked / insufficient-scope) are a 403 carrying the gate's real
+        // reason. An `undefined` resolution (a GET/HEAD — the read plane owns
+        // those, a local/unowned write, /amicode/*, a non-session path) falls
+        // through BYTE-IDENTICAL to the engine proxy below. Absent on
+        // standalone / armed / client boots (never attached) → a structural
+        // no-op. Confirmation is NOT this seam's job (#1544): the gate authorizes,
+        // the plane routes; the delete-confirm UI is a downstream consumer.
+        if (this.observeWrite) {
+          const decision = this.observeWrite.resolve(req.method ?? "GET", url.pathname);
+          if (decision) {
+            if (decision.kind === "peer") {
+              if (this.observeWrite.proxyToPeer(req, res, decision)) return;
+              // authorized but no upstream bound → the peer's OWN honest 503,
+              // never local.
+              send({
+                status: 503,
+                body: JSON.stringify({ ok: false, error: FLEET_PEER_UNREACHABLE_ERROR, reason: "peer-unreachable", machine_id: decision.machineId }),
+              });
+              return;
+            }
+            // denied → the gate's NAMED deny, never local.
+            if (decision.reason === "transport-down") {
+              send({
+                status: 503,
+                body: JSON.stringify({ ok: false, error: FLEET_PEER_UNREACHABLE_ERROR, reason: "transport-down", machine_id: decision.machineId }),
+              });
+            } else {
+              send({
+                status: 403,
+                body: JSON.stringify({ ok: false, error: "remote-write-denied", reason: decision.reason, machine_id: decision.machineId }),
+              });
+            }
             return;
           }
         }

@@ -46,8 +46,17 @@ import {
 } from "./session_multiplexer";
 import { SseFanInDriver } from "./sse_fanin_driver";
 import { createObservationReadPlane } from "./observation_read_plane";
+import { createObservationWritePlane } from "./observation_write_plane";
+import { findControlGrantByTarget, readAllLifecycleGrants, sanitizeGrantForDisplay } from "./fleet_control_lifecycle";
+import {
+  submitControlRequest,
+  approveControlRequest,
+  denyControlRequest,
+  readPendingRequests,
+} from "./fleet_control_request";
 import { HubCredentialRead, mintRegistry, readHubCredential } from "./hub_credential";
 import { buildMergedProjection, buildFleetProjection, type UpstreamMode, type MergedProjection, type FleetProjection } from "./merged_projection";
+import { buildControlResolver } from "./remote_session_state";
 import { FleetPostureDetector, type FleetPostureTuning } from "./fleet_posture";
 import { handleFleetWrite, type FleetWriteDeps } from "./fleet_writes";
 import { inspectTunnelConfigFile, TUNNEL_GENERATION_HEADER } from "./fleet_tunnel";
@@ -524,12 +533,33 @@ export function registerFleetRoutes(server: AmicodeServiceServer, deps: FleetRou
       // #1481 (AC3): blocked-identity peers (alias-conflict / key-changed) are
       // NAMED source states, never silently dropped from the projection.
       const blockedPeers = deps.fleetPeers.getBlockedPeers?.() ?? [];
+      // #1544 (slice 4): the STATE CHANNEL. Stamp each entry's app-visible
+      // `amicode_control` ({ controlState, reason, eligibility }) projected from
+      // the SoT (remote_session_state) — NOT the raw write-gate reason (which
+      // collapses revocation-pending→grant-revoked). The grant read is the
+      // D2-corrected target-keyed control-grant lookup (the controlling machine
+      // holds a `control` grant whose `targetMachineId` is the owner); any state
+      // is read so revoked/pending stay DISTINCT for the chip. Reachability =
+      // the peer is serving with a usable token+URL. `isSelfOwned` is the base
+      // self-owned fast-path (true) — the shared-peer request handshake that
+      // would flip it to request-control is #1545.
+      const reachableIds = new Set(peers.filter((p) => p.token !== undefined && p.getUrl() !== undefined).map((p) => p.machineId));
+      const resolveControl = buildControlResolver({
+        localMachineId: deps.fleetPeers.localMachineId,
+        grantReader: (ownerId) => {
+          const g = readAllLifecycleGrants().find((x) => x.targetMachineId === ownerId && x.scope === "control");
+          return g ? { scope: g.scope, state: g.state } : undefined;
+        },
+        peerReachable: (ownerId) => reachableIds.has(ownerId),
+        isSelfOwned: () => true,
+      });
       projection = await buildFleetProjection({
         localMachineId: deps.fleetPeers.localMachineId,
         local: { getUrl: deps.engine.getUrl, password: deps.engine.password },
         peers,
         blockedPeers,
         rosterLookup: deps.fleetPeers.rosterLookup,
+        resolveControl,
       });
     } else {
       projection = await buildMergedProjection({
@@ -554,6 +584,102 @@ export function registerFleetRoutes(server: AmicodeServiceServer, deps: FleetRou
       }
     }
     return { body: JSON.stringify(projection) };
+  });
+
+  // #1544 (slice 4): the Fleet Manager grant-management panel's read surface —
+  // the lifecycle grants, SANITIZED (sanitizeGrantForDisplay NEVER includes the
+  // token; identity keys are truncated). Under the /amicode/fleet/* prefix so it
+  // inherits the never-proxied local-honesty exclusion (grants are this
+  // machine's own state). The pending-requests view is populated by #1545.
+  server.add("GET", "/amicode/fleet/grants", () => {
+    return {
+      body: JSON.stringify({
+        ok: true,
+        grants: readAllLifecycleGrants().map(sanitizeGrantForDisplay),
+        pending_requests: readPendingRequests().map((r) => ({
+          requesterMachineId: r.requesterMachineId,
+          targetMachineId: r.targetMachineId,
+          status: r.status,
+          requestedAt: r.requestedAt,
+        })),
+      }),
+    };
+  });
+
+  // #1545 (slice 5): the shared-peer control request→approve handshake routes.
+  // A shared peer POSTs a control request; the lifecycle-admin authority holder
+  // approves or denies. These live under /amicode/fleet/* (never-proxied).
+  server.add("POST", "/amicode/fleet/control-request", ({ body }) => {
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      return { status: 400, body: JSON.stringify({ ok: false, reason: "invalid-json" }) };
+    }
+    const requesterMachineId = typeof parsed.requesterMachineId === "string" ? parsed.requesterMachineId : "";
+    const requesterIdentityKey = typeof parsed.requesterIdentityKey === "string" ? parsed.requesterIdentityKey : "";
+    const targetMachineId = typeof parsed.targetMachineId === "string" ? parsed.targetMachineId : "";
+    const targetIdentityKey = typeof parsed.targetIdentityKey === "string" ? parsed.targetIdentityKey : "";
+    if (!requesterMachineId || !targetMachineId) {
+      return { status: 400, body: JSON.stringify({ ok: false, reason: "missing-fields" }) };
+    }
+    const result = submitControlRequest({
+      requesterMachineId,
+      requesterIdentityKey,
+      targetMachineId,
+      targetIdentityKey,
+    });
+    return { body: JSON.stringify(result) };
+  });
+
+  server.add("POST", "/amicode/fleet/control-approve", ({ body }) => {
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      return { status: 400, body: JSON.stringify({ ok: false, reason: "invalid-json" }) };
+    }
+    const requesterMachineId = typeof parsed.requesterMachineId === "string" ? parsed.requesterMachineId : "";
+    const targetMachineId = typeof parsed.targetMachineId === "string" ? parsed.targetMachineId : "";
+    if (!requesterMachineId || !targetMachineId) {
+      return { status: 400, body: JSON.stringify({ ok: false, reason: "missing-fields" }) };
+    }
+    const result = approveControlRequest(requesterMachineId, targetMachineId);
+    if (!result.ok) {
+      return { status: 404, body: JSON.stringify(result) };
+    }
+    // Return grant token + metadata (the requester needs the token to present)
+    return {
+      body: JSON.stringify({
+        ok: true,
+        status: result.status,
+        grant: {
+          scope: result.grant.scope,
+          state: result.grant.state,
+          token: result.grant.token,
+          generation: result.grant.generation,
+        },
+      }),
+    };
+  });
+
+  server.add("POST", "/amicode/fleet/control-deny", ({ body }) => {
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      return { status: 400, body: JSON.stringify({ ok: false, reason: "invalid-json" }) };
+    }
+    const requesterMachineId = typeof parsed.requesterMachineId === "string" ? parsed.requesterMachineId : "";
+    const targetMachineId = typeof parsed.targetMachineId === "string" ? parsed.targetMachineId : "";
+    if (!requesterMachineId || !targetMachineId) {
+      return { status: 400, body: JSON.stringify({ ok: false, reason: "missing-fields" }) };
+    }
+    const result = denyControlRequest(requesterMachineId, targetMachineId);
+    if (!result.ok) {
+      return { status: 404, body: JSON.stringify(result) };
+    }
+    return { body: JSON.stringify({ ok: true }) };
   });
 
   return server;
@@ -1105,6 +1231,65 @@ export function createAmicodeService(
               return r.ok ? { getUrl: () => r.credential.baseUrl, token: r.credential.token } : { getUrl: () => undefined };
             },
             ...(opts.fleet.dataPlaneTimeoutMs !== undefined ? { timeoutMs: opts.fleet.dataPlaneTimeoutMs } : {}),
+          }),
+        );
+        // #1542 (Fleet Studio B2b, WRITE seam): BESIDE the read plane, attach the
+        // observation-only WRITE router. A NON-GET request to a peer-owned session
+        // is AUTHORIZED by the pure write gate and, when allowed, routed to the
+        // owner with the credential the owner accepts (the SAME peer reader token
+        // the read plane sources). The `grantReader` resolves the CONTROLLING
+        // machine's OWN active `control` grant by `targetMachineId === owner`
+        // (findControlGrantByTarget, #1541 — the D2 fix): the store keys grants by
+        // requesterMachineId, so in the self-owned case the naïve owner-keyed
+        // lookup would miss and every write would wrongly deny. Reads use the SAME
+        // late-bound `peer` closure for reachability + the transport credential.
+        server.attachObservationWritePlane(
+          createObservationWritePlane({
+            ownerMap,
+            localMachineId: fleetPeers.localMachineId,
+            peer: (machineId) => {
+              if (!fleetPeers.getServingPeers().some((p) => p.machineId === machineId)) return undefined;
+              const r = fleetPeers.readPeerToken(machineId);
+              return r.ok ? { getUrl: () => r.credential.baseUrl, token: r.credential.token } : { getUrl: () => undefined };
+            },
+            // The D2-corrected grant read: the controlling machine's OWN active
+            // `control` grant, resolved by target === owner. The transport
+            // credential presented to the owner remains the peer reader token
+            // (above) — the owner accepts that for /session CRUD today; a
+            // distinct owner-enforced control token is a future tightening.
+            grantReader: (owner) => {
+              const g = findControlGrantByTarget(owner);
+              return g ? { scope: g.scope, state: g.state } : undefined;
+            },
+            ...(opts.fleet.dataPlaneTimeoutMs !== undefined ? { timeoutMs: opts.fleet.dataPlaneTimeoutMs } : {}),
+          }),
+        );
+        // #1543 (Fleet Studio B2b, SSE fan-in seam): BESIDE the read + write
+        // planes, attach a NEW, SEPARATELY-ARMED observation `/event` fan-in
+        // driver (ADR 0034 D6 / ADR 0033 Amendment 1). It REUSES SseFanInDriver
+        // as a library — it is NOT the premium fleet-plane fan-in wire, NOT
+        // behind AMICO_FLEET_MULTIPLEX, and NOT behind the multiplexer. Armed on
+        // OBSERVATION READINESS: the driver DECLINES at zero non-local owners, so
+        // holding observe on ≥1 reachable session-owning peer (a non-local owner
+        // in the same ownerMap the read/write planes use) is exactly its takeover
+        // gate; fleet-of-one stays byte-identical BY the driver. NO focusSnapshot
+        // is wired here — fleet-of-one byte-identity holds only absent a focus
+        // provider (D6). Per-peer arms auth AS THEMSELVES with their OWN reader
+        // token (decision A); the local arm rides the app's incoming credential.
+        server.attachObservationEventPlane(
+          new SseFanInDriver({
+            ownerMap,
+            localMachineId: fleetPeers.localMachineId,
+            localEventUrl: opts.engine?.getUrl ?? ((): string | undefined => undefined),
+            peerBaseUrl: (machineId) => {
+              if (!fleetPeers.getServingPeers().some((p) => p.machineId === machineId)) return undefined;
+              const r = fleetPeers.readPeerToken(machineId);
+              return r.ok ? r.credential.baseUrl : undefined;
+            },
+            peerToken: (machineId) => {
+              const r = fleetPeers.readPeerToken(machineId);
+              return r.ok ? { ok: true, credential: r.credential } : { ok: false, reason: "absent" };
+            },
           }),
         );
       }

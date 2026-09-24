@@ -33,7 +33,171 @@ export interface SessionOwnerTag {
 
 /** A dropdown session row — the SDK session shape plus the optional owner
  *  overlay a peer entry carries. */
-export type DropdownSession = Session & { amicode_owner?: SessionOwnerTag }
+export type DropdownSession = Session & {
+  amicode_owner?: SessionOwnerTag
+  /** #1544 (slice 4): the state channel — the app-visible control shape the
+   *  fleet projection stamps beside `amicode_owner` (see SessionControlProjection). */
+  amicode_control?: SessionControlProjection
+}
+
+// ── #1544 (slice 4): the CONTROL STATE CHANNEL (mirror of the extension's
+// remote_session_state.SessionControlProjection, carried on GET
+// /amicode/fleet/sessions as the `amicode_control` sibling of `amicode_owner`).
+//
+// This module is the SINGLE consumer of that channel on the session surface:
+// the fail-closed chip, the enable/request affordance, the persistent driving
+// banner, and the owner-routed remote-delete gate all derive from it. The chip
+// reason is the SoT reason (the extension's write gate collapses
+// revocation-pending→grant-revoked; this channel keeps them distinct — ADR 0034
+// D4/D5), so the UI never reads the raw gate reason.
+
+/** EXACTLY the five reasons the SoT emits — mirrors the extension's
+ *  CONTROL_CHIP_REASONS (kept in sync as a literal, the same seam-crossing
+ *  precedent SessionOwnerTag sets). */
+export const CONTROL_CHIP_REASONS = [
+  "no-control-grant",
+  "grant-revoked",
+  "revocation-pending",
+  "insufficient-scope",
+  "transport-down",
+] as const
+
+export type ControlChipReason = (typeof CONTROL_CHIP_REASONS)[number]
+
+/** Which control affordance should appear. */
+export type ControlEligibility = "enable-control" | "request-control" | "none"
+
+/** The app-visible control shape (mirror of the extension's projection). */
+export interface SessionControlProjection {
+  controlState: "local" | "interactive" | "read-only" | "suspended"
+  reason: ControlChipReason | null
+  eligibility: ControlEligibility
+}
+
+const CONTROL_STATES = new Set(["local", "interactive", "read-only", "suspended"])
+const CONTROL_REASONS = new Set<string>(CONTROL_CHIP_REASONS)
+
+/** The default (control-held, no-affordance) projection — a local/unowned or
+ *  malformed session degrades to this, never to a live erroring affordance. */
+const CONTROL_LOCAL_DEFAULT: SessionControlProjection = { controlState: "local", reason: null, eligibility: "none" }
+
+/** Human, DISTINCT chip labels — one per SoT reason. revocation-pending and
+ *  grant-revoked are deliberately different (the write gate collapses them; the
+ *  chip must not). */
+const CONTROL_CHIP_LABELS: Record<ControlChipReason, string> = {
+  "no-control-grant": "Control not enabled",
+  "grant-revoked": "Control revoked",
+  "revocation-pending": "Revoking…",
+  "insufficient-scope": "Observe only",
+  "transport-down": "Peer unreachable",
+}
+
+/** Tolerant read of the control channel off a session. Absent / malformed →
+ *  the local no-affordance default (never throws). */
+export function readSessionControl(
+  session: { amicode_control?: unknown } | undefined,
+): SessionControlProjection {
+  const raw = session?.amicode_control
+  if (!raw || typeof raw !== "object") return CONTROL_LOCAL_DEFAULT
+  const o = raw as Record<string, unknown>
+  if (typeof o.controlState !== "string" || !CONTROL_STATES.has(o.controlState)) return CONTROL_LOCAL_DEFAULT
+  const reason = typeof o.reason === "string" && CONTROL_REASONS.has(o.reason) ? (o.reason as ControlChipReason) : null
+  const eligibility =
+    o.eligibility === "enable-control" || o.eligibility === "request-control" ? o.eligibility : "none"
+  return { controlState: o.controlState as SessionControlProjection["controlState"], reason, eligibility }
+}
+
+/** Control is HELD when the session is local or interactively controlled. */
+export function isControlHeld(control: SessionControlProjection): boolean {
+  return control.controlState === "local" || control.controlState === "interactive"
+}
+
+/** Write affordances (composer→peer, archive, delete) are enabled ONLY under
+ *  held control — otherwise disabled with a reason chip (never a live 500). */
+export function writeAffordanceEnabled(control: SessionControlProjection): boolean {
+  return isControlHeld(control)
+}
+
+/** The fail-closed chip: disabled-with-reason when control is not held. Null
+ *  when control is held (no chip). The label is derived from the SoT reason. */
+export function failClosedChip(control: SessionControlProjection): { reason: ControlChipReason; label: string } | null {
+  if (isControlHeld(control) || control.reason === null) return null
+  return { reason: control.reason, label: CONTROL_CHIP_LABELS[control.reason] }
+}
+
+/** The enable/request affordance derived from eligibility. `request-control` is
+ *  present-but-INERT here — its backend (the request→approve handshake) is
+ *  #1545; `enable-control` is live (the self-owned one-act enable). */
+export function controlAffordance(control: SessionControlProjection): {
+  kind: ControlEligibility
+  label: string
+  inert: boolean
+} {
+  if (control.eligibility === "enable-control") return { kind: "enable-control", label: "Enable control", inert: false }
+  if (control.eligibility === "request-control") return { kind: "request-control", label: "Request control", inert: true }
+  return { kind: "none", label: "", inert: true }
+}
+
+/** The persistent driving banner's target: the peer machineId being driven,
+ *  or null when not interactively driving a peer. Read from the owner overlay
+ *  (the state channel carries no machineId — the owner tag does). */
+export function drivingBanner(
+  session: { amicode_owner?: SessionOwnerTag; amicode_control?: unknown } | undefined,
+): { machineId: string } | null {
+  const control = readSessionControl(session)
+  if (control.controlState !== "interactive") return null
+  const machineId = session?.amicode_owner?.owner_machine_id
+  if (!machineId) return null
+  return { machineId }
+}
+
+/** The owner-routed remote-delete action, GATED on held control. When allowed,
+ *  the request carries the owner machineId so the caller (and a reviewer) can
+ *  see it is owner-routed — the #1542 write plane resolves the non-GET to the
+ *  peer-owned session by pathname; this descriptor names the owner it targets.
+ *  When control is not held, it is disallowed and carries the fail-closed reason
+ *  (never a live erroring button). */
+export function remoteDeleteAction(
+  session: { id: string; directory?: string; amicode_owner?: SessionOwnerTag; amicode_control?: unknown } | undefined,
+): { allowed: boolean; request?: { sessionID: string; directory: string; ownerMachineId: string }; reason?: ControlChipReason } {
+  const control = readSessionControl(session)
+  if (!writeAffordanceEnabled(control) || !session) {
+    return { allowed: false, ...(control.reason ? { reason: control.reason } : {}) }
+  }
+  const ownerMachineId = session.amicode_owner?.owner_machine_id ?? ""
+  return {
+    allowed: true,
+    request: { sessionID: session.id, directory: session.directory ?? "", ownerMachineId },
+  }
+}
+
+/** Find a session's control off a raw GET /amicode/fleet/sessions response by
+ *  id — the session surface's read for the CURRENT session's banner/affordance.
+ *  Unknown id / garbage → the local default (never throws). */
+export function findSessionControlInProjection(raw: unknown, sessionId: string): SessionControlProjection {
+  return readSessionControl(findSessionEntryInProjection(raw, sessionId))
+}
+
+/** Find a raw projection entry by id (owner + control overlays intact), or
+ *  undefined. Tolerant. */
+function findSessionEntryInProjection(
+  raw: unknown,
+  sessionId: string,
+): { amicode_owner?: SessionOwnerTag; amicode_control?: unknown } | undefined {
+  if (!raw || typeof raw !== "object") return undefined
+  const sessions = (raw as { sessions?: unknown }).sessions
+  if (!Array.isArray(sessions)) return undefined
+  const hit = sessions.find((s) => s && typeof s === "object" && (s as { id?: unknown }).id === sessionId)
+  return hit as { amicode_owner?: SessionOwnerTag; amicode_control?: unknown } | undefined
+}
+
+/** The driving banner for the CURRENT session id, read off the fleet projection.
+ *  Non-null only when that session is interactively driving a remote peer — the
+ *  persistent "driving <peer>" banner's data source. Unknown id / not-driving /
+ *  garbage → null (no banner). */
+export function drivingBannerFromProjection(raw: unknown, sessionId: string): { machineId: string } | null {
+  return drivingBanner(findSessionEntryInProjection(raw, sessionId))
+}
 
 /** True when a session is a REMOTE peer session (has an owner overlay whose
  *  `is_local` is explicitly false). Local / unowned sessions are false —

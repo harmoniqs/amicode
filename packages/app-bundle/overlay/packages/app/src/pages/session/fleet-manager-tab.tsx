@@ -27,11 +27,16 @@ import {
   shapeVersionRows,
   attachControlFor,
   performAttachControlWithEffectiveStream,
+  shapeGrantRows,
+  shapePendingRequests,
+  GRANTS_ROUTE,
+  PENDING_REQUESTS_BACKEND_ISSUE,
   type RosterRowLike,
   type DoctorSurfaceLike,
+  type SanitizedGrantLike,
 } from "@/pages/session/fleet-manager"
 
-type FleetManagerSection = "devices" | "machine" | "hub" | "versions"
+type FleetManagerSection = "devices" | "machine" | "hub" | "versions" | "grants"
 
 /** Tolerant roster-response reader → the lawful rows array, else []. Mirrors the
  *  host's own tolerant load: a malformed / error response never throws here. */
@@ -132,6 +137,29 @@ export function FleetManagerContent() {
       .catch(() => {})
   }
 
+  // ── #1544 (slice 4): the lifecycle grant-management panel. Reads the
+  // SANITIZED grants (sanitizeGrantForDisplay — NEVER the token) off
+  // GET /amicode/fleet/grants, and offers per-state enable/disable/revoke
+  // affordances. The pending-requests view is stubbed until #1545 wires the
+  // request→approve backend. Control affordances live HERE + on the session
+  // surface — NEVER on the read-only sidebar (ADR 0034 D7).
+  const [grantsRaw] = createResource(
+    () => server.current,
+    () => amicodeGet(server.current, GRANTS_ROUTE).catch(() => undefined),
+  )
+  const grantRows = createMemo(() => {
+    const raw = grantsRaw()
+    const grants = raw && typeof raw === "object" ? (raw as { grants?: unknown }).grants : undefined
+    return shapeGrantRows(Array.isArray(grants) ? (grants as SanitizedGrantLike[]) : [])
+  })
+  const pendingRequests = createMemo(() => shapePendingRequests(grantsRaw()))
+  const runGrantAction = (targetMachineId: string, affordance: string) => {
+    // The grant-lifecycle mutations (disable/revoke → revocation, re-admit) are
+    // dispatched to the extension's lifecycle commands (#1541's issuance/revoke
+    // seam). Present-and-dispatching; the command handler is the backend seam.
+    postAmicode(`amicode.fleet.grant.${affordance}:${targetMachineId}`)
+  }
+
   // ── Devices: the local row's inline capabilities edit → POST /amicode/roster ─
   const toggleCapability = (tag: string) => {
     const row = localRow()
@@ -192,6 +220,7 @@ export function FleetManagerContent() {
         <SectionTab id="devices" label="Devices" />
         <SectionTab id="machine" label="This machine" />
         <SectionTab id="hub" label="Hub" available={isServer()} />
+        <SectionTab id="grants" label="Grants" />
         <SectionTab id="versions" label="Versions" />
       </div>
 
@@ -359,6 +388,80 @@ export function FleetManagerContent() {
             >
               Restart hub
             </button>
+          </div>
+        </Show>
+
+        {/* ── Grants (#1544 slice 4): lifecycle grant management + pending ── */}
+        <Show when={section() === "grants"}>
+          <div class="flex flex-col gap-3">
+            <div class="flex flex-col gap-2">
+              <div class={eyebrow}>Control grants</div>
+              <Show
+                when={grantRows().length > 0}
+                fallback={<div class="text-12-regular text-text-weak">No control grants issued yet.</div>}
+              >
+                <div class="flex flex-col gap-2">
+                  <For each={grantRows()}>
+                    {(g) => (
+                      <div
+                        class="flex flex-col gap-1.5 rounded-md border border-border-weak-base p-2"
+                        data-grant-target={g.targetMachineId}
+                        data-grant-state={g.state}
+                      >
+                        <div class="flex items-center gap-2 min-w-0">
+                          <Icon name="link" size="small" />
+                          <span class="text-12-medium text-text-base truncate">{g.targetMachineId}</span>
+                          <span class={eyebrow}>{g.scope}</span>
+                          <span class="ml-auto text-[10px] uppercase tracking-wide text-text-weak" data-state={g.state}>
+                            {g.state}
+                          </span>
+                        </div>
+                        <div class="flex flex-wrap items-center gap-1">
+                          <For each={g.affordances}>
+                            {(affordance) => (
+                              <button
+                                type="button"
+                                class="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] border border-border-weak-base text-text-weak cursor-pointer hover:text-text-base transition-colors"
+                                data-grant-action={affordance}
+                                onClick={() => runGrantAction(g.targetMachineId, affordance)}
+                              >
+                                {affordance}
+                              </button>
+                            )}
+                          </For>
+                        </div>
+                      </div>
+                    )}
+                  </For>
+                </div>
+              </Show>
+            </div>
+
+            {/* Pending requests — the shared-peer request→approve view. Stubbed
+                until #1545 wires the backend (honest empty, never fabricated). */}
+            <div class="flex flex-col gap-2">
+              <div class={eyebrow}>Pending requests</div>
+              <Show
+                when={pendingRequests().length > 0}
+                fallback={
+                  <div class="text-11-regular text-text-weak" data-pending-backend-issue={PENDING_REQUESTS_BACKEND_ISSUE}>
+                    No pending control requests. The request→approve handshake for shared peers arrives in a later
+                    release (#{PENDING_REQUESTS_BACKEND_ISSUE}).
+                  </div>
+                }
+              >
+                <div class="flex flex-col gap-1">
+                  <For each={pendingRequests()}>
+                    {(r) => (
+                      <div class="flex items-center gap-2 rounded-md border border-border-weak-base p-2" data-pending-from={r.requesterMachineId}>
+                        <span class="text-12-medium text-text-base truncate">{r.requesterMachineId}</span>
+                        <span class={eyebrow}>{r.scope}</span>
+                      </div>
+                    )}
+                  </For>
+                </div>
+              </Show>
+            </div>
           </div>
         </Show>
 

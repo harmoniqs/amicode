@@ -5,7 +5,18 @@ import {
   deriveSessionBadge,
   isRemotePeerSession,
   resolveDropdownOpenAction,
+  readSessionControl,
+  isControlHeld,
+  writeAffordanceEnabled,
+  failClosedChip,
+  controlAffordance,
+  drivingBanner,
+  drivingBannerFromProjection,
+  remoteDeleteAction,
+  findSessionControlInProjection,
+  CONTROL_CHIP_REASONS,
   type DropdownSession,
+  type SessionControlProjection,
 } from "./session-fleet-peers"
 
 // #1525 B1 (read-only): merge PEER sessions from the fleet projection into the
@@ -177,5 +188,158 @@ describe("#1537 resolveDropdownOpenAction — owner-routed open of a peer row", 
         expect(["navigate", "select-tab"]).toContain(resolveDropdownOpenAction(row, hasTab, encodePath).type)
       }
     }
+  })
+})
+
+// ── #1544 (slice 4): the app-side control surface ─────────────────────────────
+// The state channel `amicode_control` ({ controlState, reason, eligibility })
+// rides the fleet projection beside `amicode_owner` (SoT: the extension's
+// remote_session_state). These pure helpers are the data layer the session
+// surface consumes: the fail-closed chip, the enable/request affordance, the
+// persistent driving banner, and the owner-routed remote-delete gate. Every
+// reader is tolerant (defaults to `local`/no-affordance on garbage).
+const ctrl = (over: Partial<SessionControlProjection> = {}): SessionControlProjection => ({
+  controlState: "read-only",
+  reason: "no-control-grant",
+  eligibility: "enable-control",
+  ...over,
+})
+const remoteWith = (control: SessionControlProjection, machineId = "jjs-mac-studio"): DropdownSession =>
+  ({
+    id: "ses_studio",
+    directory: "/studio-proj",
+    time: { created: 1 },
+    amicode_owner: { owner_machine_id: machineId, owner_name: "Studio", is_local: false },
+    amicode_control: control,
+  }) as unknown as DropdownSession
+
+describe("#1544 readSessionControl — tolerant read of amicode_control", () => {
+  test("absent / malformed → the local no-affordance default (never throws)", () => {
+    expect(readSessionControl(undefined)).toEqual({ controlState: "local", reason: null, eligibility: "none" })
+    expect(readSessionControl({} as DropdownSession)).toEqual({ controlState: "local", reason: null, eligibility: "none" })
+    expect(readSessionControl({ amicode_control: { nope: 1 } } as unknown as DropdownSession).controlState).toBe("local")
+  })
+  test("a well-formed projection round-trips", () => {
+    expect(readSessionControl(remoteWith(ctrl({ controlState: "interactive", reason: null, eligibility: "none" })))).toEqual({
+      controlState: "interactive",
+      reason: null,
+      eligibility: "none",
+    })
+  })
+})
+
+describe("#1544 write affordances gated on control held", () => {
+  test("local + interactive → control held → writes enabled", () => {
+    expect(isControlHeld(ctrl({ controlState: "local", reason: null, eligibility: "none" }))).toBe(true)
+    expect(isControlHeld(ctrl({ controlState: "interactive", reason: null, eligibility: "none" }))).toBe(true)
+    expect(writeAffordanceEnabled(ctrl({ controlState: "interactive", reason: null, eligibility: "none" }))).toBe(true)
+  })
+  test("read-only + suspended → control NOT held → writes disabled", () => {
+    expect(isControlHeld(ctrl({ controlState: "read-only" }))).toBe(false)
+    expect(isControlHeld(ctrl({ controlState: "suspended", reason: "transport-down" }))).toBe(false)
+    expect(writeAffordanceEnabled(ctrl({ controlState: "read-only" }))).toBe(false)
+  })
+})
+
+describe("#1544 failClosedChip — disabled-with-reason, derived from the SoT reason (never the collapsed gate reason)", () => {
+  test("null (no chip) when control is held (local / interactive)", () => {
+    expect(failClosedChip(ctrl({ controlState: "local", reason: null, eligibility: "none" }))).toBeNull()
+    expect(failClosedChip(ctrl({ controlState: "interactive", reason: null, eligibility: "none" }))).toBeNull()
+  })
+  test("EVERY one of the five SoT reasons yields a distinct, human chip label", () => {
+    const labels = new Set<string>()
+    for (const reason of CONTROL_CHIP_REASONS) {
+      const controlState = reason === "transport-down" || reason === "revocation-pending" ? "suspended" : "read-only"
+      const chip = failClosedChip(ctrl({ controlState, reason }))
+      expect(chip, `reason ${reason} must produce a chip`).not.toBeNull()
+      expect(chip!.reason).toBe(reason)
+      expect(typeof chip!.label).toBe("string")
+      expect(chip!.label.length).toBeGreaterThan(0)
+      labels.add(chip!.label)
+    }
+    // revocation-pending and grant-revoked must NOT share a label (the SoT keeps
+    // them distinct where the write gate collapses them).
+    expect(failClosedChip(ctrl({ controlState: "suspended", reason: "revocation-pending" }))!.label).not.toBe(
+      failClosedChip(ctrl({ controlState: "read-only", reason: "grant-revoked" }))!.label,
+    )
+    expect(labels.size).toBe(CONTROL_CHIP_REASONS.length)
+  })
+})
+
+describe("#1544 controlAffordance — enable (self) / request (shared) / none", () => {
+  test("eligibility enable-control → an Enable affordance, live (not inert)", () => {
+    const a = controlAffordance(ctrl({ eligibility: "enable-control" }))
+    expect(a.kind).toBe("enable-control")
+    expect(a.inert).toBe(false)
+    expect(a.label.length).toBeGreaterThan(0)
+  })
+  test("eligibility request-control → a Request affordance, INERT (backend is #1545)", () => {
+    const a = controlAffordance(ctrl({ eligibility: "request-control" }))
+    expect(a.kind).toBe("request-control")
+    expect(a.inert).toBe(true)
+  })
+  test("eligibility none → no affordance", () => {
+    expect(controlAffordance(ctrl({ controlState: "interactive", reason: null, eligibility: "none" })).kind).toBe("none")
+  })
+})
+
+describe("#1544 drivingBanner — persistent, pinned to the peer being driven", () => {
+  test("interactive (control held over a remote peer) → banner carries the peer machineId", () => {
+    const session = remoteWith(ctrl({ controlState: "interactive", reason: null, eligibility: "none" }), "jjs-mac-studio")
+    expect(drivingBanner(session)).toEqual({ machineId: "jjs-mac-studio" })
+  })
+  test("not interactive (read-only / local) → no banner", () => {
+    expect(drivingBanner(remoteWith(ctrl({ controlState: "read-only" })))).toBeNull()
+    const local = { id: "l", directory: "/d", time: { created: 1 } } as DropdownSession
+    expect(drivingBanner(local)).toBeNull()
+  })
+})
+
+describe("#1544 remoteDeleteAction — owner-routed delete, gated on control (arm→confirm reused, not this gate)", () => {
+  test("control held → allowed + an OWNER-ROUTED request carrying the owner machineId", () => {
+    const session = remoteWith(ctrl({ controlState: "interactive", reason: null, eligibility: "none" }), "jjs-mac-studio")
+    const action = remoteDeleteAction(session)
+    expect(action.allowed).toBe(true)
+    expect(action.request).toEqual({ sessionID: "ses_studio", directory: "/studio-proj", ownerMachineId: "jjs-mac-studio" })
+  })
+  test("control NOT held → disallowed, no request, carries the fail-closed reason (never a live erroring button)", () => {
+    const session = remoteWith(ctrl({ controlState: "read-only", reason: "no-control-grant" }))
+    const action = remoteDeleteAction(session)
+    expect(action.allowed).toBe(false)
+    expect(action.request).toBeUndefined()
+    expect(action.reason).toBe("no-control-grant")
+  })
+})
+
+describe("#1544 findSessionControlInProjection — the current session's control off the fleet projection", () => {
+  const raw = {
+    sessions: [
+      { id: "ses_local", time: { created: 1 }, amicode_owner: { owner_machine_id: "me", owner_name: "Me", is_local: true }, amicode_control: { controlState: "local", reason: null, eligibility: "none" } },
+      { id: "ses_studio", time: { created: 2 }, amicode_owner: { owner_machine_id: "studio", owner_name: "Studio", is_local: false }, amicode_control: { controlState: "read-only", reason: "no-control-grant", eligibility: "enable-control" } },
+    ],
+  }
+  test("finds a remote entry's control by id", () => {
+    expect(findSessionControlInProjection(raw, "ses_studio")).toEqual({
+      controlState: "read-only",
+      reason: "no-control-grant",
+      eligibility: "enable-control",
+    })
+  })
+  test("unknown id / garbage → the local default (never throws)", () => {
+    expect(findSessionControlInProjection(raw, "nope")).toEqual({ controlState: "local", reason: null, eligibility: "none" })
+    expect(findSessionControlInProjection(undefined, "x")).toEqual({ controlState: "local", reason: null, eligibility: "none" })
+  })
+
+  test("drivingBannerFromProjection lights the banner for a driven (interactive) current session", () => {
+    const driving = {
+      sessions: [
+        { id: "ses_studio", amicode_owner: { owner_machine_id: "studio", owner_name: "Studio", is_local: false }, amicode_control: { controlState: "interactive", reason: null, eligibility: "none" } },
+      ],
+    }
+    expect(drivingBannerFromProjection(driving, "ses_studio")).toEqual({ machineId: "studio" })
+    // read-only current session → no banner; unknown id → no banner
+    expect(drivingBannerFromProjection(raw, "ses_studio")).toBeNull()
+    expect(drivingBannerFromProjection(driving, "nope")).toBeNull()
+    expect(drivingBannerFromProjection(undefined, "x")).toBeNull()
   })
 })

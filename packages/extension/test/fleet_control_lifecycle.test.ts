@@ -675,3 +675,70 @@ describe("AC2+AC3 — the lifecycle credential matrix: only lifecycle-admin and 
     });
   }
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// #1541 (ADR 0034 D2) — the OWNER/TARGET-resolvable control-grant read.
+//
+// The grant store keys on `requesterMachineId`, but the write plane (#1542)
+// resolves the controlling machine's OWN active `control` grant by
+// `targetMachineId === <owner>` — a LifecycleGrant already carries
+// `targetMachineId`. findControlGrantByTarget delivers that read (the grant +
+// its token) so #1542's grantReader composes correctly.
+// ═══════════════════════════════════════════════════════════════════════════
+import { findControlGrantByTarget } from "../src/amicode_service/fleet_control_lifecycle";
+
+describe("#1541 — findControlGrantByTarget resolves the controlling machine's own active control grant by targetMachineId", () => {
+  let deps: LifecycleGrantDeps;
+  const SELF = "my-macbook";
+  const OWNER = "the-studio"; // the driven session's owner (the target of control)
+  beforeEach(() => {
+    deps = makeDeps();
+  });
+
+  function issueControl(over?: Partial<LifecycleGrantRequest>) {
+    return issueLifecycleGrant(
+      {
+        requesterMachineId: SELF,
+        requesterIdentityKey: "SHA256:self",
+        targetMachineId: OWNER,
+        targetIdentityKey: "SHA256:owner",
+        scope: "control",
+        ...over,
+      },
+      deps,
+    );
+  }
+
+  it("returns the active control grant (with its token) resolved by targetMachineId", () => {
+    issueControl();
+    const g = findControlGrantByTarget(OWNER, deps);
+    expect(g).toBeDefined();
+    expect(g!.scope).toBe("control");
+    expect(g!.state).toBe("active");
+    expect(g!.targetMachineId).toBe(OWNER);
+    expect(g!.token).toBe("GRANT-TOKEN-001");
+  });
+
+  it("returns undefined for a target with no control grant", () => {
+    issueControl();
+    expect(findControlGrantByTarget("some-other-owner", deps)).toBeUndefined();
+  });
+
+  it("does NOT return an OBSERVE-scoped grant for that target (control-only)", () => {
+    issueControl({ scope: "observe" });
+    expect(findControlGrantByTarget(OWNER, deps)).toBeUndefined();
+  });
+
+  it("does NOT return a revoked control grant (only active)", () => {
+    issueControl();
+    revokeLifecycleGrant(SELF, deps);
+    acknowledgeRevocation(SELF, deps);
+    expect(findControlGrantByTarget(OWNER, deps)).toBeUndefined();
+  });
+
+  it("does NOT return a revocation-pending control grant (only active)", () => {
+    issueControl();
+    revokeLifecycleGrant(SELF, deps);
+    expect(findControlGrantByTarget(OWNER, deps)).toBeUndefined();
+  });
+});
