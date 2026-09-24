@@ -8,6 +8,8 @@
 //   - renderFleetSection(): the view-model → DOM (rows, posture badge, the
 //     single Manage affordance), and the read-only click contract.
 import { describe, it, expect, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import {
   buildFleetSectionModel,
   renderFleetSection,
@@ -1076,5 +1078,39 @@ describe("#1484 AC1 — scoped server actions per peer relationship", () => {
     }));
     const device = model.devices.find((d) => d.machineId === "this-mac");
     expect(device!.availableActions).toEqual([]);
+  });
+});
+
+// ── #1544 (slice 4) AC5 — the sidebar fleet section stays READ-ONLY ───────────
+// Control affordances (Enable/Request control, the driving banner, owner-routed
+// remote-delete, the fail-closed chip) live ONLY on the session surface + the
+// Fleet Manager tab — NEVER the read-only sidebar (ADR 0034 D7). This is a
+// REGRESSION GUARD pinning that invariant: the sidebar module must carry none of
+// the #1544 control-UI markers, and its emitted message union must stay
+// navigation-only.
+describe("#1544 AC5 — sidebar fleet section carries NO control affordance", () => {
+  const src = readFileSync(resolve(__dirname, "../src/sidebar_fleet_section.ts"), "utf8");
+
+  it("no #1544 control-UI marker leaked into the sidebar", () => {
+    for (const marker of [
+      "data-driving-peer",
+      "amicode-driving-banner",
+      "session-control-chip",
+      "session-remote-delete",
+      "session-enable-control",
+      "enableControl",
+      "amicode.fleet.enableControl",
+    ]) {
+      expect(src, `sidebar must not contain "${marker}" (control lives on the session surface)`).not.toContain(marker);
+    }
+  });
+
+  it("the sidebar's emitted message union stays navigation-only (no control/driving/write message)", () => {
+    // FleetSectionMessage is the closed union of what the sidebar can emit — it
+    // is navigation only (open-fleet-manager / troubleshoot / connect / focus).
+    expect(src).toContain("export type FleetSectionMessage");
+    for (const controlKind of ["enable-control", "drive-peer", "remote-delete", "grant-control-write"]) {
+      expect(src, `sidebar message union must not carry "${controlKind}"`).not.toContain(controlKind);
+    }
   });
 });

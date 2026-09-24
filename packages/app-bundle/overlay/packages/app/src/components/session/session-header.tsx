@@ -42,14 +42,30 @@ import { sessionListDirectories, sortedRootSessions } from "@/pages/layout/helpe
 import { useNavigate } from "@solidjs/router"
 import type { Session } from "@opencode-ai/sdk/v2/client"
 import { amicodeGet } from "@/utils/amicode-fetch"
+import { postAmicode } from "@/utils/amicode-bridge"
 import {
   peerSessionsFromProjection,
   mergePeerSessions,
   deriveSessionBadge,
   isRemotePeerSession,
   resolveDropdownOpenAction,
+  readSessionControl,
+  writeAffordanceEnabled,
+  failClosedChip,
+  controlAffordance,
+  drivingBannerFromProjection,
+  findSessionControlInProjection,
+  remoteDeleteAction,
   type DropdownSession,
 } from "./session-fleet-peers"
+
+// AMICODE #1544 (slice 4): the app→extension bridge command that opens the VS
+// Code NATIVE-MODAL confirm for enabling control of a self-owned peer (ADR 0034
+// D4 — the one net-new confirmation surface). The extension relays it to the
+// modal + the #1541 self-owned control issuance; on success the projected state
+// flips to `interactive` and the driving banner lights. Present-and-dispatching
+// here; the modal + issuance handler is the extension-side seam.
+const ENABLE_CONTROL_COMMAND = "amicode.fleet.enableControl"
 
 // AMICODE: the MCP/LSP/Plugins/Vaults status popover is opencode-operator
 // noise here ("No MCPs configured"). Hidden, not deleted — the trigger slot is
@@ -178,6 +194,32 @@ export function SessionHeader() {
   const sync = useSync()
   const terminal = useTerminal()
   const { params, view } = useSessionLayout()
+
+  // #1544 (slice 4): the control state channel for the CURRENT session, read off
+  // the fleet projection (GET /amicode/fleet/sessions — the SAME carrier the
+  // Sessions dropdown consumes). It drives the persistent "driving <peer>"
+  // banner and the Enable/Request-control affordance on the SESSION SURFACE
+  // (control affordances live here + in Fleet Manager, NEVER the read-only
+  // sidebar — ADR 0034 D7). Tolerant: a 404 / no-fleet resolves to undefined and
+  // every derived value degrades to "no banner / no affordance".
+  const [controlProjection] = createResource(
+    () => server.current,
+    (conn) => amicodeGet(conn, "/amicode/fleet/sessions").catch(() => undefined),
+  )
+  const drivingPeer = createMemo(() =>
+    params.id ? drivingBannerFromProjection(controlProjection.latest, params.id) : null,
+  )
+  const controlAffordanceState = createMemo(() =>
+    controlAffordance(findSessionControlInProjection(controlProjection.latest, params.id ?? "")),
+  )
+  const enableControl = () => {
+    // The one net-new confirmation surface: dispatch the VS Code native-modal
+    // confirm (ADR 0034 D4). The extension relays it to the modal + #1541
+    // self-owned issuance; on success the projected state flips to interactive
+    // and the driving banner lights. Request-control (shared) is inert here —
+    // its request→approve backend is #1545.
+    if (controlAffordanceState().kind === "enable-control") postAmicode(ENABLE_CONTROL_COMMAND)
+  }
 
   const projectDirectory = createMemo(() => decode64(params.dir) ?? "")
   const project = createMemo(() => {
@@ -333,6 +375,81 @@ export function SessionHeader() {
 
   return (
     <>
+      {/* #1544 (slice 4): the persistent "driving <peer>" banner — the
+          ambient-safety mechanism (control is NEVER silent, ADR 0034 D4). Pinned
+          to document.body via a Portal so it survives navigation WITHIN the
+          session (SessionHeader persists across param.id changes); its
+          `data-driving-peer` hook makes the persistence assertable. */}
+      <Show when={drivingPeer()} keyed>
+        {(peer) => (
+          <Portal>
+            <div
+              data-slot="amicode-driving-banner"
+              data-driving-peer={peer.machineId}
+              role="status"
+              aria-live="polite"
+              style={{
+                position: "fixed",
+                top: "0",
+                left: "50%",
+                transform: "translateX(-50%)",
+                "z-index": "10000",
+                display: "flex",
+                "align-items": "center",
+                gap: "8px",
+                padding: "4px 12px",
+                "border-bottom-left-radius": "var(--radius-md)",
+                "border-bottom-right-radius": "var(--radius-md)",
+                background: "var(--v2-background-bg-layer-02)",
+                border: "1px solid var(--v2-border-border-strong)",
+                "border-top": "none",
+                color: "var(--v2-text-text-base)",
+                "font-size": "11px",
+                "font-weight": "600",
+              }}
+            >
+              <IconV2 name="monitor" class="opacity-80" />
+              <span>Driving {peer.machineId}</span>
+            </div>
+          </Portal>
+        )}
+      </Show>
+      {/* #1544: the Enable-control (self-owned) / Request-control (shared)
+          affordance on the session surface. Enable → the native-modal confirm
+          (ADR 0034 D4). Request → present-but-inert (backend is #1545). */}
+      <Show when={controlAffordanceState().kind !== "none"}>
+        <Portal>
+          <button
+            type="button"
+            data-action="session-enable-control"
+            data-control-affordance={controlAffordanceState().kind}
+            disabled={controlAffordanceState().inert}
+            title={
+              controlAffordanceState().kind === "request-control"
+                ? "Requesting control from the peer's owner is coming in a later release (#1545)"
+                : "Enable control of this peer (opens a confirmation)"
+            }
+            onClick={enableControl}
+            style={{
+              position: "fixed",
+              top: "8px",
+              right: "12px",
+              "z-index": "10000",
+              padding: "4px 10px",
+              "border-radius": "var(--radius-md)",
+              border: "1px solid var(--v2-border-border-strong)",
+              background: "var(--v2-background-bg-layer-02)",
+              color: "var(--v2-text-text-base)",
+              "font-size": "11px",
+              "font-weight": "600",
+              cursor: controlAffordanceState().inert ? "default" : "pointer",
+              opacity: controlAffordanceState().inert ? "0.6" : "1",
+            }}
+          >
+            {controlAffordanceState().label}
+          </button>
+        </Portal>
+      </Show>
       <Show when={search() && centerMount()} keyed>
         {(mount) => (
           <Portal mount={mount}>
@@ -882,6 +999,36 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
     }
   }
 
+  // #1544 (slice 4): owner-routed remote DELETE of a peer session. This is the
+  // net-new remote-delete affordance the ADR (D4) calls for — there is no
+  // existing wired remote-delete to reuse (the timeline/dropdown deletes are
+  // LOCAL SDK calls with no owner routing). It reuses the arm→confirm
+  // INTERACTION (SessionDropdownRow, mirroring ArchivedSessionDropdownRow), and
+  // routes by OWNER: the SDK delete is keyed on the session's own id+directory,
+  // and the #1542 observation WRITE plane intercepts the non-GET to the
+  // peer-owned session by pathname and proxies it to the owner. The action is
+  // GATED on held control (remoteDeleteAction) — a fail-closed row shows a
+  // reason chip instead, never a live erroring button.
+  async function remoteDeleteSession(session: DropdownSession) {
+    const action = remoteDeleteAction(session)
+    if (!action.allowed || !action.request) return
+    const ctx = getServerCtx()
+    if (!ctx) return
+    try {
+      // Owner-routed: same SDK delete surface; the write plane routes the
+      // non-GET to action.request.ownerMachineId by pathname.
+      await (ctx.sdk.client.session.delete as Function)({
+        sessionID: action.request.sessionID,
+        directory: action.request.directory,
+      })
+    } catch (cause) {
+      showToast({
+        title: language.t("session.delete.failed.title"),
+        description: String(cause),
+      })
+    }
+  }
+
   async function unarchiveSession(session: Session) {
     const ctx = getServerCtx()
     if (!ctx) return
@@ -1130,6 +1277,7 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
                           isCurrent={session.id === currentSessionID()}
                           onOpen={openSession}
                           onArchive={archiveSession}
+                          onRemoteDelete={remoteDeleteSession}
                         />
                       )}
                     </For>
@@ -1193,6 +1341,7 @@ function SessionDropdownRow(props: {
   isCurrent: boolean
   onOpen: (session: Session) => void
   onArchive: (session: Session) => void
+  onRemoteDelete?: (session: DropdownSession) => void
 }) {
   const language = useLanguage()
   const title = createMemo(() => sessionTitle(props.session.title) || props.session.id)
@@ -1200,6 +1349,35 @@ function SessionDropdownRow(props: {
   // hides local-only actions (archive is B2). Local/unowned rows are unbadged.
   const badge = createMemo(() => deriveSessionBadge(props.session as DropdownSession))
   const isRemote = createMemo(() => isRemotePeerSession(props.session as DropdownSession))
+  // #1544 (slice 4): the control state channel for THIS remote row. When control
+  // is NOT held, write affordances are DISABLED with a visible reason chip
+  // (failClosedChip) — never a live erroring button. When held, the owner-routed
+  // remote-delete affordance appears (arm→confirm, reused interaction).
+  const control = createMemo(() => readSessionControl(props.session as DropdownSession))
+  const chip = createMemo(() => failClosedChip(control()))
+  const canWrite = createMemo(() => writeAffordanceEnabled(control()))
+  // arm→confirm state (mirrors ArchivedSessionDropdownRow's interaction).
+  const [deleteArmed, setDeleteArmed] = createSignal(false)
+  let deleteResetTimer: ReturnType<typeof setTimeout> | undefined
+  function armRemoteDelete(event: MouseEvent) {
+    event.preventDefault()
+    event.stopPropagation()
+    setDeleteArmed(true)
+    clearTimeout(deleteResetTimer)
+    deleteResetTimer = setTimeout(() => setDeleteArmed(false), 3000)
+  }
+  function confirmRemoteDelete(event: MouseEvent) {
+    event.preventDefault()
+    event.stopPropagation()
+    clearTimeout(deleteResetTimer)
+    setDeleteArmed(false)
+    void props.onRemoteDelete?.(props.session as DropdownSession)
+  }
+  function disarmRemoteDelete() {
+    clearTimeout(deleteResetTimer)
+    setDeleteArmed(false)
+  }
+  onCleanup(() => clearTimeout(deleteResetTimer))
   const rowServer = useServer()
   // #1292 hover prewarm: a hovered row is a click away — pull its first
   // message page the instant the pointer lands, so the open renders from
@@ -1273,6 +1451,58 @@ function SessionDropdownRow(props: {
           />
         </TooltipV2>
       </div>
+      </Show>
+      {/* #1544 (slice 4): a REMOTE peer row's control affordances. Control NOT
+          held → the write affordance is DISABLED with a visible reason chip
+          (failClosedChip, derived from the SoT reason) — never a live erroring
+          button. Control HELD → the owner-routed remote-DELETE, reusing the
+          arm→confirm interaction (no second modal). */}
+      <Show when={isRemote()}>
+        <div class="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center gap-1 opacity-0 group-hover/session:opacity-100 focus-within:opacity-100 transition-opacity">
+          <Show when={chip()} keyed>
+            {(c) => (
+              <span
+                data-slot="session-control-chip"
+                data-control-reason={c.reason}
+                class="shrink-0 inline-flex items-center gap-1 rounded-sm px-1 py-0.5 text-[10px] leading-none text-v2-text-text-faint bg-v2-background-bg-layer-02"
+                title={c.label}
+              >
+                <IconV2 name="lock" class="shrink-0 opacity-70" />
+                <span>{c.label}</span>
+              </span>
+            )}
+          </Show>
+          <Show when={canWrite()}>
+            <Show
+              when={deleteArmed()}
+              fallback={
+                <TooltipV2 placement="top" value="Delete on peer">
+                  <IconButtonV2
+                    data-action="session-remote-delete"
+                    variant="ghost-muted"
+                    size="large"
+                    icon={<Icon name="trash" size="small" />}
+                    aria-label="Delete on peer"
+                    onClick={armRemoteDelete}
+                  />
+                </TooltipV2>
+              }
+            >
+              <ButtonV2
+                data-action="session-remote-delete-confirm"
+                variant="danger"
+                size="small"
+                aria-label="Confirm delete on peer"
+                aria-live="polite"
+                onClick={confirmRemoteDelete}
+                onBlur={disarmRemoteDelete}
+                onKeyDown={(e: KeyboardEvent) => e.key === "Escape" && disarmRemoteDelete()}
+              >
+                Delete
+              </ButtonV2>
+            </Show>
+          </Show>
+        </div>
       </Show>
     </div>
   )

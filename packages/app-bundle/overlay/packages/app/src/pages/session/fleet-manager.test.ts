@@ -18,7 +18,13 @@ import {
   performAttachControlWithEffectiveStream,
   ATTACH_ROUTE,
   DETACH_ROUTE,
+  shapeGrantRows,
+  grantAffordances,
+  shapePendingRequests,
+  GRANTS_ROUTE,
+  PENDING_REQUESTS_BACKEND_ISSUE,
   type RosterRowLike,
+  type SanitizedGrantLike,
 } from "./fleet-manager"
 
 const row = (over: Partial<RosterRowLike> = {}): RosterRowLike => ({
@@ -307,5 +313,71 @@ describe("performAttachControl (AC2 — the control drives attach AND detach end
         after: { ok: true, mode: "legacy-single-pointer", identity: { machine_id: "peer-b", sshAlias: "b", transport: "ssh" } },
       },
     ])
+  })
+})
+
+// ── #1544 (slice 4): the Fleet Manager grant-management panel ─────────────────
+// The panel lists the lifecycle grants (from GET /amicode/fleet/grants, the
+// SANITIZED sanitizeGrantForDisplay output — NEVER the token) with per-state
+// enable/disable/revoke affordances, plus a pending-requests view stubbed for
+// #1545. These pure helpers are the panel's decision logic (the tab render is
+// untested-by-design wiring around them).
+const grant = (over: Partial<SanitizedGrantLike> = {}): SanitizedGrantLike => ({
+  requesterMachineId: "my-macbook",
+  targetMachineId: "mac-studio",
+  scope: "control",
+  generation: 1,
+  state: "active",
+  issuedAt: "2026-09-24T00:00:00.000Z",
+  ...over,
+})
+
+describe("#1544 shapeGrantRows — sanitized grants → panel rows (NEVER a token)", () => {
+  test("maps a grant to a row carrying identity + scope + state + affordances", () => {
+    const rows = shapeGrantRows([grant()])
+    expect(rows).toHaveLength(1)
+    expect(rows[0].targetMachineId).toBe("mac-studio")
+    expect(rows[0].scope).toBe("control")
+    expect(rows[0].state).toBe("active")
+    expect(rows[0].affordances.length).toBeGreaterThan(0)
+  })
+
+  test("a token is NEVER surfaced — even if a malformed input smuggled one in (defensive strip)", () => {
+    const dirty = { ...grant(), token: "SECRET-abc123" } as unknown as SanitizedGrantLike
+    const rows = shapeGrantRows([dirty])
+    expect(JSON.stringify(rows)).not.toContain("SECRET")
+    expect(JSON.stringify(rows)).not.toContain("token")
+  })
+
+  test("tolerant: non-array / garbage → [] (never throws)", () => {
+    expect(shapeGrantRows(undefined as unknown as SanitizedGrantLike[])).toEqual([])
+    expect(shapeGrantRows("nope" as unknown as SanitizedGrantLike[])).toEqual([])
+  })
+
+  test("the read surface is GET /amicode/fleet/grants (the never-proxied honesty surface)", () => {
+    expect(GRANTS_ROUTE).toBe("/amicode/fleet/grants")
+  })
+})
+
+describe("#1544 grantAffordances — per-state enable/disable/revoke", () => {
+  test("an active grant can be disabled and revoked", () => {
+    expect(grantAffordances("active")).toEqual(["disable", "revoke"])
+  })
+  test("a revocation-pending grant can be revoked (finalized), not disabled again", () => {
+    expect(grantAffordances("revocation-pending")).toEqual(["revoke"])
+  })
+  test("a revoked grant can be re-admitted", () => {
+    expect(grantAffordances("revoked")).toEqual(["re-admit"])
+  })
+})
+
+describe("#1544 shapePendingRequests — the #1545 stub (honest empty)", () => {
+  test("the pending-requests view is stubbed until #1545 wires the request→approve backend", () => {
+    expect(PENDING_REQUESTS_BACKEND_ISSUE).toBe(1545)
+  })
+  test("reads pending_requests off the grants response; absent/garbage → [] (honest, never fabricated)", () => {
+    expect(shapePendingRequests({ ok: true, grants: [], pending_requests: [] })).toEqual([])
+    expect(shapePendingRequests(undefined)).toEqual([])
+    expect(shapePendingRequests({ pending_requests: "nope" })).toEqual([])
   })
 })

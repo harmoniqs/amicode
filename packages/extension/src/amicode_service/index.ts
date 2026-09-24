@@ -47,9 +47,10 @@ import {
 import { SseFanInDriver } from "./sse_fanin_driver";
 import { createObservationReadPlane } from "./observation_read_plane";
 import { createObservationWritePlane } from "./observation_write_plane";
-import { findControlGrantByTarget } from "./fleet_control_lifecycle";
+import { findControlGrantByTarget, readAllLifecycleGrants, sanitizeGrantForDisplay } from "./fleet_control_lifecycle";
 import { HubCredentialRead, mintRegistry, readHubCredential } from "./hub_credential";
 import { buildMergedProjection, buildFleetProjection, type UpstreamMode, type MergedProjection, type FleetProjection } from "./merged_projection";
+import { buildControlResolver } from "./remote_session_state";
 import { FleetPostureDetector, type FleetPostureTuning } from "./fleet_posture";
 import { handleFleetWrite, type FleetWriteDeps } from "./fleet_writes";
 import { inspectTunnelConfigFile, TUNNEL_GENERATION_HEADER } from "./fleet_tunnel";
@@ -526,12 +527,33 @@ export function registerFleetRoutes(server: AmicodeServiceServer, deps: FleetRou
       // #1481 (AC3): blocked-identity peers (alias-conflict / key-changed) are
       // NAMED source states, never silently dropped from the projection.
       const blockedPeers = deps.fleetPeers.getBlockedPeers?.() ?? [];
+      // #1544 (slice 4): the STATE CHANNEL. Stamp each entry's app-visible
+      // `amicode_control` ({ controlState, reason, eligibility }) projected from
+      // the SoT (remote_session_state) — NOT the raw write-gate reason (which
+      // collapses revocation-pending→grant-revoked). The grant read is the
+      // D2-corrected target-keyed control-grant lookup (the controlling machine
+      // holds a `control` grant whose `targetMachineId` is the owner); any state
+      // is read so revoked/pending stay DISTINCT for the chip. Reachability =
+      // the peer is serving with a usable token+URL. `isSelfOwned` is the base
+      // self-owned fast-path (true) — the shared-peer request handshake that
+      // would flip it to request-control is #1545.
+      const reachableIds = new Set(peers.filter((p) => p.token !== undefined && p.getUrl() !== undefined).map((p) => p.machineId));
+      const resolveControl = buildControlResolver({
+        localMachineId: deps.fleetPeers.localMachineId,
+        grantReader: (ownerId) => {
+          const g = readAllLifecycleGrants().find((x) => x.targetMachineId === ownerId && x.scope === "control");
+          return g ? { scope: g.scope, state: g.state } : undefined;
+        },
+        peerReachable: (ownerId) => reachableIds.has(ownerId),
+        isSelfOwned: () => true,
+      });
       projection = await buildFleetProjection({
         localMachineId: deps.fleetPeers.localMachineId,
         local: { getUrl: deps.engine.getUrl, password: deps.engine.password },
         peers,
         blockedPeers,
         rosterLookup: deps.fleetPeers.rosterLookup,
+        resolveControl,
       });
     } else {
       projection = await buildMergedProjection({
@@ -556,6 +578,21 @@ export function registerFleetRoutes(server: AmicodeServiceServer, deps: FleetRou
       }
     }
     return { body: JSON.stringify(projection) };
+  });
+
+  // #1544 (slice 4): the Fleet Manager grant-management panel's read surface —
+  // the lifecycle grants, SANITIZED (sanitizeGrantForDisplay NEVER includes the
+  // token; identity keys are truncated). Under the /amicode/fleet/* prefix so it
+  // inherits the never-proxied local-honesty exclusion (grants are this
+  // machine's own state). The pending-requests view is a #1545 stub (empty).
+  server.add("GET", "/amicode/fleet/grants", () => {
+    return {
+      body: JSON.stringify({
+        ok: true,
+        grants: readAllLifecycleGrants().map(sanitizeGrantForDisplay),
+        pending_requests: [],
+      }),
+    };
   });
 
   return server;

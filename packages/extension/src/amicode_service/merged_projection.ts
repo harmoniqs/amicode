@@ -21,6 +21,7 @@
 import { createHash } from "node:crypto";
 import { HubCredentialRead, hubUpstreamAuthHeader } from "./hub_credential";
 import { serverAuthHeader } from "../server_auth";
+import type { SessionControlProjection } from "./remote_session_state";
 
 export type SourceTag = string;
 export type UpstreamMode = "engine" | "fleet";
@@ -72,6 +73,11 @@ export interface FleetProjectionOptions {
   blockedPeers?: Array<{ machineId: string; reason?: SourceAbsenceReason; detail?: string }>;
   /** Roster lookup for owner_name/device_type enrichment. */
   rosterLookup: (machineId: string) => RosterEntry | undefined;
+  /** #1544 (slice 4): the OPTIONAL state-channel injector. When present, each
+   *  session entry is stamped with the app-visible `amicode_control`
+   *  ({ controlState, reason, eligibility }) derived from the SoT
+   *  (remote_session_state) for its owner. Absent ⇒ no field (back-compat). */
+  resolveControl?: (ownerMachineId: string, isLocal: boolean) => SessionControlProjection;
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
 }
@@ -80,8 +86,9 @@ export interface FleetProjectionOptions {
 export interface FleetProjection {
   ok: true;
   mode: "fleet";
-  /** Each entry carries `amicode_owner` (the owner tag overlay). */
-  sessions: Array<Record<string, unknown> & { amicode_owner?: SessionOwnerTag }>;
+  /** Each entry carries `amicode_owner` (the owner tag overlay) and, when a
+   *  control resolver was supplied, `amicode_control` (the state channel). */
+  sessions: Array<Record<string, unknown> & { amicode_owner?: SessionOwnerTag; amicode_control?: SessionControlProjection }>;
   /** Keyed by machine_id (string), not the old "local"|"hub" pair. */
   sources: Record<string, SourceFetchRecord>;
   currency: { token: string; sources: string[]; derived_over: "fetched" };
@@ -319,14 +326,18 @@ export function peerAuthHeader(token: string): string {
 // ── N-peer fleet-wide projection (#1439) ─────────────────────────────────────
 
 /** Tag each session entry with its owner machine's identity, joining the
- *  roster for name/device_type. */
+ *  roster for name/device_type. When `resolveControl` is supplied (#1544), the
+ *  app-visible `amicode_control` state channel is stamped alongside — one
+ *  resolution per source (state is per-owner, not per-session). */
 function tagSessionsWithOwner(
   entries: Record<string, unknown>[],
   machineId: string,
   isLocal: boolean,
   rosterLookup: (id: string) => RosterEntry | undefined,
-): Array<Record<string, unknown> & { amicode_owner?: SessionOwnerTag }> {
+  resolveControl?: (ownerMachineId: string, isLocal: boolean) => SessionControlProjection,
+): Array<Record<string, unknown> & { amicode_owner?: SessionOwnerTag; amicode_control?: SessionControlProjection }> {
   const roster = rosterLookup(machineId);
+  const control = resolveControl ? resolveControl(machineId, isLocal) : undefined;
   return entries.map((e) => ({
     ...e,
     amicode_provenance: machineId,
@@ -337,15 +348,16 @@ function tagSessionsWithOwner(
       ...(typeof e.directory === "string" ? { directory: e.directory } : {}),
       is_local: isLocal,
     },
+    ...(control ? { amicode_control: control } : {}),
   }));
 }
 
 /** Merge N sources into one deduplicated list. Later sources (by array order)
  *  win on conflict (same session id in multiple stores). */
 function mergeNSources(
-  taggedSources: Array<{ machineId: string; entries: Array<Record<string, unknown> & { amicode_owner?: SessionOwnerTag }> }>,
-): Array<Record<string, unknown> & { amicode_owner?: SessionOwnerTag }> {
-  const out: Array<Record<string, unknown> & { amicode_owner?: SessionOwnerTag }> = [];
+  taggedSources: Array<{ machineId: string; entries: Array<Record<string, unknown> & { amicode_owner?: SessionOwnerTag; amicode_control?: SessionControlProjection }> }>,
+): Array<Record<string, unknown> & { amicode_owner?: SessionOwnerTag; amicode_control?: SessionControlProjection }> {
+  const out: Array<Record<string, unknown> & { amicode_owner?: SessionOwnerTag; amicode_control?: SessionControlProjection }> = [];
   const seen = new Map<string, number>();
   for (const { entries } of taggedSources) {
     for (const e of entries) {
@@ -407,16 +419,17 @@ export async function buildFleetProjection(opts: FleetProjectionOptions): Promis
     };
   }
 
-  // Tag each source's sessions with owner info (roster join)
-  const taggedSources: Array<{ machineId: string; entries: Array<Record<string, unknown> & { amicode_owner?: SessionOwnerTag }> }> = [];
+  // Tag each source's sessions with owner info (roster join) + the #1544 state
+  // channel (amicode_control), when a resolver was supplied.
+  const taggedSources: Array<{ machineId: string; entries: Array<Record<string, unknown> & { amicode_owner?: SessionOwnerTag; amicode_control?: SessionControlProjection }> }> = [];
   taggedSources.push({
     machineId: opts.localMachineId,
-    entries: tagSessionsWithOwner(localResult.entries, opts.localMachineId, true, opts.rosterLookup),
+    entries: tagSessionsWithOwner(localResult.entries, opts.localMachineId, true, opts.rosterLookup, opts.resolveControl),
   });
   for (let i = 0; i < opts.peers.length; i++) {
     taggedSources.push({
       machineId: opts.peers[i].machineId,
-      entries: tagSessionsWithOwner(peerResults[i].entries, opts.peers[i].machineId, false, opts.rosterLookup),
+      entries: tagSessionsWithOwner(peerResults[i].entries, opts.peers[i].machineId, false, opts.rosterLookup, opts.resolveControl),
     });
   }
 

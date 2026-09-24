@@ -1401,6 +1401,51 @@ describe("GET /amicode/fleet/sessions — fleet-wide tagged list via the route (
     expect(body.sources["the-studio"].present).toBe(true);
     expect(body.sources["the-mini"].present).toBe(true);
   });
+
+  // #1544 (slice 4): the STATE CHANNEL is carried on this endpoint. Every entry
+  // gets the app-visible `amicode_control` overlay projected from the SoT. The
+  // exact remote reason depends on the grant store; assert the SHAPE + that the
+  // local entry is `local` (env-independent).
+  it("carries the amicode_control state channel on every session entry (#1544 Data Contract)", async () => {
+    const res = await fetch(`${origin}/amicode/fleet/sessions`, {
+      headers: { Authorization: `Basic ${engineToken}` },
+    });
+    const body = (await res.json()) as FleetProjection;
+    const kinds = new Set(["local", "interactive", "read-only", "suspended"]);
+    const reasons = new Set([null, "no-control-grant", "grant-revoked", "revocation-pending", "insufficient-scope", "transport-down"]);
+    for (const s of body.sessions) {
+      const control = (s as Record<string, unknown>).amicode_control as
+        | { controlState: string; reason: string | null; eligibility: string }
+        | undefined;
+      expect(control, `session ${s.id} must carry amicode_control`).toBeDefined();
+      expect(kinds.has(control!.controlState)).toBe(true);
+      expect(reasons.has(control!.reason as never)).toBe(true);
+      expect(["enable-control", "request-control", "none"]).toContain(control!.eligibility);
+    }
+    const local = body.sessions.find((s) => s.id === "ses-local-x") as Record<string, unknown>;
+    expect((local.amicode_control as { controlState: string }).controlState).toBe("local");
+  });
+
+  it("GET /amicode/fleet/grants returns SANITIZED grants (never a token) + the #1545 pending-requests stub", async () => {
+    const prev = process.env.AMICO_FLEET_LIFECYCLE_GRANT_FILE;
+    // point the grant reader at a fresh (nonexistent) file → deterministic [].
+    process.env.AMICO_FLEET_LIFECYCLE_GRANT_FILE = join(root, "grants-empty.json");
+    try {
+      const res = await fetch(`${origin}/amicode/fleet/grants`, {
+        headers: { Authorization: `Basic ${engineToken}` },
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { ok: boolean; grants: unknown[]; pending_requests: unknown[] };
+      expect(body.ok).toBe(true);
+      expect(body.grants).toEqual([]);
+      expect(body.pending_requests).toEqual([]);
+      // and never a token key anywhere in the payload
+      expect(JSON.stringify(body)).not.toContain("token");
+    } finally {
+      if (prev === undefined) delete process.env.AMICO_FLEET_LIFECYCLE_GRANT_FILE;
+      else process.env.AMICO_FLEET_LIFECYCLE_GRANT_FILE = prev;
+    }
+  });
 });
 
 // ══════════════════════════════════════════════════════════════════════════════

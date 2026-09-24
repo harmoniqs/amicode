@@ -330,5 +330,98 @@ export async function performAttachControlWithEffectiveStream(input: {
   return result
 }
 
+// ── #1544 (slice 4): Fleet Manager grant management ──────────────────────────
+//
+// The grant-management panel lists the lifecycle grants and offers per-state
+// affordances. It reads the SANITIZED grants (sanitizeGrantForDisplay on the
+// extension side — the token is NEVER present) off GET /amicode/fleet/grants
+// (under /amicode/fleet/* so it inherits the never-proxied local-honesty
+// exclusion). The pending-requests view is stubbed until #1545 wires the
+// request→approve backend. Control affordances live HERE and on the session
+// surface — NEVER on the read-only sidebar (ADR 0034 D7).
+
+/** The never-proxied read surface for the sanitized grants. */
+export const GRANTS_ROUTE = "/amicode/fleet/grants"
+
+/** The issue that wires the pending-requests (request→approve) backend. Until
+ *  then the pending-requests view is an honest empty stub. */
+export const PENDING_REQUESTS_BACKEND_ISSUE = 1545
+
+/** The sanitized grant shape (mirror of sanitizeGrantForDisplay's output — NO
+ *  token, identity keys truncated on the extension side). */
+export interface SanitizedGrantLike {
+  requesterMachineId: string
+  targetMachineId: string
+  scope: "observe" | "control" | "lifecycle-admin"
+  generation: number
+  state: "active" | "revocation-pending" | "revoked"
+  issuedAt: string
+  revokedAt?: string
+  /** requesterIdentityKey may ride through truncated; NEVER a token. */
+  requesterIdentityKey?: string
+}
+
+/** The grant-management affordances a grant offers in its current state. */
+export type GrantManagementAffordance = "disable" | "revoke" | "re-admit"
+
+/** Per-state affordances: active → begin-revocation (disable) or revoke;
+ *  revocation-pending → finalize revoke; revoked → re-admit. */
+export function grantAffordances(state: SanitizedGrantLike["state"]): GrantManagementAffordance[] {
+  if (state === "active") return ["disable", "revoke"]
+  if (state === "revocation-pending") return ["revoke"]
+  return ["re-admit"]
+}
+
+/** One rendered grant row: identity + scope + state + its affordances. The
+ *  token is structurally impossible here (we copy ONLY the safe fields — a
+ *  smuggled `token` on the input is dropped). */
+export interface FleetGrantRow {
+  requesterMachineId: string
+  targetMachineId: string
+  scope: SanitizedGrantLike["scope"]
+  generation: number
+  state: SanitizedGrantLike["state"]
+  issuedAt: string
+  revokedAt?: string
+  affordances: GrantManagementAffordance[]
+}
+
+/** Sanitized grants → panel rows. Copies ONLY the safe fields (never a token,
+ *  even if a malformed input carried one). Tolerant: non-array → []. */
+export function shapeGrantRows(grants: SanitizedGrantLike[]): FleetGrantRow[] {
+  if (!Array.isArray(grants)) return []
+  return grants.map((g) => ({
+    requesterMachineId: g.requesterMachineId,
+    targetMachineId: g.targetMachineId,
+    scope: g.scope,
+    generation: g.generation,
+    state: g.state,
+    issuedAt: g.issuedAt,
+    ...(g.revokedAt ? { revokedAt: g.revokedAt } : {}),
+    affordances: grantAffordances(g.state),
+  }))
+}
+
+/** A pending control request (the shared-peer handshake). Backend is #1545. */
+export interface PendingRequestRow {
+  requesterMachineId: string
+  targetMachineId: string
+  scope: string
+}
+
+/** Read the pending-requests off the grants response. Until #1545 the backend
+ *  always returns [], so this is an honest empty view (never fabricated). */
+export function shapePendingRequests(raw: unknown): PendingRequestRow[] {
+  if (!raw || typeof raw !== "object") return []
+  const pending = (raw as { pending_requests?: unknown }).pending_requests
+  if (!Array.isArray(pending)) return []
+  return pending.flatMap((p) => {
+    if (!p || typeof p !== "object") return []
+    const o = p as Record<string, unknown>
+    if (typeof o.requesterMachineId !== "string" || typeof o.targetMachineId !== "string") return []
+    return [{ requesterMachineId: o.requesterMachineId, targetMachineId: o.targetMachineId, scope: typeof o.scope === "string" ? o.scope : "control" }]
+  })
+}
+
 
 

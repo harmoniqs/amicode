@@ -4,8 +4,12 @@
 import { describe, it, expect } from "vitest";
 import {
   resolveRemoteSessionState,
+  projectSessionControlState,
+  buildControlResolver,
+  CONTROL_CHIP_REASONS,
   type RemoteSessionState,
   type RemoteSessionDeps,
+  type SessionControlProjection,
 } from "../src/amicode_service/remote_session_state";
 
 const LOCAL_MACHINE = "local-mac";
@@ -114,5 +118,97 @@ describe("#1484 AC4 — no local fallback for known remote sessions", () => {
     if (state.kind !== "local") {
       expect(state.machineId).toBe("peer-a");
     }
+  });
+});
+
+// ── #1544 (slice 4) — the state channel Data Contract ─────────────────────────
+// `projectSessionControlState` is the SINGLE SOURCE OF TRUTH projector for the
+// app-visible control shape { controlState, reason, eligibility } carried on the
+// fleet projection (GET /amicode/fleet/sessions). It projects from the
+// remote_session_state kind + reason — NOT the raw write-gate reason (the write
+// gate COLLAPSES revocation-pending→grant-revoked; this projector must keep them
+// distinct, so the fail-closed chip can say which). Eligibility is derived from
+// ownership (self vs shared) + whether control is currently held.
+describe("#1544 projectSessionControlState — the app-visible { controlState, reason, eligibility }", () => {
+  it("enumerates EXACTLY the five reasons the SoT emits (no more, no fewer)", () => {
+    expect([...CONTROL_CHIP_REASONS].sort()).toEqual(
+      ["grant-revoked", "insufficient-scope", "no-control-grant", "revocation-pending", "transport-down"],
+    );
+  });
+
+  it("local → controlState local, no reason, no affordance", () => {
+    const p = projectSessionControlState({ kind: "local" }, { selfOwned: true });
+    expect(p).toEqual({ controlState: "local", reason: null, eligibility: "none" } satisfies SessionControlProjection);
+  });
+
+  it("interactive (control held) → no chip reason, no enable/request affordance", () => {
+    const p = projectSessionControlState({ kind: "interactive", machineId: "peer-a" }, { selfOwned: true });
+    expect(p).toEqual({ controlState: "interactive", reason: null, eligibility: "none" });
+  });
+
+  it("read-only no-control-grant, self-owned → Enable-control affordance, chip reason preserved", () => {
+    const p = projectSessionControlState(
+      { kind: "read-only", machineId: "peer-a", reason: "no-control-grant" },
+      { selfOwned: true },
+    );
+    expect(p).toEqual({ controlState: "read-only", reason: "no-control-grant", eligibility: "enable-control" });
+  });
+
+  it("read-only no-control-grant, SHARED peer → Request-control affordance", () => {
+    const p = projectSessionControlState(
+      { kind: "read-only", machineId: "peer-a", reason: "no-control-grant" },
+      { selfOwned: false },
+    );
+    expect(p.eligibility).toBe("request-control");
+    expect(p.reason).toBe("no-control-grant");
+  });
+
+  it("read-only insufficient-scope / grant-revoked preserve their distinct reasons", () => {
+    expect(projectSessionControlState({ kind: "read-only", machineId: "p", reason: "insufficient-scope" }, { selfOwned: true }).reason).toBe("insufficient-scope");
+    expect(projectSessionControlState({ kind: "read-only", machineId: "p", reason: "grant-revoked" }, { selfOwned: true }).reason).toBe("grant-revoked");
+  });
+
+  it("suspended revocation-pending stays DISTINCT from grant-revoked (the SoT distinction the write gate collapses)", () => {
+    const pending = projectSessionControlState(
+      { kind: "suspended", machineId: "peer-a", reason: "revocation-pending" },
+      { selfOwned: true },
+    );
+    expect(pending.controlState).toBe("suspended");
+    expect(pending.reason).toBe("revocation-pending");
+    // and it is still eligible to re-enable (self-owned)
+    expect(pending.eligibility).toBe("enable-control");
+  });
+
+  it("suspended transport-down → suspended state, transport-down reason, eligible to re-enable", () => {
+    const p = projectSessionControlState(
+      { kind: "suspended", machineId: "peer-a", reason: "transport-down" },
+      { selfOwned: true },
+    );
+    expect(p).toEqual({ controlState: "suspended", reason: "transport-down", eligibility: "enable-control" });
+  });
+});
+
+describe("#1544 buildControlResolver — the projection carrier's per-owner resolver (route wiring)", () => {
+  const resolver = buildControlResolver({
+    localMachineId: "local-mac",
+    grantReader: (id) => (id === "peer-a" ? { scope: "control", state: "active" } : undefined),
+    peerReachable: (id) => id === "peer-a",
+    isSelfOwned: () => true,
+  });
+
+  it("resolves a local entry to controlState local", () => {
+    expect(resolver("local-mac", true)).toEqual({ controlState: "local", reason: null, eligibility: "none" });
+  });
+
+  it("resolves a controlled+reachable peer to interactive", () => {
+    expect(resolver("peer-a", false)).toEqual({ controlState: "interactive", reason: null, eligibility: "none" });
+  });
+
+  it("resolves an ungranted peer to read-only + no-control-grant + enable-control", () => {
+    expect(resolver("peer-b", false)).toEqual({
+      controlState: "read-only",
+      reason: "no-control-grant",
+      eligibility: "enable-control",
+    });
   });
 });
