@@ -187,6 +187,11 @@ describe("amicode service — golden-fixture parity with the fork", () => {
       savedEnv[k] = process.env[k];
       process.env[k] = env[k];
     }
+    // The boot pins the credential auth default; a dev host running a live
+    // amicode service exports AMICODE_SERVICE_AUTH=open (the runner's
+    // tunnel/LAN posture) — isolate it (restored by the afterAll loop below).
+    savedEnv.AMICODE_SERVICE_AUTH = process.env.AMICODE_SERVICE_AUTH;
+    delete process.env.AMICODE_SERVICE_AUTH;
     service = createAmicodeService({ password: "contract-test-password" });
     const url = await service.start();
     base = url.toString().replace(/\/$/, "");

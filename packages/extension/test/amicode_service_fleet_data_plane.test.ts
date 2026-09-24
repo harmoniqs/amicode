@@ -374,6 +374,7 @@ describe("fleet mode staged — routing, merged projection, hub credential", () 
   let origin: string;
   let engineToken: string;
   const HUB_PASSWORD = "hub-tunnel-mint";
+  let savedAuthEnv: string | undefined;
 
   function bootService(getMode: () => "engine" | "fleet") {
     return createAmicodeService({
@@ -390,6 +391,11 @@ describe("fleet mode staged — routing, merged projection, hub credential", () 
   }
 
   beforeAll(async () => {
+    // The boots rely on the credential auth default (the hub mint must be
+    // REJECTED on the service's own routes); a dev host running a live
+    // amicode service exports AMICODE_SERVICE_AUTH=open — isolate it.
+    savedAuthEnv = process.env.AMICODE_SERVICE_AUTH;
+    delete process.env.AMICODE_SERVICE_AUTH;
     root = mkdtempSync(join(tmpdir(), "amicode-fleet-live-"));
     dist = buildMockDist(root);
     overlaySource = join(root, "overlay-source");
@@ -410,6 +416,7 @@ describe("fleet mode staged — routing, merged projection, hub credential", () 
     await hub.stop();
     delete process.env.AMICO_FLEET_HUB_FILE;
     rmSync(root, { recursive: true, force: true });
+    if (savedAuthEnv !== undefined) process.env.AMICODE_SERVICE_AUTH = savedAuthEnv;
   });
 
   it("in fleet mode, proxied data requests route to the HUB with the hub mint — never the client's token", async () => {

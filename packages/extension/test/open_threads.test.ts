@@ -323,7 +323,11 @@ describe("composeOpenThreadsDigest — block composition", () => {
 
 // ── buildOpenThreadsBlock graceful degradation ───────────────────────────────
 
-describe("buildOpenThreadsBlock — graceful degradation under Node (no bun:sqlite)", () => {
+// REQUIREMENT: the Node runtime (no bun:sqlite). Under bun the module EXISTS,
+// the degradation path is unreachable, and the call would read the developer's
+// REAL session DB — so the case skips on bun runtimes. Run under node
+// (`pnpm test`, the vitest suite) to exercise it.
+describe.skipIf(typeof Bun !== "undefined")("buildOpenThreadsBlock — graceful degradation under Node (no bun:sqlite)", () => {
   it("returns null when bun:sqlite is unavailable (Node runtime)", () => {
     const result = buildOpenThreadsBlock("ses_current");
     expect(result).toBeNull();
