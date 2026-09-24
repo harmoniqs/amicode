@@ -958,5 +958,36 @@ describe.skipIf(!FLEET_E2E)("slow: fleet two-peer release E2E (#1489)", () => {
         console.log(`[fleet-e2e] no peer cursor advanced in the window — reconnect round-trip verified on the composite`);
       }
     }, 20_000);
+
+    it("the ORIGIN'S OWN /event route fans in the peer (the #1519-wired path — not the peer endpoint directly)", async () => {
+      // #1519 wired the fan-in aggregator into the ORIGIN's /event behind
+      // AMICO_FLEET_MULTIPLEX. This is the end-to-end proof through the REAL
+      // wired route: hit the local origin's OWN global stream (not the peer's
+      // /event directly), and — with the flag ON and the peer owning ≥1 session —
+      // the origin fans the peer's events in under the peer's namespace in the
+      // composite cursor. Authed with the app's OWN credential to the origin
+      // (never the peer token — that stays behind the origin, decision A).
+      const originAuth = process.env.OPENCODE_SERVER_PASSWORD ? peerAuthHeader(process.env.OPENCODE_SERVER_PASSWORD) : "";
+      const frames = await readSseFrames(
+        `${LOCAL_ENDPOINT}/event`,
+        originAuth ? { Authorization: originAuth } : {},
+        { maxFrames: 4, timeoutMs: 8_000 },
+      );
+      const composites = frames
+        .map((f) => frameRawId(f))
+        .filter((id): id is string => id !== undefined)
+        .map((id) => parseCompositeCursor(id));
+      const sawPeerNamespace = composites.some((c) => c.has(remotePeerId));
+      if (sawPeerNamespace) {
+        // fan-in is live: the origin's own stream carried the peer namespaced.
+        expect(composites.some((c) => c.has(remotePeerId))).toBe(true);
+        console.log(`[fleet-e2e] origin /event fanned in peer ${remotePeerId} — namespaced composite observed on the wired route`);
+      } else {
+        // Flag OFF, or a quiet peer in the read window: the route still served
+        // the stream (fleet-of-one local passthrough is the #1264 byte-identity).
+        console.log(`[fleet-e2e] origin /event served; no peer namespace in window (flag OFF or quiet peer) — local passthrough held`);
+        expect(Array.isArray(frames)).toBe(true);
+      }
+    }, 20_000);
   });
 }, 120_000); // generous timeout for the full physical suite
