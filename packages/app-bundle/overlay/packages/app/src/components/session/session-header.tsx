@@ -11,7 +11,7 @@ import { Tooltip, TooltipKeybind } from "@opencode-ai/ui/tooltip"
 
 import { ButtonV2 } from "@opencode-ai/ui/v2/button-v2"
 import { getFilename } from "@opencode-ai/core/util/path"
-import { batch, createEffect, createMemo, createResource, createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js"
+import { batch, createEffect, createMemo, createResource, createRoot, createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js"
 import { createStore } from "solid-js/store"
 import { createMediaQuery } from "@solid-primitives/media"
 import { Portal } from "solid-js/web"
@@ -48,12 +48,12 @@ import {
   mergePeerSessions,
   deriveSessionBadge,
   isRemotePeerSession,
+  isComposerGated,
   resolveDropdownOpenAction,
   readSessionControl,
   writeAffordanceEnabled,
   failClosedChip,
   controlAffordance,
-  isControlHeld,
   drivingBannerFromProjection,
   findSessionControlInProjection,
   findSessionOwnerInProjection,
@@ -83,6 +83,69 @@ import { KeybindV2 } from "@opencode-ai/ui/v2/keybind-v2"
 import { TooltipV2 } from "@opencode-ai/ui/v2/tooltip-v2"
 import { reviewTooltipKeybind } from "../command-tooltip-keybind"
 import { useTitlebarRightMount, useTitlebarControlMount } from "../titlebar"
+
+// ── #1562-followup (Slice A): the SHARED control-projection poll ──────────────
+// B2b (#1551) gave BOTH the driving banner (SessionHeader) and the composer
+// scrim (SessionComposerControlScrim) a ONE-SHOT createResource read of GET
+// /amicode/fleet/sessions keyed only on `server.current`. Its only source was
+// the connection, so once the Enable-control grant landed NOTHING re-fetched — the projected control never re-read `interactive`, the
+// scrim never cleared, the "Driving <peer>" banner never lit, and a later revoke
+// never re-gated. The "next poll" the design assumed did not exist.
+//
+// This is that poll: a SINGLE short-interval read (≈3s) of the same projection,
+// CONSOLIDATED into one shared accessor BOTH consumers subscribe to (single
+// source of truth, kept in sync), refetched on window `focus` as a backstop, and
+// torn down (interval cleared, root disposed) when the last consumer unmounts
+// (reference-counted). The app still NEVER self-declares interactive — it only
+// makes the SoT projection get RE-READ.
+const FLEET_CONTROL_POLL_MS = 3000
+
+type SharedControlProjection = { latest: () => unknown; refetch: () => void }
+
+let sharedControlPoll: SharedControlProjection | null = null
+let sharedControlDispose: (() => void) | null = null
+let sharedControlRefs = 0
+
+function acquireSharedControlProjection(conn: () => ServerConnection.Any | undefined): SharedControlProjection {
+  sharedControlRefs += 1
+  if (!sharedControlPoll) {
+    createRoot((dispose) => {
+      const [tick, setTick] = createSignal(0)
+      const [projection, { refetch }] = createResource(
+        () => [conn(), tick()] as const,
+        ([c]) => (c ? amicodeGet(c, "/amicode/fleet/sessions").catch(() => undefined) : undefined),
+      )
+      const interval = setInterval(() => setTick((t) => t + 1), FLEET_CONTROL_POLL_MS)
+      const onFocus = () => void refetch()
+      if (typeof window !== "undefined") window.addEventListener("focus", onFocus)
+      sharedControlPoll = { latest: () => projection.latest, refetch: () => void refetch() }
+      sharedControlDispose = () => {
+        clearInterval(interval)
+        if (typeof window !== "undefined") window.removeEventListener("focus", onFocus)
+        dispose()
+        sharedControlPoll = null
+        sharedControlDispose = null
+      }
+    })
+  }
+  return sharedControlPoll!
+}
+
+function releaseSharedControlProjection() {
+  sharedControlRefs = Math.max(0, sharedControlRefs - 1)
+  if (sharedControlRefs === 0 && sharedControlDispose) sharedControlDispose()
+}
+
+/** The ONE shared accessor the session header (driving banner) and the composer
+ *  scrim both consume — the latest polled read of the fleet control projection
+ *  (the SoT carrier). Consumers acquire on mount, release on unmount; exactly one
+ *  interval poll runs while any consumer is mounted. */
+export function useSharedControlProjection(): () => unknown {
+  const server = useServer()
+  const shared = acquireSharedControlProjection(() => server.current)
+  onCleanup(releaseSharedControlProjection)
+  return shared.latest
+}
 
 const OPEN_APPS = [
   "vscode",
@@ -205,12 +268,12 @@ export function SessionHeader() {
   // (control affordances live here + in Fleet Manager, NEVER the read-only
   // sidebar — ADR 0034 D7). Tolerant: a 404 / no-fleet resolves to undefined and
   // every derived value degrades to "no banner / no affordance".
-  const [controlProjection] = createResource(
-    () => server.current,
-    (conn) => amicodeGet(conn, "/amicode/fleet/sessions").catch(() => undefined),
-  )
+  // #1562-followup (Slice A): read via the SHARED polled accessor so the
+  // interactive flip (grant landed) is actually OBSERVED — the banner lights on
+  // the next poll instead of never (the B2b one-shot never re-fetched).
+  const controlProjection = useSharedControlProjection()
   const drivingPeer = createMemo(() =>
-    params.id ? drivingBannerFromProjection(controlProjection.latest, params.id) : null,
+    params.id ? drivingBannerFromProjection(controlProjection(), params.id) : null,
   )
 
   const projectDirectory = createMemo(() => decode64(params.dir) ?? "")
@@ -720,22 +783,23 @@ export function SessionHeader() {
 // native modal and mints the grant. On success the next fleet-projection poll
 // flips the projected control to `interactive` — the app never self-declares it.
 export function SessionComposerControlScrim(props: { children: JSX.Element }) {
-  const server = useServer()
   const { params } = useSessionLayout()
   // Tolerant read of the control channel for the CURRENT session (the SAME
   // carrier the header + dropdown consume). A 404 / no-fleet resolves to
   // undefined and every derived value degrades to "no scrim".
-  const [controlProjection] = createResource(
-    () => server.current,
-    (conn) => amicodeGet(conn, "/amicode/fleet/sessions").catch(() => undefined),
-  )
+  // #1562-followup (Slice A): the SHARED polled accessor (single source of truth
+  // with the header) — so when the grant lands and the projection flips to
+  // `interactive`, the next poll clears the scrim. The app never self-declares
+  // it; it only re-reads the SoT.
+  const controlProjection = useSharedControlProjection()
   const control = createMemo(() =>
-    findSessionControlInProjection(controlProjection.latest, params.id ?? ""),
+    findSessionControlInProjection(controlProjection(), params.id ?? ""),
   )
-  const owner = createMemo(() => findSessionOwnerInProjection(controlProjection.latest, params.id ?? ""))
+  const owner = createMemo(() => findSessionOwnerInProjection(controlProjection(), params.id ?? ""))
   // Gated iff a REMOTE peer session whose control is NOT held (read-only /
   // suspended). Local / unowned / already-driving (interactive) → not gated.
-  const gated = createMemo(() => isRemotePeerSession({ amicode_owner: owner() }) && !isControlHeld(control()))
+  // The rule lives in one pure place (isComposerGated), shared with the test.
+  const gated = createMemo(() => isComposerGated(owner(), control()))
   const peerLabel = createMemo(() => owner()?.owner_name || owner()?.owner_machine_id || "this peer")
   const enableControl = () => {
     const o = owner()

@@ -118,6 +118,20 @@ export function writeAffordanceEnabled(control: SessionControlProjection): boole
   return isControlHeld(control)
 }
 
+/** The composer scrim's GATE decision, pure: a session is gated (composer
+ *  blurred + made inert, CTA centered) IFF it is a REMOTE peer session whose
+ *  control is NOT held (read-only / suspended). A local / unowned session, or a
+ *  remote one already driving (interactive → control held), is NOT gated. This
+ *  is the single home for the ungate-on-interactive rule the composer scrim and
+ *  its test both read, so a projection that flips to `interactive` provably
+ *  clears the scrim. */
+export function isComposerGated(
+  owner: SessionOwnerTag | undefined,
+  control: SessionControlProjection,
+): boolean {
+  return isRemotePeerSession({ amicode_owner: owner }) && !isControlHeld(control)
+}
+
 /** The fail-closed chip: disabled-with-reason when control is not held. Null
  *  when control is held (no chip). The label is derived from the SoT reason. */
 export function failClosedChip(control: SessionControlProjection): { reason: ControlChipReason; label: string } | null {
