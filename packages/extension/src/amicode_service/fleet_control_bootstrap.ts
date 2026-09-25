@@ -154,3 +154,82 @@ export function enableSelfOwnedControl(req: EnableControlRequest, deps: Lifecycl
   }
   return { ok: true, grant: issued.grant };
 }
+
+// ── #1551: the LIVE caller — the extension-side enable-control handler ────────
+//
+// enableSelfOwnedControl had ZERO live callers (unit-tested, never invoked). This
+// is the handler the app→extension `fleet-enable-control` envelope drives. It is
+// pure of any vscode import — the NATIVE MODAL is injected as `confirm` (ADR 0034
+// D4 lives in the extension wiring, not here), the management-verified inputs are
+// injected from the live fleet-peer provider + authority resolver, and the grant
+// store is the same injectable one enableSelfOwnedControl mints into. Ordering is
+// deliberate: CONFIRM FIRST (a cancelled modal mints nothing, AC3), then compose
+// establishManagementVerified + enableSelfOwnedControl. A non-self-owned or
+// unverified peer mints nothing (no-privilege-bleed, AC4).
+
+/** The deps the enable-control handler needs, all injectable so the decision path
+ *  is testable without vscode / the real fleet stores. */
+export interface EnableControlHandlerDeps {
+  /** This machine's identity — the grant's requester (self-issued). */
+  self: { machineId: string; identityKey: string };
+  /** Resolve the driven peer's identity key (roster fingerprint; machineId
+   *  fallback is the wiring's concern). Recorded on the minted grant's target. */
+  targetIdentityKey: (ownerMachineId: string) => string;
+  /** Whether the driven peer is self-owned (the base fast-path) vs shared. The
+   *  shared-peer request→approve handshake (#1545) is the only other path. */
+  ownershipOf: (ownerMachineId: string) => PeerOwnership;
+  /** The live serving-peer set (transport up). */
+  getServingPeers: () => Array<{ machineId: string }>;
+  /** The reader peer-token read (bilateral token state). */
+  readPeerToken: (machineId: string) => { ok: boolean };
+  /** The enroll-seeded lifecycle-admin authority resolver. */
+  resolveAuthority: (targetMachineId: string) => LifecycleAuthorityRecord | undefined;
+  /** The ADR 0034 D4 native-modal confirm — resolves true on confirm, false on
+   *  cancel. Injected so the modal never runs in-test. */
+  confirm: (ownerMachineId: string) => Promise<boolean>;
+  /** The grant store deps (default: the real ~/.amico store). */
+  grantDeps?: LifecycleGrantDeps;
+}
+
+export type EnableControlHandlerOutcome =
+  | { outcome: "minted"; grant: LifecycleGrant }
+  | { outcome: "cancelled" }
+  | { outcome: "not-authorized" }
+  | { outcome: "issue-failed"; reason: "identity-mismatch" | "target-mismatch" | "revoked" };
+
+/** Handle one `fleet-enable-control` intent: confirm (native modal) → verify →
+ *  mint. Cancelling mints nothing; a shared / unverified peer mints nothing. */
+export async function handleEnableControlRequest(
+  payload: { ownerMachineId: string; sessionID: string },
+  deps: EnableControlHandlerDeps,
+): Promise<EnableControlHandlerOutcome> {
+  const ownerMachineId = payload.ownerMachineId;
+  // CONFIRM FIRST — the ADR 0034 D4 native modal. A cancelled modal mints
+  // nothing and leaves the gated composer unchanged (AC3).
+  const confirmed = await deps.confirm(ownerMachineId);
+  if (!confirmed) return { outcome: "cancelled" };
+
+  const managementVerified = establishManagementVerified({
+    selfMachineId: deps.self.machineId,
+    targetMachineId: ownerMachineId,
+    getServingPeers: deps.getServingPeers,
+    readPeerToken: deps.readPeerToken,
+    resolveAuthority: deps.resolveAuthority,
+  });
+
+  const result = enableSelfOwnedControl(
+    {
+      ownership: deps.ownershipOf(ownerMachineId),
+      managementVerified,
+      self: deps.self,
+      target: { machineId: ownerMachineId, identityKey: deps.targetIdentityKey(ownerMachineId) },
+    },
+    deps.grantDeps,
+  );
+  if (!result.ok) {
+    return result.reason === "requires-approval"
+      ? { outcome: "not-authorized" }
+      : { outcome: "issue-failed", reason: result.issueReason };
+  }
+  return { outcome: "minted", grant: result.grant };
+}
