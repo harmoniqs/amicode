@@ -129,6 +129,28 @@ describe("the probe command builders — read-only by construction", () => {
     expect(cmd).toContain("'/Users/a/My Db/opencode.db'");
   });
 
+  it("the client census command goes $HOME-relative when the db lives under the hub home (mixed-OS fleets, #1558)", () => {
+    // a linux hub home embedded literally is unreachable-by-construction on every
+    // macOS client — the remote shell must re-resolve the home itself
+    const cmd = clientCensusCommand("/home/aaron/.local/share/opencode/opencode.db", "/home/aaron");
+    expect(cmd).toContain(`"$HOME/.local/share/opencode/opencode.db"`);
+    expect(cmd).not.toContain("/home/aaron");
+    expect(cmd).toContain("-readonly");
+    expect(cmd).toContain("SELECT id FROM session");
+    expect(cmd).not.toMatch(/INSERT|UPDATE|DELETE|DROP|CREATE|VACUUM/i);
+  });
+
+  it("the $HOME-relative census path survives spaces (double-quoted, still expands remotely)", () => {
+    const cmd = clientCensusCommand("/home/aaron/My Db/opencode.db", "/home/aaron");
+    expect(cmd).toContain(`"$HOME/My Db/opencode.db"`);
+  });
+
+  it("a db path outside the hub home stays the quoted literal (exotic layouts, #1558)", () => {
+    const cmd = clientCensusCommand("/mnt/fleet-db/opencode.db", "/home/aaron");
+    expect(cmd).toContain("'/mnt/fleet-db/opencode.db'");
+    expect(cmd).not.toContain("$HOME");
+  });
+
   it("the fork-listener command lists LISTENers on the canonical port only", () => {
     const cmd = forkListenerCommand(4096);
     expect(cmd).toContain("-iTCP:4096");
