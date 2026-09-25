@@ -85,7 +85,11 @@ export function rehydratePeerRelationships(deps: RehydrationDeps): RehydrationRe
 
   // Build lookup sets from the peer provider's current state.
   const servingSet = new Set(provider.getServingPeers().map((p) => p.machineId));
-  const blockedPeers = provider.getBlockedPeers();
+  // getBlockedPeers is optional in practice: index.ts's boot path guards it with
+  // `?.() ?? []` and lightweight providers (tests, minimal boots) omit it. Match
+  // that defensive contract here so the rehydration boot never throws on a
+  // provider without it (a blocked-peer set is an enrichment, not a requirement).
+  const blockedPeers = provider.getBlockedPeers?.() ?? [];
   const blockedSet = new Set(blockedPeers.map((p) => p.machineId));
 
   const peers: RehydratedPeer[] = [];
