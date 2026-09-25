@@ -199,6 +199,14 @@ export function drivingBannerFromProjection(raw: unknown, sessionId: string): { 
   return drivingBanner(findSessionEntryInProjection(raw, sessionId))
 }
 
+/** The owner tag for the CURRENT session id, read off the fleet projection — the
+ *  composer scrim's source for the peer NAME (the CTA copy) and the owner
+ *  machineId (the enable-control envelope's target). Unknown id / local /
+ *  garbage → undefined. Tolerant (never throws). */
+export function findSessionOwnerInProjection(raw: unknown, sessionId: string): SessionOwnerTag | undefined {
+  return readOwnerTag(findSessionEntryInProjection(raw, sessionId)?.amicode_owner)
+}
+
 /** True when a session is a REMOTE peer session (has an owner overlay whose
  *  `is_local` is explicitly false). Local / unowned sessions are false —
  *  absence of an overlay means local (ADR 0031 §D6). B1 uses this to keep

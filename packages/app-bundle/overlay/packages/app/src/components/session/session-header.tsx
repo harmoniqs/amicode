@@ -11,7 +11,7 @@ import { Tooltip, TooltipKeybind } from "@opencode-ai/ui/tooltip"
 
 import { ButtonV2 } from "@opencode-ai/ui/v2/button-v2"
 import { getFilename } from "@opencode-ai/core/util/path"
-import { batch, createEffect, createMemo, createResource, createSignal, For, onCleanup, onMount, Show } from "solid-js"
+import { batch, createEffect, createMemo, createResource, createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js"
 import { createStore } from "solid-js/store"
 import { createMediaQuery } from "@solid-primitives/media"
 import { Portal } from "solid-js/web"
@@ -42,7 +42,7 @@ import { sessionListDirectories, sortedRootSessions } from "@/pages/layout/helpe
 import { useNavigate } from "@solidjs/router"
 import type { Session } from "@opencode-ai/sdk/v2/client"
 import { amicodeGet } from "@/utils/amicode-fetch"
-import { postAmicode } from "@/utils/amicode-bridge"
+import { postAmicodeFleetEnableControl } from "@/utils/amicode-bridge"
 import {
   peerSessionsFromProjection,
   mergePeerSessions,
@@ -53,19 +53,22 @@ import {
   writeAffordanceEnabled,
   failClosedChip,
   controlAffordance,
+  isControlHeld,
   drivingBannerFromProjection,
   findSessionControlInProjection,
+  findSessionOwnerInProjection,
   remoteDeleteAction,
   type DropdownSession,
 } from "./session-fleet-peers"
 
-// AMICODE #1544 (slice 4): the app→extension bridge command that opens the VS
-// Code NATIVE-MODAL confirm for enabling control of a self-owned peer (ADR 0034
-// D4 — the one net-new confirmation surface). The extension relays it to the
-// modal + the #1541 self-owned control issuance; on success the projected state
-// flips to `interactive` and the driving banner lights. Present-and-dispatching
-// here; the modal + issuance handler is the extension-side seam.
-const ENABLE_CONTROL_COMMAND = "amicode.fleet.enableControl"
+// AMICODE #1551 (DEFECT 2): the self-owned Enable-control affordance no longer
+// lives as a fixed top-right Portal over the titlebar. It is re-homed onto a
+// COMPOSER-ANCHORED scrim (SessionComposerControlScrim, below) that blurs +
+// gates the composer and centers the CTA while control is not held. The CTA
+// posts the #1551 payload envelope (postAmicodeFleetEnableControl); the extension
+// host shows the ADR 0034 D4 native modal and mints the grant. On success the
+// next fleet-projection poll flips the projected control to `interactive` — the
+// app never self-declares interactive.
 
 // AMICODE: the MCP/LSP/Plugins/Vaults status popover is opencode-operator
 // noise here ("No MCPs configured"). Hidden, not deleted — the trigger slot is
@@ -209,17 +212,6 @@ export function SessionHeader() {
   const drivingPeer = createMemo(() =>
     params.id ? drivingBannerFromProjection(controlProjection.latest, params.id) : null,
   )
-  const controlAffordanceState = createMemo(() =>
-    controlAffordance(findSessionControlInProjection(controlProjection.latest, params.id ?? "")),
-  )
-  const enableControl = () => {
-    // The one net-new confirmation surface: dispatch the VS Code native-modal
-    // confirm (ADR 0034 D4). The extension relays it to the modal + #1541
-    // self-owned issuance; on success the projected state flips to interactive
-    // and the driving banner lights. Request-control (shared) is inert here —
-    // its request→approve backend is #1545.
-    if (controlAffordanceState().kind === "enable-control") postAmicode(ENABLE_CONTROL_COMMAND)
-  }
 
   const projectDirectory = createMemo(() => decode64(params.dir) ?? "")
   const project = createMemo(() => {
@@ -414,42 +406,9 @@ export function SessionHeader() {
           </Portal>
         )}
       </Show>
-      {/* #1544: the Enable-control (self-owned) / Request-control (shared)
-          affordance on the session surface. Enable → the native-modal confirm
-          (ADR 0034 D4). Request → present-but-inert (backend is #1545). */}
-      <Show when={controlAffordanceState().kind !== "none"}>
-        <Portal>
-          <button
-            type="button"
-            data-action="session-enable-control"
-            data-control-affordance={controlAffordanceState().kind}
-            disabled={controlAffordanceState().inert}
-            title={
-              controlAffordanceState().kind === "request-control"
-                ? "Requesting control from the peer's owner is coming in a later release (#1545)"
-                : "Enable control of this peer (opens a confirmation)"
-            }
-            onClick={enableControl}
-            style={{
-              position: "fixed",
-              top: "8px",
-              right: "12px",
-              "z-index": "10000",
-              padding: "4px 10px",
-              "border-radius": "var(--radius-md)",
-              border: "1px solid var(--v2-border-border-strong)",
-              background: "var(--v2-background-bg-layer-02)",
-              color: "var(--v2-text-text-base)",
-              "font-size": "11px",
-              "font-weight": "600",
-              cursor: controlAffordanceState().inert ? "default" : "pointer",
-              opacity: controlAffordanceState().inert ? "0.6" : "1",
-            }}
-          >
-            {controlAffordanceState().label}
-          </button>
-        </Portal>
-      </Show>
+      {/* #1551 (DEFECT 2): the Enable-control affordance moved OFF the titlebar
+          and onto the composer scrim (SessionComposerControlScrim, below). No
+          fixed top-right Portal renders here anymore. */}
       <Show when={search() && centerMount()} keyed>
         {(mount) => (
           <Portal mount={mount}>
@@ -748,6 +707,119 @@ export function SessionHeader() {
         </Show>
       </Show>
     </>
+  )
+}
+
+// #1551 (DEFECT 2): the composer-anchored control scrim. When the current
+// session is a REMOTE peer session and control is NOT held, it BLURS + GATES the
+// composer (inert → non-editable) and centers a CTA card naming the peer the
+// session lives on, with the Enable-control button. When control is held
+// (interactive) or the session is local/unowned, the composer renders untouched
+// (no scrim). The CTA click posts the #1551 payload envelope
+// (postAmicodeFleetEnableControl); the extension host shows the ADR 0034 D4
+// native modal and mints the grant. On success the next fleet-projection poll
+// flips the projected control to `interactive` — the app never self-declares it.
+export function SessionComposerControlScrim(props: { children: JSX.Element }) {
+  const server = useServer()
+  const { params } = useSessionLayout()
+  // Tolerant read of the control channel for the CURRENT session (the SAME
+  // carrier the header + dropdown consume). A 404 / no-fleet resolves to
+  // undefined and every derived value degrades to "no scrim".
+  const [controlProjection] = createResource(
+    () => server.current,
+    (conn) => amicodeGet(conn, "/amicode/fleet/sessions").catch(() => undefined),
+  )
+  const control = createMemo(() =>
+    findSessionControlInProjection(controlProjection.latest, params.id ?? ""),
+  )
+  const owner = createMemo(() => findSessionOwnerInProjection(controlProjection.latest, params.id ?? ""))
+  // Gated iff a REMOTE peer session whose control is NOT held (read-only /
+  // suspended). Local / unowned / already-driving (interactive) → not gated.
+  const gated = createMemo(() => isRemotePeerSession({ amicode_owner: owner() }) && !isControlHeld(control()))
+  const peerLabel = createMemo(() => owner()?.owner_name || owner()?.owner_machine_id || "this peer")
+  const enableControl = () => {
+    const o = owner()
+    const id = params.id
+    if (!o || !id) return
+    // The CTA click path is identical to DEFECT 1's envelope.
+    postAmicodeFleetEnableControl({ ownerMachineId: o.owner_machine_id, sessionID: id })
+  }
+  return (
+    <div style={{ position: "relative" }}>
+      {/* The composer subtree — blurred + inert (non-editable, unfocusable)
+          while gated; untouched otherwise. */}
+      <div
+        inert={gated() || undefined}
+        aria-hidden={gated() ? "true" : undefined}
+        style={
+          gated()
+            ? { filter: "blur(3px)", "pointer-events": "none", opacity: "0.55", transition: "filter 120ms ease" }
+            : {}
+        }
+      >
+        {props.children}
+      </div>
+      <Show when={gated()}>
+        <div
+          data-slot="amicode-composer-control-scrim"
+          role="dialog"
+          aria-label="Enable control to drive this peer session"
+          style={{
+            position: "absolute",
+            inset: "0",
+            display: "flex",
+            "align-items": "center",
+            "justify-content": "center",
+            "z-index": "20",
+            padding: "8px",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              "align-items": "center",
+              gap: "12px",
+              "max-width": "100%",
+              padding: "8px 12px",
+              "border-radius": "var(--radius-lg)",
+              border: "1px solid var(--v2-border-border-strong)",
+              background: "var(--v2-background-bg-layer-02)",
+              "box-shadow": "0 4px 16px rgba(0, 0, 0, 0.28)",
+            }}
+          >
+            <IconV2 name="monitor" class="opacity-80" />
+            <span
+              style={{
+                color: "var(--v2-text-text-base)",
+                "font-size": "12px",
+                "font-weight": "500",
+              }}
+            >
+              This session lives on {peerLabel()} — Enable control to drive it
+            </span>
+            <button
+              type="button"
+              data-action="composer-enable-control"
+              onClick={enableControl}
+              title="Enable control of this peer (opens a confirmation)"
+              style={{
+                "flex-shrink": "0",
+                padding: "4px 12px",
+                "border-radius": "var(--radius-md)",
+                border: "1px solid var(--v2-border-border-strong)",
+                background: "var(--v2-background-bg-layer-01)",
+                color: "var(--v2-text-text-base)",
+                "font-size": "12px",
+                "font-weight": "600",
+                cursor: "pointer",
+              }}
+            >
+              Enable control
+            </button>
+          </div>
+        </div>
+      </Show>
+    </div>
   )
 }
 

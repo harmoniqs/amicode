@@ -37,7 +37,7 @@ import { Button } from "@opencode-ai/ui/button"
 import { showToast } from "@/utils/toast"
 import { base64Encode, checksum } from "@opencode-ai/core/util/encode"
 import { useLocation, useNavigate, useParams, useSearchParams } from "@solidjs/router"
-import { NewSessionView, SessionHeader } from "@/components/session"
+import { NewSessionView, SessionHeader, SessionComposerControlScrim } from "@/components/session"
 import { ContextWarningBanner } from "@/components/session/context-warning-banner"
 import { ErrorPage } from "@/pages/error"
 import { CommentsProvider, useComments } from "@/context/comments"
@@ -2668,6 +2668,7 @@ export default function Page() {
             <SessionComposerRegion
               controller={controller}
               promptInput={
+                <SessionComposerControlScrim>
                 <Show
                   when={newSessionDesign()}
                   fallback={
@@ -2725,6 +2726,7 @@ export default function Page() {
                     return <PromptInputV2Composer controller={controller} borderUnderlay />
                   }}
                 </Show>
+                </SessionComposerControlScrim>
               }
             />
           )
