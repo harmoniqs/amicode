@@ -69,6 +69,9 @@ export interface OpenThread {
   signal: string;
   created: string; // ISO
   ageDays: number;
+  /** The thread-Noul (#1311) — an INPUT feature from the derived map the
+   *  amico-run pass writes; undefined = no map entry = today's digest. */
+  threadNoul?: number;
 }
 
 // ── Configuration (defaults + env seams) ─────────────────────────────────────
@@ -233,26 +236,44 @@ export function buildThread(
 
 // ── Digest composition (pure, testable) ──────────────────────────────────────
 
+/** The thread-Noul promotion gate (#1311) — the curation spec's calibrated
+ * pair (spec-20260920-session-curation §Calibration): a noul ≥ 0.5 promotes a
+ * session into the open-thread surface (ranking + cap); below it is today's
+ * behavior. Jev never derives a bucket label — promotion only. */
+export const THREAD_NOUL_PROMOTION_MIN = 0.5;
+
+const isPromoted = (t: OpenThread): boolean => t.threadNoul !== undefined && t.threadNoul >= THREAD_NOUL_PROMOTION_MIN;
+
 /**
- * Compose the markdown block. Ordering: non-stale threads newest-first
- * (recency wins ties — input order preserved), stale threads last (also
- * newest-first, flagged). Capped at `maxThreads`. Returns null when there
- * are no open threads — the honest empty state, no filler.
+ * Compose the markdown block. Ordering (#1305, unchanged when no nouls):
+ * non-stale threads newest-first (recency wins ties — input order preserved),
+ * stale threads last (also newest-first, flagged). Capped at `maxThreads`.
+ *
+ * The #1311 thread-Noul rides as an INPUT feature: promoted threads (noul ≥
+ * 0.5) rank ahead within their staleness group, BY NOUL DESC (Jev ranks the
+ * surface), and win cap slots over mere recency — promotion INTO the
+ * surface. A sub-threshold noul neither promotes nor drops (fail-open: no
+ * Jev read ever removes a deterministically-surfaced thread). With no nouls
+ * at all the ordering is exactly #1305's. Returns null when there are no
+ * open threads — the honest empty state, no filler.
  */
 export function composeOpenThreadsDigest(threads: OpenThread[], maxThreads: number): string | null {
   if (threads.length === 0) return null;
 
   const byAge = (a: OpenThread, b: OpenThread): number => a.ageDays - b.ageDays;
+  const byNoulDesc = (a: OpenThread, b: OpenThread): number => (b.threadNoul ?? 0) - (a.threadNoul ?? 0) || byAge(a, b);
   const ordered = [
-    ...threads.filter(t => t.bucket !== "stale").sort(byAge),
-    ...threads.filter(t => t.bucket === "stale").sort(byAge),
+    ...threads.filter(t => t.bucket !== "stale" && isPromoted(t)).sort(byNoulDesc),
+    ...threads.filter(t => t.bucket !== "stale" && !isPromoted(t)).sort(byAge),
+    ...threads.filter(t => t.bucket === "stale" && isPromoted(t)).sort(byNoulDesc),
+    ...threads.filter(t => t.bucket === "stale" && !isPromoted(t)).sort(byAge),
   ].slice(0, maxThreads);
 
   const lines = ["## Open threads", ""];
   for (const t of ordered) {
     const date = new Date(t.created);
     const dateStr = date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-    lines.push(`- **${t.bucket}** — ${dateStr} — ${t.title} — ${t.signal}`);
+    lines.push(`- **${t.bucket}** — ${dateStr} — ${t.title} — ${t.signal}${t.threadNoul !== undefined ? ` · noul ${t.threadNoul.toFixed(2)}` : ""}`);
   }
   return lines.join("\n");
 }
@@ -306,16 +327,46 @@ function queryPendingTodos(db: any, sessionId: string): number {
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
+/** The derived thread-Noul map's home (#1311): the amico-run curation pass
+ *  (`amico sessions thread-noul`) writes it into the ops dir; the digest
+ *  READS it (input feature — this module still makes no network call).
+ *  $AMICODE_OPS_DIR → ~/.amico/amicode (the setup-state seam). */
+export function threadNoulMapFile(opsDir?: string): string {
+  const dir = opsDir ?? process.env.AMICODE_OPS_DIR ?? path.join(os.homedir(), ".amico", "amicode");
+  return path.join(dir, "thread-nouls.json");
+}
+
+/** Read the derived noul map — Record<session_id, noul>, or undefined when
+ *  the map is absent/corrupt (fail-open: the digest degrades to today). */
+export function readThreadNoulMap(mapPath?: string): Record<string, number> | undefined {
+  const resolved = mapPath ?? threadNoulMapFile();
+  if (!fs.existsSync(resolved)) return undefined;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(resolved, "utf8")) as { entries?: Record<string, unknown> };
+    if (parsed.entries === undefined || typeof parsed.entries !== "object") return undefined;
+    const out: Record<string, number> = {};
+    for (const [id, n] of Object.entries(parsed.entries)) {
+      if (typeof n === "number" && Number.isFinite(n)) out[id] = n;
+    }
+    return out;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Sweep recent sessions, classify open threads, compose the digest block.
  * `prStateFor` injects PR-state as an INPUT feature map per session — the
  * caller decides when to spend a network call; this module never fetches.
- * Returns null when there are no open threads, the DB is unavailable (e.g.
- * under Node/vitest), or on error.
+ * `threadNoulFor` (#1311) is the same seam for the derived thread-Noul map
+ * (the amico-run pass spends the Jev calls; ranking + ≥ 0.5 promotion ride
+ * the map, bucket labels stay deterministic). Returns null when there are
+ * no open threads, the DB is unavailable (e.g. under Node/vitest), or on error.
  */
 export function buildOpenThreadsBlock(
   currentSessionId?: string,
   prStateFor?: (sessionId: string) => PrState | undefined,
+  threadNoulFor?: (sessionId: string) => number | undefined,
 ): string | null {
   if (!SqliteDatabase) return null;
 
@@ -367,7 +418,11 @@ export function buildOpenThreadsBlock(
         },
         staleAfterDays,
       );
-      if (thread) threads.push(thread);
+      if (thread) {
+        const noul = threadNoulFor?.(s.id);
+        if (noul !== undefined) thread.threadNoul = noul;
+        threads.push(thread);
+      }
     }
 
     return composeOpenThreadsDigest(threads, maxThreads);

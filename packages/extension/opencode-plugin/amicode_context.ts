@@ -26,7 +26,7 @@
 import { buildModeBlock, deployedModesRoot, type ModeBlockClient } from "./mode_block";
 import { buildStackStateBlock } from "./stack_state";
 import { buildRecentSessionsBlock } from "./session_recap";
-import { buildOpenThreadsBlock } from "./open_threads";
+import { buildOpenThreadsBlock, readThreadNoulMap } from "./open_threads";
 import { buildSetupStateSection } from "./setup_state";
 import { applyHarmoniqsHeaders } from "./harmoniqs_transport";
 
@@ -98,9 +98,15 @@ export const AmicodeContext = async (input: unknown) => {
 
       // Open-threads digest (#1305) — derived, deterministic read of what is
       // still open, rendered after the recent-sessions block. PR-state is an
-      // input feature; this pass spends no network call.
+      // input feature; this pass spends no network call. The #1311 thread-Noul
+      // map is the same shape of input: the amico-run curation pass spent the
+      // Jev calls and wrote the derived map; this hook only READS it (ranking
+      // + ≥ 0.5 promotion — bucket labels stay deterministic, and an absent
+      // map degrades the digest to #1305's exact behavior).
       try {
-        const threadsBlock = buildOpenThreadsBlock(input.sessionID);
+        const threadNouls = readThreadNoulMap();
+        const threadNoulFor = threadNouls === undefined ? undefined : (sessionId: string) => threadNouls[sessionId];
+        const threadsBlock = buildOpenThreadsBlock(input.sessionID, undefined, threadNoulFor);
         if (threadsBlock) {
           output.system.push(threadsBlock);
         }
