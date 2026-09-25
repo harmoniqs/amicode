@@ -9,6 +9,12 @@ import { resolveSyntaxTheme } from "./syntax_theme_bridge";
 import { ExternalMutationTransport } from "./external_mutation_transport";
 import type { MutationTrackingContext } from "./external_mutation";
 import { shouldReframe } from "./amicode_service_wiring";
+import {
+  fetchServedBuildId,
+  BuildChangeWatcher,
+  SERVED_BUILD_ID_FETCH_TIMEOUT_MS,
+  type BuildChangeClock,
+} from "./dist_build_id";
 
 // ============================================================================
 // ChatPanel — a WebviewPanel that iframes opencode's SolidJS chat at
@@ -88,6 +94,48 @@ export class ChatPanel {
   private frameOrigin!: URL;
   private frameAuthToken?: string;
   private frameHideProjectDir?: string;
+  /** #1556 (subsuming #1459): the served dist's build id this panel's iframe
+   *  was stamped with (`?amicode_build=`) — the SW cache-bust + the prompt's
+   *  comparison baseline. undefined = never derived (honest degradation:
+   *  unstamped src, exactly today's behavior). */
+  private stampedBuildId?: string;
+  /** #1556: once the framed app signals ready, the guarded pre-ready re-stamp
+   *  closes — a later-arriving derivation must never re-navigate a live app. */
+  private appReadySeen = false;
+  private disposed = false;
+  /** Which render path constructed this panel — the pre-ready re-stamp must
+   *  re-render through the same shell (splash overlay or bare iframe). */
+  private renderMode: "normal" | "transition" = "normal";
+  /** #1556: last-known served build id per origin (window-wide, warmed by every
+   *  fetch this window's panels/watchers make) — so every panel AFTER the first
+   *  stamps its FIRST render, and the re-frame path stamps from the new origin.
+   * Test-scoped reset via clearServedBuildIdCache(). */
+  private static readonly servedBuildIds = new Map<string, string>();
+  /** #1556: the version ids this WINDOW has already prompted for (shared by
+   *  every live panel's watcher) — a ship prompts exactly once even with
+   *  side-by-side tabs. Test-scoped reset via clearBuildIdLaneForTest(). */
+  private static readonly promptedBuildVersions = new Set<string>();
+  /** #1556 test seams (production runs undefined → the host's global fetch):
+   *  the injectable fetch for the served-build-id derivation, and the watcher's
+   *  injectable clock so a 3-minute poll is one synchronous tick under test. */
+  static buildIdFetchImpl?: typeof fetch;
+  static buildChangeClock?: BuildChangeClock;
+  /** #1556 observability: the reload lane's log sink, wired at activation to
+   *  the opencode output channel ("[reload-lane] …"). The lane's fetches
+   *  bypass the webview SW and leave no request log the developer can see, so
+   *  the panel + watcher narrate their own lifecycle here. Test-scoped reset
+   *  via clearBuildIdLaneForTest(). */
+  private static laneLog: ((line: string) => void) | undefined;
+  /** Wire the lane's log sink (extension.ts activation); undefined = silent. */
+  static setLaneLog(fn: ((line: string) => void) | undefined): void {
+    ChatPanel.laneLog = fn;
+  }
+  /** #1556: one log line, never thrown. */
+  private static logLane(line: string): void {
+    try {
+      ChatPanel.laneLog?.(line);
+    } catch {}
+  }
 
   /** Subscribe to live-panel count changes. Used by the workspace tree to mute the chat button. */
   static onLiveChange(cb: (count: number) => void): void {
@@ -111,6 +159,17 @@ export class ChatPanel {
     hideProjectDir?: string,
     withSplash?: boolean,
   ) {
+    // #1556 (subsuming #1459): seed the stamp from the window-wide served-id
+    // cache (a prior panel/watcher fetch already observed this origin), then
+    // kick this panel's own derivation of the served build id from its origin
+    // — the host fetch bypasses the webview SW (#1556's premise), so it always
+    // sees the true current dist. The fetch is STARTED before the first
+    // renderHtml; its result re-stamps the frame pre-app-ready (see
+    // resolveStampedBuildId — the sync factory signatures pin the first render
+    // synchronous, so a cache-miss panel converges via one guarded re-render).
+    this.renderMode = withSplash ? "transition" : "normal";
+    this.stampedBuildId = ChatPanel.servedBuildIds.get(opencodeUrl.origin);
+    void this.resolveStampedBuildId(opencodeUrl.origin);
     this.panel.webview.html = withSplash
       ? this.renderTransitionHtml(opencodeUrl, authToken, hideProjectDir)
       : this.renderHtml(opencodeUrl, authToken, hideProjectDir);
@@ -165,11 +224,37 @@ export class ChatPanel {
         authorization: serverAuth,
       });
     }
+    // #1556 (the prompt half): while this panel is alive, poll the served
+    // build id on the slow interval and prompt once per version when it
+    // drifts from the stamp. Origin + stamp are read LIVE so a re-frame
+    // (service-shelf switch) needs no watcher surgery; the interval clears
+    // with the panel's disposables.
+    this.disposables.push(
+      new BuildChangeWatcher({
+        origin: () => this.frameOrigin.origin,
+        stampedBuildId: () => this.stampedBuildId,
+        fetchServed: (origin) => this.fetchServedBuildIdForOrigin(origin),
+        prompt: (message, ...items) =>
+          vscode.window.showInformationMessage(message, ...items) as PromiseLike<string | undefined>,
+        reload: () => void vscode.commands.executeCommand("workbench.action.reloadWindow"),
+        // one shared set across THIS window's panels — exactly one prompt per
+        // ship, however many side-by-side tabs are live.
+        prompted: ChatPanel.promptedBuildVersions,
+        ...(ChatPanel.buildChangeClock ? { clock: ChatPanel.buildChangeClock } : {}),
+        log: (line) => ChatPanel.logLane(`panel@${this.frameOrigin.origin} ${line}`),
+      }),
+    );
+    ChatPanel.logLane(
+      `panel constructed: origin=${opencodeUrl.origin} renderMode=${this.renderMode} stamped=${this.stampedBuildId ?? "undef"}`,
+    );
     this.panel.webview.onDidReceiveMessage(
       (msg) => {
         // app-ready: the SolidJS app has mounted and is rendering. Fire
         // any registered callbacks (one-shot) and clear the list.
         if (msg && msg.source === "amicode" && msg.kind === "app-ready") {
+          // #1556: the app is live — close the guarded pre-ready re-stamp
+          // window (a later-arriving derivation must never re-navigate it).
+          this.appReadySeen = true;
           // The syntax theme cannot be sent at panel construction: the iframe
           // has not registered its message listener yet. app-ready is the
           // first reliable point to deliver the initial VS Code token theme.
@@ -402,12 +487,69 @@ export class ChatPanel {
     return this.frameOrigin.toString();
   }
 
+  /** #1556 test seam: reset the window-wide reload-lane state (served-id
+   *  cache + already-prompted versions) between tests — module state survives
+   *  suites otherwise. Production never clears either. */
+  static clearBuildIdLaneForTest(): void {
+    ChatPanel.servedBuildIds.clear();
+    ChatPanel.promptedBuildVersions.clear();
+  }
+
+  /** #1556: the served-build-id fetch, shared by the construction path and the
+   *  watcher's polls. Every observed id is recorded in the window-wide cache so
+   *  panels created later stamp their FIRST render (and a re-framed panel
+   *  stamps from the new origin). Never throws — a degraded origin is honest
+   *  degradation, never a surfaced error. */
+  private async fetchServedBuildIdForOrigin(origin: string): Promise<string | undefined> {
+    try {
+      const id = await fetchServedBuildId(
+        origin,
+        AbortSignal.timeout(SERVED_BUILD_ID_FETCH_TIMEOUT_MS),
+        ChatPanel.buildIdFetchImpl,
+      );
+      if (id !== undefined) ChatPanel.servedBuildIds.set(origin, id);
+      return id;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** #1556: await this panel's served-build-id derivation and stamp it. The
+   *  sync factory signatures (and their synchronous-html contract) pin the
+   *  first render synchronous, so the derivation — STARTED before the first
+   *  renderHtml — lands as one guarded re-render: only pre-app-ready (never
+   *  re-navigate a live session), only when the id actually changed, never on
+   *  a disposed panel. undefined (fetch/parse failure) → no stamp, no
+   *  re-render — exactly today's behavior. */
+  private async resolveStampedBuildId(origin: string): Promise<void> {
+    try {
+      const id = await this.fetchServedBuildIdForOrigin(origin);
+      if (id === undefined || id === this.stampedBuildId) return;
+      this.stampedBuildId = id;
+      if (this.disposed || this.appReadySeen) return;
+      this.panel.webview.html =
+        this.renderMode === "transition"
+          ? this.renderTransitionHtml(this.frameOrigin, this.frameAuthToken, this.frameHideProjectDir)
+          : this.renderHtml(this.frameOrigin, this.frameAuthToken, this.frameHideProjectDir);
+    } catch {
+      /* the reload lane must never disturb the panel */
+    }
+  }
+
   /** #1188: re-point this panel's iframe at `newUrl` (the service shelf) when it
    *  is currently on a different origin (the engine fallback). Re-renders the
-   *  webview HTML; a no-op when the origin already matches. */
+   *  webview HTML; a no-op when the origin already matches. #1556: re-derives
+   *  and re-stamps from the NEW origin — the stamp never carries the old
+   *  origin's id across an origin switch (sync render stamps from the new
+   *  origin's cache, then the kicked fetch converges via the guarded
+   *  pre-ready re-render; the app is re-booting here, so that window is
+   *  re-opened). */
   reframe(newUrl: URL): void {
     if (!shouldReframe(this.frameHref(), newUrl.toString())) return;
     this.frameOrigin = newUrl;
+    this.appReadySeen = false;
+    this.stampedBuildId = ChatPanel.servedBuildIds.get(newUrl.origin);
+    void this.resolveStampedBuildId(newUrl.origin);
     this.panel.webview.html = this.renderHtml(newUrl, this.frameAuthToken, this.frameHideProjectDir);
   }
 
@@ -558,6 +700,14 @@ export class ChatPanel {
     // on every reload because ephemeral ports rotate the localStorage origin.
     const devAssetRoot = (vscode.workspace.getConfiguration("amicode").get<string>("devAssetRoot", "") ?? "").trim();
     if (devAssetRoot) framed.searchParams.set("amicode_developer", "1");
+    // #1556/#1459: the served dist's build id rides the frame URL as a
+    // cache key the webview's service worker has never seen. Every ship
+    // mints a fresh index-<hash>.js name, so the stamped URL (and with it
+    // the SW's navigation cache entry) can never serve the previous build
+    // across a ship — Reload Window lands the new dist with no cache
+    // surgery. Never disturbs auth_token or any existing param; undefined
+    // id (origin doc unparseable/unreachable) → no param, today's behavior.
+    if (this.stampedBuildId) framed.searchParams.set("amicode_build", this.stampedBuildId);
     return /* html */ `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -648,6 +798,9 @@ export class ChatPanel {
     if (ChatPanel.bugReportAvailable) framed.searchParams.set("amicode_bug_report", "1");
     const devAssetRootTransition = (vscode.workspace.getConfiguration("amicode").get<string>("devAssetRoot", "") ?? "").trim();
     if (devAssetRootTransition) framed.searchParams.set("amicode_developer", "1");
+    // #1556/#1459: the amicode_build stamp — identical semantics to
+    // renderHtml's (the SW cache-bust must hold on BOTH shell paths).
+    if (this.stampedBuildId) framed.searchParams.set("amicode_build", this.stampedBuildId);
     return /* html */ `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -789,6 +942,8 @@ export class ChatPanel {
   }
 
   dispose(): void {
+    this.disposed = true; // #1556: in-flight derivations must not re-render a dead panel
+    ChatPanel.logLane(`panel disposed: origin=${this.frameOrigin?.origin ?? "?"}`);
     for (const d of this.disposables) {
       try {
         d.dispose();
