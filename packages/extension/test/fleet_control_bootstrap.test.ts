@@ -384,7 +384,23 @@ describe("#1545 — shared-peer arm: requires-approval → request→approve han
 // enableSelfOwnedControl to mint. Cancelling mints nothing (AC3); a non-self-
 // owned / unverified peer mints nothing (no-privilege-bleed, AC4).
 // ═══════════════════════════════════════════════════════════════════════════
-describe("#1551 handleEnableControlRequest — confirm → mint (self-owned+verified); cancel/shared/unverified → no grant", () => {
+// ═══════════════════════════════════════════════════════════════════════════
+// #1551 / #1562-followup (Slice B) — handleEnableControlRequest: the LIVE caller
+//
+// The self-owned enable act's extension-side handler — the one the app→extension
+// `fleet-enable-control` envelope drives. It CONFIRMS first (the ADR 0034 D4
+// native modal, injected). Slice B makes it:
+//   · SELF-HEAL the dominant real-world failure — a self-owned, serving,
+//     reader-token-held peer with a MISSING lifecycle-authority record (any
+//     fleet enrolled before authority-seeding landed): record self as the
+//     authority, then proceed. Gated STRICTLY on self-owned (no privilege bleed).
+//   · report DISTINCT outcomes — shared-requires-approval (a shared peer, the
+//     #1545 handshake), peer-unreachable (not serving / no token), and
+//     authority-not-established (a self-owned peer whose authority names a
+//     DIFFERENT machine — never silently overwritten).
+// Cancelling still mints nothing (AC3); a shared peer still mints nothing (AC4).
+// ═══════════════════════════════════════════════════════════════════════════
+describe("#1551/#1562 handleEnableControlRequest — confirm → self-heal → mint; distinct honest failure reasons", () => {
   let grantDeps: LifecycleGrantDeps;
   let root: string;
   beforeEach(() => {
@@ -397,8 +413,11 @@ describe("#1551 handleEnableControlRequest — confirm → mint (self-owned+veri
   });
 
   // A verified, self-owned deps set — the happy path. `confirm` is injected so
-  // the native modal never runs in-test.
-  function verifiedDeps(confirm: (owner: string) => Promise<boolean>): EnableControlHandlerDeps {
+  // the native modal never runs in-test; `recorded` captures any self-heal write.
+  function verifiedDeps(
+    confirm: (owner: string) => Promise<boolean>,
+    recorded: LifecycleAuthorityRecord[] = [],
+  ): EnableControlHandlerDeps {
     return {
       self: { machineId: SELF_ID, identityKey: SELF_KEY },
       targetIdentityKey: () => PEER_KEY,
@@ -406,22 +425,27 @@ describe("#1551 handleEnableControlRequest — confirm → mint (self-owned+veri
       getServingPeers: () => [{ machineId: PEER_ID }],
       readPeerToken: (id) => ({ ok: id === PEER_ID }),
       resolveAuthority: (t) => (t === PEER_ID ? authorityFor(PEER_ID, SELF_ID) : undefined),
+      recordAuthority: (rec) => recorded.push(rec),
+      now: () => "2026-09-24T00:00:00.000Z",
       confirm,
       grantDeps,
     };
   }
 
-  it("confirm=true on a self-owned, management-verified peer MINTS an active control grant", async () => {
+  it("confirm=true on a self-owned, already-authorised peer MINTS (no self-heal needed)", async () => {
     let asked = "";
+    const recorded: LifecycleAuthorityRecord[] = [];
     const outcome = await handleEnableControlRequest(
       { ownerMachineId: PEER_ID, sessionID: "ses_abc" },
       verifiedDeps(async (owner) => {
         asked = owner;
         return true;
-      }),
+      }, recorded),
     );
     expect(asked).toBe(PEER_ID); // the modal was asked about the target peer
     expect(outcome.outcome).toBe("minted");
+    if (outcome.outcome === "minted") expect(outcome.selfHealed).toBe(false);
+    expect(recorded).toHaveLength(0); // authority already existed → no self-heal write
     const grant = findControlGrantByTarget(PEER_ID, grantDeps);
     expect(grant).toBeDefined();
     expect(grant!.scope).toBe("control");
@@ -430,28 +454,88 @@ describe("#1551 handleEnableControlRequest — confirm → mint (self-owned+veri
     expect(grant!.requesterMachineId).toBe(SELF_ID);
   });
 
-  it("confirm=false (native modal cancelled) MINTS NOTHING (AC3)", async () => {
-    const outcome = await handleEnableControlRequest(
-      { ownerMachineId: PEER_ID, sessionID: "ses_abc" },
-      verifiedDeps(async () => false),
-    );
+  it("SELF-HEAL: self-owned + serving + token but MISSING authority → records self as authority, then mints", async () => {
+    const recorded: LifecycleAuthorityRecord[] = [];
+    const deps = verifiedDeps(async () => true, recorded);
+    deps.resolveAuthority = () => undefined; // the pre-seeding fleet: no authority record
+
+    const outcome = await handleEnableControlRequest({ ownerMachineId: PEER_ID, sessionID: "ses_abc" }, deps);
+
+    // it self-healed: recorded SELF as the authority for the target
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0]).toEqual({
+      targetMachineId: PEER_ID,
+      authorityMachineId: SELF_ID,
+      authorityIdentityKey: SELF_KEY,
+      recordedAt: "2026-09-24T00:00:00.000Z",
+    });
+    // then authorised + minted
+    expect(outcome.outcome).toBe("minted");
+    if (outcome.outcome === "minted") expect(outcome.selfHealed).toBe(true);
+    const grant = findControlGrantByTarget(PEER_ID, grantDeps);
+    expect(grant).toBeDefined();
+    expect(grant!.scope).toBe("control");
+    expect(grant!.state).toBe("active");
+  });
+
+  it("confirm=false (native modal cancelled) MINTS NOTHING and self-heals NOTHING (AC3)", async () => {
+    const recorded: LifecycleAuthorityRecord[] = [];
+    const deps = verifiedDeps(async () => false, recorded);
+    deps.resolveAuthority = () => undefined;
+    const outcome = await handleEnableControlRequest({ ownerMachineId: PEER_ID, sessionID: "ses_abc" }, deps);
     expect(outcome.outcome).toBe("cancelled");
+    expect(recorded).toHaveLength(0); // a cancelled modal writes no authority
     expect(findControlGrantByTarget(PEER_ID, grantDeps)).toBeUndefined();
   });
 
-  it("no privilege bleed: a SHARED peer mints NOTHING even on confirm (AC4)", async () => {
-    const deps = verifiedDeps(async () => true);
+  it("no privilege bleed: a SHARED peer mints NOTHING and self-heals NOTHING, even with no authority (AC4)", async () => {
+    const recorded: LifecycleAuthorityRecord[] = [];
+    const deps = verifiedDeps(async () => true, recorded);
     deps.ownershipOf = () => "shared";
+    deps.resolveAuthority = () => undefined; // shared peer must NOT self-heal into a mint
     const outcome = await handleEnableControlRequest({ ownerMachineId: PEER_ID, sessionID: "ses_abc" }, deps);
-    expect(outcome.outcome).toBe("not-authorized");
+    expect(outcome.outcome).toBe("shared-requires-approval");
+    expect(recorded).toHaveLength(0); // NEVER records authority for a shared peer
     expect(findControlGrantByTarget(PEER_ID, grantDeps)).toBeUndefined();
   });
 
-  it("a self-owned peer that is NOT management-verified (transport down) mints NOTHING", async () => {
-    const deps = verifiedDeps(async () => true);
-    deps.getServingPeers = () => []; // peer not serving → not verified
+  it("a self-owned peer that is NOT reachable (transport down) → peer-unreachable, no self-heal", async () => {
+    const recorded: LifecycleAuthorityRecord[] = [];
+    const deps = verifiedDeps(async () => true, recorded);
+    deps.getServingPeers = () => []; // peer not serving → genuinely unreachable
     const outcome = await handleEnableControlRequest({ ownerMachineId: PEER_ID, sessionID: "ses_abc" }, deps);
-    expect(outcome.outcome).toBe("not-authorized");
+    expect(outcome.outcome).toBe("peer-unreachable");
+    expect(recorded).toHaveLength(0);
     expect(findControlGrantByTarget(PEER_ID, grantDeps)).toBeUndefined();
+  });
+
+  it("a self-owned peer whose authority names a DIFFERENT machine is NOT overwritten → authority-not-established", async () => {
+    const recorded: LifecycleAuthorityRecord[] = [];
+    const deps = verifiedDeps(async () => true, recorded);
+    deps.resolveAuthority = () => authorityFor(PEER_ID, "someone-else"); // a real, foreign authority
+    const outcome = await handleEnableControlRequest({ ownerMachineId: PEER_ID, sessionID: "ses_abc" }, deps);
+    expect(outcome.outcome).toBe("authority-not-established");
+    expect(recorded).toHaveLength(0); // must NOT clobber a foreign authority
+    expect(findControlGrantByTarget(PEER_ID, grantDeps)).toBeUndefined();
+  });
+
+  it("the three failure reasons are DISTINCT (a real code split, not one collapsed 'not-authorized')", async () => {
+    const shared = verifiedDeps(async () => true);
+    shared.ownershipOf = () => "shared";
+    const unreachable = verifiedDeps(async () => true);
+    unreachable.getServingPeers = () => [];
+    const foreign = verifiedDeps(async () => true);
+    foreign.resolveAuthority = () => authorityFor(PEER_ID, "someone-else");
+
+    const reasons = new Set(
+      await Promise.all(
+        [shared, unreachable, foreign].map(async (deps) =>
+          (await handleEnableControlRequest({ ownerMachineId: PEER_ID, sessionID: "s" }, deps)).outcome,
+        ),
+      ),
+    );
+    expect(reasons).toEqual(
+      new Set(["shared-requires-approval", "peer-unreachable", "authority-not-established"]),
+    );
   });
 });

@@ -184,6 +184,13 @@ export interface EnableControlHandlerDeps {
   readPeerToken: (machineId: string) => { ok: boolean };
   /** The enroll-seeded lifecycle-admin authority resolver. */
   resolveAuthority: (targetMachineId: string) => LifecycleAuthorityRecord | undefined;
+  /** SELF-HEAL writer (#1562): record a lifecycle-admin authority. Invoked ONLY
+   *  for a self-owned, serving, token-held peer whose authority record is
+   *  MISSING — never for a shared peer (no privilege bleed). Injectable so the
+   *  self-heal path is testable without touching the real store. */
+  recordAuthority: (record: LifecycleAuthorityRecord) => void;
+  /** ISO clock for the self-healed authority's `recordedAt`. */
+  now: () => string;
   /** The ADR 0034 D4 native-modal confirm — resolves true on confirm, false on
    *  cancel. Injected so the modal never runs in-test. */
   confirm: (ownerMachineId: string) => Promise<boolean>;
@@ -192,34 +199,81 @@ export interface EnableControlHandlerDeps {
 }
 
 export type EnableControlHandlerOutcome =
-  | { outcome: "minted"; grant: LifecycleGrant }
+  | { outcome: "minted"; grant: LifecycleGrant; selfHealed: boolean }
   | { outcome: "cancelled" }
-  | { outcome: "not-authorized" }
+  // ── DISTINCT honest failures (#1562, Slice B) — never one collapsed
+  //    "not-authorized" that the UI mistranslates to "isn't reachable or verified":
+  /** A shared peer — control needs its owner's approval (the #1545 handshake). */
+  | { outcome: "shared-requires-approval" }
+  /** A self-owned peer that is not serving / holds no reader token. */
+  | { outcome: "peer-unreachable" }
+  /** A self-owned peer whose lifecycle authority names a DIFFERENT machine — not
+   *  self-healed (never a silent takeover), left to re-enroll / the handshake. */
+  | { outcome: "authority-not-established" }
   | { outcome: "issue-failed"; reason: "identity-mismatch" | "target-mismatch" | "revoked" };
 
-/** Handle one `fleet-enable-control` intent: confirm (native modal) → verify →
- *  mint. Cancelling mints nothing; a shared / unverified peer mints nothing. */
+/** Handle one `fleet-enable-control` intent: confirm (native modal) → self-heal
+ *  a missing authority for a self-owned, serving, token-held peer → verify →
+ *  mint. Cancelling mints nothing; a shared peer mints nothing (no self-heal, no
+ *  privilege bleed); every failure carries its DISTINCT honest reason. */
 export async function handleEnableControlRequest(
   payload: { ownerMachineId: string; sessionID: string },
   deps: EnableControlHandlerDeps,
 ): Promise<EnableControlHandlerOutcome> {
   const ownerMachineId = payload.ownerMachineId;
   // CONFIRM FIRST — the ADR 0034 D4 native modal. A cancelled modal mints
-  // nothing and leaves the gated composer unchanged (AC3).
+  // nothing, self-heals nothing, and leaves the gated composer unchanged (AC3).
   const confirmed = await deps.confirm(ownerMachineId);
   if (!confirmed) return { outcome: "cancelled" };
 
-  const managementVerified = establishManagementVerified({
-    selfMachineId: deps.self.machineId,
-    targetMachineId: ownerMachineId,
-    getServingPeers: deps.getServingPeers,
-    readPeerToken: deps.readPeerToken,
-    resolveAuthority: deps.resolveAuthority,
+  // A SHARED peer NEVER self-heals and NEVER mints here — the #1545
+  // request→approve handshake is its only path (the no-privilege-bleed
+  // invariant: a shared peer mints nothing from this decision).
+  const ownership = deps.ownershipOf(ownerMachineId);
+  if (ownership !== "self-owned") return { outcome: "shared-requires-approval" };
+
+  // Self-owned: the transport facts must hold, else the peer is genuinely
+  // unreachable — a DISTINCT reason from "no authority", not the misleading
+  // collapsed copy.
+  const peerServing = deps.getServingPeers().some((p) => p.machineId === ownerMachineId);
+  const readerTokenHeld = deps.readPeerToken(ownerMachineId).ok;
+  if (!peerServing || !readerTokenHeld) return { outcome: "peer-unreachable" };
+
+  // The authority. For a self-owned, serving, token-held peer the authority
+  // genuinely IS self, so a MISSING record (the dominant real-world cause — any
+  // fleet enrolled before authority-seeding landed) SELF-HEALS: record self as
+  // the authority and proceed. A record naming a DIFFERENT machine is NEVER
+  // overwritten — that is a real authority-not-established, left to re-enroll.
+  const existing = deps.resolveAuthority(ownerMachineId);
+  const namesSelf =
+    existing !== undefined &&
+    (existing.authorityMachineId === deps.self.machineId ||
+      existing.authorityIdentityKey === deps.self.machineId);
+  let selfHealed = false;
+  if (existing === undefined) {
+    deps.recordAuthority({
+      targetMachineId: ownerMachineId,
+      authorityMachineId: deps.self.machineId,
+      authorityIdentityKey: deps.self.identityKey,
+      recordedAt: deps.now(),
+    });
+    selfHealed = true;
+  } else if (!namesSelf) {
+    return { outcome: "authority-not-established" };
+  }
+
+  // Compose management-verified from the facts we just established (post
+  // self-heal the authority is seeded for self) — do NOT re-resolve, so the
+  // decision does not depend on the injected resolver observing the write.
+  const managementVerified = evaluateManagementVerified({
+    authoritySeededForSelf: selfHealed || namesSelf,
+    peerServing,
+    readerTokenHeld,
   });
 
   const result = enableSelfOwnedControl(
     {
-      ownership: deps.ownershipOf(ownerMachineId),
+      ownership,
       managementVerified,
       self: deps.self,
       target: { machineId: ownerMachineId, identityKey: deps.targetIdentityKey(ownerMachineId) },
@@ -228,8 +282,8 @@ export async function handleEnableControlRequest(
   );
   if (!result.ok) {
     return result.reason === "requires-approval"
-      ? { outcome: "not-authorized" }
+      ? { outcome: "authority-not-established" }
       : { outcome: "issue-failed", reason: result.issueReason };
   }
-  return { outcome: "minted", grant: result.grant };
+  return { outcome: "minted", grant: result.grant, selfHealed };
 }

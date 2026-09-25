@@ -87,7 +87,7 @@ import { createFleetFocusHost } from "./fleet_focus";
 import { registerAmicodeTerminal } from "./terminal";
 import { amicodeServiceDisposal, startAmicodeService, frameOriginUrl } from "./amicode_service_wiring";
 import { buildFleetPeerProvider } from "./amicode_service/fleet_peer_provider";
-import { resolveLifecycleAuthority } from "./amicode_service/fleet_lifecycle_authority";
+import { resolveLifecycleAuthority, recordLifecycleAuthority } from "./amicode_service/fleet_lifecycle_authority";
 import { handleEnableControlRequest } from "./amicode_service/fleet_control_bootstrap";
 import { readRosterRows } from "./amicode_service/roster";
 import { resolveAppDistRoot } from "./amicode_service/app_shelf";
@@ -643,6 +643,13 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         getServingPeers: () => provider.getServingPeers(),
         readPeerToken: (id) => ({ ok: provider.readPeerToken(id).ok }),
         resolveAuthority: (id) => resolveLifecycleAuthority(id),
+        // #1562 SELF-HEAL: a self-owned, serving, token-held peer whose
+        // lifecycle-authority record is missing (any fleet enrolled before
+        // authority-seeding landed) records self as the authority, then proceeds.
+        // The handler gates this strictly on self-owned — a shared peer never
+        // reaches here (no privilege bleed).
+        recordAuthority: (rec) => recordLifecycleAuthority(rec),
+        now: () => new Date().toISOString(),
         // ADR 0034 D4: the one net-new native-modal confirm.
         confirm: async (owner) => {
           const name = provider.rosterLookup(owner)?.name ?? owner;
@@ -660,9 +667,24 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     );
     if (outcome.outcome === "minted") {
       void vscode.window.showInformationMessage(`Amicode: control enabled — now driving ${peerName}.`);
-    } else if (outcome.outcome === "not-authorized") {
+    } else if (outcome.outcome === "peer-unreachable") {
+      // #1562: DISTINCT copy — the peer is genuinely not reachable, not "unverified".
       void vscode.window.showWarningMessage(
-        `Amicode: couldn't enable control of ${peerName} — the peer isn't reachable or verified.`,
+        `Amicode: couldn't enable control of ${peerName} — it isn't reachable right now (not serving, or no reader token).`,
+      );
+    } else if (outcome.outcome === "shared-requires-approval") {
+      // #1562: DISTINCT copy — a shared peer needs its owner's approval (#1545).
+      void vscode.window.showWarningMessage(
+        `Amicode: ${peerName} is a shared peer — enabling control needs its owner's approval.`,
+      );
+    } else if (outcome.outcome === "authority-not-established") {
+      // #1562: DISTINCT copy — a foreign lifecycle authority we won't overwrite.
+      void vscode.window.showWarningMessage(
+        `Amicode: couldn't enable control of ${peerName} — its lifecycle authority is held by another machine. Re-enroll the peer from this machine to establish authority.`,
+      );
+    } else if (outcome.outcome === "issue-failed") {
+      void vscode.window.showWarningMessage(
+        `Amicode: couldn't enable control of ${peerName} — grant issuance failed (${outcome.reason}).`,
       );
     }
   });

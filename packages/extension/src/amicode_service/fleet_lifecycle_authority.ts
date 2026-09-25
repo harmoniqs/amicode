@@ -14,6 +14,7 @@
 import {
   resolveLifecycleAuthority as schemaResolve,
   readAllLifecycleAuthorities as schemaReadAll,
+  recordLifecycleAuthority as schemaRecord,
   type LifecycleAuthorityRecord,
 } from "@amicode/schema";
 
@@ -38,4 +39,15 @@ export function resolveLifecycleAuthority(
 /** Read ALL seeded authority records (fleet-scale, small set). */
 export function readAllLifecycleAuthorities(deps: LifecycleAuthorityResolveDeps = {}): LifecycleAuthorityRecord[] {
   return schemaReadAll(deps.authorityStoreFile);
+}
+
+/** SELF-HEAL writer (#1562): persist (upsert) one authority record via the SAME
+ *  shared @amicode/schema writer `amico fleet enroll` uses. The extension's
+ *  enable-control path invokes this ONLY for a self-owned, serving, token-held
+ *  peer whose record is missing — the resolver above then resolves it. */
+export function recordLifecycleAuthority(
+  record: LifecycleAuthorityRecord,
+  deps: LifecycleAuthorityResolveDeps = {},
+): void {
+  schemaRecord(record, deps.authorityStoreFile);
 }
