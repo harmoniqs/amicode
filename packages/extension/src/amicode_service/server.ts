@@ -20,6 +20,7 @@ import { mintServerPassword, serverAuthHeader } from "../server_auth";
 import { setBindHostname } from "./bind_host";
 import { AppShelf, type AppShelfResult } from "./app_shelf";
 import { EngineProxy } from "./engine_proxy";
+import { matchInflightChatTurn, trackInflightChatTurn } from "./inflight_journal";
 import { HubProxy } from "./hub_proxy";
 import type { UpstreamMode } from "./merged_projection";
 import { isPublicUiPath } from "./public_ui";
@@ -278,6 +279,19 @@ export class AmicodeServiceServer {
         return;
       }
       if (this.engineProxy) {
+        // #1552: the in-flight journal seam. dispatch is the one place that
+        // sees EVERY engine-bound request, so it is where an agent loop (an
+        // open chat POST — POST /session/{id}/message, the SDK's
+        // session.prompt()) becomes durable state: the match journals a
+        // "start" now, and the response's "close" (fires on completion AND on
+        // client/upstream death) writes the matching "end". The next boot
+        // reads this journal to re-dispatch the sessions a bounce killed
+        // mid-loop. Best-effort by contract — never a request-path
+        // dependency. (The hub runner always routes engine-mode, so this
+        // seam covers the hub's bounce case; fleet mode is a client of a
+        // remote hub, not the hub itself.)
+        const inflight = matchInflightChatTurn(req.method, url.pathname);
+        if (inflight !== undefined) trackInflightChatTurn(res, inflight);
         // Streams method/headers/body through to the engine (SSE included);
         // false = no upstream bound yet → the honest 503 below.
         if (this.engineProxy.handle(req, res)) return;
