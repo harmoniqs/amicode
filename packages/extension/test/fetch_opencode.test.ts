@@ -22,11 +22,11 @@ describe("loadManifest", () => {
   });
   it("the COMMITTED manifest parses", () => {
     const m = loadManifest(); // defaults to the real packages/extension root
-    expect(m.version).toBe("1.18.29");
+    expect(m.version).toBe("1.18.30");
   });
   it("the committed manifest has the post-absorption schema fields", () => {
     const m = loadManifest();
-    expect(m.base_version).toBe("1.18.29");
+    expect(m.base_version).toBe("1.18.30");
     expect(m.base_commit).toMatch(/^[0-9a-f]{40}$/);
     expect(m.overlay_hash).toMatch(/^[0-9a-f]{64}$/);
   });

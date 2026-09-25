@@ -4,8 +4,8 @@
 // the configured cases use a PREFILLED fresh cache so no network is touched.
 import { describe, it, expect, beforeAll } from "vitest";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { chmodSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { testKeyPair } from "../src/github_app.js";
 import { tmpRoot } from "./helpers.js";
 
@@ -104,9 +104,33 @@ describe("gh shim (bundle)", () => {
     // its child lookups resolve, but no real gh exists) → 127. The file vars
     // stay pointed at a nonexistent tmp path so this is the passthrough lane
     // regardless of the developer's real ~/.amico state.
+    //
+    // The node dir is RESOLVED, not assumed: dirname(process.execPath) holds
+    // node only under the node runner (under bun it is bun's own bin dir, and
+    // the constructed PATH then cannot spawn the bundle at all). Under bun,
+    // resolve node and take its REALPATH's dir — a bare `command -v node` can
+    // land in a shim dir (e.g. ~/.local/bin) that also carries tools like a
+    // real gh, which would defeat the guard's no-other-gh premise. No node
+    // binary on the host at all → the bundle cannot run: skip with the
+    // requirement named (run the suite under a runtime with node installed).
+    let nodeDir = "";
+    if (basename(process.execPath) === "node") {
+      nodeDir = dirname(process.execPath);
+    } else {
+      const found = spawnSync("sh", ["-c", "command -v node"], { encoding: "utf8" }).stdout?.trim() ?? "";
+      try {
+        if (found !== "") nodeDir = dirname(realpathSync(found));
+      } catch {
+        // node named but not stat-able → treated as absent below
+      }
+    }
+    if (nodeDir === "") {
+      console.warn("skipping: requires a node binary on PATH — the gh shim bundle is a node script");
+      return;
+    }
     const root = tmpRoot();
     const r = runShim(["pr", "list"], {
-      PATH: `${join(ROOT, "launcher")}:${dirname(process.execPath)}`,
+      PATH: `${join(ROOT, "launcher")}:${nodeDir}`,
       AMICO_GITHUB_FILE: join(root, "github.json"),
       AMICO_GITHUB_TOKEN_FILE: join(root, "tok.json"),
     });

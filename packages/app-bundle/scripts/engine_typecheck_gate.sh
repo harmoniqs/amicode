@@ -8,12 +8,14 @@
 # (`bun turbo typecheck`), scoped to the `opencode` package — the engine where
 # amicode's overlay changes live.
 #
-# Any NEW type error fails CI. Exactly three KNOWN base-drift errors are
-# allowlisted (tracked in #1229): the manifest's upstream_base_sha=7fe9938 is
-# older than the base the overlay was authored against, so three opencode test
-# files reference symbols (MCP `remove`, HttpRecorder `promptAgnosticMatcher`)
-# absent from the stale base. #1229 bumps the base and DELETES this allowlist.
-# The full-monorepo lane and the unit-TEST lane are tracked in #1229 / #1233.
+# Any NEW type error fails CI. KNOWN base-drift errors are allowlisted: the
+# materialized upstream test tree references symbols that upstream's own src
+# tree does not export at the pinned base (e.g. codex `extractResidency`, MCP
+# `remove`, HttpRecorder `promptAgnosticMatcher`) — inconsistencies WITHIN the
+# upstream release, not caused by amicode's overlay. The allowlist is matched by
+# file + TS rule code so line drift does not defeat it. Refresh this list when
+# the base pin (manifest upstream_base) moves. The full-monorepo lane and the
+# unit-TEST lane are tracked in #1229 / #1233.
 set -uo pipefail
 
 MAT="packages/app-bundle/.materialized"
@@ -33,10 +35,11 @@ if ! echo "$OUT" | grep -q 'tsgo --noEmit'; then
   exit 1
 fi
 
-# Known base-drift errors, tracked in #1229. Matched by file + TS rule code so
-# line drift does not defeat the allowlist. Remove this whole block when #1229
-# bumps the base pin.
-ALLOW='test/server/httpapi-mcp-oauth\.test\.ts.*error TS2322|test/session/llm-native-recorded\.test\.ts.*error TS2339|test/session/snapshot-tool-race\.test\.ts.*error TS2741'
+# Known base-drift errors — upstream test files referencing symbols absent from
+# upstream's own src tree at the pinned base (upstream_base = v1.18.30). Matched
+# by file + TS rule code so line drift does not defeat the allowlist. Refresh
+# when the base pin moves.
+ALLOW='test/plugin/codex\.test\.ts.*error TS2305|test/server/httpapi-mcp-oauth\.test\.ts.*error TS2322|test/session/llm-native-recorded\.test\.ts.*error TS2339|test/session/snapshot-tool-race\.test\.ts.*error TS2741'
 
 TYPECHECK_ERRORS="$(echo "$OUT" | grep -E 'error TS' || true)"
 if [ "$TYPECHECK_STATUS" -ne 0 ] && [ -z "$TYPECHECK_ERRORS" ]; then

@@ -80,7 +80,7 @@ import { PromptPopover, type AtOption, type SlashCommand } from "./prompt-input/
 import { PromptContextItems } from "./prompt-input/context-items"
 import { PromptImageAttachments } from "./prompt-input/image-attachments"
 import { PromptDragOverlay } from "./prompt-input/drag-overlay"
-import { promptDesignPlaceholder, promptPlaceholder } from "./prompt-input/placeholder"
+import { promptPlaceholder } from "./prompt-input/placeholder"
 import { createPromptInputTransientState } from "./prompt-input/transient-state"
 import { showToast } from "@/utils/toast"
 import { hiddenProjectWorktree } from "@/utils/amicode-hidden-project"
@@ -1499,6 +1499,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
           }
           onRemove={removeAttachment}
           removeLabel={language.t("prompt.attachment.remove")}
+          fileLabel={language.t("ui.common.file")}
           newLayoutDesigns={false}
         />
         <div

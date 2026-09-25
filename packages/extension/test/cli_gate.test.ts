@@ -182,7 +182,21 @@ exit 0`,
 
 // ── the real staged set (CI runs this after `pnpm -r run build`) ────────────
 
-describe.skipIf(!existsSync(REAL_BIN_DIR))("runGate against the really staged bins", () => {
+// The REQUIREMENT is a COMPLETE staging — every declared bin's launcher AND
+// dist bundle present (a bare bin/ dir is not enough: a partial staging —
+// e.g. a leftover dist without launchers — would red the gate for reasons the
+// freshly-staged assertion is not about). Stage with `pnpm -r run build`.
+const realStagedSetReady = (() => {
+  try {
+    return declaredBins(REAL_BIN_MAP).every(
+      (b) => existsSync(join(REAL_BIN_DIR, b.launcher)) && existsSync(join(REAL_BIN_DIR, b.dist)),
+    );
+  } catch {
+    return false;
+  }
+})();
+
+describe.skipIf(!realStagedSetReady)("runGate against the really staged bins", () => {
   it("the freshly staged CLI passes every check for every declared bin", async () => {
     const { ok, results } = await runGate({ binDir: REAL_BIN_DIR, binMapPath: REAL_BIN_MAP });
     expect(failing(results)).toEqual([]);

@@ -188,9 +188,18 @@ describe("amicode service — auth mode (#955, the open-boundary posture)", () =
       await withService({ authMode: "open" }, engine.url, async (service) => {
         expect(service.authMode).toBe("open");
       });
-      await withService({}, engine.url, async (service) => {
-        expect(service.authMode).toBe("credential");
-      });
+      // The no-opt boot pins the credential default — isolate the ambient env
+      // exactly like the env-carrier cases above (a dev host running a live
+      // amicode service exports AMICODE_SERVICE_AUTH=open).
+      const prev = process.env.AMICODE_SERVICE_AUTH;
+      delete process.env.AMICODE_SERVICE_AUTH;
+      try {
+        await withService({}, engine.url, async (service) => {
+          expect(service.authMode).toBe("credential");
+        });
+      } finally {
+        if (prev !== undefined) process.env.AMICODE_SERVICE_AUTH = prev;
+      }
     });
   });
 });

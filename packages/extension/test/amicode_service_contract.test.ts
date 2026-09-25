@@ -187,6 +187,11 @@ describe("amicode service — golden-fixture parity with the fork", () => {
       savedEnv[k] = process.env[k];
       process.env[k] = env[k];
     }
+    // The boot pins the credential auth default; a dev host running a live
+    // amicode service exports AMICODE_SERVICE_AUTH=open (the runner's
+    // tunnel/LAN posture) — isolate it (restored by the afterAll loop below).
+    savedEnv.AMICODE_SERVICE_AUTH = process.env.AMICODE_SERVICE_AUTH;
+    delete process.env.AMICODE_SERVICE_AUTH;
     service = createAmicodeService({ password: "contract-test-password" });
     const url = await service.start();
     base = url.toString().replace(/\/$/, "");
@@ -219,7 +224,7 @@ describe("amicode service — golden-fixture parity with the fork", () => {
     expect(meta.entries.length).toBeGreaterThan(0);
     // Post-absorption: the lock has version + base_commit + overlay_hash.
     const lock = JSON.parse(readFileSync(fileURLToPath(new URL("../opencode.lock.json", import.meta.url)), "utf8"));
-    expect(lock.version).toBe("1.18.29");
+    expect(lock.version).toBe("1.18.30");
     expect(lock.base_commit).toMatch(/^[0-9a-f]{40}$/);
     expect(lock.overlay_hash).toMatch(/^[0-9a-f]{64}$/);
   });

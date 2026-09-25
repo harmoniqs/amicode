@@ -1,9 +1,10 @@
 import { expect, test } from "bun:test"
-import { Marked } from "marked"
-import { markedCodeSpanBoundary } from "./marked-code-span"
-import { katexExtension, renderMathInText } from "./marked"
+import { createMarkdownParser, renderMathInText } from "./marked-parser"
 
-const parse = (src: string) => new Marked(markedCodeSpanBoundary, katexExtension).parse(src)
+// Parse through the real production pipeline (createMarkdownParser wires the
+// katexExtension + markedShiki). A no-op highlighter keeps the test hermetic —
+// code spans still round-trip as <code> via marked's built-in inline handling.
+const parse = (src: string) => createMarkdownParser((code) => code).parse(src)
 
 test("renders single-$ inline math", async () => {
   const html = await parse("in the rotating frame, where $\\Omega_x, \\Omega_y$ are the drives")

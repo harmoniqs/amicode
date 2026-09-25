@@ -1,6 +1,6 @@
 {
-  "version": "1.18.29",
-  "base_version": "1.18.29",
-  "base_commit": "7fe993879f98aa17cecc70f70d3f40d6f0f11689",
-  "overlay_hash": "09a343d884456f3cc01af38e55d42f4085251896f86ed44a5ba1fed05b086b88"
+  "version": "1.18.30",
+  "base_version": "1.18.30",
+  "base_commit": "3104c1428ec91f809e5ab86631300de41eb6952e",
+  "overlay_hash": "05f89265a9c3a4c0b32319b57fd019aa133c7cd620a8ff90ab6eea42acb64252"
 }

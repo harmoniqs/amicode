@@ -323,8 +323,12 @@ describe("reviewSpec", () => {
   // A-11: with `opencode` on PATH, any test omitting --offline and injecting nothing would fan
   // out real billed critics. test/setup.ts pins $AMICO_CRITIC_BIN to an impossible path for the
   // whole suite; this asserts the guard is actually in force rather than assumed.
+  // REQUIREMENT: the vitest setup file (test/setup.ts) — runners that don't
+  // load it (bun test) see no pin, so the guard-assertion skips; run
+  // `pnpm test` (vitest) to exercise it. The fail-closed behavior itself is
+  // still covered by the opt-in case below, which carries its own env.
   describe("the no-real-model-calls guard", () => {
-    it("the suite-wide $AMICO_CRITIC_BIN cannot resolve", async () => {
+    it.skipIf(!process.env.AMICO_CRITIC_BIN)("the suite-wide $AMICO_CRITIC_BIN cannot resolve", async () => {
       expect(process.env.AMICO_CRITIC_BIN).toMatch(/nonexistent/);
       const r = await reviewSpec(specPath, fm(SLICE));
       expect(r.critic_spawns).toBe(0);
