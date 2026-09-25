@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test"
+import { readFileSync } from "node:fs"
+import { resolve } from "node:path"
 import {
   peerSessionsFromProjection,
   mergePeerSessions,
@@ -14,9 +16,11 @@ import {
   drivingBannerFromProjection,
   remoteDeleteAction,
   findSessionControlInProjection,
+  groupSessionsByOwner,
   CONTROL_CHIP_REASONS,
   type DropdownSession,
   type SessionControlProjection,
+  type SessionGroup,
 } from "./session-fleet-peers"
 
 // #1525 B1 (read-only): merge PEER sessions from the fleet projection into the
@@ -341,5 +345,85 @@ describe("#1544 findSessionControlInProjection — the current session's control
     expect(drivingBannerFromProjection(raw, "ses_studio")).toBeNull()
     expect(drivingBannerFromProjection(driving, "nope")).toBeNull()
     expect(drivingBannerFromProjection(undefined, "x")).toBeNull()
+  })
+})
+
+// ── #1562-followup (Slice C): GROUP the dropdown by owner machine ─────────────
+// The dropdown merged peer + local sessions and sorted by recency, so a single
+// Studio session sat at the bottom under ~100 local ones — effectively
+// invisible. The projection data is correct; this is PRESENTATION. groupSessions-
+// ByOwner is the pure decision: the LOCAL / unowned rows first (one unlabeled
+// group, order preserved), then ONE labeled group per peer machine (grouped by
+// owner_machine_id, labeled with the owner name), in first-seen order. Read-only
+// — no row is dropped or reordered within a group.
+describe("#1562 groupSessionsByOwner — local first, then a labeled group per peer machine", () => {
+  const laptopTag = { owner_machine_id: "jjs-macbook-pro", owner_name: "MacBook Pro", is_local: true }
+  const studio = { owner_machine_id: "jjs-mac-studio", owner_name: "JJ's Mac Studio", is_local: false }
+  const tower = { owner_machine_id: "lab-tower", owner_name: "Lab Tower", is_local: false }
+  const mk = (id: string, owner?: DropdownSession["amicode_owner"]): DropdownSession =>
+    ({ id, directory: "/d", time: { created: 0, updated: 0 }, ...(owner ? { amicode_owner: owner } : {}) }) as DropdownSession
+
+  test("local + unowned first (one UNLABELED group), then one LABELED group per peer machine", () => {
+    const groups: SessionGroup[] = groupSessionsByOwner([
+      mk("a"),
+      mk("b", laptopTag),
+      mk("s1", studio),
+      mk("c"),
+      mk("s2", studio),
+      mk("t1", tower),
+    ])
+    expect(groups).toHaveLength(3)
+    // group 0 = local / unowned, no machineId, no label, input order preserved
+    expect(groups[0].machineId).toBeNull()
+    expect(groups[0].label).toBeUndefined()
+    expect(groups[0].sessions.map((s) => s.id)).toEqual(["a", "b", "c"])
+    // then one labeled group per peer machine, FIRST-SEEN order (studio before tower)
+    expect(groups[1].machineId).toBe("jjs-mac-studio")
+    expect(groups[1].label).toBe("JJ's Mac Studio")
+    expect(groups[1].sessions.map((s) => s.id)).toEqual(["s1", "s2"])
+    expect(groups[2].machineId).toBe("lab-tower")
+    expect(groups[2].label).toBe("Lab Tower")
+    expect(groups[2].sessions.map((s) => s.id)).toEqual(["t1"])
+  })
+
+  test("empty peers → JUST the local list (one group, machineId null)", () => {
+    const groups = groupSessionsByOwner([mk("a"), mk("b", laptopTag)])
+    expect(groups).toHaveLength(1)
+    expect(groups[0].machineId).toBeNull()
+    expect(groups[0].sessions.map((s) => s.id)).toEqual(["a", "b"])
+  })
+
+  test("empty input → a single empty local group (never blank / never throws)", () => {
+    const groups = groupSessionsByOwner([])
+    expect(groups).toHaveLength(1)
+    expect(groups[0].machineId).toBeNull()
+    expect(groups[0].sessions).toEqual([])
+  })
+
+  test("peer order is FIRST-SEEN; rows within a peer group keep input (recency) order", () => {
+    const groups = groupSessionsByOwner([mk("t1", tower), mk("s1", studio), mk("t2", tower)])
+    expect(groups.map((g) => g.machineId)).toEqual([null, "lab-tower", "jjs-mac-studio"])
+    expect(groups[1].sessions.map((s) => s.id)).toEqual(["t1", "t2"])
+    expect(groups[2].sessions.map((s) => s.id)).toEqual(["s1"])
+  })
+
+  test("only-peer input → an empty local group followed by the labeled peer group(s)", () => {
+    const groups = groupSessionsByOwner([mk("s1", studio)])
+    expect(groups).toHaveLength(2)
+    expect(groups[0].machineId).toBeNull()
+    expect(groups[0].sessions).toEqual([])
+    expect(groups[1].machineId).toBe("jjs-mac-studio")
+    expect(groups[1].sessions.map((s) => s.id)).toEqual(["s1"])
+  })
+})
+
+// The dropdown consumes the pure grouping and renders peer rows UNDER a labeled
+// machine group — not recency-merged into the local list. Source-assertion (the
+// component's SolidJS wiring), following the repo's component-source pattern.
+describe("#1562 the dropdown renders peer rows in a labeled machine group", () => {
+  const headerSource = readFileSync(resolve(__dirname, "session-header.tsx"), "utf8")
+  test("the dropdown groups by owner via groupSessionsByOwner and renders a per-machine label", () => {
+    expect(headerSource).toContain("groupSessionsByOwner(")
+    expect(headerSource).toContain('data-slot="session-group-label"')
   })
 })

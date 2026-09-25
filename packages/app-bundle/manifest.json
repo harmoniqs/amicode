@@ -643,10 +643,10 @@
     "packages/app/src/components/session/preview-human-write-gate.ts": "4c4b1cf258a06b0012d722add0125ecb77a0f4e463dd95d193f21e5e73541098",
     "packages/app/src/components/session/session-chats-dropdown.test.ts": "b5f178bea1b52788d6f794d09ccf7ff81f745633ad59e2d438cfc80b96acde55",
     "packages/app/src/components/session/session-context-tab.tsx": "227243b178b517f067d9ae0ae0eec3c559beeb6681828158b0600a17e98e7f81",
-    "packages/app/src/components/session/session-fleet-peers.test.ts": "e81601e8a5acba4def10f7aa5654c9125c363a2bddfd5a3aa9b72cbcdb9a5a44",
-    "packages/app/src/components/session/session-fleet-peers.ts": "15d7421f9d14a45a9d628509df336bc964dee6bca993648bef6a01c0ed8f5a48",
+    "packages/app/src/components/session/session-fleet-peers.test.ts": "515ab9c0bf1198b239eb830154cd77843ea3648a087ea451390cb617fec1f53c",
+    "packages/app/src/components/session/session-fleet-peers.ts": "4fe7c8277e113e780dd627bbafc5d708aee18951f87821a95900c9f306e6a6c0",
     "packages/app/src/components/session/session-header.test.tsx": "ce458b8cb58e756e75f6dcd0a327488795969643e1237d4220188b3941934150",
-    "packages/app/src/components/session/session-header.tsx": "283abf383444cfe7ee5332b4bf5bc445f3f5e199de8589b26276dc42bb0f67cb",
+    "packages/app/src/components/session/session-header.tsx": "f7025cc1c20f4c00bff001d5708ed14684d27dc415658fbc01b0bfc4648c367c",
     "packages/app/src/components/session/session-new-view.tsx": "9510a4f550a3f0d4791e98e8025666f09d70a60fb66f193e48ee61feddae5a57",
     "packages/app/src/components/session/session-preview-tab.tsx": "d3a210598d181c0aa29e9f3b5db3cd691169f3ee467001313a3d9a24bee93dbe",
     "packages/app/src/components/session/session-preview-tabs.test.ts": "773fc0116c5f61302eaa4a09fd5f91e6b26dee978c89e29c21714243ae3a5653",
@@ -897,7 +897,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-09-25T23:33:32.847Z",
+  "extracted_at": "2026-09-25T23:40:41.014Z",
   "per_package": {
     "packages/app": {
       "A": 205,

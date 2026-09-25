@@ -247,6 +247,43 @@ export function filterSessionsByMachine<T extends { amicode_owner?: SessionOwner
   return sessions.filter((s) => s.amicode_owner?.owner_machine_id === machineId)
 }
 
+/** A grouped block of dropdown rows for display (#1562): either the LOCAL /
+ *  unowned sessions (machineId null, unlabeled) or ONE peer machine's sessions
+ *  (machineId set, labeled with the owner name). */
+export interface SessionGroup {
+  /** null for the local / unowned group; the owner machineId for a peer group. */
+  machineId: string | null
+  /** The owner machine name for a peer group; undefined for the local group. */
+  label?: string
+  sessions: DropdownSession[]
+}
+
+/** Group dropdown rows so a peer's sessions are not buried by recency under the
+ *  local list (#1562): the LOCAL / unowned rows first as ONE unlabeled group
+ *  (input order preserved — the caller's recency / open-tab-first ordering),
+ *  then ONE labeled group per peer machine (by owner_machine_id), in first-seen
+ *  order, each labeled with the owner name. Read-only presentation — no row is
+ *  dropped or reordered within a group. The local group is ALWAYS present
+ *  (possibly empty) so the caller renders its empty-state uniformly. Reuses
+ *  filterSessionsByMachine + deriveSessionBadge. */
+export function groupSessionsByOwner(sessions: DropdownSession[]): SessionGroup[] {
+  const local = sessions.filter((s) => !isRemotePeerSession(s))
+  const peers = sessions.filter((s) => isRemotePeerSession(s))
+  const groups: SessionGroup[] = [{ machineId: null, sessions: local }]
+  const seen = new Set<string>()
+  for (const s of peers) {
+    const machineId = s.amicode_owner!.owner_machine_id
+    if (seen.has(machineId)) continue
+    seen.add(machineId)
+    groups.push({
+      machineId,
+      label: deriveSessionBadge(s) ?? machineId,
+      sessions: filterSessionsByMachine(peers, machineId),
+    })
+  }
+  return groups
+}
+
 /** Tolerant reader for one raw owner overlay — returns the tag only when its
  *  load-bearing fields are well-typed, else undefined. */
 function readOwnerTag(raw: unknown): SessionOwnerTag | undefined {

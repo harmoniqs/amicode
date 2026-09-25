@@ -58,7 +58,9 @@ import {
   findSessionControlInProjection,
   findSessionOwnerInProjection,
   remoteDeleteAction,
+  groupSessionsByOwner,
   type DropdownSession,
+  type SessionGroup,
 } from "./session-fleet-peers"
 
 // AMICODE #1551 (DEFECT 2): the self-owned Enable-control affordance no longer
@@ -1069,6 +1071,16 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
       return title.toLowerCase().includes(q)
     })
   })
+  // #1562-followup (Slice C): a peer's sessions were recency-merged into the
+  // local list, so one Studio session sat at the bottom under ~100 local ones
+  // (effectively invisible). Group by owner machine for display — local /
+  // unowned first (unlabeled), then a labeled group per peer machine. The flat
+  // filtered list still drives search + the empty-state; this is presentation
+  // only (read-only; local-row behavior byte-unchanged).
+  const groupedActiveSessions = createMemo<SessionGroup[]>(() => {
+    if (!open()) return []
+    return groupSessionsByOwner(filteredActiveSessions())
+  })
   const filteredArchivedSessions = createMemo(() => {
     const q = searchQuery()
     if (!q) return archivedSessions()
@@ -1405,16 +1417,35 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
                   }
                 >
                   <div class="flex min-w-0 flex-col gap-px">
-                    <For each={filteredActiveSessions()}>
-                      {(session) => (
-                        <SessionDropdownRow
-                          session={session}
-                          isOpenTab={sessionHasOpenTab(tabs.store, server.key, session)}
-                          isCurrent={session.id === currentSessionID()}
-                          onOpen={openSession}
-                          onArchive={archiveSession}
-                          onRemoteDelete={remoteDeleteSession}
-                        />
+                    <For each={groupedActiveSessions()}>
+                      {(group) => (
+                        <Show when={group.sessions.length > 0}>
+                          {/* #1562 (Slice C): a peer machine's rows sit under a
+                              labeled group header; the local / unowned group
+                              (machineId null) renders headerless, byte-unchanged. */}
+                          <Show when={group.machineId !== null}>
+                            <div
+                              data-slot="session-group-label"
+                              data-machine-id={group.machineId ?? undefined}
+                              class="flex min-w-0 items-center gap-1 px-1.5 pt-2 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-v2-text-text-faint"
+                            >
+                              <IconV2 name="monitor" class="shrink-0 opacity-70" />
+                              <span class="overflow-hidden text-ellipsis whitespace-nowrap">{group.label}</span>
+                            </div>
+                          </Show>
+                          <For each={group.sessions}>
+                            {(session) => (
+                              <SessionDropdownRow
+                                session={session}
+                                isOpenTab={sessionHasOpenTab(tabs.store, server.key, session)}
+                                isCurrent={session.id === currentSessionID()}
+                                onOpen={openSession}
+                                onArchive={archiveSession}
+                                onRemoteDelete={remoteDeleteSession}
+                              />
+                            )}
+                          </For>
+                        </Show>
                       )}
                     </For>
                   </div>
