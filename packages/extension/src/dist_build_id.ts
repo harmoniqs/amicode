@@ -109,6 +109,14 @@ export interface BuildChangeWatcherDeps {
   clock?: BuildChangeClock;
   /** Poll cadence override (tests); default BUILD_CHANGE_POLL_INTERVAL_MS. */
   pollIntervalMs?: number;
+  /** Observability sink (the extension wires this to an output channel):
+   *  one line per lifecycle event (constructed / poll / prompted / disposed).
+   *  The lane's own fetches are invisible to every other surface — the host
+   *  fetch bypasses the webview SW and leaves no request log the developer
+   *  can see — so the watcher narrates its own state. Never throws (the
+   *  watcher wraps calls); absent = silent, exactly the pre-observability
+   *  behavior. */
+  log?: (line: string) => void;
 }
 
 /** The new-build prompt (#1556's ceremony half): while a panel is alive, poll
@@ -140,6 +148,9 @@ export class BuildChangeWatcher {
       () => void this.poll(),
       deps.pollIntervalMs ?? BUILD_CHANGE_POLL_INTERVAL_MS,
     );
+    try {
+      this.deps.log?.(`watcher constructed: interval=${deps.pollIntervalMs ?? BUILD_CHANGE_POLL_INTERVAL_MS}ms`);
+    } catch {}
   }
 
   /** One poll tick — public so the interval callback and the tests share the
@@ -149,11 +160,19 @@ export class BuildChangeWatcher {
     if (this.busy || this.disposed) return;
     this.busy = true;
     try {
-      const served = await this.deps.fetchServed(this.deps.origin());
+      const origin = this.deps.origin();
+      const served = await this.deps.fetchServed(origin);
+      const stamped = this.deps.stampedBuildId();
+      try {
+        this.deps.log?.(`poll: origin=${origin} served=${served ?? "undef"} stamped=${stamped ?? "undef"}${this.disposed ? " DISPOSED-MID-POLL" : ""}`);
+      } catch {}
       if (served === undefined) return; // fetch failed — never prompt, never compare
-      if (served === this.deps.stampedBuildId()) return; // panel is current
+      if (served === stamped) return; // panel is current
       if (this.prompted.has(served)) return; // once per version — no nag loop
       this.prompted.add(served);
+      try {
+        this.deps.log?.(`prompting: served=${served} stamped=${stamped ?? "undef"}`);
+      } catch {}
       const choice = await this.deps.prompt(
         `Amicode: a new app build is live (${served}). Reload Window to pick it up.`,
         RELOAD_WINDOW_BUTTON,
@@ -169,5 +188,8 @@ export class BuildChangeWatcher {
   dispose(): void {
     this.disposed = true;
     this.clock.clearInterval(this.handle);
+    try {
+      this.deps.log?.("watcher disposed");
+    } catch {}
   }
 }

@@ -312,6 +312,11 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   const runsChannel = vscode.window.createOutputChannel("Amicode — runs");
   const devicesChannel = vscode.window.createOutputChannel("Amicode — devices");
   ctx.subscriptions.push(opencodeChannel, runsChannel, devicesChannel);
+  // #1556 (the reload lane's observability): the lane's host-side fetches
+  // bypass the webview SW and leave no request log the developer can see, so
+  // the panel + watcher narrate their own lifecycle (construction, dispose,
+  // each poll's derivation, each prompt) into this channel.
+  ChatPanel.setLaneLog((line) => opencodeChannel.appendLine(`[reload-lane] ${line}`));
 
   // Runs root (resolved early — the inspector needs it for its CSP resource roots).
   const runsRoot = resolveRunsRoot(vscode.workspace.getConfiguration("amicode").get<string>("runsRoot", ""));

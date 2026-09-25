@@ -120,6 +120,22 @@ export class ChatPanel {
    *  injectable clock so a 3-minute poll is one synchronous tick under test. */
   static buildIdFetchImpl?: typeof fetch;
   static buildChangeClock?: BuildChangeClock;
+  /** #1556 observability: the reload lane's log sink, wired at activation to
+   *  the opencode output channel ("[reload-lane] …"). The lane's fetches
+   *  bypass the webview SW and leave no request log the developer can see, so
+   *  the panel + watcher narrate their own lifecycle here. Test-scoped reset
+   *  via clearBuildIdLaneForTest(). */
+  private static laneLog: ((line: string) => void) | undefined;
+  /** Wire the lane's log sink (extension.ts activation); undefined = silent. */
+  static setLaneLog(fn: ((line: string) => void) | undefined): void {
+    ChatPanel.laneLog = fn;
+  }
+  /** #1556: one log line, never thrown. */
+  private static logLane(line: string): void {
+    try {
+      ChatPanel.laneLog?.(line);
+    } catch {}
+  }
 
   /** Subscribe to live-panel count changes. Used by the workspace tree to mute the chat button. */
   static onLiveChange(cb: (count: number) => void): void {
@@ -225,7 +241,11 @@ export class ChatPanel {
         // ship, however many side-by-side tabs are live.
         prompted: ChatPanel.promptedBuildVersions,
         ...(ChatPanel.buildChangeClock ? { clock: ChatPanel.buildChangeClock } : {}),
+        log: (line) => ChatPanel.logLane(`panel@${this.frameOrigin.origin} ${line}`),
       }),
+    );
+    ChatPanel.logLane(
+      `panel constructed: origin=${opencodeUrl.origin} renderMode=${this.renderMode} stamped=${this.stampedBuildId ?? "undef"}`,
     );
     this.panel.webview.onDidReceiveMessage(
       (msg) => {
@@ -923,6 +943,7 @@ export class ChatPanel {
 
   dispose(): void {
     this.disposed = true; // #1556: in-flight derivations must not re-render a dead panel
+    ChatPanel.logLane(`panel disposed: origin=${this.frameOrigin?.origin ?? "?"}`);
     for (const d of this.disposables) {
       try {
         d.dispose();
