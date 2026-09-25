@@ -41,6 +41,13 @@ import { tmpdir } from "node:os";
 import { createServer } from "node:net";
 import { join } from "node:path";
 import { createAmicodeService } from "./amicode_service";
+import {
+  RESUME_MESSAGE,
+  RESUME_RECENT_MS_DEFAULT,
+  clearInflightJournal,
+  inflightJournalPath,
+  readInterruptedSessions,
+} from "./amicode_service/inflight_journal";
 import type { AmicodeServiceServer } from "./amicode_service/server";
 import { mintServerPassword, serverAuthHeader } from "./server_auth";
 
@@ -100,6 +107,23 @@ export interface AmicodeServiceRunnerOptions {
   engineUnarmed?: boolean;
   /** Engine health-wait budget. Default 30_000 (the ServerManager budget). */
   healthTimeoutMs?: number;
+  /** #1552 (interrupted-session re-dispatch): skip the boot-time resume
+   *  entirely — AMICODE_RESUME_DISABLED=1, the test/ops escape hatch. The
+   *  service keeps writing the journal either way; this only stops the
+   *  boot from acting on it. */
+  resumeDisabled?: boolean;
+  /** #1552: the in-flight journal the service's dispatch seam writes and
+   *  this runner reads after engine health. Default: the env-resolved
+   *  production path (AMICODE_INFLIGHT_JOURNAL →
+   *  ~/.amico/server/active-sessions.jsonl — inflightJournalPath(), the
+   *  single source the service itself uses, so the pair can never drift). */
+  resumeJournalPath?: string;
+  /** #1552: the recency window for resume candidates — AMICODE_RESUME_RECENT_MS.
+   *  Default 12h (RESUME_RECENT_MS_DEFAULT). */
+  resumeRecentMs?: number;
+  /** #1552: the fetch used to fire the resume turns — injectable for tests
+   *  (the never-resolving/rejecting legs). */
+  resumeFetch?: typeof fetch;
   /** Log sink (the structural-interface convention — vscode-free). */
   log?: (line: string) => void;
 }
@@ -253,6 +277,67 @@ export async function bootAmicodeServiceRunner(opts: AmicodeServiceRunnerOptions
     );
   }
   log(`[service-runner] engine up at ${engineUrl}`);
+
+  // ── #1552: interrupted-session re-dispatch ──────────────────────────────
+  // The engine just came back from the bounce/crash that killed every
+  // in-flight agent loop (loops live in the engine's memory). The journal
+  // the service wrote says which sessions had an OPEN chat turn at the
+  // kill instant; each gets ONE mechanical resume turn so the loop
+  // continues from its own ledger/state — the hub's missing law: it never
+  // comes back up without resuming the loops it killed. NEVER-WEDGE
+  // discipline: the chat POST holds until the turn completes (tens of
+  // minutes), so every fire is fire-and-forget (boot never waits on a
+  // turn), every outcome is ONE log line, and the whole step is wrapped —
+  // a resume problem can never fail or stall the boot.
+  if (opts.resumeDisabled === true) {
+    log("[service-runner] interrupted-session resume disabled (AMICODE_RESUME_DISABLED) — skipping");
+  } else {
+    try {
+      const journalPath = opts.resumeJournalPath ?? inflightJournalPath();
+      const interrupted = readInterruptedSessions(journalPath, Date.now(), {
+        recentMs: opts.resumeRecentMs ?? RESUME_RECENT_MS_DEFAULT,
+      });
+      if (interrupted.length > 0) {
+        log(
+          `[service-runner] in-flight journal: ${interrupted.length} interrupted session(s) — re-dispatching resume turns (issue #1552)`,
+        );
+        const resumeFetch = opts.resumeFetch ?? fetch;
+        for (const { sessionID } of interrupted) {
+          // Fire-and-forget: same chat route + body schema the SDK uses for
+          // a user prompt (POST /session/{id}/message, {parts:[{type:"text"}]}),
+          // carrying the engine credential when armed (unarmed hub posture =
+          // anonymous — no credential exists).
+          void resumeFetch(`${engineUrl}/session/${encodeURIComponent(sessionID)}/message`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...(authHeader === undefined ? {} : { Authorization: authHeader }),
+            },
+            body: JSON.stringify({ parts: [{ type: "text", text: RESUME_MESSAGE }] }),
+          })
+            .then((r) =>
+              log(`[service-runner] resume turn for session ${sessionID}: engine answered ${r.status}`),
+            )
+            .catch((err: unknown) =>
+              log(
+                `[service-runner] resume turn for session ${sessionID} failed: ${
+                  err instanceof Error ? err.message : String(err)
+                }`,
+              ),
+            );
+        }
+        // Cleared AFTER firing (acceptance-agnostic): the turns are handed
+        // over, so a subsequent boot cannot double-resume them.
+        clearInflightJournal(journalPath);
+      }
+    } catch (err) {
+      log(
+        `[service-runner] interrupted-session re-dispatch skipped: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+  }
 
   // ── the service: the SAME wiring startAmicodeService performs ────────────
   // No fleetActivation is ever passed here (H3): the hub runs the byte-

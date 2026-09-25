@@ -28,6 +28,22 @@
 //                        fork's "canonical serves anonymous 200"). The pair
 //                        with AMICODE_SERVICE_AUTH=open is the hub posture.
 //                        Wins over AMICODE_ENGINE_PASSWORD.
+//   AMICODE_INFLIGHT_JOURNAL  path to the in-flight chat-turn journal
+//                        (#1552, interrupted-session re-dispatch). The
+//                        service's dispatch seam appends a line for every
+//                        proxied chat POST (start on entry, end on response
+//                        close); the runner's boot-time resume reads the
+//                        same file to re-dispatch the sessions an engine
+//                        bounce killed mid-loop. Default
+//                        ~/.amico/server/active-sessions.jsonl.
+//   AMICODE_RESUME_RECENT_MS  the recency window for resume candidates: a
+//                        session whose latest unmatched chat-turn start is
+//                        older than this never resumes (yesterday's
+//                        abandoned loop is noise, not continuity).
+//                        Default 12h (43_200_000).
+//   AMICODE_RESUME_DISABLED   "=1" skips the boot-time resume entirely —
+//                        the test/ops escape hatch (the service keeps
+//                        writing the journal either way).
 //   OPENCODE_DB          the canonical pin — passed through to the spawned
 //                        engine untouched (the hub's session store).
 //
@@ -82,6 +98,13 @@ async function main(): Promise<never> {
     engineCwd: (process.env.AMICODE_ENGINE_CWD ?? "").trim() || undefined,
     enginePassword: (process.env.AMICODE_ENGINE_PASSWORD ?? "").trim() || undefined,
     engineUnarmed: (process.env.AMICODE_ENGINE_UNARMED ?? "").trim() === "1",
+    // #1552 (interrupted-session re-dispatch): the same journal path the
+    // service's tracking writes (AMICODE_INFLIGHT_JOURNAL — the default
+    // resolution lives in inflightJournalPath, the single source), plus
+    // the recency window and the disable hatch.
+    resumeJournalPath: (process.env.AMICODE_INFLIGHT_JOURNAL ?? "").trim() || undefined,
+    resumeRecentMs: envInt("AMICODE_RESUME_RECENT_MS"),
+    resumeDisabled: (process.env.AMICODE_RESUME_DISABLED ?? "").trim() === "1",
     engineEnv: (process.env.OPENCODE_DB ?? "").trim() ? { OPENCODE_DB: process.env.OPENCODE_DB } : undefined,
     log: (line) => console.log(line),
   });
