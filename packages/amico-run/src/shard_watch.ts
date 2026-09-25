@@ -34,6 +34,7 @@
 // clock, the env) is INJECTABLE via ShardWatchDeps, which is how the test suite runs
 // the whole verb hermetically — no test touches network or a real DB.
 import { spawnSync } from "node:child_process";
+import { homedir } from "node:os";
 import { postViaAmicoSlack, type DigestPoster } from "./fleet_digest.js";
 import { resolveSessionDb } from "./sessions_verb.js";
 import { sqliteBatch } from "./sqlite_bridge.js";
@@ -156,9 +157,14 @@ function shQuote(s: string): string {
 
 /** The client census: sqlite3 READONLY, SELECT only, stderr dropped (a client without
  *  the sqlite3 CLI fails the ssh call and reads as unreachable — an honest unknown,
- *  never a fabricated empty census). */
-export function clientCensusCommand(dbPath: string): string {
-  return `sqlite3 -readonly ${shQuote(dbPath)} 'SELECT id FROM session' 2>/dev/null`;
+ *  never a fabricated empty census).
+ *  #1558: a dbPath under the HUB home is re-expressed "$HOME"-relatively (double-quoted
+ *  so the REMOTE shell expands its own home — a linux hub home embedded literally is
+ *  unreachable-by-construction on every macOS client); a path outside the hub home
+ *  stays the quoted literal (exotic layouts keep their absolute address). */
+export function clientCensusCommand(dbPath: string, hubHome = ""): string {
+  const remote = hubHome !== "" && dbPath.startsWith(`${hubHome}/`) ? `"$HOME/${dbPath.slice(hubHome.length + 1)}"` : shQuote(dbPath)
+  return `sqlite3 -readonly ${remote} 'SELECT id FROM session' 2>/dev/null`;
 }
 
 /** The listener census: LISTENers on the canonical port only, exit laundered (lsof
@@ -197,7 +203,7 @@ export function sqliteBridgeCensus(dbPath: string): CensusResult {
 }
 
 export function sshClientCensus(alias: string, dbPath: string): CensusResult {
-  const r = spawnSync("ssh", [...SSH_FLAGS, alias, clientCensusCommand(dbPath)], { encoding: "utf8", timeout: 20_000 });
+  const r = spawnSync("ssh", [...SSH_FLAGS, alias, clientCensusCommand(dbPath, homedir())], { encoding: "utf8", timeout: 20_000 });
   if (r.status !== 0) {
     const err = ((r.stderr || "") as string).trim().split("\n")[0] || `ssh exited ${r.status ?? "?"}`;
     return { ok: false, error: err.slice(0, 160) };
