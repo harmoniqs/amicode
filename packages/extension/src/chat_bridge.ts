@@ -197,6 +197,13 @@ export interface BridgeIo {
    *  "reset" = expand selected + collapse others, "expand" = expand selected
    *  only, "none" = highlight only. */
   onProjectSelected?: (path: string, mode?: "none" | "expand" | "reset") => void;
+  /** #1551: the self-owned enable-control act. The app posts a
+   *  `fleet-enable-control` PAYLOAD envelope carrying the target owner
+   *  machineId + sessionID (the bare command lane cannot carry a target); the
+   *  host shows the ADR 0034 D4 native modal and, on confirm, mints the
+   *  self-owned control grant. Undefined until activation wires it; the kind is
+   *  consumed regardless. */
+  onFleetEnableControl?: (req: { ownerMachineId: string; sessionID: string }) => void;
   previewVisibleChildren?: (root: string, relativeDirectory: string) => Promise<Array<{ name: string; kind: "file" | "directory"; absolute: string; relative: string }>>;
   /** Returns the currently-selected Explorer file icon theme as opaque assets. */
   explorerIconTheme?: () => ExplorerIconTheme;
@@ -601,6 +608,23 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
   // live (heals a lost one-shot open — cold-boot race, webview reload).
   if (msg.kind === "bug-report-poke") {
     io.bugReport?.poke();
+    return true;
+  }
+
+  // #1551: the self-owned enable-control act rides a PAYLOAD envelope, NOT the
+  // command lane — the bare command relay cannot carry the target peer. Shape-
+  // validate { ownerMachineId, sessionID } (both non-empty bounded strings) and
+  // forward to the host's onFleetEnableControl (native modal → self-owned mint).
+  // A malformed payload is consumed and dropped — the callback never fires.
+  if (msg.kind === "fleet-enable-control") {
+    const ownerMachineId = (msg as { ownerMachineId?: unknown }).ownerMachineId;
+    const sessionID = (msg as { sessionID?: unknown }).sessionID;
+    if (
+      typeof ownerMachineId === "string" && ownerMachineId !== "" && ownerMachineId.length <= 200 &&
+      typeof sessionID === "string" && sessionID !== "" && sessionID.length <= 200
+    ) {
+      io.onFleetEnableControl?.({ ownerMachineId, sessionID });
+    }
     return true;
   }
 

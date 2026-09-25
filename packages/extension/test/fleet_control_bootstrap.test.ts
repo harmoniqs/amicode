@@ -21,7 +21,9 @@ import {
   evaluateManagementVerified,
   establishManagementVerified,
   enableSelfOwnedControl,
+  handleEnableControlRequest,
   type ControlBootstrapRequest,
+  type EnableControlHandlerDeps,
 } from "../src/amicode_service/fleet_control_bootstrap";
 import {
   findControlGrantByTarget,
@@ -370,5 +372,86 @@ describe("#1545 — shared-peer arm: requires-approval → request→approve han
     expect(approveResult.ok).toBe(true);
     if (!approveResult.ok) return;
     expect(approveResult.grant.scope).toBe("control");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// #1551 — handleEnableControlRequest: the LIVE caller decision path
+//
+// The self-owned enable act's extension-side handler — the one the app→extension
+// `fleet-enable-control` envelope drives. It CONFIRMS first (the ADR 0034 D4
+// native modal, injected), then composes establishManagementVerified +
+// enableSelfOwnedControl to mint. Cancelling mints nothing (AC3); a non-self-
+// owned / unverified peer mints nothing (no-privilege-bleed, AC4).
+// ═══════════════════════════════════════════════════════════════════════════
+describe("#1551 handleEnableControlRequest — confirm → mint (self-owned+verified); cancel/shared/unverified → no grant", () => {
+  let grantDeps: LifecycleGrantDeps;
+  let root: string;
+  beforeEach(() => {
+    root = tmproot();
+    grantDeps = {
+      grantStoreFile: join(root, "lifecycle-grants.json"),
+      tokenFactory: () => "ENABLE-TOKEN-1551",
+      now: () => "2026-09-24T00:00:00.000Z",
+    };
+  });
+
+  // A verified, self-owned deps set — the happy path. `confirm` is injected so
+  // the native modal never runs in-test.
+  function verifiedDeps(confirm: (owner: string) => Promise<boolean>): EnableControlHandlerDeps {
+    return {
+      self: { machineId: SELF_ID, identityKey: SELF_KEY },
+      targetIdentityKey: () => PEER_KEY,
+      ownershipOf: () => "self-owned",
+      getServingPeers: () => [{ machineId: PEER_ID }],
+      readPeerToken: (id) => ({ ok: id === PEER_ID }),
+      resolveAuthority: (t) => (t === PEER_ID ? authorityFor(PEER_ID, SELF_ID) : undefined),
+      confirm,
+      grantDeps,
+    };
+  }
+
+  it("confirm=true on a self-owned, management-verified peer MINTS an active control grant", async () => {
+    let asked = "";
+    const outcome = await handleEnableControlRequest(
+      { ownerMachineId: PEER_ID, sessionID: "ses_abc" },
+      verifiedDeps(async (owner) => {
+        asked = owner;
+        return true;
+      }),
+    );
+    expect(asked).toBe(PEER_ID); // the modal was asked about the target peer
+    expect(outcome.outcome).toBe("minted");
+    const grant = findControlGrantByTarget(PEER_ID, grantDeps);
+    expect(grant).toBeDefined();
+    expect(grant!.scope).toBe("control");
+    expect(grant!.state).toBe("active");
+    expect(grant!.targetMachineId).toBe(PEER_ID);
+    expect(grant!.requesterMachineId).toBe(SELF_ID);
+  });
+
+  it("confirm=false (native modal cancelled) MINTS NOTHING (AC3)", async () => {
+    const outcome = await handleEnableControlRequest(
+      { ownerMachineId: PEER_ID, sessionID: "ses_abc" },
+      verifiedDeps(async () => false),
+    );
+    expect(outcome.outcome).toBe("cancelled");
+    expect(findControlGrantByTarget(PEER_ID, grantDeps)).toBeUndefined();
+  });
+
+  it("no privilege bleed: a SHARED peer mints NOTHING even on confirm (AC4)", async () => {
+    const deps = verifiedDeps(async () => true);
+    deps.ownershipOf = () => "shared";
+    const outcome = await handleEnableControlRequest({ ownerMachineId: PEER_ID, sessionID: "ses_abc" }, deps);
+    expect(outcome.outcome).toBe("not-authorized");
+    expect(findControlGrantByTarget(PEER_ID, grantDeps)).toBeUndefined();
+  });
+
+  it("a self-owned peer that is NOT management-verified (transport down) mints NOTHING", async () => {
+    const deps = verifiedDeps(async () => true);
+    deps.getServingPeers = () => []; // peer not serving → not verified
+    const outcome = await handleEnableControlRequest({ ownerMachineId: PEER_ID, sessionID: "ses_abc" }, deps);
+    expect(outcome.outcome).toBe("not-authorized");
+    expect(findControlGrantByTarget(PEER_ID, grantDeps)).toBeUndefined();
   });
 });

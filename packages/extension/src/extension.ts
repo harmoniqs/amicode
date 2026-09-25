@@ -86,6 +86,10 @@ import { handleConnectToDevice, type ConnectToDeviceMessage, type FleetConnectDe
 import { createFleetFocusHost } from "./fleet_focus";
 import { registerAmicodeTerminal } from "./terminal";
 import { amicodeServiceDisposal, startAmicodeService, frameOriginUrl } from "./amicode_service_wiring";
+import { buildFleetPeerProvider } from "./amicode_service/fleet_peer_provider";
+import { resolveLifecycleAuthority } from "./amicode_service/fleet_lifecycle_authority";
+import { handleEnableControlRequest } from "./amicode_service/fleet_control_bootstrap";
+import { readRosterRows } from "./amicode_service/roster";
 import { resolveAppDistRoot } from "./amicode_service/app_shelf";
 import { resolveFleetActivation, type FleetActivationConfig } from "./fleet_activation";
 import { recoverBootAttachment } from "./boot_attachment_recovery";
@@ -609,6 +613,59 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // behavior: "reset" for explicit selection, "expand" for session/tab switch.
   ChatPanel.onProjectSelected((path, mode) => sidebarProvider.setActiveProject(path, mode));
   ChatPanel.onPreviewVisibleChildren((root, relativeDirectory) => sidebarProvider.previewVisibleChildren(root, relativeDirectory));
+  // #1551: the self-owned enable-control act. The composer scrim's CTA posts a
+  // `fleet-enable-control` envelope (carrying the target owner machineId +
+  // sessionID); here we show the ADR 0034 D4 native modal and, on confirm, mint
+  // the self-owned control grant via the LIVE fleet-peer provider + enroll-seeded
+  // authority resolver + grant store. Grant persistence is what flips the state:
+  // the next GET /amicode/fleet/sessions poll re-resolves the projected
+  // `amicode_control` to `interactive` and the driving banner lights — the app
+  // never self-declares interactive (the SoT projection is the source of truth).
+  ChatPanel.onFleetEnableControl(async ({ ownerMachineId, sessionID }) => {
+    const selfMachineId = resolveLocalMachineId();
+    if (!selfMachineId) return; // standalone / unenrolled → no self identity, nothing to mint
+    const provider = buildFleetPeerProvider({ localMachineId: selfMachineId });
+    let roster: ReturnType<typeof readRosterRows> = [];
+    try { roster = readRosterRows(); } catch { roster = []; }
+    // Identity keys (roster fingerprints) recorded on the grant; machineId is the
+    // honest fallback when a row carries no identity_key yet.
+    const identityKeyOf = (machineId: string): string =>
+      roster.find((r) => r.machine_id === machineId)?.identity_key ?? machineId;
+    const peerName = provider.rosterLookup(ownerMachineId)?.name ?? ownerMachineId;
+    const outcome = await handleEnableControlRequest(
+      { ownerMachineId, sessionID },
+      {
+        self: { machineId: selfMachineId, identityKey: identityKeyOf(selfMachineId) },
+        targetIdentityKey: (id) => identityKeyOf(id),
+        // The base is self-owned (the operator owns both machines); the
+        // shared-peer flip to request-control is the #1545 handshake.
+        ownershipOf: () => "self-owned",
+        getServingPeers: () => provider.getServingPeers(),
+        readPeerToken: (id) => ({ ok: provider.readPeerToken(id).ok }),
+        resolveAuthority: (id) => resolveLifecycleAuthority(id),
+        // ADR 0034 D4: the one net-new native-modal confirm.
+        confirm: async (owner) => {
+          const name = provider.rosterLookup(owner)?.name ?? owner;
+          const choice = await vscode.window.showWarningMessage(
+            `Enable control of ${name}?`,
+            {
+              modal: true,
+              detail: "This window will be able to drive that remote session — send prompts and act on your behalf — until you close it.",
+            },
+            "Enable control",
+          );
+          return choice === "Enable control";
+        },
+      },
+    );
+    if (outcome.outcome === "minted") {
+      void vscode.window.showInformationMessage(`Amicode: control enabled — now driving ${peerName}.`);
+    } else if (outcome.outcome === "not-authorized") {
+      void vscode.window.showWarningMessage(
+        `Amicode: couldn't enable control of ${peerName} — the peer isn't reachable or verified.`,
+      );
+    }
+  });
   registerOnboardingPanel(ctx); // #433 — Stage 0 model-setup webview
   registerHarmoniqsConnectCommand(ctx); // Connect Provider dialog's branded Harmoniqs row
   // Heals a provider.harmoniqs entry written by an OLDER extension version

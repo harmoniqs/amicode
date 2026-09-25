@@ -19,12 +19,31 @@ describe("#1544 session-header control wiring", () => {
     expect(source).toContain("drivingBannerFromProjection(controlProjection.latest")
   })
 
-  test("Enable control dispatches the VS Code native-modal confirm (ADR 0034 D4)", () => {
-    expect(source).toContain("postAmicode(ENABLE_CONTROL_COMMAND)")
-    expect(source).toContain('data-action="session-enable-control"')
-    // the affordance is derived from eligibility (enable vs request vs none)
-    expect(source).toContain("controlAffordance(")
-    expect(source).toContain("data-control-affordance={controlAffordanceState().kind}")
+  test("Enable control is re-homed onto the composer scrim, NOT a fixed top-right Portal (#1551 DEFECT 2)", () => {
+    // The old placement (a Portal to document.body at top:8px/right:12px over
+    // the titlebar) is REMOVED — no top-right affordance, no command-lane post.
+    expect(source).not.toContain('data-action="session-enable-control"')
+    expect(source).not.toContain('top: "8px"')
+    expect(source).not.toContain("postAmicode(ENABLE_CONTROL_COMMAND)")
+    expect(source).not.toContain("ENABLE_CONTROL_COMMAND")
+  })
+
+  test("the composer-anchored scrim gates the composer + centers the CTA when control is not held (#1551)", () => {
+    // The affordance now lives on a composer-anchored scrim.
+    expect(source).toContain("export function SessionComposerControlScrim")
+    expect(source).toContain('data-slot="amicode-composer-control-scrim"')
+    expect(source).toContain('data-action="composer-enable-control"')
+    // the composer subtree is BLURRED + made non-editable (inert) while gated
+    expect(source).toContain("blur(")
+    expect(source).toContain("inert")
+    // gating is derived from the shared control-state reads (held vs not held) on
+    // a remote peer session — never the titlebar
+    expect(source).toContain("isControlHeld(")
+    expect(source).toContain("isRemotePeerSession(")
+    // the CTA names the peer the session lives on
+    expect(source).toContain("This session lives on")
+    // the CTA click posts DEFECT 1's payload envelope (not the retired command lane)
+    expect(source).toContain("postAmicodeFleetEnableControl(")
   })
 
   test("a not-held remote row shows a disabled reason chip (never a live erroring button)", () => {
