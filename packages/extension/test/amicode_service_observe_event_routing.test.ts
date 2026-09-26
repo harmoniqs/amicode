@@ -419,3 +419,62 @@ describe("#1565 — late peer discovery (observation-path race fix)", () => {
     }
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════════════
+// #1580 — the observation fan-in must serve BOTH `/event` AND `/global/event`.
+// The vendored engine + the app speak the v1 "global instance" protocol whose
+// event bus is `/global/event` (server-sdk `kind === "v1"` → `global.event()` →
+// `/global/event`), so the app's LIVE stream opens `/global/event`, not the
+// literal `/event`. Before this fix the interception bound only `/event`, so the
+// app's stream fell through to the observer's LOCAL engine (which does not own
+// the peer session) and remote agent output never reached the observer. The
+// correction is ADDITIVE: match `/event` OR `/global/event`. Same injected-
+// upstream harness as AC2 above — a peer frame can only survive on the single
+// downstream response if `observeEvents.handle` OWNED the response for that path
+// (a fall-through to the unattached engine proxy would 404 and deliver nothing).
+// ══════════════════════════════════════════════════════════════════════════════
+describe("#1580 — observation fan-in serves /global/event (v1 global-instance protocol), not only /event", () => {
+  async function fanInPeerFrameJoinedOn(path: string): Promise<string> {
+    const ownerMap = new SessionOwnerMap();
+    ownerMap.update([{ id: "ses-studio", amicode_owner: { owner_machine_id: "studio", owner_name: "studio", is_local: false } }]);
+    const peerCtl = controllableSource([sseFrame("event: message", 'data: {"from":"studio","n":7}', "id: p1")]);
+    const localCtl = controllableSource(); // local arm stays open, no frames
+
+    const svc = new AmicodeServiceServer({ password: PW });
+    svc.attachObservationEventPlane(
+      new SseFanInDriver({
+        ownerMap,
+        localMachineId: "macbook",
+        localEventUrl: () => "http://local.invalid",
+        peerBaseUrl: (id) => (id === "studio" ? "http://studio.invalid" : undefined),
+        peerToken: (id) => (id === "studio" ? { ok: true, credential: { baseUrl: "http://studio.invalid", token: "tok-studio" } } : { ok: false, reason: "absent" }),
+        reconcileMs: 999999,
+        openUpstream: (r) => (r.namespace === "studio" ? peerCtl.source : localCtl.source),
+      }),
+    );
+    const origin = (await svc.start()).toString().replace(/\/$/, "");
+    try {
+      const frames = await readSseFrames(`${origin}${path}`, authed, { maxFrames: 6, timeoutMs: 2500 });
+      return frames.join("");
+    } finally {
+      peerCtl.end();
+      localCtl.end();
+      await svc.stop();
+    }
+  }
+
+  it("AC1 — a dispatch to /global/event is TAKEN by the observation fan-in (the peer frame fans in on the single downstream response)", async () => {
+    // Falsifiable: before the fix `/global/event` did NOT match the interception
+    // and fell through to the engine proxy (unattached here → 404), so the peer
+    // frame never arrived and the joined body was empty.
+    const joined = await fanInPeerFrameJoinedOn("/global/event");
+    expect(joined).toContain('"from":"studio"');
+  });
+
+  it("AC3 (no regression) — a dispatch to the legacy /event is STILL taken by the observation fan-in", async () => {
+    // The correction is additive — the legacy path must keep working exactly as
+    // it does today (#1543 AC2), never traded away for the new one.
+    const joined = await fanInPeerFrameJoinedOn("/event");
+    expect(joined).toContain('"from":"studio"');
+  });
+});

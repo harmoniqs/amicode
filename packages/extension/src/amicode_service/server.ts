@@ -565,7 +565,12 @@ export class AmicodeServiceServer {
       // returns false and dispatch falls through UNCHANGED (fleet-of-one
       // byte-identity). This is the deliberate amendment of the #1448 AC4
       // structural guard: the SSE relay is wired ONLY behind the flag.
-      if (url.pathname === "/event" && fleetMultiplexEnabled() && this.fleetPlane?.eventFanIn?.handle(req, res)) return;
+      // #1580: match `/event` OR `/global/event`. The vendored engine + the app
+      // speak the v1 "global instance" protocol whose event bus is `/global/event`
+      // (server-sdk `kind === "v1"` → `global.event()`), so the app's LIVE stream
+      // opens `/global/event` — binding only the literal `/event` left it dead in
+      // production. Additive: the legacy `/event` stays intercepted.
+      if ((url.pathname === "/event" || url.pathname === "/global/event") && fleetMultiplexEnabled() && this.fleetPlane?.eventFanIn?.handle(req, res)) return;
       // #1543 (Fleet Studio B2b, SSE fan-in on the OBSERVATION path — ADR 0034 D6
       // / ADR 0033 Amendment 1): a SEPARATE, separately-armed `/event`
       // interception BESIDE the premium wire above. It is NOT behind
@@ -576,7 +581,9 @@ export class AmicodeServiceServer {
       // the OwnerMapFeed discovers them. The `?.handle` is a structural no-op
       // when unattached. An observation boot has no `fleetPlane`, so the premium
       // line above already short-circuited; the two wires never both fire.
-      if (url.pathname === "/event" && this.observeEvents?.handle(req, res)) return;
+      // #1580: same additive `/event` OR `/global/event` match as the premium
+      // wire — the app's live stream is `/global/event` (v1 global-instance bus).
+      if ((url.pathname === "/event" || url.pathname === "/global/event") && this.observeEvents?.handle(req, res)) return;
       // #1262: in fleet CLIENT mode the HOST owns all /amicode/* state. Bypass
       // the ENTIRE local /amicode/* dispatch (the exact-match route table AND
       // the catch-all 404 below) so a REGISTERED route (GET /amicode/problems,
