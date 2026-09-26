@@ -80,6 +80,7 @@ import * as AmicodeWidgetFrame from "@/server/amicode/widget-frame-html"
 import * as AmicodeLibrary from "@/server/amicode/library"
 import * as AmicodeProfile from "@/server/amicode/profile"
 import * as AmicodeConnections from "@/server/amicode/connections"
+import * as AmicodeHarness from "@/server/amicode/harness"
 import * as AmicodeProject from "@/server/amicode/project"
 import { ServerAuth } from "@/server/auth"
 import { InstanceHttpApi, RootHttpApi } from "./api"
@@ -512,6 +513,23 @@ const amicodeConnectionsRoute = HttpRouter.use((router) =>
       Effect.gen(function* () {
         const body = yield* Effect.orDie(request.text)
         return HttpServerResponse.text(AmicodeConnections.solverModeResponse(body), {
+          contentType: "application/json",
+        })
+      }),
+    )
+    // amicode#1549: the harness switcher — the composer control's write path.
+    // Same trio shape as solver-mode: POST writes {harness, status:"switching"}
+    // to the ops dir; the amicode extension's watcher performs the real switch
+    // (registry gate → setting persist → server restart) and settles ready.
+    yield* router.add("GET", "/amicode/harness", () =>
+      Effect.sync(() =>
+        HttpServerResponse.text(AmicodeHarness.harnessStateResponse(), { contentType: "application/json" }),
+      ),
+    )
+    yield* router.add("POST", "/amicode/harness", (request) =>
+      Effect.gen(function* () {
+        const body = yield* Effect.orDie(request.text)
+        return HttpServerResponse.text(AmicodeHarness.harnessResponse(body), {
           contentType: "application/json",
         })
       }),
