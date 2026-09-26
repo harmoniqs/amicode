@@ -468,17 +468,30 @@ export interface AuditAdoptedEngineDeps {
  *  config, and surface the (non-blocking) stale notice when they diverge.
  *  Returns the comparison, or undefined when there is nothing to compare (no
  *  recorded hashes). Adopt-then-notice, never a hard gate — the survivor's
- *  in-flight turns are preserved; the user chooses whether to restart. */
+ *  in-flight turns are preserved; the user chooses whether to restart.
+ *
+ *  #1579: unarmed (hub) engines have no OPENCODE_CONFIG_CONTENT — their
+ *  configHash is always empty. Comparing it against the extension's config
+ *  hash is meaningless and would fire the "Restart Engine" popup on every
+ *  adoption. When `unarmed` is true, only the binaryHash is compared. */
 export async function auditAdoptedEngine(
   adoptedHashes: { binaryHash: string; configHash: string } | undefined,
   onDisk: { binaryPath: string; configContent: string },
   deps: AuditAdoptedEngineDeps,
+  unarmed?: boolean,
 ): Promise<StaleEngineResult | undefined> {
   if (!adoptedHashes) return undefined;
   const onDiskHashes = {
     binaryHash: await deps.hashFile(onDisk.binaryPath).catch(() => ""),
     configHash: deps.hashString(onDisk.configContent),
   };
+  // Hub engines: compare binary only — configHash is structurally empty.
+  if (unarmed) {
+    const binaryChanged = adoptedHashes.binaryHash !== "" && adoptedHashes.binaryHash !== onDiskHashes.binaryHash;
+    const result: StaleEngineResult = { stale: binaryChanged, binaryChanged, configChanged: false };
+    surfaceStaleNotice(result, deps.notify);
+    return result;
+  }
   const result = detectStaleEngine(adoptedHashes, onDiskHashes);
   surfaceStaleNotice(result, deps.notify);
   return result;

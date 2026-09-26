@@ -43,7 +43,7 @@ import { dirname, join } from "node:path";
 import { createAmicodeService } from "./amicode_service";
 import type { AmicodeServiceServer } from "./amicode_service/server";
 import { mintServerPassword, serverAuthHeader } from "./server_auth";
-import { writeHubHandshake, deleteHandshake } from "./server_handshake";
+import { writeHubHandshake, deleteHandshake, hashFile } from "./server_handshake";
 
 /** The named boot-abort: `reason` is the stable grep-able phrase, `message`
  *  carries the detail (engine output tail for health failures). */
@@ -392,6 +392,29 @@ export async function bootAmicodeServiceRunner(opts: AmicodeServiceRunnerOptions
   }
   log(`[service-runner] engine up at ${engineUrl}`);
 
+  // ── Handshake write (#1579): write IMMEDIATELY after engine healthy, BEFORE
+  // the service starts — minimizing the window where the extension sees
+  // status=absent and races to cold-spawn. The binary hash is real (the same
+  // binary the extension would hash); configHash stays empty (the hub has no
+  // OPENCODE_CONFIG_CONTENT — the audit exempts unarmed engines from the
+  // config-hash comparison). ──────────────────────────────────────────────────
+  if (opts.handshakePath) {
+    try {
+      const hubBinaryHash = await hashFile(opts.engineBin).catch(() => "");
+      writeHubHandshake({
+        port,
+        pid: engine.pid!,
+        binaryHash: hubBinaryHash,
+        configHash: "", // hub has no config content — audit exempts unarmed engines
+        dbPath: opts.engineEnv?.OPENCODE_DB,
+        filePath: opts.handshakePath,
+      });
+      log(`[service-runner] wrote handshake to ${opts.handshakePath} (binaryHash=${hubBinaryHash.slice(0, 12)}…)`);
+    } catch (err) {
+      log(`[service-runner] failed to write handshake (continuing): ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   // ── the service: the SAME wiring startAmicodeService performs ────────────
   // No fleetActivation is ever passed here (H3): the hub runs the byte-
   // identical unarmed base service; arming is an extension-host decision.
@@ -426,23 +449,6 @@ export async function bootAmicodeServiceRunner(opts: AmicodeServiceRunnerOptions
   log(
     `[amicode-service] listening on ${origin} (${service.routeCount} routes; auth: per-boot Basic + engine token); app shelf mounted`,
   );
-
-  // ── Handshake write (#1579): let the extension adopt instead of spawning ──
-  if (opts.handshakePath) {
-    try {
-      writeHubHandshake({
-        port,
-        pid: engine.pid!,
-        binaryHash: "", // placeholder — the runner doesn't compute binary hashes
-        configHash: "", // placeholder
-        dbPath: opts.engineEnv?.OPENCODE_DB,
-        filePath: opts.handshakePath,
-      });
-      log(`[service-runner] wrote handshake to ${opts.handshakePath}`);
-    } catch (err) {
-      log(`[service-runner] failed to write handshake (continuing): ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
 
   let shutDown = false;
   let shutdownPromise: Promise<void> | undefined;

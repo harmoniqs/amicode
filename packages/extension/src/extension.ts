@@ -111,7 +111,7 @@ import { parseStateJson } from "./device_registry";
 import { buildDeviceStatus, nextActions, capabilityHint, type DriveLine } from "./device_status";
 import { SchusterJobServer } from "./qick_client";
 import { adoptOrSpawn, buildLiveDeps, isPidAlive, reclaimOrphanPort, auditAdoptedEngine, restartAdoptedEngine } from "./server_lifecycle";
-import { handshakePath, readHandshake, deleteHandshake, serverLogPath, coldSpawnHandshakeHook, hashFile, hashString } from "./server_handshake";
+import { handshakePath, readHandshake, deleteHandshake, serverLogPath, coldSpawnHandshakeHook, hashFile, hashString, isUnarmedHandshake, UNARMED_PASSWORD } from "./server_handshake";
 import { startKeepalive, stopKeepalive, readGraceSeconds, pingKeepalive } from "./server_keepalive";
 import { FleetPollHysteresis } from "./fleet_poll_hysteresis";
 import { FleetPostureStateWriter } from "./fleet_posture_state";
@@ -1283,6 +1283,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     // handshake) — captured here so the adopted path can compare them against
     // the on-disk build and surface a stale-engine notice.
     let adoptedHashes: { binaryHash: string; configHash: string } | undefined;
+    // #1579: track whether the adopted engine is the hub's unarmed engine —
+    // the audit must exempt unarmed engines from the config-hash comparison.
+    let adoptedUnarmed = false;
     // #1579: on a role=server machine, the hub owns the engine — give it time
     // to boot before the extension gives up and cold-spawns a rival.
     const fleetState = readFleetTopology();
@@ -1301,6 +1304,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       if (lifecycleResult.outcome === "adopted") {
         adopted = true;
         adoptedHashes = lifecycleResult.adoptedHashes;
+        adoptedUnarmed = lifecycleResult.password === UNARMED_PASSWORD;
         // Replace the minted password with the recorded one — the surviving
         // server was spawned with it, so every auth surface must carry it.
         serverPassword = lifecycleResult.password;
@@ -1805,6 +1809,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
               }),
             },
           },
+          adoptedUnarmed,
         );
       }
       // #1192: the amicode service (the branded app shelf on configuredPort+1)
