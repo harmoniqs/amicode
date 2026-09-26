@@ -269,6 +269,9 @@ class FanInConnection {
       if (frame === null || this.closed) break;
       this.agg.ingest(namespace, frame);
     }
+    // The upstream ended or errored — remove the dead source so the next
+    // reconcile() tick can re-open the arm (#1566).
+    this.sources.delete(namespace);
   }
 
   close(): void {
