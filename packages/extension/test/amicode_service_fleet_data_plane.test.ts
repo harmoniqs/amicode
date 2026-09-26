@@ -68,7 +68,7 @@ function startMockEngine(sessions: unknown[]): Promise<MockOrigin> {
       res.end(JSON.stringify({ ok: false, error: "unauthorized" }));
       return;
     }
-    if (req.method === "GET" && req.url?.startsWith("/session")) {
+    if (req.method === "GET" && (req.url?.startsWith("/session") || req.url?.startsWith("/experimental/session"))) {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify(sessions));
       return;
@@ -760,7 +760,7 @@ function startMockPeer(sessions: unknown[], peerToken: string): Promise<MockOrig
       res.end(JSON.stringify({ ok: false, error: "unauthorized" }));
       return;
     }
-    if (req.method === "GET" && req.url?.startsWith("/session")) {
+    if (req.method === "GET" && (req.url?.startsWith("/session") || req.url?.startsWith("/experimental/session"))) {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify(sessions));
       return;

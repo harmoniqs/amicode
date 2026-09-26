@@ -179,6 +179,12 @@ async function fetchSessions(
   authHeader: string | undefined,
   fetchImpl: typeof fetch,
   timeoutMs: number,
+  /** The session-list endpoint path. Defaults to `/session` (project-scoped).
+   *  The fleet-wide projection passes `/experimental/session` to fetch ALL
+   *  sessions regardless of the engine's ambient project context — the right
+   *  semantic for cross-machine fan-out where the hub engine runs in a temp
+   *  directory and would otherwise resolve to `project_id=global`. */
+  endpointPath = "/session",
 ): Promise<{ record: SourceFetchRecord; entries: Record<string, unknown>[] }> {
   const base: SourceFetchRecord = { source: tag, present: false };
   const origin = opts.getUrl();
@@ -194,7 +200,7 @@ async function fetchSessions(
     };
   }
   try {
-    const res = await fetchImpl(`${origin.replace(/\/+$/, "")}/session`, {
+    const res = await fetchImpl(`${origin.replace(/\/+$/, "")}${endpointPath}`, {
       headers: { Authorization: authHeader },
       signal: AbortSignal.timeout(timeoutMs),
     });
@@ -382,8 +388,15 @@ export async function buildFleetProjection(opts: FleetProjectionOptions): Promis
   const timeoutMs = opts.timeoutMs ?? 10_000;
   const localAuth = opts.local.password !== undefined ? serverAuthHeader(opts.local.password) : undefined;
 
-  // Fan out: local + all peers in parallel
-  const localPromise = fetchSessions(opts.localMachineId, opts.local, localAuth, fetchImpl, timeoutMs);
+  // Fan out: local + all peers in parallel.
+  // Use /experimental/session (cross-project) so the fleet projection sees ALL
+  // sessions from each source — not just whatever project the engine happens to
+  // resolve in its ambient cwd. This is critical: the hub engine runs in a temp
+  // directory and would otherwise return only project_id=global sessions.
+  // The generous limit ensures a machine with thousands of sessions is not
+  // silently truncated at the engine's default page size (100).
+  const fleetEndpoint = "/experimental/session?limit=10000";
+  const localPromise = fetchSessions(opts.localMachineId, opts.local, localAuth, fetchImpl, timeoutMs, fleetEndpoint);
   const peerPromises = opts.peers.map((peer) => {
     // #1481 (AC1): TRUST gates Observe. An untrusted peer (no Observe grant) is
     // never contacted — it resolves to a NAMED `untrusted` record with zero
@@ -396,7 +409,7 @@ export async function buildFleetProjection(opts: FleetProjectionOptions): Promis
       });
     }
     const auth = peer.token !== undefined ? peerAuthHeader(peer.token) : undefined;
-    return fetchSessions(peer.machineId, { getUrl: peer.getUrl }, auth, fetchImpl, timeoutMs);
+    return fetchSessions(peer.machineId, { getUrl: peer.getUrl }, auth, fetchImpl, timeoutMs, fleetEndpoint);
   });
 
   const [localResult, ...peerResults] = await Promise.all([localPromise, ...peerPromises]);

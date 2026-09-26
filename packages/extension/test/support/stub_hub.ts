@@ -181,7 +181,7 @@ export function startStubHub(opts: StubHubOptions = {}): Promise<StubHub> {
       res.end(JSON.stringify({ healthy: true, version }));
       return;
     }
-    if (req.method === "GET" && req.url?.startsWith("/session")) {
+    if (req.method === "GET" && (req.url?.startsWith("/session") || req.url?.startsWith("/experimental/session"))) {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify(sessions));
       return;

@@ -18,7 +18,7 @@ function fakeFetch(byOrigin: Record<string, Array<Record<string, unknown>>>): ty
     if (url.endsWith("/global/health")) {
       return new Response(JSON.stringify({ version: "test-1" }), { status: 200 });
     }
-    if (url.endsWith("/session")) {
+    if (url.includes("/session")) {
       return new Response(JSON.stringify(byOrigin[origin]), { status: 200 });
     }
     return new Response("no", { status: 404 });
