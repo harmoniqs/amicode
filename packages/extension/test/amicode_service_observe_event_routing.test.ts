@@ -1,13 +1,11 @@
-// amicode_service_observe_event_routing.test.ts — #1543 (Fleet Studio B2b, SSE
-// fan-in on the OBSERVATION path, ADR 0033 D1–D4 via ADR 0034 D6). A NEW,
-// SEPARATELY-ARMED `/event` interception that reuses the SseFanInDriver as a
-// library — it is NOT the premium `server.ts` wire (`fleetMultiplexEnabled() &&
+// amicode_service_observe_event_routing.test.ts — #1543 / #1565 (Fleet Studio
+// B2b, SSE fan-in on the OBSERVATION path, ADR 0033 D1–D4 via ADR 0034 D6). A
+// NEW, SEPARATELY-ARMED `/event` interception that reuses the SseFanInDriver as
+// a library — it is NOT the premium `server.ts` wire (`fleetMultiplexEnabled() &&
 // fleetPlane.eventFanIn`), NOT behind AMICO_FLEET_MULTIPLEX, and NOT behind the
-// multiplexer (ADR 0033 Amendment 1). It is armed on OBSERVATION READINESS:
-// holding observe on ≥1 reachable session-owning peer = ≥1 non-local owner in
-// the SessionOwnerMap, which is exactly the driver's own zero-owner decline —
-// so fleet-of-one is byte-identical BY the driver, and byte-identity holds only
-// absent a focus-snapshot provider (none is wired on the observation path).
+// multiplexer (ADR 0033 Amendment 1). The driver always accepts when wired
+// (#1565): fleet-of-one byte-identity is maintained by the aggregator's §D4
+// relay; reconcile opens peer arms as the OwnerMapFeed discovers them.
 //
 // The route dispatch → the observation `/event` interception → the #1511
 // aggregator → the real downstream `res` is exercised deterministically via an
@@ -143,66 +141,77 @@ function controllableSource(preload: string[] = []): Ctl {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// AC1 (WRITTEN FIRST — the fleet-of-one byte-identity guard). With the
-// observation event plane ATTACHED but ZERO non-local owners, the driver
-// DECLINES and `/event` streams frame-for-frame through the engine proxy —
-// identical to a server with NO event plane. The oracle is the no-plane route.
+// AC1 (#1565 — the fleet-of-one byte-identity guard). With the observation
+// event plane ATTACHED but ZERO non-local owners, the driver ACCEPTS in
+// fleet-of-one mode — the aggregator's §D4 byte-identity relay delivers local
+// frames verbatim. Reconcile opens peer arms as the OwnerMapFeed discovers them.
 // ══════════════════════════════════════════════════════════════════════════════
-describe("#1543 AC1 — observation /event fleet-of-one byte-identity (driver declines at zero owners)", () => {
+describe("#1543 AC1 — observation /event fleet-of-one byte-identity (zero non-local owners → driver accepts in fleet-of-one mode → byte-identical)", () => {
   const F1 = sseFrame("event: message", 'data: {"a":1}', "id: 1");
   const F2 = sseFrame("event: message", 'data: {"b":2}', "id: 2");
 
-  it("event plane attached + ZERO non-local owners → /event is frame-for-frame identical to the no-plane engine stream", async () => {
-    const engine = await startSseStub([F1, F2]);
+  it("zero non-local owners → driver accepts in fleet-of-one mode → local frames arrive byte-identical", async () => {
+    // The driver now ACCEPTS even with zero non-local owners (#1565). The
+    // aggregator's fleet-of-one mode (§D4) writes local frames VERBATIM when no
+    // peer arms are active, so the output matches the input frames byte-for-byte.
+    const localCtl = controllableSource([F1, F2]);
+    const ownerMap = new SessionOwnerMap();
+    ownerMap.update([{ id: "ses-local", amicode_owner: { owner_machine_id: "macbook", owner_name: "macbook", is_local: true } }]);
+
+    const svc = new AmicodeServiceServer({ password: PW });
+    svc.attachObservationEventPlane(
+      new SseFanInDriver({
+        ownerMap,
+        localMachineId: "macbook",
+        localEventUrl: () => "http://local.invalid",
+        peerBaseUrl: () => undefined,
+        peerToken: () => ({ ok: false, reason: "absent" }),
+        reconcileMs: 999999,
+        openUpstream: () => localCtl.source,
+      }),
+    );
+    const origin = (await svc.start()).toString().replace(/\/$/, "");
     try {
-      // Oracle: NO event plane attached.
-      const bare = new AmicodeServiceServer({ password: PW });
-      bare.attachEngineProxy(new EngineProxy({ getUrl: () => engine.url }));
-      const bareOrigin = (await bare.start()).toString().replace(/\/$/, "");
-      const bareBody = await (await fetch(`${bareOrigin}/event`, { headers: authed })).text();
-      await bare.stop();
-
-      // Subject: event plane attached, but the ownerMap holds only a LOCAL owner
-      // (zero non-local owners → the driver declines → same engine-proxy path).
-      const ownerMap = new SessionOwnerMap();
-      ownerMap.update([{ id: "ses-local", amicode_owner: { owner_machine_id: "macbook", owner_name: "macbook", is_local: true } }]);
-      const svc = new AmicodeServiceServer({ password: PW });
-      svc.attachEngineProxy(new EngineProxy({ getUrl: () => engine.url }));
-      svc.attachObservationEventPlane(
-        new SseFanInDriver({
-          ownerMap,
-          localMachineId: "macbook",
-          localEventUrl: () => engine.url,
-          peerBaseUrl: () => undefined,
-          peerToken: () => ({ ok: false, reason: "absent" }),
-        }),
-      );
-      const origin = (await svc.start()).toString().replace(/\/$/, "");
-      const body = await (await fetch(`${origin}/event`, { headers: authed })).text();
-      await svc.stop();
-
-      expect(bareBody).toBe(F1 + F2); // sanity: the oracle is verbatim
-      expect(body).toBe(bareBody); // byte-identical to the no-plane route
+      const frames = await readSseFrames(`${origin}/event`, authed, { maxFrames: 2, timeoutMs: 2500 });
+      expect(frames).toEqual([F1, F2]); // byte-identical via §D4 fleet-of-one relay
     } finally {
-      await engine.stop();
+      localCtl.end();
+      await svc.stop();
     }
   });
 
-  it("the opaque ?lastEventID cursor rides through to the engine UNCHANGED when the driver declines", async () => {
-    const engine = await startSseStub([sseFrame("data: {}", "id: 9")]);
+  it("?lastEventID cursor reaches the local arm's upstream as the local namespace resume id", async () => {
+    // The driver parses the composite cursor and passes the local namespace's
+    // resume id to the local arm's openUpstream call. A bare scalar "42" (no
+    // namespace separator) is the #1264 back-compat form → local arm's position.
+    const localCtl = controllableSource([sseFrame("data: {}", "id: 9")]);
+    const seenUpstream: Array<{ namespace: string; lastEventId?: string }> = [];
+    const ownerMap = new SessionOwnerMap();
+
+    const svc = new AmicodeServiceServer({ password: PW });
+    svc.attachObservationEventPlane(
+      new SseFanInDriver({
+        ownerMap,
+        localMachineId: "macbook",
+        localEventUrl: () => "http://local.invalid",
+        peerBaseUrl: () => undefined,
+        peerToken: () => ({ ok: false, reason: "absent" }),
+        reconcileMs: 999999,
+        openUpstream: (r) => {
+          seenUpstream.push({ namespace: r.namespace, lastEventId: r.lastEventId });
+          return localCtl.source;
+        },
+      }),
+    );
+    const origin = (await svc.start()).toString().replace(/\/$/, "");
     try {
-      const ownerMap = new SessionOwnerMap(); // zero owners → decline
-      const svc = new AmicodeServiceServer({ password: PW });
-      svc.attachEngineProxy(new EngineProxy({ getUrl: () => engine.url }));
-      svc.attachObservationEventPlane(
-        new SseFanInDriver({ ownerMap, localMachineId: "macbook", localEventUrl: () => engine.url, peerBaseUrl: () => undefined, peerToken: () => ({ ok: false, reason: "absent" }) }),
-      );
-      const origin = (await svc.start()).toString().replace(/\/$/, "");
-      await (await fetch(`${origin}/event?lastEventID=42`, { headers: authed })).text();
-      await svc.stop();
-      expect(engine.requests.some((r) => r.path === "/event" && r.lastEventID === "42")).toBe(true);
+      await readSseFrames(`${origin}/event?lastEventID=42`, authed, { maxFrames: 1, timeoutMs: 2500 });
+      const localReq = seenUpstream.find((u) => u.namespace === "local");
+      expect(localReq).toBeDefined();
+      expect(localReq!.lastEventId).toBe("42");
     } finally {
-      await engine.stop();
+      localCtl.end();
+      await svc.stop();
     }
   });
 });
@@ -337,6 +346,70 @@ describe("#1543 — production wiring (createAmicodeService observation-only pat
       expect(peerEventReqs.length).toBeGreaterThan(peerEventBefore); // the peer arm was opened (takeover)
       expect(peerEventReqs.at(-1)!.auth).toBe(peerAuthHeader("tok-studio")); // authed as the peer, its own token
     } finally {
+      await svc.stop();
+    }
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// #1565 — late peer discovery: the driver accepts at zero owners, streams local
+// frames in fleet-of-one mode, then reconcile opens peer arms when the
+// OwnerMapFeed discovers them (the race-fix contract).
+// ══════════════════════════════════════════════════════════════════════════════
+describe("#1565 — late peer discovery (observation-path race fix)", () => {
+  it("zero-owner start → ownerMap gains a peer → reconcile opens the peer arm and its frames arrive", async () => {
+    const F_local = sseFrame("event: message", 'data: {"src":"local"}', "id: L1");
+    const F_peer = sseFrame("event: message", 'data: {"src":"studio"}', "id: P1");
+
+    const localCtl = controllableSource([F_local]);
+    const peerCtl = controllableSource();
+    const ownerMap = new SessionOwnerMap(); // zero owners initially
+    const seenUpstream: Array<{ namespace: string }> = [];
+
+    const driver = new SseFanInDriver({
+      ownerMap,
+      localMachineId: "macbook",
+      localEventUrl: () => "http://local.invalid",
+      peerBaseUrl: (id) => (id === "studio" ? "http://studio.invalid" : undefined),
+      peerToken: (id) =>
+        id === "studio"
+          ? { ok: true as const, credential: { baseUrl: "http://studio.invalid", token: "tok-studio" } }
+          : { ok: false as const, reason: "absent" as const },
+      reconcileMs: 999999,
+      openUpstream: (r) => {
+        seenUpstream.push({ namespace: r.namespace });
+        if (r.namespace === "studio") return peerCtl.source;
+        return localCtl.source;
+      },
+    });
+
+    const svc = new AmicodeServiceServer({ password: PW });
+    svc.attachObservationEventPlane(driver);
+    const origin = (await svc.start()).toString().replace(/\/$/, "");
+
+    try {
+      // Schedule late peer discovery: after 300ms, add a peer and push its frame.
+      // The driver already accepted at zero owners and is streaming local frames.
+      setTimeout(() => {
+        ownerMap.update([
+          { id: "ses-studio", amicode_owner: { owner_machine_id: "studio", owner_name: "studio", is_local: false } },
+        ]);
+        driver.reconcile();
+        peerCtl.push(F_peer);
+      }, 300);
+
+      // Read frames — expect both the local frame and the late-arriving peer frame
+      const frames = await readSseFrames(`${origin}/event`, authed, { maxFrames: 2, timeoutMs: 3000 });
+      expect(frames.length).toBe(2);
+      // First frame: local, byte-identical (fleet-of-one at the time)
+      expect(frames[0]).toContain('"src":"local"');
+      // Second frame: the peer's frame arrived after late reconcile
+      expect(frames[1]).toContain('"src":"studio"');
+      // The peer arm was opened by reconcile
+      expect(seenUpstream.some((u) => u.namespace === "studio")).toBe(true);
+    } finally {
+      localCtl.end();
+      peerCtl.end();
       await svc.stop();
     }
   });
