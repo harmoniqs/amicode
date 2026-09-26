@@ -1283,6 +1283,11 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     // handshake) — captured here so the adopted path can compare them against
     // the on-disk build and surface a stale-engine notice.
     let adoptedHashes: { binaryHash: string; configHash: string } | undefined;
+    // #1579: on a role=server machine, the hub owns the engine — give it time
+    // to boot before the extension gives up and cold-spawns a rival.
+    const fleetState = readFleetTopology();
+    const isServerMachine = fleetState.kind === "ok" && fleetState.role === "server";
+    const hubPollBudget = isServerMachine ? 30_000 : undefined;
     try {
       const lifecycleResult = await adoptOrSpawn(
         handshakePath(),
@@ -1291,7 +1296,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           // spawn below via ServerManager. Return a sentinel so the lifecycle
           // function knows to proceed, but the real spawn is in the next block.
           return { port: configuredPort || 0, pid: 0, password: serverPassword };
-        }, configuredPort > 0 ? configuredPort : 43117, (l) => opencodeChannel.appendLine(l)),
+        }, configuredPort > 0 ? configuredPort : 43117, (l) => opencodeChannel.appendLine(l), hubPollBudget),
       );
       if (lifecycleResult.outcome === "adopted") {
         adopted = true;

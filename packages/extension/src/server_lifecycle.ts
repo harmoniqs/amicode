@@ -309,11 +309,14 @@ export async function challengePassword(port: number, password: string): Promise
 
 /** Build the production deps for adoptOrSpawn.
  *  When `configuredPort` is given, the reclaim seam (#1178) is wired so the
- *  no-handshake path can recover an orphaned port instead of ServeError-looping. */
+ *  no-handshake path can recover an orphaned port instead of ServeError-looping.
+ *  When `hubPollBudgetMs` is given (#1576), the no-handshake path polls for the
+ *  hub's handshake before falling back to cold-spawn — the reboot-race guard. */
 export function buildLiveDeps(
   coldSpawn: () => Promise<{ port: number; pid: number; password: string }>,
   configuredPort?: number,
   log?: (line: string) => void,
+  hubPollBudgetMs?: number,
 ): AdoptOrSpawnDeps {
   return {
     healthCheck: probeHealth,
@@ -324,6 +327,7 @@ export function buildLiveDeps(
     configuredPort,
     probePort: configuredPort !== undefined ? probePortOccupant : undefined,
     reclaimPort: configuredPort !== undefined ? reclaimOrphanPort : undefined,
+    hubPollBudgetMs,
     log,
   };
 }
