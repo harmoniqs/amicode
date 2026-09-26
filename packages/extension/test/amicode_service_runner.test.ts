@@ -13,8 +13,8 @@
 //  - FAIL-LOUD (always on): a missing engine binary, a shelf without an app
 //    dist, and an engine that never becomes healthy each fail with a NAMED
 //    reason (never a silent half-boot) and tear the spawned child down.
-import { spawn } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, writeFileSync, readdirSync, readFileSync } from "node:fs";
+import { spawn, execSync } from "node:child_process";
+import { chmodSync, copyFileSync, existsSync, mkdtempSync, writeFileSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -24,6 +24,11 @@ import {
   AmicodeServiceRunnerError,
   bootAmicodeServiceRunner,
   type AmicodeServiceRunnerBoot,
+  cleanupStalePid,
+  writePidFile,
+  removePidFile,
+  isProcessAlive,
+  isOpencodeProcess,
 } from "../src/amicode_service_runner";
 import { APP_SHELF_NEEDS_SETUP_MARKER } from "../src/amicode_service/app_shelf";
 import { serverAuthHeader, serverAuthToken } from "../src/server_auth";
@@ -350,5 +355,207 @@ describe("amicode service runner (fail-loud, headless — no engine needed)", ()
       await new Promise((r) => setTimeout(r, 300));
       expect(child.killed || child.exitCode !== null || child.signalCode !== null).toBe(true);
     }
+  });
+});
+
+// ── PID-file lifecycle (#1578) ──────────────────────────────────────────────
+
+describe("amicode service runner PID-file lifecycle (headless, fake engine — no vendored engine needed)", () => {
+  const boots: AmicodeServiceRunnerBoot[] = [];
+  afterAll(async () => {
+    for (const b of boots.splice(0)) await b.shutdown().catch(() => undefined);
+  });
+
+  function writeFakeEngine(dir: string): string {
+    const bin = join(dir, "fake-engine");
+    writeFileSync(
+      bin,
+      `#!/usr/bin/env node
+const { createServer } = require("node:http");
+const port = Number(process.argv[4] ?? 0);
+createServer((_req, res) => {
+  res.writeHead(200, { "content-type": "text/plain" });
+  res.end("fake engine up");
+}).listen(port, "127.0.0.1");
+`,
+    );
+    chmodSync(bin, 0o755);
+    return bin;
+  }
+
+  function writeStubShelf(dir: string): string {
+    writeFileSync(join(dir, "index.html"), "<!doctype html><title>stub shelf</title>");
+    return dir;
+  }
+
+  it("AC1: on boot, writes a PID file containing the engine child's PID", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "amicode-runner-pid-write-"));
+    const pidFile = join(dir, "hub-engine.pid");
+    const boot = await bootAmicodeServiceRunner({
+      engineBin: writeFakeEngine(dir),
+      appDistRoot: writeStubShelf(mkdtempSync(join(tmpdir(), "amicode-runner-pid-shelf-"))),
+      pidFile,
+      healthTimeoutMs: 10_000,
+      servicePort: 0,
+      enginePort: 0,
+      log: () => undefined,
+    });
+    boots.push(boot);
+
+    // The PID file must exist and contain the engine's PID as a trimmed string.
+    expect(existsSync(pidFile)).toBe(true);
+    const content = readFileSync(pidFile, "utf8").trim();
+    expect(content).toBe(String(boot.engine.pid));
+  }, 30_000);
+
+  it("AC4: a stale PID file (dead process) does not block boot", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "amicode-runner-pid-stale-"));
+    const pidFile = join(dir, "hub-engine.pid");
+    // Write a PID that almost certainly doesn't exist.
+    writeFileSync(pidFile, "999999\n");
+
+    const boot = await bootAmicodeServiceRunner({
+      engineBin: writeFakeEngine(dir),
+      appDistRoot: writeStubShelf(mkdtempSync(join(tmpdir(), "amicode-runner-pid-stale-shelf-"))),
+      pidFile,
+      healthTimeoutMs: 10_000,
+      servicePort: 0,
+      enginePort: 0,
+      log: () => undefined,
+    });
+    boots.push(boot);
+
+    // Boot succeeded despite the stale PID file; the file now has the new PID.
+    const content = readFileSync(pidFile, "utf8").trim();
+    expect(content).toBe(String(boot.engine.pid));
+  }, 30_000);
+
+  it("AC3: on shutdown, the runner removes the PID file", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "amicode-runner-pid-remove-"));
+    const pidFile = join(dir, "hub-engine.pid");
+    const boot = await bootAmicodeServiceRunner({
+      engineBin: writeFakeEngine(dir),
+      appDistRoot: writeStubShelf(mkdtempSync(join(tmpdir(), "amicode-runner-pid-remove-shelf-"))),
+      pidFile,
+      healthTimeoutMs: 10_000,
+      servicePort: 0,
+      enginePort: 0,
+      log: () => undefined,
+    });
+    // Do NOT push into boots — we shutdown ourselves.
+    expect(existsSync(pidFile)).toBe(true);
+    await boot.shutdown();
+    expect(existsSync(pidFile)).toBe(false);
+  }, 30_000);
+
+  it("AC5: a PID file pointing at a non-opencode process is NOT killed (safety check)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "amicode-runner-pid-safety-"));
+    const pidFile = join(dir, "hub-engine.pid");
+
+    // Spawn a `sleep` process — NOT named opencode.
+    const sleeper = spawn("sleep", ["300"]);
+    writeFileSync(pidFile, `${sleeper.pid}\n`);
+
+    const boot = await bootAmicodeServiceRunner({
+      engineBin: writeFakeEngine(dir),
+      appDistRoot: writeStubShelf(mkdtempSync(join(tmpdir(), "amicode-runner-pid-safety-shelf-"))),
+      pidFile,
+      healthTimeoutMs: 10_000,
+      servicePort: 0,
+      enginePort: 0,
+      log: () => undefined,
+    });
+    boots.push(boot);
+
+    // The `sleep` process must still be alive — it was NOT an opencode process.
+    expect(isProcessAlive(sleeper.pid!)).toBe(true);
+    sleeper.kill("SIGTERM");
+  }, 30_000);
+
+  it("AC2: on boot, if a PID file exists with a live opencode process, the runner kills it before spawning", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "amicode-runner-pid-kill-stale-"));
+    const pidFile = join(dir, "hub-engine.pid");
+
+    // Spawn a process whose `ps -o comm=` shows "opencode": copy a real
+    // binary (sleep) to a temp dir named "opencode". On macOS, `comm` is the
+    // basename of the executable — so this trick gives us an "opencode" pid.
+    const fakeOpencode = join(dir, "opencode");
+    copyFileSync("/bin/sleep", fakeOpencode);
+    chmodSync(fakeOpencode, 0o755);
+    const stale = spawn(fakeOpencode, ["300"]);
+    writeFileSync(pidFile, `${stale.pid}\n`);
+
+    // Sanity: the stale process IS alive and IS recognized as opencode.
+    expect(isProcessAlive(stale.pid!)).toBe(true);
+    expect(isOpencodeProcess(stale.pid!)).toBe(true);
+
+    // Boot the runner with that PID file — it should kill the stale process.
+    const boot = await bootAmicodeServiceRunner({
+      engineBin: writeFakeEngine(mkdtempSync(join(tmpdir(), "amicode-runner-pid-kill2-"))),
+      appDistRoot: writeStubShelf(mkdtempSync(join(tmpdir(), "amicode-runner-pid-kill2-shelf-"))),
+      pidFile,
+      healthTimeoutMs: 10_000,
+      servicePort: 0,
+      enginePort: 0,
+      log: () => undefined,
+    });
+    boots.push(boot);
+
+    // The stale "opencode" process should be dead now.
+    await new Promise((r) => setTimeout(r, 200));
+    expect(isProcessAlive(stale.pid!)).toBe(false);
+
+    // The PID file now has the new engine's PID.
+    const content = readFileSync(pidFile, "utf8").trim();
+    expect(content).toBe(String(boot.engine.pid));
+  }, 30_000);
+});
+
+// ── PID-file helpers (unit tests) ───────────────────────────────────────────
+
+describe("PID-file helpers (unit, #1578)", () => {
+  it("writePidFile creates intermediate directories and writes PID as a string", () => {
+    const dir = mkdtempSync(join(tmpdir(), "amicode-pid-helper-write-"));
+    const pidFile = join(dir, "nested", "deep", "hub-engine.pid");
+    writePidFile(pidFile, 42);
+    expect(readFileSync(pidFile, "utf8").trim()).toBe("42");
+  });
+
+  it("removePidFile removes the file and is silent when the file is already gone", () => {
+    const dir = mkdtempSync(join(tmpdir(), "amicode-pid-helper-remove-"));
+    const pidFile = join(dir, "hub-engine.pid");
+    writeFileSync(pidFile, "123\n");
+    removePidFile(pidFile, () => undefined);
+    expect(existsSync(pidFile)).toBe(false);
+    // Calling again must not throw.
+    removePidFile(pidFile, () => undefined);
+  });
+
+  it("isProcessAlive returns true for this process and false for a dead PID", () => {
+    expect(isProcessAlive(process.pid)).toBe(true);
+    expect(isProcessAlive(999999)).toBe(false);
+  });
+
+  it("isOpencodeProcess returns false for a sleep process", () => {
+    const sleeper = spawn("sleep", ["300"]);
+    try {
+      expect(isOpencodeProcess(sleeper.pid!)).toBe(false);
+    } finally {
+      sleeper.kill("SIGTERM");
+    }
+  });
+
+  it("cleanupStalePid is a no-op when the PID file does not exist", async () => {
+    const pidFile = join(tmpdir(), "amicode-no-such-pid-file-" + Date.now() + ".pid");
+    // Must not throw.
+    await cleanupStalePid(pidFile, () => undefined);
+  });
+
+  it("cleanupStalePid skips a dead PID gracefully", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "amicode-pid-cleanup-dead-"));
+    const pidFile = join(dir, "hub-engine.pid");
+    writeFileSync(pidFile, "999999\n");
+    await cleanupStalePid(pidFile, () => undefined);
+    // File still exists (we don't delete it in cleanup — boot overwrites it).
   });
 });

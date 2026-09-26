@@ -35,11 +35,11 @@
 // path in-process).
 // ============================================================================
 
-import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { spawn, execSync, type ChildProcess } from "node:child_process";
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { createServer } from "node:net";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { createAmicodeService } from "./amicode_service";
 import type { AmicodeServiceServer } from "./amicode_service/server";
 import { mintServerPassword, serverAuthHeader } from "./server_auth";
@@ -100,6 +100,13 @@ export interface AmicodeServiceRunnerOptions {
   engineUnarmed?: boolean;
   /** Engine health-wait budget. Default 30_000 (the ServerManager budget). */
   healthTimeoutMs?: number;
+  /** PID file path for stale-engine cleanup on restart. When set, the runner:
+   *  (1) reads any existing PID file on boot and kills a stale opencode engine
+   *      (best-effort — missing file, dead PID, or non-opencode PID is silently
+   *      skipped); (2) writes the new engine child's PID after spawn; (3)
+   *  removes the file on shutdown. Default: undefined (no PID file — backward
+   *  compatible). */
+  pidFile?: string;
   /** Log sink (the structural-interface convention — vscode-free). */
   log?: (line: string) => void;
 }
@@ -164,6 +171,113 @@ async function waitForHealth(baseUrl: string, timeoutMs: number, authorization: 
   return false;
 }
 
+// ── PID-file lifecycle helpers (#1578) ──────────────────────────────────────
+// Exported for unit testing; the boot path calls them when opts.pidFile is set.
+
+/** Check whether a PID is alive (signal 0 — no signal sent, just the liveness
+ *  check). Returns false if the process does not exist or is not reachable. */
+export function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Check whether `pid` is an opencode process. Uses `ps -p <pid> -o comm=` on
+ *  macOS/darwin and reads `/proc/<pid>/comm` on Linux. Returns false on any
+ *  error (process gone, permission denied, etc.). */
+export function isOpencodeProcess(pid: number): boolean {
+  try {
+    let comm: string;
+    if (process.platform === "linux") {
+      try {
+        comm = readFileSync(`/proc/${pid}/comm`, "utf8").trim();
+      } catch {
+        return false;
+      }
+    } else {
+      // macOS (darwin) and other POSIX: `ps -p <pid> -o comm=` prints the
+      // command name with no header.
+      comm = execSync(`ps -p ${pid} -o comm=`, { encoding: "utf8", timeout: 5_000 }).trim();
+    }
+    // The vendored binary's basename is "opencode" — match it (the comm field
+    // is typically just the basename, but on macOS it can be the full path).
+    const basename = comm.split("/").pop() ?? "";
+    return basename === "opencode";
+  } catch {
+    return false;
+  }
+}
+
+/** Write the engine's PID to the PID file (creates intermediate dirs). */
+export function writePidFile(pidFile: string, pid: number): void {
+  mkdirSync(dirname(pidFile), { recursive: true });
+  writeFileSync(pidFile, `${pid}\n`);
+}
+
+/** Remove the PID file. Best-effort: a missing file is silently ignored. */
+export function removePidFile(pidFile: string, log: (line: string) => void): void {
+  try {
+    unlinkSync(pidFile);
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      log(`[service-runner] PID file removal failed (continuing): ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+}
+
+/** Pre-boot cleanup: if a PID file exists and points at a live opencode
+ *  process, SIGTERM it (with a 3s SIGKILL fallback). Best-effort: never
+ *  blocks boot on failure. */
+export async function cleanupStalePid(pidFile: string, log: (line: string) => void): Promise<void> {
+  let raw: string;
+  try {
+    raw = readFileSync(pidFile, "utf8").trim();
+  } catch {
+    return; // No PID file — nothing to clean up.
+  }
+
+  const pid = Number(raw);
+  if (!Number.isFinite(pid) || pid <= 0) {
+    log(`[service-runner] PID file ${pidFile} has invalid content "${raw}" — ignoring`);
+    return;
+  }
+
+  if (!isProcessAlive(pid)) {
+    log(`[service-runner] stale PID file (pid ${pid} is dead) — ignoring`);
+    return;
+  }
+
+  if (!isOpencodeProcess(pid)) {
+    log(`[service-runner] PID ${pid} is alive but NOT an opencode process — skipping kill (safety check)`);
+    return;
+  }
+
+  // It's alive and it's opencode — kill it.
+  log(`[service-runner] killing stale opencode engine (pid ${pid}) from PID file`);
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch {
+    return; // Gone between the check and the kill — fine.
+  }
+
+  // Wait up to 3s for it to die, then SIGKILL.
+  const deadline = Date.now() + 3_000;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 100));
+    if (!isProcessAlive(pid)) return;
+  }
+
+  log(`[service-runner] stale engine (pid ${pid}) did not die after SIGTERM — sending SIGKILL`);
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {
+    /* already gone */
+  }
+}
+
 /**
  * Boot the runner's pair: engine + service. Throws AmicodeServiceRunnerError
  * (named reason) on any boot failure — never a silent half-boot. The CLI
@@ -178,6 +292,11 @@ export async function bootAmicodeServiceRunner(opts: AmicodeServiceRunnerOptions
     throw new AmicodeServiceRunnerError(`no engine binary at ${opts.engineBin} — set AMICODE_ENGINE_BIN (or run \`pnpm --filter amicode fetch:opencode\`)`);
   if (!existsSync(join(opts.appDistRoot, "index.html")))
     throw new AmicodeServiceRunnerError(`no built app dist at ${opts.appDistRoot} (missing index.html) — run \`pnpm --filter amicode run build:app\` or set AMICODE_APP_DIST`);
+
+  // ── PID-file pre-boot cleanup (#1578) ───────────────────────────────────
+  if (opts.pidFile) {
+    await cleanupStalePid(opts.pidFile, log);
+  }
 
   // ── the engine: spawn + health wait (the ServerManager/probe idiom) ──────
   // #955: engineUnarmed is the hub's anonymous boundary posture — no
@@ -221,6 +340,16 @@ export async function bootAmicodeServiceRunner(opts: AmicodeServiceRunnerOptions
   let engineLog = "";
   engine.stdout?.on("data", (d: Buffer) => (engineLog += d));
   engine.stderr?.on("data", (d: Buffer) => (engineLog += d));
+
+  // ── PID-file write (#1578): record the engine child's PID ───────────────
+  if (opts.pidFile && engine.pid !== undefined) {
+    try {
+      writePidFile(opts.pidFile, engine.pid);
+      log(`[service-runner] wrote PID file ${opts.pidFile} (pid ${engine.pid})`);
+    } catch (err) {
+      log(`[service-runner] failed to write PID file (continuing): ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
 
   const killEngine = () =>
     new Promise<void>((resolve) => {
@@ -315,6 +444,10 @@ export async function bootAmicodeServiceRunner(opts: AmicodeServiceRunnerOptions
     shutdownPromise = (async () => {
       await service.stop().catch(() => undefined);
       await killEngine();
+      // ── PID-file removal (#1578) ──────────────────────────────────────
+      if (opts.pidFile) {
+        removePidFile(opts.pidFile, log);
+      }
       log("[service-runner] stopped — service closed, engine torn down");
       resolveDone?.();
     })();
