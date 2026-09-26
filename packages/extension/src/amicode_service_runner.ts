@@ -43,6 +43,7 @@ import { dirname, join } from "node:path";
 import { createAmicodeService } from "./amicode_service";
 import type { AmicodeServiceServer } from "./amicode_service/server";
 import { mintServerPassword, serverAuthHeader } from "./server_auth";
+import { writeHubHandshake, deleteHandshake } from "./server_handshake";
 
 /** The named boot-abort: `reason` is the stable grep-able phrase, `message`
  *  carries the detail (engine output tail for health failures). */
@@ -107,6 +108,14 @@ export interface AmicodeServiceRunnerOptions {
    *  removes the file on shutdown. Default: undefined (no PID file — backward
    *  compatible). */
   pidFile?: string;
+  /** Handshake file path for extension adoption (#1579). When set, the runner
+   *  writes the handshake record after the engine is healthy AND the service is
+   *  up, and removes it on shutdown (BEFORE killing the engine — order matters:
+   *  the extension must not read a handshake for a dying engine). The handshake
+   *  carries the UNARMED_PASSWORD sentinel (the hub engine is unarmed, so the
+   *  password challenge is vacuously true). Default: undefined (no handshake —
+   *  backward compatible, same pattern as pidFile). */
+  handshakePath?: string;
   /** Log sink (the structural-interface convention — vscode-free). */
   log?: (line: string) => void;
 }
@@ -418,6 +427,23 @@ export async function bootAmicodeServiceRunner(opts: AmicodeServiceRunnerOptions
     `[amicode-service] listening on ${origin} (${service.routeCount} routes; auth: per-boot Basic + engine token); app shelf mounted`,
   );
 
+  // ── Handshake write (#1579): let the extension adopt instead of spawning ──
+  if (opts.handshakePath) {
+    try {
+      writeHubHandshake({
+        port,
+        pid: engine.pid!,
+        binaryHash: "", // placeholder — the runner doesn't compute binary hashes
+        configHash: "", // placeholder
+        dbPath: opts.engineEnv?.OPENCODE_DB,
+        filePath: opts.handshakePath,
+      });
+      log(`[service-runner] wrote handshake to ${opts.handshakePath}`);
+    } catch (err) {
+      log(`[service-runner] failed to write handshake (continuing): ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   let shutDown = false;
   let shutdownPromise: Promise<void> | undefined;
   let resolveDone: (() => void) | undefined;
@@ -442,6 +468,11 @@ export async function bootAmicodeServiceRunner(opts: AmicodeServiceRunnerOptions
     if (shutdownPromise !== undefined) return shutdownPromise;
     shutDown = true;
     shutdownPromise = (async () => {
+      // ── Handshake removal (#1579): BEFORE killing the engine — order
+      //    matters: the extension must not read a handshake for a dying engine.
+      if (opts.handshakePath) {
+        try { deleteHandshake(opts.handshakePath); } catch { /* best-effort */ }
+      }
       await service.stop().catch(() => undefined);
       await killEngine();
       // ── PID-file removal (#1578) ──────────────────────────────────────

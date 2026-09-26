@@ -35,6 +35,13 @@
 //                        reads any existing PID file to kill stale opencode
 //                        engine processes, writes the new child's PID, and
 //                        removes the file on shutdown.
+//   AMICODE_HUB_HANDSHAKE  the handshake file path (#1579). Default:
+//                        ~/.amico/ops/server/standalone.json (the
+//                        server_handshake canonical path). On boot, the runner
+//                        writes the handshake after the engine is healthy AND
+//                        the service is up; on shutdown, removes it BEFORE
+//                        killing the engine. The extension's adoptOrSpawn reads
+//                        this to adopt instead of spawning a rival engine.
 //
 // EXIT CODES: 0 = graceful (SIGTERM/SIGINT teardown completed); 1 = any
 // boot/lifecycle failure, with a `[service-runner] FAIL: <reason>` line on
@@ -44,6 +51,7 @@ import { dirname, join } from "node:path";
 import os from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { AmicodeServiceRunnerError, bootAmicodeServiceRunner } from "./amicode_service_runner";
+import { handshakePath as defaultHandshakePath } from "./server_handshake";
 
 const invokedAsMain = (() => {
   try {
@@ -90,6 +98,7 @@ async function main(): Promise<never> {
     engineUnarmed: (process.env.AMICODE_ENGINE_UNARMED ?? "").trim() === "1",
     engineEnv: (process.env.OPENCODE_DB ?? "").trim() ? { OPENCODE_DB: process.env.OPENCODE_DB } : undefined,
     pidFile: (process.env.AMICODE_HUB_PID_FILE ?? "").trim() || join(os.homedir(), ".amico", "amicode", "hub-engine.pid"),
+    handshakePath: (process.env.AMICODE_HUB_HANDSHAKE ?? "").trim() || defaultHandshakePath(),
     log: (line) => console.log(line),
   });
 
