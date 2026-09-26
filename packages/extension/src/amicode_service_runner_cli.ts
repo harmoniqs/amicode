@@ -30,12 +30,18 @@
 //                        Wins over AMICODE_ENGINE_PASSWORD.
 //   OPENCODE_DB          the canonical pin — passed through to the spawned
 //                        engine untouched (the hub's session store).
+//   AMICODE_HUB_PID_FILE the engine's PID file path (#1578). Default:
+//                        ~/.amico/amicode/hub-engine.pid. On boot, the runner
+//                        reads any existing PID file to kill stale opencode
+//                        engine processes, writes the new child's PID, and
+//                        removes the file on shutdown.
 //
 // EXIT CODES: 0 = graceful (SIGTERM/SIGINT teardown completed); 1 = any
 // boot/lifecycle failure, with a `[service-runner] FAIL: <reason>` line on
 // stderr — never a silent half-boot, never a hang.
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
+import os from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { AmicodeServiceRunnerError, bootAmicodeServiceRunner } from "./amicode_service_runner";
 
@@ -83,6 +89,7 @@ async function main(): Promise<never> {
     enginePassword: (process.env.AMICODE_ENGINE_PASSWORD ?? "").trim() || undefined,
     engineUnarmed: (process.env.AMICODE_ENGINE_UNARMED ?? "").trim() === "1",
     engineEnv: (process.env.OPENCODE_DB ?? "").trim() ? { OPENCODE_DB: process.env.OPENCODE_DB } : undefined,
+    pidFile: (process.env.AMICODE_HUB_PID_FILE ?? "").trim() || join(os.homedir(), ".amico", "amicode", "hub-engine.pid"),
     log: (line) => console.log(line),
   });
 
