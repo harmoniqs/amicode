@@ -10,7 +10,7 @@ import {
   adoptOrSpawn,
   buildLiveDeps,
 } from "../src/server_lifecycle";
-import { coldSpawnHandshakeHook, readHandshake, PROTOCOL_VERSION } from "../src/server_handshake";
+import { coldSpawnHandshakeHook, readHandshake, writeHandshake, writeHubHandshake, UNARMED_PASSWORD, PROTOCOL_VERSION } from "../src/server_handshake";
 import { serverAuthHeader } from "../src/server_auth";
 import { windowModeFromRemoteName } from "../src/fleet_window_mode_state";
 import { divertToFleetRelay, type FleetTopologyState } from "../src/fleet_topology";
@@ -257,6 +257,194 @@ describe("#1270 host-side relocation over Remote-SSH — adopt the durable hub, 
       expect(result.outcome).toBe("foreign-error"); // reachable but not adoptable → surfaced
       expect(result.error).toBeTruthy();             // carries the message the UI surfaces
       expect(spawned).toBe(false);                   // never cold-spawn a rival onto the hub's port
+    } finally {
+      await hub.close();
+    }
+  });
+});
+
+// ============================================================================
+// #1576 — Hub engine adoption: the editor adopts the hub's unarmed engine
+// instead of cold-spawning a rival alongside it.
+//
+// On a role=server machine the canonical fleet-hub engine runs UNARMED
+// (AMICODE_ENGINE_UNARMED=1, no password check) on port servicePort-3.
+// The hub writes a handshake record with a sentinel password so the editor's
+// adoptOrSpawn path can adopt it — one engine, one DB, one event bus.
+//
+// The unarmed server fixture (startUnarmedHub) models the hub engine: it
+// responds 200 to ANY request without checking Authorization, matching the
+// AMICODE_ENGINE_UNARMED=1 behavior. An ephemeral port + tmpdir handshake
+// keep these tests isolated from live sessions.
+// ============================================================================
+
+/** An UNARMED loopback server — models the hub engine (AMICODE_ENGINE_UNARMED=1).
+ *  Responds 200 to ANY request, no auth required — the SSH tunnel is the auth
+ *  boundary (#1354), not the engine itself. */
+async function startUnarmedHub(): Promise<{ port: number; close: () => Promise<void> }> {
+  const server = http.createServer((_req, res) => {
+    res.writeHead(200, { "content-type": "text/plain" });
+    res.end("ok");
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  const port = (server.address() as AddressInfo).port;
+  return { port, close: () => new Promise<void>((resolve) => server.close(() => resolve())) };
+}
+
+/** Sentinel password for the unarmed hub engine — matches UNARMED_PASSWORD
+ *  from server_handshake.ts (imported above). */
+
+/** Plant a hub-style handshake (unarmed sentinel password, current protocol). */
+function plantHubHandshake(
+  fp: string,
+  port: number,
+  overrides: { pid?: number; protocolVersion?: string; dbPath?: string } = {},
+): void {
+  if (overrides.protocolVersion) {
+    // For tests that need a non-current protocol, use writeHandshake directly
+    const record: Record<string, unknown> = {
+      port,
+      pid: overrides.pid ?? process.pid,
+      startedAt: new Date().toISOString(),
+      password: UNARMED_PASSWORD,
+      binaryHash: "hub-bin",
+      configHash: "hub-cfg",
+      protocolVersion: overrides.protocolVersion,
+    };
+    if (overrides.dbPath) record.dbPath = overrides.dbPath;
+    writeHandshake(record as any, fp);
+  } else {
+    // Normal case: use the production writeHubHandshake
+    writeHubHandshake({
+      port,
+      pid: overrides.pid ?? process.pid,
+      binaryHash: "hub-bin",
+      configHash: "hub-cfg",
+      dbPath: overrides.dbPath,
+      filePath: fp,
+    });
+  }
+}
+
+describe("#1576 hub engine adoption — editor adopts the hub, no rival engine", () => {
+  it("ADOPTS a live unarmed hub — outcome='adopted' at hub port, cold-spawn count = 0 (AC1)", async () => {
+    const hub = await startUnarmedHub();
+    try {
+      const fp = tmpHandshake();
+      plantHubHandshake(fp, hub.port);
+
+      let spawnCount = 0;
+      const deps = buildLiveDeps(async () => {
+        spawnCount++;
+        return { port: 0, pid: 0, password: "should-not-be-used" };
+      }, hub.port);
+
+      const result = await adoptOrSpawn(fp, deps);
+
+      expect(result.outcome).toBe("adopted");
+      expect(result.port).toBe(hub.port);
+      expect(spawnCount).toBe(0);
+    } finally {
+      await hub.close();
+    }
+  });
+
+  it("reboot-race: handshake absent initially → appears within poll budget → ADOPTED (AC1 + constraint)", async () => {
+    const hub = await startUnarmedHub();
+    try {
+      const fp = tmpHandshake();
+      // Hub hasn't written its handshake yet (still in its ~30s health-wait)
+
+      // After 300ms the hub finishes its health-wait and writes the handshake
+      const writeTimer = setTimeout(() => plantHubHandshake(fp, hub.port), 300);
+
+      let spawnCount = 0;
+      const baseDeps = buildLiveDeps(async () => {
+        spawnCount++;
+        return { port: 0, pid: 0, password: "should-not-be-used" };
+      }); // no configuredPort — the hub's port comes from the handshake
+      // #1576: the reboot-race poll budget — adoptOrSpawn polls for the handshake
+      // to appear instead of immediately cold-spawning on a server machine.
+      const deps = Object.assign({}, baseDeps, { hubPollBudgetMs: 5000 });
+
+      const result = await adoptOrSpawn(fp, deps);
+
+      clearTimeout(writeTimer);
+      expect(result.outcome).toBe("adopted");
+      expect(result.port).toBe(hub.port);
+      expect(spawnCount).toBe(0);
+    } finally {
+      await hub.close();
+    }
+  });
+
+  it("adopted result surfaces the canonical DB path from the hub handshake (AC2)", async () => {
+    const CANONICAL_DB = "/home/user/.amico/amicode.db";
+    const hub = await startUnarmedHub();
+    try {
+      const fp = tmpHandshake();
+      plantHubHandshake(fp, hub.port, { dbPath: CANONICAL_DB });
+
+      const deps = buildLiveDeps(async () => {
+        return { port: 0, pid: 0, password: "x" };
+      }, hub.port);
+
+      const result = await adoptOrSpawn(fp, deps);
+
+      expect(result.outcome).toBe("adopted");
+      // #1576: the adopted result must surface the hub's canonical DB path so
+      // the editor can verify it shares the same store (AC2: runtime readback).
+      expect(result.adoptedDbPath).toBe(CANONICAL_DB);
+    } finally {
+      await hub.close();
+    }
+  });
+
+  it("writeHubHandshake round-trips: unarmed sentinel, dbPath, and current protocol", () => {
+    const fp = tmpHandshake();
+    const DB = "/canonical/store.db";
+    writeHubHandshake({ port: 12345, pid: 999, binaryHash: "bh", configHash: "ch", dbPath: DB, filePath: fp });
+
+    const hs = readHandshake(fp);
+    expect(hs.status).toBe("ok");
+    if (hs.status !== "ok") return;
+    expect(hs.record.port).toBe(12345);
+    expect(hs.record.pid).toBe(999);
+    expect(hs.record.password).toBe(UNARMED_PASSWORD);
+    expect(hs.record.protocolVersion).toBe(PROTOCOL_VERSION);
+    expect(hs.record.dbPath).toBe(DB);
+  });
+
+  it("standalone machine: no hub, no handshake → cold-spawn as before (AC6 regression guard)", async () => {
+    const fp = tmpHandshake(); // absent — no file written
+    let spawnCount = 0;
+    const deps = buildLiveDeps(async () => {
+      spawnCount++;
+      return { port: 9999, pid: 1234, password: "fresh-pw" };
+    });
+
+    const result = await adoptOrSpawn(fp, deps);
+
+    expect(result.outcome).toBe("cold-spawned");
+    expect(spawnCount).toBe(1);
+  });
+
+  it("unarmed hub with incompatible protocol → incompatible-error, no spawn (AC1 guard)", async () => {
+    const hub = await startUnarmedHub();
+    try {
+      const fp = tmpHandshake();
+      plantHubHandshake(fp, hub.port, { protocolVersion: "WRONG-999" });
+
+      let spawnCount = 0;
+      const deps = buildLiveDeps(async () => {
+        spawnCount++;
+        return { port: 0, pid: 0, password: "x" };
+      }, hub.port);
+
+      const result = await adoptOrSpawn(fp, deps);
+
+      expect(result.outcome).toBe("incompatible-error");
+      expect(spawnCount).toBe(0);
     } finally {
       await hub.close();
     }

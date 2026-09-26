@@ -31,6 +31,9 @@ export interface HandshakeRecord {
   binaryHash: string;
   configHash: string;
   protocolVersion: string;
+  /** #1576: the canonical DB path the engine opened. Optional — present when
+   *  the hub service writes the handshake (AC2: runtime readback). */
+  dbPath?: string;
 }
 
 /** Result of reading the handshake file. */
@@ -65,6 +68,52 @@ export function writeHandshake(record: HandshakeRecord, filePath?: string): void
   writeFileSync(p, JSON.stringify(record, null, 2) + "\n", { mode: 0o600 });
 }
 
+// ── Hub handshake (#1576) ──────────────────────────────────────────────────
+
+/** The password sentinel written by the hub service's handshake. The hub engine
+ *  runs unarmed (AMICODE_ENGINE_UNARMED=1, no password check), so a real
+ *  password is meaningless. The sentinel tells the adoption gate that the
+ *  "password challenge" for this server is vacuously true — the health check IS
+ *  the ownership proof for an unarmed engine behind the SSH tunnel. */
+export const UNARMED_PASSWORD = "__hub_unarmed__";
+
+/** True when the handshake record was written by an unarmed hub engine. */
+export function isUnarmedHandshake(record: HandshakeRecord): boolean {
+  return record.password === UNARMED_PASSWORD;
+}
+
+export interface WriteHubHandshakeOpts {
+  port: number;
+  pid: number;
+  binaryHash: string;
+  configHash: string;
+  /** The canonical DB path the hub engine opened (AC2: runtime readback). */
+  dbPath?: string;
+  /** Override the handshake file path (tests). */
+  filePath?: string;
+}
+
+/** Write the hub engine's handshake record after it passes its health check.
+ *  The hub is unarmed, so the password field carries the UNARMED_PASSWORD
+ *  sentinel. The adoption gate verifies reachability-only for unarmed engines
+ *  (the SSH tunnel is the auth boundary). Generates startedAt and stamps
+ *  PROTOCOL_VERSION automatically. */
+export function writeHubHandshake(opts: WriteHubHandshakeOpts): void {
+  writeHandshake(
+    {
+      port: opts.port,
+      pid: opts.pid,
+      startedAt: new Date().toISOString(),
+      password: UNARMED_PASSWORD,
+      binaryHash: opts.binaryHash,
+      configHash: opts.configHash,
+      protocolVersion: PROTOCOL_VERSION,
+      dbPath: opts.dbPath,
+    },
+    opts.filePath,
+  );
+}
+
 // ── Read ────────────────────────────────────────────────────────────────────
 
 /** Read and validate the handshake record. Never throws — malformed / absent
@@ -94,6 +143,7 @@ function parseHandshake(raw: string): HandshakeReadResult {
   const obj = parsed as Record<string, unknown>;
   const required: (keyof HandshakeRecord)[] = [
     "port", "pid", "startedAt", "password", "binaryHash", "configHash", "protocolVersion",
+    // Note: dbPath is intentionally NOT in this list — it's optional (#1576).
   ];
   for (const key of required) {
     if (!(key in obj)) return { status: "invalid", reason: `missing field: ${key}` };
@@ -115,6 +165,8 @@ function parseHandshake(raw: string): HandshakeReadResult {
       binaryHash: obj.binaryHash as string,
       configHash: obj.configHash as string,
       protocolVersion: obj.protocolVersion as string,
+      // #1576: optional — present when the hub service writes the handshake
+      ...(typeof obj.dbPath === "string" ? { dbPath: obj.dbPath } : {}),
     },
   };
 }
