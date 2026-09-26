@@ -621,11 +621,12 @@ describe("fleet-client relay skeleton (#1261) — a client holds NO local engine
       peerDir = mkdtempSync(join(tmpdir(), "amicode-peer-1378-"));
       peerKeeperFile = join(peerDir, "keeper.json");
       peerAttachmentFile = join(peerDir, "attachment.json");
-      for (const k of ["AMICO_FLEET_KEEPER_FILE", "AMICO_FLEET_ATTACHMENT_FILE"]) {
+      for (const k of ["AMICO_FLEET_KEEPER_FILE", "AMICO_FLEET_ATTACHMENT_FILE", "AMICO_FLEET_MULTIPLEX"]) {
         savedPeerEnv[k] = process.env[k];
       }
       process.env.AMICO_FLEET_KEEPER_FILE = peerKeeperFile;
       process.env.AMICO_FLEET_ATTACHMENT_FILE = peerAttachmentFile;
+      delete process.env.AMICO_FLEET_MULTIPLEX;
       keeperStub = await startStubHost([], HUB_PASSWORD);
       attachedStub = await startStubHost([], HUB_PASSWORD);
       expect(keeperStub.url).not.toBe(attachedStub.url); // genuinely distinct

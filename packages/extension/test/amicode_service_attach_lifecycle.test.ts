@@ -444,6 +444,8 @@ describe("createAmicodeService with transportFactory wires the attach lifecycle 
   let overlaySource: string;
   const PASSWORD = "svc-integration-mint";
 
+  let savedMultiplexEnv: string | undefined;
+
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "attach-svc-int-"));
     attachmentFile = join(dir, "attachment.json");
@@ -457,11 +459,15 @@ describe("createAmicodeService with transportFactory wires the attach lifecycle 
     process.env.AMICO_FLEET_ATTACHMENT_FILE = attachmentFile;
     process.env.AMICO_FLEET_ROSTER_FILE = rosterFile;
     process.env.AMICO_FLEET_ATTACHMENT_CREDENTIAL_FILE = credentialFile;
+    savedMultiplexEnv = process.env.AMICO_FLEET_MULTIPLEX;
+    delete process.env.AMICO_FLEET_MULTIPLEX;
   });
   afterEach(() => {
     delete process.env.AMICO_FLEET_ATTACHMENT_FILE;
     delete process.env.AMICO_FLEET_ROSTER_FILE;
     delete process.env.AMICO_FLEET_ATTACHMENT_CREDENTIAL_FILE;
+    if (savedMultiplexEnv === undefined) delete process.env.AMICO_FLEET_MULTIPLEX;
+    else process.env.AMICO_FLEET_MULTIPLEX = savedMultiplexEnv;
     rmSync(dir, { recursive: true, force: true });
   });
 

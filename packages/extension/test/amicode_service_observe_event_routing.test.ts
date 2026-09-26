@@ -45,7 +45,7 @@ function startSseStub(frames: string[]): Promise<SseStub> {
       lastEventID: u.searchParams.get("lastEventID"),
       auth: typeof req.headers.authorization === "string" ? req.headers.authorization : undefined,
     });
-    if (u.pathname === "/session" && (req.method ?? "GET") === "GET") {
+    if ((u.pathname === "/session" || u.pathname === "/experimental/session") && (req.method ?? "GET") === "GET") {
       res.writeHead(200, { "content-type": "application/json" });
       return void res.end(JSON.stringify([{ id: "ses-studio", time: { created: 3, updated: 4 } }]));
     }
@@ -292,18 +292,22 @@ describe("#1543 — the observation event plane is INERT when unattached (struct
 describe("#1543 — production wiring (createAmicodeService observation-only path)", () => {
   let root: string;
   const savedHubFile = process.env.AMICO_FLEET_HUB_FILE;
+  const savedMultiplex = process.env.AMICO_FLEET_MULTIPLEX;
   let engineStub: SseStub;
   let peerStub: SseStub;
 
   beforeAll(async () => {
     root = mkdtempSync(join(tmpdir(), "amicode-1543-wire-"));
     process.env.AMICO_FLEET_HUB_FILE = join(root, "hub-cred-absent.json");
+    delete process.env.AMICO_FLEET_MULTIPLEX;
     engineStub = await startSseStub([sseFrame("data: {}", "id: local-1")]);
     peerStub = await startSseStub([sseFrame("event: message", 'data: {"peer":true}', "id: p9")]);
   });
   afterAll(async () => {
     if (savedHubFile === undefined) delete process.env.AMICO_FLEET_HUB_FILE;
     else process.env.AMICO_FLEET_HUB_FILE = savedHubFile;
+    if (savedMultiplex === undefined) delete process.env.AMICO_FLEET_MULTIPLEX;
+    else process.env.AMICO_FLEET_MULTIPLEX = savedMultiplex;
     await engineStub?.stop();
     await peerStub?.stop();
     rmSync(root, { recursive: true, force: true });
@@ -320,10 +324,10 @@ describe("#1543 — production wiring (createAmicodeService observation-only pat
     };
   }
 
-  async function waitFor(cond: () => boolean, timeoutMs = 4000): Promise<boolean> {
+  async function waitFor(cond: (() => boolean) | (() => Promise<boolean>), timeoutMs = 4000): Promise<boolean> {
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
-      if (cond()) return true;
+      if (await cond()) return true;
       await new Promise((r) => setTimeout(r, 25));
     }
     return cond();
@@ -337,9 +341,10 @@ describe("#1543 — production wiring (createAmicodeService observation-only pat
     });
     const origin = (await svc.start()).toString().replace(/\/$/, "");
     try {
-      // let the OwnerMapFeed pull the projection so the peer becomes a non-local owner
-      await waitFor(() => peerStub.requests.some((r) => r.path === "/session"));
-      await new Promise((r) => setTimeout(r, 250));
+      // Wait for the OwnerMapFeed to pull the projection AND populate the owner map.
+      await waitFor(() => peerStub.requests.some((r) => r.path === "/experimental/session" || r.path === "/session") && peerStub.requests.some((r) => r.path === "/global/health"));
+      await new Promise((r) => setTimeout(r, 500)); // settle the async projection chain
+
       const peerEventBefore = peerStub.requests.filter((r) => r.path === "/event").length;
       await readSseFrames(`${origin}/event`, { Authorization: serverAuthHeader("engine-mint") }, { maxFrames: 4, timeoutMs: 2500 });
       const peerEventReqs = peerStub.requests.filter((r) => r.path === "/event");

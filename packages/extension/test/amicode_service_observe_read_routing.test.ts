@@ -56,7 +56,7 @@ function startStub(marker: string, sessions: Array<Record<string, unknown>> = []
       auth: typeof req.headers.authorization === "string" ? req.headers.authorization : undefined,
     });
     res.writeHead(200, { "content-type": "application/json" });
-    if (u.pathname === "/session" && (req.method ?? "GET") === "GET") return void res.end(JSON.stringify(sessions));
+    if ((u.pathname === "/session" || u.pathname === "/experimental/session") && (req.method ?? "GET") === "GET") return void res.end(JSON.stringify(sessions));
     if (u.pathname === "/global/health") return void res.end(JSON.stringify({ version: "stub-1537" }));
     res.end(JSON.stringify({ ok: true, marker }));
   });
@@ -287,14 +287,18 @@ describe("#1537 AC5 — a known-but-unreachable owner answers honestly, never lo
 describe("#1537 AC6 — production wiring (createAmicodeService observation-only path)", () => {
   let root: string;
   const savedHubFile = process.env.AMICO_FLEET_HUB_FILE;
+  const savedMultiplex = process.env.AMICO_FLEET_MULTIPLEX;
 
   beforeAll(() => {
     root = mkdtempSync(join(tmpdir(), "amicode-1537-wire-"));
     process.env.AMICO_FLEET_HUB_FILE = join(root, "hub-cred-absent.json");
+    delete process.env.AMICO_FLEET_MULTIPLEX;
   });
   afterAll(() => {
     if (savedHubFile === undefined) delete process.env.AMICO_FLEET_HUB_FILE;
     else process.env.AMICO_FLEET_HUB_FILE = savedHubFile;
+    if (savedMultiplex === undefined) delete process.env.AMICO_FLEET_MULTIPLEX;
+    else process.env.AMICO_FLEET_MULTIPLEX = savedMultiplex;
     rmSync(root, { recursive: true, force: true });
   });
 
@@ -310,10 +314,10 @@ describe("#1537 AC6 — production wiring (createAmicodeService observation-only
     };
   }
 
-  async function waitFor(cond: () => boolean, timeoutMs = 4000): Promise<boolean> {
+  async function waitFor(cond: (() => boolean) | (() => Promise<boolean>), timeoutMs = 4000): Promise<boolean> {
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
-      if (cond()) return true;
+      if (await cond()) return true;
       await new Promise((r) => setTimeout(r, 25));
     }
     return cond();
@@ -330,8 +334,8 @@ describe("#1537 AC6 — production wiring (createAmicodeService observation-only
       // the owner-map feed rebuilds the fleet projection on boot (immediate
       // refresh); wait until it has fetched the peer's session list + health so
       // the map knows ses-studio → studio.
-      await waitFor(() => peerStub.requests.some((r) => r.path === "/session") && peerStub.requests.some((r) => r.path === "/global/health"));
-      await new Promise((r) => setTimeout(r, 250)); // settle the synchronous ownerMap.update after the awaited projection
+      await waitFor(() => peerStub.requests.some((r) => r.path === "/experimental/session" || r.path === "/session") && peerStub.requests.some((r) => r.path === "/global/health"));
+      await new Promise((r) => setTimeout(r, 500)); // settle the synchronous ownerMap.update after the awaited projection
 
       const localBefore = localStub.requests.length;
       const peerBefore = peerStub.requests.length;
