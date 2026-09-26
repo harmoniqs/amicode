@@ -13,8 +13,9 @@
 // A bespoke wrapper on the canonical port is reclaim-killed by the editor's
 // adoptOrSpawn path, and it puts TWO writers on one SQLite DB — the failure the
 // review found. Running the SAME runner the editor would adopt keeps ONE
-// canonical DB / ONE writer (ADR 0005): the editor attaches to the running
-// service instead of spawning a rival.
+// canonical DB / ONE writer (ADR 0005): the hub writes the adoption handshake
+// (writeHubHandshake, #1576) so the editor's adoptOrSpawn path ADOPTS the
+// running hub engine instead of cold-spawning a rival.
 //
 // This is the HUB SERVICE unit — DISTINCT from #1260's TUNNEL unit
 // (systemdTunnelUnit / the co.harmoniqs.amico-tunnel.plist), which runs an
