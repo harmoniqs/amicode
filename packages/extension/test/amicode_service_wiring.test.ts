@@ -241,6 +241,8 @@ describe("startAmicodeService", () => {
     writeFileSync(attachmentFile, JSON.stringify({ sshAlias: "test-peer", transport: "ssh", machine_id: "peer-01" }));
     const savedAttachmentFileEnv = process.env.AMICO_FLEET_ATTACHMENT_FILE;
     process.env.AMICO_FLEET_ATTACHMENT_FILE = attachmentFile;
+    const savedMultiplexEnv = process.env.AMICO_FLEET_MULTIPLEX;
+    delete process.env.AMICO_FLEET_MULTIPLEX;
 
     const { log } = sinkLog();
     const boot = await startAmicodeService(log, {
@@ -281,6 +283,8 @@ describe("startAmicodeService", () => {
       else process.env.AMICO_FLEET_HUB_FILE = savedHubFileEnv;
       if (savedAttachmentFileEnv === undefined) delete process.env.AMICO_FLEET_ATTACHMENT_FILE;
       else process.env.AMICO_FLEET_ATTACHMENT_FILE = savedAttachmentFileEnv;
+      if (savedMultiplexEnv === undefined) delete process.env.AMICO_FLEET_MULTIPLEX;
+      else process.env.AMICO_FLEET_MULTIPLEX = savedMultiplexEnv;
       rmSync(root, { recursive: true, force: true });
     }
   });

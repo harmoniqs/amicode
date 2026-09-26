@@ -64,7 +64,7 @@ function startStub(marker: string, sessions: Array<Record<string, unknown>> = []
       auth: typeof req.headers.authorization === "string" ? req.headers.authorization : undefined,
     });
     res.writeHead(200, { "content-type": "application/json" });
-    if (u.pathname === "/session" && (req.method ?? "GET") === "GET") return void res.end(JSON.stringify(sessions));
+    if ((u.pathname === "/session" || u.pathname === "/experimental/session") && (req.method ?? "GET") === "GET") return void res.end(JSON.stringify(sessions));
     if (u.pathname === "/global/health") return void res.end(JSON.stringify({ version: "stub-1542" }));
     res.end(JSON.stringify({ ok: true, marker }));
   });
@@ -478,17 +478,21 @@ describe("#1542 — production wiring (createAmicodeService observation-only pat
   let root: string;
   const savedHubFile = process.env.AMICO_FLEET_HUB_FILE;
   const savedGrantFile = process.env.AMICO_FLEET_LIFECYCLE_GRANT_FILE;
+  const savedMultiplex = process.env.AMICO_FLEET_MULTIPLEX;
 
   beforeAll(() => {
     root = mkdtempSync(join(tmpdir(), "amicode-1542-wire-"));
     process.env.AMICO_FLEET_HUB_FILE = join(root, "hub-cred-absent.json");
     process.env.AMICO_FLEET_LIFECYCLE_GRANT_FILE = join(root, "lifecycle-grants.json");
+    delete process.env.AMICO_FLEET_MULTIPLEX;
   });
   afterAll(() => {
     if (savedHubFile === undefined) delete process.env.AMICO_FLEET_HUB_FILE;
     else process.env.AMICO_FLEET_HUB_FILE = savedHubFile;
     if (savedGrantFile === undefined) delete process.env.AMICO_FLEET_LIFECYCLE_GRANT_FILE;
     else process.env.AMICO_FLEET_LIFECYCLE_GRANT_FILE = savedGrantFile;
+    if (savedMultiplex === undefined) delete process.env.AMICO_FLEET_MULTIPLEX;
+    else process.env.AMICO_FLEET_MULTIPLEX = savedMultiplex;
     rmSync(root, { recursive: true, force: true });
   });
 
@@ -505,10 +509,10 @@ describe("#1542 — production wiring (createAmicodeService observation-only pat
     };
   }
 
-  async function waitFor(cond: () => boolean, timeoutMs = 4000): Promise<boolean> {
+  async function waitFor(cond: (() => boolean) | (() => Promise<boolean>), timeoutMs = 4000): Promise<boolean> {
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
-      if (cond()) return true;
+      if (await cond()) return true;
       await new Promise((r) => setTimeout(r, 25));
     }
     return cond();
@@ -534,8 +538,8 @@ describe("#1542 — production wiring (createAmicodeService observation-only pat
     });
     const origin = (await svc.start()).toString().replace(/\/$/, "");
     try {
-      await waitFor(() => peerStub.requests.some((r) => r.path === "/session") && peerStub.requests.some((r) => r.path === "/global/health"));
-      await new Promise((r) => setTimeout(r, 250)); // settle the synchronous ownerMap.update
+      await waitFor(() => peerStub.requests.some((r) => r.path === "/experimental/session" || r.path === "/session") && peerStub.requests.some((r) => r.path === "/global/health"));
+      await new Promise((r) => setTimeout(r, 500)); // settle the synchronous ownerMap.update
 
       const localBefore = localStub.requests.length;
       const peerBefore = peerStub.requests.length;
@@ -568,8 +572,8 @@ describe("#1542 — production wiring (createAmicodeService observation-only pat
     });
     const origin = (await svc.start()).toString().replace(/\/$/, "");
     try {
-      await waitFor(() => peerStub.requests.some((r) => r.path === "/session") && peerStub.requests.some((r) => r.path === "/global/health"));
-      await new Promise((r) => setTimeout(r, 250));
+      await waitFor(() => peerStub.requests.some((r) => r.path === "/experimental/session" || r.path === "/session") && peerStub.requests.some((r) => r.path === "/global/health"));
+      await new Promise((r) => setTimeout(r, 500));
 
       const localBefore = localStub.requests.length;
       const peerBefore = peerStub.requests.length;

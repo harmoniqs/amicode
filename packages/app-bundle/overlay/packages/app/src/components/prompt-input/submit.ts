@@ -24,6 +24,7 @@ import { createPromptSubmissionState } from "./submission-state"
 import { normalizeSessionInfo } from "@/utils/session"
 import { Event } from "@opencode-ai/schema/event"
 import { blobDataUrl } from "@/utils/draft-store"
+import { startReconcileTimer, cancelReconcileTimer } from "@/context/session-status-reconcile"
 
 type PendingPrompt = {
   abort: AbortController
@@ -62,10 +63,14 @@ export async function sendFollowupDraft(input: FollowupSendInput) {
   const setBusy = () => {
     if (!input.optimisticBusy) return
     input.serverSync.session.set("session_status", input.draft.sessionID, { type: "busy" })
+    startReconcileTimer(input.draft.sessionID, (sessionId) => {
+      input.serverSync.session.set("session_status", sessionId, { type: "idle" })
+    })
   }
 
   const setIdle = () => {
     if (!input.optimisticBusy) return
+    cancelReconcileTimer(input.draft.sessionID)
     input.serverSync.session.set("session_status", input.draft.sessionID, { type: "idle" })
   }
 
@@ -536,6 +541,9 @@ export function createPromptSubmit(input: PromptSubmitInput) {
         clearInput()
         const messageID = Identifier.ascending("message")
         serverSync().session.set("session_status", session.id, { type: "busy" })
+        startReconcileTimer(session.id, (sessionId) => {
+          serverSync().session.set("session_status", sessionId, { type: "idle" })
+        })
         sdk()
           .api.session.command({
             sessionID: session.id,
@@ -552,6 +560,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
             ),
           })
           .catch((err) => {
+            cancelReconcileTimer(session.id)
             serverSync().session.set("session_status", session.id, { type: "idle" })
             showToast({
               title: language.t("prompt.toast.commandSendFailed.title"),

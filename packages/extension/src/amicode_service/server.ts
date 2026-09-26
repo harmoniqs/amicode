@@ -272,8 +272,8 @@ export class AmicodeServiceServer {
     *  wire, NOT behind AMICO_FLEET_MULTIPLEX, NOT behind the multiplexer — ADR
     *  0033 Amendment 1). Armed ONLY on the observation path (index.ts); absent
     *  everywhere else, so the dispatch consult is a structural no-op unless it is
-    *  attached. The driver's own zero-non-local-owner decline is the fleet-of-one
-    *  byte-identity guard (observation readiness = ≥1 reachable owner peer). */
+    *  attached. Always accepts when wired (#1565): fleet-of-one byte-identity is
+    *  maintained by the aggregator's §D4 relay, not by declining. */
    private observeEvents?: EventFanInDriver;
    readonly password: string;
   /** #955 (the hub cutover): the auth mode. "credential" (the default) is the
@@ -570,13 +570,12 @@ export class AmicodeServiceServer {
       // / ADR 0033 Amendment 1): a SEPARATE, separately-armed `/event`
       // interception BESIDE the premium wire above. It is NOT behind
       // fleetMultiplexEnabled() and NOT behind the multiplexer — it is armed only
-      // when the observation path attached `observeEvents` (index.ts), and the
-      // driver DECLINES (returns false) at zero non-local owners, so a fleet-of-
-      // one / unattached boot falls through BYTE-IDENTICALLY to the paths below
-      // (the `?.handle` is a structural no-op when unattached). An observation
-      // boot has no `fleetPlane`, so the premium line above already short-
-      // circuited; the two wires never both fire. With ≥1 owned peer the driver
-      // takes over the response (returns true → we return).
+      // when the observation path attached `observeEvents` (index.ts). The driver
+      // always accepts when wired (#1565): fleet-of-one byte-identity is
+      // maintained by the aggregator's §D4 relay; reconcile opens peer arms as
+      // the OwnerMapFeed discovers them. The `?.handle` is a structural no-op
+      // when unattached. An observation boot has no `fleetPlane`, so the premium
+      // line above already short-circuited; the two wires never both fire.
       if (url.pathname === "/event" && this.observeEvents?.handle(req, res)) return;
       // #1262: in fleet CLIENT mode the HOST owns all /amicode/* state. Bypass
       // the ENTIRE local /amicode/* dispatch (the exact-match route table AND

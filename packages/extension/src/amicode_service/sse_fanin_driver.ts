@@ -8,12 +8,12 @@
 // their frames onto the ONE downstream `res` the app reads (ADR 0027 single-
 // origin). This module is that driver.
 //
-// It is consulted ONLY behind AMICO_FLEET_MULTIPLEX (server.ts gates the call).
-// `handle()` DECLINES (returns false) when zero owner-peers are owned, so a
-// flag-OFF / fleet-of-one `/event` falls through BYTE-IDENTICALLY to the engine
-// proxy — the #1264 regression guard (AC1). With ≥1 owned peer it takes over the
-// response: local arm + one authed upstream per owner-peer, fanned in through the
-// aggregator's composite-cursor `ingest` path.
+// On the observation path (#1543/#1565), `handle()` ALWAYS accepts (returns
+// true) — zero non-local owners starts in fleet-of-one mode where the
+// aggregator's §D4 byte-identity relay delivers local frames verbatim, and
+// reconcile opens peer arms as they appear. The premium path (behind
+// AMICO_FLEET_MULTIPLEX, server.ts) also consults this driver. With ≥1 owned
+// peer, peer arms fan in through the aggregator's composite-cursor `ingest` path.
 //
 // Split (per the ADR): the aggregator CORE is driven deterministically by the
 // route-level tests via an INJECTED upstream opener; the real-http opener below
@@ -32,10 +32,10 @@ import type { SessionOwnerMap } from "./session_multiplexer";
 import type { PeerTokenRead } from "./fleet_peer_store";
 
 /** The one thing dispatch needs from the driver (server.ts imports this type and
- *  exposes it on FleetPlane.eventFanIn). `handle` returns true when it TOOK OVER
- *  the response (≥1 non-local owner-peer owned → the fan-in path); false when
- *  there are zero owned peers (fleet-of-one) — the caller then falls through to
- *  the existing byte-identical `/event` path (#1264, AC1). */
+ *  exposes it on FleetPlane.eventFanIn). `handle` always returns true on the
+ *  observation path (#1565): zero non-local owners starts in fleet-of-one mode
+ *  (the aggregator's §D4 byte-identity relay); reconcile opens peer arms as the
+ *  OwnerMapFeed discovers them. */
 export interface EventFanInDriver {
   handle(req: http.IncomingMessage, res: http.ServerResponse): boolean;
 }
@@ -269,6 +269,9 @@ class FanInConnection {
       if (frame === null || this.closed) break;
       this.agg.ingest(namespace, frame);
     }
+    // The upstream ended or errored — remove the dead source so the next
+    // reconcile() tick can re-open the arm (#1566).
+    this.sources.delete(namespace);
   }
 
   close(): void {
@@ -303,12 +306,9 @@ export class SseFanInDriver implements EventFanInDriver {
   constructor(private readonly deps: SseFanInDriverDeps) {}
 
   handle(req: http.IncomingMessage, res: http.ServerResponse): boolean {
-    // The gate: ≥1 non-local owner-peer owned (from the live SessionOwnerMap).
-    // Zero → decline, so `/event` falls through byte-identically (#1264, AC1).
-    const owners = this.deps.ownerMap
-      .ownerMachineIds()
-      .filter((id) => id !== "" && id !== this.deps.localMachineId);
-    if (owners.length === 0) return false;
+    // #1565: always accept on the observation path. Zero non-local owners starts
+    // in fleet-of-one mode (the aggregator's §D4 byte-identity relay); reconcile
+    // opens peer arms as the OwnerMapFeed discovers them.
     this.active?.close();
     const conn = new FanInConnection(this.deps, req, res);
     this.active = conn;

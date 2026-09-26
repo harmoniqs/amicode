@@ -151,3 +151,19 @@ describe("Slice A — the control projection is polled + shared (the interactive
     expect(isComposerGated(undefined, control)).toBe(false)
   })
 })
+
+// #1568: the "Driven by {machine}" presence indicator — shows on the session tab
+// when a remote machine holds an active control grant targeting this machine.
+describe("#1568 driven-by presence indicator wiring", () => {
+  test("the tab strip derives driven-by state from the shared fleet projection", () => {
+    expect(tabStripSource).toContain("drivenByBannerFromProjection(controlProjection()")
+    expect(tabStripSource).toContain("drivenByMachine")
+  })
+
+  test("the tab nav item renders an eye icon with the driven-by machine tooltip", () => {
+    expect(tabNavSource).toContain('data-slot="tab-driven-by-remote"')
+    expect(tabNavSource).toContain("drivenByMachine")
+    expect(tabNavSource).toContain('name="eye"')
+    expect(tabNavSource).toContain("Driven by")
+  })
+})
