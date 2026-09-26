@@ -426,7 +426,7 @@
         "amicode.chat.autoOpen": {
           "type": "boolean",
           "default": true,
-          "description": "Open the Amicode chat automatically once the opencode server is ready."
+          "description": "Automatically start the opencode server and open the Amicode chat when a window activates (default: on). When off, neither happens automatically — the server only starts once an on-demand command needs it (Open Chat, New Chat, Chat Deck, Bind to Environment, etc.), which still works unconditionally."
         },
         "amicode.device.name": {
           "type": "string",

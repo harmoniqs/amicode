@@ -120,6 +120,48 @@ let statusBar: StatusBarManager | undefined;
 let sseClient: OpencodeEventClient | undefined;
 let runsManager: RunsManager | undefined;
 let opencodeReadyUrl: URL | undefined;
+/** #1572: when amicode.chat.autoOpen=false, the local server's bring-up
+ *  (adopt/spawn/keepalive/service boot/auto-open) is NOT run at activation —
+ *  its closure is stashed here instead, so the first on-demand command that
+ *  needs the server (Open Chat, etc.) can trigger the exact same bring-up
+ *  lazily via ensureLocalServer(). Left undefined in the default (autoOpen)
+ *  case, and in fleet-client mode / when no binary is available — nothing to defer. */
+let deferredLocalServerStart: (() => Promise<void>) | undefined;
+let localServerStartPromise: Promise<void> | undefined;
+/** ensureLocalServer() is safe to call unconditionally from any on-demand
+ *  command: a no-op (already-resolved) when the server started eagerly or was
+ *  already triggered once; otherwise it kicks off deferredLocalServerStart()
+ *  exactly once and every caller awaits the same promise. */
+function ensureLocalServer(): Promise<void> {
+  if (!deferredLocalServerStart) return Promise.resolve();
+  if (!localServerStartPromise) {
+    const start = deferredLocalServerStart;
+    deferredLocalServerStart = undefined;
+    localServerStartPromise = start();
+  }
+  return localServerStartPromise;
+}
+/** #1572: resolves once opencodeReadyUrl is populated — needed because
+ *  ensureLocalServer() only guarantees the bring-up was KICKED OFF (cold-spawn
+ *  resolves before serverManager.onReady fires), not that the server is
+ *  actually ready yet. Adopted-path readiness is already synchronous by the
+ *  time ensureLocalServer() resolves, so this short-circuits for that case. */
+let serverReadyWaiters: Array<() => void> = [];
+function notifyServerReady(): void {
+  const waiters = serverReadyWaiters;
+  serverReadyWaiters = [];
+  for (const w of waiters) w();
+}
+function waitForServerReady(timeoutMs = 20_000): Promise<URL | undefined> {
+  if (opencodeReadyUrl) return Promise.resolve(opencodeReadyUrl);
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(opencodeReadyUrl), timeoutMs);
+    serverReadyWaiters.push(() => {
+      clearTimeout(timer);
+      resolve(opencodeReadyUrl);
+    });
+  });
+}
 /** Set once the binary + vault are known; the watcher's onRunFinished closure
  *  and the distillNow command read it lazily (undefined = distiller disabled). */
 let distillerSetup: DistillerSetup | undefined;
@@ -833,6 +875,12 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     // Fallback status bar already handles the fallback-active case; in pure
     // client mode we surface tunnel health via the fleet health warning above.
   } else if (binary !== undefined) {
+    // #1572: the local server's bring-up (adopt/spawn/keepalive/service boot/
+    // auto-open, the whole body below) is wrapped in a closure so it can run
+    // either eagerly (today's default, unchanged behavior) or lazily on first
+    // on-demand command use when amicode.chat.autoOpen is false. See
+    // ensureLocalServer() / deferredLocalServerStart above.
+    const startLocalServer = async (): Promise<void> => {
     // amico-run is argv-only (β.1) — no AMICO_* env propagation (S37), with ONE
     // recorded exception: AMICO_PYTHON (Pasqal python provisioning) rides the
     // server child env for the FORK's validator spawn — server plumbing, not
@@ -1243,6 +1291,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
 
     serverManager.onReady((url) => {
       opencodeReadyUrl = url;
+      notifyServerReady();
       statusBar?.setServerReady(true);
       sseClient?.connect(url);
       // #1147: start keepalive after cold-spawn health passes
@@ -1385,6 +1434,22 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
             : `[boot] LLM provider: ${sig.reason} → ${sig.fix}`,
         );
       });
+    }
+    }; // end startLocalServer
+
+    // #1572: no separate setting for this — amicode.chat.autoOpen (default
+    // true) already means "bring the server and chat up automatically", so it
+    // is the single switch for both. Off means neither happens automatically;
+    // the server bring-up above only runs once an on-demand command needs it
+    // (Open Chat, etc.), via the identical closure through ensureLocalServer().
+    const autoOpenOnActivate = vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true);
+    if (autoOpenOnActivate) {
+      await startLocalServer();
+    } else {
+      opencodeChannel.appendLine(
+        "[boot] amicode.chat.autoOpen=false — deferring opencode server start until an on-demand command needs it",
+      );
+      deferredLocalServerStart = startLocalServer;
     }
   }
 
@@ -2152,10 +2217,13 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
 
   ctx.subscriptions.push(
     vscode.commands.registerCommand("amicode.openChat", async () => {
+      // #1572: on-demand commands must always be able to start the server —
+      // a no-op when it's already up (eager mode, or already lazily started).
+      await ensureLocalServer();
       // Snapshot the ready URL before any await: restartServer nulls
       // opencodeReadyUrl, so a restart racing this handler would otherwise reach
       // openOrReveal as undefined (or reveal a panel bound to a stale server).
-      const readyUrl = opencodeReadyUrl;
+      const readyUrl = opencodeReadyUrl ?? (await waitForServerReady());
       if (!readyUrl) {
         vscode.window.showWarningMessage(
           "Amicode: opencode server isn't ready yet. Check the 'Amicode — opencode' output channel.",
@@ -2184,7 +2252,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     // ready/creds gates as openChat: a second tab that can't chat is worse
     // than a named warning.
     vscode.commands.registerCommand("amicode.newChat", async () => {
-      const readyUrl = opencodeReadyUrl;
+      await ensureLocalServer();
+      const readyUrl = opencodeReadyUrl ?? (await waitForServerReady());
       if (!readyUrl) {
         vscode.window.showWarningMessage(
           "Amicode: opencode server isn't ready yet. Check the 'Amicode — opencode' output channel.",
@@ -2247,7 +2316,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     ),
     // Bind to Environment: Command Palette → quick-pick from registry → amico env bind. (#892)
     vscode.commands.registerCommand("amicode.bindToEnvironment", async () => {
-      const readyUrl = opencodeReadyUrl;
+      await ensureLocalServer();
+      const readyUrl = opencodeReadyUrl ?? (await waitForServerReady());
       if (!readyUrl) {
         vscode.window.showWarningMessage(
           "Amicode: opencode server isn't ready yet. Check the 'Amicode — opencode' output channel.",
@@ -2277,7 +2347,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     // merge-back, sashes (dist/deck_shell.js). Same ready/creds gates as the
     // other chat entries. The deck shares the one server with every ChatPanel.
     vscode.commands.registerCommand("amicode.chatDeck", async () => {
-      const readyUrl = opencodeReadyUrl;
+      await ensureLocalServer();
+      const readyUrl = opencodeReadyUrl ?? (await waitForServerReady());
       if (!readyUrl) {
         vscode.window.showWarningMessage(
           "Amicode: opencode server isn't ready yet. Check the 'Amicode — opencode' output channel.",
