@@ -3,6 +3,7 @@ import {
   classifyGate,
   PROTOCOL_VERSION,
   type GateInputs,
+  type HandshakeRecord,
 } from "./server_handshake";
 import { serverAuthHeader } from "./server_auth";
 
@@ -44,6 +45,11 @@ export interface AdoptOrSpawnDeps {
   /** Free an orphaned port (kill the opencode server holding it). Returns
    *  whether the port was actually freed. Never called for a foreign holder. */
   reclaimPort?: (port: number) => Promise<boolean>;
+  // ── Reboot-race guard (#1576) — only used on the NO-handshake path ──
+  /** On a role=server machine, the hub may still be starting (~30s health-wait).
+   *  When set, the no-handshake path polls for the handshake to appear on a
+   *  bounded budget (ms) before falling back to cold-spawn. */
+  hubPollBudgetMs?: number;
   /** Optional log sink for adoption diagnostics. */
   log?: (line: string) => void;
 }
@@ -67,6 +73,9 @@ export interface AdoptOrSpawnResult {
   /** Present on "cold-spawned" — true when an orphaned port was reclaimed
    *  before the cold-spawn (#1178). */
   reclaimed?: boolean;
+  /** #1576: present on "adopted" when the handshake carried a dbPath — the
+   *  canonical DB the hub engine opened (AC2: runtime readback). */
+  adoptedDbPath?: string;
 }
 
 /**
@@ -81,12 +90,31 @@ export async function adoptOrSpawn(
   // Step 1: read the handshake
   const hs = readHandshake(handshakePath);
 
-  // No handshake or invalid → cold-spawn (fresh install) — but first check the
-  // configured port for an ORPHANED survivor (#1178): a server we spawned that
-  // outlived its handshake. Without this, the cold-spawn ServeErrors on the
-  // occupied port forever (the stuck state). We reclaim ours; we never touch a
-  // foreign holder.
+  // No handshake or invalid → cold-spawn (fresh install) — but first check for
+  // a reboot-race (#1576) or an ORPHANED survivor (#1178).
   if (hs.status === "absent" || hs.status === "invalid") {
+    // ── Reboot-race guard (#1576): on a role=server machine, the hub may still
+    //    be starting (~30s health-wait). Poll for the handshake to appear on a
+    //    bounded budget before any cold-spawn fallback — never spawn a rival and
+    //    reinstate the split.
+    if (deps.hubPollBudgetMs) {
+      deps.log?.(`[adopt] reboot-race: handshake ${hs.status}, polling for hub handshake (budget ${deps.hubPollBudgetMs}ms)`);
+      const deadline = Date.now() + deps.hubPollBudgetMs;
+      const POLL_INTERVAL = 250; // ms
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, POLL_INTERVAL));
+        const retry = readHandshake(handshakePath);
+        if (retry.status === "ok") {
+          deps.log?.(`[adopt] reboot-race: hub handshake appeared — proceeding to adopt`);
+          // Handshake appeared — fall through to the adoption flow below
+          return adoptFromRecord(retry.record, deps);
+        }
+      }
+      deps.log?.(`[adopt] reboot-race: budget expired, no hub handshake — falling through to cold-spawn`);
+    }
+
+    // Check the configured port for an ORPHANED survivor (#1178): a server we
+    // spawned that outlived its handshake.
     if (deps.configuredPort !== undefined && deps.probePort) {
       const probe = await deps.probePort(deps.configuredPort);
       if (probe.occupied) {
@@ -123,7 +151,16 @@ export async function adoptOrSpawn(
 
   const record = hs.record;
 
-  // Step 2: run the four live checks (with one retry for transient failures).
+  return adoptFromRecord(record, deps);
+}
+
+/** Run the four-check gate against a handshake record and return the adoption
+ *  verdict. Extracted so both the normal path and the reboot-race poll path
+ *  (#1576) share the same decision logic. */
+async function adoptFromRecord(
+  record: HandshakeRecord,
+  deps: AdoptOrSpawnDeps,
+): Promise<AdoptOrSpawnResult> {
   // A window reload can leave the server briefly unreachable while it flushes
   // dying connections; retrying once after a short wait covers that gap.
   const runChecks = async () => {
@@ -174,6 +211,8 @@ export async function adoptOrSpawn(
           binaryHash: record.binaryHash,
           configHash: record.configHash,
         },
+        // #1576: surface the canonical DB path when the handshake carries it
+        ...(record.dbPath ? { adoptedDbPath: record.dbPath } : {}),
       };
 
     case "stale":
