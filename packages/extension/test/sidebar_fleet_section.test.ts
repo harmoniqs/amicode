@@ -275,10 +275,10 @@ describe("buildFleetSectionModel — canonical-server synthesis on a client (#13
     const model = buildFleetSectionModel(input({
       roster: [],
       localDevice: { machineId: "laptop-01", name: "JJ's Laptop", serveStance: "client", deviceType: "laptop" },
-      canonicalServer: { machineId: "jjs-mac-studio", name: "jjs-mac-studio" },
+      canonicalServer: { machineId: "test-desktop", name: "test-desktop" },
     }));
     expect(model.state).toBe("populated");
-    const server = model.devices.find((d) => d.machineId === "jjs-mac-studio");
+    const server = model.devices.find((d) => d.machineId === "test-desktop");
     expect(server).toBeDefined();
     expect(server!.role).toBe("server");        // the canonical node is the server
     expect(server!.isLocal).toBe(false);
@@ -287,21 +287,21 @@ describe("buildFleetSectionModel — canonical-server synthesis on a client (#13
 
   it("does not duplicate the server row when the host roster already carries it", () => {
     const model = buildFleetSectionModel(input({
-      roster: [row({ machine_id: "jjs-mac-studio", name: "Mac Studio", server_mode: "server" })],
+      roster: [row({ machine_id: "test-desktop", name: "Mac Studio", server_mode: "server" })],
       localDevice: { machineId: "laptop-01", name: "Laptop", serveStance: "client" },
-      canonicalServer: { machineId: "jjs-mac-studio", name: "jjs-mac-studio" },
+      canonicalServer: { machineId: "test-desktop", name: "test-desktop" },
     }));
-    const serverRows = model.devices.filter((d) => d.machineId === "jjs-mac-studio");
+    const serverRows = model.devices.filter((d) => d.machineId === "test-desktop");
     expect(serverRows).toHaveLength(1);
   });
 
   it("does not synthesize a server row for the local machine (the server never doubles its own self-row)", () => {
     const model = buildFleetSectionModel(input({
       roster: [],
-      localDevice: { machineId: "jjs-mac-studio", name: "Mac Studio", serveStance: "server" },
-      canonicalServer: { machineId: "jjs-mac-studio", name: "jjs-mac-studio" },
+      localDevice: { machineId: "test-desktop", name: "Mac Studio", serveStance: "server" },
+      canonicalServer: { machineId: "test-desktop", name: "test-desktop" },
     }));
-    const serverRows = model.devices.filter((d) => d.machineId === "jjs-mac-studio");
+    const serverRows = model.devices.filter((d) => d.machineId === "test-desktop");
     expect(serverRows).toHaveLength(1);
     expect(serverRows[0].isLocal).toBe(true);   // it's the self-row, not a synthesized peer
   });
@@ -310,10 +310,10 @@ describe("buildFleetSectionModel — canonical-server synthesis on a client (#13
     const model = buildFleetSectionModel(input({
       rosterReachable: false,
       localDevice: { machineId: "laptop-01", name: "Laptop", serveStance: "client" },
-      canonicalServer: { machineId: "jjs-mac-studio", name: "jjs-mac-studio" },
+      canonicalServer: { machineId: "test-desktop", name: "test-desktop" },
     }));
     expect(model.state).toBe("unreachable");
-    const server = model.devices.find((d) => d.machineId === "jjs-mac-studio");
+    const server = model.devices.find((d) => d.machineId === "test-desktop");
     expect(server).toBeDefined();
     expect(server!.health).toBe("down");        // known to exist, but unreachable — never fabricated as healthy
   });
@@ -652,14 +652,14 @@ describe("buildFleetSectionModel — server self-registration collapses to one r
     // the client's synthesized canonical-server node (same key) must collapse —
     // ZERO client-side change, just the producer keying its row correctly.
     const model = buildFleetSectionModel(input({
-      roster: [row({ machine_id: "Mac.mynetworksettings.com", name: "JJ's Mac Studio", server_mode: "server", device_type: "desktop" })],
+      roster: [row({ machine_id: "Desktop.local", name: "Test Desktop", server_mode: "server", device_type: "desktop" })],
       localDevice: { machineId: "jvs-macbook.local", name: "JV's MacBook", serveStance: "client", deviceType: "laptop" },
-      canonicalServer: { machineId: "Mac.mynetworksettings.com", name: "Mac.mynetworksettings.com" },
+      canonicalServer: { machineId: "Desktop.local", name: "Desktop.local" },
     }));
-    const serverRows = model.devices.filter((d) => d.machineId === "Mac.mynetworksettings.com");
+    const serverRows = model.devices.filter((d) => d.machineId === "Desktop.local");
     expect(serverRows).toHaveLength(1);
     // it's the REAL roster row (friendly name + type), not the raw synthesized node
-    expect(serverRows[0].name).toBe("JJ's Mac Studio");
+    expect(serverRows[0].name).toBe("Test Desktop");
     expect(serverRows[0].typeLabel).toBe("desktop");
     expect(serverRows[0].isLocal).toBe(false); // the server is a peer to this client
   });
@@ -669,11 +669,11 @@ describe("buildFleetSectionModel — server self-registration collapses to one r
     // reconciled to the SAME key (readLocalDevice on a server → canonical.host),
     // so the roster row is marked isLocal and no second self-row is synthesized.
     const model = buildFleetSectionModel(input({
-      roster: [row({ machine_id: "Mac.mynetworksettings.com", name: "JJ's Mac Studio", server_mode: "server", device_type: "desktop" })],
-      localDevice: { machineId: "Mac.mynetworksettings.com", name: "JJ's Mac Studio", serveStance: "server", deviceType: "desktop" },
+      roster: [row({ machine_id: "Desktop.local", name: "Test Desktop", server_mode: "server", device_type: "desktop" })],
+      localDevice: { machineId: "Desktop.local", name: "Test Desktop", serveStance: "server", deviceType: "desktop" },
       canonicalServer: null, // a server has no canonical to synthesize — it IS the server
     }));
-    const serverRows = model.devices.filter((d) => d.machineId === "Mac.mynetworksettings.com");
+    const serverRows = model.devices.filter((d) => d.machineId === "Desktop.local");
     expect(serverRows).toHaveLength(1);
     expect(serverRows[0].isLocal).toBe(true); // the roster row IS the self-row (collapsed)
   });

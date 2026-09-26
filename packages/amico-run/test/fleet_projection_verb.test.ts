@@ -361,7 +361,7 @@ describe("the base-tier projection (ADR 0023 — enrolled machine, no amicissimo
   it("no entitlement + an enrolled client fleet.json → ok (exit 0), base_tier, role=client, canonical carried, cache written", () => {
     const topologyPath = join(tmp, "fleet.json");
     const cachePath = join(tmp, "cache.json");
-    const canonical = { host: "jj@100.77.141.50", port: 4096, sshAlias: "jjs-mac-studio" };
+    const canonical = { host: "user@100.64.0.1", port: 4096, sshAlias: "test-desktop" };
     const fleetJson = JSON.stringify({ role: "client", canonical });
     const deps: FleetProjectionDeps = {
       readFile: (p) => (p === topologyPath ? fleetJson : null), // NO entitlements file

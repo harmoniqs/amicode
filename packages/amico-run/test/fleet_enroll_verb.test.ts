@@ -632,14 +632,14 @@ describe("amico fleet enroll — client row carries friendly name + device_type 
   it("POSTs a row whose name is the resolved friendly name and device_type the resolved type", async () => {
     const s = await stub({ version: "v1.18.29" });
     const rec = recorder({
-      machineName: () => "JJ's MacBook Pro", // OS-detected friendly name (scutil ComputerName)
+      machineName: () => "Test Laptop", // OS-detected friendly name (scutil ComputerName)
       deviceType: () => "laptop", // OS-detected form factor
     });
     const r = await fleetEnroll(["--join-token-json", JSON.stringify(tokenFor(s))], rec.deps);
 
     expect(r.code).toBe(0);
     const row = s.rosterRows()[0];
-    expect(row.name).toBe("JJ's MacBook Pro");
+    expect(row.name).toBe("Test Laptop");
     expect(row.device_type).toBe("laptop");
   });
 });
@@ -682,13 +682,13 @@ describe("amico fleet enroll — the friendly name never leaks into canonical/jo
   it("wiring a friendly name does NOT change canonical.host or the minted join token", async () => {
     // A friendly, space-bearing display name; NO --host → canonical.host must be
     // the RAW hostname, never the friendly name (the seam is decoupled).
-    const rec = recorder({ machineName: () => "JJ's Mac Studio" });
+    const rec = recorder({ machineName: () => "Test Desktop" });
     const r = await fleetEnroll(["--as-server", "--port", "4096", "--ssh-alias", "hub"], rec.deps);
 
     expect(r.code).toBe(0);
     const canonicalHost = (rec.fleetWrites[0].config as { canonical: { host: string } }).canonical.host;
     expect(canonicalHost).toBe(osHostname());
-    expect(canonicalHost).not.toBe("JJ's Mac Studio");
+    expect(canonicalHost).not.toBe("Test Desktop");
     expect(j(r).join_token?.canonical.host).toBe(osHostname());
   });
 });
@@ -703,16 +703,16 @@ describe("detectDeviceTypeVia / detectDeviceNameVia — the amico-run impure det
       cmd === "system_profiler"
         ? "      Model Name: Mac Studio\n      Model Identifier: Mac14,13\n"
         : cmd === "scutil"
-          ? "JJ's Mac Studio\n"
+          ? "Test Desktop\n"
           : "";
     expect(detectDeviceTypeVia(run, "darwin")).toBe("desktop");
-    expect(detectDeviceNameVia(run, "Mac.mynetworksettings.com", "darwin")).toBe("JJ's Mac Studio");
+    expect(detectDeviceNameVia(run, "Desktop.local", "darwin")).toBe("Test Desktop");
   });
 
   it("darwin: an unrecognized Model Name abstains; a missing ComputerName falls to the prettified hostname", () => {
     const run: CommandRunner = () => ""; // both commands yield nothing
     expect(detectDeviceTypeVia(run, "darwin")).toBeUndefined();
-    expect(detectDeviceNameVia(run, "Mac.mynetworksettings.com", "darwin")).toBe("Mac");
+    expect(detectDeviceNameVia(run, "Desktop.local", "darwin")).toBe("Desktop");
   });
 
   it("linux source order: hostnamectl chassis is consulted first (#1371 AC7)", () => {
@@ -765,17 +765,17 @@ describe("detectDeviceTypeVia / detectDeviceNameVia — the amico-run impure det
 describe("amico fleet enroll --as-server — self-registration (#1372 AC2)", () => {
   it("POSTs its own roster row keyed machine_id = canonical.host with resolved name + type after a verified-reachable hub", async () => {
     const s = await stub({ version: "v1.18.29" });
-    const rec = recorder({ machineName: () => "JJ's Mac Studio" });
+    const rec = recorder({ machineName: () => "Test Desktop" });
     const r = await fleetEnroll(
-      ["--as-server", "--host", "Mac.mynetworksettings.com", "--port", String(s.port), "--ssh-alias", "studio"],
+      ["--as-server", "--host", "Desktop.local", "--port", String(s.port), "--ssh-alias", "studio"],
       rec.deps,
     );
     expect(r.code).toBe(0);
     expect(j(r).self_registered).toBe(true);
-    const serverRow = s.rosterRows().find((x) => x.machine_id === "Mac.mynetworksettings.com");
+    const serverRow = s.rosterRows().find((x) => x.machine_id === "Desktop.local");
     expect(serverRow).toBeDefined();
     expect(serverRow!.server_mode).toBe("server");
-    expect(serverRow!.name).toBe("JJ's Mac Studio");
+    expect(serverRow!.name).toBe("Test Desktop");
     // detection abstains (commandRunner "" in recorder) ⇒ device_type defaults to "server"
     expect(serverRow!.device_type).toBe("server");
     expect(serverRow!.sshAlias).toBe("studio");
@@ -785,7 +785,7 @@ describe("amico fleet enroll --as-server — self-registration (#1372 AC2)", () 
   it("honors the amicode.device.type override on the server row (#1372 AC2)", async () => {
     const s = await stub({ version: "v1.18.29" });
     const rec = recorder({
-      machineName: () => "JJ's Mac Studio",
+      machineName: () => "Test Desktop",
       readDeviceSetting: (k: string) => (k === "amicode.device.type" ? "desktop" : undefined),
     });
     const r = await fleetEnroll(["--as-server", "--host", "hub.example", "--port", String(s.port), "--ssh-alias", "hub"], rec.deps);
@@ -808,7 +808,7 @@ describe("amico fleet enroll --as-server — reachability-verified, no false-suc
     // unreachable hub (returns "dev") — which must NOT be taken as reachability.
     const rec = recorder({ fetchImpl: spy, clientVersion: undefined });
     const r = await fleetEnroll(
-      ["--as-server", "--host", "Mac.mynetworksettings.com", "--port", "4096", "--ssh-alias", "hub"],
+      ["--as-server", "--host", "Desktop.local", "--port", "4096", "--ssh-alias", "hub"],
       rec.deps,
     );
     // provisioning still succeeded (token minted, fleet.json written), but the

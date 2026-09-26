@@ -327,7 +327,7 @@ describe("SidebarViewProvider — fleet section host wiring (#1321)", () => {
       ...deps,
       readRoster: () => Promise.resolve({ rows: [], reachable: true }),
       readLocalDevice: () => state.localDevice,
-      readCanonicalServer: () => ({ machineId: "jjs-mac-studio", name: "jjs-mac-studio" }),
+      readCanonicalServer: () => ({ machineId: "test-desktop", name: "test-desktop" }),
     };
     const provider = new SidebarViewProvider(makeExtensionUri(), undefined, asyncDeps);
     const view = makeWebviewView();
@@ -339,8 +339,8 @@ describe("SidebarViewProvider — fleet section host wiring (#1321)", () => {
     expect(msg).toBeDefined();
     const ids = msg.model.devices.map((d: any) => d.machineId);
     expect(ids).toContain("laptop-01");        // the client's own self-row
-    expect(ids).toContain("jjs-mac-studio");   // the synthesized canonical server
-    const server = msg.model.devices.find((d: any) => d.machineId === "jjs-mac-studio");
+    expect(ids).toContain("test-desktop");   // the synthesized canonical server
+    const server = msg.model.devices.find((d: any) => d.machineId === "test-desktop");
     expect(server.role).toBe("server");
     expect(server.isLocal).toBe(false);
   });
@@ -559,7 +559,7 @@ describe("defaultFleetSectionDeps — production readers (#1321)", () => {
   it("readRoster on a CLIENT proxy-reads GET /amicode/roster from the host with the credential (#1363)", async () => {
     const fs = await import("node:fs");
     const fleetConfigFile = resolve(tmp, "fleet-client.json");
-    fs.writeFileSync(fleetConfigFile, JSON.stringify({ role: "client", canonical: { host: "jjs-mac-studio", port: 4096, sshAlias: "jjs-mac-studio" } }));
+    fs.writeFileSync(fleetConfigFile, JSON.stringify({ role: "client", canonical: { host: "test-desktop", port: 4096, sshAlias: "test-desktop" } }));
     const fetchImpl = vi.fn(async () => ({
       ok: true, status: 200,
       json: async () => ({
@@ -628,13 +628,13 @@ describe("defaultFleetSectionDeps — production readers (#1321)", () => {
     const fs = await import("node:fs");
     const clientCfg = resolve(tmp, "fleet-cs-client.json");
     const serverCfg = resolve(tmp, "fleet-cs-server.json");
-    fs.writeFileSync(clientCfg, JSON.stringify({ role: "client", canonical: { host: "jjs-mac-studio", port: 4096, sshAlias: "jjs-mac-studio" } }));
-    fs.writeFileSync(serverCfg, JSON.stringify({ role: "server", canonical: { host: "jjs-mac-studio", port: 4096, sshAlias: "jjs-mac-studio" } }));
+    fs.writeFileSync(clientCfg, JSON.stringify({ role: "client", canonical: { host: "test-desktop", port: 4096, sshAlias: "test-desktop" } }));
+    fs.writeFileSync(serverCfg, JSON.stringify({ role: "server", canonical: { host: "test-desktop", port: 4096, sshAlias: "test-desktop" } }));
     const clientDeps = defaultFleetSectionDeps({ fleetConfigFile: clientCfg });
     const serverDeps = defaultFleetSectionDeps({ fleetConfigFile: serverCfg });
     const cs = clientDeps.readCanonicalServer?.();
     expect(cs).not.toBeNull();
-    expect(cs!.machineId).toBe("jjs-mac-studio");
+    expect(cs!.machineId).toBe("test-desktop");
     expect(serverDeps.readCanonicalServer?.()).toBeNull();
   });
 
@@ -4669,7 +4669,7 @@ describe("device identity — shared @amicode/schema derivation (#1371, ADR 0028
 // ── server self-row identity reconciliation (#1372, ADR 0028) ─────────────────
 // AC4: on a SERVER/standalone this machine self-registers its roster row keyed by
 // fleet.json canonical.host (which differs from os.hostname() under --host / FQDN
-// drift, e.g. Mac.mynetworksettings.com). The self-row identity must reconcile to
+// drift, e.g. Desktop.local). The self-row identity must reconcile to
 // that SAME key so the posted row collapses against the self-row (the
 // r.machine_id === localId check), rendering the server exactly once. A CLIENT
 // keeps machine_id = os.hostname() (peers reference it by hostname).
@@ -4710,7 +4710,7 @@ describe("readLocalDevice — server self-row identity reconciled to canonical.h
     const fleetConfigFile = resolve(tmp, "fleet-client.json");
     fs.writeFileSync(
       fleetConfigFile,
-      JSON.stringify({ role: "client", canonical: { host: "Mac.mynetworksettings.com", port: 4096, sshAlias: "studio" } }),
+      JSON.stringify({ role: "client", canonical: { host: "Desktop.local", port: 4096, sshAlias: "studio" } }),
     );
     const deps = defaultFleetSectionDeps({ fleetConfigFile, detectDeviceType: () => undefined, readDeviceSetting: () => undefined });
     const local = deps.readLocalDevice();

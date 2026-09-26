@@ -307,9 +307,9 @@ describe("the stable projection-cache path convention (#1106)", () => {
 describe("parseFleetTopology (the machine's fleet.json → {role, canonical})", () => {
   it("parses a client membership record with a full canonical", () => {
     const topo = parseFleetTopology(
-      JSON.stringify({ role: "client", canonical: { host: "jj@100.77.141.50", port: 4096, sshAlias: "jjs-mac-studio" } }),
+      JSON.stringify({ role: "client", canonical: { host: "user@100.64.0.1", port: 4096, sshAlias: "test-desktop" } }),
     );
-    expect(topo).toEqual({ role: "client", canonical: { host: "jj@100.77.141.50", port: 4096, sshAlias: "jjs-mac-studio" } });
+    expect(topo).toEqual({ role: "client", canonical: { host: "user@100.64.0.1", port: 4096, sshAlias: "test-desktop" } });
   });
 
   it("parses a server record with a partial canonical (no sshAlias)", () => {

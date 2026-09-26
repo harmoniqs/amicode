@@ -9,6 +9,9 @@ export default defineConfig({
   resolve: {
     alias: { vscode: path.resolve(process.cwd(), "test/__mocks__/vscode.ts") },
   },
+  test: {
+    globalTeardown: ["./test/teardown_roster_hygiene.ts"],
+  },
   plugins: [
     // Match esbuild.config.mjs's `loader: {".svg": "text"}`: Vite's own default
     // .svg handling returns a URL string, not raw markup, which would make

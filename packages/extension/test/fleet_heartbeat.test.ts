@@ -110,16 +110,16 @@ describe("FleetHeartbeat (#1375)", () => {
         server_mode: "server",
         capabilities: ["serving"],
         device_type: "desktop",
-        sshAlias: "jjs-mac-studio",
+        sshAlias: "test-desktop",
         transport: "tailscale",
-        peer_origin: "https://jjs-mac-studio.tail570504.ts.net",
+        peer_origin: "https://test-desktop.tail000000.ts.net",
       })),
     });
     const hb = new FleetHeartbeat(deps as any);
     await hb.tick();
     const body = JSON.parse(deps.fetchImpl.mock.calls[0][1].body);
     expect(body.transport).toBe("tailscale");
-    expect(body.peer_origin).toBe("https://jjs-mac-studio.tail570504.ts.net");
+    expect(body.peer_origin).toBe("https://test-desktop.tail000000.ts.net");
   });
 
   it("tick omits peer_origin from the roster row when identity does not provide one", async () => {
@@ -157,10 +157,10 @@ describe("FleetHeartbeat (#1375)", () => {
 describe("resolveTailscaleDnsName", () => {
   it("extracts the MagicDNS name from tailscale status --self --json", () => {
     const mockOutput = JSON.stringify({
-      Self: { DNSName: "jjs-mac-studio.tail570504.ts.net.", TailscaleIPs: ["100.77.141.50"] },
+      Self: { DNSName: "test-desktop.tail000000.ts.net.", TailscaleIPs: ["100.64.0.1"] },
     });
     const dns = resolveTailscaleDnsName(() => mockOutput);
-    expect(dns).toBe("jjs-mac-studio.tail570504.ts.net");
+    expect(dns).toBe("test-desktop.tail000000.ts.net");
   });
 
   it("strips the trailing dot from the DNS name", () => {
@@ -191,14 +191,14 @@ describe("pushRowToPeer — transport-aware heartbeat push", () => {
     const execSsh = vi.fn();
     await pushRowToPeer({
       rowJson: '{"machine_id":"mbp"}',
-      peer: { machine_id: "studio", sshAlias: "jjs-mac-studio", transport: "tailscale", peer_origin: "https://jjs-mac-studio.tail570504.ts.net" },
+      peer: { machine_id: "studio", sshAlias: "test-desktop", transport: "tailscale", peer_origin: "https://test-desktop.tail000000.ts.net" },
       localPort: 4096,
       fetchImpl,
       execSsh,
     });
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     const [url, opts] = fetchImpl.mock.calls[0];
-    expect(url).toBe("https://jjs-mac-studio.tail570504.ts.net/amicode/roster");
+    expect(url).toBe("https://test-desktop.tail000000.ts.net/amicode/roster");
     expect(opts.method).toBe("POST");
     expect(opts.body).toBe('{"machine_id":"mbp"}');
     expect(execSsh).not.toHaveBeenCalled();
@@ -209,13 +209,13 @@ describe("pushRowToPeer — transport-aware heartbeat push", () => {
     const execSsh = vi.fn();
     await pushRowToPeer({
       rowJson: '{"machine_id":"mbp"}',
-      peer: { machine_id: "studio", sshAlias: "jjs-mac-studio", transport: "ssh" },
+      peer: { machine_id: "studio", sshAlias: "test-desktop", transport: "ssh" },
       localPort: 4096,
       fetchImpl,
       execSsh,
     });
     expect(execSsh).toHaveBeenCalledTimes(1);
-    expect(execSsh.mock.calls[0][0]).toBe("jjs-mac-studio");
+    expect(execSsh.mock.calls[0][0]).toBe("test-desktop");
     expect(execSsh.mock.calls[0][1]).toContain("127.0.0.1:4096");
     expect(fetchImpl).not.toHaveBeenCalled();
   });
@@ -225,7 +225,7 @@ describe("pushRowToPeer — transport-aware heartbeat push", () => {
     const execSsh = vi.fn();
     await pushRowToPeer({
       rowJson: '{"machine_id":"mbp"}',
-      peer: { machine_id: "studio", sshAlias: "jjs-mac-studio", transport: "tailscale" },
+      peer: { machine_id: "studio", sshAlias: "test-desktop", transport: "tailscale" },
       localPort: 4096,
       fetchImpl,
       execSsh,
@@ -240,7 +240,7 @@ describe("pushRowToPeer — transport-aware heartbeat push", () => {
     // Must not throw
     await expect(pushRowToPeer({
       rowJson: '{"machine_id":"mbp"}',
-      peer: { machine_id: "studio", sshAlias: "jjs-mac-studio", transport: "tailscale", peer_origin: "https://example.ts.net" },
+      peer: { machine_id: "studio", sshAlias: "test-desktop", transport: "tailscale", peer_origin: "https://example.ts.net" },
       localPort: 4096,
       fetchImpl,
       execSsh,
@@ -252,7 +252,7 @@ describe("pushRowToPeer — transport-aware heartbeat push", () => {
     const execSsh = vi.fn();
     await pushRowToPeer({
       rowJson: '{"machine_id":"mbp"}',
-      peer: { machine_id: "studio", sshAlias: "jjs-mac-studio", transport: "direct", peer_origin: "https://10.0.0.5:4096" },
+      peer: { machine_id: "studio", sshAlias: "test-desktop", transport: "direct", peer_origin: "https://10.0.0.5:4096" },
       localPort: 4096,
       fetchImpl,
       execSsh,

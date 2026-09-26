@@ -104,9 +104,9 @@ export function classifyLinuxChassis(chassis: string): KnownDeviceType | undefin
 
 /** Prettify a raw hostname into a display name. Rule: strip from the first `.`
  *  onward ONLY when the remainder is a DNS-suffix-shaped label sequence (labels
- *  of `[A-Za-z0-9-]` joined by dots) — so `Mac.mynetworksettings.com → Mac` and
+ *  of `[A-Za-z0-9-]` joined by dots) — so `Desktop.local → Mac` and
  *  `host.local → host`. A name that carries a space is treated as a human-set
- *  display name (a macOS ComputerName like "JJ's Mac Studio") and is left intact
+ *  display name (a macOS ComputerName like "Test Desktop") and is left intact
  *  even if it contains a dot; a dot-free name is returned unchanged; `""` → `""`.
  *  Never fabricates — the fallback is always the raw input. */
 export function normalizeDeviceName(raw: string): string {

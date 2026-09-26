@@ -291,7 +291,7 @@ describe("the installer consumes the verb (never greps the raw file)", () => {
     // A base-tier server projection carries role=server + canonical WITHOUT an
     // sshAlias (a hub is the tunnel's destination, not its client). The installer
     // must NOT die demanding an alias, and must install no self-tunnel.
-    fakeAmico({ code: 0, stdout: verbJson("server", { host: "jj@100.77.141.50", port: 4096 }) });
+    fakeAmico({ code: 0, stdout: verbJson("server", { host: "user@100.64.0.1", port: 4096 }) });
     fakeLoaders(); // #1258: the server write-path now provisions a hub service — shadow the OS loaders
     const r = runScript(INSTALL, [], installEnv()); // install mode (not --check)
     expect(r.code).toBe(0);

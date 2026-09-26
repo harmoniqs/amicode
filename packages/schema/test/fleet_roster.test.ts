@@ -39,10 +39,10 @@ import {
 
 const ROW: RosterRow = {
   machine_id: "mac-studio-01",
-  name: "JJ's Mac Studio",
+  name: "Test Desktop",
   server_mode: "server",
   capabilities: ["compute", "roaming"],
-  sshAlias: "jjs-mac-studio",
+  sshAlias: "test-desktop",
   transport: "tailscale",
   last_report: "2026-09-20T12:00:00Z",
   health: "reachable",
@@ -123,10 +123,10 @@ describe("device_type — optional per-row form factor (fleet sidebar type pill,
 
 describe("peer_origin — optional per-row reach URL for non-SSH transports", () => {
   it("round-trips a peer_origin when the reporting machine includes one", () => {
-    const r = parseRosterRow({ ...ROW, peer_origin: "https://jjs-mac-studio.tail570504.ts.net" });
+    const r = parseRosterRow({ ...ROW, peer_origin: "https://test-desktop.tail000000.ts.net" });
     expect(r.ok).toBe(true);
     if (!r.ok) throw new Error("expected a valid row");
-    expect(r.row.peer_origin).toBe("https://jjs-mac-studio.tail570504.ts.net");
+    expect(r.row.peer_origin).toBe("https://test-desktop.tail000000.ts.net");
   });
 
   it("parses a row that omits peer_origin entirely — absent is lawful (SSH peers never need it)", () => {
@@ -282,9 +282,9 @@ describe("classifyLinuxChassis — the hostnamectl/DMI chassis classifier (#1371
 
 describe("normalizeDeviceName — the friendly-name prettifier (#1371 AC3)", () => {
   const table: [string, string][] = [
-    ["Mac.mynetworksettings.com", "Mac"],
+    ["Desktop.local", "Desktop"],
     ["host.local", "host"],
-    ["JJ's Mac Studio", "JJ's Mac Studio"],
+    ["Test Desktop", "Test Desktop"],
     ["", ""],
     ["workbench", "workbench"],
     ["JVs-MacBook-Pro.local", "JVs-MacBook-Pro"],
@@ -296,7 +296,7 @@ describe("normalizeDeviceName — the friendly-name prettifier (#1371 AC3)", () 
   }
 
   it("leaves a space-bearing name intact even if it carries a dot (a human display name, not a hostname)", () => {
-    expect(normalizeDeviceName("JJ's Mac Studio")).toBe("JJ's Mac Studio");
+    expect(normalizeDeviceName("Test Desktop")).toBe("Test Desktop");
     expect(normalizeDeviceName("Conf Room 3.5")).toBe("Conf Room 3.5");
   });
 });

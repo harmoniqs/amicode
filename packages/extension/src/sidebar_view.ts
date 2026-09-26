@@ -336,8 +336,8 @@ export function detectDeviceType(run?: HostCommandRunner): string | undefined {
 
 /** The user-facing device name on macOS: `scutil --get ComputerName` returns
  *  whatever the user set in System Settings → General → About → Name (e.g.
- *  "JJ's Mac Studio"), which is far friendlier than `os.hostname()` (which
- *  appends the network domain → "Mac.mynetworksettings.com"). Memoized for
+ *  "Test Desktop"), which is far friendlier than `os.hostname()` (which
+ *  appends the network domain → "Desktop.local"). Memoized for
  *  the process lifetime; quietly returns undefined on non-darwin or failure. */
 let cachedFriendlyHostname: string | undefined | "unset" = "unset";
 function friendlyHostname(): string | undefined {
@@ -589,7 +589,7 @@ export function defaultFleetSectionDeps(opts: DefaultFleetDepsOptions = {}): Fle
       const hostname = os.hostname();
       // AC4 (#1372, ADR 0028): on a SERVER/standalone this machine self-registers
       // its roster row keyed by fleet.json canonical.host (which differs from
-      // os.hostname() under --host / FQDN drift, e.g. Mac.mynetworksettings.com).
+      // os.hostname() under --host / FQDN drift, e.g. Desktop.local).
       // Reconcile the self-row identity to that SAME key so the posted row
       // collapses against the self-row (sidebar_fleet_section's
       // `r.machine_id === localId`), rendering the server exactly once. A CLIENT

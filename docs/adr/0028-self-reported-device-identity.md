@@ -26,14 +26,14 @@ But nothing **produces** meaningful values: the enroll verb writes a row with
 
 The consequence is a split identity. Each machine already labels *itself* nicely on its own
 sidebar — the extension synthesizes a local self-row from `scutil --get ComputerName` (the
-user's chosen name, e.g. "JJ's MacBook Pro") and a `system_profiler`-derived form factor. But
+user's chosen name, e.g. "Test Laptop") and a `system_profiler`-derived form factor. But
 that derivation lives only in the extension, so it never reaches the **roster row a peer reads**.
 A machine and its peers therefore disagree about the machine's name and type: the server sees
-`JVs-MacBook-Pro.local / client` while the laptop calls itself `JJ's MacBook Pro / laptop`.
+`JVs-MacBook-Pro.local / client` while the laptop calls itself `Test Laptop / laptop`.
 
 The disagreement is symmetric. A client never sees a friendly server either: the client
 synthesizes the canonical-server node (#1363) from `fleet.json`'s `canonical.host`, so it renders
-the raw host string (`Mac.mynetworksettings.com`) with a hardcoded `server` type — because the
+the raw host string (`Desktop.local`) with a hardcoded `server` type — because the
 server does not self-register a roster row at all.
 
 ## Decision
@@ -80,7 +80,7 @@ server does not self-register a roster row at all.
    de-dupe (`d.machineId === server.machineId`) collapses the synthesized node against the real
    row with **zero client-side change**. But the client view is only half of it: the server's
    OWN self-row is keyed by `os.hostname()`, which differs from `canonical.host` under a
-   non-default `--host` or macOS FQDN drift (the live fleet's `Mac.mynetworksettings.com` is
+   non-default `--host` or macOS FQDN drift (the live fleet's `Desktop.local` is
    exactly this case), so the server would render *itself* twice. Slice 2 therefore also
    reconciles the server's self-row identity to `canonical.host` (or de-dupes the self-row
    against the roster on it). `machine_id` need only match what *other* machines use to reference
@@ -134,7 +134,7 @@ server does not self-register a roster row at all.
 - A machine and its peers agree on its name and type by construction — the split-identity bug is
   closed on both halves (client-as-seen-by-server and server-as-seen-by-client).
 - The server becomes a first-class roster row, making ADR 0026's "each machine owns its own row"
-  literally true and letting the client render the real server (`JJ's Mac Studio / desktop`)
+  literally true and letting the client render the real server (`Test Desktop / desktop`)
   instead of a synthesized raw-host node.
 - Linux/WSL clients get real detection with an explicit override; the extension's existing
   `classifyDeviceType` is rehomed to schema and imported back, removing a soon-to-drift copy.

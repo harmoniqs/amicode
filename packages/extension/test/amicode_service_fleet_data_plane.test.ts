@@ -2173,18 +2173,18 @@ describe("#1524 observation-only base peer-studio — routes mount without hub-a
   let savedHubFile: string | undefined;
 
   const ROSTER_1524: Record<string, { name: string; device_type?: string }> = {
-    "jjs-macbook-pro": { name: "JJ's MacBook Pro", device_type: "laptop" },
-    "jjs-mac-studio": { name: "JJ's Mac Studio", device_type: "desktop" },
+    "test-laptop": { name: "Test Laptop", device_type: "laptop" },
+    "test-desktop": { name: "Test Desktop", device_type: "desktop" },
   };
 
   // A serving-peer provider: one reachable serving peer beyond self, with a
   // valid reader token — the live-machine shape from the bug report.
   function servingPeerProvider() {
     return {
-      localMachineId: "jjs-macbook-pro",
-      getServingPeers: () => [{ machineId: "jjs-mac-studio" }],
+      localMachineId: "test-laptop",
+      getServingPeers: () => [{ machineId: "test-desktop" }],
       readPeerToken: (id: string) =>
-        id === "jjs-mac-studio"
+        id === "test-desktop"
           ? { ok: true as const, credential: { baseUrl: studioPeer.url, token: "tok-studio-1524" } }
           : { ok: false as const },
       rosterLookup: (id: string) => ROSTER_1524[id],
@@ -2195,7 +2195,7 @@ describe("#1524 observation-only base peer-studio — routes mount without hub-a
   // shape — the AC2 byte-identity case).
   function noPeerProvider() {
     return {
-      localMachineId: "jjs-macbook-pro",
+      localMachineId: "test-laptop",
       getServingPeers: () => [] as Array<{ machineId: string }>,
       readPeerToken: () => ({ ok: false as const }),
       rosterLookup: (id: string) => ROSTER_1524[id],
@@ -2252,8 +2252,8 @@ describe("#1524 observation-only base peer-studio — routes mount without hub-a
       const sessions = await fetch(`${o}/amicode/fleet/sessions`, { headers: { Authorization: `Basic ${engineToken}` } });
       expect(sessions.status).toBe(200);
       const body = (await sessions.json()) as FleetProjection;
-      expect(body.sources["jjs-mac-studio"].present).toBe(true);
-      expect(body.sources["jjs-macbook-pro"].present).toBe(true);
+      expect(body.sources["test-desktop"].present).toBe(true);
+      expect(body.sources["test-laptop"].present).toBe(true);
     } finally {
       await svc.stop();
     }
@@ -2325,8 +2325,8 @@ describe("#1524 observation-only base peer-studio — routes mount without hub-a
         | undefined;
       expect(studioSes).toBeDefined();
       expect(studioSes!.amicode_owner).toMatchObject({
-        owner_machine_id: "jjs-mac-studio",
-        owner_name: "JJ's Mac Studio",
+        owner_machine_id: "test-desktop",
+        owner_name: "Test Desktop",
         is_local: false,
       });
     } finally {
@@ -2384,13 +2384,13 @@ describe("#1524 observation-only base peer-studio — the real wiring seam (unar
       JSON.stringify({
         schema_version: 1,
         rows: [
-          w0RosterRow({ id: "jjs-macbook-pro", name: "MacBook Pro", serving: true, reachable: true, device_type: "laptop" }),
-          w0RosterRow({ id: "jjs-mac-studio", name: "Mac Studio", serving: true, reachable: true, device_type: "desktop" }),
+          w0RosterRow({ id: "test-laptop", name: "MacBook Pro", serving: true, reachable: true, device_type: "laptop" }),
+          w0RosterRow({ id: "test-desktop", name: "Mac Studio", serving: true, reachable: true, device_type: "desktop" }),
         ],
       }),
     );
     const peerStoreFile = join(root, "peer-tokens.json");
-    writePeerToken("jjs-mac-studio", { baseUrl: studioPeer.url, token: "tok-studio-1524w" }, { storeFile: peerStoreFile });
+    writePeerToken("test-desktop", { baseUrl: studioPeer.url, token: "tok-studio-1524w" }, { storeFile: peerStoreFile });
     for (const k of ["AMICO_FLEET_ROSTER_FILE", "AMICO_FLEET_PEER_TOKEN_FILE", "AMICO_FLEET_HUB_FILE"]) savedEnv[k] = process.env[k];
     process.env.AMICO_FLEET_ROSTER_FILE = rosterFile;
     process.env.AMICO_FLEET_PEER_TOKEN_FILE = peerStoreFile;
@@ -2415,7 +2415,7 @@ describe("#1524 observation-only base peer-studio — the real wiring seam (unar
       engine: { password: "engine-mint-password", getUrl: () => localEngine.url },
       appDistRoot: dist,
       fleetActivation: () => resolveFleetActivation({ config: {}, env: {} }), // unarmed — no hub config
-      localMachineId: "jjs-macbook-pro",
+      localMachineId: "test-laptop",
     });
     expect(boot).toBeDefined();
     if (!boot) return;
@@ -2430,7 +2430,7 @@ describe("#1524 observation-only base peer-studio — the real wiring seam (unar
       const sessions = await fetch(`${boot.url}/amicode/fleet/sessions`, { headers: { Authorization: `Basic ${engineToken}` } });
       expect(sessions.status).toBe(200);
       const body = (await sessions.json()) as FleetProjection;
-      expect(body.sources["jjs-mac-studio"].present).toBe(true);
+      expect(body.sources["test-desktop"].present).toBe(true);
       expect(body.sessions.some((s) => s.id === "ses-1524w-studio")).toBe(true);
     } finally {
       await boot.service.stop();
@@ -2445,7 +2445,7 @@ describe("#1524 observation-only base peer-studio — the real wiring seam (unar
       rosterFile,
       JSON.stringify({
         schema_version: 1,
-        rows: [w0RosterRow({ id: "jjs-macbook-pro", name: "MacBook Pro", serving: true, reachable: true })],
+        rows: [w0RosterRow({ id: "test-laptop", name: "MacBook Pro", serving: true, reachable: true })],
       }),
     );
     process.env.AMICO_FLEET_ROSTER_FILE = rosterFile;
@@ -2453,7 +2453,7 @@ describe("#1524 observation-only base peer-studio — the real wiring seam (unar
       engine: { password: "engine-mint-password", getUrl: () => localEngine.url },
       appDistRoot: dist,
       fleetActivation: () => resolveFleetActivation({ config: {}, env: {} }),
-      localMachineId: "jjs-macbook-pro",
+      localMachineId: "test-laptop",
     });
     expect(boot).toBeDefined();
     if (!boot) return;

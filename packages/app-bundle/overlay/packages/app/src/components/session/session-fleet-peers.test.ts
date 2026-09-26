@@ -27,8 +27,8 @@ import {
 // titlebar Sessions dropdown. These pure helpers are the data layer the
 // component consumes; every reader is tolerant (never throws, [] on garbage).
 
-const localTag = { owner_machine_id: "jjs-macbook-pro", owner_name: "MacBook Pro", is_local: true }
-const studioTag = { owner_machine_id: "jjs-mac-studio", owner_name: "JJ's Mac Studio", device_type: "desktop", is_local: false }
+const localTag = { owner_machine_id: "test-laptop", owner_name: "MacBook Pro", is_local: true }
+const studioTag = { owner_machine_id: "test-desktop", owner_name: "Test Desktop", device_type: "desktop", is_local: false }
 
 function projection(sessions: unknown[]): unknown {
   return { sessions, sources: {} }
@@ -44,7 +44,7 @@ describe("#1525 peerSessionsFromProjection — keep only remote peer sessions", 
     expect(out[0].id).toBe("ses_studio")
     expect(out[0].title).toBe("Free port 4096")
     expect(out[0].time).toEqual({ created: 3, updated: 7 })
-    expect(out[0].amicode_owner).toMatchObject({ owner_machine_id: "jjs-mac-studio", is_local: false })
+    expect(out[0].amicode_owner).toMatchObject({ owner_machine_id: "test-desktop", is_local: false })
   })
 
   test("drops LOCAL-owned and UNOWNED entries (the local list already has those)", () => {
@@ -74,7 +74,7 @@ describe("#1525 peerSessionsFromProjection — keep only remote peer sessions", 
 
 describe("#1525 deriveSessionBadge / isRemotePeerSession", () => {
   test("remote session badges with the owner name", () => {
-    expect(deriveSessionBadge({ amicode_owner: studioTag })).toBe("JJ's Mac Studio")
+    expect(deriveSessionBadge({ amicode_owner: studioTag })).toBe("Test Desktop")
     expect(isRemotePeerSession({ amicode_owner: studioTag })).toBe(true)
   })
   test("local and unowned sessions are unbadged / not remote", () => {
@@ -140,7 +140,7 @@ describe("#1525 mergePeerSessions — dedupe (local wins) + sort by last activit
     const remote = out.find((s) => s.id === "ses_remote")!
     expect(remote.amicode_owner).toBeDefined()
     expect(remote.amicode_owner!.is_local).toBe(false)
-    expect(deriveSessionBadge(remote)).toBe("JJ's Mac Studio")
+    expect(deriveSessionBadge(remote)).toBe("Test Desktop")
   })
 })
 
@@ -152,7 +152,7 @@ describe("#1525 mergePeerSessions — dedupe (local wins) + sort by last activit
 // mutation/remote-write action — open is a read.
 describe("#1537 resolveDropdownOpenAction — owner-routed open of a peer row", () => {
   const encodePath = (dir: string, id: string) => `/${btoa(dir)}/session/${id}`
-  const studioTag = { owner_machine_id: "jjs-mac-studio", owner_name: "JJ's Mac Studio", is_local: false }
+  const studioTag = { owner_machine_id: "test-desktop", owner_name: "Test Desktop", is_local: false }
 
   const localRow: DropdownSession = { id: "ses_local", directory: "/proj", time: { created: 1 } } as DropdownSession
   const remoteRow: DropdownSession = {
@@ -208,7 +208,7 @@ const ctrl = (over: Partial<SessionControlProjection> = {}): SessionControlProje
   eligibility: "enable-control",
   ...over,
 })
-const remoteWith = (control: SessionControlProjection, machineId = "jjs-mac-studio"): DropdownSession =>
+const remoteWith = (control: SessionControlProjection, machineId = "test-desktop"): DropdownSession =>
   ({
     id: "ses_studio",
     directory: "/studio-proj",
@@ -289,8 +289,8 @@ describe("#1544 controlAffordance — enable (self) / request (shared) / none", 
 
 describe("#1544 drivingBanner — persistent, pinned to the peer being driven", () => {
   test("interactive (control held over a remote peer) → banner carries the peer machineId", () => {
-    const session = remoteWith(ctrl({ controlState: "interactive", reason: null, eligibility: "none" }), "jjs-mac-studio")
-    expect(drivingBanner(session)).toEqual({ machineId: "jjs-mac-studio" })
+    const session = remoteWith(ctrl({ controlState: "interactive", reason: null, eligibility: "none" }), "test-desktop")
+    expect(drivingBanner(session)).toEqual({ machineId: "test-desktop" })
   })
   test("not interactive (read-only / local) → no banner", () => {
     expect(drivingBanner(remoteWith(ctrl({ controlState: "read-only" })))).toBeNull()
@@ -301,10 +301,10 @@ describe("#1544 drivingBanner — persistent, pinned to the peer being driven", 
 
 describe("#1544 remoteDeleteAction — owner-routed delete, gated on control (arm→confirm reused, not this gate)", () => {
   test("control held → allowed + an OWNER-ROUTED request carrying the owner machineId", () => {
-    const session = remoteWith(ctrl({ controlState: "interactive", reason: null, eligibility: "none" }), "jjs-mac-studio")
+    const session = remoteWith(ctrl({ controlState: "interactive", reason: null, eligibility: "none" }), "test-desktop")
     const action = remoteDeleteAction(session)
     expect(action.allowed).toBe(true)
-    expect(action.request).toEqual({ sessionID: "ses_studio", directory: "/studio-proj", ownerMachineId: "jjs-mac-studio" })
+    expect(action.request).toEqual({ sessionID: "ses_studio", directory: "/studio-proj", ownerMachineId: "test-desktop" })
   })
   test("control NOT held → disallowed, no request, carries the fail-closed reason (never a live erroring button)", () => {
     const session = remoteWith(ctrl({ controlState: "read-only", reason: "no-control-grant" }))
@@ -357,8 +357,8 @@ describe("#1544 findSessionControlInProjection — the current session's control
 // owner_machine_id, labeled with the owner name), in first-seen order. Read-only
 // — no row is dropped or reordered within a group.
 describe("#1562 groupSessionsByOwner — local first, then a labeled group per peer machine", () => {
-  const laptopTag = { owner_machine_id: "jjs-macbook-pro", owner_name: "MacBook Pro", is_local: true }
-  const studio = { owner_machine_id: "jjs-mac-studio", owner_name: "JJ's Mac Studio", is_local: false }
+  const laptopTag = { owner_machine_id: "test-laptop", owner_name: "MacBook Pro", is_local: true }
+  const studio = { owner_machine_id: "test-desktop", owner_name: "Test Desktop", is_local: false }
   const tower = { owner_machine_id: "lab-tower", owner_name: "Lab Tower", is_local: false }
   const mk = (id: string, owner?: DropdownSession["amicode_owner"]): DropdownSession =>
     ({ id, directory: "/d", time: { created: 0, updated: 0 }, ...(owner ? { amicode_owner: owner } : {}) }) as DropdownSession
@@ -378,8 +378,8 @@ describe("#1562 groupSessionsByOwner — local first, then a labeled group per p
     expect(groups[0].label).toBeUndefined()
     expect(groups[0].sessions.map((s) => s.id)).toEqual(["a", "b", "c"])
     // then one labeled group per peer machine, FIRST-SEEN order (studio before tower)
-    expect(groups[1].machineId).toBe("jjs-mac-studio")
-    expect(groups[1].label).toBe("JJ's Mac Studio")
+    expect(groups[1].machineId).toBe("test-desktop")
+    expect(groups[1].label).toBe("Test Desktop")
     expect(groups[1].sessions.map((s) => s.id)).toEqual(["s1", "s2"])
     expect(groups[2].machineId).toBe("lab-tower")
     expect(groups[2].label).toBe("Lab Tower")
@@ -402,7 +402,7 @@ describe("#1562 groupSessionsByOwner — local first, then a labeled group per p
 
   test("peer order is FIRST-SEEN; rows within a peer group keep input (recency) order", () => {
     const groups = groupSessionsByOwner([mk("t1", tower), mk("s1", studio), mk("t2", tower)])
-    expect(groups.map((g) => g.machineId)).toEqual([null, "lab-tower", "jjs-mac-studio"])
+    expect(groups.map((g) => g.machineId)).toEqual([null, "lab-tower", "test-desktop"])
     expect(groups[1].sessions.map((s) => s.id)).toEqual(["t1", "t2"])
     expect(groups[2].sessions.map((s) => s.id)).toEqual(["s1"])
   })
@@ -412,7 +412,7 @@ describe("#1562 groupSessionsByOwner — local first, then a labeled group per p
     expect(groups).toHaveLength(2)
     expect(groups[0].machineId).toBeNull()
     expect(groups[0].sessions).toEqual([])
-    expect(groups[1].machineId).toBe("jjs-mac-studio")
+    expect(groups[1].machineId).toBe("test-desktop")
     expect(groups[1].sessions.map((s) => s.id)).toEqual(["s1"])
   })
 })
