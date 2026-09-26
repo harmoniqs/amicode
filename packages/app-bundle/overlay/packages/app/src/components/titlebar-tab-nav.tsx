@@ -22,6 +22,7 @@ export function TabNavItem(props: {
   server: ServerConnection.Key
   session: () => Session | undefined
   fallbackTitle?: string
+  drivingMachineId?: () => string | undefined
   onRename: (title: string) => Promise<void>
   onClose: () => void
   onNavigate: () => void
@@ -221,7 +222,7 @@ export function TabNavItem(props: {
         }}
         class="flex h-full min-w-0 flex-1 flex-row items-center gap-1.5 text-[13px] font-medium text-v2-text-text-faint group-data-[active='true']:text-v2-text-text-base group-data-[editing='true']:text-v2-text-text-base [-webkit-user-drag:none]"
       >
-        <span data-slot="project-avatar-slot" class="flex size-4 shrink-0 items-center justify-center">
+        <span data-slot="project-avatar-slot" class="flex shrink-0 items-center justify-center gap-1">
           <Show
             when={props.session()}
             keyed
@@ -236,6 +237,17 @@ export function TabNavItem(props: {
                 sessionId={session.id}
                 server={props.server}
               />
+            )}
+          </Show>
+          <Show when={props.drivingMachineId?.()}>
+            {(machineId) => (
+              <span
+                data-slot="tab-driving-remote"
+                title={`Driving ${machineId()}`}
+                class="flex size-3.5 shrink-0 items-center justify-center text-v2-text-text-faint"
+              >
+                <IconV2 name="monitor" class="opacity-70" />
+              </span>
             )}
           </Show>
         </span>

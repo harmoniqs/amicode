@@ -54,7 +54,7 @@ import {
   writeAffordanceEnabled,
   failClosedChip,
   controlAffordance,
-  drivingBannerFromProjection,
+
   findSessionControlInProjection,
   findSessionOwnerInProjection,
   remoteDeleteAction,
@@ -85,69 +85,10 @@ import { KeybindV2 } from "@opencode-ai/ui/v2/keybind-v2"
 import { TooltipV2 } from "@opencode-ai/ui/v2/tooltip-v2"
 import { reviewTooltipKeybind } from "../command-tooltip-keybind"
 import { useTitlebarRightMount, useTitlebarControlMount } from "../titlebar"
-
-// ── #1562-followup (Slice A): the SHARED control-projection poll ──────────────
-// B2b (#1551) gave BOTH the driving banner (SessionHeader) and the composer
-// scrim (SessionComposerControlScrim) a ONE-SHOT createResource read of GET
-// /amicode/fleet/sessions keyed only on `server.current`. Its only source was
-// the connection, so once the Enable-control grant landed NOTHING re-fetched — the projected control never re-read `interactive`, the
-// scrim never cleared, the "Driving <peer>" banner never lit, and a later revoke
-// never re-gated. The "next poll" the design assumed did not exist.
-//
-// This is that poll: a SINGLE short-interval read (≈3s) of the same projection,
-// CONSOLIDATED into one shared accessor BOTH consumers subscribe to (single
-// source of truth, kept in sync), refetched on window `focus` as a backstop, and
-// torn down (interval cleared, root disposed) when the last consumer unmounts
-// (reference-counted). The app still NEVER self-declares interactive — it only
-// makes the SoT projection get RE-READ.
-const FLEET_CONTROL_POLL_MS = 3000
-
-type SharedControlProjection = { latest: () => unknown; refetch: () => void }
-
-let sharedControlPoll: SharedControlProjection | null = null
-let sharedControlDispose: (() => void) | null = null
-let sharedControlRefs = 0
-
-function acquireSharedControlProjection(conn: () => ServerConnection.Any | undefined): SharedControlProjection {
-  sharedControlRefs += 1
-  if (!sharedControlPoll) {
-    createRoot((dispose) => {
-      const [tick, setTick] = createSignal(0)
-      const [projection, { refetch }] = createResource(
-        () => [conn(), tick()] as const,
-        ([c]) => (c ? amicodeGet(c, "/amicode/fleet/sessions").catch(() => undefined) : undefined),
-      )
-      const interval = setInterval(() => setTick((t) => t + 1), FLEET_CONTROL_POLL_MS)
-      const onFocus = () => void refetch()
-      if (typeof window !== "undefined") window.addEventListener("focus", onFocus)
-      sharedControlPoll = { latest: () => projection.latest, refetch: () => void refetch() }
-      sharedControlDispose = () => {
-        clearInterval(interval)
-        if (typeof window !== "undefined") window.removeEventListener("focus", onFocus)
-        dispose()
-        sharedControlPoll = null
-        sharedControlDispose = null
-      }
-    })
-  }
-  return sharedControlPoll!
-}
-
-function releaseSharedControlProjection() {
-  sharedControlRefs = Math.max(0, sharedControlRefs - 1)
-  if (sharedControlRefs === 0 && sharedControlDispose) sharedControlDispose()
-}
-
-/** The ONE shared accessor the session header (driving banner) and the composer
- *  scrim both consume — the latest polled read of the fleet control projection
- *  (the SoT carrier). Consumers acquire on mount, release on unmount; exactly one
- *  interval poll runs while any consumer is mounted. */
-export function useSharedControlProjection(): () => unknown {
-  const server = useServer()
-  const shared = acquireSharedControlProjection(() => server.current)
-  onCleanup(releaseSharedControlProjection)
-  return shared.latest
-}
+// #1562-followup (Slice A): the shared control-projection poll — extracted to
+// session-fleet-control-projection.ts so the titlebar tab strip can share the
+// same ref-counted singleton without importing this component file.
+import { useSharedControlProjection } from "./session-fleet-control-projection"
 
 const OPEN_APPS = [
   "vscode",
@@ -274,9 +215,6 @@ export function SessionHeader() {
   // interactive flip (grant landed) is actually OBSERVED — the banner lights on
   // the next poll instead of never (the B2b one-shot never re-fetched).
   const controlProjection = useSharedControlProjection()
-  const drivingPeer = createMemo(() =>
-    params.id ? drivingBannerFromProjection(controlProjection(), params.id) : null,
-  )
 
   const projectDirectory = createMemo(() => decode64(params.dir) ?? "")
   const project = createMemo(() => {
@@ -432,45 +370,10 @@ export function SessionHeader() {
 
   return (
     <>
-      {/* #1544 (slice 4): the persistent "driving <peer>" banner — the
-          ambient-safety mechanism (control is NEVER silent, ADR 0034 D4). Pinned
-          to document.body via a Portal so it survives navigation WITHIN the
-          session (SessionHeader persists across param.id changes); its
-          `data-driving-peer` hook makes the persistence assertable. */}
-      <Show when={drivingPeer()} keyed>
-        {(peer) => (
-          <Portal>
-            <div
-              data-slot="amicode-driving-banner"
-              data-driving-peer={peer.machineId}
-              role="status"
-              aria-live="polite"
-              style={{
-                position: "fixed",
-                top: "0",
-                left: "50%",
-                transform: "translateX(-50%)",
-                "z-index": "10000",
-                display: "flex",
-                "align-items": "center",
-                gap: "8px",
-                padding: "4px 12px",
-                "border-bottom-left-radius": "var(--radius-md)",
-                "border-bottom-right-radius": "var(--radius-md)",
-                background: "var(--v2-background-bg-layer-02)",
-                border: "1px solid var(--v2-border-border-strong)",
-                "border-top": "none",
-                color: "var(--v2-text-text-base)",
-                "font-size": "11px",
-                "font-weight": "600",
-              }}
-            >
-              <IconV2 name="monitor" class="opacity-80" />
-              <span>Driving {peer.machineId}</span>
-            </div>
-          </Portal>
-        )}
-      </Show>
+      {/* #1544 (slice 4): the "driving <peer>" indicator moved from a fixed
+          banner Portal to a monitor icon on the session tab in the titlebar
+          (titlebar-tab-nav.tsx). The tab strip now consumes the shared fleet
+          projection directly. The composer scrim control gate is unchanged. */}
       {/* #1551 (DEFECT 2): the Enable-control affordance moved OFF the titlebar
           and onto the composer scrim (SessionComposerControlScrim, below). No
           fixed top-right Portal renders here anymore. */}

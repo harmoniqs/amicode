@@ -11,18 +11,35 @@ import {
 // component-source-assertion pattern (vscode-explorer-file-icon.test.tsx): the
 // DECISION logic is pure + unit-tested in session-fleet-peers.ts; here we assert
 // the SolidJS wiring binds those pure functions to the session surface — the
-// persistent driving banner's `data-` hook (so persistence is assertable), the
 // native-modal confirm dispatch, the fail-closed reason chip, and the
 // owner-routed remote-delete reusing the arm→confirm interaction.
+//
+// The "Driving <peer>" indicator moved from a fixed banner Portal in
+// session-header.tsx to a monitor icon on the session tab in the titlebar
+// (titlebar-tab-nav.tsx). The session header no longer renders any driving
+// banner; the shared control projection was extracted to its own module.
 const source = readFileSync(resolve(__dirname, "session-header.tsx"), "utf8")
+const tabNavSource = readFileSync(resolve(__dirname, "../titlebar-tab-nav.tsx"), "utf8")
+const tabStripSource = readFileSync(resolve(__dirname, "../titlebar-tab-strip.tsx"), "utf8")
+const projectionSource = readFileSync(resolve(__dirname, "session-fleet-control-projection.ts"), "utf8")
 
 describe("#1544 session-header control wiring", () => {
-  test("the persistent driving banner is pinned with an ASSERTABLE data-driving-peer hook", () => {
-    expect(source).toContain("data-driving-peer={peer.machineId}")
-    expect(source).toContain('data-slot="amicode-driving-banner"')
-    // sourced from the fleet projection (the state channel carrier) via the
-    // SHARED polled accessor — not the ad-hoc one-shot resource
-    expect(source).toContain("drivingBannerFromProjection(controlProjection()")
+  test("the driving banner Portal is REMOVED from session-header (moved to the tab strip)", () => {
+    // The fixed-position "Driving <peer>" banner no longer lives here —
+    // the indicator is now a monitor icon on the session tab itself.
+    expect(source).not.toContain('data-slot="amicode-driving-banner"')
+    expect(source).not.toContain("data-driving-peer=")
+    expect(source).not.toContain("drivingBannerFromProjection")
+  })
+
+  test("the driving indicator lives on the session tab in the titlebar", () => {
+    // The tab strip derives the driving state from the shared projection
+    expect(tabStripSource).toContain("drivingBannerFromProjection(controlProjection()")
+    expect(tabStripSource).toContain("drivingMachineId")
+    // The tab nav item renders a monitor icon with the driving machine tooltip
+    expect(tabNavSource).toContain('data-slot="tab-driving-remote"')
+    expect(tabNavSource).toContain("drivingMachineId")
+    expect(tabNavSource).toContain('name="monitor"')
   })
 
   test("Enable control is re-homed onto the composer scrim, NOT a fixed top-right Portal (#1551 DEFECT 2)", () => {
@@ -73,23 +90,22 @@ describe("#1544 session-header control wiring", () => {
   })
 })
 
-// #1562-followup (Slice A): the interactive flip must be OBSERVED. B2b left both
-// the header (driving banner) and the composer scrim reading the control
-// projection through a ONE-SHOT createResource whose only source was
-// server.current — so after a grant landed nothing re-fetched and the flip was
-// invisible (scrim never cleared, banner never lit). The fix: a SINGLE
-// short-interval poll of /amicode/fleet/sessions, CONSOLIDATED into one shared
-// accessor BOTH consume, refetched on window focus, torn down on unmount.
+// #1562-followup (Slice A): the interactive flip must be OBSERVED. The shared
+// control projection was extracted to session-fleet-control-projection.ts — the
+// same ref-counted singleton the session header, the composer scrim, and now the
+// titlebar tab strip all consume.
 describe("Slice A — the control projection is polled + shared (the interactive flip is observed)", () => {
-  test("a SHARED polled accessor is the single source both the header and scrim consume", () => {
-    // one named shared accessor symbol — not two divergent one-shot resources
+  test("the shared polled accessor lives in its own module and is consumed by session-header", () => {
+    // session-header imports the shared accessor
     expect(source).toContain("useSharedControlProjection")
-    // an interval poll bumps the resource source (the flip B2b never re-read)
-    expect(source).toContain("setInterval(")
-    // a window-focus refetch backstop
-    expect(source).toContain('addEventListener("focus"')
-    // cleaned up on unmount (interval cleared) — no leaked timer
-    expect(source).toContain("clearInterval(")
+    // the projection module has the poll machinery
+    expect(projectionSource).toContain("setInterval(")
+    expect(projectionSource).toContain('addEventListener("focus"')
+    expect(projectionSource).toContain("clearInterval(")
+  })
+
+  test("the tab strip also consumes the shared projection (for the driving indicator)", () => {
+    expect(tabStripSource).toContain("useControlProjectionForConnection")
   })
 
   test("the duplicated one-shot createResource(() => server.current, …) is GONE from header + scrim", () => {
