@@ -22,6 +22,7 @@ import { compareMessages, messageKey, normalizeSessionMessages } from "@/utils/s
 import { dropSessionCaches, pickSessionCacheEvictions, SESSION_CACHE_LIMIT } from "./global-sync/session-cache"
 import { createV2SessionReducer, type V2SessionReduction } from "./server-session-v2-reducer"
 import { deleteMirror, loadMirror, mirrorSlice, saveMirror } from "./session-mirror"
+import { cancelReconcileTimer } from "./session-status-reconcile"
 import type { ServerApi } from "@/utils/server"
 
 type MessageApi = ServerApi["message"]
@@ -1186,8 +1187,10 @@ export function createServerSession(
       event.type === "session.execution.succeeded" ||
       event.type === "session.execution.failed" ||
       event.type === "session.execution.interrupted"
-    )
+    ) {
+      cancelReconcileTimer(sessionID)
       setData("session_status", sessionID, { type: "idle" })
+    }
     if (event.type === "session.retry.scheduled")
       setData("session_status", sessionID, {
         type: "retry",
