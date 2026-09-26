@@ -333,7 +333,7 @@ describe("#1543 — production wiring (createAmicodeService observation-only pat
     return cond();
   }
 
-  it("observation-only boot + a serving owned peer → GET /event opens the peer's /event upstream with the peer reader token", async () => {
+  it("observation-only boot + a serving owned peer → GET /event opens the peer's /global/event upstream with the peer reader token", async () => {
     const svc = createAmicodeService({
       password: PW,
       engine: { password: "engine-mint", getUrl: () => engineStub.url },
@@ -345,9 +345,13 @@ describe("#1543 — production wiring (createAmicodeService observation-only pat
       await waitFor(() => peerStub.requests.some((r) => r.path === "/experimental/session" || r.path === "/session") && peerStub.requests.some((r) => r.path === "/global/health"));
       await new Promise((r) => setTimeout(r, 500)); // settle the async projection chain
 
-      const peerEventBefore = peerStub.requests.filter((r) => r.path === "/event").length;
+      // #1580: the peer arm's UPSTREAM opens against `/global/event` (the v1
+      // global-instance event bus), not the literal `/event`. The DOWNSTREAM read
+      // below still uses `/event` — the legacy client path is intercepted too, and
+      // exercising it proves it drives the corrected upstream arm.
+      const peerEventBefore = peerStub.requests.filter((r) => r.path === "/global/event").length;
       await readSseFrames(`${origin}/event`, { Authorization: serverAuthHeader("engine-mint") }, { maxFrames: 4, timeoutMs: 2500 });
-      const peerEventReqs = peerStub.requests.filter((r) => r.path === "/event");
+      const peerEventReqs = peerStub.requests.filter((r) => r.path === "/global/event");
       expect(peerEventReqs.length).toBeGreaterThan(peerEventBefore); // the peer arm was opened (takeover)
       expect(peerEventReqs.at(-1)!.auth).toBe(peerAuthHeader("tok-studio")); // authed as the peer, its own token
     } finally {

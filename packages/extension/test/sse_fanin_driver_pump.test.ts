@@ -7,6 +7,7 @@ import { describe, it, expect } from "vitest";
 import * as http from "node:http";
 import { SseFanInDriver } from "../src/amicode_service/sse_fanin_driver";
 import type { SseFrameSource } from "../src/amicode_service/sse_fanin_aggregator";
+import { LOCAL_NAMESPACE } from "../src/amicode_service/sse_fanin_aggregator";
 import { SessionOwnerMap } from "../src/amicode_service/session_multiplexer";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -158,6 +159,64 @@ describe("#1566 — dead arm zombie: pump exit cleans up source so reconcile re-
     // Cleanup
     localCtl.end();
     for (const ctl of peerCtls) ctl.end();
+    res.fireClose();
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// #1580 — the fan-in must OPEN its upstream arms against `/global/event`, not the
+// literal `/event`. The vendored engine + the app speak the v1 "global instance"
+// protocol whose event bus is `/global/event`; opening an arm at `/event` reads a
+// path the engine does not serve as the global bus, so the owner's agent output
+// never reaches the aggregator and the observer's live view stays stuck. BOTH the
+// ALWAYS-present local arm (§D4, opened in start()) and every peer arm (opened in
+// reconcile()) go through the same openArm() upstream request, so a single path
+// covers both.
+// ══════════════════════════════════════════════════════════════════════════════
+describe("#1580 — fan-in opens its local AND peer arms against /global/event", () => {
+  it("the injected upstream opener receives path === /global/event for both the LOCAL arm and a peer arm", async () => {
+    const ownerMap = new SessionOwnerMap();
+    ownerMap.update([
+      { id: "ses-studio", amicode_owner: { owner_machine_id: "studio", owner_name: "studio", is_local: false } },
+    ]);
+
+    // Record the FULL upstream request (namespace + path) for every arm opened.
+    const opened: Array<{ namespace: string; path: string }> = [];
+    const localCtl = controllableSource();
+    const peerCtl = controllableSource();
+
+    const driver = new SseFanInDriver({
+      ownerMap,
+      localMachineId: "macbook",
+      localEventUrl: () => "http://local.invalid",
+      peerBaseUrl: (id) => (id === "studio" ? "http://studio.invalid" : undefined),
+      peerToken: (id) =>
+        id === "studio"
+          ? { ok: true as const, credential: { baseUrl: "http://studio.invalid", token: "tok-studio" } }
+          : { ok: false as const, reason: "absent" as const },
+      reconcileMs: 999_999, // no automatic reconcile — start()+its inline reconcile open both arms
+      openUpstream: (r) => {
+        opened.push({ namespace: r.namespace, path: r.path });
+        return r.namespace === LOCAL_NAMESPACE ? localCtl.source : peerCtl.source;
+      },
+    });
+
+    const res = mockRes();
+    driver.handle(mockReq(), res);
+    await tick();
+
+    // Falsifiable: before the fix openArm() hard-coded path: "/event", so both
+    // arms opened against "/event" and these assertions failed.
+    const localArm = opened.find((o) => o.namespace === LOCAL_NAMESPACE);
+    const peerArm = opened.find((o) => o.namespace === "studio");
+    expect(localArm).toBeDefined();
+    expect(peerArm).toBeDefined();
+    expect(localArm!.path).toBe("/global/event");
+    expect(peerArm!.path).toBe("/global/event");
+
+    // Cleanup
+    localCtl.end();
+    peerCtl.end();
     res.fireClose();
   });
 });

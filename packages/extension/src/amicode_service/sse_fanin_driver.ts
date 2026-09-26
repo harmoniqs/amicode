@@ -41,8 +41,9 @@ export interface EventFanInDriver {
 }
 
 /** One upstream-open request. Both the local arm and each peer arm read the
- *  global `/event` stream; `url` is the source origin (the local engine, or the
- *  peer's base URL), `lastEventId` is that namespace's D3 resume id. */
+ *  global `/global/event` stream (the v1 global-instance event bus, #1580);
+ *  `url` is the source origin (the local engine, or the peer's base URL),
+ *  `lastEventId` is that namespace's D3 resume id. */
 export interface FanInUpstreamRequest {
   namespace: string;
   url: string;
@@ -246,7 +247,13 @@ class FanInConnection {
     const source = this.open({
       namespace,
       url,
-      path: "/event",
+      // #1580: the vendored engine + the app speak the v1 "global instance"
+      // protocol whose event bus is `/global/event` — opening the arm at the
+      // literal `/event` read a path the engine does not serve as the global bus,
+      // so the owner's agent output never reached the aggregator. This one path
+      // covers both the always-present local arm (§D4, opened in start()) and
+      // every peer arm (opened in reconcile()).
+      path: "/global/event",
       ...(authHeader ? { authHeader } : {}),
       ...(lastEventId ? { lastEventId } : {}),
     });
