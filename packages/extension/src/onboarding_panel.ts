@@ -9,7 +9,6 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import * as os from "node:os";
 import { randomUUID } from "node:crypto";
 import * as vscode from "vscode";
 
@@ -23,7 +22,7 @@ import {
   BEDROCK_PLANTED_PLACEHOLDER,
   type DetectedCredential,
 } from "./credential_scanner";
-import { opencodeDataDir } from "./opencode_xdg";
+import { opencodeConfigDir, opencodeDataDir } from "./opencode_xdg";
 import { ChatPanel } from "./chat_panel";
 
 // ─── Harmoniqs AI — branded custom-provider preset ───────────────────────────
@@ -141,9 +140,14 @@ export interface OnboardingConfig {
   apiKey: string;
 }
 
-/** The default opencode config path — ~/.config/opencode/opencode.json */
+/** The default opencode config path — $XDG_CONFIG_HOME/opencode/opencode.json,
+ *  falling back to ~/.config/opencode/opencode.json. Must agree with
+ *  opencodeDataDir's auth.json (below) and with opencode's own XDG resolution
+ *  (which this same opencode_xdg.ts module already matches elsewhere in the
+ *  extension) — otherwise a provider written by one path silently goes
+ *  unseen by the other whenever XDG_CONFIG_HOME is set. */
 function defaultConfigPath(): string {
-  return path.join(os.homedir(), ".config", "opencode", "opencode.json");
+  return path.join(opencodeConfigDir(), "opencode.json");
 }
 
 /** #602: drop the always-write Bedrock placeholder entry planted by ≤#589, if
