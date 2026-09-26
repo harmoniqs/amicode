@@ -21,7 +21,7 @@ import { canStartTabDrag, isTabCloseTarget } from "./titlebar-tab-gesture"
 import { adjacentTabKey, mergeVisibleTabOrder } from "./titlebar-tab-order"
 import type { Session } from "@opencode-ai/sdk/v2"
 import { useControlProjectionForConnection } from "@/components/session/session-fleet-control-projection"
-import { drivingBannerFromProjection } from "@/components/session/session-fleet-peers"
+import { drivingBannerFromProjection, drivenByBannerFromProjection } from "@/components/session/session-fleet-peers"
 
 function SessionTabSlot(props: {
   tab: SessionTab
@@ -32,6 +32,7 @@ function SessionTabSlot(props: {
   session: () => Session | undefined
   fallbackTitle?: string
   drivingMachineId?: () => string | undefined
+  drivenByMachine?: () => { machineId: string; machineName: string } | undefined
   onRename: (title: string) => Promise<void>
   onNavigate: (element: HTMLDivElement) => void
   onClose: () => void
@@ -63,6 +64,7 @@ function SessionTabSlot(props: {
         session={props.session}
         fallbackTitle={props.fallbackTitle}
         drivingMachineId={props.drivingMachineId}
+        drivenByMachine={props.drivenByMachine}
         onRename={props.onRename}
         onNavigate={() => props.onNavigate(ref)}
         onClose={props.onClose}
@@ -82,6 +84,7 @@ function SessionTabEntry(props: {
   forceTruncate: boolean
   serverCtx: () => ServerCtx | undefined
   drivingMachineId?: () => string | undefined
+  drivenByMachine?: () => { machineId: string; machineName: string } | undefined
   onVisibleChange: (visible: boolean) => void
   onNavigate: (element: HTMLDivElement) => void
   onClose: () => void
@@ -164,6 +167,7 @@ function SessionTabEntry(props: {
         forceTruncate={props.forceTruncate}
         session={session}
         drivingMachineId={props.drivingMachineId}
+        drivenByMachine={props.drivenByMachine}
         fallbackTitle={persisted()?.title ?? (missingSession() ? language.t("session.tab.unknown") : loadedSession.loading ? "\u2026" : undefined)}
         onRename={rename}
         onNavigate={props.onNavigate}
@@ -364,6 +368,10 @@ export function TitlebarTabStrip(props: {
                     const driving = drivingBannerFromProjection(controlProjection(), tab.sessionId)
                     return driving?.machineId
                   })
+                  const drivenByMachine = createMemo(() => {
+                    const driven = drivenByBannerFromProjection(controlProjection(), tab.sessionId)
+                    return driven ?? undefined
+                  })
                   return (
                     <SessionTabEntry
                       tab={tab}
@@ -373,6 +381,7 @@ export function TitlebarTabStrip(props: {
                       forceTruncate={props.forceTruncate}
                       serverCtx={serverCtx}
                       drivingMachineId={drivingMachineId}
+                      drivenByMachine={drivenByMachine}
                       onVisibleChange={(visible) => setVisibility(id, visible)}
                       onNavigate={(element) => {
                         ref = element
