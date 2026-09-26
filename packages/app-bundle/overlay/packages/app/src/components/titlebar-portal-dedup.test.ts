@@ -156,6 +156,33 @@ describe("#1577 AC1 — ownership transfer gives exactly one winner per mount", 
   })
 })
 
+describe("#1577 session-header wiring — the registry is consumed", () => {
+  test("session-header imports and uses the portal registry for claim/release/ownership", async () => {
+    const { readFileSync } = await import("node:fs")
+    const { resolve } = await import("node:path")
+    const source = readFileSync(resolve(__dirname, "session/session-header.tsx"), "utf8")
+
+    // Must import the registry
+    expect(source).toContain("claimPortalMount")
+    expect(source).toContain("isPortalOwner")
+    expect(source).toContain("releasePortalMount")
+
+    // Must claim the three session-scoped mount points
+    expect(source).toContain('claimPortalMount("sessions")')
+    expect(source).toContain('claimPortalMount("status")')
+    expect(source).toContain('claimPortalMount("side-panel")')
+
+    // Must gate portal rendering on ownership
+    expect(source).toContain('isPortalOwner("sessions"')
+    expect(source).toContain('isPortalOwner("status"')
+    expect(source).toContain('isPortalOwner("side-panel"')
+
+    // Must release on cleanup
+    expect(source).toContain("releasePortalMount(")
+    expect(source).toContain("onCleanup(")
+  })
+})
+
 describe("#1577 AC3 — no net-new /event subscriber", () => {
   test("the registry module does not import event, fetch, or subscription machinery", async () => {
     // Source-string assertion: the registry is pure signals + Map,
