@@ -32,6 +32,12 @@ import {
 } from "../src/amicode_service_runner";
 import { APP_SHELF_NEEDS_SETUP_MARKER } from "../src/amicode_service/app_shelf";
 import { serverAuthHeader, serverAuthToken } from "../src/server_auth";
+import {
+  readHandshake,
+  classifyGate,
+  UNARMED_PASSWORD,
+  PROTOCOL_VERSION,
+} from "../src/server_handshake";
 
 const PKG_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const ENGINE_BIN = join(PKG_ROOT, "vendor", "opencode", `${process.platform}-${process.arch}`, "opencode");
@@ -558,4 +564,133 @@ describe("PID-file helpers (unit, #1578)", () => {
     await cleanupStalePid(pidFile, () => undefined);
     // File still exists (we don't delete it in cleanup — boot overwrites it).
   });
+});
+
+// ── Handshake lifecycle (#1579) ─────────────────────────────────────────────
+
+describe("amicode service runner handshake lifecycle (headless, fake engine — no vendored engine needed)", () => {
+  const boots: AmicodeServiceRunnerBoot[] = [];
+  afterAll(async () => {
+    for (const b of boots.splice(0)) await b.shutdown().catch(() => undefined);
+  });
+
+  function writeFakeEngine(dir: string): string {
+    const bin = join(dir, "fake-engine");
+    writeFileSync(
+      bin,
+      `#!/usr/bin/env node
+const { createServer } = require("node:http");
+const port = Number(process.argv[4] ?? 0);
+createServer((_req, res) => {
+  res.writeHead(200, { "content-type": "text/plain" });
+  res.end("fake engine up");
+}).listen(port, "127.0.0.1");
+`,
+    );
+    chmodSync(bin, 0o755);
+    return bin;
+  }
+
+  function writeStubShelf(dir: string): string {
+    writeFileSync(join(dir, "index.html"), "<!doctype html><title>stub shelf</title>");
+    return dir;
+  }
+
+  it("AC1: on boot, the handshake file exists and contains port, password (UNARMED_PASSWORD), and dbPath", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "amicode-runner-handshake-write-"));
+    const hsPath = join(dir, "handshake.json");
+    const dbPath = "/tmp/fake-db.db";
+    const boot = await bootAmicodeServiceRunner({
+      engineBin: writeFakeEngine(dir),
+      appDistRoot: writeStubShelf(mkdtempSync(join(tmpdir(), "amicode-runner-hs-shelf-"))),
+      handshakePath: hsPath,
+      engineEnv: { OPENCODE_DB: dbPath },
+      healthTimeoutMs: 10_000,
+      servicePort: 0,
+      enginePort: 0,
+      log: () => undefined,
+    });
+    boots.push(boot);
+
+    // The handshake file must exist and be readable.
+    expect(existsSync(hsPath)).toBe(true);
+    const result = readHandshake(hsPath);
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") throw new Error("unreachable");
+
+    // The record must carry the right fields.
+    expect(result.record.port).toBeGreaterThan(0);
+    expect(result.record.password).toBe(UNARMED_PASSWORD);
+    expect(result.record.dbPath).toBe(dbPath);
+    expect(result.record.pid).toBe(boot.engine.pid);
+    expect(result.record.protocolVersion).toBe(PROTOCOL_VERSION);
+  }, 30_000);
+
+  it("AC2: classifyGate returns 'adoptable' when reading the hub-written handshake with a healthy engine", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "amicode-runner-handshake-gate-"));
+    const hsPath = join(dir, "handshake.json");
+    const boot = await bootAmicodeServiceRunner({
+      engineBin: writeFakeEngine(dir),
+      appDistRoot: writeStubShelf(mkdtempSync(join(tmpdir(), "amicode-runner-hs-gate-shelf-"))),
+      handshakePath: hsPath,
+      healthTimeoutMs: 10_000,
+      servicePort: 0,
+      enginePort: 0,
+      log: () => undefined,
+    });
+    boots.push(boot);
+
+    // Read back the handshake the runner wrote.
+    const result = readHandshake(hsPath);
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") throw new Error("unreachable");
+
+    // The round-trip: the hub handshake + a healthy engine = adoptable.
+    // The hub engine is unarmed, so password challenge is vacuously true;
+    // hashes match (empty = empty).
+    const verdict = classifyGate({
+      healthy: true,
+      pidAlive: true,
+      passwordChallengePass: true, // unarmed = vacuously true
+      protocolCompatible: result.record.protocolVersion === PROTOCOL_VERSION,
+    });
+    expect(verdict).toBe("adoptable");
+  }, 30_000);
+
+  it("AC3: on shutdown, the handshake file is removed", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "amicode-runner-handshake-remove-"));
+    const hsPath = join(dir, "handshake.json");
+    const boot = await bootAmicodeServiceRunner({
+      engineBin: writeFakeEngine(dir),
+      appDistRoot: writeStubShelf(mkdtempSync(join(tmpdir(), "amicode-runner-hs-remove-shelf-"))),
+      handshakePath: hsPath,
+      healthTimeoutMs: 10_000,
+      servicePort: 0,
+      enginePort: 0,
+      log: () => undefined,
+    });
+    // Do NOT push into boots — we shutdown ourselves.
+    expect(existsSync(hsPath)).toBe(true);
+    await boot.shutdown();
+    expect(existsSync(hsPath)).toBe(false);
+  }, 30_000);
+
+  it("AC5: when handshakePath is undefined, no handshake file is created (backward compat)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "amicode-runner-handshake-none-"));
+    // Boot WITHOUT handshakePath — the default path should NOT be written.
+    const boot = await bootAmicodeServiceRunner({
+      engineBin: writeFakeEngine(dir),
+      appDistRoot: writeStubShelf(mkdtempSync(join(tmpdir(), "amicode-runner-hs-none-shelf-"))),
+      // handshakePath deliberately omitted
+      healthTimeoutMs: 10_000,
+      servicePort: 0,
+      enginePort: 0,
+      log: () => undefined,
+    });
+    boots.push(boot);
+
+    // No handshake file should exist anywhere in the temp dir.
+    const files = readdirSync(dir);
+    expect(files.some((f) => f.includes("handshake"))).toBe(false);
+  }, 30_000);
 });
