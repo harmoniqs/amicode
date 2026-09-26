@@ -85,6 +85,10 @@ import { KeybindV2 } from "@opencode-ai/ui/v2/keybind-v2"
 import { TooltipV2 } from "@opencode-ai/ui/v2/tooltip-v2"
 import { reviewTooltipKeybind } from "../command-tooltip-keybind"
 import { useTitlebarRightMount, useTitlebarControlMount } from "../titlebar"
+// #1577: portal dedup registry — enforces exactly one portal source per
+// session-scoped mount point across concurrent SessionHeader mounts
+// (the startTransition double-mount during remote session focus).
+import { claimPortalMount, isPortalOwner, releasePortalMount } from "../titlebar-portal-registry"
 // #1562-followup (Slice A): the shared control-projection poll — extracted to
 // session-fleet-control-projection.ts so the titlebar tab strip can share the
 // same ref-counted singleton without importing this component file.
@@ -364,6 +368,21 @@ export function SessionHeader() {
   const sessionsMount = useTitlebarControlMount("sessions")
   const statusMount = useTitlebarControlMount("status")
   const sidePanelMount = useTitlebarControlMount("side-panel")
+
+  // #1577: claim exclusive ownership of each session-scoped mount point.
+  // During startTransition, a new SessionHeader can mount while the old one
+  // is still alive — both render portals into the same mount divs, doubling
+  // controls. The registry makes isPortalOwner() return false for the stale
+  // component, so its portals conditionally hide.
+  const sessionsToken = claimPortalMount("sessions")
+  const statusToken = claimPortalMount("status")
+  const sidePanelToken = claimPortalMount("side-panel")
+  onCleanup(() => {
+    releasePortalMount("sessions", sessionsToken)
+    releasePortalMount("status", statusToken)
+    releasePortalMount("side-panel", sidePanelToken)
+  })
+
   onMount(() => {
     setCenterMount(document.getElementById("opencode-titlebar-center"))
   })
@@ -615,9 +634,11 @@ export function SessionHeader() {
           </Portal>
         )}
       </Show>
-      {/* V2 per-button portals — each session-scoped control portals to its own mount point */}
+      {/* V2 per-button portals — each session-scoped control portals to its own mount point.
+          #1577: each portal is gated on isPortalOwner so that during startTransition
+          (two concurrent SessionHeaders), only the latest owner renders. */}
       <Show when={isV2}>
-        <Show when={sessionsMount()} keyed>
+        <Show when={isPortalOwner("sessions", sessionsToken) && sessionsMount()} keyed>
           {(mount) => (
             <Portal mount={mount}>
               <span class="flex shrink-0" data-tour-target="sessions">
@@ -627,7 +648,7 @@ export function SessionHeader() {
           )}
         </Show>
         <Show when={!AMICODE_HIDE_STATUS_POPOVER}>
-          <Show when={statusMount()} keyed>
+          <Show when={isPortalOwner("status", statusToken) && statusMount()} keyed>
             {(mount) => (
               <Portal mount={mount}>
                 <span class="flex shrink-0" data-tour-target="status">
@@ -640,7 +661,7 @@ export function SessionHeader() {
           </Show>
         </Show>
         <Show when={v2ActionsState().reviewVisible}>
-          <Show when={sidePanelMount()} keyed>
+          <Show when={isPortalOwner("side-panel", sidePanelToken) && sidePanelMount()} keyed>
             {(mount) => (
               <Portal mount={mount}>
                 <TooltipV2
