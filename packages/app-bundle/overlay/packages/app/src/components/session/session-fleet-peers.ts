@@ -31,6 +31,13 @@ export interface SessionOwnerTag {
   is_local: boolean
 }
 
+/** #1568: the presence indicator overlay — which remote machine is controlling
+ *  this (local) session. Stamped on LOCAL session entries only. */
+export interface ControlledByTag {
+  machine_id: string
+  machine_name: string
+}
+
 /** A dropdown session row — the SDK session shape plus the optional owner
  *  overlay a peer entry carries. */
 export type DropdownSession = Session & {
@@ -38,6 +45,10 @@ export type DropdownSession = Session & {
   /** #1544 (slice 4): the state channel — the app-visible control shape the
    *  fleet projection stamps beside `amicode_owner` (see SessionControlProjection). */
   amicode_control?: SessionControlProjection
+  /** #1568: the presence indicator — which remote machine is controlling this
+   *  local session, if any. Absent on remote sessions and when no control grant
+   *  is active. */
+  amicode_controlled_by?: ControlledByTag
 }
 
 // ── #1544 (slice 4): the CONTROL STATE CHANNEL (mirror of the extension's
@@ -197,12 +208,12 @@ export function findSessionControlInProjection(raw: unknown, sessionId: string):
 function findSessionEntryInProjection(
   raw: unknown,
   sessionId: string,
-): { amicode_owner?: SessionOwnerTag; amicode_control?: unknown } | undefined {
+): { amicode_owner?: SessionOwnerTag; amicode_control?: unknown; amicode_controlled_by?: unknown } | undefined {
   if (!raw || typeof raw !== "object") return undefined
   const sessions = (raw as { sessions?: unknown }).sessions
   if (!Array.isArray(sessions)) return undefined
   const hit = sessions.find((s) => s && typeof s === "object" && (s as { id?: unknown }).id === sessionId)
-  return hit as { amicode_owner?: SessionOwnerTag; amicode_control?: unknown } | undefined
+  return hit as { amicode_owner?: SessionOwnerTag; amicode_control?: unknown; amicode_controlled_by?: unknown } | undefined
 }
 
 /** The driving banner for the CURRENT session id, read off the fleet projection.
@@ -211,6 +222,31 @@ function findSessionEntryInProjection(
  *  garbage → null (no banner). */
 export function drivingBannerFromProjection(raw: unknown, sessionId: string): { machineId: string } | null {
   return drivingBanner(findSessionEntryInProjection(raw, sessionId))
+}
+
+/** #1568: the REVERSE of drivingBanner — presence indicator for a locally-owned
+ *  session being remotely controlled. Non-null only when the session is LOCAL
+ *  (is_local === true) AND carries `amicode_controlled_by` (a remote machine
+ *  holds an active control grant targeting this machine). Remote sessions never
+ *  show this (they are the controller's sessions, not ours). */
+export function drivenByBanner(
+  session: { amicode_owner?: SessionOwnerTag; amicode_controlled_by?: unknown } | undefined,
+): { machineId: string; machineName: string } | null {
+  if (!session) return null
+  // Only local sessions can be "driven by" a remote controller
+  if (!session.amicode_owner || session.amicode_owner.is_local === false) return null
+  const cb = session.amicode_controlled_by
+  if (!cb || typeof cb !== "object") return null
+  const o = cb as Record<string, unknown>
+  if (typeof o.machine_id !== "string" || typeof o.machine_name !== "string") return null
+  return { machineId: o.machine_id, machineName: o.machine_name }
+}
+
+/** #1568: the driven-by banner for the CURRENT session id, read off the fleet
+ *  projection. Non-null only when that session is a LOCAL session being remotely
+ *  controlled. Unknown id / no controller / garbage → null. */
+export function drivenByBannerFromProjection(raw: unknown, sessionId: string): { machineId: string; machineName: string } | null {
+  return drivenByBanner(findSessionEntryInProjection(raw, sessionId))
 }
 
 /** The owner tag for the CURRENT session id, read off the fleet projection — the

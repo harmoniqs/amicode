@@ -139,9 +139,9 @@
     "packages/app/src/components/titlebar-layout.test.ts": "00708b4dd63a357f76bec035ce0fad017e5b24c18129f38df039f587e9e71f71",
     "packages/app/src/components/titlebar-layout.ts": "a375c238ab632421a6505dce3a41fd3894865729e921e68eb32249478c18a286",
     "packages/app/src/components/titlebar-tab-nav.css": "90930c2f9476fb0eace8692424a029b3510781c88d1ee61f7f2edba559526832",
-    "packages/app/src/components/titlebar-tab-nav.tsx": "cda055f144ee4b2b5d3fdcd4110f1733a7bab18449fc3aedaefba69fcc16a2d2",
+    "packages/app/src/components/titlebar-tab-nav.tsx": "0d5e11f63006e87fc42a4682c481203f50622677b07a8ff87a3348613cdf3674",
     "packages/app/src/components/titlebar-tab-popover.css": "d731db2d7d49838004089a3d82ff68c22214b0ca636bf3b8e02498c14dadbf8d",
-    "packages/app/src/components/titlebar-tab-strip.tsx": "7ca21ec072f0271e9332d792a189609c927fc5f129406fedf1a857bc756c9d3e",
+    "packages/app/src/components/titlebar-tab-strip.tsx": "a3c8a8df186a6164494230bec7f302cfe3a1cf658e3ab10f9ef0af4f5d63c038",
     "packages/app/src/components/titlebar.css": "50c262603ba1140db9e4fefe8f03e9c6ae3bf64dc7a917e55586bfd67a5e3011",
     "packages/app/src/components/titlebar.tsx": "c53f438701e97cbe3fbf2eaa67fb584a0b8b3a91f2d4f8016542156e17cd598c",
     "packages/app/src/components/vault-browser-model.test.ts": "7ca11eae3574033d58081bc4126b1ec772a5b496573c70159f05497a1365f4cd",
@@ -644,9 +644,9 @@
     "packages/app/src/components/session/session-chats-dropdown.test.ts": "b5f178bea1b52788d6f794d09ccf7ff81f745633ad59e2d438cfc80b96acde55",
     "packages/app/src/components/session/session-context-tab.tsx": "227243b178b517f067d9ae0ae0eec3c559beeb6681828158b0600a17e98e7f81",
     "packages/app/src/components/session/session-fleet-control-projection.ts": "8fb86805827498bc02297c1102f6f7ada62351df1f7030cd120123298728568e",
-    "packages/app/src/components/session/session-fleet-peers.test.ts": "61629b43229afb150e414afb9ad5ecba1f1039c6c11e68c8f608af3915db9cb1",
-    "packages/app/src/components/session/session-fleet-peers.ts": "4fe7c8277e113e780dd627bbafc5d708aee18951f87821a95900c9f306e6a6c0",
-    "packages/app/src/components/session/session-header.test.tsx": "384b190c9b9954260175a3e819c8dccae003a4d9ca8e43537485e1efa498c539",
+    "packages/app/src/components/session/session-fleet-peers.test.ts": "b1debe397c7e73d19a10094ba9dec112768307b631b8adb9a4b994bb5d96b019",
+    "packages/app/src/components/session/session-fleet-peers.ts": "0263bcd31954973c0189d63a49a100a43ab175c03625cbcbccb3f5121ba6bf35",
+    "packages/app/src/components/session/session-header.test.tsx": "20804a66b8f872be1da2c2b9f70ddbd4b5ef8a745cf7d29bd6654dba064547cb",
     "packages/app/src/components/session/session-header.tsx": "3d21d570d04ead89613be918b81b06c5fed6d5feb6cf297b1e21ee9b9cffe2b3",
     "packages/app/src/components/session/session-new-view.tsx": "9510a4f550a3f0d4791e98e8025666f09d70a60fb66f193e48ee61feddae5a57",
     "packages/app/src/components/session/session-preview-tab.tsx": "d3a210598d181c0aa29e9f3b5db3cd691169f3ee467001313a3d9a24bee93dbe",
@@ -898,7 +898,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-09-26T01:05:15.394Z",
+  "extracted_at": "2026-09-26T01:52:54.791Z",
   "per_package": {
     "packages/app": {
       "A": 206,

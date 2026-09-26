@@ -23,6 +23,7 @@ export function TabNavItem(props: {
   session: () => Session | undefined
   fallbackTitle?: string
   drivingMachineId?: () => string | undefined
+  drivenByMachine?: () => { machineId: string; machineName: string } | undefined
   onRename: (title: string) => Promise<void>
   onClose: () => void
   onNavigate: () => void
@@ -247,6 +248,17 @@ export function TabNavItem(props: {
                 class="flex size-3.5 shrink-0 items-center justify-center text-v2-text-text-faint"
               >
                 <IconV2 name="monitor" class="opacity-70" />
+              </span>
+            )}
+          </Show>
+          <Show when={props.drivenByMachine?.()}>
+            {(machine) => (
+              <span
+                data-slot="tab-driven-by-remote"
+                title={`Driven by ${machine().machineName}`}
+                class="flex size-3.5 shrink-0 items-center justify-center text-v2-text-text-faint"
+              >
+                <IconV2 name="eye" class="opacity-70" />
               </span>
             )}
           </Show>

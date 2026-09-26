@@ -14,6 +14,8 @@ import {
   controlAffordance,
   drivingBanner,
   drivingBannerFromProjection,
+  drivenByBanner,
+  drivenByBannerFromProjection,
   remoteDeleteAction,
   findSessionControlInProjection,
   groupSessionsByOwner,
@@ -425,5 +427,69 @@ describe("#1562 the dropdown renders peer rows in a labeled machine group", () =
   test("the dropdown groups by owner via groupSessionsByOwner and renders a per-machine label", () => {
     expect(headerSource).toContain("groupSessionsByOwner(")
     expect(headerSource).toContain('data-slot="session-group-label"')
+  })
+})
+
+// ── #1568: drivenByBanner — presence indicator for locally-owned sessions
+// being remotely controlled. The REVERSE of drivingBanner: a local session
+// whose projection entry carries `amicode_controlled_by` shows who is driving.
+describe("#1568 drivenByBanner — presence indicator for a locally-controlled session", () => {
+  test("local session with amicode_controlled_by → banner carries the controller machine info", () => {
+    const session = {
+      id: "ses_local",
+      directory: "/proj",
+      time: { created: 1 },
+      amicode_owner: localTag,
+      amicode_controlled_by: { machine_id: "peer-studio", machine_name: "Mac Studio" },
+    } as DropdownSession
+    expect(drivenByBanner(session)).toEqual({ machineId: "peer-studio", machineName: "Mac Studio" })
+  })
+
+  test("local session without amicode_controlled_by → no banner", () => {
+    const session = {
+      id: "ses_local",
+      directory: "/proj",
+      time: { created: 1 },
+      amicode_owner: localTag,
+    } as DropdownSession
+    expect(drivenByBanner(session)).toBeNull()
+  })
+
+  test("remote session with amicode_controlled_by → no banner (only local sessions show it)", () => {
+    const session = {
+      id: "ses_remote",
+      directory: "/proj",
+      time: { created: 1 },
+      amicode_owner: studioTag,
+      amicode_controlled_by: { machine_id: "peer-x", machine_name: "X" },
+    } as DropdownSession
+    expect(drivenByBanner(session)).toBeNull()
+  })
+
+  test("undefined / garbage → no banner (tolerant, never throws)", () => {
+    expect(drivenByBanner(undefined)).toBeNull()
+    expect(drivenByBanner({} as DropdownSession)).toBeNull()
+  })
+
+  test("drivenByBannerFromProjection reads the overlay off the fleet projection by session id", () => {
+    const raw = {
+      sessions: [
+        {
+          id: "ses_local",
+          time: { created: 1 },
+          amicode_owner: { owner_machine_id: "me", owner_name: "Me", is_local: true },
+          amicode_controlled_by: { machine_id: "studio", machine_name: "Mac Studio" },
+        },
+        {
+          id: "ses_no_control",
+          time: { created: 2 },
+          amicode_owner: { owner_machine_id: "me", owner_name: "Me", is_local: true },
+        },
+      ],
+    }
+    expect(drivenByBannerFromProjection(raw, "ses_local")).toEqual({ machineId: "studio", machineName: "Mac Studio" })
+    expect(drivenByBannerFromProjection(raw, "ses_no_control")).toBeNull()
+    expect(drivenByBannerFromProjection(raw, "unknown")).toBeNull()
+    expect(drivenByBannerFromProjection(undefined, "x")).toBeNull()
   })
 })

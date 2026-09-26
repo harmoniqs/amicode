@@ -38,6 +38,13 @@ export interface SessionOwnerTag {
   is_local: boolean;
 }
 
+/** #1568: the presence indicator — which remote machine is controlling this
+ *  (local) machine's sessions, if any. Stamped on LOCAL session entries only. */
+export interface ControlledByTag {
+  machine_id: string;
+  machine_name: string;
+}
+
 /** A remote peer source for the fleet-wide fan-out. */
 export interface FleetPeerSource {
   machineId: string;
@@ -78,6 +85,12 @@ export interface FleetProjectionOptions {
    *  ({ controlState, reason, eligibility }) derived from the SoT
    *  (remote_session_state) for its owner. Absent ⇒ no field (back-compat). */
   resolveControl?: (ownerMachineId: string, isLocal: boolean) => SessionControlProjection;
+  /** #1568: the OPTIONAL presence-indicator resolver. When present and returning
+   *  a value, LOCAL session entries are stamped with `amicode_controlled_by`
+   *  ({ machine_id, machine_name }) — the controlling machine's identity. Remote
+   *  sessions are never stamped (they are owned by a peer, not by this machine).
+   *  Absent or returning undefined ⇒ no field (back-compat). */
+  resolveControlledBy?: () => ControlledByTag | undefined;
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
 }
@@ -87,8 +100,10 @@ export interface FleetProjection {
   ok: true;
   mode: "fleet";
   /** Each entry carries `amicode_owner` (the owner tag overlay) and, when a
-   *  control resolver was supplied, `amicode_control` (the state channel). */
-  sessions: Array<Record<string, unknown> & { amicode_owner?: SessionOwnerTag; amicode_control?: SessionControlProjection }>;
+   *  control resolver was supplied, `amicode_control` (the state channel).
+   *  #1568: LOCAL entries may also carry `amicode_controlled_by` when a remote
+   *  machine holds an active control grant targeting this machine. */
+  sessions: Array<Record<string, unknown> & { amicode_owner?: SessionOwnerTag; amicode_control?: SessionControlProjection; amicode_controlled_by?: ControlledByTag }>;
   /** Keyed by machine_id (string), not the old "local"|"hub" pair. */
   sources: Record<string, SourceFetchRecord>;
   currency: { token: string; sources: string[]; derived_over: "fetched" };
@@ -334,14 +349,17 @@ export function peerAuthHeader(token: string): string {
 /** Tag each session entry with its owner machine's identity, joining the
  *  roster for name/device_type. When `resolveControl` is supplied (#1544), the
  *  app-visible `amicode_control` state channel is stamped alongside — one
- *  resolution per source (state is per-owner, not per-session). */
+ *  resolution per source (state is per-owner, not per-session).
+ *  #1568: when `controlledBy` is supplied AND the session is local, the entry
+ *  gains `amicode_controlled_by` — the presence indicator for remote control. */
 function tagSessionsWithOwner(
   entries: Record<string, unknown>[],
   machineId: string,
   isLocal: boolean,
   rosterLookup: (id: string) => RosterEntry | undefined,
   resolveControl?: (ownerMachineId: string, isLocal: boolean) => SessionControlProjection,
-): Array<Record<string, unknown> & { amicode_owner?: SessionOwnerTag; amicode_control?: SessionControlProjection }> {
+  controlledBy?: ControlledByTag,
+): Array<Record<string, unknown> & { amicode_owner?: SessionOwnerTag; amicode_control?: SessionControlProjection; amicode_controlled_by?: ControlledByTag }> {
   const roster = rosterLookup(machineId);
   const control = resolveControl ? resolveControl(machineId, isLocal) : undefined;
   return entries.map((e) => ({
@@ -355,15 +373,16 @@ function tagSessionsWithOwner(
       is_local: isLocal,
     },
     ...(control ? { amicode_control: control } : {}),
+    ...(isLocal && controlledBy ? { amicode_controlled_by: controlledBy } : {}),
   }));
 }
 
 /** Merge N sources into one deduplicated list. Later sources (by array order)
  *  win on conflict (same session id in multiple stores). */
 function mergeNSources(
-  taggedSources: Array<{ machineId: string; entries: Array<Record<string, unknown> & { amicode_owner?: SessionOwnerTag; amicode_control?: SessionControlProjection }> }>,
-): Array<Record<string, unknown> & { amicode_owner?: SessionOwnerTag; amicode_control?: SessionControlProjection }> {
-  const out: Array<Record<string, unknown> & { amicode_owner?: SessionOwnerTag; amicode_control?: SessionControlProjection }> = [];
+  taggedSources: Array<{ machineId: string; entries: Array<Record<string, unknown> & { amicode_owner?: SessionOwnerTag; amicode_control?: SessionControlProjection; amicode_controlled_by?: ControlledByTag }> }>,
+): Array<Record<string, unknown> & { amicode_owner?: SessionOwnerTag; amicode_control?: SessionControlProjection; amicode_controlled_by?: ControlledByTag }> {
+  const out: Array<Record<string, unknown> & { amicode_owner?: SessionOwnerTag; amicode_control?: SessionControlProjection; amicode_controlled_by?: ControlledByTag }> = [];
   const seen = new Map<string, number>();
   for (const { entries } of taggedSources) {
     for (const e of entries) {
@@ -434,10 +453,13 @@ export async function buildFleetProjection(opts: FleetProjectionOptions): Promis
 
   // Tag each source's sessions with owner info (roster join) + the #1544 state
   // channel (amicode_control), when a resolver was supplied.
-  const taggedSources: Array<{ machineId: string; entries: Array<Record<string, unknown> & { amicode_owner?: SessionOwnerTag; amicode_control?: SessionControlProjection }> }> = [];
+  // #1568: resolve the controlled_by overlay for LOCAL sessions (once, not
+  // per-session — it is machine-scoped, not session-scoped).
+  const controlledBy = opts.resolveControlledBy ? opts.resolveControlledBy() : undefined;
+  const taggedSources: Array<{ machineId: string; entries: Array<Record<string, unknown> & { amicode_owner?: SessionOwnerTag; amicode_control?: SessionControlProjection; amicode_controlled_by?: ControlledByTag }> }> = [];
   taggedSources.push({
     machineId: opts.localMachineId,
-    entries: tagSessionsWithOwner(localResult.entries, opts.localMachineId, true, opts.rosterLookup, opts.resolveControl),
+    entries: tagSessionsWithOwner(localResult.entries, opts.localMachineId, true, opts.rosterLookup, opts.resolveControl, controlledBy),
   });
   for (let i = 0; i < opts.peers.length; i++) {
     taggedSources.push({
