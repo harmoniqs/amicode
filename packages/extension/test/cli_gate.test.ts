@@ -17,6 +17,15 @@ import { declaredBins, PROBES, runGate } from "../scripts/assert_packaged_cli.mj
 
 const REAL_BIN_MAP = join(__dirname, "..", "..", "amico-run", "package.json");
 const REAL_BIN_DIR = join(__dirname, "..", "bin");
+// The staged set is a BUILD ARTIFACT: `bin/launcher/*` is gitignored and only
+// exists after `pnpm -r run build` (which CI runs before this test). A partial
+// tree — e.g. a fresh worktree where only `pnpm install` ran — has `bin/`
+// (its `dist/` subdir) but NO launchers, so keying the skip on `bin/` alone
+// false-fires this integration check against an unbuilt set. Gate on a canonical
+// staged LAUNCHER instead: run when the set is actually staged (CI / a built
+// checkout), skip otherwise — the stub `runGate` cases above keep proving the
+// absence/staleness mutation direction regardless.
+const REAL_SET_STAGED = existsSync(join(REAL_BIN_DIR, "launcher", "amico-run"));
 
 // ── fixture helpers ─────────────────────────────────────────────────────────
 
@@ -182,7 +191,7 @@ exit 0`,
 
 // ── the real staged set (CI runs this after `pnpm -r run build`) ────────────
 
-describe.skipIf(!existsSync(REAL_BIN_DIR))("runGate against the really staged bins", () => {
+describe.skipIf(!REAL_SET_STAGED)("runGate against the really staged bins", () => {
   it("the freshly staged CLI passes every check for every declared bin", async () => {
     const { ok, results } = await runGate({ binDir: REAL_BIN_DIR, binMapPath: REAL_BIN_MAP });
     expect(failing(results)).toEqual([]);
