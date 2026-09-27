@@ -12,6 +12,7 @@ import {
   parseProblemResponse,
   parseRunStatusResponse,
   railState,
+  shouldRefetchOnReconnect,
 } from "./problem"
 
 // AMICODE problem-header rail (spec B). One compact sticky row per session
@@ -108,6 +109,12 @@ export function AmicodeEntityRail(props: {
   // When true, the rail is completely hidden. Used to prevent the rail from
   // showing in unrelated chat sessions (issue #272).
   disabled?: boolean
+  // Live stream-connected signal (the app's serverSDK event status). The rail
+  // refetches /amicode/problem on the disconnect→connect edge so a view
+  // stranded by a connection blip heals once the stream reconnects — never on
+  // the initial connect, never while steadily connected. Optional so hosts
+  // that can't supply status leave rail behavior unchanged (#1585).
+  streamConnected?: () => boolean
 }) {
   if (props.onAsk) {
     const dispose = registerAmicodeAskBridge({
@@ -190,6 +197,21 @@ export function AmicodeEntityRail(props: {
     editLabel: props.editLabel,
   })
   onCleanup(disposeUiBridge)
+
+  // Self-heal on reconnect (#1585): when the host supplies a stream-connected
+  // signal, refetch /amicode/problem on the disconnect→connect edge so a view
+  // stranded by a connection blip recovers once the stream is back. `prev` is a
+  // plain closure `let` — the effect tracks ONLY the connected signal, never the
+  // resource's own state, so there is no refetch feedback loop. Omitting the
+  // prop leaves behavior unchanged (the effect's body is a no-op).
+  let prevConnected: boolean | undefined = undefined
+  createEffect(() => {
+    const signal = props.streamConnected
+    if (!signal) return
+    const next = signal()
+    if (shouldRefetchOnReconnect(prevConnected, next)) void refetch()
+    prevConnected = next
+  })
 
   // Recomputed on any warrant change; no ticker, so an expiry crossing resolves on
   // the next refetch rather than needing a timer per rail.

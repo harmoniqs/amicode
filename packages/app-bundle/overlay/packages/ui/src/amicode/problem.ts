@@ -404,6 +404,17 @@ export function railState(current: ProblemView | undefined, lastGood: ProblemVie
   return { kind: "unavailable", error: current.error }
 }
 
+/** True iff the stream-connected signal made a genuine disconnect→connect edge
+ *  (`false → true`) — the moment the rail should refetch `/amicode/problem` to
+ *  heal a view stranded by a connection blip. The initial connect
+ *  (`undefined → true`) returns false: there is nothing to heal yet, and the
+ *  completed-part resource key already drives the first fetch. Steady
+ *  connection (`true → true`) and going down (`true → false`) never refetch.
+ *  Pure so it is unit-tested in place without solid-js. */
+export function shouldRefetchOnReconnect(previous: boolean | undefined, next: boolean): boolean {
+  return previous === false && next === true
+}
+
 // --- entity view helpers -------------------------------------------------------
 
 export type EntityRow = { key: string; value: string }

@@ -2629,6 +2629,9 @@ export function MessageTimeline(props: {
                   .then(() => void refetchWarrants())
                   .catch(() => void refetchWarrants())
               }}
+              // #1585: the rail self-heals /amicode/problem on the stream's
+              // disconnect→connect edge, driven by the app's live SSE status.
+              streamConnected={() => serverSDK().event.status() === "connected"}
             />
             {/* amicode#271: bubble inside the header — naturally below the
                 title row + chip rail */}

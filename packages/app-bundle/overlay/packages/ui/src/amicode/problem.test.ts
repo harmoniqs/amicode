@@ -17,6 +17,7 @@ import {
   compositeChip,
   compositeSystemRows,
   systemProjection,
+  shouldRefetchOnReconnect,
 } from "./problem"
 
 describe("wire parsers are tolerant and never throw", () => {
@@ -158,6 +159,21 @@ describe("railState", () => {
     })
     expect(railState(bad, good)).toMatchObject({ kind: "ready", stale: true }) // last-good wins
     expect(railState(bad, undefined).kind).toBe("unavailable")
+  })
+})
+
+describe("shouldRefetchOnReconnect (rail self-heals on disconnect→connect edge)", () => {
+  test("initial connect (undefined → true) does NOT refetch", () => {
+    expect(shouldRefetchOnReconnect(undefined, true)).toBe(false)
+  })
+  test("reconnect (false → true) DOES refetch — the rising edge after a real disconnect", () => {
+    expect(shouldRefetchOnReconnect(false, true)).toBe(true)
+  })
+  test("steadily connected (true → true) does NOT refetch", () => {
+    expect(shouldRefetchOnReconnect(true, true)).toBe(false)
+  })
+  test("going down (true → false) does NOT refetch", () => {
+    expect(shouldRefetchOnReconnect(true, false)).toBe(false)
   })
 })
 
