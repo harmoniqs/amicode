@@ -15,7 +15,17 @@ export function statusBarLabel(
   // that only know the server is ready; the manager always passes the real
   // stream state (L1, #638)
   sseState: SseState = "live",
+  // #1572 follow-up: deferred activation (amicode.chat.autoOpen=false) leaves
+  // serverReady permanently false until an on-demand command starts the
+  // server — "(booting)" would lie about a boot that was never triggered.
+  idle = false,
 ): { text: string; tooltip: string } {
+  if (idle) {
+    return {
+      text: "$(circle-outline) Amicode (idle)",
+      tooltip: "Amicode is idle — click to start the opencode server and open chat.",
+    };
+  }
   if (!serverReady) return { text: "$(loading~spin) Amicode (booting)", tooltip: "Spawning opencode server…" };
   switch (sseState) {
     case "live":
@@ -39,6 +49,7 @@ export class StatusBarManager {
   private readonly item: vscode.StatusBarItem;
   private serverReady = false;
   private sseState: SseState = "connecting";
+  private idle = false;
 
   constructor() {
     this.item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
@@ -49,6 +60,15 @@ export class StatusBarManager {
 
   setServerReady(ready: boolean): void {
     this.serverReady = ready;
+    this.render();
+  }
+
+  /** #1572 follow-up: the server bring-up hasn't been triggered yet (deferred
+   *  activation) — distinct from "booting", which implies a boot in progress.
+   *  Cleared the moment ensureLocalServer() actually kicks off the deferred
+   *  start, so it never lingers once a real boot begins. */
+  setIdle(idle: boolean): void {
+    this.idle = idle;
     this.render();
   }
 
@@ -64,7 +84,7 @@ export class StatusBarManager {
   }
 
   private render(): void {
-    const { text, tooltip } = statusBarLabel(this.serverReady, this.sseState);
+    const { text, tooltip } = statusBarLabel(this.serverReady, this.sseState, this.idle);
     this.item.text = text;
     this.item.tooltip = tooltip;
   }

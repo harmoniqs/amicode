@@ -33,4 +33,15 @@ describe("statusBarLabel", () => {
     expect(statusBarLabel(false, "stale").text).toMatch(/booting/i);
     expect(statusBarLabel(false, "dead").text).toMatch(/booting/i);
   });
+
+  // #1572 follow-up: deferred activation (chat.autoOpen=false) must not show
+  // "(booting)" — no boot was ever triggered, so that label would be a lie.
+  it("idle shows a distinct label, not booting", () => {
+    const s = statusBarLabel(false, "live", true);
+    expect(s.text).toMatch(/idle/i);
+    expect(s.text).not.toMatch(/booting/i);
+  });
+  it("idle overrides serverReady=true too", () => {
+    expect(statusBarLabel(true, "live", true).text).toMatch(/idle/i);
+  });
 });
