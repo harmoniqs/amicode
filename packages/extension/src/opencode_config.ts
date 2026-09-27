@@ -437,6 +437,97 @@ export function validatedModelPin(pin: string | undefined, configDir?: string): 
   }
 }
 
+/** The RESOLVED inputs the config object is assembled from — every value here
+ *  is already computed (paths resolved, skills staged, mounts read). Both the
+ *  per-session path (buildOpencodeConfigContent) and the machine-stable hub
+ *  path (buildMachineStableConfig) funnel through assembleOpencodeConfig with
+ *  this shape, so the SHARED config keys have ONE source of truth (no copy-paste
+ *  divergence, #1581 L2). */
+export interface AssembledConfigInputs {
+  agentsPath: string;
+  templatePath: string;
+  runsRoot: string;
+  scoresRoot: string;
+  /** Absolute SKILL.md paths indexed this session — one least-privilege read
+   *  grant per skill's own directory. */
+  skillPaths: string[];
+  /** Absolute dir holding the staged opencode-native skills (skills.paths). ""
+   *  omits the skills key. */
+  skillsStageDir: string;
+  vaultDir: string;
+  mounts: Mount[];
+  modelPin?: string;
+  telemetryOpen: boolean;
+  extraPluginPaths: string[];
+}
+
+/** Assemble the opencode config OBJECT (not yet stringified) from fully-resolved
+ *  inputs. This is the single source of truth for the shared config shape —
+ *  default_agent, instructions, plugin, mcp.amicode (+ slack), skills.paths,
+ *  and the external_directory permission block. Kept pure (no fs/process reads
+ *  beyond problemsRoot()/readCredential(), matching the prior inlined behavior)
+ *  so both the session builder and the machine-stable hub builder share it. */
+function assembleOpencodeConfig(input: AssembledConfigInputs): Record<string, unknown> {
+  const { agentsPath, templatePath, runsRoot, scoresRoot, skillPaths, skillsStageDir, vaultDir, mounts, modelPin, telemetryOpen, extraPluginPaths } = input;
+  const templatesDir = path.dirname(templatePath);
+  const skillGrants: Record<string, string> = {};
+  for (const p of skillPaths) skillGrants[`${path.dirname(p)}/**`] = "allow";
+  const skills = skillsStageDir ? { paths: [skillsStageDir] } : undefined;
+  return {
+    $schema: "https://opencode.ai/config.json",
+    default_agent: "plan",
+    ...(modelPin ? { model: modelPin } : {}),
+    instructions: [agentsPath],
+    plugin: [...extraPluginPaths],
+    mcp: {
+      amicode: {
+        type: "local",
+        command: ["node", DEFAULT_MCP_DIST_PATH],
+        enabled: true,
+        environment: {
+          AMICODE_PROBLEMS_DIR: problemsRoot(),
+          ...(process.env.AMICODE_ENTITIES_DIR ? { AMICODE_ENTITIES_DIR: process.env.AMICODE_ENTITIES_DIR } : {}),
+        },
+      },
+      ...(() => {
+        const slackCred = readCredential("slack");
+        return slackCred?.token
+          ? {
+              slack: {
+                type: "local",
+                command: ["npx", "-y", "slack-mcp-server"],
+                enabled: true,
+                environment: {
+                  SLACK_MCP_XOXP_TOKEN: slackCred.token,
+                  SLACK_MCP_ADD_MESSAGE_TOOL: "true",
+                },
+              },
+            }
+          : {};
+      })(),
+    },
+    ...(skills ? { skills } : {}),
+    ...(telemetryOpen ? { experimental: { openTelemetry: true } } : {}),
+    permission: {
+      bash: "allow",
+      edit: "allow",
+      external_directory: {
+        [templatePath]: "allow",
+        [`${templatesDir}/**`]: "allow",
+        [`${SCRATCH_DIR}/**`]: "allow",
+        [`/private${SCRATCH_DIR}/**`]: "allow",
+        [`${runsRoot}/**`]: "allow",
+        [`${path.join(os.homedir(), ".amico")}/**`]: "allow",
+        [`${problemsRoot()}/**`]: "allow",
+        [`${scoresRoot}/**`]: "allow",
+        ...skillGrants,
+        ...Object.fromEntries(mounts.map((m) => [`${m.path}/**`, "allow"])),
+        ...(vaultDir ? { [`${vaultDir}/amicode/**`]: "allow" } : {}),
+      },
+    },
+  };
+}
+
 export function buildOpencodeConfigContent(
   agentsPath: string,
   templatePath: string,
@@ -469,113 +560,25 @@ export function buildOpencodeConfigContent(
    *  single-export amicode_tools pack. */
   extraPluginPaths: string[] = [],
 ): string {
-  const templatesDir = path.dirname(templatePath);
-  // Least-privilege read grants for the skill index (spec §3): each indexed
-  // skill's OWN directory only — NOT a library root (the ~50 process skills stay
-  // unreadable; the grants agree with the index guard).
-  const skillGrants: Record<string, string> = {};
-  for (const p of skillPaths) skillGrants[`${path.dirname(p)}/**`] = "allow";
-  // Register the staged skills as opencode-native skills (spec §3 fix,
-  // 2026-07-04): an ABSOLUTE per-session dir holding ONLY the resolved set, so
-  // `atoms`/`piccolissimo-authoring`/… are invocable by name. Absolute path (not
-  // a `.opencode/skills` under cwd) sidesteps the session-cwd=workspace pollution
-  // and the worktree-walk; the dir holds only the guarded set (stageOpencodeSkills).
-  const skills = skillsStageDir ? { paths: [skillsStageDir] } : undefined;
-  return JSON.stringify({
-    $schema: "https://opencode.ai/config.json",
-    // Plan-first posture (product default for ALL users): every new Amicode
-    // session opens on opencode's `plan` agent. The named modes are
-    // plan → build → develop → research (spec-20260907-011500 D1 rev 3,
-    // #868: autodev → develop, autoresearch → research; `build` is a named,
-     // selectable tile AND the default posture — marked default in the picker,
-     // not implied-absent). The app keeps its own display ordering: do not send
-     // `agent_order` here because older pinned engines reject unknown config keys.
-     default_agent: "plan",
-    ...(modelPin ? { model: modelPin } : {}),
-    instructions: [agentsPath],
-    // #700 A3: the amicode_* tool plugin is RETIRED — the tools come from the
-    // `mcp.amicode` local MCP server below. `plugin` carries ONLY the extra
-    // paths (today: amicode_context.ts, the prompt-time context splice, which
-    // is harness-coupled by nature and stays a plugin).
-    plugin: [...extraPluginPaths],
-    // The MCP transport of the amicode_* tool surface (harness-contract A3):
-    // opencode v1.18's fork supports local MCP servers in config (verified in
-    // the fork's McpLocalConfig shape — command array, optional environment,
-    // enabled flag). The server resolves problem slugs against the SAME
-    // workspace root the plugin used — threaded explicitly through the MCP
-    // environment (never ambient), derivation-identical to problemsDir() in
-    // opencode-plugin/problems.ts via problemsRoot() (the #402 ladder).
-    mcp: {
-      amicode: {
-        type: "local",
-        command: ["node", DEFAULT_MCP_DIST_PATH],
-        enabled: true,
-        environment: {
-          AMICODE_PROBLEMS_DIR: problemsRoot(),
-          // The legacy-migration skip flag, when the host set one (test
-          // harnesses) — the MCP server runs the same one-shot migration as
-          // the plugin did, and must skip it for the same reason.
-          ...(process.env.AMICODE_ENTITIES_DIR ? { AMICODE_ENTITIES_DIR: process.env.AMICODE_ENTITIES_DIR } : {}),
-        },
-      },
-      // Slack MCP server (#1037 revised, #1157): when a Slack credential
-      // exists, spawn slack-mcp-server with the stored token. The token is
-      // threaded as SLACK_MCP_XOXP_TOKEN — minimal-env graft per ADR 0002
-      // (never a full env spread). No credential → no entry → tools invisible.
-      ...(() => {
-        const slackCred = readCredential("slack");
-        return slackCred?.token
-          ? {
-              slack: {
-                type: "local",
-                command: ["npx", "-y", "slack-mcp-server"],
-                enabled: true,
-                environment: {
-                  SLACK_MCP_XOXP_TOKEN: slackCred.token,
-                  SLACK_MCP_ADD_MESSAGE_TOOL: "true",
-                },
-              },
-            }
-          : {};
-      })(),
-    },
-    ...(skills ? { skills } : {}),
-    // Enable AI-SDK span generation ONLY behind the telemetry gate — deep-merges
-    // into cfg.experimental alongside any user keys (see telemetryOpen above).
-    ...(telemetryOpen ? { experimental: { openTelemetry: true } } : {}),
-    // No `agent` overrides: the picker is opencode's native plan/build plus
-    // the two director modes develop/research (#389 — the pulse-designer
-    // agent entry is retired; its prompt was a shell deferring to the
-    // compiled AGENTS.md interview section, and its permission grants were
-    // always the config-root block above). The interview runs from ANY agent
-    // via the injected instructions.
-    permission: {
-      bash: "allow",
-      edit: "allow",
-      external_directory: {
-        [templatePath]: "allow", // exact template file the agent reads
-        [`${templatesDir}/**`]: "allow", // (belt-and-suspenders for the dir)
-        [`${SCRATCH_DIR}/**`]: "allow", // solve.jl + solve.log it writes
-        [`/private${SCRATCH_DIR}/**`]: "allow", // macOS: /tmp → /private/tmp
-        [`${runsRoot}/**`]: "allow", // run read-backs: FINISHED/result.toml/run.log
-        [`${path.join(os.homedir(), ".amico")}/**`]: "allow", // the whole amicode state tree: profile, problems, runs, library, onboarding
-        [`${problemsRoot()}/**`]: "allow", // amicode_* problem workspaces (may be overridden outside ~/.amico)
-        [`${scoresRoot}/**`]: "allow", // score templates + memory hooks ([Why?]) the agent reads
-        ...skillGrants, // per-indexed-skill dirs (spec §3, least-privilege)
-        // Armonia mount stack (spec-20260707-002846 C1): a READ grant per mount
-        // so the agent can read cards/notes on demand across the WHOLE stack.
-        // The permission surface has no read/write split, so even a read-only
-        // mount gets a grant here (read posture); write discipline stays
-        // distiller-side (its own config), same contract as the vault grant below.
-        ...Object.fromEntries(mounts.map((m) => [`${m.path}/**`, "allow"])),
-        // User-memory substrate (spec-20260705-002847 §6): the interview reads
-        // problem/environment cards on demand. Read-only BY CONTRACT — vault
-        // writes are distiller-only (its own config); the permission surface
-        // has no read/write split, so this is posture, documented in spec §10.
-        ...(vaultDir ? { [`${vaultDir}/amicode/**`]: "allow" } : {}),
-      },
-    },
-  });
+  // Delegate to the shared assembler (#1581 L2: ONE source of truth for the
+  // shared config keys — the machine-stable hub builder funnels through the
+  // same assembleOpencodeConfig). Behavior is byte-identical to the prior
+  // inlined literal: the same keys, same order, same conditional emissions.
+  return JSON.stringify(
+    assembleOpencodeConfig({
+      agentsPath,
+      templatePath,
+      runsRoot,
+      scoresRoot,
+      skillPaths,
+      skillsStageDir,
+      vaultDir,
+      mounts,
+      modelPin,
+      telemetryOpen,
+      extraPluginPaths,
+    }),
+  );
 }
 
 export interface OpencodeConfigOptions {
@@ -866,4 +869,180 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
     vaultDir,
     mounts: stack.mounts,
   };
+}
+
+// ============================================================================
+// #1581 Layer 2 (option f) — the FULL machine-stable config for the HUB spawn.
+//
+// After #1576 the editor ADOPTS the durable launchd hub engine rather than
+// spawning its own. The hub is provisioned by launchd, NOT by the extension's
+// per-session env builder, so every per-directory session opencode resolves on
+// the hub merges the hub PROCESS env's OPENCODE_CONFIG_CONTENT over its
+// per-directory config (verified: config/config.ts:468). L1 put a machine-stable
+// SUBSET on that env (skills.paths=[machineRoot]); L2 extends it to the FULL
+// machine-stable config — everything buildOpencodeConfigContent emits EXCEPT the
+// genuinely per-workspace, repo-co-located inputs (project/environment/workspace
+// skills that depend on VS Code workspaceFolders — deferred to L3).
+//
+// The AGENTS.md `instructions` target: the hub has no per-session projectDir
+// writer at spawn, so we write the merged AGENTS.md ONCE, idempotently, into a
+// STABLE machine location (default ~/.amico/server/machine-stable/) — NEVER into
+// a user workspace repo, NEVER a projectDir vestigial file. skills.paths is the
+// machine-stable staged set (library + entitled/package), staged to a stable
+// machine dir; per-workspace roots are excluded (L3).
+//
+// Shares assembleOpencodeConfig with buildOpencodeConfigContent — ONE source of
+// truth for the shared keys. Never throws: any resolution failure degrades to a
+// minimal-but-valid config (bare AGENTS.md fallback), because the hub must boot.
+// ============================================================================
+export interface MachineStableConfigOptions {
+  /** Absolute path to packages/extension/AGENTS.md (the merge source). Default:
+   *  resolved module-relative (the shipped file ships one level up from src/dist,
+   *  same trick as resolveShippedSkillsDir). */
+  agentsSrc?: string;
+  /** Absolute path to the vetted solve template. Default: module-relative
+   *  templates/solve_template.jl. */
+  templateSrc?: string;
+  /** Julia project (--project) substituted into AGENTS.md. Default: the
+   *  β.4-provisioned ~/.amico/julia (resolveJuliaProject("")). */
+  juliaProject?: string;
+  /** Runs root for the external_directory read-back grant. Default:
+   *  ~/.amico/runs/default. */
+  runsRoot?: string;
+  /** Stable machine dir the merged AGENTS.md + staged skills are written into.
+   *  Default: ~/.amico/server/machine-stable. Created idempotently. Must be a
+   *  machine location — never a user workspace repo. */
+  stableDir?: string;
+  scoresRoot?: string;
+  packsRoot?: string;
+  entitlementsDir?: string;
+  skillRoots?: string[];
+  skillLibraryRoots?: LibraryRootSpec[];
+  /** The machine skill root pointed at by skills.paths — the machine-stable
+   *  catalog mount (L1's AMICODE_MACHINE_SKILL_ROOT / the shipped library skills
+   *  dir). This is the SAME value L1 put on skills.paths; L2 keeps it there and
+   *  adds the rest of the machine-stable config around it. Undefined = omit the
+   *  skills key (suppression still applies). */
+  machineSkillRoot?: string;
+  /** Personal vault dir (three-state, same contract as prepareOpencodeProject):
+   *  undefined → auto-resolve the full mount stack; "" → personalization off;
+   *  a path → a single forced personal mount. */
+  vaultDir?: string;
+  modelPin?: string;
+  telemetryOpen?: boolean;
+  extraPluginPaths?: string[];
+}
+
+/** Resolve the shipped AGENTS.md source module-relative (src/ under vitest,
+ *  bin/dist/ in the VSIX — the file ships at packages/extension/AGENTS.md). */
+function resolveShippedAgentsSrc(): string | undefined {
+  const candidates = [
+    path.resolve(__dirname, "..", "AGENTS.md"), // src/ → packages/extension/AGENTS.md
+    path.resolve(__dirname, "..", "..", "AGENTS.md"), // bin/dist/ → packages/extension/AGENTS.md
+  ];
+  for (const c of candidates) if (fs.existsSync(c)) return c;
+  return undefined;
+}
+
+/** Resolve the shipped solve template module-relative. */
+function resolveShippedTemplateSrc(): string {
+  const candidates = [
+    path.resolve(__dirname, "..", "templates", "solve_template.jl"),
+    path.resolve(__dirname, "..", "..", "templates", "solve_template.jl"),
+  ];
+  for (const c of candidates) if (fs.existsSync(c)) return c;
+  // Fall back to the first candidate as the nominal absolute path even if the
+  // file is absent — the grant/instructions still point at a stable location.
+  return candidates[0];
+}
+
+/** Build the FULL machine-stable OPENCODE_CONFIG_CONTENT (stringified) for the
+ *  hub spawn. Resolves ONLY user/machine-scoped inputs (entitlements, library +
+ *  entitled/package skills, the amico AGENTS.md instruction merge, ~/.amico
+ *  permission grants, mounts, vaultDir, mcp.amicode, default_agent) — it
+ *  EXCLUDES the per-workspace resolvers (resolveProjectSkills /
+ *  resolveEnvironmentSkills / resolveWorkspaceSkills), which need VS Code
+ *  workspaceFolders (L3). Returns the config STRING, or undefined only if it
+ *  could not even resolve the shipped AGENTS.md source (then the caller keeps
+ *  the L1 subset). */
+export function buildMachineStableConfig(opts: MachineStableConfigOptions = {}): string | undefined {
+  const stableDir = opts.stableDir ?? path.join(os.homedir(), ".amico", "server", "machine-stable");
+  const scoresRoot = opts.scoresRoot ?? DEFAULT_SCORES_ROOT;
+  const runsRoot = opts.runsRoot ?? path.join(os.homedir(), ".amico", "runs", "default");
+  const templateSrc = opts.templateSrc ?? resolveShippedTemplateSrc();
+  const agentsSrc = opts.agentsSrc ?? resolveShippedAgentsSrc();
+
+  try {
+    fs.mkdirSync(stableDir, { recursive: true });
+    const agentsPath = path.join(stableDir, "AGENTS.md");
+
+    // AGENTS.md base: read the shipped source and substitute the template/julia
+    // placeholders (mirrors prepareOpencodeProject). Fallback keeps a minimal
+    // but non-empty instruction file so the merge is never a no-op.
+    const raw = agentsSrc && fs.existsSync(agentsSrc)
+      ? fs.readFileSync(agentsSrc, "utf8")
+      : "# Amicode\nRead the template at {{TEMPLATE_PATH}}, fill params, run `amico-run <script>`.\n";
+    const filled = raw
+      .replaceAll("{{JULIA_PROJECT}}", opts.juliaProject ?? resolveJuliaProject(""))
+      .replaceAll("{{TEMPLATE_PATH}}", templateSrc);
+
+    // Mount stack + vaultDir (three-state, same contract as prepareOpencodeProject).
+    let stack: MountStack;
+    if (opts.vaultDir === undefined) stack = resolveMountStack();
+    else if (opts.vaultDir === "") stack = { mounts: [], warnings: [] };
+    else stack = { mounts: [{ name: path.basename(opts.vaultDir), kind: "personal", path: opts.vaultDir, writable: true }], warnings: [] };
+    const vaultDir = personalMount(stack)?.path ?? "";
+
+    // Machine-scoped skill index: library (public + entitled) + entitlement-gated
+    // package skills ONLY. NO project/environment/workspace skills (they need
+    // workspaceFolders — L3). Read on demand; the lean index is spliced into
+    // AGENTS.md, and the least-privilege read grants ride the resolved entries.
+    // skills.paths itself points at the machineSkillRoot (the catalog mount L1
+    // set) — NOT a re-staged copy: the machine root IS the shipped catalog, and
+    // re-staging would diverge the path L1's contract pins.
+    let skillEntries: SkillIndexEntry[] = [];
+    let finalContent = filled;
+    try {
+      const entsDir = opts.entitlementsDir ?? path.join(os.homedir(), ".amico", "amicode");
+      const ents = readLocalEntitlements(entsDir).entitlements;
+      const allow = packageAllowlist(entitlementsTablePath(scoresRoot), ents);
+      const library = resolveLibrarySkillsWithProvenance(opts.skillLibraryRoots ?? DEFAULT_LIBRARY_ROOTS, ents);
+      // machine-scoped only: the resolved library + entitlement-gated package
+      // skills go in the `shipped` slot; the per-workspace slots (project /
+      // environment / custom / workspace) are EMPTY — they need workspaceFolders
+      // (L3). Same 5-arg mergeSkillEntries shape prepareOpencodeProject uses.
+      const shippedEntries: SkillIndexEntry[] = [
+        ...library.entries,
+        ...resolvePackageSkills(allow, opts.skillRoots ?? DEFAULT_SKILL_ROOTS),
+      ];
+      skillEntries = mergeSkillEntries([], [], [], [], shippedEntries);
+      const section = buildSkillIndexSection(skillEntries);
+      if (section) finalContent = finalContent + "\n\n" + section;
+    } catch (e) {
+      console.warn(`amicode: machine-stable skill index failed (hub config continues without it): ${e}`);
+    }
+
+    fs.writeFileSync(agentsPath, finalContent, "utf8");
+
+    return JSON.stringify(
+      assembleOpencodeConfig({
+        agentsPath,
+        templatePath: templateSrc,
+        runsRoot,
+        scoresRoot,
+        skillPaths: skillEntries.map((e) => e.path),
+        // skills.paths = the machine skill root (L1's catalog mount), not a
+        // per-session staged dir. "" (no root) → the skills key is omitted.
+        skillsStageDir: opts.machineSkillRoot ?? "",
+        vaultDir,
+        mounts: stack.mounts,
+        modelPin: opts.modelPin,
+        telemetryOpen: opts.telemetryOpen ?? false,
+        extraPluginPaths: opts.extraPluginPaths ?? [],
+      }),
+    );
+  } catch (e) {
+    console.warn(`amicode: buildMachineStableConfig failed (hub keeps the L1 subset): ${e}`);
+    return undefined;
+  }
 }
