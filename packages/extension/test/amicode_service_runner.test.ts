@@ -29,6 +29,7 @@ import {
   removePidFile,
   isProcessAlive,
   isOpencodeProcess,
+  resolveShippedSkillsDir,
 } from "../src/amicode_service_runner";
 import { APP_SHELF_NEEDS_SETUP_MARKER } from "../src/amicode_service/app_shelf";
 import { serverAuthHeader, serverAuthToken } from "../src/server_auth";
@@ -349,6 +350,49 @@ createServer((_req, res) => {
     const parsed = JSON.parse(dumped.config as string) as { skills?: { paths?: string[] } };
     expect(Array.isArray(parsed.skills?.paths)).toBe(true);
     expect(parsed.skills?.paths).toContain(machineSkillRoot);
+  }, 30_000);
+
+  // #1581 Layer 1 (self-sufficient default): on the live fleet the installer/
+  // plist does NOT set AMICODE_MACHINE_SKILL_ROOT, so WITHOUT a default the hub
+  // would ship suppression + an EMPTY skill root — the adopted engine would get
+  // zero usable skills, strictly worse than pre-#1576. The runner must default
+  // the machine skill root to the SHIPPED library skills dir
+  // (packages/extension/skills) — resolved relative to the runner MODULE (holds
+  // for the installed VSIX; the hub cwd is a throwaway temp dir), so
+  // director-core/autodev/implement-issue always ship alongside suppression.
+  it("#1581: with NO machine-skill-root override, the hub engine defaults skills.paths to the SHIPPED library skills dir (director-core resolvable)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "amicode-runner-hubcfg-default-"));
+    const dump = join(dir, "env-dump.json");
+    const boot = await bootAmicodeServiceRunner({
+      engineBin: writeFakeEngine(dir),
+      appDistRoot: writeStubShelf(mkdtempSync(join(tmpdir(), "amicode-runner-hubcfg-default-shelf-"))),
+      engineUnarmed: true,
+      // NO machineSkillRoot — exercise the self-sufficient default.
+      engineEnv: { FAKE_ENGINE_DUMP: dump },
+      healthTimeoutMs: 10_000,
+      servicePort: 0,
+      enginePort: 0,
+      log: () => undefined,
+    });
+    boots.push(boot);
+
+    const dumped = JSON.parse(readFileSync(dump, "utf8")) as { suppress?: string; config?: string };
+
+    // Suppression is unconditional — stays true even without an override.
+    expect(dumped.suppress).toBe("true");
+
+    // The default resolved to the shipped library skills dir — asserted AS THE
+    // CHILD SEES IT (env dump), against the runner's OWN resolver (no drift).
+    const shipped = resolveShippedSkillsDir();
+    expect(shipped).toBeDefined();
+    expect(typeof dumped.config).toBe("string");
+    const parsed = JSON.parse(dumped.config as string) as { skills?: { paths?: string[] } };
+    expect(parsed.skills?.paths).toContain(shipped);
+
+    // Anti-fake-green: the resolved dir is REALLY packages/extension/skills AND
+    // it actually holds the workflow catalog — not merely a non-empty string.
+    expect((shipped as string).replace(/\\/g, "/")).toMatch(/packages\/extension\/skills$/);
+    expect(existsSync(join(shipped as string, "director-core"))).toBe(true);
   }, 30_000);
 });
 

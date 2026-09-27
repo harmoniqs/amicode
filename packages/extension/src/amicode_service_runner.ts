@@ -39,7 +39,8 @@ import { spawn, execSync, type ChildProcess } from "node:child_process";
 import { existsSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { createServer } from "node:net";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createAmicodeService } from "./amicode_service";
 import type { AmicodeServiceServer } from "./amicode_service/server";
 import { mintServerPassword, serverAuthHeader } from "./server_auth";
@@ -124,8 +125,10 @@ export interface AmicodeServiceRunnerOptions {
    *  carries it. External-skill suppression (OPENCODE_DISABLE_EXTERNAL_SKILLS)
    *  is injected unconditionally — it is the env-only #573 boundary the
    *  pre-#1576 spawn path (server_auth.buildServerSpawnEnv) carried and the
-   *  launchd hub dropped (#1581 regression). Undefined = no skill root in the
-   *  config (suppression still applies). */
+   *  launchd hub dropped (#1581 regression). Undefined = fall back to the
+   *  SHIPPED library skills dir (resolveShippedSkillsDir), so suppression never
+   *  ships without a real catalog; only a truly unresolvable shipped dir leaves
+   *  skills.paths omitted (suppression still applies). */
   machineSkillRoot?: string;
   /** Log sink (the structural-interface convention — vscode-free). */
   log?: (line: string) => void;
@@ -174,6 +177,32 @@ export function buildHubEngineEnv(opts: {
   }
   if (opts.unarmed) delete env.OPENCODE_SERVER_PASSWORD;
   return env;
+}
+
+/** #1581 Layer 1 (self-sufficient default): resolve the SHIPPED library skills
+ *  directory (packages/extension/skills) RELATIVE TO THIS RUNNER MODULE — never
+ *  via process.cwd() (the hub cwd is a throwaway temp dir). This is the
+ *  machine-stable skill root the hub engine indexes when the installer/plist
+ *  does not set AMICODE_MACHINE_SKILL_ROOT, so external-skill suppression never
+ *  ships with an EMPTY catalog (the "strictly worse than pre-#1576" gap).
+ *
+ *  The module lives at one of two depths under packages/extension depending on
+ *  build shape, and the skills ship at packages/extension/skills either way:
+ *    - source (vitest):   src/amicode_service_runner.ts        → ../skills
+ *    - compiled (VSIX):   bin/dist/amicode-service-runner.mjs   → ../../skills
+ *  Try the candidates in order and return the FIRST that exists; undefined if
+ *  none does (then the env omits skills.paths — suppression still applies, same
+ *  as an unset explicit root). */
+export function resolveShippedSkillsDir(): string | undefined {
+  const moduleDir = dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    resolve(moduleDir, "..", "skills"), // src/  → packages/extension/skills
+    resolve(moduleDir, "..", "..", "skills"), // bin/dist/ → packages/extension/skills
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return undefined;
 }
 
 export interface AmicodeServiceRunnerBoot {
@@ -392,7 +421,11 @@ export async function bootAmicodeServiceRunner(opts: AmicodeServiceRunnerOptions
     engineEnv: opts.engineEnv,
     password,
     unarmed,
-    machineSkillRoot: opts.machineSkillRoot,
+    // #1581: an explicit override (AMICODE_MACHINE_SKILL_ROOT / opts) wins;
+    // otherwise default to the SHIPPED library skills dir (module-relative) so
+    // suppression never ships without a real catalog. buildHubEngineEnv stays
+    // pure — the fs-touching default resolves HERE, at the boot call site.
+    machineSkillRoot: opts.machineSkillRoot ?? resolveShippedSkillsDir(),
   });
 
   const engine: ChildProcess = spawn(opts.engineBin, ["serve", "--port", String(port)], {
