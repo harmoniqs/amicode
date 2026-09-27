@@ -146,10 +146,86 @@ function problemsRoot(): string {
 
 /** Absolute path of the amicode MCP stdio server bundle (#700 A3): the
  *  amicode_* tools' portable carrier, built by esbuild.config.mjs's 4th target.
- *  Same __dirname trick as the other defaults — works from both src/ under
- *  vitest and dist/ in the cjs bundle (bin/ is a sibling of both). The .vsix
- *  ships bin/ (see .vscodeignore), so a packaged runtime spawns the same file. */
-const DEFAULT_MCP_DIST_PATH = path.resolve(__dirname, "..", "bin", "dist", "mcp-amico.mjs");
+ *  The bundle lives at `<extension>/bin/dist/mcp-amico.mjs`. Callers reach this
+ *  from three __dirname layouts: `src/` (vitest) and `dist/` (the cjs extension
+ *  bundle) — where `bin/` is a SIBLING, so `../bin/dist` is right — but ALSO
+ *  from `bin/dist/` itself (the amicode-service-runner.mjs bundle, which builds
+ *  the same config content in the runner path). From `bin/dist/`, `../bin/dist`
+ *  doubles to `bin/bin/dist` and the spawn fails (red MCP tile in the dev host).
+ *  Resolve by probing the known layouts and taking the one that exists; fall
+ *  back to the sibling layout so the value is always a concrete path. */
+const resolveMcpDistPath = (): string => {
+  const candidates = [
+    path.resolve(__dirname, "..", "bin", "dist", "mcp-amico.mjs"), // from src/ or dist/ (bin/ is a sibling)
+    path.resolve(__dirname, "mcp-amico.mjs"), // from bin/dist/ (the runner bundle's own dir)
+    path.resolve(__dirname, "..", "..", "bin", "dist", "mcp-amico.mjs"), // deep nesting fallback
+  ];
+  for (const c of candidates) {
+    try {
+      if (fs.existsSync(c)) return c;
+    } catch {
+      // ignore and try the next candidate
+    }
+  }
+  return candidates[0];
+};
+const DEFAULT_MCP_DIST_PATH = resolveMcpDistPath();
+
+/** Absolute path to a `node` executable for spawning the local MCP stdio
+ *  server. The engine spawns `command[0]` via the OS with the ENGINE's `$PATH`
+ *  — and a GUI-launched VS Code (the dev host, or a .app double-click) does NOT
+ *  inherit a login shell's `$PATH`, so bare `"node"` fails with
+ *  `Executable not found in $PATH: "node"` and the MCP tile goes red even
+ *  though node is installed. `process.execPath` is the absolute path of the
+ *  node binary already running the extension host — always present, always
+ *  correct — so we spawn with it explicitly rather than trusting `$PATH`. */
+const resolveNodeExecPath = (): string => {
+  try {
+    if (process.execPath && fs.existsSync(process.execPath)) return process.execPath;
+  } catch {
+    // fall through to bare "node"
+  }
+  return "node";
+};
+const NODE_EXEC_PATH = resolveNodeExecPath();
+
+/** Absolute path to an `npx` shim beside the resolved node (for the slack MCP
+ *  server, which is `npx -y slack-mcp-server`). Same GUI-PATH problem as node.
+ *  npx ships in node's own bin dir, so derive it from NODE_EXEC_PATH; fall back
+ *  to bare "npx" if it isn't found there. */
+const resolveNpxExecPath = (): string => {
+  try {
+    if (NODE_EXEC_PATH !== "node") {
+      const npx = path.join(path.dirname(NODE_EXEC_PATH), "npx");
+      if (fs.existsSync(npx)) return npx;
+    }
+  } catch {
+    // fall through to bare "npx"
+  }
+  return "npx";
+};
+const NPX_EXEC_PATH = resolveNpxExecPath();
+
+/** A `PATH` value that is guaranteed to contain the resolved node's own bin
+ *  directory, for the ENVIRONMENT of a spawned MCP server. Spawning with an
+ *  absolute `command[0]` is not enough: a launcher like `npx` re-invokes bare
+ *  `node` internally, and the amicode server may shell out too. Under a
+ *  GUI/launchd engine the inherited PATH is often just /usr/bin:/bin:/usr/sbin:
+ *  /sbin (no /usr/local/bin, no ~/.nvm/...), so those bare `node` calls die with
+ *  `env: node: No such file or directory` and the MCP connection closes. Prepend
+ *  node's bin dir to whatever PATH the engine passes down (or a sane default). */
+const mcpEnvPath = (): string => {
+  const parts: string[] = [];
+  try {
+    if (NODE_EXEC_PATH !== "node") parts.push(path.dirname(NODE_EXEC_PATH));
+  } catch {
+    // ignore — fall through to the inherited/default PATH
+  }
+  const inherited = process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
+  parts.push(inherited);
+  return parts.join(path.delimiter);
+};
+const MCP_ENV_PATH = mcpEnvPath();
 
 /** Default scores repertoire root — same sibling-of-src-and-dist trick as the
  *  plugin path. Holds SCORE.md manifests, score-local templates, memory hooks. */
@@ -482,9 +558,10 @@ function assembleOpencodeConfig(input: AssembledConfigInputs): Record<string, un
     mcp: {
       amicode: {
         type: "local",
-        command: ["node", DEFAULT_MCP_DIST_PATH],
+        command: [NODE_EXEC_PATH, DEFAULT_MCP_DIST_PATH],
         enabled: true,
         environment: {
+          PATH: MCP_ENV_PATH,
           AMICODE_PROBLEMS_DIR: problemsRoot(),
           ...(process.env.AMICODE_ENTITIES_DIR ? { AMICODE_ENTITIES_DIR: process.env.AMICODE_ENTITIES_DIR } : {}),
         },
@@ -495,9 +572,10 @@ function assembleOpencodeConfig(input: AssembledConfigInputs): Record<string, un
           ? {
               slack: {
                 type: "local",
-                command: ["npx", "-y", "slack-mcp-server"],
+                command: [NPX_EXEC_PATH, "-y", "slack-mcp-server"],
                 enabled: true,
                 environment: {
+                  PATH: MCP_ENV_PATH,
                   SLACK_MCP_XOXP_TOKEN: slackCred.token,
                   SLACK_MCP_ADD_MESSAGE_TOOL: "true",
                 },

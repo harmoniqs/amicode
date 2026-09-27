@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { existsSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
-import { join } from "node:path";
+import { join, isAbsolute, basename } from "node:path";
 import { execFileSync } from "node:child_process";
 import {
   prepareOpencodeProject,
@@ -80,12 +80,31 @@ describe("buildOpencodeConfigContent", () => {
     expect(mcp.type).toBe("local"); // the fork v1.18's McpLocalConfig shape
     expect(mcp.enabled).toBe(true);
     expect(Array.isArray(mcp.command)).toBe(true);
-    expect(mcp.command[0]).toBe("node");
+    // command[0] is a node executable: an ABSOLUTE path (process.execPath) so a
+    // GUI-launched engine with no login-shell $PATH can still spawn it, or the
+    // bare "node" fallback if execPath could not be resolved. Never a relative
+    // token that only a login shell would find.
+    expect(mcp.command[0] === "node" || (isAbsolute(mcp.command[0]) && basename(mcp.command[0]).startsWith("node"))).toBe(
+      true,
+    );
     expect(mcp.command[1].endsWith(join("bin", "dist", "mcp-amico.mjs"))).toBe(true);
     expect(mcp.command[1]).not.toContain(".."); // resolved absolute, not relative
+    // Regression guard: the MCP bundle path must never double the bin/ segment.
+    // When the config is generated from the service-runner bundle (which itself
+    // lives in bin/dist/), a naive `../bin/dist` join produced bin/bin/dist —
+    // a nonexistent path, so the engine could not spawn the server and the MCP
+    // tile went red in the dev host. resolveMcpDistPath() probes the real layout.
+    expect(mcp.command[1]).not.toContain(join("bin", "bin"));
     // the tools resolve slugs against the SAME problems root the grant uses —
     // threaded through the MCP environment, pinned explicitly (never ambient).
     expect(mcp.environment.AMICODE_PROBLEMS_DIR).toBe(join(homedir(), ".amico", "problems"));
+    // The MCP server's environment carries a PATH that contains the node bin
+    // dir. An absolute command[0] is not enough — a launcher (npx) or the amico
+    // server re-invokes bare `node`, and a GUI/launchd engine's PATH lacks
+    // /usr/local/bin etc., so those children died with `env: node: not found`
+    // and the connection closed. PATH must be present and non-empty.
+    expect(typeof mcp.environment.PATH).toBe("string");
+    expect(mcp.environment.PATH.length).toBeGreaterThan(0);
   });
   it("registers skills.paths only when a stage dir is given (opencode-native skills)", () => {
     const without = JSON.parse(buildOpencodeConfigContent("/abs/AGENTS.md", TPL, "/home/u/.amico/runs/default"));

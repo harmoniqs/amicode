@@ -16,7 +16,7 @@
 import { spawn, execSync } from "node:child_process";
 import { chmodSync, copyFileSync, existsSync, mkdtempSync, writeFileSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, dirname } from "node:path";
+import { join, dirname, isAbsolute, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 import { createServer } from "node:net";
@@ -470,7 +470,18 @@ createServer((_req, res) => {
     expect(cfg.mcp?.amicode?.type).toBe("local");
     expect(cfg.mcp?.amicode?.enabled).toBe(true);
     expect(Array.isArray(cfg.mcp?.amicode?.command)).toBe(true);
-    expect((cfg.mcp?.amicode?.command ?? [])[0]).toBe("node");
+    // The runner bundle lives in bin/dist/ and generates this same config. Two
+    // things must hold for the engine (which may run under a GUI-launched host
+    // with NO login-shell $PATH) to actually spawn the MCP server:
+    //   (1) command[0] is a node executable resolved to an ABSOLUTE path
+    //       (process.execPath), or the bare "node" fallback — never a token
+    //       only a login shell would find; and
+    //   (2) command[1] (the bundle path) is NOT the doubled bin/bin/dist that a
+    //       naive ../bin/dist join produced from the runner's own bin/dist dir.
+    const mcpCmd = cfg.mcp?.amicode?.command ?? [];
+    expect(mcpCmd[0] === "node" || (isAbsolute(mcpCmd[0]) && basename(mcpCmd[0]).startsWith("node"))).toBe(true);
+    expect(mcpCmd[1]).toContain(join("bin", "dist", "mcp-amico.mjs"));
+    expect(mcpCmd[1]).not.toContain(join("bin", "bin"));
 
     // Plan-first posture: default_agent is "plan" (the product default for every
     // session — lost on the adopted hub before L2).
