@@ -83,6 +83,12 @@ describe("buildOpencodeConfigContent", () => {
     expect(mcp.command[0]).toBe("node");
     expect(mcp.command[1].endsWith(join("bin", "dist", "mcp-amico.mjs"))).toBe(true);
     expect(mcp.command[1]).not.toContain(".."); // resolved absolute, not relative
+    // Regression guard: the MCP bundle path must never double the bin/ segment.
+    // When the config is generated from the service-runner bundle (which itself
+    // lives in bin/dist/), a naive `../bin/dist` join produced bin/bin/dist —
+    // a nonexistent path, so the engine could not spawn the server and the MCP
+    // tile went red in the dev host. resolveMcpDistPath() probes the real layout.
+    expect(mcp.command[1]).not.toContain(join("bin", "bin"));
     // the tools resolve slugs against the SAME problems root the grant uses —
     // threaded through the MCP environment, pinned explicitly (never ambient).
     expect(mcp.environment.AMICODE_PROBLEMS_DIR).toBe(join(homedir(), ".amico", "problems"));

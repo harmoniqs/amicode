@@ -146,10 +146,30 @@ function problemsRoot(): string {
 
 /** Absolute path of the amicode MCP stdio server bundle (#700 A3): the
  *  amicode_* tools' portable carrier, built by esbuild.config.mjs's 4th target.
- *  Same __dirname trick as the other defaults — works from both src/ under
- *  vitest and dist/ in the cjs bundle (bin/ is a sibling of both). The .vsix
- *  ships bin/ (see .vscodeignore), so a packaged runtime spawns the same file. */
-const DEFAULT_MCP_DIST_PATH = path.resolve(__dirname, "..", "bin", "dist", "mcp-amico.mjs");
+ *  The bundle lives at `<extension>/bin/dist/mcp-amico.mjs`. Callers reach this
+ *  from three __dirname layouts: `src/` (vitest) and `dist/` (the cjs extension
+ *  bundle) — where `bin/` is a SIBLING, so `../bin/dist` is right — but ALSO
+ *  from `bin/dist/` itself (the amicode-service-runner.mjs bundle, which builds
+ *  the same config content in the runner path). From `bin/dist/`, `../bin/dist`
+ *  doubles to `bin/bin/dist` and the spawn fails (red MCP tile in the dev host).
+ *  Resolve by probing the known layouts and taking the one that exists; fall
+ *  back to the sibling layout so the value is always a concrete path. */
+const resolveMcpDistPath = (): string => {
+  const candidates = [
+    path.resolve(__dirname, "..", "bin", "dist", "mcp-amico.mjs"), // from src/ or dist/ (bin/ is a sibling)
+    path.resolve(__dirname, "mcp-amico.mjs"), // from bin/dist/ (the runner bundle's own dir)
+    path.resolve(__dirname, "..", "..", "bin", "dist", "mcp-amico.mjs"), // deep nesting fallback
+  ];
+  for (const c of candidates) {
+    try {
+      if (fs.existsSync(c)) return c;
+    } catch {
+      // ignore and try the next candidate
+    }
+  }
+  return candidates[0];
+};
+const DEFAULT_MCP_DIST_PATH = resolveMcpDistPath();
 
 /** Default scores repertoire root — same sibling-of-src-and-dist trick as the
  *  plugin path. Holds SCORE.md manifests, score-local templates, memory hooks. */
