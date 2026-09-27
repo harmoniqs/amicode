@@ -172,6 +172,32 @@ describe("#1354 hub open-auth — the SSH tunnel is the auth boundary, not HTTP 
   });
 });
 
+describe("#1581 hub config provisioning — the launchd unit carries the machine skill root", () => {
+  const withRoot: HubServiceUnitOptions = {
+    ...OPTS,
+    machineSkillRoot: "/opt/amico/ext/skills",
+  };
+
+  it("hubServiceEnv sets AMICODE_MACHINE_SKILL_ROOT when a machineSkillRoot is given (so the adopted engine indexes the skill catalog, not the ~/.claude/skills global pack)", () => {
+    const env = hubServiceEnv(withRoot);
+    expect(env.AMICODE_MACHINE_SKILL_ROOT).toBe("/opt/amico/ext/skills");
+  });
+
+  it("hubServiceEnv OMITS AMICODE_MACHINE_SKILL_ROOT when no machineSkillRoot is given (no empty/misleading key)", () => {
+    const env = hubServiceEnv(OPTS);
+    expect(env.AMICODE_MACHINE_SKILL_ROOT).toBeUndefined();
+  });
+
+  it("the machine skill root propagates to BOTH OS forms of the reboot-survival unit", () => {
+    const plist = launchdHubServiceUnit(withRoot);
+    expect(plist).toContain("<key>AMICODE_MACHINE_SKILL_ROOT</key>");
+    expect(plist).toContain("<string>/opt/amico/ext/skills</string>");
+    expect(systemdHubServiceUnit(withRoot)).toContain(
+      "Environment=AMICODE_MACHINE_SKILL_ROOT=/opt/amico/ext/skills",
+    );
+  });
+});
+
 describe("#1354 fleet port convention — no collisions across engine, app-shelf, and hub", () => {
   it("lays out hub-engine (FLEET_PORT-3), ext-engine (FLEET_PORT-2), app-shelf (FLEET_PORT-1), hub-service (FLEET_PORT) without overlap", () => {
     // The corrected convention (#1354 follow-up): the installer writes

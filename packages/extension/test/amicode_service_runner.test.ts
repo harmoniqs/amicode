@@ -205,9 +205,12 @@ describe("amicode service runner spawn posture (headless, fake engine — no ven
 
   /** A stand-in engine binary (the shebang-node fake-engine idiom): answers
    *  the health probe with 200 and — when FAKE_ENGINE_DUMP is set in its env
-   *  (rides the runner's engineEnv passthrough) — records whether
-   *  OPENCODE_SERVER_PASSWORD was present at spawn. argv: [node, script,
-   *  "serve", "--port", <port>]. */
+   *  (rides the runner's engineEnv passthrough) — records, AS THE CHILD SEES
+   *  THEM, whether OPENCODE_SERVER_PASSWORD was present at spawn, the raw
+   *  OPENCODE_DISABLE_EXTERNAL_SKILLS value (#1581 AC2 — env-only), and the
+   *  raw OPENCODE_CONFIG_CONTENT string (#1581 AC1 — the machine skill root
+   *  rides `skills.paths` in this JSON). argv: [node, script, "serve",
+   *  "--port", <port>]. */
   function writeFakeEngine(dir: string): string {
     const bin = join(dir, "fake-engine");
     writeFileSync(
@@ -217,7 +220,11 @@ const { createServer } = require("node:http");
 const { writeFileSync } = require("node:fs");
 const port = Number(process.argv[4] ?? 0);
 if (process.env.FAKE_ENGINE_DUMP)
-  writeFileSync(process.env.FAKE_ENGINE_DUMP, JSON.stringify({ armed: "OPENCODE_SERVER_PASSWORD" in process.env }));
+  writeFileSync(process.env.FAKE_ENGINE_DUMP, JSON.stringify({
+    armed: "OPENCODE_SERVER_PASSWORD" in process.env,
+    suppress: process.env.OPENCODE_DISABLE_EXTERNAL_SKILLS,
+    config: process.env.OPENCODE_CONFIG_CONTENT,
+  }));
 createServer((_req, res) => {
   res.writeHead(200, { "content-type": "text/plain" });
   res.end("fake engine up");
@@ -303,6 +310,45 @@ createServer((_req, res) => {
     expect(dumped.armed).toBe(true);
     expect(typeof boot.enginePassword).toBe("string");
     expect((boot.enginePassword ?? "").length).toBeGreaterThan(0);
+  }, 30_000);
+
+  // #1581 Layer 1 (machine-stable, on the hub spawn): the launchd-provisioned
+  // hub engine must receive the two vars the pre-#1576 spawn path
+  // (server_auth.buildServerSpawnEnv) injected but the runner dropped —
+  // OPENCODE_DISABLE_EXTERNAL_SKILLS (AC2, env-only: a RuntimeFlags boot read,
+  // absent from the Config schema) and an OPENCODE_CONFIG_CONTENT whose
+  // `skills.paths` carries the machine skill root (AC1-machine: the skill
+  // catalog mount, so a session's registry is not the bare ~/.claude/skills
+  // global pack). Asserted AS THE CHILD SEES THEM (env dump), not inferred.
+  it("#1581: the hub engine child carries external-skill suppression + a machine skill root in OPENCODE_CONFIG_CONTENT", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "amicode-runner-hubcfg-"));
+    const dump = join(dir, "env-dump.json");
+    const machineSkillRoot = join(mkdtempSync(join(tmpdir(), "amicode-machine-skills-")), "skills");
+    const boot = await bootAmicodeServiceRunner({
+      engineBin: writeFakeEngine(dir),
+      appDistRoot: writeStubShelf(mkdtempSync(join(tmpdir(), "amicode-runner-hubcfg-shelf-"))),
+      engineUnarmed: true,
+      machineSkillRoot,
+      engineEnv: { FAKE_ENGINE_DUMP: dump },
+      healthTimeoutMs: 10_000,
+      servicePort: 0,
+      enginePort: 0,
+      log: () => undefined,
+    });
+    boots.push(boot);
+
+    const dumped = JSON.parse(readFileSync(dump, "utf8")) as { suppress?: string; config?: string };
+
+    // AC2: external-skill suppression is in effect on the adopted engine.
+    expect(dumped.suppress).toBe("true");
+
+    // AC1-machine (anti-fake-green): parse the config the child actually
+    // received and assert the machine skill root is an ACTUAL entry in
+    // skills.paths — not merely that the var is present/non-empty.
+    expect(typeof dumped.config).toBe("string");
+    const parsed = JSON.parse(dumped.config as string) as { skills?: { paths?: string[] } };
+    expect(Array.isArray(parsed.skills?.paths)).toBe(true);
+    expect(parsed.skills?.paths).toContain(machineSkillRoot);
   }, 30_000);
 });
 

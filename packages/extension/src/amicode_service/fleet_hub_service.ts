@@ -60,6 +60,13 @@ export interface HubServiceUnitOptions {
   logPath?: string;
   /** launchd Label / systemd identity. Default `co.harmoniqs.amico-hub`. */
   label?: string;
+  /** #1581 Layer 1: the machine-stable skill root the adopted hub engine must
+   *  index (AMICODE_MACHINE_SKILL_ROOT). The runner injects it into the engine's
+   *  OPENCODE_CONFIG_CONTENT as `skills.paths` so a session's `skill` tool sees
+   *  the amicode catalog, not the bare ~/.claude/skills global pack. Optional:
+   *  omitted from the unit env when unset (external-skill suppression rides the
+   *  runner unconditionally regardless). */
+  machineSkillRoot?: string;
   /** Deploy-policy env layered OVER the required set — e.g. the hub's
    *  anonymous boundary posture (AMICODE_ENGINE_UNARMED=1 / AMICODE_SERVICE_AUTH=open,
    *  #955). NEVER credentials (the runner mints its own). Kept optional so this
@@ -85,6 +92,11 @@ export function hubServiceEnv(opts: HubServiceUnitOptions): Record<string, strin
     AMICODE_SERVICE_AUTH: "open", // #1354: the SSH tunnel is the auth boundary
     AMICODE_SERVICE_PORT: String(opts.servicePort),
     OPENCODE_DB: opts.dbPath, // the canonical ONE-writer store (ADR 0005)
+    // #1581 Layer 1: the machine skill root the adopted hub engine indexes so a
+    // session's `skill` tool sees the amicode catalog (director-core, autodev,
+    // implement-issue, …), not the bare ~/.claude/skills global pack. Omitted
+    // when unset — no empty/misleading key.
+    ...(opts.machineSkillRoot ? { AMICODE_MACHINE_SKILL_ROOT: opts.machineSkillRoot } : {}),
     ...(opts.extraEnv ?? {}),
   };
 }

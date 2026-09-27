@@ -116,8 +116,64 @@ export interface AmicodeServiceRunnerOptions {
    *  password challenge is vacuously true). Default: undefined (no handshake —
    *  backward compatible, same pattern as pidFile). */
   handshakePath?: string;
+  /** #1581 Layer 1 (machine-stable, on the hub spawn): the machine skill root
+   *  the adopted hub engine must index so a session's `skill` tool sees the
+   *  amicode catalog (not the bare ~/.claude/skills global pack). Threaded from
+   *  the CLI (AMICODE_MACHINE_SKILL_ROOT / the fleet unit's extraEnv). When set,
+   *  buildHubEngineEnv injects an OPENCODE_CONFIG_CONTENT whose `skills.paths`
+   *  carries it. External-skill suppression (OPENCODE_DISABLE_EXTERNAL_SKILLS)
+   *  is injected unconditionally — it is the env-only #573 boundary the
+   *  pre-#1576 spawn path (server_auth.buildServerSpawnEnv) carried and the
+   *  launchd hub dropped (#1581 regression). Undefined = no skill root in the
+   *  config (suppression still applies). */
+  machineSkillRoot?: string;
   /** Log sink (the structural-interface convention — vscode-free). */
   log?: (line: string) => void;
+}
+
+/** #1581 Layer 1 — the PURE hub-engine env builder, extracted from the inlined
+ *  merge that spawned the launchd hub engine WITHOUT the amicode config the
+ *  pre-#1576 editor spawn injected (server_auth.buildServerSpawnEnv:258/270).
+ *  Mirrors that builder's shape: it layers OVER the host env + the caller's
+ *  engineEnv, arms the credential unless unarmed, and — the #1581 fix —
+ *  injects:
+ *    - OPENCODE_DISABLE_EXTERNAL_SKILLS: "true" (AC2, ALWAYS — env-only: a
+ *      RuntimeFlags boot read, absent from the Config schema, so it cannot ride
+ *      a config file);
+ *    - OPENCODE_CONFIG_CONTENT with `skills.paths` = [machineSkillRoot] (AC1-
+ *      machine) WHEN a machineSkillRoot is given.
+ *  Pure (no process/fs reads beyond the passed baseEnv) so the runner suite
+ *  drives it headlessly. */
+export function buildHubEngineEnv(opts: {
+  /** The base env the spawn inherits (the host env on the hub). */
+  baseEnv: NodeJS.ProcessEnv;
+  /** The caller's extra engine env (the OPENCODE_DB pin, test FAKE_ENGINE_DUMP). */
+  engineEnv?: Record<string, string | undefined>;
+  /** The armed credential, or undefined in the unarmed posture. */
+  password?: string;
+  /** The unarmed posture (#955): OPENCODE_SERVER_PASSWORD stays ABSENT. */
+  unarmed: boolean;
+  /** The machine skill root to index (AC1-machine). Undefined = omit skills. */
+  machineSkillRoot?: string;
+}): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {
+    ...opts.baseEnv,
+    ...opts.engineEnv,
+    // AC2 (#573 / #1581): external-skill auto-discovery suppression. Env-only —
+    // the extension owns skill loading; ~/.claude/skills must never auto-load.
+    OPENCODE_DISABLE_EXTERNAL_SKILLS: "true",
+    ...(opts.unarmed || opts.password === undefined ? {} : { OPENCODE_SERVER_PASSWORD: opts.password }),
+  };
+  // AC1-machine: point the engine's skill index at the machine skill root via
+  // OPENCODE_CONFIG_CONTENT (opencode merges it over global config at boot).
+  if (opts.machineSkillRoot) {
+    env.OPENCODE_CONFIG_CONTENT = JSON.stringify({
+      $schema: "https://opencode.ai/config.json",
+      skills: { paths: [opts.machineSkillRoot] },
+    });
+  }
+  if (opts.unarmed) delete env.OPENCODE_SERVER_PASSWORD;
+  return env;
 }
 
 export interface AmicodeServiceRunnerBoot {
@@ -331,12 +387,13 @@ export async function bootAmicodeServiceRunner(opts: AmicodeServiceRunnerOptions
   log(
     `[service-runner] spawning engine ${opts.engineBin} serve --port=${port} (cwd=${cwd}${dbPin ? `, OPENCODE_DB=${dbPin}` : ", OPENCODE_DB=(host env)"})${unarmed ? " UNARMED (the hub's anonymous boundary posture)" : ""}`,
   );
-  const engineEnv = {
-    ...process.env,
-    ...opts.engineEnv,
-    ...(unarmed ? {} : { OPENCODE_SERVER_PASSWORD: password }),
-  };
-  if (unarmed) delete engineEnv.OPENCODE_SERVER_PASSWORD;
+  const engineEnv = buildHubEngineEnv({
+    baseEnv: process.env,
+    engineEnv: opts.engineEnv,
+    password,
+    unarmed,
+    machineSkillRoot: opts.machineSkillRoot,
+  });
 
   const engine: ChildProcess = spawn(opts.engineBin, ["serve", "--port", String(port)], {
     cwd,

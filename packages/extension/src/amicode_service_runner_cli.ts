@@ -30,6 +30,14 @@
 //                        Wins over AMICODE_ENGINE_PASSWORD.
 //   OPENCODE_DB          the canonical pin — passed through to the spawned
 //                        engine untouched (the hub's session store).
+//   AMICODE_MACHINE_SKILL_ROOT  the machine-stable skill root the adopted hub
+//                        engine must index (#1581 Layer 1). The runner injects
+//                        it into the engine's OPENCODE_CONFIG_CONTENT as
+//                        `skills.paths` so a session's `skill` tool sees the
+//                        amicode catalog, not the bare ~/.claude/skills global
+//                        pack. The fleet unit bakes it into the launchd/systemd
+//                        EnvironmentVariables (hubServiceEnv). External-skill
+//                        suppression rides unconditionally regardless of this.
 //   AMICODE_HUB_PID_FILE the engine's PID file path (#1578). Default:
 //                        ~/.amico/amicode/hub-engine.pid. On boot, the runner
 //                        reads any existing PID file to kill stale opencode
@@ -97,6 +105,7 @@ async function main(): Promise<never> {
     enginePassword: (process.env.AMICODE_ENGINE_PASSWORD ?? "").trim() || undefined,
     engineUnarmed: (process.env.AMICODE_ENGINE_UNARMED ?? "").trim() === "1",
     engineEnv: (process.env.OPENCODE_DB ?? "").trim() ? { OPENCODE_DB: process.env.OPENCODE_DB } : undefined,
+    machineSkillRoot: (process.env.AMICODE_MACHINE_SKILL_ROOT ?? "").trim() || undefined,
     pidFile: (process.env.AMICODE_HUB_PID_FILE ?? "").trim() || join(os.homedir(), ".amico", "amicode", "hub-engine.pid"),
     handshakePath: (process.env.AMICODE_HUB_HANDSHAKE ?? "").trim() || defaultHandshakePath(),
     log: (line) => console.log(line),
