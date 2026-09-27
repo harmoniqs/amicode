@@ -169,7 +169,7 @@
     "packages/app/src/context/server-sdk.test.ts": "48ce5243c8c5d42c23c8eadf9eecac777c9330ac1f4d81953042d5ef7d264bd7",
     "packages/app/src/context/server-sdk.tsx": "a3f51fc8a17da40869cd21aecebc5e06bd2e2ba5d323b4aa07909a2646df9549",
     "packages/app/src/context/server-session.test.ts": "a76d24b0d36d7c6c9ce187d2eb5bba78c90774184adc0398559ee1a417674516",
-    "packages/app/src/context/server-session.ts": "ef5700a42615f6ccc352b03db3353e1228dabe567dab37a676935ea9a8b78fbf",
+    "packages/app/src/context/server-session.ts": "1f65f390e977551ec904e90226ce87038331b515dfc88ebb45a94d9fff4bccfb",
     "packages/app/src/context/server-sync.tsx": "94c16dfb25bf8cec340bdc31bef5e875c31a4c42af7076179bf69da4d1586889",
     "packages/app/src/context/server.tsx": "08e978e4b4b3094221a2a0b92e069f39cbedb6d6cf95935881e21cde52265ee2",
     "packages/app/src/context/session-mirror.test.ts": "65e6d6474e4e67f2da194047140c8c8aac04fe0cc9926441468e53fabc48db96",
@@ -842,7 +842,7 @@
     "packages/app/src/pages/session/composer/session-tour.tsx": "da5d807c7efe7aed1140d65d7eddd7982a8c17348d928f5d0a887d1b2a8d3a50",
     "packages/app/src/pages/session/composer/todo-panel-motion.stories.tsx": "70a8267c725af320d78d266b85fd0ff005d067c4d09a21bef824126602e831e7",
     "packages/app/src/pages/session/timeline/last-prompt-bubble.test.ts": "83753b3ec7227570523c2e0b9e82401fae7a20f3a23980bb40deaeb13304327b",
-    "packages/app/src/pages/session/timeline/message-timeline.tsx": "bb854f8f979eebb645e3209b025174c727196abd836f87540c213f59e9c3bfa6",
+    "packages/app/src/pages/session/timeline/message-timeline.tsx": "6e94a16c8d8f3fc2ba31db0c8dbce90489e2cd6e082b8136f813f317ed78e374",
     "packages/app/src/pages/session/timeline/model-pure.ts": "50be4ba12d747dd8df9932044ceee29c5f3b6fa6d6ac36791207f91a91067cd4",
     "packages/app/src/pages/session/timeline/model.test.ts": "459e0694409ffcf2530252a65491e1006f982b8f5c78a15573ed41646b2c85cf",
     "packages/app/src/pages/session/timeline/model.ts": "1692edf34c1e829900fb3fadcd3f092598164f353e29fe28a9dfb40debcc36bc",
@@ -905,7 +905,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-09-26T19:52:56.445Z",
+  "extracted_at": "2026-09-27T21:42:15.413Z",
   "per_package": {
     "packages/app": {
       "A": 210,
