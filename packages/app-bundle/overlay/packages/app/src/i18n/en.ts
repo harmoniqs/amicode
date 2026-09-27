@@ -1,4 +1,15 @@
+import { DESKTOP_NATIVE_ENGLISH } from "./desktop-native"
+
 export const dict = {
+  ...DESKTOP_NATIVE_ENGLISH,
+  // amicode: rebrand the desktop-native menu strings (DESKTOP_NATIVE_ENGLISH
+  // ships them as "OpenCode"). Spread first, override after so ours win.
+  "desktop.menu.app": "Amicode",
+  "desktop.menu.documentation": "Amicode Documentation",
+  "desktop.menu.ariaLabel": "Amicode menu",
+  "desktop.recovery.loadFailed": "Amicode failed to load",
+  "desktop.recovery.terminated": "Amicode window terminated unexpectedly",
+  "desktop.recovery.unresponsive": "Amicode is not responding",
   "command.category.suggested": "Suggested",
   "command.category.view": "View",
   "command.category.project": "Project",

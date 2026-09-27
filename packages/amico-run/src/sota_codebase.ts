@@ -19,7 +19,8 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
-import seedToml from "../resources/watched-repos.seed.toml";
+import seedTomlImport from "../resources/watched-repos.seed.toml";
+import { stringify } from "smol-toml";
 import {
   parseWatchedRepoRegistry,
   validateWatchedRepoRegistry,
@@ -38,6 +39,14 @@ import {
 import { ANOMALY_FLOOR_WINDOW_DAYS, type AnomalyFloorVerdict } from "./sota_history.js";
 
 export const REGISTRY_FILENAME = "watched-repos.toml";
+
+/** The packaged seed AS TEXT. The import's d.ts contract (#820 data-as-import)
+ *  is the file's text content — esbuild's `.toml: "text"` loader and vitest's
+ *  toml-as-text plugin both honor it — but bun natively PARSES .toml imports
+ *  into an object, so normalize back to text: one canonical string under
+ *  every runtime (the validator re-parses it either way). */
+const seedToml: string =
+  typeof seedTomlImport === "string" ? seedTomlImport : stringify(seedTomlImport);
 
 /** The stable per-source history key for one repo+surface. The slug is
  *  HASHED, not flattened: the key is a FILE NAME under fetch-history/ (a
@@ -161,7 +170,10 @@ export function curlGithubFetch(url: string): Promise<{ ok: true; status: number
   return (async () => {
     let out: string;
     try {
-      out = execFileSync("curl", curlArgs(url, ["accept: application/vnd.github+json"]), { encoding: "utf8", maxBuffer: 4 << 20 });
+      // env passed EXPLICITLY — same runtime-resolution constraint as
+      // curlSotaFetch (see sota_papers.ts): bun resolves unqualified
+      // executables from the env option, else the startup PATH snapshot.
+      out = execFileSync("curl", curlArgs(url, ["accept: application/vnd.github+json"]), { encoding: "utf8", maxBuffer: 4 << 20, env: process.env });
     } catch (e) {
       const err = e as { stdout?: string | Buffer; stderr?: string | Buffer; message: string };
       const stdout = (err.stdout ?? "").toString();

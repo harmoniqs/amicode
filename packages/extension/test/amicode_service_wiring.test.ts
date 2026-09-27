@@ -7,7 +7,7 @@
 // cover the full boot: engine context (late-bound URL getter + engine mint)
 // and the app dist root both reach the booted service — against a mock engine
 // upstream (node:http), per the issue's Testing Decisions.
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as http from "node:http";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -15,6 +15,19 @@ import { join } from "node:path";
 import { AddressInfo } from "node:net";
 import { amicodeServiceDisposal, startAmicodeService } from "../src/amicode_service_wiring";
 import { serverAuthHeader } from "../src/server_auth";
+
+// Every boot in this file relies on the CREDENTIAL auth default (the 401
+// assertions pin the fork's auth discipline). A dev host that runs a live
+// amicode service exports AMICODE_SERVICE_AUTH=open — the runner's tunnel/LAN
+// posture — which must not leak into these boots. Save/restore per test.
+let savedAuthEnv: string | undefined;
+beforeEach(() => {
+  savedAuthEnv = process.env.AMICODE_SERVICE_AUTH;
+  delete process.env.AMICODE_SERVICE_AUTH;
+});
+afterEach(() => {
+  if (savedAuthEnv !== undefined) process.env.AMICODE_SERVICE_AUTH = savedAuthEnv;
+});
 
 const sinkLog = () => {
   const lines: string[] = [];

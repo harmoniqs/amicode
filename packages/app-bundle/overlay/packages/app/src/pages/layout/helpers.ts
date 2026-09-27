@@ -9,18 +9,10 @@ type SessionStore = {
   path: { directory: string }
 }
 
-function sortSessions(now: number) {
-  const oneMinuteAgo = now - 60 * 1000
-  return (a: Session, b: Session) => {
-    const aUpdated = a.time.updated ?? a.time.created
-    const bUpdated = b.time.updated ?? b.time.created
-    const aRecent = aUpdated > oneMinuteAgo
-    const bRecent = bUpdated > oneMinuteAgo
-    if (aRecent && bRecent) return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
-    if (aRecent && !bRecent) return -1
-    if (!aRecent && bRecent) return 1
-    return bUpdated - aUpdated
-  }
+export function compareSessionTime(a: Session, b: Session) {
+  const updated = (b.time.updated ?? b.time.created) - (a.time.updated ?? a.time.created)
+  if (updated !== 0) return updated
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
 }
 
 const isRootVisibleSession = (session: Session, directory: string) =>
@@ -29,10 +21,10 @@ const isRootVisibleSession = (session: Session, directory: string) =>
 export const roots = (store: SessionStore) =>
   (store.session ?? []).filter((session) => isRootVisibleSession(session, store.path.directory))
 
-export const sortedRootSessions = (store: SessionStore, now: number) => roots(store).sort(sortSessions(now))
+export const sortedRootSessions = (store: SessionStore, _now: number) => roots(store).sort(compareSessionTime)
 
-export const latestRootSession = (stores: SessionStore[], now: number) =>
-  stores.flatMap(roots).sort(sortSessions(now))[0]
+export const latestRootSession = (stores: SessionStore[], _now: number) =>
+  stores.flatMap(roots).sort(compareSessionTime)[0]
 
 export function hasProjectPermissions<T>(
   request: Record<string, T[] | undefined> | undefined,
@@ -56,37 +48,6 @@ export const childSessionOnPath = (sessions: Session[] | undefined, rootID: stri
 
 export const displayName = (project: { name?: string; worktree: string }) =>
   project.name || getFilename(project.worktree) || project.worktree
-
-/**
- * Directories whose sessions the list surfaces (Sessions dropdown, home list)
- * — always the union of opened projects (first) and server-registered projects
- * (deduplicated, appended). Every historical project the server knows about
- * contributes sessions, not just the ones currently open. Session listing only;
- * this must NOT feed the project switcher, or closing a server-registered
- * project becomes impossible (amicode#839, replacing the fallback-only behavior
- * from amicode#288).
- */
-export function sessionListDirectories(
-  opened: { worktree: string; sandboxes?: string[] }[],
-  serverProjects: { worktree: string; sandboxes?: string[] }[],
-): string[] {
-  const seen = new Set<string>()
-  const result: string[] = []
-  const add = (d: string) => {
-    if (!d || seen.has(d)) return
-    seen.add(d)
-    result.push(d)
-  }
-  for (const p of opened) {
-    add(p.worktree)
-    for (const s of p.sandboxes ?? []) add(s)
-  }
-  for (const p of serverProjects) {
-    add(p.worktree)
-    for (const s of p.sandboxes ?? []) add(s)
-  }
-  return result
-}
 
 export function toggleHomeProjectSelection(
   current: HomeProjectSelection | undefined,
@@ -178,4 +139,35 @@ export const effectiveWorkspaceOrder = (local: string, dirs: string[], persisted
   }
 
   return [...result, ...live.values()]
+}
+
+/**
+ * Directories whose sessions the list surfaces (Sessions dropdown, home list)
+ * — always the union of opened projects (first) and server-registered projects
+ * (deduplicated, appended). Every historical project the server knows about
+ * contributes sessions, not just the ones currently open. Session listing only;
+ * this must NOT feed the project switcher, or closing a server-registered
+ * project becomes impossible (amicode#839, replacing the fallback-only behavior
+ * from amicode#288).
+ */
+export function sessionListDirectories(
+  opened: { worktree: string; sandboxes?: string[] }[],
+  serverProjects: { worktree: string; sandboxes?: string[] }[],
+): string[] {
+  const seen = new Set<string>()
+  const result: string[] = []
+  const add = (d: string) => {
+    if (!d || seen.has(d)) return
+    seen.add(d)
+    result.push(d)
+  }
+  for (const p of opened) {
+    add(p.worktree)
+    for (const s of p.sandboxes ?? []) add(s)
+  }
+  for (const p of serverProjects) {
+    add(p.worktree)
+    for (const s of p.sandboxes ?? []) add(s)
+  }
+  return result
 }

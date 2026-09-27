@@ -498,12 +498,14 @@ describe("amicode service runner (fail-loud, headless — no engine needed)", ()
   });
 
   it("a shelf without a built app dist fails with the named reason", async () => {
-    const empty = mkdtempSync(join(tmpdir(), "amicode-runner-empty-shelf-"));
-    // Use a stub engine binary so the test doesn't depend on the vendored
-    // build artifact (which is gitignored and absent in worktrees).
-    const stubBin = join(mkdtempSync(join(tmpdir(), "amicode-runner-stub-bin-")), "opencode");
-    writeFileSync(stubBin, "#!/bin/sh\nsleep 1000\n");
+    // The engine bin must EXIST so the runner's engine check passes and the
+    // DIST check is what fires — the vendored ENGINE_BIN only exists on hosts
+    // with the vendor fetch, and its absence would fail earlier with the
+    // wrong named reason. The stub never runs: the dist check throws first.
+    const stubBin = join(mkdtempSync(join(tmpdir(), "amicode-runner-stub-engine-")), "stub-engine");
+    writeFileSync(stubBin, "#!/bin/sh\nexit 0\n");
     chmodSync(stubBin, 0o755);
+    const empty = mkdtempSync(join(tmpdir(), "amicode-runner-empty-shelf-"));
     const err = await bootAmicodeServiceRunner({
       engineBin: stubBin,
       appDistRoot: empty,
