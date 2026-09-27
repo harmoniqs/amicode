@@ -291,6 +291,7 @@
     "packages/llm/src/protocols/bedrock-converse.ts": "834a415fa8ddf9ad1224133f8352d0a926694f19f0954201d182111c171ec03b",
     "packages/llm/test/provider/bedrock-converse.test.ts": "e8e14d60e8502e928f170f8ac5b406c44bf16d2dd34996ddc2fb7b9261decf85",
     "packages/opencode/src/agent/agent.ts": "512372a4c62997e9565266638ada19b9dc0a3685b0c0483fd28fede2abdb5c9b",
+    "packages/opencode/src/effect/runner.ts": "b660b5b22df810b16293c23c6d832e5e8dcfb12b9a8a858c875d2c051c855b81",
     "packages/opencode/src/mcp/browser.ts": "ecdda42cbd55a97b8d14050aa15c6e6450a1d63b0a641c8c8e5b81e50f957c87",
     "packages/opencode/src/mcp/index.ts": "da45165e6791a5b30c8962c7fd0ea391bb8e1931cc2357c6b90e9fd090cdeb0d",
     "packages/opencode/src/project/instance-context.ts": "65a35792e50e96a50ea14cd9f928045c0e2fc15eb49506f5bbceee38c4af1457",
@@ -331,6 +332,8 @@
     "packages/opencode/src/tool/widget-author.txt": "a2572913debbbbd2d4a644dcdf4576accbc7efdcc8217c0fc9f5a011e7a15ec4",
     "packages/opencode/src/tool/write.ts": "094661a3bdd3fab2cd439c0b6cb942b6a2653d3e9451420523b33acbc762d1a7",
     "packages/opencode/src/worktree/index.ts": "a86f542b579ef40f2940d36e2c8011ce5592d4811cd5ed437bafe614789fb87e",
+    "packages/opencode/test/effect/runner-queue.test.ts": "9ce3074dc4a86f620381e2c7ada08b9034b500a62b5da1a7d63896f2519085ca",
+    "packages/opencode/test/effect/runner.test.ts": "6be02ad6a7d173642100a9e17b323410bad7ece842a00018d2170b91d4894c5a",
     "packages/opencode/test/fixture/fixture.ts": "357bdaa06c6233a91069db20cc5f1cbb2d6eafa3bc7ba3e89b019859d195d6ef",
     "packages/opencode/test/lib/cli-process.ts": "110c43d247930e834ffffb9068682c5ab2e1b95460ec1ac3d0a75cafbdee60ff",
     "packages/opencode/test/project/worktree-rename.test.ts": "3ec168c9f8595249b75832895a251483ec1f3641ce44ad0bd5a664b5bbd6dad1",
@@ -904,7 +907,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-09-26T19:52:56.445Z",
+  "extracted_at": "2026-09-27T21:59:09.271Z",
   "per_package": {
     "packages/app": {
       "A": 212,
@@ -922,8 +925,8 @@
       "D": 0
     },
     "packages/opencode": {
-      "A": 72,
-      "M": 82,
+      "A": 73,
+      "M": 84,
       "D": 0
     },
     "packages/schema": {
@@ -953,7 +956,7 @@
     }
   },
   "counts": {
-    "overlay_total": 882,
+    "overlay_total": 885,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1241,6 +1244,7 @@
     "packages/llm/src/protocols/bedrock-converse.ts": "M",
     "packages/llm/test/provider/bedrock-converse.test.ts": "M",
     "packages/opencode/src/agent/agent.ts": "M",
+    "packages/opencode/src/effect/runner.ts": "M",
     "packages/opencode/src/mcp/browser.ts": "M",
     "packages/opencode/src/mcp/index.ts": "M",
     "packages/opencode/src/project/instance-context.ts": "M",
@@ -1281,6 +1285,8 @@
     "packages/opencode/src/tool/widget-author.txt": "A",
     "packages/opencode/src/tool/write.ts": "M",
     "packages/opencode/src/worktree/index.ts": "M",
+    "packages/opencode/test/effect/runner-queue.test.ts": "A",
+    "packages/opencode/test/effect/runner.test.ts": "M",
     "packages/opencode/test/fixture/fixture.ts": "M",
     "packages/opencode/test/lib/cli-process.ts": "M",
     "packages/opencode/test/project/worktree-rename.test.ts": "A",

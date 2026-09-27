@@ -45,6 +45,7 @@ import { createAmicodeService } from "./amicode_service";
 import type { AmicodeServiceServer } from "./amicode_service/server";
 import { mintServerPassword, serverAuthHeader } from "./server_auth";
 import { writeHubHandshake, deleteHandshake, hashFile } from "./server_handshake";
+import { buildMachineStableConfig } from "./opencode_config";
 
 /** The named boot-abort: `reason` is the stable grep-able phrase, `message`
  *  carries the detail (engine output tail for health failures). */
@@ -134,19 +135,26 @@ export interface AmicodeServiceRunnerOptions {
   log?: (line: string) => void;
 }
 
-/** #1581 Layer 1 — the PURE hub-engine env builder, extracted from the inlined
- *  merge that spawned the launchd hub engine WITHOUT the amicode config the
- *  pre-#1576 editor spawn injected (server_auth.buildServerSpawnEnv:258/270).
- *  Mirrors that builder's shape: it layers OVER the host env + the caller's
- *  engineEnv, arms the credential unless unarmed, and — the #1581 fix —
- *  injects:
+/** #1581 Layer 1 (env-only necessity) + Layer 2 (the FULL machine-stable config):
+ *  the PURE hub-engine env builder, extracted from the inlined merge that
+ *  spawned the launchd hub engine WITHOUT the amico config the pre-#1576 editor
+ *  spawn injected (server_auth.buildServerSpawnEnv:258/270). Mirrors that
+ *  builder's shape: it layers OVER the host env + the caller's engineEnv, arms
+ *  the credential unless unarmed, and — the #1581 fix — injects:
  *    - OPENCODE_DISABLE_EXTERNAL_SKILLS: "true" (AC2, ALWAYS — env-only: a
  *      RuntimeFlags boot read, absent from the Config schema, so it cannot ride
  *      a config file);
- *    - OPENCODE_CONFIG_CONTENT with `skills.paths` = [machineSkillRoot] (AC1-
- *      machine) WHEN a machineSkillRoot is given.
+ *    - OPENCODE_CONFIG_CONTENT — the machine-stable config opencode merges over
+ *      each per-directory session config at boot. L2: this is the FULL
+ *      machine-stable config (instructions merge, external_directory grants,
+ *      mcp.amicode, default_agent, skills.paths) resolved by the caller
+ *      (buildMachineStableConfig, at the fs-touching boot call site) and passed
+ *      here as `configContent`. When `configContent` is absent, fall back to the
+ *      L1 subset ({skills:{paths:[machineSkillRoot]}}) — still better than the
+ *      bare regression, and the shape older callers exercise.
  *  Pure (no process/fs reads beyond the passed baseEnv) so the runner suite
- *  drives it headlessly. */
+ *  drives it headlessly; the fs-touching machine-stable resolution happens at
+ *  the boot call site (mirrors resolveShippedSkillsDir's placement). */
 export function buildHubEngineEnv(opts: {
   /** The base env the spawn inherits (the host env on the hub). */
   baseEnv: NodeJS.ProcessEnv;
@@ -156,7 +164,13 @@ export function buildHubEngineEnv(opts: {
   password?: string;
   /** The unarmed posture (#955): OPENCODE_SERVER_PASSWORD stays ABSENT. */
   unarmed: boolean;
-  /** The machine skill root to index (AC1-machine). Undefined = omit skills. */
+  /** #1581 L2: the FULL machine-stable OPENCODE_CONFIG_CONTENT (stringified),
+   *  resolved by the caller via buildMachineStableConfig. Wins over the L1
+   *  machineSkillRoot subset when present. */
+  configContent?: string;
+  /** #1581 L1: the machine skill root to index (AC1-machine). Used to build the
+   *  L1 subset config ONLY when `configContent` is absent. Undefined = omit
+   *  skills from the L1 fallback. */
   machineSkillRoot?: string;
 }): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
@@ -167,9 +181,12 @@ export function buildHubEngineEnv(opts: {
     OPENCODE_DISABLE_EXTERNAL_SKILLS: "true",
     ...(opts.unarmed || opts.password === undefined ? {} : { OPENCODE_SERVER_PASSWORD: opts.password }),
   };
-  // AC1-machine: point the engine's skill index at the machine skill root via
-  // OPENCODE_CONFIG_CONTENT (opencode merges it over global config at boot).
-  if (opts.machineSkillRoot) {
+  // L2: the caller resolved the FULL machine-stable config — use it verbatim.
+  if (opts.configContent) {
+    env.OPENCODE_CONFIG_CONTENT = opts.configContent;
+  } else if (opts.machineSkillRoot) {
+    // L1 fallback: point the engine's skill index at the machine skill root via
+    // a minimal OPENCODE_CONFIG_CONTENT (opencode merges it over global config).
     env.OPENCODE_CONFIG_CONTENT = JSON.stringify({
       $schema: "https://opencode.ai/config.json",
       skills: { paths: [opts.machineSkillRoot] },
@@ -421,10 +438,20 @@ export async function bootAmicodeServiceRunner(opts: AmicodeServiceRunnerOptions
     engineEnv: opts.engineEnv,
     password,
     unarmed,
-    // #1581: an explicit override (AMICODE_MACHINE_SKILL_ROOT / opts) wins;
-    // otherwise default to the SHIPPED library skills dir (module-relative) so
-    // suppression never ships without a real catalog. buildHubEngineEnv stays
-    // pure — the fs-touching default resolves HERE, at the boot call site.
+    // #1581 L2: resolve the FULL machine-stable config at the boot call site
+    // (the fs-touching resolution stays OUT of the pure buildHubEngineEnv, same
+    // placement discipline as resolveShippedSkillsDir below). skills.paths rides
+    // the machine skill root — an explicit override (AMICODE_MACHINE_SKILL_ROOT /
+    // opts) wins; otherwise the SHIPPED library skills dir (module-relative), so
+    // suppression never ships without a real catalog. The full config carries
+    // the amico instruction merge, external_directory grants, mcp.amicode, and
+    // default_agent — everything the launchd hub dropped (#1581 regression),
+    // minus the per-workspace skills (L3). If the machine-stable resolution
+    // fails, configContent is undefined and buildHubEngineEnv falls back to the
+    // L1 skills-only subset.
+    configContent: buildMachineStableConfig({
+      machineSkillRoot: opts.machineSkillRoot ?? resolveShippedSkillsDir(),
+    }),
     machineSkillRoot: opts.machineSkillRoot ?? resolveShippedSkillsDir(),
   });
 

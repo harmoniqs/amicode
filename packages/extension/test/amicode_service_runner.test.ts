@@ -394,6 +394,95 @@ createServer((_req, res) => {
     expect((shipped as string).replace(/\\/g, "/")).toMatch(/packages\/extension\/skills$/);
     expect(existsSync(join(shipped as string, "director-core"))).toBe(true);
   }, 30_000);
+
+  // #1581 Layer 2 (option f — the FULL machine-stable config on the hub spawn):
+  // L1 only put a machine-stable SUBSET (skills.paths=[machineRoot]) on the hub
+  // env. The adopted launchd hub still ran WITHOUT the amico instruction merge,
+  // the external_directory permission grants, the amicode MCP tool surface, and
+  // the plan-first default_agent — every session on the adopted engine lost them
+  // (the #1581 regression, only partially closed by L1). L2 extends the hub
+  // env's OPENCODE_CONFIG_CONTENT to the FULL machine-stable config that
+  // buildOpencodeConfigContent emits, MINUS the genuinely per-workspace inputs
+  // (project/environment/workspace skills — deferred to L3).
+  //
+  // Asserted AS THE CHILD SEES IT (env dump → JSON.parse twice: the dump is
+  // JSON, and OPENCODE_CONFIG_CONTENT inside it is itself a JSON string).
+  // ANTI-FAKE-GREEN: assert on ACTUAL path strings / values inside the parsed
+  // config, never mere key presence.
+  it("#1581 L2: the hub engine child's OPENCODE_CONFIG_CONTENT is the FULL machine-stable config (instructions + external_directory grants + mcp.amicode + default_agent), not just skills.paths", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "amicode-runner-hubcfg-full-"));
+    const dump = join(dir, "env-dump.json");
+    const boot = await bootAmicodeServiceRunner({
+      engineBin: writeFakeEngine(dir),
+      appDistRoot: writeStubShelf(mkdtempSync(join(tmpdir(), "amicode-runner-hubcfg-full-shelf-"))),
+      engineUnarmed: true,
+      // NO machineSkillRoot override — exercise the self-sufficient default,
+      // the shape the live launchd hub actually runs.
+      engineEnv: { FAKE_ENGINE_DUMP: dump },
+      healthTimeoutMs: 10_000,
+      servicePort: 0,
+      enginePort: 0,
+      log: () => undefined,
+    });
+    boots.push(boot);
+
+    const dumped = JSON.parse(readFileSync(dump, "utf8")) as { suppress?: string; config?: string };
+
+    // AC2 stays intact: suppression is unconditional.
+    expect(dumped.suppress).toBe("true");
+
+    // The config the child received parses (JSON string → object).
+    expect(typeof dumped.config).toBe("string");
+    const cfg = JSON.parse(dumped.config as string) as {
+      instructions?: string[];
+      default_agent?: string;
+      skills?: { paths?: string[] };
+      mcp?: { amicode?: { type?: string; enabled?: boolean; command?: string[] } };
+      permission?: { external_directory?: Record<string, string>; bash?: string; edit?: string };
+    };
+
+    // AC3 — the amico instruction merge is present: instructions is a non-empty
+    // array carrying a REAL merged AGENTS.md path (an absolute path that exists
+    // on disk, produced idempotently at spawn — never a per-workspace repo file).
+    expect(Array.isArray(cfg.instructions)).toBe(true);
+    expect((cfg.instructions ?? []).length).toBeGreaterThan(0);
+    const agentsPath = (cfg.instructions ?? [])[0];
+    expect(typeof agentsPath).toBe("string");
+    expect(agentsPath.startsWith("/")).toBe(true); // absolute
+    expect(existsSync(agentsPath)).toBe(true); // the merged AGENTS.md was written
+    // The merged AGENTS.md is a real, non-empty instruction file.
+    expect(readFileSync(agentsPath, "utf8").length).toBeGreaterThan(0);
+
+    // AC3 — the permission merge is present: external_directory is a path-scoped
+    // object with the load-bearing grants (>=6 keys), and bash/edit are allowed.
+    const ed = cfg.permission?.external_directory ?? {};
+    expect(typeof ed).toBe("object");
+    expect(Object.keys(ed).length).toBeGreaterThanOrEqual(6);
+    // Anti-fake-green: assert on ACTUAL grant VALUES + a concrete scratch grant
+    // string, not just the count.
+    expect(ed["/tmp/amicode-work/**"]).toBe("allow");
+    expect(Object.values(ed).every((v) => v === "allow")).toBe(true);
+    expect(cfg.permission?.bash).toBe("allow");
+    expect(cfg.permission?.edit).toBe("allow");
+
+    // AC1 — the amicode MCP tool surface is present (a local stdio spawn of the
+    // bundled server, enabled), so a session's tools are the amicode pack.
+    expect(cfg.mcp?.amicode?.type).toBe("local");
+    expect(cfg.mcp?.amicode?.enabled).toBe(true);
+    expect(Array.isArray(cfg.mcp?.amicode?.command)).toBe(true);
+    expect((cfg.mcp?.amicode?.command ?? [])[0]).toBe("node");
+
+    // Plan-first posture: default_agent is "plan" (the product default for every
+    // session — lost on the adopted hub before L2).
+    expect(cfg.default_agent).toBe("plan");
+
+    // AC1 (machine skills) still holds: skills.paths is non-empty and carries the
+    // shipped library skills dir (director-core resolvable).
+    const shipped = resolveShippedSkillsDir();
+    expect(Array.isArray(cfg.skills?.paths)).toBe(true);
+    expect((cfg.skills?.paths ?? []).length).toBeGreaterThan(0);
+    expect(cfg.skills?.paths).toContain(shipped);
+  }, 30_000);
 });
 
 describe("amicode service runner (fail-loud, headless — no engine needed)", () => {
