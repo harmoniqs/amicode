@@ -18,7 +18,7 @@ describe("session-status-reconcile (#1567)", () => {
   afterEach(() => cancelAllReconcileTimers())
 
   test("startReconcileTimer calls onReconcile after timeout", async () => {
-    const onReconcile = mock(() => {})
+    const onReconcile = mock((_id: string) => {})
     startReconcileTimer("s1", onReconcile, SHORT_MS)
     expect(onReconcile).not.toHaveBeenCalled()
     expect(hasReconcileTimer("s1")).toBe(true)

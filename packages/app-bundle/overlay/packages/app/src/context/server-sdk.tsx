@@ -13,6 +13,7 @@ import { createRefCountMap } from "@/utils/refcount"
 import { useGlobal } from "./global"
 import { ServerScope } from "@/utils/server-scope"
 import { parseCursorNamespaces, resolveEventOrigin } from "./sse-origin"
+import { shouldReconnectIdleStream } from "./stream-liveness"
 import { detectServerProtocol, type ServerProtocol } from "@/utils/server-protocol"
 import { createCompatibleApi, type CompatibleApi } from "@/utils/server-compat"
 
@@ -433,6 +434,33 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
   // governs liveness; two abort clocks would fight.)
   const [streamStatus, setStreamStatus] = createSignal<"connected" | "disconnected">("disconnected")
 
+  // #1584 client-side liveness watchdog. The v1 event iterator neither throws
+  // nor completes when the socket goes silently half-open (sleep/wake, Wi-Fi
+  // blip, an engine replaced without FIN/RST), so `onSseError` never fires and
+  // the `for await` parks forever while `streamStatus` stays "connected". We
+  // track the last frame time and, on a 5s tick, force-reconnect a stream that
+  // BELIEVES it is connected but has seen nothing for 30s — abort only the
+  // per-attempt controller so the loop re-opens with the `lastEventID` cursor
+  // (lossless); the same generation reconnects. An intentional abort is treated
+  // as "closed" by the catch at ~L526, so the banner does NOT flip to
+  // disconnected. Mirrors the extension-host `sse_liveness.ts` (30s/5s).
+  const STREAM_STALE_MS = 30_000
+  const WATCHDOG_TICK_MS = 5_000
+  // A tab returning to visible / the network coming back are the signals that
+  // actually fire in a VS Code webview under retainContextWhenHidden, where
+  // pageshow/pagehide do NOT fire on a tab switch — re-arm with a tighter
+  // window so a wake reconnects promptly.
+  const WAKE_STALE_MS = 10_000
+  let lastFrameAt = Date.now()
+  let watchdog: ReturnType<typeof setInterval> | undefined
+  // Reset the frame clock and abort the parked attempt so the loop re-opens
+  // (same generation, cursor intact). Shared by the watchdog and both wake
+  // handlers; a no-op if the stream is already down (attempt undefined).
+  const forceReconnect = () => {
+    lastFrameAt = Date.now()
+    attempt?.abort()
+  }
+
   const start = () => {
     if (started) return run
     started = true
@@ -473,6 +501,7 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
               : eventApi.event.subscribe({ signal: currentAttempt.signal })
           if (!streamGeneration.accepts(active)) return
           setStreamStatus("connected")
+          lastFrameAt = Date.now()
           let yielded = Date.now()
           for await (const event of events) {
             // A buffered frame can arrive after AbortController.abort(). The
@@ -480,6 +509,7 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
             // mutate the new effective stream's session state.
             if (!streamGeneration.accepts(active)) return
             streamErrorLogged = false
+            lastFrameAt = Date.now()
             const legacy = "payload" in event
             if (legacy && event.payload.type === "sync") continue
             const directory = legacy ? (event.directory ?? "global") : (event.location?.directory ?? "global")
@@ -590,10 +620,41 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
   onMount(() => {
     makeEventListener(window, "pagehide", stop)
     makeEventListener(window, "pageshow", (event) => resumeStreamAfterPageShow(event, start))
+    // #1584 watchdog: on a 5s tick, force-reconnect a stream that believes it
+    // is connected but has been silent past the 30s staleness window. Guarded
+    // on the live stream (started, not torn down) so a stopped stream is left
+    // to the loop; forceReconnect resets the clock so a single tick fires once
+    // per staleness episode, not every tick.
+    watchdog = setInterval(() => {
+      if (!started || abort.signal.aborted) return
+      if (shouldReconnectIdleStream({ status: streamStatus(), now: Date.now(), lastFrameAt, staleMs: STREAM_STALE_MS }))
+        forceReconnect()
+    }, WATCHDOG_TICK_MS)
+    // #1584 wake re-arm: pageshow/pagehide do NOT fire on a tab switch under
+    // retainContextWhenHidden — visibilitychange and online are the signals
+    // that actually fire. A tab returning to visible while the stream is stale
+    // past the tighter wake window reconnects; the network coming back
+    // reconnects any "connected" stream (its socket may be silently dead). A
+    // healthy active stream (fresh lastFrameAt) is not stale, so a quick tab
+    // toggle causes no reconnect.
+    makeEventListener(document, "visibilitychange", () => {
+      if (!started || abort.signal.aborted) return
+      if (
+        document.visibilityState === "visible" &&
+        shouldReconnectIdleStream({ status: streamStatus(), now: Date.now(), lastFrameAt, staleMs: WAKE_STALE_MS })
+      )
+        forceReconnect()
+    })
+    makeEventListener(window, "online", () => {
+      if (!started || abort.signal.aborted) return
+      if (streamStatus() === "connected") forceReconnect()
+    })
   })
 
   onCleanup(() => {
     stop()
+    if (watchdog) clearInterval(watchdog)
+    watchdog = undefined
     abort.abort()
     flush()
   })

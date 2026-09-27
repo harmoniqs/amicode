@@ -111,7 +111,7 @@ import { parseStateJson } from "./device_registry";
 import { buildDeviceStatus, nextActions, capabilityHint, type DriveLine } from "./device_status";
 import { SchusterJobServer } from "./qick_client";
 import { adoptOrSpawn, buildLiveDeps, isPidAlive, reclaimOrphanPort, auditAdoptedEngine, restartAdoptedEngine } from "./server_lifecycle";
-import { handshakePath, readHandshake, deleteHandshake, serverLogPath, coldSpawnHandshakeHook, hashFile, hashString, isUnarmedHandshake, UNARMED_PASSWORD } from "./server_handshake";
+import { handshakePath, readHandshake, deleteHandshake, serverLogPath, coldSpawnHandshakeHook, hashFile, hashString, UNARMED_PASSWORD } from "./server_handshake";
 import { startKeepalive, stopKeepalive, readGraceSeconds, pingKeepalive } from "./server_keepalive";
 import { FleetPollHysteresis } from "./fleet_poll_hysteresis";
 import { FleetPostureStateWriter } from "./fleet_posture_state";

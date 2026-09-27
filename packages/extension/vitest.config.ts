@@ -10,6 +10,9 @@ export default defineConfig({
     alias: { vscode: path.resolve(process.cwd(), "test/__mocks__/vscode.ts") },
   },
   test: {
+    // Neutralize ambient dev-shell env (AMICODE_*/AMICO_*/OPENCODE_*) per file so
+    // the local suite matches CI's clean environment — see setup_hermetic_env.ts.
+    setupFiles: ["./test/setup_hermetic_env.ts"],
     globalTeardown: ["./test/teardown_roster_hygiene.ts"],
   },
   plugins: [
