@@ -456,9 +456,17 @@ export function MessageTimeline(props: {
   const projectedMessages = createMemo(() => {
     const id = sessionID()
     if (!id) return []
-    const visible = new Set(props.userMessages.map((message) => message.id))
-    const boundary = sessionMessages().find((message) => message.role === "user" && !visible.has(message.id))?.id
     const messages = sync().data.session_message[id] ?? []
+    // #1579: when visibleUserMessages transiently empties (data.message
+    // fluctuated during a wire reconcile or mirror hydration), the boundary
+    // computation picks the FIRST user message as the cutoff and filters
+    // everything out — the timeline renders zero rows even though
+    // session_message still holds the full history. Skip the boundary
+    // filter when the visible set is empty; the full session_message
+    // renders instead, and the projection corrects on the next tick.
+    const visible = new Set(props.userMessages.map((message) => message.id))
+    if (visible.size === 0) return messages
+    const boundary = sessionMessages().find((message) => message.role === "user" && !visible.has(message.id))?.id
     return boundary ? messages.filter((message) => message.id < boundary) : messages
   })
   const info = createMemo(() => {
@@ -2558,8 +2566,6 @@ export function MessageTimeline(props: {
                   `/amicode/run-series?run=${encodeURIComponent(run)}${lab ? `&lab=${encodeURIComponent(lab)}` : ""}`,
                 )
               }
-              // Disable rail in chat sessions to prevent showing in unrelated sessions (issue #272)
-              disabled={true}
               widgetHost={{
                 // Stage 2: the in-chat widget preview reuses the home grid's
                 // frame kernel; server context is resolved live per call.

@@ -770,6 +770,20 @@ export function createServerSession(
       preserveUnfetched,
       compare: compareMessages,
     })
+    // #1579: an empty reconcile result against a populated store is a
+    // transient wire anomaly (empty page from a just-created session, timing
+    // gap during a concurrent SSE stream), not a real history wipe. Applying
+    // it blanks the timeline for one reactive tick — the "responses
+    // disappear" flash — then the next SSE event or warm pass re-populates.
+    // Skip the replacement; the existing data is more truthful.
+    const currentCount = data.message[sessionID]?.length ?? 0
+    if (messages.length === 0 && currentCount > 0) {
+      loadDebug(sessionID, "skip-empty-replace", { currentCount })
+      // Still update meta so the session is marked as loaded, but don't
+      // touch the message/part stores.
+      setMeta("at", sessionID, Date.now())
+      return
+    }
     batch(() => {
       if (source) setData("session_message", sessionID, reconcile(source))
       const messageIDs = replaceMessages(sessionID, messages)
@@ -1104,7 +1118,26 @@ export function createServerSession(
 
   const projectV2 = (reduction: V2SessionReduction) => {
     reduction.touched.forEach((messageID) => messageLoads.get(reduction.sessionID)?.touchedSource.add(messageID))
-    setData("session_message", reduction.sessionID, reconcile(reduction.messages))
+    // #1579: the V2 reducer receives `data.session_message[id] ?? []` as its
+    // base. When session_message hasn't been loaded yet (the session was just
+    // opened and the wire fetch is still in flight), the base is `[]` and the
+    // reduction contains ONLY the messages the SSE event described — typically
+    // a single message. A wholesale reconcile here would replace a fully-loaded
+    // session_message with that one-message array, wiping the timeline for one
+    // reactive tick until the next event or the wire fetch lands. Guard: never
+    // shrink an already-populated session_message; merge the touched entries
+    // into the existing array instead.
+    const existing = data.session_message[reduction.sessionID]
+    if (existing && existing.length > reduction.messages.length) {
+      const incomingIDs = new Set(reduction.messages.map((m) => m.id))
+      const merged = [
+        ...existing.filter((m) => !incomingIDs.has(m.id)),
+        ...reduction.messages,
+      ].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+      setData("session_message", reduction.sessionID, reconcile(merged))
+    } else {
+      setData("session_message", reduction.sessionID, reconcile(reduction.messages))
+    }
     if (reduction.touched.length === 0) return
 
     const touched = new Set(reduction.touched)
