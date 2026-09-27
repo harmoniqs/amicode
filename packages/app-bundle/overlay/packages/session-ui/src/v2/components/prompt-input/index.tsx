@@ -42,11 +42,13 @@ export type PromptInputV2Props = {
   class?: string
   modelControl?: JSX.Element
   /**
-   * Optional control rendered FIRST in the bottom row's control group,
-   * before agent/model/variant (amicode#1549: the harness switcher — the
-   * outermost context the composer serves). Follows the modelControl
-   * optional-control pattern: pass `undefined` and nothing renders — the
-   * row's layout does not shift.
+   * Optional control rendered to the RIGHT of the effort/variant select —
+   * after agent/model/variant (amicode#1549: the harness switcher reads as
+   * the outermost context, positioned right of the trio per the live-test
+   * layout ruling). Outside the degraded wrapper so it stays clickable under
+   * a non-opencode harness. Follows the modelControl optional-control
+   * pattern: pass `undefined` and nothing renders — the row's layout does
+   * not shift.
    */
   harnessControl?: JSX.Element
   /**
@@ -235,9 +237,6 @@ export function PromptInputV2(props: PromptInputV2Props) {
               onContext={props.controller.openContext}
               onShell={props.controller.openShell}
             />
-            <Show when={props.harnessControl} keyed>
-              {(control) => control}
-            </Show>
             <div
               class={props.harnessDegraded ? "flex min-w-0 flex-1 items-center gap-1 opacity-40 pointer-events-none" : "contents"}
               title={props.harnessDegraded ? "Not accepted by this harness" : undefined}
@@ -276,6 +275,15 @@ export function PromptInputV2(props: PromptInputV2Props) {
                 )}
               </Show>
             </div>
+            {/* amicode#1549: the harness select renders to the RIGHT of the
+                effort/variant select — the outermost context read right-to-left
+                after the trio, NOT first-in-row (the live-test layout ruling:
+                agent → model → effort → harness). Deliberately OUTSIDE the
+                degraded wrapper: under a telaio harness the trio dims inert but
+                the harness select must stay clickable — it is the way back. */}
+            <Show when={props.harnessControl} keyed>
+              {(control) => control}
+            </Show>
           </div>
           <Show when={props.trailingControl} keyed>
             {(control) => <div class="mr-1 flex items-center">{control}</div>}

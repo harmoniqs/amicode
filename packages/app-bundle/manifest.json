@@ -855,7 +855,7 @@
     "packages/sdk/js/src/v2/gen/sdk.gen.ts": "6610638b4fb71bac498da98d232ef9adcd4b011b63e5e81a63fc6dc20d311b17",
     "packages/sdk/js/src/v2/gen/types.gen.ts": "0c23b262085d1e14b89bd03292a380c9ec8b52e66c4308304a05173362b79339",
     "packages/session-ui/src/v2/components/prompt-input/attachments.ts": "ff66078f2edc9a67a4df0d7dfd76a49be5eab27ac332b303f3412721ef7268ea",
-    "packages/session-ui/src/v2/components/prompt-input/index.tsx": "811ebe3d4f6ba6318d3bf3efbac678d4d0484f83929b8f8ae1b7af1bc29911f4",
+    "packages/session-ui/src/v2/components/prompt-input/index.tsx": "098bf84bf22573fcab2826a827e6789d41ad660545a0364ffb4a77cda5e01b30",
     "packages/opencode/src/server/routes/instance/httpapi/server.ts": "8a8e47c2242bc61be078c2fb97ecaa37ebe45cb410b95819102731b52f2b3c31",
     "packages/opencode/src/server/routes/instance/httpapi/groups/experimental.ts": "944a0aee215a917e867fd9482f3c2bd40f49082bd3174c8a7d967ca40e34ec15",
     "packages/opencode/src/server/routes/instance/httpapi/groups/file.ts": "ed165131c62eeb29375db39edf89db8f87488e24ef99fc6f2cf19705ba35751a",
@@ -881,7 +881,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-09-24T21:16:08.091Z",
+  "extracted_at": "2026-09-27T08:23:44.235Z",
   "per_package": {
     "packages/app": {
       "A": 192,
