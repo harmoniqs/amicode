@@ -1266,7 +1266,8 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
         if (flyoutRoot?.contains(target)) return
         if (triggerRef?.contains(target)) return
         // Don't dismiss if the click landed inside a dialog (e.g. delete confirmation)
-        if (target instanceof Element && target.closest("[data-dialog-layer], [data-component='dialog-overlay']")) return
+        // or a portalled menu (e.g. the sort-by MenuV2 dropdown, which renders outside flyoutRoot)
+        if (target instanceof Element && target.closest("[data-dialog-layer], [data-component='dialog-overlay'], [data-component='menu-v2-content']")) return
         setOpen(false)
       }
       const onKey = (e: KeyboardEvent) => {
