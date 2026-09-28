@@ -710,6 +710,37 @@ export default function Page() {
   const workColumnWidth = createMemo(() =>
     clampWorkColumnWidth({ width: layout.panelColumn.width(), available: sessionPanelAvailable() }),
   )
+
+  // #1434: Wide mode — a fullscreen toggle for the Work Column that overrides
+  // the normal 60% cap. The resize handle stays bounded; only the toggle goes
+  // full-width. Declared before sessionPanelWidth so it can gate the chat width.
+  const [wideMode, setWideMode] = createSignal(false)
+  const [preWideColumnWidth, setPreWideColumnWidth] = createSignal<number | undefined>(undefined)
+
+  function toggleWide() {
+    if (wideMode()) {
+      setWideMode(false)
+      const restore = preWideColumnWidth()
+      if (restore) layout.panelColumn.resize(restore)
+    } else {
+      setPreWideColumnWidth(layout.panelColumn.width())
+      setWideMode(true)
+    }
+  }
+
+  // Cmd+Shift+M toggles wide mode
+  createEffect(() => {
+    if (!newSessionDesign()) return
+    function onKeyDown(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "m") {
+        e.preventDefault()
+        toggleWide()
+      }
+    }
+    window.addEventListener("keydown", onKeyDown)
+    onCleanup(() => window.removeEventListener("keydown", onKeyDown))
+  })
+
   const sessionPanelWidth = createMemo(() => {
     if (chatTakesRemainder()) return undefined
     if (!desktopSidePanelOpen()) return "100%"
@@ -2730,25 +2761,38 @@ export default function Page() {
     <SessionRouteFrame>
       <SessionHeader />
       <ContextWarningBanner />
-      <div
+       <div
         ref={panelRow}
         class="flex-1 min-h-0 flex flex-col md:flex-row"
         classList={{
-           "gap-1.5 px-1.5 py-2": settings.general.newLayoutDesigns(),
+           "gap-1.5 px-1.5 py-2": settings.general.newLayoutDesigns() && !wideMode(),
+           "py-2": settings.general.newLayoutDesigns() && wideMode(),
         }}
       >
         <Show when={!isDesktop() && !!params.id && !settings.general.newLayoutDesigns()}>{mobileTabs()}</Show>
 
         <div
           classList={{
-            "@container relative shrink-0 flex flex-col min-h-0 h-full transition-[width]": true,
+            "@container relative shrink-0 flex flex-col min-h-0 h-full transition-[width,opacity]": true,
             "flex-1 md:flex-none": !chatTakesRemainder(),
-            "flex-1": chatTakesRemainder(),
+            "flex-1": chatTakesRemainder() && !wideMode(),
             "duration-[240ms] ease-[cubic-bezier(0.22,1,0.36,1)] will-change-[width] motion-reduce:transition-none":
               !size.active() && !ui.reviewSnap && !desktopInlineTerminalOnlyOpen(),
           }}
           style={{
-            width: sessionPanelWidth(),
+            // #1434: in wide mode, collapse Chat completely out of flow.
+            // Use position:absolute + visibility:hidden (not display:none)
+            // to preserve scroll geometry and avoid the #1510 cascade.
+            ...(newSessionDesign() && wideMode() ? {
+              position: "absolute" as const,
+              visibility: "hidden" as const,
+              width: "0px",
+              height: "0px",
+              overflow: "hidden",
+              "pointer-events": "none",
+            } : {
+              width: sessionPanelWidth(),
+            }),
           }}
         >
           {settings.general.newLayoutDesigns() ? (
@@ -2807,15 +2851,16 @@ export default function Page() {
             <div
               classList={{
                 "min-w-0 h-full flex flex-col relative": true,
-                "flex-1": !isDesktop(),
-                "flex-none": isDesktop(),
+                "flex-1": !isDesktop() || wideMode(),
+                "flex-none": isDesktop() && !wideMode(),
               }}
-              style={{ width: isDesktop() ? `${workColumnWidth()}px` : undefined }}
+              style={{ width: isDesktop() && !wideMode() ? `${workColumnWidth()}px` : undefined }}
             >
               {/* amicode#105: the work column's own resize handle (its left
                   edge), sizing layout.panelColumn within the policy bounds —
-                  the chat flexes around it, never below it. */}
-              <Show when={isDesktop()}>
+                  the chat flexes around it, never below it. Hidden in wide
+                  mode since the column fills the row. */}
+              <Show when={isDesktop() && !wideMode()}>
                 <div onPointerDown={() => size.start()}>
                   <ResizeHandle
                     direction="horizontal"
@@ -2852,6 +2897,8 @@ export default function Page() {
                       size={size}
                       stacked={desktopV2PanelLayout().stacked}
                       touchedFiles={touchedFiles}
+                      isWide={wideMode}
+                      onToggleWide={toggleWide}
                     />
                   </Suspense>
                 </div>
