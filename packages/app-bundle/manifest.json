@@ -110,8 +110,8 @@
     "packages/app/src/components/dialog-release-notes.tsx": "0ea5b049786787643a7f6b54d4ccf84c4f8ffa4e8272426c0d32f60d445b6890",
     "packages/app/src/components/dialog-select-directory-v2.css": "2e2f18abdca77f9fe85da157c40f288f3b1641ca92845208749e16455fd58637",
     "packages/app/src/components/dialog-select-file.tsx": "e6278ee35dd27d203e00ad73f70c709c44a6c06f81ffbd931edfaa0c986b9e03",
-    "packages/app/src/components/engine-state-signal.ts": "6e77b790857d4b742ae78b1dd6bf3846ca6875a63a758bcd099dac2409e26032",
-    "packages/app/src/components/engine-toggle-utils.test.ts": "36bc98571ebf47245c7f714ac1e16ec442773bb87f63f11ffb40dc19df1ea0a7",
+    "packages/app/src/components/engine-state-signal.ts": "2726628b85d4bc58bf6b3bd3045fc4239ad384deaba14fc8f46b818741549a5e",
+    "packages/app/src/components/engine-toggle-utils.test.ts": "bf53ca7a6fac3696f8d9aac032ceee5e35fb3b7e3dfaef3f9afb1fa0ff3135bb",
     "packages/app/src/components/engine-toggle-utils.ts": "bab8a7ddef9f49d4fc243477b7206feb741afdf5ec154a2d70a9f31c814f8c5d",
     "packages/app/src/components/external-link.tsx": "7130044026ad3ec417de4ba7389cc6059de46f21b370047046269c772aa7a4bb",
     "packages/app/src/components/help-button.tsx": "780d533f776a784660cfed072a131198bc6fcc8e8fe332e8e1a220d516c9684e",
@@ -911,7 +911,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-09-28T14:28:18.081Z",
+  "extracted_at": "2026-09-28T15:37:40.240Z",
   "per_package": {
     "packages/app": {
       "A": 214,

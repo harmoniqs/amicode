@@ -35,17 +35,26 @@ const [engineState, setEngineStateRaw] = createSignal<EngineState>("on")
 const [fleetRole, setFleetRole] = createSignal<FleetRole>("standalone")
 // The local latch: the wall-clock time of the stop click, or undefined when
 // there is no outstanding optimistic stop. A tick signal advances the derived
-// state so the timeout is observed reactively.
+// state so the timeout is observed reactively — effectiveEngineState() MUST
+// read `tick` (below) or the self-expiry setTimeout fires into the void: the
+// popover would only re-derive on reopen (BUG1 follow-up — live update lost).
 const [latchedAt, setLatchedAt] = createSignal<number | undefined>(undefined)
-const [, setTick] = createSignal(0)
+const [tick, setTick] = createSignal(0)
 let latchTimer: ReturnType<typeof setTimeout> | undefined
 const now = () => Date.now()
 
 export { engineState, fleetRole }
 
 /** The state the UI should render: the latch reads `stopping` inside the
- *  confirm window, then resolves to `off` (BUG1); a delivered push wins. */
+ *  confirm window, then resolves to `off` (BUG1); a delivered push wins.
+ *
+ *  Reads `tick()` for its reactive side effect ONLY: `now()` is a plain
+ *  non-reactive Date.now(), so nothing here would re-run when the self-expiry
+ *  timer elapses. The timer bumps `tick` (latchStopRequested); reading it makes
+ *  this a tracked dependency so the toggle re-derives to `off` live at the 4s
+ *  boundary WITHOUT the user reopening the popover. */
 export function effectiveEngineState(): EngineState {
+  tick() // reactive dependency — see the timer in latchStopRequested()
   return latchedEngineStateAt(engineState(), latchedAt(), now(), STOP_LATCH_TIMEOUT_MS)
 }
 

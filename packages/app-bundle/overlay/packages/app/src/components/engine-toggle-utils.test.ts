@@ -1,5 +1,7 @@
 // engine-toggle-utils.test.ts — #1598: unit tests for the engine toggle logic.
 import { describe, it, expect, vi, beforeEach, afterEach } from "bun:test"
+import { readFileSync } from "node:fs"
+import { fileURLToPath } from "node:url"
 import {
   parseEngineStateMessage,
   parseFleetRoleMessage,
@@ -154,5 +156,46 @@ describe("latchedEngineStateAt — self-expiring latch (#1608 BUG1)", () => {
     // a real off/booting push landed → raw changed → it wins immediately
     expect(latchedEngineStateAt("off", 0, 500, TIMEOUT)).toBe("off")
     expect(latchedEngineStateAt("booting", 0, 500, TIMEOUT)).toBe("booting")
+  })
+})
+
+// #1608 follow-up (BUG1b — live update lost): the pure helper above was correct,
+// but the toggle only settled to `off` when the popover was CLOSED and REOPENED.
+// Root cause: effectiveEngineState() reads `now()` (plain Date.now(), NOT
+// reactive), so the self-expiry setTimeout's setTick() invalidated nothing —
+// the derived state never re-ran at the 4s boundary. The fix wires a `tick`
+// signal that effectiveEngineState() READS, so the timer's setTick re-derives
+// it live. solid-js is not resolvable in this package's node_modules (engine
+// source tree, built by the bun bundler, not pnpm install — see the session
+// ledger's honest-degradation note), so a createRoot/createEffect reactivity
+// harness cannot run here; the binary build is the authoritative compile gate.
+// We guard the exact regression with a source assertion: effectiveEngineState()
+// MUST read the tick, or the setTimeout fires into the void again.
+describe("engine-state-signal reactivity wiring (#1608 BUG1b)", () => {
+  const signalSrc = readFileSync(
+    fileURLToPath(new URL("./engine-state-signal.ts", import.meta.url)),
+    "utf8",
+  )
+
+  it("names the tick reader (does not discard the setter alone)", () => {
+    // the bug was `const [, setTick] = createSignal(0)` — a write with no reader
+    expect(signalSrc).toContain("const [tick, setTick] = createSignal(0)")
+  })
+
+  it("effectiveEngineState reads tick() so the self-expiry timer re-derives", () => {
+    const body = signalSrc.slice(
+      signalSrc.indexOf("export function effectiveEngineState"),
+      signalSrc.indexOf("function clearLatchTimer"),
+    )
+    expect(body).toContain("tick()")
+    expect(body).toContain("latchedEngineStateAt(")
+  })
+
+  it("the self-expiry timer bumps tick to invalidate the derived state", () => {
+    const body = signalSrc.slice(
+      signalSrc.indexOf("export function latchStopRequested"),
+      signalSrc.indexOf("export function applyEngineState"),
+    )
+    expect(body).toContain("setTick(")
   })
 })
