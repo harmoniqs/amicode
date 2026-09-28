@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test"
 // the ONE real module the component also imports (`session-fleet-peers.ts`).
 // `deriveBadge` was a stale duplicate of the real `deriveSessionBadge`; the
 // per-machine narrowing `filterSessionsByMachine` is promoted alongside it.
-import { deriveSessionBadge, filterSessionsByMachine } from "./session-fleet-peers"
+import { deriveSessionBadge, filterSessionsByMachine, sortDropdownSessions, type DropdownSession, type SortMode } from "./session-fleet-peers"
 
 /**
  * Tests for the Session Chats Dropdown logic (amicode#274).
@@ -365,6 +365,72 @@ describe("Session Chats Dropdown", () => {
       const searched = filterSessionsByQuery(studioSessions, "session 2", getTitle)
       expect(searched).toHaveLength(1)
       expect(searched[0].id).toBe("ses_c")
+    })
+  })
+
+  // ── sort modes compose with open-tab pinning (#1599) ──────────────────────
+
+  describe("sort modes compose with open-tab pinning", () => {
+    /**
+     * The display pipeline partitions into open-tab and rest, sorts EACH
+     * partition with sortDropdownSessions, then concatenates. Open-tab
+     * sessions must stay first regardless of which sort mode is applied.
+     *
+     * This mirrors the real pipeline in session-header.tsx.
+     */
+    function composeSortWithPinning(
+      sessions: DropdownSession[],
+      hasOpenTab: (s: DropdownSession) => boolean,
+      mode: SortMode,
+    ): DropdownSession[] {
+      const openTabs: DropdownSession[] = []
+      const rest: DropdownSession[] = []
+      for (const s of sessions) {
+        if (hasOpenTab(s)) openTabs.push(s)
+        else rest.push(s)
+      }
+      return [
+        ...sortDropdownSessions(openTabs, mode),
+        ...sortDropdownSessions(rest, mode),
+      ]
+    }
+
+    const all: DropdownSession[] = [
+      { id: "a", title: "Zebra", directory: "/p", time: { created: 100 } },
+      { id: "b", title: "Alpha", directory: "/p", time: { created: 300 } },
+      { id: "c", title: "Mid", directory: "/p", time: { created: 200 } },
+    ] as DropdownSession[]
+    const openIds = new Set(["c"])
+    const hasOpen = (s: DropdownSession) => openIds.has(s.id)
+
+    test("alpha sort: open-tab session stays first even if title sorts later", () => {
+      const result = composeSortWithPinning(all, hasOpen, "alpha")
+      // "c" (Mid) has an open tab — it must be first
+      expect(result[0].id).toBe("c")
+      // Rest sorted alphabetically: Alpha (b), Zebra (a)
+      expect(result.slice(1).map((s) => s.id)).toEqual(["b", "a"])
+    })
+
+    test("recent sort: open-tab session stays first even if older", () => {
+      const result = composeSortWithPinning(all, hasOpen, "recent")
+      expect(result[0].id).toBe("c")
+      // Rest sorted by recency: b (300), a (100)
+      expect(result.slice(1).map((s) => s.id)).toEqual(["b", "a"])
+    })
+
+    test("machine sort: open-tab session stays first", () => {
+      const machineAll: DropdownSession[] = [
+        { id: "r1", title: "R1", directory: "/p", time: { created: 300 }, amicode_owner: { owner_machine_id: "peer", owner_name: "Box", is_local: false } },
+        { id: "loc", title: "Local", directory: "/p", time: { created: 100 } },
+        { id: "r2", title: "R2", directory: "/p", time: { created: 200 }, amicode_owner: { owner_machine_id: "peer", owner_name: "Box", is_local: false } },
+      ] as DropdownSession[]
+      const machineOpen = new Set(["r1"])
+      const result = composeSortWithPinning(machineAll, (s) => machineOpen.has(s.id), "machine")
+      // r1 is the open tab — stays first despite being remote
+      expect(result[0].id).toBe("r1")
+      // Rest sorted by machine: local first, then remote
+      expect(result[1].id).toBe("loc")
+      expect(result[2].id).toBe("r2")
     })
   })
 })
