@@ -21,6 +21,13 @@ const SESSION_CONTENT_EVENTS = new Set([
   "session.diff",
   "todo.updated",
   "session.status",
+  // #1637 — the turn-active floor's events are session content too (they feed
+  // session_working); gate them with the status frame in passive directories.
+  "session.execution.started",
+  "session.execution.succeeded",
+  "session.execution.failed",
+  "session.execution.interrupted",
+  "session.error",
   "message.updated",
   "message.removed",
   "message.part.updated",
@@ -32,6 +39,9 @@ const SESSION_CONTENT_EVENTS = new Set([
   "question.replied",
   "question.rejected",
 ])
+// #1637 — sessionID → max status seq seen (#1636), for the child store's seq
+// guard. Sessions are unique across directories, so a module map is safe.
+const childStatusSeq = new Map<string, number>()
 
 export function applyGlobalEvent(input: {
   event: { type: string; properties?: unknown }
@@ -264,8 +274,50 @@ export function applyDirectoryEvent(input: {
       break
     }
     case "session.status": {
-      const props = event.properties as { sessionID: string; status: SessionStatus }
+      const props = event.properties as { sessionID: string; status: SessionStatus; seq?: number }
+      // #1637 honor seq (#1636): drop a stale/out-of-order frame so a reordered
+      // idle cannot overwrite a live busy. Absent seq → always apply.
+      if (typeof props.seq === "number") {
+        const seen = childStatusSeq.get(props.sessionID)
+        if (seen !== undefined && props.seq <= seen) break
+        childStatusSeq.set(props.sessionID, props.seq)
+      }
+      // #1637 fallback clear: an authoritative idle frame ends the turn bracket.
+      if ((props.status?.type ?? "idle") === "idle")
+        input.setStore("session_turn_active", props.sessionID, false)
       input.setStore("session_status", props.sessionID, reconcile(props.status))
+      break
+    }
+    case "session.execution.started": {
+      // #1637 turn-active floor: rises on the execution bracket the server emits
+      // for EVERY turn shape (part-bearing or not).
+      const props = event.properties as { sessionID?: string } | undefined
+      if (props?.sessionID) {
+        input.setStore("session_turn_active", props.sessionID, true)
+        input.setStore("session_status", props.sessionID, reconcile({ type: "busy" }))
+      }
+      break
+    }
+    case "session.execution.succeeded":
+    case "session.execution.failed":
+    case "session.execution.interrupted": {
+      // #1637 terminal clear.
+      const props = event.properties as { sessionID?: string } | undefined
+      if (props?.sessionID) {
+        input.setStore("session_turn_active", props.sessionID, false)
+        input.setStore("session_status", props.sessionID, reconcile({ type: "idle" }))
+      }
+      break
+    }
+    case "session.error": {
+      // #1637 fallback clear: a Session.Event.Error site / abort can skip the
+      // terminal execution event.
+      const props = event.properties as { sessionID?: string } | undefined
+      if (props?.sessionID) {
+        input.setStore("session_turn_active", props.sessionID, false)
+        if ((input.store.session_status[props.sessionID]?.type ?? "idle") !== "idle")
+          input.setStore("session_status", props.sessionID, reconcile({ type: "idle" }))
+      }
       break
     }
     case "message.updated": {
