@@ -628,6 +628,13 @@ export interface SweepStrayEnginesDeps {
    *  undefined (no handshake yet), only the live-client check protects an
    *  engine from being reaped. */
   keepPid: number | undefined;
+  /** The launchd hub engine's PID (from hub-engine.pid), when this machine has
+   *  one. A HARD protection: the hub is NEVER reaped, independent of keepPid or
+   *  the live-client check — so a future call site that bypasses the never-sweep
+   *  guard (#1576) or passes a wrong keepPid cannot SIGTERM the hub and
+   *  reintroduce the churn (#1607 Slice 4). Undefined on a standalone machine,
+   *  where behavior is unchanged. */
+  hubEnginePid?: number | undefined;
   /** Enumerate all `opencode serve` engines on the machine. */
   listOpencodeEngines: () => Promise<StrayEngine[]>;
   /** Does this engine's port still have an external client connected? A live
@@ -656,6 +663,15 @@ export async function sweepStrayEngines(
   const result: SweepResult = { reaped: [], kept: [], failed: [] };
   const engines = await deps.listOpencodeEngines();
   for (const { pid, port } of engines) {
+    // #1607 Slice 4: HARD hub protection — the launchd hub engine is never
+    // reaped, independent of keepPid or the live-client check. This makes "zero
+    // SIGTERMs to the hub PID" structural, so a call site that bypasses the
+    // never-sweep guard (or passes a wrong keepPid) still cannot reap the hub.
+    if (deps.hubEnginePid !== undefined && pid === deps.hubEnginePid) {
+      deps.log?.(`[sweep] engine PID ${pid} on port ${port} is the fleet hub — never reaped [#1607]`);
+      result.kept.push(pid);
+      continue;
+    }
     if (deps.keepPid !== undefined && pid === deps.keepPid) {
       result.kept.push(pid);
       continue;

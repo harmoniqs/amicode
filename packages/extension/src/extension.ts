@@ -1494,6 +1494,17 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       try {
         const res = await sweepStrayEngines({
           keepPid,
+          // #1607 Slice 4: HARD hub protection — even though this closure is
+          // already gated (a fleet server never sweeps), pass the hub PID so the
+          // sweep itself will never reap the hub. Defense-in-depth: a future call
+          // site that bypasses the guard still cannot SIGTERM the hub.
+          hubEnginePid: (() => {
+            try {
+              return parseInt(fs.readFileSync(path.join(os.homedir(), ".amico", "amicode", "hub-engine.pid"), "utf8").trim(), 10) || undefined;
+            } catch {
+              return undefined;
+            }
+          })(),
           listOpencodeEngines,
           hasLiveClient,
           killEngine: reclaimEnginePid,
