@@ -6,10 +6,11 @@ import { Icon } from "@opencode-ai/ui/v2/icon"
 import { KeybindV2 } from "@opencode-ai/ui/v2/keybind-v2"
 import { TooltipV2 } from "@opencode-ai/ui/v2/tooltip-v2"
 import type { ReferenceInfo } from "@opencode-ai/sdk/v2/client"
-import { createEffect, createMemo, on, onCleanup, Show } from "solid-js"
+import { createEffect, createMemo, createSignal, on, onCleanup, Show } from "solid-js"
 import { ModelSelectorPopoverV2 } from "@/components/dialog-select-model"
 import { DialogSelectModelUnpaidV2 } from "@/components/dialog-select-model-unpaid-v2"
 import { ReportBugButton } from "@/components/report-bug-button"
+import { ConciseModeButton } from "@/components/concise-mode-button"
 import type { PromptInputProps } from "@/components/prompt-input/contracts"
 import { normalizePromptHistoryEntry, promptLength, type PromptHistoryComment } from "@/components/prompt-input/history"
 import { createPersistedPromptInputHistory } from "@/components/prompt-input/history-store"
@@ -48,6 +49,10 @@ export type PromptInputV2ComposerProps = {
 export type PromptInputV2ControllerProps = Omit<PromptInputProps, "class" | "submission">
 export type PromptInputV2ComposerController = PromptInputV2Interaction & {
   readonly model: PromptInputProps["controls"]["model"]
+  // amicode: the concise-mode toggle state + action, surfaced to the composer's
+  // trailing controls. `on` is a reactive accessor; `toggle` flips it and sends
+  // the concise skill's own toggle phrase.
+  readonly concise: { readonly on: () => boolean; readonly toggle: () => void }
 }
 
 export function PromptInputV2Composer(props: PromptInputV2ComposerProps) {
@@ -67,7 +72,15 @@ export function PromptInputV2Composer(props: PromptInputV2ComposerProps) {
         // amicode/opencode#116: report-a-bug, right-anchored immediately left
         // of send. The boot-param gate lives HERE (not inside the button) so a
         // gated-off button passes `undefined` and the row's layout never shifts.
-        trailingControl={bugReportEnabled() ? <ReportBugButton /> : undefined}
+        trailingControl={
+          <>
+            <ConciseModeButton
+              active={props.controller.concise.on()}
+              onToggle={() => props.controller.concise.toggle()}
+            />
+            {bugReportEnabled() ? <ReportBugButton /> : undefined}
+          </>
+        }
         modelControl={
           <PromptInputV2ModelControl
             loading={props.controller.model.loading}
@@ -242,6 +255,23 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
     streamGap,
     model: props.controls.model.selection,
   })
+
+  // amicode: concise-mode toggle. Lightweight by design — it drives Amico's
+  // `concise` output-shaping skill by sending the skill's own toggle phrases,
+  // rather than a persisted engine setting (the response-presentation transport
+  // epic was deliberately parked in favor of the skill). Between-messages action:
+  // it no-ops while a turn is working, and sends the phrase as its own turn.
+  const [conciseOn, setConciseOn] = createSignal(false)
+  const toggleConcise = () => {
+    if (working()) return
+    const next = !conciseOn()
+    setConciseOn(next)
+    const phrase = next ? "concise mode" : "normal mode"
+    const parts = [{ type: "text" as const, content: phrase, start: 0, end: phrase.length }]
+    prompt.set(parts, promptLength(parts))
+    void submission.handleSubmit(new Event("submit"))
+  }
+  const concise = { on: conciseOn, toggle: toggleConcise }
 
   const referenceDescription = (reference: ReferenceInfo) =>
     reference.source.type === "git" ? reference.source.repository : reference.source.path
@@ -437,6 +467,7 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
     },
   })
   Object.defineProperty(controller, "model", { get: () => props.controls.model })
+  Object.defineProperty(controller, "concise", { get: () => concise })
 
   // Framed webview: the window-level fallback (global-clipboard.ts) is the
   // sole ⌘V owner. When the clipboard carries no text it offers the media to
