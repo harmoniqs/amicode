@@ -25,7 +25,7 @@
     "packages/app/public/oc-theme-preload.js": "27227e802b3494e7c545da903e679efdb30ccc754cd4eb5cdf08005a40d560b6",
     "packages/app/src/app-desktop-commands.test.ts": "1d2057f238dc14e4407ff5c4e53afe091784790bc0fd0dbfde0eacd91e2bd968",
     "packages/app/src/app.tsx": "07b292f88de59fad23b0e7564e0c536214917b65b50326552894925a9c0e17d1",
-    "packages/app/src/design-polish.css": "9726c02e451b4cb0a12f71d775748f9681e5348e5da217fb2581392f96918b9f",
+    "packages/app/src/design-polish.css": "6dceafb232f7132be588debc33c913fa6773966d54d6bbf6a1496b7622adeacc",
     "packages/app/src/desktop-menu.ts": "350e0e9f2e4294bfe1b1f357b3cd2ea0908b14d20ca1e79fda2305db1958fb24",
     "packages/app/src/entry.tsx": "f35e1017f4c9d478d254b2a38043e5750064b6bef25169c3e07ae9f72ff1049c",
     "packages/app/src/index.css": "2c11df3dcebb381358e06626094b5dda3c35688ad7940d643b2cbb6cff1ea9e9",
@@ -110,10 +110,9 @@
     "packages/app/src/components/dialog-release-notes.tsx": "0ea5b049786787643a7f6b54d4ccf84c4f8ffa4e8272426c0d32f60d445b6890",
     "packages/app/src/components/dialog-select-directory-v2.css": "2e2f18abdca77f9fe85da157c40f288f3b1641ca92845208749e16455fd58637",
     "packages/app/src/components/dialog-select-file.tsx": "e6278ee35dd27d203e00ad73f70c709c44a6c06f81ffbd931edfaa0c986b9e03",
-    "packages/app/src/components/engine-banner.tsx": "5119a010d7b1cb25383cd8288bfb949037289d077c9be85badf9041472b2a5ce",
-    "packages/app/src/components/engine-state-signal.ts": "854ef65349c8528d467adbbf0d09213b2ad981ab4bf595eb7d4903d880c13535",
-    "packages/app/src/components/engine-toggle-utils.test.ts": "13deb80d133266b9264556d4539204c818aa0f2606766beb8831805b1bf3a71b",
-    "packages/app/src/components/engine-toggle-utils.ts": "2c9ac45b6424dc758752402a44556d3fa5ae6be8e5390f4ab302e695b0de05bd",
+    "packages/app/src/components/engine-state-signal.ts": "6e77b790857d4b742ae78b1dd6bf3846ca6875a63a758bcd099dac2409e26032",
+    "packages/app/src/components/engine-toggle-utils.test.ts": "36bc98571ebf47245c7f714ac1e16ec442773bb87f63f11ffb40dc19df1ea0a7",
+    "packages/app/src/components/engine-toggle-utils.ts": "bab8a7ddef9f49d4fc243477b7206feb741afdf5ec154a2d70a9f31c814f8c5d",
     "packages/app/src/components/external-link.tsx": "7130044026ad3ec417de4ba7389cc6059de46f21b370047046269c772aa7a4bb",
     "packages/app/src/components/help-button.tsx": "780d533f776a784660cfed072a131198bc6fcc8e8fe332e8e1a220d516c9684e",
     "packages/app/src/components/new-session-machine-picker.ts": "8c7689f79c7610e32fef478320870d1468fa17a3a02463e2cbe058a487fb4769",
@@ -131,7 +130,7 @@
     "packages/app/src/components/settings-providers.tsx": "c86c9bf4a6f6e198dc7b0995a69d5b76e851144987bbe601802b1b0120ee4ac4",
     "packages/app/src/components/solver-switch-banner.tsx": "ec7edeec6dc05a4a06b39241b4f3a8e7534da97722dd8ec6f26ff782025802e9",
     "packages/app/src/components/split-frame.tsx": "44c53737f72027b461097c03df48a4f411d04a82d02b1fce4901813c73dfcc72",
-    "packages/app/src/components/status-popover-body.tsx": "52b9d4395b2f4c5f721e8136e04f7e29c40b83b7e5fc07b5f9cf27b0dfac9db4",
+    "packages/app/src/components/status-popover-body.tsx": "15b545e6e5dfff2cebb32a98cc99d5710fdb45ca3d35040d6db6f50ab536719f",
     "packages/app/src/components/status-popover-indicator.test.ts": "9afc7b49d9021a94d74f3f777178230ae13bd26e5749da0cee4d3378eacacacd",
     "packages/app/src/components/status-popover-indicator.ts": "887b3e659ff49fd0d2a8715fad6562dc7e9402b80d06442058502306bdb108f5",
     "packages/app/src/components/status-popover-model.test.ts": "10634035bab0f31de24564e0d6c8413a0f7434fb2c08ac3ef722981a69dd08e7",
@@ -223,7 +222,7 @@
     "packages/app/src/pages/home-session-archive.test.ts": "e8f1126287a3e9daa455efcc378e5d72aebdd092158bf8526f7779669b72e850",
     "packages/app/src/pages/home-session-archive.ts": "1b56c173f37f4a4dfd54088ef5fdb0dbcd3d9b62aeb08de4bfa0ed34f07d7ad5",
     "packages/app/src/pages/home.tsx": "06fb5c7718aacfd29b35e730e05d45076b39d6cd5d936d1270fb1bd9424c32fa",
-    "packages/app/src/pages/layout-new.tsx": "ff63494b0a0e20f8d124aa625cc6bf628033b3a59cd7e2d2b139d04746702a76",
+    "packages/app/src/pages/layout-new.tsx": "7ba4195f7b893a371641fcdf9f6ca228afa09b8f078bbf1f7aa912ce98e79ca0",
     "packages/app/src/pages/layout.tsx": "eaf8bed869b5ec53582db732119fb903b223d749ebda354b1e388de3be02dc52",
     "packages/app/src/pages/new-session-landing.test.ts": "95e2780456a653a71e6f66b4302ae546e308a29e6b8ad9e84442938a3a226905",
     "packages/app/src/pages/new-session-landing.ts": "528d27cd5d441b521674328fb7812fb2acf77233e9e436d081c98ce611e8b268",
@@ -912,10 +911,10 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-09-28T14:07:31.644Z",
+  "extracted_at": "2026-09-28T14:28:18.081Z",
   "per_package": {
     "packages/app": {
-      "A": 215,
+      "A": 214,
       "M": 157,
       "D": 0
     },
@@ -961,7 +960,7 @@
     }
   },
   "counts": {
-    "overlay_total": 890,
+    "overlay_total": 889,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1068,7 +1067,6 @@
     "packages/app/src/components/dialog-release-notes.tsx": "M",
     "packages/app/src/components/dialog-select-directory-v2.css": "M",
     "packages/app/src/components/dialog-select-file.tsx": "M",
-    "packages/app/src/components/engine-banner.tsx": "A",
     "packages/app/src/components/engine-state-signal.ts": "A",
     "packages/app/src/components/engine-toggle-utils.test.ts": "A",
     "packages/app/src/components/engine-toggle-utils.ts": "A",

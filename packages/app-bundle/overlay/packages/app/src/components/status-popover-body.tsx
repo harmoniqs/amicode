@@ -324,9 +324,9 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean>; onClose?: (
   // toggle. The state now lives in a GLOBAL always-mounted signal
   // (engine-state-signal.ts), so a push arriving while this popover is closed is
   // not lost. We read effectiveEngineState() (the delivered state, or the local
-  // "stopping" latch during the click→push gap). installEngineStateListener() is
-  // idempotent — the always-mounted EngineBanner installs it too; this call is a
-  // no-op belt-and-braces so the toggle works even if the banner never mounts.
+  // self-expiring "stopping" latch during the click→push gap). The ONE listener
+  // install is owned by the always-mounted layout (layout-new.tsx); this call is
+  // idempotent belt-and-braces so the toggle still works if that host changes.
   installEngineStateListener()
   const engineState = () => effectiveEngineState()
   const defaultServer = useDefaultServerKey(platform.getDefaultServer)

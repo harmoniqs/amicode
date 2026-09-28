@@ -35,16 +35,6 @@ export function parseFleetRoleMessage(
   return undefined
 }
 
-/** The state the UI should render given the raw pushed state and the local
- *  "stop-requested" latch (#1608 AC5): a click flips the toggle to `stopping`
- *  instantly, before any extension round-trip — but only when the raw state is
- *  still `on` (once a real push lands, the push wins and the caller clears the
- *  latch). Pure so it is testable without the solid signal graph. */
-export function latchedEngineState(raw: EngineState, stopRequested: boolean): EngineState {
-  if (stopRequested && raw === "on") return "stopping"
-  return raw
-}
-
 /** Send a bridge command to the extension (stop or restart the engine). */
 export function sendEngineCommand(state: EngineState): void {
   if (state === "on") {
@@ -86,23 +76,26 @@ export function engineDotClass(state: EngineState): string {
   }
 }
 
-/** The calm off/stopping/booting banner label (#1608 AC2), or undefined when
- *  the banner must stay silent: when the engine is on, OR on a fleet-client
- *  window where the engine is remote and a local "engine off" is a lie (AC8). */
-export function engineBannerLabel(state: EngineState, role: FleetRole): string | undefined {
-  // AC8: never narrate a local engine state on a fleet-client window — the
-  // engine lives on the hub; a tunnel blip is not an intentional off.
-  if (role === "client") return undefined
-  switch (state) {
-    case "on":
-      return undefined
-    case "off":
-      return "Engine off — toggle on to resume"
-    case "stopping":
-      return "Stopping the engine…"
-    case "booting":
-      return "Starting the engine…"
-    default:
-      return assertNever(state)
-  }
+/** The calm off/stopping/booting narration was removed (#1608 follow-up): the
+ *  toggle's own dot/lock is the whole story, per the user. See engineDotClass. */
+
+/** Self-expiring latch resolution (#1608 BUG1). The stuck-stopping bug was the
+ *  latch reading `stopping` forever when the confirming `off` push was dropped
+ *  (engine dead → SSE gone → the push never arrives). This resolves the latch
+ *  to its INTENDED terminal state `off` once `timeoutMs` elapses, so the toggle
+ *  is never permanently grayed:
+ *   - no latch (`latchedAt` undefined) → raw passes through;
+ *   - raw already changed (a push landed) → raw wins immediately;
+ *   - latch set, raw still `on`, inside the window → `stopping`;
+ *   - latch set, raw still `on`, window elapsed → `off` (clickable to restart).
+ *  Pure so it is testable without the solid signal graph or real timers. */
+export function latchedEngineStateAt(
+  raw: EngineState,
+  latchedAt: number | undefined,
+  now: number,
+  timeoutMs: number,
+): EngineState {
+  if (latchedAt === undefined) return raw
+  if (raw !== "on") return raw // a real push already moved us off `on`
+  return now - latchedAt >= timeoutMs ? "off" : "stopping"
 }

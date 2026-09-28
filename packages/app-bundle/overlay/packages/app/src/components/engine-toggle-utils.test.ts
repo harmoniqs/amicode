@@ -5,8 +5,7 @@ import {
   parseFleetRoleMessage,
   sendEngineCommand,
   engineDotClass,
-  engineBannerLabel,
-  latchedEngineState,
+  latchedEngineStateAt,
 } from "./engine-toggle-utils"
 
 describe("parseEngineStateMessage", () => {
@@ -125,46 +124,35 @@ describe("engineDotClass (#1608)", () => {
   })
 })
 
-// #1608 AC2 + AC8: the calm banner narrates off/stopping/booting, stays silent
-// when the engine is on, and NEVER narrates on a fleet-client window (the
-// engine is remote; a local "off" would be a lie).
-describe("engineBannerLabel (#1608)", () => {
-  it("narrates the non-on lifecycle states on a standalone/server window", () => {
-    expect(engineBannerLabel("off", "standalone")).toBe("Engine off — toggle on to resume")
-    expect(engineBannerLabel("stopping", "standalone")).toBe("Stopping the engine…")
-    expect(engineBannerLabel("booting", "server")).toBe("Starting the engine…")
+// #1608 follow-up (BUG1): the latch must be SELF-LIMITING. The stuck-stopping
+// bug was `stopping` staying locked forever when the confirming `off` push was
+// dropped (engine dead → SSE gone → push never delivered). The latch resolves
+// to the INTENDED terminal state `off` after a timeout, so the toggle is never
+// permanently grayed — a user can always click to restart.
+describe("latchedEngineStateAt — self-expiring latch (#1608 BUG1)", () => {
+  const TIMEOUT = 4000
+  it("reads `stopping` inside the confirm window (instant feedback preserved)", () => {
+    // latched at t=0, now=1s, still within the 4s window
+    expect(latchedEngineStateAt("on", 0, 1000, TIMEOUT)).toBe("stopping")
   })
 
-  it("stays silent when the engine is on", () => {
-    expect(engineBannerLabel("on", "standalone")).toBeUndefined()
+  it("falls back to `off` once the window elapses with no confirming push", () => {
+    // latched at t=0, now=5s > 4s window → resolve to the intended terminal off
+    expect(latchedEngineStateAt("on", 0, 5000, TIMEOUT)).toBe("off")
   })
 
-  it("stays silent on a fleet-client window for EVERY state (AC8)", () => {
-    for (const s of ["on", "off", "stopping", "booting"] as const) {
-      expect(engineBannerLabel(s, "client")).toBeUndefined()
-    }
-  })
-})
-
-// #1608 AC5: the local "stop-requested" latch flips the toggle to `stopping`
-// the instant the user clicks, before any extension round-trip — but only
-// while the raw pushed state is still `on`. Once a real push lands the caller
-// clears the latch and the push wins.
-describe("latchedEngineState (#1608 AC5)", () => {
-  it("reads `stopping` on a click while raw is still on (instant feedback)", () => {
-    expect(latchedEngineState("on", true)).toBe("stopping")
+  it("resolves to `off` exactly at the boundary (>= timeout)", () => {
+    expect(latchedEngineStateAt("on", 0, 4000, TIMEOUT)).toBe("off")
   })
 
-  it("passes raw through when the latch is clear", () => {
-    expect(latchedEngineState("on", false)).toBe("on")
-    expect(latchedEngineState("off", false)).toBe("off")
-    expect(latchedEngineState("booting", false)).toBe("booting")
+  it("passes raw through when there is no latch (latchedAt undefined)", () => {
+    expect(latchedEngineStateAt("on", undefined, 9999, TIMEOUT)).toBe("on")
+    expect(latchedEngineStateAt("off", undefined, 9999, TIMEOUT)).toBe("off")
   })
 
-  it("lets a delivered push win over a stale latch (never fights delivery)", () => {
-    // A real `off`/`booting`/`stopping` push overrides the optimistic latch.
-    expect(latchedEngineState("off", true)).toBe("off")
-    expect(latchedEngineState("booting", true)).toBe("booting")
-    expect(latchedEngineState("stopping", true)).toBe("stopping")
+  it("lets a delivered push win over the latch, even inside the window", () => {
+    // a real off/booting push landed → raw changed → it wins immediately
+    expect(latchedEngineStateAt("off", 0, 500, TIMEOUT)).toBe("off")
+    expect(latchedEngineStateAt("booting", 0, 500, TIMEOUT)).toBe("booting")
   })
 })

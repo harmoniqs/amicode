@@ -2,7 +2,7 @@ import { createSignal } from "solid-js"
 import {
   parseEngineStateMessage,
   parseFleetRoleMessage,
-  latchedEngineState,
+  latchedEngineStateAt,
   type EngineState,
   type FleetRole,
 } from "./engine-toggle-utils"
@@ -11,49 +11,78 @@ import {
 //
 // #1598 kept the engine-state signal LOCAL to the status popover, so a push
 // that arrived while the popover was closed was lost, and nothing outside the
-// popover (the composer refusal, the off-narration banner) could read it. This
-// promotes it to a module-level always-mounted signal — mirroring the
-// solver-switch-banner pattern — installed ONCE from the layout so a single
-// window listener owns the channel for the whole app lifetime.
+// popover could read it. This promotes it to a module-level always-mounted
+// signal — installed ONCE (see installEngineStateListener) so a single window
+// listener owns the channel for the whole app lifetime.
 //
-// It also carries the LOCAL "stop-requested" latch (AC5): the click flips the
-// UI off instantly, before any extension round-trip. A delivered push then
-// reconciles it (the latch clears the moment the real state arrives), so the
-// latch never fights delivery — it only covers the gap before it.
+// It also carries the LOCAL "stop-requested" latch: the click flips the UI to
+// `stopping` instantly, before any extension round-trip. A delivered push then
+// reconciles it. CRITICALLY (BUG1 fix), the latch is SELF-EXPIRING: if the
+// confirming `off` push is dropped (engine dead → SSE gone → the push never
+// arrives), a timer resolves the latch to the intended terminal `off` state so
+// the toggle is NEVER permanently grayed — the user can always click to restart.
+
+// How long `stopping` may show before the latch self-resolves to `off`. The
+// deliberate kill is SIGTERM→wait→SIGKILL-bounded at ~3s (server_manager.ts),
+// so 4s covers the happy path and still recovers a dropped confirm quickly.
+export const STOP_LATCH_TIMEOUT_MS = 4000
 
 // Default "on": the app can only render when the engine is already serving it,
 // so the resting initial state is on; booting/off/stopping arrive via push.
 const [engineState, setEngineStateRaw] = createSignal<EngineState>("on")
-// Fleet role drives the fleet-client hide (AC8). Default standalone — a window
-// with no fleet topology behaves as a normal standalone engine host.
+// Fleet role default standalone — a window with no fleet topology behaves as a
+// normal standalone engine host.
 const [fleetRole, setFleetRole] = createSignal<FleetRole>("standalone")
-// The local latch: set true on a stop click, cleared when a real push lands.
-const [stopRequested, setStopRequested] = createSignal(false)
+// The local latch: the wall-clock time of the stop click, or undefined when
+// there is no outstanding optimistic stop. A tick signal advances the derived
+// state so the timeout is observed reactively.
+const [latchedAt, setLatchedAt] = createSignal<number | undefined>(undefined)
+const [, setTick] = createSignal(0)
+let latchTimer: ReturnType<typeof setTimeout> | undefined
+const now = () => Date.now()
 
 export { engineState, fleetRole }
 
-/** The state the UI should render: the latch wins until a real push arrives,
- *  so a click reads as `stopping` instantly (AC5) without waiting for delivery. */
+/** The state the UI should render: the latch reads `stopping` inside the
+ *  confirm window, then resolves to `off` (BUG1); a delivered push wins. */
 export function effectiveEngineState(): EngineState {
-  return latchedEngineState(engineState(), stopRequested())
+  return latchedEngineStateAt(engineState(), latchedAt(), now(), STOP_LATCH_TIMEOUT_MS)
 }
 
-/** Flip the toggle off locally the instant the user clicks (AC5). The extension
- *  round-trip then confirms via push; this only covers the gap before it. */
+function clearLatchTimer() {
+  if (latchTimer !== undefined) {
+    clearTimeout(latchTimer)
+    latchTimer = undefined
+  }
+}
+
+/** Flip the toggle to `stopping` locally the instant the user clicks. Records
+ *  the click time and arms the self-expiry timer: if no confirming push lands
+ *  within STOP_LATCH_TIMEOUT_MS, the derived state falls back to `off` so the
+ *  toggle is never stuck grayed. */
 export function latchStopRequested() {
-  setStopRequested(true)
+  setLatchedAt(now())
+  clearLatchTimer()
+  latchTimer = setTimeout(() => {
+    // Tick to re-derive effectiveEngineState() → past the window it reads `off`.
+    // The latch is intentionally NOT cleared: `off` is the intended terminal
+    // state, and a later real push (e.g. `on` from a restart) still wins.
+    setTick((t) => t + 1)
+    latchTimer = undefined
+  }, STOP_LATCH_TIMEOUT_MS)
 }
 
-/** Apply a delivered engine-state push. Clears the local latch — the real
- *  state now owns the rendering, so the optimistic latch steps aside. */
+/** Apply a delivered engine-state push. Clears the local latch + its timer —
+ *  the real state now owns the rendering, so the optimistic latch steps aside. */
 export function applyEngineState(state: EngineState) {
-  setStopRequested(false)
+  setLatchedAt(undefined)
+  clearLatchTimer()
   setEngineStateRaw(state)
 }
 
 /** Install the ONE window listener that feeds the global signals. Idempotent —
- *  a second install is a no-op — so calling it from the always-mounted banner
- *  is safe even across HMR. Returns a disposer for symmetry/testing. */
+ *  a second install is a no-op — so multiple call sites (the always-mounted
+ *  host + the popover) are safe. Returns a disposer for symmetry/testing. */
 let installed = false
 export function installEngineStateListener(win: Window = window): () => void {
   if (installed) return () => {}
@@ -75,6 +104,7 @@ export function installEngineStateListener(win: Window = window): () => void {
 export function __resetEngineStateForTest() {
   setEngineStateRaw("on")
   setFleetRole("standalone")
-  setStopRequested(false)
+  setLatchedAt(undefined)
+  clearLatchTimer()
   installed = false
 }
