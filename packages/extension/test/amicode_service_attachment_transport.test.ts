@@ -65,6 +65,20 @@ import {
   readAttachmentCredential,
   writeAttachmentCredential,
 } from "../src/amicode_service/attachment_credential";
+import {
+  defaultAuthorizedKeysPath,
+  installTeardownHandlers,
+  nodeHarnessFs,
+  nodeProcessInspector,
+  nodeSignalSink,
+  registeringSpawn,
+  runPreflightSweepOnce,
+} from "./support/ssh_test_harness";
+
+// #1634: STOP THE LEAK. Sweep the previous run's orphaned forwards + stale
+// test authorized_keys lines BEFORE the SSH_READY probe installs any throwaway
+// key (the IIFE below is a module-load statement, so this runs first).
+runPreflightSweepOnce();
 
 // ── D9 — roaming-aware transport default (pure, no network) ────────────────
 
@@ -448,6 +462,16 @@ if (!SSH_READY.ready) {
       "Needs a loopback sshd on 127.0.0.1:22 the current OS user can authenticate to (directly, or via a throwaway key this probe installs and " +
       "verifies itself). attach_over_real_transport / attach_injects_client_credential are NOT exercised on this machine — this is an honest skip, not a failure.",
   );
+} else {
+  // #1634: crash-safe teardown for graceful interrupts (Ctrl-C / SIGTERM).
+  installTeardownHandlers({
+    signals: nodeSignalSink(),
+    fs: nodeHarnessFs(),
+    inspector: nodeProcessInspector(),
+    authorizedKeysPath: defaultAuthorizedKeysPath(),
+    originalAuthorizedKeys: SSH_READY.throwaway?.originalAuthorizedKeys,
+    spawnedPids: [],
+  });
 }
 
 describe.skipIf(!SSH_READY.ready)(
@@ -470,6 +494,8 @@ describe.skipIf(!SSH_READY.ready)(
         remotePort: peer.port,
         localPort,
         extraSshOptions: [...sshProbeBaseArgs(), ...SSH_READY.identityArgs],
+        // #1634: register the spawned forward's PID for the next run's sweep.
+        spawnFn: registeringSpawn(),
       });
       credDir = mkdtempSync(join(tmpdir(), "amicode-attach-cred-real-"));
       credFile = join(credDir, "attachment-credentials.json");

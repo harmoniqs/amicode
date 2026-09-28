@@ -32,6 +32,20 @@ import {
   type AttachmentTransportHandle,
 } from "../src/amicode_service/attachment_transport";
 import { attachmentUpstreamAuthHeader } from "../src/amicode_service/attachment_credential";
+import {
+  defaultAuthorizedKeysPath,
+  installTeardownHandlers,
+  nodeHarnessFs,
+  nodeProcessInspector,
+  nodeSignalSink,
+  registeringSpawn,
+  runPreflightSweepOnce,
+} from "./support/ssh_test_harness";
+
+// #1634: STOP THE LEAK. Sweep the previous run's orphaned forwards + stale
+// test authorized_keys lines BEFORE the SSH_READY probe installs any throwaway
+// key (the IIFE below is a module-load statement, so this runs first).
+runPreflightSweepOnce();
 
 // ── a stub "peer engine" — 401s without the expected auth, 2xx with a FRESH,
 //    per-run-random peer_identity a credentialed request could not have forged ──
@@ -165,6 +179,16 @@ if (!SSH_READY.ready) {
     `[amicode_service_attach_switch_latency.test.ts] SKIPPING the AC4 real-SSH p95 harness: ${SSH_READY.reason ?? "no loopback ssh access"}. ` +
       "attach_switch_p95_ms is NOT measured on this machine (no loopback sshd the current user can authenticate to). This is an HONEST skip, not a fabricated pass.",
   );
+} else {
+  // #1634: crash-safe teardown for graceful interrupts (Ctrl-C / SIGTERM).
+  installTeardownHandlers({
+    signals: nodeSignalSink(),
+    fs: nodeHarnessFs(),
+    inspector: nodeProcessInspector(),
+    authorizedKeysPath: defaultAuthorizedKeysPath(),
+    originalAuthorizedKeys: SSH_READY.throwaway?.originalAuthorizedKeys,
+    spawnedPids: [],
+  });
 }
 
 /** p95 by nearest-rank over a copy of the samples (ascending). */
@@ -211,6 +235,8 @@ describe.skipIf(!SSH_READY.ready)(
         remotePort: peer.port,
         localPort,
         extraSshOptions: [...sshProbeBaseArgs(), ...SSH_READY.identityArgs],
+        // #1634: register the spawned forward's PID for the next run's sweep.
+        spawnFn: registeringSpawn(),
       });
       // first usable peer 2xx (authenticated): the peer_identity proves it came
       // from THIS peer engine, over the real tunnel — not a local response.
