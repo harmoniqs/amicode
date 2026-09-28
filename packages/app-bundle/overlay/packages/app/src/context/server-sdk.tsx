@@ -470,7 +470,15 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
   // handlers; a no-op if the stream is already down (attempt undefined).
   const forceReconnect = () => {
     lastFrameAt = Date.now()
-    attempt?.abort()
+    // #1637: a silent-socket / watchdog forced reconnect must bump the resync
+    // token so the entity rail self-heals a stranded view — a WEDGE keeps the
+    // socket nominally connected, so the disconnect→connect edge never fires and
+    // the rail would otherwise never re-fetch. Bump only when we actually abort a
+    // parked attempt (a real forced resync), not on the already-down no-op.
+    if (attempt) {
+      attempt.abort()
+      setResyncCount((n) => n + 1)
+    }
   }
 
   const start = () => {

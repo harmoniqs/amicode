@@ -71,6 +71,7 @@ const baseState = (input: Partial<State> = {}) =>
     session: [],
     sessionTotal: 0,
     session_status: {},
+    session_turn_active: {},
     session_diff: {},
     todo: {},
     permission: {},
@@ -656,4 +657,70 @@ describe("applyDirectoryEvent", () => {
     // The gate prevents this for events with `origin: "studio"`.
   })
 
+  // ── #1637 — the child-store's second session_working honors the turn floor ──
+  // The global-sync child store's reducer previously wrote status ONLY from
+  // session.status frames — the execution bracket never reached it, so its
+  // session_working had no turn floor. Plumb the flag: execution.started sets it,
+  // the terminals / session.error / an idle status frame clear it.
+  test("#1637 the child-store reducer raises session_turn_active on execution.started", () => {
+    const [store, setStore] = createStore(baseState())
+    applyDirectoryEvent({
+      event: { type: "session.execution.started", properties: { sessionID: "ses_1" } },
+      store,
+      setStore,
+      push() {},
+      directory: "/tmp",
+      loadLsp() {},
+    })
+    expect(store.session_turn_active?.ses_1).toBe(true)
+  })
+
+  test("#1637 the child-store reducer clears session_turn_active on a terminal execution event", () => {
+    const [store, setStore] = createStore(baseState({ session_turn_active: { ses_1: true } }))
+    applyDirectoryEvent({
+      event: { type: "session.execution.succeeded", properties: { sessionID: "ses_1" } },
+      store,
+      setStore,
+      push() {},
+      directory: "/tmp",
+      loadLsp() {},
+    })
+    expect(store.session_turn_active?.ses_1).toBe(false)
+  })
+
+  test("#1637 the child-store reducer clears session_turn_active on session.error", () => {
+    const [store, setStore] = createStore(baseState({ session_turn_active: { ses_1: true } }))
+    applyDirectoryEvent({
+      event: { type: "session.error", properties: { sessionID: "ses_1" } },
+      store,
+      setStore,
+      push() {},
+      directory: "/tmp",
+      loadLsp() {},
+    })
+    expect(store.session_turn_active?.ses_1).toBe(false)
+  })
+
+  test("#1637 the child-store reducer honors status seq (drops a stale idle)", () => {
+    const [store, setStore] = createStore(baseState({ session_status: { ses_1: { type: "busy" } } }))
+    applyDirectoryEvent({
+      event: { type: "session.status", properties: { sessionID: "ses_1", status: { type: "busy" }, seq: 5 } },
+      store,
+      setStore,
+      push() {},
+      directory: "/tmp",
+      loadLsp() {},
+    })
+    // A lower-seq idle is dropped — the busy stands.
+    applyDirectoryEvent({
+      event: { type: "session.status", properties: { sessionID: "ses_1", status: { type: "idle" }, seq: 3 } },
+      store,
+      setStore,
+      push() {},
+      directory: "/tmp",
+      loadLsp() {},
+    })
+    expect(store.session_status.ses_1?.type).toBe("busy")
+  })
 })
+

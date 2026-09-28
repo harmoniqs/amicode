@@ -224,11 +224,19 @@ export function createServerSession(
     part: {} as Record<string, Part[]>,
     part_text_accum_delta: {} as Record<string, string>,
     session_working(id: string) {
-      // #1617 — self-correcting floor against a racing/stale `idle`. The wire
-      // carries no sequence on session status ({type} only) and three unordered
-      // writers set `session_status`, so a reordered or prior-turn `idle` can
-      // arrive while the agent is still producing output. Report working when the
-      // status says busy OR a text part for this session is mid-stream — a
+      // #1637 — turn-active floor keyed on the server's execution bracket. The
+      // #1617 per-delta floor (streamActiveParts) only rises on
+      // `message.part.delta`, but most turns stream via `message.part.updated`
+      // and some turns produce NO parts at all (refusal, immediate provider
+      // error, empty completion, abort-before-first-token) — so that floor would
+      // never rise for them and a stale idle blanks the rail. The turn flag rises
+      // on `session.execution.started` (which brackets EVERY turn shape) and
+      // clears on the terminal execution events OR a fallback (session.error /
+      // eviction / a seq/recency-honored idle status frame / a bounded timeout)
+      // so a swallowed terminal cannot wedge it "working" forever.
+      if (turnActive.has(id)) return true
+      // #1617 — self-correcting floor against a racing/stale `idle`. Report working
+      // when the status says busy OR a text part for this session is mid-stream — a
       // `message.part.delta` sets an accum entry (streamActiveParts records its
       // session) and the finalizing `message.part.updated` clears it, so this
       // floor is up exactly while tokens flow and cannot be blanked by a stray
@@ -271,6 +279,56 @@ export function createServerSession(
       if (set.delete(partID) && set.size === 0) streamActiveParts.delete(sid)
     }
   }
+  // #1637 — sessionID → the turn is bracketed by a `session.execution.started`
+  // whose terminal has not yet arrived. This is the turn-active floor: it rises
+  // on the execution bracket the server emits for EVERY turn shape (part-bearing
+  // or not) and clears on the terminal execution events OR a fallback, so a
+  // no-part turn (refusal / immediate error / empty completion / abort) is
+  // covered and a swallowed terminal cannot wedge the rail "working".
+  const turnActive = new Set<string>()
+  const turnFloorTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  // The bounded staleness timeout: if no terminal (and no other clear) arrives
+  // within this window, the flag self-clears so the rail can never be stuck
+  // "working" forever from a fully-swallowed terminal path.
+  const TURN_FLOOR_TIMEOUT_MS = 5 * 60_000
+  const clearTurnFloorTimer = (sessionID: string) => {
+    const timer = turnFloorTimers.get(sessionID)
+    if (timer !== undefined) {
+      clearTimeout(timer)
+      turnFloorTimers.delete(sessionID)
+    }
+  }
+  const clearTurnActive = (sessionID: string) => {
+    turnActive.delete(sessionID)
+    clearTurnFloorTimer(sessionID)
+  }
+  const markTurnActive = (sessionID: string, timeoutMs = TURN_FLOOR_TIMEOUT_MS) => {
+    turnActive.add(sessionID)
+    clearTurnFloorTimer(sessionID)
+    const timer = setTimeout(() => {
+      turnFloorTimers.delete(sessionID)
+      turnActive.delete(sessionID)
+      // The bounded timeout is a hard safety net: settle the status to idle too,
+      // so a fully-swallowed terminal (which never set idle) cannot leave the
+      // status floor reading "busy" forever.
+      if ((data.session_status[sessionID]?.type ?? "idle") !== "idle")
+        setData("session_status", sessionID, { type: "idle" })
+    }, timeoutMs)
+    if (typeof timer === "object" && "unref" in timer) timer.unref()
+    turnFloorTimers.set(sessionID, timer)
+  }
+  // #1637 — sessionID → the max status `seq` seen for it (#1636 stamps a
+  // strictly-increasing-per-session seq on session.status event DATA). A status
+  // frame carrying seq <= what we have seen is stale/out-of-order and MUST be
+  // discarded so a reordered idle cannot overwrite a live busy. Absent seq
+  // (pre-#1636 wire) → the frame is always applied.
+  const lastStatusSeq = new Map<string, number>()
+  // #1637 — sessionID → the local wall-clock time of its last status mutation.
+  // The reconnect/gap reconcile from /session/status carries no seq, so its
+  // recency guard is temporal: a reconcile fetched BEFORE the last local status
+  // mutation is stale for that session and must not downgrade a live busy.
+  const lastStatusMutationAt = new Map<string, number>()
+  const stampStatusMutation = (sessionID: string) => lastStatusMutationAt.set(sessionID, Date.now())
   const completedFileDiffParts = new Map<string, Set<string>>()
   const deleteMessageParts = (
     cache: { part: Record<string, Part[] | undefined>; part_text_accum_delta: Record<string, string | undefined> },
@@ -574,6 +632,7 @@ export function createServerSession(
       clearOptimistic(sessionID)
       completedFileDiffParts.delete(sessionID)
       streamActiveParts.delete(sessionID) // #1617 streaming floor: session gone
+      clearTurnActive(sessionID) // #1637 turn-active floor: session gone
       requests.delete(sessionID)
       inflight.delete(sessionID)
       inflightTodo.delete(sessionID)
@@ -1332,8 +1391,59 @@ export function createServerSession(
         return
       }
       case "session.status": {
-        const props = event.properties as { sessionID: string; status: SessionStatus }
+        const props = event.properties as { sessionID: string; status: SessionStatus; seq?: number }
+        // #1637 honor seq (#1636): drop a stale/out-of-order frame — a status
+        // whose seq is <= the last seen for this session is discarded so a
+        // reordered idle cannot overwrite a live busy. Absent seq → always apply.
+        if (typeof props.seq === "number") {
+          const seen = lastStatusSeq.get(props.sessionID)
+          if (seen !== undefined && props.seq <= seen) return
+          lastStatusSeq.set(props.sessionID, props.seq)
+        }
+        // #1637 fallback clear: an authoritative idle frame ends the turn bracket.
+        // (The mid-turn floor is held by an active part stream / a fresh execution
+        // bracket — a lone idle frame does not race those; it settles a turn that
+        // has otherwise gone quiet.)
+        if ((props.status?.type ?? "idle") === "idle") clearTurnActive(props.sessionID)
+        stampStatusMutation(props.sessionID)
         setData("session_status", props.sessionID, reconcile(props.status))
+        return
+      }
+      case "session.execution.started": {
+        // #1637 turn-active floor: rises on the execution bracket the server
+        // emits for EVERY turn shape (part-bearing or not).
+        const props = event.properties as { sessionID?: string; turnFloorTimeoutMs?: number } | undefined
+        const id = props?.sessionID ?? eventID
+        if (!id) return
+        markTurnActive(id, props?.turnFloorTimeoutMs)
+        stampStatusMutation(id)
+        setData("session_status", id, { type: "busy" })
+        return
+      }
+      case "session.execution.succeeded":
+      case "session.execution.failed":
+      case "session.execution.interrupted": {
+        // #1637 terminal clear: the turn bracket closed.
+        const props = event.properties as { sessionID?: string } | undefined
+        const id = props?.sessionID ?? eventID
+        if (!id) return
+        cancelReconcileTimer(id)
+        clearTurnActive(id)
+        stampStatusMutation(id)
+        setData("session_status", id, { type: "idle" })
+        return
+      }
+      case "session.error": {
+        // #1637 fallback clear: a Session.Event.Error site (10 in prompt.ts) and
+        // /session/abort can skip the terminal execution event — session.error
+        // clears the turn flag AND settles a busy status to idle so a swallowed
+        // terminal cannot wedge the rail (neither the turn floor nor the status
+        // floor is left up).
+        const props = event.properties as { sessionID?: string } | undefined
+        const id = props?.sessionID ?? eventID
+        if (!id) return
+        clearTurnActive(id)
+        if ((data.session_status[id]?.type ?? "idle") !== "idle") setData("session_status", id, { type: "idle" })
         return
       }
       case "message.updated": {
@@ -1747,6 +1857,32 @@ export function createServerSession(
     },
     apply,
     applyV2,
+    // #1637 — reconcile session_status from a /session/status (tri-state) fetch
+    // on a reconnect edge / gap frame. Corrects BOTH a stale idle and a stale
+    // busy the client was left holding during an outage. Recency-guarded: a
+    // downgrade of a live busy to idle is refused when the fetched snapshot is
+    // OLDER than the last local status mutation for that session (the response
+    // carries no seq, so the guard is temporal). A stale idle→busy upgrade is
+    // always safe (it can only raise a floor, never wrongly blank a live rail).
+    reconcileStatuses(statuses: Record<string, SessionStatus>, opts?: { fetchedAt?: number }) {
+      const fetchedAt = opts?.fetchedAt ?? Date.now()
+      for (const [sessionID, status] of Object.entries(statuses)) {
+        if (!status) continue
+        const current = data.session_status[sessionID]
+        const currentType = current?.type ?? "idle"
+        const nextType = status.type
+        if (currentType === nextType && current) continue
+        // Recency guard: refuse a downgrade (→ idle) when the local status was
+        // mutated AFTER this snapshot was fetched — a live busy must survive an
+        // out-of-order reconcile. Raising a floor (→ non-idle) is always applied.
+        if (nextType === "idle" && currentType !== "idle") {
+          const localAt = lastStatusMutationAt.get(sessionID) ?? 0
+          if (localAt > fetchedAt) continue
+        }
+        stampStatusMutation(sessionID)
+        setData("session_status", sessionID, reconcile(status))
+      }
+    },
   }
 }
 

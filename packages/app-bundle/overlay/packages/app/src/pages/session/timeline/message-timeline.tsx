@@ -1433,7 +1433,15 @@ export function MessageTimeline(props: {
     )
   }
 
-  const workingTurn = (userMessageID: string) => sessionStatus().type !== "idle" && activeMessageID() === userMessageID
+  // #1637: the transcript per-turn indicator reflects session_working (the
+  // turn-active floor), NOT raw status type — a stray idle during a live turn
+  // (incl. a no-part turn) must not flip the indicator to done. The diff/todo
+  // refetch readers in session.tsx stay on raw status (they want the real idle
+  // edge) and are deliberately NOT migrated.
+  const workingTurn = (userMessageID: string) => {
+    const id = sessionID()
+    return !!id && sync().data.session_working(id) && activeMessageID() === userMessageID
+  }
 
   const turnDurationMs = (userMessageID: string) => {
     const message = messageByID().get(userMessageID)
