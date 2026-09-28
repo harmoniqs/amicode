@@ -6,6 +6,7 @@ import { producedUserVisibleOutput } from "./turn-output"
 import { askedQuestionInProse, PROSE_QUESTION_NUDGE } from "./prose-guard"
 import os from "os"
 import { SessionID, MessageID, PartID } from "./schema"
+import { ResponsePresentation } from "@opencode-ai/schema"
 import { MessageV2 } from "./message-v2"
 import { SessionRevert } from "./revert"
 import { Session } from "./session"
@@ -1710,6 +1711,7 @@ export const PromptInput = Schema.Struct({
   format: Schema.optional(SessionV1.Format),
   system: Schema.optional(Schema.String),
   variant: Schema.optional(Schema.String),
+  response_presentation: Schema.optional(ResponsePresentation),
   parts: Schema.Array(
     Schema.Union([
       SessionV1.TextPartInput,
@@ -1732,6 +1734,7 @@ export const ShellInput = Schema.Struct({
   agent: Schema.String,
   model: Schema.optional(ModelRef),
   command: Schema.String,
+  response_presentation: Schema.optional(ResponsePresentation),
 })
 export type ShellInput = Schema.Schema.Type<typeof ShellInput>
 
@@ -1743,6 +1746,7 @@ export const CommandInput = Schema.Struct({
   arguments: Schema.String,
   command: Schema.String,
   variant: Schema.optional(Schema.String),
+  response_presentation: Schema.optional(ResponsePresentation),
   // Inlined (no identifier annotation) to keep the original SDK output — the
   // PromptInput call site below references FilePartInput by ref via the
   // Schema export in message-v2.ts.

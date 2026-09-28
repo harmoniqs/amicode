@@ -2,6 +2,18 @@ import { Schema } from "effect"
 import { optional } from "./schema"
 import { statics } from "./schema"
 
+// #1331 (part of #1330): session-local response-presentation preference.
+// A per-request prose-presentation hint — concise/standard/detailed — carried
+// through every session request path. It governs human-facing prose only and is
+// never an authorization, workflow, or model-routing control. `standard` is the
+// neutral reset default for new/reloaded sessions.
+export const ResponsePresentation = Schema.Literals(["concise", "standard", "detailed"]).annotate({
+  identifier: "ResponsePresentation",
+  description:
+    "Session-local response-presentation preference governing human-facing prose only (concise | standard | detailed).",
+})
+export type ResponsePresentation = Schema.Schema.Type<typeof ResponsePresentation>
+
 export interface Source extends Schema.Schema.Type<typeof Source> {}
 export const Source = Schema.Struct({
   start: Schema.Finite,

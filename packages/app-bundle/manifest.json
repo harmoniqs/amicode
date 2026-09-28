@@ -53,9 +53,9 @@
     "packages/opencode/test/amicode-release-workflow.test.ts": "f6dfcb3ed9c572ca8e8b21ff82e038872b635b25c68f9580f6d6f51ee2813189",
     "packages/opencode/test/event-manifest.test.ts": "e2f1542c3ee8e981934044bb14cb87a58a676f3b6eb5d160f6e854f136ba445c",
     "packages/opencode/test/preload.ts": "5a3c7e7a8341dc735513b0cbeac6029ee406ad64767a1b883bdcb3e99269dd7e",
-    "packages/schema/src/index.ts": "73df02fa179fc218606b05ec1507dae0dacef638bde36801d6a1a3f7899780bd",
+    "packages/schema/src/index.ts": "9e196449bac8284b709b4e99703b901169e0510cf4c18c3196b993bbe2e52d14",
     "packages/schema/src/location.ts": "078649bbc39b8e3413311b5af85392437873597d8954494016943cfb13564805",
-    "packages/schema/src/prompt.ts": "eb3b42b98ef856f85f32154482b19de546272f1eabe552ee9207db030346291b",
+    "packages/schema/src/prompt.ts": "e529bf4196239dad0b93375c69053a03d62c4ebaec261d6f85d72ff85e40f694",
     "packages/schema/src/provenance-matrix.ts": "f3acd0110eca38f49a30eb89fa19ac76475ba196abb6c43114668fd3a4c4b757",
     "packages/schema/src/provider-permission.ts": "382d3b8c8e7bac64816d6a8cb0a84dff6e9a4bd1a921a653ebb20b23d4580e14",
     "packages/schema/src/question.ts": "538b73b25f8993700d7836b915ff27a1aff63cb6a6ef42e77b90bfbef83a5558",
@@ -299,7 +299,7 @@
     "packages/opencode/src/session/lineage.ts": "fce706aacb78004f9ce04783da9341e56a9dffc94fb54ca2b7b488d5efaeeafa",
     "packages/opencode/src/session/message-v2.ts": "3b308ef7feb697fbcfd20f416e6d9a5bb73a2a2a41c4ff77aee771788d0c6d19",
     "packages/opencode/src/session/mutation.ts": "31f29e8865be9dd62eb8148d240811f2344db4c440be2739dc113764749d3e88",
-    "packages/opencode/src/session/prompt.ts": "2ea50e8e53f05365b1fa8927f121eb607cb5cb6cf89f50195fb44b257b332c8f",
+    "packages/opencode/src/session/prompt.ts": "f5e52be982282399c7577ba99155d5c912bcdf6d1a72a74e10547a4033e56ebc",
     "packages/opencode/src/session/prose-guard.ts": "dd6f8dfdc41b9cad3406ac586db9a60f7ee0a040b41550d6c55da2d040dc7c13",
     "packages/opencode/src/session/receipt-privacy.ts": "92ba8a92d4ddc0d18249efa5efdf600a32ebc0453d605b8c747cd4bcbd6d19a9",
     "packages/opencode/src/session/receipt.ts": "06fd30326424112b8dacd756e4bba5424b3a7a2d10318464a5670aeabb0c4808",
@@ -364,6 +364,7 @@
     "packages/opencode/test/session/prompt.test.ts": "e3d0748edb833640ef284857ae725e4b974843480d4128f56239e3fd1e6d481f",
     "packages/opencode/test/session/prose-guard.test.ts": "7239a758cbf27df4c3879fa9ee0374964559c1461773c2f5a85196f64632e6c4",
     "packages/opencode/test/session/receipt-privacy.test.ts": "6c8777edc280a061fec1a4d16e2504aec18bdf9cd6dd2cedc7a09ef8fc6c2ca0",
+    "packages/opencode/test/session/response-presentation.test.ts": "ec57f6cac2dec3069f3e90f5ccf4e503f3d4ff3a2d888748292f75a1b43f649c",
     "packages/opencode/test/session/rollout.test.ts": "3153fad45639db647d98d7fd96b3b5c2f0d938fca3a40598a4f88b8f62dda397",
     "packages/opencode/test/session/session.test.ts": "c182f3e5311324175c9ba44a7164737a75ee6d2f22e4a024d66518b5ae91f5f2",
     "packages/opencode/test/session/turn-output.test.ts": "3e92f545d10054e501ad2c8857b43719f5a8f768065643d343c0c37c2e6fb60c",
@@ -873,7 +874,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-09-24T04:46:38.771Z",
+  "extracted_at": "2026-09-28T18:48:46.419Z",
   "per_package": {
     "packages/app": {
       "A": 186,
@@ -891,7 +892,7 @@
       "D": 0
     },
     "packages/opencode": {
-      "A": 69,
+      "A": 70,
       "M": 81,
       "D": 0
     },
@@ -922,7 +923,7 @@
     }
   },
   "counts": {
-    "overlay_total": 851,
+    "overlay_total": 852,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1283,6 +1284,7 @@
     "packages/opencode/test/session/prompt.test.ts": "M",
     "packages/opencode/test/session/prose-guard.test.ts": "A",
     "packages/opencode/test/session/receipt-privacy.test.ts": "A",
+    "packages/opencode/test/session/response-presentation.test.ts": "A",
     "packages/opencode/test/session/rollout.test.ts": "A",
     "packages/opencode/test/session/session.test.ts": "M",
     "packages/opencode/test/session/turn-output.test.ts": "A",
