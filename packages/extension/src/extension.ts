@@ -110,7 +110,7 @@ import { loadGraph } from "./calibration_graph";
 import { parseStateJson } from "./device_registry";
 import { buildDeviceStatus, nextActions, capabilityHint, type DriveLine } from "./device_status";
 import { SchusterJobServer } from "./qick_client";
-import { adoptOrSpawn, buildLiveDeps, isPidAlive, reclaimOrphanPort, auditAdoptedEngine, restartAdoptedEngine } from "./server_lifecycle";
+import { adoptOrSpawn, buildLiveDeps, isPidAlive, reclaimOrphanPort, auditAdoptedEngine, restartAdoptedEngine, sweepStrayEngines, listOpencodeEngines, hasLiveClient, reclaimEnginePid } from "./server_lifecycle";
 import { handshakePath, readHandshake, deleteHandshake, serverLogPath, coldSpawnHandshakeHook, hashFile, hashString, UNARMED_PASSWORD } from "./server_handshake";
 import { startKeepalive, stopKeepalive, readGraceSeconds, pingKeepalive } from "./server_keepalive";
 import { FleetPollHysteresis } from "./fleet_poll_hysteresis";
@@ -1328,6 +1328,36 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       opencodeChannel.appendLine(`[boot] adopt-or-spawn check failed: ${(e as Error).message} — cold-spawning`);
     }
 
+    // #1592: machine-wide stray-engine sweep. adopt-or-spawn only guards the
+    // configured port; a stale install or a dead workspace can leave an engine
+    // orphaned on ANOTHER port. Reap every `opencode serve` that is neither the
+    // engine we kept nor still serving a live client. keepEnginePid is filled in
+    // once the surviving/spawned engine's PID is known (adopted path: now; cold-
+    // spawn path: after the handshake is written in onReady).
+    const runStrayEngineSweep = async (keepPid: number | undefined) => {
+      try {
+        const res = await sweepStrayEngines({
+          keepPid,
+          listOpencodeEngines,
+          hasLiveClient,
+          killEngine: reclaimEnginePid,
+          log: (l) => opencodeChannel.appendLine(l),
+        });
+        if (res.reaped.length > 0) {
+          opencodeChannel.appendLine(`[sweep] reaped stray engine(s): ${res.reaped.join(", ")}`);
+        }
+        if (res.failed.length > 0) {
+          opencodeChannel.appendLine(`[sweep] could not confirm reap of: ${res.failed.join(", ")}`);
+        }
+      } catch (e) {
+        opencodeChannel.appendLine(`[sweep] stray-engine sweep failed (non-fatal): ${(e as Error).message}`);
+      }
+    };
+    if (adopted) {
+      const hs = readHandshake(handshakePath());
+      void runStrayEngineSweep(hs.status === "ok" ? hs.record.pid : undefined);
+    }
+
     // #1147 (ADR 0020): keepalive helper — starts the ping loop for the
     // given port/password. Called from BOTH the cold-spawn onReady and the
     // adoption path so every active window pings the detached server.
@@ -1719,6 +1749,11 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       // #1147: start keepalive after cold-spawn health passes
       const readyPort = parseInt(url.port || "0", 10);
       if (readyPort > 0) wireKeepalive(readyPort, serverPassword);
+      // #1592: sweep stray engines now the fresh engine's handshake is written.
+      {
+        const hs = readHandshake(handshakePath());
+        void runStrayEngineSweep(hs.status === "ok" ? hs.record.pid : undefined);
+      }
       // Onboarding gate: if no model is configured, open the Stage 0 webview
       // instead of chat. The webview will fire onOnboardingComplete when done,
       // which then opens chat.
