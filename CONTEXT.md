@@ -245,6 +245,18 @@ _Avoid_: Explorer (VS Code's native file explorer is separate), Panel (the in-ap
 The multi-document file workspace in the side panel. Holds zero or more files as inner tabs, each rendering its content (markdown rendered with a toggle to edit; text/code files in a CodeMirror editor; images and PDFs inline). Files arrive via Sidebar single-click or a Chat file pill and accumulate as tabs — each closeable and drag-reorderable; opening an already-open file focuses its existing tab rather than duplicating it. A breadcrumb bar under each pane's tab strip shows the active file's project-relative path with interactive sibling navigation. Supports recursive split panes via edge-drop: dragging a tab toward a pane's edge divides the view, and each resulting pane keeps its own tab bar, breadcrumb, zoom, and preview/edit toggle. Empty panes auto-collapse; a minimum pane dimension is enforced so splits can't shrink below a usable size. Opens and activates automatically when the first file is selected; shows a placeholder when no file is open. For committed editing, double-click the Sidebar entry to open a native VS Code tab.
 _Avoid_: Editor (Preview is a multi-document viewer, not a primary editor — committed editing belongs in a native VS Code tab), File browser (the Sidebar is still the primary project-wide file tree; the breadcrumb is a contextual sibling-navigation aid scoped to the open file, not a second tree)
 
+**Paper Mode**:
+A first-class, opt-in session surface for *committed* LaTeX co-editing: the `.tex` editor is primary, Chat docks beneath it, and the compiled PDF sits to the right. Distinct from Preview (which stays a viewer) and from the Work Column layout — Paper Mode is its own layout, not a resize of an existing one. The live editor Draft is the single source of truth; the agent reads it fresh each turn; agent edits arrive as reviewable Pending Hunks rather than direct disk writes; and compilation is manual. Does not depend on the paused wide-mode work.
+_Avoid_: Write mode (superseded name), Overleaf mode, wide mode (a separate, paused feature)
+
+**Draft** (Paper Mode):
+The live in-editor content of a `.tex` file, versioned by a monotonic Content Revision. In Paper Mode it is the single source of truth: the human's typing and accepted agent edits both land here, saves flush it to disk, and the agent always reads it at its current revision. Supersedes disk and any cached copy as the authority for "current content."
+_Avoid_: Buffer (implementation detail), file contents (ambiguous with disk)
+
+**Pending Hunk**:
+A proposed agent edit shown as an inline, reviewable diff decoration in the Paper Mode editor, not yet written to the Draft or disk. Accepted (`✓`) hunks apply to the Draft; rejected (`✗`) hunks vanish. A Pending Hunk that overlaps concurrent human edits becomes a Conflict Hunk requiring explicit resolution — nothing lands unchecked. Only accepted hunks emit mutation-ledger receipts and enter the compiled source.
+_Avoid_: Suggestion, agent write (in Paper Mode the agent proposes, it does not write disk), pending change
+
 ### Developer tooling
 
 **Rebuild (local)**:
