@@ -2780,15 +2780,16 @@ export default function Page() {
               !size.active() && !ui.reviewSnap && !desktopInlineTerminalOnlyOpen(),
           }}
           style={{
-            // #1434: in wide mode, collapse Chat to width:0 (not display:none —
-            // preserves scroll geometry, avoids the #1510 scroll-loop cascade).
+            // #1434: in wide mode, collapse Chat completely out of flow.
+            // Use position:absolute + visibility:hidden (not display:none)
+            // to preserve scroll geometry and avoid the #1510 cascade.
             ...(newSessionDesign() && wideMode() ? {
+              position: "absolute" as const,
+              visibility: "hidden" as const,
               width: "0px",
-              "min-width": "0px",
+              height: "0px",
               overflow: "hidden",
-              opacity: "0",
               "pointer-events": "none",
-              flex: "0 0 0px",
             } : {
               width: sessionPanelWidth(),
             }),
