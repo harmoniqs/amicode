@@ -686,7 +686,7 @@
     "packages/app/src/components/settings-v2/permission-scope-relocation.test.ts": "39539c4fc4b7433f08b913100f48a7fa75d6ab47615ba697aa9ae8eee09d316b",
     "packages/app/src/components/settings-v2/permissions.tsx": "5746c8ef02da833ff72fee1375dab2a7ee241bb111e8ef15b21ae70c49349543",
     "packages/app/src/components/settings-v2/providers.tsx": "e15f23a40058abb4299ad7444df2845e3c24b5da3ca58a731e0cbafe58de2a76",
-    "packages/app/src/components/settings-v2/settings-v2.css": "38818ab5349cf637023379d2b1ee62081d456676020bdb445576865327858162",
+    "packages/app/src/components/settings-v2/settings-v2.css": "129ebe678b18d5ea897e077ef16e7b71d003468f29c49b0f47e2b54d310c8f5b",
     "packages/app/src/components/settings-v2/skills-controller.ts": "2c7344d144da0eec1c25083ead45f5afb2a8c6fd759541ad719cae9a09fcd19b",
     "packages/app/src/components/settings-v2/skills.tsx": "42deb0c11fcba158abad857b9644ffb551aed5ba9e00dbfd1584a7ffaaba5aa0",
     "packages/app/src/components/ui/drawer.tsx": "76574ca4c6997209f37a766a61000d707332a9a857f6ea8100a3cee1be58d65c",
@@ -825,7 +825,8 @@
     "packages/ui/src/v2/components/menu-v2.stories.tsx": "4ed1498d7e4cd51ce9c7459061f3540efdfae71751ff618901c78ee413951559",
     "packages/ui/src/v2/components/radio-v2.css": "bf6eb3457a7fc13e48356f5a7dcf3cbf462382580250a3144a745402ff88e2e6",
     "packages/ui/src/v2/components/select-v2.css": "4dd4104bee8f661c30ad08ec806e5bddec21d75be6a5d09b693dd297ea10a24c",
-    "packages/ui/src/v2/components/switch-v2.css": "96406f51a412f931c99c005ecd6a889898ad80160143cca0a81cacfa13714f8f",
+    "packages/ui/src/v2/components/switch-v2.css": "863b1f4d29e4c25440f695f6cca95438b671e0445a717ae826115a33dd6d3635",
+    "packages/ui/src/v2/components/switch-v2.tsx": "52167c94e7b931ca37a29a5ace612f7d8bf5ae1aa82ebb6cb07c931de05eb62f",
     "packages/ui/src/v2/components/toast-v2.css": "9b652d908f39e35cdf1764f1675e4db3dea1d7abf43cb792cfa2d27b699f2723",
     "packages/ui/src/v2/components/tooltip-v2.css": "7cbd2523d9f183b7e24bfbc1f523c370abf8e32836f8be90cfdf75e1c70f05a9",
     "packages/ui/src/v2/components/wordmark-v2.tsx": "6037a68db862ddd67235cbae8dae5a95c9f7403e7c5f268b78fdaaf013950166",
@@ -913,7 +914,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-09-28T16:55:43.948Z",
+  "extracted_at": "2026-09-28T18:12:30.354Z",
   "per_package": {
     "packages/app": {
       "A": 216,
@@ -957,12 +958,12 @@
     },
     "packages/ui": {
       "A": 152,
-      "M": 63,
+      "M": 64,
       "D": 0
     }
   },
   "counts": {
-    "overlay_total": 891,
+    "overlay_total": 892,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1785,6 +1786,7 @@
     "packages/ui/src/v2/components/radio-v2.css": "M",
     "packages/ui/src/v2/components/select-v2.css": "M",
     "packages/ui/src/v2/components/switch-v2.css": "M",
+    "packages/ui/src/v2/components/switch-v2.tsx": "M",
     "packages/ui/src/v2/components/toast-v2.css": "M",
     "packages/ui/src/v2/components/tooltip-v2.css": "M",
     "packages/ui/src/v2/components/wordmark-v2.tsx": "M",
