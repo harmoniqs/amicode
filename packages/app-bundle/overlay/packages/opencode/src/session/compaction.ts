@@ -32,6 +32,52 @@ const PRUNE_PROTECTED_TOOLS = ["skill"]
 const DEFAULT_TAIL_TURNS = 2
 const MIN_PRESERVE_RECENT_TOKENS = 2_000
 const MAX_PRESERVE_RECENT_TOKENS = 8_000
+
+function truncateForCompaction(value: string): string {
+  return value.length <= TOOL_OUTPUT_MAX_CHARS ? value : `${value.slice(0, TOOL_OUTPUT_MAX_CHARS)}\n[truncated]`
+}
+
+function serializeMessagesForCompaction(messages: SessionV1.WithParts[]): string[] {
+  return messages
+    .map((msg) => {
+      if (msg.info.role === "user") {
+        if (msg.parts.some((part) => part.type === "compaction")) return undefined
+        const lines: string[] = []
+        for (const part of msg.parts) {
+          if (part.type === "text" && part.text) lines.push(`[User]: ${part.text}`)
+          if (
+            part.type === "file" &&
+            part.mime !== "text/plain" &&
+            part.mime !== "application/x-directory"
+          )
+            lines.push(`[Attached ${part.mime}: ${part.filename ?? "file"}]`)
+        }
+        return lines.length > 0 ? lines.join("\n") : undefined
+      }
+      if (msg.info.role === "assistant") {
+        if (msg.info.summary) return undefined
+        const lines: string[] = []
+        for (const part of msg.parts) {
+          if (part.type === "text" && part.text) lines.push(`[Assistant]: ${part.text}`)
+          if (part.type === "tool") {
+            const input = typeof part.state.input === "string" ? part.state.input : JSON.stringify(part.state.input)
+            lines.push(`[Assistant tool call]: ${part.tool}(${input})`)
+            if (part.state.status === "completed") {
+              const output = part.state.time.compacted
+                ? "[Old tool result content cleared]"
+                : truncateForCompaction(part.state.output)
+              lines.push(`[Tool result]: ${output}`)
+            } else if (part.state.status === "error") {
+              lines.push(`[Tool error]: ${part.state.error}`)
+            }
+          }
+        }
+        return lines.length > 0 ? lines.join("\n") : undefined
+      }
+      return undefined
+    })
+    .filter((line): line is string => line !== undefined)
+}
 type Turn = {
   start: number
   end: number
@@ -345,14 +391,13 @@ const layer = Layer.effect(
         { sessionID: input.sessionID },
         { context: [], prompt: undefined },
       )
-      const nextPrompt = compacting.prompt ?? buildPrompt({ previousSummary, context: compacting.context })
       const msgs = structuredClone(selected.head)
       yield* plugin.trigger("experimental.chat.messages.transform", {}, { messages: msgs })
-      const modelMessages = yield* MessageV2.toModelMessagesEffect(msgs, model, {
-        stripMedia: true,
-        toolOutputMaxChars: TOOL_OUTPUT_MAX_CHARS,
-        forCompaction: true,
-      })
+      const conversationLines = serializeMessagesForCompaction(msgs)
+      const basePrompt = buildPrompt({ previousSummary, context: conversationLines })
+      const nextPrompt =
+        compacting.prompt ??
+        (compacting.context.length > 0 ? basePrompt + "\n\n" + compacting.context.join("\n\n") : basePrompt)
       const ctx = yield* InstanceState.context
       const msg: SessionV1.Assistant = {
         id: MessageID.ascending(),
@@ -393,7 +438,6 @@ const layer = Layer.effect(
         tools: {},
         system: [],
         messages: [
-          ...modelMessages,
           {
             role: "user",
             content: [{ type: "text", text: nextPrompt }],

@@ -33,7 +33,8 @@ export function provider(model: Provider.Model) {
 }
 
 function providerBase(model: Provider.Model) {
-  if (model.api.id.includes("muse-spark")) return PROMPT_META
+  if (model.api.id.includes("muse-glimmer")) return PROMPT_META.replaceAll("{{MODEL_NAME}}", "Muse Glimmer")
+  if (model.api.id.includes("muse-spark")) return PROMPT_META.replaceAll("{{MODEL_NAME}}", "Muse Spark")
   if (model.api.id.includes("gpt-4") || model.api.id.includes("o1") || model.api.id.includes("o3"))
     return PROMPT_BEAST
   if (model.api.id.includes("gpt")) {
@@ -45,6 +46,7 @@ function providerBase(model: Provider.Model) {
   if (model.api.id.includes("gemini-")) return PROMPT_GEMINI
   if (model.api.id.includes("claude")) return PROMPT_ANTHROPIC
   if (model.api.id.toLowerCase().includes("trinity")) return PROMPT_TRINITY
+  if (["kimi-for-coding", "moonshotai", "moonshotai-cn"].includes(model.providerID)) return PROMPT_KIMI
   if (model.api.id.toLowerCase().includes("kimi")) return PROMPT_KIMI
   return PROMPT_DEFAULT
 }
