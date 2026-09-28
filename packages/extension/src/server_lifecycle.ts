@@ -248,6 +248,39 @@ async function adoptFromRecord(
 }
 
 // ============================================================================
+// Engine-toggle restart decision (#1598, #1354)
+//
+// The status-cluster engine toggle sends amicode.restartServer on "on". The
+// restart must be FLEET-AWARE, or it re-creates the two-engine split:
+//
+//   - fleet client       → the engine is remote (over the tunnel); there is no
+//                          local engine to kill. Re-probe the tunnel.
+//   - riding unarmed hub  → this window ADOPTED the launchd hub's shared engine.
+//                          stop()+start() would kill the shared hub AND cold-
+//                          spawn a rival on the editor port — the exact split
+//                          the owner-guard fixes. Instead reclaim + re-adopt:
+//                          kill the hub engine (launchd respawns it fresh),
+//                          drop the handshake, and re-adopt the new hub.
+//   - window owns engine  → the simple case: stop() then start() a fresh one.
+// ============================================================================
+
+export type EngineRestartPlan = "reprobe-tunnel" | "reclaim-and-readopt" | "stop-and-respawn";
+
+/** Decide how the engine toggle should restart, given this window's role.
+ *  Pure — the handler branches on the returned plan. `isFleetClient` wins over
+ *  everything (a client has no local engine); a server window riding the
+ *  unarmed hub must re-adopt rather than spawn a rival; otherwise the window
+ *  owns its engine and does a plain stop→start. */
+export function planEngineRestart(state: {
+  isFleetClient: boolean;
+  ridingUnarmedHub: boolean;
+}): EngineRestartPlan {
+  if (state.isFleetClient) return "reprobe-tunnel";
+  if (state.ridingUnarmedHub) return "reclaim-and-readopt";
+  return "stop-and-respawn";
+}
+
+// ============================================================================
 // Production implementations of the four live checks
 // ============================================================================
 

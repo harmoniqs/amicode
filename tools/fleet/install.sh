@@ -299,6 +299,16 @@ if [[ "$ROLE" == "server" ]]; then
       if ! grep -q "AMICODE_ENGINE_PORT" "$HUB_UNIT_DST"; then echo "[fleet] FAIL hub service unit missing AMICODE_ENGINE_PORT (#1354 — hub engine must not collide with extension engine)"; exit 1; fi
       say "ok hub service $HUB_UNIT_DST (WantedBy+Restart=always, runs the #955 runner)"
     fi
+    # #1598 advisory (non-fatal): a fleet server's editor window must ADOPT the
+    # hub's UNARMED engine, never cold-spawn a rival. If the adoption handshake
+    # is ARMED, a window clobbered the hub record and split one engine into two
+    # on one DB (the stale-session / lost-connection failure). This is a runtime
+    # state that self-heals once the owner-guarded extension reloads — so warn,
+    # never fail the check (it is not config drift).
+    HS_FILE="$HOME/.amico/ops/server/standalone.json"
+    if [[ -f "$HS_FILE" ]] && ! grep -q '__hub_unarmed__' "$HS_FILE"; then
+      say "WARN adoption handshake $HS_FILE is ARMED, not the unarmed hub record — a rival editor engine may have clobbered the hub (two engines on one DB → stale sessions). Reload the VS Code window to re-adopt the hub."
+    fi
   else
     if [[ -z "$HUB_EXT_ROOT" ]]; then
       say "note: no service runner bundle at <ext>/bin/dist/amicode-service-runner.mjs — skipping hub service install (run \`pnpm --filter amicode build\`)"

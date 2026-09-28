@@ -110,8 +110,8 @@ import { loadGraph } from "./calibration_graph";
 import { parseStateJson } from "./device_registry";
 import { buildDeviceStatus, nextActions, capabilityHint, type DriveLine } from "./device_status";
 import { SchusterJobServer } from "./qick_client";
-import { adoptOrSpawn, buildLiveDeps, isPidAlive, reclaimOrphanPort, auditAdoptedEngine, restartAdoptedEngine, sweepStrayEngines, listOpencodeEngines, hasLiveClient, reclaimEnginePid } from "./server_lifecycle";
-import { handshakePath, readHandshake, deleteHandshake, serverLogPath, coldSpawnHandshakeHook, hashFile, hashString, UNARMED_PASSWORD } from "./server_handshake";
+import { adoptOrSpawn, buildLiveDeps, isPidAlive, reclaimOrphanPort, auditAdoptedEngine, restartAdoptedEngine, sweepStrayEngines, listOpencodeEngines, hasLiveClient, reclaimEnginePid, planEngineRestart } from "./server_lifecycle";
+import { handshakePath, readHandshake, deleteHandshake, serverLogPath, coldSpawnHandshakeHook, hashFile, hashString, UNARMED_PASSWORD, isUnarmedHandshake } from "./server_handshake";
 import { startKeepalive, stopKeepalive, readGraceSeconds, pingKeepalive } from "./server_keepalive";
 import { FleetPollHysteresis } from "./fleet_poll_hysteresis";
 import { FleetPostureStateWriter } from "./fleet_posture_state";
@@ -3090,8 +3090,24 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       // the bridge allowlist already permits it, so the server restart here
       // clears the "Something went wrong" state instead of being a no-op.
       opencodeChannel.appendLine(`[boot] restart requested`);
-      // Fleet client: no local server to restart — just re-probe the tunnel
-      if (binary !== undefined && isFleetClientGuard(binary, (line) => opencodeChannel.appendLine(line))) {
+
+      // #1598/#1354: the restart must be FLEET-AWARE, or "toggle on" re-creates
+      // the two-engine split. Decide the path from this window's role:
+      //   - fleet client      → re-probe the tunnel (no local engine to restart)
+      //   - riding unarmed hub → reclaim + re-adopt (kill the shared hub engine;
+      //                          launchd respawns it; re-adopt — NEVER cold-spawn
+      //                          a rival on the editor port)
+      //   - window owns engine → stop() then start() a fresh one
+      const isFleetClient =
+        binary !== undefined && isFleetClientGuard(binary, (line) => opencodeChannel.appendLine(line));
+      const hubRecord = (() => {
+        const hs = readHandshake(handshakePath());
+        return hs.status === "ok" && isUnarmedHandshake(hs.record) ? hs.record : undefined;
+      })();
+      const plan = planEngineRestart({ isFleetClient, ridingUnarmedHub: hubRecord !== undefined });
+      opencodeChannel.appendLine(`[boot] restart plan: ${plan}`);
+
+      if (plan === "reprobe-tunnel") {
         const topologyRestart = readFleetTopology();
         const restartPort = topologyRestart.kind === "ok" ? (topologyRestart.canonical?.port ?? 4096) : 4096;
         opencodeChannel.appendLine(`[fleet] client restart — re-probing tunnel 127.0.0.1:${restartPort}`);
@@ -3113,6 +3129,29 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         }
         return;
       }
+
+      if (plan === "reclaim-and-readopt") {
+        // Riding the launchd hub's shared engine: killing it via serverManager and
+        // cold-spawning would murder the hub AND spawn a rival on the editor port
+        // (the exact split the owner-guard fixes). Instead reclaim the hub engine's
+        // port (launchd KeepAlive respawns a fresh hub), drop the handshake, and
+        // reload — the reload's adopt-or-spawn re-adopts the new hub. One engine.
+        opencodeChannel.appendLine(`[boot] restart: reclaiming hub engine on port ${hubRecord!.port} — launchd will respawn; re-adopting on reload`);
+        pushEngineState("booting");
+        statusBar?.setServerReady(false);
+        opencodeReadyUrl = undefined;
+        await restartAdoptedEngine({
+          port: hubRecord!.port,
+          reclaimPort: reclaimOrphanPort,
+          deleteHandshake: () => deleteHandshake(),
+          reloadWindow: () => void vscode.commands.executeCommand("workbench.action.reloadWindow"),
+          log: (line) => opencodeChannel.appendLine(line),
+        });
+        return;
+      }
+
+      // plan === "stop-and-respawn": the window owns its engine — the simple kill
+      // and fresh spawn.
       await serverManager?.stop();
       // #1146 (ADR 0020): Restart is the deliberate kill — delete the
       // handshake so the next activation cold-spawns instead of adopting
