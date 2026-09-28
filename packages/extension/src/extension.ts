@@ -110,7 +110,7 @@ import { loadGraph } from "./calibration_graph";
 import { parseStateJson } from "./device_registry";
 import { buildDeviceStatus, nextActions, capabilityHint, type DriveLine } from "./device_status";
 import { SchusterJobServer } from "./qick_client";
-import { adoptOrSpawn, buildLiveDeps, isPidAlive, reclaimOrphanPort, auditAdoptedEngine, restartAdoptedEngine, sweepStrayEngines, listOpencodeEngines, hasLiveClient, reclaimEnginePid, planEngineRestart } from "./server_lifecycle";
+import { adoptOrSpawn, buildLiveDeps, isPidAlive, reclaimOrphanPort, auditAdoptedEngine, restartAdoptedEngine, sweepStrayEngines, listOpencodeEngines, hasLiveClient, reclaimEnginePid, planEngineRestart, planServerActivation } from "./server_lifecycle";
 import { handshakePath, readHandshake, deleteHandshake, serverLogPath, coldSpawnHandshakeHook, hashFile, hashString, UNARMED_PASSWORD, isUnarmedHandshake } from "./server_handshake";
 import { startKeepalive, stopKeepalive, readGraceSeconds, pingKeepalive } from "./server_keepalive";
 import { FleetPollHysteresis } from "./fleet_poll_hysteresis";
@@ -1345,13 +1345,51 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       opencodeChannel.appendLine(`[boot] adopt-or-spawn check failed: ${(e as Error).message} — cold-spawning`);
     }
 
+    // #1576: the one-engine-per-serving-machine activation plan. On a fleet
+    // SERVER the window rides the launchd hub engine (adopted, unarmed) — the
+    // #1354 "ext-engine on FLEET_PORT-2" allocation is retired here. A server
+    // must NEVER run the stray-engine sweep (the sweep SIGTERM-churned the hub —
+    // the hub owns its own engine lifecycle via its PID file, #1578) and NEVER
+    // write the shared handshake (the hub's record is authoritative; a window
+    // write is the clobber that points the next reload at a PEER window's engine
+    // instead of the hub). A server that could NOT adopt (hub genuinely down
+    // past the 30s poll budget) falls back to a local spawn with an honest
+    // banner — never engine-less on the daily driver. A standalone machine is
+    // byte-for-byte unchanged (own-engine: spawn + sweep + handshake).
+    const activationPlan = planServerActivation({ isServerMachine, hubReachable: adopted });
+    opencodeChannel.appendLine(
+      `[boot] #1576 activation: ${activationPlan.mode} (server=${isServerMachine} adopted=${adopted} ` +
+      `spawn=${activationPlan.spawnLocalEngine} sweep=${activationPlan.runStraySweep} writeHandshake=${activationPlan.writeHandshake})`,
+    );
+    if (activationPlan.hubDownBanner) {
+      opencodeChannel.appendLine(
+        `[boot] #1576 hub engine unreachable after the poll budget — running a LOCAL engine (fallback). ` +
+        `Reload the window to re-adopt the hub once launchd brings it back.`,
+      );
+      const hubDownItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 49);
+      hubDownItem.text = "$(warning) Amicode: hub down — local engine";
+      hubDownItem.tooltip =
+        "The fleet hub engine is unreachable, so this window is running its own local engine as a fallback (#1576). " +
+        "Reload the window to switch back to the shared hub engine once it returns.";
+      hubDownItem.show();
+      ctx.subscriptions.push(hubDownItem);
+    }
+
     // #1592: machine-wide stray-engine sweep. adopt-or-spawn only guards the
     // configured port; a stale install or a dead workspace can leave an engine
     // orphaned on ANOTHER port. Reap every `opencode serve` that is neither the
     // engine we kept nor still serving a live client. keepEnginePid is filled in
     // once the surviving/spawned engine's PID is known (adopted path: now; cold-
     // spawn path: after the handshake is written in onReady).
+    // #1576: GATED — a fleet server never sweeps (see activationPlan above). One
+    // guard here covers every call site (the adopt path below and wireReadyState).
     const runStrayEngineSweep = async (keepPid: number | undefined) => {
+      if (!activationPlan.runStraySweep) {
+        opencodeChannel.appendLine(
+          `[sweep] skipped — ${activationPlan.mode}: a fleet server never reaps engines (the hub owns lifecycle) [#1576]`,
+        );
+        return;
+      }
       try {
         const res = await sweepStrayEngines({
           keepPid,
@@ -1449,6 +1487,20 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     const bootBinaryHash = await hashFile(binary).catch(() => "");
     const bootConfigHash = hashString(configContent);
 
+    // #1576: the handshake-write hook, GATED on the activation plan. On a fleet
+    // server (ride-hub OR local-fallback) writeHandshake is false → undefined
+    // afterHealthy → the window NEVER writes the shared handshake, so the hub's
+    // record stays authoritative and the clobber that mis-pointed reloads is
+    // gone. A standalone machine (own-engine) writes it exactly as before.
+    const handshakeAfterHealthy = activationPlan.writeHandshake
+      ? coldSpawnHandshakeHook({
+          binaryHash: bootBinaryHash,
+          configHash: bootConfigHash,
+          password: serverPassword,
+          log: (l) => opencodeChannel.appendLine(l),
+        })
+      : undefined;
+
     // #1595: shared ready-wiring — called from BOTH the cold-spawn onReady
     // handler AND the adopted path's inline boot. The `isFirstReady` flag
     // gates chat-open so it fires on boot but NOT on restart cycles.
@@ -1526,12 +1578,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       // #1181 (ADR 0020): write the handshake once the server is healthy — the
       // durable record a later reload adopts (the linchpin the feature was
       // missing). Best-effort; a failed write logs and never blocks boot.
-      afterHealthy: coldSpawnHandshakeHook({
-        binaryHash: bootBinaryHash,
-        configHash: bootConfigHash,
-        password: serverPassword,
-        log: (l) => opencodeChannel.appendLine(l),
-      }),
+      // #1576: GATED — undefined on a fleet server (never write the handshake).
+      afterHealthy: handshakeAfterHealthy,
     });
     ctx.subscriptions.push({ dispose: () => serverManager?.detach() });
 
@@ -1846,12 +1894,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         }),
         channel: opencodeChannel,
         logFile: serverLogPath(),
-        afterHealthy: coldSpawnHandshakeHook({
-          binaryHash: bootBinaryHash,
-          configHash: bootConfigHash,
-          password: serverPassword,
-          log: (l) => opencodeChannel.appendLine(l),
-        }),
+        // #1576: GATED — undefined on a fleet server (never write the handshake).
+        afterHealthy: handshakeAfterHealthy,
       }, { port: adoptedPort, pid: adoptedPid });
       ctx.subscriptions.push({ dispose: () => serverManager?.detach() });
 

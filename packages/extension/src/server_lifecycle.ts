@@ -281,6 +281,95 @@ export function planEngineRestart(state: {
 }
 
 // ============================================================================
+// One-engine-per-serving-machine activation decision (#1576)
+//
+// A role=server editor window must RIDE the launchd hub engine (FLEET_PORT-3,
+// unarmed) instead of spawning its OWN ext-engine on FLEET_PORT-2 — the #1354
+// port allocation this reverses. The prior owner-guard/ELECTRON fixes were
+// band-aids around a still-active "two engines by design" decision; this is the
+// activation branch that makes ONE engine the truth on a server.
+//
+// Two invariants are load-bearing and returned as explicit fields, not buried
+// in the caller's branching:
+//   • runStraySweep is NEVER true on a fleet server. The machine-wide sweep
+//     (#1592) is what SIGTERM-churned the hub — on a server the hub owns engine
+//     lifecycle (its own PID-file, #1578), so the editor must never reap.
+//   • writeHandshake is NEVER true on a fleet server. The single un-namespaced
+//     handshake belongs to the hub; a window write is the clobber that points a
+//     reload at a peer window's engine instead of the hub.
+//
+// The three modes:
+//   own-engine     — standalone (non-fleet-server): spawn + sweep + handshake,
+//                    today's behavior, byte-for-byte unchanged.
+//   ride-hub       — fleet server + hub reachable: adopt the hub, spawn NOTHING.
+//   local-fallback — fleet server + hub unreachable (after the poll budget):
+//                    spawn a local engine + surface an honest banner so the
+//                    daily driver is never engine-less; still never sweeps or
+//                    clobbers, and yields back to the hub when it returns.
+// ============================================================================
+
+export type ServerActivationMode = "own-engine" | "ride-hub" | "local-fallback";
+
+export interface ServerActivationPlan {
+  mode: ServerActivationMode;
+  /** Cold-spawn a local engine? Only ride-hub adopts the hub instead. */
+  spawnLocalEngine: boolean;
+  /** Run the machine-wide stray-engine sweep? ONLY on a standalone machine —
+   *  never on a fleet server (the hub owns engine lifecycle). */
+  runStraySweep: boolean;
+  /** Write the adoption handshake? ONLY on a standalone machine — never on a
+   *  fleet server, where the hub's record is authoritative. */
+  writeHandshake: boolean;
+  /** Surface the honest "hub down — running a local engine" banner
+   *  (local-fallback only). */
+  hubDownBanner: boolean;
+}
+
+/** Decide how a window activates its engine, given whether this is a fleet
+ *  server machine and whether the hub engine is reachable. Pure — the caller
+ *  reads the fields to wire spawn/sweep/handshake. `isServerMachine` is the
+ *  projection's role=server; `hubReachable` is the adopt gate's verdict against
+ *  the hub engine AFTER the poll budget (#1576 hubPollBudgetMs). */
+export function planServerActivation(state: {
+  isServerMachine: boolean;
+  hubReachable: boolean;
+}): ServerActivationPlan {
+  // Standalone (or any non-fleet-server) machine: today's behavior — own the
+  // engine, sweep strays, write the handshake. Unchanged.
+  if (!state.isServerMachine) {
+    return {
+      mode: "own-engine",
+      spawnLocalEngine: true,
+      runStraySweep: true,
+      writeHandshake: true,
+      hubDownBanner: false,
+    };
+  }
+  // Fleet server with a reachable hub: RIDE it. Spawn nothing (retire the
+  // ext-engine), never sweep, never write the handshake.
+  if (state.hubReachable) {
+    return {
+      mode: "ride-hub",
+      spawnLocalEngine: false,
+      runStraySweep: false,
+      writeHandshake: false,
+      hubDownBanner: false,
+    };
+  }
+  // Fleet server, hub genuinely unreachable: pragmatic fallback — spawn a local
+  // engine so the editor is never engine-less, with an honest banner. STILL
+  // never sweep (a returning hub must not be reaped) and never clobber the
+  // shared handshake (the local engine yields to the hub when it returns).
+  return {
+    mode: "local-fallback",
+    spawnLocalEngine: true,
+    runStraySweep: false,
+    writeHandshake: false,
+    hubDownBanner: true,
+  };
+}
+
+// ============================================================================
 // Production implementations of the four live checks
 // ============================================================================
 
