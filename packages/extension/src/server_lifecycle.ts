@@ -389,6 +389,52 @@ export function adoptedTheHub(state: { adopted: boolean; adoptedUnarmed: boolean
 }
 
 // ============================================================================
+// Deterministic hub probe (#1607 Slice 1)
+//
+// Instead of trusting the (deletable / clobberable / stale-pid) handshake for
+// hub identity, a server probes the hub engine's port directly — derived from
+// the shared HUB_ENGINE_PORT_OFFSET — and confirms the occupant is the UNARMED
+// hub. The hub engine is passwordless (the SSH tunnel is its auth boundary), so
+// an ANONYMOUS GET distinguishes it: 200 = unarmed hub; 401/403 = an ARMED peer
+// (NOT the hub); no response = down. This makes ride-hub survive a hub crash +
+// respawn (stale pid) and a deleted/absent handshake.
+// ============================================================================
+
+export type HubProbe = "unarmed" | "armed" | "down";
+
+/** Classify a hub-engine probe result. Pure — the fetch wrapper feeds it. */
+export function classifyHubProbe(r: { reached: boolean; status?: number }): HubProbe {
+  if (!r.reached) return "down";
+  // An armed engine 401/403s an anonymous request; the unarmed hub answers.
+  if (r.status === 401 || r.status === 403) return "armed";
+  return "unarmed";
+}
+
+/** Probe 127.0.0.1:<port> anonymously and classify it as the unarmed hub, an
+ *  armed peer, or down. Never throws. */
+export async function probeUnarmedHub(port: number): Promise<HubProbe> {
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 3000);
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/`, { signal: ctrl.signal });
+      return classifyHubProbe({ reached: true, status: res.status });
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch {
+    return classifyHubProbe({ reached: false });
+  }
+}
+
+/** Ride the deterministically-probed hub iff this is a server AND the probe
+ *  found the UNARMED hub. Pure. An armed/down probe falls through to the
+ *  handshake-based adopt-or-spawn (poll / fallback). */
+export function shouldRideDeterministicHub(state: { isServerMachine: boolean; hubProbe: HubProbe }): boolean {
+  return state.isServerMachine && state.hubProbe === "unarmed";
+}
+
+// ============================================================================
 // Production implementations of the four live checks
 // ============================================================================
 

@@ -34,6 +34,20 @@
  *  from the tunnel's `co.harmoniqs.amico-tunnel`. */
 export const HUB_SERVICE_LABEL = "co.harmoniqs.amico-hub";
 
+/** #1354 port layout on a server: FLEET_PORT-3 hub-engine · FLEET_PORT-2
+ *  ext-engine · FLEET_PORT-1 app-shelf · FLEET_PORT hub-service. The hub
+ *  ENGINE sits this many ports BELOW the canonical/service port. Exported as
+ *  the SINGLE source of the offset (#1607 Slice 1) — the hub-service env below
+ *  AND the extension's deterministic hub probe both derive the port from here,
+ *  never a re-typed literal. (The bash installer still hardcodes the same 3;
+ *  keep them in step.) */
+export const HUB_ENGINE_PORT_OFFSET = 3;
+
+/** The hub engine's port for a given canonical/service port (#1607 Slice 1). */
+export function hubEnginePortFor(servicePort: number): number {
+  return servicePort - HUB_ENGINE_PORT_OFFSET;
+}
+
 /** The default stdout/stderr redirection target for the launchd agent. */
 const DEFAULT_LOG = "/tmp/amico-hub.log";
 
@@ -83,7 +97,7 @@ export function hubServiceEnv(opts: HubServiceUnitOptions): Record<string, strin
     // #1354: the hub's embedded engine must NOT collide with the extension's
     // engine. Layout on a server: FLEET_PORT-3 hub-engine · FLEET_PORT-2
     // ext-engine · FLEET_PORT-1 app-shelf · FLEET_PORT hub-service.
-    AMICODE_ENGINE_PORT: String(opts.servicePort - 3),
+    AMICODE_ENGINE_PORT: String(hubEnginePortFor(opts.servicePort)),
     // #1354: open-auth REQUIRES an unarmed engine — /global/health proxies to
     // the engine, which 401s if it holds a password. The SSH tunnel is the
     // boundary; the engine behind it is passwordless. This is the matched pair

@@ -110,7 +110,8 @@ import { loadGraph } from "./calibration_graph";
 import { parseStateJson } from "./device_registry";
 import { buildDeviceStatus, nextActions, capabilityHint, type DriveLine } from "./device_status";
 import { SchusterJobServer } from "./qick_client";
-import { adoptOrSpawn, buildLiveDeps, isPidAlive, reclaimOrphanPort, auditAdoptedEngine, restartAdoptedEngine, sweepStrayEngines, listOpencodeEngines, hasLiveClient, reclaimEnginePid, planEngineRestart, planServerActivation, adoptedTheHub } from "./server_lifecycle";
+import { adoptOrSpawn, buildLiveDeps, isPidAlive, reclaimOrphanPort, auditAdoptedEngine, restartAdoptedEngine, sweepStrayEngines, listOpencodeEngines, hasLiveClient, reclaimEnginePid, planEngineRestart, planServerActivation, adoptedTheHub, probeUnarmedHub, shouldRideDeterministicHub } from "./server_lifecycle";
+import { hubEnginePortFor } from "./amicode_service/fleet_hub_service";
 import { handshakePath, readHandshake, deleteHandshake, serverLogPath, coldSpawnHandshakeHook, hashFile, hashString, UNARMED_PASSWORD, isUnarmedHandshake } from "./server_handshake";
 import { startKeepalive, stopKeepalive, readGraceSeconds, pingKeepalive } from "./server_keepalive";
 import { FleetPollHysteresis } from "./fleet_poll_hysteresis";
@@ -1306,7 +1307,41 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     const fleetState = readFleetTopology();
     const isServerMachine = fleetState.kind === "ok" && fleetState.role === "server";
     const hubPollBudget = isServerMachine ? 30_000 : undefined;
+
+    // #1607 Slice 1: on a fleet server, find the hub DETERMINISTICALLY before
+    // trusting the handshake. Probe the hub engine port (canonical −
+    // HUB_ENGINE_PORT_OFFSET) and confirm it's the UNARMED hub (anonymous GET:
+    // 200 = unarmed hub; 401/403 = armed peer; down = fall through). This makes
+    // ride-hub survive a hub crash+respawn (stale handshake pid) and a deleted/
+    // absent handshake — the incident's exact failure. The hub pid comes from
+    // the hub's own PID file (not the clobberable handshake).
+    if (isServerMachine) {
+      const canonicalPort = (fleetState.kind === "ok" ? fleetState.canonical?.port : undefined) ?? 4096;
+      const hubEnginePort = hubEnginePortFor(canonicalPort);
+      const hubProbe = await probeUnarmedHub(hubEnginePort);
+      opencodeChannel.appendLine(`[boot] #1607 deterministic hub probe 127.0.0.1:${hubEnginePort} → ${hubProbe}`);
+      if (shouldRideDeterministicHub({ isServerMachine, hubProbe })) {
+        const hubPid = (() => {
+          try {
+            return parseInt(fs.readFileSync(path.join(os.homedir(), ".amico", "amicode", "hub-engine.pid"), "utf8").trim(), 10) || 0;
+          } catch {
+            return 0;
+          }
+        })();
+        adopted = true;
+        adoptedPort = hubEnginePort;
+        adoptedPid = hubPid;
+        adoptedUnarmed = true;
+        serverPassword = UNARMED_PASSWORD;
+        serverAuthHeaders.Authorization = serverAuthHeader(serverPassword);
+        opencodeReadyUrl = new URL(`http://127.0.0.1:${hubEnginePort}`);
+        opencodeChannel.appendLine(
+          `[boot] #1607 RIDING hub engine on ${hubEnginePort} (unarmed, deterministic probe; pid ${hubPid || "?"}) — no handshake dependency`,
+        );
+      }
+    }
     try {
+      if (!adopted) {
       const lifecycleResult = await adoptOrSpawn(
         handshakePath(),
         buildLiveDeps(async () => {
@@ -1340,6 +1375,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         // real ServerManager spawn below.
         opencodeChannel.appendLine(`[boot] no surviving server to adopt — cold-spawning`);
       }
+      } // #1607: end if (!adopted) — skipped when the deterministic probe already rode the hub
     } catch (e) {
       // Adoption check failed — non-fatal, proceed to cold-spawn.
       opencodeChannel.appendLine(`[boot] adopt-or-spawn check failed: ${(e as Error).message} — cold-spawning`);

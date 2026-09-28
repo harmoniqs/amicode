@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { planServerActivation, adoptedTheHub } from "../src/server_lifecycle";
+import {
+  planServerActivation,
+  adoptedTheHub,
+  classifyHubProbe,
+  shouldRideDeterministicHub,
+} from "../src/server_lifecycle";
+import { hubEnginePortFor, HUB_ENGINE_PORT_OFFSET } from "../src/amicode_service/fleet_hub_service";
 
 // ============================================================================
 // #1576 — one engine per serving machine. A role=server editor window must RIDE
@@ -137,5 +143,53 @@ describe("planServerActivation — a fleet server never DELETES the shared hands
       expect(p.writeHandshake).toBe(false);
       expect(p.mayDeleteHandshake).toBe(false);
     }
+  });
+});
+
+// ============================================================================
+// #1607 Slice 1: find the hub DETERMINISTICALLY. Instead of trusting the
+// (deletable/clobberable/stale) handshake for hub identity, a server probes the
+// hub engine's port — derived from a SHARED constant (FLEET_PORT − offset, no
+// re-typed literal) — and confirms the occupant is the UNARMED hub (anonymous
+// GET: 200 = unarmed hub; 401/403 = armed peer, NOT the hub; no response = down).
+// This closes: a clobbered handshake (armed peer), a stale pid after a hub
+// respawn, and an absent handshake with a live hub.
+// ============================================================================
+
+describe("hubEnginePortFor — the shared hub-engine-port constant (#1607 Slice 1)", () => {
+  it("offset is 3 (FLEET_PORT-3 hub-engine, per the #1354 layout)", () => {
+    expect(HUB_ENGINE_PORT_OFFSET).toBe(3);
+  });
+  it("derives the hub engine port from the canonical/service port", () => {
+    expect(hubEnginePortFor(4096)).toBe(4093);
+    expect(hubEnginePortFor(5000)).toBe(4997);
+  });
+});
+
+describe("classifyHubProbe — is the occupant the UNARMED hub? (#1607 Slice 1)", () => {
+  it("no response → down", () => {
+    expect(classifyHubProbe({ reached: false })).toBe("down");
+  });
+  it("200 (anonymous OK) → unarmed (the hub is passwordless)", () => {
+    expect(classifyHubProbe({ reached: true, status: 200 })).toBe("unarmed");
+  });
+  it("401/403 (anonymous rejected) → armed — an armed peer, NOT the unarmed hub", () => {
+    expect(classifyHubProbe({ reached: true, status: 401 })).toBe("armed");
+    expect(classifyHubProbe({ reached: true, status: 403 })).toBe("armed");
+  });
+});
+
+describe("shouldRideDeterministicHub — ride only a probed UNARMED hub, on a server (#1607 Slice 1)", () => {
+  it("server + unarmed probe → ride", () => {
+    expect(shouldRideDeterministicHub({ isServerMachine: true, hubProbe: "unarmed" })).toBe(true);
+  });
+  it("server + armed probe → do NOT ride (it's a peer, not the hub)", () => {
+    expect(shouldRideDeterministicHub({ isServerMachine: true, hubProbe: "armed" })).toBe(false);
+  });
+  it("server + down probe → do NOT ride (fall through to poll/fallback)", () => {
+    expect(shouldRideDeterministicHub({ isServerMachine: true, hubProbe: "down" })).toBe(false);
+  });
+  it("non-server never rides the deterministic hub (standalone owns its engine)", () => {
+    expect(shouldRideDeterministicHub({ isServerMachine: false, hubProbe: "unarmed" })).toBe(false);
   });
 });
