@@ -4,6 +4,7 @@ import {
   adoptedTheHub,
   classifyHubProbe,
   shouldRideDeterministicHub,
+  planHubYieldBack,
 } from "../src/server_lifecycle";
 import { hubEnginePortFor, HUB_ENGINE_PORT_OFFSET } from "../src/amicode_service/fleet_hub_service";
 
@@ -191,5 +192,110 @@ describe("shouldRideDeterministicHub — ride only a probed UNARMED hub, on a se
   });
   it("non-server never rides the deterministic hub (standalone owns its engine)", () => {
     expect(shouldRideDeterministicHub({ isServerMachine: false, hubProbe: "unarmed" })).toBe(false);
+  });
+});
+
+// ============================================================================
+// #1607 Slice 3 — live yield-back on hub-return.
+//
+// When a server has fallen back to a LOCAL engine (hub genuinely down, spawned
+// on FLEET_PORT-2), a returning hub must be picked up WITHOUT a manual reload
+// and WITHOUT breaking an in-flight turn. planHubYieldBack is the pure trigger:
+// given the current activation mode, a fresh hub probe, and the fallback
+// engine's drained state (in-flight turns + SSE subscribers — the same quiescence
+// test as shouldSelfExit), it decides the action:
+//   • "stay"            — hub not back yet (probe ≠ unarmed), or not in fallback.
+//   • "switch-quiesced" — hub back AND fallback drained: tear down the local
+//                         engine, adopt the hub, clear the banner. Safe now.
+//   • "prompt"          — hub back BUT fallback busy: surface an actionable
+//                         "hub is back — switch" prompt. NEVER a silent live
+//                         hot-swap (AC3: different engine/store/password → dropped
+//                         turns, invalidated auth, two-writer risk).
+//
+// Invariants as tested fields, mirroring planServerActivation:
+//   • NEVER "switch-quiesced" while the fallback engine is busy (the dropped-turn
+//     hazard AC3 forbids) — busy always yields "prompt", not a switch.
+//   • The trigger only fires in "local-fallback"; ride-hub / own-engine → "stay"
+//     (no fallback engine to yield).
+// ============================================================================
+
+describe("planHubYieldBack — live yield-back to a returning hub (#1607 Slice 3)", () => {
+  it("local-fallback + hub back (unarmed) + drained → switch-quiesced", () => {
+    const p = planHubYieldBack({
+      mode: "local-fallback",
+      hubProbe: "unarmed",
+      inFlightTurns: 0,
+      activeEventStreamSubscribers: 0,
+    });
+    expect(p.action).toBe("switch-quiesced");
+    expect(p.clearHubDownBanner).toBe(true);
+  });
+
+  it("local-fallback + hub back + in-flight turn → prompt (never a silent switch)", () => {
+    const p = planHubYieldBack({
+      mode: "local-fallback",
+      hubProbe: "unarmed",
+      inFlightTurns: 1,
+      activeEventStreamSubscribers: 0,
+    });
+    expect(p.action).toBe("prompt");
+    expect(p.clearHubDownBanner).toBe(false);
+  });
+
+  it("local-fallback + hub back + active SSE subscriber → prompt (client is watching)", () => {
+    const p = planHubYieldBack({
+      mode: "local-fallback",
+      hubProbe: "unarmed",
+      inFlightTurns: 0,
+      activeEventStreamSubscribers: 1,
+    });
+    expect(p.action).toBe("prompt");
+    expect(p.clearHubDownBanner).toBe(false);
+  });
+
+  it("local-fallback + hub still down → stay (nothing to yield to)", () => {
+    const p = planHubYieldBack({
+      mode: "local-fallback",
+      hubProbe: "down",
+      inFlightTurns: 0,
+      activeEventStreamSubscribers: 0,
+    });
+    expect(p.action).toBe("stay");
+    expect(p.clearHubDownBanner).toBe(false);
+  });
+
+  it("local-fallback + an ARMED peer answered → stay (that is NOT the hub)", () => {
+    const p = planHubYieldBack({
+      mode: "local-fallback",
+      hubProbe: "armed",
+      inFlightTurns: 0,
+      activeEventStreamSubscribers: 0,
+    });
+    expect(p.action).toBe("stay");
+  });
+
+  it("ride-hub never yields (already on the hub, no fallback engine)", () => {
+    expect(
+      planHubYieldBack({ mode: "ride-hub", hubProbe: "unarmed", inFlightTurns: 0, activeEventStreamSubscribers: 0 }).action,
+    ).toBe("stay");
+  });
+
+  it("own-engine (standalone) never yields (no hub to yield to)", () => {
+    expect(
+      planHubYieldBack({ mode: "own-engine", hubProbe: "unarmed", inFlightTurns: 0, activeEventStreamSubscribers: 0 }).action,
+    ).toBe("stay");
+  });
+
+  it("INVARIANT: a busy fallback is NEVER switched quiesced, for any busy shape", () => {
+    for (const [t, s] of [[1, 0], [0, 1], [3, 2]] as const) {
+      const p = planHubYieldBack({
+        mode: "local-fallback",
+        hubProbe: "unarmed",
+        inFlightTurns: t,
+        activeEventStreamSubscribers: s,
+      });
+      expect(p.action).not.toBe("switch-quiesced");
+      expect(p.action).toBe("prompt");
+    }
   });
 });

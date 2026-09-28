@@ -435,6 +435,61 @@ export function shouldRideDeterministicHub(state: { isServerMachine: boolean; hu
 }
 
 // ============================================================================
+// Live yield-back on hub-return (#1607 Slice 3)
+//
+// When a server is in local-fallback (hub genuinely down, running its own engine
+// on FLEET_PORT-2), a returning hub must be picked up WITHOUT a manual reload and
+// WITHOUT breaking an in-flight turn. This pure trigger decides the action from
+// the current activation mode, a fresh hub probe, and the fallback engine's
+// drained state (in-flight turns + SSE subscribers — the same quiescence test as
+// shouldSelfExit). A SILENT live hot-swap is explicitly OUT OF SCOPE (AC3):
+// switching engine/store/password under a live turn drops it, invalidates auth,
+// and re-opens the two-writer window. So:
+//   • "switch-quiesced" — hub back AND fallback drained: safe to tear down the
+//                          local engine, adopt the hub, and clear the banner.
+//   • "prompt"          — hub back BUT fallback busy: an actionable "hub is back —
+//                          switch" prompt; the user picks the moment. Never silent.
+//   • "stay"            — hub not back (probe ≠ unarmed), or not in local-fallback
+//                          (ride-hub / own-engine have no fallback engine to yield).
+//
+// Invariants, asserted as fields by the caller's tests:
+//   • NEVER "switch-quiesced" while busy — a busy fallback is always "prompt".
+//   • Fires only in "local-fallback"; every other mode → "stay".
+// ============================================================================
+
+export type HubYieldAction = "stay" | "switch-quiesced" | "prompt";
+
+export interface HubYieldPlan {
+  action: HubYieldAction;
+  /** Clear the honest "hub down — local engine" banner? Only on a quiesced
+   *  switch (the prompt path clears it once the user accepts, not here). */
+  clearHubDownBanner: boolean;
+}
+
+/** Decide whether/how a local-fallback server yields back to a returning hub.
+ *  Pure — the caller wires the teardown+adopt (switch-quiesced) or the
+ *  notification (prompt). `hubProbe` is a fresh deterministic probe of the hub
+ *  engine port; drained state mirrors shouldSelfExit's quiescence inputs. */
+export function planHubYieldBack(state: {
+  mode: ServerActivationMode;
+  hubProbe: HubProbe;
+  inFlightTurns: number;
+  activeEventStreamSubscribers: number;
+}): HubYieldPlan {
+  // Only a local-fallback window has a fallback engine to yield; ride-hub is
+  // already on the hub, own-engine has no hub to return to.
+  if (state.mode !== "local-fallback") return { action: "stay", clearHubDownBanner: false };
+  // The hub must genuinely be back — an armed peer or a down port is not the hub.
+  if (state.hubProbe !== "unarmed") return { action: "stay", clearHubDownBanner: false };
+  // Hub is back. If the fallback engine is drained, switch quiesced; if a turn
+  // is in flight or a client is streaming, defer to a user-prompted switch —
+  // never drop a live turn (AC3).
+  const busy = state.inFlightTurns > 0 || state.activeEventStreamSubscribers > 0;
+  if (busy) return { action: "prompt", clearHubDownBanner: false };
+  return { action: "switch-quiesced", clearHubDownBanner: true };
+}
+
+// ============================================================================
 // Production implementations of the four live checks
 // ============================================================================
 

@@ -110,7 +110,7 @@ import { loadGraph } from "./calibration_graph";
 import { parseStateJson } from "./device_registry";
 import { buildDeviceStatus, nextActions, capabilityHint, type DriveLine } from "./device_status";
 import { SchusterJobServer } from "./qick_client";
-import { adoptOrSpawn, buildLiveDeps, isPidAlive, reclaimOrphanPort, auditAdoptedEngine, restartAdoptedEngine, sweepStrayEngines, listOpencodeEngines, hasLiveClient, reclaimEnginePid, planEngineRestart, planServerActivation, adoptedTheHub, probeUnarmedHub, shouldRideDeterministicHub } from "./server_lifecycle";
+import { adoptOrSpawn, buildLiveDeps, isPidAlive, reclaimOrphanPort, auditAdoptedEngine, restartAdoptedEngine, sweepStrayEngines, listOpencodeEngines, hasLiveClient, reclaimEnginePid, planEngineRestart, planServerActivation, adoptedTheHub, probeUnarmedHub, shouldRideDeterministicHub, planHubYieldBack } from "./server_lifecycle";
 import { hubEnginePortFor } from "./amicode_service/fleet_hub_service";
 import { handshakePath, readHandshake, deleteHandshake, serverLogPath, coldSpawnHandshakeHook, hashFile, hashString, UNARMED_PASSWORD, isUnarmedHandshake } from "./server_handshake";
 import { startKeepalive, stopKeepalive, readGraceSeconds, pingKeepalive } from "./server_keepalive";
@@ -1307,6 +1307,11 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     const fleetState = readFleetTopology();
     const isServerMachine = fleetState.kind === "ok" && fleetState.role === "server";
     const hubPollBudget = isServerMachine ? 30_000 : undefined;
+    // #1607 Slice 3: the hub engine port is needed both by the deterministic
+    // probe below and by the local-fallback yield-back watcher, so hoist it here.
+    const hubEnginePort = hubEnginePortFor(
+      (fleetState.kind === "ok" ? fleetState.canonical?.port : undefined) ?? 4096,
+    );
 
     // #1607 Slice 1: on a fleet server, find the hub DETERMINISTICALLY before
     // trusting the handshake. Probe the hub engine port (canonical −
@@ -1316,8 +1321,6 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     // absent handshake — the incident's exact failure. The hub pid comes from
     // the hub's own PID file (not the clobberable handshake).
     if (isServerMachine) {
-      const canonicalPort = (fleetState.kind === "ok" ? fleetState.canonical?.port : undefined) ?? 4096;
-      const hubEnginePort = hubEnginePortFor(canonicalPort);
       const hubProbe = await probeUnarmedHub(hubEnginePort);
       opencodeChannel.appendLine(`[boot] #1607 deterministic hub probe 127.0.0.1:${hubEnginePort} → ${hubProbe}`);
       if (shouldRideDeterministicHub({ isServerMachine, hubProbe })) {
@@ -1416,6 +1419,61 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         "Reload the window to switch back to the shared hub engine once it returns.";
       hubDownItem.show();
       ctx.subscriptions.push(hubDownItem);
+
+      // #1607 Slice 3: live yield-back. While in local-fallback, poll the hub
+      // engine port; when the UNARMED hub returns, yield back WITHOUT a manual
+      // reload. planHubYieldBack decides: a drained fallback switches quiesced
+      // (reload → the deterministic probe rides the hub, tearing down the local
+      // engine as the window restarts); a BUSY fallback gets an actionable prompt
+      // instead — never a silent hot-swap that would drop a live turn (AC3). We
+      // cannot cheaply read the local engine's in-flight/SSE counts from the
+      // extension host, so unknown busy-state is treated as BUSY (→ prompt): the
+      // conservative choice never interrupts a running turn.
+      let yieldBackHandled = false;
+      const readFallbackBusy = (): { inFlightTurns: number; activeEventStreamSubscribers: number } => {
+        // Honest conservative default: assume busy (→ prompt) unless a future
+        // seam supplies drained counts. Never returns drained on a guess.
+        return { inFlightTurns: 1, activeEventStreamSubscribers: 0 };
+      };
+      const doSwitchToHub = () => {
+        hubDownItem.hide();
+        opencodeChannel.appendLine(`[yield-back] #1607 hub returned — switching this window back to the hub engine`);
+        void vscode.commands.executeCommand("workbench.action.reloadWindow");
+      };
+      const yieldBackTimer = setInterval(() => {
+        if (yieldBackHandled) return;
+        void (async () => {
+          const hubProbe = await probeUnarmedHub(hubEnginePort);
+          const busy = readFallbackBusy();
+          const yieldPlan = planHubYieldBack({
+            mode: activationPlan.mode,
+            hubProbe,
+            inFlightTurns: busy.inFlightTurns,
+            activeEventStreamSubscribers: busy.activeEventStreamSubscribers,
+          });
+          if (yieldPlan.action === "stay") return;
+          yieldBackHandled = true;
+          if (yieldPlan.clearHubDownBanner) hubDownItem.hide();
+          if (yieldPlan.action === "switch-quiesced") {
+            doSwitchToHub();
+          } else {
+            // "prompt": an actionable notification; the user picks the moment.
+            const pick = await vscode.window.showInformationMessage(
+              "Amicode: the fleet hub engine is back. Switch this window to the shared hub engine? " +
+                "This reloads the window; finish any in-flight turn first.",
+              "Switch to hub",
+              "Not now",
+            );
+            if (pick === "Switch to hub") {
+              doSwitchToHub();
+            } else {
+              // User deferred — keep watching, re-offer on the next return.
+              yieldBackHandled = false;
+            }
+          }
+        })();
+      }, 15_000);
+      ctx.subscriptions.push({ dispose: () => clearInterval(yieldBackTimer) });
     }
 
     // #1592: machine-wide stray-engine sweep. adopt-or-spawn only guards the
