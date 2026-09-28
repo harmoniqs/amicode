@@ -12,6 +12,7 @@
 //
 // stop() → deleteHandshake(). deleteHandshake uses #1144's primitive — the
 // handshake record is always cleared so no stale record survives the kill.
+// #1608: the kill is now narrated — `stopping` before, `off` in a `finally`.
 
 /** Dependencies injected for testability — every live seam is mockable. */
 export interface StopServerDeps {
@@ -19,14 +20,26 @@ export interface StopServerDeps {
   stop: () => Promise<void>;
   /** Delete the handshake record (#1144's primitive). */
   deleteHandshake: () => void;
+  /** #1608: push a lifecycle state to the app toggle. Optional — callers that
+   *  don't drive the toggle (or tests that don't assert narration) omit it.
+   *  `stopping` is pushed before the kill; `off` in a `finally` so a throwing
+   *  stop never strands the toggle mid-transition. */
+  pushState?: (state: "stopping" | "off") => void;
 }
 
 /**
  * Stop the surviving server — the deliberate kill. No confirmation:
- * stop() → deleteHandshake(). The handshake is cleared AFTER the kill so no
- * stale record survives.
+ * pushState("stopping") → stop() → deleteHandshake(), with pushState("off")
+ * in a `finally`. The handshake is cleared AFTER the kill so no stale record
+ * survives; `off` is pushed even if stop() throws so the toggle resolves to a
+ * definite state (#1608 AC7) rather than staying stuck on `stopping`.
  */
 export async function stopServer(deps: StopServerDeps): Promise<void> {
-  await deps.stop();
-  deps.deleteHandshake();
+  deps.pushState?.("stopping");
+  try {
+    await deps.stop();
+    deps.deleteHandshake();
+  } finally {
+    deps.pushState?.("off");
+  }
 }

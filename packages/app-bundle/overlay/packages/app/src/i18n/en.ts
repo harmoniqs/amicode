@@ -326,6 +326,9 @@ export const dict = {
   "prompt.toast.connectionDropped.title": "Connection dropped",
   "prompt.toast.connectionDropped.description":
     "The connection to the server dropped, so your message wasn't sent. It's still in the composer — try again once reconnected.",
+  "prompt.toast.engineOff.title": "Engine is off",
+  "prompt.toast.engineOff.description":
+    "The Amicode engine is switched off, so your message wasn't sent. It's still in the composer — toggle the engine on to resume.",
 
   "dialog.mcp.title": "MCPs",
   "dialog.mcp.description": "{{enabled}} of {{total}} enabled",

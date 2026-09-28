@@ -238,6 +238,12 @@ type PromptSubmitInput = {
    *  after a first successful connect); a send is then refused with an honest
    *  notice instead of optimistically posting into a dead tunnel. */
   streamGap?: Accessor<boolean>
+  /** amicode#1608 — true when the engine is deliberately OFF (or stopping). A
+   *  send is refused with an engine-specific notice that takes PRECEDENCE over
+   *  streamGap, so an intentional off reads as intentional rather than as a
+   *  generic connection drop. Injected (like streamGap) so submission stays
+   *  testable without the provider tree. */
+  engineOff?: Accessor<boolean>
   model?: ModelSelection
 }
 
@@ -342,6 +348,19 @@ export function createPromptSubmit(input: PromptSubmitInput) {
 
     if (text.trim().length === 0 && images.length === 0 && input.commentCount() === 0) {
       if (input.working()) void abort()
+      return
+    }
+
+    // amicode#1608 AC6 — a send while the engine is deliberately OFF refuses
+    // with an engine-specific reason, ordered BEFORE the stream-gap refusal so
+    // the specific "engine is off" reason wins over the generic
+    // connection-dropped notice. Same honest-refusal contract as the gap:
+    // nothing was sent, the draft is untouched, nothing pushed to history.
+    if (input.engineOff?.()) {
+      showToast({
+        title: language.t("prompt.toast.engineOff.title"),
+        description: language.t("prompt.toast.engineOff.description"),
+      })
       return
     }
 

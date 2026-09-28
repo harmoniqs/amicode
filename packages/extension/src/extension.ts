@@ -3346,11 +3346,12 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           await serverManager?.stop();
           statusBar?.setServerReady(false);
           opencodeReadyUrl = undefined;
-          // #1598: push engine-off to the app toggle.
-          pushEngineState("off");
           opencodeChannel.appendLine("[server] stopped by user (amicode.stopServer)");
         },
         deleteHandshake: () => deleteHandshake(),
+        // #1608 AC7: narrate the deliberate off — `stopping` before the kill,
+        // `off` in a finally so a throwing stop never strands the toggle.
+        pushState: (state) => pushEngineState(state),
       }),
     ),
     // #1597: Quit — stop engine + close window in one action.

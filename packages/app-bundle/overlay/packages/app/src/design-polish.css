@@ -691,6 +691,50 @@ span[data-component="tag"][data-variant="accent"] {
   }
 }
 
+/* engine banner (#1608) — the calm narration of a DELIBERATE engine off (and
+   the booting/stopping transitions). Distinct slot from the solver-switch
+   banner: that one is bottom-CENTER, this one is bottom-LEFT, so the two never
+   collide when both are visible. Same neutral chip language; never a blocking
+   overlay. Reads NEUTRAL (no yellow foreground — yellow may never be a
+   foreground on light). */
+[data-component="amicode-engine-banner"] {
+  position: fixed;
+  bottom: var(--space-4);
+  left: var(--space-4);
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-full);
+  border: var(--border-width) solid var(--v2-border-border-base);
+  background: var(--v2-background-bg-layer-01);
+  color: var(--v2-text-text-base);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-emphasis);
+  box-shadow: var(--elev-float);
+  transition:
+    background-color 0.16s ease,
+    border-color 0.16s ease,
+    color 0.16s ease;
+}
+/* the dot: neutral ink, pulsing while a transition is in flight (booting /
+   stopping), steady once resting off. */
+[data-component="amicode-engine-banner"] > i {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: currentColor;
+}
+[data-component="amicode-engine-banner"][data-state="booting"] > i,
+[data-component="amicode-engine-banner"][data-state="stopping"] > i {
+  animation: amc-solver-switch-pulse 1.2s ease-in-out infinite;
+}
+/* off is the resting state — a calm steady dot, dimmed to read as inactive. */
+[data-component="amicode-engine-banner"][data-state="off"] > i {
+  opacity: 0.5;
+}
+
 /* ── Onboarding walkthrough spotlight (session-tour.tsx) ───────────────────
    A ring traced on the chrome element the current "Tour · X" stop names. The
    ring is the whole marker — there is no label, because the stop's own text

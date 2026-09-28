@@ -46,3 +46,42 @@ describe("send-during-gap honest refusal (#1203)", () => {
     }
   })
 })
+
+// #1608 AC6: a send attempted while the engine is OFF is refused with an
+// engine-specific message that takes PRECEDENCE over the generic
+// connection-dropped (stream-gap) refusal — the specific reason wins.
+describe("send-while-engine-off honest refusal (#1608 AC6)", () => {
+  test("the engine-off refusal is ordered BEFORE the stream-gap refusal", () => {
+    const engineOff = source.indexOf("input.engineOff?.()")
+    const streamGap = source.indexOf("input.streamGap?.()")
+    expect(engineOff).toBeGreaterThan(-1)
+    expect(streamGap).toBeGreaterThan(-1)
+    // the specific reason wins: engine-off is consulted first
+    expect(engineOff).toBeLessThan(streamGap)
+  })
+
+  test("both refusals fire before anything is committed to the composer", () => {
+    const engineOff = source.indexOf("input.engineOff?.()")
+    const history = source.indexOf("input.addToHistory")
+    const clear = source.indexOf("clearInput()")
+    expect(history).toBeGreaterThan(engineOff)
+    expect(clear).toBeGreaterThan(engineOff)
+  })
+
+  test("the engine-off refusal shows an engine-specific notice (not the generic drop)", () => {
+    expect(source).toContain("prompt.toast.engineOff.title")
+    expect(source).toContain("prompt.toast.engineOff.description")
+  })
+
+  test("the engine-off state is INJECTED, so submission stays testable without the provider tree", () => {
+    expect(source).toContain("engineOff?: Accessor<boolean>")
+  })
+
+  test("both composers wire the engine-off accessor from the global engine signal", () => {
+    for (const composer of ["../prompt-input.tsx", "../prompt-input-v2.tsx"]) {
+      const wiring = readFileSync(join(import.meta.dir, composer), "utf8")
+      expect(wiring).toContain("effectiveEngineState")
+      expect(wiring).toContain("engineOff,")
+    }
+  })
+})

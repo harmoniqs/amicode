@@ -47,3 +47,39 @@ describe("stopServer (#1149, #1598)", () => {
     expect(deps.deleteHandshake).not.toHaveBeenCalled();
   });
 });
+
+// #1608 AC7: the deliberate off must NARRATE a lifecycle and never strand the
+// toggle. `stopping` is pushed BEFORE the kill; the resting `off` is pushed in
+// a `finally` so a throwing stop still resolves the UI to a definite state.
+describe("stopServer lifecycle narration (#1608 AC7)", () => {
+  it("pushes `stopping` before the kill, then `off` after (happy path)", async () => {
+    const events: string[] = [];
+    const deps: StopServerDeps = {
+      stop: vi.fn().mockImplementation(async () => { events.push("stop"); }),
+      deleteHandshake: vi.fn().mockImplementation(() => { events.push("deleteHandshake"); }),
+      pushState: vi.fn().mockImplementation((s: string) => { events.push(`push:${s}`); }),
+    };
+    await stopServer(deps);
+    // stopping is narrated before the kill; off is the resting state after.
+    expect(events).toEqual(["push:stopping", "stop", "deleteHandshake", "push:off"]);
+  });
+
+  it("still pushes `off` when stop() throws — the toggle is never stranded on `stopping`", async () => {
+    const events: string[] = [];
+    const deps: StopServerDeps = {
+      stop: vi.fn().mockRejectedValue(new Error("kill failed")),
+      deleteHandshake: vi.fn(),
+      pushState: vi.fn().mockImplementation((s: string) => { events.push(`push:${s}`); }),
+    };
+    await expect(stopServer(deps)).rejects.toThrow("kill failed");
+    // stopping was narrated, the error propagates, but off was pushed in finally
+    // so the UI resolves to a definite state (never stuck on stopping).
+    expect(events).toEqual(["push:stopping", "push:off"]);
+  });
+
+  it("works without a pushState hook (back-compat — the push is optional)", async () => {
+    const deps = makeDeps();
+    await expect(stopServer(deps)).resolves.toBeUndefined();
+    expect(deps.stop).toHaveBeenCalledTimes(1);
+  });
+});

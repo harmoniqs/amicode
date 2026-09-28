@@ -686,6 +686,57 @@ describe("ChatPanel — postToAll broadcasts to every live panel (#870 AC3)", ()
   });
 });
 
+describe("ChatPanel — engine-state + fleet-role relay forwarding (#1608)", () => {
+  let restore: (() => void) | undefined;
+  let created: CapturedPanel[] = [];
+  afterEach(() => {
+    for (const p of created) p.dispose();
+    restore?.();
+    restore = undefined;
+    created = [];
+  });
+
+  // #1608 AC3: the #1598 engine toggle renders from engine-state pushes, but
+  // those pushes were DROPPED at the outer relay's downstream allowlist — an
+  // intentional off was indistinguishable from a network drop. The relay must
+  // forward engine-state + fleet-role (extension → iframe) in BOTH chat render
+  // paths (main panel + splash/transition).
+  it("forwards engine-state + fleet-role to the iframe in both chat render paths", () => {
+    const cap = capturePanel();
+    restore = cap.restore;
+    created = cap.created;
+    ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
+    const normalHtml = created[0].webview.html;
+
+    const transitionPanel = (vscode.window as unknown as { createWebviewPanel: (...args: unknown[]) => vscode.WebviewPanel }).createWebviewPanel(
+      "amicode.chat",
+      "Amicode Chat",
+      vscode.ViewColumn.One,
+      {},
+    );
+    ChatPanel.adopt(transitionPanel, fakeCtx(), new URL("http://127.0.0.1:43117/"));
+    const transitionHtml = transitionPanel.webview.html;
+
+    for (const html of [normalHtml, transitionHtml]) {
+      expect(html).toContain('"engine-state"');
+      expect(html).toContain('"fleet-role"');
+    }
+  });
+
+  it("actually relays a pushed engine-state envelope to a live panel (postToAll → downstream)", () => {
+    const cap = capturePanel();
+    restore = cap.restore;
+    created = cap.created;
+    ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
+    const msgs: unknown[] = [];
+    (cap.created[0] as unknown as { webview: { postMessage: (m: unknown) => Promise<boolean> } }).webview.postMessage =
+      (m: unknown) => { msgs.push(m); return Promise.resolve(true); };
+    const envelope = { source: "amicode", kind: "engine-state", state: "stopping" };
+    ChatPanel.postToAll(envelope);
+    expect(msgs).toContainEqual(envelope);
+  });
+});
+
 describe("ChatPanel — clipboard-image-request routes through extension host", () => {
   let restore: (() => void) | undefined;
   let created: CapturedPanel[] = [];

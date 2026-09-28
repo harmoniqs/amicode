@@ -49,7 +49,8 @@ import { authTokenFromCredentials } from "@/utils/server"
 import { GLOBAL_STATUS_DEFAULT_TAB } from "./status-popover-model"
 import { useServerProtocol } from "@/context/server-sdk"
 import { beginSolverSwitch } from "@/components/solver-switch-banner"
-import { parseEngineStateMessage, sendEngineCommand, type EngineState } from "./engine-toggle-utils"
+import { sendEngineCommand, engineDotClass } from "./engine-toggle-utils"
+import { effectiveEngineState, latchStopRequested, installEngineStateListener } from "./engine-state-signal"
 
 const pluginEmptyMessage = (value: string, file: string): JSXElement => {
   const parts = value.split(file)
@@ -319,19 +320,15 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean>; onClose?: (
   })
   const toggleMcp = useMcpToggle()
 
-  // #1598: engine lifecycle — the "amicode" MCP row doubles as the engine
-  // toggle. Extension pushes engine-state messages; when the user flips the
-  // amicode switch we send start/stop commands instead of toggling the MCP.
-  // Default to "on": the app can only render when the engine is already
-  // serving it, so the initial state is always on; "booting"/"off" arrive
-  // via push only during transitions the listener will catch.
-  const [engineState, setEngineState] = createSignal<EngineState>("on")
-  const onEngineMsg = (e: MessageEvent) => {
-    const parsed = parseEngineStateMessage(e.data)
-    if (parsed !== undefined) setEngineState(parsed)
-  }
-  window.addEventListener("message", onEngineMsg)
-  onCleanup(() => window.removeEventListener("message", onEngineMsg))
+  // #1598/#1608: engine lifecycle — the "amicode" MCP row doubles as the engine
+  // toggle. The state now lives in a GLOBAL always-mounted signal
+  // (engine-state-signal.ts), so a push arriving while this popover is closed is
+  // not lost. We read effectiveEngineState() (the delivered state, or the local
+  // "stopping" latch during the click→push gap). installEngineStateListener() is
+  // idempotent — the always-mounted EngineBanner installs it too; this call is a
+  // no-op belt-and-braces so the toggle works even if the banner never mounts.
+  installEngineStateListener()
+  const engineState = () => effectiveEngineState()
   const defaultServer = useDefaultServerKey(platform.getDefaultServer)
   const mcpNames = createMemo(() => Object.keys(sync().data.mcp ?? {}).sort((a, b) => a.localeCompare(b)))
   const mcpStatus = (name: string) => sync().data.mcp?.[name]?.status
@@ -477,12 +474,16 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean>; onClose?: (
                     const enabled = () => (isEngine ? engineState() === "on" : status() === "connected")
                     const locked = () =>
                       isEngine
-                        ? engineState() === "booting"
+                        ? engineState() === "booting" || engineState() === "stopping"
                         : toggleMcp.isPending && toggleMcp.variables === name
 
                     const handleToggle = () => {
                       if (locked()) return
                       if (isEngine) {
+                        // #1608 AC5: flip off instantly via the local latch
+                        // BEFORE the extension round-trip, so the switch reflects
+                        // intent immediately. The delivered push reconciles it.
+                        if (engineState() === "on") latchStopRequested()
                         sendEngineCommand(engineState())
                       } else {
                         toggleMcp.mutate(name)
@@ -490,16 +491,7 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean>; onClose?: (
                     }
 
                     const dotClass = (): string => {
-                      if (isEngine) {
-                        switch (engineState()) {
-                          case "on":
-                            return "bg-icon-success-base"
-                          case "booting":
-                            return "bg-icon-warning-base"
-                          case "off":
-                            return "bg-border-weak-base"
-                        }
-                      }
+                      if (isEngine) return engineDotClass(engineState())
                       const s = status()
                       if (s === "connected") return "bg-icon-success-base"
                       if (s === "failed") return "bg-icon-critical-base"
@@ -530,6 +522,9 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean>; onClose?: (
                           </Show>
                           <Show when={isEngine && engineState() === "booting"}>
                             <span class="text-11-regular text-text-weaker truncate">Starting…</span>
+                          </Show>
+                          <Show when={isEngine && engineState() === "stopping"}>
+                            <span class="text-11-regular text-text-weaker truncate">Stopping…</span>
                           </Show>
                         </span>
                         <div onClick={(event) => event.stopPropagation()}>

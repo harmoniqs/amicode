@@ -8,8 +8,12 @@
 import { ChatPanel } from "./chat_panel";
 import { readFleetTopology, type FleetTopologyState } from "./fleet_topology";
 
-/** The engine's lifecycle state as seen by the app toggle. */
-export type EngineState = "on" | "booting" | "off";
+/** The engine's lifecycle state as seen by the app toggle.
+ *  #1608: `stopping` is pushed before a deliberate kill; the resting `off` is
+ *  pushed in a `finally` so a throwing stop never strands the toggle on
+ *  `stopping`. Stays in sync with the app's EngineState (engine-toggle-utils.ts)
+ *  — these two are the only two definitions. */
+export type EngineState = "on" | "booting" | "off" | "stopping";
 
 /**
  * Post the current engine lifecycle state to all live app panels.
