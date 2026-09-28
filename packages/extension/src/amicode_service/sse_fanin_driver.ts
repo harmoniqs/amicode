@@ -261,7 +261,12 @@ class FanInConnection {
     // Open a real upstream for each newly-active peer arm.
     for (const machineId of active) {
       if (this.sources.has(machineId)) continue;
-      this.openArm(machineId, this.deps.peerBaseUrl(machineId), this.peerAuth(machineId), this.resume.get(machineId));
+      // #1638 — resume from the aggregator's LIVE last-delivered id for this
+      // namespace (its composite cursor), NOT the stale connect-time id. A
+      // re-open of an arm that already delivered is a NON-INITIAL re-open — the
+      // aggregator emits one composite-mode gap (reopenArm is a no-op for a
+      // never-delivered arm and in fleet-of-one, so calling it here is safe).
+      this.reopenAndTrack(machineId, this.deps.peerBaseUrl(machineId), this.peerAuth(machineId));
     }
     // Close the real upstream for any peer arm no longer active (dark peer, or
     // its sessions ended). The local arm is never closed here (§D4).
@@ -287,8 +292,22 @@ class FanInConnection {
     // re-opened or duplicated (openArm early-returns on a present source too);
     // resume from LOCAL's live cursor for lossless replay — mirrors start().
     if (!this.sources.has(LOCAL_NAMESPACE)) {
-      this.openArm(LOCAL_NAMESPACE, this.deps.localEventUrl(), this.authHeader, this.resume.get(LOCAL_NAMESPACE));
+      this.reopenAndTrack(LOCAL_NAMESPACE, this.deps.localEventUrl(), this.authHeader);
     }
+  }
+
+  /** #1638 — re-open an arm from the aggregator's LIVE last-delivered cursor (not
+   *  the stale connect-time id) and, on a NON-INITIAL re-open, force a client
+   *  refetch via the aggregator's composite-mode gap. `agg.reopenArm` is a no-op
+   *  for an arm that has never delivered (an initial open) and in fleet-of-one
+   *  (where a synthetic frame would break the #1264 byte-identity guard), so it
+   *  is safe to call at every reconcile-time open. Falls back to the connect-time
+   *  resume id when the arm has delivered nothing yet. */
+  private reopenAndTrack(namespace: string, url: string | undefined, authHeader: string | undefined): void {
+    if (this.sources.has(namespace)) return;
+    this.agg.reopenArm(namespace);
+    const lastEventId = this.agg.cursorFor(namespace) ?? this.resume.get(namespace);
+    this.openArm(namespace, url, authHeader, lastEventId);
   }
 
   /** Resolve a peer's upstream Authorization from its OWN token (decision A).

@@ -242,12 +242,27 @@ export class SseFanInAggregator {
   private readonly unavailable = new Set<string>();
   /** decision B — is the shared downstream currently accepting writes? A
    *  `write()` returning false flips this off; `resume()` flips it back and
-   *  drains the per-namespace buffers. */
+   *  drains the pending stream. */
   private flowing = true;
-  /** decision B — per-namespace bounded buffers on the shared downstream. */
-  private readonly buffers = new Map<string, string[]>();
+  /** decision B / #1638 — the ONE ordered pending stream on the shared
+   *  downstream. Data frames (per-namespace, isolation-bounded) and control
+   *  frames (gap/focus/comment) share this queue so a control frame written
+   *  during backpressure NEVER jumps ahead of buffered data frames, nor is
+   *  swallowed into a full sink: it drains interleaved by true arrival order.
+   *  Per-namespace overflow isolation is kept by counting live data entries per
+   *  namespace against `bufferBound` — an overflowing peer's frame is dropped in
+   *  isolation (its cursor stays at the last delivered id) without touching any
+   *  other namespace or a control frame's ordering. */
+  private readonly pending: Array<
+    { kind: "data"; namespace: string; frame: string } | { kind: "control"; frame: string }
+  > = [];
   /** decision B — per-namespace overflow drop counts (the gap D3 resumes). */
   private readonly droppedCount = new Map<string, number>();
+  /** #1638 — namespaces whose arm has EVER delivered a frame this connection.
+   *  A re-open of an arm not in this set is the INITIAL open (no gap); a re-open
+   *  of one already here is a NON-INITIAL re-open (the #1601 path → gap in
+   *  composite mode). */
+  private readonly everDelivered = new Set<string>();
   /** #1617 (fleet-of-one) — frames stranded on the zero-peer VERBATIM path while
    *  the downstream is backpressured. Kept SEPARATE from the composite `buffers`
    *  because these flush byte-for-byte (raw `sink.write`, no composite-id rewrite)
@@ -293,8 +308,9 @@ export class SseFanInAggregator {
         if (!this.unavailable.has(peer.machineId)) {
           this.unavailable.add(peer.machineId);
           const reason = peer.reason ?? (peer.reachable ? "token-absent" : "peer-unreachable");
-          this.sink.write(honestSourceComment(peer.machineId, reason));
-          this.sink.flush?.();
+          // #1638 — routed through the return-checked, order-preserving control
+          // helper so the honest comment never jumps ahead of buffered data.
+          this.writeControl(honestSourceComment(peer.machineId, reason));
         }
       }
     }
@@ -325,7 +341,10 @@ export class SseFanInAggregator {
       // §D4 / AC1 byte-identity: with no peer arms the local frame is written
       // VERBATIM (bare id, every line untouched). The composite still tracks the
       // local position silently, so a peer that joins mid-stream inherits it.
-      if (rawId !== undefined) this.composite.set(LOCAL_NAMESPACE, rawId);
+      if (rawId !== undefined) {
+        this.composite.set(LOCAL_NAMESPACE, rawId);
+        this.everDelivered.add(LOCAL_NAMESPACE);
+      }
       // #1617 (fleet-of-one) — honor backpressure on the verbatim path too. When
       // the downstream is already backpressured, hold the frame VERBATIM in the
       // verbatim buffer (never namespaced) so it is not fired into an over-full
@@ -349,7 +368,8 @@ export class SseFanInAggregator {
     // Composite mode (≥1 peer arm active): every arm's frames carry the full
     // composite id so the client holds all N namespaces' positions at once.
     // decision B — when the shared downstream is flowing, deliver directly;
-    // when it is backpressured, buffer per-namespace (bounded, isolated).
+    // when it is backpressured, enqueue onto the ONE ordered pending stream
+    // (bounded per-namespace, isolated).
     if (this.flowing) {
       this.deliver(namespace, rawFrame);
     } else {
@@ -357,19 +377,27 @@ export class SseFanInAggregator {
     }
   }
 
-  /** Flush the per-namespace buffers after the downstream drains (decision B).
-   *  Namespaces flush independently; if the sink backpressures again mid-drain,
-   *  the remaining frames stay buffered (its cursor still resumes the gap).
+  /** Drain the ordered pending stream after the downstream drains (decision B /
+   *  #1638). Data + control entries flush in true ARRIVAL ORDER — a control
+   *  frame written during backpressure never jumps ahead of the data frames that
+   *  preceded it. If the sink backpressures again mid-drain, the remaining
+   *  entries stay pending in order (a dropped namespace's cursor still resumes
+   *  the gap).
    *
-   *  #1617 — this is the seam a downstream `drain` edge drives (never called in
-   *  production before this fix; the driver now wires it). After the buffers
-   *  drain, if any namespace overflow-DROPPED while backpressured, emit exactly
-   *  one gap signal naming those namespaces and zero their counters. The gap is
-   *  emitted HERE, at resume time — never into a backpressured sink (a signal
-   *  written while the sink is full would itself buffer). If the drain flushed
-   *  cleanly (flowing stays true), the gap goes out; if the sink re-stalled
-   *  mid-drain the drops persist and the next resume() carries the gap. */
+   *  #1638 — the only added guard is a NO-OP WHEN ALREADY FLOWING: `resume()` is
+   *  called on the downstream `drain` edge, which only fires after a stall, so a
+   *  spurious resume() while flowing must not re-flush/duplicate. It is NOT a
+   *  "no-op when the sink is full" — that would strand #1617's idle frame.
+   *
+   *  #1617 — this is the seam the downstream `drain` edge drives. After the
+   *  pending stream drains, if any namespace overflow-DROPPED while
+   *  backpressured, emit exactly one gap signal naming those namespaces and zero
+   *  their counters. The gap is emitted HERE, at resume time — never into a
+   *  backpressured sink. If the drain flushed cleanly (flowing stays true) the
+   *  gap goes out; if the sink re-stalled mid-drain the drops persist and the
+   *  next resume() carries the gap. */
   resume(): void {
+    if (this.flowing) return; // #1638 — no-op WHEN ALREADY FLOWING (never "when full")
     this.flowing = true;
     // #1617 (fleet-of-one) — flush the VERBATIM buffer first, byte-for-byte (no
     // composite-id rewrite), so a solo-mode wedge heals without ever touching the
@@ -385,13 +413,59 @@ export class SseFanInAggregator {
         this.onBackpressure?.();
       }
     }
-    for (const [ns, buf] of this.buffers) {
-      while (buf.length > 0 && this.flowing) {
-        this.deliver(ns, buf.shift()!);
-      }
+    // #1638 — drain the ONE ordered pending stream in arrival order: data frames
+    // through deliver() (composite-id rewrite + cursor advance), control frames
+    // written raw. This is what interleaves gap/focus/comment frames correctly
+    // relative to buffered data.
+    while (this.pending.length > 0 && this.flowing) {
+      const entry = this.pending.shift()!;
+      if (entry.kind === "data") this.deliver(entry.namespace, entry.frame);
+      else this.writeControlRaw(entry.frame);
     }
-    for (const [ns, buf] of [...this.buffers]) if (buf.length === 0) this.buffers.delete(ns);
     if (this.flowing) this.emitGapIfDropped();
+  }
+
+  /** #1638 — the ONE return-checked, order-preserving control-write helper. A
+   *  control frame (gap/focus/comment) must not jump ahead of buffered data
+   *  frames nor be swallowed into a full sink: when backpressured, it ENQUEUES
+   *  onto the same ordered pending stream (draining interleaved by arrival
+   *  order); when flowing, it writes directly and the return is CHECKED — a
+   *  write() that backpressures flips flowing off and signals the driver, exactly
+   *  like a data frame. */
+  private writeControl(frame: string): void {
+    if (!this.flowing) {
+      this.pending.push({ kind: "control", frame });
+      return;
+    }
+    this.writeControlRaw(frame);
+  }
+
+  /** Write a control frame directly (flowing path, and the resume() drain path).
+   *  Return-checked: a backpressuring write flips flowing off + signals pause. */
+  private writeControlRaw(frame: string): void {
+    const accepted = this.sink.write(frame);
+    this.sink.flush?.();
+    if (accepted === false && this.flowing) {
+      this.flowing = false;
+      this.onBackpressure?.();
+    }
+  }
+
+  /** #1638 — a peer/local arm is being RE-OPENED (the #1601 reconcile path). In
+   *  composite mode (≥1 peer arm) a NON-INITIAL re-open forces a client refetch
+   *  via exactly one id-less `amicode.sync.gap` naming that namespace, because
+   *  the upstream `/global/event` route does NOT replay on `?lastEventID` (Step 0
+   *  = no replay) so the cursor-advance alone cannot recover the reconnect gap.
+   *  In FLEET-OF-ONE (zero peers) NO gap is emitted — a synthetic frame in the
+   *  verbatim stream would violate the #1264 byte-identity guard; the solo-mode
+   *  arm re-opens silently (its verbatim stream stays frame-for-frame identical).
+   *  The INITIAL open of an arm (never delivered a frame) emits no gap either —
+   *  only a re-open of an arm that has already delivered. */
+  reopenArm(namespace: string): void {
+    if (this.peerArms.size === 0) return; // fleet-of-one → NO synthetic frame (#1264)
+    if (!this.everDelivered.has(namespace)) return; // initial open → no gap
+    const data = JSON.stringify({ type: "amicode.sync.gap", namespaces: [namespace] });
+    this.writeControl(`event: amicode.sync.gap\ndata: ${data}\n\n`);
   }
 
   /** #1617 — the overflow defense-in-depth. When resume() observes a nonzero
@@ -401,14 +475,13 @@ export class SseFanInAggregator {
    *  carries a `data:` line (the SSE parser drops a data-less frame) and its
    *  JSON has NO top-level `payload` key (the client routes on `"payload" in
    *  event` — a payload-less bare-JSON frame takes the adapter path where the
-   *  gap type match lives). */
+   *  gap type match lives). Routed through the return-checked control helper. */
   private emitGapIfDropped(): void {
     const dropped: string[] = [];
     for (const [ns, n] of this.droppedCount) if (n > 0) dropped.push(ns);
     if (dropped.length === 0) return;
     const data = JSON.stringify({ type: "amicode.sync.gap", namespaces: dropped });
-    this.sink.write(`event: amicode.sync.gap\ndata: ${data}\n\n`);
-    this.sink.flush?.();
+    this.writeControl(`event: amicode.sync.gap\ndata: ${data}\n\n`);
     for (const ns of dropped) this.droppedCount.set(ns, 0);
   }
 
@@ -423,42 +496,57 @@ export class SseFanInAggregator {
     return formatCompositeCursor(this.composite);
   }
 
+  /** #1638 — the live per-namespace last-DELIVERED id (the composite map's
+   *  entry for `namespace`), or undefined if the arm has delivered no id'd frame
+   *  yet. The driver reads this at re-open time to resume the arm from its
+   *  last-delivered position rather than the stale connect-time cursor — honoring
+   *  #1617's own cursor invariant. Advances per delivered frame on BOTH the
+   *  composite and the verbatim path; an id-less frame never advances it. */
+  cursorFor(namespace: string): string | undefined {
+    return this.composite.get(namespace);
+  }
+
   // ── internals ────────────────────────────────────────────────────────────
 
   /** Write one frame downstream in composite mode: advance the namespace's
    *  cursor from the frame's id, stamp the full composite as the wire `id:`,
    *  write + flush. A `write()` returning false backpressures the shared
-   *  downstream (subsequent frames buffer per-namespace). */
+   *  downstream (subsequent frames enqueue onto the ordered pending stream). */
   private deliver(namespace: string, rawFrame: string): void {
     const rawId = frameRawId(rawFrame);
-    if (rawId !== undefined) this.composite.set(namespace, rawId);
+    if (rawId !== undefined) {
+      this.composite.set(namespace, rawId);
+      this.everDelivered.add(namespace);
+    }
     const wire = rewriteFrameId(rawFrame, formatCompositeCursor(this.composite));
     const accepted = this.sink.write(wire);
     this.sink.flush?.();
     if (accepted === false && this.flowing) {
       // flowing→backpressured transition: flip the flag and signal the driver to
       // pause its live upstreams (#1617). Fire ONCE per episode — subsequent
-      // frames arrive with flowing already false and buffer via ingest(), so
+      // frames arrive with flowing already false and enqueue via ingest(), so
       // deliver() is not re-entered until resume() re-arms.
       this.flowing = false;
       this.onBackpressure?.();
     }
   }
 
-  /** Buffer a frame for a backpressured namespace (decision B). At the bound,
-   *  DROP the frame in ISOLATION — its cursor stays at the last DELIVERED id so
-   *  the upstream replays the gap on reconnect; other namespaces are untouched. */
+  /** Enqueue a data frame for a backpressured namespace onto the ONE ordered
+   *  pending stream (decision B / #1638). Per-namespace overflow isolation: at
+   *  the bound (counting only this namespace's live data entries) DROP the frame
+   *  in ISOLATION — its cursor stays at the last DELIVERED id so the upstream
+   *  replays the gap on reconnect; other namespaces and control frames are
+   *  untouched, and arrival order across the whole stream is preserved. */
   private enqueue(namespace: string, rawFrame: string): void {
-    let buf = this.buffers.get(namespace);
-    if (buf === undefined) {
-      buf = [];
-      this.buffers.set(namespace, buf);
+    let live = 0;
+    for (const entry of this.pending) {
+      if (entry.kind === "data" && entry.namespace === namespace) live++;
     }
-    if (buf.length >= this.bufferBound) {
+    if (live >= this.bufferBound) {
       this.droppedCount.set(namespace, (this.droppedCount.get(namespace) ?? 0) + 1);
       return;
     }
-    buf.push(rawFrame);
+    this.pending.push({ kind: "data", namespace, frame: rawFrame });
   }
 
   private emitFocusFrame(): void {
@@ -471,7 +559,7 @@ export class SseFanInAggregator {
     const payload = JSON.stringify({ type: "amicode.fleet.focus", ...snapshot });
     // The focus frame rides the `local` namespace. It carries no monotonic id
     // (it is a snapshot, not a resumable event) so it never advances a cursor.
-    this.sink.write(`event: amicode.fleet.focus\ndata: ${payload}\n\n`);
-    this.sink.flush?.();
+    // #1638 — routed through the return-checked, order-preserving control helper.
+    this.writeControl(`event: amicode.fleet.focus\ndata: ${payload}\n\n`);
   }
 }

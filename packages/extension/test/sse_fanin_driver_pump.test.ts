@@ -570,3 +570,226 @@ describe("#1617 — driver wires drain→resume + upstream pause/resume", () => 
     res.fireClose()
   })
 })
+
+// ══════════════════════════════════════════════════════════════════════════════
+// #1638 — a re-opened arm must resume from the LAST-DELIVERED id (the aggregator's
+// live per-namespace cursor), NOT the stale connect-time id, and a NON-INITIAL
+// re-open must force a client refetch via one composite-mode gap (Step 0 = the
+// upstream /global/event route does NOT replay on ?lastEventID). In fleet-of-one
+// no gap is emitted and the verbatim stream stays byte-identical (#1264).
+// ══════════════════════════════════════════════════════════════════════════════
+describe("#1638 — re-open resumes from last-delivered id + composite-mode reconnect gap", () => {
+  it("a re-opened LOCAL arm resumes from the LAST-DELIVERED id, not the connect-time id", async () => {
+    // Connect with a stale local cursor of l0; deliver l1, l2; drop the arm;
+    // the re-open must request lastEventID = l2 (the last DELIVERED), not l0.
+    const ownerMap = new SessionOwnerMap()
+    ownerMap.update([
+      { id: "ses-studio", amicode_owner: { owner_machine_id: "studio", owner_name: "studio", is_local: false } },
+    ])
+
+    const L1 = sseFrame("event: message", 'data: {"from":"macbook","n":1}', "id: l1")
+    const L2 = sseFrame("event: message", 'data: {"from":"macbook","n":2}', "id: l2")
+
+    const opened: Array<{ namespace: string; lastEventId?: string }> = []
+    const localCtls: Ctl[] = []
+    const peerCtl = controllableSource()
+
+    const driver = new SseFanInDriver({
+      ownerMap,
+      localMachineId: "macbook",
+      localEventUrl: () => "http://local.invalid",
+      peerBaseUrl: (id) => (id === "studio" ? "http://studio.invalid" : undefined),
+      peerToken: (id) =>
+        id === "studio"
+          ? { ok: true as const, credential: { baseUrl: "http://studio.invalid", token: "tok-studio" } }
+          : { ok: false as const, reason: "absent" as const },
+      reconcileMs: 999_999,
+      openUpstream: (r) => {
+        opened.push({ namespace: r.namespace, lastEventId: r.lastEventId })
+        if (r.namespace === LOCAL_NAMESPACE) {
+          const ctl = controllableSource()
+          localCtls.push(ctl)
+          return ctl.source
+        }
+        return peerCtl.source
+      },
+    })
+
+    const res = mockRes()
+    driver.handle(mockReq("/event?lastEventID=local=l0;studio=p0"), res)
+    await tick()
+
+    // initial local open used the connect cursor l0
+    const initialLocalOpen = opened.find((o) => o.namespace === LOCAL_NAMESPACE)
+    expect(initialLocalOpen?.lastEventId).toBe("l0")
+
+    // deliver two local frames — the aggregator's live local cursor advances to l2
+    localCtls[0].push(L1)
+    await tick()
+    localCtls[0].push(L2)
+    await tick()
+
+    // the local arm drops
+    localCtls[0].end()
+    await tick()
+
+    // reconcile re-opens the local arm — it MUST resume from l2 (last delivered),
+    // NOT l0 (the stale connect id). This is the crux the issue names.
+    driver.reconcile()
+    await tick()
+
+    const reopenLocal = opened.filter((o) => o.namespace === LOCAL_NAMESPACE)
+    expect(reopenLocal.length).toBe(2)
+    expect(reopenLocal[1].lastEventId).toBe("l2") // <── last-delivered, not l0
+
+    localCtls.forEach((c) => c.end())
+    peerCtl.end()
+    res.fireClose()
+  })
+
+  it("COMPOSITE MODE: re-opening a dropped peer arm emits exactly one amicode.sync.gap naming it", async () => {
+    const ownerMap = new SessionOwnerMap()
+    ownerMap.update([
+      { id: "ses-studio", amicode_owner: { owner_machine_id: "studio", owner_name: "studio", is_local: false } },
+    ])
+
+    const P1 = sseFrame("event: message", 'data: {"from":"studio","n":1}', "id: p1")
+
+    const localCtl = controllableSource()
+    const peerCtls: Ctl[] = []
+
+    const driver = new SseFanInDriver({
+      ownerMap,
+      localMachineId: "macbook",
+      localEventUrl: () => "http://local.invalid",
+      peerBaseUrl: (id) => (id === "studio" ? "http://studio.invalid" : undefined),
+      peerToken: (id) =>
+        id === "studio"
+          ? { ok: true as const, credential: { baseUrl: "http://studio.invalid", token: "tok-studio" } }
+          : { ok: false as const, reason: "absent" as const },
+      reconcileMs: 999_999,
+      openUpstream: (r) => {
+        if (r.namespace === LOCAL_NAMESPACE) return localCtl.source
+        const ctl = controllableSource()
+        peerCtls.push(ctl)
+        return ctl.source
+      },
+    })
+
+    const res = mockRes()
+    driver.handle(mockReq(), res)
+    await tick()
+
+    // deliver a peer frame so the arm has DELIVERED (a re-open is now non-initial)
+    peerCtls[0].push(P1)
+    await tick()
+    expect(res.text()).toContain('"from":"studio"')
+    const beforeGap = (res.text().match(/amicode\.sync\.gap/g) ?? []).length
+    expect(beforeGap).toBe(0) // initial open emitted no gap
+
+    // drop the peer arm, then reconcile re-opens it → exactly one gap
+    peerCtls[0].end()
+    await tick()
+    driver.reconcile()
+    await tick()
+
+    const gapMatches = res.text().match(/event: amicode\.sync\.gap/g) ?? []
+    expect(gapMatches.length).toBe(1)
+    const gapFrame = res.text().split("\n\n").find((f) => f.includes("amicode.sync.gap"))!
+    const dataLine = gapFrame.split("\n").find((l) => l.startsWith("data:"))!
+    const parsed = JSON.parse(dataLine.slice("data:".length).trim())
+    expect(parsed.namespaces).toContain("studio")
+
+    localCtl.end()
+    peerCtls.forEach((c) => c.end())
+    res.fireClose()
+  })
+
+  it("FLEET-OF-ONE (zero peers): a re-opened LOCAL arm emits NO gap and stays byte-identical (#1264)", async () => {
+    const ownerMap = new SessionOwnerMap() // no owners → fleet-of-one
+
+    const L1 = sseFrame("event: message", 'data: {"from":"macbook","n":1}', "id: l1")
+    const L2 = sseFrame("event: message", 'data: {"from":"macbook","n":2}', "id: l2")
+
+    const localCtls: Ctl[] = []
+
+    const driver = new SseFanInDriver({
+      ownerMap,
+      localMachineId: "macbook",
+      localEventUrl: () => "http://local.invalid",
+      peerBaseUrl: () => undefined,
+      peerToken: () => ({ ok: false as const, reason: "absent" as const }),
+      reconcileMs: 999_999,
+      openUpstream: () => {
+        const ctl = controllableSource()
+        localCtls.push(ctl)
+        return ctl.source
+      },
+    })
+
+    const res = mockRes()
+    driver.handle(mockReq(), res)
+    await tick()
+
+    // deliver a local frame, drop the arm, re-open
+    localCtls[0].push(L1)
+    await tick()
+    localCtls[0].end()
+    await tick()
+    driver.reconcile()
+    await tick()
+    // the re-opened arm delivers another frame
+    localCtls[localCtls.length - 1].push(L2)
+    await tick()
+
+    // NO synthetic frame anywhere; the verbatim stream is exactly the two frames.
+    expect(res.text()).not.toContain("amicode.sync.gap")
+    expect(res.text()).not.toContain("local\u001f")
+    expect(res.text()).toBe(L1 + L2) // byte-identical, in order
+
+    localCtls.forEach((c) => c.end())
+    res.fireClose()
+  })
+
+  it("a re-opened LOCAL arm in fleet-of-one resumes from the last-delivered id too", async () => {
+    const ownerMap = new SessionOwnerMap()
+
+    const L1 = sseFrame("event: message", 'data: {"from":"macbook","n":1}', "id: l1")
+
+    const opened: Array<{ namespace: string; lastEventId?: string }> = []
+    const localCtls: Ctl[] = []
+
+    const driver = new SseFanInDriver({
+      ownerMap,
+      localMachineId: "macbook",
+      localEventUrl: () => "http://local.invalid",
+      peerBaseUrl: () => undefined,
+      peerToken: () => ({ ok: false as const, reason: "absent" as const }),
+      reconcileMs: 999_999,
+      openUpstream: (r) => {
+        opened.push({ namespace: r.namespace, lastEventId: r.lastEventId })
+        const ctl = controllableSource()
+        localCtls.push(ctl)
+        return ctl.source
+      },
+    })
+
+    const res = mockRes()
+    driver.handle(mockReq("/event?lastEventID=l0"), res)
+    await tick()
+    expect(opened[0].lastEventId).toBe("l0") // initial: connect cursor
+
+    localCtls[0].push(L1)
+    await tick()
+    localCtls[0].end()
+    await tick()
+    driver.reconcile()
+    await tick()
+
+    const localOpens = opened.filter((o) => o.namespace === LOCAL_NAMESPACE)
+    expect(localOpens[1].lastEventId).toBe("l1") // re-open resumes from last-delivered
+
+    localCtls.forEach((c) => c.end())
+    res.fireClose()
+  })
+})
