@@ -232,6 +232,19 @@ class FanInConnection {
         this.sources.delete(machineId);
       }
     }
+    // #1601: re-open the LOCAL arm if it is gone. `activeArms()` is peers-only by
+    // construction (it returns [...peerArms], never `local`), so the loops above
+    // — both the open-side over `active` and the close-side over `sources` — can
+    // NEVER touch LOCAL. Yet pump() removes ANY dead source, LOCAL included, when
+    // its upstream ends. Without this check the local arm, once dead, stays dead
+    // until a full handle() (webview reload) while peer frames keep the composite
+    // stream non-silent so the client watchdog never fires ("local sessions freeze
+    // until reload"). Guard at the call site so a HEALTHY local arm is never
+    // re-opened or duplicated (openArm early-returns on a present source too);
+    // resume from LOCAL's live cursor for lossless replay — mirrors start().
+    if (!this.sources.has(LOCAL_NAMESPACE)) {
+      this.openArm(LOCAL_NAMESPACE, this.deps.localEventUrl(), this.authHeader, this.resume.get(LOCAL_NAMESPACE));
+    }
   }
 
   /** Resolve a peer's upstream Authorization from its OWN token (decision A).
