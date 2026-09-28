@@ -519,4 +519,54 @@ describe("#1617 — driver wires drain→resume + upstream pause/resume", () => 
     peerCtl.end()
     res.fireClose()
   })
+
+  it("FLEET-OF-ONE (zero peers): the verbatim path backpressures + heals on drain, byte-identical", async () => {
+    // No owners at all → the aggregator's §D4 zero-peer verbatim branch. This is
+    // the solo-machine wedge the composite test above does NOT exercise.
+    const ownerMap = new SessionOwnerMap()
+
+    const F1 = sseFrame("event: message", 'data: {"big":"tool-output"}', "id: 7")
+    const F2 = sseFrame("event: session.status", 'data: {"status":"idle"}', "id: 8") // clears the rail
+
+    const localCtl = pausableSource()
+
+    const driver = new SseFanInDriver({
+      ownerMap,
+      localMachineId: "macbook",
+      localEventUrl: () => "http://local.invalid",
+      peerBaseUrl: () => undefined,
+      peerToken: () => ({ ok: false as const, reason: "absent" as const }),
+      reconcileMs: 999_999,
+      openUpstream: () => localCtl.source,
+    })
+
+    const res = backpressureRes()
+    driver.handle(mockReq(), res)
+    await tick()
+
+    res.block()
+    localCtl.push(F1) // trip-frame: written verbatim, res.write() → false
+    await tick()
+    localCtl.push(F2) // the idle frame — must be HELD, not fired into a full socket
+    await tick()
+
+    // The wedge, through the real seam: idle frame stranded, local upstream paused.
+    expect(res.text()).toContain('"big":"tool-output"')
+    expect(res.text()).not.toContain('"status":"idle"')
+    expect(localCtl.pauseCalls).toBeGreaterThan(0)
+
+    res.fireDrain()
+    await tick()
+
+    // Healed: the idle frame is delivered, in order, and BYTE-IDENTICAL — no
+    // composite-id rewrite, no namespacing (the #1264 guard on the live seam).
+    expect(res.text()).toContain('"status":"idle"')
+    expect(res.text()).toBe(F1 + F2)
+    expect(res.text()).not.toContain("local\u001f")
+    expect(res.text()).not.toContain("local=8")
+    expect(localCtl.resumeCalls).toBeGreaterThan(0)
+
+    localCtl.end()
+    res.fireClose()
+  })
 })

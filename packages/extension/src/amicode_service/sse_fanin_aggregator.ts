@@ -248,6 +248,12 @@ export class SseFanInAggregator {
   private readonly buffers = new Map<string, string[]>();
   /** decision B — per-namespace overflow drop counts (the gap D3 resumes). */
   private readonly droppedCount = new Map<string, number>();
+  /** #1617 (fleet-of-one) — frames stranded on the zero-peer VERBATIM path while
+   *  the downstream is backpressured. Kept SEPARATE from the composite `buffers`
+   *  because these flush byte-for-byte (raw `sink.write`, no composite-id rewrite)
+   *  to preserve the #1264 byte-identity guard — a wedge in solo mode must heal
+   *  without ever entering the namespaced/composite delivery path. */
+  private readonly verbatimBuffer: string[] = [];
 
   constructor(opts: SseFanInOptions) {
     this.sink = opts.sink;
@@ -320,8 +326,23 @@ export class SseFanInAggregator {
       // VERBATIM (bare id, every line untouched). The composite still tracks the
       // local position silently, so a peer that joins mid-stream inherits it.
       if (rawId !== undefined) this.composite.set(LOCAL_NAMESPACE, rawId);
-      this.sink.write(rawFrame);
+      // #1617 (fleet-of-one) — honor backpressure on the verbatim path too. When
+      // the downstream is already backpressured, hold the frame VERBATIM in the
+      // verbatim buffer (never namespaced) so it is not fired into an over-full
+      // socket where a stranded `session.status: idle` would wedge the rail until
+      // reload. When flowing, write it directly and, if THIS write backpressures,
+      // flip flowing off + signal the driver to pause the local upstream. This
+      // changes only TIMING — not a byte — so the #1264 guard holds.
+      if (!this.flowing) {
+        this.verbatimBuffer.push(rawFrame);
+        return;
+      }
+      const accepted = this.sink.write(rawFrame);
       this.sink.flush?.();
+      if (accepted === false) {
+        this.flowing = false;
+        this.onBackpressure?.();
+      }
       return;
     }
 
@@ -350,6 +371,20 @@ export class SseFanInAggregator {
    *  mid-drain the drops persist and the next resume() carries the gap. */
   resume(): void {
     this.flowing = true;
+    // #1617 (fleet-of-one) — flush the VERBATIM buffer first, byte-for-byte (no
+    // composite-id rewrite), so a solo-mode wedge heals without ever touching the
+    // namespaced path (the #1264 guard). If the sink backpressures again mid-drain
+    // the remaining frames stay buffered in order, flowing flips off, and the next
+    // drain resumes them.
+    while (this.verbatimBuffer.length > 0 && this.flowing) {
+      const frame = this.verbatimBuffer.shift()!;
+      const accepted = this.sink.write(frame);
+      this.sink.flush?.();
+      if (accepted === false) {
+        this.flowing = false;
+        this.onBackpressure?.();
+      }
+    }
     for (const [ns, buf] of this.buffers) {
       while (buf.length > 0 && this.flowing) {
         this.deliver(ns, buf.shift()!);

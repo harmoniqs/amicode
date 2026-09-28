@@ -674,4 +674,51 @@ describe("#1617 — backpressure re-arm + gap signal", () => {
     agg.resume();
     expect(sink.text()).not.toContain("amicode.sync.gap");
   });
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // #1617 (follow-up) — the FLEET-OF-ONE wedge. The composite-mode fix above never
+  // touches the zero-peer verbatim branch, which ignored `write() === false`
+  // entirely: a large LOCAL frame tripped backpressure and the next frame (the
+  // `session.status: idle` that clears the rail) was stranded with nothing to
+  // re-arm delivery — the "local sessions freeze until reload" symptom on a solo
+  // machine. The verbatim path must honor backpressure too, WITHOUT changing a
+  // single byte (the #1264 guard: no namespacing, no composite-id rewrite).
+  // ────────────────────────────────────────────────────────────────────────────
+  it("the FLEET-OF-ONE wedge: a large local frame strands the next; resume() flushes both VERBATIM", () => {
+    const sink = controllableSink();
+    const agg = new SseFanInAggregator({ sink });
+    agg.connect(); // zero peers → the §D4 verbatim branch
+
+    const f1 = frame("event: message", 'data: {"big":"tool-output"}', "id: 7");
+    const f2 = frame("event: session.status", 'data: {"status":"idle"}', "id: 8"); // the rail-clearing frame
+
+    sink.block(); // the socket fills on the NEXT write
+    agg.ingest(LOCAL_NAMESPACE, f1); // trip-frame: written, write()→false
+    agg.ingest(LOCAL_NAMESPACE, f2); // the idle frame — MUST NOT be lost/stranded past drain
+
+    // Before drain: only the trip-frame is out; the idle frame is held.
+    expect(sink.text()).toBe(f1);
+
+    // Socket drains → resume() flushes the stranded frame.
+    sink.unblock();
+    agg.resume();
+
+    // BYTE-IDENTICAL flush (the #1264 guard): both frames verbatim, in order, no
+    // composite id, no namespacing, no gap frame (no overflow occurred).
+    expect(sink.text()).toBe(f1 + f2);
+    expect(sink.text()).not.toContain("local\u001f"); // no NS_SEP namespacing
+    expect(sink.text()).not.toContain("local=8"); // no composite-cursor id rewrite
+    expect(sink.text()).not.toContain("amicode.sync.gap");
+  });
+
+  it("fleet-of-one never backpressured stays strictly byte-identical (the #1264 guard, unchanged)", () => {
+    const sink = controllableSink();
+    const agg = new SseFanInAggregator({ sink });
+    agg.connect();
+    const f1 = frame("event: message", 'data: {"a":1}', "id: 1");
+    const f2 = frame("data: {\"c\":3}", "id: 3"); // no event: line
+    agg.ingest(LOCAL_NAMESPACE, f1);
+    agg.ingest(LOCAL_NAMESPACE, f2);
+    expect(sink.text()).toBe(f1 + f2); // untouched fast path
+  });
 });
