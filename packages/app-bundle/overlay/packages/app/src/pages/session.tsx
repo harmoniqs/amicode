@@ -2791,13 +2791,24 @@ export default function Page() {
           classList={{
             "@container relative shrink-0 flex flex-col min-h-0 h-full transition-[width]": true,
             "flex-1 md:flex-none": !chatTakesRemainder() && !chatEffectivelyCollapsed(),
-            "flex-1": chatTakesRemainder() || (newSessionDesign() && chatEffectivelyCollapsed()),
+            "flex-1": chatTakesRemainder() && !chatEffectivelyCollapsed(),
             "duration-[240ms] ease-[cubic-bezier(0.22,1,0.36,1)] will-change-[width] motion-reduce:transition-none":
               !size.active() && !ui.reviewSnap && !desktopInlineTerminalOnlyOpen(),
-            "!hidden": newSessionDesign() && chatEffectivelyCollapsed(),
           }}
           style={{
-            width: (newSessionDesign() && chatEffectivelyCollapsed()) ? undefined : sessionPanelWidth(),
+            width: (newSessionDesign() && chatEffectivelyCollapsed()) ? "0px" : sessionPanelWidth(),
+            // #1614: use width:0 + overflow:hidden instead of display:none to
+            // preserve scroll geometry and avoid the ResizeObserver cascade that
+            // triggers the infinite scroll loop on restore.
+            ...(newSessionDesign() && chatEffectivelyCollapsed() ? {
+              overflow: "hidden",
+              opacity: "0",
+              "pointer-events": "none",
+              "min-width": "0px",
+              "flex-basis": "0px",
+              "flex-grow": "0",
+              "flex-shrink": "0",
+            } : {}),
           }}
         >
           {settings.general.newLayoutDesigns() ? (
