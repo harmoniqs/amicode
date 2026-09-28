@@ -920,6 +920,20 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
 
   let flyoutRoot: HTMLDivElement | undefined
   let triggerRef: HTMLButtonElement | undefined
+  let scrollContainerRef: HTMLDivElement | undefined
+
+  /** Save scrollTop and restore it on the next animation frame.
+   *  Call before any action that triggers a reactive list rebuild
+   *  (archive / delete / unarchive) to prevent the scroll container
+   *  from jumping to the top when <For> diffs the updated array. */
+  function restoreScrollAfter<T>(fn: () => Promise<T>): Promise<T> {
+    const saved = scrollContainerRef?.scrollTop ?? 0
+    return fn().finally(() => {
+      requestAnimationFrame(() => {
+        if (scrollContainerRef) scrollContainerRef.scrollTop = saved
+      })
+    })
+  }
 
   // --- Cached flyout position (amicode#1599 part A) ---
   const [flyoutPos, setFlyoutPos] = createSignal<{ top: number; right: number }>({ top: 0, right: 0 })
@@ -1088,21 +1102,23 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
   async function archiveSession(session: Session) {
     const ctx = getServerCtx()
     if (!ctx) return
-    try {
-      await (ctx.sdk.client.session.update as Function)({
-        sessionID: session.id,
-        directory: session.directory,
-        time: { archived: Date.now() },
-      })
-      setArchivedSessions((prev) => [session, ...prev])
-      // Reload active sessions for this session's directory
-      await serverSync().project.loadSessions(session.directory, { limit: 64 })
-    } catch (cause) {
-      showToast({
-        title: language.t("common.requestFailed"),
-        description: String(cause),
-      })
-    }
+    await restoreScrollAfter(async () => {
+      try {
+        await (ctx.sdk.client.session.update as Function)({
+          sessionID: session.id,
+          directory: session.directory,
+          time: { archived: Date.now() },
+        })
+        setArchivedSessions((prev) => [session, ...prev])
+        // Reload active sessions for this session's directory
+        await serverSync().project.loadSessions(session.directory, { limit: 64 })
+      } catch (cause) {
+        showToast({
+          title: language.t("common.requestFailed"),
+          description: String(cause),
+        })
+      }
+    })
   }
 
   // #1544 (slice 4): owner-routed remote DELETE of a peer session. This is the
@@ -1118,58 +1134,65 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
   async function remoteDeleteSession(session: DropdownSession) {
     const action = remoteDeleteAction(session)
     if (!action.allowed || !action.request) return
+    const { sessionID, directory } = action.request
     const ctx = getServerCtx()
     if (!ctx) return
-    try {
-      // Owner-routed: same SDK delete surface; the write plane routes the
-      // non-GET to action.request.ownerMachineId by pathname.
-      await (ctx.sdk.client.session.delete as Function)({
-        sessionID: action.request.sessionID,
-        directory: action.request.directory,
-      })
-    } catch (cause) {
-      showToast({
-        title: language.t("session.delete.failed.title"),
-        description: String(cause),
-      })
-    }
+    await restoreScrollAfter(async () => {
+      try {
+        // Owner-routed: same SDK delete surface; the write plane routes the
+        // non-GET to action.request.ownerMachineId by pathname.
+        await (ctx.sdk.client.session.delete as Function)({
+          sessionID,
+          directory,
+        })
+      } catch (cause) {
+        showToast({
+          title: language.t("session.delete.failed.title"),
+          description: String(cause),
+        })
+      }
+    })
   }
 
   async function unarchiveSession(session: Session) {
     const ctx = getServerCtx()
     if (!ctx) return
-    try {
-      await (ctx.sdk.client.session.update as Function)({
-        sessionID: session.id,
-        directory: session.directory,
-        time: { archived: null },
-      })
-      setArchivedSessions((prev) => prev.filter((s) => s.id !== session.id))
-      await serverSync().project.loadSessions(session.directory, { limit: 64 })
-    } catch (cause) {
-      showToast({
-        title: language.t("common.requestFailed"),
-        description: String(cause),
-      })
-    }
+    await restoreScrollAfter(async () => {
+      try {
+        await (ctx.sdk.client.session.update as Function)({
+          sessionID: session.id,
+          directory: session.directory,
+          time: { archived: null },
+        })
+        setArchivedSessions((prev) => prev.filter((s) => s.id !== session.id))
+        await serverSync().project.loadSessions(session.directory, { limit: 64 })
+      } catch (cause) {
+        showToast({
+          title: language.t("common.requestFailed"),
+          description: String(cause),
+        })
+      }
+    })
   }
 
   // amicode#255: permanently delete an archived session (inline confirm in row).
   async function deleteArchivedSession(session: Session) {
     const ctx = getServerCtx()
     if (!ctx) return
-    try {
-      await (ctx.sdk.client.session.delete as Function)({
-        sessionID: session.id,
-        directory: session.directory,
-      })
-      setArchivedSessions((prev) => prev.filter((s) => s.id !== session.id))
-    } catch (cause) {
-      showToast({
-        title: language.t("session.delete.failed.title"),
-        description: String(cause),
-      })
-    }
+    await restoreScrollAfter(async () => {
+      try {
+        await (ctx.sdk.client.session.delete as Function)({
+          sessionID: session.id,
+          directory: session.directory,
+        })
+        setArchivedSessions((prev) => prev.filter((s) => s.id !== session.id))
+      } catch (cause) {
+        showToast({
+          title: language.t("session.delete.failed.title"),
+          description: String(cause),
+        })
+      }
+    })
   }
 
   async function openSession(session: Session) {
@@ -1379,7 +1402,7 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
             </div>
 
             {/* Tab content */}
-            <div class="min-h-0 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            <div ref={scrollContainerRef} class="min-h-0 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
               <Show when={flyoutTab() === "active"}>
                 <Show
                   when={filteredActiveSessions().length > 0}
