@@ -301,6 +301,20 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
   let bootedAt = 0
   let bootingRoot = false
   let eventFrame: number | undefined
+  // #1637 — reconcile session_status from /session/status (the FULL tri-state
+  // map — NOT /session/active, which is running-only and cannot carry the idle
+  // needed to downgrade a stale busy) on every reconnect edge / gap frame. The
+  // fetch is timestamped BEFORE the request so the store's recency guard can
+  // refuse a downgrade of a busy that was mutated locally after the snapshot.
+  const reconcileFromStatus = async () => {
+    const fetchedAt = Date.now()
+    try {
+      const statuses = (await serverSDK.client.session.status()).data ?? {}
+      session.reconcileStatuses(statuses, { fetchedAt })
+    } catch {
+      // A failed reconcile is non-fatal — the next edge retries.
+    }
+  }
   // #1264/#1289 (reconnect-storm debounce): the SSE preamble replays
   // `server.connected` to EVERY reconnecting member — over a flaky link a
   // reconnect flurry would re-bootstrap all active directories once per
@@ -566,6 +580,10 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
     if (directory === "global") {
       if (eventType === "server.connected" && activeSessionsQuery.data === undefined && !activeSessionsQuery.isFetching)
         void activeSessionsQuery.refetch()
+      // #1637 — reconcile the tri-state status on every reconnect edge / gap
+      // frame so a status left stale during an outage self-corrects without a
+      // reload (a stale busy AND a stale idle), recency-guarded in the store.
+      if (eventType === "server.connected" || eventType === "amicode.sync.gap") void reconcileFromStatus()
       applyGlobalEvent({
         event,
         project: globalStore.project,

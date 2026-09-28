@@ -355,3 +355,39 @@ describe("#1637 — honor status seq: a status with seq <= last seen is discarde
     expect(session.data.session_status.q3?.type).toBe("idle")
   })
 })
+
+// ── #1637 — reconcile session_status from /session/status on reconnect/gap ──
+// On a reconnect edge and on a gap frame the client must re-fetch the FULL
+// tri-state status map (/session/status — NOT /session/active, which is
+// running-only and cannot carry idle) and correct BOTH a stale idle and a stale
+// busy without a reload — recency-guarded so an out-of-order reconcile cannot
+// downgrade a LIVE busy to idle.
+describe("#1637 — reconcileStatuses from /session/status (tri-state)", () => {
+  test("corrects a stale idle: a fetched busy raises a session the client left idle", () => {
+    const session = createSession()
+    session.apply({ type: "session.created", properties: { info: sessionInfo("r1") } })
+    session.apply({ type: "session.status", properties: { sessionID: "r1", status: { type: "idle" } } })
+    // A reconcile fetched AFTER the local idle sees the session actually busy.
+    session.reconcileStatuses({ r1: { type: "busy" } }, { fetchedAt: Date.now() + 1000 })
+    expect(session.data.session_status.r1?.type).toBe("busy")
+  })
+
+  test("corrects a stale busy: a fetched idle downgrades a session the client left busy (older local mutation)", () => {
+    const session = createSession()
+    session.apply({ type: "session.created", properties: { info: sessionInfo("r2") } })
+    session.apply({ type: "session.status", properties: { sessionID: "r2", status: { type: "busy" } } })
+    // The reconcile response is newer than the last local mutation → downgrade is honored.
+    session.reconcileStatuses({ r2: { type: "idle" } }, { fetchedAt: Date.now() + 1000 })
+    expect(session.data.session_status.r2?.type).toBe("idle")
+  })
+
+  test("recency guard: an out-of-order (older) reconcile does NOT downgrade a live busy to idle", () => {
+    const session = createSession()
+    session.apply({ type: "session.created", properties: { info: sessionInfo("r3") } })
+    // The reconcile was fetched in the past; the local busy is fresher.
+    const past = Date.now() - 10_000
+    session.apply({ type: "session.status", properties: { sessionID: "r3", status: { type: "busy" } } })
+    session.reconcileStatuses({ r3: { type: "idle" } }, { fetchedAt: past })
+    expect(session.data.session_status.r3?.type).toBe("busy") // live busy preserved
+  })
+})
