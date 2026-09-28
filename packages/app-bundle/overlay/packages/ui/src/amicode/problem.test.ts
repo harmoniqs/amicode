@@ -18,6 +18,7 @@ import {
   compositeSystemRows,
   systemProjection,
   shouldRefetchOnReconnect,
+  shouldRefetchOnResync,
 } from "./problem"
 
 describe("wire parsers are tolerant and never throw", () => {
@@ -174,6 +175,25 @@ describe("shouldRefetchOnReconnect (rail self-heals on disconnect→connect edge
   })
   test("going down (true → false) does NOT refetch", () => {
     expect(shouldRefetchOnReconnect(true, false)).toBe(false)
+  })
+})
+
+describe("#1617 — shouldRefetchOnResync (rail heals a WEDGE, which never produces a false→true edge)", () => {
+  test("a resync token that advances DOES refetch (the gap-driven forced bootstrap)", () => {
+    // A wedge keeps the socket nominally connected (no disconnect→connect edge),
+    // so shouldRefetchOnReconnect never fires. The forced-resync signal — bumped
+    // when a gap frame drives a forced bootstrap — is a monotonic token; any
+    // advance heals the rail.
+    expect(shouldRefetchOnResync(0, 1)).toBe(true)
+    expect(shouldRefetchOnResync(4, 5)).toBe(true)
+  })
+  test("first observation (undefined → n) does NOT refetch — nothing to heal yet", () => {
+    expect(shouldRefetchOnResync(undefined, 0)).toBe(false)
+    expect(shouldRefetchOnResync(undefined, 7)).toBe(false)
+  })
+  test("an unchanged token does NOT refetch (no feedback loop)", () => {
+    expect(shouldRefetchOnResync(3, 3)).toBe(false)
+    expect(shouldRefetchOnResync(0, 0)).toBe(false)
   })
 })
 

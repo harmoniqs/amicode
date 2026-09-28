@@ -33,10 +33,22 @@ export { LOCAL_NAMESPACE, NS_SEP } from "./sse_composite_cursor";
 // ── transport-shaped interfaces (injectable; a test fakes them) ──────────────
 
 /** A source of raw SSE frame blocks (delimiter-inclusive). `next()` resolves to
- *  the next whole frame, or null when the source ends. */
+ *  the next whole frame, or null when the source ends.
+ *
+ *  #1617 — `pause()` / `resume()` are OPTIONAL flow control the driver drives
+ *  when the shared downstream backpressures: pausing every live upstream while
+ *  the downstream is stalled is what keeps the bounded per-namespace buffers
+ *  from overflow-dropping (the overflow is otherwise UNRECOVERABLE — the live
+ *  global event route has no replay cursor). A source that cannot pause simply
+ *  omits them; the aggregator falls back to buffer-and-drain (today's behavior
+ *  for injected test sources) — additive, no existing caller breaks. */
 export interface SseFrameSource {
   next(): Promise<string | null>;
   close(): void;
+  /** #1617 — stop pulling from the upstream while the downstream is stalled. */
+  pause?(): void;
+  /** #1617 — resume pulling once the downstream has drained. */
+  resume?(): void;
 }
 
 /** The downstream response, narrowed to what the relay needs. In production an
@@ -208,12 +220,19 @@ export interface SseFanInOptions {
   /** Focus/picker snapshot provider (decision A). When absent, no focus frame
    *  is emitted — the fleet-of-one passthrough stays strictly byte-identical. */
   focusSnapshot?: () => FocusSnapshot | undefined;
+  /** #1617 — invoked EACH time a downstream `write()` returns false (the
+   *  flowing→backpressured transition). The driver wires this to pause its live
+   *  upstream sources, so under sustained backpressure the bounded per-namespace
+   *  buffers cannot overflow-drop. Absent ⇒ buffer-and-drain only (today's
+   *  behavior for injected test sources). */
+  onBackpressure?: () => void;
 }
 
 export class SseFanInAggregator {
   private readonly sink: SseSink;
   private readonly bufferBound: number;
   private readonly focusProvider?: () => FocusSnapshot | undefined;
+  private readonly onBackpressure?: () => void;
 
   /** namespace → last delivered upstream id (the composite cursor state). */
   private readonly composite = new Map<string, string>();
@@ -234,6 +253,7 @@ export class SseFanInAggregator {
     this.sink = opts.sink;
     this.bufferBound = opts.bufferBound ?? 256;
     this.focusProvider = opts.focusSnapshot;
+    this.onBackpressure = opts.onBackpressure;
   }
 
   /** Begin (or reconnect): parse the client's opaque composite cursor into the
@@ -318,7 +338,16 @@ export class SseFanInAggregator {
 
   /** Flush the per-namespace buffers after the downstream drains (decision B).
    *  Namespaces flush independently; if the sink backpressures again mid-drain,
-   *  the remaining frames stay buffered (its cursor still resumes the gap). */
+   *  the remaining frames stay buffered (its cursor still resumes the gap).
+   *
+   *  #1617 — this is the seam a downstream `drain` edge drives (never called in
+   *  production before this fix; the driver now wires it). After the buffers
+   *  drain, if any namespace overflow-DROPPED while backpressured, emit exactly
+   *  one gap signal naming those namespaces and zero their counters. The gap is
+   *  emitted HERE, at resume time — never into a backpressured sink (a signal
+   *  written while the sink is full would itself buffer). If the drain flushed
+   *  cleanly (flowing stays true), the gap goes out; if the sink re-stalled
+   *  mid-drain the drops persist and the next resume() carries the gap. */
   resume(): void {
     this.flowing = true;
     for (const [ns, buf] of this.buffers) {
@@ -327,6 +356,25 @@ export class SseFanInAggregator {
       }
     }
     for (const [ns, buf] of [...this.buffers]) if (buf.length === 0) this.buffers.delete(ns);
+    if (this.flowing) this.emitGapIfDropped();
+  }
+
+  /** #1617 — the overflow defense-in-depth. When resume() observes a nonzero
+   *  drop count for any namespace, emit ONE `amicode.sync.gap` frame carrying
+   *  those namespaces and zero their counters. The frame is id-less (never
+   *  advances a cursor) and meets the client's two hard shape requirements: it
+   *  carries a `data:` line (the SSE parser drops a data-less frame) and its
+   *  JSON has NO top-level `payload` key (the client routes on `"payload" in
+   *  event` — a payload-less bare-JSON frame takes the adapter path where the
+   *  gap type match lives). */
+  private emitGapIfDropped(): void {
+    const dropped: string[] = [];
+    for (const [ns, n] of this.droppedCount) if (n > 0) dropped.push(ns);
+    if (dropped.length === 0) return;
+    const data = JSON.stringify({ type: "amicode.sync.gap", namespaces: dropped });
+    this.sink.write(`event: amicode.sync.gap\ndata: ${data}\n\n`);
+    this.sink.flush?.();
+    for (const ns of dropped) this.droppedCount.set(ns, 0);
   }
 
   /** The number of frames DROPPED for a namespace on buffer overflow (decision
@@ -352,7 +400,14 @@ export class SseFanInAggregator {
     const wire = rewriteFrameId(rawFrame, formatCompositeCursor(this.composite));
     const accepted = this.sink.write(wire);
     this.sink.flush?.();
-    if (accepted === false) this.flowing = false;
+    if (accepted === false && this.flowing) {
+      // flowing→backpressured transition: flip the flag and signal the driver to
+      // pause its live upstreams (#1617). Fire ONCE per episode — subsequent
+      // frames arrive with flowing already false and buffer via ingest(), so
+      // deliver() is not re-entered until resume() re-arms.
+      this.flowing = false;
+      this.onBackpressure?.();
+    }
   }
 
   /** Buffer a frame for a backpressured namespace (decision B). At the bound,

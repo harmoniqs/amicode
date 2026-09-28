@@ -579,7 +579,14 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
         eventType === "config.updated" ||
         eventType === "catalog.updated" ||
         eventType === "agent.updated" ||
-        eventType === "project.directories.updated"
+        eventType === "project.directories.updated" ||
+        // #1617 (ADR 0033 Amendment 1): the fan-in aggregator dropped frames on
+        // buffer overflow while the downstream was backpressured and emitted a
+        // gap signal; the SDK loop re-emitted it as this synthetic global event.
+        // A gap is a real loss, so force a bootstrap refetch UNCONDITIONALLY —
+        // this branch runs before the #1289 `server.connected` debounce below and
+        // keys on a distinct type, so the forced refetch bypasses that debounce.
+        eventType === "amicode.sync.gap"
       )
         bootstrap.refetch()
       if (eventType === "server.connected" || eventType === "global.disposed") {

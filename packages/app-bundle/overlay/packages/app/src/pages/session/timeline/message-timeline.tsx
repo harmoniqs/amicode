@@ -2632,6 +2632,11 @@ export function MessageTimeline(props: {
               // #1585: the rail self-heals /amicode/problem on the stream's
               // disconnect→connect edge, driven by the app's live SSE status.
               streamConnected={() => serverSDK().event.status() === "connected"}
+              // #1617: a WEDGE (fan-in flowing stuck false) keeps the socket
+              // nominally connected, so the edge above never fires. The gap-frame
+              // resync counter bumps on the fan-in overflow signal; the rail
+              // refetches on its advance so a wedged view heals without a reload.
+              forceResync={() => serverSDK().event.resyncCount()}
             />
             {/* amicode#271: bubble inside the header — naturally below the
                 title row + chip rail */}

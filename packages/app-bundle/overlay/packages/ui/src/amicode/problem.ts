@@ -415,6 +415,20 @@ export function shouldRefetchOnReconnect(previous: boolean | undefined, next: bo
   return previous === false && next === true
 }
 
+/** #1617 — True iff a forced-resync token ADVANCED (`previous < next`), the
+ *  moment the rail should refetch `/amicode/problem` to heal a view stranded by
+ *  a WEDGE. A wedge keeps the socket nominally connected — it never produces the
+ *  stream-status `false → true` edge `shouldRefetchOnReconnect` watches — so the
+ *  rail broadens its self-heal to also fire on this monotonic signal, bumped when
+ *  a `amicode.sync.gap` frame drives a forced bootstrap (#1289-debounce-free).
+ *  The first observation (`undefined → n`) does NOT refetch (nothing to heal yet,
+ *  and the resource key already drives the first fetch); an unchanged token does
+ *  NOT refetch (no feedback loop). Pure so it is unit-tested in place, exactly
+ *  like `shouldRefetchOnReconnect`. */
+export function shouldRefetchOnResync(previous: number | undefined, next: number): boolean {
+  return previous !== undefined && next > previous
+}
+
 // --- entity view helpers -------------------------------------------------------
 
 export type EntityRow = { key: string; value: string }

@@ -82,6 +82,91 @@ function mockRes(): http.ServerResponse & { text(): string; fireClose(): void } 
   } as unknown as http.ServerResponse & { text(): string; fireClose(): void };
 }
 
+/** #1617 — a mock ServerResponse that models REAL Node backpressure: `write()`
+ *  returns `false` once `block()` has been called (a full socket buffer past the
+ *  high-water mark) and stays false until `fireDrain()` — which also emits the
+ *  `drain` event Node fires when the buffer clears. This drives the ACTUAL drain
+ *  seam (`res.on("drain", …)`) the production `FanInConnection` must wire — the
+ *  gap the shipped code left (its only `resume()` call site was a unit test that
+ *  hand-called it). */
+function backpressureRes(): http.ServerResponse & {
+  text(): string
+  fireClose(): void
+  block(): void
+  fireDrain(): void
+} {
+  const chunks: string[] = []
+  const closeListeners: Array<() => void> = []
+  const drainListeners: Array<() => void> = []
+  let blocked = false
+  return {
+    headersSent: false,
+    write(chunk: string) {
+      chunks.push(chunk)
+      return !blocked
+    },
+    writeHead() {
+      return this
+    },
+    flushHeaders() {},
+    on(event: string, cb: (...args: unknown[]) => void) {
+      if (event === "close") closeListeners.push(cb as () => void)
+      if (event === "drain") drainListeners.push(cb as () => void)
+      return this
+    },
+    end() {},
+    text() {
+      return chunks.join("")
+    },
+    fireClose() {
+      for (const cb of closeListeners) cb()
+    },
+    block() {
+      blocked = true
+    },
+    fireDrain() {
+      blocked = false
+      for (const cb of drainListeners) cb()
+    },
+  } as unknown as http.ServerResponse & {
+    text(): string
+    fireClose(): void
+    block(): void
+    fireDrain(): void
+  }
+}
+
+/** #1617 — a controllable source that also records pause()/resume() so a test can
+ *  assert the driver paused the upstream while the downstream was backpressured
+ *  and resumed it on drain. */
+interface PausableCtl extends Ctl {
+  paused: boolean
+  pauseCalls: number
+  resumeCalls: number
+}
+function pausableSource(): PausableCtl {
+  const base = controllableSource()
+  const inner = base.source // capture BEFORE we reassign ctl.source (base === ctl)
+  const ctl = base as unknown as PausableCtl
+  ctl.paused = false
+  ctl.pauseCalls = 0
+  ctl.resumeCalls = 0
+  const wrapped: SseFrameSource = {
+    next: () => inner.next(),
+    close: () => inner.close(),
+    pause() {
+      ctl.paused = true
+      ctl.pauseCalls += 1
+    },
+    resume() {
+      ctl.paused = false
+      ctl.resumeCalls += 1
+    },
+  }
+  ctl.source = wrapped
+  return ctl
+}
+
 function mockReq(url = "/event"): http.IncomingMessage {
   return { url, headers: {} } as unknown as http.IncomingMessage;
 }
@@ -362,3 +447,76 @@ describe("#1601 — dead LOCAL arm: reconcile re-opens the local arm", () => {
     res.fireClose();
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════════════
+// #1617 — the fan-in driver must re-derive the transparent proxy's backpressure
+// by hand: wire the downstream `drain` edge to the aggregator's resume() so
+// `flowing` re-arms and the buffers flush in order, and pause the upstream
+// sources while backpressured (resume on drain) so the bounded buffers cannot
+// overflow-drop. This is the EXACT gap that shipped: the aggregator's resume()
+// existed but its only production caller did not — the unit suite passed only
+// because it hand-called resume(). This test drives the REAL drain seam.
+// ══════════════════════════════════════════════════════════════════════════════
+describe("#1617 — driver wires drain→resume + upstream pause/resume", () => {
+  it("a backpressured frame + a stranded frame behind it flush IN ORDER on drain, with zero drops and no reload", async () => {
+    // Composite mode: one owned peer, so the local namespace goes through the
+    // shared flowing-gated path (the exact user-visible failure — a large LOCAL
+    // frame strands the frames after it in composite mode).
+    const ownerMap = new SessionOwnerMap()
+    ownerMap.update([
+      { id: "ses-studio", amicode_owner: { owner_machine_id: "studio", owner_name: "studio", is_local: false } },
+    ])
+
+    const F1 = sseFrame("event: message", 'data: {"from":"macbook","n":1}', "id: l1")
+    const F2 = sseFrame("event: message", 'data: {"from":"macbook","n":2}', "id: l2") // the stranded idle-equivalent
+
+    const localCtl = pausableSource()
+    const peerCtl = pausableSource()
+
+    const driver = new SseFanInDriver({
+      ownerMap,
+      localMachineId: "macbook",
+      localEventUrl: () => "http://local.invalid",
+      peerBaseUrl: (id) => (id === "studio" ? "http://studio.invalid" : undefined),
+      peerToken: (id) =>
+        id === "studio"
+          ? { ok: true as const, credential: { baseUrl: "http://studio.invalid", token: "tok-studio" } }
+          : { ok: false as const, reason: "absent" as const },
+      reconcileMs: 999_999,
+      openUpstream: (r) => (r.namespace === LOCAL_NAMESPACE ? localCtl.source : peerCtl.source),
+    })
+
+    const res = backpressureRes()
+    driver.handle(mockReq(), res)
+    await tick()
+
+    // The downstream socket fills: the NEXT write backpressures.
+    res.block()
+    localCtl.push(F1) // trip-frame: written, res.write() → false, flowing=false
+    await tick()
+    localCtl.push(F2) // stranded behind the trip-frame — buffered, NOT delivered
+    await tick()
+
+    // The wedge, reproduced through the REAL seam: frame 1 written, frame 2 is
+    // stranded, and the upstreams were paused so nothing overflows.
+    expect(res.text()).toContain('"n":1')
+    expect(res.text()).not.toContain('"n":2')
+    expect(localCtl.pauseCalls).toBeGreaterThan(0)
+    expect(peerCtl.pauseCalls).toBeGreaterThan(0)
+
+    // The socket drains: the driver's drain wiring calls resume() → flowing
+    // re-arms, the stranded frame flushes IN ORDER, and the upstreams resume.
+    res.fireDrain()
+    await tick()
+
+    expect(res.text()).toContain('"n":2')
+    expect(res.text().indexOf('"n":1')).toBeLessThan(res.text().indexOf('"n":2'))
+    expect(localCtl.resumeCalls).toBeGreaterThan(0)
+    expect(peerCtl.resumeCalls).toBeGreaterThan(0)
+
+    // Cleanup
+    localCtl.end()
+    peerCtl.end()
+    res.fireClose()
+  })
+})

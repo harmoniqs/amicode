@@ -540,3 +540,138 @@ describe("#1511 AC7 (B) — per-namespace back-pressure", () => {
     expect(sink.count("studio")).toBe(5);
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════════════
+// #1617 — the fan-in relay never re-armed backpressure (flowing stuck false).
+// The core fix, at the aggregator seam: an `onBackpressure` hook the driver wires
+// to pause upstreams; a gap signal emitted at resume() time (never into a
+// backpressured sink) when overflow dropped frames; and the wedge repro — one
+// trip-frame plus a single stranded frame heals on resume with NO overflow.
+// ══════════════════════════════════════════════════════════════════════════════
+describe("#1617 — backpressure re-arm + gap signal", () => {
+  function controllableSink() {
+    const chunks: string[] = [];
+    let blocked = false;
+    return {
+      write(chunk: string): boolean {
+        chunks.push(chunk);
+        return !blocked;
+      },
+      flush() {},
+      block() {
+        blocked = true;
+      },
+      unblock() {
+        blocked = false;
+      },
+      text() {
+        return chunks.join("");
+      },
+      count(ns: string) {
+        return (this.text().match(new RegExp(`"ns":"${ns}"`, "g")) ?? []).length;
+      },
+    };
+  }
+  function nsFrame(ns: string, n: number): string {
+    return frame("event: message", `data: {"ns":"${ns}","n":${n}}`, `id: ${n}`);
+  }
+
+  it("the WEDGE (no overflow): one trip-frame strands one frame behind it; resume() delivers BOTH in order", () => {
+    const sink = controllableSink();
+    const agg = new SseFanInAggregator({ sink, bufferBound: 256 });
+    agg.connect();
+    agg.setMembership([{ machineId: "studio", reachable: true, token: "tok-studio" }]);
+
+    sink.block(); // the shared downstream backpressures on the NEXT write
+    agg.ingest("studio", nsFrame("studio", 1)); // trip-frame: written, flips flowing=false
+    agg.ingest("studio", nsFrame("studio", 2)); // stranded in the buffer — NOT delivered
+    // The wedge: frame 2 sits buffered, flowing is false, nothing overflowed.
+    expect(sink.count("studio")).toBe(1);
+    expect(agg.dropped("studio")).toBe(0);
+
+    // The downstream drains and resume() re-arms flowing + flushes in order.
+    sink.unblock();
+    agg.resume();
+    expect(sink.count("studio")).toBe(2);
+    // order preserved: frame 1 before frame 2
+    expect(sink.text().indexOf('"n":1')).toBeLessThan(sink.text().indexOf('"n":2'));
+    // cursor advanced past both delivered frames
+    expect(parseCompositeCursor(agg.cursor()).get("studio")).toBe("2");
+  });
+
+  it("onBackpressure fires exactly when a write() returns false (the driver's upstream-pause hook)", () => {
+    const sink = controllableSink();
+    let backpressureCalls = 0;
+    const agg = new SseFanInAggregator({ sink, onBackpressure: () => (backpressureCalls += 1) });
+    agg.connect();
+    agg.setMembership([{ machineId: "studio", reachable: true, token: "tok-studio" }]);
+
+    // flowing: no backpressure signal
+    agg.ingest("studio", nsFrame("studio", 1));
+    expect(backpressureCalls).toBe(0);
+
+    // the next write backpressures → onBackpressure fires once
+    sink.block();
+    agg.ingest("studio", nsFrame("studio", 2));
+    expect(backpressureCalls).toBe(1);
+
+    // subsequent frames buffer (already not flowing) — no repeated signal storm
+    agg.ingest("studio", nsFrame("studio", 3));
+    expect(backpressureCalls).toBe(1);
+  });
+
+  it("resume() emits EXACTLY ONE id-less gap frame naming the dropped namespaces and zeroes their drop counters", () => {
+    const sink = controllableSink();
+    const agg = new SseFanInAggregator({ sink, bufferBound: 1 });
+    agg.connect();
+    agg.setMembership([
+      { machineId: "studio", reachable: true, token: "tok-studio" },
+      { machineId: "mini", reachable: true, token: "tok-mini" },
+    ]);
+
+    sink.block();
+    // studio overflows its bound (1 delivered, 1 buffered, rest dropped)
+    for (let n = 1; n <= 5; n++) agg.ingest("studio", nsFrame("studio", n));
+    // mini stays within bound (no drops)
+    agg.ingest("mini", nsFrame("mini", 1));
+    expect(agg.dropped("studio")).toBeGreaterThan(0);
+    expect(agg.dropped("mini")).toBe(0);
+
+    sink.unblock();
+    agg.resume();
+
+    const gapMatches = sink.text().match(/event: amicode\.sync\.gap/g) ?? [];
+    expect(gapMatches.length).toBe(1);
+    // drop counters zeroed after the gap is emitted
+    expect(agg.dropped("studio")).toBe(0);
+
+    // HARD shape reqs (issue Data Contracts): the gap frame carries a `data:`
+    // line (SSE drops a data-less frame) and its JSON has NO top-level `payload`
+    // key (the client routes on `"payload" in event`).
+    const gapFrame = sink
+      .text()
+      .split("\n\n")
+      .find((f) => f.includes("amicode.sync.gap"))!;
+    expect(gapFrame).toContain("data:");
+    const dataLine = gapFrame.split("\n").find((l) => l.startsWith("data:"))!;
+    const parsed = JSON.parse(dataLine.slice("data:".length).trim());
+    expect("payload" in parsed).toBe(false);
+    expect(parsed.type).toBe("amicode.sync.gap");
+    expect(parsed.namespaces).toContain("studio");
+    // id-less: never advances any namespace's cursor
+    expect(gapFrame.split("\n").some((l) => l.startsWith("id:"))).toBe(false);
+  });
+
+  it("resume() with NO drops emits NO gap frame", () => {
+    const sink = controllableSink();
+    const agg = new SseFanInAggregator({ sink, bufferBound: 256 });
+    agg.connect();
+    agg.setMembership([{ machineId: "studio", reachable: true, token: "tok-studio" }]);
+    sink.block();
+    agg.ingest("studio", nsFrame("studio", 1));
+    agg.ingest("studio", nsFrame("studio", 2)); // buffered, not dropped
+    sink.unblock();
+    agg.resume();
+    expect(sink.text()).not.toContain("amicode.sync.gap");
+  });
+});

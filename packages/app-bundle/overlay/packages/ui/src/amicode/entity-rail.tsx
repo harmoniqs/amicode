@@ -13,6 +13,7 @@ import {
   parseRunStatusResponse,
   railState,
   shouldRefetchOnReconnect,
+  shouldRefetchOnResync,
 } from "./problem"
 
 // AMICODE problem-header rail (spec B). One compact sticky row per session
@@ -115,6 +116,12 @@ export function AmicodeEntityRail(props: {
   // the initial connect, never while steadily connected. Optional so hosts
   // that can't supply status leave rail behavior unchanged (#1585).
   streamConnected?: () => boolean
+  // #1617: a monotonic forced-resync token, bumped when a `amicode.sync.gap`
+  // frame drives a forced bootstrap. A WEDGE keeps the socket nominally connected
+  // (no disconnect→connect edge), so streamConnected alone can never heal it; the
+  // rail also refetches when this token advances. Optional — omitting it leaves
+  // rail behavior unchanged.
+  forceResync?: () => number
 }) {
   if (props.onAsk) {
     const dispose = registerAmicodeAskBridge({
@@ -211,6 +218,22 @@ export function AmicodeEntityRail(props: {
     const next = signal()
     if (shouldRefetchOnReconnect(prevConnected, next)) void refetch()
     prevConnected = next
+  })
+
+  // #1617: broaden the self-heal to a WEDGE. A wedge (fan-in `flowing` stuck
+  // false) keeps the socket nominally connected — it never crosses the
+  // disconnect→connect edge the effect above watches — so a view stranded by it
+  // would never recover without a reload. The forced-resync token advances when
+  // a `amicode.sync.gap` frame drives a forced bootstrap; refetch on any advance.
+  // Same closure-`let` discipline: the effect tracks ONLY the token, never the
+  // resource's own state, so there is no refetch feedback loop.
+  let prevResync: number | undefined = undefined
+  createEffect(() => {
+    const signal = props.forceResync
+    if (!signal) return
+    const next = signal()
+    if (shouldRefetchOnResync(prevResync, next)) void refetch()
+    prevResync = next
   })
 
   // Recomputed on any warrant change; no ticker, so an expiry crossing resolves on

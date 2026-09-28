@@ -4,6 +4,7 @@ import { createSimpleContext } from "@opencode-ai/ui/context"
 import { createGlobalEmitter } from "@solid-primitives/event-bus"
 import { makeEventListener } from "@solid-primitives/event-listener"
 import { dispatchSseFocusEvent } from "../pages/new-session/new-session-machine-mount"
+import { isSyncGapType, parseSyncGapFrame, SYNC_GAP_TYPE } from "./sse-gap-frame"
 import { type Accessor, batch, createMemo, createResource, createSignal, onCleanup, onMount } from "solid-js"
 import { createApiForServer, createSdkForServer, type ServerApi } from "@/utils/server"
 import { useLanguage } from "./language"
@@ -297,6 +298,11 @@ type ServerSDKBase = {
     /** amicode webview: live stream visibility for the ConnectionBanner —
      *  "connected" only while the SSE loop is actively subscribed. */
     status: Accessor<"connected" | "disconnected">
+    /** #1617: a monotonic counter bumped each time a `amicode.sync.gap` frame is
+     *  intercepted (the fan-in overflow signal). Surfaces to the entity rail as
+     *  the forced-resync signal so a WEDGE — which never crosses the
+     *  disconnect→connect edge — still heals the rail. */
+    resyncCount: Accessor<number>
     /** Reset only the legacy single-pointer global stream after a successful
      * attachment control changes the local effective data-plane identity. */
     resetForAttachmentChange: (input: { control: unknown; before: unknown; after: unknown }) => Promise<boolean>
@@ -434,6 +440,12 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
   // governs liveness; two abort clocks would fight.)
   const [streamStatus, setStreamStatus] = createSignal<"connected" | "disconnected">("disconnected")
 
+  // #1617: bumped each time a `amicode.sync.gap` frame is intercepted below. The
+  // entity rail reads this as its forced-resync signal (a WEDGE keeps the socket
+  // nominally connected, so the disconnect→connect edge never fires and the rail
+  // would otherwise never self-heal a stranded view).
+  const [resyncCount, setResyncCount] = createSignal(0)
+
   // #1584 client-side liveness watchdog. The v1 event iterator neither throws
   // nor completes when the socket goes silently half-open (sleep/wake, Wi-Fi
   // blip, an engine replaced without FIN/RST), so `onSseError` never fires and
@@ -533,6 +545,33 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
                   window,
                 )
               }
+              continue
+            }
+            // #1617 (ADR 0033 Amendment 1): the fan-in aggregator emits an id-less
+            // `amicode.sync.gap` frame when a bounded per-namespace buffer
+            // overflow-dropped frames while the downstream was backpressured. A gap
+            // is a real loss the reconnect-storm debounce (#1289) must NOT swallow,
+            // so we drive a FORCED bootstrap refetch. Modeled on the focus-frame
+            // interception directly above: the gap frame is `payload`-less bare
+            // JSON, so it rides the non-legacy adapter path (`payload.type`), and
+            // its data sits in `properties`. Re-emit it as a synthetic GLOBAL event
+            // into the normal queue; server-sync's listener refetches the bootstrap
+            // unconditionally on this type (past the #1289 `server.connected`
+            // debounce, which keys on a different type). Skip the rest of the loop:
+            // the gap frame is not a session event and never advances the cursor.
+            if (isSyncGapType(focusType)) {
+              const gapData = legacy
+                ? (payload as Record<string, unknown>)
+                : ((payload as { properties?: Record<string, unknown> }).properties ?? {})
+              const gap = parseSyncGapFrame({ type: SYNC_GAP_TYPE, ...gapData })
+              // Bump the forced-resync signal so the entity rail self-heals even
+              // though the socket never crossed a disconnect→connect edge.
+              setResyncCount((n) => n + 1)
+              if (enqueueServerEvent(queue, {
+                directory: "global",
+                payload: { type: SYNC_GAP_TYPE, properties: { namespaces: gap?.namespaces ?? [] } } as unknown as ServerEvent,
+              }))
+                schedule()
               continue
             }
             trackEventID(legacy ? event.payload : (event as { id?: string }))
@@ -701,6 +740,7 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
       listen: emitter.listen.bind(emitter),
       start,
       status: streamStatus,
+      resyncCount,
       resetForAttachmentChange: streamGeneration.resetAfterControl,
     },
     createClient(opts: Omit<Parameters<typeof createSdkForServer>[0], "server" | "fetch">) {

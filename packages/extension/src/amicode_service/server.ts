@@ -149,14 +149,19 @@ export interface FleetPlane {
   multiplex?: MultiplexResolver;
   /** #1519 (W1c): the SSE fan-in driver for the global `/event` stream (ADR 0033
    *  §D1–D4). Consulted ONLY when `fleetMultiplexEnabled()` is ON (default OFF).
-   *  Its `handle()` DECLINES (returns false) when zero owner-peers are owned, so
-   *  the flag-OFF / fleet-of-one `/event` path stays byte-identical (#1264, AC1);
-   *  with ≥1 owned peer it takes over the response and fans in local + one authed
-   *  upstream per owner-peer through the #1511 aggregator. Wiring the SSE relay
+   *  Its `handle()` ALWAYS ACCEPTS (returns true) on the current observation
+   *  wiring (#1565): zero owner-peers starts in fleet-of-one mode, where the
+   *  #1511 aggregator's §D4 zero-peer relay writes local frames VERBATIM — that
+   *  verbatim relay IS the byte-identity guard (#1264, AC1), NOT a decline to the
+   *  transparent proxy. With ≥1 owned peer the aggregator enters composite mode
+   *  and fans in local + one authed upstream per owner-peer. Composite mode routes
+   *  every frame — the local namespace included — through the shared
+   *  `flowing`-gated path; that path's backpressure is re-armed by the driver's
+   *  `drain`→`resume()` wiring (#1617, ADR 0033 Amendment 1). Wiring the SSE relay
    *  here is the deliberate amendment of the #1448 AC4 guard — permitted ONLY
    *  behind the flag (the flag-OFF "SSE relay not reachable" invariant is kept
    *  provable by the guard's re-expression + the route-level byte-identity test). */
-  eventFanIn?: EventFanInDriver;
+   eventFanIn?: EventFanInDriver;
 }
 
 /** #1537 (Fleet Studio B2b, read seam): the OBSERVATION-ONLY per-session

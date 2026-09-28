@@ -165,7 +165,38 @@ class FanInConnection {
       sink,
       localMachineId: deps.localMachineId,
       ...(deps.focusSnapshot ? { focusSnapshot: deps.focusSnapshot } : {}),
+      // #1617 — re-derive the transparent proxy's backpressure by hand. When the
+      // shared downstream `write()` returns false, pause EVERY live upstream so
+      // the bounded per-namespace buffers cannot overflow-drop (the overflow is
+      // otherwise unrecoverable — the live global event route has no replay
+      // cursor). The `drain` edge (wired in start()) resumes them and calls
+      // agg.resume() to flush the buffers in order and re-arm `flowing`.
+      onBackpressure: () => this.pauseUpstreams(),
     });
+  }
+
+  /** #1617 — pause every live upstream source that supports it. A source
+   *  without pause()/resume() (an injected test source, or a transport that
+   *  cannot pause) simply keeps flowing into the aggregator's bounded buffer. */
+  private pauseUpstreams(): void {
+    for (const s of this.sources.values()) {
+      try {
+        s.pause?.();
+      } catch {
+        /* a source that cannot pause degrades to buffer-and-drain */
+      }
+    }
+  }
+
+  /** #1617 — resume every live upstream source on the downstream `drain` edge. */
+  private resumeUpstreams(): void {
+    for (const s of this.sources.values()) {
+      try {
+        s.resume?.();
+      } catch {
+        /* best-effort */
+      }
+    }
   }
 
   start(): void {
@@ -182,6 +213,19 @@ class FanInConnection {
       });
       this.res.flushHeaders?.();
     }
+    // #1617 — wire the downstream `drain` edge to the aggregator's resume(). This
+    // is the flow-control the transparent proxy's stream `pipe` gave for free and
+    // the hand-rolled relay silently dropped: without it, `flowing` never re-arms
+    // after a single large frame trips backpressure, and every subsequent frame —
+    // including the `session.status: idle` that clears the rail — is buffered
+    // indefinitely (the stale-until-reload wedge). On drain we resume the live
+    // upstreams (paused in onBackpressure) and flush the per-namespace buffers in
+    // arrival order; resume() also emits the overflow gap signal if any dropped.
+    this.res.on("drain", () => {
+      if (this.closed) return;
+      this.resumeUpstreams();
+      this.agg.resume();
+    });
     // Parse the opaque composite cursor (#1264 / §D3) and seed the aggregator
     // (this also emits the focus snapshot as the first `local` frame — decision A).
     const url = new URL(this.req.url ?? "/", "http://origin");
