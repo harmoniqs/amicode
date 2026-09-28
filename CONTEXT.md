@@ -228,7 +228,7 @@ The condition that keeps a detached standalone server alive past the grace windo
 _Avoid_: keepalive, lock, busy flag
 
 **Grace window**:
-The interval after an extension-host teardown during which a detached standalone server stays alive awaiting re-adoption. On expiry with no adoption and no active-work pin the server self-exits and deletes its handshake; a reload re-adopts well within it, a genuine quit does not.
+The interval after an extension-host teardown during which a detached standalone server stays alive awaiting re-adoption. On expiry with no adoption, no active-work pin, and no attached fleet subscriber (a `client` streaming the server's event channel over the Managed Tunnel) the server self-exits and deletes its handshake; a reload re-adopts well within it, a genuine quit does not. A `server`/`hub` fleet role is exempt from the self-exit entirely, set at spawn (ADR 0035 amends ADR 0020's turns-only pin with the subscriber clause and the role exemption).
 _Avoid_: timeout, linger period
 
 **Peer studio**:
