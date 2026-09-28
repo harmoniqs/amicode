@@ -98,7 +98,7 @@
     "packages/app/src/components/amicode-default-model.tsx": "16a2de1feb12e07416fe5fbb25879391f912ee0909b553c868c1b531f2ed1f2d",
     "packages/app/src/components/amicode-defaults-capsule.tsx": "94dc081bc47abb7e50566fcd8e9e53124f9d7632d61f93eff4f1627e0c2efb2d",
     "packages/app/src/components/amicode-file-ref-bridge.tsx": "11c17d7fdb29d16530e188b13ee8af728f37d9adfbb518084106ce50cc0c527a",
-    "packages/app/src/components/concise-mode-toggle.tsx": "55ac18a80e54c8534e8f76944123b1416d0ace815c4ed34100ab71c620981b7d",
+    "packages/app/src/components/concise-mode-toggle.tsx": "3eff0c5557143500a27d828a08d1efe09a8c99aac9b6e2f9950bfe70c76162a1",
     "packages/app/src/components/connection-banner.tsx": "c793966e1f9d6f307af697032b235c2ff65afaa04f6cc232e40ce45e5745ded4",
     "packages/app/src/components/dialog-command-palette-v2.css": "85984957adaf15efcc0828310f3a0b438cedaaba776a9fec2eddb3ad83487fa2",
     "packages/app/src/components/dialog-command-palette-v2.tsx": "e12da3e5e9e503089dd9139b20e04f6b566cf74fa445f23a2e193f5883f7c5f3",
@@ -874,7 +874,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-09-28T19:53:01.096Z",
+  "extracted_at": "2026-09-28T20:09:50.705Z",
   "per_package": {
     "packages/app": {
       "A": 187,
