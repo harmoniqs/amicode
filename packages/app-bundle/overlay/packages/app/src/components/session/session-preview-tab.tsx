@@ -96,6 +96,11 @@ export function SessionPreviewTab(props: {
    *  a preview tab within the pane). Composed with isSelected to form the
    *  full `active` signal so hide/show fires on side-panel tab switches too. */
   panelVisible?: () => boolean
+  /** Persisted open-paths list (from the session view). Restores every open
+   *  preview tab across remounts and editor reloads; when absent the tab keeps
+   *  its old purely-local, non-persisted behavior. #1398 + reload persistence. */
+  openPaths?: Accessor<string[]>
+  onOpenedPathsChange?: (paths: string[]) => void
 }) {
   const platform = usePlatform()
   const [dirtyPaths, setDirtyPaths] = createStore<Record<string, boolean>>({})
@@ -128,6 +133,24 @@ export function SessionPreviewTab(props: {
     setCapacityMessage(null)
   }
 
+  // Restore the open preview tabs from the persisted list once it hydrates, as
+  // long as the user hasn't already opened something this mount. Runs *before*
+  // the previewFile effect so the full set is rebuilt before the active file is
+  // re-focused (openPreviewPath is idempotent on an already-open path). The
+  // split-pane layout is intentionally not restored — only the flat path list.
+  let restoredPreview = false
+  createEffect(() => {
+    if (restoredPreview) return
+    const persisted = props.openPaths?.() ?? []
+    if (openedPaths().length > 0) {
+      restoredPreview = true
+      return
+    }
+    if (persisted.length === 0) return
+    setWorkspace(createPreviewWorkspace(persisted))
+    restoredPreview = true
+  })
+
   createEffect(
     on(
       () => props.previewFile(),
@@ -135,6 +158,16 @@ export function SessionPreviewTab(props: {
         if (path) openPath(path)
       },
     ),
+  )
+
+  // Mirror the live open-paths set up to the persisted session view so a reload
+  // restores it. Gated on restore so we never clobber the persisted list with an
+  // empty set before hydration completes.
+  createEffect(
+    on(openedPaths, (paths) => {
+      if (!restoredPreview) return
+      props.onOpenedPathsChange?.(paths)
+    }),
   )
 
   onMount(() => {
