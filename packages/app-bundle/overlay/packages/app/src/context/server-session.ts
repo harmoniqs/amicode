@@ -224,7 +224,17 @@ export function createServerSession(
     part: {} as Record<string, Part[]>,
     part_text_accum_delta: {} as Record<string, string>,
     session_working(id: string) {
-      return (this.session_status[id]?.type ?? "idle") !== "idle"
+      // #1617 — self-correcting floor against a racing/stale `idle`. The wire
+      // carries no sequence on session status ({type} only) and three unordered
+      // writers set `session_status`, so a reordered or prior-turn `idle` can
+      // arrive while the agent is still producing output. Report working when the
+      // status says busy OR a text part for this session is mid-stream — a
+      // `message.part.delta` sets an accum entry (streamActiveParts records its
+      // session) and the finalizing `message.part.updated` clears it, so this
+      // floor is up exactly while tokens flow and cannot be blanked by a stray
+      // idle. When streaming genuinely stops, the entry clears and idle settles.
+      if ((this.session_status[id]?.type ?? "idle") !== "idle") return true
+      return streamActiveParts.has(id)
     },
   })
   const requests = new Map<string, Promise<Session>>()
@@ -238,6 +248,29 @@ export function createServerSession(
   const removedMessages = new Map<string, Set<string>>()
   const deltaBases = new Map<string, { base: string; sessionID: string }>()
   const taskSpawnParent = new Map<string, string>()
+  // #1617 — sessionID → set of part ids currently mid-stream (a `part.delta` has
+  // arrived and the finalizing `part.updated` has not). The session_working()
+  // floor reads this so a racing/stale `idle` cannot blank the rail while tokens
+  // are still flowing. Populated/cleared in lockstep with `part_text_accum_delta`.
+  const streamActiveParts = new Map<string, Set<string>>()
+  const markPartStreaming = (sessionID: string, partID: string) => {
+    const set = streamActiveParts.get(sessionID) ?? new Set<string>()
+    set.add(partID)
+    streamActiveParts.set(sessionID, set)
+  }
+  const clearPartStreaming = (sessionID: string | undefined, partID: string) => {
+    // sessionID is known at delta time; at clear time we may only have the partID,
+    // so sweep when the session is unknown (small sets; correctness over micro-opt).
+    if (sessionID !== undefined) {
+      const set = streamActiveParts.get(sessionID)
+      set?.delete(partID)
+      if (set && set.size === 0) streamActiveParts.delete(sessionID)
+      return
+    }
+    for (const [sid, set] of streamActiveParts) {
+      if (set.delete(partID) && set.size === 0) streamActiveParts.delete(sid)
+    }
+  }
   const completedFileDiffParts = new Map<string, Set<string>>()
   const deleteMessageParts = (
     cache: { part: Record<string, Part[] | undefined>; part_text_accum_delta: Record<string, string | undefined> },
@@ -540,6 +573,7 @@ export function createServerSession(
       generations.delete(sessionID)
       clearOptimistic(sessionID)
       completedFileDiffParts.delete(sessionID)
+      streamActiveParts.delete(sessionID) // #1617 streaming floor: session gone
       requests.delete(sessionID)
       inflight.delete(sessionID)
       inflightTodo.delete(sessionID)
@@ -1411,6 +1445,7 @@ export function createServerSession(
         deltaBases.delete(part.id)
         trackPartChange(part.sessionID, part.messageID, part.id)
         confirmOptimisticPart(part.sessionID, part.messageID, part)
+        clearPartStreaming(part.sessionID, part.id) // #1617 streaming floor: part finalized
         setData(
           "part_text_accum_delta",
           produce((draft) => void delete draft[part.id]),
@@ -1455,6 +1490,7 @@ export function createServerSession(
         }
         trackPartChange(props.sessionID, props.messageID, props.partID)
         clearOptimisticPart(props.sessionID, props.messageID, props.partID)
+        clearPartStreaming(props.sessionID, props.partID) // #1617 streaming floor: part removed
         setData(
           produce((draft) => {
             delete draft.part_text_accum_delta[props.partID]
@@ -1481,6 +1517,7 @@ export function createServerSession(
         const result = Binary.search(parts, props.partID, (part) => part.id)
         if (!result.found) return
         trackPartChange(props.sessionID, props.messageID, props.partID)
+        markPartStreaming(props.sessionID, props.partID) // #1617 streaming floor
         const load = messageLoads.get(props.sessionID)
         if (load) {
           const parts = load.deltaParts.get(props.messageID) ?? new Set<string>()

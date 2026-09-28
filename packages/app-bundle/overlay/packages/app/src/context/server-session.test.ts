@@ -154,3 +154,71 @@ describe("ServerSession live file-edit route", () => {
     expect(session.data.diff_version.worker).toBe(1)
   })
 })
+
+// ── #1617 (follow-up) — rail must not go idle while the agent is still streaming ──
+// The wire carries NO sequence/timestamp on session status (only {type}), and the
+// client's session_status writer blindly overwrites from THREE unordered writers.
+// A racing/stale `idle` (from a prior turn, or a reordered frame) could blank the
+// rail while the agent is still producing output. The self-correcting floor:
+// session_working() stays true while message-part deltas are actively streaming
+// for the session, regardless of a stray idle status.
+describe("#1617 — session_working floor: a racing idle does not blank a streaming rail", () => {
+  const textPart = (id: string, sessionID: string, text = "") =>
+    ({
+      id,
+      sessionID,
+      messageID: `msg_${sessionID}`,
+      type: "text",
+      text,
+    }) as Part
+  const assistantMessage = (sessionID: string) =>
+    ({
+      id: `msg_${sessionID}`,
+      sessionID,
+      role: "assistant",
+      time: { created: 1 },
+    }) as unknown as Parameters<ReturnType<typeof createSession>["apply"]>[0]
+
+  // Establish the parent message so a part.updated is not dropped as an orphan.
+  const openStreamingMessage = (session: ReturnType<typeof createSession>, sessionID: string) => {
+    session.apply({ type: "message.updated", properties: { info: assistantMessage(sessionID) } })
+    session.apply({ type: "message.part.updated", properties: { part: textPart("p1", sessionID, "hel") } })
+    session.apply({
+      type: "message.part.delta",
+      properties: { sessionID, messageID: `msg_${sessionID}`, partID: "p1", field: "text", delta: "lo" },
+    })
+  }
+
+  test("an idle status arriving WHILE parts stream keeps session_working true", () => {
+    const session = createSession()
+    session.apply({ type: "session.created", properties: { info: sessionInfo("s1") } })
+    // The turn is running: busy + a text part that is actively receiving deltas.
+    session.apply({ type: "session.status", properties: { sessionID: "s1", status: { type: "busy" } } })
+    openStreamingMessage(session, "s1")
+    expect(session.data.session_working("s1")).toBe(true)
+
+    // A RACING/STALE idle arrives (reordered, or from a prior turn). The rail must
+    // NOT blank while deltas are still streaming.
+    session.apply({ type: "session.status", properties: { sessionID: "s1", status: { type: "idle" } } })
+    expect(session.data.session_working("s1")).toBe(true) // <-- RED before the fix
+  })
+
+  test("a genuine idle AFTER streaming stops clears session_working", () => {
+    const session = createSession()
+    session.apply({ type: "session.created", properties: { info: sessionInfo("s2") } })
+    session.apply({ type: "session.status", properties: { sessionID: "s2", status: { type: "busy" } } })
+    openStreamingMessage(session, "s2")
+    expect(session.data.session_working("s2")).toBe(true)
+    // Streaming settles: the finalizing part.updated clears the stream marker, then idle.
+    session.apply({ type: "message.part.updated", properties: { part: textPart("p1", "s2", "hello") } })
+    session.apply({ type: "session.status", properties: { sessionID: "s2", status: { type: "idle" } } })
+    expect(session.data.session_working("s2")).toBe(false)
+  })
+
+  test("no false floor: a session with no streaming and an idle status is not working", () => {
+    const session = createSession()
+    session.apply({ type: "session.created", properties: { info: sessionInfo("s3") } })
+    session.apply({ type: "session.status", properties: { sessionID: "s3", status: { type: "idle" } } })
+    expect(session.data.session_working("s3")).toBe(false)
+  })
+})
