@@ -1,6 +1,6 @@
 // amicode_service_multiplex_dispatch.test.ts — #1448 (Fleet Studio wiring W1a):
 // insert the session multiplexer into the dispatch path behind the
-// AMICO_FLEET_MULTIPLEX feature flag (default OFF), shadowing ONLY the attached
+// AMICO_FLEET_MULTIPLEX feature flag (default ON), shadowing ONLY the attached
 // arm of the D3 resolver, and introduce the distinct `unreachable`/degraded
 // `ResolvedTarget` variant W1b (#1449) turns into a 503.
 //
@@ -145,7 +145,7 @@ beforeAll(async () => {
   process.env.AMICO_FLEET_HUB_FILE = hubFile;
   process.env.AMICO_FLEET_KEEPER_FILE = keeperFile;
   process.env.AMICO_FLEET_ATTACHMENT_FILE = attachmentFile;
-  delete process.env[FLEET_MULTIPLEX_FLAG]; // default OFF
+  process.env[FLEET_MULTIPLEX_FLAG] = "0"; // explicit OFF for flag-OFF tests
 
   peerStub = await startStub("PEER-1448");
   keeperStub = await startStub("KEEPER-1448");
@@ -160,7 +160,7 @@ beforeAll(async () => {
 });
 
 afterEach(() => {
-  delete process.env[FLEET_MULTIPLEX_FLAG]; // reset to the default OFF between tests
+  process.env[FLEET_MULTIPLEX_FLAG] = "0"; // reset to explicit OFF between tests
 });
 
 afterAll(async () => {
@@ -229,7 +229,7 @@ describe("#1448 AC3 — ResolvedTarget carries a distinct unreachable/degraded v
 // ══════════════════════════════════════════════════════════════════════════════
 // AC1 — flag OFF (default): byte-identity; resolveTarget NEVER called
 // ══════════════════════════════════════════════════════════════════════════════
-describe("#1448 AC1 — flag OFF (default): dispatch byte-identical, resolveTarget never called", () => {
+describe("#1448 AC1 — flag OFF (explicit): dispatch byte-identical, resolveTarget never called", () => {
   it("single_attach_nonfleet_smoke: a non-fleet single-machine boot serves the local path through EngineProxy (multiplexer structurally uninvolved)", async () => {
     const server = new AmicodeServiceServer({ password: PW });
     server.attachEngineProxy(new EngineProxy({ getUrl: () => engineStub.url }));
@@ -360,7 +360,7 @@ describe("#1448 AC4 (amended by #1519 AC5) — SSE relay reachable ONLY behind t
   });
 
   it("flag OFF (behavioural): a GET /event NEVER calls the fan-in relay's handle, and streams byte-identically through the engine proxy", async () => {
-    delete process.env[FLEET_MULTIPLEX_FLAG];
+    process.env[FLEET_MULTIPLEX_FLAG] = "0";
     const handleSpy = vi.fn(() => false);
     const F = sseFrame("event: message", 'data: {"z":1}', "id: 4");
     const engine = await startSseStub([F]);
@@ -431,8 +431,8 @@ describe("#1448 — production dispatch wiring (createAmicodeService)", () => {
     });
   }
 
-  it("flag OFF (default): an attached-arm /amicode request routes to the peer (byte-identical to today)", async () => {
-    delete process.env[FLEET_MULTIPLEX_FLAG];
+  it("flag OFF (explicit): an attached-arm /amicode request routes to the peer (byte-identical to pre-multiplexer)", async () => {
+    process.env[FLEET_MULTIPLEX_FLAG] = "0";
     const svc = bootService();
     const origin = (await svc.start()).toString().replace(/\/$/, "");
     const before = peerStub.requests.length;
@@ -562,8 +562,8 @@ async function readSseFrames(
 
 // ── AC1 — route-level flag-OFF byte-identity (WRITTEN FIRST; the #1264 guard) ──
 describe("#1519 AC1 — /event route flag-OFF byte-identity (#1264 regression guard)", () => {
-  it("flag OFF: /event streams frame-for-frame through the engine proxy, exactly as today", async () => {
-    delete process.env[FLEET_MULTIPLEX_FLAG];
+  it("flag OFF: /event streams frame-for-frame through the engine proxy, exactly as pre-multiplexer", async () => {
+    process.env[FLEET_MULTIPLEX_FLAG] = "0";
     const F1 = sseFrame("event: message", 'data: {"a":1}', "id: 1");
     const F2 = sseFrame("event: message", 'data: {"b":2}', "id: 2");
     const engine = await startSseStub([F1, F2]);
@@ -599,7 +599,7 @@ describe("#1519 AC1 — /event route flag-OFF byte-identity (#1264 regression gu
   });
 
   it("flag OFF: the #1264 ?lastEventID cursor rides through to the engine UNCHANGED (opaque, frame-for-frame path preserved)", async () => {
-    delete process.env[FLEET_MULTIPLEX_FLAG];
+    process.env[FLEET_MULTIPLEX_FLAG] = "0";
     const engine = await startSseStub([sseFrame("data: {}", "id: 9")]);
     const server = new AmicodeServiceServer({ password: PW });
     server.attachEngineProxy(new EngineProxy({ getUrl: () => engine.url }));

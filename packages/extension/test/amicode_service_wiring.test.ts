@@ -255,7 +255,7 @@ describe("startAmicodeService", () => {
     const savedAttachmentFileEnv = process.env.AMICO_FLEET_ATTACHMENT_FILE;
     process.env.AMICO_FLEET_ATTACHMENT_FILE = attachmentFile;
     const savedMultiplexEnv = process.env.AMICO_FLEET_MULTIPLEX;
-    delete process.env.AMICO_FLEET_MULTIPLEX;
+    process.env.AMICO_FLEET_MULTIPLEX = "0";
 
     const { log } = sinkLog();
     const boot = await startAmicodeService(log, {

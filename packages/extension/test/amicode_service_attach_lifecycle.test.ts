@@ -460,7 +460,7 @@ describe("createAmicodeService with transportFactory wires the attach lifecycle 
     process.env.AMICO_FLEET_ROSTER_FILE = rosterFile;
     process.env.AMICO_FLEET_ATTACHMENT_CREDENTIAL_FILE = credentialFile;
     savedMultiplexEnv = process.env.AMICO_FLEET_MULTIPLEX;
-    delete process.env.AMICO_FLEET_MULTIPLEX;
+    process.env.AMICO_FLEET_MULTIPLEX = "0";
   });
   afterEach(() => {
     delete process.env.AMICO_FLEET_ATTACHMENT_FILE;

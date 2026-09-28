@@ -177,7 +177,7 @@ describe("#1449 AC2/AC3 — per-session request routing retires the single attac
     process.env.AMICO_FLEET_ATTACHMENT_FILE = attachmentFile;
     process.env.AMICO_FLEET_KEEPER_FILE = keeperFile;
     process.env.AMICO_FLEET_HUB_FILE = hubFile;
-    delete process.env[FLEET_MULTIPLEX_FLAG];
+    process.env[FLEET_MULTIPLEX_FLAG] = "0";
 
     peerA = await startStub("PEER-A");
     peerB = await startStub("PEER-B");
@@ -193,7 +193,7 @@ describe("#1449 AC2/AC3 — per-session request routing retires the single attac
   });
 
   afterEach(() => {
-    delete process.env[FLEET_MULTIPLEX_FLAG];
+    process.env[FLEET_MULTIPLEX_FLAG] = "0";
   });
 
   afterAll(async () => {
@@ -337,8 +337,8 @@ describe("#1449 AC2/AC3 — per-session request routing retires the single attac
     }
   });
 
-  it("flag OFF (regression): a session-pathed attached-arm request routes to the SINGLE attachment pointer — byte-identical to today", async () => {
-    delete process.env[FLEET_MULTIPLEX_FLAG];
+  it("flag OFF (explicit): a session-pathed attached-arm request routes to the SINGLE attachment pointer — byte-identical to pre-multiplexer", async () => {
+    process.env[FLEET_MULTIPLEX_FLAG] = "0";
     expect(fleetMultiplexEnabled()).toBe(false);
     const mux = populatedMultiplex();
     const spy = vi.spyOn(mux, "resolveTarget");

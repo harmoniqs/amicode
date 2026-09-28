@@ -626,7 +626,7 @@ describe("fleet-client relay skeleton (#1261) — a client holds NO local engine
       }
       process.env.AMICO_FLEET_KEEPER_FILE = peerKeeperFile;
       process.env.AMICO_FLEET_ATTACHMENT_FILE = peerAttachmentFile;
-      delete process.env.AMICO_FLEET_MULTIPLEX;
+      process.env.AMICO_FLEET_MULTIPLEX = "0";
       keeperStub = await startStubHost([], HUB_PASSWORD);
       attachedStub = await startStubHost([], HUB_PASSWORD);
       expect(keeperStub.url).not.toBe(attachedStub.url); // genuinely distinct

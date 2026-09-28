@@ -217,20 +217,23 @@ export const FLEET_PEER_UNREACHABLE_POINTER =
   "the attached server is unreachable — check the peer's tunnel / service, " +
   "or detach to work locally";
 
-/** #1448 (W1a): the session-multiplexer feature-flag env var. Default OFF. */
+/** #1448 (W1a): the session-multiplexer feature-flag env var. Default ON. */
 export const FLEET_MULTIPLEX_FLAG = "AMICO_FLEET_MULTIPLEX";
 
 /** #1448 (W1a): is the session multiplexer armed? Read ONCE at the dispatch
- *  decision point, default OFF (absent / empty / any non-truthy value). Mirrors
- *  the AMICO_FLEET_* env precedence (attachment_pointer.ts:83): read the env,
- *  treat only an explicit truthy token as ON. When OFF, `dispatch()` never
- *  calls the multiplexer's resolveTarget, so byte-identity is STRUCTURAL. A
- *  rollback is a flag flip / single-hunk revert. */
+ *  decision point, default ON (absent / empty → enabled). Without the
+ *  multiplexer, the single attachment pointer routes ALL /amicode/* traffic
+ *  (including non-session workspace endpoints like /amicode/problem) to the
+ *  attached peer — so a flaky peer transport makes the entity rail show
+ *  "status unavailable" for state that lives on the LOCAL filesystem. The
+ *  multiplexer fixes this: non-session paths resolve LOCAL (resolveTarget
+ *  returns undefined at step 3), session-specific paths route per-owner.
+ *  Opt-out: AMICO_FLEET_MULTIPLEX=0. Rollback is still a single-hunk revert. */
 export function fleetMultiplexEnabled(): boolean {
   const raw = process.env[FLEET_MULTIPLEX_FLAG];
-  if (raw === undefined) return false;
+  if (raw === undefined) return true;
   const v = raw.trim().toLowerCase();
-  return v === "1" || v === "true" || v === "on" || v === "yes";
+  return v !== "0" && v !== "false" && v !== "off" && v !== "no";
 }
 
 interface RouteEntry {
