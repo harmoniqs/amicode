@@ -379,12 +379,28 @@ export function peerSessionsFromProjection(raw: unknown): DropdownSession[] {
 }
 
 /** Merge peer sessions into the local active list: local wins on an id
- *  collision (a session that is somehow in both stays local), and the result
- *  is sorted by last activity (updated ?? created) descending — the same order
- *  the dropdown already uses for the local list. */
+ *  collision (a session that is somehow in both stays local, keeping its live
+ *  state), and the result is sorted by last activity (updated ?? created)
+ *  descending — the same order the dropdown already uses for the local list.
+ *
+ *  #1599 (badge-on-open fix): when a local row collides with a peer that
+ *  carries an `amicode_owner` overlay AND the local row has none, the local
+ *  row is enriched with the peer's owner tag. Opening a remote session pulls
+ *  an untagged copy into the local directory store (the intended open flow —
+ *  `openSession` calls projects.open + session.sync to render it); without
+ *  this enrichment that untagged copy would win the dedup and the machine
+ *  badge would vanish the moment a remote session goes live. The projection is
+ *  the source of truth for ownership, so carrying its tag onto the local copy
+ *  is honest: the row stays local (live state) but keeps its remote badge. */
 export function mergePeerSessions(local: DropdownSession[], peers: DropdownSession[]): DropdownSession[] {
+  const peerById = new Map(peers.map((p) => [p.id, p]))
+  const merged = local.map((s) => {
+    if (s.amicode_owner) return s
+    const peer = peerById.get(s.id)
+    if (peer?.amicode_owner) return { ...s, amicode_owner: peer.amicode_owner }
+    return s
+  })
   const seen = new Set(local.map((s) => s.id))
-  const merged = [...local]
   for (const p of peers) {
     if (seen.has(p.id)) continue
     seen.add(p.id)

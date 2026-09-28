@@ -100,12 +100,25 @@ describe("#1525 mergePeerSessions — dedupe (local wins) + sort by last activit
     expect(mergePeerSessions(local, peers).map((s) => s.id)).toEqual(["c", "a", "d", "b"])
   })
 
-  test("id collision: the local row wins, the peer duplicate is dropped", () => {
+  test("id collision: the local row wins but is enriched with the peer's owner tag", () => {
     const local = [mk("dup", 5)]
     const peers = [mk("dup", 99, studioTag)]
     const out = mergePeerSessions(local, peers)
     expect(out).toHaveLength(1)
-    expect(out[0].amicode_owner).toBeUndefined() // kept the LOCAL row
+    // The local row stays (its id, its time — live state), but #1599 enriches
+    // it with the peer's owner overlay so the machine badge survives dedup.
+    expect(out[0].id).toBe("dup")
+    expect(out[0].time.updated).toBe(5) // local row's data, not the peer's
+    expect(out[0].amicode_owner).toMatchObject({ owner_machine_id: "test-desktop", is_local: false })
+  })
+
+  test("id collision: an already-tagged local row keeps its OWN owner tag (no clobber)", () => {
+    const laptop = { owner_machine_id: "other", owner_name: "Other", is_local: false }
+    const local = [mk("dup", 5, laptop)]
+    const peers = [mk("dup", 99, studioTag)]
+    const out = mergePeerSessions(local, peers)
+    expect(out).toHaveLength(1)
+    expect(out[0].amicode_owner).toMatchObject({ owner_machine_id: "other" })
   })
 
   test("empty peers → local list unchanged (degrade path)", () => {
@@ -113,25 +126,21 @@ describe("#1525 mergePeerSessions — dedupe (local wins) + sort by last activit
     expect(mergePeerSessions(local, []).map((s) => s.id)).toEqual(["b", "a"])
   })
 
-  // #1539 regression: when the SSE fan-in contaminated the directory store, a
-  // remote session ended up in the local `activeSessions` array WITHOUT its
-  // `amicode_owner` tag. On the next dropdown open, `mergePeerSessions` saw the
-  // local (untagged) copy and the projection (tagged) copy — local wins, so the
-  // badge-carrying projection copy was dropped. The fix gates the directory store
-  // so remote events never insert there; this test guards the dedup behavior that
-  // was being exploited by the contamination.
-  test("#1539 regression: contaminated local copy (no amicode_owner) wins over badged projection copy", () => {
-    // Simulate the contamination scenario: same session in local (no tag) and
-    // projection (with tag). The local copy should win, which is correct behavior
-    // — the fix prevents the contamination from happening in the first place.
-    const contaminated = mk("ses_remote", 5) // no amicode_owner (the bug)
-    const fromProjection = mk("ses_remote", 5, studioTag) // has the badge
-    const out = mergePeerSessions([contaminated], [fromProjection])
+  // #1599 regression: opening a remote session pulls an UNTAGGED copy of it
+  // into the local directory store (the intended open flow — openSession calls
+  // projects.open + session.sync to render it). On the next dropdown compute,
+  // mergePeerSessions sees the local (untagged) copy AND the projection
+  // (tagged) copy for the same id. Previously local won outright and the badge
+  // vanished the moment the remote session went live. The fix enriches the
+  // local copy with the projection's owner tag so the badge persists.
+  test("#1599 regression: opening a remote session keeps its badge (local copy enriched from projection)", () => {
+    const liveLocalCopy = mk("ses_remote", 5) // untagged — pulled in by opening it
+    const fromProjection = mk("ses_remote", 5, studioTag) // authoritative owner overlay
+    const out = mergePeerSessions([liveLocalCopy], [fromProjection])
     expect(out).toHaveLength(1)
-    // Local wins → badge is lost. This is CORRECT dedup behavior — the fix is
-    // to prevent `contaminated` from ever reaching the local store.
-    expect(out[0].amicode_owner).toBeUndefined()
-    expect(deriveSessionBadge(out[0])).toBeUndefined()
+    // Badge survives — this is the corrected behavior (was `undefined` pre-#1599).
+    expect(out[0].amicode_owner).toBeDefined()
+    expect(deriveSessionBadge(out[0])).toBe("Test Desktop")
   })
 
   test("#1539 fixed: when directory store is clean, projection badge persists through dedup", () => {
