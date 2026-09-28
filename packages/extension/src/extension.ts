@@ -122,6 +122,7 @@ import { AmicoHostFileSystemProvider } from "./fleet_host_fs/provider";
 import { mountAmicoHostFs } from "./fleet_host_fs/mount";
 import { type CapabilityLabel } from "./fleet_host_fs/mount_policy";
 import { stopServer } from "./stop_server";
+import { quitAmicode } from "./quit_command";
 import type { QueueView } from "./qick_job_server";
 import { postDeviceStatus, postDeviceActions, postDeviceActivate } from "./inspector_bridge";
 
@@ -3132,6 +3133,24 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         deleteHandshake: () => deleteHandshake(),
       }),
     ),
+    // #1597: Quit — stop engine + close window in one action.
+    // CRITICAL: stop() runs BEFORE closeWindow(). Closing first triggers
+    // deactivate's detach() (not kill) — the engine would survive until
+    // the idle timer fires.
+    vscode.commands.registerCommand("amicode.quit", async () => {
+      await quitAmicode({
+        hasInFlightTurns: () => sseClient?.sseState === "live",
+        showWarning: (msg, ...items) =>
+          vscode.window.showWarningMessage(msg, ...items) as Promise<string | undefined>,
+        stop: async () => {
+          await serverManager?.stop();
+          statusBar?.setServerReady(false);
+          opencodeReadyUrl = undefined;
+        },
+        deleteHandshake: () => deleteHandshake(),
+        closeWindow: () => vscode.commands.executeCommand("workbench.action.closeWindow"),
+      });
+    }),
     // Issue #573: skill provider changes take effect on next session start.
     // Live hot-reload (rewriting AGENTS.md while the server reads it) was
     // causing crashes — deferred until the engine supports atomic reload.
