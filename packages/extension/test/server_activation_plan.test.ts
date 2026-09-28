@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { planServerActivation } from "../src/server_lifecycle";
+import { planServerActivation, adoptedTheHub } from "../src/server_lifecycle";
 
 // ============================================================================
 // #1576 — one engine per serving machine. A role=server editor window must RIDE
@@ -65,5 +65,46 @@ describe("planServerActivation — the #1576 one-engine activation decision", ()
   it("INVARIANT: a fleet server NEVER writes the shared handshake (either hub state)", () => {
     expect(planServerActivation({ isServerMachine: true, hubReachable: true }).writeHandshake).toBe(false);
     expect(planServerActivation({ isServerMachine: true, hubReachable: false }).writeHandshake).toBe(false);
+  });
+});
+
+// ============================================================================
+// #1607 (HIGH): the hubReachable signal fed to planServerActivation must mean
+// "adopted the UNARMED hub", not "adopted ANYTHING". A clobbered handshake can
+// point a server at an ARMED PEER window's engine; adopting that is NOT riding
+// the hub, and must fall to local-fallback rather than silently "ride-hub" a
+// peer. The wiring computes hubReachable via adoptedTheHub({adopted, adoptedUnarmed}).
+// ============================================================================
+
+describe("adoptedTheHub — a server reaches the hub only by adopting the UNARMED hub (#1607)", () => {
+  it("adopted the unarmed hub → true (genuinely rode the hub)", () => {
+    expect(adoptedTheHub({ adopted: true, adoptedUnarmed: true })).toBe(true);
+  });
+
+  it("adopted an ARMED peer engine → false (a clobbered handshake is NOT the hub)", () => {
+    expect(adoptedTheHub({ adopted: true, adoptedUnarmed: false })).toBe(false);
+  });
+
+  it("did not adopt anything → false (hub genuinely unreachable)", () => {
+    expect(adoptedTheHub({ adopted: false, adoptedUnarmed: false })).toBe(false);
+    expect(adoptedTheHub({ adopted: false, adoptedUnarmed: true })).toBe(false);
+  });
+
+  it("composed: an ARMED adopt on a server → local-fallback, NOT ride-hub", () => {
+    const plan = planServerActivation({
+      isServerMachine: true,
+      hubReachable: adoptedTheHub({ adopted: true, adoptedUnarmed: false }),
+    });
+    expect(plan.mode).toBe("local-fallback");
+    expect(plan.runStraySweep).toBe(false); // still never sweeps on a server
+    expect(plan.writeHandshake).toBe(false); // still never clobbers on a server
+  });
+
+  it("composed: adopting the unarmed hub on a server → ride-hub", () => {
+    const plan = planServerActivation({
+      isServerMachine: true,
+      hubReachable: adoptedTheHub({ adopted: true, adoptedUnarmed: true }),
+    });
+    expect(plan.mode).toBe("ride-hub");
   });
 });

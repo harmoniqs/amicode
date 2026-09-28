@@ -110,7 +110,7 @@ import { loadGraph } from "./calibration_graph";
 import { parseStateJson } from "./device_registry";
 import { buildDeviceStatus, nextActions, capabilityHint, type DriveLine } from "./device_status";
 import { SchusterJobServer } from "./qick_client";
-import { adoptOrSpawn, buildLiveDeps, isPidAlive, reclaimOrphanPort, auditAdoptedEngine, restartAdoptedEngine, sweepStrayEngines, listOpencodeEngines, hasLiveClient, reclaimEnginePid, planEngineRestart, planServerActivation } from "./server_lifecycle";
+import { adoptOrSpawn, buildLiveDeps, isPidAlive, reclaimOrphanPort, auditAdoptedEngine, restartAdoptedEngine, sweepStrayEngines, listOpencodeEngines, hasLiveClient, reclaimEnginePid, planEngineRestart, planServerActivation, adoptedTheHub } from "./server_lifecycle";
 import { handshakePath, readHandshake, deleteHandshake, serverLogPath, coldSpawnHandshakeHook, hashFile, hashString, UNARMED_PASSWORD, isUnarmedHandshake } from "./server_handshake";
 import { startKeepalive, stopKeepalive, readGraceSeconds, pingKeepalive } from "./server_keepalive";
 import { FleetPollHysteresis } from "./fleet_poll_hysteresis";
@@ -1356,7 +1356,14 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     // past the 30s poll budget) falls back to a local spawn with an honest
     // banner — never engine-less on the daily driver. A standalone machine is
     // byte-for-byte unchanged (own-engine: spawn + sweep + handshake).
-    const activationPlan = planServerActivation({ isServerMachine, hubReachable: adopted });
+    // #1607: hubReachable means "adopted the UNARMED hub" — NOT "adopted
+    // anything". A clobbered handshake pointing {port, armed} at a PEER window's
+    // engine must NOT enter ride-hub; adoptedTheHub maps an armed adopt to
+    // false → local-fallback.
+    const activationPlan = planServerActivation({
+      isServerMachine,
+      hubReachable: adoptedTheHub({ adopted, adoptedUnarmed }),
+    });
     opencodeChannel.appendLine(
       `[boot] #1576 activation: ${activationPlan.mode} (server=${isServerMachine} adopted=${adopted} ` +
       `spawn=${activationPlan.spawnLocalEngine} sweep=${activationPlan.runStraySweep} writeHandshake=${activationPlan.writeHandshake})`,

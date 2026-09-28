@@ -369,6 +369,17 @@ export function planServerActivation(state: {
   };
 }
 
+/** On a fleet server, "reached the hub" means we adopted an engine AND it was
+ *  the UNARMED hub (#1607). Adopting an ARMED peer engine — the failure a
+ *  clobbered handshake produces, where the record points {port, armed} at a
+ *  PEER window's engine — is NOT riding the hub, so it must map to hubReachable
+ *  = false (→ local-fallback), never a silent ride-hub of a peer. This is the
+ *  honest signal to feed planServerActivation's `hubReachable`; the bare
+ *  `adopted` boolean conflates the two. */
+export function adoptedTheHub(state: { adopted: boolean; adoptedUnarmed: boolean }): boolean {
+  return state.adopted && state.adoptedUnarmed;
+}
+
 // ============================================================================
 // Production implementations of the four live checks
 // ============================================================================
