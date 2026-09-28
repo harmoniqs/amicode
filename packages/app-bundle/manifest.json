@@ -112,7 +112,6 @@
     "packages/app/src/components/dialog-select-file.tsx": "e6278ee35dd27d203e00ad73f70c709c44a6c06f81ffbd931edfaa0c986b9e03",
     "packages/app/src/components/engine-toggle-utils.test.ts": "057643553f6b2f32c6615ade5c9a1766dd2e3cb6dbe8a6b5f0c1b5975918751a",
     "packages/app/src/components/engine-toggle-utils.ts": "e4af79757e09f768c77fc9a5d7d91766494a19382abc6e2b932ab4bce1c8518e",
-    "packages/app/src/components/engine-toggle.tsx": "9be0e4affea4082367f9f1a8aca6cbead822264d1babf044ed747e14419a5167",
     "packages/app/src/components/external-link.tsx": "7130044026ad3ec417de4ba7389cc6059de46f21b370047046269c772aa7a4bb",
     "packages/app/src/components/help-button.tsx": "780d533f776a784660cfed072a131198bc6fcc8e8fe332e8e1a220d516c9684e",
     "packages/app/src/components/new-session-machine-picker.ts": "8c7689f79c7610e32fef478320870d1468fa17a3a02463e2cbe058a487fb4769",
@@ -130,7 +129,7 @@
     "packages/app/src/components/settings-providers.tsx": "c86c9bf4a6f6e198dc7b0995a69d5b76e851144987bbe601802b1b0120ee4ac4",
     "packages/app/src/components/solver-switch-banner.tsx": "ec7edeec6dc05a4a06b39241b4f3a8e7534da97722dd8ec6f26ff782025802e9",
     "packages/app/src/components/split-frame.tsx": "44c53737f72027b461097c03df48a4f411d04a82d02b1fce4901813c73dfcc72",
-    "packages/app/src/components/status-popover-body.tsx": "49427a9ca4a58a9d11d28803c2b0f9c654db992ba3c87747eaad66d06ff7eb40",
+    "packages/app/src/components/status-popover-body.tsx": "da9fd9c818fe94b177299973b1e72e6fb9dc844beed8974931429679929ca178",
     "packages/app/src/components/status-popover-indicator.test.ts": "9afc7b49d9021a94d74f3f777178230ae13bd26e5749da0cee4d3378eacacacd",
     "packages/app/src/components/status-popover-indicator.ts": "887b3e659ff49fd0d2a8715fad6562dc7e9402b80d06442058502306bdb108f5",
     "packages/app/src/components/status-popover-model.test.ts": "10634035bab0f31de24564e0d6c8413a0f7434fb2c08ac3ef722981a69dd08e7",
@@ -910,10 +909,10 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-09-28T03:12:10.845Z",
+  "extracted_at": "2026-09-28T03:46:02.606Z",
   "per_package": {
     "packages/app": {
-      "A": 214,
+      "A": 213,
       "M": 157,
       "D": 0
     },
@@ -959,7 +958,7 @@
     }
   },
   "counts": {
-    "overlay_total": 888,
+    "overlay_total": 887,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1068,7 +1067,6 @@
     "packages/app/src/components/dialog-select-file.tsx": "M",
     "packages/app/src/components/engine-toggle-utils.test.ts": "A",
     "packages/app/src/components/engine-toggle-utils.ts": "A",
-    "packages/app/src/components/engine-toggle.tsx": "A",
     "packages/app/src/components/external-link.tsx": "M",
     "packages/app/src/components/help-button.tsx": "M",
     "packages/app/src/components/new-session-machine-picker.ts": "A",
