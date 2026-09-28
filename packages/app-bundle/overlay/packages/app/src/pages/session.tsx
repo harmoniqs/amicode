@@ -2761,11 +2761,12 @@ export default function Page() {
     <SessionRouteFrame>
       <SessionHeader />
       <ContextWarningBanner />
-      <div
+       <div
         ref={panelRow}
         class="flex-1 min-h-0 flex flex-col md:flex-row"
         classList={{
-           "gap-1.5 px-1.5 py-2": settings.general.newLayoutDesigns(),
+           "gap-1.5 px-1.5 py-2": settings.general.newLayoutDesigns() && !wideMode(),
+           "py-2": settings.general.newLayoutDesigns() && wideMode(),
         }}
       >
         <Show when={!isDesktop() && !!params.id && !settings.general.newLayoutDesigns()}>{mobileTabs()}</Show>
