@@ -667,11 +667,13 @@ describe("amicode bridge — reportBug model handoff (amicode#277)", () => {
     // amicode#653 added amicode.restartHub (payload-free, like restartServer).
     // #1322 added the Fleet Manager tab's This-machine actions (payload-free):
     // amicode.fleet.repair + amicode.fleet.goStandalone.
-    expect(BRIDGE_ALLOWED_COMMANDS.size).toBe(13);
+    // #1598 added amicode.stopServer for the engine on/off toggle.
+    expect(BRIDGE_ALLOWED_COMMANDS.size).toBe(14);
     expect(BRIDGE_ALLOWED_COMMANDS.has("amicode.reportBug")).toBe(true);
     expect(BRIDGE_ALLOWED_COMMANDS.has("amicode.restartHub")).toBe(true);
     expect(BRIDGE_ALLOWED_COMMANDS.has("amicode.fleet.repair")).toBe(true);
     expect(BRIDGE_ALLOWED_COMMANDS.has("amicode.fleet.goStandalone")).toBe(true);
+    expect(BRIDGE_ALLOWED_COMMANDS.has("amicode.stopServer")).toBe(true);
     // other allowlisted commands ignore model payload
     const host = io();
     let received: unknown = "sentinel";
