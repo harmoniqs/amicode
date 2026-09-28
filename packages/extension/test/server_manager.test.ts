@@ -110,6 +110,121 @@ describe("ServerManager — health probe under the per-boot password (#163)", ()
 // onReady — cold-spawn handshake writes hook in here.
 // ============================================================================
 
+// ============================================================================
+// #1595: ServerManager.seed() — adopt an already-running engine into a manager
+// so stop()/start() work on adopted windows.
+// ============================================================================
+
+describe("ServerManager.seed() — adopt-safe lifecycle (#1595)", () => {
+  it("creates a manager with the seeded port and pid", () => {
+    const { channel } = captureChannel();
+    const mgr = ServerManager.seed(
+      { binary: "/fake/opencode", cwd: "/tmp", env: {}, channel },
+      { port: 43117, pid: 12345 },
+    );
+    expect(mgr.port).toBe(43117);
+    expect(mgr.pid).toBe(12345);
+  });
+
+  it("reports url derived from the seeded port", () => {
+    const { channel } = captureChannel();
+    const mgr = ServerManager.seed(
+      { binary: "/fake/opencode", cwd: "/tmp", env: {}, channel },
+      { port: 43117, pid: 12345 },
+    );
+    expect(mgr.url?.toString()).toBe("http://127.0.0.1:43117/");
+  });
+
+  it("stop() sends SIGTERM to the seeded PID", async () => {
+    const { channel } = captureChannel();
+    const mgr = ServerManager.seed(
+      { binary: "/fake/opencode", cwd: "/tmp", env: {}, channel },
+      { port: 43117, pid: process.pid }, // use own PID so it's "alive"
+    );
+    // Mock process.kill to capture calls without actually killing
+    const killCalls: Array<{ pid: number; signal: string | number }> = [];
+    const origKill = process.kill;
+    process.kill = ((pid: number, signal?: string | number) => {
+      killCalls.push({ pid, signal: signal ?? "SIGTERM" });
+      // signal 0 = existence probe → return true (alive); else no-op
+      if (signal === 0) return true;
+    }) as typeof process.kill;
+    try {
+      await mgr.stop();
+    } finally {
+      process.kill = origKill;
+    }
+    // Must have sent SIGTERM to the seeded PID
+    expect(killCalls.some((c) => c.pid === process.pid && c.signal === "SIGTERM")).toBe(true);
+  });
+
+  it("after stop(), start() spawns fresh (no 'already running' error)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "sm-seed-restart-"));
+    const captureFile = join(dir, "requests.jsonl");
+    const { channel } = captureChannel();
+    const mgr = ServerManager.seed(
+      { binary: fakeOpencodeBinary(dir, captureFile), cwd: dir, env: { PATH: process.env.PATH ?? "" }, channel },
+      { port: 43117, pid: 99999 }, // fake PID (dead — stop() will be a no-op kill)
+    );
+    // Mock process.kill so stop() doesn't fail on the dead PID
+    const origKill = process.kill;
+    process.kill = ((pid: number, signal?: string | number) => {
+      if (signal === 0) throw new Error("no such process"); // pidIsAlive → false
+    }) as typeof process.kill;
+    try {
+      await mgr.stop();
+    } finally {
+      process.kill = origKill;
+    }
+    // Now start() should spawn a fresh server — no "already running" error
+    try {
+      const url = await mgr.start();
+      expect(url).toBeDefined();
+      expect(mgr.port).toBeGreaterThan(0);
+    } finally {
+      await mgr.stop();
+    }
+  }, 15_000);
+
+  it("afterHealthy fires with new port/pid after stop-then-start on a seeded manager", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "sm-seed-onready-"));
+    const captureFile = join(dir, "requests.jsonl");
+    const { channel } = captureChannel();
+    let hookPort: number | undefined;
+    let hookPid: number | undefined;
+    const mgr = ServerManager.seed(
+      {
+        binary: fakeOpencodeBinary(dir, captureFile),
+        cwd: dir,
+        env: { PATH: process.env.PATH ?? "" },
+        channel,
+        afterHealthy: (info) => { hookPort = info.port; hookPid = info.pid; },
+      },
+      { port: 43117, pid: 99999 },
+    );
+    // Stop the "adopted" engine (dead PID — no-op kill)
+    const origKill = process.kill;
+    process.kill = ((pid: number, signal?: string | number) => {
+      if (signal === 0) throw new Error("no such process");
+    }) as typeof process.kill;
+    try {
+      await mgr.stop();
+    } finally {
+      process.kill = origKill;
+    }
+    // Now start fresh — afterHealthy should run with the new engine's info
+    try {
+      const url = await mgr.start();
+      expect(url).toBeDefined();
+    } finally {
+      await mgr.stop();
+    }
+    // afterHealthy must have fired for the fresh spawn (the handshake write hook)
+    expect(hookPort).toBeGreaterThan(0);
+    expect(hookPid).toBeGreaterThan(0);
+  }, 15_000);
+});
+
 describe("ServerManager — afterHealthy hook (#1144)", () => {
   it("fires after health passes with the correct port and pid", async () => {
     const dir = mkdtempSync(join(tmpdir(), "sm-hook-"));

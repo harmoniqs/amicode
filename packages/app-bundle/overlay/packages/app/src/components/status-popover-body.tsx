@@ -49,6 +49,7 @@ import { authTokenFromCredentials } from "@/utils/server"
 import { GLOBAL_STATUS_DEFAULT_TAB } from "./status-popover-model"
 import { useServerProtocol } from "@/context/server-sdk"
 import { beginSolverSwitch } from "@/components/solver-switch-banner"
+import { EngineToggle } from "./engine-toggle"
 
 const pluginEmptyMessage = (value: string, file: string): JSXElement => {
   const parts = value.split(file)
@@ -343,6 +344,13 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean>; onClose?: (
 
   return (
     <div class="flex items-center gap-1 w-[360px] rounded-lg shadow-[var(--shadow-lg-border-base)]">
+      <div class="w-full bg-[var(--v2-background-bg-base)] rounded-lg overflow-hidden">
+      {/* #1598: engine toggle — driven by extension push, hidden on fleet clients */}
+      <div class="px-2 pt-2">
+        <div class="px-1">
+          <EngineToggle />
+        </div>
+      </div>
       <Tabs
         aria-label={language.t("status.popover.ariaLabel")}
         class="tabs bg-[var(--v2-background-bg-base)] rounded-lg overflow-hidden"
@@ -556,6 +564,7 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean>; onClose?: (
 
         <AmicodeStatusTabContents state={amicodeTabs} />
       </Tabs>
+      </div>
     </div>
   )
 }

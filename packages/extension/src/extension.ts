@@ -122,6 +122,8 @@ import { AmicoHostFileSystemProvider } from "./fleet_host_fs/provider";
 import { mountAmicoHostFs } from "./fleet_host_fs/mount";
 import { type CapabilityLabel } from "./fleet_host_fs/mount_policy";
 import { stopServer } from "./stop_server";
+import { quitAmicode } from "./quit_command";
+import { pushEngineState, pushFleetRole } from "./engine_state_push";
 import type { QueueView } from "./qick_job_server";
 import { postDeviceStatus, postDeviceActions, postDeviceActivate } from "./inspector_bridge";
 
@@ -498,6 +500,17 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     });
     // the harness's own additions (telaio: TELAIO_APP_DIR — the app shelf)
     Object.assign(env, harnessEnvCurrent);
+    // #1596 (ADR 0020): fleet server/hub role exemption — engines that serve
+    // fleet clients must never self-exit on the idle timer. Read the topology
+    // LAZILY at spawn time so a late enrollment is picked up on the next
+    // respawn. The env var is consumed by the engine overlay's self-shutdown
+    // module (process.env.AMICO_ENGINE_ROLE_EXEMPT === "1").
+    {
+      const topo = readFleetTopology();
+      if (topo.kind === "ok" && topo.role === "server") {
+        env.AMICO_ENGINE_ROLE_EXEMPT = "1";
+      }
+    }
     // Data & Storage overrides (#378): inject OPENCODE_DB / OPENCODE_CONFIG_DIR
     // from the user's VS Code settings when non-empty. On cold start + on
     // restartServer, the new env reaches the fresh server process.
@@ -1279,6 +1292,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     // recorded password and wire the event stream; on cold-spawn, proceed as
     // before; on error, surface it and skip server creation entirely.
     let adopted = false;
+    let adoptedPort = 0;
+    let adoptedPid = 0;
     // #1190: the adopted survivor's recorded binary/config hashes (from the
     // handshake) — captured here so the adopted path can compare them against
     // the on-disk build and surface a stale-engine notice.
@@ -1303,6 +1318,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       );
       if (lifecycleResult.outcome === "adopted") {
         adopted = true;
+        adoptedPort = lifecycleResult.port;
+        adoptedPid = lifecycleResult.pid;
         adoptedHashes = lifecycleResult.adoptedHashes;
         adoptedUnarmed = lifecycleResult.password === UNARMED_PASSWORD;
         // Replace the minted password with the recorded one — the surviving
@@ -1382,6 +1399,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
             deleteHandshake();
             statusBar?.setServerReady(false);
             opencodeReadyUrl = undefined;
+            // #1598: push engine-off to the app toggle.
+            pushEngineState("off");
           },
           log: (line) => opencodeChannel.appendLine(line),
         },
@@ -1423,11 +1442,69 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       [path.resolve(ctx.extensionPath, "opencode-plugin", "amicode_context.ts")],
     );
 
+    // #1181/#1595: the hashes the handshake records — computed once, BEFORE the
+    // adopt/cold-spawn split so both paths can use them (cold-spawn records them;
+    // the adopted path compares them in the stale-engine audit AND passes them to
+    // the seeded manager's afterHealthy for restart-cycle handshakes).
+    const bootBinaryHash = await hashFile(binary).catch(() => "");
+    const bootConfigHash = hashString(configContent);
+
+    // #1595: shared ready-wiring — called from BOTH the cold-spawn onReady
+    // handler AND the adopted path's inline boot. The `isFirstReady` flag
+    // gates chat-open so it fires on boot but NOT on restart cycles.
+    let isFirstReady = true;
+    const wireReadyState = (url: URL) => {
+      opencodeReadyUrl = url;
+      statusBar?.setServerReady(true);
+      // #1598: push engine-on to the app toggle on every ready (boot + restart).
+      pushEngineState("on");
+      sseClient?.connect(url);
+      // keepalive
+      const readyPort = parseInt(url.port || "0", 10);
+      if (readyPort > 0) wireKeepalive(readyPort, serverPassword);
+      // stray-engine sweep
+      {
+        const hs = readHandshake(handshakePath());
+        void runStrayEngineSweep(hs.status === "ok" ? hs.record.pid : undefined);
+      }
+      // chat-open — only on first-ready (boot), not restart
+      if (isFirstReady) {
+        isFirstReady = false;
+        if (!isModelConfigured() && vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true)) {
+          void vscode.commands.executeCommand("amicode.onboarding.open");
+          onOnboardingCancelled(() => {
+            ChatPanel.openOrReveal(ctx, frameUrl() ?? url, serverAuthToken(serverPassword), opencodeProject.projectDir);
+          });
+        } else if (vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true)) {
+          if (ChatPanel.consumePendingOnboardingGreeting()) {
+            const onboardPanel = getOnboardingPanel();
+            if (onboardPanel) {
+              releaseOnboardingPanel();
+              const panel = ChatPanel.adopt(onboardPanel, ctx, frameUrl() ?? url, serverAuthToken(serverPassword), opencodeProject.projectDir);
+              panel.postOnboardingGreeting();
+            } else {
+              const panel = ChatPanel.openOrReveal(ctx, frameUrl() ?? url, serverAuthToken(serverPassword), opencodeProject.projectDir);
+              panel.postOnboardingGreeting();
+            }
+          } else {
+            ChatPanel.openOrReveal(ctx, frameUrl() ?? url, serverAuthToken(serverPassword), opencodeProject.projectDir);
+          }
+        }
+      }
+      // LLM-provider signal — fires on every ready (including restart, for diagnostics)
+      void fetchProviderSignal(url.toString(), { headers: serverAuthHeaders }).then((sig) => {
+        opencodeChannel.appendLine(
+          sig.ok
+            ? `[boot] LLM provider: configured (${sig.provider}${sig.source ? ` via ${sig.source}` : ""})`
+            : `[boot] LLM provider: ${sig.reason} → ${sig.fix}`,
+        );
+        if (sig.ok && sig.warning) {
+          opencodeChannel.appendLine(`[boot] LLM provider warning: ${sig.warning}`);
+        }
+      });
+    };
+
     if (!adopted) {
-    // #1181: the hashes the handshake records (computed once, so the hook is sync).
-    // hashFile is best-effort — an unreadable binary yields "" (treated as changed).
-    const coldSpawnBinaryHash = await hashFile(binary).catch(() => "");
-    const coldSpawnConfigHash = hashString(configContent);
     serverManager = new ServerManager({
       binary,
       cwd: opencodeProject.projectDir,
@@ -1450,8 +1527,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       // durable record a later reload adopts (the linchpin the feature was
       // missing). Best-effort; a failed write logs and never blocks boot.
       afterHealthy: coldSpawnHandshakeHook({
-        binaryHash: coldSpawnBinaryHash,
-        configHash: coldSpawnConfigHash,
+        binaryHash: bootBinaryHash,
+        configHash: bootConfigHash,
         password: serverPassword,
         log: (l) => opencodeChannel.appendLine(l),
       }),
@@ -1743,62 +1820,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     ctx.subscriptions.push(sseClient);
 
     serverManager.onReady((url) => {
-      opencodeReadyUrl = url;
-      statusBar?.setServerReady(true);
-      sseClient?.connect(url);
-      // #1147: start keepalive after cold-spawn health passes
-      const readyPort = parseInt(url.port || "0", 10);
-      if (readyPort > 0) wireKeepalive(readyPort, serverPassword);
-      // #1592: sweep stray engines now the fresh engine's handshake is written.
-      {
-        const hs = readHandshake(handshakePath());
-        void runStrayEngineSweep(hs.status === "ok" ? hs.record.pid : undefined);
-      }
-      // Onboarding gate: if no model is configured, open the Stage 0 webview
-      // instead of chat. The webview will fire onOnboardingComplete when done,
-      // which then opens chat.
-      if (!isModelConfigured() && vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true)) {
-        void vscode.commands.executeCommand("amicode.onboarding.open");
-        // Wire: when onboarding completes, the server restarts and the
-        // onReady handler (else-if branch below) opens the chat panel.
-        // We do NOT open chat here — that would race the server restart
-        // and show behind the transition splash.
-        // Wire: when onboarding is cancelled (X), open chat normally
-        onOnboardingCancelled(() => {
-          ChatPanel.openOrReveal(ctx, frameUrl() ?? url, serverAuthToken(serverPassword), opencodeProject.projectDir);
-        });
-      } else if (vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true)) {
-        // Normal path: model configured → open chat directly
-        // Post-onboarding: adopt the onboarding panel as the chat panel (zero
-        // tab switching — the splash overlay fades out revealing the chat).
-        if (ChatPanel.consumePendingOnboardingGreeting()) {
-          const onboardPanel = getOnboardingPanel();
-          if (onboardPanel) {
-            releaseOnboardingPanel(); // detach from onboarding lifecycle
-            const panel = ChatPanel.adopt(onboardPanel, ctx, frameUrl() ?? url, serverAuthToken(serverPassword), opencodeProject.projectDir);
-            panel.postOnboardingGreeting();
-          } else {
-            // Fallback: no onboarding panel alive (user closed it manually)
-            const panel = ChatPanel.openOrReveal(ctx, frameUrl() ?? url, serverAuthToken(serverPassword), opencodeProject.projectDir);
-            panel.postOnboardingGreeting();
-          }
-        } else {
-          ChatPanel.openOrReveal(ctx, frameUrl() ?? url, serverAuthToken(serverPassword), opencodeProject.projectDir);
-        }
-      }
-      // Surface ONE explicit LLM-provider signal at boot, read from opencode's
-      // OWN resolution (its live /config/providers) — not a silent hang at the
-      // chat box (Q129). Key-free; never logs a credential.
-      void fetchProviderSignal(url.toString(), { headers: serverAuthHeaders }).then((sig) => {
-        opencodeChannel.appendLine(
-          sig.ok
-            ? `[boot] LLM provider: configured (${sig.provider}${sig.source ? ` via ${sig.source}` : ""})`
-            : `[boot] LLM provider: ${sig.reason} → ${sig.fix}`,
-        );
-        if (sig.ok && sig.warning) {
-          opencodeChannel.appendLine(`[boot] LLM provider warning: ${sig.warning}`);
-        }
-      });
+      wireReadyState(url);
     });
 
     serverManager.start().catch((err) => {
@@ -1807,20 +1829,45 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     });
     } // end if (!adopted)
 
-    // #1145: adopted path — the server is already running, wire the event
-    // stream + chat to the adopted server's URL with the recorded password.
+    // #1145/#1595: adopted path — the server is already running. Seed a
+    // ServerManager so stop()/start() work (Restart kills the adopted engine
+    // by PID, then cold-spawns fresh with a valid handshake).
     if (adopted && opencodeReadyUrl) {
+      // #1595: seed the manager with the SAME options a cold-spawn would use —
+      // so start() after stop() produces an identical fresh engine.
+      serverManager = ServerManager.seed({
+        binary,
+        cwd: opencodeProject.projectDir,
+        port: configuredPort > 0 ? configuredPort : undefined,
+        env: spawnEnv({
+          amicoRunBinDir,
+          serverPassword,
+          configContent,
+        }),
+        channel: opencodeChannel,
+        logFile: serverLogPath(),
+        afterHealthy: coldSpawnHandshakeHook({
+          binaryHash: bootBinaryHash,
+          configHash: bootConfigHash,
+          password: serverPassword,
+          log: (l) => opencodeChannel.appendLine(l),
+        }),
+      }, { port: adoptedPort, pid: adoptedPid });
+      ctx.subscriptions.push({ dispose: () => serverManager?.detach() });
+
       sseClient = new OpencodeEventClient({
         channel: opencodeChannel,
         statusBar,
         authorization: serverAuthHeaders.Authorization,
       });
       ctx.subscriptions.push(sseClient);
-      statusBar?.setServerReady(true);
-      sseClient.connect(opencodeReadyUrl);
-      // #1147: start keepalive after adoption
-      const adoptedPort = parseInt(opencodeReadyUrl.port || "0", 10);
-      if (adoptedPort > 0) wireKeepalive(adoptedPort, serverPassword);
+
+      // Register onReady for restart cycles — wireReadyState handles
+      // SSE reconnect, keepalive, sweep, and provider signal.
+      serverManager.onReady((url) => {
+        wireReadyState(url);
+      });
+
       // #1190 (ADR 0020): the gate matched only protocolVersion, so the adopted
       // survivor may be running a DIFFERENT build than what is now on disk.
       // Compare hashes and, if they diverge, surface a non-blocking notice that
@@ -1904,16 +1951,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       opencodeChannel.appendLine(
         `[boot] amicode service started on adopted path${amicodeService?.url ? ` (${amicodeService.url})` : ""}`,
       );
-      if (vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true)) {
-        ChatPanel.openOrReveal(ctx, frameUrl() ?? opencodeReadyUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
-      }
-      void fetchProviderSignal(opencodeReadyUrl.toString(), { headers: serverAuthHeaders }).then((sig) => {
-        opencodeChannel.appendLine(
-          sig.ok
-            ? `[boot] LLM provider: configured (${sig.provider}${sig.source ? ` via ${sig.source}` : ""})`
-            : `[boot] LLM provider: ${sig.reason} → ${sig.fix}`,
-        );
-      });
+      // #1595: wire readiness — SSE connect, keepalive, sweep, chat-open,
+      // provider signal. The same function handles restart cycles via onReady.
+      wireReadyState(opencodeReadyUrl);
     }
   }
 
@@ -1949,6 +1989,14 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // On app-ready: push the initial project list. Persistent (#870) — fires
   // on EVERY app-ready (new panels, re-activations), not just the first.
   ChatPanel.onAppReadyPersistent(pushWorkspaceProjects);
+
+  // #1598: push engine state + fleet role to every new/re-activated app panel.
+  // Persistent so newly opened panels get the current state immediately.
+  ChatPanel.onAppReadyPersistent(() => {
+    // Engine state: on if we have a ready URL, off otherwise.
+    pushEngineState(opencodeReadyUrl ? "on" : "off");
+    pushFleetRole();
+  });
 
   // On workspace folder change: push the updated list.
   ctx.subscriptions.push(
@@ -3072,9 +3120,13 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       deleteHandshake();
       statusBar?.setServerReady(false);
       opencodeReadyUrl = undefined;
+      // #1598: push booting before start (wireReadyState pushes "on" on ready).
+      pushEngineState("booting");
       try {
         await serverManager?.start();
       } catch (err) {
+        // #1598: start failed — push off so the toggle reflects the real state.
+        pushEngineState("off");
         vscode.window.showErrorMessage(`Amicode: restart failed — ${(err as Error).message}`);
       }
     }),
@@ -3093,11 +3145,31 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           await serverManager?.stop();
           statusBar?.setServerReady(false);
           opencodeReadyUrl = undefined;
+          // #1598: push engine-off to the app toggle.
+          pushEngineState("off");
           opencodeChannel.appendLine("[server] stopped by user (amicode.stopServer)");
         },
         deleteHandshake: () => deleteHandshake(),
       }),
     ),
+    // #1597: Quit — stop engine + close window in one action.
+    // CRITICAL: stop() runs BEFORE closeWindow(). Closing first triggers
+    // deactivate's detach() (not kill) — the engine would survive until
+    // the idle timer fires.
+    vscode.commands.registerCommand("amicode.quit", async () => {
+      await quitAmicode({
+        hasInFlightTurns: () => sseClient?.sseState === "live",
+        showWarning: (msg, ...items) =>
+          vscode.window.showWarningMessage(msg, ...items) as Promise<string | undefined>,
+        stop: async () => {
+          await serverManager?.stop();
+          statusBar?.setServerReady(false);
+          opencodeReadyUrl = undefined;
+        },
+        deleteHandshake: () => deleteHandshake(),
+        closeWindow: () => vscode.commands.executeCommand("workbench.action.closeWindow"),
+      });
+    }),
     // Issue #573: skill provider changes take effect on next session start.
     // Live hot-reload (rewriting AGENTS.md while the server reads it) was
     // causing crashes — deferred until the engine supports atomic reload.

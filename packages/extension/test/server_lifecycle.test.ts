@@ -457,6 +457,42 @@ describe("restartEngine — gated restart (#1148)", () => {
 });
 
 // ============================================================================
+// #1595: restartEngine with a SEEDED manager — adopted-path restart
+// ============================================================================
+
+describe("restartEngine — adopted-path restart via seeded ServerManager (#1595)", () => {
+  it("stop → deleteHandshake → coldSpawn fires in the correct order (adopted window restart)", async () => {
+    const events: string[] = [];
+    // Simulate an adopted window's restartEngine: the ServerManager was seeded,
+    // so stopServer actually kills a PID (or no-ops on a dead one), then
+    // coldSpawn re-starts the manager.
+    await restartEngine({
+      hasInflightTurns: () => false,
+      showWarningMessage: async () => undefined,
+      stopServer: async () => { events.push("stop-seeded"); },
+      deleteHandshake: () => { events.push("deleteHandshake"); },
+      coldSpawn: async () => { events.push("coldSpawn"); },
+    });
+    // The invariant: stop comes first, handshake deleted, then fresh spawn
+    expect(events).toEqual(["stop-seeded", "deleteHandshake", "coldSpawn"]);
+  });
+
+  it("adopted restart with in-flight turns warns, then proceeds on confirm", async () => {
+    let warned = false;
+    const events: string[] = [];
+    await restartEngine({
+      hasInflightTurns: () => true,
+      showWarningMessage: async () => { warned = true; return "Restart anyway"; },
+      stopServer: async () => { events.push("stop"); },
+      deleteHandshake: () => { events.push("deleteHandshake"); },
+      coldSpawn: async () => { events.push("coldSpawn"); },
+    });
+    expect(warned).toBe(true);
+    expect(events).toEqual(["stop", "deleteHandshake", "coldSpawn"]);
+  });
+});
+
+// ============================================================================
 // #1592: machine-wide stray-engine sweep — reap orphaned engines on ANY port
 // ============================================================================
 
