@@ -135,6 +135,10 @@
         "title": "Amicode: Stop server"
       },
       {
+        "command": "amicode.quit",
+        "title": "Amicode: Quit"
+      },
+      {
         "command": "amicode.replayDemo",
         "title": "Amicode: Replay demo run"
       },
