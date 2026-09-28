@@ -322,7 +322,10 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean>; onClose?: (
   // #1598: engine lifecycle — the "amicode" MCP row doubles as the engine
   // toggle. Extension pushes engine-state messages; when the user flips the
   // amicode switch we send start/stop commands instead of toggling the MCP.
-  const [engineState, setEngineState] = createSignal<EngineState>("booting")
+  // Default to "on": the app can only render when the engine is already
+  // serving it, so the initial state is always on; "booting"/"off" arrive
+  // via push only during transitions the listener will catch.
+  const [engineState, setEngineState] = createSignal<EngineState>("on")
   const onEngineMsg = (e: MessageEvent) => {
     const parsed = parseEngineStateMessage(e.data)
     if (parsed !== undefined) setEngineState(parsed)
