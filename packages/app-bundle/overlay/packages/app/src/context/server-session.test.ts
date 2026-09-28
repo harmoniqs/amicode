@@ -222,3 +222,136 @@ describe("#1617 — session_working floor: a racing idle does not blank a stream
     expect(session.data.session_working("s3")).toBe(false)
   })
 })
+
+// ── #1637 — turn-active floor keyed on execution.started (covers no-part turns) ──
+// The #1617 per-delta floor only rises on message.part.{delta}, but most turns
+// stream via message.part.updated and some turns produce NO parts at all
+// (refusal, immediate provider error, empty completion, abort-before-first-token).
+// The turn-active flag is keyed on session.execution.started — the bracket the
+// server emits for EVERY turn shape — and cleared on the terminal execution
+// events OR any fallback (session.error / eviction / idle status frame / bounded
+// timeout), so a swallowed terminal cannot wedge the rail "working" forever.
+describe("#1637 — turn-active floor keyed on execution.started", () => {
+  test("a no-part turn keeps session_working true for its duration and clears once when it ends", () => {
+    const session = createSession()
+    session.apply({ type: "session.created", properties: { info: sessionInfo("np1") } })
+    // execution.started brackets the turn — no parts are ever produced.
+    session.apply({ type: "session.execution.started", properties: { sessionID: "np1" } })
+    // The server stamps a monotonic seq on the busy status frame (#1636).
+    session.apply({ type: "session.status", properties: { sessionID: "np1", status: { type: "busy" }, seq: 5 } })
+    expect(session.data.session_working("np1")).toBe(true)
+    // A stray/reordered idle from a prior turn (lower seq) must NOT blank the rail:
+    // the seq guard drops it before it can clear the turn flag.
+    session.apply({ type: "session.status", properties: { sessionID: "np1", status: { type: "idle" }, seq: 2 } })
+    expect(session.data.session_working("np1")).toBe(true)
+    // The turn ends (empty completion) → clears exactly once.
+    session.apply({ type: "session.execution.succeeded", properties: { sessionID: "np1" } })
+    expect(session.data.session_working("np1")).toBe(false)
+  })
+
+  test("a turn streaming only tool/reasoning parts keeps session_working true across a stray idle", () => {
+    const session = createSession()
+    session.apply({ type: "session.created", properties: { info: sessionInfo("to1") } })
+    session.apply({ type: "session.execution.started", properties: { sessionID: "to1" } })
+    session.apply({ type: "session.status", properties: { sessionID: "to1", status: { type: "busy" }, seq: 8 } })
+    // A completed tool part (no text delta stream) arrives; then a racing idle.
+    session.apply({
+      type: "message.part.updated",
+      properties: { part: toolPart({ id: "t1", sessionID: "to1", tool: "read" }) },
+    })
+    // A stray idle (lower seq) — dropped by the seq guard, floor held by the turn flag.
+    session.apply({ type: "session.status", properties: { sessionID: "to1", status: { type: "idle" }, seq: 4 } })
+    expect(session.data.session_working("to1")).toBe(true)
+    session.apply({ type: "session.execution.interrupted", properties: { sessionID: "to1" } })
+    expect(session.data.session_working("to1")).toBe(false)
+  })
+
+  test("clear path: session.execution.failed clears the flag (no stuck-working)", () => {
+    const session = createSession()
+    session.apply({ type: "session.created", properties: { info: sessionInfo("cf") } })
+    session.apply({ type: "session.execution.started", properties: { sessionID: "cf" } })
+    expect(session.data.session_working("cf")).toBe(true)
+    session.apply({ type: "session.execution.failed", properties: { sessionID: "cf" } })
+    expect(session.data.session_working("cf")).toBe(false)
+  })
+
+  test("clear path: session.error clears a flag left set by a swallowed terminal", () => {
+    const session = createSession()
+    session.apply({ type: "session.created", properties: { info: sessionInfo("ce") } })
+    session.apply({ type: "session.execution.started", properties: { sessionID: "ce" } })
+    expect(session.data.session_working("ce")).toBe(true)
+    // A Session.Event.Error site skips the terminal execution event; session.error is the fallback.
+    session.apply({ type: "session.error", properties: { sessionID: "ce", error: { name: "ProviderError" } } })
+    expect(session.data.session_working("ce")).toBe(false)
+  })
+
+  test("clear path: eviction / session.deleted clears the flag", () => {
+    const session = createSession()
+    session.apply({ type: "session.created", properties: { info: sessionInfo("cd") } })
+    session.apply({ type: "session.execution.started", properties: { sessionID: "cd" } })
+    expect(session.data.session_working("cd")).toBe(true)
+    session.apply({ type: "session.deleted", properties: { sessionID: "cd" } })
+    expect(session.data.session_working("cd")).toBe(false)
+  })
+
+  test("clear path: an idle session.status frame clears the flag once the turn is genuinely idle", () => {
+    // The idle-frame fallback clears the turn flag. (The mid-turn floor is held by
+    // the ACTIVE-part stream / a fresh execution bracket, not a lone idle frame;
+    // here there is no active stream, so an authoritative idle frame settles it.)
+    const session = createSession()
+    session.apply({ type: "session.created", properties: { info: sessionInfo("ci") } })
+    session.apply({ type: "session.execution.started", properties: { sessionID: "ci" } })
+    expect(session.data.session_working("ci")).toBe(true)
+    session.apply({ type: "session.status", properties: { sessionID: "ci", status: { type: "idle" } } })
+    // The flag itself is cleared by the idle frame (fallback); with no active
+    // stream and idle status, the session is no longer working.
+    expect(session.data.session_working("ci")).toBe(false)
+  })
+
+  test("clear path: the bounded timeout clears a flag whose terminal never arrived", async () => {
+    const session = createSession()
+    session.apply({ type: "session.created", properties: { info: sessionInfo("ct") } })
+    // A tiny timeout so the test is fast; the flag must self-clear when it fires.
+    session.apply({ type: "session.execution.started", properties: { sessionID: "ct", turnFloorTimeoutMs: 20 } })
+    expect(session.data.session_working("ct")).toBe(true)
+    await new Promise((r) => setTimeout(r, 60))
+    expect(session.data.session_working("ct")).toBe(false)
+  })
+})
+
+// ── #1637 — honor status seq (drop stale/out-of-order status) — depends on #1636 ──
+// #1636 stamps a strictly-increasing-per-session `seq` on session.status event
+// DATA (v1 event.properties.seq / v2 event.data.seq, adapted to properties.seq
+// in this reducer). A client tracking the max seq per session must DISCARD any
+// status frame carrying seq <= what it has already seen.
+describe("#1637 — honor status seq: a status with seq <= last seen is discarded", () => {
+  test("a stale idle (seq below the last busy) does not overwrite the live busy", () => {
+    const session = createSession()
+    session.apply({ type: "session.created", properties: { info: sessionInfo("q1") } })
+    session.apply({ type: "session.status", properties: { sessionID: "q1", status: { type: "busy" }, seq: 5 } })
+    expect(session.data.session_status.q1?.type).toBe("busy")
+    // An out-of-order idle with a LOWER seq must be dropped.
+    session.apply({ type: "session.status", properties: { sessionID: "q1", status: { type: "idle" }, seq: 3 } })
+    expect(session.data.session_status.q1?.type).toBe("busy")
+    // A newer seq is honored.
+    session.apply({ type: "session.status", properties: { sessionID: "q1", status: { type: "idle" }, seq: 6 } })
+    expect(session.data.session_status.q1?.type).toBe("idle")
+  })
+
+  test("an equal seq is discarded (strictly-greater to win)", () => {
+    const session = createSession()
+    session.apply({ type: "session.created", properties: { info: sessionInfo("q2") } })
+    session.apply({ type: "session.status", properties: { sessionID: "q2", status: { type: "busy" }, seq: 10 } })
+    session.apply({ type: "session.status", properties: { sessionID: "q2", status: { type: "idle" }, seq: 10 } })
+    expect(session.data.session_status.q2?.type).toBe("busy")
+  })
+
+  test("seq is optional: a status frame without seq is applied (pre-#1636 compat)", () => {
+    const session = createSession()
+    session.apply({ type: "session.created", properties: { info: sessionInfo("q3") } })
+    session.apply({ type: "session.status", properties: { sessionID: "q3", status: { type: "busy" }, seq: 4 } })
+    // A frame with NO seq is still applied (the flag+reconcile halves must land without seq).
+    session.apply({ type: "session.status", properties: { sessionID: "q3", status: { type: "idle" } } })
+    expect(session.data.session_status.q3?.type).toBe("idle")
+  })
+})
