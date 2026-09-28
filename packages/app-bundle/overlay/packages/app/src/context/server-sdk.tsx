@@ -13,6 +13,7 @@ import { ServerConnection, useServer } from "./server"
 import { createRefCountMap } from "@/utils/refcount"
 import { useGlobal } from "./global"
 import { ServerScope } from "@/utils/server-scope"
+import { attachOwnerHeaderIfArmed } from "@/components/remote-create-arm"
 import { parseCursorNamespaces, resolveEventOrigin } from "./sse-origin"
 import { shouldReconnectIdleStream } from "./stream-liveness"
 import { detectServerProtocol, type ServerProtocol } from "@/utils/server-protocol"
@@ -713,11 +714,29 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
   // the old forever. A timed-out call rejects; the sync layer's retry
   // paths (and the frozen holds) carry the view until it lands.
   const platformFetch = platform.fetch ?? globalThis.fetch
-  const fetchWithTimeout: FetchLike = (input, init) =>
-    platformFetch(input, {
-      ...init,
-      signal: init?.signal ?? AbortSignal.timeout(30_000),
+  const fetchWithTimeout: FetchLike = (input, init) => {
+    // #1643 (completes #1484 AC3): the owner-header PRODUCER seam (ADR 0031
+    // §D1a leg 2). When the composer armed a remote create, attach
+    // x-amicode-owner to the path-less session-create POST so the multiplexer
+    // routes it to the owning peer. One-shot (disarms on attach); a local
+    // create never arms, so this is byte-unchanged for the common case.
+    let headerInit = init
+    try {
+      const method = init?.method ?? (input instanceof Request ? input.method : "GET")
+      const rawUrl = typeof input === "string" ? input : input instanceof URL ? input.href : input.url
+      const url = new URL(rawUrl, server.http.url).href
+      const existing: Record<string, string> = {}
+      new Headers(init?.headers).forEach((v, k) => (existing[k] = v))
+      const withOwner = attachOwnerHeaderIfArmed(method, url, existing)
+      if (withOwner !== existing) headerInit = { ...init, headers: withOwner }
+    } catch {
+      /* fall through unmodified — never let header logic break a request */
+    }
+    return platformFetch(input, {
+      ...headerInit,
+      signal: headerInit?.signal ?? AbortSignal.timeout(30_000),
     })
+  }
 
   const sdk = createSdkForServer({
     server: server.http,

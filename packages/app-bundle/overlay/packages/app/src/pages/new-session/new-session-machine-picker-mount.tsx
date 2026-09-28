@@ -19,12 +19,13 @@
  * with no owner-tagged sessions the projection is empty and the picker renders
  * nothing (honest fleet-of-one degrade).
  */
-import { For, Show, createMemo, createResource, createSignal, onCleanup, onMount } from "solid-js"
+import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, onMount } from "solid-js"
 import { useServer } from "@/context/server"
 import { amicodeGet } from "@/utils/amicode-fetch"
 import { fleetSessionsFromResponse } from "@/pages/session/timeline/session-header-provenance"
 import { createMachinePickerState } from "@/components/new-session-machine-picker"
 import { getFleetFocusReceiver, machineOptionsFromFleetSessions } from "./new-session-machine-mount"
+import { publishMachineSelection } from "./new-session-machine-selection"
 
 export function NewSessionMachinePicker() {
   const server = useServer()
@@ -53,6 +54,19 @@ export function NewSessionMachinePicker() {
   const picker = createMemo(() =>
     createMachinePickerState({ machines: machines(), focusedMachineId: override() ?? focused() }),
   )
+
+  // #1643 (completes #1484 AC3): publish the picker's effective selection to the
+  // submit path. A REMOTE selection is what the create's pre-flight gate reads
+  // to arm the x-amicode-owner header; a local one publishes undefined (local,
+  // header-less create). Without this the selection was purely cosmetic — the
+  // AC3-shipped-incomplete finding.
+  createEffect(() => {
+    const sel = picker().selectedMachineId
+    const chosen = picker().machines.find((m) => m.machineId === sel)
+    // A local pick (or the default local) publishes undefined → local create.
+    publishMachineSelection(chosen && !chosen.isLocal ? sel : undefined)
+  })
+  onCleanup(() => publishMachineSelection(undefined))
 
   return (
     <Show when={machines().length > 0}>

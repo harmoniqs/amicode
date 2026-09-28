@@ -25,6 +25,11 @@ import { normalizeSessionInfo } from "@/utils/session"
 import { Event } from "@opencode-ai/schema/event"
 import { blobDataUrl } from "@/utils/draft-store"
 import { startReconcileTimer, cancelReconcileTimer } from "@/context/session-status-reconcile"
+import { amicodeGet } from "@/utils/amicode-fetch"
+import { currentMachineSelection } from "@/pages/new-session/new-session-machine-selection"
+import { runCreatePreflight } from "@/components/remote-create-preflight"
+import { armRemoteCreate, disarmRemoteCreate } from "@/components/remote-create-arm"
+import type { CreationTargetResponse, PeerHomeBaseResponse } from "@/components/remote-create-preflight"
 
 type PendingPrompt = {
   abort: AbortController
@@ -443,6 +448,35 @@ export function createPromptSubmit(input: PromptSubmitInput) {
 
     let session = input.info()
     if (!session && isNewSession) {
+      // #1643 (completes #1484 AC3): the pre-flight gate. When the composer's
+      // machine picker selected a REMOTE peer, resolve the create target + the
+      // peer's working directory BEFORE creating. A blocked pick surfaces its
+      // exact reason and creates NOTHING; a remote pick arms x-amicode-owner
+      // (the multiplexer routes the path-less create POST to the peer) and
+      // lands in the peer's directory; a local pick is byte-unchanged.
+      const picked = currentMachineSelection()
+      let remoteOwnerArmed = false
+      if (picked) {
+        const conn = sdk().server
+        const preflight = await runCreatePreflight(picked, {
+          getCreationTarget: (m) =>
+            amicodeGet(conn, `/amicode/fleet/creation-target?machine=${encodeURIComponent(m)}`) as Promise<CreationTargetResponse>,
+          getPeerHomeBase: (m) =>
+            amicodeGet(conn, `/amicode/fleet/peer-home-base?machine=${encodeURIComponent(m)}`) as Promise<PeerHomeBaseResponse>,
+        })
+        if (!preflight.proceed) {
+          showToast({
+            title: language.t("prompt.toast.sessionCreateFailed.title"),
+            description: preflight.displayText ?? language.t("common.requestFailed"),
+          })
+          return
+        }
+        if (preflight.ownerToArm) {
+          armRemoteCreate(preflight.ownerToArm)
+          remoteOwnerArmed = true
+          if (preflight.remoteDirectory) sessionDirectory = preflight.remoteDirectory
+        }
+      }
       const created = await sdk()
         .api.session.create({
           agent: currentAgent.name,
@@ -451,6 +485,8 @@ export function createPromptSubmit(input: PromptSubmitInput) {
         })
         .then(normalizeSessionInfo)
         .catch((err) => {
+          // Never leave a stale arm behind if the create rejected.
+          if (remoteOwnerArmed) disarmRemoteCreate()
           showToast({
             title: language.t("prompt.toast.sessionCreateFailed.title"),
             description: errorMessage(err),
