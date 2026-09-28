@@ -2787,28 +2787,17 @@ export default function Page() {
       >
         <Show when={!isDesktop() && !!params.id && !settings.general.newLayoutDesigns()}>{mobileTabs()}</Show>
 
-        {/* #1434: restore chevron when Chat is collapsed */}
-        <Show when={newSessionDesign() && chatEffectivelyCollapsed()}>
-          <button
-            class="shrink-0 flex items-center justify-center w-6 h-full hover:bg-background-interactive-hover rounded transition-colors"
-            title={`Show Chat (${navigator.platform.includes("Mac") ? "⌘" : "Ctrl"}⇧M)`}
-            onClick={toggleMaximize}
-          >
-            <svg width="16" height="16" viewBox="0 0 20 20" fill="none" class="text-text-dimmed"><path d="M7.5 15L12.5 10L7.5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          </button>
-        </Show>
-
         <div
           classList={{
             "@container relative shrink-0 flex flex-col min-h-0 h-full transition-[width]": true,
-            "flex-1 md:flex-none": !chatTakesRemainder(),
-            "flex-1": chatTakesRemainder(),
+            "flex-1 md:flex-none": !chatTakesRemainder() && !chatEffectivelyCollapsed(),
+            "flex-1": chatTakesRemainder() || (newSessionDesign() && chatEffectivelyCollapsed()),
             "duration-[240ms] ease-[cubic-bezier(0.22,1,0.36,1)] will-change-[width] motion-reduce:transition-none":
               !size.active() && !ui.reviewSnap && !desktopInlineTerminalOnlyOpen(),
             "!hidden": newSessionDesign() && chatEffectivelyCollapsed(),
           }}
           style={{
-            width: sessionPanelWidth(),
+            width: (newSessionDesign() && chatEffectivelyCollapsed()) ? undefined : sessionPanelWidth(),
           }}
         >
           {settings.general.newLayoutDesigns() ? (
@@ -2867,11 +2856,22 @@ export default function Page() {
             <div
               classList={{
                 "min-w-0 h-full flex flex-col relative": true,
-                "flex-1": !isDesktop(),
-                "flex-none": isDesktop(),
+                "flex-1": !isDesktop() || chatEffectivelyCollapsed(),
+                "flex-none": isDesktop() && !chatEffectivelyCollapsed(),
               }}
-              style={{ width: isDesktop() ? `${workColumnWidth()}px` : undefined }}
+              style={{ width: isDesktop() && !chatEffectivelyCollapsed() ? `${workColumnWidth()}px` : undefined }}
             >
+              {/* #1434: restore strip when Chat is collapsed — inside the Work
+                  Column so it doesn't eat flex-row space as a sibling */}
+              <Show when={chatEffectivelyCollapsed()}>
+                <button
+                  class="absolute left-0 top-0 z-10 flex items-center justify-center w-6 h-full hover:bg-background-interactive-hover/50 transition-colors"
+                  title={`Show Chat (${navigator.platform.includes("Mac") ? "⌘" : "Ctrl"}⇧M)`}
+                  onClick={toggleMaximize}
+                >
+                  <svg width="16" height="16" viewBox="0 0 20 20" fill="none" class="text-text-dimmed opacity-60"><path d="M7.5 15L12.5 10L7.5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </button>
+              </Show>
               {/* amicode#105: the work column's own resize handle (its left
                   edge), sizing layout.panelColumn within the policy bounds —
                   the chat flexes around it, never below it. */}
@@ -2921,20 +2921,16 @@ export default function Page() {
                     }}
                   />
                 </div>
-                {/* #1434: Maximize/restore toggle button */}
-                <button
-                  class="absolute top-1 right-1 z-10 flex items-center justify-center w-6 h-6 rounded hover:bg-background-interactive-hover transition-colors opacity-60 hover:opacity-100"
-                  title={chatEffectivelyCollapsed()
-                    ? `Show Chat (${navigator.platform.includes("Mac") ? "⌘" : "Ctrl"}⇧M)`
-                    : `Maximize Preview (${navigator.platform.includes("Mac") ? "⌘" : "Ctrl"}⇧M)`
-                  }
-                  onClick={toggleMaximize}
-                >
-                  {chatEffectivelyCollapsed()
-                    ? <svg width="16" height="16" viewBox="0 0 20 20" fill="none" class="text-text-dimmed"><path d="M12.5 15L7.5 10L12.5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                    : <svg width="16" height="16" viewBox="0 0 20 20" fill="none" class="text-text-dimmed"><path d="M7.5 15L12.5 10L7.5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                  }
-                </button>
+                {/* #1434: Maximize toggle button — only when Chat is visible */}
+                <Show when={!chatEffectivelyCollapsed()}>
+                  <button
+                    class="absolute top-1 right-1 z-10 flex items-center justify-center w-6 h-6 rounded hover:bg-background-interactive-hover transition-colors opacity-40 hover:opacity-100"
+                    title={`Maximize Preview (${navigator.platform.includes("Mac") ? "⌘" : "Ctrl"}⇧M)`}
+                    onClick={toggleMaximize}
+                  >
+                    <svg width="16" height="16" viewBox="0 0 20 20" fill="none" class="text-text-dimmed"><path d="M7.5 15L12.5 10L7.5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  </button>
+                </Show>
               </Show>
               <Show when={isDesktop() && (desktopV2ReviewOpen() || desktopFileTreeOpen())}>
                 <div class="min-h-0 flex-1">
