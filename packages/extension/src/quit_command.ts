@@ -20,8 +20,8 @@ export interface QuitDeps {
   stop: () => Promise<void>;
   /** Delete the handshake record (#1144's primitive). */
   deleteHandshake: () => void;
-  /** Close the VS Code window. */
-  closeWindow: () => void | Promise<void>;
+  /** Close the VS Code window. Accepts Thenable (vscode.commands.executeCommand). */
+  closeWindow: () => void | PromiseLike<void>;
 }
 
 /**

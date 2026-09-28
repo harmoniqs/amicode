@@ -49,7 +49,7 @@ import { authTokenFromCredentials } from "@/utils/server"
 import { GLOBAL_STATUS_DEFAULT_TAB } from "./status-popover-model"
 import { useServerProtocol } from "@/context/server-sdk"
 import { beginSolverSwitch } from "@/components/solver-switch-banner"
-import { EngineToggle } from "./engine-toggle.tsx"
+import { EngineToggle } from "./engine-toggle"
 
 const pluginEmptyMessage = (value: string, file: string): JSXElement => {
   const parts = value.split(file)

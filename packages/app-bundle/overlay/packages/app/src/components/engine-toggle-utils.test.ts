@@ -1,10 +1,10 @@
-// engine-toggle.test.ts — #1598: unit tests for the engine toggle logic.
+// engine-toggle-utils.test.ts — #1598: unit tests for the engine toggle logic.
 import { describe, it, expect, vi, beforeEach, afterEach } from "bun:test"
 import {
   parseEngineStateMessage,
   parseFleetRoleMessage,
   sendEngineCommand,
-} from "./engine-toggle.ts"
+} from "./engine-toggle-utils"
 
 describe("parseEngineStateMessage", () => {
   it("parses a valid engine-state message for each state", () => {

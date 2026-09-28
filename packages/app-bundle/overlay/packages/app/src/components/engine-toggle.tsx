@@ -11,7 +11,7 @@ import {
   sendEngineCommand,
   type EngineState,
   type FleetRole,
-} from "./engine-toggle"
+} from "./engine-toggle-utils"
 
 /**
  * Engine on/off toggle — renders a row with a status dot, "Engine" label,
