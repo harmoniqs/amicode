@@ -400,6 +400,59 @@ export type DropdownOpenAction =
   | { type: "select-tab"; sessionId: string }
   | { type: "navigate"; path: string }
 
+// ── Sort utilities (amicode#1599) ─────────────────────────────────────────────
+
+export type SortMode = "recent" | "alpha" | "machine"
+
+/** Title extraction for sort — falls back to id when title is empty/absent. */
+const sortTitle = (s: DropdownSession): string =>
+  typeof s.title === "string" && s.title ? s.title : s.id
+
+/**
+ * Sort a flat list of dropdown sessions by the given mode.
+ * Returns a new array — never mutates the input.
+ *
+ * - `recent`:  updated (or created) desc, tie-break by id asc
+ * - `alpha`:   title case-insensitive asc, tie-break by recency desc
+ * - `machine`: local/unowned first, then by owner_name asc, recency desc within group
+ */
+export function sortDropdownSessions(
+  sessions: readonly DropdownSession[],
+  mode: SortMode,
+): DropdownSession[] {
+  const sorted = [...sessions]
+  switch (mode) {
+    case "recent":
+      return sorted.sort((a, b) => {
+        const diff = (b.time.updated ?? b.time.created) - (a.time.updated ?? a.time.created)
+        if (diff !== 0) return diff
+        return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
+      })
+    case "alpha":
+      return sorted.sort((a, b) => {
+        const cmp = sortTitle(a).toLowerCase().localeCompare(sortTitle(b).toLowerCase())
+        if (cmp !== 0) return cmp
+        return (b.time.updated ?? b.time.created) - (a.time.updated ?? a.time.created)
+      })
+    case "machine": {
+      const isLocal = (s: DropdownSession): boolean =>
+        !s.amicode_owner || s.amicode_owner.is_local === true
+      const ownerName = (s: DropdownSession): string =>
+        s.amicode_owner?.owner_name ?? ""
+      return sorted.sort((a, b) => {
+        const aLocal = isLocal(a)
+        const bLocal = isLocal(b)
+        if (aLocal !== bLocal) return aLocal ? -1 : 1
+        if (!aLocal) {
+          const nameCmp = ownerName(a).localeCompare(ownerName(b))
+          if (nameCmp !== 0) return nameCmp
+        }
+        return (b.time.updated ?? b.time.created) - (a.time.updated ?? a.time.created)
+      })
+    }
+  }
+}
+
 /** Resolve how to open a dropdown row — the seam #1537 B2a wires for BOTH local
  *  and REMOTE peer rows.
  *

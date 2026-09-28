@@ -19,10 +19,12 @@ import {
   remoteDeleteAction,
   findSessionControlInProjection,
   groupSessionsByOwner,
+  sortDropdownSessions,
   CONTROL_CHIP_REASONS,
   type DropdownSession,
   type SessionControlProjection,
   type SessionGroup,
+  type SortMode,
 } from "./session-fleet-peers"
 
 // #1525 B1 (read-only): merge PEER sessions from the fleet projection into the
@@ -234,6 +236,116 @@ describe("#1544 readSessionControl — tolerant read of amicode_control", () => 
   })
 })
 
+// ── sortDropdownSessions (#1599) ──────────────────────────────────────────────
+
+describe("sortDropdownSessions", () => {
+  // helper: create a minimal DropdownSession fixture
+  function mk(
+    id: string,
+    title: string,
+    created: number,
+    updated?: number,
+    ownerTag?: { owner_machine_id: string; owner_name: string; is_local: boolean },
+  ): DropdownSession {
+    return {
+      id,
+      title,
+      directory: "/p",
+      time: { created, ...(updated !== undefined ? { updated } : {}) },
+      ...(ownerTag ? { amicode_owner: ownerTag } : {}),
+    } as DropdownSession
+  }
+
+  const local = (id: string, title: string, created: number, updated?: number) =>
+    mk(id, title, created, updated)
+  const remote = (id: string, title: string, created: number, owner: string, updated?: number) =>
+    mk(id, title, created, updated, { owner_machine_id: owner, owner_name: owner, is_local: false })
+
+  describe("recent mode", () => {
+    test("sorts by updated desc, falls back to created when no updated", () => {
+      const sessions = [local("a", "A", 100), local("b", "B", 300), local("c", "C", 200)]
+      const result = sortDropdownSessions(sessions, "recent")
+      expect(result.map((s) => s.id)).toEqual(["b", "c", "a"])
+    })
+
+    test("prefers updated over created when both present", () => {
+      const sessions = [local("a", "A", 100, 500), local("b", "B", 600, 200)]
+      const result = sortDropdownSessions(sessions, "recent")
+      expect(result.map((s) => s.id)).toEqual(["a", "b"])
+    })
+
+    test("tie-breaks by id ascending", () => {
+      const sessions = [local("z", "Z", 100), local("a", "A", 100)]
+      const result = sortDropdownSessions(sessions, "recent")
+      expect(result.map((s) => s.id)).toEqual(["a", "z"])
+    })
+  })
+
+  describe("alpha mode", () => {
+    test("sorts by title case-insensitive ascending", () => {
+      const sessions = [local("1", "Zebra", 300), local("2", "alpha", 100), local("3", "Middle", 200)]
+      const result = sortDropdownSessions(sessions, "alpha")
+      expect(result.map((s) => s.id)).toEqual(["2", "3", "1"])
+    })
+
+    test("tie-breaks by recency desc", () => {
+      const sessions = [local("a", "Same", 100), local("b", "Same", 300)]
+      const result = sortDropdownSessions(sessions, "alpha")
+      expect(result.map((s) => s.id)).toEqual(["b", "a"])
+    })
+
+    test("falls back to id when title is missing", () => {
+      const noTitle = { id: "zzz", directory: "/p", time: { created: 100 } } as DropdownSession
+      const withTitle = local("aaa", "Beta", 200)
+      const result = sortDropdownSessions([noTitle, withTitle], "alpha")
+      // "Beta" < "zzz"
+      expect(result.map((s) => s.id)).toEqual(["aaa", "zzz"])
+    })
+  })
+
+  describe("machine mode", () => {
+    test("local/unowned sessions come first, then by owner_name asc", () => {
+      const sessions = [
+        remote("r1", "R1", 300, "Studio"),
+        local("l1", "L1", 100),
+        remote("r2", "R2", 200, "Box"),
+      ]
+      const result = sortDropdownSessions(sessions, "machine")
+      expect(result.map((s) => s.id)).toEqual(["l1", "r2", "r1"])
+    })
+
+    test("tie-breaks by recency within the same machine", () => {
+      const sessions = [
+        remote("r1", "R1", 100, "Box"),
+        remote("r2", "R2", 300, "Box"),
+      ]
+      const result = sortDropdownSessions(sessions, "machine")
+      expect(result.map((s) => s.id)).toEqual(["r2", "r1"])
+    })
+
+    test("sessions with is_local=true are treated as local", () => {
+      const localTagged = mk("l", "L", 100, undefined, { owner_machine_id: "me", owner_name: "Me", is_local: true })
+      const remoteTagged = remote("r", "R", 200, "Peer")
+      const result = sortDropdownSessions([remoteTagged, localTagged], "machine")
+      expect(result[0].id).toBe("l")
+      expect(result[1].id).toBe("r")
+    })
+  })
+
+  test("never mutates the input array", () => {
+    const sessions = [local("b", "B", 100), local("a", "A", 200)]
+    const original = [...sessions]
+    sortDropdownSessions(sessions, "alpha")
+    expect(sessions.map((s) => s.id)).toEqual(original.map((s) => s.id))
+  })
+
+  test("returns empty array for empty input", () => {
+    expect(sortDropdownSessions([], "recent")).toEqual([])
+    expect(sortDropdownSessions([], "alpha")).toEqual([])
+    expect(sortDropdownSessions([], "machine")).toEqual([])
+  })
+})
+
 describe("#1544 write affordances gated on control held", () => {
   test("local + interactive → control held → writes enabled", () => {
     expect(isControlHeld(ctrl({ controlState: "local", reason: null, eligibility: "none" }))).toBe(true)
@@ -419,14 +531,15 @@ describe("#1562 groupSessionsByOwner — local first, then a labeled group per p
   })
 })
 
-// The dropdown consumes the pure grouping and renders peer rows UNDER a labeled
-// machine group — not recency-merged into the local list. Source-assertion (the
-// component's SolidJS wiring), following the repo's component-source pattern.
-describe("#1562 the dropdown renders peer rows in a labeled machine group", () => {
+// #1599: the dropdown now renders a FLAT list with per-row machine badges
+// (no per-machine group headers). Source-assertion confirms the old grouping
+// code was removed and the sort utility is wired in.
+describe("#1599 the dropdown renders a flat sorted list (no machine group headers)", () => {
   const headerSource = readFileSync(resolve(__dirname, "session-header.tsx"), "utf8")
-  test("the dropdown groups by owner via groupSessionsByOwner and renders a per-machine label", () => {
-    expect(headerSource).toContain("groupSessionsByOwner(")
-    expect(headerSource).toContain('data-slot="session-group-label"')
+  test("the dropdown uses sortDropdownSessions and does NOT group by owner", () => {
+    expect(headerSource).toContain("sortDropdownSessions(")
+    expect(headerSource).not.toContain("groupSessionsByOwner(")
+    expect(headerSource).not.toContain('data-slot="session-group-label"')
   })
 })
 

@@ -237,12 +237,16 @@ describe.skipIf(!SSH_READY.ready)(
       attachmentFile = join(root, "attachment.json");
 
       // Save and override env vars so the resolver reads OUR temp pointer files
-      for (const k of ["AMICO_FLEET_HUB_FILE", "AMICO_FLEET_KEEPER_FILE", "AMICO_FLEET_ATTACHMENT_FILE"]) {
+      // and the session multiplexer is OFF — this suite tests the pre-multiplexer
+      // single-attachment-pointer routing path (the multiplexer resolves bare
+      // /session requests locally, which 503s with no local engine configured).
+      for (const k of ["AMICO_FLEET_HUB_FILE", "AMICO_FLEET_KEEPER_FILE", "AMICO_FLEET_ATTACHMENT_FILE", "AMICO_FLEET_MULTIPLEX"]) {
         savedEnv[k] = process.env[k];
       }
       process.env.AMICO_FLEET_HUB_FILE = hubFile;
       process.env.AMICO_FLEET_KEEPER_FILE = keeperFile;
       process.env.AMICO_FLEET_ATTACHMENT_FILE = attachmentFile;
+      process.env.AMICO_FLEET_MULTIPLEX = "0";
 
       // Start the two mock engines on distinct ports
       peer = await startMockEngine(PEER_MARKER, HUB_PASSWORD);

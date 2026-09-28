@@ -58,9 +58,9 @@ import {
   findSessionControlInProjection,
   findSessionOwnerInProjection,
   remoteDeleteAction,
-  groupSessionsByOwner,
+  sortDropdownSessions,
   type DropdownSession,
-  type SessionGroup,
+  type SortMode,
 } from "./session-fleet-peers"
 
 // AMICODE #1551 (DEFECT 2): the self-owned Enable-control affordance no longer
@@ -899,7 +899,58 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
   const [archivedHasMore, setArchivedHasMore] = createSignal(true)
   const ARCHIVED_PAGE_SIZE = 20
 
+  // --- Sort mode (amicode#1599 part C) ---
+  const [sortMode, setSortMode] = createSignal<SortMode>(
+    (() => {
+      try {
+        const stored = localStorage.getItem("amicode:sessions-dropdown-sort")
+        if (stored === "recent" || stored === "alpha" || stored === "machine") return stored
+      } catch { /* localStorage unavailable */ }
+      return "recent"
+    })(),
+  )
+  createEffect(() => {
+    try { localStorage.setItem("amicode:sessions-dropdown-sort", sortMode()) } catch { /* best-effort */ }
+  })
+
+  // --- Active tab pagination (amicode#1599 part B) ---
+  const ACTIVE_PAGE_SIZE = 50
+  const [activeLimit, setActiveLimit] = createSignal(ACTIVE_PAGE_SIZE)
+  const [loadingMore, setLoadingMore] = createSignal(false)
+
   let flyoutRoot: HTMLDivElement | undefined
+  let triggerRef: HTMLButtonElement | undefined
+  let scrollContainerRef: HTMLDivElement | undefined
+
+  /** Save scrollTop and restore it on the next animation frame.
+   *  Call before any action that triggers a reactive list rebuild
+   *  (archive / delete / unarchive) to prevent the scroll container
+   *  from jumping to the top when <For> diffs the updated array. */
+  function restoreScrollAfter<T>(fn: () => Promise<T>): Promise<T> {
+    const saved = scrollContainerRef?.scrollTop ?? 0
+    return fn().finally(() => {
+      requestAnimationFrame(() => {
+        if (scrollContainerRef) scrollContainerRef.scrollTop = saved
+      })
+    })
+  }
+
+  // --- Cached flyout position (amicode#1599 part A) ---
+  const [flyoutPos, setFlyoutPos] = createSignal<{ top: number; right: number }>({ top: 0, right: 0 })
+  const recomputePos = () => {
+    if (!triggerRef) return
+    const rect = triggerRef.getBoundingClientRect()
+    setFlyoutPos({
+      top: rect.bottom + 8,
+      right: document.documentElement.clientWidth - rect.right,
+    })
+  }
+  createEffect(() => {
+    if (!open()) return
+    recomputePos()
+    window.addEventListener("resize", recomputePos)
+    onCleanup(() => window.removeEventListener("resize", recomputePos))
+  })
 
   const currentSessionID = createMemo(() => props.currentSessionID)
 
@@ -968,7 +1019,7 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
     }
   })
 
-  // Sort: open-tab sessions first
+  // Sort: open-tab sessions first, each partition sorted by the active mode.
   const sortedActiveSessions = createMemo(() => {
     if (!open()) return []
     const all = activeSessionsWithPeers()
@@ -981,8 +1032,15 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
         rest.push(session)
       }
     }
-    return [...openTabs, ...rest]
+    const mode = sortMode()
+    return [
+      ...sortDropdownSessions(openTabs as DropdownSession[], mode),
+      ...sortDropdownSessions(rest as DropdownSession[], mode),
+    ]
   })
+
+  // Heuristic: if we loaded exactly the cap, there are probably more.
+  const hasMoreActive = createMemo(() => activeSessions().length >= activeLimit())
 
   // Search filtering
   const searchQuery = createMemo(() => search().trim().toLowerCase())
@@ -994,16 +1052,6 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
       const title = sessionTitle(session.title) || session.id
       return title.toLowerCase().includes(q)
     })
-  })
-  // #1562-followup (Slice C): a peer's sessions were recency-merged into the
-  // local list, so one Studio session sat at the bottom under ~100 local ones
-  // (effectively invisible). Group by owner machine for display — local /
-  // unowned first (unlabeled), then a labeled group per peer machine. The flat
-  // filtered list still drives search + the empty-state; this is presentation
-  // only (read-only; local-row behavior byte-unchanged).
-  const groupedActiveSessions = createMemo<SessionGroup[]>(() => {
-    if (!open()) return []
-    return groupSessionsByOwner(filteredActiveSessions())
   })
   const filteredArchivedSessions = createMemo(() => {
     const q = searchQuery()
@@ -1054,21 +1102,23 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
   async function archiveSession(session: Session) {
     const ctx = getServerCtx()
     if (!ctx) return
-    try {
-      await (ctx.sdk.client.session.update as Function)({
-        sessionID: session.id,
-        directory: session.directory,
-        time: { archived: Date.now() },
-      })
-      setArchivedSessions((prev) => [session, ...prev])
-      // Reload active sessions for this session's directory
-      await serverSync().project.loadSessions(session.directory, { limit: 64 })
-    } catch (cause) {
-      showToast({
-        title: language.t("common.requestFailed"),
-        description: String(cause),
-      })
-    }
+    await restoreScrollAfter(async () => {
+      try {
+        await (ctx.sdk.client.session.update as Function)({
+          sessionID: session.id,
+          directory: session.directory,
+          time: { archived: Date.now() },
+        })
+        setArchivedSessions((prev) => [session, ...prev])
+        // Reload active sessions for this session's directory
+        await serverSync().project.loadSessions(session.directory, { limit: 64 })
+      } catch (cause) {
+        showToast({
+          title: language.t("common.requestFailed"),
+          description: String(cause),
+        })
+      }
+    })
   }
 
   // #1544 (slice 4): owner-routed remote DELETE of a peer session. This is the
@@ -1084,58 +1134,65 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
   async function remoteDeleteSession(session: DropdownSession) {
     const action = remoteDeleteAction(session)
     if (!action.allowed || !action.request) return
+    const { sessionID, directory } = action.request
     const ctx = getServerCtx()
     if (!ctx) return
-    try {
-      // Owner-routed: same SDK delete surface; the write plane routes the
-      // non-GET to action.request.ownerMachineId by pathname.
-      await (ctx.sdk.client.session.delete as Function)({
-        sessionID: action.request.sessionID,
-        directory: action.request.directory,
-      })
-    } catch (cause) {
-      showToast({
-        title: language.t("session.delete.failed.title"),
-        description: String(cause),
-      })
-    }
+    await restoreScrollAfter(async () => {
+      try {
+        // Owner-routed: same SDK delete surface; the write plane routes the
+        // non-GET to action.request.ownerMachineId by pathname.
+        await (ctx.sdk.client.session.delete as Function)({
+          sessionID,
+          directory,
+        })
+      } catch (cause) {
+        showToast({
+          title: language.t("session.delete.failed.title"),
+          description: String(cause),
+        })
+      }
+    })
   }
 
   async function unarchiveSession(session: Session) {
     const ctx = getServerCtx()
     if (!ctx) return
-    try {
-      await (ctx.sdk.client.session.update as Function)({
-        sessionID: session.id,
-        directory: session.directory,
-        time: { archived: null },
-      })
-      setArchivedSessions((prev) => prev.filter((s) => s.id !== session.id))
-      await serverSync().project.loadSessions(session.directory, { limit: 64 })
-    } catch (cause) {
-      showToast({
-        title: language.t("common.requestFailed"),
-        description: String(cause),
-      })
-    }
+    await restoreScrollAfter(async () => {
+      try {
+        await (ctx.sdk.client.session.update as Function)({
+          sessionID: session.id,
+          directory: session.directory,
+          time: { archived: null },
+        })
+        setArchivedSessions((prev) => prev.filter((s) => s.id !== session.id))
+        await serverSync().project.loadSessions(session.directory, { limit: 64 })
+      } catch (cause) {
+        showToast({
+          title: language.t("common.requestFailed"),
+          description: String(cause),
+        })
+      }
+    })
   }
 
   // amicode#255: permanently delete an archived session (inline confirm in row).
   async function deleteArchivedSession(session: Session) {
     const ctx = getServerCtx()
     if (!ctx) return
-    try {
-      await (ctx.sdk.client.session.delete as Function)({
-        sessionID: session.id,
-        directory: session.directory,
-      })
-      setArchivedSessions((prev) => prev.filter((s) => s.id !== session.id))
-    } catch (cause) {
-      showToast({
-        title: language.t("session.delete.failed.title"),
-        description: String(cause),
-      })
-    }
+    await restoreScrollAfter(async () => {
+      try {
+        await (ctx.sdk.client.session.delete as Function)({
+          sessionID: session.id,
+          directory: session.directory,
+        })
+        setArchivedSessions((prev) => prev.filter((s) => s.id !== session.id))
+      } catch (cause) {
+        showToast({
+          title: language.t("session.delete.failed.title"),
+          description: String(cause),
+        })
+      }
+    })
   }
 
   async function openSession(session: Session) {
@@ -1224,8 +1281,6 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
     onCleanup(() => clearTimeout(timer))
   })
 
-  let triggerRef: HTMLButtonElement | undefined
-
   return (
     <>
       <TooltipV2 placement="bottom" value="Sessions" class="shrink-0">
@@ -1249,8 +1304,8 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
             aria-label={language.t("sidebar.project.recentSessions")}
             style={{
               position: "fixed",
-              top: `${(triggerRef?.getBoundingClientRect().bottom ?? 0) + 8}px`,
-              right: `${document.documentElement.clientWidth - (triggerRef?.getBoundingClientRect().right ?? 0)}px`,
+              top: `${flyoutPos().top}px`,
+              right: `${flyoutPos().right}px`,
               "z-index": "9999",
               width: "min(440px, 88vw)",
               "max-height": "min(70vh, 680px)",
@@ -1318,6 +1373,23 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
               </button>
               <div class="flex-1" />
               <Show when={flyoutTab() === "active"}>
+                <div class="flex items-center gap-0.5">
+                  <For each={["recent", "alpha", "machine"] as const}>
+                    {(mode) => (
+                      <button
+                        type="button"
+                        class="rounded-md px-2 py-1 text-[10px] font-semibold border-none cursor-pointer transition-colors"
+                        style={{
+                          background: sortMode() === mode ? "var(--v2-background-bg-layer-02)" : "transparent",
+                          color: sortMode() === mode ? "var(--v2-text-text-base)" : "var(--v2-text-text-muted)",
+                        }}
+                        onClick={() => setSortMode(mode)}
+                      >
+                        {mode === "recent" ? "Recent" : mode === "alpha" ? "A\u2013Z" : "Machine"}
+                      </button>
+                    )}
+                  </For>
+                </div>
                 <IconButtonV2
                   variant="ghost-muted"
                   size="large"
@@ -1330,7 +1402,7 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
             </div>
 
             {/* Tab content */}
-            <div class="min-h-0 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            <div ref={scrollContainerRef} class="min-h-0 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
               <Show when={flyoutTab() === "active"}>
                 <Show
                   when={filteredActiveSessions().length > 0}
@@ -1341,38 +1413,45 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
                   }
                 >
                   <div class="flex min-w-0 flex-col gap-px">
-                    <For each={groupedActiveSessions()}>
-                      {(group) => (
-                        <Show when={group.sessions.length > 0}>
-                          {/* #1562 (Slice C): a peer machine's rows sit under a
-                              labeled group header; the local / unowned group
-                              (machineId null) renders headerless, byte-unchanged. */}
-                          <Show when={group.machineId !== null}>
-                            <div
-                              data-slot="session-group-label"
-                              data-machine-id={group.machineId ?? undefined}
-                              class="flex min-w-0 items-center gap-1 px-1.5 pt-2 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-v2-text-text-faint"
-                            >
-                              <IconV2 name="monitor" class="shrink-0 opacity-70" />
-                              <span class="overflow-hidden text-ellipsis whitespace-nowrap">{group.label}</span>
-                            </div>
-                          </Show>
-                          <For each={group.sessions}>
-                            {(session) => (
-                              <SessionDropdownRow
-                                session={session}
-                                isOpenTab={sessionHasOpenTab(tabs.store, server.key, session)}
-                                isCurrent={session.id === currentSessionID()}
-                                onOpen={openSession}
-                                onArchive={archiveSession}
-                                onRemoteDelete={remoteDeleteSession}
-                              />
-                            )}
-                          </For>
-                        </Show>
+                    <For each={filteredActiveSessions()}>
+                      {(session) => (
+                        <SessionDropdownRow
+                          session={session}
+                          isOpenTab={sessionHasOpenTab(tabs.store, server.key, session)}
+                          isCurrent={session.id === currentSessionID()}
+                          onOpen={openSession}
+                          onArchive={archiveSession}
+                          onRemoteDelete={remoteDeleteSession}
+                        />
                       )}
                     </For>
                   </div>
+                  <Show when={hasMoreActive() && !searchQuery()}>
+                    <button
+                      type="button"
+                      class="mt-2 w-full text-center text-[12px] text-v2-text-text-muted cursor-pointer border-none bg-transparent hover:text-v2-text-text-base"
+                      onClick={() => {
+                        setLoadingMore(true)
+                        const newLimit = activeLimit() + ACTIVE_PAGE_SIZE
+                        setActiveLimit(newLimit)
+                        const conn = server.current
+                        if (conn) {
+                          const ctx = globalCtx.ensureServerCtx(conn)
+                          if (ctx) {
+                            const dirs = sessionListDirectories(ctx.projects.list(), ctx.sync.data?.project ?? [])
+                            void Promise.all(
+                              dirs.map((dir) => ctx.sync.project.loadSessions(dir, { limit: newLimit })),
+                            ).finally(() => setLoadingMore(false))
+                            return
+                          }
+                        }
+                        setLoadingMore(false)
+                      }}
+                      disabled={loadingMore()}
+                    >
+                      {loadingMore() ? language.t("common.loading") : "Show more"}
+                    </button>
+                  </Show>
                 </Show>
               </Show>
               <Show when={flyoutTab() === "archived"}>
