@@ -1,65 +1,49 @@
-// stop_server.test.ts — #1149: Stop-server command tests.
-// Covers: stop with no turns, stop with turns (confirm + cancel),
-// and the handshake deletion invariant.
-import { describe, it, expect, vi, beforeEach } from "vitest";
+// stop_server.test.ts — #1149 / #1598: Stop-server command tests.
+// The deliberate kill: stop() → deleteHandshake(), with NO confirmation.
+// (#1598 removed the in-flight-turns warning: its only predicate was SSE
+// stream liveness, true whenever the engine is healthy, so it nagged on
+// essentially every stop. A deliberate toggle needs no prompt.)
+import { describe, it, expect, vi } from "vitest";
 import { stopServer, type StopServerDeps } from "../src/stop_server";
 
 function makeDeps(overrides?: Partial<StopServerDeps>): StopServerDeps {
   return {
-    hasInFlightTurns: () => false,
-    showWarning: vi.fn().mockResolvedValue(undefined),
     stop: vi.fn().mockResolvedValue(undefined),
     deleteHandshake: vi.fn(),
     ...overrides,
   };
 }
 
-describe("stopServer (#1149)", () => {
-  it("stops and deletes handshake when no in-flight turns", async () => {
+describe("stopServer (#1149, #1598)", () => {
+  it("stops and deletes the handshake with no confirmation", async () => {
     const deps = makeDeps();
     await stopServer(deps);
 
-    expect(deps.showWarning).not.toHaveBeenCalled();
     expect(deps.stop).toHaveBeenCalledTimes(1);
     expect(deps.deleteHandshake).toHaveBeenCalledTimes(1);
   });
 
-  it("warns and stops when in-flight turns exist and user confirms", async () => {
+  it("deletes the handshake AFTER the kill (no stale record survives)", async () => {
+    const order: string[] = [];
     const deps = makeDeps({
-      hasInFlightTurns: () => true,
-      showWarning: vi.fn().mockResolvedValue("Stop"),
+      stop: vi.fn().mockImplementation(async () => {
+        order.push("stop");
+      }),
+      deleteHandshake: vi.fn().mockImplementation(() => {
+        order.push("deleteHandshake");
+      }),
     });
     await stopServer(deps);
 
-    expect(deps.showWarning).toHaveBeenCalledTimes(1);
-    // Verify the warning message mentions in-flight turns
-    const msg = (deps.showWarning as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
-    expect(msg).toMatch(/in.flight/i);
-    expect(deps.stop).toHaveBeenCalledTimes(1);
-    expect(deps.deleteHandshake).toHaveBeenCalledTimes(1);
+    expect(order).toEqual(["stop", "deleteHandshake"]);
   });
 
-  it("does NOT stop when in-flight turns exist and user cancels", async () => {
+  it("propagates a stop() rejection without deleting the handshake", async () => {
     const deps = makeDeps({
-      hasInFlightTurns: () => true,
-      showWarning: vi.fn().mockResolvedValue("Cancel"),
+      stop: vi.fn().mockRejectedValue(new Error("kill failed")),
     });
-    await stopServer(deps);
 
-    expect(deps.showWarning).toHaveBeenCalledTimes(1);
-    expect(deps.stop).not.toHaveBeenCalled();
-    expect(deps.deleteHandshake).not.toHaveBeenCalled();
-  });
-
-  it("does NOT stop when in-flight turns exist and user dismisses", async () => {
-    const deps = makeDeps({
-      hasInFlightTurns: () => true,
-      showWarning: vi.fn().mockResolvedValue(undefined), // dismissed
-    });
-    await stopServer(deps);
-
-    expect(deps.showWarning).toHaveBeenCalledTimes(1);
-    expect(deps.stop).not.toHaveBeenCalled();
+    await expect(stopServer(deps)).rejects.toThrow("kill failed");
     expect(deps.deleteHandshake).not.toHaveBeenCalled();
   });
 });

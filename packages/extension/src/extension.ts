@@ -3131,16 +3131,11 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       }
     }),
     // #1149 (ADR 0020): Stop server — the deliberate kill alongside Restart.
-    // Gated on in-flight turns (warns first). Always clears the handshake
-    // (#1144's primitive) so no stale record survives the kill.
+    // #1598: the deliberate kill — no confirmation (a toggle IS the intent).
+    // Always clears the handshake (#1144's primitive) so no stale record
+    // survives the kill.
     vscode.commands.registerCommand("amicode.stopServer", () =>
       void stopServer({
-        // In-flight turn detection: wired to the SSE event stream's liveness
-        // state. A "live" stream means the server is actively communicating;
-        // more granular per-session turn tracking is a future refinement.
-        hasInFlightTurns: () => sseClient?.sseState === "live",
-        showWarning: (msg, ...items) =>
-          vscode.window.showWarningMessage(msg, ...items) as Promise<string | undefined>,
         stop: async () => {
           await serverManager?.stop();
           statusBar?.setServerReady(false);

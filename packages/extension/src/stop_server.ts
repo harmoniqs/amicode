@@ -1,20 +1,20 @@
-// stop-server command (#1149, ADR 0020)
+// stop-server command (#1149, ADR 0020; #1598)
 //
 // A deliberate kill for the surviving server — alongside Restart, the two
-// DELIBERATE kills. Gated on in-flight turns: when active chat turns exist,
-// the command warns with "Stop" / "Cancel" before proceeding.
+// DELIBERATE kills. Runs directly, with NO confirmation: toggling the engine
+// off (the "amicode" status row) or the "Amicode: Stop server" palette entry
+// IS the intent, and Restart (toggle on) is symmetric — no prompt either.
 //
-// On confirm (or no turns): stop() → deleteHandshake().
-// deleteHandshake uses #1144's primitive — the handshake record is always
-// cleared so no stale record survives the kill.
+// (History: #1149 gated this on an in-flight-turns warning, but the only
+// available predicate was SSE stream liveness, which is true whenever the
+// engine is healthy — so it fired on essentially every stop, idle or not.
+// A deliberate toggle needs no nag; the guard was removed in #1598.)
+//
+// stop() → deleteHandshake(). deleteHandshake uses #1144's primitive — the
+// handshake record is always cleared so no stale record survives the kill.
 
-/** Dependencies injected for testability — every live check is a seam. */
+/** Dependencies injected for testability — every live seam is mockable. */
 export interface StopServerDeps {
-  /** Returns true when any chat session has an in-flight LLM turn. */
-  hasInFlightTurns: () => boolean;
-  /** Show a warning with "Stop" and "Cancel" options. Returns the picked label
-   *  or undefined (dismissed). */
-  showWarning: (message: string, ...items: string[]) => Promise<string | undefined>;
   /** Kill the server process (ServerManager.stop). */
   stop: () => Promise<void>;
   /** Delete the handshake record (#1144's primitive). */
@@ -22,21 +22,11 @@ export interface StopServerDeps {
 }
 
 /**
- * Stop the surviving server — the deliberate kill.
- *
- * When in-flight turns exist, warns first. On confirm (or no turns):
- * stop() → deleteHandshake(). On cancel/dismiss: no-op.
+ * Stop the surviving server — the deliberate kill. No confirmation:
+ * stop() → deleteHandshake(). The handshake is cleared AFTER the kill so no
+ * stale record survives.
  */
 export async function stopServer(deps: StopServerDeps): Promise<void> {
-  if (deps.hasInFlightTurns()) {
-    const choice = await deps.showWarning(
-      "Amicode: there are in-flight turns. Stop the server anyway?",
-      "Stop",
-      "Cancel",
-    );
-    if (choice !== "Stop") return;
-  }
-
   await deps.stop();
   deps.deleteHandshake();
 }
