@@ -10,6 +10,7 @@ import { showToast } from "@/utils/toast"
 import { Tooltip, TooltipKeybind } from "@opencode-ai/ui/tooltip"
 
 import { ButtonV2 } from "@opencode-ai/ui/v2/button-v2"
+import { MenuV2 } from "@opencode-ai/ui/v2/menu-v2"
 import { getFilename } from "@opencode-ai/core/util/path"
 import { batch, createEffect, createMemo, createResource, createRoot, createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js"
 import { createStore } from "solid-js/store"
@@ -1373,23 +1374,26 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
               </button>
               <div class="flex-1" />
               <Show when={flyoutTab() === "active"}>
-                <div class="flex items-center gap-0.5">
-                  <For each={["recent", "alpha", "machine"] as const}>
-                    {(mode) => (
-                      <button
-                        type="button"
-                        class="rounded-md px-2 py-1 text-[10px] font-semibold border-none cursor-pointer transition-colors"
-                        style={{
-                          background: sortMode() === mode ? "var(--v2-background-bg-layer-02)" : "transparent",
-                          color: sortMode() === mode ? "var(--v2-text-text-base)" : "var(--v2-text-text-muted)",
-                        }}
-                        onClick={() => setSortMode(mode)}
-                      >
-                        {mode === "recent" ? "Recent" : mode === "alpha" ? "A\u2013Z" : "Machine"}
-                      </button>
-                    )}
-                  </For>
-                </div>
+                <MenuV2 gutter={4} placement="bottom-end">
+                  <MenuV2.Trigger
+                    as={ButtonV2}
+                    variant="ghost-muted"
+                    size="small"
+                    class="!gap-1 !px-2 !py-1 !text-[10px] !font-semibold"
+                  >
+                    Sort by
+                    <IconV2 name="chevron-down" size="small" />
+                  </MenuV2.Trigger>
+                  <MenuV2.Portal>
+                    <MenuV2.Content style={{ "min-width": "140px" }}>
+                      <MenuV2.RadioGroup value={sortMode()} onChange={(v) => setSortMode(v as SortMode)}>
+                        <MenuV2.RadioItem value="recent">Recent</MenuV2.RadioItem>
+                        <MenuV2.RadioItem value="alpha">A–Z</MenuV2.RadioItem>
+                        <MenuV2.RadioItem value="machine">Machine</MenuV2.RadioItem>
+                      </MenuV2.RadioGroup>
+                    </MenuV2.Content>
+                  </MenuV2.Portal>
+                </MenuV2>
                 <IconButtonV2
                   variant="ghost-muted"
                   size="large"
