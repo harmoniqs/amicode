@@ -28,12 +28,10 @@
 // reason — never a fake pass, never a hard failure on a machine without
 // loopback SSH.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { execFileSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import {
-  existsSync,
   mkdtempSync,
-  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -71,8 +69,10 @@ import {
   nodeHarnessFs,
   nodeProcessInspector,
   nodeSignalSink,
+  probeSshReadiness,
   registeringSpawn,
   runPreflightSweepOnce,
+  sshProbeBaseArgs,
 } from "./support/ssh_test_harness";
 
 // #1634: STOP THE LEAK. Sweep the previous run's orphaned forwards + stale
@@ -370,90 +370,17 @@ function pickFreeLoopbackPort(): Promise<number> {
 // faked pass.
 const AUTHORIZED_KEYS_PATH = join(homedir(), ".ssh", "authorized_keys");
 
-interface SshReadiness {
-  ready: boolean;
-  reason?: string;
-  /** Extra ssh argv this suite's forwards must pass to authenticate: empty
-   *  for the zero-mutation path; -i <throwaway key> + IdentitiesOnly for
-   *  the fallback path. */
-  identityArgs: string[];
-  /** Present ONLY when a throwaway key was installed to reach `ready` — the
-   *  describe block's own afterAll uses this to remove EXACTLY that
-   *  mutation, byte-for-byte, every run. */
-  throwaway?: { keyDir: string; originalAuthorizedKeys: string };
-}
-
-function sshProbeBaseArgs(): string[] {
-  return [
-    "-F", "/dev/null", // never consult (or depend on) the user's real ~/.ssh/config
-    "-o", "BatchMode=yes", // never prompt — an outcome, not a hang
-    "-o", "ConnectTimeout=3",
-    "-o", "StrictHostKeyChecking=no", // a throwaway loopback hop; nothing security-sensitive rides this
-    "-o", "UserKnownHostsFile=/dev/null", // never touch the user's real known_hosts
-  ];
-}
-
-function canConnectLoopback(identityArgs: readonly string[]): boolean {
-  try {
-    execFileSync("ssh", [...sshProbeBaseArgs(), ...identityArgs, "127.0.0.1", "true"], {
-      stdio: "ignore",
-      timeout: 5000,
-    });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-const SSH_READY: SshReadiness = (() => {
-  if (canConnectLoopback([])) {
-    return { ready: true, identityArgs: [] }; // the simpler, zero-mutation path — prefer it
-  }
-  let tmpDir: string | undefined;
-  let originalAuthorizedKeys: string | undefined;
-  try {
-    tmpDir = mkdtempSync(join(tmpdir(), "amicode-attach-sshkey-"));
-    const keyPath = join(tmpDir, "id_attach_test");
-    execFileSync(
-      "ssh-keygen",
-      ["-t", "ed25519", "-N", "", "-C", `amicode-attachment-transport-test-${process.pid}`, "-f", keyPath],
-      { stdio: "ignore", timeout: 10_000 },
-    );
-    const pubKey = readFileSync(`${keyPath}.pub`, "utf8").trim();
-    originalAuthorizedKeys = existsSync(AUTHORIZED_KEYS_PATH) ? readFileSync(AUTHORIZED_KEYS_PATH, "utf8") : "";
-    const sep = originalAuthorizedKeys === "" || originalAuthorizedKeys.endsWith("\n") ? "" : "\n";
-    atomicWriteFileSync(AUTHORIZED_KEYS_PATH, `${originalAuthorizedKeys}${sep}${pubKey}\n`);
-    const identityArgs = ["-i", keyPath, "-o", "IdentitiesOnly=yes"];
-    if (canConnectLoopback(identityArgs)) {
-      return { ready: true, identityArgs, throwaway: { keyDir: tmpDir, originalAuthorizedKeys } };
-    }
-    // the freshly-installed key STILL didn't connect — roll back before
-    // reporting not-ready; leave zero trace.
-    atomicWriteFileSync(AUTHORIZED_KEYS_PATH, originalAuthorizedKeys);
-    rmSync(tmpDir, { recursive: true, force: true });
-    return {
-      ready: false,
-      identityArgs: [],
-      reason: "installed a throwaway key but the resulting connection still failed (sshd may disallow key auth, or PubkeyAuthentication is off)",
-    };
-  } catch (e) {
-    if (originalAuthorizedKeys !== undefined) {
-      try {
-        atomicWriteFileSync(AUTHORIZED_KEYS_PATH, originalAuthorizedKeys);
-      } catch {
-        /* best-effort rollback */
-      }
-    }
-    if (tmpDir) {
-      try {
-        rmSync(tmpDir, { recursive: true, force: true });
-      } catch {
-        /* best-effort */
-      }
-    }
-    return { ready: false, identityArgs: [], reason: `loopback ssh probe failed: ${e instanceof Error ? e.message : String(e)}` };
-  }
-})();
+// #1634 Slice 2: the probe logic lives in the shared harness
+// (probeSshReadiness) — this suite supplies only its per-suite key/marker
+// names. Behavior is byte-for-byte the pre-Slice-2 IIFE; NO in-suite SSH_READY
+// IIFE remains.
+const SSH_READY = probeSshReadiness({
+  keyDirPrefix: "amicode-attach-sshkey-",
+  keyFileName: "id_attach_test",
+  keyComment: `amicode-attachment-transport-test-${process.pid}`,
+  verifyFailedReason:
+    "installed a throwaway key but the resulting connection still failed (sshd may disallow key auth, or PubkeyAuthentication is off)",
+});
 
 if (!SSH_READY.ready) {
   // eslint-disable-next-line no-console

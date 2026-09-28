@@ -356,6 +356,9 @@ export function nodeSignalSink(): SignalSink {
 // bringUpSshAttachment exactly as before; they only pass a wrapping spawnFn.
 
 import { spawn as nodeSpawn } from "node:child_process";
+import { mkdtempSync as nodeMkdtempSync, rmSync as nodeRmSync } from "node:fs";
+import { tmpdir as nodeTmpdir } from "node:os";
+import { atomicWriteFileSync } from "../../src/amicode_service/credentials";
 
 let preflightRan = false;
 
@@ -408,4 +411,138 @@ export function registeringSpawn(inner: typeof nodeSpawn = nodeSpawn): typeof no
     return child;
   }) as unknown as typeof nodeSpawn;
   return wrapped;
+}
+
+// ── shared loopback-SSH readiness probe (#1634 Slice 2) ────────────────────
+//
+// The three real-SSH suites (fleet_peer_e2e, amicode_service_attachment_
+// transport, amicode_service_attach_switch_latency) each carried a near-
+// identical `SSH_READY` IIFE that, at module load, decides whether a loopback
+// sshd the current OS user can authenticate to is reachable — preferring a
+// ZERO-MUTATION path (the default identity already connects → `identityArgs:
+// []`, no throwaway key installed, no `-i` marker), and only otherwise
+// generating a THROWAWAY ed25519 key, atomically appending its public half to
+// ~/.ssh/authorized_keys, and verifying it connects (rolling back byte-for-
+// byte if it does not). Slice 2 de-duplicates that logic onto this one
+// function; the suites call it with a per-suite label + key-file names.
+//
+// Unlike the sweep/teardown above, this probe LEGITIMATELY touches the real
+// fs/ssh at module load (it must — readiness is a property of the machine),
+// so it is NOT injected-seam style. It uses the same node:fs / node:child_
+// process / atomicWriteFileSync surfaces the suites used inline before.
+
+/** The throwaway ed25519 key a probe installed to reach `ready` — present
+ *  ONLY on the fallback path. A suite's afterAll (and the crash-safe teardown)
+ *  uses this to remove EXACTLY that mutation, byte-for-byte, every run. */
+export interface Throwaway {
+  keyDir: string;
+  originalAuthorizedKeys: string;
+}
+
+/** The result of the loopback-SSH readiness probe. */
+export interface SshReadiness {
+  ready: boolean;
+  reason?: string;
+  /** Extra ssh argv a suite's forwards must pass to authenticate: empty for
+   *  the zero-mutation path; `-i <throwaway key> -o IdentitiesOnly=yes` for
+   *  the fallback path. */
+  identityArgs: string[];
+  /** Present ONLY when a throwaway key was installed to reach `ready`. */
+  throwaway?: Throwaway;
+}
+
+/** The per-suite parameters the shared probe threads into its otherwise
+ *  identical logic: the tmpdir prefix, the throwaway key filename, the
+ *  `ssh-keygen -C` comment (which MUST carry the `amicode-*-test-*` marker so
+ *  the authorized_keys sweep can strip it), and the reason string emitted when
+ *  a freshly-installed key still fails to connect. */
+export interface SshProbeParams {
+  keyDirPrefix: string;
+  keyFileName: string;
+  keyComment: string;
+  verifyFailedReason: string;
+}
+
+/** The ssh argv every probe/forward passes so it never consults (or depends
+ *  on) the user's real ~/.ssh/config, never prompts, and never touches the
+ *  user's real known_hosts. Exported so the suites' forwards reuse it verbatim
+ *  (they spread `[...sshProbeBaseArgs(), ...SSH_READY.identityArgs]`). */
+export function sshProbeBaseArgs(): string[] {
+  return [
+    "-F", "/dev/null", // never consult (or depend on) the user's real ~/.ssh/config
+    "-o", "BatchMode=yes", // never prompt — an outcome, not a hang
+    "-o", "ConnectTimeout=3",
+    "-o", "StrictHostKeyChecking=no", // a throwaway loopback hop; nothing security-sensitive rides this
+    "-o", "UserKnownHostsFile=/dev/null", // never touch the user's real known_hosts
+  ];
+}
+
+/** True iff `ssh <base args> <identityArgs> 127.0.0.1 true` succeeds — the one
+ *  question the readiness probe asks the machine. */
+export function canConnectLoopback(identityArgs: readonly string[]): boolean {
+  try {
+    execFileSync("ssh", [...sshProbeBaseArgs(), ...identityArgs, "127.0.0.1", "true"], {
+      stdio: "ignore",
+      timeout: 5000,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The shared, synchronous loopback-SSH readiness probe (#1634 Slice 2) — the
+ *  one implementation the three real-SSH suites now call in lieu of their own
+ *  `SSH_READY` IIFE. Behavior is byte-for-byte the pre-Slice-2 per-suite logic:
+ *  the zero-mutation path first (`identityArgs: []`), then a throwaway-key
+ *  fallback with byte-for-byte rollback on any failure, then the honest not-
+ *  ready result carrying a printed reason. The only per-suite variation is the
+ *  `SshProbeParams` (key-file names, marker comment, verify-failed reason). */
+export function probeSshReadiness(params: SshProbeParams): SshReadiness {
+  const authorizedKeysPath = defaultAuthorizedKeysPath();
+  if (canConnectLoopback([])) {
+    return { ready: true, identityArgs: [] }; // the simpler, zero-mutation path — prefer it
+  }
+  let tmpDir: string | undefined;
+  let originalAuthorizedKeys: string | undefined;
+  try {
+    tmpDir = nodeMkdtempSync(join(nodeTmpdir(), params.keyDirPrefix));
+    const keyPath = join(tmpDir, params.keyFileName);
+    execFileSync(
+      "ssh-keygen",
+      ["-t", "ed25519", "-N", "", "-C", params.keyComment, "-f", keyPath],
+      { stdio: "ignore", timeout: 10_000 },
+    );
+    const pubKey = nodeReadFileSync(`${keyPath}.pub`, "utf8").trim();
+    originalAuthorizedKeys = nodeExistsSync(authorizedKeysPath)
+      ? nodeReadFileSync(authorizedKeysPath, "utf8")
+      : "";
+    const sep = originalAuthorizedKeys === "" || originalAuthorizedKeys.endsWith("\n") ? "" : "\n";
+    atomicWriteFileSync(authorizedKeysPath, `${originalAuthorizedKeys}${sep}${pubKey}\n`);
+    const identityArgs = ["-i", keyPath, "-o", "IdentitiesOnly=yes"];
+    if (canConnectLoopback(identityArgs)) {
+      return { ready: true, identityArgs, throwaway: { keyDir: tmpDir, originalAuthorizedKeys } };
+    }
+    // the freshly-installed key STILL didn't connect — roll back before
+    // reporting not-ready; leave zero trace.
+    atomicWriteFileSync(authorizedKeysPath, originalAuthorizedKeys);
+    nodeRmSync(tmpDir, { recursive: true, force: true });
+    return { ready: false, identityArgs: [], reason: params.verifyFailedReason };
+  } catch (e) {
+    if (originalAuthorizedKeys !== undefined) {
+      try {
+        atomicWriteFileSync(authorizedKeysPath, originalAuthorizedKeys);
+      } catch {
+        /* best-effort rollback */
+      }
+    }
+    if (tmpDir) {
+      try {
+        nodeRmSync(tmpDir, { recursive: true, force: true });
+      } catch {
+        /* best-effort */
+      }
+    }
+    return { ready: false, identityArgs: [], reason: `loopback ssh probe failed: ${e instanceof Error ? e.message : String(e)}` };
+  }
 }

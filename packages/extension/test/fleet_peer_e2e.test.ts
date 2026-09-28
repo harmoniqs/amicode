@@ -16,8 +16,7 @@
 // as the Slice-3/Slice-4 harnesses: when no loopback sshd is reachable, the
 // suite `describe.skip`s — never a fabricated pass.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import * as http from "node:http";
 import { createServer as createNetServer, type AddressInfo } from "node:net";
 import { homedir, tmpdir, userInfo } from "node:os";
@@ -39,8 +38,10 @@ import {
   nodeHarnessFs,
   nodeProcessInspector,
   nodeSignalSink,
+  probeSshReadiness,
   registeringSpawn,
   runPreflightSweepOnce,
+  sshProbeBaseArgs,
 } from "./support/ssh_test_harness";
 
 // #1634: STOP THE LEAK. Before this suite's SSH_READY probe installs any
@@ -55,70 +56,17 @@ runPreflightSweepOnce();
 //    the current OS user can authenticate to: zero-mutation identity first,
 //    else a throwaway ed25519 key installed and verified (rolled back on every
 //    run). When NOT ready, the entire describe.skip's — never a fabricated pass.
+//    #1634 Slice 2: the probe logic itself lives in the shared harness
+//    (probeSshReadiness); this suite only supplies its per-suite key/marker
+//    names. NO in-suite SSH_READY IIFE remains.
 const AUTHORIZED_KEYS_PATH = join(homedir(), ".ssh", "authorized_keys");
 
-interface SshReadiness {
-  ready: boolean;
-  reason?: string;
-  identityArgs: string[];
-  throwaway?: { keyDir: string; originalAuthorizedKeys: string };
-}
-
-function sshProbeBaseArgs(): string[] {
-  return [
-    "-F", "/dev/null",
-    "-o", "BatchMode=yes",
-    "-o", "ConnectTimeout=3",
-    "-o", "StrictHostKeyChecking=no",
-    "-o", "UserKnownHostsFile=/dev/null",
-  ];
-}
-
-function canConnectLoopback(identityArgs: readonly string[]): boolean {
-  try {
-    execFileSync("ssh", [...sshProbeBaseArgs(), ...identityArgs, "127.0.0.1", "true"], {
-      stdio: "ignore",
-      timeout: 5000,
-    });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-const SSH_READY: SshReadiness = (() => {
-  if (canConnectLoopback([])) return { ready: true, identityArgs: [] };
-  let tmpDir: string | undefined;
-  let originalAuthorizedKeys: string | undefined;
-  try {
-    tmpDir = mkdtempSync(join(tmpdir(), "amicode-peer-e2e-sshkey-"));
-    const keyPath = join(tmpDir, "id_peer_e2e_test");
-    execFileSync(
-      "ssh-keygen",
-      ["-t", "ed25519", "-N", "", "-C", `amicode-peer-e2e-test-${process.pid}`, "-f", keyPath],
-      { stdio: "ignore", timeout: 10_000 },
-    );
-    const pubKey = readFileSync(`${keyPath}.pub`, "utf8").trim();
-    originalAuthorizedKeys = existsSync(AUTHORIZED_KEYS_PATH) ? readFileSync(AUTHORIZED_KEYS_PATH, "utf8") : "";
-    const sep = originalAuthorizedKeys === "" || originalAuthorizedKeys.endsWith("\n") ? "" : "\n";
-    atomicWriteFileSync(AUTHORIZED_KEYS_PATH, `${originalAuthorizedKeys}${sep}${pubKey}\n`);
-    const identityArgs = ["-i", keyPath, "-o", "IdentitiesOnly=yes"];
-    if (canConnectLoopback(identityArgs)) {
-      return { ready: true, identityArgs, throwaway: { keyDir: tmpDir, originalAuthorizedKeys } };
-    }
-    atomicWriteFileSync(AUTHORIZED_KEYS_PATH, originalAuthorizedKeys);
-    rmSync(tmpDir, { recursive: true, force: true });
-    return { ready: false, identityArgs: [], reason: "installed a throwaway key but the connection still failed" };
-  } catch (e) {
-    if (originalAuthorizedKeys !== undefined) {
-      try { atomicWriteFileSync(AUTHORIZED_KEYS_PATH, originalAuthorizedKeys); } catch { /* best-effort */ }
-    }
-    if (tmpDir) {
-      try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* best-effort */ }
-    }
-    return { ready: false, identityArgs: [], reason: `loopback ssh probe failed: ${e instanceof Error ? e.message : String(e)}` };
-  }
-})();
+const SSH_READY = probeSshReadiness({
+  keyDirPrefix: "amicode-peer-e2e-sshkey-",
+  keyFileName: "id_peer_e2e_test",
+  keyComment: `amicode-peer-e2e-test-${process.pid}`,
+  verifyFailedReason: "installed a throwaway key but the connection still failed",
+});
 
 if (!SSH_READY.ready) {
   // eslint-disable-next-line no-console
