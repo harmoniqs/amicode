@@ -708,16 +708,18 @@ export default function Page() {
   const chatTakesRemainder = createMemo(() =>
     sessionChatTakesRemainder({ newDesign: newSessionDesign(), columnVisible: isDesktop() && desktopV2PanelLayout().visible }),
   )
+
+  // #1434: Work Column maximize — collapse the Chat panel to give Preview
+  // full width. The pre-maximize column width is remembered for restore.
+  // Declared before workColumnWidth because it reads chatCollapsed().
+  const [chatCollapsed, setChatCollapsed] = createSignal(false)
+  const [preMaximizeWidth, setPreMaximizeWidth] = createSignal<number | undefined>(undefined)
+
   const workColumnWidth = createMemo(() => {
     // #1434: when Chat is collapsed, the Work Column fills the full row
     if (chatCollapsed()) return sessionPanelAvailable() ?? 900
     return clampWorkColumnWidth({ width: layout.panelColumn.width(), available: sessionPanelAvailable() })
   })
-
-  // #1434: Work Column maximize — collapse the Chat panel to give Preview
-  // full width. The pre-maximize column width is remembered for restore.
-  const [chatCollapsed, setChatCollapsed] = createSignal(false)
-  const [preMaximizeWidth, setPreMaximizeWidth] = createSignal<number | undefined>(undefined)
 
   const chatEffectivelyCollapsed = createMemo(() => {
     if (chatCollapsed()) return true
