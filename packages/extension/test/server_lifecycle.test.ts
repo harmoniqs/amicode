@@ -13,9 +13,11 @@ import {
   detectStaleEngine,
   surfaceStaleNotice,
   restartEngine,
+  sweepStrayEngines,
   type AdoptOrSpawnDeps,
   type StaleNoticeDeps,
   type RestartEngineDeps,
+  type SweepStrayEnginesDeps,
 } from "../src/server_lifecycle";
 
 // ============================================================================
@@ -451,5 +453,102 @@ describe("restartEngine — gated restart (#1148)", () => {
       coldSpawn: async () => { events.push("spawn"); },
     });
     expect(events.indexOf("delete")).toBeLessThan(events.indexOf("spawn"));
+  });
+});
+
+// ============================================================================
+// #1592: machine-wide stray-engine sweep — reap orphaned engines on ANY port
+// ============================================================================
+
+describe("sweepStrayEngines — per-machine invariant", () => {
+  function sweepDeps(overrides?: Partial<SweepStrayEnginesDeps>): SweepStrayEnginesDeps {
+    return {
+      keepPid: 100,
+      listOpencodeEngines: async () => [{ pid: 100, port: 4093 }],
+      hasLiveClient: async () => false,
+      killEngine: async () => true,
+      ...overrides,
+    };
+  }
+
+  it("reaps a stray engine on a DIFFERENT port with no live client (the bug)", async () => {
+    const killed: number[] = [];
+    const result = await sweepStrayEngines(sweepDeps({
+      keepPid: 100,
+      listOpencodeEngines: async () => [
+        { pid: 100, port: 4093 }, // the adopted/handshake engine
+        { pid: 200, port: 4094 }, // the orphan on a different port
+      ],
+      hasLiveClient: async () => false,
+      killEngine: async (pid) => { killed.push(pid); return true; },
+    }));
+    expect(killed).toEqual([200]);
+    expect(result.reaped).toEqual([200]);
+    expect(result.kept).toContain(100);
+  });
+
+  it("never reaps the handshake/adopted engine (keepPid)", async () => {
+    const killed: number[] = [];
+    await sweepStrayEngines(sweepDeps({
+      keepPid: 100,
+      listOpencodeEngines: async () => [{ pid: 100, port: 4093 }],
+      killEngine: async (pid) => { killed.push(pid); return true; },
+    }));
+    expect(killed).toEqual([]);
+  });
+
+  it("never reaps an engine that still has a live client (a real second workspace)", async () => {
+    const killed: number[] = [];
+    const result = await sweepStrayEngines(sweepDeps({
+      keepPid: 100,
+      listOpencodeEngines: async () => [
+        { pid: 100, port: 4093 },
+        { pid: 300, port: 4095 }, // another window's engine — client attached
+      ],
+      hasLiveClient: async (port) => port === 4095,
+      killEngine: async (pid) => { killed.push(pid); return true; },
+    }));
+    expect(killed).toEqual([]);
+    expect(result.kept).toContain(300);
+  });
+
+  it("is a no-op when only the adopted engine is running", async () => {
+    const killed: number[] = [];
+    const result = await sweepStrayEngines(sweepDeps({
+      keepPid: 100,
+      listOpencodeEngines: async () => [{ pid: 100, port: 4093 }],
+      killEngine: async (pid) => { killed.push(pid); return true; },
+    }));
+    expect(killed).toEqual([]);
+    expect(result.reaped).toEqual([]);
+  });
+
+  it("reaps multiple strays and records a kill that failed to confirm", async () => {
+    const result = await sweepStrayEngines(sweepDeps({
+      keepPid: 100,
+      listOpencodeEngines: async () => [
+        { pid: 100, port: 4093 },
+        { pid: 200, port: 4094 },
+        { pid: 201, port: 4096 },
+      ],
+      hasLiveClient: async () => false,
+      killEngine: async (pid) => pid !== 201, // 201 refuses to die
+    }));
+    expect(result.reaped.sort()).toEqual([200]);
+    expect(result.failed).toEqual([201]);
+  });
+
+  it("keeps every engine when keepPid is undefined but all have live clients", async () => {
+    const killed: number[] = [];
+    await sweepStrayEngines(sweepDeps({
+      keepPid: undefined,
+      listOpencodeEngines: async () => [
+        { pid: 200, port: 4094 },
+        { pid: 300, port: 4095 },
+      ],
+      hasLiveClient: async () => true,
+      killEngine: async (pid) => { killed.push(pid); return true; },
+    }));
+    expect(killed).toEqual([]);
   });
 });

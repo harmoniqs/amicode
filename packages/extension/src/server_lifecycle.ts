@@ -364,6 +364,135 @@ export async function probePortOccupant(
   return { occupied: true, isOurServer: isOpencodeServer(pid), pid };
 }
 
+// ============================================================================
+// Machine-wide stray-engine sweep (#1592)
+//
+// The adopt-or-spawn guard (#1145) and its orphan-reclaim (#1178) only ever
+// probe the CONFIGURED port. An engine on any OTHER port — a stale install, a
+// second workspace whose window died — is invisible to them, so it is neither
+// adopted nor reaped and squats forever (with its MCP child tree). This sweep
+// closes that gap: after adopt-or-spawn resolves, enumerate EVERY `opencode
+// serve` on the machine and reap the ones that are neither the engine we kept
+// nor still serving a live client. Every I/O boundary is an injected seam.
+// ============================================================================
+
+export interface StrayEngine {
+  pid: number;
+  port: number;
+}
+
+export interface SweepStrayEnginesDeps {
+  /** The engine PID to preserve — the one we adopted or cold-spawned. When
+   *  undefined (no handshake yet), only the live-client check protects an
+   *  engine from being reaped. */
+  keepPid: number | undefined;
+  /** Enumerate all `opencode serve` engines on the machine. */
+  listOpencodeEngines: () => Promise<StrayEngine[]>;
+  /** Does this engine's port still have an external client connected? A live
+   *  second workspace's engine must never be reaped. */
+  hasLiveClient: (port: number) => Promise<boolean>;
+  /** SIGTERM→SIGKILL the engine; returns whether it was confirmed dead. */
+  killEngine: (pid: number) => Promise<boolean>;
+  log?: (line: string) => void;
+}
+
+export interface SweepResult {
+  /** PIDs reaped (kill confirmed). */
+  reaped: number[];
+  /** PIDs preserved — the kept engine or engines with a live client. */
+  kept: number[];
+  /** PIDs we tried to reap but could not confirm dead. */
+  failed: number[];
+}
+
+/** Reap every `opencode serve` on the machine that is neither the engine we
+ *  kept (keepPid) nor still serving a live client. Pure decision logic over
+ *  injected seams — safe to unit-test without touching real processes. */
+export async function sweepStrayEngines(
+  deps: SweepStrayEnginesDeps,
+): Promise<SweepResult> {
+  const result: SweepResult = { reaped: [], kept: [], failed: [] };
+  const engines = await deps.listOpencodeEngines();
+  for (const { pid, port } of engines) {
+    if (deps.keepPid !== undefined && pid === deps.keepPid) {
+      result.kept.push(pid);
+      continue;
+    }
+    if (await deps.hasLiveClient(port)) {
+      deps.log?.(`[sweep] engine PID ${pid} on port ${port} has a live client — keeping`);
+      result.kept.push(pid);
+      continue;
+    }
+    deps.log?.(`[sweep] reaping stray engine PID ${pid} on port ${port} (no client, not the adopted engine)`);
+    const killed = await deps.killEngine(pid);
+    if (killed) result.reaped.push(pid);
+    else result.failed.push(pid);
+  }
+  return result;
+}
+
+/** Production seam: enumerate all `opencode serve` engines and their ports via
+ *  `lsof`/`ps`. Best-effort — returns [] on any failure. */
+export async function listOpencodeEngines(): Promise<StrayEngine[]> {
+  try {
+    const { execSync } = require("node:child_process") as typeof import("node:child_process");
+    // Ports held LISTEN by an opencode process, with their PIDs.
+    const out = execSync(`lsof -nP -iTCP -sTCP:LISTEN`, { timeout: 5000 }).toString();
+    const engines: StrayEngine[] = [];
+    const seen = new Set<number>();
+    for (const line of out.split("\n")) {
+      if (!/opencode/i.test(line)) continue;
+      const cols = line.trim().split(/\s+/);
+      const pid = parseInt(cols[1] ?? "", 10);
+      const nameCol = cols[cols.length - 1] ?? "";
+      const portMatch = nameCol.match(/:(\d+)$/);
+      if (!Number.isInteger(pid) || !portMatch) continue;
+      if (!isOpencodeServer(pid)) continue; // confirm it is `opencode serve`
+      if (seen.has(pid)) continue;
+      seen.add(pid);
+      engines.push({ pid, port: parseInt(portMatch[1], 10) });
+    }
+    return engines;
+  } catch {
+    return [];
+  }
+}
+
+/** Production seam: does the port have an ESTABLISHED connection from a PID
+ *  OTHER than the engine itself (i.e. a real external client)? */
+export async function hasLiveClient(port: number): Promise<boolean> {
+  try {
+    const { execSync } = require("node:child_process") as typeof import("node:child_process");
+    const enginePid = pidHoldingPort(port);
+    const out = execSync(`lsof -nP -iTCP:${port} -sTCP:ESTABLISHED`, { timeout: 5000 }).toString();
+    for (const line of out.split("\n").slice(1)) {
+      const cols = line.trim().split(/\s+/);
+      const pid = parseInt(cols[1] ?? "", 10);
+      if (!Number.isInteger(pid)) continue;
+      if (enginePid !== undefined && pid === enginePid) continue; // the engine's own loopback
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/** Production reclaim: SIGTERM then SIGKILL an engine by PID; verify dead.
+ *  The killEngine seam for sweepStrayEngines — reaps by PID (any port). */
+export async function reclaimEnginePid(pid: number): Promise<boolean> {
+  const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+  if (!isPidAlive(pid)) return true;
+  try { process.kill(pid, "SIGTERM"); } catch { /* re-probe decides */ }
+  for (let i = 0; i < 6; i++) {
+    if (!isPidAlive(pid)) return true;
+    await sleep(250);
+  }
+  try { process.kill(pid, "SIGKILL"); } catch { /* re-probe decides */ }
+  await sleep(500);
+  return !isPidAlive(pid);
+}
+
 /** Production reclaim: SIGTERM then SIGKILL the port holder; verify freed.
  *  Only ever called by adoptOrSpawn AFTER probePort confirms the holder is
  *  our opencode server — never against a foreign process. */
