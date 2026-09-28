@@ -6,6 +6,7 @@ import { useNavigate, useParams, useSearchParams } from "@solidjs/router"
 import { batch, startTransition, type Accessor } from "solid-js"
 import { useTabs } from "@/context/tabs"
 import { useServerSync, type ServerSync } from "@/context/server-sync"
+import { useServer } from "@/context/server"
 import { useLanguage } from "@/context/language"
 import { useLayout } from "@/context/layout"
 import { useLocal, type ModelSelection } from "@/context/local"
@@ -257,6 +258,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
   const sdk = useSDK()
   const sync = useSync()
   const serverSync = useServerSync()
+  const server = useServer()
   const local = useLocal()
   const permission = usePermission()
   const prompt = input.prompt
@@ -457,7 +459,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       const picked = currentMachineSelection()
       let remoteOwnerArmed = false
       if (picked) {
-        const conn = sdk().server
+        const conn = server.current
         const preflight = await runCreatePreflight(picked, {
           getCreationTarget: (m) =>
             amicodeGet(conn, `/amicode/fleet/creation-target?machine=${encodeURIComponent(m)}`) as Promise<CreationTargetResponse>,
