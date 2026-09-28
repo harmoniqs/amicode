@@ -49,7 +49,7 @@ import { authTokenFromCredentials } from "@/utils/server"
 import { GLOBAL_STATUS_DEFAULT_TAB } from "./status-popover-model"
 import { useServerProtocol } from "@/context/server-sdk"
 import { beginSolverSwitch } from "@/components/solver-switch-banner"
-import { EngineToggle } from "./engine-toggle"
+import { parseEngineStateMessage, sendEngineCommand, type EngineState } from "./engine-toggle-utils"
 
 const pluginEmptyMessage = (value: string, file: string): JSXElement => {
   const parts = value.split(file)
@@ -318,6 +318,17 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean>; onClose?: (
     return listServersByHealth(list, server.key, global.servers.health)
   })
   const toggleMcp = useMcpToggle()
+
+  // #1598: engine lifecycle — the "amicode" MCP row doubles as the engine
+  // toggle. Extension pushes engine-state messages; when the user flips the
+  // amicode switch we send start/stop commands instead of toggling the MCP.
+  const [engineState, setEngineState] = createSignal<EngineState>("booting")
+  const onEngineMsg = (e: MessageEvent) => {
+    const parsed = parseEngineStateMessage(e.data)
+    if (parsed !== undefined) setEngineState(parsed)
+  }
+  window.addEventListener("message", onEngineMsg)
+  onCleanup(() => window.removeEventListener("message", onEngineMsg))
   const defaultServer = useDefaultServerKey(platform.getDefaultServer)
   const mcpNames = createMemo(() => Object.keys(sync().data.mcp ?? {}).sort((a, b) => a.localeCompare(b)))
   const mcpStatus = (name: string) => sync().data.mcp?.[name]?.status
@@ -345,12 +356,6 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean>; onClose?: (
   return (
     <div class="flex items-center gap-1 w-[360px] rounded-lg shadow-[var(--shadow-lg-border-base)]">
       <div class="w-full bg-[var(--v2-background-bg-base)] rounded-lg overflow-hidden">
-      {/* #1598: engine toggle — driven by extension push, hidden on fleet clients */}
-      <div class="px-2 pt-2">
-        <div class="px-1">
-          <EngineToggle />
-        </div>
-      </div>
       <Tabs
         aria-label={language.t("status.popover.ariaLabel")}
         class="tabs bg-[var(--v2-background-bg-base)] rounded-lg overflow-hidden"
@@ -461,46 +466,74 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean>; onClose?: (
               >
                 <For each={mcpNames()}>
                   {(name) => {
+                    // #1598: the "amicode" MCP row IS the engine toggle — its
+                    // dot/switch reflect engine lifecycle state rather than MCP
+                    // connection status, and toggling it starts/stops the engine.
+                    const isEngine = name === "amicode"
                     const status = () => mcpStatus(name)
-                    const enabled = () => status() === "connected"
+                    const enabled = () => (isEngine ? engineState() === "on" : status() === "connected")
+                    const locked = () =>
+                      isEngine
+                        ? engineState() === "booting"
+                        : toggleMcp.isPending && toggleMcp.variables === name
+
+                    const handleToggle = () => {
+                      if (locked()) return
+                      if (isEngine) {
+                        sendEngineCommand(engineState())
+                      } else {
+                        toggleMcp.mutate(name)
+                      }
+                    }
+
+                    const dotClass = (): string => {
+                      if (isEngine) {
+                        switch (engineState()) {
+                          case "on":
+                            return "bg-icon-success-base"
+                          case "booting":
+                            return "bg-icon-warning-base"
+                          case "off":
+                            return "bg-border-weak-base"
+                        }
+                      }
+                      const s = status()
+                      if (s === "connected") return "bg-icon-success-base"
+                      if (s === "failed") return "bg-icon-critical-base"
+                      if (s === "needs_auth" || s === "needs_client_registration") return "bg-icon-warning-base"
+                      return "bg-border-weak-base"
+                    }
+
                     return (
                       <button
                         type="button"
-                        class="flex items-center gap-2 w-full min-h-8 pl-3 pr-2 py-1 rounded-md hover:bg-surface-raised-base-hover transition-colors text-left"
-                        onClick={() => {
-                          if (toggleMcp.isPending) return
-                          toggleMcp.mutate(name)
+                        class="flex items-center gap-2 w-full min-h-8 pl-3 pr-2 py-1 rounded-md transition-colors text-left"
+                        classList={{
+                          "hover:bg-surface-raised-base-hover": !locked(),
+                          "cursor-not-allowed opacity-60": locked(),
                         }}
-                        disabled={toggleMcp.isPending && toggleMcp.variables === name}
+                        onClick={handleToggle}
+                        disabled={locked()}
                       >
-                        <div
-                          classList={{
-                            "size-1.5 rounded-full shrink-0": true,
-                            "bg-icon-success-base": status() === "connected",
-                            "bg-icon-critical-base": status() === "failed",
-                            "bg-border-weak-base": status() === "disabled",
-                            "bg-icon-warning-base":
-                              status() === "needs_auth" || status() === "needs_client_registration",
-                          }}
-                        />
+                        <div class={`size-1.5 rounded-full shrink-0 ${dotClass()}`} />
                         <span class="flex flex-col min-w-0 flex-1">
                           <span class="flex items-center gap-2 min-w-0">
                             <span class="text-14-regular text-text-base truncate">{name}</span>
                           </span>
-                          <Show when={status() === "needs_auth"}>
+                          <Show when={!isEngine && status() === "needs_auth"}>
                             <span class="text-11-regular text-text-weaker truncate">
                               {language.t("mcp.auth.clickToAuthenticate")}
                             </span>
+                          </Show>
+                          <Show when={isEngine && engineState() === "booting"}>
+                            <span class="text-11-regular text-text-weaker truncate">Starting…</span>
                           </Show>
                         </span>
                         <div onClick={(event) => event.stopPropagation()}>
                           <Switch
                             checked={enabled()}
-                            disabled={toggleMcp.isPending && toggleMcp.variables === name}
-                            onChange={() => {
-                              if (toggleMcp.isPending) return
-                              toggleMcp.mutate(name)
-                            }}
+                            disabled={locked()}
+                            onChange={handleToggle}
                           />
                         </div>
                       </button>
