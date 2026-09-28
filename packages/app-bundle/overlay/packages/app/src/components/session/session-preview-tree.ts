@@ -39,6 +39,15 @@ export const createPreviewWorkspace = (paths: readonly string[] = []): PreviewWo
   nextPaneID: 1,
 })
 
+/** The reconciled open-paths list when restoring persisted preview tabs: the
+ *  persisted order first, then any paths already open that were not persisted
+ *  (e.g. the active file the previewFile effect opened before hydration). An
+ *  empty persisted list keeps whatever is currently open. This is what fixes
+ *  "only the active file restores" — restoring [a,b,c] when only [c] is open
+ *  must yield [a,b,c], not [c]. */
+export const reconcilePreviewPaths = (persisted: readonly string[], open: readonly string[]): string[] =>
+  persisted.length > 0 ? [...persisted, ...open.filter((path) => !persisted.includes(path))] : [...open]
+
 export const previewLeaves = (tree: PreviewPane): PreviewLeaf[] => {
   if (tree.kind === "leaf") return [tree]
   return [...previewLeaves(tree.first), ...previewLeaves(tree.second)]

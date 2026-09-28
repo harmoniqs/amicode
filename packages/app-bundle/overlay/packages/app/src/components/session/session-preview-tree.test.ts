@@ -6,6 +6,7 @@ import {
   previewLeafByID,
   previewLeaves,
   previewMinimumExtent,
+  reconcilePreviewPaths,
   removePreviewPath,
   setPreviewLeafZoom,
 } from "./session-preview-tree"
@@ -124,5 +125,27 @@ describe("Preview open-paths persistence round-trip", () => {
     const restored = createPreviewWorkspace(["file://paper3.tex", "file://paper3.pdf"])
     const afterClose = removePreviewPath(restored, "file://paper3.pdf")
     expect(openedPaths(afterClose)).toEqual(["file://paper3.tex"])
+  })
+})
+
+// reconcilePreviewPaths is the merge that restore uses. The first case is the
+// exact regression behind "only the active file came back on reload": the
+// persisted list has all N, but the previewFile effect has only opened the
+// active one when reconcile runs — the union must still be all N.
+describe("reconcilePreviewPaths", () => {
+  test("restores the full persisted list when only the active file is open (the 1-of-N bug)", () => {
+    expect(reconcilePreviewPaths(["a", "b", "c"], ["c"])).toEqual(["a", "b", "c"])
+  })
+
+  test("appends currently-open paths that were not persisted", () => {
+    expect(reconcilePreviewPaths(["a", "b"], ["b", "d"])).toEqual(["a", "b", "d"])
+  })
+
+  test("keeps persisted order and de-duplicates when open is a subset", () => {
+    expect(reconcilePreviewPaths(["a", "b", "c"], ["a", "c"])).toEqual(["a", "b", "c"])
+  })
+
+  test("an empty persisted list keeps whatever is currently open", () => {
+    expect(reconcilePreviewPaths([], ["x"])).toEqual(["x"])
   })
 })

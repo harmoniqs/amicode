@@ -26,6 +26,7 @@ import {
   previewLeaves,
   previewMinimumExtent,
   previewTabCount,
+  reconcilePreviewPaths,
   removePreviewPath,
   resizePreviewSplit,
   selectPreviewPath,
@@ -101,6 +102,10 @@ export function SessionPreviewTab(props: {
    *  its old purely-local, non-persisted behavior. #1398 + reload persistence. */
   openPaths?: Accessor<string[]>
   onOpenedPathsChange?: (paths: string[]) => void
+  /** True once the persisted layout store has hydrated. Reconciliation of the
+   *  persisted open-paths list is held until this flips true (the store loads
+   *  async); reconciling earlier clobbers the list to just the active file. */
+  hydrated?: () => boolean
 }) {
   const platform = usePlatform()
   const [dirtyPaths, setDirtyPaths] = createStore<Record<string, boolean>>({})
@@ -133,22 +138,30 @@ export function SessionPreviewTab(props: {
     setCapacityMessage(null)
   }
 
-  // Restore the open preview tabs from the persisted list once it hydrates, as
-  // long as the user hasn't already opened something this mount. Runs *before*
-  // the previewFile effect so the full set is rebuilt before the active file is
-  // re-focused (openPreviewPath is idempotent on an already-open path). The
-  // split-pane layout is intentionally not restored — only the flat path list.
-  let restoredPreview = false
+  // Reconcile the persisted open-paths list into the workspace exactly once,
+  // AFTER the persisted store has hydrated (props.hydrated). Rebuild in the
+  // persisted order, unioning anything already open (e.g. the active file the
+  // previewFile effect opened first), then keep the active tab focused.
+  //
+  // Gating on hydration is essential: the persisted store loads asynchronously,
+  // so before `hydrated` flips true `props.openPaths()` still reads empty.
+  // Reconciling then (or letting the up-sync run then) would clobber the
+  // persisted list down to just the active file — the "only 1 of N restored"
+  // bug. We hold both restore and up-sync until hydration is done.
+  let reconciled = false
   createEffect(() => {
-    if (restoredPreview) return
+    if (reconciled) return
+    if (props.hydrated && !props.hydrated()) return
     const persisted = props.openPaths?.() ?? []
-    if (openedPaths().length > 0) {
-      restoredPreview = true
-      return
+    const finalPaths = reconcilePreviewPaths(persisted, openedPaths())
+    if (persisted.length > 0) {
+      let next = createPreviewWorkspace(finalPaths)
+      const active = props.previewFile()
+      if (active && finalPaths.includes(active)) next = openPreviewPath(next, active)
+      setWorkspace(next)
     }
-    if (persisted.length === 0) return
-    setWorkspace(createPreviewWorkspace(persisted))
-    restoredPreview = true
+    reconciled = true
+    props.onOpenedPathsChange?.(finalPaths)
   })
 
   createEffect(
@@ -161,11 +174,11 @@ export function SessionPreviewTab(props: {
   )
 
   // Mirror the live open-paths set up to the persisted session view so a reload
-  // restores it. Gated on restore so we never clobber the persisted list with an
-  // empty set before hydration completes.
+  // restores it. Held until reconciliation so a pre-hydration empty set never
+  // clobbers the persisted list.
   createEffect(
     on(openedPaths, (paths) => {
-      if (!restoredPreview) return
+      if (!reconciled) return
       props.onOpenedPathsChange?.(paths)
     }),
   )
