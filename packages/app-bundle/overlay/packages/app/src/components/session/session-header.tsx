@@ -919,6 +919,11 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
   const [activeLimit, setActiveLimit] = createSignal(ACTIVE_PAGE_SIZE)
   const [loadingMore, setLoadingMore] = createSignal(false)
 
+  // Track the sort MenuV2 open state so the flyout's outside-click dismiss
+  // handler can yield while the menu is interacting (the menu content is
+  // portalled outside flyoutRoot — see the dismiss handler comment).
+  const [sortMenuOpen, setSortMenuOpen] = createSignal(false)
+
   let flyoutRoot: HTMLDivElement | undefined
   let triggerRef: HTMLButtonElement | undefined
   let scrollContainerRef: HTMLDivElement | undefined
@@ -1268,10 +1273,21 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
         // Don't dismiss if the click landed inside a dialog (e.g. delete confirmation)
         // or a portalled menu (e.g. the sort-by MenuV2 dropdown, which renders outside flyoutRoot)
         if (target instanceof Element && target.closest("[data-dialog-layer], [data-component='dialog-overlay'], [data-component='menu-v2-content']")) return
+        // While the sort MenuV2 is open its portal sits outside flyoutRoot, so
+        // interactions (trigger toggle, Kobalte overlay, popper positioner)
+        // would pass all the checks above. Kobalte handles its own dismiss on
+        // pointerdown (before mousedown); by the time this handler runs the
+        // menu is already closed and sortMenuOpen is false — so a genuine
+        // outside click still reaches setOpen(false) below.
+        if (sortMenuOpen()) return
         setOpen(false)
       }
       const onKey = (e: KeyboardEvent) => {
-        if (e.key === "Escape") setOpen(false)
+        if (e.key === "Escape") {
+          // If the sort menu is open, let Kobalte handle its own Escape first
+          if (sortMenuOpen()) return
+          setOpen(false)
+        }
       }
       document.addEventListener("mousedown", onDown)
       document.addEventListener("keydown", onKey)
@@ -1375,7 +1391,7 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
               </button>
               <div class="flex-1" />
               <Show when={flyoutTab() === "active"}>
-                <MenuV2 gutter={4} placement="bottom-end">
+                <MenuV2 gutter={4} placement="bottom-end" open={sortMenuOpen()} onOpenChange={setSortMenuOpen}>
                   <MenuV2.Trigger
                     as={ButtonV2}
                     variant="ghost-muted"
