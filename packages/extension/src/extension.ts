@@ -3153,9 +3153,6 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     // the idle timer fires.
     vscode.commands.registerCommand("amicode.quit", async () => {
       await quitAmicode({
-        hasInFlightTurns: () => sseClient?.sseState === "live",
-        showWarning: (msg, ...items) =>
-          vscode.window.showWarningMessage(msg, ...items) as Promise<string | undefined>,
         stop: async () => {
           await serverManager?.stop();
           statusBar?.setServerReady(false);
