@@ -106,6 +106,18 @@ describe("buildOpencodeConfigContent", () => {
     expect(typeof mcp.environment.PATH).toBe("string");
     expect(mcp.environment.PATH.length).toBeGreaterThan(0);
   });
+  it("sets ELECTRON_RUN_AS_NODE=1 in the amicode MCP env so an Electron command[0] runs the .mjs, never opening it in a window", () => {
+    // command[0] is process.execPath. In a VS Code extension host that is the
+    // Electron/Code binary, and spawning `Electron mcp-amico.mjs` WITHOUT this
+    // env makes Electron OPEN the file in a NEW WINDOW instead of executing it
+    // (the window-flood bug). This env is a no-op for a real node and the cure
+    // for an Electron one, so it is set unconditionally. (This suite runs under
+    // vitest, where execPath is real node, so command[0] alone never catches
+    // the Electron case — the env assertion is the durable guard.)
+    const cfg = JSON.parse(buildOpencodeConfigContent("/abs/AGENTS.md", TPL, "/home/u/.amico/runs/default"));
+    const mcp = cfg.mcp?.amicode;
+    expect(mcp.environment.ELECTRON_RUN_AS_NODE).toBe("1");
+  });
   it("registers skills.paths only when a stage dir is given (opencode-native skills)", () => {
     const without = JSON.parse(buildOpencodeConfigContent("/abs/AGENTS.md", TPL, "/home/u/.amico/runs/default"));
     expect(without.skills).toBeUndefined(); // no stage dir → no skills key at all

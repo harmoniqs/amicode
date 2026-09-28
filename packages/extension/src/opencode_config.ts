@@ -562,6 +562,12 @@ function assembleOpencodeConfig(input: AssembledConfigInputs): Record<string, un
         enabled: true,
         environment: {
           PATH: MCP_ENV_PATH,
+          // command[0] is process.execPath — in a VS Code extension host that is
+          // the Electron/Code binary, not a real node. Spawning `Electron
+          // mcp-amico.mjs` WITHOUT this makes Electron OPEN the file in a new
+          // window instead of executing it (the window-flood bug). Setting it
+          // is a no-op for a real node and the cure for an Electron one.
+          ELECTRON_RUN_AS_NODE: "1",
           AMICODE_PROBLEMS_DIR: problemsRoot(),
           ...(process.env.AMICODE_ENTITIES_DIR ? { AMICODE_ENTITIES_DIR: process.env.AMICODE_ENTITIES_DIR } : {}),
         },
