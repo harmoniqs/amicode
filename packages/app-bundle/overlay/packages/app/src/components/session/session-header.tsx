@@ -919,11 +919,6 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
   const [activeLimit, setActiveLimit] = createSignal(ACTIVE_PAGE_SIZE)
   const [loadingMore, setLoadingMore] = createSignal(false)
 
-  // Track the sort MenuV2 open state so the flyout's outside-click dismiss
-  // handler can yield while the menu is interacting (the menu content is
-  // portalled outside flyoutRoot — see the dismiss handler comment).
-  const [sortMenuOpen, setSortMenuOpen] = createSignal(false)
-
   let flyoutRoot: HTMLDivElement | undefined
   let triggerRef: HTMLButtonElement | undefined
   let scrollContainerRef: HTMLDivElement | undefined
@@ -1271,23 +1266,11 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
         if (flyoutRoot?.contains(target)) return
         if (triggerRef?.contains(target)) return
         // Don't dismiss if the click landed inside a dialog (e.g. delete confirmation)
-        // or a portalled menu (e.g. the sort-by MenuV2 dropdown, which renders outside flyoutRoot)
         if (target instanceof Element && target.closest("[data-dialog-layer], [data-component='dialog-overlay'], [data-component='menu-v2-content']")) return
-        // While the sort MenuV2 is open its portal sits outside flyoutRoot, so
-        // interactions (trigger toggle, Kobalte overlay, popper positioner)
-        // would pass all the checks above. Kobalte handles its own dismiss on
-        // pointerdown (before mousedown); by the time this handler runs the
-        // menu is already closed and sortMenuOpen is false — so a genuine
-        // outside click still reaches setOpen(false) below.
-        if (sortMenuOpen()) return
         setOpen(false)
       }
       const onKey = (e: KeyboardEvent) => {
-        if (e.key === "Escape") {
-          // If the sort menu is open, let Kobalte handle its own Escape first
-          if (sortMenuOpen()) return
-          setOpen(false)
-        }
+        if (e.key === "Escape") setOpen(false)
       }
       document.addEventListener("mousedown", onDown)
       document.addEventListener("keydown", onKey)
@@ -1391,7 +1374,7 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
               </button>
               <div class="flex-1" />
               <Show when={flyoutTab() === "active"}>
-                <MenuV2 gutter={4} placement="bottom-end" open={sortMenuOpen()} onOpenChange={setSortMenuOpen}>
+                <MenuV2 gutter={4} placement="bottom-end">
                   <MenuV2.Trigger
                     as={ButtonV2}
                     variant="ghost-muted"
@@ -1401,25 +1384,23 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
                     Sort by
                     <IconV2 name="chevron-down" size="small" />
                   </MenuV2.Trigger>
-                  <MenuV2.Portal>
-                    <MenuV2.Content
-                      style={{ "min-width": "140px" }}
-                      class={[
-                        /* Match the flyout's 11px type scale, not MenuV2's default 13px */
-                        "[&_[data-slot=menu-v2-item-content]]:!text-[11px]",
-                        /* Checked state: checkmark is enough — drop the accent color + bold */
-                        "[&_[data-checked]_[data-slot=menu-v2-item-content]]:!text-v2-text-text-base",
-                        "[&_[data-checked]_[data-slot=menu-v2-item-content]]:!font-normal",
-                        "[&_[data-checked]_[data-slot=menu-v2-item-indicator]]:!text-v2-text-text-base",
-                      ].join(" ")}
-                    >
-                      <MenuV2.RadioGroup value={sortMode()} onChange={(v) => setSortMode(v as SortMode)}>
-                        <MenuV2.RadioItem value="recent">Recent</MenuV2.RadioItem>
-                        <MenuV2.RadioItem value="alpha">A–Z</MenuV2.RadioItem>
-                        <MenuV2.RadioItem value="machine">Machine</MenuV2.RadioItem>
-                      </MenuV2.RadioGroup>
-                    </MenuV2.Content>
-                  </MenuV2.Portal>
+                  <MenuV2.Content
+                    style={{ "min-width": "140px" }}
+                    class={[
+                      /* Match the flyout's 11px type scale, not MenuV2's default 13px */
+                      "[&_[data-slot=menu-v2-item-content]]:!text-[11px]",
+                      /* Checked state: checkmark is enough — drop the accent color + bold */
+                      "[&_[data-checked]_[data-slot=menu-v2-item-content]]:!text-v2-text-text-base",
+                      "[&_[data-checked]_[data-slot=menu-v2-item-content]]:!font-normal",
+                      "[&_[data-checked]_[data-slot=menu-v2-item-indicator]]:!text-v2-text-text-base",
+                    ].join(" ")}
+                  >
+                    <MenuV2.RadioGroup value={sortMode()} onChange={(v) => setSortMode(v as SortMode)}>
+                      <MenuV2.RadioItem value="recent">Recent</MenuV2.RadioItem>
+                      <MenuV2.RadioItem value="alpha">A–Z</MenuV2.RadioItem>
+                      <MenuV2.RadioItem value="machine">Machine</MenuV2.RadioItem>
+                    </MenuV2.RadioGroup>
+                  </MenuV2.Content>
                 </MenuV2>
                 <IconButtonV2
                   variant="ghost-muted"
