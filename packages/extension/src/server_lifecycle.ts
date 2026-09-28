@@ -320,6 +320,11 @@ export interface ServerActivationPlan {
   /** Write the adoption handshake? ONLY on a standalone machine — never on a
    *  fleet server, where the hub's record is authoritative. */
   writeHandshake: boolean;
+  /** DELETE the adoption handshake (the keepalive's server-gone path)? ONLY on a
+   *  standalone machine — never on a fleet server (#1607 Slice 2). The hub owns
+   *  the handshake lifecycle (launchd respawns + rewrites); a window deleting it
+   *  strands the next reload. The read-side twin of writeHandshake. */
+  mayDeleteHandshake: boolean;
   /** Surface the honest "hub down — running a local engine" banner
    *  (local-fallback only). */
   hubDownBanner: boolean;
@@ -342,6 +347,7 @@ export function planServerActivation(state: {
       spawnLocalEngine: true,
       runStraySweep: true,
       writeHandshake: true,
+      mayDeleteHandshake: true,
       hubDownBanner: false,
     };
   }
@@ -353,6 +359,7 @@ export function planServerActivation(state: {
       spawnLocalEngine: false,
       runStraySweep: false,
       writeHandshake: false,
+      mayDeleteHandshake: false,
       hubDownBanner: false,
     };
   }
@@ -365,6 +372,7 @@ export function planServerActivation(state: {
     spawnLocalEngine: true,
     runStraySweep: false,
     writeHandshake: false,
+    mayDeleteHandshake: false,
     hubDownBanner: true,
   };
 }

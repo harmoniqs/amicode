@@ -108,3 +108,34 @@ describe("adoptedTheHub — a server reaches the hub only by adopting the UNARME
     expect(plan.mode).toBe("ride-hub");
   });
 });
+
+// ============================================================================
+// #1607 Slice 2: a fleet server must never DELETE the shared handshake either.
+// The keepalive's onServerGone deletes it un-gated today; on a server the hub
+// owns the handshake lifecycle (launchd respawns + rewrites), so a window
+// deleting it strands the next reload (the incident: hub crashed → window's
+// keepalive deleted the record → window couldn't find the live hub → fell back
+// to a rival engine). mayDeleteHandshake is the read-side twin of writeHandshake.
+// ============================================================================
+
+describe("planServerActivation — a fleet server never DELETES the shared handshake (#1607 Slice 2)", () => {
+  it("standalone owns its handshake → mayDeleteHandshake true (today's behavior)", () => {
+    expect(planServerActivation({ isServerMachine: false, hubReachable: false }).mayDeleteHandshake).toBe(true);
+  });
+
+  it("ride-hub → mayDeleteHandshake false (the hub owns its record)", () => {
+    expect(planServerActivation({ isServerMachine: true, hubReachable: true }).mayDeleteHandshake).toBe(false);
+  });
+
+  it("local-fallback → mayDeleteHandshake false (still never mutate the hub's record)", () => {
+    expect(planServerActivation({ isServerMachine: true, hubReachable: false }).mayDeleteHandshake).toBe(false);
+  });
+
+  it("INVARIANT: a fleet server never WRITES and never DELETES the shared handshake (either hub state)", () => {
+    for (const hubReachable of [true, false]) {
+      const p = planServerActivation({ isServerMachine: true, hubReachable });
+      expect(p.writeHandshake).toBe(false);
+      expect(p.mayDeleteHandshake).toBe(false);
+    }
+  });
+});

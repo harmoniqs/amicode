@@ -1440,8 +1440,19 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           pingServer: pingKeepalive,
           pidAlive: isPidAlive,
           onServerGone: () => {
-            opencodeChannel.appendLine(`[keepalive] server gone — deleting handshake`);
-            deleteHandshake();
+            // #1607 Slice 2: on a fleet server the window must NOT delete the
+            // shared handshake — the hub owns its lifecycle (launchd respawns +
+            // rewrites). Deleting it here strands the next reload (the incident:
+            // hub crashed → this delete fired → window couldn't find the live
+            // hub → fell back to a rival engine). Symmetric to never-write.
+            if (activationPlan.mayDeleteHandshake) {
+              opencodeChannel.appendLine(`[keepalive] server gone — deleting handshake`);
+              deleteHandshake();
+            } else {
+              opencodeChannel.appendLine(
+                `[keepalive] server gone — NOT deleting the shared handshake (${activationPlan.mode}: the hub owns it) [#1607]`,
+              );
+            }
             statusBar?.setServerReady(false);
             opencodeReadyUrl = undefined;
             // #1598: push engine-off to the app toggle.
