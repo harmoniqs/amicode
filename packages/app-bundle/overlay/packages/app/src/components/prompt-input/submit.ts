@@ -40,6 +40,9 @@ export type FollowupDraft = {
   agent: string
   model: { providerID: string; modelID: string }
   variant?: string
+  // amicode: per-turn system instruction (e.g. the concise directive). Reaches
+  // the model for this turn but is NOT rendered as a visible message part.
+  system?: string
 }
 
 type FollowupSendInput = {
@@ -56,14 +59,11 @@ const draftText = (prompt: Prompt) => prompt.map((part) => ("content" in part ? 
 
 const draftImages = (prompt: Prompt) => prompt.filter((part): part is ImageAttachmentPart => part.type === "image")
 
-// amicode: when the composer's concise switch is on, append a concise directive
-// to the outgoing prose message so the response comes back concise. Rides with
-// the message (a leading blank line separates it from the user's text); the
-// user's text and history stay unmodified — only the sent draft carries it.
+// amicode: the concise directive. When the composer's concise switch is on it
+// rides as the message's per-turn `system` instruction (invisible — reaches the
+// model, not rendered as a user part), never appended to the visible text.
 const CONCISE_DIRECTIVE =
-  "\n\n[Concise mode: respond concisely — lead with the answer or next action, no preamble or closing pleasantries.]"
-const conciseDraftPrompt = (prompt: Prompt, on: boolean): Prompt =>
-  on ? [...prompt, { type: "text", content: CONCISE_DIRECTIVE, start: 0, end: 0 }] : prompt
+  "Concise mode is on for this message. Respond concisely: lead with the answer or next action, no preamble or closing pleasantries, and keep it tight — without dropping required caveats, questions, or safety confirmations."
 
 export async function sendFollowupDraft(input: FollowupSendInput) {
   const text = draftText(input.draft.prompt)
@@ -144,6 +144,7 @@ export async function sendFollowupDraft(input: FollowupSendInput) {
     time: { created: Date.now() },
     agent: input.draft.agent,
     model: { ...input.draft.model, variant: input.draft.variant },
+    system: input.draft.system,
   }
 
   const add = () =>
@@ -181,6 +182,7 @@ export async function sendFollowupDraft(input: FollowupSendInput) {
       agent: input.draft.agent,
       model: input.draft.model,
       variant: input.draft.variant,
+      system: input.draft.system,
       legacyParts: requestParts,
       text: requestParts.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n"),
       files: requestParts.flatMap((part) => {
@@ -483,11 +485,12 @@ export function createPromptSubmit(input: PromptSubmitInput) {
     const draft: FollowupDraft = {
       sessionID: session.id,
       sessionDirectory,
-      prompt: conciseDraftPrompt(currentPrompt, input.concise?.() ?? false),
+      prompt: currentPrompt,
       context,
       agent,
       model,
       variant,
+      system: (input.concise?.() ?? false) ? CONCISE_DIRECTIVE : undefined,
     }
 
     const clearInput = () => {

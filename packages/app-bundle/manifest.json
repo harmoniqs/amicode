@@ -243,7 +243,7 @@
     "packages/app/src/utils/retry-import.ts": "591bfd3e28f8afa9c4d9f0ca118d20e875cb1dce574c0ae25615994c4fe57a99",
     "packages/app/src/utils/serialize-session.test.ts": "f8fe318f195dca251eae3f4899f4a5881c3523522f59e02fef208588391f4048",
     "packages/app/src/utils/serialize-session.ts": "c303c678500cdb64c7aa6928a0bd984c441a36705fe8152368a0e575cbcb459f",
-    "packages/app/src/utils/server-compat.ts": "01413e13b87485770eb3dbec0b882aec4c8247dafc4dc74b7b4669fa5b20cf1a",
+    "packages/app/src/utils/server-compat.ts": "1cccb1aabde1bce6ee382c33db0dea9273a9519747b805b771dec060d3071b39",
     "packages/app/src/utils/session-message.ts": "96f8f3dca62f70215ac2dccbc8d27cd5b247af3ecea1ac5d34a74ffc8af5d4d3",
     "packages/app/src/utils/start-prompt.ts": "809d8ad0ab6de76a97503f8368ade25f771431be3f92eb8f039a2c65244ab20f",
     "packages/app/src/utils/vscode-explorer-icon-theme.test.ts": "351deb0ff77e62d2585858105aaf34ab621298511798fcb626abee97bd644fe6",
@@ -623,7 +623,7 @@
     "packages/app/src/components/prompt-input/placeholder.ts": "6b2af23a0588e7970cd0dd059fc60c3671c907a76ba3db660483a932f1dce79d",
     "packages/app/src/components/prompt-input/slash-popover.tsx": "a1800173edebcd419802796470f7270acaf0ef689a72f1b81a1cedfd8968337d",
     "packages/app/src/components/prompt-input/submit-stream-gap.test.ts": "68a94b03e75625531b2f2ad161ef9d0b93365f9edae154a797f82031b5bfc062",
-    "packages/app/src/components/prompt-input/submit.ts": "7f9c88406d600e1d5de80ce9fab1279ce32fc294da2371d0bf0bc11cc4257aba",
+    "packages/app/src/components/prompt-input/submit.ts": "38621336b3c22a1e67cada6693a8e029fad963825ed4e2a6fec1ee39058f2278",
     "packages/app/src/components/session/context-warning-banner.tsx": "f5fab4d7a9536238b70d64488fc30d44f6a4948fdcffd910a9666f4b6c296019",
     "packages/app/src/components/session/index.ts": "21473290d4a1a3d0670fd878372ddf21ff22d4a0b30d1aef6c81ea906c1488b4",
     "packages/app/src/components/session/panel-menu.tsx": "42f323046b7375ae158023a51506038eb15f2e1545c407f45acd47446a8ef3e0",
@@ -874,7 +874,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-09-28T19:44:50.621Z",
+  "extracted_at": "2026-09-28T19:53:01.096Z",
   "per_package": {
     "packages/app": {
       "A": 187,
