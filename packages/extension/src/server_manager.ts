@@ -64,6 +64,19 @@ export class ServerManager {
 
   constructor(private readonly opts: ServerOptions) {}
 
+  /** Create a ServerManager that represents an already-running (adopted) engine.
+   *  The manager starts in the running + daemonized state with port/pid set.
+   *  It does NOT call start() — the engine is already healthy.
+   *  After seeding, stop() kills by PID and start() cold-spawns fresh. (#1595) */
+  static seed(opts: ServerOptions, info: { port: number; pid: number }): ServerManager {
+    const mgr = new ServerManager(opts);
+    mgr._port = info.port;
+    mgr._pid = info.pid;
+    mgr._running = true;
+    mgr._daemonized = true;
+    return mgr;
+  }
+
   get port(): number | undefined {
     return this._port;
   }
