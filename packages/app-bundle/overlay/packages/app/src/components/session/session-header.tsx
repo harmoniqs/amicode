@@ -1385,7 +1385,17 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
                     <IconV2 name="chevron-down" size="small" />
                   </MenuV2.Trigger>
                   <MenuV2.Portal>
-                    <MenuV2.Content style={{ "min-width": "140px" }}>
+                    <MenuV2.Content
+                      style={{ "min-width": "140px" }}
+                      class={[
+                        /* Match the flyout's 11px type scale, not MenuV2's default 13px */
+                        "[&_[data-slot=menu-v2-item-content]]:!text-[11px]",
+                        /* Checked state: checkmark is enough — drop the accent color + bold */
+                        "[&_[data-checked]_[data-slot=menu-v2-item-content]]:!text-v2-text-text-base",
+                        "[&_[data-checked]_[data-slot=menu-v2-item-content]]:!font-normal",
+                        "[&_[data-checked]_[data-slot=menu-v2-item-indicator]]:!text-v2-text-text-base",
+                      ].join(" ")}
+                    >
                       <MenuV2.RadioGroup value={sortMode()} onChange={(v) => setSortMode(v as SortMode)}>
                         <MenuV2.RadioItem value="recent">Recent</MenuV2.RadioItem>
                         <MenuV2.RadioItem value="alpha">A–Z</MenuV2.RadioItem>
