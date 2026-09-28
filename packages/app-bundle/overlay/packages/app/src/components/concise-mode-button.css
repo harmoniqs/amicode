@@ -1,8 +1,0 @@
-/* amicode: concise-mode toggle ON state. Uses the accent selected-state tokens
-   — soft fill + a defining edge — the same pattern as the other amicode
-   selected surfaces (defaults capsule, solver toggle, connections row). Yellow
-   appears only as a soft fill + edge here, never as a foreground on light. */
-[data-component="icon-button-v2"].concise-mode-button--on {
-  background: var(--accent-fill-soft);
-  box-shadow: inset 0 0 0 var(--border-width, 1px) var(--accent-edge);
-}

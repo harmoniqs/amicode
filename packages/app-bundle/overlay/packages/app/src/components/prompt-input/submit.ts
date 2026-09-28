@@ -56,6 +56,15 @@ const draftText = (prompt: Prompt) => prompt.map((part) => ("content" in part ? 
 
 const draftImages = (prompt: Prompt) => prompt.filter((part): part is ImageAttachmentPart => part.type === "image")
 
+// amicode: when the composer's concise switch is on, append a concise directive
+// to the outgoing prose message so the response comes back concise. Rides with
+// the message (a leading blank line separates it from the user's text); the
+// user's text and history stay unmodified — only the sent draft carries it.
+const CONCISE_DIRECTIVE =
+  "\n\n[Concise mode: respond concisely — lead with the answer or next action, no preamble or closing pleasantries.]"
+const conciseDraftPrompt = (prompt: Prompt, on: boolean): Prompt =>
+  on ? [...prompt, { type: "text", content: CONCISE_DIRECTIVE, start: 0, end: 0 }] : prompt
+
 export async function sendFollowupDraft(input: FollowupSendInput) {
   const text = draftText(input.draft.prompt)
   const images = draftImages(input.draft.prompt)
@@ -234,6 +243,12 @@ type PromptSubmitInput = {
    *  notice instead of optimistically posting into a dead tunnel. */
   streamGap?: Accessor<boolean>
   model?: ModelSelection
+  /** amicode: when true at send time, a concise directive is appended to the
+   *  outgoing message (normal prose turns only) so the response comes back
+   *  concise — the composer's concise switch drives this. Not a hidden channel:
+   *  the directive rides with the sent message (the response-presentation
+   *  engine transport that would make it invisible was parked). */
+  concise?: Accessor<boolean>
 }
 
 export function createPromptSubmit(input: PromptSubmitInput) {
@@ -468,7 +483,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
     const draft: FollowupDraft = {
       sessionID: session.id,
       sessionDirectory,
-      prompt: currentPrompt,
+      prompt: conciseDraftPrompt(currentPrompt, input.concise?.() ?? false),
       context,
       agent,
       model,

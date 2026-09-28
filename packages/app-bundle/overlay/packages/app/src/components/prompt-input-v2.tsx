@@ -10,7 +10,7 @@ import { createEffect, createMemo, createSignal, on, onCleanup, Show } from "sol
 import { ModelSelectorPopoverV2 } from "@/components/dialog-select-model"
 import { DialogSelectModelUnpaidV2 } from "@/components/dialog-select-model-unpaid-v2"
 import { ReportBugButton } from "@/components/report-bug-button"
-import { ConciseModeButton } from "@/components/concise-mode-button"
+import { ConciseModeToggle } from "@/components/concise-mode-toggle"
 import type { PromptInputProps } from "@/components/prompt-input/contracts"
 import { normalizePromptHistoryEntry, promptLength, type PromptHistoryComment } from "@/components/prompt-input/history"
 import { createPersistedPromptInputHistory } from "@/components/prompt-input/history-store"
@@ -49,10 +49,10 @@ export type PromptInputV2ComposerProps = {
 export type PromptInputV2ControllerProps = Omit<PromptInputProps, "class" | "submission">
 export type PromptInputV2ComposerController = PromptInputV2Interaction & {
   readonly model: PromptInputProps["controls"]["model"]
-  // amicode: the concise-mode toggle state + action, surfaced to the composer's
-  // trailing controls. `on` is a reactive accessor; `toggle` flips it and sends
-  // the concise skill's own toggle phrase.
-  readonly concise: { readonly on: () => boolean; readonly toggle: () => void }
+  // amicode: the concise-mode toggle state + setter, surfaced to the composer's
+  // trailing controls. `on` is a reactive accessor; `set` flips a persistent
+  // per-session flag — it sends nothing. The flag is read at submit time.
+  readonly concise: { readonly on: () => boolean; readonly set: (next: boolean) => void }
 }
 
 export function PromptInputV2Composer(props: PromptInputV2ComposerProps) {
@@ -74,9 +74,9 @@ export function PromptInputV2Composer(props: PromptInputV2ComposerProps) {
         // gated-off button passes `undefined` and the row's layout never shifts.
         trailingControl={
           <>
-            <ConciseModeButton
+            <ConciseModeToggle
               active={props.controller.concise.on()}
-              onToggle={() => props.controller.concise.toggle()}
+              onToggle={(next) => props.controller.concise.set(next)}
             />
             {bugReportEnabled() ? <ReportBugButton /> : undefined}
           </>
@@ -229,6 +229,13 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
     if (!id) return permission.isAutoAcceptingDirectory(sdk().directory)
     return permission.isAutoAccepting(id, sdk().directory)
   })
+  // amicode: concise-mode flag. A persistent per-session switch — flipping it
+  // sends nothing; it is read at submit time (createPromptSubmit's `concise`) to
+  // append a concise directive to the outgoing prose message. Lightweight by
+  // design: the response-presentation engine transport was parked in favor of
+  // the concise skill, and this drives that skill per sent message.
+  const [conciseOn, setConciseOn] = createSignal(false)
+  const concise = { on: conciseOn, set: setConciseOn }
   const submission = createPromptSubmit({
     prompt,
     info,
@@ -254,24 +261,8 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
     onSubmit: props.onSubmit,
     streamGap,
     model: props.controls.model.selection,
+    concise: conciseOn,
   })
-
-  // amicode: concise-mode toggle. Lightweight by design — it drives Amico's
-  // `concise` output-shaping skill by sending the skill's own toggle phrases,
-  // rather than a persisted engine setting (the response-presentation transport
-  // epic was deliberately parked in favor of the skill). Between-messages action:
-  // it no-ops while a turn is working, and sends the phrase as its own turn.
-  const [conciseOn, setConciseOn] = createSignal(false)
-  const toggleConcise = () => {
-    if (working()) return
-    const next = !conciseOn()
-    setConciseOn(next)
-    const phrase = next ? "concise mode" : "normal mode"
-    const parts = [{ type: "text" as const, content: phrase, start: 0, end: phrase.length }]
-    prompt.set(parts, promptLength(parts))
-    void submission.handleSubmit(new Event("submit"))
-  }
-  const concise = { on: conciseOn, toggle: toggleConcise }
 
   const referenceDescription = (reference: ReferenceInfo) =>
     reference.source.type === "git" ? reference.source.repository : reference.source.path

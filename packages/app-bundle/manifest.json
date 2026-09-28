@@ -98,8 +98,7 @@
     "packages/app/src/components/amicode-default-model.tsx": "16a2de1feb12e07416fe5fbb25879391f912ee0909b553c868c1b531f2ed1f2d",
     "packages/app/src/components/amicode-defaults-capsule.tsx": "94dc081bc47abb7e50566fcd8e9e53124f9d7632d61f93eff4f1627e0c2efb2d",
     "packages/app/src/components/amicode-file-ref-bridge.tsx": "11c17d7fdb29d16530e188b13ee8af728f37d9adfbb518084106ce50cc0c527a",
-    "packages/app/src/components/concise-mode-button.css": "396dc1fa856e882db45e6ed70ae328ad02ce42faa7215c135fd4627a3e254b13",
-    "packages/app/src/components/concise-mode-button.tsx": "c4b5c7be4fb225aeef22767fda6709512dcbe13e90e531e0e476e2487f3a54fa",
+    "packages/app/src/components/concise-mode-toggle.tsx": "55ac18a80e54c8534e8f76944123b1416d0ace815c4ed34100ab71c620981b7d",
     "packages/app/src/components/connection-banner.tsx": "c793966e1f9d6f307af697032b235c2ff65afaa04f6cc232e40ce45e5745ded4",
     "packages/app/src/components/dialog-command-palette-v2.css": "85984957adaf15efcc0828310f3a0b438cedaaba776a9fec2eddb3ad83487fa2",
     "packages/app/src/components/dialog-command-palette-v2.tsx": "e12da3e5e9e503089dd9139b20e04f6b566cf74fa445f23a2e193f5883f7c5f3",
@@ -117,7 +116,7 @@
     "packages/app/src/components/pane-bridge.tsx": "756b3306b51c963fac6778716f6c6c4626f0f3bf75c93b7cb4cab58ea0bf3d4e",
     "packages/app/src/components/profile-popover.tsx": "eff742e90544455f13234a9351bb1b82189663cba2cd3172bdcea1a8a37284e8",
     "packages/app/src/components/prompt-input-clipboard-structure.test.ts": "946b718c2164da394602f26e4d9919d752da0d0b9bee714f345ba16c274542da",
-    "packages/app/src/components/prompt-input-v2.tsx": "168652d1005de6cb7a8f733002e222bab07ebde006454597b1bda7166fb918dc",
+    "packages/app/src/components/prompt-input-v2.tsx": "a982b27659c126e3148ffd3f9fca97da5a349aafde164871e4398b56aa12be6b",
     "packages/app/src/components/prompt-input.tsx": "97a9bc55b46cf1f2d7c3e38110e736f7fa9db7f89121d3c013b9650a60d382d4",
     "packages/app/src/components/prompt-project-selector.tsx": "0157c954b938bce2b5aca9a82f4a72338e361f4c9027e55a7fd5a14a1654d294",
     "packages/app/src/components/report-bug-button.css": "909809b6241d53c386aa4c8ea34539ba162a8998fff755834c783025bc53a5fd",
@@ -624,7 +623,7 @@
     "packages/app/src/components/prompt-input/placeholder.ts": "6b2af23a0588e7970cd0dd059fc60c3671c907a76ba3db660483a932f1dce79d",
     "packages/app/src/components/prompt-input/slash-popover.tsx": "a1800173edebcd419802796470f7270acaf0ef689a72f1b81a1cedfd8968337d",
     "packages/app/src/components/prompt-input/submit-stream-gap.test.ts": "68a94b03e75625531b2f2ad161ef9d0b93365f9edae154a797f82031b5bfc062",
-    "packages/app/src/components/prompt-input/submit.ts": "6f14368b0d481bdf10a2711e08da41010edd9f67ca8af90b930c096a56778b89",
+    "packages/app/src/components/prompt-input/submit.ts": "7f9c88406d600e1d5de80ce9fab1279ce32fc294da2371d0bf0bc11cc4257aba",
     "packages/app/src/components/session/context-warning-banner.tsx": "f5fab4d7a9536238b70d64488fc30d44f6a4948fdcffd910a9666f4b6c296019",
     "packages/app/src/components/session/index.ts": "21473290d4a1a3d0670fd878372ddf21ff22d4a0b30d1aef6c81ea906c1488b4",
     "packages/app/src/components/session/panel-menu.tsx": "42f323046b7375ae158023a51506038eb15f2e1545c407f45acd47446a8ef3e0",
@@ -875,10 +874,10 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-09-28T19:26:06.623Z",
+  "extracted_at": "2026-09-28T19:44:50.621Z",
   "per_package": {
     "packages/app": {
-      "A": 188,
+      "A": 187,
       "M": 157,
       "D": 0
     },
@@ -924,7 +923,7 @@
     }
   },
   "counts": {
-    "overlay_total": 853,
+    "overlay_total": 852,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1019,8 +1018,7 @@
     "packages/app/src/components/amicode-default-model.tsx": "A",
     "packages/app/src/components/amicode-defaults-capsule.tsx": "A",
     "packages/app/src/components/amicode-file-ref-bridge.tsx": "A",
-    "packages/app/src/components/concise-mode-button.css": "A",
-    "packages/app/src/components/concise-mode-button.tsx": "A",
+    "packages/app/src/components/concise-mode-toggle.tsx": "A",
     "packages/app/src/components/connection-banner.tsx": "A",
     "packages/app/src/components/dialog-command-palette-v2.css": "M",
     "packages/app/src/components/dialog-command-palette-v2.tsx": "M",
