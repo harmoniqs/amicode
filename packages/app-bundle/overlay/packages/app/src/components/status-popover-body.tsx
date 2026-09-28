@@ -518,10 +518,10 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean>; onClose?: (
                                 of the name (not a stacked second line) so the row
                                 never changes height on toggle. Muted, not accent. */}
                             <Show when={isEngine && engineState() === "booting"}>
-                              <span class="text-11-regular text-text-weaker shrink-0">Starting…</span>
+                              <span class="text-11-regular text-text-weaker shrink-0">starting…</span>
                             </Show>
                             <Show when={isEngine && engineState() === "stopping"}>
-                              <span class="text-11-regular text-text-weaker shrink-0">Stopping…</span>
+                              <span class="text-11-regular text-text-weaker shrink-0">stopping…</span>
                             </Show>
                           </span>
                           <Show when={!isEngine && status() === "needs_auth"}>
