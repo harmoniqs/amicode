@@ -110,7 +110,7 @@ import { loadGraph } from "./calibration_graph";
 import { parseStateJson } from "./device_registry";
 import { buildDeviceStatus, nextActions, capabilityHint, type DriveLine } from "./device_status";
 import { SchusterJobServer } from "./qick_client";
-import { adoptOrSpawn, buildLiveDeps, isPidAlive, reclaimOrphanPort, auditAdoptedEngine, restartAdoptedEngine, sweepStrayEngines, listOpencodeEngines, hasLiveClient, reclaimEnginePid, planEngineRestart, planServerActivation, adoptedTheHub, probeUnarmedHub, shouldRideDeterministicHub, planHubYieldBack } from "./server_lifecycle";
+import { adoptOrSpawn, buildLiveDeps, isPidAlive, reclaimOrphanPort, auditAdoptedEngine, restartAdoptedEngine, readoptHubInPlace, sweepStrayEngines, listOpencodeEngines, hasLiveClient, reclaimEnginePid, planEngineRestart, planServerActivation, adoptedTheHub, probeUnarmedHub, shouldRideDeterministicHub, planHubYieldBack } from "./server_lifecycle";
 import { hubEnginePortFor } from "./amicode_service/fleet_hub_service";
 import { handshakePath, readHandshake, deleteHandshake, serverLogPath, coldSpawnHandshakeHook, hashFile, hashString, UNARMED_PASSWORD, isUnarmedHandshake } from "./server_handshake";
 import { startKeepalive, stopKeepalive, readGraceSeconds, pingKeepalive } from "./server_keepalive";
@@ -3301,15 +3301,35 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         // Riding the launchd hub's shared engine: killing it via serverManager and
         // cold-spawning would murder the hub AND spawn a rival on the editor port
         // (the exact split the owner-guard fixes). Instead reclaim the hub engine's
-        // port (launchd KeepAlive respawns a fresh hub), drop the handshake, and
-        // reload — the reload's adopt-or-spawn re-adopts the new hub. One engine.
-        opencodeChannel.appendLine(`[boot] restart: reclaiming hub engine on port ${hubRecord!.port} — launchd will respawn; re-adopting on reload`);
+        // port (launchd KeepAlive respawns a fresh hub), then re-adopt it.
+        // #1615: re-adopt IN PLACE (poll the respawned hub → reattach SSE → push
+        // `on`, no reload) for a seamless toggle-on; fall back to the reload path
+        // only if the respawned hub does not answer within the poll budget.
+        opencodeChannel.appendLine(`[boot] restart: reclaiming hub engine on port ${hubRecord!.port} — launchd will respawn; re-adopting in place`);
         pushEngineState("booting");
         statusBar?.setServerReady(false);
         opencodeReadyUrl = undefined;
-        await restartAdoptedEngine({
+        await readoptHubInPlace({
           port: hubRecord!.port,
           reclaimPort: reclaimOrphanPort,
+          // Poll the respawned hub with a bounded budget; resolve to the ready
+          // URL once it answers, else undefined on timeout (→ reload fallback).
+          pollHub: async (port) => {
+            const deadline = Date.now() + 30_000;
+            while (Date.now() < deadline) {
+              const probe = await probeUnarmedHub(port);
+              if (probe === "unarmed") return `http://127.0.0.1:${port}`;
+              await new Promise((r) => setTimeout(r, 500));
+            }
+            return undefined;
+          },
+          reattachSse: (url) => {
+            opencodeReadyUrl = new URL(url);
+            statusBar?.setServerReady(true);
+            sseClient?.connect(opencodeReadyUrl);
+            opencodeChannel.appendLine(`[boot] hub re-adopted in place at ${opencodeReadyUrl}`);
+          },
+          pushEngineState: (state) => pushEngineState(state),
           deleteHandshake: () => deleteHandshake(),
           reloadWindow: () => void vscode.commands.executeCommand("workbench.action.reloadWindow"),
           log: (line) => opencodeChannel.appendLine(line),

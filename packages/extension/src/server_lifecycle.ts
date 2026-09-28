@@ -908,3 +908,67 @@ export async function restartAdoptedEngine(deps: RestartAdoptedEngineDeps): Prom
   deps.deleteHandshake();
   await deps.reloadWindow();
 }
+
+// ============================================================================
+// Seamless engine toggle-ON for a hub window (#1615, follow-up to #1608)
+//
+// The reclaim-and-readopt plan used to end in a full window reload
+// (restartAdoptedEngine). For the TOGGLE-ON path we can do better: after
+// reclaiming the hub port (launchd respawns a fresh hub engine), poll that port
+// until the new engine answers, then reattach the SSE stream and push `on` — no
+// reload. If the respawned hub does not answer within the poll budget we fall
+// back to the proven reload path, so the toggle is never left stuck.
+//
+// This is DELIBERATELY separate from restartAdoptedEngine: the stale-engine
+// notice path swaps to a NEW build and a fresh window is legitimately wanted
+// there, so it keeps reloading. Only the toggle re-adopts in place.
+// ============================================================================
+
+export type ReadoptMode = "in-place-readopt" | "reload-readopt";
+
+/** Decide whether the toggle-on re-adopt can complete in place. Pure: in-place
+ *  when the respawned hub answered within the poll budget, else a safe reload. */
+export function planReadoptMode(state: { hubAnswered: boolean }): ReadoptMode {
+  return state.hubAnswered ? "in-place-readopt" : "reload-readopt";
+}
+
+export interface ReadoptHubInPlaceDeps {
+  /** Hub engine port to reclaim + re-adopt. */
+  port: number;
+  /** SIGTERM→SIGKILL the port holder so launchd respawns a fresh hub. */
+  reclaimPort: (port: number) => Promise<boolean>;
+  /** Poll the hub port with a bounded budget; resolves to the ready URL when the
+   *  respawned hub answers, or undefined on timeout. */
+  pollHub: (port: number) => Promise<string | undefined>;
+  /** Reattach the live SSE client to the fresh ready URL (in-place success). */
+  reattachSse: (url: string) => void;
+  /** Push the app-facing engine-state (`on` on success). */
+  pushEngineState: (state: "on" | "booting" | "off" | "stopping") => void;
+  /** Drop the handshake before the fallback reload (mirrors restartAdoptedEngine). */
+  deleteHandshake: () => void;
+  /** Fallback: reload the window so its adopt-or-spawn gate re-adopts. */
+  reloadWindow: () => void | Promise<void>;
+  log?: (line: string) => void;
+}
+
+/** Re-adopt the launchd-respawned hub IN PLACE for the toggle-on path (#1615).
+ *  Order: reclaim (frees the port so launchd respawns) → poll the fresh hub →
+ *  on answer, reattach SSE + push `on` (no reload); on timeout, delete the
+ *  handshake + reload (the old safe path). Reclaim ALWAYS precedes the poll,
+ *  and the two outcomes (reattach / reload) are mutually exclusive. */
+export async function readoptHubInPlace(deps: ReadoptHubInPlaceDeps): Promise<void> {
+  deps.log?.(`[boot] toggle-on: reclaiming hub engine on port ${deps.port} for in-place re-adopt`);
+  const freed = await deps.reclaimPort(deps.port).catch(() => false);
+  deps.log?.(`[boot] port ${deps.port} freed=${freed} — polling for the respawned hub`);
+  const readyUrl = await deps.pollHub(deps.port).catch(() => undefined);
+  const mode = planReadoptMode({ hubAnswered: readyUrl !== undefined });
+  if (mode === "in-place-readopt" && readyUrl !== undefined) {
+    deps.log?.(`[boot] hub back at ${readyUrl} — reattaching SSE in place (no reload)`);
+    deps.reattachSse(readyUrl);
+    deps.pushEngineState("on");
+    return;
+  }
+  deps.log?.(`[boot] respawned hub did not answer within budget — deleting handshake + reloading`);
+  deps.deleteHandshake();
+  await deps.reloadWindow();
+}
