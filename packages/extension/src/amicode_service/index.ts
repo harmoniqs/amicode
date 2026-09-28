@@ -48,6 +48,8 @@ import { SseFanInDriver } from "./sse_fanin_driver";
 import { createObservationReadPlane } from "./observation_read_plane";
 import { createObservationWritePlane } from "./observation_write_plane";
 import { findControlGrantByTarget, readAllLifecycleGrants, sanitizeGrantForDisplay } from "./fleet_control_lifecycle";
+import { creationTargetResponse } from "./session_creation_route";
+import { peerHomeBaseResponse } from "./session_peer_home_base";
 import {
   submitControlRequest,
   approveControlRequest,
@@ -467,6 +469,10 @@ export interface FleetRouteDeps {
     getBlockedPeers?(): Array<{ machineId: string; reason: "identity-conflict" }>;
     readPeerToken(machineId: string): { ok: true; credential: { baseUrl: string; token: string } } | { ok: false };
     rosterLookup(machineId: string): { name: string; device_type?: string } | undefined;
+    /** #1643 (completes #1484 AC3): the peer's home-base working directory for a
+     *  remote session.create. Optional for back-compat — a provider without it
+     *  yields `no-remote-root` (the honest unresolvable outcome), never a guess. */
+    readPeerHomeDir?(machineId: string): string | undefined;
   };
 }
 
@@ -606,7 +612,39 @@ export function registerFleetRoutes(server: AmicodeServiceServer, deps: FleetRou
     };
   });
 
-  // #1545 (slice 5): the shared-peer control request→approve handshake routes.
+  // #1643 (completes #1484 AC3): the composer's pre-flight gate for remote
+  // session creation. GET /amicode/fleet/creation-target?machine=<id> wraps the
+  // pure resolveCreationTarget resolver so a blocked pick (no grant / revoked /
+  // observe-only / transport-down) surfaces its EXACT reason BEFORE any create
+  // is attempted. GET /amicode/fleet/peer-home-base?machine=<id> resolves the
+  // directory the remote create lands in (one small peer read; unresolvable →
+  // no-remote-root). Both under /amicode/fleet/* → never proxied (the grant +
+  // reachability truth is THIS machine's own fleet view, ADR 0027 §4).
+  server.add("GET", "/amicode/fleet/creation-target", ({ url }) => {
+    const machine = url.searchParams.get("machine") ?? undefined;
+    const fp = deps.fleetPeers;
+    if (!fp) {
+      return { status: 200, body: JSON.stringify({ ok: true, target: { kind: "local" } }) };
+    }
+    const serving = new Set(fp.getServingPeers().map((p) => p.machineId));
+    return creationTargetResponse(machine, {
+      localMachineId: fp.localMachineId,
+      readGrants: () => readAllLifecycleGrants(),
+      // A peer is reachable when it is in the serving set AND its token resolves
+      // to a base URL — the same signal the multiplexer routes on.
+      peerReachable: (peerId) => serving.has(peerId) && fp.readPeerToken(peerId).ok,
+    });
+  });
+
+  server.add("GET", "/amicode/fleet/peer-home-base", ({ url }) => {
+    const machine = url.searchParams.get("machine") ?? undefined;
+    const fp = deps.fleetPeers;
+    return peerHomeBaseResponse(machine, {
+      readPeerHomeDir: (peerId) => fp?.readPeerHomeDir?.(peerId),
+    });
+  });
+
+
   // A shared peer POSTs a control request; the lifecycle-admin authority holder
   // approves or denies. These live under /amicode/fleet/* (never-proxied).
   server.add("POST", "/amicode/fleet/control-request", ({ body }) => {
