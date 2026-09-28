@@ -1374,7 +1374,14 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
               </button>
               <div class="flex-1" />
               <Show when={flyoutTab() === "active"}>
-                <MenuV2 gutter={4} placement="bottom-end">
+                {/* modal={false} is load-bearing: a modal Kobalte DropdownMenu
+                    sets document.body { pointer-events: none } while open, so
+                    clicks on the flyout (rendered in a solid Portal under body)
+                    retarget to <body> — which the flyout's outside-click
+                    dismiss handler reads as "outside" and closes the whole
+                    session list. Non-modal keeps body interactive; the menu
+                    still dismisses itself on outside-click via its own layer. */}
+                <MenuV2 gutter={4} placement="bottom-end" modal={false}>
                   <MenuV2.Trigger
                     as={ButtonV2}
                     variant="ghost-muted"
