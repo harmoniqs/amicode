@@ -33,6 +33,22 @@ import {
   bringUpSshAttachment,
   type AttachmentTransportHandle,
 } from "../src/amicode_service/attachment_transport";
+import {
+  defaultAuthorizedKeysPath,
+  installTeardownHandlers,
+  nodeHarnessFs,
+  nodeProcessInspector,
+  nodeSignalSink,
+  registeringSpawn,
+  runPreflightSweepOnce,
+} from "./support/ssh_test_harness";
+
+// #1634: STOP THE LEAK. Before this suite's SSH_READY probe installs any
+// throwaway key, sweep the PREVIOUS run's debris — orphaned `ssh -N` loopback
+// forwards (via the harness-owned PID registry, the primary path-independent
+// reap) and stale `amicode-*-test-*` authorized_keys lines. MUST run before
+// the SSH_READY IIFE below (a module-load statement, so it does).
+runPreflightSweepOnce();
 
 // ── SSH readiness probe (module scope) — identical to the Slice-3/Slice-4
 //    harnesses (attachment_transport, attach_switch_latency). A loopback sshd
@@ -110,6 +126,22 @@ if (!SSH_READY.ready) {
     `[fleet_peer_e2e.test.ts] SKIPPING the real-SSH two-engine e2e suite: ${SSH_READY.reason ?? "no loopback ssh access"}. ` +
       "This is an HONEST skip, not a fabricated pass.",
   );
+} else {
+  // #1634: crash-safe teardown for the common interactive Ctrl-C / SIGTERM
+  // case — synchronously restore authorized_keys (only if a throwaway key was
+  // installed this run) and kill spawned forward children. The PID registry
+  // above is the primary reap that survives an un-handleable SIGKILL; this is
+  // the secondary convenience for graceful interrupts. Children are reaped by
+  // the next run's registry sweep regardless, so an empty spawnedPids here is
+  // still safe — the handler focuses on restoring authorized_keys promptly.
+  installTeardownHandlers({
+    signals: nodeSignalSink(),
+    fs: nodeHarnessFs(),
+    inspector: nodeProcessInspector(),
+    authorizedKeysPath: defaultAuthorizedKeysPath(),
+    originalAuthorizedKeys: SSH_READY.throwaway?.originalAuthorizedKeys,
+    spawnedPids: [],
+  });
 }
 
 // ── mock engine factory ─────────────────────────────────────────────────────
@@ -298,6 +330,10 @@ describe.skipIf(!SSH_READY.ready)(
         remotePort: peer.port,
         localPort,
         extraSshOptions: [...sshProbeBaseArgs(), ...SSH_READY.identityArgs],
+        // #1634: register each spawned `ssh -N` forward's PID at bring-up so
+        // the next run's pre-flight sweep can reap it even after a SIGKILL.
+        // Production bring-up is unchanged — same argv, same child.
+        spawnFn: registeringSpawn(),
       });
     }
 
