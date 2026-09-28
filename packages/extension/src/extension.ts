@@ -498,6 +498,17 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     });
     // the harness's own additions (telaio: TELAIO_APP_DIR — the app shelf)
     Object.assign(env, harnessEnvCurrent);
+    // #1596 (ADR 0020): fleet server/hub role exemption — engines that serve
+    // fleet clients must never self-exit on the idle timer. Read the topology
+    // LAZILY at spawn time so a late enrollment is picked up on the next
+    // respawn. The env var is consumed by the engine overlay's self-shutdown
+    // module (process.env.AMICO_ENGINE_ROLE_EXEMPT === "1").
+    {
+      const topo = readFleetTopology();
+      if (topo.kind === "ok" && topo.role === "server") {
+        env.AMICO_ENGINE_ROLE_EXEMPT = "1";
+      }
+    }
     // Data & Storage overrides (#378): inject OPENCODE_DB / OPENCODE_CONFIG_DIR
     // from the user's VS Code settings when non-empty. On cold start + on
     // restartServer, the new env reaches the fresh server process.

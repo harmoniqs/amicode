@@ -81,6 +81,7 @@ import * as AmicodeLibrary from "@/server/amicode/library"
 import * as AmicodeProfile from "@/server/amicode/profile"
 import * as AmicodeConnections from "@/server/amicode/connections"
 import * as AmicodeProject from "@/server/amicode/project"
+import * as SelfShutdown from "@/server/amicode/self-shutdown"
 import { ServerAuth } from "@/server/auth"
 import { InstanceHttpApi, RootHttpApi } from "./api"
 import { Api } from "@opencode-ai/server/api"
@@ -520,6 +521,30 @@ const amicodeConnectionsRoute = HttpRouter.use((router) =>
   }),
 ).pipe(Layer.provide(authOnlyRouterLayer))
 
+// amicode: /keepalive route (#1596, ADR 0020). Authenticated POST that the
+// extension pings at a regular interval. Updates the self-shutdown module's
+// last-ping timestamp and grace window. JSON body { graceSeconds: number }.
+const amicodeKeepaliveRoute = HttpRouter.use((router) =>
+  Effect.gen(function* () {
+    yield* router.add("POST", "/keepalive", (request) =>
+      Effect.gen(function* () {
+        const raw = yield* Effect.orDie(request.text)
+        let grace = 30
+        try {
+          const parsed = JSON.parse(raw) as { graceSeconds?: unknown }
+          if (typeof parsed.graceSeconds === "number" && Number.isFinite(parsed.graceSeconds) && parsed.graceSeconds > 0) {
+            grace = parsed.graceSeconds
+          }
+        } catch {
+          // invalid JSON → use default grace
+        }
+        SelfShutdown.touchKeepalive(grace)
+        return HttpServerResponse.text(JSON.stringify({ ok: true }), { contentType: "application/json" })
+      }),
+    )
+  }),
+).pipe(Layer.provide(authOnlyRouterLayer))
+
 const uiRoute = HttpRouter.use((router) =>
   Effect.gen(function* () {
     const fs = yield* FSUtil.Service
@@ -613,6 +638,7 @@ export function createRoutes(
     amicodeProblemsRoute,
     amicodeWidgetsRoute,
     amicodeConnectionsRoute,
+    amicodeKeepaliveRoute,
     uiRoute,
   ).pipe(
     Layer.provide([
