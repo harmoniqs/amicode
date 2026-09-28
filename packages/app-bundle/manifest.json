@@ -300,7 +300,7 @@
     "packages/opencode/src/project/instance-store.ts": "c22d3e2499e63dd8d9395d58189df75444d306774df833e746f22e327edcf2ab",
     "packages/opencode/src/provider/auth.ts": "b0ab1322c1039e27176bf9e3500603eae27506065ac141a69710220f3361f6b8",
     "packages/opencode/src/provider/error.ts": "7f3c8210c775e2ce98140bf015dc97e61192912af062c75e18ecb09ee2736a0f",
-    "packages/opencode/src/provider/provider.ts": "058ebad1e5632403a5bf7873c4cae13f17f3c872c7f0559d4dc4d9d279f35adc",
+    "packages/opencode/src/provider/provider.ts": "435a2838291d2aa32de4d1ecab1778b443f9ec9b3b5ed409b94d3b2de0142853",
     "packages/opencode/src/provider/transform.ts": "70c7492d4a23a30ebc340a5605702b1602960f4b412e18557534e02962c137b8",
     "packages/opencode/src/server/auth.ts": "a054aff2ea06a303a99f326275332a68089c58916356a26d66af44f048f597cc",
     "packages/opencode/src/server/server.ts": "9cbd3503b77b61b07d754f1064207c04a5f28175c4138fbd08bba2abf0016803",
@@ -339,6 +339,7 @@
     "packages/opencode/test/fixture/fixture.ts": "357bdaa06c6233a91069db20cc5f1cbb2d6eafa3bc7ba3e89b019859d195d6ef",
     "packages/opencode/test/lib/cli-process.ts": "110c43d247930e834ffffb9068682c5ab2e1b95460ec1ac3d0a75cafbdee60ff",
     "packages/opencode/test/project/worktree-rename.test.ts": "3ec168c9f8595249b75832895a251483ec1f3641ce44ad0bd5a664b5bbd6dad1",
+    "packages/opencode/test/provider/combine-abort-signals.test.ts": "0a997303e717184e3e237e4b978b64a34ab8022724c47245b25f32e90738d205",
     "packages/opencode/test/provider/harmoniqs-tools.test.ts": "0c626daa51c312eb81dd854509a2e1944712ee9620a36eb4db66078ab80d6b82",
     "packages/opencode/test/provider/provider.test.ts": "5b2cbed8994d3bbc968a72d01459460c1de72b6117a0795c2bc6a10abbf02926",
     "packages/opencode/test/provider/transform.test.ts": "ecf9dd1bdec36c2126f3140d43125728c06211b9771d47619ff65f7453ff37fd",
@@ -909,7 +910,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-09-28T03:53:48.657Z",
+  "extracted_at": "2026-09-28T13:48:47.465Z",
   "per_package": {
     "packages/app": {
       "A": 213,
@@ -927,7 +928,7 @@
       "D": 0
     },
     "packages/opencode": {
-      "A": 74,
+      "A": 75,
       "M": 84,
       "D": 0
     },
@@ -958,7 +959,7 @@
     }
   },
   "counts": {
-    "overlay_total": 887,
+    "overlay_total": 888,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1294,6 +1295,7 @@
     "packages/opencode/test/fixture/fixture.ts": "M",
     "packages/opencode/test/lib/cli-process.ts": "M",
     "packages/opencode/test/project/worktree-rename.test.ts": "A",
+    "packages/opencode/test/provider/combine-abort-signals.test.ts": "A",
     "packages/opencode/test/provider/harmoniqs-tools.test.ts": "A",
     "packages/opencode/test/provider/provider.test.ts": "M",
     "packages/opencode/test/provider/transform.test.ts": "M",

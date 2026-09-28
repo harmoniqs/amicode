@@ -34,10 +34,19 @@ import { ProviderError } from "./error"
 
 const OPENAI_HEADER_TIMEOUT_DEFAULT = 300_000
 
-function wrapSSE(res: Response, ms: number, ctl: AbortController) {
-  if (typeof ms !== "number" || ms <= 0) return res
-  if (!res.body) return res
-  if (!res.headers.get("content-type")?.includes("text/event-stream")) return res
+function wrapSSE(res: Response, ms: number, ctl: AbortController, dispose?: () => void) {
+  if (typeof ms !== "number" || ms <= 0) {
+    dispose?.()
+    return res
+  }
+  if (!res.body) {
+    dispose?.()
+    return res
+  }
+  if (!res.headers.get("content-type")?.includes("text/event-stream")) {
+    dispose?.()
+    return res
+  }
 
   const reader = res.body.getReader()
   const body = new ReadableStream<Uint8Array>({
@@ -63,6 +72,8 @@ function wrapSSE(res: Response, ms: number, ctl: AbortController) {
       })
 
       if (part.done) {
+        // Stream drained normally — the combined abort signal is done its job.
+        dispose?.()
         ctrl.close()
         return
       }
@@ -70,6 +81,8 @@ function wrapSSE(res: Response, ms: number, ctl: AbortController) {
       ctrl.enqueue(part.value)
     },
     async cancel(reason) {
+      // Consumer (or timeout) cancelled — tear down combined-signal listeners.
+      dispose?.()
       ctl.abort(reason)
       await reader.cancel(reason)
     },
@@ -89,6 +102,62 @@ function timeoutController(ms: number) {
     signal: ctl.signal,
     clear: () => clearTimeout(id),
   }
+}
+
+// ── Harmoniqs overlay fix: deterministic abort-signal combiner ───────────────
+// Upstream combined the per-fetch abort signals with `AbortSignal.any(signals)`.
+// That is correct in isolation but leaks here: `AbortSignal.any` registers an
+// internal abort listener on EVERY source signal, and one source — `opts.signal`
+// — is the LONG-LIVED session/turn abort signal that is reused across many
+// sequential LLM fetches in a single agent turn. Every fetch planted another
+// listener on that durable signal; the composite `any` result was discarded but
+// the listener it left on the source only cleared on non-deterministic GC. They
+// accumulated → MaxListenersExceededWarning on the internal node, then an
+// unbounded listener leak over a long turn.
+//
+// combineAbortSignals owns the wiring: it attaches ONE listener per source to a
+// single controller and returns dispose(), which removes every listener the
+// moment the fetch (and any SSE stream) is fully settled. A durable source
+// therefore returns to its baseline listener count after each fetch — the leak
+// is closed deterministically, without depending on GC. Fast paths (0 or 1
+// source) return without wrapping, exactly as before.
+export function combineAbortSignals(signals: AbortSignal[]): {
+  signal: AbortSignal | null
+  dispose: () => void
+} {
+  if (signals.length === 0) return { signal: null, dispose: () => {} }
+  if (signals.length === 1) return { signal: signals[0], dispose: () => {} }
+
+  const controller = new AbortController()
+  // Track (source, handler) pairs so dispose() removes exactly what we added.
+  const wired: Array<{ src: AbortSignal; handler: () => void }> = []
+  let disposed = false
+
+  const dispose = () => {
+    if (disposed) return
+    disposed = true
+    for (const { src, handler } of wired) src.removeEventListener("abort", handler)
+    wired.length = 0
+  }
+
+  for (const src of signals) {
+    // A source already aborted: propagate immediately and stop — no listeners
+    // to leave behind, and the combined signal is aborted from the start.
+    if (src.aborted) {
+      controller.abort((src as AbortSignal & { reason?: unknown }).reason)
+      dispose()
+      return { signal: controller.signal, dispose }
+    }
+    const handler = () => {
+      controller.abort((src as AbortSignal & { reason?: unknown }).reason)
+      // Once combined, the other sources' listeners are dead weight — clear them.
+      dispose()
+    }
+    src.addEventListener("abort", handler, { once: true })
+    wired.push({ src, handler })
+  }
+
+  return { signal: controller.signal, dispose }
 }
 
 function googleVertexAnthropicBaseURL(project: string | undefined, location: string | undefined) {
@@ -1825,17 +1894,31 @@ const layer = Layer.effect(
           if (options["timeout"] !== undefined && options["timeout"] !== null && options["timeout"] !== false)
             signals.push(AbortSignal.timeout(options["timeout"]))
 
-          const combined = signals.length === 0 ? null : signals.length === 1 ? signals[0] : AbortSignal.any(signals)
-          if (combined) opts.signal = combined
+          const combined = combineAbortSignals(signals)
+          if (combined.signal) opts.signal = combined.signal
 
-          const res = await fetchFn(input, {
-            ...opts,
-            // @ts-ignore see here: https://github.com/oven-sh/bun/issues/16682
-            timeout: false,
-          }).finally(() => headerTimeoutCtl?.clear())
+          try {
+            const res = await fetchFn(input, {
+              ...opts,
+              // @ts-ignore see here: https://github.com/oven-sh/bun/issues/16682
+              timeout: false,
+            }).finally(() => headerTimeoutCtl?.clear())
 
-          if (!chunkAbortCtl) return res
-          return wrapSSE(res, chunkTimeout, chunkAbortCtl)
+            if (!chunkAbortCtl) {
+              // Non-SSE: the response is fully in hand; our combined signal has
+              // done its job, so tear its listeners off the (possibly durable)
+              // sources now. The runtime owns any further body-read cancellation.
+              combined.dispose()
+              return res
+            }
+            // SSE: the combined signal must stay live while the stream reads, so
+            // dispose only when the wrapped stream completes or is cancelled.
+            return wrapSSE(res, chunkTimeout, chunkAbortCtl, combined.dispose)
+          } catch (e) {
+            // A throw before we could hand off to the stream still tears down.
+            combined.dispose()
+            throw e
+          }
         }
 
         const bundledLoader = BUNDLED_PROVIDERS[model.api.npm]
