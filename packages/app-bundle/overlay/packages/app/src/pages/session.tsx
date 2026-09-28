@@ -78,7 +78,6 @@ import { restorePromptModel, syncPromptModel, syncSessionModel } from "@/pages/s
 import {
   clampSessionPanelWidth,
   clampWorkColumnWidth,
-  CHAT_COLLAPSE_THRESHOLD,
   SESSION_PANEL_WIDTH_MIN,
   sessionChatTakesRemainder,
   sessionPanelWidthMax,
@@ -708,50 +707,34 @@ export default function Page() {
   const chatTakesRemainder = createMemo(() =>
     sessionChatTakesRemainder({ newDesign: newSessionDesign(), columnVisible: isDesktop() && desktopV2PanelLayout().visible }),
   )
+  const workColumnWidth = createMemo(() =>
+    clampWorkColumnWidth({ width: layout.panelColumn.width(), available: sessionPanelAvailable() }),
+  )
 
-  // #1434: Work Column maximize — collapse the Chat panel to give Preview
-  // full width. The pre-maximize column width is remembered for restore.
-  // Declared before workColumnWidth because it reads chatCollapsed().
-  const [chatCollapsed, setChatCollapsed] = createSignal(false)
-  const [preMaximizeWidth, setPreMaximizeWidth] = createSignal<number | undefined>(undefined)
+  // #1434: Wide mode — a fullscreen toggle for the Work Column that overrides
+  // the normal 60% cap. The resize handle stays bounded; only the toggle goes
+  // full-width. Declared before sessionPanelWidth so it can gate the chat width.
+  const [wideMode, setWideMode] = createSignal(false)
+  const [preWideColumnWidth, setPreWideColumnWidth] = createSignal<number | undefined>(undefined)
 
-  const workColumnWidth = createMemo(() => {
-    // #1434: when Chat is collapsed, the Work Column fills the full row
-    if (chatCollapsed()) return sessionPanelAvailable() ?? 900
-    return clampWorkColumnWidth({ width: layout.panelColumn.width(), available: sessionPanelAvailable() })
-  })
-
-  const chatEffectivelyCollapsed = createMemo(() => {
-    if (chatCollapsed()) return true
-    // Also collapse when the user drags the column so wide the chat is squeezed
-    // below the threshold.
-    const available = sessionPanelAvailable()
-    if (available === undefined) return false
-    return available - workColumnWidth() < CHAT_COLLAPSE_THRESHOLD
-  })
-
-  function toggleMaximize() {
-    if (chatCollapsed()) {
-      // Restore: set column back to pre-maximize width
-      setChatCollapsed(false)
-      const restoreWidth = preMaximizeWidth() ?? WORK_COLUMN_WIDTH_MIN
-      layout.panelColumn.resize(restoreWidth)
+  function toggleWide() {
+    if (wideMode()) {
+      setWideMode(false)
+      const restore = preWideColumnWidth()
+      if (restore) layout.panelColumn.resize(restore)
     } else {
-      // Maximize: remember current width, then expand column to fill
-      setPreMaximizeWidth(workColumnWidth())
-      setChatCollapsed(true)
-      const available = sessionPanelAvailable() ?? 900
-      layout.panelColumn.resize(available)
+      setPreWideColumnWidth(layout.panelColumn.width())
+      setWideMode(true)
     }
   }
 
-  // Cmd+Shift+M (Ctrl+Shift+M on Linux/Windows) toggles maximize
+  // Cmd+Shift+M toggles wide mode
   createEffect(() => {
     if (!newSessionDesign()) return
     function onKeyDown(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "m") {
         e.preventDefault()
-        toggleMaximize()
+        toggleWide()
       }
     }
     window.addEventListener("keydown", onKeyDown)
@@ -2789,26 +2772,25 @@ export default function Page() {
 
         <div
           classList={{
-            "@container relative shrink-0 flex flex-col min-h-0 h-full transition-[width]": true,
-            "flex-1 md:flex-none": !chatTakesRemainder() && !chatEffectivelyCollapsed(),
-            "flex-1": chatTakesRemainder() && !chatEffectivelyCollapsed(),
+            "@container relative shrink-0 flex flex-col min-h-0 h-full transition-[width,opacity]": true,
+            "flex-1 md:flex-none": !chatTakesRemainder(),
+            "flex-1": chatTakesRemainder() && !wideMode(),
             "duration-[240ms] ease-[cubic-bezier(0.22,1,0.36,1)] will-change-[width] motion-reduce:transition-none":
               !size.active() && !ui.reviewSnap && !desktopInlineTerminalOnlyOpen(),
           }}
           style={{
-            width: (newSessionDesign() && chatEffectivelyCollapsed()) ? "0px" : sessionPanelWidth(),
-            // #1614: use width:0 + overflow:hidden instead of display:none to
-            // preserve scroll geometry and avoid the ResizeObserver cascade that
-            // triggers the infinite scroll loop on restore.
-            ...(newSessionDesign() && chatEffectivelyCollapsed() ? {
+            // #1434: in wide mode, collapse Chat to width:0 (not display:none —
+            // preserves scroll geometry, avoids the #1510 scroll-loop cascade).
+            ...(newSessionDesign() && wideMode() ? {
+              width: "0px",
+              "min-width": "0px",
               overflow: "hidden",
               opacity: "0",
               "pointer-events": "none",
-              "min-width": "0px",
-              "flex-basis": "0px",
-              "flex-grow": "0",
-              "flex-shrink": "0",
-            } : {}),
+              flex: "0 0 0px",
+            } : {
+              width: sessionPanelWidth(),
+            }),
           }}
         >
           {settings.general.newLayoutDesigns() ? (
@@ -2867,50 +2849,17 @@ export default function Page() {
             <div
               classList={{
                 "min-w-0 h-full flex flex-col relative": true,
-                "flex-1": !isDesktop() || chatEffectivelyCollapsed(),
-                "flex-none": isDesktop() && !chatEffectivelyCollapsed(),
+                "flex-1": !isDesktop() || wideMode(),
+                "flex-none": isDesktop() && !wideMode(),
               }}
-              style={{ width: isDesktop() && !chatEffectivelyCollapsed() ? `${workColumnWidth()}px` : undefined }}
+              style={{ width: isDesktop() && !wideMode() ? `${workColumnWidth()}px` : undefined }}
             >
-              {/* #1434: restore strip when Chat is collapsed — inside the Work
-                  Column so it doesn't eat flex-row space as a sibling */}
-              <Show when={chatEffectivelyCollapsed()}>
-                <button
-                  class="absolute left-0 top-0 z-10 flex items-center justify-center w-6 h-full hover:bg-background-interactive-hover/50 transition-colors"
-                  title={`Show Chat (${navigator.platform.includes("Mac") ? "⌘" : "Ctrl"}⇧M)`}
-                  onClick={toggleMaximize}
-                >
-                  <svg width="16" height="16" viewBox="0 0 20 20" fill="none" class="text-text-dimmed opacity-60"><path d="M7.5 15L12.5 10L7.5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                </button>
-              </Show>
               {/* amicode#105: the work column's own resize handle (its left
                   edge), sizing layout.panelColumn within the policy bounds —
-                  the chat flexes around it, never below it. */}
-              <Show when={isDesktop()}>
-                <div onPointerDown={() => size.start()} onDblClick={(e) => {
-                  e.preventDefault()
-                  // #1434: double-click cycles: 50/50 → full Preview → default
-                  const available = sessionPanelAvailable() ?? 900
-                  const current = workColumnWidth()
-                  const half = Math.floor(available * 0.5)
-                  const full = available
-                  const def = WORK_COLUMN_WIDTH_MIN
-                  // Determine which snap to go to next
-                  if (Math.abs(current - half) < 20) {
-                    // Currently ~50/50 → go to full
-                    setChatCollapsed(true)
-                    setPreMaximizeWidth(half)
-                    layout.panelColumn.resize(full)
-                  } else if (current > available - CHAT_COLLAPSE_THRESHOLD) {
-                    // Currently full → go to default
-                    setChatCollapsed(false)
-                    layout.panelColumn.resize(def)
-                  } else {
-                    // Currently at some other width → go to 50/50
-                    setChatCollapsed(false)
-                    layout.panelColumn.resize(half)
-                  }
-                }}>
+                  the chat flexes around it, never below it. Hidden in wide
+                  mode since the column fills the row. */}
+              <Show when={isDesktop() && !wideMode()}>
+                <div onPointerDown={() => size.start()}>
                   <ResizeHandle
                     direction="horizontal"
                     edge="start"
@@ -2920,28 +2869,9 @@ export default function Page() {
                     onResize={(width) => {
                       size.touch()
                       layout.panelColumn.resize(width)
-                      // #1434: if dragging pushes chat below collapse threshold,
-                      // auto-collapse it
-                      const available = sessionPanelAvailable() ?? 900
-                      if (available - width < CHAT_COLLAPSE_THRESHOLD && !chatCollapsed()) {
-                        setChatCollapsed(true)
-                        setPreMaximizeWidth(width)
-                      } else if (available - width >= CHAT_COLLAPSE_THRESHOLD && chatCollapsed()) {
-                        setChatCollapsed(false)
-                      }
                     }}
                   />
                 </div>
-                {/* #1434: Maximize toggle button — only when Chat is visible */}
-                <Show when={!chatEffectivelyCollapsed()}>
-                  <button
-                    class="absolute top-1 right-1 z-10 flex items-center justify-center w-6 h-6 rounded hover:bg-background-interactive-hover transition-colors opacity-40 hover:opacity-100"
-                    title={`Maximize Preview (${navigator.platform.includes("Mac") ? "⌘" : "Ctrl"}⇧M)`}
-                    onClick={toggleMaximize}
-                  >
-                    <svg width="16" height="16" viewBox="0 0 20 20" fill="none" class="text-text-dimmed"><path d="M7.5 15L12.5 10L7.5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                  </button>
-                </Show>
               </Show>
               <Show when={isDesktop() && (desktopV2ReviewOpen() || desktopFileTreeOpen())}>
                 <div class="min-h-0 flex-1">
@@ -2965,6 +2895,8 @@ export default function Page() {
                       size={size}
                       stacked={desktopV2PanelLayout().stacked}
                       touchedFiles={touchedFiles}
+                      isWide={wideMode}
+                      onToggleWide={toggleWide}
                     />
                   </Suspense>
                 </div>

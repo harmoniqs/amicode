@@ -332,6 +332,9 @@ export function SessionSidePanel(props: {
   size: Sizing
   stacked?: boolean
   touchedFiles?: () => Array<{ file: string; status: string }>
+  /** #1434: Wide mode toggle */
+  isWide?: () => boolean
+  onToggleWide?: () => void
 }) {
   const layout = useLayout()
   const settings = useSettings()
@@ -858,7 +861,24 @@ export function SessionSidePanel(props: {
                                 </For>
                               </SortableProvider>
                             </Tabs.List>
-                            <div class="shrink-0 flex items-center justify-center pl-2 pr-1">
+                            <div class="shrink-0 flex items-center gap-1 pl-2 pr-1">
+                              {/* #1434: Wide mode toggle pill */}
+                              <Show when={props.onToggleWide}>
+                                <button
+                                  class="flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium transition-colors"
+                                  classList={{
+                                    "bg-surface-accent/15 text-text-accent hover:bg-surface-accent/25": props.isWide?.() ?? false,
+                                    "bg-transparent text-text-dimmed hover:bg-background-interactive-hover hover:text-text-base": !(props.isWide?.() ?? false),
+                                  }}
+                                  title={props.isWide?.()
+                                    ? `Exit Wide (${navigator.platform.includes("Mac") ? "⌘" : "Ctrl"}⇧M)`
+                                    : `Wide (${navigator.platform.includes("Mac") ? "⌘" : "Ctrl"}⇧M)`
+                                  }
+                                  onClick={() => props.onToggleWide?.()}
+                                >
+                                  {props.isWide?.() ? "Exit Wide" : "Wide"}
+                                </button>
+                              </Show>
                               <PanelMenu items={panelMenuItems()} onSelect={handlePanelMenuSelect} />
                             </div>
                           </div>
@@ -1181,7 +1201,24 @@ export function SessionSidePanel(props: {
                             </For>
                           </DndKitProvider>
                         </Tabs.List>
-                        <div class="shrink-0 flex items-center justify-center pl-2 pr-1">
+                        <div class="shrink-0 flex items-center gap-1 pl-2 pr-1">
+                          {/* #1434: Wide mode toggle pill (v2 path) */}
+                          <Show when={props.onToggleWide}>
+                            <button
+                              class="flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium transition-colors"
+                              classList={{
+                                "bg-surface-accent/15 text-text-accent hover:bg-surface-accent/25": props.isWide?.() ?? false,
+                                "bg-transparent text-text-dimmed hover:bg-background-interactive-hover hover:text-text-base": !(props.isWide?.() ?? false),
+                              }}
+                              title={props.isWide?.()
+                                ? `Exit Wide (${navigator.platform.includes("Mac") ? "⌘" : "Ctrl"}⇧M)`
+                                : `Wide (${navigator.platform.includes("Mac") ? "⌘" : "Ctrl"}⇧M)`
+                              }
+                              onClick={() => props.onToggleWide?.()}
+                            >
+                              {props.isWide?.() ? "Exit Wide" : "Wide"}
+                            </button>
+                          </Show>
                           <PanelMenu items={panelMenuItems()} onSelect={handlePanelMenuSelect} v2 />
                         </div>
                         <div
