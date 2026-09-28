@@ -142,6 +142,9 @@ export function rebuildAppBundleStep(mode: RebuildMode, branch: string): { cmd: 
 // app renders LLM output, so we never executeCommand anything outside this set.
 export const BRIDGE_ALLOWED_COMMANDS: ReadonlySet<string> = new Set([
   "amicode.restartServer",
+  // #1598: the engine on/off toggle in the status cluster — the app posts this
+  // to stop the engine (the companion amicode.restartServer is already here).
+  "amicode.stopServer",
   // amicode#653: the connection banner's Restart Hub action — the client-
   // initiated atomic restart over SSH (amicode#649). Initiated from the
   // extension host, never from the hub itself.

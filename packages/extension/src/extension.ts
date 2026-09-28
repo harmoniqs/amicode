@@ -123,6 +123,7 @@ import { mountAmicoHostFs } from "./fleet_host_fs/mount";
 import { type CapabilityLabel } from "./fleet_host_fs/mount_policy";
 import { stopServer } from "./stop_server";
 import { quitAmicode } from "./quit_command";
+import { pushEngineState, pushFleetRole } from "./engine_state_push";
 import type { QueueView } from "./qick_job_server";
 import { postDeviceStatus, postDeviceActions, postDeviceActivate } from "./inspector_bridge";
 
@@ -1398,6 +1399,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
             deleteHandshake();
             statusBar?.setServerReady(false);
             opencodeReadyUrl = undefined;
+            // #1598: push engine-off to the app toggle.
+            pushEngineState("off");
           },
           log: (line) => opencodeChannel.appendLine(line),
         },
@@ -1453,6 +1456,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     const wireReadyState = (url: URL) => {
       opencodeReadyUrl = url;
       statusBar?.setServerReady(true);
+      // #1598: push engine-on to the app toggle on every ready (boot + restart).
+      pushEngineState("on");
       sseClient?.connect(url);
       // keepalive
       const readyPort = parseInt(url.port || "0", 10);
@@ -1984,6 +1989,14 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // On app-ready: push the initial project list. Persistent (#870) — fires
   // on EVERY app-ready (new panels, re-activations), not just the first.
   ChatPanel.onAppReadyPersistent(pushWorkspaceProjects);
+
+  // #1598: push engine state + fleet role to every new/re-activated app panel.
+  // Persistent so newly opened panels get the current state immediately.
+  ChatPanel.onAppReadyPersistent(() => {
+    // Engine state: on if we have a ready URL, off otherwise.
+    pushEngineState(opencodeReadyUrl ? "on" : "off");
+    pushFleetRole();
+  });
 
   // On workspace folder change: push the updated list.
   ctx.subscriptions.push(
@@ -3107,9 +3120,13 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       deleteHandshake();
       statusBar?.setServerReady(false);
       opencodeReadyUrl = undefined;
+      // #1598: push booting before start (wireReadyState pushes "on" on ready).
+      pushEngineState("booting");
       try {
         await serverManager?.start();
       } catch (err) {
+        // #1598: start failed — push off so the toggle reflects the real state.
+        pushEngineState("off");
         vscode.window.showErrorMessage(`Amicode: restart failed — ${(err as Error).message}`);
       }
     }),
@@ -3128,6 +3145,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           await serverManager?.stop();
           statusBar?.setServerReady(false);
           opencodeReadyUrl = undefined;
+          // #1598: push engine-off to the app toggle.
+          pushEngineState("off");
           opencodeChannel.appendLine("[server] stopped by user (amicode.stopServer)");
         },
         deleteHandshake: () => deleteHandshake(),
