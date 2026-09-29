@@ -65,7 +65,7 @@ import { ServerRowMenu } from "@/components/server/server-row-menu"
 import { ServerHealthIndicator } from "@/components/server/server-row"
 import { type ServerHealth } from "@/utils/server-health"
 import { amicodeGet, amicodePost } from "@/utils/amicode-fetch"
-import { archivedSessionsWithRemote, type DropdownSession } from "@/components/session/session-fleet-peers"
+import { archivedSessionsWithRemote, isRemotePeerSession, deriveSessionBadge, readSessionControl, writeAffordanceEnabled, failClosedChip, remoteDeleteAction, type DropdownSession } from "@/components/session/session-fleet-peers"
 import { AmicodeRunGallery } from "@opencode-ai/ui/amicode-run-gallery"
 import { AmicodeOnboardingWizard, shouldShowWizard } from "@opencode-ai/ui/amicode-onboarding-wizard"
 import { AMICODE_MANAGE_VAULTS_PROMPT } from "@opencode-ai/ui/amicode-vaults-tab"
@@ -387,6 +387,15 @@ function HomeDesign() {
   async function unarchiveSession(session: Session) {
     const ctx = focusedServerCtx()
     if (!ctx) return
+    // #1647 (S4): a remote archived row unarchives on its owner; gate on control.
+    const ds = session as DropdownSession
+    if (isRemotePeerSession(ds) && !remoteDeleteAction(ds).allowed) {
+      showToast({
+        title: "Control not enabled",
+        description: `Enable control of ${ds.amicode_owner?.owner_name ?? "the owner machine"} to unarchive its sessions from here.`,
+      })
+      return
+    }
     try {
       // Unarchive via the v1 session.update endpoint (same as archive, but nulling the timestamp)
       await (ctx.sdk.client.session.update as Function)({
@@ -447,6 +456,15 @@ function HomeDesign() {
   async function deleteArchivedSession(session: Session) {
     const ctx = focusedServerCtx()
     if (!ctx) return
+    // #1647 (S4): remote delete routes to the owner; gate on control.
+    const ds = session as DropdownSession
+    if (isRemotePeerSession(ds) && !remoteDeleteAction(ds).allowed) {
+      showToast({
+        title: "Control not enabled",
+        description: `Enable control of ${ds.amicode_owner?.owner_name ?? "the owner machine"} to delete its sessions from here.`,
+      })
+      return
+    }
     try {
       await (ctx.sdk.client.session.delete as Function)({
         sessionID: session.id,
@@ -2194,6 +2212,14 @@ function ArchivedSessionRow(props: {
   onDelete: (session: Session) => void
 }) {
   const title = createMemo(() => sessionTitle(props.session.title) || props.session.id)
+  // #1647 (S4): a remote archived row (owner-tagged from the fleet projection)
+  // shows the owner badge and control-gates unarchive/delete — fail-closed to a
+  // lock chip when control is not held.
+  const badge = createMemo(() => deriveSessionBadge(props.session as DropdownSession))
+  const isRemote = createMemo(() => isRemotePeerSession(props.session as DropdownSession))
+  const control = createMemo(() => readSessionControl(props.session as DropdownSession))
+  const canWrite = createMemo(() => writeAffordanceEnabled(control()))
+  const chip = createMemo(() => failClosedChip(control()))
   const [armed, setArmed] = createSignal(false)
   let resetTimer: ReturnType<typeof setTimeout> | undefined
 
@@ -2232,10 +2258,38 @@ function ArchivedSessionRow(props: {
         <span class="min-w-0 flex-[1_1_auto] overflow-hidden text-ellipsis whitespace-nowrap">
           {title()}
         </span>
+        <Show when={isRemote() && badge()}>
+          <span
+            data-slot="archived-session-owner-badge"
+            class="shrink-0 inline-flex items-center gap-1 text-[10px] leading-none text-v2-text-text-faint"
+            title={badge()}
+          >
+            <IconV2 name="monitor" size="small" class="shrink-0 opacity-70" />
+            <span class="max-w-24 overflow-hidden text-ellipsis whitespace-nowrap">{badge()}</span>
+          </span>
+        </Show>
       </button>
       <div
         class="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center gap-0.5 opacity-0 group-hover/archived:opacity-100 focus-within:opacity-100 transition-opacity"
       >
+        <Show
+          when={!isRemote() || canWrite()}
+          fallback={
+            <Show when={chip()} keyed>
+              {(c) => (
+                <span
+                  data-slot="session-control-chip"
+                  data-control-reason={c.reason}
+                  class="shrink-0 inline-flex items-center gap-1 rounded-sm px-1 py-0.5 text-[10px] leading-none text-v2-text-text-faint bg-v2-background-bg-layer-02"
+                  title={c.label}
+                >
+                  <IconV2 name="lock" class="shrink-0 opacity-70" />
+                  <span>{c.label}</span>
+                </span>
+              )}
+            </Show>
+          }
+        >
         <TooltipV2 placement="top" value="Unarchive">
           <IconButtonV2
             data-action="home-session-unarchive"
@@ -2277,6 +2331,7 @@ function ArchivedSessionRow(props: {
           >
             Delete
           </ButtonV2>
+        </Show>
         </Show>
       </div>
     </div>

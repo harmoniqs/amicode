@@ -1240,6 +1240,18 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
   async function unarchiveSession(session: Session) {
     const ctx = getServerCtx()
     if (!ctx) return
+    // #1647 (S4): a REMOTE archived row unarchives on its OWNER (the same
+    // owner-routed session.update, now routable because the owner map unions
+    // archived ids — S2). Gate on control exactly like the active archive path;
+    // a control-less remote row shows the fail-closed chip and never reaches here.
+    const dropdownSession = session as DropdownSession
+    if (isRemotePeerSession(dropdownSession) && !remoteDeleteAction(dropdownSession).allowed) {
+      showToast({
+        title: "Control not enabled",
+        description: `Enable control of ${dropdownSession.amicode_owner?.owner_name ?? "the owner machine"} to unarchive its sessions from here.`,
+      })
+      return
+    }
     await restoreScrollAfter(async () => {
       try {
         await (ctx.sdk.client.session.update as Function)({
@@ -1262,6 +1274,15 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
   async function deleteArchivedSession(session: Session) {
     const ctx = getServerCtx()
     if (!ctx) return
+    // #1647 (S4): remote delete routes to the owner; gate on control.
+    const dropdownSession = session as DropdownSession
+    if (isRemotePeerSession(dropdownSession) && !remoteDeleteAction(dropdownSession).allowed) {
+      showToast({
+        title: "Control not enabled",
+        description: `Enable control of ${dropdownSession.amicode_owner?.owner_name ?? "the owner machine"} to delete its sessions from here.`,
+      })
+      return
+    }
     await restoreScrollAfter(async () => {
       try {
         await (ctx.sdk.client.session.delete as Function)({
@@ -1800,6 +1821,15 @@ function ArchivedSessionDropdownRow(props: {
   onDelete: (session: Session) => void
 }) {
   const title = createMemo(() => sessionTitle(props.session.title) || props.session.id)
+  // #1647 (S4): archived rows now carry amicode_owner / amicode_control (they
+  // come from the fleet projection). A remote archived row shows the owner
+  // badge; its unarchive/delete are control-gated — fail-closed to a lock chip
+  // when control is not held, exactly like the active SessionDropdownRow.
+  const badge = createMemo(() => deriveSessionBadge(props.session as DropdownSession))
+  const isRemote = createMemo(() => isRemotePeerSession(props.session as DropdownSession))
+  const control = createMemo(() => readSessionControl(props.session as DropdownSession))
+  const canWrite = createMemo(() => writeAffordanceEnabled(control()))
+  const chip = createMemo(() => failClosedChip(control()))
   const [armed, setArmed] = createSignal(false)
   let resetTimer: ReturnType<typeof setTimeout> | undefined
 
@@ -1838,9 +1868,37 @@ function ArchivedSessionDropdownRow(props: {
         <span class="min-w-0 flex-[1_1_auto] overflow-hidden text-ellipsis whitespace-nowrap">
           {title()}
         </span>
+        <Show when={isRemote() && badge()}>
+          <span
+            data-slot="archived-session-owner-badge"
+            class="shrink-0 inline-flex items-center gap-1 text-[10px] leading-none text-v2-text-text-faint"
+            title={badge()}
+          >
+            <IconV2 name="monitor" size="small" class="shrink-0 opacity-70" />
+            <span class="max-w-24 overflow-hidden text-ellipsis whitespace-nowrap">{badge()}</span>
+          </span>
+        </Show>
       </button>
       <div class="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center gap-0.5 opacity-0 group-hover/archived:opacity-100 focus-within:opacity-100 transition-opacity">
-        <TooltipV2 placement="top" value="Unarchive">
+        <Show
+          when={!isRemote() || canWrite()}
+          fallback={
+            <Show when={chip()} keyed>
+              {(c) => (
+                <span
+                  data-slot="session-control-chip"
+                  data-control-reason={c.reason}
+                  class="shrink-0 inline-flex items-center gap-1 rounded-sm px-1 py-0.5 text-[10px] leading-none text-v2-text-text-faint bg-v2-background-bg-layer-02"
+                  title={c.label}
+                >
+                  <IconV2 name="lock" class="shrink-0 opacity-70" />
+                  <span>{c.label}</span>
+                </span>
+              )}
+            </Show>
+          }
+        >
+          <TooltipV2 placement="top" value="Unarchive">
           <IconButtonV2
             data-action="session-dropdown-unarchive"
             variant="ghost-muted"
@@ -1881,6 +1939,7 @@ function ArchivedSessionDropdownRow(props: {
           >
             Delete
           </ButtonV2>
+        </Show>
         </Show>
       </div>
     </div>

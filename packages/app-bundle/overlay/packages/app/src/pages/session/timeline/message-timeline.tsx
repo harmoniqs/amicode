@@ -89,6 +89,7 @@ import { useSettings } from "@/context/settings"
 import { useTabs } from "@/context/tabs"
 import { amicodeGet, amicodePost } from "@/utils/amicode-fetch"
 import { fleetSessionsFromResponse, resolveHeaderProvenance } from "./session-header-provenance"
+import { findSessionOwnerInProjection, findSessionControlInProjection, writeAffordanceEnabled } from "@/components/session/session-fleet-peers"
 import { draftPrompt } from "@/utils/start-prompt"
 import { inAmicode, postAmicode } from "@/pages/session/use-amicode-commands"
 import { writeClipboardViaBridge } from "@/components/prompt-input/clipboard-bridge"
@@ -1285,8 +1286,28 @@ export function MessageTimeline(props: {
     if (!session) return
     if ((await sdk().protocol) !== "v1") return
 
+    // #1647 (S5): control-aware + the session's OWN directory. A REMOTE session
+    // archives on its owner (the observation write plane routes the non-GET by
+    // owner); if control is not held the write would 403 into a generic "request
+    // failed" toast, so gate it here with a clear "enable control" message
+    // instead. The owner/control come from the fleet projection. Using the
+    // session's own directory (not sdk().directory) keeps the PATCH keyed
+    // correctly for a remote session that lives in a different project.
+    const owner = findSessionOwnerInProjection(fleetSessionsRaw.latest, sessionID)
+    if (owner && owner.is_local === false) {
+      const control = findSessionControlInProjection(fleetSessionsRaw.latest, sessionID)
+      if (!writeAffordanceEnabled(control)) {
+        showToast({
+          title: "Control not enabled",
+          description: `Enable control of ${owner.owner_name ?? "the owner machine"} to archive its sessions from here.`,
+        })
+        return
+      }
+    }
+    const directory = session.directory ?? sdk().directory
+
     await sdk()
-      .client.session.update({ sessionID, directory: sdk().directory, time: { archived: Date.now() } })
+      .client.session.update({ sessionID, directory, time: { archived: Date.now() } })
       .then(() => {
         // Drop the archived session out of the ACTIVE list store (it belongs to
         // the Archived tab now) and clear its tab chrome — but do NOT navigate
@@ -1320,7 +1341,10 @@ export function MessageTimeline(props: {
 
   const unarchiveSession = async (sessionID: string) => {
     if ((await sdk().protocol) !== "v1") return
-    await (sdk().client.session.update as Function)({ sessionID, directory: sdk().directory, time: { archived: null } })
+    // #1647 (S5): use the session's own directory (remote sessions may live in a
+    // different project); the owner-routed write plane handles remote routing.
+    const directory = sync().session.get(sessionID)?.directory ?? sdk().directory
+    await (sdk().client.session.update as Function)({ sessionID, directory, time: { archived: null } })
       .then(() => void sync().session.sync(sessionID, { force: true }))
       .catch((err: unknown) => {
         showToast({
