@@ -105,12 +105,17 @@ export function HarnessComposerControl() {
                   <For each={state().options}>
                     {(option) => (
                       <MenuV2.RadioItem value={option.id} disabled={option.disabled} closeOnSelect>
-                        <div class="flex flex-col items-start gap-0.5 py-0.5">
-                          <span class="leading-5">{option.displayName}</span>
-                          <span class="max-w-[280px] text-[11px] leading-4 whitespace-normal text-v2-text-text-faint">
-                            {option.disabled ? (option.reason ?? "Unavailable") : DISCLOSURE}
-                          </span>
-                        </div>
+                        {/* Live-test layout ruling: single-line entries, matching every other
+                            composer select. The two-line flex-col entry fought the menu item's
+                            own inline content slot (span[data-slot=menu-v2-item-content]) and
+                            the texts overlapped; the disabled reason + the disclosure ride the
+                            item's title tooltip instead of a second line. */}
+                        <span class="truncate" title={option.disabled ? (option.reason ?? "Unavailable") : DISCLOSURE}>
+                          {option.displayName}
+                          <Show when={option.disabled}>
+                            <span class="text-v2-text-text-faint"> — {option.reason ?? "Unavailable"}</span>
+                          </Show>
+                        </span>
                       </MenuV2.RadioItem>
                     )}
                   </For>
