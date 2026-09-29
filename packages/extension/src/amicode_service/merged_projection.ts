@@ -204,12 +204,20 @@ async function fetchSessions(
    *  sessions regardless of the engine's ambient project context — the right
    *  semantic for cross-machine fan-out where the hub engine runs in a temp
    *  directory and would otherwise resolve to `project_id=global`. */
-  endpointPath = "/session",
+   endpointPath = "/session",
+  /** The LOCAL loopback source is an OPEN engine on localhost — it does not
+   *  require the per-boot Basic password (the EngineProxy already dials it
+   *  credential-less). When true, a missing `authHeader` is NOT a bail: the
+   *  fetch proceeds WITHOUT an Authorization header and the engine answers
+   *  (200 → sessions; a 401 would still be named `unauthorized` honestly).
+   *  Peers/hub keep the old behavior (false): no credential ⇒ do not fire an
+   *  unauthenticated cross-machine request. */
+  allowUnauthenticated = false,
 ): Promise<{ record: SourceFetchRecord; entries: Record<string, unknown>[] }> {
   const base: SourceFetchRecord = { source: tag, present: false };
   const origin = opts.getUrl();
   if (!origin) return { record: { ...base, reason: "no-upstream" }, entries: [] };
-  if (!authHeader) {
+  if (!authHeader && !allowUnauthenticated) {
     return {
       record: {
         ...base,
@@ -219,9 +227,12 @@ async function fetchSessions(
       entries: [],
     };
   }
+  // Send Authorization only when we actually hold one — the open loopback
+  // engine is queried bare (allowUnauthenticated with no password).
+  const authHeaders: Record<string, string> = authHeader ? { Authorization: authHeader } : {};
   try {
     const res = await fetchImpl(`${origin.replace(/\/+$/, "")}${endpointPath}`, {
-      headers: { Authorization: authHeader },
+      headers: authHeaders,
       signal: AbortSignal.timeout(timeoutMs),
     });
     if (res.status === 401) return { record: { ...base, reason: "unauthorized" }, entries: [] };
@@ -250,7 +261,7 @@ async function fetchSessions(
     let version: string | null = null;
     try {
       const health = await fetchImpl(`${origin.replace(/\/+$/, "")}/global/health`, {
-        headers: { Authorization: authHeader },
+        headers: authHeaders,
         signal: AbortSignal.timeout(timeoutMs),
       });
       if (health.ok) {
@@ -425,7 +436,7 @@ export async function buildFleetProjection(opts: FleetProjectionOptions): Promis
   const fleetEndpoint = opts.archived
     ? "/experimental/session?archived=true&limit=10000"
     : "/experimental/session?limit=10000";
-  const localPromise = fetchSessions(opts.localMachineId, opts.local, localAuth, fetchImpl, timeoutMs, fleetEndpoint);
+  const localPromise = fetchSessions(opts.localMachineId, opts.local, localAuth, fetchImpl, timeoutMs, fleetEndpoint, true);
   const peerPromises = opts.peers.map((peer) => {
     // #1481 (AC1): TRUST gates Observe. An untrusted peer (no Observe grant) is
     // never contacted — it resolves to a NAMED `untrusted` record with zero
