@@ -705,8 +705,8 @@
     "packages/app/src/components/ui/drawer.tsx": "76574ca4c6997209f37a766a61000d707332a9a857f6ea8100a3cee1be58d65c",
     "packages/app/src/context/global-sync/bootstrap.test.ts": "ed66b4c0427d51c015fd286dd63c2cc24a25391320366d75e28634334d70e366",
     "packages/app/src/context/global-sync/child-store.ts": "ec6464eaba08a8cf41f3169777faeead75b55a80ce117e830becc9535f6e1b2c",
-    "packages/app/src/context/global-sync/event-reducer.test.ts": "5b9b1c11e4dbfc6dff784a15f5dd9fbc8949131b03fe393ac224e8ef23321103",
-    "packages/app/src/context/global-sync/event-reducer.ts": "ab76609d596fcf1ac009d0b0c37ecfea215ec603dd7742f84ccad98527a0957d",
+    "packages/app/src/context/global-sync/event-reducer.test.ts": "9db2c436adb78f54662126defbf06a2c0a911c5a3b1210c0dba95adb35297533",
+    "packages/app/src/context/global-sync/event-reducer.ts": "4bb0dac9c8962aed0ceaf08ba8aa70fa2ca64e928f3db8eb50872ecdbcf328b8",
     "packages/app/src/context/global-sync/session-cache.test.ts": "e3c66ef76ff20a416f3b2d72041acd66c2a65da57ded92cbcb381ab71474285f",
     "packages/app/src/context/global-sync/session-cache.ts": "78861c053e9ba7574cc0766681773087b2e5b93eabf28dd43dbdc88535389fe0",
     "packages/app/src/context/global-sync/types.ts": "da1408b5665534588a0f437972730b810b0d1271a98bb8d0c442f3d4625bbf7f",
@@ -929,7 +929,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-09-29T02:16:41.215Z",
+  "extracted_at": "2026-09-29T02:44:46.885Z",
   "per_package": {
     "packages/app": {
       "A": 224,

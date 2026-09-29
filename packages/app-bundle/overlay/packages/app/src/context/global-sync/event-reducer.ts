@@ -283,14 +283,24 @@ export function applyDirectoryEvent(input: {
         childStatusSeq.set(props.sessionID, props.seq)
       }
       // #1637 fallback clear: an authoritative idle frame ends the turn bracket.
+      // #1637-followup: and a busy frame RAISES the turn-active floor. The engine
+      // publishes session.status (busy/idle) but never session.execution.started
+      // (no publisher — it is a stale SDK type), so the floor must rise on the
+      // busy status frame that actually arrives, not only the phantom execution
+      // bracket below. This is the load-bearing floor for every turn shape.
       if ((props.status?.type ?? "idle") === "idle")
         input.setStore("session_turn_active", props.sessionID, false)
+      else if (props.status?.type === "busy")
+        input.setStore("session_turn_active", props.sessionID, true)
       input.setStore("session_status", props.sessionID, reconcile(props.status))
       break
     }
     case "session.execution.started": {
-      // #1637 turn-active floor: rises on the execution bracket the server emits
-      // for EVERY turn shape (part-bearing or not).
+      // #1637 turn-active floor: rises on the execution bracket IF the server emits
+      // one. NOTE (#1637-followup): this engine build does NOT publish
+      // session.execution.* — kept as a harmless forward-compat branch so a future
+      // engine that does emit it still raises the floor; the session.status busy
+      // case above is what actually fires today.
       const props = event.properties as { sessionID?: string } | undefined
       if (props?.sessionID) {
         input.setStore("session_turn_active", props.sessionID, true)
