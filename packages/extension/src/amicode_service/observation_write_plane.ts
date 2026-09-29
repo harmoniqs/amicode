@@ -34,6 +34,7 @@
 import * as http from "node:http";
 import { HubProxy } from "./hub_proxy";
 import { HUB_MINT_NAME, type HubCredentialRead } from "./hub_credential";
+import { serverAuthHeader } from "../server_auth";
 import {
   ObservationWriteRouter,
   type ObservationWriteRouterOpts,
@@ -52,6 +53,7 @@ export function createObservationWritePlane(
   const router = new ObservationWriteRouter(opts);
   return {
     resolve: (method, pathname) => router.resolve(method, pathname),
+    resolveCreate: (method, pathname, headers) => router.resolveCreate(method, pathname, headers),
     proxyToPeer(req: http.IncomingMessage, res: http.ServerResponse, target: ObservationWritePeerTarget): boolean {
       // A synthetic per-peer hub credential → HubProxy attaches
       // serverAuthHeader(target.token) === peerAuthHeader(target.token). The
@@ -68,6 +70,50 @@ export function createObservationWritePlane(
         ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
       });
       return proxy.handle(req, res);
+    },
+    async proxyCreateToPeer(
+      req: http.IncomingMessage,
+      res: http.ServerResponse,
+      target: ObservationWritePeerTarget,
+    ): Promise<boolean> {
+      // The path-less session-create is a small one-shot JSON request/response
+      // (never SSE), so — unlike proxyToPeer's streaming HubProxy — it is proxied
+      // BUFFERED, so the new session's id can be read from the response and its
+      // ownership recorded IMMEDIATELY (the pull-only projection lags ~5s; the
+      // app reads /session/{id} right after create). The peer is dialed with the
+      // reader token it accepts (serverAuthHeader(token)); auth_token query
+      // carriers are dropped (GET-only on the peer). On any transport error the
+      // caller answers its own honest 503 (return false).
+      try {
+        const chunks: Buffer[] = [];
+        for await (const c of req) chunks.push(c as Buffer);
+        const body = Buffer.concat(chunks);
+        const upstream = new URL(req.url ?? "/session", target.url);
+        upstream.searchParams.delete("auth_token");
+        const headers: Record<string, string> = {
+          authorization: serverAuthHeader(target.token),
+          "content-type": typeof req.headers["content-type"] === "string" ? req.headers["content-type"] : "application/json",
+        };
+        const resp = await fetch(upstream.toString(), {
+          method: req.method ?? "POST",
+          headers,
+          body: body.length ? body : undefined,
+        });
+        const text = await resp.text();
+        // Record the new session → owner binding so the immediate follow-up read
+        // routes to the peer (superseded by the next projection; TTL-bounded).
+        try {
+          const parsed = JSON.parse(text) as { id?: unknown };
+          if (typeof parsed?.id === "string" && parsed.id) opts.ownerMap.recordPendingOwner(parsed.id, target.machineId);
+        } catch {
+          /* a non-JSON body is not fatal — the response still streams back */
+        }
+        res.writeHead(resp.status, { "content-type": resp.headers.get("content-type") ?? "application/json" });
+        res.end(text);
+        return true;
+      } catch {
+        return false; // transport error → the caller sends the honest 503
+      }
     },
   };
 }

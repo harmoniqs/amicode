@@ -200,11 +200,30 @@ export interface ObservationWritePlane {
   /** Resolve a write to an owner-peer target, a named deny, or undefined to
    *  fall through byte-identical to local. */
   resolve(method: string, pathname: string): ObservationWriteResolution | undefined;
+  /** Resolve the PATH-LESS session-create POST by its X-Amicode-Owner header
+   *  (the create has no session id yet, so `resolve` declines it). Same peer /
+   *  named-deny / undefined outcomes; undefined falls through byte-identical to
+   *  a local create. */
+  resolveCreate(
+    method: string,
+    pathname: string,
+    headers: Record<string, string | string[] | undefined>,
+  ): ObservationWriteResolution | undefined;
   /** Proxy an AUTHORIZED write to the owner peer with the credential the owner
    *  accepts (the peer reader token). Returns true when it owns the response;
    *  false when no upstream is bound (→ the caller answers a named 503, never
    *  local). */
   proxyToPeer(req: http.IncomingMessage, res: http.ServerResponse, target: ObservationWritePeerTarget): boolean;
+  /** Proxy an AUTHORIZED path-less session-create to the owner peer (buffered,
+   *  not streamed — a create is small one-shot JSON), recording the new
+   *  session's ownership so the immediate follow-up read routes to the peer.
+   *  Resolves true when it owns the response; false on a transport error (→ the
+   *  caller answers a named 503, never local). */
+  proxyCreateToPeer(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    target: ObservationWritePeerTarget,
+  ): Promise<boolean>;
 }
 
 /** #1261 (AC6): a client's own named hub-down state — distinct from the base
@@ -812,10 +831,22 @@ export class AmicodeServiceServer {
         // no-op. Confirmation is NOT this seam's job (#1544): the gate authorizes,
         // the plane routes; the delete-confirm UI is a downstream consumer.
         if (this.observeWrite) {
-          const decision = this.observeWrite.resolve(req.method ?? "GET", url.pathname);
+          // The path-less create POST (owner-header keyed) OR a pathed write to
+          // a peer-owned session (path-session-id keyed). Mutually exclusive —
+          // resolveCreate declines pathed writes and resolve declines the
+          // path-less create — so one `??` fold covers both, sharing the peer /
+          // named-deny handling below. undefined → byte-identical local. A create
+          // is proxied BUFFERED (proxyCreateToPeer records the new session's
+          // ownership so the immediate follow-up read routes to the peer); a
+          // pathed write streams (proxyToPeer).
+          const createDecision = this.observeWrite.resolveCreate(req.method ?? "GET", url.pathname, req.headers);
+          const decision = createDecision ?? this.observeWrite.resolve(req.method ?? "GET", url.pathname);
           if (decision) {
             if (decision.kind === "peer") {
-              if (this.observeWrite.proxyToPeer(req, res, decision)) return;
+              const handled = createDecision
+                ? await this.observeWrite.proxyCreateToPeer(req, res, decision)
+                : this.observeWrite.proxyToPeer(req, res, decision);
+              if (handled) return;
               // authorized but no upstream bound → the peer's OWN honest 503,
               // never local.
               send({

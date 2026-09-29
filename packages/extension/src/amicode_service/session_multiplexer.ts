@@ -70,6 +70,13 @@ export function extractSessionIdFromReadPath(pathname: string): string | undefin
 
 // ── session→owner map ────────────────────────────────────────────────────────
 
+/** How long a create-time pending owner binding survives without projection
+ *  confirmation. Comfortably longer than the owner-map refresh cadence
+ *  (OWNER_MAP_REFRESH_MS = 5s) so the projection reliably supersedes it first;
+ *  a binding still unconfirmed after this is treated as dead (the session was
+ *  never really created, or was deleted) and drops back to local. */
+export const PENDING_OWNER_TTL_MS = 60_000;
+
 /** A session entry with owner tag (the fleet-wide projection's shape). */
 export interface SessionEntry {
   id: string;
@@ -79,11 +86,26 @@ export interface SessionEntry {
 
 /** The per-session owner binding — maps session IDs to their owner machine_id.
  *  Populated from the fleet-wide projection's amicode_owner overlay (slice 2).
- *  A miss returns undefined, which the multiplexer interprets as "local". */
+ *  A miss returns undefined, which the multiplexer interprets as "local".
+ *
+ *  Free-tier remote create (feature/free-tier-fleet): a session just created on
+ *  a peer is not yet in the pull-only projection, so a PENDING overlay bridges
+ *  the gap — `recordPendingOwner` binds the new id at create time, the binding
+ *  survives projection refreshes that don't yet include it, is superseded once
+ *  the projection does, and expires after a TTL. */
 export class SessionOwnerMap {
   private readonly owners = new Map<string, string>();
+  /** Create-time bindings awaiting projection confirmation (id → {owner, at}). */
+  private readonly pending = new Map<string, { machineId: string; at: number }>();
+  private readonly now: () => number;
 
-  /** Rebuild the map from a fleet-wide projection's session list. */
+  constructor(opts: { now?: () => number } = {}) {
+    this.now = opts.now ?? Date.now;
+  }
+
+  /** Rebuild the map from a fleet-wide projection's session list. The projection
+   *  is authoritative: a pending binding now present in it is superseded (dropped
+   *  from the overlay); expired pending bindings are pruned. */
   update(sessions: SessionEntry[]): void {
     this.owners.clear();
     for (const s of sessions) {
@@ -91,11 +113,35 @@ export class SessionOwnerMap {
         this.owners.set(s.id, s.amicode_owner.owner_machine_id);
       }
     }
+    // Prune the pending overlay: drop entries the authoritative projection now
+    // carries (superseded), and any that have outlived the TTL.
+    const cutoff = this.now() - PENDING_OWNER_TTL_MS;
+    for (const [id, entry] of this.pending) {
+      if (this.owners.has(id) || entry.at < cutoff) this.pending.delete(id);
+    }
   }
 
-  /** Look up the owner machine_id for a session. Undefined → local. */
+  /** Bind a just-created session to its owner peer BEFORE the projection catches
+   *  up (free-tier remote create). Superseded by the next projection that
+   *  includes the session; expires after PENDING_OWNER_TTL_MS otherwise. */
+  recordPendingOwner(sessionId: string, machineId: string): void {
+    if (!sessionId || !machineId) return;
+    this.pending.set(sessionId, { machineId, at: this.now() });
+  }
+
+  /** Look up the owner machine_id for a session. Undefined → local. The
+   *  authoritative projection map wins; a non-expired pending binding is the
+   *  fallback (the create-time bridge). */
   resolveOwner(sessionId: string): string | undefined {
-    return this.owners.get(sessionId);
+    const authoritative = this.owners.get(sessionId);
+    if (authoritative) return authoritative;
+    const p = this.pending.get(sessionId);
+    if (!p) return undefined;
+    if (p.at < this.now() - PENDING_OWNER_TTL_MS) {
+      this.pending.delete(sessionId);
+      return undefined;
+    }
+    return p.machineId;
   }
 
   /** The DISTINCT owner machine_ids currently holding ≥1 owned session (#1511,
@@ -398,6 +444,59 @@ export class ObservationWriteRouter {
     // the control-grant token (the empirical boundary above). Defensive
     // transport re-read: the gate's peerReachable already guaranteed url+token,
     // but this narrows the optionals honestly to transport-down if they vanished.
+    const url = peer.getUrl();
+    const token = peer.token;
+    if (!url || !token) return { kind: "denied", machineId: owner, reason: "transport-down" };
+    return { kind: "peer", machineId: owner, url, token };
+  }
+
+  /** Resolve the PATH-LESS session-create POST (feature/free-tier-fleet) — the
+   *  one write that has no session id yet, so `resolve` above (which keys off a
+   *  path session id) declines it and it would fall through to the local engine.
+   *  The target peer is carried in the X-Amicode-Owner header (the same header
+   *  the app arms on a remote pick, and the same one the premium multiplexer
+   *  reads). Authorized through the SAME write gate (active `control` grant +
+   *  reachable transport) and, when allowed, routed to the owner with the peer
+   *  reader token — mirroring `resolve` exactly, header-keyed instead of
+   *  path-keyed. Once the create lands, the new session is tagged to its owner
+   *  in the fleet projection, so every follow-up (`/session/{id}/…`) routes via
+   *  `resolve` / the read plane with no extra wiring.
+   *
+   *  Resolution order:
+   *   0. non-POST → undefined (create is a POST; other verbs are not creates)
+   *   1. not the path-less create path (`/session` | `/api/session`) → undefined
+   *      (a pathed write is `resolve`'s job; the list/status polls are GETs)
+   *   2. no owner header → undefined (LOCAL fail-safe — a plain local create)
+   *   3. owner == localMachineId → undefined (a local create, served locally)
+   *   4. owner is not a serving peer → undefined (local, never an arbitrary target)
+   *   5. owner is a serving peer → AUTHORIZE via the write gate:
+   *        allowed → the peer target (peer reader token); denied → NAMED deny. */
+  resolveCreate(
+    method: string,
+    pathname: string,
+    headers: Record<string, string | string[] | undefined>,
+  ): ObservationWriteResolution | undefined {
+    if ((method || "GET").toUpperCase() !== "POST") return undefined; // (0)
+    if (pathname !== "/session" && pathname !== "/api/session") return undefined; // (1) path-less create only
+    const headerVal = headers[OWNER_ROUTING_HEADER]; // (2)
+    const owner = typeof headerVal === "string" && headerVal.trim() ? headerVal.trim() : undefined;
+    if (!owner) return undefined;
+    if (owner === this.localMachineId) return undefined; // (3)
+    const peer = this.peer(owner); // (4)
+    if (!peer) return undefined;
+    // (5) authorize via the SAME pure write gate as resolve().
+    const gate = evaluateRemoteWriteGate(
+      { ownerMachineId: owner, action: method.toUpperCase(), path: pathname },
+      {
+        localMachineId: this.localMachineId,
+        grantReader: (id) => this.grantReader(id),
+        peerReachable: (id) => {
+          const p = this.peer(id);
+          return !!(p && p.getUrl() && p.token);
+        },
+      },
+    );
+    if (!gate.allowed) return { kind: "denied", machineId: owner, reason: gate.reason };
     const url = peer.getUrl();
     const token = peer.token;
     if (!url || !token) return { kind: "denied", machineId: owner, reason: "transport-down" };

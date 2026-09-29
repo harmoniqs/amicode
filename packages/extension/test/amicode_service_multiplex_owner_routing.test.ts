@@ -25,6 +25,7 @@ import {
   OwnerMapFeed,
   SessionOwnerMap,
   SessionMultiplexProxy,
+  PENDING_OWNER_TTL_MS,
   type SessionEntry,
 } from "../src/amicode_service/session_multiplexer";
 import {
@@ -148,11 +149,56 @@ describe("#1449 AC1 — SessionOwnerMap fed by a live projection loop (not a tes
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
-// AC2 — per-session request routing on the ATTACHED arm (reachable → owner url;
-//       owned-but-unreachable → 503 never local; keyless → local)
-// AC3 (request path) — the single attachment pointer is RETIRED from the
-//       attached arm; keeper + honesty arms preserved.
+// FREE-TIER REMOTE CREATE (feature/free-tier-fleet) — pending create-time owner
+// bindings. A session just created on a peer is not yet in the pull-only fleet
+// projection (refreshed every ~5s), so the immediate follow-up read would
+// resolve LOCAL and render "This session cannot be found". recordPendingOwner
+// binds the new id → owner at create time; the binding survives projection
+// refreshes that don't yet include it, is SUPERSEDED once the projection does,
+// and EXPIRES after a TTL so a dead id never routes to a peer forever.
 // ══════════════════════════════════════════════════════════════════════════════
+describe("free-tier remote create — pending create-time owner bindings", () => {
+  const owned = (id: string, owner: string): SessionEntry => ({
+    id,
+    amicode_owner: { owner_machine_id: owner, owner_name: owner, is_local: false },
+  });
+
+  it("recordPendingOwner makes the session resolvable IMMEDIATELY (before any projection)", () => {
+    const m = new SessionOwnerMap();
+    expect(m.resolveOwner("ses-new")).toBeUndefined();
+    m.recordPendingOwner("ses-new", "studio");
+    expect(m.resolveOwner("ses-new")).toBe("studio");
+  });
+
+  it("the pending binding SURVIVES a projection refresh that does not yet include it", () => {
+    const m = new SessionOwnerMap();
+    m.recordPendingOwner("ses-new", "studio");
+    m.update([owned("ses-other", "studio")]); // projection lags — no ses-new yet
+    expect(m.resolveOwner("ses-new")).toBe("studio"); // still routed to the peer
+    expect(m.resolveOwner("ses-other")).toBe("studio");
+  });
+
+  it("the projection SUPERSEDES the pending binding once it includes the session", () => {
+    const m = new SessionOwnerMap();
+    m.recordPendingOwner("ses-new", "studio");
+    m.update([owned("ses-new", "studio")]); // now authoritative
+    expect(m.resolveOwner("ses-new")).toBe("studio");
+    // and a later projection that drops it is authoritative (session deleted)
+    m.update([]);
+    expect(m.resolveOwner("ses-new")).toBeUndefined();
+  });
+
+  it("a pending binding EXPIRES after the TTL (a dead id never routes to a peer forever)", () => {
+    let t = 1_000_000;
+    const m = new SessionOwnerMap({ now: () => t });
+    m.recordPendingOwner("ses-new", "studio");
+    expect(m.resolveOwner("ses-new")).toBe("studio");
+    t += PENDING_OWNER_TTL_MS + 1;
+    expect(m.resolveOwner("ses-new")).toBeUndefined(); // expired
+  });
+});
+
+
 describe("#1449 AC2/AC3 — per-session request routing retires the single attachment pointer", () => {
   const PW = "multiplex-owner-1449";
   let root: string;

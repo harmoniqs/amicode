@@ -34,6 +34,7 @@ import { EngineProxy } from "../src/amicode_service/engine_proxy";
 import {
   SessionOwnerMap,
   ObservationWriteRouter,
+  OWNER_ROUTING_HEADER,
   type PeerTransport,
 } from "../src/amicode_service/session_multiplexer";
 import { createObservationReadPlane } from "../src/amicode_service/observation_read_plane";
@@ -200,6 +201,89 @@ describe("#1542 — ObservationWriteRouter resolution order (GET/non-GET INVERTE
   });
 });
 
+// ══════════════════════════════════════════════════════════════════════════════
+// FREE-TIER REMOTE CREATE (feature/free-tier-fleet): the path-less create POST
+// carries the target peer in the x-amicode-owner header (there is no session id
+// yet). ObservationWriteRouter.resolveCreate authorizes it through the SAME
+// write gate (active control + reachable) and, when allowed, routes it to the
+// owner peer with the peer reader token — the mirror of resolve() for the one
+// request that has no path session id. This is what makes "pick the Studio →
+// create a session" actually run on the Studio from a base-tier machine.
+// ══════════════════════════════════════════════════════════════════════════════
+describe("free-tier remote create — ObservationWriteRouter.resolveCreate (owner-header keyed)", () => {
+  const ownerMap = new SessionOwnerMap(); // create is path-less: the owner map is irrelevant here
+  const peer = (id: string): PeerTransport | undefined => {
+    if (id === "studio") return { getUrl: () => "http://studio.invalid", token: "tok-studio" };
+    if (id === "darkpeer") return { getUrl: () => undefined, token: "tok-dark" }; // serving peer, transport down
+    if (id === "obspeer") return { getUrl: () => "http://obs.invalid", token: "tok-obs" };
+    if (id === "ngpeer") return { getUrl: () => "http://ng.invalid", token: "tok-ng" };
+    return undefined; // "stranger" is not a serving peer
+  };
+  const grantReader = (owner: string): WriteGrantRead | undefined => {
+    if (owner === "studio") return { scope: "control", state: "active" };
+    if (owner === "darkpeer") return { scope: "control", state: "active" }; // active but transport down
+    if (owner === "obspeer") return { scope: "observe", state: "active" }; // wrong scope
+    return undefined; // ngpeer + stranger: no grant
+  };
+  const r = new ObservationWriteRouter({ ownerMap, localMachineId: "macbook", peer, grantReader });
+  const owner = (id: string) => ({ [OWNER_ROUTING_HEADER]: id });
+
+  it("a path-less POST /session with owner header (active control + reachable) → the peer target with the reader token", () => {
+    expect(r.resolveCreate("POST", "/session", owner("studio"))).toEqual({
+      kind: "peer",
+      machineId: "studio",
+      url: "http://studio.invalid",
+      token: "tok-studio",
+    });
+  });
+
+  it("both client shapes route: /session and /api/session", () => {
+    expect(r.resolveCreate("POST", "/api/session", owner("studio"))).toMatchObject({ kind: "peer", machineId: "studio" });
+  });
+
+  it("no owner header → undefined (LOCAL fail-safe — a plain local create is byte-unchanged)", () => {
+    expect(r.resolveCreate("POST", "/session", {})).toBeUndefined();
+  });
+
+  it("owner === local machine → undefined (a local create is served locally)", () => {
+    expect(r.resolveCreate("POST", "/session", owner("macbook"))).toBeUndefined();
+  });
+
+  it("owner not a serving peer → undefined (fail-safe local, never an arbitrary target)", () => {
+    expect(r.resolveCreate("POST", "/session", owner("stranger"))).toBeUndefined();
+  });
+
+  it("a NON-create request is never a create target (a pathed write / a GET / the list)", () => {
+    expect(r.resolveCreate("POST", "/session/ses-x/message", owner("studio"))).toBeUndefined(); // pathed write → resolve() owns it
+    expect(r.resolveCreate("GET", "/session", owner("studio"))).toBeUndefined(); // create is POST-only
+    expect(r.resolveCreate("POST", "/session/status", owner("studio"))).toBeUndefined(); // the status poll
+  });
+
+  it("no control grant → DENIED no-control-grant (never local, never a peer target)", () => {
+    expect(r.resolveCreate("POST", "/session", owner("ngpeer"))).toEqual({
+      kind: "denied",
+      machineId: "ngpeer",
+      reason: "no-control-grant",
+    });
+  });
+
+  it("an observe-only grant → DENIED insufficient-scope (create is a write, needs control)", () => {
+    expect(r.resolveCreate("POST", "/api/session", owner("obspeer"))).toEqual({
+      kind: "denied",
+      machineId: "obspeer",
+      reason: "insufficient-scope",
+    });
+  });
+
+  it("active control but transport down → DENIED transport-down (never local)", () => {
+    expect(r.resolveCreate("POST", "/session", owner("darkpeer"))).toEqual({
+      kind: "denied",
+      machineId: "darkpeer",
+      reason: "transport-down",
+    });
+  });
+});
+
 // ── an observation-mode server with BOTH planes: local EngineProxy + the read
 //    plane (#1537) + the write plane (#1542), NO fleet plane (getMode stays
 //    "engine"). `owners` seeds the SessionOwnerMap; `peer` resolves transport;
@@ -305,6 +389,152 @@ describe("#1542 AC2 — active control + reachable → the write routes to the o
       }
     });
   }
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// FREE-TIER REMOTE CREATE (feature/free-tier-fleet) — end to end through dispatch:
+// a path-less POST /session carrying x-amicode-owner is authorized by the write
+// gate and proxied to the owner peer with the peer reader token; the local
+// engine is NOT dialed. This is the dispatch-level proof of the router unit test
+// above — the request the machine selector issues when a peer is picked.
+// ══════════════════════════════════════════════════════════════════════════════
+describe("free-tier remote create — a path-less POST /session routes to the owning peer", () => {
+  const peer = (id: string): PeerTransport | undefined =>
+    id === "studio" ? { getUrl: () => peerStub.url, token: "tok-studio" } : undefined;
+  const grantReader = (owner: string): WriteGrantRead | undefined =>
+    owner === "studio" ? { scope: "control", state: "active" } : undefined;
+
+  for (const path of ["/session", "/api/session"] as const) {
+    it(`POST ${path} + owner header → created on the PEER (reader-token auth); local NOT dialed`, async () => {
+      const server = bootObserveRW([], peer, grantReader);
+      const origin = (await server.start()).toString().replace(/\/$/, "");
+      const localBefore = localStub.requests.length;
+      const peerBefore = peerStub.requests.length;
+      try {
+        const res = await fetch(`${origin}${path}`, {
+          method: "POST",
+          headers: { ...authed, [OWNER_ROUTING_HEADER]: "studio", "content-type": "application/json" },
+          body: JSON.stringify({ agent: "build" }),
+        });
+        expect(res.status).toBe(200);
+        expect(((await res.json()) as { marker: string }).marker).toBe(peerStub.marker);
+        expect(peerStub.requests.length).toBe(peerBefore + 1);
+        const dialed = peerStub.requests.at(-1)!;
+        expect(dialed.method).toBe("POST");
+        expect(dialed.path).toBe(path); // proxied verbatim
+        expect(dialed.auth).toBe(peerAuthHeader("tok-studio")); // the peer reader token the owner accepts
+        expect(dialed.auth?.includes(PW)).toBe(false); // the local mint is NEVER forwarded outward
+        expect(localStub.requests.length).toBe(localBefore); // the local engine was NOT dialed
+      } finally {
+        await server.stop();
+      }
+    });
+  }
+
+  it("POST /session with NO owner header → a LOCAL create (byte-identical fall-through); peer NOT dialed", async () => {
+    const server = bootObserveRW([], peer, grantReader);
+    const origin = (await server.start()).toString().replace(/\/$/, "");
+    const peerBefore = peerStub.requests.length;
+    const localBefore = localStub.requests.length;
+    try {
+      const res = await fetch(`${origin}/session`, {
+        method: "POST",
+        headers: { ...authed, "content-type": "application/json" },
+        body: JSON.stringify({ agent: "build" }),
+      });
+      expect(res.status).toBe(200);
+      expect(peerStub.requests.length).toBe(peerBefore); // no peer dialed
+      expect(localStub.requests.length).toBe(localBefore + 1); // served locally
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("POST /session picking a peer with NO control grant → 403 no-control-grant; neither peer nor local dialed", async () => {
+    const server = bootObserveRW([], peer, () => undefined); // no grant for anyone
+    const origin = (await server.start()).toString().replace(/\/$/, "");
+    const peerBefore = peerStub.requests.length;
+    const localBefore = localStub.requests.length;
+    try {
+      const res = await fetch(`${origin}/session`, {
+        method: "POST",
+        headers: { ...authed, [OWNER_ROUTING_HEADER]: "studio", "content-type": "application/json" },
+        body: JSON.stringify({ agent: "build" }),
+      });
+      expect(res.status).toBe(403);
+      const body = (await res.json()) as { ok: boolean; error: string; reason: string };
+      expect(body.error).toBe("remote-write-denied");
+      expect(body.reason).toBe("no-control-grant");
+      expect(peerStub.requests.length).toBe(peerBefore); // never dialed the peer
+      expect(localStub.requests.length).toBe(localBefore); // NEVER an accidental local create
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("records the new session's ownership so the immediate follow-up READ routes to the peer (not local)", async () => {
+    // A peer stub that returns a real session id for the create (the marker stub
+    // returns no id) — so we can assert the create response's id is bound to the
+    // owner, closing the "This session cannot be found" read-after-create gap.
+    const idStub = await (async () => {
+      const requests: Array<{ method: string; path: string }> = [];
+      const s = http.createServer((req, res) => {
+        const u = new URL(req.url ?? "/", "http://stub");
+        requests.push({ method: req.method ?? "GET", path: u.pathname });
+        res.writeHead(200, { "content-type": "application/json" });
+        if ((u.pathname === "/session" || u.pathname === "/api/session") && req.method === "POST") {
+          return void res.end(JSON.stringify({ id: "ses-remote-new", title: "New session" }));
+        }
+        res.end(JSON.stringify({ id: "ses-remote-new", ok: true }));
+      });
+      await new Promise<void>((r) => s.listen(0, "127.0.0.1", r));
+      const port = (s.address() as AddressInfo).port;
+      return { url: `http://127.0.0.1:${port}`, requests, stop: () => new Promise<void>((r) => s.close(() => r())) };
+    })();
+
+    const ownerMap = new SessionOwnerMap();
+    const peerToId = (id: string): PeerTransport | undefined =>
+      id === "studio" ? { getUrl: () => idStub.url, token: "tok-studio" } : undefined;
+    const server = new AmicodeServiceServer({ password: PW });
+    server.attachEngineProxy(new EngineProxy({ getUrl: () => localStub.url }));
+    server.attachObservationReadPlane(createObservationReadPlane({ ownerMap, localMachineId: "macbook", peer: peerToId }));
+    server.attachObservationWritePlane(
+      createObservationWritePlane({
+        ownerMap,
+        localMachineId: "macbook",
+        peer: peerToId,
+        grantReader: (o) => (o === "studio" ? { scope: "control", state: "active" } : undefined),
+      }),
+    );
+    const origin = (await server.start()).toString().replace(/\/$/, "");
+    const localBefore = localStub.requests.length;
+    try {
+      // BEFORE: the owner map does not know the (not-yet-created) session.
+      expect(ownerMap.resolveOwner("ses-remote-new")).toBeUndefined();
+
+      const created = await fetch(`${origin}/session`, {
+        method: "POST",
+        headers: { ...authed, [OWNER_ROUTING_HEADER]: "studio", "content-type": "application/json" },
+        body: JSON.stringify({ agent: "build" }),
+      });
+      expect(created.status).toBe(200);
+      expect(((await created.json()) as { id: string }).id).toBe("ses-remote-new");
+
+      // AFTER: ownership was recorded at create time — the map routes it to the peer.
+      expect(ownerMap.resolveOwner("ses-remote-new")).toBe("studio");
+
+      // and the immediate follow-up READ of that session goes to the PEER, NOT local.
+      const peerReadsBefore = idStub.requests.length;
+      const read = await fetch(`${origin}/session/ses-remote-new`, { headers: { ...authed } });
+      expect(read.status).toBe(200);
+      expect(idStub.requests.length).toBe(peerReadsBefore + 1); // the peer served the read
+      expect(idStub.requests.at(-1)!.path).toBe("/session/ses-remote-new");
+      expect(localStub.requests.length).toBe(localBefore); // local engine NEVER dialed
+    } finally {
+      await server.stop();
+      await idStub.stop();
+    }
+  });
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
