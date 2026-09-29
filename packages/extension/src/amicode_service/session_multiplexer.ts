@@ -423,7 +423,7 @@ export class ObservationWriteRouter {
  *  The two variants are discriminated by `unreachable`; the reachable variant
  *  carries `url`, the degraded one never does. */
 export type ResolvedTarget =
-  | { machineId: string; url: string; unreachable?: false }
+  | { machineId: string; url: string; token?: string; unreachable?: false }
   | { machineId: string; url?: undefined; unreachable: true };
 
 /** #1448 (W1a): the narrow resolver seam the dispatch peer branch consults on
@@ -519,7 +519,11 @@ export class SessionMultiplexProxy implements MultiplexResolver {
     //    it into a 503 rather than silently serving local (the #1382 bug).
     const url = peer.getUrl();
     if (!url) return { machineId, unreachable: true };
-    return { machineId, url };
+    // Carry the peer's OWN reader token so the dispatch dials the peer with
+    // serverAuthHeader(peer.token) — NOT the hub credential (the real peer
+    // engine's ServerAuth.authorized accepts only its per-boot password or a
+    // token IT issued; the hub token is neither → 401 on every create).
+    return { machineId, url, token: peer.token };
   }
 
   /** Open an SSE event stream for a session. The multiplexer connects to the

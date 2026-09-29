@@ -78,23 +78,45 @@ export class HubProxy {
    * attachment pointer's own `getUrl()`. Absent → the pointer's `getUrl()`
    * as before (byte-identical). Only the base URL changes; the credential
    * translation (H1: this proxy's mint) is unchanged.
+   *
+   * `authOverride`: the per-request Authorization header to attach INSTEAD of
+   * the hub mint. The multiplexer's reachable create dispatch passes the
+   * resolved peer's OWN reader token (serverAuthHeader(peer.token)) here — the
+   * real peer engine accepts only its per-boot password or a token IT issued,
+   * never the hub token. Absent → the hub mint as before (the local-engine /
+   * single-hub hops are unchanged).
    */
-  handle(req: http.IncomingMessage, res: http.ServerResponse, urlOverride?: string): boolean {
+  handle(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    urlOverride?: string,
+    authOverride?: string,
+  ): boolean {
     const upstreamBase = urlOverride ?? this.opts.getUrl();
     if (!upstreamBase) return false;
-    const cred = this.opts.credential();
-    if (!cred.ok) {
-      try {
-        if (!res.headersSent) {
-          res.writeHead(503, { "content-type": "application/json" });
-          res.end(JSON.stringify({ ok: false, error: "hub-credential-missing", reason: cred.reason }));
-        } else {
-          res.end();
+    // With a per-request auth override the hub credential is bypassed entirely
+    // (a peer-targeted create needs the PEER's token, and the hub credential
+    // may not even be present). Otherwise the hub mint is required, and a
+    // missing one is the NAMED 503.
+    let authHeader: string;
+    if (authOverride !== undefined) {
+      authHeader = authOverride;
+    } else {
+      const cred = this.opts.credential();
+      if (!cred.ok) {
+        try {
+          if (!res.headersSent) {
+            res.writeHead(503, { "content-type": "application/json" });
+            res.end(JSON.stringify({ ok: false, error: "hub-credential-missing", reason: cred.reason }));
+          } else {
+            res.end();
+          }
+        } catch {
+          /* never throw into the server */
         }
-      } catch {
-        /* never throw into the server */
+        return true;
       }
-      return true;
+      authHeader = hubUpstreamAuthHeader(cred.credential.token);
     }
     try {
       // Reconstruct the request line against the hub origin, WITHOUT the
@@ -114,7 +136,7 @@ export class HubProxy {
       if (resumePlan?.afterToInject !== undefined) target.searchParams.set("after", resumePlan.afterToInject);
       const headers: Record<string, string | string[] | undefined> = { ...req.headers };
       for (const h of DROPPED_HEADERS) delete headers[h];
-      headers["authorization"] = hubUpstreamAuthHeader(cred.credential.token);
+      headers["authorization"] = authHeader;
       // D6: the client-enforced headers timeout — the client always
       // resolves or times out; the body (an SSE stream included) is
       // unbounded once headers arrive.

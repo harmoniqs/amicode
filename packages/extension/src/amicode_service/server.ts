@@ -715,7 +715,16 @@ export class AmicodeServiceServer {
             // attachment pointer routes as today (byte-identical).
             if (multiplexResolved) {
               if (multiplexResolved.unreachable !== true && multiplexResolved.url !== undefined) {
-                if (this.fleetPlane.attached.handle(req, res, multiplexResolved.url)) return;
+                // Dial the resolved peer with ITS OWN reader token when the
+                // multiplexer surfaced one — the real peer engine 401s the hub
+                // credential (it accepts only its per-boot password or a token
+                // IT issued). No peer token → fall back to the hub mint (the
+                // proxy's default), preserving the pre-token behavior.
+                const peerAuth =
+                  multiplexResolved.token !== undefined
+                    ? serverAuthHeader(multiplexResolved.token)
+                    : undefined;
+                if (this.fleetPlane.attached.handle(req, res, multiplexResolved.url, peerAuth)) return;
               }
               // unreachable, or the per-session proxy reported no upstream →
               // fall through to the named 503 (never the pointer, never local).
