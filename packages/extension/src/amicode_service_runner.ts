@@ -46,6 +46,9 @@ import type { AmicodeServiceServer } from "./amicode_service/server";
 import { mintServerPassword, serverAuthHeader } from "./server_auth";
 import { writeHubHandshake, deleteHandshake, hashFile } from "./server_handshake";
 import { buildMachineStableConfig } from "./opencode_config";
+import { buildHubFleetOption } from "./hub_fleet_wiring";
+import { readFleetTopology } from "./fleet_topology";
+import { buildFleetPeerProvider } from "./amicode_service/fleet_peer_provider";
 
 /** The named boot-abort: `reason` is the stable grep-able phrase, `message`
  *  carries the detail (engine output tail for health failures). */
@@ -533,11 +536,25 @@ export async function bootAmicodeServiceRunner(opts: AmicodeServiceRunnerOptions
   }
 
   // ── the service: the SAME wiring startAmicodeService performs ────────────
-  // No fleetActivation is ever passed here (H3): the hub runs the byte-
-  // identical unarmed base service; arming is an extension-host decision.
+  // #1607 regression fix: on a role=server machine the app RIDES this hub as
+  // its server. A byte-identical unarmed base service (no fleet) means every
+  // /amicode/fleet/* route — the N-peer projection, the grant surface, and the
+  // #1643 remote-create routes — 404s on the very server the app talks to.
+  // Build the OBSERVATION-ONLY fleet (same shape as amicode_service_wiring.ts's
+  // base-studio path) so createAmicodeService mounts the fleet routes via
+  // baseStudioActivates. GUARDED: only when a machine id resolves from the
+  // topology (server/standalone-with-canonical); a true standalone / client /
+  // unreadable topology → undefined → the byte-identical base (H3 preserved).
+  // No fleetActivation is passed (no hub proxy / multiplex / premium plane) —
+  // observationOnly:true keeps this a pure local-observation surface.
+  const hubFleet = buildHubFleetOption({
+    readTopology: () => readFleetTopology(),
+    buildProvider: (localMachineId) => buildFleetPeerProvider({ localMachineId }),
+  });
   const service = createAmicodeService({
     engine: { password: unarmed ? undefined : password, getUrl: () => engineUrl },
     shelf: { distRoot: opts.appDistRoot },
+    ...(hubFleet ? { fleet: hubFleet } : {}),
   });
   const servicePort = opts.servicePort ?? 4095;
   let url: URL;
