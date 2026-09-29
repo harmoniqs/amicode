@@ -90,6 +90,16 @@ export function createObservationWritePlane(
         const body = Buffer.concat(chunks);
         const upstream = new URL(req.url ?? "/session", target.url);
         upstream.searchParams.delete("auth_token");
+        // Drop the CREATOR's directory query: the app issues create scoped to
+        // ITS OWN open project (?directory=<creator path>), but that path is
+        // meaningless on the owning peer and — worse — makes the peer's engine
+        // file the session under a directory the peer's OWN sidebar never lists
+        // (it lists session.list({ directory: <the peer's open project> })), so
+        // the remote-created session is invisible on the machine that runs it.
+        // Stripping it lets the peer resolve its OWN default project scope, where
+        // its sidebar looks. The follow-up read routes by session id (owner map),
+        // independent of directory, so nothing downstream needs the creator's dir.
+        upstream.searchParams.delete("directory");
         const headers: Record<string, string> = {
           authorization: serverAuthHeader(target.token),
           "content-type": typeof req.headers["content-type"] === "string" ? req.headers["content-type"] : "application/json",

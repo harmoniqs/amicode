@@ -535,6 +535,60 @@ describe("free-tier remote create — a path-less POST /session routes to the ow
       await idStub.stop();
     }
   });
+
+  // The peer-UI-visibility gap: the app issues create as
+  // POST /session?directory=<CREATOR's open project>. If the proxy forwards that
+  // foreign directory verbatim, the OWNING peer's engine files the session under
+  // the CREATOR's path — a directory the peer's OWN sidebar (which lists
+  // session.list({ directory: <the peer's open project> })) never queries, so
+  // the session is invisible on the peer that actually runs it. The fix drops
+  // the creator's directory query so the peer files the session under ITS OWN
+  // default project scope, where its sidebar looks.
+  it("strips the creator's foreign ?directory= from the proxied create (so the peer files it where its OWN sidebar looks)", async () => {
+    // A stub that records the FULL search string, not just the pathname.
+    const searchStub = await (async () => {
+      const searches: string[] = [];
+      const s = http.createServer((req, res) => {
+        const u = new URL(req.url ?? "/", "http://stub");
+        if ((u.pathname === "/session" || u.pathname === "/api/session") && req.method === "POST") {
+          searches.push(u.search); // e.g. "" or "?directory=..."
+        }
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ id: "ses-created", title: "New session" }));
+      });
+      await new Promise<void>((r) => s.listen(0, "127.0.0.1", r));
+      const port = (s.address() as AddressInfo).port;
+      return { url: `http://127.0.0.1:${port}`, searches, stop: () => new Promise<void>((r) => s.close(() => r())) };
+    })();
+
+    const peerToSearch = (id: string): PeerTransport | undefined =>
+      id === "studio" ? { getUrl: () => searchStub.url, token: "tok-studio" } : undefined;
+    const server = new AmicodeServiceServer({ password: PW });
+    server.attachEngineProxy(new EngineProxy({ getUrl: () => localStub.url }));
+    server.attachObservationWritePlane(
+      createObservationWritePlane({
+        ownerMap: new SessionOwnerMap(),
+        localMachineId: "macbook",
+        peer: peerToSearch,
+        grantReader: (o) => (o === "studio" ? { scope: "control", state: "active" } : undefined),
+      }),
+    );
+    const origin = (await server.start()).toString().replace(/\/$/, "");
+    try {
+      const res = await fetch(`${origin}/session?directory=${encodeURIComponent("/Users/jj/AmicodeProjects")}`, {
+        method: "POST",
+        headers: { ...authed, [OWNER_ROUTING_HEADER]: "studio", "content-type": "application/json" },
+        body: JSON.stringify({ agent: "build" }),
+      });
+      expect(res.status).toBe(200);
+      expect(searchStub.searches.length).toBe(1);
+      // the peer saw the create WITHOUT the creator's foreign directory query
+      expect(searchStub.searches[0]).not.toContain("directory=");
+    } finally {
+      await server.stop();
+      await searchStub.stop();
+    }
+  });
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
