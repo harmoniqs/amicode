@@ -43,9 +43,24 @@ import {
 const PKG_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const ENGINE_BIN = join(PKG_ROOT, "vendor", "opencode", `${process.platform}-${process.arch}`, "opencode");
 const APP_DIST = join(PKG_ROOT, "dist", "app");
-
 const engineAvailable = existsSync(ENGINE_BIN);
 const distAvailable = existsSync(join(APP_DIST, "index.html"));
+
+/** Poll a predicate until it holds or the timeout elapses (returns its final
+ *  value). The PID-safety tests spawn a real process and then assert
+ *  `ps -o comm=` sees it as "opencode"; right after `spawn()` there is an
+ *  exec→ps visibility window that widens under full-suite CPU contention (a
+ *  flake that only surfaced in the parallel suite, never in isolation). Polling
+ *  closes that window without weakening the assertion — the sanity check still
+ *  requires the process to become alive AND recognized, just not instantly. */
+async function waitUntil(pred: () => boolean, timeoutMs = 3_000, stepMs = 25): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (pred()) return true;
+    await new Promise((r) => setTimeout(r, stepMs));
+  }
+  return pred();
+}
 
 describe.skipIf(!engineAvailable || !distAvailable)(
   "amicode service runner (live: vendored engine + built dist)",
@@ -684,8 +699,11 @@ createServer((_req, res) => {
     writeFileSync(pidFile, `${stale.pid}\n`);
 
     // Sanity: the stale process IS alive and IS recognized as opencode.
-    expect(isProcessAlive(stale.pid!)).toBe(true);
-    expect(isOpencodeProcess(stale.pid!)).toBe(true);
+    // Poll (not assert-instantly): `spawn()` returns before the child has
+    // finished exec'ing into "opencode", so `ps -o comm=` can transiently miss
+    // it under full-suite CPU contention (the flake this closes).
+    expect(await waitUntil(() => isProcessAlive(stale.pid!))).toBe(true);
+    expect(await waitUntil(() => isOpencodeProcess(stale.pid!))).toBe(true);
 
     // Boot the runner with that PID file — it should kill the stale process.
     const boot = await bootAmicodeServiceRunner({
@@ -699,9 +717,9 @@ createServer((_req, res) => {
     });
     boots.push(boot);
 
-    // The stale "opencode" process should be dead now.
-    await new Promise((r) => setTimeout(r, 200));
-    expect(isProcessAlive(stale.pid!)).toBe(false);
+    // The stale "opencode" process should be dead now. Poll for death rather
+    // than a fixed 200ms sleep — SIGTERM→reap can exceed that under contention.
+    expect(await waitUntil(() => !isProcessAlive(stale.pid!))).toBe(true);
 
     // The PID file now has the new engine's PID.
     const content = readFileSync(pidFile, "utf8").trim();
