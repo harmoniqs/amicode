@@ -858,7 +858,7 @@
     "packages/app/src/pages/session/composer/session-bug-dock.stories.tsx": "a5730bb3699751d63629134924ce8dea021b264722c40f5f6bb98236dc15eda7",
     "packages/app/src/pages/session/composer/session-bug-dock.tsx": "e7fed3c5ab80527d69a106440833f795bbbafc5deeba3883902ede9fba612605",
     "packages/app/src/pages/session/composer/session-composer-controls.ts": "7ba9d56c81b1547acbdd47c4f9371ddc37c9a92059f5785f7286fc68e0cb4483",
-    "packages/app/src/pages/session/composer/session-composer-region-controller.ts": "f64f38e22c14d80326b0fdbad4e1932967418380ec66aa176a3ea7beebf75834",
+    "packages/app/src/pages/session/composer/session-composer-region-controller.ts": "d0403567856eb07ee93957e6d8a23c0f5c78620d94fa09407c01fc6ad3d9eadc",
     "packages/app/src/pages/session/composer/session-composer-region.tsx": "415cd5c3a77b625a3142b828b6458687e1a35b382d3a208d90ff1555cc7098b1",
     "packages/app/src/pages/session/composer/session-composer-state.ts": "fcffa11d801309cf58f42a174143bf6eb3ea2b14f860ad91a8ffa4e097df5c16",
     "packages/app/src/pages/session/composer/session-question-dock.helpers.test.ts": "a1fe31fe4dfdf2914bc184030a0427bcbdfae0f3e7b146e1d6ee29ce31d85b64",
@@ -934,7 +934,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-09-29T14:50:03.746Z",
+  "extracted_at": "2026-09-29T16:59:35.474Z",
   "per_package": {
     "packages/app": {
       "A": 229,

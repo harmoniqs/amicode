@@ -124,6 +124,28 @@ export function createSessionComposerRegionController(input: {
     return !!info?.time?.archived
   })
 
+  // #1647 follow-up: flip to the archived read-only banner promptly even when
+  // THIS machine did not perform the archive — the OWNER of a session that a
+  // peer archived (or any archive done elsewhere, e.g. the CLI). That transition
+  // arrives as a `session.updated` SSE event, but on the non-acting machine that
+  // delivery is jittery: the #1646 force-sync only covers the ACTING machine and
+  // reconnect/resync edges, so the owner's flip "took some time" (it waited for
+  // the next edge or the laggy event). While the viewed session is NOT yet
+  // archived, do a bounded INFO-ONLY forced resolve (client.session.get →
+  // remember; it does NOT re-fetch messages and is #1646-safe against a stale
+  // in-flight) so the archived flag converges within the interval without
+  // disrupting an active stream. Self-terminating: once `archived()` flips true
+  // the effect re-runs, hits the guard, and stops (no more polling).
+  createEffect(() => {
+    const id = input.sessionID()
+    if (!id) return
+    if (archived()) return
+    const timer = setInterval(() => {
+      void sync().session.resolve(id, { force: true }).catch(() => {})
+    }, 5000)
+    onCleanup(() => clearInterval(timer))
+  })
+
 
   const open = createMemo(() => store.ready && input.state.dock() && !input.state.closing())
   const progress = useSpring(
