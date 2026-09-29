@@ -671,8 +671,8 @@
     "packages/app/src/components/session/session-chats-dropdown.test.ts": "72e2e797fe96a59ee46ae59c4a5cb34eae8d338a468977bd4e8f61cefd6abd49",
     "packages/app/src/components/session/session-context-tab.tsx": "4062ef39e161f041bf1d7a300173c510cecd581ad8e1fbb4503961b7cd1a29f5",
     "packages/app/src/components/session/session-fleet-control-projection.ts": "8fb86805827498bc02297c1102f6f7ada62351df1f7030cd120123298728568e",
-    "packages/app/src/components/session/session-fleet-peers.test.ts": "d2ab257c701a537f4a7e37b36a0de7fb0e113152a08e853b04f2a578943e5ece",
-    "packages/app/src/components/session/session-fleet-peers.ts": "0dc7de797f734db3aab55414863d032ae900abdaf6260aaf9370ea506fba199f",
+    "packages/app/src/components/session/session-fleet-peers.test.ts": "8f8e48540d135f598c5dc23733f1757a6e68a67c7cbcdc4d0a4d4459baa7757d",
+    "packages/app/src/components/session/session-fleet-peers.ts": "90ab6307ca1b82210ff956633894d5cef04f285f8558d43b54a7d66ee771d0ec",
     "packages/app/src/components/session/session-header.test.tsx": "20804a66b8f872be1da2c2b9f70ddbd4b5ef8a745cf7d29bd6654dba064547cb",
     "packages/app/src/components/session/session-header.tsx": "cf9506ca3503b5a36c9974b4279d05a31c1beb1d6a5851d95c490362e87d5446",
     "packages/app/src/components/session/session-new-view.tsx": "9510a4f550a3f0d4791e98e8025666f09d70a60fb66f193e48ee61feddae5a57",
@@ -929,7 +929,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-09-29T02:44:46.885Z",
+  "extracted_at": "2026-09-29T03:21:56.535Z",
   "per_package": {
     "packages/app": {
       "A": 224,

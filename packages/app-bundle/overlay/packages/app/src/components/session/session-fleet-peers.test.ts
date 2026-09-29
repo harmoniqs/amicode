@@ -231,10 +231,25 @@ const remoteWith = (control: SessionControlProjection, machineId = "test-desktop
   }) as unknown as DropdownSession
 
 describe("#1544 readSessionControl — tolerant read of amicode_control", () => {
-  test("absent / malformed → the local no-affordance default (never throws)", () => {
+  test("absent / malformed on a LOCAL / unowned session → the local no-affordance default (never throws)", () => {
     expect(readSessionControl(undefined)).toEqual({ controlState: "local", reason: null, eligibility: "none" })
     expect(readSessionControl({} as DropdownSession)).toEqual({ controlState: "local", reason: null, eligibility: "none" })
     expect(readSessionControl({ amicode_control: { nope: 1 } } as unknown as DropdownSession).controlState).toBe("local")
+  })
+  test("absent / malformed on a REMOTE peer session → FAIL-CLOSED (amicode#1544 follow-up)", () => {
+    // A remote row with no control channel must NOT read as held — the server
+    // write gate denies with no-control-grant, so the client must agree (no
+    // silently-failing delete button; a "Control not enabled" chip instead).
+    const remoteOwner = { owner_machine_id: "studio", owner_name: "Studio", is_local: false as const }
+    const missing = readSessionControl({ amicode_owner: remoteOwner } as unknown as DropdownSession)
+    expect(missing).toEqual({ controlState: "read-only", reason: "no-control-grant", eligibility: "enable-control" })
+    expect(writeAffordanceEnabled(missing)).toBe(false)
+    const malformed = readSessionControl({
+      amicode_owner: remoteOwner,
+      amicode_control: { nope: 1 },
+    } as unknown as DropdownSession)
+    expect(malformed.controlState).toBe("read-only")
+    expect(writeAffordanceEnabled(malformed)).toBe(false)
   })
   test("a well-formed projection round-trips", () => {
     expect(readSessionControl(remoteWith(ctrl({ controlState: "interactive", reason: null, eligibility: "none" })))).toEqual({

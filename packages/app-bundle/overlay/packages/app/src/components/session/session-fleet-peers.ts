@@ -103,15 +103,32 @@ const CONTROL_CHIP_LABELS: Record<ControlChipReason, string> = {
   "transport-down": "Peer unreachable",
 }
 
+/** The fail-closed default for a REMOTE peer session whose control channel is
+ *  absent/malformed. A missing channel must NOT read as "control held" on a
+ *  remote row — the server-side write gate (evaluateRemoteWriteGate) denies with
+ *  `no-control-grant` in exactly that case, so defaulting the client to
+ *  `local` (held) produced a delete button that silently failed against the
+ *  owner (amicode#1544 follow-up). Fail-closed keeps the client honest: no
+ *  live-erroring write button, a "Control not enabled" chip instead. */
+const CONTROL_REMOTE_FAIL_CLOSED: SessionControlProjection = {
+  controlState: "read-only",
+  reason: "no-control-grant",
+  eligibility: "enable-control",
+}
+
 /** Tolerant read of the control channel off a session. Absent / malformed →
- *  the local no-affordance default (never throws). */
+ *  a default that DEPENDS on ownership: a local/unowned session degrades to the
+ *  held no-affordance default (you own it); a REMOTE peer session degrades to
+ *  fail-closed (you do NOT hold control until the channel says so), matching the
+ *  server write gate. Never throws. */
 export function readSessionControl(
-  session: { amicode_control?: unknown } | undefined,
+  session: { amicode_control?: unknown; amicode_owner?: SessionOwnerTag } | undefined,
 ): SessionControlProjection {
+  const missingDefault = isRemotePeerSession(session) ? CONTROL_REMOTE_FAIL_CLOSED : CONTROL_LOCAL_DEFAULT
   const raw = session?.amicode_control
-  if (!raw || typeof raw !== "object") return CONTROL_LOCAL_DEFAULT
+  if (!raw || typeof raw !== "object") return missingDefault
   const o = raw as Record<string, unknown>
-  if (typeof o.controlState !== "string" || !CONTROL_STATES.has(o.controlState)) return CONTROL_LOCAL_DEFAULT
+  if (typeof o.controlState !== "string" || !CONTROL_STATES.has(o.controlState)) return missingDefault
   const reason = typeof o.reason === "string" && CONTROL_REASONS.has(o.reason) ? (o.reason as ControlChipReason) : null
   const eligibility =
     o.eligibility === "enable-control" || o.eligibility === "request-control" ? o.eligibility : "none"
