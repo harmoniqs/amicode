@@ -451,8 +451,15 @@ export function createServerSession(
   const resolve = (sessionID: string, options?: { force?: boolean }) => {
     const cached = data.info[sessionID]
     if (cached && !options?.force) return Promise.resolve(cached)
+    // #1646: a FORCED resolve must NOT ride a non-forced in-flight request. That
+    // request may have been issued BEFORE a just-committed mutation (e.g. the
+    // archive PATCH) and will resolve with STALE info, re-remembering it and
+    // clobbering the fresh state — the exact regression where archiving a local
+    // session left the row gone from the list but the session live (no
+    // read-only banner, menu still "Archive"). A non-forced caller may still
+    // coalesce onto any pending request.
     const pending = requests.get(sessionID)
-    if (pending) return pending
+    if (pending && !options?.force) return pending
     const active = generation(sessionID)
     const request = sessionApi
       ? sessionApi.get({ sessionID }).then(normalizeSessionInfo)

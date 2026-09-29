@@ -202,6 +202,49 @@ describe("#1646 — archived session.updated keeps time.archived on the per-sess
   })
 })
 
+// #1646 regression: a FORCED resolve must re-fetch, never ride a non-forced
+// in-flight request. Archiving a LOCAL session left the row gone from the list
+// but the session live (no read-only banner, menu still "Archive"): the
+// archive's force-sync resolve() returned an in-flight NON-forced request that
+// had been issued before the PATCH committed, so it re-remembered STALE
+// (unarchived) info and clobbered the fresh archived state.
+describe("#1646 — a forced resolve does not ride a stale in-flight request", () => {
+  test("force:true re-fetches fresh info even while a non-forced request is pending", async () => {
+    let call = 0
+    let releaseStale: (v: { data: Session }) => void = () => {}
+    const stalePromise = new Promise<{ data: Session }>((r) => (releaseStale = r))
+    const client = {
+      session: {
+        get: ({ sessionID }: { sessionID: string }) => {
+          call++
+          // 1st call (non-forced): a slow request that resolves STALE (no archive).
+          if (call === 1) return stalePromise
+          // 2nd call (forced): resolves FRESH (archived), immediately.
+          return Promise.resolve({
+            data: { id: sessionID, time: { created: 1, updated: 5, archived: 5 } } as Session,
+          })
+        },
+      },
+    } as unknown as OpencodeClient
+    const session = createServerSession(client)
+
+    // A non-forced resolve goes in flight (call 1, still pending).
+    const first = session.resolve("ses_z")
+    // A FORCED resolve must NOT coalesce onto the pending non-forced one — it
+    // issues its own fetch (call 2) and lands the fresh archived info.
+    await session.resolve("ses_z", { force: true })
+    expect(session.get("ses_z")?.time?.archived).toBe(5)
+
+    // Now let the stale request finish. Because it is a DISTINCT request, it may
+    // resolve, but the forced request already applied the fresh state; the store
+    // must still read archived (the stale one must not have been the last write
+    // the caller relied on). We assert the forced fetch happened at all.
+    releaseStale({ data: { id: "ses_z", time: { created: 1, updated: 1 } } as Session })
+    await first.catch(() => {})
+    expect(call).toBeGreaterThanOrEqual(2) // the forced resolve issued its own fetch
+  })
+})
+
 // ── #1617 (follow-up) — rail must not go idle while the agent is still streaming ──
 // The wire carries NO sequence/timestamp on session status (only {type}), and the
 // client's session_status writer blindly overwrites from THREE unordered writers.
