@@ -178,8 +178,9 @@
     "packages/app/src/context/platform.tsx": "edd9b1773feb5c084b922a57b6914f6a473eed558b44f9de0eeb1c4d4e2b49da",
     "packages/app/src/context/server-sdk.test.ts": "48ce5243c8c5d42c23c8eadf9eecac777c9330ac1f4d81953042d5ef7d264bd7",
     "packages/app/src/context/server-sdk.tsx": "acaa265c9b26c2494e1916d2017e337131bfeea39f3c76709fba37ec055ee92a",
+    "packages/app/src/context/server-session-orphan-part.test.ts": "1d635374c0bfff25a01825061aabac7334e5cdaedca2dab9f3d9467ff543caea",
     "packages/app/src/context/server-session.test.ts": "8d060f458a5469c0e757679b87ad3f52727d31c403498e331ff3d5fbfef534ad",
-    "packages/app/src/context/server-session.ts": "d7d424884123beec1b7664230b4bb892b2b107db789177cdb1c765e2129ee611",
+    "packages/app/src/context/server-session.ts": "e11c86357d8647116b2c5d37f682d1cfe0a0f5c23e97e4821078b9050439a824",
     "packages/app/src/context/server-sync.tsx": "42ab2de3c766750c92d38d4ffef64ea43f712a5e7d13aac4496df5b01216d6f3",
     "packages/app/src/context/server.tsx": "08e978e4b4b3094221a2a0b92e069f39cbedb6d6cf95935881e21cde52265ee2",
     "packages/app/src/context/session-mirror.test.ts": "65e6d6474e4e67f2da194047140c8c8aac04fe0cc9926441468e53fabc48db96",
@@ -241,7 +242,7 @@
     "packages/app/src/pages/new-session-landing.ts": "528d27cd5d441b521674328fb7812fb2acf77233e9e436d081c98ce611e8b268",
     "packages/app/src/pages/new-session.tsx": "c060bbb15569b6da2f67146e6af0879ccb5444345df03dbc2f9b39cb98b9db78",
     "packages/app/src/pages/overlay-content-hash.test.ts": "aa208098213522dcde42434408afe9c8641fad663f44a58c316922dbd0da2f5c",
-    "packages/app/src/pages/session.tsx": "fcfb48b1b92ce96063eb71b78d343e08a7cf24110a8583a3e1c205d5d56d412f",
+    "packages/app/src/pages/session.tsx": "6944975f40355addf43b5bbd3a02489eb6989dbfddcfd3408aebf982dd80e3db",
     "packages/app/src/utils/amicode-bridge.ts": "3ec87c24c0384d312f7eb644807d9217a53b1b4b97f7fffadab1cc1595603f3b",
     "packages/app/src/utils/amicode-bug-report.test.ts": "b1bbf49230ff3aa6d1a43ffa9165ba5a84ca4ee18a6d49f52ee5cd887c3e6444",
     "packages/app/src/utils/amicode-bug-report.ts": "d55d9cecfe17719c0d4a0ca498345c7eff6fca1de6b645e4bc3fecb40f2f4645",
@@ -572,7 +573,7 @@
     "packages/ui/src/components/amicode-connections-tab.tsx": "d184dfcd5c645332c2cc1c79356e551cd53b67a6b61ed16e78d041de5d13fafe",
     "packages/ui/src/components/amicode-edit-row.tsx": "99c8c4e90ea02be21f74603c5a5ac1e2c030f487d62ce9da972c99dff505d892",
     "packages/ui/src/components/amicode-entity-rail.tsx": "5377561b952d9e6bd9bd6a16cec91a37770f14195bb7bd1cd294eb20a1e78a3d",
-    "packages/ui/src/components/amicode-entity-view.tsx": "1ff46b6abdca65992606755e0d5e516483bbd8f3f8cef54b81cb6faa08d895dc",
+    "packages/ui/src/components/amicode-entity-view.tsx": "1514d29716dc6488fa06dee4672b718444700f4563c9ac6de00e5941005d005b",
     "packages/ui/src/components/amicode-footer.tsx": "d7d7344613c7acbf2d4b0dd3f33c89f67fae6ac065bcea047e7dc26d13bca5a0",
     "packages/ui/src/components/amicode-getting-started.tsx": "219524d12d3b7e35a3e6ac4a112c64b8a54ce1b695bb61dc4a0bcc64a7f37e2e",
     "packages/ui/src/components/amicode-harmonic-dot.tsx": "3f459b3e579e5d8fc3de5562593ec4236d22878f1da59ba46b74e524559542dc",
@@ -872,7 +873,7 @@
     "packages/app/src/pages/session/timeline/message-timeline.tsx": "225b4b579c79d8642032a4e544a0dc3cc99f045a434821bfac937bf4e0eaaf53",
     "packages/app/src/pages/session/timeline/model-pure.ts": "50be4ba12d747dd8df9932044ceee29c5f3b6fa6d6ac36791207f91a91067cd4",
     "packages/app/src/pages/session/timeline/model.test.ts": "459e0694409ffcf2530252a65491e1006f982b8f5c78a15573ed41646b2c85cf",
-    "packages/app/src/pages/session/timeline/model.ts": "1692edf34c1e829900fb3fadcd3f092598164f353e29fe28a9dfb40debcc36bc",
+    "packages/app/src/pages/session/timeline/model.ts": "cec6ba88bbc628e97b7a14bdb5fe8e5007bcc8ef4d38e0ee1df8b109b48afabe",
     "packages/app/src/pages/session/timeline/projection.test.ts": "68655f29c382640fc281780166aa528ea26d28d953f3376e1e062be7a0e13749",
     "packages/app/src/pages/session/timeline/projection.ts": "36ab006523de7b695b33d26a0a03b59db9e148b7e979c36f63970cbcb8bcaca2",
     "packages/app/src/pages/session/timeline/rows-current.test.ts": "b6a2d9671cfba970990b36d9ef0d1f107efcee59f0a9863f1280526116299095",
@@ -932,10 +933,10 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-09-29T13:49:46.003Z",
+  "extracted_at": "2026-09-29T14:18:09.649Z",
   "per_package": {
     "packages/app": {
-      "A": 227,
+      "A": 228,
       "M": 158,
       "D": 0
     },
@@ -981,7 +982,7 @@
     }
   },
   "counts": {
-    "overlay_total": 910,
+    "overlay_total": 911,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1156,6 +1157,7 @@
     "packages/app/src/context/platform.tsx": "M",
     "packages/app/src/context/server-sdk.test.ts": "M",
     "packages/app/src/context/server-sdk.tsx": "M",
+    "packages/app/src/context/server-session-orphan-part.test.ts": "A",
     "packages/app/src/context/server-session.test.ts": "M",
     "packages/app/src/context/server-session.ts": "M",
     "packages/app/src/context/server-sync.tsx": "M",

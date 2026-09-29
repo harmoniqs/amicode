@@ -759,7 +759,15 @@ export default function Page() {
   const activeTab = tabState.activeTab
   const activeFileTab = tabState.activeFileTab
   const revertMessageID = createMemo(() => info()?.revert?.messageID)
-  const timeline = createTimelineModel({ sessionID: () => params.id, revertMessageID })
+  const timeline = createTimelineModel({
+    sessionID: () => params.id,
+    revertMessageID,
+    // #1646 (transcript self-heal) — the same global SSE liveness signals
+    // message-timeline.tsx feeds the entity rail, so the transcript heals on a
+    // reconnect edge / fan-in-wedge resync while staying on this session.
+    streamConnected: () => serverSDK().event.status() === "connected",
+    forceResync: () => serverSDK().event.resyncCount(),
+  })
   const historyLoading = timeline.history.loading
   const historyMore = timeline.history.more
   const lastUserMessage = timeline.lastUserMessage

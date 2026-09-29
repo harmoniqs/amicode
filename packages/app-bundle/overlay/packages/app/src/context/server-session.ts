@@ -267,6 +267,11 @@ export function createServerSession(
   const messageLoads = new Map<string, MessageLoadState>()
   const pendingParts = new Map<string, Map<string, Set<string>>>()
   const orphanParts = new Map<string, Set<string>>()
+  // #1646 (transcript self-heal) — per-session guard so an orphan-part BURST
+  // (many parts arriving ahead of their parent message.updated after a
+  // reconnect gap) triggers at most ONE forced resync per session while one is
+  // outstanding. Cleared when the resync settles.
+  const orphanResyncInflight = new Set<string>()
   const removedMessages = new Map<string, Set<string>>()
   const deltaBases = new Map<string, { base: string; sessionID: string }>()
   const taskSpawnParent = new Map<string, string>()
@@ -1543,14 +1548,38 @@ export function createServerSession(
         const messages = data.message[part.sessionID]
         const load = messageLoads.get(part.sessionID)
         const missing = !messages?.some((message) => message.id === part.messageID)
-        // Outside a page load, accepting a part without its ordered parent event would create an unbounded orphan.
+        // A part for a message we KNOW was removed/cleared must never be
+        // accepted — that would resurrect a deleted message. This short-circuit
+        // holds whether or not a load is active, and never triggers a resync.
         if (
           missing &&
-          (!load ||
-            load.clearedMessageParts.has(part.messageID) ||
+          (load?.clearedMessageParts.has(part.messageID) ||
             removedMessages.get(part.sessionID)?.has(part.messageID))
         )
           return
+        // #1646 (transcript self-heal) — outside a page load, a part whose
+        // ordered parent message.updated we never saw is a GENUINE orphan: the
+        // classic mid-stream reconnect gap where the parent frame was the one
+        // lost and the lastEventID cursor could not replay it. Silently dropping
+        // it (the old behavior) left the row permanently absent until a manual
+        // reload. Instead, request a forced resync to backfill the parent —
+        // debounced per session (novel-messageID + an in-flight guard) so a
+        // part burst yields at most one sync, and still dropping the part itself
+        // (a part without its parent cannot be ordered into the list).
+        if (missing && !load) {
+          const known = orphanParts.get(part.sessionID)
+          const novel = !known?.has(part.messageID)
+          const orphans = known ?? new Set<string>()
+          orphans.add(part.messageID)
+          orphanParts.set(part.sessionID, orphans)
+          if (novel && !orphanResyncInflight.has(part.sessionID)) {
+            orphanResyncInflight.add(part.sessionID)
+            void sync(part.sessionID, { force: true })
+              .catch(() => {})
+              .finally(() => orphanResyncInflight.delete(part.sessionID))
+          }
+          return
+        }
         if (missing) {
           const orphans = orphanParts.get(part.sessionID) ?? new Set<string>()
           orphans.add(part.messageID)
