@@ -1143,6 +1143,22 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
   async function archiveSession(session: Session) {
     const ctx = getServerCtx()
     if (!ctx) return
+    // Archive is a LOCAL-only action (#1525 B2): it is not owner-routed, and the
+    // archived tab below only lists THIS machine's archived sessions. Archiving a
+    // remote peer session against the local SDK either no-ops or writes a phantom
+    // local record that then vanishes on the next archived-list load (the local
+    // engine never owned it) — the "archived a Studio session, now I can't find
+    // it" bug. The row already hides the archive button for remote rows; this is
+    // the belt-and-braces guard for the transient window where a freshly-opened
+    // remote session's local copy has not yet been enriched with its owner tag.
+    if (isRemotePeerSession(session as DropdownSession)) {
+      const owner = (session as DropdownSession).amicode_owner?.owner_name ?? "its owner machine"
+      showToast({
+        title: "Archive on the owning machine",
+        description: `This session lives on ${owner} — archive it there. Archiving remote sessions from a peer isn't supported yet.`,
+      })
+      return
+    }
     await restoreScrollAfter(async () => {
       try {
         await (ctx.sdk.client.session.update as Function)({
