@@ -3,11 +3,13 @@ import {
   adaptServerEvent,
   applySseError,
   coalesceServerEvents,
+  composeArmedRequestHeaders,
   createGlobalStreamResetCoordinator,
   enqueueServerEvent,
   globalStreamResetRequired,
   resumeStreamAfterPageShow,
 } from "./server-sdk"
+import { armRemoteCreate, attachOwnerHeaderIfArmed, disarmRemoteCreate } from "@/components/remote-create-arm"
 import type { OpenCodeEvent } from "@opencode-ai/client/promise"
 import type { Event } from "@opencode-ai/sdk/v2/client"
 
@@ -359,3 +361,54 @@ describe("legacy attachment global-stream reset (#1468)", () => {
     expect(calls).toEqual({ abort: 0, clear: 0, reconnect: 0 })
   })
 })
+
+describe("composeArmedRequestHeaders (remote-create Authorization preservation)", () => {
+  // The regression: the armed path-less create POST went out with NO
+  // Authorization (the SDK applies the Basic credential as the client's BASE
+  // headers, not per-request init; rebuilding init.headers shadowed it) → 401,
+  // while every other call kept the base credential. This proves the armed
+  // create now carries BOTH the owner header AND the base Authorization.
+  const BASE_AUTH = "Basic b3BlbmNvZGU6c2VjcmV0" // base64("opencode:secret")
+
+  test("an armed create POST keeps the base Authorization AND gets the owner header", () => {
+    armRemoteCreate("jjs-mac-studio")
+    const out = composeArmedRequestHeaders({
+      method: "POST",
+      url: "http://127.0.0.1:4095/session",
+      initHeaders: { "content-type": "application/json" },
+      baseAuthorization: BASE_AUTH,
+      attach: attachOwnerHeaderIfArmed,
+    })
+    expect(out.rewritten).toBe(true)
+    expect(out.headers["authorization"]).toBe(BASE_AUTH)
+    expect(out.headers["x-amicode-owner"]).toBe("jjs-mac-studio")
+    expect(out.headers["content-type"]).toBe("application/json")
+    disarmRemoteCreate()
+  })
+
+  test("an UNARMED call is not rewritten (base headers apply untouched)", () => {
+    disarmRemoteCreate()
+    const out = composeArmedRequestHeaders({
+      method: "POST",
+      url: "http://127.0.0.1:4095/session",
+      initHeaders: undefined,
+      baseAuthorization: BASE_AUTH,
+      attach: attachOwnerHeaderIfArmed,
+    })
+    expect(out.rewritten).toBe(false)
+  })
+
+  test("a non-create armed request is not rewritten (owner header is create-only, one-shot preserved)", () => {
+    armRemoteCreate("jjs-mac-studio")
+    const out = composeArmedRequestHeaders({
+      method: "GET",
+      url: "http://127.0.0.1:4095/session/abc/message",
+      initHeaders: undefined,
+      baseAuthorization: BASE_AUTH,
+      attach: attachOwnerHeaderIfArmed,
+    })
+    expect(out.rewritten).toBe(false)
+    disarmRemoteCreate() // consume the still-armed state
+  })
+})
+

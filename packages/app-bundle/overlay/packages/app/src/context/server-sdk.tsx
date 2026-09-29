@@ -282,6 +282,35 @@ export function applySseError(input: { closed: boolean; disconnect: () => void; 
   return true
 }
 
+/** Compose the outgoing request headers for the owner-header PRODUCER seam.
+ *
+ * The bug this fixes (#1643 follow-up): createOpencodeClient applies the Basic
+ * credential as the CLIENT's base headers, NOT per-request `init.headers`. The
+ * fetch wrapper rebuilds `init.headers` when it arms the owner header, which
+ * SHADOWS the client base headers — so the armed create went out with no
+ * Authorization and 401'd, while every other (un-rewritten) call kept the base
+ * credential. Seeding the base Authorization here before arming keeps it on the
+ * rewritten request. Returns the same reference when nothing was armed (the
+ * wrapper leaves `init` untouched → base headers still apply). */
+export function composeArmedRequestHeaders(input: {
+  method: string
+  url: string
+  initHeaders: HeadersInit | undefined
+  baseAuthorization: string | undefined
+  attach: (method: string, url: string, headers: Record<string, string>) => Record<string, string>
+}): { rewritten: boolean; headers: Record<string, string> } {
+  const seeded: Record<string, string> = {}
+  if (input.baseAuthorization) seeded["authorization"] = input.baseAuthorization
+  new Headers(input.initHeaders).forEach((v, k) => (seeded[k] = v))
+  // Snapshot to detect whether `attach` changed anything (it returns the SAME
+  // reference when not armed). We compare against a copy because we mutated
+  // `seeded` above with the base auth.
+  const before = { ...seeded }
+  const after = input.attach(input.method, input.url, seeded)
+  const rewritten = after !== seeded || JSON.stringify(after) !== JSON.stringify(before)
+  return { rewritten, headers: after }
+}
+
 type ServerEventEmitter = ReturnType<typeof createGlobalEmitter<{ [key: string]: ServerEvent }>>
 type ServerSDKBase = {
   server: ServerConnection.Any
@@ -725,10 +754,21 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
       const method = init?.method ?? (input instanceof Request ? input.method : "GET")
       const rawUrl = typeof input === "string" ? input : input instanceof URL ? input.href : input.url
       const url = new URL(rawUrl, server.http.url).href
-      const existing: Record<string, string> = {}
-      new Headers(init?.headers).forEach((v, k) => (existing[k] = v))
-      const withOwner = attachOwnerHeaderIfArmed(method, url, existing)
-      if (withOwner !== existing) headerInit = { ...init, headers: withOwner }
+      const baseAuthorization =
+        server.http.password !== undefined
+          ? `Basic ${btoa(`${server.http.username ?? "opencode"}:${server.http.password}`)}`
+          : undefined
+      const composed = composeArmedRequestHeaders({
+        method,
+        url,
+        initHeaders: init?.headers,
+        baseAuthorization,
+        attach: attachOwnerHeaderIfArmed,
+      })
+      // Only rewrite when the owner header was actually attached (an armed
+      // create). Unarmed calls leave `init` untouched so the client's base
+      // headers still apply byte-identically to before.
+      if (composed.rewritten) headerInit = { ...init, headers: composed.headers }
     } catch {
       /* fall through unmodified — never let header logic break a request */
     }
