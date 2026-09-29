@@ -1177,6 +1177,15 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
         if (!isRemote) setArchivedSessions((prev) => [session, ...prev])
         // Reload active sessions for this session's directory
         await serverSync().project.loadSessions(session.directory, { limit: 64 })
+        // #1646: force-sync the PER-SESSION store so the composer flips to its
+        // archived read-only banner immediately. loadSessions above refreshes
+        // the LIST store, but the composer's `archived` memo reads the
+        // per-session store (sync().session.get(id).time.archived) — which the
+        // list reload does not touch. Without this the banner appeared only when
+        // the change lazily propagated (SSE / next projection cycle), so a
+        // remote (owner-routed) archive left the composer live for seconds. This
+        // mirrors the unarchive path, which already force-syncs (session.tsx).
+        await serverSync().session.sync(session.id, { force: true }).catch(() => {})
       } catch (cause) {
         showToast({
           title: language.t("common.requestFailed"),

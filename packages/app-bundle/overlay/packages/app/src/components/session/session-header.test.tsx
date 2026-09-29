@@ -88,6 +88,17 @@ describe("#1544 session-header control wiring", () => {
     // only shown when control is held
     expect(source).toContain("<Show when={canWrite()}>")
   })
+
+  // #1646: the archive handler must force-sync the PER-SESSION store, not only
+  // reload the list — the composer's archived read-only banner reads the
+  // per-session store, so without this the banner lagged (seconds) behind an
+  // owner-routed remote archive. Mirrors the unarchive path's force-sync.
+  test("#1646 archive force-syncs the per-session store so the composer flips immediately", () => {
+    // the archive handler still reloads the list…
+    expect(source).toContain("project.loadSessions(session.directory")
+    // …AND force-syncs the per-session store (the composer's `archived` source)
+    expect(source).toContain("session.sync(session.id, { force: true })")
+  })
 })
 
 // #1562-followup (Slice A): the interactive flip must be OBSERVED. The shared
