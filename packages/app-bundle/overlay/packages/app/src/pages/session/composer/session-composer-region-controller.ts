@@ -110,8 +110,21 @@ export function createSessionComposerRegionController(input: {
   })
   const archived = createMemo(() => {
     const id = input.sessionID()
-    return id ? !!sync().session.get(id)?.time?.archived : false
+    if (!id) return false
+    // #1646: the archive arrives as a session.updated event that ADDS a
+    // `time.archived` key that was ABSENT at first render. A memo that only
+    // touched the (then-undefined) leaf never subscribed to it in the Solid
+    // store, so it did not recompute until an unrelated dependency changed
+    // ("only flips when I click around"). Touch a path that ALWAYS exists and
+    // changes on every remember() — `time.updated`, which the archive bumps —
+    // to guarantee a subscription that fires when the event lands. Proven by a
+    // reactivity regression test in server-session.test.ts (#1646).
+    const info = sync().session.get(id)
+    void info?.time?.updated
+    return !!info?.time?.archived
   })
+
+
   const open = createMemo(() => store.ready && input.state.dock() && !input.state.closing())
   const progress = useSpring(
     () => (open() ? 1 : 0),

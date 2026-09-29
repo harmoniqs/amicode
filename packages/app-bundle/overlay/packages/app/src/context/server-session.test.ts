@@ -155,6 +155,53 @@ describe("ServerSession live file-edit route", () => {
   })
 })
 
+// #1646: the composer's archived read-only banner reads the PER-SESSION store
+// (session.get(id).time.archived). When an archive arrives as a `session.updated`
+// event (the ONLY way a NON-initiating machine — e.g. the owner Studio when the
+// laptop archived its session — learns of it), that read MUST reflect archived.
+// The handler remembers the info (archived set) then evict()s message caches;
+// evict must NOT drop the info entry, or the composer never flips off the event.
+describe("#1646 — archived session.updated keeps time.archived on the per-session info store", () => {
+  const archivedInfo = (id: string, archived: number) =>
+    ({ id, time: { created: 1, updated: archived, archived } }) as Session
+
+  test("get(id).time.archived is truthy after a session.updated archive event", () => {
+    const session = createSession()
+    session.apply({ type: "session.created", properties: { info: sessionInfo("ses_x") } })
+    expect(session.get("ses_x")?.time?.archived).toBeFalsy()
+
+    session.apply({ type: "session.updated", properties: { info: archivedInfo("ses_x", 4242) } })
+
+    // The composer's exact read — must see the archive, NOT undefined (evicted).
+    const info = session.get("ses_x")
+    expect(info).toBeDefined()
+    expect(info?.time?.archived).toBe(4242)
+  })
+
+  test("the message caches ARE dropped for the archived session (evict still runs)", () => {
+    const session = createSession()
+    session.apply({ type: "session.created", properties: { info: sessionInfo("ses_y") } })
+    session.apply({
+      type: "message.part.updated",
+      properties: {
+        part: toolPart({
+          id: "e1",
+          sessionID: "ses_y",
+          tool: "apply_patch",
+          metadata: { filediff: { file: "f.ts", status: "modified" } },
+        }),
+      },
+    })
+    expect(session.data.diff_version["ses_y"]).toBe(1)
+
+    session.apply({ type: "session.updated", properties: { info: archivedInfo("ses_y", 99) } })
+
+    // Caches gone (evict ran) but the info entry survives with archived set.
+    expect(session.data.diff_version["ses_y"]).toBeUndefined()
+    expect(session.get("ses_y")?.time?.archived).toBe(99)
+  })
+})
+
 // ── #1617 (follow-up) — rail must not go idle while the agent is still streaming ──
 // The wire carries NO sequence/timestamp on session status (only {type}), and the
 // client's session_status writer blindly overwrites from THREE unordered writers.
