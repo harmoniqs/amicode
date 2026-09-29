@@ -963,7 +963,7 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
   // merge below adds REMOTE (is_local:false) sessions, badged with the owner
   // machine name; owner-routed open + remote control (prompt/archive/delete)
   // are B2 (#1525) and deliberately absent here.
-  const [fleetProjection] = createResource(
+  const [fleetProjection, { refetch: refetchFleetProjection }] = createResource(
     () => (open() ? server.current : undefined),
     (conn) => amicodeGet(conn, "/amicode/fleet/sessions").catch(() => undefined),
   )
@@ -1195,6 +1195,14 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
         if (!isRemote) setArchivedSessions((prev) => [session, ...prev])
         // Reload active sessions for this session's directory
         await serverSync().project.loadSessions(session.directory, { limit: 64 })
+        // #1647 (S9): a REMOTE row in the active list comes from the FLEET
+        // PROJECTION (peerSessionsFromProjection), NOT the local list store that
+        // loadSessions above refreshes — so without refetching the projection the
+        // archived peer row lingered and the archive "did nothing" in the list.
+        // Refetch so the now-archived peer session drops out of the active list.
+        if (isRemote) void refetchFleetProjection()
+        // Refresh the Archived tab so the just-archived session appears there too.
+        void loadArchivedSessions(true)
         // #1646: force-sync the PER-SESSION store so the composer flips to its
         // archived read-only banner immediately. loadSessions above refreshes
         // the LIST store, but the composer's `archived` memo reads the
@@ -1237,6 +1245,8 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
           sessionID,
           directory,
         })
+        // #1647 (S9): drop the deleted peer session from the active list.
+        void refetchFleetProjection()
       } catch (cause) {
         showToast({
           title: language.t("session.delete.failed.title"),
@@ -1270,6 +1280,9 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
         })
         setArchivedSessions((prev) => prev.filter((s) => s.id !== session.id))
         await serverSync().project.loadSessions(session.directory, { limit: 64 })
+        // #1647 (S9): a remote unarchive re-activates the session on its owner —
+        // refetch the fleet projection so it reappears in the active peer list.
+        if (isRemotePeerSession(dropdownSession)) void refetchFleetProjection()
       } catch (cause) {
         showToast({
           title: language.t("common.requestFailed"),
@@ -1299,6 +1312,8 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
           directory: session.directory,
         })
         setArchivedSessions((prev) => prev.filter((s) => s.id !== session.id))
+        // #1647 (S9): drop the deleted peer session from the active list too.
+        if (isRemotePeerSession(dropdownSession)) void refetchFleetProjection()
       } catch (cause) {
         showToast({
           title: language.t("session.delete.failed.title"),
