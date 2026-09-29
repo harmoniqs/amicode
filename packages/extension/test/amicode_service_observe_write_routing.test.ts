@@ -537,56 +537,85 @@ describe("free-tier remote create — a path-less POST /session routes to the ow
   });
 
   // The peer-UI-visibility gap: the app issues create as
-  // POST /session?directory=<CREATOR's open project>. If the proxy forwards that
-  // foreign directory verbatim, the OWNING peer's engine files the session under
-  // the CREATOR's path — a directory the peer's OWN sidebar (which lists
-  // session.list({ directory: <the peer's open project> })) never queries, so
-  // the session is invisible on the peer that actually runs it. The fix drops
-  // the creator's directory query so the peer files the session under ITS OWN
-  // default project scope, where its sidebar looks.
-  it("strips the creator's foreign ?directory= from the proxied create (so the peer files it where its OWN sidebar looks)", async () => {
-    // A stub that records the FULL search string, not just the pathname.
-    const searchStub = await (async () => {
-      const searches: string[] = [];
-      const s = http.createServer((req, res) => {
-        const u = new URL(req.url ?? "/", "http://stub");
-        if ((u.pathname === "/session" || u.pathname === "/api/session") && req.method === "POST") {
-          searches.push(u.search); // e.g. "" or "?directory=..."
-        }
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ id: "ses-created", title: "New session" }));
+  // POST /session?directory=<CREATOR's open project>. The OWNING peer's engine
+  // scopes the session to that directory; the peer's OWN sidebar lists
+  // session.list({ directory: <the peer's open project> }). So the create must
+  // land in a project the PEER actually lists. Decision (match-by-path): keep
+  // the creator's directory IFF it exists as a project worktree on the peer
+  // (both machines have the same repo open — the common case); otherwise strip
+  // it so the peer files it under its own default scope rather than a foreign
+  // path (or, worse, the creator path that then resolves to the peer's throwaway
+  // ambient temp cwd — the slice-1 shortfall this replaces).
+  //
+  // A peer stub that answers GET /project with a known worktree list + records
+  // the create's search string.
+  function startProjectProbeStub(worktrees: string[]): Promise<{ url: string; searches: string[]; stop: () => Promise<void> }> {
+    const searches: string[] = [];
+    const s = http.createServer((req, res) => {
+      const u = new URL(req.url ?? "/", "http://stub");
+      res.writeHead(200, { "content-type": "application/json" });
+      if (u.pathname === "/project" && (req.method ?? "GET") === "GET") {
+        return void res.end(JSON.stringify(worktrees.map((w, i) => ({ id: `p${i}`, worktree: w }))));
+      }
+      if ((u.pathname === "/session" || u.pathname === "/api/session") && req.method === "POST") {
+        searches.push(u.search);
+      }
+      res.end(JSON.stringify({ id: "ses-created", title: "New session" }));
+    });
+    return new Promise((resolve) => {
+      s.listen(0, "127.0.0.1", () => {
+        const port = (s.address() as AddressInfo).port;
+        resolve({ url: `http://127.0.0.1:${port}`, searches, stop: () => new Promise<void>((r) => s.close(() => r())) });
       });
-      await new Promise<void>((r) => s.listen(0, "127.0.0.1", r));
-      const port = (s.address() as AddressInfo).port;
-      return { url: `http://127.0.0.1:${port}`, searches, stop: () => new Promise<void>((r) => s.close(() => r())) };
-    })();
+    });
+  }
 
-    const peerToSearch = (id: string): PeerTransport | undefined =>
-      id === "studio" ? { getUrl: () => searchStub.url, token: "tok-studio" } : undefined;
+  async function createAgainstPeer(peerUrl: string, dir: string): Promise<void> {
+    const peerFn = (id: string): PeerTransport | undefined =>
+      id === "studio" ? { getUrl: () => peerUrl, token: "tok-studio" } : undefined;
     const server = new AmicodeServiceServer({ password: PW });
     server.attachEngineProxy(new EngineProxy({ getUrl: () => localStub.url }));
     server.attachObservationWritePlane(
       createObservationWritePlane({
         ownerMap: new SessionOwnerMap(),
         localMachineId: "macbook",
-        peer: peerToSearch,
+        peer: peerFn,
         grantReader: (o) => (o === "studio" ? { scope: "control", state: "active" } : undefined),
       }),
     );
     const origin = (await server.start()).toString().replace(/\/$/, "");
     try {
-      const res = await fetch(`${origin}/session?directory=${encodeURIComponent("/Users/jj/AmicodeProjects")}`, {
+      const res = await fetch(`${origin}/session?directory=${encodeURIComponent(dir)}`, {
         method: "POST",
         headers: { ...authed, [OWNER_ROUTING_HEADER]: "studio", "content-type": "application/json" },
         body: JSON.stringify({ agent: "build" }),
       });
       expect(res.status).toBe(200);
-      expect(searchStub.searches.length).toBe(1);
-      // the peer saw the create WITHOUT the creator's foreign directory query
-      expect(searchStub.searches[0]).not.toContain("directory=");
     } finally {
       await server.stop();
-      await searchStub.stop();
+    }
+  }
+
+  it("KEEPS the creator's ?directory= when that path IS a project worktree on the peer (shared-repo case)", async () => {
+    const stub = await startProjectProbeStub(["/Users/jj/harmoniqs/amicode", "/Users/jj/.julia/dev/Altissimo"]);
+    try {
+      await createAgainstPeer(stub.url, "/Users/jj/harmoniqs/amicode");
+      expect(stub.searches.length).toBe(1);
+      // the shared repo path is preserved so the session lands where the peer's UI looks
+      expect(decodeURIComponent(stub.searches[0])).toContain("directory=/Users/jj/harmoniqs/amicode");
+    } finally {
+      await stub.stop();
+    }
+  });
+
+  it("STRIPS the creator's ?directory= when that path is NOT a project on the peer (foreign path)", async () => {
+    const stub = await startProjectProbeStub(["/Users/jj/harmoniqs/amicode"]);
+    try {
+      await createAgainstPeer(stub.url, "/Users/jj/AmicodeProjects"); // not a project on the peer
+      expect(stub.searches.length).toBe(1);
+      expect(stub.searches[0]).not.toContain("directory=");
+    } finally {
+      await stub.stop();
     }
   });
 });

@@ -42,6 +42,29 @@ import {
 } from "./session_multiplexer";
 import type { ObservationWritePlane } from "./server";
 
+/** Does the owning peer host a project whose worktree equals `dir`? Probes the
+ *  peer's `GET /project` list (the same route the fleet projection can see) with
+ *  the peer reader token. Used to decide whether a remote create's directory is a
+ *  REAL shared path on the peer (keep it — the session lands in that shared repo,
+ *  where the peer's UI looks) or a foreign creator-only path (strip it). Any
+ *  probe failure (transport, non-2xx, non-JSON, unexpected shape) resolves FALSE
+ *  — the fail-safe: strip to the peer's default scope rather than pin the session
+ *  to a directory the peer may not list. Never throws. */
+async function peerHasProjectWorktree(peerUrl: string, token: string, dir: string): Promise<boolean> {
+  try {
+    const resp = await fetch(new URL("/project", peerUrl).toString(), {
+      method: "GET",
+      headers: { authorization: serverAuthHeader(token) },
+    });
+    if (!resp.ok) return false;
+    const projects = (await resp.json()) as Array<{ worktree?: unknown }>;
+    if (!Array.isArray(projects)) return false;
+    return projects.some((p) => typeof p?.worktree === "string" && p.worktree === dir);
+  } catch {
+    return false;
+  }
+}
+
 /** Build the observation-only WRITE plane: a resolver (path→owner peer, GET
  *  ignored) that AUTHORIZES through the pure write gate, plus the peer proxy
  *  presenting the credential the owner accepts (the peer reader token).
@@ -90,16 +113,24 @@ export function createObservationWritePlane(
         const body = Buffer.concat(chunks);
         const upstream = new URL(req.url ?? "/session", target.url);
         upstream.searchParams.delete("auth_token");
-        // Drop the CREATOR's directory query: the app issues create scoped to
-        // ITS OWN open project (?directory=<creator path>), but that path is
-        // meaningless on the owning peer and — worse — makes the peer's engine
-        // file the session under a directory the peer's OWN sidebar never lists
-        // (it lists session.list({ directory: <the peer's open project> })), so
-        // the remote-created session is invisible on the machine that runs it.
-        // Stripping it lets the peer resolve its OWN default project scope, where
-        // its sidebar looks. The follow-up read routes by session id (owner map),
-        // independent of directory, so nothing downstream needs the creator's dir.
-        upstream.searchParams.delete("directory");
+        // Resolve the create's PROJECT SCOPE on the owning peer (the peer-UI
+        // visibility fix, match-by-path). The app issues create scoped to ITS
+        // OWN open project (?directory=<creator path>); the peer's sidebar lists
+        // session.list({ directory: <the peer's open project> }), so the create
+        // must land in a project the PEER actually lists.
+        //   - KEEP the creator's directory IFF it is a project worktree on the
+        //     peer (the common shared-repo case: both machines have the same
+        //     repo open) → the session lands in that shared repo, where the
+        //     peer's UI looks.
+        //   - Otherwise STRIP it: a foreign path would otherwise resolve to the
+        //     peer's throwaway ambient temp cwd (a project nobody views), so we
+        //     drop it and let the peer file the session under its OWN default
+        //     scope. The follow-up read routes by session id (owner map),
+        //     independent of directory, so nothing downstream needs the dir.
+        const creatorDir = upstream.searchParams.get("directory");
+        if (creatorDir && !(await peerHasProjectWorktree(target.url, target.token, creatorDir))) {
+          upstream.searchParams.delete("directory");
+        }
         const headers: Record<string, string> = {
           authorization: serverAuthHeader(target.token),
           "content-type": typeof req.headers["content-type"] === "string" ? req.headers["content-type"] : "application/json",
