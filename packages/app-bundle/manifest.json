@@ -873,7 +873,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-09-29T19:57:16.640Z",
+  "extracted_at": "2026-09-29T20:36:51.065Z",
   "per_package": {
     "packages/app": {
       "A": 186,
