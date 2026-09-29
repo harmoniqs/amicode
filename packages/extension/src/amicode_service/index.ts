@@ -50,6 +50,8 @@ import { createObservationWritePlane } from "./observation_write_plane";
 import { findControlGrantByTarget, readAllLifecycleGrants, sanitizeGrantForDisplay } from "./fleet_control_lifecycle";
 import { creationTargetResponse } from "./session_creation_route";
 import { peerHomeBaseResponse } from "./session_peer_home_base";
+import { fetchPeerHomeBase } from "./peer_home_base_fetch";
+import { peerWorkspaceResponse } from "./peer_workspace_route";
 import {
   submitControlRequest,
   approveControlRequest,
@@ -64,7 +66,7 @@ import { handleFleetWrite, type FleetWriteDeps } from "./fleet_writes";
 import { inspectTunnelConfigFile, TUNNEL_GENERATION_HEADER } from "./fleet_tunnel";
 import { stageFleetDataPlane, observationOnlyStagingReceipt, type FleetStagingReceipt } from "./fleet_staging";
 import { resolveFleetProgram, type FleetProgramReceipt } from "./fleet_program";
-import { createProject, listProjects } from "./project";
+import { createProject, listProjects, defaultParentDir, listProjectDirs } from "./project";
 import { rehydratePeerRelationships, type RehydrationResult } from "./fleet_headless_rehydration";
 import {
   MINT_ENDPOINT_PATH,
@@ -469,10 +471,6 @@ export interface FleetRouteDeps {
     getBlockedPeers?(): Array<{ machineId: string; reason: "identity-conflict" }>;
     readPeerToken(machineId: string): { ok: true; credential: { baseUrl: string; token: string } } | { ok: false };
     rosterLookup(machineId: string): { name: string; device_type?: string } | undefined;
-    /** #1643 (completes #1484 AC3): the peer's home-base working directory for a
-     *  remote session.create. Optional for back-compat — a provider without it
-     *  yields `no-remote-root` (the honest unresolvable outcome), never a guess. */
-    readPeerHomeDir?(machineId: string): string | undefined;
   };
 }
 
@@ -636,11 +634,34 @@ export function registerFleetRoutes(server: AmicodeServiceServer, deps: FleetRou
     });
   });
 
-  server.add("GET", "/amicode/fleet/peer-home-base", ({ url }) => {
+  server.add("GET", "/amicode/fleet/peer-home-base", async ({ url }) => {
     const machine = url.searchParams.get("machine") ?? undefined;
     const fp = deps.fleetPeers;
+    // #1643 (live peer read): resolve the peer's home-base by fetching its OWN
+    // /amicode/fleet/peer-workspace route over the reader-token transport — the
+    // owning machine is the authority on its working directory. undefined (any
+    // failure) → the honest no-remote-root refusal.
     return peerHomeBaseResponse(machine, {
-      readPeerHomeDir: (peerId) => fp?.readPeerHomeDir?.(peerId),
+      readPeerHomeDir: () => undefined, // sync fallback unused; async path below
+      resolveHomeDir: async (peerId) =>
+        fetchPeerHomeBase(peerId, {
+          resolvePeer: (id) => {
+            const t = fp?.readPeerToken(id);
+            return t && t.ok ? { baseUrl: t.credential.baseUrl, token: t.credential.token } : undefined;
+          },
+        }),
+    });
+  });
+
+  // #1643 remote-create unblock: a machine's OWN workspace truth, served for a
+  // remote-create picker. The OWNING machine answers this about ITSELF (the
+  // Studio serves its own home-base + projects); the local app fetches it when
+  // that machine is picked, feeding the create's working directory and (later)
+  // the selector cascade. Local, never proxied — a machine describing itself.
+  server.add("GET", "/amicode/fleet/peer-workspace", () => {
+    return peerWorkspaceResponse({
+      homeBaseDir: () => defaultParentDir(),
+      listProjects: () => listProjectDirs(),
     });
   });
 

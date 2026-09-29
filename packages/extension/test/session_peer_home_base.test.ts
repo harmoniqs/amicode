@@ -45,23 +45,33 @@ describe("#1643 GET /amicode/fleet/peer-home-base — route", () => {
     ...over,
   });
 
-  it("missing machine param → 400 missing-machine", () => {
-    const res = peerHomeBaseResponse(undefined, deps());
+  it("missing machine param → 400 missing-machine", async () => {
+    const res = await peerHomeBaseResponse(undefined, deps());
     expect(res.status).toBe(400);
     expect(parse(res.body).reason).toBe("missing-machine");
   });
 
-  it("resolvable peer → ok with directory", () => {
-    const res = peerHomeBaseResponse("peer-a", deps());
+  it("resolvable peer → ok with directory", async () => {
+    const res = await peerHomeBaseResponse("peer-a", deps());
     const b = parse(res.body);
     expect(b.ok).toBe(true);
     expect(b.directory).toBe("/Users/studio/work");
   });
 
-  it("unresolvable peer → ok:false with reason no-remote-root", () => {
-    const res = peerHomeBaseResponse("peer-x", deps());
+  it("unresolvable peer → ok:false with reason no-remote-root", async () => {
+    const res = await peerHomeBaseResponse("peer-x", deps());
     const b = parse(res.body);
     expect(b.ok).toBe(false);
     expect(b.reason).toBe("no-remote-root");
+  });
+
+  it("async resolveHomeDir takes precedence (the live-peer-read path)", async () => {
+    const res = await peerHomeBaseResponse("peer-a", {
+      readPeerHomeDir: () => undefined,
+      resolveHomeDir: async (id) => (id === "peer-a" ? "/live/dir" : undefined),
+    })
+    const b = parse(res.body)
+    expect(b.ok).toBe(true)
+    expect(b.directory).toBe("/live/dir")
   });
 });

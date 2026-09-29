@@ -13,10 +13,12 @@
 // (never proxied — the resolution is driven from THIS machine's fleet view).
 
 export interface PeerHomeBaseDeps {
-  /** Read the peer's advertised home/default working directory. The call site
-   *  wires this to the peer's fleet projection directory (the peer's own
-   *  sessions carry it) or the peer engine's default directory. */
+  /** Read the peer's advertised home/default working directory (SYNC). Kept for
+   *  back-compat / unit tests; the live route uses `resolveHomeDir` instead. */
   readPeerHomeDir: (peerId: string) => string | undefined;
+  /** Resolve the peer's home directory via a live peer read (ASYNC, preferred).
+   *  When present, it takes precedence over readPeerHomeDir. */
+  resolveHomeDir?: (peerId: string) => Promise<string | undefined>;
 }
 
 export interface RouteResult {
@@ -33,15 +35,23 @@ export function resolvePeerHomeBase(peerId: string, deps: PeerHomeBaseDeps): str
   return trimmed === "" ? undefined : trimmed;
 }
 
-/** GET /amicode/fleet/peer-home-base?machine=<id>. Never throws. */
-export function peerHomeBaseResponse(
+/** GET /amicode/fleet/peer-home-base?machine=<id>. Never throws. Async so the
+ *  live peer read (resolveHomeDir) can dial the owning machine; a purely-sync
+ *  deps set still resolves synchronously-then-wrapped. */
+export async function peerHomeBaseResponse(
   machine: string | undefined,
   deps: PeerHomeBaseDeps,
-): RouteResult {
+): Promise<RouteResult> {
   if (machine === undefined || machine.trim() === "") {
     return { status: 400, body: JSON.stringify({ ok: false, reason: "missing-machine" }) };
   }
-  const directory = resolvePeerHomeBase(machine, deps);
+  let directory: string | undefined;
+  if (deps.resolveHomeDir) {
+    const dir = await deps.resolveHomeDir(machine);
+    directory = typeof dir === "string" && dir.trim() !== "" ? dir.trim() : undefined;
+  } else {
+    directory = resolvePeerHomeBase(machine, deps);
+  }
   if (directory === undefined) {
     return { status: 200, body: JSON.stringify({ ok: false, reason: "no-remote-root" }) };
   }
