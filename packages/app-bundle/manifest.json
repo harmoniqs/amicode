@@ -866,7 +866,8 @@
     "packages/app/src/pages/session/composer/session-tour.tsx": "da5d807c7efe7aed1140d65d7eddd7982a8c17348d928f5d0a887d1b2a8d3a50",
     "packages/app/src/pages/session/composer/todo-panel-motion.stories.tsx": "70a8267c725af320d78d266b85fd0ff005d067c4d09a21bef824126602e831e7",
     "packages/app/src/pages/session/timeline/last-prompt-bubble.test.ts": "83753b3ec7227570523c2e0b9e82401fae7a20f3a23980bb40deaeb13304327b",
-    "packages/app/src/pages/session/timeline/message-timeline.tsx": "67a4e27e35d9072536956fb4a64cf61b4da0400d02344ea399160ac97efa26cd",
+    "packages/app/src/pages/session/timeline/message-timeline-archive.test.ts": "87fcf0934eb334cd0dc3d97ec874a815757668378ae6ecaf3e5f9eac5f27c0c0",
+    "packages/app/src/pages/session/timeline/message-timeline.tsx": "225b4b579c79d8642032a4e544a0dc3cc99f045a434821bfac937bf4e0eaaf53",
     "packages/app/src/pages/session/timeline/model-pure.ts": "50be4ba12d747dd8df9932044ceee29c5f3b6fa6d6ac36791207f91a91067cd4",
     "packages/app/src/pages/session/timeline/model.test.ts": "459e0694409ffcf2530252a65491e1006f982b8f5c78a15573ed41646b2c85cf",
     "packages/app/src/pages/session/timeline/model.ts": "1692edf34c1e829900fb3fadcd3f092598164f353e29fe28a9dfb40debcc36bc",
@@ -929,10 +930,10 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-09-29T04:48:45.527Z",
+  "extracted_at": "2026-09-29T05:35:07.927Z",
   "per_package": {
     "packages/app": {
-      "A": 224,
+      "A": 225,
       "M": 158,
       "D": 0
     },
@@ -978,7 +979,7 @@
     }
   },
   "counts": {
-    "overlay_total": 907,
+    "overlay_total": 908,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1841,6 +1842,7 @@
     "packages/app/src/pages/session/composer/session-tour.tsx": "A",
     "packages/app/src/pages/session/composer/todo-panel-motion.stories.tsx": "M",
     "packages/app/src/pages/session/timeline/last-prompt-bubble.test.ts": "A",
+    "packages/app/src/pages/session/timeline/message-timeline-archive.test.ts": "A",
     "packages/app/src/pages/session/timeline/message-timeline.tsx": "M",
     "packages/app/src/pages/session/timeline/model-pure.ts": "A",
     "packages/app/src/pages/session/timeline/model.test.ts": "M",
