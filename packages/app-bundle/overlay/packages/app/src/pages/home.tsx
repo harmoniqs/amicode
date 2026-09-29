@@ -421,6 +421,14 @@ function HomeDesign() {
           focusedSync().project.loadSessions(directory, { limit: HOME_SESSION_LIMIT }),
         ),
       )
+      // #1646: flip the composer of the viewed session to its read-only banner
+      // in place. loadSessions refreshes the LIST store; the composer's `archived`
+      // memo reads the PER-SESSION store (focusedSync().session.get(id)), which
+      // only a force-sync lands (and that forced sync now actually runs — see the
+      // runInflight force bypass in server-session.ts).
+      void focusedSync()
+        .session.sync(session.id, { force: true })
+        .catch(() => {})
     } catch (cause) {
       showToast({
         title: language.t("common.requestFailed"),

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { OpencodeClient, Part, Session, SessionStatus } from "@opencode-ai/sdk/v2/client"
-import { createServerSession } from "./server-session"
+import { createServerSession, runInflight } from "./server-session"
 
 const sessionInfo = (id: string, parentID?: string) =>
   ({
@@ -242,6 +242,48 @@ describe("#1646 — a forced resolve does not ride a stale in-flight request", (
     releaseStale({ data: { id: "ses_z", time: { created: 1, updated: 1 } } as Session })
     await first.catch(() => {})
     expect(call).toBeGreaterThanOrEqual(2) // the forced resolve issued its own fetch
+  })
+})
+
+// #1646 (follow-up): the OUTER coalescing layer f54987a9 missed. sync() wraps
+// its whole body in runInflight(inflight, id, task); the archive read-only flip
+// rides through it as sync(id, { force: true }). A forced run must NOT coalesce
+// onto a pending non-forced task (the inflight twin of the resolve()-layer fix)
+// — otherwise the forced task never runs while a normal sync/prefetch is in
+// flight for the session, resolve(force) is never reached, and the composer
+// stays live ("archived row gone from the list but the session still editable").
+describe("#1646 — runInflight: a forced run bypasses in-flight coalescing", () => {
+  test("non-forced runs coalesce onto a pending task; a forced run executes its own", async () => {
+    const map = new Map<string, Promise<void>>()
+    let runs = 0
+    let release: () => void = () => {}
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    const task = () => {
+      runs++
+      return gate
+    }
+
+    // First non-forced run starts the task and stays pending.
+    const first = runInflight(map, "ses_a", task)
+    // A second NON-forced run coalesces onto it — the task must NOT run again.
+    const second = runInflight(map, "ses_a", task)
+    expect(second).toBe(first)
+    expect(runs).toBe(1)
+
+    // A FORCED run must NOT coalesce — it executes its own task even though a
+    // non-forced one is still in flight for the same key.
+    const forced = runInflight(map, "ses_a", task, { force: true })
+    expect(forced).not.toBe(first)
+    expect(runs).toBe(2)
+
+    release()
+    await Promise.all([first, second, forced])
+  })
+
+  test("a settled forced run cleans itself out of the inflight map", async () => {
+    const map = new Map<string, Promise<void>>()
+    await runInflight(map, "ses_b", () => Promise.resolve(), { force: true })
+    expect(map.has("ses_b")).toBe(false)
   })
 })
 

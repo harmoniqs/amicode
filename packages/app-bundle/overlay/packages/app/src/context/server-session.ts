@@ -143,9 +143,23 @@ function mergeOptimisticPage(page: MessagePage, items: OptimisticItem[]) {
   }
 }
 
-function runInflight(map: Map<string, Promise<void>>, key: string, task: () => Promise<void>) {
+export function runInflight(
+  map: Map<string, Promise<void>>,
+  key: string,
+  task: () => Promise<void>,
+  options?: { force?: boolean },
+) {
   const pending = map.get(key)
-  if (pending) return pending
+  // #1646: a FORCED run must NOT coalesce onto a pending NON-forced task. The
+  // pending task may have been issued BEFORE a just-committed mutation (e.g. the
+  // archive PATCH) and resolves with STALE state — the inflight-layer twin of
+  // the resolve() coalescing f54987a9 fixed at the requests layer. sync()'s
+  // force-sync (the archive read-only flip) rides through here, so without this
+  // the forced task never runs while any non-forced sync/prefetch is in flight
+  // for the session, and the composer never flips. A forced run always executes
+  // its own task and becomes the new pending; the finally-guard keeps that
+  // overwrite safe (only the promise still registered deletes itself).
+  if (pending && !options?.force) return pending
   const promise = task().finally(() => {
     if (map.get(key) === promise) map.delete(key)
   })
@@ -1165,7 +1179,7 @@ export function createServerSession(
           ? Promise.resolve()
           : loadMessages(sessionID, options?.messageLimit ?? meta.limit[sessionID] ?? initialMessagePageSize),
       ])
-    })
+    }, { force: options?.force })
   }
 
   const prefetch = async (sessionID: string, limit: number) => {
