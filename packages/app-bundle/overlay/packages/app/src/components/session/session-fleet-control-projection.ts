@@ -33,7 +33,7 @@ function acquireSharedControlProjection(conn: () => ServerConnection.Any | undef
       const [tick, setTick] = createSignal(0)
       const [projection, { refetch }] = createResource(
         () => [conn(), tick()] as const,
-        ([c]) => (c ? amicodeGet(c, "/amicode/fleet/sessions").catch(() => undefined) : undefined),
+        ([c]) => (c ? amicodeGet(c, "/amicode/fleet/sessions?scope=all").catch(() => undefined) : undefined),
       )
       const interval = setInterval(() => setTick((t) => t + 1), FLEET_CONTROL_POLL_MS)
       const onFocus = () => void refetch()

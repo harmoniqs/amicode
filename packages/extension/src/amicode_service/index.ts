@@ -519,6 +519,12 @@ export function registerFleetRoutes(server: AmicodeServiceServer, deps: FleetRou
     // fans the ARCHIVED session list out to peers (owner-tagged like active),
     // powering the local Archive tab's remote-session parity. Absent ⇒ active.
     const archived = url.searchParams.get("archived") === "true";
+    // #1647 (S8): `?scope=all` returns the ACTIVE+ARCHIVED union (owner + control
+    // overlays on both). The tab strip's driving indicator and the composer
+    // control scrim read this projection to resolve a session's owner/control;
+    // an OPEN-but-ARCHIVED remote session had left the active-only projection,
+    // so its tab lost the monitor icon. The union keeps it resolvable.
+    const scopeAll = url.searchParams.get("scope") === "all";
     // #1439: fleet-wide N-peer projection when peer data is available;
     // otherwise fall back to the legacy 2-source (local+hub) projection.
     let projection: MergedProjection | FleetProjection;
@@ -569,6 +575,20 @@ export function registerFleetRoutes(server: AmicodeServiceServer, deps: FleetRou
         resolveControl,
         archived,
       });
+      if (scopeAll) {
+        // Replace the sessions with the active+archived union (owner + control
+        // overlays preserved). Reuses S2's buildOwnerRoutingProjection so an
+        // open-but-archived remote session stays resolvable for the tab icon.
+        const union = await buildOwnerRoutingProjection({
+          localMachineId: deps.fleetPeers.localMachineId,
+          local: { getUrl: deps.engine.getUrl, password: deps.engine.password },
+          peers,
+          blockedPeers,
+          rosterLookup: deps.fleetPeers.rosterLookup,
+          resolveControl,
+        });
+        projection = { ...projection, sessions: union.sessions } as FleetProjection;
+      }
     } else {
       projection = await buildMergedProjection({
         local: { getUrl: deps.engine.getUrl, password: deps.engine.password },

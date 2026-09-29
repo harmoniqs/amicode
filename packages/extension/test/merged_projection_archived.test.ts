@@ -6,6 +6,7 @@
 // Back-compat: absent/false ⇒ the existing active-only fan-out, byte-identical.
 import { describe, it, expect } from "vitest";
 import { buildFleetProjection, buildOwnerRoutingProjection, type SessionOwnerTag } from "../src/amicode_service/merged_projection";
+import { buildControlResolver } from "../src/amicode_service/remote_session_state";
 
 /** A fetch stub that records every URL it is asked for and serves DIFFERENT
  *  session sets for the active vs archived query (keyed on `archived=true`). */
@@ -105,5 +106,25 @@ describe("#1647 S2 — buildOwnerRoutingProjection unions active + archived for 
     const sessionFetches = seen.filter((u) => u.includes("/session") && !u.endsWith("/global/health"));
     expect(sessionFetches.some((u) => /archived=true/.test(u))).toBe(true);
     expect(sessionFetches.some((u) => !/archived=true/.test(u))).toBe(true);
+  });
+
+  it("#1647 S8: the union carries amicode_control on ARCHIVED sessions (tab icon survives archive)", async () => {
+    // The `?scope=all` route (tab driving-indicator + composer scrim source)
+    // uses this union with a control resolver. An OPEN-but-archived REMOTE
+    // session must keep BOTH its owner and control overlays, or its tab monitor
+    // icon vanishes on archive — the bug this locks down.
+    const seen: string[] = [];
+    const { archived: _drop, ...base } = opts(false, seen) as ReturnType<typeof opts> & { archived?: boolean };
+    const resolveControl = buildControlResolver({
+      localMachineId: "local-mac",
+      grantReader: (id) => (id === "peer-a" ? { scope: "control", state: "active" } : undefined),
+      peerReachable: (id) => id === "peer-a",
+      isSelfOwned: () => true,
+    });
+    const p = await buildOwnerRoutingProjection({ ...base, resolveControl });
+    const arch = p.sessions.find((s) => s.id === "ses-a-arch")! as Record<string, unknown>;
+    expect((arch.amicode_owner as SessionOwnerTag).owner_machine_id).toBe("peer-a");
+    // control overlay present on the ARCHIVED remote session → drivingBanner resolves
+    expect(arch.amicode_control).toEqual({ controlState: "interactive", reason: null, eligibility: "none" });
   });
 });
