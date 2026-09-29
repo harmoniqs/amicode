@@ -454,6 +454,22 @@ export function mergePeerSessions(local: DropdownSession[], peers: DropdownSessi
   return merged.sort((a, b) => (b.time.updated ?? b.time.created) - (a.time.updated ?? a.time.created))
 }
 
+/** #1647 (S3): the ARCHIVED list, fleet-aware. Given this machine's LOCAL
+ *  archived sessions (authoritative, engine-paginated) and the raw
+ *  `/amicode/fleet/sessions?archived=true` projection, return the merged
+ *  archived list: local archived PLUS every peer-owned archived session
+ *  (owner-tagged), local winning an id collision, sorted by last activity
+ *  descending. Standalone / fetch-failure ⇒ raw is undefined ⇒
+ *  `peerSessionsFromProjection` yields [] ⇒ the local list is unchanged
+ *  (byte-identical to the pre-fleet behavior). This is the composition of the
+ *  two already-tested peer helpers, named for the one place S3 consumes it. */
+export function archivedSessionsWithRemote(
+  localArchived: DropdownSession[],
+  archivedProjectionRaw: unknown,
+): DropdownSession[] {
+  return mergePeerSessions(localArchived, peerSessionsFromProjection(archivedProjectionRaw))
+}
+
 /** The action the dropdown's openSession() dispatches on when a row is clicked.
  *  A READ-ONLY union — there is no delete/archive/prompt variant, so a reviewer
  *  can confirm this open path carries no remote-write surface (#1537 B2a). */

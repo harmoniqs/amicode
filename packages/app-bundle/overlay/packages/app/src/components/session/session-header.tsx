@@ -47,6 +47,7 @@ import { postAmicodeFleetEnableControl } from "@/utils/amicode-bridge"
 import {
   peerSessionsFromProjection,
   mergePeerSessions,
+  archivedSessionsWithRemote,
   deriveSessionBadge,
   isRemotePeerSession,
   isComposerGated,
@@ -1119,14 +1120,22 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
       const result = await ctx.sdk.client.experimental.session.list(
         { archived: true, limit: ARCHIVED_PAGE_SIZE, ...(cursor ? { cursor: Number(cursor) } : {}) },
       )
-      const sessions: Session[] = (result.data ?? []) as Session[]
+      const local: Session[] = (result.data ?? []) as Session[]
       if (reset) {
-        setArchivedSessions(sessions)
+        // #1647 (S3): on the first page, fold in peer-owned archived sessions
+        // from the fleet projection (owner-tagged). Bounded recent window — not
+        // per-peer cursor-paginated (pragmatic first cut). A standalone machine
+        // or a fetch failure yields no remote rows → local list unchanged.
+        const proj = await amicodeGet(server.current, "/amicode/fleet/sessions?archived=true").catch(() => undefined)
+        setArchivedSessions(archivedSessionsWithRemote(local as DropdownSession[], proj) as Session[])
       } else {
-        setArchivedSessions((prev) => [...prev, ...sessions])
+        // Load-more appends the next LOCAL page; remote rows were merged on reset.
+        const have = new Set(archivedSessions().map((s) => s.id))
+        setArchivedSessions((prev) => [...prev, ...local.filter((s) => !have.has(s.id))])
       }
-      const lastSession = sessions[sessions.length - 1]
-      if (sessions.length >= ARCHIVED_PAGE_SIZE && lastSession) {
+      // Cursor tracks the LOCAL engine's pagination only (remote is a fixed window).
+      const lastSession = local[local.length - 1]
+      if (local.length >= ARCHIVED_PAGE_SIZE && lastSession) {
         setArchivedCursor(String(lastSession.time.updated ?? lastSession.time.created))
         setArchivedHasMore(true)
       } else {

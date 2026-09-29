@@ -65,6 +65,7 @@ import { ServerRowMenu } from "@/components/server/server-row-menu"
 import { ServerHealthIndicator } from "@/components/server/server-row"
 import { type ServerHealth } from "@/utils/server-health"
 import { amicodeGet, amicodePost } from "@/utils/amicode-fetch"
+import { archivedSessionsWithRemote, type DropdownSession } from "@/components/session/session-fleet-peers"
 import { AmicodeRunGallery } from "@opencode-ai/ui/amicode-run-gallery"
 import { AmicodeOnboardingWizard, shouldShowWizard } from "@opencode-ai/ui/amicode-onboarding-wizard"
 import { AMICODE_MANAGE_VAULTS_PROMPT } from "@opencode-ai/ui/amicode-vaults-tab"
@@ -356,15 +357,20 @@ function HomeDesign() {
       const result = await ctx.sdk.client.experimental.session.list(
         { archived: true, limit: ARCHIVED_PAGE_SIZE, ...(cursor ? { cursor: Number(cursor) } : {}) },
       )
-      const sessions: Session[] = (result.data ?? []) as Session[]
+      const local: Session[] = (result.data ?? []) as Session[]
       if (reset) {
-        setArchivedSessions(sessions)
+        // #1647 (S3): fold in peer-owned archived sessions from the fleet
+        // projection (owner-tagged). Bounded recent window, merged only on the
+        // first page. Standalone / fetch failure → no remote rows → unchanged.
+        const proj = await amicodeGet(focusedServer(), "/amicode/fleet/sessions?archived=true").catch(() => undefined)
+        setArchivedSessions(archivedSessionsWithRemote(local as DropdownSession[], proj) as Session[])
       } else {
-        setArchivedSessions((prev) => [...prev, ...sessions])
+        const have = new Set(archivedSessions().map((s) => s.id))
+        setArchivedSessions((prev) => [...prev, ...local.filter((s) => !have.has(s.id))])
       }
-      // Cursor-based pagination: if we got a full page, there may be more
-      const lastSession = sessions[sessions.length - 1]
-      if (sessions.length >= ARCHIVED_PAGE_SIZE && lastSession) {
+      // Cursor-based pagination tracks the LOCAL engine only (remote is a window)
+      const lastSession = local[local.length - 1]
+      if (local.length >= ARCHIVED_PAGE_SIZE && lastSession) {
         setArchivedCursor(String(lastSession.time.updated ?? lastSession.time.created))
         setArchivedHasMore(true)
       } else {
