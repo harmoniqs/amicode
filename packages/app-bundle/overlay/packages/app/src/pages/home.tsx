@@ -384,6 +384,18 @@ function HomeDesign() {
     }
   }
 
+  // #1647 (S6): keep the Archived tab live while it is open. A local OR remote
+  // (fan-in-relayed) archive/unarchive should surface without a manual refresh.
+  // Remote archive events are owned by a peer and don't reliably flow through
+  // the local directory stores, so instead of fragile cross-store reactivity we
+  // refresh on the SAME 5s cadence the fleet projection / owner-map already use
+  // — bounded real-time (≤5s), robust, and cleaned up on tab-close / unmount.
+  createEffect(() => {
+    if (flyoutTab() !== "archived") return
+    const timer = setInterval(() => void loadArchivedSessions(true), 5000)
+    onCleanup(() => clearInterval(timer))
+  })
+
   async function unarchiveSession(session: Session) {
     const ctx = focusedServerCtx()
     if (!ctx) return

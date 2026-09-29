@@ -1149,6 +1149,15 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
     }
   }
 
+  // #1647 (S6): keep the Archived tab live while open (local + fan-in-relayed
+  // remote archive/unarchive), on the same 5s cadence the fleet projection uses.
+  // Bounded real-time (≤5s), robust, cleaned up on tab-close / unmount.
+  createEffect(() => {
+    if (flyoutTab() !== "archived") return
+    const timer = setInterval(() => void loadArchivedSessions(true), 5000)
+    onCleanup(() => clearInterval(timer))
+  })
+
   async function archiveSession(session: Session) {
     const ctx = getServerCtx()
     if (!ctx) return

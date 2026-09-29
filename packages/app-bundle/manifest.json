@@ -234,7 +234,7 @@
     "packages/app/src/pages/home-projects.ts": "d55124578dc839b98e2084b488d818e30e4a1abf1ae264499b83e403c2aabca7",
     "packages/app/src/pages/home-session-archive.test.ts": "e8f1126287a3e9daa455efcc378e5d72aebdd092158bf8526f7779669b72e850",
     "packages/app/src/pages/home-session-archive.ts": "1b56c173f37f4a4dfd54088ef5fdb0dbcd3d9b62aeb08de4bfa0ed34f07d7ad5",
-    "packages/app/src/pages/home.tsx": "c7b6117bd20f9f8f49955181e6011d780cc7d56ffb0596944705cdd5076a38e9",
+    "packages/app/src/pages/home.tsx": "21af59e56fb705e5cb1b7be0bf451bd290e5bb7285614df9c027ca9e8fd4ea47",
     "packages/app/src/pages/layout-archive.test.ts": "e884e5bcb34d2762c1581ae5fe06dc48e2317c2f403dd3dad15b9a11c08d1f65",
     "packages/app/src/pages/layout-new.tsx": "7ba4195f7b893a371641fcdf9f6ca228afa09b8f078bbf1f7aa912ce98e79ca0",
     "packages/app/src/pages/layout.tsx": "5eb7e1548985792d21cbfc0f1f8ae6503ac5349b1a4bf47a2483b3d8ee98ce22",
@@ -678,7 +678,7 @@
     "packages/app/src/components/session/session-fleet-peers.test.ts": "53de1d720afd964ff72b77dc5b7e5ce8557c9e363517bf8b56c16664eb3de987",
     "packages/app/src/components/session/session-fleet-peers.ts": "f869c2e679703f4a2011043f0dc73beb19bbaf543d643a32fcd0eaf710163032",
     "packages/app/src/components/session/session-header.test.tsx": "67834639a61ec10724bc68b3ccbacf191e0a42a38ce66d442e56b39ad1aa2670",
-    "packages/app/src/components/session/session-header.tsx": "6f5e73c69dbce5246f84a3c2c38aa31b0ddde5c7e2b0739a85e45a7fc16dc1a8",
+    "packages/app/src/components/session/session-header.tsx": "de22352d5f9c7d0635445a87c6074dd2f603a22378974e842db6852c7d2ddcdd",
     "packages/app/src/components/session/session-new-view.tsx": "9510a4f550a3f0d4791e98e8025666f09d70a60fb66f193e48ee61feddae5a57",
     "packages/app/src/components/session/session-preview-tab.tsx": "d3a210598d181c0aa29e9f3b5db3cd691169f3ee467001313a3d9a24bee93dbe",
     "packages/app/src/components/session/session-preview-tabs.test.ts": "773fc0116c5f61302eaa4a09fd5f91e6b26dee978c89e29c21714243ae3a5653",
@@ -934,7 +934,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-09-29T14:46:05.931Z",
+  "extracted_at": "2026-09-29T14:50:03.746Z",
   "per_package": {
     "packages/app": {
       "A": 229,
