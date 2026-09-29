@@ -474,6 +474,17 @@ export function MessageTimeline(props: {
     if (!id) return
     return sync().session.get(id)
   })
+  // #1646: whether a session reads as archived, with a Solid store subscription
+  // anchor. A gate that touches only the (initially-undefined) time.archived
+  // leaf never subscribes in the store, so the Archive/Unarchive menu toggle
+  // does not flip when the archive event lands. Touch time.updated — which
+  // every remember() bumps — to guarantee the recompute. Same fix the composer
+  // memo uses (session-composer-region-controller.ts).
+  const sessionArchived = (id: string) => {
+    const s = sync().session.get(id)
+    void s?.time?.updated
+    return !!s?.time?.archived
+  }
   const titleValue = createMemo(() => info()?.title)
   const titleLabel = createMemo(() => sessionTitle(titleValue()))
   const shareUrl = createMemo(() => info()?.share?.url)
@@ -1274,22 +1285,30 @@ export function MessageTimeline(props: {
     if (!session) return
     if ((await sdk().protocol) !== "v1") return
 
-    const sessions = sync().data.session ?? []
-    const index = sessions.findIndex((s) => s.id === sessionID)
-    const nextSession = index === -1 ? undefined : (sessions[index + 1] ?? sessions[index - 1])
-
     await sdk()
       .client.session.update({ sessionID, directory: sdk().directory, time: { archived: Date.now() } })
       .then(() => {
+        // Drop the archived session out of the ACTIVE list store (it belongs to
+        // the Archived tab now) and clear its tab chrome — but do NOT navigate
+        // away, and do NOT evict. Archiving the session you are VIEWING should
+        // flip it to the read-only banner IN PLACE and swap the menu item to
+        // "Unarchive"; the old behavior bounced you to another session (so the
+        // read-only mode was never seen) and evict() dropped the per-session
+        // info the banner and the menu toggle both read.
         sync().set(
           produce((draft) => {
             const index = draft.session.findIndex((s) => s.id === sessionID)
             if (index !== -1) draft.session.splice(index, 1)
           }),
         )
-        sync().session.evict(sessionID)
-        navigateAfterSessionRemoval(sessionID, session.parentID, nextSession?.id)
         notifySessionTabsRemoved({ directory: sdk().directory, sessionIDs: [sessionID] })
+        // #1646: force-sync the PER-SESSION store so the composer's `archived`
+        // memo and this menu's archived gate flip immediately. The list splice
+        // above touches only the list store; the per-session store
+        // (sync().session.get(id).time.archived) is what the composer and the
+        // menu read, and only a force-sync (or a lazily-arriving SSE) sets it.
+        // Mirrors the header + unarchive paths, which already force-sync.
+        void sync().session.sync(sessionID, { force: true }).catch(() => {})
       })
       .catch((err) => {
         showToast({
@@ -2272,7 +2291,7 @@ export function MessageTimeline(props: {
                                   <DropdownMenu.ItemLabel>{language.t("session.exportTrace")}</DropdownMenu.ItemLabel>
                                 </DropdownMenu.Item>
                                 <Show
-                                  when={sync().session.get(id)?.time?.archived}
+                                  when={sessionArchived(id)}
                                   fallback={
                                     <DropdownMenu.Item onSelect={() => void archiveSession(id)}>
                                       <DropdownMenu.ItemLabel>{language.t("common.archive")}</DropdownMenu.ItemLabel>
@@ -2355,7 +2374,7 @@ export function MessageTimeline(props: {
                                 {language.t("session.exportTrace")}
                               </MenuV2.Item>
                               <Show
-                                when={sync().session.get(id)?.time?.archived}
+                                when={sessionArchived(id)}
                                 fallback={
                                   <MenuV2.Item onSelect={() => void archiveSession(id)}>
                                     {language.t("common.archive")}
