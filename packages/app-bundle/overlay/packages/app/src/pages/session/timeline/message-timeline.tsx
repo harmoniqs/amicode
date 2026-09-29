@@ -453,6 +453,14 @@ export function MessageTimeline(props: {
     if (!id) return idle
     return sync().data.session_status[id] ?? idle
   })
+  // #1649 — the FLOORED working state for the viewed session, driving the rail's
+  // live dot. session_working ORs the raw busy leaf, a streaming part, the turn
+  // floor, AND a non-idle descendant (a foreground subagent) — so the rail stays
+  // live through a child run even when the parent's own leaf is stray-idled.
+  const sessionWorking = createMemo(() => {
+    const id = sessionID()
+    return !!id && sync().data.session_working(id)
+  })
   const sessionMessages = createMemo(() => (sessionID() ? (sync().data.message[sessionID()!] ?? []) : []))
   const projectedMessages = createMemo(() => {
     const id = sessionID()
@@ -610,6 +618,7 @@ export function MessageTimeline(props: {
     sessionMessages: projectedMessages,
     parts: getMsgParts,
     status: sessionStatus,
+    working: sessionWorking,
     showReasoningSummaries: settings.general.showReasoningSummaries,
     inlineComments: settings.general.newLayoutDesigns,
     tailProseSettled,

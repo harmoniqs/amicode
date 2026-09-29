@@ -237,6 +237,17 @@ export function createServerSession(
     session_message: {} as Record<string, SessionMessageInfo[]>,
     part: {} as Record<string, Part[]>,
     part_text_accum_delta: {} as Record<string, string>,
+    // #1649 — ancestor-of-active-child floor. Count of non-idle DESCENDANT
+    // sessions per ancestor id, pushed reactively (setData) as child statuses
+    // change — the same shape as diff_version's ancestor propagation. A
+    // foreground subagent blocks its parent's turn inside the task tool
+    // (background.wait): the engine holds the parent runner busy but the parent
+    // emits no parts and no execution bracket, so neither the streamActiveParts
+    // nor the turnActive floor rises, and a stray/reconcile idle would blank the
+    // parent rail. This floor keeps the parent working while any descendant is
+    // non-idle. It MUST be a store leaf (not a plain-Map read) so the parent's
+    // projection memo re-runs on a first child spawn and on every child edge.
+    session_child_active: {} as Record<string, number>,
     session_working(id: string) {
       // #1637 — turn-active floor keyed on the server's execution bracket. The
       // #1617 per-delta floor (streamActiveParts) only rises on
@@ -256,6 +267,11 @@ export function createServerSession(
       // floor is up exactly while tokens flow and cannot be blanked by a stray
       // idle. When streaming genuinely stops, the entry clears and idle settles.
       if ((this.session_status[id]?.type ?? "idle") !== "idle") return true
+      // #1649 — ancestor floor: a session with any non-idle descendant (a
+      // running foreground subagent) is working, even when its own status leaf
+      // has gone stray-idle (reconcile downgrade) and no part is streaming. This
+      // is a reactive store read, so the parent rail re-runs on the child edge.
+      if ((this.session_child_active[id] ?? 0) > 0) return true
       return streamActiveParts.has(id)
     },
   })
@@ -275,6 +291,11 @@ export function createServerSession(
   const removedMessages = new Map<string, Set<string>>()
   const deltaBases = new Map<string, { base: string; sessionID: string }>()
   const taskSpawnParent = new Map<string, string>()
+  // #1649 — per-child last-known contribution to the ancestor floor (0 = idle,
+  // 1 = non-idle). The floor is applied as a DELTA against this remembered
+  // value, so a duplicated or missed status frame cannot drift the ancestor
+  // counts (idempotent): re-applying the same contribution is a no-op.
+  const childActiveContribution = new Map<string, number>()
   // #1617 — sessionID → set of part ids currently mid-stream (a `part.delta` has
   // arrived and the finalizing `part.updated` has not). The session_working()
   // floor reads this so a racing/stale `idle` cannot blank the rail while tokens
@@ -403,6 +424,10 @@ export function createServerSession(
     if (typeof parentSessionId !== "string" || typeof sessionId !== "string") return
     if (!parentSessionId || !sessionId || parentSessionId !== part.sessionID) return
     taskSpawnParent.set(sessionId, parentSessionId)
+    // #1649 — the child's status may have arrived BEFORE this mapping existed
+    // (SSE frames are not ordered across sessions). Seed the ancestor floor from
+    // the child's current status now that the ancestry link is known.
+    refreshChildActive(sessionId)
   }
 
   const incrementFileDiffVersion = (part: Part) => {
@@ -419,6 +444,32 @@ export function createServerSession(
     while (ancestor && !seen.has(ancestor)) {
       seen.add(ancestor)
       setData("diff_version", ancestor, (version = 0) => version + 1)
+      ancestor = taskSpawnParent.get(ancestor)
+    }
+  }
+
+  // #1649 — recompute a child session's contribution to the ancestor floor and
+  // propagate the DELTA up the taskSpawnParent chain into the reactive
+  // session_child_active leaf. Called on every child session.status edge and on
+  // spawn. `nextContribution` overrides the derived value (used on eviction to
+  // force a session's contribution to 0). Idempotent: the delta is computed
+  // against the remembered contribution, so a duplicate/reordered frame is a
+  // no-op and a missed frame self-corrects on the next one.
+  const refreshChildActive = (childSessionID: string, nextContribution?: number) => {
+    // Only a spawned child (present in the ancestry map) can lift an ancestor.
+    if (!taskSpawnParent.has(childSessionID)) return
+    const derived = (data.session_status[childSessionID]?.type ?? "idle") !== "idle" ? 1 : 0
+    const next = nextContribution ?? derived
+    const prev = childActiveContribution.get(childSessionID) ?? 0
+    if (next === prev) return
+    const delta = next - prev
+    if (next === 0) childActiveContribution.delete(childSessionID)
+    else childActiveContribution.set(childSessionID, next)
+    const seen = new Set([childSessionID])
+    let ancestor = taskSpawnParent.get(childSessionID)
+    while (ancestor && !seen.has(ancestor)) {
+      seen.add(ancestor)
+      setData("session_child_active", ancestor, (count = 0) => Math.max(0, count + delta))
       ancestor = taskSpawnParent.get(ancestor)
     }
   }
@@ -659,6 +710,16 @@ export function createServerSession(
       completedFileDiffParts.delete(sessionID)
       streamActiveParts.delete(sessionID) // #1617 streaming floor: session gone
       clearTurnActive(sessionID) // #1637 turn-active floor: session gone
+      // #1649 — lower this session's contribution to its ancestors' floor
+      // BEFORE severing the ancestry links, then drop its own bookkeeping. A
+      // session that is itself an ancestor has its session_child_active leaf
+      // deleted in the produce block below.
+      refreshChildActive(sessionID, 0)
+      taskSpawnParent.delete(sessionID)
+      for (const [childSessionID, parentSessionID] of taskSpawnParent) {
+        if (parentSessionID === sessionID) taskSpawnParent.delete(childSessionID)
+      }
+      childActiveContribution.delete(sessionID)
       requests.delete(sessionID)
       inflight.delete(sessionID)
       inflightTodo.delete(sessionID)
@@ -670,7 +731,10 @@ export function createServerSession(
     })
     setData(
       produce((draft) => {
-        for (const sessionID of sessionIDs) delete draft.diff_version[sessionID]
+        for (const sessionID of sessionIDs) {
+          delete draft.diff_version[sessionID]
+          delete draft.session_child_active[sessionID] // #1649
+        }
         dropSessionCaches(draft, sessionIDs)
       }),
     )
@@ -1394,10 +1458,10 @@ export function createServerSession(
         const properties = event.properties as { sessionID?: string; info?: Session }
         const sessionID = properties.info?.id ?? properties.sessionID
         if (!sessionID) return
-        taskSpawnParent.delete(sessionID)
-        for (const [childSessionID, parentSessionID] of taskSpawnParent) {
-          if (parentSessionID === sessionID) taskSpawnParent.delete(childSessionID)
-        }
+        // #1649 — taskSpawnParent teardown (self + children) now lives in evict(),
+        // which also lowers the ancestor floor BEFORE severing the links. Calling
+        // evict below performs it; the manual deletes here would sever the links
+        // first and leak the floor, so they are removed.
         completedFileDiffParts.delete(sessionID)
         infoSeen.delete(sessionID)
         setData(
@@ -1433,6 +1497,9 @@ export function createServerSession(
         if ((props.status?.type ?? "idle") === "idle") clearTurnActive(props.sessionID)
         stampStatusMutation(props.sessionID)
         setData("session_status", props.sessionID, reconcile(props.status))
+        // #1649 — if this session is a spawned child, propagate its new
+        // idle/non-idle state to its ancestors' floor (no-op otherwise).
+        refreshChildActive(props.sessionID)
         return
       }
       case "session.execution.started": {
@@ -1457,6 +1524,8 @@ export function createServerSession(
         clearTurnActive(id)
         stampStatusMutation(id)
         setData("session_status", id, { type: "idle" })
+        // #1649 — a child turn's terminal lowers its ancestor floor.
+        refreshChildActive(id)
         return
       }
       case "session.error": {
@@ -1470,6 +1539,8 @@ export function createServerSession(
         if (!id) return
         clearTurnActive(id)
         if ((data.session_status[id]?.type ?? "idle") !== "idle") setData("session_status", id, { type: "idle" })
+        // #1649 — a child error settles it idle; lower its ancestor floor.
+        refreshChildActive(id)
         return
       }
       case "message.updated": {
