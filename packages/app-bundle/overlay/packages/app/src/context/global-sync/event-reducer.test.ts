@@ -156,6 +156,43 @@ describe("applyDirectoryEvent", () => {
     expect((store.part.message?.[0] as { text: string }).text).toBe("existing appended")
   })
 
+  // #1637-followup: the engine publishes session.status (busy/idle) but NEVER
+  // session.execution.started (no publisher exists — it is a stale SDK type).
+  // The turn-active floor must therefore rise on the busy status frame that
+  // actually arrives, not only on the phantom execution bracket.
+  test("a session.status busy frame raises the turn-active floor", () => {
+    const [store, setStore] = createStore(baseState())
+
+    applyDirectoryEvent({
+      event: { type: "session.status", properties: { sessionID: "ses_x", status: { type: "busy" } } },
+      store,
+      setStore,
+      push() {},
+      directory: "/tmp",
+      loadLsp() {},
+    })
+
+    expect(store.session_status.ses_x).toEqual({ type: "busy" })
+    expect(store.session_turn_active?.ses_x).toBe(true)
+  })
+
+  test("a session.status idle frame lowers the turn-active floor", () => {
+    const [store, setStore] = createStore(
+      baseState({ session_status: { ses_y: { type: "busy" } }, session_turn_active: { ses_y: true } }),
+    )
+
+    applyDirectoryEvent({
+      event: { type: "session.status", properties: { sessionID: "ses_y", status: { type: "idle" } } },
+      store,
+      setStore,
+      push() {},
+      directory: "/tmp",
+      loadLsp() {},
+    })
+
+    expect(store.session_turn_active?.ses_y).toBe(false)
+  })
+
   test("preserves a Home-specific retained session limit", () => {
     const [store, setStore] = createStore(
       baseState({
