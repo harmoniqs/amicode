@@ -3,10 +3,12 @@ import {
   createPreviewWorkspace,
   movePreviewTab,
   openPreviewPath,
+  previewActiveAfterClose,
   previewLeafByID,
   previewLeaves,
   previewMinimumExtent,
-  reconcilePreviewPaths,
+  previewMissingPaths,
+  previewRestoreTarget,
   removePreviewPath,
   setPreviewLeafZoom,
 } from "./session-preview-tree"
@@ -128,24 +130,42 @@ describe("Preview open-paths persistence round-trip", () => {
   })
 })
 
-// reconcilePreviewPaths is the merge that restore uses. The first case is the
-// exact regression behind "only the active file came back on reload": the
-// persisted list has all N, but the previewFile effect has only opened the
-// active one when reconcile runs — the union must still be all N.
-describe("reconcilePreviewPaths", () => {
-  test("restores the full persisted list when only the active file is open (the 1-of-N bug)", () => {
-    expect(reconcilePreviewPaths(["a", "b", "c"], ["c"])).toEqual(["a", "b", "c"])
+// The pure restore/close decisions the persistence uses. Each test pins a
+// specific regression we hit by hand across many rebuilds.
+describe("preview persistence decisions", () => {
+  describe("previewRestoreTarget", () => {
+    test("folds in a net-new active file (first open that mounted the tab)", () => {
+      expect(previewRestoreTarget(["a"], "c")).toEqual(["a", "c"])
+    })
+    test("leaves the list unchanged when the active file is already tracked", () => {
+      expect(previewRestoreTarget(["a", "b"], "b")).toEqual(["a", "b"])
+    })
+    test("no active file → just the persisted list", () => {
+      expect(previewRestoreTarget(["a", "b"], null)).toEqual(["a", "b"])
+    })
   })
 
-  test("appends currently-open paths that were not persisted", () => {
-    expect(reconcilePreviewPaths(["a", "b"], ["b", "d"])).toEqual(["a", "b", "d"])
+  describe("previewMissingPaths", () => {
+    test("restores the FULL set when only the active file is open (the 1-of-N bug)", () => {
+      expect(previewMissingPaths(["a", "b", "c"], ["c"])).toEqual(["a", "b"])
+    })
+    test("re-instantiation with everything already open opens nothing (no reopen)", () => {
+      expect(previewMissingPaths(["a", "b"], ["a", "b"])).toEqual([])
+    })
+    test("opens only the not-yet-open paths", () => {
+      expect(previewMissingPaths(["a", "b", "c"], ["a"])).toEqual(["b", "c"])
+    })
   })
 
-  test("keeps persisted order and de-duplicates when open is a subset", () => {
-    expect(reconcilePreviewPaths(["a", "b", "c"], ["a", "c"])).toEqual(["a", "b", "c"])
-  })
-
-  test("an empty persisted list keeps whatever is currently open", () => {
-    expect(reconcilePreviewPaths([], ["x"])).toEqual(["x"])
+  describe("previewActiveAfterClose", () => {
+    test("closing the active tab moves active to the last remaining tab", () => {
+      expect(previewActiveAfterClose("b", "b", ["a", "c"])).toBe("c")
+    })
+    test("closing the last/active tab clears active to null (no reopen pointer)", () => {
+      expect(previewActiveAfterClose("a", "a", [])).toBeNull()
+    })
+    test("closing a background tab leaves active unchanged", () => {
+      expect(previewActiveAfterClose("a", "b", ["b", "c"])).toBe("b")
+    })
   })
 })

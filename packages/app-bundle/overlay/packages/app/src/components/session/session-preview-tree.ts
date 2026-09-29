@@ -39,14 +39,35 @@ export const createPreviewWorkspace = (paths: readonly string[] = []): PreviewWo
   nextPaneID: 1,
 })
 
-/** The reconciled open-paths list when restoring persisted preview tabs: the
- *  persisted order first, then any paths already open that were not persisted
- *  (e.g. the active file the previewFile effect opened before hydration). An
- *  empty persisted list keeps whatever is currently open. This is what fixes
- *  "only the active file restores" — restoring [a,b,c] when only [c] is open
- *  must yield [a,b,c], not [c]. */
-export const reconcilePreviewPaths = (persisted: readonly string[], open: readonly string[]): string[] =>
-  persisted.length > 0 ? [...persisted, ...open.filter((path) => !persisted.includes(path))] : [...open]
+// ── Preview persistence decisions (pure) ─────────────────────────────────────
+// These are the restore/close decisions the SessionPreviewTab persistence uses.
+// Kept pure and here (not inline in the component) so the exact regressions we
+// hit — "only the active file restored", "closed tab reopened", "net-new open
+// lost" — are unit-testable without a reactive harness.
+
+/** The set to restore into the workspace: the persisted open paths, plus the
+ *  active file when it is a net-new open not yet tracked (a first open that
+ *  mounted the Preview tab). Restoring [a,b,c] when only the active [c] is known
+ *  must still yield all of [a,b,c] — never collapse to the active one. */
+export const previewRestoreTarget = (persisted: readonly string[], active: string | null): string[] =>
+  active && !persisted.includes(active) ? [...persisted, active] : [...persisted]
+
+/** Which of `target` are not yet open — the paths to merge into the workspace.
+ *  On a plain re-instantiation (everything already open) this is empty, so the
+ *  restore is a no-op and nothing re-opens. */
+export const previewMissingPaths = (target: readonly string[], open: readonly string[]): string[] => {
+  const openSet = new Set(open)
+  return target.filter((path) => !openSet.has(path))
+}
+
+/** The active file after closing `closed`: unchanged when a background tab was
+ *  closed; otherwise the last remaining tab, or null if none remain — so a
+ *  closed active file is never left as the pointer that gets re-opened. */
+export const previewActiveAfterClose = (
+  closed: string,
+  wasActive: string | null,
+  remaining: readonly string[],
+): string | null => (closed === wasActive ? (remaining[remaining.length - 1] ?? null) : wasActive)
 
 export const previewLeaves = (tree: PreviewPane): PreviewLeaf[] => {
   if (tree.kind === "leaf") return [tree]

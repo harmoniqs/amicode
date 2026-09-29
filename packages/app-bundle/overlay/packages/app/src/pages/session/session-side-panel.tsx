@@ -385,6 +385,7 @@ export function SessionSidePanel(props: {
   const previewFile = createMemo(() => view().previewFile.get())
   const previewPaths = createMemo(() => view().previewPaths.get())
   const setPreviewPaths = (paths: string[]) => view().previewPaths.set(paths)
+  const setPreviewActive = (path: string | null) => view().previewFile.set(path)
 
   createEffect(
     on(previewFile, (path) => {
@@ -923,7 +924,7 @@ export function SessionSidePanel(props: {
                             inert={activeTab() !== SESSION_PREVIEW_TAB}
                           >
                             <div class="relative flex-1 min-h-0 overflow-hidden">
-                              <SessionPreviewTab previewFile={previewFile} panelVisible={() => activeTab() === SESSION_PREVIEW_TAB} openPaths={previewPaths} onOpenedPathsChange={setPreviewPaths} hydrated={layout.ready} />
+                              <SessionPreviewTab previewFile={previewFile} panelVisible={() => activeTab() === SESSION_PREVIEW_TAB} openPaths={previewPaths} onOpenedPathsChange={setPreviewPaths} onActiveChange={setPreviewActive} hydrated={layout.ready} />
                             </div>
                           </Tabs.Content>
 
@@ -1253,7 +1254,7 @@ export function SessionSidePanel(props: {
                         inert={activeTab() !== SESSION_PREVIEW_TAB}
                       >
                         <div class="relative flex-1 min-h-0 overflow-hidden">
-                          <SessionPreviewTab previewFile={previewFile} panelVisible={() => activeTab() === SESSION_PREVIEW_TAB} openPaths={previewPaths} onOpenedPathsChange={setPreviewPaths} hydrated={layout.ready} />
+                          <SessionPreviewTab previewFile={previewFile} panelVisible={() => activeTab() === SESSION_PREVIEW_TAB} openPaths={previewPaths} onOpenedPathsChange={setPreviewPaths} onActiveChange={setPreviewActive} hydrated={layout.ready} />
                         </div>
                       </Tabs.Content>
 
