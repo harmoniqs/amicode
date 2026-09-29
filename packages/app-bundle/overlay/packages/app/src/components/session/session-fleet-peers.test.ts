@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
 import {
   peerSessionsFromProjection,
+  allSessionsFromProjection,
   mergePeerSessions,
   deriveSessionBadge,
   isRemotePeerSession,
@@ -685,5 +686,45 @@ describe("#1568 drivenByBanner — presence indicator for a locally-controlled s
     expect(drivenByBannerFromProjection(raw, "ses_no_control")).toBeNull()
     expect(drivenByBannerFromProjection(raw, "unknown")).toBeNull()
     expect(drivenByBannerFromProjection(undefined, "x")).toBeNull()
+  })
+})
+
+// The Studio dropdown must show LOCAL sessions too — including local sessions in
+// directories the local store never iterates (a remote-created session that
+// landed in the owner's ambient temp cwd, or any project not in projects.list()).
+// peerSessionsFromProjection drops all is_local rows on the assumption "the local
+// list already carries those" — false for an unlisted-directory session, so such a
+// session was invisible on the owning machine's dropdown. allSessionsFromProjection
+// keeps local AND remote rows; mergePeerSessions then dedupes (local store wins),
+// so listed-dir sessions are unchanged and only the missing ones are surfaced.
+describe("allSessionsFromProjection — local + remote (the Studio-dropdown fix)", () => {
+  test("keeps BOTH local and remote rows (unlike peerSessionsFromProjection)", () => {
+    const raw = projection([
+      { id: "ses_local_temp", time: { created: 2 }, title: "Testing greeting", directory: "/var/folders/T/engine-x", amicode_owner: localTag },
+      { id: "ses_remote", time: { created: 1 }, title: "Peer one", amicode_owner: studioTag },
+    ])
+    const out = allSessionsFromProjection(raw)
+    const ids = out.map((s) => s.id).sort()
+    expect(ids).toEqual(["ses_local_temp", "ses_remote"])
+  })
+
+  test("surfaces a local temp-dir session the local store list is missing", () => {
+    // The local store list only has sessions from listed project dirs.
+    const localList: DropdownSession[] = [
+      { id: "ses_in_project", time: { created: 5 }, directory: "/Users/jj/harmoniqs/amicode" } as DropdownSession,
+    ]
+    // The projection (cross-project) carries that one PLUS the temp-dir local one.
+    const raw = projection([
+      { id: "ses_in_project", time: { created: 5 }, directory: "/Users/jj/harmoniqs/amicode", amicode_owner: localTag },
+      { id: "ses_local_temp", time: { created: 9 }, title: "Testing greeting", directory: "/var/folders/T/engine-x", amicode_owner: localTag },
+    ])
+    const merged = mergePeerSessions(localList, allSessionsFromProjection(raw))
+    expect(merged.map((s) => s.id)).toContain("ses_local_temp")
+  })
+
+  test("tolerant: garbage/empty ⇒ []", () => {
+    expect(allSessionsFromProjection(undefined)).toEqual([])
+    expect(allSessionsFromProjection({})).toEqual([])
+    expect(allSessionsFromProjection({ sessions: "nope" })).toEqual([])
   })
 })

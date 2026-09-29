@@ -45,7 +45,7 @@ import type { Session } from "@opencode-ai/sdk/v2/client"
 import { amicodeGet } from "@/utils/amicode-fetch"
 import { postAmicodeFleetEnableControl } from "@/utils/amicode-bridge"
 import {
-  peerSessionsFromProjection,
+  allSessionsFromProjection,
   mergePeerSessions,
   archivedSessionsWithRemote,
   deriveSessionBadge,
@@ -1050,13 +1050,19 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
   })
 
 
-  // #1525 B1: fold the projection's remote peer sessions into the active list
-  // (deduped against local, sorted by last activity). Empty/errored projection
-  // → the local list unchanged.
+  // #1525 B1: fold the projection's sessions into the active list (deduped
+  // against local, sorted by last activity). Empty/errored projection → the
+  // local list unchanged. Use the FULL projection set (local + remote): the
+  // local list is iterated only over KNOWN project directories, so a local
+  // session in a directory the store never iterates (a remote-created session
+  // that landed in the owner's ambient temp cwd, any unlisted project) was
+  // absent from BOTH the local list and the peer-only extractor → invisible on
+  // the owning machine's dropdown. mergePeerSessions dedupes (local store wins),
+  // so listed-dir rows are unchanged and only the missing ones are surfaced.
   const activeSessionsWithPeers = createMemo<DropdownSession[]>(() => {
     if (!open()) return []
-    const peers = peerSessionsFromProjection(fleetProjection.latest)
-    return mergePeerSessions(activeSessions() as DropdownSession[], peers)
+    const projectionSessions = allSessionsFromProjection(fleetProjection.latest)
+    return mergePeerSessions(activeSessions() as DropdownSession[], projectionSessions)
   })
 
   // Fresh clients have no bootstrapped child stores for the fallback

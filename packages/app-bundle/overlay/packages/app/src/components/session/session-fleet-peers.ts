@@ -404,6 +404,32 @@ export function peerSessionsFromProjection(raw: unknown): DropdownSession[] {
   })
 }
 
+/** From the raw GET /amicode/fleet/sessions response, extract ALL renderable
+ *  rows — LOCAL and REMOTE alike (any entry with a usable id). This is the
+ *  complete cross-project, cross-machine session set the projection already
+ *  computes.
+ *
+ *  Distinct from `peerSessionsFromProjection`, which keeps ONLY remote rows on
+ *  the assumption that the dropdown's LOCAL list (iterated from the known
+ *  project directories) already carries every local session. That assumption
+ *  breaks for a local session in a directory the local store never iterates —
+ *  a remote-created session that landed in the owner's ambient temp cwd, or any
+ *  project not in `projects.list()`. Such a session is local (so dropped by the
+ *  peer-only extractor) AND absent from the directory-scoped local list, so it
+ *  was invisible on the owning machine's dropdown. Feeding THIS set through
+ *  `mergePeerSessions` (local store wins an id collision) leaves listed-dir
+ *  sessions unchanged and surfaces exactly the ones the local list is missing.
+ *  Tolerant: malformed / absent / errored ⇒ []. */
+export function allSessionsFromProjection(raw: unknown): DropdownSession[] {
+  if (!raw || typeof raw !== "object") return []
+  const sessions = (raw as { sessions?: unknown }).sessions
+  if (!Array.isArray(sessions)) return []
+  return sessions.flatMap((s) => {
+    const row = readProjectionSession(s)
+    return row ? [row] : []
+  })
+}
+
 /** Merge peer sessions into the local active list: local wins on an id
  *  collision (a session that is somehow in both stays local, keeping its live
  *  state), and the result is sorted by last activity (updated ?? created)
