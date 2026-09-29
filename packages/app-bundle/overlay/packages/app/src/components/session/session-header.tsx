@@ -1143,21 +1143,24 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
   async function archiveSession(session: Session) {
     const ctx = getServerCtx()
     if (!ctx) return
-    // Archive is a LOCAL-only action (#1525 B2): it is not owner-routed, and the
-    // archived tab below only lists THIS machine's archived sessions. Archiving a
-    // remote peer session against the local SDK either no-ops or writes a phantom
-    // local record that then vanishes on the next archived-list load (the local
-    // engine never owned it) — the "archived a Studio session, now I can't find
-    // it" bug. The row already hides the archive button for remote rows; this is
-    // the belt-and-braces guard for the transient window where a freshly-opened
-    // remote session's local copy has not yet been enriched with its owner tag.
-    if (isRemotePeerSession(session as DropdownSession)) {
-      const owner = (session as DropdownSession).amicode_owner?.owner_name ?? "its owner machine"
-      showToast({
-        title: "Archive on the owning machine",
-        description: `This session lives on ${owner} — archive it there. Archiving remote sessions from a peer isn't supported yet.`,
-      })
-      return
+    const dropdownSession = session as DropdownSession
+    const isRemote = isRemotePeerSession(dropdownSession)
+    // A REMOTE peer session is archived on its OWNER: the same session.update
+    // PATCH, keyed on the session's own id+directory, is intercepted by the
+    // #1542 observation WRITE plane (any non-GET to a peer-owned session routes
+    // to the owner by pathname) — provided control is held. The row only shows
+    // the archive affordance for a remote row when canWrite() is true, so this
+    // is reached only under held control; a control-less remote row shows the
+    // fail-closed chip instead and never gets here.
+    if (isRemote) {
+      const action = remoteDeleteAction(dropdownSession) // reuse the gate: allowed iff control held
+      if (!action.allowed) {
+        showToast({
+          title: "Control not enabled",
+          description: `Enable control of ${dropdownSession.amicode_owner?.owner_name ?? "the owner machine"} to archive its sessions from here.`,
+        })
+        return
+      }
     }
     await restoreScrollAfter(async () => {
       try {
@@ -1166,7 +1169,12 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
           directory: session.directory,
           time: { archived: Date.now() },
         })
-        setArchivedSessions((prev) => [session, ...prev])
+        // A LOCAL archive moves the row into THIS machine's archived tab
+        // (which lists local archived sessions). A REMOTE archive lands on the
+        // owner — it will drop out of the fleet projection's active list on the
+        // next poll; we do NOT add it to the local archived tab (that tab is
+        // local-only and would show a phantom that vanishes on reload).
+        if (!isRemote) setArchivedSessions((prev) => [session, ...prev])
         // Reload active sessions for this session's directory
         await serverSync().project.loadSessions(session.directory, { limit: 64 })
       } catch (cause) {
@@ -1718,6 +1726,20 @@ function SessionDropdownRow(props: {
             )}
           </Show>
           <Show when={canWrite()}>
+            <TooltipV2 placement="top" value="Archive on peer">
+              <IconButtonV2
+                data-action="session-remote-archive"
+                variant="ghost-muted"
+                size="large"
+                icon={<IconV2 name="archive" />}
+                aria-label="Archive on peer"
+                onClick={(event: MouseEvent) => {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  void props.onArchive(props.session)
+                }}
+              />
+            </TooltipV2>
             <Show
               when={deleteArmed()}
               fallback={
