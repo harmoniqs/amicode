@@ -964,9 +964,22 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
   // machine name; owner-routed open + remote control (prompt/archive/delete)
   // are B2 (#1525) and deliberately absent here.
   const [fleetProjection, { refetch: refetchFleetProjection }] = createResource(
-    () => (open() ? server.current : undefined),
-    (conn) => amicodeGet(conn, "/amicode/fleet/sessions").catch(() => undefined),
+    () => (open() ? ([server.current, fleetPoll()] as const) : undefined),
+    ([conn]) => amicodeGet(conn, "/amicode/fleet/sessions").catch(() => undefined),
   )
+  // #1647 (S10): poll the fleet projection while the flyout is open. It is the
+  // SOURCE of a peer row's owner badge (peerSessionsFromProjection); without a
+  // poll it was fetched ONCE on open, so a REMOTE archive/unarchive done on the
+  // OWNER machine (which this machine only learns of via the SSE event) left the
+  // projection stale — the row reappeared from the local store on unarchive but
+  // WITHOUT its machine tag until the flyout was reopened. A 3s poll (matching
+  // the control projection) refreshes the owner overlay so the badge returns.
+  const [fleetPoll, setFleetPoll] = createSignal(0)
+  createEffect(() => {
+    if (!open()) return
+    const timer = setInterval(() => setFleetPoll((t) => t + 1), 3000)
+    onCleanup(() => clearInterval(timer))
+  })
 
   // Active sessions — only computed when the flyout is open to avoid
   // triggering reactive subscriptions (serverSync().child pins the directory
