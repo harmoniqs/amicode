@@ -91,6 +91,11 @@ export interface FleetProjectionOptions {
    *  sessions are never stamped (they are owned by a peer, not by this machine).
    *  Absent or returning undefined ⇒ no field (back-compat). */
   resolveControlledBy?: () => ControlledByTag | undefined;
+  /** #1647 (S1): when true, fan out the ARCHIVED session list rather than the
+   *  active one — every source is fetched with `?archived=true`, and the
+   *  archived peer sessions come back owner-tagged exactly like active ones.
+   *  Absent/false ⇒ the existing active-only fan-out (byte-identical). */
+  archived?: boolean;
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
 }
@@ -414,7 +419,12 @@ export async function buildFleetProjection(opts: FleetProjectionOptions): Promis
   // directory and would otherwise return only project_id=global sessions.
   // The generous limit ensures a machine with thousands of sessions is not
   // silently truncated at the engine's default page size (100).
-  const fleetEndpoint = "/experimental/session?limit=10000";
+  // #1647 (S1): the ARCHIVED variant fetches the same cross-project endpoint
+  // with `?archived=true` so the archived list fans out to peers identically
+  // to the active list (the engine's listGlobal flips IS NOT NULL vs IS NULL).
+  const fleetEndpoint = opts.archived
+    ? "/experimental/session?archived=true&limit=10000"
+    : "/experimental/session?limit=10000";
   const localPromise = fetchSessions(opts.localMachineId, opts.local, localAuth, fetchImpl, timeoutMs, fleetEndpoint);
   const peerPromises = opts.peers.map((peer) => {
     // #1481 (AC1): TRUST gates Observe. An untrusted peer (no Observe grant) is
@@ -476,4 +486,26 @@ export async function buildFleetProjection(opts: FleetProjectionOptions): Promis
   const currency = deriveCurrency(allRecords);
 
   return { ok: true, mode: "fleet", sessions, sources, currency: { ...currency, derived_over: "fetched" } };
+}
+
+/** #1647 (S2): the OWNER-ROUTING session set — active AND archived unioned.
+ *  The multiplexer's owner map (OwnerMapFeed) is populated from a projection's
+ *  `.sessions`; if it only ever sees ACTIVE sessions, a write to a peer-owned
+ *  ARCHIVED session (unarchive / delete of an archived row) has no owner entry
+ *  and misroutes to the LOCAL engine (the #1382 silent-local failure). This
+ *  runs BOTH variants and unions by id so every peer-owned session — active or
+ *  archived — is routable. Owner tags are carried through unchanged. */
+export async function buildOwnerRoutingProjection(
+  opts: Omit<FleetProjectionOptions, "archived">,
+): Promise<{ sessions: FleetProjection["sessions"] }> {
+  const [active, archived] = await Promise.all([
+    buildFleetProjection({ ...opts, archived: false }),
+    buildFleetProjection({ ...opts, archived: true }),
+  ]);
+  const byId = new Map<string, FleetProjection["sessions"][number]>();
+  for (const s of [...active.sessions, ...archived.sessions]) {
+    const id = typeof s.id === "string" ? s.id : undefined;
+    if (id && !byId.has(id)) byId.set(id, s);
+  }
+  return { sessions: [...byId.values()] };
 }

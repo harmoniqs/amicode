@@ -59,7 +59,7 @@ import {
   readPendingRequests,
 } from "./fleet_control_request";
 import { HubCredentialRead, mintRegistry, readHubCredential } from "./hub_credential";
-import { buildMergedProjection, buildFleetProjection, type UpstreamMode, type MergedProjection, type FleetProjection } from "./merged_projection";
+import { buildMergedProjection, buildFleetProjection, buildOwnerRoutingProjection, type UpstreamMode, type MergedProjection, type FleetProjection } from "./merged_projection";
 import { buildControlResolver } from "./remote_session_state";
 import { FleetPostureDetector, type FleetPostureTuning } from "./fleet_posture";
 import { handleFleetWrite, type FleetWriteDeps } from "./fleet_writes";
@@ -513,9 +513,12 @@ export function registerFleetRoutes(server: AmicodeServiceServer, deps: FleetRou
   // cannot live behind this entitlement-gated block. They stay local for free
   // under the EXISTING shouldProxyAmicodeToHost /amicode/fleet/* exclusion.
 
-  server.add("GET", "/amicode/fleet/sessions", async () => {
+  server.add("GET", "/amicode/fleet/sessions", async ({ url }) => {
     const started = Date.now();
-
+    // #1647 (S1): the archived variant of the fleet-wide list. `?archived=true`
+    // fans the ARCHIVED session list out to peers (owner-tagged like active),
+    // powering the local Archive tab's remote-session parity. Absent ⇒ active.
+    const archived = url.searchParams.get("archived") === "true";
     // #1439: fleet-wide N-peer projection when peer data is available;
     // otherwise fall back to the legacy 2-source (local+hub) projection.
     let projection: MergedProjection | FleetProjection;
@@ -564,6 +567,7 @@ export function registerFleetRoutes(server: AmicodeServiceServer, deps: FleetRou
         blockedPeers,
         rosterLookup: deps.fleetPeers.rosterLookup,
         resolveControl,
+        archived,
       });
     } else {
       projection = await buildMergedProjection({
@@ -1085,7 +1089,7 @@ export function createAmicodeService(
                 token: tokenRead.ok ? tokenRead.credential.token : undefined,
               };
             });
-            const projection = await buildFleetProjection({
+            const projection = await buildOwnerRoutingProjection({
               localMachineId: fleetPeers.localMachineId,
               local: { getUrl: opts.engine?.getUrl ?? ((): string | undefined => undefined), password: opts.engine?.password },
               peers,
@@ -1265,7 +1269,7 @@ export function createAmicodeService(
                 token: tokenRead.ok ? tokenRead.credential.token : undefined,
               };
             });
-            const projection = await buildFleetProjection({
+            const projection = await buildOwnerRoutingProjection({
               localMachineId: fleetPeers.localMachineId,
               local: { getUrl: opts.engine?.getUrl ?? ((): string | undefined => undefined), password: opts.engine?.password },
               peers,
