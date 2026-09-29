@@ -12,7 +12,7 @@ import { Tooltip, TooltipKeybind } from "@opencode-ai/ui/tooltip"
 import { ButtonV2 } from "@opencode-ai/ui/v2/button-v2"
 import { MenuV2 } from "@opencode-ai/ui/v2/menu-v2"
 import { getFilename } from "@opencode-ai/core/util/path"
-import { batch, createEffect, createMemo, createResource, createRoot, createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js"
+import { batch, createEffect, createMemo, createResource, createRoot, createSignal, For, onCleanup, onMount, Show, untrack, type JSX } from "solid-js"
 import { createStore } from "solid-js/store"
 import { createMediaQuery } from "@solid-primitives/media"
 import { Portal } from "solid-js/web"
@@ -972,7 +972,17 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
   // and can cascade re-renders to the parent Portal).
   // Source from ALL project directories (same as dashboard) — not just the
   // server's cwd, which may not be where sessions live (amicode#138).
-  const activeSessions = createMemo(() => {
+  //
+  // PERF (amicode#1599): reading each store's session rows subscribes this memo
+  // to per-row fields including `time.updated`. A LIVE session streaming tokens
+  // bumps `time.updated` on nearly every frame, which would re-run the whole
+  // dropdown pipeline (merge → sort → filter → <For> re-diff) at frame rate and
+  // make the open flyout lag. We split the compute in two:
+  //   • activeSessionsRaw — the reactive read (subscribes to the stores).
+  //   • activeSessions    — a throttled mirror that only re-emits at most once
+  //     per THROTTLE_MS, EXCEPT it passes through immediately when the session
+  //     SET changes (ids/titles/count) so open/close/rename stay instant.
+  const activeSessionsRaw = createMemo(() => {
     if (!open()) return []
     try {
       const conn = server.current
@@ -995,6 +1005,36 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
       return []
     }
   })
+
+  // The SET signature: what actually needs an instant re-render (rows added /
+  // removed / renamed). Streaming token churn only moves `time.updated`, which
+  // is deliberately NOT in the signature — those updates ride the throttle.
+  const activeSetSignature = createMemo(() =>
+    activeSessionsRaw()
+      .map((s) => `${s.id}:${s.title ?? ""}`)
+      .join("|"),
+  )
+
+  const ACTIVE_THROTTLE_MS = 500
+  const [activeThrottleTick, setActiveThrottleTick] = createSignal(0)
+  createEffect(() => {
+    if (!open()) return
+    // Depend on the raw list so the timer runs while updates are flowing.
+    activeSessionsRaw()
+    const t = setTimeout(() => setActiveThrottleTick((n) => n + 1), ACTIVE_THROTTLE_MS)
+    onCleanup(() => clearTimeout(t))
+  })
+
+  const activeSessions = createMemo<Session[]>(() => {
+    if (!open()) return []
+    // Re-emit ONLY on a set change (add/remove/rename) or a throttle tick.
+    activeSetSignature()
+    activeThrottleTick()
+    // Read the raw list WITHOUT subscribing to its per-row fields — otherwise a
+    // streaming `time.updated` would re-run this memo and defeat the throttle.
+    return untrack(activeSessionsRaw)
+  })
+
 
   // #1525 B1: fold the projection's remote peer sessions into the active list
   // (deduped against local, sorted by last activity). Empty/errored projection
