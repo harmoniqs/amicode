@@ -377,6 +377,15 @@ function readProjectionSession(raw: unknown): DropdownSession | undefined {
     ...(typeof o.parentID === "string" ? { parentID: o.parentID } : {}),
     time,
     ...(owner ? { amicode_owner: owner } : {}),
+    // #1646: carry the raw control overlay onto the row. Without this the peer
+    // row has NO control channel, so readSessionControl always falls to the
+    // fail-closed default (`no-control-grant`) — the row could never reflect a
+    // real `interactive` grant, and archive/delete stayed refused forever. The
+    // overlay is passed through verbatim (an object) — readSessionControl is the
+    // single tolerant validator, so a malformed one still degrades safely there.
+    ...(o.amicode_control && typeof o.amicode_control === "object"
+      ? { amicode_control: o.amicode_control as SessionControlProjection }
+      : {}),
   } as DropdownSession
 }
 
@@ -408,14 +417,33 @@ export function peerSessionsFromProjection(raw: unknown): DropdownSession[] {
  *  this enrichment that untagged copy would win the dedup and the machine
  *  badge would vanish the moment a remote session goes live. The projection is
  *  the source of truth for ownership, so carrying its tag onto the local copy
- *  is honest: the row stays local (live state) but keeps its remote badge. */
+ *  is honest: the row stays local (live state) but keeps its remote badge.
+ *
+ *  #1646 (stale-control fix): the projection is ALSO the source of truth for
+ *  the control channel (`amicode_control`), which flips read-only→interactive
+ *  when you enable control of a peer. A locally-pulled copy (from opening the
+ *  remote session) has NO control overlay, so on an id collision the merge must
+ *  carry the peer's control overlay across too — otherwise the merged row reads
+ *  fail-closed (`no-control-grant`) even after control is enabled, and the
+ *  archive/delete gate refuses with "Control not enabled" while the projection
+ *  says interactive. Owner AND control are grafted together, from the same peer. */
 export function mergePeerSessions(local: DropdownSession[], peers: DropdownSession[]): DropdownSession[] {
   const peerById = new Map(peers.map((p) => [p.id, p]))
   const merged = local.map((s) => {
-    if (s.amicode_owner) return s
     const peer = peerById.get(s.id)
-    if (peer?.amicode_owner) return { ...s, amicode_owner: peer.amicode_owner }
-    return s
+    if (!peer) return s
+    // Graft the projection's ownership + control overlays onto a local copy that
+    // lacks them (the projection is SoT for both). Owner grafts only when the
+    // local row has none (#1599); control grafts from the peer whenever the peer
+    // is a remote row carrying one (#1646) — a live local copy has no fleet
+    // control channel of its own, so the peer's is strictly fresher.
+    const needsOwner = !s.amicode_owner && !!peer.amicode_owner
+    const needsControl = isRemotePeerSession(peer) && peer.amicode_control !== undefined
+    if (!needsOwner && !needsControl) return s
+    const grafted: DropdownSession = { ...s }
+    if (needsOwner) grafted.amicode_owner = peer.amicode_owner
+    if (needsControl) grafted.amicode_control = peer.amicode_control
+    return grafted
   })
   const seen = new Set(local.map((s) => s.id))
   for (const p of peers) {

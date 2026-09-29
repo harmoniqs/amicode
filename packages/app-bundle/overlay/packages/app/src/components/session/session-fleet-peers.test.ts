@@ -74,6 +74,31 @@ describe("#1525 peerSessionsFromProjection — keep only remote peer sessions", 
     expect(out).toHaveLength(1)
     expect(out[0].time.created).toBe(0)
   })
+
+  // #1646 regression: the peer row MUST carry the projection's amicode_control
+  // overlay. Without it, readSessionControl on the row always fell to the
+  // remote fail-closed default (`no-control-grant`), so an enabled `interactive`
+  // grant never reached the row and archive/delete stayed refused forever.
+  test("#1646: a peer entry's amicode_control overlay is carried onto the row", () => {
+    const out = peerSessionsFromProjection(
+      projection([
+        {
+          id: "ses_studio",
+          amicode_owner: studioTag,
+          amicode_control: { controlState: "interactive", reason: null, eligibility: "none" },
+        },
+      ]),
+    )
+    expect(out).toHaveLength(1)
+    expect(readSessionControl(out[0]).controlState).toBe("interactive")
+  })
+
+  test("#1646: a peer entry WITHOUT control still coerces (degrades to fail-closed at read time)", () => {
+    const out = peerSessionsFromProjection(projection([{ id: "ses_studio", amicode_owner: studioTag }]))
+    expect(out[0].amicode_control).toBeUndefined()
+    // No overlay on the row → readSessionControl applies the remote fail-closed default.
+    expect(readSessionControl(out[0]).reason).toBe("no-control-grant")
+  })
 })
 
 describe("#1525 deriveSessionBadge / isRemotePeerSession", () => {
@@ -141,6 +166,38 @@ describe("#1525 mergePeerSessions — dedupe (local wins) + sort by last activit
     // Badge survives — this is the corrected behavior (was `undefined` pre-#1599).
     expect(out[0].amicode_owner).toBeDefined()
     expect(deriveSessionBadge(out[0])).toBe("Test Desktop")
+  })
+
+  // #1646 regression: the SAME open flow that pulls an untagged local copy also
+  // strips the fleet CONTROL overlay — the local copy has no control channel of
+  // its own. Enabling control flips the PROJECTION's copy to `interactive`, but
+  // pre-#1646 the merge kept the control-less local copy, so the row read
+  // fail-closed and archive/delete refused with "Control not enabled" even
+  // though control was held. The fix grafts the peer's control overlay across.
+  test("#1646 regression: an enabled control grant on the projection reaches the merged row", () => {
+    const liveLocalCopy = mk("ses_remote", 5) // untagged, control-less — pulled in by opening it
+    const fromProjection = {
+      ...mk("ses_remote", 5, studioTag),
+      amicode_control: { controlState: "interactive", reason: null, eligibility: "none" },
+    } as DropdownSession
+    const out = mergePeerSessions([liveLocalCopy], [fromProjection])
+    expect(out).toHaveLength(1)
+    // Control is HELD on the merged row (was fail-closed `read-only` pre-#1646),
+    // so writeAffordanceEnabled — the archive/delete gate — is true.
+    expect(readSessionControl(out[0]).controlState).toBe("interactive")
+    expect(writeAffordanceEnabled(readSessionControl(out[0]))).toBe(true)
+  })
+
+  test("#1646: a revoked/read-only grant on the projection also reaches the merged row (not just interactive)", () => {
+    const liveLocalCopy = mk("ses_remote", 5)
+    const fromProjection = {
+      ...mk("ses_remote", 5, studioTag),
+      amicode_control: { controlState: "read-only", reason: "grant-revoked", eligibility: "enable-control" },
+    } as DropdownSession
+    const out = mergePeerSessions([liveLocalCopy], [fromProjection])
+    // The projection is SoT both ways: a revocation must reach the row too.
+    expect(readSessionControl(out[0]).reason).toBe("grant-revoked")
+    expect(writeAffordanceEnabled(readSessionControl(out[0]))).toBe(false)
   })
 
   test("#1539 fixed: when directory store is clean, projection badge persists through dedup", () => {
