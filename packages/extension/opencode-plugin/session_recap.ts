@@ -46,6 +46,16 @@ export const RECAP_WINDOW_DAYS = 7;
 export const MAX_RECAPS = 10;
 export const MIN_ASSISTANT_MESSAGES = 2;
 
+/** Resolve the effective recap window in days. Reads AMICODE_SESSION_RECAP_WINDOW_DAYS
+ *  from the environment; falls back to RECAP_WINDOW_DAYS if unset or invalid. */
+export function resolveWindowDays(): number {
+  const raw = process.env.AMICODE_SESSION_RECAP_WINDOW_DAYS;
+  if (raw == null || raw.trim() === "") return RECAP_WINDOW_DAYS;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return RECAP_WINDOW_DAYS;
+  return parsed;
+}
+
 // Titles that indicate noise sessions (internal housekeeping)
 export const NOISE_TITLE_PREFIXES = ["Compaction", "compaction"];
 
@@ -168,8 +178,9 @@ export function composeRecapText(userTexts: string[], outcomes: string[]): strin
 
 // ── Markdown composition (pure, testable) ────────────────────────────────────
 
-export function composeMarkdown(recaps: SessionRecap[]): string {
-  const lines = ["## Recent sessions (last 7 days)", ""];
+export function composeMarkdown(recaps: SessionRecap[], windowDays?: number): string {
+  const days = windowDays ?? resolveWindowDays();
+  const lines = [`## Recent sessions (last ${days} days)`, ""];
 
   for (const r of recaps) {
     const date = new Date(r.created);
@@ -263,7 +274,8 @@ export function buildRecentSessionsBlock(currentSessionId?: string): string | nu
   }
 
   try {
-    const cutoff = Date.now() - RECAP_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+    const windowDays = resolveWindowDays();
+    const cutoff = Date.now() - windowDays * 24 * 60 * 60 * 1000;
 
     // Query recent sessions: non-subagent, non-archived, within window
     const sessions = db.prepare(`
@@ -320,7 +332,7 @@ export function buildRecentSessionsBlock(currentSessionId?: string): string | nu
 
     if (recaps.length === 0) return null;
 
-    return composeMarkdown(recaps);
+    return composeMarkdown(recaps, windowDays);
   } catch (e) {
     console.error(`[session-recap] failed: ${e instanceof Error ? e.message : String(e)}`);
     return null;
