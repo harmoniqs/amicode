@@ -1,0 +1,53 @@
+# The EE / test-&-measurement domain pack (plan-20260920 step 10; amicode #1328).
+# The strumento substrate — device model, task records, calibration store —
+# is this domain in quantum clothing; this pack generalizes it to instruments.
+# SEEDED, not exercised: the manifest + references resolve; the first task
+# (a mock-instrument fit cycle) is the shakedown exercise, the next milestone.
+#
+# SCOPE BOUND (honest): instruments the device schema actually models. The
+# schema today models QICK-class hardware; the first task extends it to the
+# bench signal-generator + spectrum-analyzer class (mock). Everything the
+# schema does NOT model is out of scope until modeled — stated, never assumed.
+schema_version = "1"
+id = "ee-test-measurement"
+name = "Electrical Engineering / Test & Measurement"
+version = 1
+scores = []
+curricula = ["curricula/instrument-bringup/CURRICULUM.md"]
+skills = [] # the strumento skill generalizes at exercise time; none shipped yet
+payload_schemas = ["PAYLOADS.md"]
+benchmarks = ["benchmarks/README.md"]
+
+[[instruments]]
+kind = "strumento device schema (QICK-class, existing)"
+coverage = "modeled"
+
+[[instruments]]
+kind = "bench signal generator (mock, schema extension this pass)"
+coverage = "modeled-at-first-task"
+
+[[instruments]]
+kind = "spectrum analyzer (mock, schema extension this pass)"
+coverage = "modeled-at-first-task"
+
+[verification]
+contract = "VERIFICATION.md"
+bindings = [
+  "measurement residuals: T1b (deterministic given the recorded artifact; residuals against declared tolerance, honestly noise-bounded)",
+  "closed-loop recalibration: T1b over the recorded calibration-store chain",
+  "hardware claims: un-tiered until measured on real instruments (mock runs certify nothing about hardware)",
+]
+
+[first_task]
+declaration = "FIRST-TASK.md"
+level = "shakedown"
+
+[onboarding]
+primary = "instrument-bringup"
+head = "instrument-bringup"
+
+[corrector]
+name = "task-record contract (the strumento seam: the directory is the truth; verdicts re-derived from the record)"
+paths = ["FIRST-TASK.md", "VERIFICATION.md"]
+integrity = "corrector/integrity.toml"
+tier = "open"
