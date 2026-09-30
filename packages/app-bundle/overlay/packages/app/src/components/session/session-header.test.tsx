@@ -11,8 +11,9 @@ import {
 // component-source-assertion pattern (vscode-explorer-file-icon.test.tsx): the
 // DECISION logic is pure + unit-tested in session-fleet-peers.ts; here we assert
 // the SolidJS wiring binds those pure functions to the session surface — the
-// native-modal confirm dispatch, the fail-closed reason chip, and the
-// owner-routed remote-delete reusing the arm→confirm interaction.
+// fail-closed reason chip, the owner-routed archive on an active remote row, and
+// the owner-routed delete that now lives on the Archived tab (remote matches
+// local: an active row archives, the Archived row deletes).
 //
 // The "Driving <peer>" indicator moved from a fixed banner Portal in
 // session-header.tsx to a monitor icon on the session tab in the titlebar
@@ -76,17 +77,29 @@ describe("#1544 session-header control wiring", () => {
     expect(source).toContain("writeAffordanceEnabled(control())")
   })
 
-  test("the remote-delete affordance is owner-routed AND reuses the arm→confirm interaction", () => {
-    // owner-routed: the action carries the owner and the write plane routes it
-    expect(source).toContain("remoteDeleteAction(session)")
-    expect(source).toContain("action.request.ownerMachineId")
-    // reused arm→confirm interaction (no second modal), gated on held control
-    expect(source).toContain('data-action="session-remote-delete"')
-    expect(source).toContain('data-action="session-remote-delete-confirm"')
-    expect(source).toContain("armRemoteDelete")
-    expect(source).toContain("confirmRemoteDelete")
-    // only shown when control is held
+  test("the active remote row is ARCHIVE-ONLY — remote delete moved to the Archived tab", () => {
+    // A remote peer row on the ACTIVE list offers only the owner-routed archive,
+    // gated on held control. Remote now matches local: no delete on an active
+    // row — archive first, then delete from the Archived tab.
+    expect(source).toContain('data-action="session-remote-archive"')
     expect(source).toContain("<Show when={canWrite()}>")
+    // the active-row remote-delete + its arm→confirm interaction are GONE
+    expect(source).not.toContain('data-action="session-remote-delete"')
+    expect(source).not.toContain('data-action="session-remote-delete-confirm"')
+    expect(source).not.toContain("armRemoteDelete")
+    expect(source).not.toContain("confirmRemoteDelete")
+    expect(source).not.toContain("remoteDeleteSession")
+  })
+
+  test("remote delete lives on the Archived row — owner-routed AND control-gated", () => {
+    // deleteArchivedSession routes a remote delete to the owner (same SDK delete
+    // surface, intercepted by the #1542 write plane) and is gated on held control
+    // — a control-less remote archived row shows the fail-closed chip instead.
+    expect(source).toContain("async function deleteArchivedSession")
+    expect(source).toContain("remoteDeleteAction(dropdownSession).allowed")
+    // the archived row renders the arm→confirm permanent delete
+    expect(source).toContain('data-action="session-dropdown-delete"')
+    expect(source).toContain('data-action="session-dropdown-delete-confirm"')
   })
 
   // #1646: the archive handler must force-sync the PER-SESSION store, not only

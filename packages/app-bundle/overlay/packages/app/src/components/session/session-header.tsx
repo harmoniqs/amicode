@@ -1100,9 +1100,6 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
     ]
   })
 
-  // Heuristic: if we loaded exactly the cap, there are probably more.
-  const hasMoreActive = createMemo(() => activeSessions().length >= activeLimit())
-
   // Search filtering
   const searchQuery = createMemo(() => search().trim().toLowerCase())
   const filteredActiveSessions = createMemo(() => {
@@ -1114,6 +1111,21 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
       return title.toLowerCase().includes(q)
     })
   })
+  // amicode#1599 follow-up — actually paginate the DOM. `activeLimit` bounded the
+  // backend fetch and the Show-more button, but the <For> rendered EVERY loaded
+  // + peer row: hundreds of rows, each carrying the per-row
+  // useSessionTabAvatarState subscriptions, re-diffed on every 3s fleet poll —
+  // the source of the flyout lag. Slice the rendered list to the limit. Search
+  // spans the full loaded set, so slice AFTER the filter (a query renders all
+  // matches; Show-more is hidden while searching).
+  const pagedActiveSessions = createMemo(() =>
+    searchQuery() ? filteredActiveSessions() : filteredActiveSessions().slice(0, activeLimit()),
+  )
+  // "More" = rows hidden by the slice, OR the backend fetch cap was hit (more may
+  // be loadable). Show-more reveals the next page and fetches the next backend page.
+  const hasMoreActive = createMemo(
+    () => filteredActiveSessions().length > pagedActiveSessions().length || activeSessions().length >= activeLimit(),
+  )
   const filteredArchivedSessions = createMemo(() => {
     const q = searchQuery()
     if (!q) return archivedSessions()
@@ -1234,41 +1246,6 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
       } catch (cause) {
         showToast({
           title: language.t("common.requestFailed"),
-          description: String(cause),
-        })
-      }
-    })
-  }
-
-  // #1544 (slice 4): owner-routed remote DELETE of a peer session. This is the
-  // net-new remote-delete affordance the ADR (D4) calls for — there is no
-  // existing wired remote-delete to reuse (the timeline/dropdown deletes are
-  // LOCAL SDK calls with no owner routing). It reuses the arm→confirm
-  // INTERACTION (SessionDropdownRow, mirroring ArchivedSessionDropdownRow), and
-  // routes by OWNER: the SDK delete is keyed on the session's own id+directory,
-  // and the #1542 observation WRITE plane intercepts the non-GET to the
-  // peer-owned session by pathname and proxies it to the owner. The action is
-  // GATED on held control (remoteDeleteAction) — a fail-closed row shows a
-  // reason chip instead, never a live erroring button.
-  async function remoteDeleteSession(session: DropdownSession) {
-    const action = remoteDeleteAction(session)
-    if (!action.allowed || !action.request) return
-    const { sessionID, directory } = action.request
-    const ctx = getServerCtx()
-    if (!ctx) return
-    await restoreScrollAfter(async () => {
-      try {
-        // Owner-routed: same SDK delete surface; the write plane routes the
-        // non-GET to action.request.ownerMachineId by pathname.
-        await (ctx.sdk.client.session.delete as Function)({
-          sessionID,
-          directory,
-        })
-        // #1647 (S9): drop the deleted peer session from the active list.
-        void refetchFleetProjection()
-      } catch (cause) {
-        showToast({
-          title: language.t("session.delete.failed.title"),
           description: String(cause),
         })
       }
@@ -1578,7 +1555,7 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
                   }
                 >
                   <div class="flex min-w-0 flex-col gap-px">
-                    <For each={filteredActiveSessions()}>
+                    <For each={pagedActiveSessions()}>
                       {(session) => (
                         <SessionDropdownRow
                           session={session}
@@ -1586,7 +1563,6 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
                           isCurrent={session.id === currentSessionID()}
                           onOpen={openSession}
                           onArchive={archiveSession}
-                          onRemoteDelete={remoteDeleteSession}
                         />
                       )}
                     </For>
@@ -1676,7 +1652,6 @@ function SessionDropdownRow(props: {
   isCurrent: boolean
   onOpen: (session: Session) => void
   onArchive: (session: Session) => void
-  onRemoteDelete?: (session: DropdownSession) => void
 }) {
   const language = useLanguage()
   const title = createMemo(() => sessionTitle(props.session.title) || props.session.id)
@@ -1685,34 +1660,14 @@ function SessionDropdownRow(props: {
   const badge = createMemo(() => deriveSessionBadge(props.session as DropdownSession))
   const isRemote = createMemo(() => isRemotePeerSession(props.session as DropdownSession))
   // #1544 (slice 4): the control state channel for THIS remote row. When control
-  // is NOT held, write affordances are DISABLED with a visible reason chip
+  // is NOT held, the write affordance is DISABLED with a visible reason chip
   // (failClosedChip) — never a live erroring button. When held, the owner-routed
-  // remote-delete affordance appears (arm→confirm, reused interaction).
+  // ARCHIVE affordance appears. Delete is NOT offered on an active row: a remote
+  // session (like a local one) is archived first, then deleted from the Archived
+  // tab (ArchivedSessionDropdownRow, owner-routed via deleteArchivedSession).
   const control = createMemo(() => readSessionControl(props.session as DropdownSession))
   const chip = createMemo(() => failClosedChip(control()))
   const canWrite = createMemo(() => writeAffordanceEnabled(control()))
-  // arm→confirm state (mirrors ArchivedSessionDropdownRow's interaction).
-  const [deleteArmed, setDeleteArmed] = createSignal(false)
-  let deleteResetTimer: ReturnType<typeof setTimeout> | undefined
-  function armRemoteDelete(event: MouseEvent) {
-    event.preventDefault()
-    event.stopPropagation()
-    setDeleteArmed(true)
-    clearTimeout(deleteResetTimer)
-    deleteResetTimer = setTimeout(() => setDeleteArmed(false), 3000)
-  }
-  function confirmRemoteDelete(event: MouseEvent) {
-    event.preventDefault()
-    event.stopPropagation()
-    clearTimeout(deleteResetTimer)
-    setDeleteArmed(false)
-    void props.onRemoteDelete?.(props.session as DropdownSession)
-  }
-  function disarmRemoteDelete() {
-    clearTimeout(deleteResetTimer)
-    setDeleteArmed(false)
-  }
-  onCleanup(() => clearTimeout(deleteResetTimer))
   const rowServer = useServer()
   // #1292 hover prewarm: a hovered row is a click away — pull its first
   // message page the instant the pointer lands, so the open renders from
@@ -1759,9 +1714,13 @@ function SessionDropdownRow(props: {
         <span class="min-w-0 flex-[1_1_auto] overflow-hidden text-ellipsis whitespace-nowrap">
           {title()}
         </span>
+        {/* The owner machine tag. It fades out on hover/focus so the archive
+            affordance (absolutely positioned at the right edge) never overlays
+            it — the tag is the row's resting identity, the action takes over on
+            intent. Covers pointer hover and keyboard focus-within alike. */}
         <Show when={badge()}>
           <span
-            class="shrink-0 ml-1 inline-flex max-w-[40%] items-center gap-1 overflow-hidden text-ellipsis whitespace-nowrap rounded-sm px-1 py-0.5 text-[10px] leading-none text-v2-text-text-faint bg-v2-background-bg-layer-02"
+            class="shrink-0 ml-1 inline-flex max-w-[40%] items-center gap-1 overflow-hidden text-ellipsis whitespace-nowrap rounded-sm px-1 py-0.5 text-[10px] leading-none text-v2-text-text-faint bg-v2-background-bg-layer-02 opacity-100 transition-opacity group-hover/session:opacity-0 group-focus-within/session:opacity-0"
             title={badge()!}
           >
             <IconV2 name="monitor" class="shrink-0 opacity-70" />
@@ -1790,8 +1749,8 @@ function SessionDropdownRow(props: {
       {/* #1544 (slice 4): a REMOTE peer row's control affordances. Control NOT
           held → the write affordance is DISABLED with a visible reason chip
           (failClosedChip, derived from the SoT reason) — never a live erroring
-          button. Control HELD → the owner-routed remote-DELETE, reusing the
-          arm→confirm interaction (no second modal). */}
+          button. Control HELD → the owner-routed ARCHIVE. Delete lives on the
+          Archived tab (remote matches local: archive first, then delete). */}
       <Show when={isRemote()}>
         <div class="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center gap-1 opacity-0 group-hover/session:opacity-100 focus-within:opacity-100 transition-opacity">
           <Show when={chip()} keyed>
@@ -1822,34 +1781,6 @@ function SessionDropdownRow(props: {
                 }}
               />
             </TooltipV2>
-            <Show
-              when={deleteArmed()}
-              fallback={
-                <TooltipV2 placement="top" value="Delete on peer">
-                  <IconButtonV2
-                    data-action="session-remote-delete"
-                    variant="ghost-muted"
-                    size="large"
-                    icon={<Icon name="trash" size="small" />}
-                    aria-label="Delete on peer"
-                    onClick={armRemoteDelete}
-                  />
-                </TooltipV2>
-              }
-            >
-              <ButtonV2
-                data-action="session-remote-delete-confirm"
-                variant="danger"
-                size="small"
-                aria-label="Confirm delete on peer"
-                aria-live="polite"
-                onClick={confirmRemoteDelete}
-                onBlur={disarmRemoteDelete}
-                onKeyDown={(e: KeyboardEvent) => e.key === "Escape" && disarmRemoteDelete()}
-              >
-                Delete
-              </ButtonV2>
-            </Show>
           </Show>
         </div>
       </Show>
@@ -1911,10 +1842,12 @@ function ArchivedSessionDropdownRow(props: {
         <span class="min-w-0 flex-[1_1_auto] overflow-hidden text-ellipsis whitespace-nowrap">
           {title()}
         </span>
+        {/* Owner tag fades out on hover/focus so the unarchive/delete controls
+            never overlay it — same resting-identity rule as the active row. */}
         <Show when={isRemote() && badge()}>
           <span
             data-slot="archived-session-owner-badge"
-            class="shrink-0 inline-flex items-center gap-1 text-[10px] leading-none text-v2-text-text-faint"
+            class="shrink-0 inline-flex items-center gap-1 text-[10px] leading-none text-v2-text-text-faint opacity-100 transition-opacity group-hover/archived:opacity-0 group-focus-within/archived:opacity-0"
             title={badge()}
           >
             <IconV2 name="monitor" size="small" class="shrink-0 opacity-70" />
