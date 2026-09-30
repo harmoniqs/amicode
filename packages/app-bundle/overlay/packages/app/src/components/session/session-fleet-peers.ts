@@ -480,6 +480,60 @@ export function mergePeerSessions(local: DropdownSession[], peers: DropdownSessi
   return merged.sort((a, b) => (b.time.updated ?? b.time.created) - (a.time.updated ?? a.time.created))
 }
 
+/** The render-relevant signature of a dropdown row — every field the
+ *  SessionDropdownRow / ArchivedSessionDropdownRow actually paint. Two rows with
+ *  the same signature are visually identical, so the `<For>` should keep the
+ *  same DOM node for them. `time.updated` is deliberately EXCLUDED: it churns on
+ *  every streamed token but never changes what the row renders (the status dot
+ *  is driven by the live avatar-state subscription, not by this object), and
+ *  including it would defeat the whole point — a live row would re-key on every
+ *  frame. */
+export function sessionRowSignature(s: DropdownSession): string {
+  const owner = s.amicode_owner
+  const control = s.amicode_control
+  return [
+    s.id,
+    s.title ?? "",
+    s.directory ?? "",
+    owner ? `${owner.is_local ? "L" : "R"}:${owner.owner_name ?? ""}:${owner.owner_machine_id ?? ""}` : "-",
+    control ? `${control.controlState}:${control.reason ?? ""}:${control.eligibility}` : "-",
+  ].join("\u0001")
+}
+
+/** Stabilize row object identity across polls so SolidJS `<For>` (which keys by
+ *  referential identity) preserves each row's DOM node instead of disposing and
+ *  remounting it. Every 3s the fleet projection re-fetches and `mergePeerSessions`
+ *  mints brand-new objects for peer / owner-tagged rows; `<For>` then sees a new
+ *  reference at that index and remounts the row, resetting its CSS `:hover` state
+ *  and replaying the machine-tag opacity transition — the "flash" a user sees
+ *  when the pointer is resting on a tagged row (amicode#1652).
+ *
+ *  This keeps a caller-owned `Map<id, DropdownSession>` cache: when a row's
+ *  render signature is unchanged since last emit, the PREVIOUS object is
+ *  returned (stable reference → no remount); only a genuine content change (or a
+ *  new id) allocates. Order follows `next` exactly; ids absent from `next` are
+ *  evicted from the cache so it can't grow without bound. Pure aside from the
+ *  passed-in cache — the cache is the reuse state the caller persists across
+ *  memo runs. */
+export function stabilizeSessionIdentity(
+  next: readonly DropdownSession[],
+  cache: Map<string, { sig: string; row: DropdownSession }>,
+): DropdownSession[] {
+  const nextIds = new Set<string>()
+  const out = next.map((row) => {
+    nextIds.add(row.id)
+    const sig = sessionRowSignature(row)
+    const prev = cache.get(row.id)
+    if (prev && prev.sig === sig) return prev.row
+    cache.set(row.id, { sig, row })
+    return row
+  })
+  for (const id of cache.keys()) {
+    if (!nextIds.has(id)) cache.delete(id)
+  }
+  return out
+}
+
 /** #1647 (S3): the ARCHIVED list, fleet-aware. Given this machine's LOCAL
  *  archived sessions (authoritative, engine-paginated) and the raw
  *  `/amicode/fleet/sessions?archived=true` projection, return the merged

@@ -114,6 +114,37 @@ describe("#1544 session-header control wiring", () => {
   })
 })
 
+// amicode#1652: the owner tag no longer simply vanishes on hover to reveal the
+// action cluster — it TELEPORTS left, reappearing next to the archive/delete
+// controls. The resting badge fades out (group-hover opacity) and a second copy
+// inside the (fade-in) action cluster takes its place.
+describe("#1652 owner-tag teleport on hover", () => {
+  test("the active row renders a resting badge AND a teleported copy in the action cluster", () => {
+    expect(source).toContain('data-slot="session-owner-badge-resting"')
+    expect(source).toContain('data-slot="session-owner-badge-teleported"')
+    // the resting badge still fades out on hover/focus…
+    expect(source).toContain("group-hover/session:opacity-0")
+    expect(source).toContain("group-focus-within/session:opacity-0")
+  })
+
+  test("the archived row also teleports its owner tag into the action cluster", () => {
+    expect(source).toContain('data-slot="archived-session-owner-badge"')
+    expect(source).toContain('data-slot="archived-session-owner-badge-teleported"')
+    expect(source).toContain("group-hover/archived:opacity-0")
+  })
+})
+
+// amicode#1652: the flyout list must not remount (and flash) tagged rows on the
+// 3s fleet poll. The dropdown feeds <For> through stabilizeSessionIdentity with a
+// component-scoped id-keyed cache, so unchanged rows keep their object reference.
+describe("#1652 stable row identity across the fleet poll", () => {
+  test("the dropdown stabilizes row identity before <For> (active + archived)", () => {
+    expect(source).toContain("stabilizeSessionIdentity")
+    expect(source).toContain("activeIdentityCache")
+    expect(source).toContain("archivedIdentityCache")
+  })
+})
+
 // #1562-followup (Slice A): the interactive flip must be OBSERVED. The shared
 // control projection was extracted to session-fleet-control-projection.ts — the
 // same ref-counted singleton the session header, the composer scrim, and now the

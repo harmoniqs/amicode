@@ -47,6 +47,7 @@ import { postAmicodeFleetEnableControl } from "@/utils/amicode-bridge"
 import {
   allSessionsFromProjection,
   mergePeerSessions,
+  stabilizeSessionIdentity,
   archivedSessionsWithRemote,
   deriveSessionBadge,
   isRemotePeerSession,
@@ -1118,21 +1119,40 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
   // the source of the flyout lag. Slice the rendered list to the limit. Search
   // spans the full loaded set, so slice AFTER the filter (a query renders all
   // matches; Show-more is hidden while searching).
-  const pagedActiveSessions = createMemo(() =>
-    searchQuery() ? filteredActiveSessions() : filteredActiveSessions().slice(0, activeLimit()),
-  )
+  // amicode#1652 — the 3s fleet poll (fleetPoll) re-fetches the projection, and
+  // mergePeerSessions mints a NEW object for every peer / owner-tagged row on each
+  // fetch. SolidJS <For> keys by referential identity, so those new references make
+  // it dispose + remount the row — resetting the CSS :hover state and replaying the
+  // machine-tag opacity transition under a resting pointer (the "flash"). An
+  // id-keyed identity cache returns the PREVIOUS row object when a row's render
+  // signature is unchanged, so unchanged rows keep their reference (and DOM node)
+  // across the poll. The cache is component-scoped so it survives memo re-runs; it
+  // self-evicts ids that leave the list.
+  const activeIdentityCache = new Map<string, { sig: string; row: DropdownSession }>()
+  const pagedActiveSessions = createMemo(() => {
+    const sliced = searchQuery()
+      ? filteredActiveSessions()
+      : filteredActiveSessions().slice(0, activeLimit())
+    return stabilizeSessionIdentity(sliced as DropdownSession[], activeIdentityCache)
+  })
   // "More" = rows hidden by the slice, OR the backend fetch cap was hit (more may
   // be loadable). Show-more reveals the next page and fetches the next backend page.
   const hasMoreActive = createMemo(
     () => filteredActiveSessions().length > pagedActiveSessions().length || activeSessions().length >= activeLimit(),
   )
+  // amicode#1652 — same identity-stabilization as the active list: the archived
+  // tab has its own 5s poll (loadArchivedSessions) that setArchivedSessions with
+  // fresh objects, remounting owner-tagged archived rows and flashing their tag.
+  const archivedIdentityCache = new Map<string, { sig: string; row: DropdownSession }>()
   const filteredArchivedSessions = createMemo(() => {
     const q = searchQuery()
-    if (!q) return archivedSessions()
-    return archivedSessions().filter((session) => {
-      const title = sessionTitle(session.title) || session.id
-      return title.toLowerCase().includes(q)
-    })
+    const list = !q
+      ? archivedSessions()
+      : archivedSessions().filter((session) => {
+          const title = sessionTitle(session.title) || session.id
+          return title.toLowerCase().includes(q)
+        })
+    return stabilizeSessionIdentity(list as DropdownSession[], archivedIdentityCache)
   })
 
   // SDK access for archived sessions
@@ -1714,12 +1734,14 @@ function SessionDropdownRow(props: {
         <span class="min-w-0 flex-[1_1_auto] overflow-hidden text-ellipsis whitespace-nowrap">
           {title()}
         </span>
-        {/* The owner machine tag. It fades out on hover/focus so the archive
-            affordance (absolutely positioned at the right edge) never overlays
-            it — the tag is the row's resting identity, the action takes over on
-            intent. Covers pointer hover and keyboard focus-within alike. */}
+        {/* The owner machine tag. It fades out on hover/focus and the SAME tag
+          reappears inside the action cluster to the LEFT of the archive icon
+          (the teleport) — the row's resting identity slides aside for the
+          action, never simply vanishing. Covers pointer hover + keyboard
+          focus-within alike. */}
         <Show when={badge()}>
           <span
+            data-slot="session-owner-badge-resting"
             class="shrink-0 ml-1 inline-flex max-w-[40%] items-center gap-1 overflow-hidden text-ellipsis whitespace-nowrap rounded-sm px-1 py-0.5 text-[10px] leading-none text-v2-text-text-faint bg-v2-background-bg-layer-02 opacity-100 transition-opacity group-hover/session:opacity-0 group-focus-within/session:opacity-0"
             title={badge()!}
           >
@@ -1729,7 +1751,19 @@ function SessionDropdownRow(props: {
         </Show>
       </button>
       <Show when={!isRemote()}>
-      <div class="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center opacity-0 group-hover/session:opacity-100 focus-within:opacity-100 transition-opacity">
+      <div class="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center gap-1 opacity-0 group-hover/session:opacity-100 focus-within:opacity-100 transition-opacity">
+        {/* Teleported tag: the resting owner badge (above) faded out on hover;
+            this copy appears in its place, next to the archive icon. */}
+        <Show when={badge()}>
+          <span
+            data-slot="session-owner-badge-teleported"
+            class="shrink-0 inline-flex max-w-[40%] items-center gap-1 overflow-hidden text-ellipsis whitespace-nowrap rounded-sm px-1 py-0.5 text-[10px] leading-none text-v2-text-text-faint bg-v2-background-bg-layer-02"
+            title={badge()!}
+          >
+            <IconV2 name="monitor" class="shrink-0 opacity-70" />
+            <span class="overflow-hidden text-ellipsis whitespace-nowrap">{badge()}</span>
+          </span>
+        </Show>
         <TooltipV2 placement="top" value={language.t("common.archive")}>
           <IconButtonV2
             data-action="session-dropdown-archive"
@@ -1753,6 +1787,18 @@ function SessionDropdownRow(props: {
           Archived tab (remote matches local: archive first, then delete). */}
       <Show when={isRemote()}>
         <div class="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center gap-1 opacity-0 group-hover/session:opacity-100 focus-within:opacity-100 transition-opacity">
+          {/* Teleported owner tag — slides in next to the control chip / archive
+              as the resting badge fades out on hover. */}
+          <Show when={badge()}>
+            <span
+              data-slot="session-owner-badge-teleported"
+              class="shrink-0 inline-flex max-w-[40%] items-center gap-1 overflow-hidden text-ellipsis whitespace-nowrap rounded-sm px-1 py-0.5 text-[10px] leading-none text-v2-text-text-faint bg-v2-background-bg-layer-02"
+              title={badge()!}
+            >
+              <IconV2 name="monitor" class="shrink-0 opacity-70" />
+              <span class="overflow-hidden text-ellipsis whitespace-nowrap">{badge()}</span>
+            </span>
+          </Show>
           <Show when={chip()} keyed>
             {(c) => (
               <span
@@ -1842,8 +1888,9 @@ function ArchivedSessionDropdownRow(props: {
         <span class="min-w-0 flex-[1_1_auto] overflow-hidden text-ellipsis whitespace-nowrap">
           {title()}
         </span>
-        {/* Owner tag fades out on hover/focus so the unarchive/delete controls
-            never overlay it — same resting-identity rule as the active row. */}
+        {/* Owner tag fades out on hover/focus and the SAME tag reappears in the
+            action cluster to the left of unarchive/delete (the teleport) —
+            same resting-identity rule as the active row. */}
         <Show when={isRemote() && badge()}>
           <span
             data-slot="archived-session-owner-badge"
@@ -1856,6 +1903,18 @@ function ArchivedSessionDropdownRow(props: {
         </Show>
       </button>
       <div class="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center gap-0.5 opacity-0 group-hover/archived:opacity-100 focus-within:opacity-100 transition-opacity">
+        {/* Teleported owner tag — appears next to unarchive/delete as the resting
+            badge fades out on hover. */}
+        <Show when={isRemote() && badge()}>
+          <span
+            data-slot="archived-session-owner-badge-teleported"
+            class="shrink-0 inline-flex items-center gap-1 text-[10px] leading-none text-v2-text-text-faint mr-0.5"
+            title={badge()}
+          >
+            <IconV2 name="monitor" size="small" class="shrink-0 opacity-70" />
+            <span class="max-w-24 overflow-hidden text-ellipsis whitespace-nowrap">{badge()}</span>
+          </span>
+        </Show>
         <Show
           when={!isRemote() || canWrite()}
           fallback={

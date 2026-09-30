@@ -5,6 +5,8 @@ import {
   peerSessionsFromProjection,
   allSessionsFromProjection,
   mergePeerSessions,
+  stabilizeSessionIdentity,
+  sessionRowSignature,
   deriveSessionBadge,
   isRemotePeerSession,
   resolveDropdownOpenAction,
@@ -726,5 +728,63 @@ describe("allSessionsFromProjection — local + remote (the Studio-dropdown fix)
     expect(allSessionsFromProjection(undefined)).toEqual([])
     expect(allSessionsFromProjection({})).toEqual([])
     expect(allSessionsFromProjection({ sessions: "nope" })).toEqual([])
+  })
+})
+
+// amicode#1652: the identity cache that stops <For> remounting (and flashing) a
+// tagged row on every 3s fleet poll. `mergePeerSessions` mints new objects each
+// poll; `stabilizeSessionIdentity` returns the PREVIOUS object when a row's
+// render signature is unchanged, so the reference (and its DOM node) is stable.
+describe("stabilizeSessionIdentity — stable row references across polls (#1652)", () => {
+  const row = (id: string, updated: number, extra: Partial<DropdownSession> = {}): DropdownSession =>
+    ({ id, title: id, directory: "/d", time: { created: 0, updated }, ...extra }) as DropdownSession
+
+  test("an unchanged row keeps the SAME object reference across two emits", () => {
+    const cache = new Map<string, { sig: string; row: DropdownSession }>()
+    const first = [row("ses_a", 1, { amicode_owner: studioTag })]
+    const out1 = stabilizeSessionIdentity(first, cache)
+    // A fresh object with identical render-relevant content (as mergePeerSessions
+    // would mint on the next poll) — different reference, same signature.
+    const second = [row("ses_a", 1, { amicode_owner: { ...studioTag } })]
+    const out2 = stabilizeSessionIdentity(second, cache)
+    expect(out2[0]).toBe(out1[0]) // SAME reference → <For> preserves the DOM node
+    expect(second[0]).not.toBe(out2[0]) // the fresh input object was discarded
+  })
+
+  test("a genuine content change (title/owner/control) allocates a NEW reference", () => {
+    const cache = new Map<string, { sig: string; row: DropdownSession }>()
+    const out1 = stabilizeSessionIdentity([row("ses_a", 1, { title: "old" })], cache)
+    const changed = row("ses_a", 1, { title: "new" })
+    const out2 = stabilizeSessionIdentity([changed], cache)
+    expect(out2[0]).toBe(changed) // content changed → the new object is used
+    expect(out2[0]).not.toBe(out1[0])
+  })
+
+  test("time.updated churn alone does NOT re-key (streaming tokens must not remount)", () => {
+    const cache = new Map<string, { sig: string; row: DropdownSession }>()
+    const out1 = stabilizeSessionIdentity([row("ses_a", 1)], cache)
+    const out2 = stabilizeSessionIdentity([row("ses_a", 99999)], cache) // only updated moved
+    expect(out2[0]).toBe(out1[0])
+  })
+
+  test("preserves order and evicts ids that leave the list (no unbounded growth)", () => {
+    const cache = new Map<string, { sig: string; row: DropdownSession }>()
+    stabilizeSessionIdentity([row("ses_a", 1), row("ses_b", 2), row("ses_c", 3)], cache)
+    expect(cache.size).toBe(3)
+    const out = stabilizeSessionIdentity([row("ses_c", 3), row("ses_a", 1)], cache)
+    expect(out.map((s) => s.id)).toEqual(["ses_c", "ses_a"]) // order follows input
+    expect(cache.has("ses_b")).toBe(false) // evicted
+    expect(cache.size).toBe(2)
+  })
+
+  test("sessionRowSignature ignores time.updated but tracks owner + control", () => {
+    const base = row("ses_a", 1, { amicode_owner: studioTag })
+    expect(sessionRowSignature(base)).toBe(sessionRowSignature(row("ses_a", 12345, { amicode_owner: studioTag })))
+    expect(sessionRowSignature(base)).not.toBe(sessionRowSignature(row("ses_a", 1, { amicode_owner: localTag })))
+    const withControl = row("ses_a", 1, {
+      amicode_owner: studioTag,
+      amicode_control: { controlState: "interactive", reason: null, eligibility: "none" },
+    })
+    expect(sessionRowSignature(withControl)).not.toBe(sessionRowSignature(base))
   })
 })
