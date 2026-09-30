@@ -61,7 +61,7 @@ export function PromptInputV2Composer(props: PromptInputV2ComposerProps) {
   const language = useLanguage()
 
   return (
-    <div class="flex flex-col gap-3">
+    <div class="amicode-composer-cq flex flex-col gap-3">
       <PromptInputV2
         controller={props.controller}
         borderUnderlay={props.borderUnderlay}
@@ -74,10 +74,12 @@ export function PromptInputV2Composer(props: PromptInputV2ComposerProps) {
         // gated-off button passes `undefined` and the row's layout never shifts.
         trailingControl={
           <>
-            <ConciseModeToggle
-              active={props.controller.concise.on()}
-              onToggle={(next) => props.controller.concise.set(next)}
-            />
+            <div class="amicode-concise-toggle-wrap flex items-center">
+              <ConciseModeToggle
+                active={props.controller.concise.on()}
+                onToggle={(next) => props.controller.concise.set(next)}
+              />
+            </div>
             {bugReportEnabled() ? <ReportBugButton /> : undefined}
           </>
         }

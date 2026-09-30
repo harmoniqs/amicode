@@ -28,7 +28,7 @@
     "packages/app/src/design-polish.css": "6b860316d2d57a4a9a89c1ff2772de45eca0d0cef2bd3e2ea8572d817e1d1910",
     "packages/app/src/desktop-menu.ts": "350e0e9f2e4294bfe1b1f357b3cd2ea0908b14d20ca1e79fda2305db1958fb24",
     "packages/app/src/entry.tsx": "f35e1017f4c9d478d254b2a38043e5750064b6bef25169c3e07ae9f72ff1049c",
-    "packages/app/src/index.css": "2c11df3dcebb381358e06626094b5dda3c35688ad7940d643b2cbb6cff1ea9e9",
+    "packages/app/src/index.css": "727656c5e7ff7d7c7ff4fc95a3ec7c9148a34f1f974a58a297285e870519be5d",
     "packages/app/src/theme-preload.test.ts": "d9e4e96dd39a3491493637682611bedf6ddf4b6e4dbdddcb60bf006211b137a1",
     "packages/app/test-browser/empty-workspace-landing.test.ts": "83d19ecf5da37c234dbde1a004432865204d7f412a335c4e470a07e73d9bcda4",
     "packages/app/test-browser/keybind-migration.test.ts": "192418880d432ff62d15fd80f6250ece6233e43d0dbe11d5a4fbb5f4d9e45a06",
@@ -116,7 +116,7 @@
     "packages/app/src/components/pane-bridge.tsx": "756b3306b51c963fac6778716f6c6c4626f0f3bf75c93b7cb4cab58ea0bf3d4e",
     "packages/app/src/components/profile-popover.tsx": "eff742e90544455f13234a9351bb1b82189663cba2cd3172bdcea1a8a37284e8",
     "packages/app/src/components/prompt-input-clipboard-structure.test.ts": "946b718c2164da394602f26e4d9919d752da0d0b9bee714f345ba16c274542da",
-    "packages/app/src/components/prompt-input-v2.tsx": "a982b27659c126e3148ffd3f9fca97da5a349aafde164871e4398b56aa12be6b",
+    "packages/app/src/components/prompt-input-v2.tsx": "12938d7b497ef971a3a809a7e0adf4845d148c673c79b55f345ac6de6adf73aa",
     "packages/app/src/components/prompt-input.tsx": "97a9bc55b46cf1f2d7c3e38110e736f7fa9db7f89121d3c013b9650a60d382d4",
     "packages/app/src/components/prompt-project-selector.tsx": "0157c954b938bce2b5aca9a82f4a72338e361f4c9027e55a7fd5a14a1654d294",
     "packages/app/src/components/report-bug-button.css": "909809b6241d53c386aa4c8ea34539ba162a8998fff755834c783025bc53a5fd",
@@ -874,7 +874,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-09-28T20:09:50.705Z",
+  "extracted_at": "2026-09-30T02:26:16.851Z",
   "per_package": {
     "packages/app": {
       "A": 187,
