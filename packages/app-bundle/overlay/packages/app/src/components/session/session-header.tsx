@@ -883,7 +883,7 @@ function SessionHeaderV2Actions(props: { state: SessionHeaderV2ActionsState }) {
 // (amicode#273) inside the session header: tabbed Active/Archived, search,
 // open-tab indicators, archive/unarchive actions, and cursor-based pagination.
 const SESSION_DROPDOWN_ROW =
-  "flex min-w-0 w-full shrink-0 cursor-default items-center rounded-sm bg-transparent text-left transition-[background-color,color,box-shadow] duration-[120ms] ease-in-out focus-visible:outline-none h-7 gap-2 px-1.5 [font-weight:440] text-v2-text-text-muted hover:bg-v2-overlay-simple-overlay-hover hover:text-v2-text-text-base focus-visible:bg-v2-overlay-simple-overlay-hover focus-visible:text-v2-text-text-base"
+  "flex min-w-0 flex-1 cursor-default items-center rounded-sm bg-transparent text-left transition-[background-color,color,box-shadow] duration-[120ms] ease-in-out focus-visible:outline-none h-7 gap-2 px-1.5 [font-weight:440] text-v2-text-text-muted hover:bg-v2-overlay-simple-overlay-hover hover:text-v2-text-text-base focus-visible:bg-v2-overlay-simple-overlay-hover focus-visible:text-v2-text-text-base"
 
 export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) {
   const tabs = useTabs()
@@ -1734,51 +1734,44 @@ function SessionDropdownRow(props: {
         <span class="min-w-0 flex-[1_1_auto] overflow-hidden text-ellipsis whitespace-nowrap">
           {title()}
         </span>
-        {/* The owner machine tag. It fades out on hover/focus and the SAME tag
-          reappears inside the action cluster to the LEFT of the archive icon
-          (the teleport) — the row's resting identity slides aside for the
-          action, never simply vanishing. Covers pointer hover + keyboard
-          focus-within alike. */}
+        {/* The owner machine tag — the row's resting identity. On hover the
+            action cluster to the right reveals IN FLOW (a 0fr→1fr grid column,
+            so it reserves exactly the controls' rendered width), which shrinks
+            this button and slides the whole tag left by that width. The tag is
+            never faded and never truncated on hover — it just moves over to make
+            room, and the archive stays pinned at the row's right edge. */}
         <Show when={badge()}>
           <span
-            data-slot="session-owner-badge-resting"
-            class="shrink-0 ml-1 inline-flex max-w-[40%] items-center gap-1 overflow-hidden text-ellipsis whitespace-nowrap rounded-sm px-1 py-0.5 text-[10px] leading-none text-v2-text-text-faint bg-v2-background-bg-layer-02 opacity-100 transition-opacity group-hover/session:opacity-0 group-focus-within/session:opacity-0"
+            data-slot="session-owner-badge"
+            class="shrink-0 ml-1 inline-flex items-center gap-1 whitespace-nowrap rounded-sm px-1 py-0.5 text-[10px] leading-none text-v2-text-text-faint bg-v2-background-bg-layer-02"
             title={badge()!}
           >
             <IconV2 name="monitor" class="shrink-0 opacity-70" />
-            <span class="overflow-hidden text-ellipsis whitespace-nowrap">{badge()}</span>
+            <span class="whitespace-nowrap">{badge()}</span>
           </span>
         </Show>
       </button>
       <Show when={!isRemote()}>
-      <div class="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center gap-1 opacity-0 group-hover/session:opacity-100 focus-within:opacity-100 transition-opacity">
-        {/* Teleported tag: the resting owner badge (above) faded out on hover;
-            this copy appears in its place, next to the archive icon. */}
-        <Show when={badge()}>
-          <span
-            data-slot="session-owner-badge-teleported"
-            class="shrink-0 inline-flex max-w-[40%] items-center gap-1 overflow-hidden text-ellipsis whitespace-nowrap rounded-sm px-1 py-0.5 text-[10px] leading-none text-v2-text-text-faint bg-v2-background-bg-layer-02"
-            title={badge()!}
-          >
-            <IconV2 name="monitor" class="shrink-0 opacity-70" />
-            <span class="overflow-hidden text-ellipsis whitespace-nowrap">{badge()}</span>
-          </span>
-        </Show>
-        <TooltipV2 placement="top" value={language.t("common.archive")}>
-          <IconButtonV2
-            data-action="session-dropdown-archive"
-            variant="ghost-muted"
-            size="large"
-            icon={<IconV2 name="archive" />}
-            aria-label={language.t("common.archive")}
-            onClick={(event: MouseEvent) => {
-              event.preventDefault()
-              event.stopPropagation()
-              void props.onArchive(props.session)
-            }}
-          />
-        </TooltipV2>
-      </div>
+        <div class="grid shrink-0 grid-cols-[0fr] transition-[grid-template-columns] duration-150 ease-in-out group-hover/session:grid-cols-[1fr] group-focus-within/session:grid-cols-[1fr]">
+          <div class="overflow-hidden">
+            <div class="flex items-center pl-1 opacity-0 transition-opacity duration-150 group-hover/session:opacity-100 group-focus-within/session:opacity-100">
+              <TooltipV2 placement="top" value={language.t("common.archive")}>
+                <IconButtonV2
+                  data-action="session-dropdown-archive"
+                  variant="ghost-muted"
+                  size="large"
+                  icon={<IconV2 name="archive" />}
+                  aria-label={language.t("common.archive")}
+                  onClick={(event: MouseEvent) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    void props.onArchive(props.session)
+                  }}
+                />
+              </TooltipV2>
+            </div>
+          </div>
+        </div>
       </Show>
       {/* #1544 (slice 4): a REMOTE peer row's control affordances. Control NOT
           held → the write affordance is DISABLED with a visible reason chip
@@ -1786,48 +1779,40 @@ function SessionDropdownRow(props: {
           button. Control HELD → the owner-routed ARCHIVE. Delete lives on the
           Archived tab (remote matches local: archive first, then delete). */}
       <Show when={isRemote()}>
-        <div class="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center gap-1 opacity-0 group-hover/session:opacity-100 focus-within:opacity-100 transition-opacity">
-          {/* Teleported owner tag — slides in next to the control chip / archive
-              as the resting badge fades out on hover. */}
-          <Show when={badge()}>
-            <span
-              data-slot="session-owner-badge-teleported"
-              class="shrink-0 inline-flex max-w-[40%] items-center gap-1 overflow-hidden text-ellipsis whitespace-nowrap rounded-sm px-1 py-0.5 text-[10px] leading-none text-v2-text-text-faint bg-v2-background-bg-layer-02"
-              title={badge()!}
-            >
-              <IconV2 name="monitor" class="shrink-0 opacity-70" />
-              <span class="overflow-hidden text-ellipsis whitespace-nowrap">{badge()}</span>
-            </span>
-          </Show>
-          <Show when={chip()} keyed>
-            {(c) => (
-              <span
-                data-slot="session-control-chip"
-                data-control-reason={c.reason}
-                class="shrink-0 inline-flex items-center gap-1 rounded-sm px-1 py-0.5 text-[10px] leading-none text-v2-text-text-faint bg-v2-background-bg-layer-02"
-                title={c.label}
-              >
-                <IconV2 name="lock" class="shrink-0 opacity-70" />
-                <span>{c.label}</span>
-              </span>
-            )}
-          </Show>
-          <Show when={canWrite()}>
-            <TooltipV2 placement="top" value="Archive on peer">
-              <IconButtonV2
-                data-action="session-remote-archive"
-                variant="ghost-muted"
-                size="large"
-                icon={<IconV2 name="archive" />}
-                aria-label="Archive on peer"
-                onClick={(event: MouseEvent) => {
-                  event.preventDefault()
-                  event.stopPropagation()
-                  void props.onArchive(props.session)
-                }}
-              />
-            </TooltipV2>
-          </Show>
+        <div class="grid shrink-0 grid-cols-[0fr] transition-[grid-template-columns] duration-150 ease-in-out group-hover/session:grid-cols-[1fr] group-focus-within/session:grid-cols-[1fr]">
+          <div class="overflow-hidden">
+            <div class="flex items-center gap-1 pl-1 opacity-0 transition-opacity duration-150 group-hover/session:opacity-100 group-focus-within/session:opacity-100">
+              <Show when={chip()} keyed>
+                {(c) => (
+                  <span
+                    data-slot="session-control-chip"
+                    data-control-reason={c.reason}
+                    class="shrink-0 inline-flex items-center gap-1 rounded-sm px-1 py-0.5 text-[10px] leading-none text-v2-text-text-faint bg-v2-background-bg-layer-02"
+                    title={c.label}
+                  >
+                    <IconV2 name="lock" class="shrink-0 opacity-70" />
+                    <span>{c.label}</span>
+                  </span>
+                )}
+              </Show>
+              <Show when={canWrite()}>
+                <TooltipV2 placement="top" value="Archive on peer">
+                  <IconButtonV2
+                    data-action="session-remote-archive"
+                    variant="ghost-muted"
+                    size="large"
+                    icon={<IconV2 name="archive" />}
+                    aria-label="Archive on peer"
+                    onClick={(event: MouseEvent) => {
+                      event.preventDefault()
+                      event.stopPropagation()
+                      void props.onArchive(props.session)
+                    }}
+                  />
+                </TooltipV2>
+              </Show>
+            </div>
+          </div>
         </div>
       </Show>
     </div>
@@ -1888,94 +1873,87 @@ function ArchivedSessionDropdownRow(props: {
         <span class="min-w-0 flex-[1_1_auto] overflow-hidden text-ellipsis whitespace-nowrap">
           {title()}
         </span>
-        {/* Owner tag fades out on hover/focus and the SAME tag reappears in the
-            action cluster to the left of unarchive/delete (the teleport) —
-            same resting-identity rule as the active row. */}
+        {/* Owner tag — the row's resting identity. Same behavior as the active
+            row: on hover the unarchive/delete cluster reveals IN FLOW (0fr→1fr
+            grid, reserving the controls' exact rendered width) and slides this
+            tag left by that width. Never faded, never truncated on hover. */}
         <Show when={isRemote() && badge()}>
           <span
             data-slot="archived-session-owner-badge"
-            class="shrink-0 inline-flex items-center gap-1 text-[10px] leading-none text-v2-text-text-faint opacity-100 transition-opacity group-hover/archived:opacity-0 group-focus-within/archived:opacity-0"
+            class="shrink-0 inline-flex items-center gap-1 whitespace-nowrap text-[10px] leading-none text-v2-text-text-faint"
             title={badge()}
           >
             <IconV2 name="monitor" size="small" class="shrink-0 opacity-70" />
-            <span class="max-w-24 overflow-hidden text-ellipsis whitespace-nowrap">{badge()}</span>
+            <span class="whitespace-nowrap">{badge()}</span>
           </span>
         </Show>
       </button>
-      <div class="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center gap-0.5 opacity-0 group-hover/archived:opacity-100 focus-within:opacity-100 transition-opacity">
-        {/* Teleported owner tag — appears next to unarchive/delete as the resting
-            badge fades out on hover. */}
-        <Show when={isRemote() && badge()}>
-          <span
-            data-slot="archived-session-owner-badge-teleported"
-            class="shrink-0 inline-flex items-center gap-1 text-[10px] leading-none text-v2-text-text-faint mr-0.5"
-            title={badge()}
-          >
-            <IconV2 name="monitor" size="small" class="shrink-0 opacity-70" />
-            <span class="max-w-24 overflow-hidden text-ellipsis whitespace-nowrap">{badge()}</span>
-          </span>
-        </Show>
-        <Show
-          when={!isRemote() || canWrite()}
-          fallback={
-            <Show when={chip()} keyed>
-              {(c) => (
-                <span
-                  data-slot="session-control-chip"
-                  data-control-reason={c.reason}
-                  class="shrink-0 inline-flex items-center gap-1 rounded-sm px-1 py-0.5 text-[10px] leading-none text-v2-text-text-faint bg-v2-background-bg-layer-02"
-                  title={c.label}
+      <div class="grid shrink-0 grid-cols-[0fr] transition-[grid-template-columns] duration-150 ease-in-out group-hover/archived:grid-cols-[1fr] group-focus-within/archived:grid-cols-[1fr]">
+        <div class="overflow-hidden">
+          <div class="flex items-center gap-0.5 pl-1 opacity-0 transition-opacity duration-150 group-hover/archived:opacity-100 group-focus-within/archived:opacity-100">
+            <Show
+              when={!isRemote() || canWrite()}
+              fallback={
+                <Show when={chip()} keyed>
+                  {(c) => (
+                    <span
+                      data-slot="session-control-chip"
+                      data-control-reason={c.reason}
+                      class="shrink-0 inline-flex items-center gap-1 rounded-sm px-1 py-0.5 text-[10px] leading-none text-v2-text-text-faint bg-v2-background-bg-layer-02"
+                      title={c.label}
+                    >
+                      <IconV2 name="lock" class="shrink-0 opacity-70" />
+                      <span>{c.label}</span>
+                    </span>
+                  )}
+                </Show>
+              }
+            >
+              <TooltipV2 placement="top" value="Unarchive">
+                <IconButtonV2
+                  data-action="session-dropdown-unarchive"
+                  variant="ghost-muted"
+                  size="large"
+                  icon={<Icon name="arrow-undo-down" size="small" />}
+                  aria-label="Unarchive"
+                  onClick={(event: MouseEvent) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    void props.onUnarchive(props.session)
+                  }}
+                />
+              </TooltipV2>
+              <Show
+                when={armed()}
+                fallback={
+                  <TooltipV2 placement="top" value="Delete permanently">
+                    <IconButtonV2
+                      data-action="session-dropdown-delete"
+                      variant="ghost-muted"
+                      size="large"
+                      icon={<Icon name="trash" size="small" />}
+                      aria-label="Delete permanently"
+                      onClick={arm}
+                    />
+                  </TooltipV2>
+                }
+              >
+                <ButtonV2
+                  data-action="session-dropdown-delete-confirm"
+                  variant="danger"
+                  size="small"
+                  aria-label="Confirm delete"
+                  aria-live="polite"
+                  onClick={confirmDelete}
+                  onBlur={disarm}
+                  onKeyDown={(e: KeyboardEvent) => e.key === "Escape" && disarm()}
                 >
-                  <IconV2 name="lock" class="shrink-0 opacity-70" />
-                  <span>{c.label}</span>
-                </span>
-              )}
+                  Delete
+                </ButtonV2>
+              </Show>
             </Show>
-          }
-        >
-          <TooltipV2 placement="top" value="Unarchive">
-          <IconButtonV2
-            data-action="session-dropdown-unarchive"
-            variant="ghost-muted"
-            size="large"
-            icon={<Icon name="arrow-undo-down" size="small" />}
-            aria-label="Unarchive"
-            onClick={(event: MouseEvent) => {
-              event.preventDefault()
-              event.stopPropagation()
-              void props.onUnarchive(props.session)
-            }}
-          />
-        </TooltipV2>
-        <Show
-          when={armed()}
-          fallback={
-            <TooltipV2 placement="top" value="Delete permanently">
-              <IconButtonV2
-                data-action="session-dropdown-delete"
-                variant="ghost-muted"
-                size="large"
-                icon={<Icon name="trash" size="small" />}
-                aria-label="Delete permanently"
-                onClick={arm}
-              />
-            </TooltipV2>
-          }
-        >
-          <ButtonV2
-            data-action="session-dropdown-delete-confirm"
-            variant="danger"
-            size="small"
-            aria-label="Confirm delete"
-            aria-live="polite"
-            onClick={confirmDelete}
-            onBlur={disarm}
-            onKeyDown={(e: KeyboardEvent) => e.key === "Escape" && disarm()}
-          >
-            Delete
-          </ButtonV2>
-        </Show>
-        </Show>
+          </div>
+        </div>
       </div>
     </div>
   )

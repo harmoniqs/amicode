@@ -114,23 +114,34 @@ describe("#1544 session-header control wiring", () => {
   })
 })
 
-// amicode#1652: the owner tag no longer simply vanishes on hover to reveal the
-// action cluster — it TELEPORTS left, reappearing next to the archive/delete
-// controls. The resting badge fades out (group-hover opacity) and a second copy
-// inside the (fade-in) action cluster takes its place.
-describe("#1652 owner-tag teleport on hover", () => {
-  test("the active row renders a resting badge AND a teleported copy in the action cluster", () => {
-    expect(source).toContain('data-slot="session-owner-badge-resting"')
-    expect(source).toContain('data-slot="session-owner-badge-teleported"')
-    // the resting badge still fades out on hover/focus…
-    expect(source).toContain("group-hover/session:opacity-0")
-    expect(source).toContain("group-focus-within/session:opacity-0")
+// amicode#1652: the owner tag is a SINGLE element that slides left by the action
+// cluster's exact rendered width — the cluster reveals IN FLOW via a 0fr→1fr grid
+// column (no hardcoded pixel shift), which shrinks the row button and pushes the
+// tag over. The tag is never faded out and never truncated on hover, and the
+// archive stays pinned at the row's right edge (it does not move/teleport).
+describe("#1652 owner-tag shifts (does not teleport) on hover", () => {
+  test("there is ONE owner badge per row — no duplicate 'teleported' copy", () => {
+    expect(source).toContain('data-slot="session-owner-badge"')
+    expect(source).toContain('data-slot="archived-session-owner-badge"')
+    // the earlier fade-out + second-copy approach is gone
+    expect(source).not.toContain('data-slot="session-owner-badge-resting"')
+    expect(source).not.toContain('data-slot="session-owner-badge-teleported"')
+    expect(source).not.toContain('data-slot="archived-session-owner-badge-teleported"')
   })
 
-  test("the archived row also teleports its owner tag into the action cluster", () => {
-    expect(source).toContain('data-slot="archived-session-owner-badge"')
-    expect(source).toContain('data-slot="archived-session-owner-badge-teleported"')
-    expect(source).toContain("group-hover/archived:opacity-0")
+  test("the tag is NOT faded out on hover (it shifts, it does not vanish)", () => {
+    expect(source).not.toContain("group-hover/session:opacity-0")
+    expect(source).not.toContain("group-focus-within/session:opacity-0")
+    expect(source).not.toContain("group-hover/archived:opacity-0")
+  })
+
+  test("the action cluster reveals in flow via a 0fr→1fr grid column (reserves exact width)", () => {
+    // active row (session group) and archived row (archived group)
+    expect(source).toContain("grid-cols-[0fr]")
+    expect(source).toContain("group-hover/session:grid-cols-[1fr]")
+    expect(source).toContain("group-hover/archived:grid-cols-[1fr]")
+    // the archive controls no longer overlay via an absolute right-edge box
+    expect(source).not.toContain("absolute right-1.5 top-1/2 flex -translate-y-1/2")
   })
 })
 
