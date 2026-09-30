@@ -20,6 +20,7 @@ import { buildRequestParts } from "./build-request-parts"
 import { setCursorPosition } from "./editor-dom"
 import { formatServerError } from "@/utils/server-errors"
 import { ScopedKey } from "@/utils/server-scope"
+import { conciseKey, conciseMode } from "@/context/concise-mode"
 import { createPromptSubmissionState } from "./submission-state"
 import { normalizeSessionInfo } from "@/utils/session"
 import { Event } from "@opencode-ai/schema/event"
@@ -245,11 +246,11 @@ type PromptSubmitInput = {
    *  notice instead of optimistically posting into a dead tunnel. */
   streamGap?: Accessor<boolean>
   model?: ModelSelection
-  /** amicode: when true at send time, a concise directive is appended to the
-   *  outgoing message (normal prose turns only) so the response comes back
-   *  concise — the composer's concise switch drives this. Not a hidden channel:
-   *  the directive rides with the sent message (the response-presentation
-   *  engine transport that would make it invisible was parked). */
+  /** amicode: when true at send time, the concise directive rides as the
+   *  message's per-turn `system` instruction (normal prose turns only) so the
+   *  response comes back concise — the composer's concise switch drives this.
+   *  #1651: the switch is session-keyed; a new chat's value is promoted to the
+   *  created session below. */
   concise?: Accessor<boolean>
 }
 
@@ -389,6 +390,10 @@ export function createPromptSubmit(input: PromptSubmitInput) {
     const permissionState = permission.currentServerState()
     const isNewSession = !params.id
     const shouldAutoAccept = isNewSession && input.autoAccept()
+    // amicode#1651: read the concise switch (and the new chat's draft key) NOW,
+    // before any await — once the session exists the composer's key moves to it.
+    const conciseAtSend = input.concise?.() ?? false
+    const conciseDraftKey = conciseKey.draft(sdk().scope, projectDirectory, search.draftId)
     const worktreeSelection = input.newSessionWorktree?.() || "main"
 
     let sessionDirectory = projectDirectory
@@ -461,6 +466,8 @@ export function createPromptSubmit(input: PromptSubmitInput) {
             model: { providerID: currentModel.provider.id, modelID: currentModel.id },
             variant: variant ?? null,
           })
+          // amicode#1651: the new chat's concise switch follows it into the session.
+          conciseMode.promote(conciseDraftKey, conciseKey.session(sdk().scope, sessionDirectory, session.id))
           layout.handoff.setTabs(base64Encode(sessionDirectory), session.id)
           const draftID = search.draftId
           if (draftID) tabs.promoteDraft(draftID, { server: tabs.draft(draftID).server, sessionId: session.id })
@@ -490,7 +497,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       agent,
       model,
       variant,
-      system: (input.concise?.() ?? false) ? CONCISE_DIRECTIVE : undefined,
+      system: conciseAtSend ? CONCISE_DIRECTIVE : undefined,
     }
 
     const clearInput = () => {

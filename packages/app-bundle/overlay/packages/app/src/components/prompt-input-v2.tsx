@@ -6,7 +6,9 @@ import { Icon } from "@opencode-ai/ui/v2/icon"
 import { KeybindV2 } from "@opencode-ai/ui/v2/keybind-v2"
 import { TooltipV2 } from "@opencode-ai/ui/v2/tooltip-v2"
 import type { ReferenceInfo } from "@opencode-ai/sdk/v2/client"
-import { createEffect, createMemo, createSignal, on, onCleanup, Show } from "solid-js"
+import { createEffect, createMemo, on, onCleanup, Show } from "solid-js"
+import { useSearchParams } from "@solidjs/router"
+import { bindConcise, conciseKey, conciseMode } from "@/context/concise-mode"
 import { ModelSelectorPopoverV2 } from "@/components/dialog-select-model"
 import { DialogSelectModelUnpaidV2 } from "@/components/dialog-select-model-unpaid-v2"
 import { ReportBugButton } from "@/components/report-bug-button"
@@ -231,13 +233,21 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
     if (!id) return permission.isAutoAcceptingDirectory(sdk().directory)
     return permission.isAutoAccepting(id, sdk().directory)
   })
-  // amicode: concise-mode flag. A persistent per-session switch — flipping it
-  // sends nothing; it is read at submit time (createPromptSubmit's `concise`) to
-  // append a concise directive to the outgoing prose message. Lightweight by
-  // design: the response-presentation engine transport was parked in favor of
-  // the concise skill, and this drives that skill per sent message.
-  const [conciseOn, setConciseOn] = createSignal(false)
-  const concise = { on: conciseOn, set: setConciseOn }
+  // amicode: concise-mode flag. A per-session switch — flipping it sends
+  // nothing; it is read at submit time (createPromptSubmit's `concise`) to attach
+  // the concise directive to the outgoing prose message. #1651: held in the
+  // session-keyed concise store, NOT component state, so a composer remount (new
+  // chat → session, Changes tab, session switch) reads the value back. A new
+  // chat writes under its draft key; submit promotes it to the session key.
+  const [conciseSearch] = useSearchParams<{ draftId?: string }>()
+  const conciseKeyNow = () => {
+    const id = props.controls.session.id
+    return id
+      ? conciseKey.session(sdk().scope, sdk().directory, id)
+      : conciseKey.draft(sdk().scope, sdk().directory, conciseSearch.draftId)
+  }
+  const concise = bindConcise(conciseMode, conciseKeyNow)
+  const conciseOn = concise.on
   const submission = createPromptSubmit({
     prompt,
     info,
