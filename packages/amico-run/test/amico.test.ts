@@ -85,6 +85,16 @@ describe("amico router — help + unknown verb", () => {
     expect(r.code).toBe(64);
     expect(r.stderr).toMatch(/unknown verb "frobnicate"/);
   });
+  it("strategy-brief is a TOP-LEVEL verb (the notturno synthesis seam invokes it there)", () => {
+    // the seam contract (automation/notturno/synthesis): `bun …/src/amico.ts
+    // strategy-brief …` — if the router drops the head to the switch's
+    // default, the seam dies as "unknown verb" (dry-run 36836288143).
+    // Missing corpus paths → the RENDERER's own validation error, never the
+    // router's unknown-verb error.
+    const r = run(["strategy-brief", "--intent", "/nonexistent-intent", "--sessions", "/nonexistent-sessions"]);
+    expect(r.stderr).not.toMatch(/unknown verb/);
+    expect(r.stderr).toMatch(/amico-run strategy-brief: --intent not found/);
+  });
 });
 
 describe("amico router — run delegates verbatim to the launch path", () => {
