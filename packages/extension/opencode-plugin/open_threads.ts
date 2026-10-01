@@ -70,7 +70,7 @@ export interface OpenThread {
   created: string; // ISO
   ageDays: number;
   /** The thread-Noul (#1311) — an INPUT feature from the derived map the
-   *  amico-run pass writes; undefined = no map entry = today's digest. */
+   *  amico CLI curation pass writes; undefined = no map entry = today's digest. */
   threadNoul?: number;
 }
 
@@ -327,7 +327,7 @@ function queryPendingTodos(db: any, sessionId: string): number {
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
-/** The derived thread-Noul map's home (#1311): the amico-run curation pass
+/** The derived thread-Noul map's home (#1311): the amico CLI curation pass
  *  (`amico sessions thread-noul`) writes it into the ops dir; the digest
  *  READS it (input feature — this module still makes no network call).
  *  $AMICODE_OPS_DIR → ~/.amico/amicode (the setup-state seam). */
@@ -359,7 +359,7 @@ export function readThreadNoulMap(mapPath?: string): Record<string, number> | un
  * `prStateFor` injects PR-state as an INPUT feature map per session — the
  * caller decides when to spend a network call; this module never fetches.
  * `threadNoulFor` (#1311) is the same seam for the derived thread-Noul map
- * (the amico-run pass spends the Jev calls; ranking + ≥ 0.5 promotion ride
+ * (the amico CLI pass spends the Jev calls; ranking + ≥ 0.5 promotion ride
  * the map, bucket labels stay deterministic). Returns null when there are
  * no open threads, the DB is unavailable (e.g. under Node/vitest), or on error.
  */

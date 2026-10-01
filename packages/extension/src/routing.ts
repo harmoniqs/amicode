@@ -18,7 +18,7 @@ import * as path from "node:path";
 // This module never routes: it (a) reads whether Harmoniqs Cloud is currently
 // connected and (b) shapes the routing guidance spliced into the agent's
 // AGENTS.md. The durable enforcement is elsewhere and does not trust this prose
-// — amico-run refuses a local launch while HP is selected, and its gate refuses
+// — the amico CLI refuses a local launch while HP is selected, and its gate refuses
 // a tier=hpc spec that is not remote + provisioned + connected.
 //
 // SECURITY: the cloud token lives in ~/.amico/cloud.json and is NEVER read here
@@ -121,12 +121,12 @@ export function buildRoutingSection(ctx: RoutingContext): string {
     "which is a CLOUD-ONLY tier. Every solve on this solver runs in the cloud: there is no " +
     "local-vs-cloud choice to make here, so do NOT ask the researcher where it should run.\n" +
     "- **Author it as High-Performance + Cloud.** Set `tier=\"hpc\"`, `executor=\"remote\"`, and " +
-    '`env.kind="provisioned"` on solvespec.json, then launch with `amico-run --spec <spec> ' +
+    '`env.kind="provisioned"` on solvespec.json, then launch with `amico run --spec <spec> ' +
     "<script.jl> --executor remote`.\n" +
     "- **Never dispatch this solver locally.** The runner image has Piccolissimo/Altissimo " +
-    "pre-baked; a laptop would precompile the HP stack from scratch. amico-run REFUSES a local " +
+    "pre-baked; a laptop would precompile the HP stack from scratch. The amico CLI REFUSES a local " +
     "launch while this solver is selected (exit 64), so a local attempt only wastes a turn.\n" +
-    "- **`amico-run estimate` is still worth running** to report size and cost to the " +
+    "- **`amico estimate` is still worth running** to report size and cost to the " +
     "researcher, but it no longer decides anything: an estimate that fits in local RAM does " +
     "not make an HP solve local.\n" +
     "- **A local solve means switching solvers.** If the researcher wants to run locally, they " +

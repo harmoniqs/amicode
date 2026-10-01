@@ -99,7 +99,7 @@ export const AmicodeContext = async (input: unknown) => {
       // Open-threads digest (#1305) — derived, deterministic read of what is
       // still open, rendered after the recent-sessions block. PR-state is an
       // input feature; this pass spends no network call. The #1311 thread-Noul
-      // map is the same shape of input: the amico-run curation pass spent the
+      // map is the same shape of input: the amico CLI curation pass spent the
       // Jev calls and wrote the derived map; this hook only READS it (ranking
       // + ≥ 0.5 promotion — bucket labels stay deterministic, and an absent
       // map degrades the digest to #1305's exact behavior).

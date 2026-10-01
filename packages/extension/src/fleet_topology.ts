@@ -241,7 +241,7 @@ function defaultRunVerb(): VerbRunResult {
 }
 
 /** A verb runner with extra PATH entries (the extension host's `amico` may
- *  not be on the ambient PATH — the amico-run launcher dir is prepended the
+ *  not be on the ambient PATH — the amico CLI launcher dir is prepended the
  *  same way the server spawn's PATH is, so an enrolled machine never gets
  *  misrouted to the CLI-absent branch). */
 export function verbRunnerWithPaths(extraPaths: string[], timeoutMs = 30_000): () => VerbRunResult {

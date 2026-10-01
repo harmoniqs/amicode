@@ -53,7 +53,7 @@ export function serverAuthHeader(password: string): string {
 
 /** Build the env the extension ADDS to the opencode server spawn (the server
  *  inherits the host env underneath — ServerManager spreads process.env):
- *    PATH                     — amico-run launcher dir prepended, so solves run
+ *    PATH                     — amico CLI launcher dir prepended, so solves run
  *    OPENCODE_CONFIG_CONTENT  — the amico instructions/permission merge
  *    OPENCODE_SERVER_PASSWORD — arms the fork's route auth (this module)
  *  One builder for all spawn sites so no respawn path can drop the password. */
@@ -194,7 +194,7 @@ export function buildTelemetryEnv(t: TelemetryContext | undefined): Record<strin
   };
 }
 
-/** GitHub App connection state file — path contract SHARED with amico-run's
+/** GitHub App connection state file — path contract SHARED with packages/amico-run's
  *  github_app.ts (githubAppConfigFile); duplicated here because the extension
  *  spawns the CLI package, it does not import it (the pasqal_devices.ts
  *  precedent for ~/.amico defaults). */
@@ -224,7 +224,7 @@ export function buildGitCredentialHelperEnv(
 }
 
 export function buildServerSpawnEnv(opts: {
-  /** amico-run launcher bin dir; undefined = launcher missing (boot warns). */
+  /** amico CLI launcher bin dir; undefined = launcher missing (boot warns). */
   amicoRunBinDir: string | undefined;
   /** buildOpencodeConfigContent(...) output for this spawn. */
   configContent: string;
@@ -235,7 +235,7 @@ export function buildServerSpawnEnv(opts: {
    *  Undefined = not provisioned: the key stays ABSENT (never empty) so the
    *  fork's fallback is byte-identical to pre-provisioning behavior.
    *  Deliberate, recorded S37 exception: this is server-child plumbing for
-   *  the validator, NOT amico-run env propagation (which stays argv-only). */
+   *  the validator, NOT amico CLI env propagation (which stays argv-only). */
   amicoPython?: string;
   /** Resolved run-corpus telemetry context, or undefined to omit OTLP entirely.
    *  buildTelemetryEnv applies the consent gate, so an un-gated context still
