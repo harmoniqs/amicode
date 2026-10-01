@@ -179,7 +179,7 @@ jobs:
       - run: julia --project=packages/schema/julia -e 'using Pkg; Pkg.instantiate()'
       - name: round-trip (golden + negative fixtures)
         run: julia --project=packages/schema/julia packages/schema/julia/runtests.jl
-      - name: producer lane — amico-run emits a run-dir, Julia validates the emitted output
+      - name: producer lane — amico run emits a run-dir, Julia validates the emitted output
         run: bash packages/schema/scripts/producer_roundtrip.sh
       - name: AC6 anti-drift — perturbing the shared schema flips BOTH TS and Julia (run + problemspec)
         run: bash packages/schema/scripts/ac6_drift_check.sh
