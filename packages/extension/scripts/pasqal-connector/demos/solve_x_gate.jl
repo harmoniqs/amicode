@@ -49,16 +49,17 @@ sys = QuantumSystem(
 goal = GATES[:X]
 
 # Initial guess: amplitude near the π-area mean (∫Ω dt = π), detuning ~0.
-# Endpoints at idle (Ω=Δ=0, S-19 doctrine — the campaign's H17 measured the
-# clamp costs nothing and pays on both legs; the contract warns on non-idle
-# endpoints): zero the seed's edges AND pin them explicitly.
+# Endpoints at idle (S-19 doctrine — the campaign's H17 measured the clamp
+# costs nothing and pays on both legs; the contract warns on non-idle
+# endpoints): the boundary kwargs below PIN both drives' ends to Ω=Δ=0.
+# (The seed's edges are not zeroed on purpose — an x₀/boundary mismatch is
+# harmless, Ipopt's restoration phase resolves it in the first iterations,
+# and this seed reproduces the recorded Jul-8 chain.)
 times = collect(range(0.0, T, length = N))
 u_init = vcat(
     clamp.(fill(π / T, N)' .+ 0.05Ω_MAX * randn(1, N), 0.05Ω_MAX, 0.95Ω_MAX),
     0.01Δ_MAX * randn(1, N),
 )
-u_init[:, 1] .= 0.0
-u_init[:, end] .= 0.0
 
 qtraj = UnitaryTrajectory(sys, ZeroOrderPulse(u_init, times;
     initial_value = zeros(2),   # endpoints pinned to IDLE, never the seed's
