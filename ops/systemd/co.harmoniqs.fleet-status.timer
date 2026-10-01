@@ -1,0 +1,10 @@
+[Unit]
+Description=Amicode fleet status + projection refresh every 5 minutes (launchd co.harmoniqs.fleet-status parity)
+
+[Timer]
+OnCalendar=*:0/5
+Persistent=true
+Unit=co.harmoniqs.fleet-status.service
+
+[Install]
+WantedBy=timers.target

@@ -11,7 +11,7 @@ set -euo pipefail
 DEST="$HOME/.amico/ops"
 SRC="$(cd "$(dirname "$0")" && pwd)"
 
-mkdir -p "$DEST/papers-digest" "$DEST/skill-freshness" "$DEST/role-parity" "$DEST/session-archive" "$DEST/shard-watch"
+mkdir -p "$DEST/papers-digest" "$DEST/skill-freshness" "$DEST/role-parity" "$DEST/session-archive" "$DEST/shard-watch" "$DEST/fleet-status"
 
 install -m 0755 "$SRC/fleet-status.sh"          "$DEST/fleet-status.sh"
 install -m 0755 "$SRC/fleet-alert.sh"           "$DEST/fleet-alert.sh"
