@@ -49,6 +49,7 @@
 import { FRONTIER_MODELS, ladderRungs } from "./ledger_dispatch.js";
 import { fleetDigest } from "./fleet_digest.js";
 import { shardWatch } from "./shard_watch.js";
+import { shardRehome } from "./shard_rehome.js";
 // The fleet-authority projection status (#1068, rearchitect P3b-1): the same
 // `amico fleet status` verb, one more read path — `--projection` routes to the
 // entitlement-gated publisher invocation + the shared reader, while the
@@ -592,7 +593,8 @@ const USAGE =
   "amico fleet launch --session <id> --pid <n>  |  " +
   'amico fleet finish --session <id> --outcome settled|crashed --pid <n> [--step "<s>"]  |  ' +
    "amico fleet digest [--post <channel>] [--machines a,b] [--jobs-line \"<t>\"] [--dry-run] [--root D]  |  " +
-   "amico fleet shard-watch [--clients a,b] [--port <p>] [--alert-min <n>] [--db <path>] [--post <ch>] [--dry-run]";
+   "amico fleet shard-watch [--clients a,b] [--port <p>] [--alert-min <n>] [--db <path>] [--post <ch>] [--dry-run]  |  " +
+  "amico fleet shard-rehome --client-home <path> [--db <path>] [--apply]";
 
 /** Optional injection surface for the fleet verb's sub-verbs — the projection
  *  status's hermetic seam (publisher subprocess, entitlement file, checkout
@@ -620,6 +622,7 @@ export function fleetVerb(argv: string[], deps: FleetVerbDeps = {}): VerbResult 
   if (sub === "finish") return fleetFinish(rest);
   if (sub === "digest") return fleetDigest(rest);
   if (sub === "shard-watch") return shardWatch(rest);
+  if (sub === "shard-rehome") return shardRehome(rest);
   return {
     json: { verb: "fleet", error: `unknown subcommand ${sub ? `"${sub}"` : "(none)"}`, usage: USAGE },
     code: 64,
