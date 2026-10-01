@@ -40,11 +40,18 @@ solve!(qcp; max_iter = 200, tol = 1e-8)
 
 Three facts worth internalizing:
 
-- **Piccolo deliberately has no `:spline` backend of its own.** Passing
-  `integrator_type = :spline` to `SplinePulseProblem` errors with instructions;
-  the only shipped Piccolo backend is `:pwc` (`BilinearIntegrator`), which models
-  the drive as piecewise-constant and ignores `:du` — a spline pulse optimized
-  against it is not the pulse its name promises.
+- **`SplineIntegrator` is Piccolo open-core (since the 2026-09 slices) — but check
+  your resolution.** The old error text saying it is "Piccolissimo only" is stale
+  (the S-18 finding): it is TRUE of the provisioned env's Piccolo git-tree but
+  FALSE of the registered v2.1.0 *tag* — the same version string covers both
+  realities, so probe before relying on it:
+  `isdefined(Piccolo, :SplineIntegrator)`. The `:pwc` fallback
+  (`BilinearIntegrator`) models the drive as piecewise-constant and ignores
+  `:du` — a spline pulse optimized against it is not the pulse its name promises
+  (Piccolo now errors on the CubicSplinePulse+Bilinear pairing by design).
+  What this tier still exclusively owns: the performance flags (GPU spline
+  cells, matrix-free HVP), the HermitianExponential specializations, adjoint
+  robustness, and the conjugation kernels (P1 on main, unreleased).
 - **`global_names` requires this integrator.** Optimizing global variables
   (frequencies, couplings) with `SplinePulseProblem(qtraj, N; global_names = [...])`
   errors unless you pass a globals-aware integrator — the spline integrator above,
