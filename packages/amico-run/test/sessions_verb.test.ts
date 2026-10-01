@@ -356,9 +356,13 @@ describe("amico sessions index — regeneration vs the seeded DB (bundle)", () =
     // archive state per row matches the DB
     expect(parsed.rows.find((x) => x.id === "ses_b1")!.state).toBe("archived");
     expect(parsed.rows.find((x) => x.id === "ses_a1")!.state).toBe("active");
-    // month sections follow time_updated
-    const nowMonth = new Date().toISOString().slice(0, 7);
-    expect(parsed.rows.find((x) => x.id === "ses_a1")!.month).toBe(nowMonth);
+    // month sections follow time_updated — the SEED's time_updated (2 days
+    // ago), which crosses a month boundary in the first days of a month: the
+    // fixture is relative to now, so the expectation must be too (the Oct-1
+    // flake: updatedDaysAgo=2 landed in September while the test asserted
+    // the current month)
+    const seedMonth = new Date(Date.now() - 2 * 86400000).toISOString().slice(0, 7);
+    expect(parsed.rows.find((x) => x.id === "ses_a1")!.month).toBe(seedMonth);
     // the distribution header carries the full-path provenance + counts
     expect(parsed.distribution).toContain("- `/home/aaron/armonia` — 3 sessions");
     expect(parsed.distribution).toContain("- `/home/aaron/harmoniqs/amicode` — 1 session");
