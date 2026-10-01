@@ -49,13 +49,21 @@ sys = QuantumSystem(
 goal = GATES[:X]
 
 # Initial guess: amplitude near the π-area mean (∫Ω dt = π), detuning ~0.
+# Endpoints at idle (Ω=Δ=0, S-19 doctrine — the campaign's H17 measured the
+# clamp costs nothing and pays on both legs; the contract warns on non-idle
+# endpoints): zero the seed's edges AND pin them explicitly.
 times = collect(range(0.0, T, length = N))
 u_init = vcat(
     clamp.(fill(π / T, N)' .+ 0.05Ω_MAX * randn(1, N), 0.05Ω_MAX, 0.95Ω_MAX),
     0.01Δ_MAX * randn(1, N),
 )
+u_init[:, 1] .= 0.0
+u_init[:, end] .= 0.0
 
-qtraj = UnitaryTrajectory(sys, ZeroOrderPulse(u_init, times), goal)
+qtraj = UnitaryTrajectory(sys, ZeroOrderPulse(u_init, times;
+    initial_value = zeros(2),   # endpoints pinned to IDLE, never the seed's
+    final_value   = zeros(2),   # edges — the pulse returns the channel to Ω=Δ=0
+), goal)
 qcp = SmoothPulseProblem(qtraj, N;
     piccolo_options = PiccoloOptions(timesteps_all_equal = true),
     Δt_bounds = (CLOCK_NS, CLOCK_NS),   # pin to the AnalogDevice clock grid
@@ -63,9 +71,12 @@ qcp = SmoothPulseProblem(qtraj, N;
 
 solve!(qcp; max_iter = max_iter, print_level = 1)
 
-# Rollout fidelity (fresh high-tolerance integration, phase-invariant).
+# Rollout fidelity (fresh high-tolerance integration, phase-invariant) at
+# interpolation = :constant — the contract executes a ZOH staircase, and a
+# smooth-interp rollout is optimistic about a pulse the device runs as steps
+# (campaign S-2).
 traj = get_trajectory(qcp)
-Uroll = iso_vec_to_operator(unitary_rollout(traj, sys)[:, end])
+Uroll = iso_vec_to_operator(unitary_rollout(traj, sys; interpolation = :constant)[:, end])
 fid = abs2(tr(Uroll' * goal)) / size(goal, 1)^2
 
 # ── Export knots in Pulser's units (rad/µs) ──────────────────────────────
@@ -75,9 +86,12 @@ amplitude = collect(A[1, :]) .* 1e3    # rad/ns → rad/µs
 detuning = collect(A[2, :]) .* 1e3
 
 open("pulse.toml", "w") do io
-    TOML.print(io, Dict(
+    TOML.print(io, Dict{String,Any}(
         "schema_version" => 1,   # pulse_contract.py checks this exactly
         "spike" => "piccolo-to-pulser-x-gate",
+        "run_id" => "x-gate-analogdevice-demo",
+        "target" => "x-1atom",
+        "fidelity_interpolation" => "constant",
         "fidelity" => fid,
         "T_ns" => T,
         "dt_ns" => Δt,
