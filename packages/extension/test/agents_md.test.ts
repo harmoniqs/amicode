@@ -340,3 +340,35 @@ describe("prompt surfaces carry no machine-specific absolute paths (#856)", () =
     expect(offenders).toEqual([]);
   });
 });
+
+// #1665: ops/server/hub-AGENTS.md is the repo's source of record for the staged
+// server AGENTS.md — the hand-maintained hub prompt served to EVERY session on
+// erlich (a Linux host; no script on the hub generates it, so this capture is
+// the only record of what the live prompt says). #856 scrubbed the four
+// mac-rendered /Users/aaron paths and captured the fixed file, but the scan
+// above walks only extension-package surfaces — the ops/ capture itself was
+// unguarded and could regress to mac-rendered paths undetected. The fixture is
+// the file itself (hermetic): the hub staging is Linux-targeted, so any /Users/
+// path in the source is the exact regression the #850 audit caught.
+describe("staged hub AGENTS.md source is platform-correct (#1665)", () => {
+  const HUB_AGENTS = readFileSync(join(__dirname, "..", "..", "..", "ops", "server", "hub-AGENTS.md"), "utf8");
+
+  it("is the real hub prompt (non-vacuous fixture — a moved or missing file must fail)", () => {
+    expect(HUB_AGENTS).toMatch(/# Amicode project context/);
+    expect(HUB_AGENTS).toMatch(/## Workflow \(this is the whole job\)/);
+  });
+
+  it("carries no /Users/ (macOS) paths — the hub staging is Linux-targeted", () => {
+    const offenders: string[] = [];
+    HUB_AGENTS.split("\n").forEach((line, i) => {
+      if (line.includes("/Users/")) offenders.push(`${i + 1}: ${line.trim()}`);
+    });
+    expect(offenders).toEqual([]);
+  });
+
+  it("keeps its amico paths in the portable ~ form, not machine-specific absolutes", () => {
+    expect(HUB_AGENTS).toMatch(/~\/\.amico\//); // the platform-correct form — $HOME resolves per host
+    expect(HUB_AGENTS).not.toMatch(/\/home\/[a-z]+\//);
+    expect(HUB_AGENTS).not.toMatch(/(?:darwin|linux|win32)-(?:x64|arm64)/);
+  });
+});
