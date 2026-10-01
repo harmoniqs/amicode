@@ -5,10 +5,14 @@
 // — the report GAINS a surfaces section; nothing v1 consumers rely on breaks.
 import type { StudioPaths } from "@amicode/schema";
 import { studioPathsOrLegacy } from "@amicode/schema";
+import { readFile, readdir } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import {
   surfaceInventory,
   renderSurfacesTable,
   canonicalJson,
+  fileSha,
   type SurfaceContext,
   type SurfacesReport,
 } from "./surfaces.js";
@@ -77,6 +81,83 @@ export async function diagnoseStudio(paths: StudioPaths, exists: Exists): Promis
   }
 
   return { ok: errors.length === 0, errors, warnings, checks };
+}
+
+// ── #1666: the pinned CLI root — the shims' frozen-bundle pin ────────────────
+//
+// The launchers resolve a pinned dist root (~/.amico/server/cli by default,
+// AMICO_CLI_PIN_ROOT to override) BEFORE any repo checkout, so a moving
+// checkout can never change what the CLI executes. `amico doctor` reports the
+// pin as a record: the root, the bundle count, the amico.js sha, and the
+// sha-sidecar freshness (the papers-digest convention — the freeze contract
+// is bundle + sidecar pair). An ABSENT pin is a warning (the pre-pin state,
+// resolving through the checkout); a mismatched/missing sidecar is an error
+// (the repairable integrity drift). Pure core: every world fact is injected.
+
+export interface PinnedCliProbes {
+  /** dir entries of the pinned root ([] when the root is absent). */
+  list: (p: string) => Promise<string[]>;
+  /** sidecar text (null when unreadable). */
+  read: (p: string) => Promise<string | null>;
+  /** hex sha256 of a file's bytes (null when unreadable). */
+  sha: (p: string) => Promise<string | null>;
+}
+
+export interface PinnedCliCheck {
+  name: "pinned_cli";
+  status: "ok" | "warn" | "error";
+  detail: string;
+}
+
+/** The first whitespace-separated token of the sidecar — `shasum`/`sha256sum`
+ *  format is "<hex>  <name>", so the digest is token 0 whatever wrote it. */
+function sidecarDigest(text: string): string | null {
+  const t = text.trim().split(/\s+/)[0] ?? "";
+  return t.length > 0 ? t : null;
+}
+
+export async function diagnosePinnedCli(root: string, probes: PinnedCliProbes): Promise<PinnedCliCheck> {
+  const bundles = (await probes.list(root)).filter((n) => n.endsWith(".js")).sort();
+  if (bundles.length === 0)
+    return {
+      name: "pinned_cli",
+      status: "warn",
+      detail: `no pinned CLI root at ${root} — resolving through the moving checkout (amicode#1666); pin it: bash ops/install-cli-pin.sh --dist <repo>/packages/amico-run/dist`,
+    };
+  const problems: string[] = [];
+  for (const name of bundles) {
+    const bundleSha = await probes.sha(join(root, name));
+    if (bundleSha === null) {
+      problems.push(`${name} unreadable`);
+      continue;
+    }
+    const sidecarPath = join(root, `${name}.sha256`);
+    const sidecarText = await probes.read(sidecarPath);
+    if (sidecarText === null) {
+      problems.push(`sidecar missing: ${sidecarPath}`);
+      continue;
+    }
+    const digest = sidecarDigest(sidecarText);
+    if (digest === null) {
+      problems.push(`sidecar unreadable (no sha256 digest found): ${sidecarPath}`);
+      continue;
+    }
+    if (digest !== bundleSha) problems.push(`${name} sha256 ${bundleSha} ≠ sidecar ${digest} (tampered dist or stale sidecar)`);
+  }
+  if (problems.length > 0)
+    return { name: "pinned_cli", status: "error", detail: problems.join("; ") };
+  if (!bundles.includes("amico.js"))
+    return {
+      name: "pinned_cli",
+      status: "warn",
+      detail: `pin at ${root} holds no amico.js — the amico shim still resolves through the checkout (refresh: ops/install-cli-pin.sh)`,
+    };
+  const amicoSha = await probes.sha(join(root, "amico.js"));
+  return {
+    name: "pinned_cli",
+    status: "ok",
+    detail: `${bundles.length} bundle(s) pinned at ${root} — sidecars fresh (amico.js sha ${amicoSha === null ? "?" : amicoSha.slice(0, 12)})`,
+  };
 }
 
 /** The CLI entry: diagnose THIS machine's binding and print the table.
@@ -152,6 +233,36 @@ export async function doctorReport(
     }
   };
   const diagnosis = await diagnoseStudio(paths, stat);
+  // #1666: the pinned CLI root record rides the same checks table — the root
+  // from the SAME env the launchers read (AMICO_CLI_PIN_ROOT), so doctor and
+  // the shims never disagree about which pin is deployed. An integrity error
+  // fails the report (it is the repairable drift); an absent pin only warns
+  // (the pre-pin state, still resolvable through the checkout).
+  const pinnedRoot = process.env.AMICO_CLI_PIN_ROOT ?? join(homedir(), ".amico", "server", "cli");
+  const pinned = await diagnosePinnedCli(pinnedRoot, {
+    list: async (p) => {
+      try {
+        return await readdir(p);
+      } catch {
+        return [];
+      }
+    },
+    read: async (p) => {
+      try {
+        return await readFile(p, "utf8");
+      } catch {
+        return null;
+      }
+    },
+    sha: fileSha,
+  });
+  diagnosis.checks.push(pinned);
+  if (pinned.status === "error") {
+    diagnosis.errors.push(`pinned_cli: ${pinned.detail}`);
+    diagnosis.ok = false;
+  } else if (pinned.status === "warn") {
+    diagnosis.warnings.push(`pinned_cli: ${pinned.detail}`);
+  }
   const surfaces = await surfaceInventory(parsed.args.roots);
   const width = Math.max(...diagnosis.checks.map((c) => c.name.length));
   const lines = diagnosis.checks.map((c) => {

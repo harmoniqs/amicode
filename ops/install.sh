@@ -14,6 +14,7 @@ SRC="$(cd "$(dirname "$0")" && pwd)"
 mkdir -p "$DEST/papers-digest" "$DEST/skill-freshness" "$DEST/role-parity" "$DEST/session-archive" "$DEST/shard-watch" "$DEST/fleet-status"
 
 install -m 0755 "$SRC/fleet-status.sh"          "$DEST/fleet-status.sh"
+install -m 0755 "$SRC/install-cli-pin.sh"       "$DEST/install-cli-pin.sh"
 install -m 0755 "$SRC/fleet-alert.sh"           "$DEST/fleet-alert.sh"
 install -m 0755 "$SRC/hub-restart.sh"           "$DEST/hub-restart.sh"
 install -m 0755 "$SRC/hub-upgrade-smoke.sh"    "$DEST/hub-upgrade-smoke.sh"
@@ -27,6 +28,7 @@ install -m 0755 "$SRC/shard-watch/run-shard-watch.sh"         "$DEST/shard-watch
 
 echo "deployed to $DEST:"
 echo "  fleet-status.sh   (launchd co.harmoniqs.fleet-status, every 5 min)"
+echo "  install-cli-pin.sh (run from a fresh checkout build: install-cli-pin.sh --dist <repo>/packages/amico-run/dist — pins the CLI dist to ~/.amico/server/cli, the frozen-bundle convention, amicode#1666)"
 echo "  fleet-alert.sh    (launchd co.harmoniqs.fleet-alert, every 15 min)"
 echo "  papers-digest/daily.sh (launchd co.harmoniqs.amicode-papers-digest, daily ~09:00)"
 echo "  skill-freshness/run-skill-freshness.sh (launchd co.harmoniqs.skill-freshness, daily ~04:30)"
