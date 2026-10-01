@@ -30,6 +30,7 @@ import { envVerb } from "./env_verb.js";
 import { sessionsVerb } from "./sessions_verb.js";
 import { sotaVerb } from "./sota_verb.js";
 import { skillsVerb } from "./skills_verb.js";
+import { notturnoVerb } from "./notturno_verb.js";
 export interface VerbResult {
   json: unknown; // structured result (stdout as JSON for the CLI; tool content for MCP)
   code: number; // process exit code (0 ok, 64 usage/gate, else failure)
@@ -296,6 +297,24 @@ const skills: Verb = {
   run: skillsVerb,
 };
 
+// notturno — the scheduled-agentic-work framework, TS-native (#1669, the
+// #852 step-6 A1′ leg): the job registry (parse + the total-coverage check),
+// the warrant tiers as typed values, and the scheduled-pass recorder. Parity
+// over rewrite — verdicts and file bytes match amicissimo's Python engine
+// (automation/notturno, post-#490) against the SAME registry file, and the
+// two runners coexist during the boundary window (no Python deletion). The
+// instance deny-list is the load-bearing gate: a registry named by a deny row
+// fails loudly (64) pointing at the private instance's runner — a public
+// binary never runs org config.
+const notturno: Verb = {
+  name: "notturno",
+  summary:
+    "registry-check (total-coverage verdicts) / list (the job slate) / pass (append a scheduled-passes.md record) — the scheduled-work registry, deny-list-gated",
+  generalizes: "amicissimo's automation/notturno registry + passes runners (the #852 A1′ TS-native port)",
+  slice: "amico-run sunset (#852 step 6, amicode#1669)",
+  run: notturnoVerb,
+};
+
 export const SPINE_VERBS: Verb[] = [
   catalog,
   vault,
@@ -314,4 +333,5 @@ export const SPINE_VERBS: Verb[] = [
   sessions,
   sota,
   skills,
+  notturno,
 ];
