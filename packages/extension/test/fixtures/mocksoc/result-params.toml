@@ -1,5 +1,5 @@
 # A minimal run-dir result record ([params] is what the rehearsal reads — the
-# same shape every amico-run solve writes, self-describing its regime).
+# same shape every `amico run` solve writes, self-describing its regime).
 fidelity = 0.9999786189131341
 iterations = 60
 

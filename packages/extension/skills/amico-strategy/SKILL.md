@@ -18,7 +18,7 @@ On-demand loader for the Amicode research **composition** (the D6 model, spec-20
 Render the brief on demand:
 
 ```bash
-amico-run strategy-brief --intent <path/to/INTENT.md> --sessions <path/to/sessions> [--as-of YYYY-MM-DD] [--out <path>]
+amico strategy-brief --intent <path/to/INTENT.md> --sessions <path/to/sessions> [--as-of YYYY-MM-DD] [--out <path>]
 ```
 
 Defaults resolve from the ops checkout and the personal vault. The render is deterministic (same inputs → same bytes) and **degrades with named unknowns** — an unparsable ledger is listed as an anomaly, never silently dropped; a missing receipt renders "unknown" stamps.

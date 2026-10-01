@@ -70,7 +70,7 @@ digest job never needs a restart (it execs the bundle each run).
 ## The pinned CLI root (`install-cli-pin.sh`, amicode#1666)
 
 The same frozen-bundle doctrine, applied to the CLI itself. The `~/.local/bin/amico`
-(+ `amico-run`, `gh`, `amico-pasqal`, `amico-git-credential`) shims are symlinks into a
+(+ `gh`, `amico-pasqal`, `amico-git-credential`) shims are symlinks into a
 **moving checkout** — and a checkout is a moving target. Observed 2026-09-25: the live
 shim resolved into a stale side-checkout on an old branch, and every ops job silently
 ran months-old code for weeks. The launchers (`packages/amico-run/launcher/`) therefore

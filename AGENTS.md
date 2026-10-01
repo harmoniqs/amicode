@@ -34,7 +34,7 @@ pnpm --filter amicode run build:binary    # check: vendor/opencode/<platform>/op
                                               # Requires bun. No external fork or download needed.
 pnpm --filter amicode test                 # check: 200+ tests pass, 0 fail
 bash packages/extension/scripts/install.sh    # Julia project (~15 min first precompile) + VSIX + lab.toml
-node packages/extension/scripts/healthcheck.mjs   # check: 4/4 ✓ (julia, opencode, amico-run, creds)
+node packages/extension/scripts/healthcheck.mjs   # check: 4/4 ✓ (julia, opencode, amico CLI, creds)
 ```
 
 ## Repo sync (one-command drift check)
@@ -52,7 +52,7 @@ pnpm sync --fix        # also writes: git pull --ff-only, pnpm install, build:bi
 
 ## Amicode terminal (bundled canonical opencode)
 
-The integrated terminal's `opencode` is now the **vendored, amicode-aware binary** — the same `vendor/opencode/<platform>/opencode` + the same `OPENCODE_CONFIG_CONTENT` the chat server was spawned with. `Amicode: Open Amicode Terminal` (Command Palette) opens a shell whose `PATH` is prepended with `vendor/opencode/<platform>` (so `opencode` resolves to the vendored one) and `bin/launcher` (so `amico`/`amico-run` resolve), and whose env carries `OPENCODE_CONFIG_CONTENT` + `OPENCODE_SERVER_PASSWORD` + `AMICO_FLEET_FALLBACK`. That terminal's `opencode` knows about fleet/guard/fallback and the per-workspace skills/vault mounts, so `opencode` there can diagnose the same panel the user sees (`pnpm sync --check`, `bash tools/fleet/install.sh --check`, `amico fleet ...`), and `amico`/`pnpm sync` etc. all work without extra `PATH` setup. The terminal is a normal shell (not an opencode TUI) — run `opencode` on demand; `Amicode: Open Amicode Terminal` with arg `opencode` opens the TUI directly.
+The integrated terminal's `opencode` is now the **vendored, amicode-aware binary** — the same `vendor/opencode/<platform>/opencode` + the same `OPENCODE_CONFIG_CONTENT` the chat server was spawned with. `Amicode: Open Amicode Terminal` (Command Palette) opens a shell whose `PATH` is prepended with `vendor/opencode/<platform>` (so `opencode` resolves to the vendored one) and `bin/launcher` (so `amico` resolves), and whose env carries `OPENCODE_CONFIG_CONTENT` + `OPENCODE_SERVER_PASSWORD` + `AMICO_FLEET_FALLBACK`. That terminal's `opencode` knows about fleet/guard/fallback and the per-workspace skills/vault mounts, so `opencode` there can diagnose the same panel the user sees (`pnpm sync --check`, `bash tools/fleet/install.sh --check`, `amico fleet ...`), and `amico`/`pnpm sync` etc. all work without extra `PATH` setup. The terminal is a normal shell (not an opencode TUI) — run `opencode` on demand; `Amicode: Open Amicode Terminal` with arg `opencode` opens the TUI directly.
 
 macOS note: the vendored binary is unsigned — if Gatekeeper blocks it:
 `xattr -d com.apple.quarantine packages/extension/vendor/opencode/darwin-arm64/opencode`

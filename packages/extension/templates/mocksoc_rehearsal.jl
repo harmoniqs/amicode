@@ -28,7 +28,7 @@
 #         mocksoc_rehearsal.jl <pulse.jld2> <result.toml> [out_dir]
 #
 #   pulse.jld2  — the solved pulse artifact (key "traj", a NamedTrajectory;
-#                 what every amico-run solve writes)
+#                 what every `amico run` solve writes)
 #   result.toml — the run's self-describing record ([params]: delta/levels/
 #                 T/N/drive_max — the regime the run actually solved)
 #   out_dir     — where rehearsal.toml lands (default: the pulse's directory)
@@ -132,7 +132,7 @@ end
 try
     params = TOML.parsefile(RESULT_PATH)
     haskey(params, "params") ||
-        error("result.toml carries no [params] table — not an amico-run result record")
+        error("result.toml carries no [params] table — not an `amico run` result record")
     rp = params["params"]
     δ        = Float64(rp["delta"])
     levels   = Int(rp["levels"])
