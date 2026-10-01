@@ -161,7 +161,7 @@ describe("runStubToml (bookkeeping stub — NOT amico-run's run.toml)", () => {
         note: "X gate, defaults",
       }),
     ) as any;
-    expect(doc.run.launched_via).toBe("bash amico-run"); // the tool never launches — bash does
+    expect(doc.run.launched_via).toBe("bash amico run"); // the tool never launches — bash does
     expect(doc.run.formulation_ref).toMatch(/formulation\.toml$/);
     expect(doc.run.system_ref).toMatch(/system\.toml$/);
     expect(doc.run.run_dir).toMatch(/20260703-021500-abcd$/);
@@ -170,7 +170,7 @@ describe("runStubToml (bookkeeping stub — NOT amico-run's run.toml)", () => {
   });
   it("omits absent optional refs instead of writing empty strings", () => {
     const doc = parse(runStubToml({})) as any;
-    expect(doc.run.launched_via).toBe("bash amico-run");
+    expect(doc.run.launched_via).toBe("bash amico run");
     expect("formulation_ref" in doc.run).toBe(false);
     expect("system_ref" in doc.run).toBe(false);
     expect("note" in doc.run).toBe(false);

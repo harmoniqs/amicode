@@ -44,16 +44,16 @@ const sha256hex = (content: string) => createHash("sha256").update(content, "utf
 describe("ops/install-cli-pin.sh — the frozen-bundle pin-installer (#1666)", () => {
   it("copies every dist bundle to the pinned root and writes a shasum-format sha256 sidecar beside each", () => {
     writeDist("amico.js", "stub router bundle A\n");
-    writeDist("amico-run.js", "stub runner bundle B\n");
+    writeDist("amico-pasqal.js", "stub runner bundle B\n");
     const r = runInstaller(["--dist", dist, "--root", root]);
     expect(r.code).toBe(0);
     expect(readFileSync(join(root, "amico.js"), "utf8")).toBe("stub router bundle A\n");
-    expect(readFileSync(join(root, "amico-run.js"), "utf8")).toBe("stub runner bundle B\n");
+    expect(readFileSync(join(root, "amico-pasqal.js"), "utf8")).toBe("stub runner bundle B\n");
     // the papers-digest convention: `shasum -a 256 amico.js > amico.js.sha256`
     // → "<hex>  <name>\n" (two spaces), hex == the copied file's sha256.
     expect(readFileSync(join(root, "amico.js.sha256"), "utf8")).toBe(`${sha256hex("stub router bundle A\n")}  amico.js\n`);
-    expect(readFileSync(join(root, "amico-run.js.sha256"), "utf8")).toBe(
-      `${sha256hex("stub runner bundle B\n")}  amico-run.js\n`,
+    expect(readFileSync(join(root, "amico-pasqal.js.sha256"), "utf8")).toBe(
+      `${sha256hex("stub runner bundle B\n")}  amico-pasqal.js\n`,
     );
   });
 

@@ -220,8 +220,10 @@ describe("offload suggestion vs local RAM", () => {
   });
 });
 
-// ── AC3: the CLI seam — `amico-run estimate` (script or --spec), data only ──
-const BUNDLE = join(__dirname, "..", "dist", "amico-run.js");
+// ── AC3: the CLI seam — `amico estimate` (script or --spec), data only ──
+// the estimate subcommand through the `amico` verb router (the historical
+// `amico-run estimate` bin is deleted, #1667 — the delegation is verbatim).
+const BUNDLE = join(__dirname, "..", "dist", "amico.js");
 beforeAll(() => {
   execFileSync("node", [join(__dirname, "..", "esbuild.config.mjs")], { cwd: join(__dirname, "..") });
 });

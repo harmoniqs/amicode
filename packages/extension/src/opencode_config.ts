@@ -34,14 +34,14 @@ import { readCredential } from "./amicode_service/credentials";
 // ============================================================================
 // Prepare a per-session opencode project directory.
 //
-// opencode invokes amico-run via its built-in `bash` tool — no MCP, no
+// opencode invokes the amico CLI via its built-in `bash` tool — no MCP, no
 // callback HTTP. The amico solve workflow (AGENTS.md) reaches the agent via
 // opencode's `instructions` config (see buildOpencodeConfigContent + the
 // OPENCODE_CONFIG_CONTENT spawn env in extension.ts), which is loaded for
 // every session regardless of the session's working directory. opencode's web
 // UI runs the session in the VS Code workspace folder, NOT this temp dir, so
 // the temp dir exists only to hold the substituted AGENTS.md — the absolute
-// path `instructions` points at. PATH augmentation (so `amico-run` resolves)
+// path `instructions` points at. PATH augmentation (so `amico` resolves)
 // happens at spawn time in extension.ts.
 //
 // LIFETIME INVARIANT: opencode reads the `instructions` file lazily, per
@@ -73,7 +73,7 @@ export function resolveJuliaProject(configValue: string): string {
  *
  *  Why the `permission` block: the agent reads the bundled template at an
  *  absolute path *outside* the session's working dir and writes scratch to
- *  /tmp/amicode-work, then runs amico-run via bash. opencode defaults
+ *  /tmp/amicode-work, then runs the amico CLI via bash. opencode defaults
  *  `external_directory` to "ask" — which, with no interactive approver, makes
  *  the turn hang forever (headless) and nags the user on every solve (GUI).
  *
@@ -85,7 +85,7 @@ export function resolveJuliaProject(configValue: string): string {
  *      FINISHED/result.toml for results and run.log for failure tracebacks;
  *      without the grant each such read is an "ask" prompt (one per solve,
  *      worse on failures — the nag the 2026-07-03 live test hit).
- *  (amico-run's own writes to ~/.amico/runs|julia are the subprocess's, not the
+ *  (the amico CLI's own writes to ~/.amico/runs|julia are the subprocess's, not the
  *  agent's file tools, so they need no grant — only the agent's read-backs do.)
  *  The path-scoped object form is accepted by opencode 1.17.3 (verified via
  *  `opencode debug config`).
@@ -96,7 +96,7 @@ export function resolveJuliaProject(configValue: string): string {
  *  keys, we don't replace the user's permission settings.
  *
  *  `bash`/`edit` are left at "allow" (both already default to allow; bash runs
- *  the compound `mkdir … && nohup amico-run …` launch, not worth scoping).
+ *  the compound `mkdir … && nohup amico run …` launch, not worth scoping).
  *  `webfetch` is intentionally NOT set — the solve flow never fetches a URL.
  *
  *  L0 pulse-designer additions (night build 2026-07-03; registration mechanism
@@ -234,8 +234,8 @@ export function entitlementsTablePath(scoresRoot: string = DEFAULT_SCORES_ROOT):
   return path.join(scoresRoot, "entitlements.toml");
 }
 
-/** Where amico-run reads the authoring config (spec C seam). $AMICO_AUTHORING_FILE
- *  overrides (tests + parity with amico-run's own reader). */
+/** Where the amico CLI reads the authoring config (spec C seam). $AMICO_AUTHORING_FILE
+ *  overrides (tests + parity with the amico CLI's own reader). */
 /** True when ~/.amico/profile.json already carries identity — the onboarding
  *  WIZARD (or the About-You card) saved it, so the chat overture must not
  *  re-ask session-zero questions. Complements hasOnboardingCompleted (which
@@ -261,7 +261,7 @@ export function authoringFilePath(): string {
 
 /** Assemble + write authoring.json at session prep. Reads verify_tolerance from
  *  the bundled registry.toml (falls back to 0.01). Never throws — a write
- *  failure logs and leaves amico-run to use its built-in conservative defaults. */
+ *  failure logs and leaves the amico CLI to use its built-in conservative defaults. */
 export function writeAuthoringConfig(
   entitlementsDir: string,
   scoresRoot: string = DEFAULT_SCORES_ROOT,
@@ -307,7 +307,7 @@ export function writeAuthoringConfig(
           verify_harness: AUTHORING_ASSETS.verifyHarness,
           verify_tolerance: tolerance,
           // Additive session record (spec §3): the dual-source skill index the
-          // agent was given. amico-run ignores unknown fields; schema_version stays 1.
+          // agent was given. The amico CLI ignores unknown fields; schema_version stays 1.
           skills,
         },
         null,
@@ -315,7 +315,7 @@ export function writeAuthoringConfig(
       ) + "\n",
     );
   } catch (e) {
-    console.warn(`amicode: failed to write authoring.json (amico-run will use built-in defaults): ${e}`);
+    console.warn(`amicode: failed to write authoring.json (the amico CLI will use built-in defaults): ${e}`);
   }
 }
 
@@ -324,7 +324,7 @@ export function writeAuthoringConfig(
  *  Cloud" (tier=hpc) is the PAID tier — it runs in the cloud only, never
  *  locally (the runner AMI has Piccolissimo/Altissimo pre-baked; a local run
  *  can't even instantiate the private package). Routing is enforced durably by
- *  the amico-run gate (tier=hpc ⇒ executor=remote + env=provisioned + a cloud
+ *  the amico CLI gate (tier=hpc ⇒ executor=remote + env=provisioned + a cloud
  *  connection, else exit 64); this section makes the agent do the right thing
  *  and, crucially, BLOCK-WITH-PROMPT when no cloud key is connected. */
 export function solverModeSection(): string {
@@ -334,15 +334,15 @@ export function solverModeSection(): string {
   const routing = cloudConnected
     ? "Harmoniqs Cloud is CONNECTED, and EVERY solve on this solver runs there — this tier has no local " +
       "mode, so never ask the user where a solve should run. Author it as: " +
-      '`tier="hpc"`, `executor="remote"`, `env.kind="provisioned"` (via `amico-run --spec <spec> ' +
+      '`tier="hpc"`, `executor="remote"`, `env.kind="provisioned"` (via `amico run --spec <spec> ' +
       "<script.jl> --executor remote`). The runner image has Piccolissimo/Altissimo pre-baked, so there " +
       "is NO local precompile and NO sandbox — never author a sandbox env for HP. A local launch is " +
-      "REFUSED by amico-run while this solver is selected (exit 64), so attempting one only wastes a turn. " +
+      "REFUSED by the amico CLI while this solver is selected (exit 64), so attempting one only wastes a turn. " +
       "Live iteration frames stream to the Inspector; note that per-iteration AMICODE_ITER stats + the " +
       "cooperative Stop are not yet available on the cloud bundle, and re-rollout verification is skipped " +
       "for cloud runs (say so). Only claim cloud execution when the launch actually used `--executor remote`."
     : "Harmoniqs Cloud is NOT connected (no API key). Piccolissimo + Altissimo is a PAID cloud tier and " +
-      "CANNOT run locally — do NOT attempt a local Piccolissimo solve (it will fail three ways: amico-run " +
+      "CANNOT run locally — do NOT attempt a local Piccolissimo solve (it will fail three ways: the amico CLI " +
       "refuses a local launch in this mode, the private package can't be instantiated in a sandbox, and " +
       "the gate rejects a local hpc run). Instead, STOP and tell the user: " +
       '"Piccolissimo + Altissimo needs a Harmoniqs Cloud connection — click **Piccolissimo + Altissimo** ' +
@@ -659,7 +659,7 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
   const agentsPath = path.join(projectDir, "AGENTS.md");
   const raw = fs.existsSync(opts.agentsSrc)
     ? fs.readFileSync(opts.agentsSrc, "utf8")
-    : "# Amicode\nRead the template at {{TEMPLATE_PATH}}, fill params, run `amico-run <script>`.\n";
+    : "# Amicode\nRead the template at {{TEMPLATE_PATH}}, fill params, run `amico run <script>`.\n";
   const filled = raw
     .replaceAll("{{JULIA_PROJECT}}", opts.juliaProject ?? resolveJuliaProject(""))
     .replaceAll("{{TEMPLATE_PATH}}", opts.templateSrc);
@@ -825,7 +825,7 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
   // throws — the second write below is the authoritative one.
   fs.writeFileSync(agentsPath, finalContent, "utf8");
 
-  // spec C: write the authoring.json seam amico-run reads (allowlist resolved
+  // spec C: write the authoring.json seam the amico CLI reads (allowlist resolved
   // from the same entitlements the score filter used + the bundled asset paths).
   // The skill index rides along as an additive session record (spec §3).
   writeAuthoringConfig(

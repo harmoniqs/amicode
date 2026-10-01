@@ -51,7 +51,7 @@ const HEALTH_FAIL_ALWAYS = "exit 1";
  * the real one on every push). Each stub bundle is ESM (`export {};`) so the
  * module-type warning test discriminates. */
 const DIST_BUILD_STUB =
-  'mkdir -p dist && for n in amico-run amico amico-pasqal amico-git-credential gh; do printf "export {};\\n" > "dist/$n.js"; done';
+  'mkdir -p dist && for n in amico amico-pasqal amico-git-credential gh; do printf "export {};\\n" > "dist/$n.js"; done';
 
 function verbArgs(w: DoctorWorld, extra: string[]): string[] {
   return [
@@ -280,7 +280,7 @@ describe("upgrade server-binary — the verb-router dist rebuild (#643)", () => 
     // the PATH-first launcher execs — byte-identical, for every declared bundle
     const arDist = join(w.repoAmicode, "packages", "amico-run", "dist");
     const extBin = join(w.repoAmicode, "packages", "extension", "bin");
-    for (const n of ["amico-run", "amico", "amico-pasqal", "amico-git-credential", "gh"]) {
+    for (const n of ["amico", "amico-pasqal", "amico-git-credential", "gh"]) {
       const built = readFileSync(join(arDist, `${n}.js`));
       const staged = readFileSync(join(extBin, "dist", `${n}.js`));
       expect(staged.equals(built)).toBe(true);

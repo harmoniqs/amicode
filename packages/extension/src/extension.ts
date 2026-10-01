@@ -110,7 +110,7 @@ import { postDeviceStatus, postDeviceActions, postDeviceActivate } from "./inspe
 //   1. Register UI surfaces (trees, inspector, status bar, commands)
 //   2. Start watching /tmp/amicode-runs/latest/ for new runs
 //   3. Write per-session opencode project dir with AGENTS.md
-//   4. Spawn `opencode serve` with PATH augmented to find amico-run
+//   4. Spawn `opencode serve` with PATH augmented to find the amico CLI
 //   5. SSE-subscribe once opencode is healthy
 // ============================================================================
 
@@ -131,7 +131,7 @@ let fleetClientPoll: ReturnType<typeof setInterval> | undefined;
 const DEVICE_POLL_MS = 2500; // mirror the RunsManager cadence
 
 /** #1106: the fleet-projection verb runner — set once in activate() once the
- *  amico-run launcher dir is known (PATH-augmented exactly like the server
+ *  amico CLI launcher dir is known (PATH-augmented exactly like the server
  *  spawn's PATH, so `amico` resolves in the extension host and an enrolled
  *  machine never misroutes to the CLI-absent branch). Undefined until then →
  *  the fleet_topology default (PATH-only). */
@@ -833,20 +833,20 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     // Fallback status bar already handles the fallback-active case; in pure
     // client mode we surface tunnel health via the fleet health warning above.
   } else if (binary !== undefined) {
-    // amico-run is argv-only (β.1) — no AMICO_* env propagation (S37), with ONE
+    // The amico CLI is argv-only (β.1) — no AMICO_* env propagation (S37), with ONE
     // recorded exception: AMICO_PYTHON (Pasqal python provisioning) rides the
     // server child env for the FORK's validator spawn — server plumbing, not
-    // amico-run contract; amico-run itself still receives nothing via env. The agent
+    // amico CLI contract; the CLI itself still receives nothing via env. The agent
     // gets the Julia project from AGENTS.md (substituted at session-copy time)
     // and passes it as `--project`. PATH just needs to resolve the launcher.
     if (amicoRunBinDir === undefined) {
       opencodeChannel.appendLine(
-        `[boot] WARNING: amico-run launcher not found — chat can author but solves won't run (build amico-run or check the VSIX)`,
+        `[boot] WARNING: amico CLI launcher not found — chat can author but solves won't run (build the amico CLI or check the VSIX)`,
       );
     }
     // opencode owns the LLM credential (0.3): amico injects NO key into the
     // spawn env — opencode resolves its provider from its own env / config /
-    // auth.json. The spawn env carries only PATH (so amico-run resolves), the
+    // auth.json. The spawn env carries only PATH (so the amico CLI resolves), the
     // amico instructions/permission config, and the per-boot server password
     // that arms the fork's route auth (#163).
     const configuredPort = vscode.workspace.getConfiguration("amicode").get<number>("opencodePort", 0);

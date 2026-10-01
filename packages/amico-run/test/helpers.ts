@@ -389,7 +389,6 @@ export function buildDoctorWorld(opts: DoctorWorldOpts = {}): DoctorWorld {
       {
         name: "@amicode/amico-run",
         bin: {
-          "amico-run": "./launcher/amico-run",
           amico: "./launcher/amico",
           "amico-pasqal": "./launcher/amico-pasqal",
           "amico-git-credential": "./launcher/amico-git-credential",

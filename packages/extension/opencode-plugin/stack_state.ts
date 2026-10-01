@@ -119,15 +119,15 @@ function buildSolverModeSection(): string {
   const routing = connected
     ? "Harmoniqs Cloud is CONNECTED, and EVERY solve on this solver runs there — this tier has no local " +
       "mode, so never ask the user where a solve should run. Author it as: " +
-      '`tier="hpc"`, `executor="remote"`, `env.kind="provisioned"` (via `amico-run --spec <spec> ' +
+      '`tier="hpc"`, `executor="remote"`, `env.kind="provisioned"` (via `amico run --spec <spec> ' +
       "<script.jl> --executor remote`). The runner image has Piccolissimo/Altissimo pre-baked, so there " +
       "is NO local precompile and NO sandbox — never author a sandbox env for HP. A local launch is " +
-      "REFUSED by amico-run while this solver is selected (exit 64), so attempting one only wastes a turn. " +
+      "REFUSED by the amico CLI while this solver is selected (exit 64), so attempting one only wastes a turn. " +
       "Live iteration frames stream to the Inspector; note that per-iteration AMICODE_ITER stats + the " +
       "cooperative Stop are not yet available on the cloud bundle, and re-rollout verification is skipped " +
       "for cloud runs (say so). Only claim cloud execution when the launch actually used `--executor remote`."
     : "Harmoniqs Cloud is NOT connected (no API key). Piccolissimo + Altissimo is a PAID cloud tier and " +
-      "CANNOT run locally — do NOT attempt a local Piccolissimo solve (it will fail three ways: amico-run " +
+      "CANNOT run locally — do NOT attempt a local Piccolissimo solve (it will fail three ways: the amico CLI " +
       "refuses a local launch in this mode, the private package can't be instantiated in a sandbox, and " +
       "the gate rejects a local hpc run). Instead, STOP and tell the user: " +
       '"Piccolissimo + Altissimo needs a Harmoniqs Cloud connection — click **Piccolissimo + Altissimo** ' +
@@ -181,12 +181,12 @@ function buildRoutingSection(): string {
     "which is a CLOUD-ONLY tier. Every solve on this solver runs in the cloud: there is no " +
     "local-vs-cloud choice to make here, so do NOT ask the researcher where it should run.\n" +
     "- **Author it as High-Performance + Cloud.** Set `tier=\"hpc\"`, `executor=\"remote\"`, and " +
-    '`env.kind="provisioned"` on solvespec.json, then launch with `amico-run --spec <spec> ' +
+    '`env.kind="provisioned"` on solvespec.json, then launch with `amico run --spec <spec> ' +
     "<script.jl> --executor remote`.\n" +
     "- **Never dispatch this solver locally.** The runner image has Piccolissimo/Altissimo " +
-    "pre-baked; a laptop would precompile the HP stack from scratch. amico-run REFUSES a local " +
+    "pre-baked; a laptop would precompile the HP stack from scratch. The amico CLI REFUSES a local " +
     "launch while this solver is selected (exit 64), so a local attempt only wastes a turn.\n" +
-    "- **`amico-run estimate` is still worth running** to report size and cost to the " +
+    "- **`amico estimate` is still worth running** to report size and cost to the " +
     "researcher, but it no longer decides anything: an estimate that fits in local RAM does " +
     "not make an HP solve local.\n" +
     "- **A local solve means switching solvers.** If the researcher wants to run locally, they " +

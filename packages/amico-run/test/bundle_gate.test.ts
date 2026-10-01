@@ -53,7 +53,6 @@ function fabricatedPkg(files: Record<string, string>): string {
     JSON.stringify({
       name: "@amicode/amico-run-fixture",
       bin: {
-        "amico-run": "./launcher/amico-run",
         amico: "./launcher/amico",
         "amico-pasqal": "./launcher/amico-pasqal",
         "amico-git-credential": "./launcher/amico-git-credential",
@@ -68,7 +67,7 @@ function fabricatedPkg(files: Record<string, string>): string {
   return pkg;
 }
 
-const ALL_BUNDLES = ["amico-run.js", "amico.js", "amico-pasqal.js", "amico-git-credential.js", "gh.js"];
+const ALL_BUNDLES = ["amico.js", "amico-pasqal.js", "amico-git-credential.js", "gh.js"];
 /** A router stub that answers --help like the real one (exit 0, usage text). */
 const LIVE_ROUTER = 'console.log("usage:\\n  amico run <script.jl> [--spec <s.json>]");\n';
 
