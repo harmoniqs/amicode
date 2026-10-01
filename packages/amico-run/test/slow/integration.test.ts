@@ -8,13 +8,15 @@ import { validateManifest, validateFinished, validateResult } from "../../src/sc
 // Requires: julia on PATH + a Piccolo project (pass via AMICO_TEST_JULIA_PROJECT to *the test*,
 // which forwards it as an explicit --project flag — the orchestrator itself stays env-free).
 const PROJECT = process.env.AMICO_TEST_JULIA_PROJECT;
-const BUNDLE = join(__dirname, "..", "..", "dist", "amico-run.js");
+// The launch path through the `amico` verb router (`amico run …` ≡ the deleted
+// `amico-run` bin, #1667).
+const BUNDLE = join(__dirname, "..", "..", "dist", "amico.js");
 
 function solveAndValidate(script: string): void {
   const root = tmpRoot();
   const stdout = execFileSync(
     "node",
-    [BUNDLE, join(__dirname, script), "--runs-root", join(root, "runs"), "--project", PROJECT!, "--lab", "devlab"],
+    [BUNDLE, "run", join(__dirname, script), "--runs-root", join(root, "runs"), "--project", PROJECT!, "--lab", "devlab"],
     { encoding: "utf8", timeout: 600_000 },
   );
 

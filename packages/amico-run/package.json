@@ -6,7 +6,6 @@
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "bin": {
-    "amico-run": "./launcher/amico-run",
     "amico": "./launcher/amico",
     "amico-pasqal": "./launcher/amico-pasqal",
     "amico-git-credential": "./launcher/amico-git-credential"

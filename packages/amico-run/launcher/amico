@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Thin launcher for the `amico` verb router: resolve node, exec the bundled router.
-# No logic lives here (mirror of launcher/amico-run). See src/amico.ts.
+# No logic lives here. See src/amico.ts. The historical `amico-run` bin is deleted
+# (#1667) — `amico run <args>` is its byte-for-byte equivalent.
 set -euo pipefail
 SOURCE="${BASH_SOURCE[0]}"
 while [ -h "$SOURCE" ]; do                       # resolve symlink chains (node_modules/.bin)

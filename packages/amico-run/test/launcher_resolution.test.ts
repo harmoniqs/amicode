@@ -12,7 +12,7 @@
 // no build, no network). Table: pin present/absent × override on/off.
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -20,7 +20,7 @@ const REPO = resolve(import.meta.dirname, "..", "..", "..");
 const LAUNCHER_DIR = join(REPO, "packages", "amico-run", "launcher");
 // every declared bin (package.json "bin" + the gh shadowBin) shares one body —
 // the resolution contract must hold for all of them, not just the named pair.
-const LAUNCHERS = ["amico", "amico-run", "amico-pasqal", "amico-git-credential", "gh"];
+const LAUNCHERS = ["amico", "amico-pasqal", "amico-git-credential", "gh"];
 
 let work: string;
 
@@ -57,6 +57,21 @@ function runLauncher(name: string, opts: { pinRoot?: string; fromCheckout?: bool
 
 const checkoutDist = (name: string) => join(REPO, "packages", "amico-run", "dist", `${name}.js`);
 
+// ── #1667: the amico-run bin deletion — the launcher dir's exact set ─────────
+// The bin's consumers moved to `amico run` (the documented ≡ delegation); the
+// launcher dir must hold exactly the sanctioned remainder — a resurrected or
+// leftover amico-run shim on the PATH would silently serve stale physics.
+describe("the launcher set (#1667 — the amico-run bin is deleted)", () => {
+  it("launcher/ holds exactly the sanctioned bins — no amico-run", () => {
+    expect(readdirSync(LAUNCHER_DIR).sort()).toEqual([
+      "amico",
+      "amico-git-credential",
+      "amico-pasqal",
+      "gh",
+    ]);
+  });
+});
+
 describe("launcher source resolution (#1666)", () => {
   it("resolves the PINNED dist root before the checkout (pin present, override off) — the checkout's state cannot change what runs", () => {
     const root = pin("amico");
@@ -91,7 +106,7 @@ describe("launcher source resolution (#1666)", () => {
     expect(r.stdout).toBe(join(root, "amico.js"));
   });
 
-  it("every declared bin launcher resolves its pinned bundle first (one body, five shims — gh, pasqal, git-credential included)", () => {
+  it("every declared bin launcher resolves its pinned bundle first (one body, four shims — gh, pasqal, git-credential included)", () => {
     for (const name of LAUNCHERS) {
       const root = pin(name);
       const r = runLauncher(name, { pinRoot: root });
@@ -101,7 +116,7 @@ describe("launcher source resolution (#1666)", () => {
   });
 
   it("an INCOMPLETE pin (root present, this bin's bundle missing) degrades to the checkout, not to a dead shim", () => {
-    const root = pin("amico-run"); // pin holds amico-run.js but not amico.js
+    const root = pin("amico-pasqal"); // pin holds amico-pasqal.js but not amico.js
     const r = runLauncher("amico", { pinRoot: root });
     expect(r.code).toBe(0);
     expect(r.stdout).toBe(`${LAUNCHER_DIR}/../dist/amico.js`);

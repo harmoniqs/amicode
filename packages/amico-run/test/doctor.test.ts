@@ -176,10 +176,10 @@ describe("diagnosePinnedCli (#1666)", () => {
   test("a fresh pin (every bundle's sidecar matches its sha) is ok and reports root + amico.js sha", async () => {
     const fs: Record<string, string> = {
       "/pin/amico.js": "router bundle",
-      "/pin/amico-run.js": "runner bundle",
+      "/pin/amico-pasqal.js": "runner bundle",
     };
     fs["/pin/amico.js.sha256"] = `${hex("router bundle")}  amico.js\n`;
-    fs["/pin/amico-run.js.sha256"] = `${hex("runner bundle")}  amico-run.js\n`;
+    fs["/pin/amico-pasqal.js.sha256"] = `${hex("runner bundle")}  amico-pasqal.js\n`;
     const r = await diagnosePinnedCli("/pin", probes(fs));
     expect(r.name).toBe("pinned_cli");
     expect(r.status).toBe("ok");
@@ -223,8 +223,8 @@ describe("diagnosePinnedCli (#1666)", () => {
   });
 
   test("a pin that holds bundles but NOT amico.js is a warning — the amico shim still resolves through the checkout", async () => {
-    const fs: Record<string, string> = { "/pin/amico-run.js": "runner bundle" };
-    fs["/pin/amico-run.js.sha256"] = `${hex("runner bundle")}  amico-run.js\n`;
+    const fs: Record<string, string> = { "/pin/amico-pasqal.js": "runner bundle" };
+    fs["/pin/amico-pasqal.js.sha256"] = `${hex("runner bundle")}  amico-pasqal.js\n`;
     const r = await diagnosePinnedCli("/pin", probes(fs));
     expect(r.status).toBe("warn");
     expect(r.detail).toMatch(/no amico\.js/);
