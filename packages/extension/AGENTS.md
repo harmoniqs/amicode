@@ -87,8 +87,12 @@ user's model budget — fan out deliberately (max 4 per call). `mode: "fork"`
 seeds a child from this session's history; the spawn-depth cap (2) is soft and
 overridable with `force: true`.
 
-**`amico-run`** is the gate + launch CLI. It validates specs, scans imports,
-checks tiers, and launches scripts. `amico-run --help` prints usage.
+**The `amico` CLI** is the five-verb surface — AUTHOR · EXECUTE · VERIFY ·
+REMEMBER · METER — over the launch package (`packages/amico-run`). `amico run`
+is EXECUTE, the gate + launch verb: it validates specs, scans imports, checks
+tiers, and launches scripts; `amico resolve` and `amico sandbox` are the
+AUTHOR-side subcommands, `amico estimate` and `amico doctor` the METER.
+`amico --help` prints usage.
 
 **`amico`** CLI carries deterministic bookkeeping: `amico catalog query/ingest`
 (result catalog), `amico vault query/status/resolve` (knowledge mounts),

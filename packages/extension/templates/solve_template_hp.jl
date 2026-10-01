@@ -1,6 +1,6 @@
 #!/usr/bin/env julia
 # Amicode HP solve template (Piccolissimo) — fill in the `# FILL IN` block, then:
-#   amico-run --project <julia-project> solve.jl
+#   amico run --project <julia-project> solve.jl
 # Emits the SAME run-dir contract as solve_template.jl (AMICODE_ITER, iter_<N>.png,
 # AMICODE_PULSE_META/AMICODE_PULSE, STOP-file cooperative stop, result.toml,
 # pulse.jld2, DONE) — the inspector/run-card readers cannot tell the modes apart.

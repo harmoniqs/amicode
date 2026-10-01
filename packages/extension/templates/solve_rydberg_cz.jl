@@ -6,7 +6,7 @@
 # demos until a vetting solve completes with F > 0.99.
 #
 # Amicode Rydberg CZ template — fill in the `# FILL IN` block, then:
-#   amico-run --project <julia-project> solve.jl
+#   amico run --project <julia-project> solve.jl
 # Emits the run-dir contract (AMICODE_ITER, iter_<N>.png, result.toml, pulse.jld2, DONE).
 #
 # Physics: two neutral atoms, 3 levels each (|0⟩ dark, laser couples |1⟩↔|r⟩,

@@ -36,7 +36,7 @@ Describe what you want in plain language — a gate, a state preparation, a cali
 
 We start with **quantum control** because it is the hardest physical system to prove the loop on. If the studio works here — arbitrary Hamiltonians, hard constraints, **hardware in the loop via Strumento.jl / QICK** — it generalizes to any physical system you can model. Bring your own Hamiltonian; the loop is the same. That's **physical intelligence**: not one device or platform, but a composable way to do experimental science. Plenty will sell you a closed “superintelligence” that never touches the hardware. We ship open, down to the RFSoC.
 
-**This repo is the whole product:** the VS Code extension (`packages/extension`), the `amico` / `amico-run` CLI (`packages/amico-run`), and the public skill library (`packages/extension/skills/`) — skills are product content, versioned with the extension and bundled into every vsix. Additional skills load from your own vault mounts (never shipped), and package skills ride their Julia repos behind entitlements.
+**This repo is the whole product:** the VS Code extension (`packages/extension`), the `amico` CLI (`packages/amico-run`), and the public skill library (`packages/extension/skills/`) — skills are product content, versioned with the extension and bundled into every vsix. Additional skills load from your own vault mounts (never shipped), and package skills ride their Julia repos behind entitlements.
 
 ## Harnesses
 
@@ -121,7 +121,7 @@ Skills are not configuration — they are the capability surface. **26 skills** 
 | Entitled surfaces | `piccolissimo`, `intonatissimo` — usage guidance for the `-issimo` performance tiers; ship in the vsix, stage only for entitled sessions |
 | Internal library — not in the vsix | `transmon`, `fluxonium`, `atoms` (Rydberg), `bosonic`, `ions`, `setup`, `solve`, `simulate`, `warm-start`, `constraints`, `objectives`, `problem-types`, `structural-analysis`, `demo`, `pasqal`, `plot`, `compose`, `multistart` — these live in the internal library and resolve only from the private plugin checkout, per the skill-surface decisions of record ([ADR-0003](docs/adr/0003-skill-surfaces-two-tier-checkout-gate.md), [ADR-0011](docs/adr/0011-entitled-skill-surface.md)) |
 
-The extension stages the union of the shipped bundle and your vault mounts at startup; mount presence is the eligibility proof. The boundary as it stands: the extension, the `amico` / `amico-run` CLI, and the public skills are open — entitled builds add proprietary capabilities behind entitlements.
+The extension stages the union of the shipped bundle and your vault mounts at startup; mount presence is the eligibility proof. The boundary as it stands: the extension, the `amico` CLI, and the public skills are open — entitled builds add proprietary capabilities behind entitlements.
 
 ## Physical intelligence
 

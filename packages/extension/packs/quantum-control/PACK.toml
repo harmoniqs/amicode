@@ -55,14 +55,14 @@ tier = "open"
 path = "../../scores/pulse-designer/templates/solve.jl"
 tier = "open"
 
-# The corrector: the gate contract the runner (amico-run) enforces — the
+# The corrector: the gate contract the runner (`amico run`) enforces — the
 # vetted template's FILL-IN block and the composed exemplar index
 # (masked-baseline). Integrity is a LOAD-TIME property (#369): the loader
 # verifies these sha256s and that the paths resolve outside agent-editable
 # trees. Deeper independence (the separate-repo gate pattern the QEC pack
 # uses) lands with WS3.
 [corrector]
-name = "amico-run gate (vetted template + exemplar baseline)"
+name = "amico run gate (vetted template + exemplar baseline)"
 paths = [
   "../../scores/pulse-designer/templates/solve.jl",
   "../../exemplars/index.json",

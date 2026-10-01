@@ -1,7 +1,7 @@
 # Template registry (spec C tier 1) — shape key (platform × kind × size) → a
 # vetted solve template. `status` gates tier-1 eligibility: ONLY status="vetted"
 # entries resolve as tier 1; "experimental" entries are recorded for provenance
-# but never selected (amico-run resolve skips them → the shape falls to tier 2/3).
+# but never selected (`amico resolve` skips them → the shape falls to tier 2/3).
 # `packages` drives the entitlement check + sandbox generation; `entitlement`
 # (optional) names the entitlement a gated template requires.
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env julia
 # Amicode solve template — fill in the `# FILL IN` block, then:
-#   amico-run --project <julia-project> solve.jl
+#   amico run --project <julia-project> solve.jl
 # Emits the run-dir contract (AMICODE_ITER, iter_<N>.png, result.toml, pulse.jld2, DONE).
 # Vetted against Piccolo 2.1 / DirectTrajOpt 0.10 / NamedTrajectories 0.9.4 (the
 # provisioned env refresh, #540): single-qubit family gates (X/Y/Z/H/√X/T) on a
@@ -69,7 +69,7 @@ R = 1e-2 * (T / N)   # = R_old · Δt; 1e-2 · (10/50) = 2e-3 on the default gri
 # though the solve was streaming perfectly (verified on tasks 419a57e6 and
 # 0fccbbf9 — frames landed, iterations did not).
 #
-# Why gated on a cloud run: LOCALLY amico-run's executor already writes run.log
+# Why gated on a cloud run: LOCALLY `amico run`'s executor already writes run.log
 # from our stdout, so appending here too would DOUBLE every line and the
 # inspector would count each iteration twice. TASK_ID is exported by the runner's
 # SendCommand and never set by a local run.
