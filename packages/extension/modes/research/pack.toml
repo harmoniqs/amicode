@@ -66,6 +66,12 @@ roles = ["analyzer"]
   procedure = "Commit the ledger update at the loop boundary as sole writer — hypothesis-verdict row, loop-log row, in-flight state, and next queue — so the ledger never lies about what is in the air."
 
   [[phases.gates]]
+  name = "record-boundary-curation"
+  kind = "derived"
+  owner = "director"
+  procedure = "At every record boundary emit the loop's visual record (pulse/data plot artifacts beside the run outputs, plus the campaign dashboard widget refresh where one exists) and commit the curation delta as a first-class loop output: skill findings filed with provenance, vault knowledge cards written for measured laws, and pending proposals' status. Meta-improvement rides the loop, never trails it."
+
+  [[phases.gates]]
   name = "catalog-promotion"
   kind = "human"
   owner = "human"
