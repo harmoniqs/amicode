@@ -1,6 +1,6 @@
 #!/usr/bin/env julia
 # Amicode solve template — fill in the `# FILL IN` block, then:
-#   amico-run --project <julia-project> solve.jl
+#   amico run --project <julia-project> solve.jl
 # Emits the run-dir contract (AMICODE_ITER, iter_<N>.png, result.toml, pulse.jld2, DONE).
 # Vetted against Piccolo 1.19 (the version `Pkg.add Piccolo` installs today): a
 # single-qubit X gate on a 3-level transmon converges to subspace fidelity ~1.0.

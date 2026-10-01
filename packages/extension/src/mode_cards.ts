@@ -93,7 +93,7 @@ export function overlayDirOf(root: string): string {
  *  absent — never an error (the funnel invariant: a missing overlay never
  *  dead-ends staging).
  *
- *  DIVERGENCE, named (review F4): amico-run's `amico premium` verb
+ *  DIVERGENCE, named (review F4): the amico CLI's `amico premium` verb
  *  (packages/amico-run/src/premium.ts) resolves its checkout as
  *  AMICISSIMO_ROOT → the default path under the org home dir. This module
  *  follows the same LADDER but a DIFFERENT final default: the org-home path

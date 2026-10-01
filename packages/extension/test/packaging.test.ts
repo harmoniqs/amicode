@@ -36,9 +36,8 @@ const PUBLIC_WORKFLOW_SKILLS = [
 const REQUIRED = [
   // EVERY bin the CLI package declares ships as launcher + dist bundle (#161 —
   // amico-pasqal was declared but unstaged; cli_gate.test.ts asserts behavior,
-  // this list pins vsix presence).
-  "extension/bin/dist/amico-run.js",
-  "extension/bin/launcher/amico-run",
+  // this list pins vsix presence). #1667: the amico-run bin is deleted — the
+  // staging is bin-map-driven, so its launcher + dist drop out of the set too.
   "extension/bin/dist/amico.js",
   "extension/bin/launcher/amico",
   "extension/bin/dist/amico-pasqal.js",
@@ -141,7 +140,7 @@ describe.skipIf(!existsSync(VSIX) && !REQUIRE_VSIX)("packaged VSIX contains runt
   it("the .vsix exists (hard requirement under AMICODE_REQUIRE_VSIX=1)", () => {
     expect(existsSync(VSIX), `no ${VSIX} — run: pnpm --filter amicode package`).toBe(true);
   });
-  it("includes amico-run, template, julia project, AGENTS.md + a vendored opencode", () => {
+  it("includes the amico CLI, template, julia project, AGENTS.md + a vendored opencode", () => {
     const listing = execFileSync("unzip", ["-Z1", VSIX], { encoding: "utf8" });
     for (const p of REQUIRED) expect(listing, `missing ${p}`).toContain(p);
     expect(/extension\/vendor\/opencode\/.+\/opencode/.test(listing), "missing vendored opencode").toBe(true);

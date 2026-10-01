@@ -1,6 +1,6 @@
 #!/usr/bin/env julia
 # Amicode pasqal-mis solve template — fill in the `# FILL IN` block, then:
-#   amico-run --project <julia-project> solve.jl
+#   amico run --project <julia-project> solve.jl
 # Emits the run-dir contract (AMICODE_ITER, iter_<N>.png, result.toml, pulse.jld2, DONE)
 # plus `waveforms.json` — the seam templates/register.py (Pulser) reads.
 #

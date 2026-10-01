@@ -55,7 +55,7 @@ describe("buildOpencodeConfigContent", () => {
     // results and run.log for tracebacks — without this grant every such read is
     // an external_directory "ask" prompt (one per solve, worse on failures).
     expect(ed["/home/u/.amico/runs/default/**"]).toBe("allow");
-    expect(cfg.permission.bash).toBe("allow"); // runs amico-run (compound launch)
+    expect(cfg.permission.bash).toBe("allow"); // runs the amico CLI (compound launch)
     expect(cfg.permission.edit).toBe("allow"); // fills the FILL-IN block
     expect(cfg.permission.webfetch).toBeUndefined(); // unused by the solve flow — dropped
   });
@@ -346,7 +346,7 @@ describe("routingSection (Δ10 #63 — per-solve routing guidance splice)", () =
     withSession("hp", { "company-compute": { state: "connected", identity: "kate@harmoniqs.co" } }, () => {
       const s = routingSection();
       expect(s).toMatch(/## Routing/);
-      expect(s).toMatch(/amico-run estimate/);
+      expect(s).toMatch(/amico estimate/);
       expect(s).toMatch(/executor.*"remote"/);
       expect(s).toMatch(/connected as kate@harmoniqs\.co/);
     });

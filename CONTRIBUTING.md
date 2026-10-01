@@ -41,7 +41,7 @@ work if the approach already has a decision.
 ```
 amicode/
 ├── packages/
-│   ├── amico-run/    -- The `amico` / `amico-run` CLI
+│   ├── amico-run/    -- The `amico` CLI (the five-verb surface: AUTHOR·EXECUTE·VERIFY·REMEMBER·METER)
 │   ├── extension/    -- The VS Code extension (the product users install)
 │   └── schema/       -- Shared JSON schemas + cross-language validation (TS + Julia)
 ├── tools/
@@ -111,7 +111,7 @@ To add a new platform:
 1. Create a score directory under `scores/` following the existing structure.
 2. Register the score in the pulse-designer dispatch in `scores/pulse-designer/`.
 3. Add the platform-specific Hamiltonian and system constructor to the template.
-4. Wire it into the `amico-run resolve` tier-resolution logic in
+4. Wire it into the `amico resolve` tier-resolution logic in
    `packages/amico-run/src/`.
 
 The best template to copy is an existing complete score — `scores/pulse-designer/`
@@ -125,7 +125,7 @@ vetted solve scripts.
 | Tier | Command | Scope |
 |---|---|---|
 | **Fast** | `pnpm -r test` | All unit tests across all packages (excludes `**/slow/**`) |
-| **Slow** | `pnpm --filter amico-run test:slow` | Julia E2E (requires `AMICO_TEST_JULIA_PROJECT`) |
+| **Slow** | `pnpm --filter @amicode/amico-run test:slow` | Julia E2E (requires `AMICO_TEST_JULIA_PROJECT`) |
 | **Smoke** | `pnpm --filter amicode test:smoke` | Boot smoke: extension loads, opencode binary is healthy |
 | **Packaging** | `AMICODE_REQUIRE_VSIX=1 pnpm --filter amicode test` | Asserts every expected file exists in the built `.vsix` |
 | **Schema** | `cd packages/schema/julia && julia runtests.jl` | Cross-language schema conformance (TS ↔ Julia) |

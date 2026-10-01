@@ -32,7 +32,7 @@ export interface ServerOptions {
   /** cwd for opencode — opencode reads project config from here. */
   cwd: string;
   /** env vars to inject into the opencode process (e.g. OPENCODE_CONFIG_CONTENT
-   *  for the instructions/permission merge, and PATH augmentation so amico-run
+   *  for the instructions/permission merge, and PATH augmentation so the amico CLI
    *  resolves). */
   env: Record<string, string>;
   /** OutputChannel for opencode stdout/stderr capture. */

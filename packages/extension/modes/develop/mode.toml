@@ -3,7 +3,7 @@
 # it binds, the handoff seed it receives, the schema version, and the
 # per-consumer minimum-version map. ONE shared validator (packages/schema,
 # mode_registry) enforces this against the pack schema and the declared set;
-# the vitest suite and the amico-run doctor probe import the same code.
+# the vitest suite and the `amico doctor` probe import the same code.
 #
 # D3 (#806) LANDED: the implementer role card is a versioned repo source
 # seeded from the live deployed staging artifact (packages/extension/agents/

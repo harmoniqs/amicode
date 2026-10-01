@@ -11,7 +11,7 @@
 // verdicts — view logic, not a parallel fact).
 //
 // Execution mechanics (spec D3): the extension host spawns the CLI verb via
-// child_process (the amico-run launcher pattern — resolveAmicoRunBinDir); long
+// child_process (the amico CLI launcher pattern — resolveAmicoRunBinDir); long
 // upgrade verbs stream by showing the verb's live stdout; the receipt store
 // (~/.amico/server/upgrade-receipts/, JSONL) is the upgrade's exit state of
 // record — the panel may die mid-flight (the extension verb replaces the
@@ -26,7 +26,7 @@ import { join } from "node:path";
 // ─── the doctor report contract (structural mirror of the committed schema) ──
 // The schema (packages/amico-run/schemas/doctor-report.schema.json, #525) is
 // the contract — these local structural types mirror it rather than importing
-// amico-run internals, keeping the panel a view over the JSON document.
+// packages/amico-run internals, keeping the panel a view over the JSON document.
 
 export type FleetVerdict = "current" | "stale" | "integrity-failure" | "unknown";
 
@@ -143,7 +143,7 @@ ${rows}
 </section>`;
 }
 
-// ─── CLI invocation (the amico-run launcher pattern) ─────────────────────────
+// ─── CLI invocation (the amico CLI launcher pattern) ─────────────────────────
 
 /** Injectable child-process seam — a trimmed child_process.spawn. The default
  *  wraps the real spawn; tests inject fakes so no `amico` binary is needed. */
@@ -166,7 +166,7 @@ const realSpawn: SpawnLike = (cmd, args) =>
 export function resolveAmicoCli(extensionRoot: string): string {
   const staged = join(extensionRoot, "bin", "launcher", "amico");
   if (existsSync(staged)) return staged;
-  const sibling = join(extensionRoot, "..", "amico-run", "launcher", "amico");
+  const sibling = join(extensionRoot, "..", "amico-run/launcher/amico");
   if (existsSync(sibling)) return sibling;
   return "amico";
 }

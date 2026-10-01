@@ -49,7 +49,7 @@ export function stopPlan(runDir: string, now = Date.now()): "already-finished" |
 }
 
 /** The run's solve script from run.toml (regex, not a TOML parse — one known
- *  key on its own line, written by amico-run). The value is written with
+ *  key on its own line, written by the amico CLI). The value is written with
  *  JSON.stringify escaping, so decode it the same way — an escaped `\` or `"`
  *  in the path would otherwise never match ps argv. Undefined if unreadable. */
 export function runScriptPath(runDir: string): string | undefined {

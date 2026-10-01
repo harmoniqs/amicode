@@ -14,7 +14,7 @@
 // Entities live under <entitiesDir> (see amicode_tools.ts): System and
 // Formulation are the interview's durable design state; the Run *stub* records
 // that a launch was requested — it is bookkeeping, NOT the run-dir `run.toml`
-// that amico-run itself writes (different directory, different schema).
+// that the amico CLI itself writes (different directory, different schema).
 //
 // `recorded` is emitted as a QUOTED ISO-8601 string, not a bare TOML datetime:
 // smol-toml parses bare datetimes into TomlDate objects (schema/src/index.ts
@@ -283,7 +283,7 @@ export interface RunStub {
    *  or pulse ref) — the load_traj idiom's recorded half. Additive. */
   warm_start?: string;
   /** Free-tier re-rollout verification outcome (spec C) — recorded by
-   *  amicode_verify after amico-run's harness writes verification.toml. Spec B's
+   *  amicode_verify after the amico CLI's harness writes verification.toml. Spec B's
    *  entity view renders it beside the tier; promotion is gated on agree. */
   verification?: {
     agree: boolean;
@@ -1149,7 +1149,7 @@ export function formulationToml(e: FormulationEntity, now?: Date): string {
 }
 
 /** Serialize the Run bookkeeping stub under [run]. `launched_via` is fixed to
- *  "bash amico-run": the amicode_solve tool records intent only — the actual
+ *  "bash amico run": the amicode_solve tool records intent only — the actual
  *  launch is the AGENTS.md bash workflow, never this tool. Optional refs are
  *  omitted (not written as "") when absent. */
 export function runStubToml(stub: RunStub, now?: Date): string {
@@ -1161,7 +1161,7 @@ export function runStubToml(stub: RunStub, now?: Date): string {
   if (stub.script_ref !== undefined) lines.push(`script_ref = ${tomlEscape(stub.script_ref)}`);
   if (stub.env !== undefined) lines.push(`env = ${tomlEscape(stub.env)}`);
   if (stub.warm_start !== undefined) lines.push(`warm_start = ${tomlEscape(stub.warm_start)}`);
-  lines.push(`launched_via = ${tomlEscape("bash amico-run")}`);
+  lines.push(`launched_via = ${tomlEscape("bash amico run")}`);
   if (stub.note !== undefined) lines.push(`note = ${tomlEscape(stub.note)}`);
   lines.push(`recorded = ${tomlEscape(isoNow(now))}`);
   if (stub.verification !== undefined) {

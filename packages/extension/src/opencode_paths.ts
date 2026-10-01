@@ -13,18 +13,20 @@ export function resolveExtensionRoot(installedRoot: string): string {
   return installedRoot;
 }
 
-/** Dir to prepend to opencode's PATH so `amico-run` resolves.
- *  Packaged: <ext>/bin/launcher (staged by esbuild). Dev: workspace sibling. */
+/** Dir to prepend to opencode's PATH so the `amico` CLI (the verb router —
+ *  `amico run` is the launch surface since the bin's deletion, #1667)
+ *  resolves. Packaged: <ext>/bin/launcher (staged by esbuild). Dev: workspace
+ *  sibling. */
 export function resolveAmicoRunBinDir(extensionRoot: string): string | undefined {
   const staged = join(extensionRoot, "bin", "launcher");
-  if (existsSync(join(staged, "amico-run"))) return staged;
-  const sibling = join(extensionRoot, "..", "amico-run", "launcher");
-  if (existsSync(join(sibling, "amico-run"))) return sibling;
+  if (existsSync(join(staged, "amico"))) return staged;
+  const sibling = join(extensionRoot, "..", "amico-run/launcher");
+  if (existsSync(join(sibling, "amico"))) return sibling;
   return undefined;
 }
 
-/** Runs root the inspector watches; must match where amico-run writes.
- *  Empty config → ~/.amico/runs/default (amico-run's β.1 default lab). */
+/** Runs root the inspector watches; must match where the amico CLI writes.
+ *  Empty config → ~/.amico/runs/default (the CLI's β.1 default lab). */
 export function resolveRunsRoot(configValue: string): string {
   const v = (configValue ?? "").trim();
   if (v === "") return join(homedir(), ".amico", "runs", "default");

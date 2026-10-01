@@ -2,10 +2,11 @@ import { build } from "esbuild";
 import { chmodSync, mkdirSync, mkdtempSync, renameSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
-// Three bins from one package: the historical `amico-run` (entry cli.ts), the `amico`
-// verb router (entry amico.ts, issue #108) — both sharing the launch path (src/launch.ts;
-// amico.ts additionally bundles the spine verbs + the mcp-serve facade) — and the
-// `amico-pasqal` connector launcher (entry pasqal_cli.ts, issue #168: token env-injection,
+// Bins from one package: the `amico` verb router (entry amico.ts, issue #108 —
+// bundles the launch path (src/launch.ts; `amico run <args>` is the
+// byte-for-byte equivalent of the historical `amico-run <args>` bin, deleted in
+// #1667), the spine verbs, and the mcp-serve facade) and the `amico-pasqal`
+// connector launcher (entry pasqal_cli.ts, issue #168: token env-injection,
 // secrets off argv).
 const common = {
   bundle: true,
@@ -72,7 +73,6 @@ mkdirSync("dist", { recursive: true });
 const staging = mkdtempSync(join("dist", "build-"));
 try {
   for (const [entry, name] of [
-    ["src/cli.ts", "amico-run.js"],
     ["src/amico.ts", "amico.js"],
     ["src/pasqal_cli.ts", "amico-pasqal.js"],
     ["src/gh_cli.ts", "gh.js"],

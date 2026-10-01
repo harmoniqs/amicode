@@ -67,6 +67,33 @@ cd ~/.amico/ops/papers-digest/bin && shasum -a 256 amico.js > amico.js.sha256
 The sha sidecar is what an operator compares against to know what's deployed; the
 digest job never needs a restart (it execs the bundle each run).
 
+## The pinned CLI root (`install-cli-pin.sh`, amicode#1666)
+
+The same frozen-bundle doctrine, applied to the CLI itself. The `~/.local/bin/amico`
+(+ `gh`, `amico-pasqal`, `amico-git-credential`) shims are symlinks into a
+**moving checkout** — and a checkout is a moving target. Observed 2026-09-25: the live
+shim resolved into a stale side-checkout on an old branch, and every ops job silently
+ran months-old code for weeks. The launchers (`packages/amico-run/launcher/`) therefore
+resolve a **pinned dist root** FIRST — `~/.amico/server/cli/` by default
+(`AMICO_CLI_PIN_ROOT` overrides; a bundle present there wins), with the checkout dist
+beside the launcher as the pre-pin fallback. Development against the checkout is the
+EXPLICIT override: `AMICO_CLI_FROM_CHECKOUT=1` — never implicit.
+
+**Pin / upgrade procedure** (from a fresh checkout build):
+
+```sh
+pnpm --filter @amicode/amico-run build
+bash ops/install-cli-pin.sh --dist packages/amico-run/dist
+# → copies every dist bundle to ~/.amico/server/cli/ + writes <name>.js.sha256
+#   sidecars (shasum format) — the papers-digest convention
+```
+
+`amico doctor` reports the pin as the `pinned_cli` record: the root, the bundle
+count, the `amico.js` sha, and the sidecars' freshness (a mismatched or missing
+sidecar is an integrity error — refresh the pin; an absent root is a warning, the
+pre-pin state). Structural proof post-deploy: break the checkout's branch, the CLI
+still runs the pinned dist.
+
 ## Hunts: `hunt.sh` (#426)
 
 `hunt.sh` is the hardened hunt wrapper — it replaces the retired fire-and-forget
