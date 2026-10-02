@@ -1,18 +1,27 @@
-// jev_curation.ts — issue #1311 (slice of #1301 session curation): the two
-// confidence-gated call sites over the ONE thin Jev client (jev_client.ts):
+// jev_curation.ts — the confidence-gated call sites over the ONE thin Jev
+// client (jev_client.ts):
 //
-//   (a) classifier residual — sessions the deterministic #1303 rules leave
-//       unclassified get ONE Jev Choice over the closed junk-bucket set (with
-//       an "unclassified" no-match option). Archive admission ONLY at
-//       junk-bucket p ≥ 0.95 AND age ≥ 48 h — the curation spec's calibrated
-//       pair ("never act on an ambiguous mid-confidence read"); everything
-//       else — below threshold, no-match, any client failure — leaves the
-//       session as-is (fail-open).
+//   (a) classifier residual, issue #1311 (slice of #1301 session curation):
+//       sessions the deterministic #1303 rules leave unclassified get ONE Jev
+//       Choice over the closed junk-bucket set (with an "unclassified"
+//       no-match option). Archive admission ONLY at junk-bucket p ≥ 0.95 AND
+//       age ≥ 48 h — the curation spec's calibrated pair ("never act on an
+//       ambiguous mid-confidence read"); everything else — below threshold,
+//       no-match, any client failure — leaves the session as-is (fail-open).
 //
-//   (b) onset thread-Noul — ONE Noul per digest candidate ("does this session
-//       have an open thread?"). The ≥ 0.5 promotion + ranking live in the
-//       onset digest module (the plugin); THIS module only produces the map.
-//       Jev never derives a bucket label anywhere.
+//   (b) onset thread-Noul, issue #1311: ONE Noul per digest candidate ("does
+//       this session have an open thread?"). The ≥ 0.5 promotion + ranking
+//       live in the onset digest module (the plugin); THIS module only
+//       produces the map. Jev never derives a bucket label anywhere.
+//
+//   (c) distill claim-type, amicode #1680 (brain flywheel slice 1): ONE
+//       Choice per classified-substantive session over the parent claim
+//       contract's closed type set (insight | hypothesis | best-practice |
+//       hazard | method, with "none" as OUR no-match option). This is the
+//       TYPING gate only — the statement + evidence are deterministic
+//       projections of the substrate rows; Jev never authors prose. The
+//       result lands in a candidate area (a draft); a "none" verdict is an
+//       honest no-claim, both stamped by the caller. Fail-open per session.
 //
 // PURITY: the gates and question builders are pure functions of their
 // arguments (the #1303 classifier discipline); the loops take injectable
@@ -163,8 +172,8 @@ export function threadNoulQuestion(c: NoulCandidate): { question: JevQuestion; s
 }
 
 /** ONE thread-Noul per digest candidate → the promotion map the onset digest
- * consumes. A failed candidate is absent from the map (never a guessed 0);
- * unavailable/disabled yields the EMPTY map — the digest degrades to today. */
+ *  consumes. A failed candidate is absent from the map (never a guessed 0);
+ *  unavailable/disabled yields the EMPTY map — the digest degrades to today. */
 export async function jevThreadNouls(
   candidates: NoulCandidate[],
   deps: CurationDeps = {},
@@ -181,4 +190,104 @@ export async function jevThreadNouls(
     if (answer !== undefined && answer.type === "noul") nouls[c.id] = answer.noul;
   }
   return { status: "ran", nouls };
+}
+
+// ── the distill claim-type pass (#1680, brain flywheel slice 1) ───────────────
+// The typing gate over the parent claim contract's closed type set. This is a
+// CLASSIFICATION of durable knowledge, never a second session-junk classifier:
+// the substantive/junk worklist split stays #1304's classifySession (the distill
+// verb runs it upstream and never consults here for junk). The no-match option
+// is one of OUR options ("none") — an honest no-claim, never a forced type.
+
+/** The parent claim contract's closed type set (issue #1679's data contract;
+ *  the spec sketch's "hypthesis" is a typo, corrected here deliberately). */
+export const CLAIM_TYPES = ["insight", "hypothesis", "best-practice", "hazard", "method"] as const;
+
+/** The no-match option — a substantive session carrying no durable claim. */
+export const CLAIM_TYPE_NONE = "none";
+
+/** The rubric: one line per type, the claim-contract vocabulary. */
+export const CLAIM_TYPE_RUBRIC: Record<string, string> = {
+  insight: "a durable finding about how things behave — something learned about a system, tool, or process that outlives this session",
+  hypothesis: "a testable prediction or open question worth an experiment — phrased so a later run could confirm or refute it",
+  "best-practice": "a named way of working the session adopted or recommended — a checklist, workflow, or configuration pattern",
+  hazard: "a failure mode, footgun, or operational risk discovered — what bit, and what to avoid",
+  method: "a repeatable procedure for getting a specific class of thing done — steps another session could follow",
+  [CLAIM_TYPE_NONE]: "no durable knowledge here — coordination, chat, or work whose value does not outlive the session",
+};
+
+/** The state fold's excerpt cap — digest-sized, never raw spines (the
+ *  state-budget doctrine; the thread-noul precedent's 400-char band). */
+const CLAIM_STATE_TEXT_CHARS = 400;
+
+/** One substantive session the claim-type pass judges. The text fields are
+ *  capped excerpts (title + first/last user ask + last assistant conclusion);
+ *  `id` is the chat-DB session id and rides every receipt as provenance. */
+export interface ClaimTypeCandidate {
+  id: string;
+  title: string;
+  userMessageCount: number;
+  userTextChars: number;
+  assistantMessageCount: number;
+  firstUserText: string;
+  lastUserText: string;
+  lastAssistantText: string;
+}
+
+/** The claim-type question: state fold + one Choice over the closed set. */
+export function claimTypeQuestion(c: ClaimTypeCandidate): { question: JevQuestion; state: Record<string, unknown> } {
+  const excerpt = (s: string) => s.slice(0, CLAIM_STATE_TEXT_CHARS);
+  return {
+    question: {
+      type: "choice",
+      instructions:
+        "This chat session has been classified as substantive. Does it contain durable knowledge worth a candidate claim in the company brain — and if so, which type? Judge what OUTLIVES the session, not the session itself.",
+      criteria: CLAIM_TYPE_RUBRIC,
+    },
+    state: {
+      title: c.title,
+      user_message_count: c.userMessageCount,
+      user_text_chars: c.userTextChars,
+      assistant_message_count: c.assistantMessageCount,
+      first_user_text: excerpt(c.firstUserText),
+      last_user_text: excerpt(c.lastUserText),
+      last_assistant_text: excerpt(c.lastAssistantText),
+    },
+  };
+}
+
+/** Per-session claim-type verdict: the Choice read, or the honest error that
+ *  failed it (never both, never neither). */
+export interface ClaimTypeVerdict {
+  choice?: string;
+  confidence?: number;
+  error?: string;
+}
+
+/** ONE claim-type Choice per substantive session → verdicts keyed by session
+ *  id. Disabled/unavailable yields the FIRST call's status and whatever
+ *  partial verdicts exist; a per-session call error fails open per session
+ *  (the verdict carries the error, the caller skips the stamp so the next
+ *  night retries). */
+export async function jevClaimTypes(
+  candidates: ClaimTypeCandidate[],
+  deps: CurationDeps = {},
+): Promise<{ status: JevPassStatus; verdicts: Record<string, ClaimTypeVerdict> }> {
+  const verdicts: Record<string, ClaimTypeVerdict> = {};
+  for (const c of candidates) {
+    const { question, state } = claimTypeQuestion(c);
+    const res = await askJev({ claim_type: question }, state, { sessionId: c.id, deps });
+    if (!res.ok) {
+      if (res.reason === "disabled" || res.reason === "key-missing") return { status: res.reason === "disabled" ? "disabled" : "unavailable", verdicts };
+      verdicts[c.id] = { error: res.error };
+      continue;
+    }
+    const answer = res.answers.claim_type;
+    if (answer === undefined || answer.type !== "choice") {
+      verdicts[c.id] = { error: "no choice answer for claim_type" };
+      continue;
+    }
+    verdicts[c.id] = { choice: answer.choice, confidence: answer.confidence };
+  }
+  return { status: "ran", verdicts };
 }

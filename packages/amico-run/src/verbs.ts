@@ -31,6 +31,7 @@ import { sessionsVerb } from "./sessions_verb.js";
 import { sotaVerb } from "./sota_verb.js";
 import { skillsVerb } from "./skills_verb.js";
 import { notturnoVerb } from "./notturno_verb.js";
+import { distillVerb } from "./distill_verb.js";
 export interface VerbResult {
   json: unknown; // structured result (stdout as JSON for the CLI; tool content for MCP)
   code: number; // process exit code (0 ok, 64 usage/gate, else failure)
@@ -315,6 +316,26 @@ const notturno: Verb = {
   run: notturnoVerb,
 };
 
+// distill — the brain flywheel's artery (amicode #1680, slice 1 of the
+// company-brain flywheel #1679): the nightly notturno job over the chat DB.
+// Worklist = #1304's substantive classification (never a second classifier);
+// ONE confidence-gated Jev Choice per eligible session types the candidate
+// claim; the note is a deterministic projection with provenance pointers
+// back into the substrate (session id + message ids — resolvable by
+// construction). Dry-run by default; --apply writes candidate notes into the
+// dedicated candidate area, the distill state stamp (re-runs are no-ops), and
+// the notturno pass receipt (deny-list-gated, membership-checked,
+// record-mode-respecting). The chat DB is opened READ-ONLY — one substrate,
+// no second capture path.
+const distill: Verb = {
+  name: "distill",
+  summary:
+    "distill the chat DB's classified-substantive sessions into candidate claim-notes (provenance-carrying drafts) + the state stamp + the notturno pass receipt",
+  generalizes: "the dream-distill pass (the severed substrate, rewired to the chat DB through the notturno chassis)",
+  slice: "company brain flywheel (amicode#1680, slice 1)",
+  run: (args) => distillVerb(args),
+};
+
 export const SPINE_VERBS: Verb[] = [
   catalog,
   vault,
@@ -334,4 +355,5 @@ export const SPINE_VERBS: Verb[] = [
   sota,
   skills,
   notturno,
+  distill,
 ];
