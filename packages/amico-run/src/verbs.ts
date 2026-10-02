@@ -28,6 +28,7 @@ import { campaignVerb } from "./campaign_verb.js";
 import { projectVerb } from "./project_verb.js";
 import { envVerb } from "./env_verb.js";
 import { sessionsVerb } from "./sessions_verb.js";
+import { correctionsVerb } from "./corrections_verb.js";
 import { sotaVerb } from "./sota_verb.js";
 import { skillsVerb } from "./skills_verb.js";
 import { notturnoVerb } from "./notturno_verb.js";
@@ -315,6 +316,25 @@ const notturno: Verb = {
   run: notturnoVerb,
 };
 
+// corrections — the #1677 REMEMBER-family surface: mine the chat DB for user
+// messages that CORRECT system behavior (the pasqal-campaign lesson — the
+// user's corrections used to evaporate), classify the residual with the ONE
+// Jev client (deterministic marker pre-filter first — the curation doctrine),
+// and file skills-integrity findings at `status: open` in the personal vault
+// (drift → skill-finding; gaps → skill-proposal; occurrences = evidence).
+// Detection is the autonomous fast ring; application stays human-gated per
+// the skills-integrity charter. Dry-run by default; the scan DB is READ-ONLY;
+// P0/P1 severities ping Slack, everything else files silently. The nightly
+// notturno job runs this pass and records via `amico notturno pass`.
+const corrections: Verb = {
+  name: "corrections",
+  summary:
+    "scan — mine chat sessions for user corrections, classify with jev, file skills-integrity findings (status: open) + a digest; P0/P1 ping Slack",
+  generalizes: "the skills-integrity front-line rule's missing half: corrections observed in sessions but never filed by hand",
+  slice: "corrections scan (amicode#1677)",
+  run: (args) => correctionsVerb(args),
+};
+
 export const SPINE_VERBS: Verb[] = [
   catalog,
   vault,
@@ -331,6 +351,7 @@ export const SPINE_VERBS: Verb[] = [
   project,
   env,
   sessions,
+  corrections,
   sota,
   skills,
   notturno,
