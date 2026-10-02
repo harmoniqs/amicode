@@ -49,16 +49,21 @@ const USAGE =
 export const DEFAULT_SCAN_DAYS = 7;
 
 /** Filing gate — the calibrated Choice confidence floor. Filing an OPEN
- *  finding is non-destructive (a human triages it), so this sits just under
- *  the archiver's destructive 0.95; tunable per the issue's Notes. */
-export const CORRECTIONS_CONFIDENCE_MIN = 0.90;
+ *  finding is non-destructive (a human triages it), so this sits well under
+ *  the archiver's destructive 0.95. Tuned against the pasqal campaign backfill
+ *  (#1677's acceptance run): jev reads true corrections as kind=behavior-gap
+ *  with noul ≥ 0.94 but kind-confidence in the 0.80–0.90 band — a 0.90 gate
+ *  starved exactly the corrections the scan exists for. The noul floor below
+ *  is the corroboration that keeps 0.80 honest (true corrections read
+ *  noul ≥ 0.9; not-a-corrections read ≤ 0.5 on the same fold). */
+export const CORRECTIONS_CONFIDENCE_MIN = 0.80;
 
 /** Corroboration floor — the correction-noul must agree (p(true) ≥ 0.5). */
 export const CORRECTIONS_NOUL_MIN = 0.5;
 
 /** Jev budget: at most this many residual consultations per pass (the
  *  pre-filter is generous by design — the cap is the cost guard). */
-export const DEFAULT_MAX_JEV = 200;
+export const DEFAULT_MAX_JEV = 400;
 
 /** Digest unverified-entries cap (digest rows, never findings). */
 export const DIGEST_UNVERIFIED_CAP = 20;
@@ -66,7 +71,11 @@ export const DIGEST_UNVERIFIED_CAP = 20;
 // ── the deterministic front line (recall) ────────────────────────────────────
 
 /** Correction-signal markers — ONE match consults Jev. Generous by design:
- *  the regex owns recall, Jev owns precision; `--max-jev` caps the spend. */
+ *  the regex owns recall, Jev owns precision; `--max-jev` caps the spend.
+ *  Tuned against the pasqal campaign session (amicode #1677's acceptance
+ *  backfill): interrogative corrections ("why are we…", "are we not…"),
+ *  prescriptive ones ("we should…"), and the stack's display-drift
+ *  vocabulary ("not showing", "not in line") are all recall-relevant. */
 export const CORRECTION_MARKERS: RegExp[] = [
   /\bno[ ,:;!?]/i,
   /\bnope\b/i,
@@ -80,11 +89,18 @@ export const CORRECTION_MARKERS: RegExp[] = [
   /\bstop\b/i,
   /\bdon'?t\b/i,
   /\binstead\b/i,
+  /\bwe should(?:n'?t)?\b/i,
+  /\byou should(?:n'?t)?\b/i,
   /\bshould be (?:using|doing)\b/i,
+  /\bshouldn'?t\b/i,
   /\b(?:supposed to|you were supposed)\b/i,
-  /\bwhy did you\b/i,
-  /\byou should\b/i,
+  /\bwhy (?:did|are|is) (?:you|we|it)\b/i,
+  /\bare we not\b/i,
+  /\bwtf\b/i,
+  /\bway too\b/i,
+  /\bnot (?:showing|in line|visible)\b/i,
   /\b(?:again|still) (?:wrong|not)\b/i,
+  /\bstill (?:can'?t|don'?t)\b/i,
   /\bper my\b/i,
   /\bas i said\b/i,
   /\b(?:explicitly|specifically) (?:said|asked)\b/i,
@@ -624,6 +640,15 @@ export async function correctionsScan(argv: string[], env: NodeJS.ProcessEnv, de
     const key = clusterKey(a);
     clusters.set(key, [...(clusters.get(key) ?? []), a]);
   }
+  // What WOULD be filed — the dry-run's whole point (the tuning loop reads this).
+  const admittedDetail = [...clusters.values()].map((list) => ({
+    session_id: list[0]!.candidate.sessionId,
+    session_title: list[0]!.candidate.sessionTitle,
+    kind: list[0]!.kind,
+    severity: list[0]!.severity,
+    occurrences: list.length,
+    quotes: list.map((o) => o.candidate.userText.replace(/\s+/g, " ").trim().slice(0, 140)),
+  }));
 
   // ── filing (apply only; dedup via UPDATE appends; watermark; digest; ping) ─
   const passIso = new Date(now).toISOString();
@@ -708,6 +733,7 @@ export async function correctionsScan(argv: string[], env: NodeJS.ProcessEnv, de
       jev_status: jevStatus,
       admitted: admitted.length,
       clusters: clusters.size,
+      admitted_detail: admittedDetail,
       filed,
       updated,
       unverified: unverifiedList.length,

@@ -47,6 +47,13 @@ describe("the deterministic marker pre-filter", () => {
     expect(isCorrectionCandidate("you're misunderstanding the routing, we agreed on plan B")).toBe(true);
     expect(isCorrectionCandidate("I said dt=4, not 1")).toBe(true);
     expect(isCorrectionCandidate("Actually, I meant the Fock basis instead")).toBe(true);
+    // the pasqal-campaign phrasings the first recall pass missed (#1677 backfill)
+    expect(isCorrectionCandidate("wtf are we doing with nelder mead? like we can do high fidelity gates with piccolo")).toBe(true);
+    expect(isCorrectionCandidate("why are we leaving them fixed? we should be leveraging the free time warp")).toBe(true);
+    expect(isCorrectionCandidate("the pulse is not showing up in line")).toBe(true);
+    expect(isCorrectionCandidate("so are we not constraining these pulses to start and end at 0")).toBe(true);
+    expect(isCorrectionCandidate("wait we should always do minimum time as an optimization problem")).toBe(true);
+    expect(isCorrectionCandidate("these pulses are crazy and way too long for order 100ns gates")).toBe(true);
   });
 
   it("does not match fresh instructions, praise, or questions", () => {
@@ -94,14 +101,15 @@ describe("the questions builder + state fold", () => {
 // ── AC: the calibrated filing gate ────────────────────────────────────────────
 
 describe("the filing gate + severity ladder", () => {
-  it("admits kind-carrying corrections at ≥ 0.90 corroborated by noul ≥ 0.5", () => {
+  it("admits kind-carrying corrections at ≥ 0.80 corroborated by noul ≥ 0.5", () => {
     expect(filingAdmits("behavior-gap", 0.92, 0.8)).toBe(true);
+    expect(filingAdmits("behavior-gap", 0.85, 0.94)).toBe(true); // the pasqal-backfill operating band (conf 0.80–0.90, noul ≥ 0.9)
     expect(filingAdmits("skill-drift", 0.99, 0.99)).toBe(true);
     expect(filingAdmits("skill-gap", 0.95, 0.5)).toBe(true);
   });
 
   it("never files below threshold, without corroboration, without a kind, or not-a-correction", () => {
-    expect(filingAdmits("behavior-gap", 0.89, 0.9)).toBe(false);
+    expect(filingAdmits("behavior-gap", 0.79, 0.9)).toBe(false);
     expect(filingAdmits("skill-drift", 0.95, 0.4)).toBe(false);
     expect(filingAdmits(undefined, 1, 1)).toBe(false);
     expect(filingAdmits("not-a-correction", 0.99, 0.9)).toBe(false);
