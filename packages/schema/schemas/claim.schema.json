@@ -1,0 +1,95 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://amico.harmoniqs.co/schema/claim/v1",
+  "title": "claim (the company-brain atomic unit)",
+  "description": "The claim object (amicode #1681, brain flywheel slice 2 — the ONE type namespace): the atomic knowledge unit of the #1679 flywheel. Notes are renderings; machinery operates on claims only. Authoritative shape per the vault spec spec-20261002-090500's data contract (its sketch's 'hypthesis' is a corrected typo). The claim note's frontmatter IS this object — exactly these keys, no render-level extras: provenance rides evidence pointers + the append-only history. Frontmatter-contract pattern (like library-paper/skill): no schema_version.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "type",
+    "statement",
+    "status",
+    "confidence",
+    "evidence",
+    "applied",
+    "last_applied",
+    "history",
+    "scope",
+    "tags"
+  ],
+  "properties": {
+    "type": {
+      "description": "the claim's type — the closed vocabulary slice 1's distill pass already types candidates over (jev_curation CLAIM_TYPES). This field dissolves the memory/vault type-namespace collision: in the claims registry `type` speaks ONLY this vocabulary.",
+      "type": "string",
+      "enum": ["insight", "hypothesis", "best-practice", "hazard", "method"]
+    },
+    "statement": {
+      "description": "one addressable sentence — the unit of agreement/disagreement. The projection takes the memory card's description; distill takes the session title.",
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "status": {
+      "description": "the lifecycle. Transitions are stamped by machinery (slice 5); a claim with zero resolvable evidence cannot reach corroborated (the lint enforces it).",
+      "type": "string",
+      "enum": ["unverified", "corroborated", "superseded", "refuted"]
+    },
+    "confidence": {
+      "description": "the calibrated band. Distill's numeric Jev confidence buckets into this enum via bucketConfidence; the memory-card projection stamps `medium` (a hand-curated card carries no calibration).",
+      "type": "string",
+      "enum": ["high", "medium", "low"]
+    },
+    "evidence": {
+      "description": "pointers into the substrate — MUST resolve (the lint checks). Vocabulary (extends slice 1's): chat-session/<id>, chat-message/<id> (the chat DB), memory-card/<relpath under amicode/memory/> (the vault). May be empty only while unverified.",
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "applied": {
+      "description": "adoption counter — machinery-stamped (recommend-outcome accepted, citation in a solve; slice 4).",
+      "type": "integer",
+      "minimum": 0
+    },
+    "last_applied": {
+      "description": "when the adoption counter last moved; null until first applied.",
+      "type": ["string", "null"],
+      "format": "date-time"
+    },
+    "history": {
+      "description": "the append-only trail: entries are never removed or edited, only appended (lifecycle transitions, merges, adoption stamps, projections).",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["date", "event", "note"],
+        "properties": {
+          "date": { "type": "string", "format": "date-time" },
+          "event": {
+            "description": "the closed event vocabulary machinery stamps: created (distill-merge), projected (memory-card projection), merged (dedupe), evidence-added, applied (adoption stamp), corroborated / superseded / refuted (lifecycle).",
+            "type": "string",
+            "enum": [
+              "created",
+              "projected",
+              "merged",
+              "evidence-added",
+              "applied",
+              "corroborated",
+              "superseded",
+              "refuted"
+            ]
+          },
+          "note": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "scope": {
+      "description": "the promotion ladder tier this claim lives at (copy-never-move promotion is slice 6; the projection stamps `personal` — the cards' home).",
+      "type": "string",
+      "enum": ["personal", "team", "public"]
+    },
+    "tags": {
+      "description": "free-form retrieval hooks; the projection preserves the source card's tags verbatim.",
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    }
+  }
+}

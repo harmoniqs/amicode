@@ -50,6 +50,10 @@ import libraryPaperSchema from "../schemas/library-paper.schema.json" with { typ
 // The SKILL.md frontmatter contract (amicode#996) — the third markdown-
 // frontmatter kind: validated as a parsed object, never filename-kinded.
 import skillSchema from "../schemas/skill.schema.json" with { type: "json" };
+// The claim object (amicode#1681, brain flywheel slice 2) — the company brain's
+// atomic unit: the ONE type namespace machinery operates on. Fourth markdown-
+// frontmatter kind (a registry claim note's frontmatter IS this object).
+import claimSchema from "../schemas/claim.schema.json" with { type: "json" };
 
 // Cross-language ProblemSpec hashing (Plan 2 Task 5) — re-exported at the package
 // root so cross-package consumers (e.g. the extension's ledger_client.ts, Plan 3
@@ -193,6 +197,25 @@ export {
   type FleetFreshnessStamp,
 } from "./fleet_projection.js";
 
+// The claim object's ONE validator + closed vocabularies + the distill→claim
+// confidence bridge (amicode#1681, brain flywheel slice 2): the amico-run
+// claims verb (registry lint + memory-card projection) and any future consumer
+// import from here — same documented root seam as vault-card/mode_registry.
+export {
+  validateClaim,
+  CLAIM_TYPES,
+  CLAIM_STATUSES,
+  CLAIM_CONFIDENCE_LEVELS,
+  CLAIM_SCOPES,
+  CLAIM_HISTORY_EVENTS,
+  bucketConfidence,
+  type ClaimType,
+  type ClaimStatus,
+  type ClaimConfidence,
+  type ClaimScope,
+  type ClaimHistoryEvent,
+} from "./claim.js";
+
 // ajv-formats ships a CJS default export; under NodeNext the default import can
 // bind the module namespace rather than the callable, so normalize defensively.
 const addFormats = (typeof addFormatsDefault === "function"
@@ -232,6 +255,11 @@ const SCHEMAS = {
 // SKILL.md frontmatter contract (amicode#996) — frontmatter carries no
 // schema_version, same pattern as library-paper.
   skill: skillSchema,
+// Registered in SCHEMAS ONLY (not SUPPORTED_VERSIONS_BY_KIND): claim is the
+// claim-object frontmatter contract (amicode#1681) — a registry claim note's
+// frontmatter IS the claim object and carries no schema_version, same pattern
+// as library-paper/skill.
+  claim: claimSchema,
 } as const;
 
 export type SchemaKind = keyof typeof SCHEMAS;
@@ -245,16 +273,17 @@ export const SCHEMA_KINDS = Object.keys(SCHEMAS) as SchemaKind[];
  *  the rest remain v1 and bump independently. `finished` (no schema_version),
  * `problemspec`, and `ledger-record` (both top-level `oneOf` shapes with no
  * top-level properties.schema_version), `library-paper` (vault note
- * frontmatter — real notes carry no schema_version), and `skill` (SKILL.md
- * frontmatter, amicode#996 — frontmatter carries no schema_version) are
- * excluded from this string-version map. */
-export const SUPPORTED_VERSIONS_BY_KIND: Record<Exclude<SchemaKind, "finished" | "problemspec" | "ledger-record" | "library-paper" | "skill">, string[]> =
+ * frontmatter — real notes carry no schema_version), `skill` (SKILL.md
+ * frontmatter, amicode#996 — frontmatter carries no schema_version), and
+ * `claim` (registry claim-note frontmatter, amicode#1681 — the frontmatter IS
+ * the claim object) are excluded from this string-version map. */
+export const SUPPORTED_VERSIONS_BY_KIND: Record<Exclude<SchemaKind, "finished" | "problemspec" | "ledger-record" | "library-paper" | "skill" | "claim">, string[]> =
   Object.fromEntries(
     (["run", "result", "lab", "solvespec", "catalog-entry", "spec", "plan", "pack", "amicode-config"] as const).map((kind) => [
       kind,
       (SCHEMAS[kind] as { properties: { schema_version: { enum: string[] } } }).properties.schema_version.enum,
     ]),
-  ) as Record<Exclude<SchemaKind, "finished" | "problemspec" | "ledger-record" | "library-paper" | "skill">, string[]>;
+  ) as Record<Exclude<SchemaKind, "finished" | "problemspec" | "ledger-record" | "library-paper" | "skill" | "claim">, string[]>;
 
 export interface Validation {
   ok: boolean;
