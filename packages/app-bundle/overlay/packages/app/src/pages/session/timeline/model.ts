@@ -1,5 +1,6 @@
 import type { Message, UserMessage } from "@opencode-ai/sdk/v2"
-import { createMemo, createResource, onCleanup, untrack, type Accessor } from "solid-js"
+import { createEffect, createMemo, createResource, onCleanup, untrack, type Accessor } from "solid-js"
+import { shouldRefetchOnReconnect, shouldRefetchOnResync } from "@opencode-ai/ui/amicode-entity-view"
 import { useServerSync } from "@/context/server-sync"
 import { useSync } from "@/context/sync"
 import { same } from "@/utils/same"
@@ -12,6 +13,12 @@ const sessionFreshness = 15_000
 export function createTimelineModel(input: {
   sessionID: Accessor<string | undefined>
   revertMessageID: Accessor<string | undefined>
+  // #1646 (transcript self-heal) — the app's global SSE liveness signals, the
+  // same ones message-timeline.tsx feeds the entity rail. Optional so the model
+  // is usable without a live stream (tests, non-session hosts); omitting them
+  // leaves the effects' bodies inert.
+  streamConnected?: Accessor<boolean>
+  forceResync?: Accessor<number>
 }) {
   const serverSync = useServerSync()
   const sync = useSync()
@@ -62,6 +69,42 @@ export function createTimelineModel(input: {
       return sync().session.sync(id)
     },
   )
+
+  // #1646 (transcript self-heal) — the transcript re-syncs above ONLY on a
+  // session-ID change. A silent SSE reconnect or fan-in wedge WHILE STAYING ON
+  // THE SAME SESSION drops message frames the lastEventID cursor may not
+  // replay, and neither reconcileFromStatus (status only) nor the reconnect
+  // bootstrap (list/status/global) reloads the viewed session's messages — so
+  // the rail froze until a manual reload re-ran the resource above. Mirror the
+  // entity rail's two self-heal effects (entity-rail.tsx): a forced
+  // session.sync on the disconnect→connect rising edge AND on any resync-token
+  // advance (the wedge case, where status stays "connected"). `prev` is a plain
+  // closure `let` — each effect tracks ONLY its signal, never the store or the
+  // resource, so a re-fetch's own store mutation cannot re-arm it (no loop).
+  // force:true re-fetches messages and does not coalesce onto a non-forced
+  // in-flight request (server-session.ts sync, #1646 forced-resolve fix).
+  const forceSyncViewed = () => {
+    const id = untrack(() => input.sessionID())
+    if (!id) return
+    void sync().session.sync(id, { force: true }).catch(() => {})
+  }
+  let prevConnected: boolean | undefined = undefined
+  createEffect(() => {
+    const signal = input.streamConnected
+    if (!signal) return
+    const next = signal()
+    if (shouldRefetchOnReconnect(prevConnected, next)) forceSyncViewed()
+    prevConnected = next
+  })
+  let prevResync: number | undefined = undefined
+  createEffect(() => {
+    const signal = input.forceResync
+    if (!signal) return
+    const next = signal()
+    if (shouldRefetchOnResync(prevResync, next)) forceSyncViewed()
+    prevResync = next
+  })
+
   const messages = createMemo(() => {
     const id = input.sessionID()
     return id ? (sync().data.message[id] ?? []) : []

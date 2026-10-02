@@ -43,7 +43,6 @@ import {
   type DoctorReport,
   type SpawnLike,
   type DoctorOutcome,
-  type UpgradeOutcome,
 } from "../src/fleet_panel";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -553,7 +552,11 @@ describe("fleet panel — runDoctor spawns doctor --json and parses the report",
   });
 });
 
-// ─── the webview host: registerFleetPanel (deliverable 2) ────────────────────
+// ─── the standalone webview panel is RETIRED (#1322, AC5) ────────────────────
+// The Fleet & Versions panel is absorbed into the Fleet Manager Work Column tab.
+// registerFleetPanel no longer registers a command or opens a panel; the pure
+// primitives above (renderFleetSection / runDoctor / upgradeEnabled / …) remain
+// the Versions CONTENT, now shipped to the tab by registerFleetManagerCommands.
 
 const okDoctor = (name: (typeof FIXTURE_NAMES)[number]): (() => Promise<DoctorOutcome>) =>
   async () => ({ ok: true, report: fixture(name) as unknown as DoctorReport, error: null });
@@ -563,122 +566,22 @@ const panelCtx = (): { subscriptions: unknown[]; extensionUri: unknown } => ({
   extensionUri: vscode.Uri.file("/ext"),
 });
 
-describe("fleet panel — the webview host", () => {
+describe("fleet panel — the standalone panel is retired", () => {
   beforeEach(() => {
     _resetFleetPanelForTesting();
   });
 
-  it("the command opens a webview panel, runs doctor, and renders the report", async () => {
-    const doctor = vi.fn(okDoctor("doctor-current.json"));
-    const ctx = panelCtx();
-    registerFleetPanel(ctx as never, { doctor });
-    const spy = vi.spyOn(vscode.window, "createWebviewPanel");
-    await vscode.commands.executeCommand("amicode.fleet.versions");
-    expect(spy).toHaveBeenCalledTimes(1);
-    expect(doctor).toHaveBeenCalledTimes(1);
-    const panel = spy.mock.results[0]!.value as { webview: { html: string } };
-    // the rendered report IS the pure section: doctor's facts verbatim
-    expect(panel.webview.html).toContain("server-binary");
-    expect(panel.webview.html).toContain("0.2.6-darwin-arm64");
-    expect(panel.webview.html).toContain(">current<");
-    // the CSP-pinned document (onboarding pattern)
-    expect(panel.webview.html).toContain("Content-Security-Policy");
-    spy.mockRestore();
-  });
-
-  it("singleton: a second open reveals the existing panel instead of creating one", async () => {
+  it("registerFleetPanel no longer registers amicode.fleet.versions (it routes to the tab now)", () => {
+    const spy = vi.spyOn(vscode.commands, "registerCommand");
     registerFleetPanel(panelCtx() as never, { doctor: vi.fn(okDoctor("doctor-current.json")) });
-    const spy = vi.spyOn(vscode.window, "createWebviewPanel");
-    await vscode.commands.executeCommand("amicode.fleet.versions");
-    await vscode.commands.executeCommand("amicode.fleet.versions");
-    expect(spy).toHaveBeenCalledTimes(1);
-    const panel = spy.mock.results[0]!.value as { revealCount: number };
-    expect(panel.revealCount).toBe(1);
+    expect(spy.mock.calls.map((c) => c[0])).not.toContain("amicode.fleet.versions");
     spy.mockRestore();
   });
 
-  it("a doctor failure renders the error state, not a fabricated report", async () => {
-    const doctor = vi.fn(async () => ({ ok: false, report: null, error: "amico doctor exited 64" }));
-    registerFleetPanel(panelCtx() as never, { doctor });
+  it("registerFleetPanel opens no webview panel", () => {
     const spy = vi.spyOn(vscode.window, "createWebviewPanel");
-    await vscode.commands.executeCommand("amicode.fleet.versions");
-    const panel = spy.mock.results[0]!.value as { webview: { html: string } };
-    expect(panel.webview.html).toContain("amico doctor exited 64");
-    expect(panel.webview.html).not.toContain(">current<");
-    spy.mockRestore();
-  });
-
-  it("the refresh message re-invokes doctor and re-renders", async () => {
-    let call = 0;
-    const doctor = vi.fn(async () => {
-      call += 1;
-      return call === 1
-        ? { ok: true, report: fixture("doctor-current.json") as unknown as DoctorReport, error: null }
-        : { ok: true, report: fixture("doctor-stale.json") as unknown as DoctorReport, error: null };
-    });
-    registerFleetPanel(panelCtx() as never, { doctor });
-    const spy = vi.spyOn(vscode.window, "createWebviewPanel");
-    await vscode.commands.executeCommand("amicode.fleet.versions");
-    const panel = spy.mock.results[0]!.value as {
-      webview: { html: string; _simulateMessage: (msg: unknown) => void };
-    };
-    expect(panel.webview.html).toContain("0.2.6-darwin-arm64");
-    panel.webview._simulateMessage({ type: "fleet-refresh" });
-    await new Promise((r) => setTimeout(r, 0));
-    expect(doctor).toHaveBeenCalledTimes(2);
-    // the refreshed report swapped in: stale fixture's facts now rendered
-    expect(panel.webview.html).toContain("0.2.4-darwin-arm64");
-    expect(panel.webview.html).toContain(">stale<");
-    spy.mockRestore();
-  });
-
-  it("the upgrade message invokes the verb with the surface, streams live lines, shows the receipt of record, then re-runs doctor", async () => {
-    const doctor = vi.fn(okDoctor("doctor-stale.json"));
-    let resolveUpgrade!: (out: UpgradeOutcome) => void;
-    const seenLines: string[] = [];
-    const upgrade = vi.fn(
-      (surface: string, onLine: (l: string) => void) =>
-        new Promise<UpgradeOutcome>((res) => {
-          expect(surface).toBe("extension");
-          onLine("pre-flight: doctor probe");
-          onLine("receipt appended");
-          resolveUpgrade = (out) => res(out);
-        }),
-    );
-    registerFleetPanel(panelCtx() as never, { doctor, upgrade });
-    const spy = vi.spyOn(vscode.window, "createWebviewPanel");
-    await vscode.commands.executeCommand("amicode.fleet.versions");
-    const panel = spy.mock.results[0]!.value as {
-      webview: { html: string; _simulateMessage: (msg: unknown) => void };
-    };
-
-    panel.webview._simulateMessage({ type: "fleet-upgrade", surface: "extension" });
-    await new Promise((r) => setTimeout(r, 0));
-    expect(upgrade).toHaveBeenCalledTimes(1);
-    // the live verb output streams into the panel (the receipt-tailing view)
-    expect(panel.webview.html).toContain("pre-flight: doctor probe");
-    expect(panel.webview.html).toContain("receipt appended");
-
-    resolveUpgrade({ code: 0, ok: true, receipt: { surface: "extension", outcome: "upgraded", verification: true } });
-    await new Promise((r) => setTimeout(r, 0));
-    // the receipt of record is shown verbatim (JSON of the store's line)
-    expect(panel.webview.html).toContain('"outcome": "upgraded"');
-    // doctor re-ran post-upgrade to refresh the table from the CLI's truth
-    expect(doctor).toHaveBeenCalledTimes(2);
-    spy.mockRestore();
-  });
-
-  it("an upgrade message for a NON-repairable surface is refused by the host (view logic re-derived from the current report)", async () => {
-    const upgrade = vi.fn();
-    registerFleetPanel(panelCtx() as never, { doctor: vi.fn(okDoctor("doctor-current.json")), upgrade });
-    const spy = vi.spyOn(vscode.window, "createWebviewPanel");
-    await vscode.commands.executeCommand("amicode.fleet.versions");
-    const panel = spy.mock.results[0]!.value as {
-      webview: { _simulateMessage: (msg: unknown) => void };
-    };
-    panel.webview._simulateMessage({ type: "fleet-upgrade", surface: "extension" }); // current in this fixture
-    await new Promise((r) => setTimeout(r, 0));
-    expect(upgrade).not.toHaveBeenCalled();
+    registerFleetPanel(panelCtx() as never, { doctor: vi.fn(okDoctor("doctor-current.json")) });
+    expect(spy).not.toHaveBeenCalled();
     spy.mockRestore();
   });
 });

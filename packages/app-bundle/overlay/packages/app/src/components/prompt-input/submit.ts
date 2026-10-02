@@ -6,6 +6,7 @@ import { useNavigate, useParams, useSearchParams } from "@solidjs/router"
 import { batch, startTransition, type Accessor } from "solid-js"
 import { useTabs } from "@/context/tabs"
 import { useServerSync, type ServerSync } from "@/context/server-sync"
+import { useServer } from "@/context/server"
 import { useLanguage } from "@/context/language"
 import { useLayout } from "@/context/layout"
 import { useLocal, type ModelSelection } from "@/context/local"
@@ -24,6 +25,12 @@ import { createPromptSubmissionState } from "./submission-state"
 import { normalizeSessionInfo } from "@/utils/session"
 import { Event } from "@opencode-ai/schema/event"
 import { blobDataUrl } from "@/utils/draft-store"
+import { startReconcileTimer, cancelReconcileTimer } from "@/context/session-status-reconcile"
+import { amicodeGet } from "@/utils/amicode-fetch"
+import { currentMachineSelection } from "@/pages/new-session/new-session-machine-selection"
+import { runCreatePreflight } from "@/components/remote-create-preflight"
+import { armRemoteCreate, disarmRemoteCreate } from "@/components/remote-create-arm"
+import type { CreationTargetResponse, PeerHomeBaseResponse } from "@/components/remote-create-preflight"
 
 type PendingPrompt = {
   abort: AbortController
@@ -62,10 +69,14 @@ export async function sendFollowupDraft(input: FollowupSendInput) {
   const setBusy = () => {
     if (!input.optimisticBusy) return
     input.serverSync.session.set("session_status", input.draft.sessionID, { type: "busy" })
+    startReconcileTimer(input.draft.sessionID, (sessionId) => {
+      input.serverSync.session.set("session_status", sessionId, { type: "idle" })
+    })
   }
 
   const setIdle = () => {
     if (!input.optimisticBusy) return
+    cancelReconcileTimer(input.draft.sessionID)
     input.serverSync.session.set("session_status", input.draft.sessionID, { type: "idle" })
   }
 
@@ -233,6 +244,12 @@ type PromptSubmitInput = {
    *  after a first successful connect); a send is then refused with an honest
    *  notice instead of optimistically posting into a dead tunnel. */
   streamGap?: Accessor<boolean>
+  /** amicode#1608 — true when the engine is deliberately OFF (or stopping). A
+   *  send is refused with an engine-specific notice that takes PRECEDENCE over
+   *  streamGap, so an intentional off reads as intentional rather than as a
+   *  generic connection drop. Injected (like streamGap) so submission stays
+   *  testable without the provider tree. */
+  engineOff?: Accessor<boolean>
   model?: ModelSelection
 }
 
@@ -241,6 +258,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
   const sdk = useSDK()
   const sync = useSync()
   const serverSync = useServerSync()
+  const server = useServer()
   const local = useLocal()
   const permission = usePermission()
   const prompt = input.prompt
@@ -340,6 +358,19 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       return
     }
 
+    // amicode#1608 AC6 — a send while the engine is deliberately OFF refuses
+    // with an engine-specific reason, ordered BEFORE the stream-gap refusal so
+    // the specific "engine is off" reason wins over the generic
+    // connection-dropped notice. Same honest-refusal contract as the gap:
+    // nothing was sent, the draft is untouched, nothing pushed to history.
+    if (input.engineOff?.()) {
+      showToast({
+        title: language.t("prompt.toast.engineOff.title"),
+        description: language.t("prompt.toast.engineOff.description"),
+      })
+      return
+    }
+
     // amicode#1203 AC3 — a send during the stream gap refuses with an honest
     // reason: nothing was sent, the draft is untouched in the composer, nothing
     // was pushed to history. Never a fake success, never a silent loss. The gap
@@ -419,6 +450,35 @@ export function createPromptSubmit(input: PromptSubmitInput) {
 
     let session = input.info()
     if (!session && isNewSession) {
+      // #1643 (completes #1484 AC3): the pre-flight gate. When the composer's
+      // machine picker selected a REMOTE peer, resolve the create target + the
+      // peer's working directory BEFORE creating. A blocked pick surfaces its
+      // exact reason and creates NOTHING; a remote pick arms x-amicode-owner
+      // (the multiplexer routes the path-less create POST to the peer) and
+      // lands in the peer's directory; a local pick is byte-unchanged.
+      const picked = currentMachineSelection()
+      let remoteOwnerArmed = false
+      if (picked) {
+        const conn = server.current
+        const preflight = await runCreatePreflight(picked, {
+          getCreationTarget: (m) =>
+            amicodeGet(conn, `/amicode/fleet/creation-target?machine=${encodeURIComponent(m)}`) as Promise<CreationTargetResponse>,
+          getPeerHomeBase: (m) =>
+            amicodeGet(conn, `/amicode/fleet/peer-home-base?machine=${encodeURIComponent(m)}`) as Promise<PeerHomeBaseResponse>,
+        })
+        if (!preflight.proceed) {
+          showToast({
+            title: language.t("prompt.toast.sessionCreateFailed.title"),
+            description: preflight.displayText ?? language.t("common.requestFailed"),
+          })
+          return
+        }
+        if (preflight.ownerToArm) {
+          armRemoteCreate(preflight.ownerToArm)
+          remoteOwnerArmed = true
+          if (preflight.remoteDirectory) sessionDirectory = preflight.remoteDirectory
+        }
+      }
       const created = await sdk()
         .api.session.create({
           agent: currentAgent.name,
@@ -427,6 +487,8 @@ export function createPromptSubmit(input: PromptSubmitInput) {
         })
         .then(normalizeSessionInfo)
         .catch((err) => {
+          // Never leave a stale arm behind if the create rejected.
+          if (remoteOwnerArmed) disarmRemoteCreate()
           showToast({
             title: language.t("prompt.toast.sessionCreateFailed.title"),
             description: errorMessage(err),
@@ -536,6 +598,9 @@ export function createPromptSubmit(input: PromptSubmitInput) {
         clearInput()
         const messageID = Identifier.ascending("message")
         serverSync().session.set("session_status", session.id, { type: "busy" })
+        startReconcileTimer(session.id, (sessionId) => {
+          serverSync().session.set("session_status", sessionId, { type: "idle" })
+        })
         sdk()
           .api.session.command({
             sessionID: session.id,
@@ -552,6 +617,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
             ),
           })
           .catch((err) => {
+            cancelReconcileTimer(session.id)
             serverSync().session.set("session_status", session.id, { type: "idle" })
             showToast({
               title: language.t("prompt.toast.commandSendFailed.title"),

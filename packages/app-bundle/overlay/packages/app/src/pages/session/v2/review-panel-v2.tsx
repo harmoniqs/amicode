@@ -20,6 +20,7 @@ import type {
   SessionReviewLineComment,
 } from "@opencode-ai/session-ui/session-review"
 import FileTreeV2 from "@/components/file-tree-v2"
+import { validateHumanWritePath } from "@/components/session/preview-human-write-gate"
 import { useLanguage } from "@/context/language"
 import { useSDK } from "@/context/sdk"
 import {
@@ -181,6 +182,11 @@ export function ReviewPanelV2(props: ReviewPanelV2Props) {
                   expandMode={props.state.expandMode()}
                   readFile={readFile}
                   writeFile={async (path, content) => {
+                    // #1454 (W5): human write gate — reject a write resolving
+                    // outside the session workspace (gate applied upstream of
+                    // the permissive engine handler). Only gate when known.
+                    const workspace = sdk().directory
+                    if (workspace && !validateHumanWritePath(path, workspace).allowed) return
                     await sdk().client.file.write({ path, content })
                   }}
                   serverUrl={props.serverUrl}

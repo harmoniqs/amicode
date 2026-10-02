@@ -95,6 +95,13 @@ jobs:
     needs: [build-binary]
     steps:
       - uses: actions/checkout@v7
+        # full history: the #1346 additive-invariants-gate diffs the enroll/guard
+        # set vs `git merge-base HEAD <base>` — a shallow (depth-1) checkout has no
+        # common ancestor, so the merge-base is empty and the gate (correctly)
+        # refuses to pass an UNVERIFIABLE AC1 under INVARIANT_STRICT=1. Full history
+        # lets it actually verify. (#1346)
+        with:
+          fetch-depth: 0
       - uses: pnpm/action-setup@v6   # version pinned by packageManager in package.json
       - uses: actions/setup-node@v7
         with: { node-version: 20, cache: pnpm }
@@ -112,6 +119,16 @@ jobs:
         run: node packages/extension/scripts/assert_packaged_cli.mjs
       - name: fleet-gate — guard + tunnel template sane (#324)
         run: bash packages/extension/scripts/assert_fleet_guard.sh
+      - name: additive-invariants-gate — peer studios stay additive (ADR 0027, #1346)
+        env:
+          INVARIANT_STRICT: "1" # CI must be able to verify AC1 — an unverifiable base is a hard fail
+        run: |
+          # AC1 diffs the enroll/guard set vs the MERGE-BASE with the base branch.
+          # A shallow checkout may not carry the base branch, so fetch it here —
+          # this also persists the ref for the later vitest subprocess in the
+          # `pnpm -r run test` step, which runs the same gate.
+          git fetch --no-tags --quiet origin "${GITHUB_BASE_REF:-feature/free-tier-fleet}" || true
+          bash packages/extension/scripts/assert_additive_invariants.sh
       # Pasqal python provisioning gate, source lane: the SHIPPED connector
       # assets must provision a working interpreter (real venv + pip + SDK
       # import at the pinned version + validator env-guard smoke). Guards the

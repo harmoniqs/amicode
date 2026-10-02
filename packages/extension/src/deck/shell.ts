@@ -425,6 +425,14 @@ window.addEventListener("message", (e) => {
     if (typeof d.kind === "string" && (d.kind.indexOf("run:") === 0 || d.kind.indexOf("device:") === 0)) {
       for (const f of frameByTab.values()) f.contentWindow?.postMessage(d, boot.origin);
     }
+    // #1608: engine-state + fleet-role fan-out — the #1598 engine toggle (and
+    // the intentional-off banner) render from these pushes, which arrive via
+    // postToAll with NO tab id, so broadcast to every pane like the inspector
+    // fan-out above. Without this the toggle in a deck pane never sees a
+    // lifecycle push and an intentional off reads as an endless reconnect.
+    if (d.kind === "engine-state" || d.kind === "fleet-role") {
+      for (const f of frameByTab.values()) f.contentWindow?.postMessage(d, boot.origin);
+    }
     return;
   }
 

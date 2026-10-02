@@ -88,6 +88,8 @@ import { usePrompt } from "@/context/prompt"
 import { useSettings } from "@/context/settings"
 import { useTabs } from "@/context/tabs"
 import { amicodeGet, amicodePost } from "@/utils/amicode-fetch"
+import { fleetSessionsFromResponse, resolveHeaderProvenance } from "./session-header-provenance"
+import { findSessionOwnerInProjection, findSessionControlInProjection, writeAffordanceEnabled } from "@/components/session/session-fleet-peers"
 import { draftPrompt } from "@/utils/start-prompt"
 import { inAmicode, postAmicode } from "@/pages/session/use-amicode-commands"
 import { writeClipboardViaBridge } from "@/components/prompt-input/clipboard-bridge"
@@ -98,7 +100,7 @@ import { notifySessionTabsRemoved } from "@/components/titlebar-session-events"
 import { sessionTitle } from "@/utils/session-title"
 import { scheduleConnectedMeasure } from "./measure"
 import { observeElementOffsetReconnectAware } from "./observe-element-offset"
-import { smoothScrollInterpolate, SMOOTH_SCROLL_DURATION } from "./smooth-scroll"
+import { smoothScrollInterpolate, SMOOTH_SCROLL_DURATION, shouldInstantScroll } from "./smooth-scroll"
 import { createTimelineProjection } from "./projection"
 import { MessageComment, SummaryDiff, TimelineRow, TimelineRowMap } from "./rows"
 import { filterVirtualIndexes } from "./virtual-items"
@@ -320,7 +322,7 @@ export function MessageTimeline(props: {
   userMessages: UserMessage[]
   anchor: (id: string) => string
   setRevealMessage?: (fn: (id: string) => void) => void
-  setScrollToEnd?: (fn: () => void) => void
+  setScrollToEnd?: (fn: (opts?: { smooth?: boolean }) => void) => void
   setHistoryAnchor?: (handlers: { capture: () => void; restore: (done: boolean) => void }) => void
 }) {
   let touchGesture: number | undefined
@@ -387,6 +389,15 @@ export function MessageTimeline(props: {
     () => amicodeGet(server.current, "/amicode/run-status"),
   )
   const entityRunStatus = createMemo(() => parseRunStatusResponse(runStatusRaw.latest))
+  // #1452 (W4a): fleet-wide session provenance. Fetch the merged fleet-sessions
+  // projection (W2 #1447) and resolve THIS session's amicode_owner overlay: a
+  // remote-owned session renders a monitor icon + owner-name tooltip left of the
+  // title; a local or owner-less (legacy/local-path) session degrades to today's
+  // no-provenance header. Keyed on server.current — a server switch re-fetches.
+  const [fleetSessionsRaw] = createResource(
+    () => server.current,
+    () => amicodeGet(server.current, "/amicode/fleet/sessions").catch(() => undefined),
+  )
   const openEntityView = (kind: string, seq?: number) => {
     setEntityViewOpen(true)
     dialog.show(
@@ -431,18 +442,40 @@ export function MessageTimeline(props: {
 
   const [listRoot, setListRoot] = createSignal<HTMLDivElement>()
   const sessionID = createMemo(() => params.id)
+  // #1452 (W4a): the header's provenance — this session's owner overlay mapped
+  // through resolveSessionProvenance. Recomputes when the projection resolves or
+  // the session changes; degrades to no-icon when owner-less/local/not-found.
+  const sessionProvenance = createMemo(() =>
+    resolveHeaderProvenance(fleetSessionsFromResponse(fleetSessionsRaw.latest), sessionID()),
+  )
   const sessionStatus = createMemo(() => {
     const id = sessionID()
     if (!id) return idle
     return sync().data.session_status[id] ?? idle
   })
+  // #1649 — the FLOORED working state for the viewed session, driving the rail's
+  // live dot. session_working ORs the raw busy leaf, a streaming part, the turn
+  // floor, AND a non-idle descendant (a foreground subagent) — so the rail stays
+  // live through a child run even when the parent's own leaf is stray-idled.
+  const sessionWorking = createMemo(() => {
+    const id = sessionID()
+    return !!id && sync().data.session_working(id)
+  })
   const sessionMessages = createMemo(() => (sessionID() ? (sync().data.message[sessionID()!] ?? []) : []))
   const projectedMessages = createMemo(() => {
     const id = sessionID()
     if (!id) return []
-    const visible = new Set(props.userMessages.map((message) => message.id))
-    const boundary = sessionMessages().find((message) => message.role === "user" && !visible.has(message.id))?.id
     const messages = sync().data.session_message[id] ?? []
+    // #1579: when visibleUserMessages transiently empties (data.message
+    // fluctuated during a wire reconcile or mirror hydration), the boundary
+    // computation picks the FIRST user message as the cutoff and filters
+    // everything out — the timeline renders zero rows even though
+    // session_message still holds the full history. Skip the boundary
+    // filter when the visible set is empty; the full session_message
+    // renders instead, and the projection corrects on the next tick.
+    const visible = new Set(props.userMessages.map((message) => message.id))
+    if (visible.size === 0) return messages
+    const boundary = sessionMessages().find((message) => message.role === "user" && !visible.has(message.id))?.id
     return boundary ? messages.filter((message) => message.id < boundary) : messages
   })
   const info = createMemo(() => {
@@ -450,6 +483,17 @@ export function MessageTimeline(props: {
     if (!id) return
     return sync().session.get(id)
   })
+  // #1646: whether a session reads as archived, with a Solid store subscription
+  // anchor. A gate that touches only the (initially-undefined) time.archived
+  // leaf never subscribes in the store, so the Archive/Unarchive menu toggle
+  // does not flip when the archive event lands. Touch time.updated — which
+  // every remember() bumps — to guarantee the recompute. Same fix the composer
+  // memo uses (session-composer-region-controller.ts).
+  const sessionArchived = (id: string) => {
+    const s = sync().session.get(id)
+    void s?.time?.updated
+    return !!s?.time?.archived
+  }
   const titleValue = createMemo(() => info()?.title)
   const titleLabel = createMemo(() => sessionTitle(titleValue()))
   const shareUrl = createMemo(() => info()?.share?.url)
@@ -574,6 +618,7 @@ export function MessageTimeline(props: {
     sessionMessages: projectedMessages,
     parts: getMsgParts,
     status: sessionStatus,
+    working: sessionWorking,
     showReasoningSummaries: settings.general.showReasoningSummaries,
     inlineComments: settings.general.newLayoutDesigns,
     tailProseSettled,
@@ -769,6 +814,14 @@ export function MessageTimeline(props: {
     const target = el.scrollHeight - el.clientHeight
     const current = el.scrollTop
     if (Math.abs(target - current) < 2) return // already there
+    // amicode: large delta → instant jump. Animating across more than 1.5×
+    // the viewport chases a moving target while the virtualizer is still
+    // measuring off-screen items, producing visible jank.
+    if (shouldInstantScroll(target, current, el.clientHeight)) {
+      cancelSmoothScroll()
+      virtualizer.scrollToEnd()
+      return
+    }
     // If an animation is in flight, restart from current position
     cancelSmoothScroll()
     smoothStartY = current
@@ -807,7 +860,11 @@ export function MessageTimeline(props: {
     queueMicrotask(() => {
       resizeAnchorScheduled = false
       if (!props.shouldAnchorBottom() || props.hasScrollGesture()) return
-      smoothScrollToEnd()
+      // amicode: use instant scroll to avoid fighting the auto-scroller's
+      // ResizeObserver during streaming — the 180ms animation and the instant
+      // scrollToBottom were competing, causing visible oscillation.
+      cancelSmoothScroll()
+      virtualizer.scrollToEnd()
     })
   }
   virtualizer.resizeItem = (index, size) => {
@@ -916,7 +973,11 @@ export function MessageTimeline(props: {
       if (index === undefined) return
       virtualizer.scrollToIndex(index, { align: "center" })
     })
-    props.setScrollToEnd?.(() => smoothScrollToEnd())
+    props.setScrollToEnd?.((opts?: { smooth?: boolean }) => {
+      cancelSmoothScroll()
+      if (opts?.smooth) smoothScrollToEnd()
+      else virtualizer.scrollToEnd()
+    })
     props.setHistoryAnchor?.({ capture: capturePrependAnchor, restore: restorePrependAnchor })
   })
 
@@ -1234,22 +1295,50 @@ export function MessageTimeline(props: {
     if (!session) return
     if ((await sdk().protocol) !== "v1") return
 
-    const sessions = sync().data.session ?? []
-    const index = sessions.findIndex((s) => s.id === sessionID)
-    const nextSession = index === -1 ? undefined : (sessions[index + 1] ?? sessions[index - 1])
+    // #1647 (S5): control-aware + the session's OWN directory. A REMOTE session
+    // archives on its owner (the observation write plane routes the non-GET by
+    // owner); if control is not held the write would 403 into a generic "request
+    // failed" toast, so gate it here with a clear "enable control" message
+    // instead. The owner/control come from the fleet projection. Using the
+    // session's own directory (not sdk().directory) keeps the PATCH keyed
+    // correctly for a remote session that lives in a different project.
+    const owner = findSessionOwnerInProjection(fleetSessionsRaw.latest, sessionID)
+    if (owner && owner.is_local === false) {
+      const control = findSessionControlInProjection(fleetSessionsRaw.latest, sessionID)
+      if (!writeAffordanceEnabled(control)) {
+        showToast({
+          title: "Control not enabled",
+          description: `Enable control of ${owner.owner_name ?? "the owner machine"} to archive its sessions from here.`,
+        })
+        return
+      }
+    }
+    const directory = session.directory ?? sdk().directory
 
     await sdk()
-      .client.session.update({ sessionID, directory: sdk().directory, time: { archived: Date.now() } })
+      .client.session.update({ sessionID, directory, time: { archived: Date.now() } })
       .then(() => {
+        // Drop the archived session out of the ACTIVE list store (it belongs to
+        // the Archived tab now) and clear its tab chrome — but do NOT navigate
+        // away, and do NOT evict. Archiving the session you are VIEWING should
+        // flip it to the read-only banner IN PLACE and swap the menu item to
+        // "Unarchive"; the old behavior bounced you to another session (so the
+        // read-only mode was never seen) and evict() dropped the per-session
+        // info the banner and the menu toggle both read.
         sync().set(
           produce((draft) => {
             const index = draft.session.findIndex((s) => s.id === sessionID)
             if (index !== -1) draft.session.splice(index, 1)
           }),
         )
-        sync().session.evict(sessionID)
-        navigateAfterSessionRemoval(sessionID, session.parentID, nextSession?.id)
         notifySessionTabsRemoved({ directory: sdk().directory, sessionIDs: [sessionID] })
+        // #1646: force-sync the PER-SESSION store so the composer's `archived`
+        // memo and this menu's archived gate flip immediately. The list splice
+        // above touches only the list store; the per-session store
+        // (sync().session.get(id).time.archived) is what the composer and the
+        // menu read, and only a force-sync (or a lazily-arriving SSE) sets it.
+        // Mirrors the header + unarchive paths, which already force-sync.
+        void sync().session.sync(sessionID, { force: true }).catch(() => {})
       })
       .catch((err) => {
         showToast({
@@ -1261,7 +1350,10 @@ export function MessageTimeline(props: {
 
   const unarchiveSession = async (sessionID: string) => {
     if ((await sdk().protocol) !== "v1") return
-    await (sdk().client.session.update as Function)({ sessionID, directory: sdk().directory, time: { archived: null } })
+    // #1647 (S5): use the session's own directory (remote sessions may live in a
+    // different project); the owner-routed write plane handles remote routing.
+    const directory = sync().session.get(sessionID)?.directory ?? sdk().directory
+    await (sdk().client.session.update as Function)({ sessionID, directory, time: { archived: null } })
       .then(() => void sync().session.sync(sessionID, { force: true }))
       .catch((err: unknown) => {
         showToast({
@@ -1393,7 +1485,15 @@ export function MessageTimeline(props: {
     )
   }
 
-  const workingTurn = (userMessageID: string) => sessionStatus().type !== "idle" && activeMessageID() === userMessageID
+  // #1637: the transcript per-turn indicator reflects session_working (the
+  // turn-active floor), NOT raw status type — a stray idle during a live turn
+  // (incl. a no-part turn) must not flip the indicator to done. The diff/todo
+  // refetch readers in session.tsx stay on raw status (they want the real idle
+  // edge) and are deliberately NOT migrated.
+  const workingTurn = (userMessageID: string) => {
+    const id = sessionID()
+    return !!id && sync().data.session_working(id) && activeMessageID() === userMessageID
+  }
 
   const turnDurationMs = (userMessageID: string) => {
     const message = messageByID().get(userMessageID)
@@ -2041,6 +2141,20 @@ export function MessageTimeline(props: {
                 }}
               >
                 <div class="flex items-center min-w-0 flex-1 w-full">
+                  {/* #1452 (W4a): fleet provenance — a remote-owned session shows
+                      a monitor icon (tooltip = owner machine name) left of the
+                      title; local / owner-less sessions render nothing. */}
+                  <Show when={sessionProvenance().showIcon}>
+                    <TooltipV2 class="shrink-0" placement="bottom" value={sessionProvenance().tooltip}>
+                      <span
+                        data-slot="session-provenance-icon"
+                        class="mr-1.5 flex shrink-0 items-center pl-2 text-v2-text-text-faint"
+                        aria-label={sessionProvenance().tooltip}
+                      >
+                        <IconV2 name="monitor" size="small" />
+                      </span>
+                    </TooltipV2>
+                  </Show>
                   <Show when={parentID()}>
                     <button
                       type="button"
@@ -2210,7 +2324,7 @@ export function MessageTimeline(props: {
                                   <DropdownMenu.ItemLabel>{language.t("session.exportTrace")}</DropdownMenu.ItemLabel>
                                 </DropdownMenu.Item>
                                 <Show
-                                  when={sync().session.get(id)?.time?.archived}
+                                  when={sessionArchived(id)}
                                   fallback={
                                     <DropdownMenu.Item onSelect={() => void archiveSession(id)}>
                                       <DropdownMenu.ItemLabel>{language.t("common.archive")}</DropdownMenu.ItemLabel>
@@ -2293,7 +2407,7 @@ export function MessageTimeline(props: {
                                 {language.t("session.exportTrace")}
                               </MenuV2.Item>
                               <Show
-                                when={sync().session.get(id)?.time?.archived}
+                                when={sessionArchived(id)}
                                 fallback={
                                   <MenuV2.Item onSelect={() => void archiveSession(id)}>
                                     {language.t("common.archive")}
@@ -2512,8 +2626,6 @@ export function MessageTimeline(props: {
                   `/amicode/run-series?run=${encodeURIComponent(run)}${lab ? `&lab=${encodeURIComponent(lab)}` : ""}`,
                 )
               }
-              // Disable rail in chat sessions to prevent showing in unrelated sessions (issue #272)
-              disabled={true}
               widgetHost={{
                 // Stage 2: the in-chat widget preview reuses the home grid's
                 // frame kernel; server context is resolved live per call.
@@ -2577,6 +2689,14 @@ export function MessageTimeline(props: {
                   .then(() => void refetchWarrants())
                   .catch(() => void refetchWarrants())
               }}
+              // #1585: the rail self-heals /amicode/problem on the stream's
+              // disconnect→connect edge, driven by the app's live SSE status.
+              streamConnected={() => serverSDK().event.status() === "connected"}
+              // #1617: a WEDGE (fan-in flowing stuck false) keeps the socket
+              // nominally connected, so the edge above never fires. The gap-frame
+              // resync counter bumps on the fan-in overflow signal; the rail
+              // refetches on its advance so a wedged view heals without a reload.
+              forceResync={() => serverSDK().event.resyncCount()}
             />
             {/* amicode#271: bubble inside the header — naturally below the
                 title row + chip rail */}

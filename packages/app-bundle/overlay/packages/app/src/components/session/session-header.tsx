@@ -10,8 +10,9 @@ import { showToast } from "@/utils/toast"
 import { Tooltip, TooltipKeybind } from "@opencode-ai/ui/tooltip"
 
 import { ButtonV2 } from "@opencode-ai/ui/v2/button-v2"
+import { MenuV2 } from "@opencode-ai/ui/v2/menu-v2"
 import { getFilename } from "@opencode-ai/core/util/path"
-import { batch, createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js"
+import { batch, createEffect, createMemo, createResource, createRoot, createSignal, For, onCleanup, onMount, Show, untrack, type JSX } from "solid-js"
 import { createStore } from "solid-js/store"
 import { createMediaQuery } from "@solid-primitives/media"
 import { Portal } from "solid-js/web"
@@ -41,6 +42,38 @@ import { base64Encode } from "@opencode-ai/core/util/encode"
 import { sessionListDirectories, sortedRootSessions } from "@/pages/layout/helpers"
 import { useNavigate } from "@solidjs/router"
 import type { Session } from "@opencode-ai/sdk/v2/client"
+import { amicodeGet } from "@/utils/amicode-fetch"
+import { postAmicodeFleetEnableControl } from "@/utils/amicode-bridge"
+import {
+  allSessionsFromProjection,
+  mergePeerSessions,
+  stabilizeSessionIdentity,
+  archivedSessionsWithRemote,
+  deriveSessionBadge,
+  isRemotePeerSession,
+  isComposerGated,
+  resolveDropdownOpenAction,
+  readSessionControl,
+  writeAffordanceEnabled,
+  failClosedChip,
+  controlAffordance,
+
+  findSessionControlInProjection,
+  findSessionOwnerInProjection,
+  remoteDeleteAction,
+  sortDropdownSessions,
+  type DropdownSession,
+  type SortMode,
+} from "./session-fleet-peers"
+
+// AMICODE #1551 (DEFECT 2): the self-owned Enable-control affordance no longer
+// lives as a fixed top-right Portal over the titlebar. It is re-homed onto a
+// COMPOSER-ANCHORED scrim (SessionComposerControlScrim, below) that blurs +
+// gates the composer and centers the CTA while control is not held. The CTA
+// posts the #1551 payload envelope (postAmicodeFleetEnableControl); the extension
+// host shows the ADR 0034 D4 native modal and mints the grant. On success the
+// next fleet-projection poll flips the projected control to `interactive` — the
+// app never self-declares interactive.
 
 // AMICODE: the MCP/LSP/Plugins/Vaults status popover is opencode-operator
 // noise here ("No MCPs configured"). Hidden, not deleted — the trigger slot is
@@ -55,6 +88,14 @@ import { KeybindV2 } from "@opencode-ai/ui/v2/keybind-v2"
 import { TooltipV2 } from "@opencode-ai/ui/v2/tooltip-v2"
 import { reviewTooltipKeybind } from "../command-tooltip-keybind"
 import { useTitlebarRightMount, useTitlebarControlMount } from "../titlebar"
+// #1577: portal dedup registry — enforces exactly one portal source per
+// session-scoped mount point across concurrent SessionHeader mounts
+// (the startTransition double-mount during remote session focus).
+import { claimPortalMount, isPortalOwner, releasePortalMount } from "../titlebar-portal-registry"
+// #1562-followup (Slice A): the shared control-projection poll — extracted to
+// session-fleet-control-projection.ts so the titlebar tab strip can share the
+// same ref-counted singleton without importing this component file.
+import { useSharedControlProjection } from "./session-fleet-control-projection"
 
 const OPEN_APPS = [
   "vscode",
@@ -169,6 +210,18 @@ export function SessionHeader() {
   const sync = useSync()
   const terminal = useTerminal()
   const { params, view } = useSessionLayout()
+
+  // #1544 (slice 4): the control state channel for the CURRENT session, read off
+  // the fleet projection (GET /amicode/fleet/sessions — the SAME carrier the
+  // Sessions dropdown consumes). It drives the persistent "driving <peer>"
+  // banner and the Enable/Request-control affordance on the SESSION SURFACE
+  // (control affordances live here + in Fleet Manager, NEVER the read-only
+  // sidebar — ADR 0034 D7). Tolerant: a 404 / no-fleet resolves to undefined and
+  // every derived value degrades to "no banner / no affordance".
+  // #1562-followup (Slice A): read via the SHARED polled accessor so the
+  // interactive flip (grant landed) is actually OBSERVED — the banner lights on
+  // the next poll instead of never (the B2b one-shot never re-fetched).
+  const controlProjection = useSharedControlProjection()
 
   const projectDirectory = createMemo(() => decode64(params.dir) ?? "")
   const project = createMemo(() => {
@@ -318,12 +371,34 @@ export function SessionHeader() {
   const sessionsMount = useTitlebarControlMount("sessions")
   const statusMount = useTitlebarControlMount("status")
   const sidePanelMount = useTitlebarControlMount("side-panel")
+
+  // #1577: claim exclusive ownership of each session-scoped mount point.
+  // During startTransition, a new SessionHeader can mount while the old one
+  // is still alive — both render portals into the same mount divs, doubling
+  // controls. The registry makes isPortalOwner() return false for the stale
+  // component, so its portals conditionally hide.
+  const sessionsToken = claimPortalMount("sessions")
+  const statusToken = claimPortalMount("status")
+  const sidePanelToken = claimPortalMount("side-panel")
+  onCleanup(() => {
+    releasePortalMount("sessions", sessionsToken)
+    releasePortalMount("status", statusToken)
+    releasePortalMount("side-panel", sidePanelToken)
+  })
+
   onMount(() => {
     setCenterMount(document.getElementById("opencode-titlebar-center"))
   })
 
   return (
     <>
+      {/* #1544 (slice 4): the "driving <peer>" indicator moved from a fixed
+          banner Portal to a monitor icon on the session tab in the titlebar
+          (titlebar-tab-nav.tsx). The tab strip now consumes the shared fleet
+          projection directly. The composer scrim control gate is unchanged. */}
+      {/* #1551 (DEFECT 2): the Enable-control affordance moved OFF the titlebar
+          and onto the composer scrim (SessionComposerControlScrim, below). No
+          fixed top-right Portal renders here anymore. */}
       <Show when={search() && centerMount()} keyed>
         {(mount) => (
           <Portal mount={mount}>
@@ -562,9 +637,11 @@ export function SessionHeader() {
           </Portal>
         )}
       </Show>
-      {/* V2 per-button portals — each session-scoped control portals to its own mount point */}
+      {/* V2 per-button portals — each session-scoped control portals to its own mount point.
+          #1577: each portal is gated on isPortalOwner so that during startTransition
+          (two concurrent SessionHeaders), only the latest owner renders. */}
       <Show when={isV2}>
-        <Show when={sessionsMount()} keyed>
+        <Show when={isPortalOwner("sessions", sessionsToken) && sessionsMount()} keyed>
           {(mount) => (
             <Portal mount={mount}>
               <span class="flex shrink-0" data-tour-target="sessions">
@@ -574,7 +651,7 @@ export function SessionHeader() {
           )}
         </Show>
         <Show when={!AMICODE_HIDE_STATUS_POPOVER}>
-          <Show when={statusMount()} keyed>
+          <Show when={isPortalOwner("status", statusToken) && statusMount()} keyed>
             {(mount) => (
               <Portal mount={mount}>
                 <span class="flex shrink-0" data-tour-target="status">
@@ -587,7 +664,7 @@ export function SessionHeader() {
           </Show>
         </Show>
         <Show when={v2ActionsState().reviewVisible}>
-          <Show when={sidePanelMount()} keyed>
+          <Show when={isPortalOwner("side-panel", sidePanelToken) && sidePanelMount()} keyed>
             {(mount) => (
               <Portal mount={mount}>
                 <TooltipV2
@@ -622,6 +699,120 @@ export function SessionHeader() {
         </Show>
       </Show>
     </>
+  )
+}
+
+// #1551 (DEFECT 2): the composer-anchored control scrim. When the current
+// session is a REMOTE peer session and control is NOT held, it BLURS + GATES the
+// composer (inert → non-editable) and centers a CTA card naming the peer the
+// session lives on, with the Enable-control button. When control is held
+// (interactive) or the session is local/unowned, the composer renders untouched
+// (no scrim). The CTA click posts the #1551 payload envelope
+// (postAmicodeFleetEnableControl); the extension host shows the ADR 0034 D4
+// native modal and mints the grant. On success the next fleet-projection poll
+// flips the projected control to `interactive` — the app never self-declares it.
+export function SessionComposerControlScrim(props: { children: JSX.Element }) {
+  const { params } = useSessionLayout()
+  // Tolerant read of the control channel for the CURRENT session (the SAME
+  // carrier the header + dropdown consume). A 404 / no-fleet resolves to
+  // undefined and every derived value degrades to "no scrim".
+  // #1562-followup (Slice A): the SHARED polled accessor (single source of truth
+  // with the header) — so when the grant lands and the projection flips to
+  // `interactive`, the next poll clears the scrim. The app never self-declares
+  // it; it only re-reads the SoT.
+  const controlProjection = useSharedControlProjection()
+  const control = createMemo(() =>
+    findSessionControlInProjection(controlProjection(), params.id ?? ""),
+  )
+  const owner = createMemo(() => findSessionOwnerInProjection(controlProjection(), params.id ?? ""))
+  // Gated iff a REMOTE peer session whose control is NOT held (read-only /
+  // suspended). Local / unowned / already-driving (interactive) → not gated.
+  // The rule lives in one pure place (isComposerGated), shared with the test.
+  const gated = createMemo(() => isComposerGated(owner(), control()))
+  const peerLabel = createMemo(() => owner()?.owner_name || owner()?.owner_machine_id || "this peer")
+  const enableControl = () => {
+    const o = owner()
+    const id = params.id
+    if (!o || !id) return
+    // The CTA click path is identical to DEFECT 1's envelope.
+    postAmicodeFleetEnableControl({ ownerMachineId: o.owner_machine_id, sessionID: id })
+  }
+  return (
+    <div style={{ position: "relative" }}>
+      {/* The composer subtree — blurred + inert (non-editable, unfocusable)
+          while gated; untouched otherwise. */}
+      <div
+        inert={gated() || undefined}
+        aria-hidden={gated() ? "true" : undefined}
+        style={
+          gated()
+            ? { filter: "blur(3px)", "pointer-events": "none", opacity: "0.55", transition: "filter 120ms ease" }
+            : {}
+        }
+      >
+        {props.children}
+      </div>
+      <Show when={gated()}>
+        <div
+          data-slot="amicode-composer-control-scrim"
+          role="dialog"
+          aria-label="Enable control to drive this peer session"
+          style={{
+            position: "absolute",
+            inset: "0",
+            display: "flex",
+            "align-items": "center",
+            "justify-content": "center",
+            "z-index": "20",
+            padding: "8px",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              "align-items": "center",
+              gap: "12px",
+              "max-width": "100%",
+              padding: "8px 12px",
+              "border-radius": "var(--radius-lg)",
+              border: "1px solid var(--v2-border-border-strong)",
+              background: "var(--v2-background-bg-layer-02)",
+              "box-shadow": "0 4px 16px rgba(0, 0, 0, 0.28)",
+            }}
+          >
+            <IconV2 name="monitor" class="opacity-80" />
+            <span
+              style={{
+                color: "var(--v2-text-text-base)",
+                "font-size": "12px",
+                "font-weight": "500",
+              }}
+            >
+              This session lives on {peerLabel()} — Enable control to drive it
+            </span>
+            <button
+              type="button"
+              data-action="composer-enable-control"
+              onClick={enableControl}
+              title="Enable control of this peer (opens a confirmation)"
+              style={{
+                "flex-shrink": "0",
+                padding: "4px 12px",
+                "border-radius": "var(--radius-md)",
+                border: "1px solid var(--v2-border-border-strong)",
+                background: "var(--v2-background-bg-layer-01)",
+                color: "var(--v2-text-text-base)",
+                "font-size": "12px",
+                "font-weight": "600",
+                cursor: "pointer",
+              }}
+            >
+              Enable control
+            </button>
+          </div>
+        </div>
+      </Show>
+    </div>
   )
 }
 
@@ -692,7 +883,7 @@ function SessionHeaderV2Actions(props: { state: SessionHeaderV2ActionsState }) {
 // (amicode#273) inside the session header: tabbed Active/Archived, search,
 // open-tab indicators, archive/unarchive actions, and cursor-based pagination.
 const SESSION_DROPDOWN_ROW =
-  "flex min-w-0 w-full shrink-0 cursor-default items-center rounded-sm bg-transparent text-left transition-[background-color,color,box-shadow] duration-[120ms] ease-in-out focus-visible:outline-none h-7 gap-2 px-1.5 [font-weight:440] text-v2-text-text-muted hover:bg-v2-overlay-simple-overlay-hover hover:text-v2-text-text-base focus-visible:bg-v2-overlay-simple-overlay-hover focus-visible:text-v2-text-text-base"
+  "flex min-w-0 flex-1 cursor-default items-center rounded-sm bg-transparent text-left transition-[background-color,color,box-shadow] duration-[120ms] ease-in-out focus-visible:outline-none h-7 gap-2 px-1.5 [font-weight:440] text-v2-text-text-muted hover:bg-v2-overlay-simple-overlay-hover hover:text-v2-text-text-base focus-visible:bg-v2-overlay-simple-overlay-hover focus-visible:text-v2-text-text-base"
 
 export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) {
   const tabs = useTabs()
@@ -711,16 +902,102 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
   const [archivedHasMore, setArchivedHasMore] = createSignal(true)
   const ARCHIVED_PAGE_SIZE = 20
 
+  // --- Sort mode (amicode#1599 part C) ---
+  const [sortMode, setSortMode] = createSignal<SortMode>(
+    (() => {
+      try {
+        const stored = localStorage.getItem("amicode:sessions-dropdown-sort")
+        if (stored === "recent" || stored === "alpha" || stored === "machine") return stored
+      } catch { /* localStorage unavailable */ }
+      return "recent"
+    })(),
+  )
+  createEffect(() => {
+    try { localStorage.setItem("amicode:sessions-dropdown-sort", sortMode()) } catch { /* best-effort */ }
+  })
+
+  // --- Active tab pagination (amicode#1599 part B) ---
+  const ACTIVE_PAGE_SIZE = 50
+  const [activeLimit, setActiveLimit] = createSignal(ACTIVE_PAGE_SIZE)
+  const [loadingMore, setLoadingMore] = createSignal(false)
+
   let flyoutRoot: HTMLDivElement | undefined
+  let triggerRef: HTMLButtonElement | undefined
+  let scrollContainerRef: HTMLDivElement | undefined
+
+  /** Save scrollTop and restore it on the next animation frame.
+   *  Call before any action that triggers a reactive list rebuild
+   *  (archive / delete / unarchive) to prevent the scroll container
+   *  from jumping to the top when <For> diffs the updated array. */
+  function restoreScrollAfter<T>(fn: () => Promise<T>): Promise<T> {
+    const saved = scrollContainerRef?.scrollTop ?? 0
+    return fn().finally(() => {
+      requestAnimationFrame(() => {
+        if (scrollContainerRef) scrollContainerRef.scrollTop = saved
+      })
+    })
+  }
+
+  // --- Cached flyout position (amicode#1599 part A) ---
+  const [flyoutPos, setFlyoutPos] = createSignal<{ top: number; right: number }>({ top: 0, right: 0 })
+  const recomputePos = () => {
+    if (!triggerRef) return
+    const rect = triggerRef.getBoundingClientRect()
+    setFlyoutPos({
+      top: rect.bottom + 8,
+      right: document.documentElement.clientWidth - rect.right,
+    })
+  }
+  createEffect(() => {
+    if (!open()) return
+    recomputePos()
+    window.addEventListener("resize", recomputePos)
+    onCleanup(() => window.removeEventListener("resize", recomputePos))
+  })
 
   const currentSessionID = createMemo(() => props.currentSessionID)
+
+  // #1525 B1 (read-only): peer sessions from the fleet-wide projection
+  // (GET /amicode/fleet/sessions). Fetched only while the flyout is open;
+  // tolerant — a 404 (route not mounted / no fleet) or any error resolves to
+  // undefined, so the dropdown degrades to the local list, never blank. The
+  // merge below adds REMOTE (is_local:false) sessions, badged with the owner
+  // machine name; owner-routed open + remote control (prompt/archive/delete)
+  // are B2 (#1525) and deliberately absent here.
+  const [fleetProjection, { refetch: refetchFleetProjection }] = createResource(
+    () => (open() ? ([server.current, fleetPoll()] as const) : undefined),
+    ([conn]) => amicodeGet(conn, "/amicode/fleet/sessions").catch(() => undefined),
+  )
+  // #1647 (S10): poll the fleet projection while the flyout is open. It is the
+  // SOURCE of a peer row's owner badge (peerSessionsFromProjection); without a
+  // poll it was fetched ONCE on open, so a REMOTE archive/unarchive done on the
+  // OWNER machine (which this machine only learns of via the SSE event) left the
+  // projection stale — the row reappeared from the local store on unarchive but
+  // WITHOUT its machine tag until the flyout was reopened. A 3s poll (matching
+  // the control projection) refreshes the owner overlay so the badge returns.
+  const [fleetPoll, setFleetPoll] = createSignal(0)
+  createEffect(() => {
+    if (!open()) return
+    const timer = setInterval(() => setFleetPoll((t) => t + 1), 3000)
+    onCleanup(() => clearInterval(timer))
+  })
 
   // Active sessions — only computed when the flyout is open to avoid
   // triggering reactive subscriptions (serverSync().child pins the directory
   // and can cascade re-renders to the parent Portal).
   // Source from ALL project directories (same as dashboard) — not just the
   // server's cwd, which may not be where sessions live (amicode#138).
-  const activeSessions = createMemo(() => {
+  //
+  // PERF (amicode#1599): reading each store's session rows subscribes this memo
+  // to per-row fields including `time.updated`. A LIVE session streaming tokens
+  // bumps `time.updated` on nearly every frame, which would re-run the whole
+  // dropdown pipeline (merge → sort → filter → <For> re-diff) at frame rate and
+  // make the open flyout lag. We split the compute in two:
+  //   • activeSessionsRaw — the reactive read (subscribes to the stores).
+  //   • activeSessions    — a throttled mirror that only re-emits at most once
+  //     per THROTTLE_MS, EXCEPT it passes through immediately when the session
+  //     SET changes (ids/titles/count) so open/close/rename stay instant.
+  const activeSessionsRaw = createMemo(() => {
     if (!open()) return []
     try {
       const conn = server.current
@@ -744,6 +1021,51 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
     }
   })
 
+  // The SET signature: what actually needs an instant re-render (rows added /
+  // removed / renamed). Streaming token churn only moves `time.updated`, which
+  // is deliberately NOT in the signature — those updates ride the throttle.
+  const activeSetSignature = createMemo(() =>
+    activeSessionsRaw()
+      .map((s) => `${s.id}:${s.title ?? ""}`)
+      .join("|"),
+  )
+
+  const ACTIVE_THROTTLE_MS = 500
+  const [activeThrottleTick, setActiveThrottleTick] = createSignal(0)
+  createEffect(() => {
+    if (!open()) return
+    // Depend on the raw list so the timer runs while updates are flowing.
+    activeSessionsRaw()
+    const t = setTimeout(() => setActiveThrottleTick((n) => n + 1), ACTIVE_THROTTLE_MS)
+    onCleanup(() => clearTimeout(t))
+  })
+
+  const activeSessions = createMemo<Session[]>(() => {
+    if (!open()) return []
+    // Re-emit ONLY on a set change (add/remove/rename) or a throttle tick.
+    activeSetSignature()
+    activeThrottleTick()
+    // Read the raw list WITHOUT subscribing to its per-row fields — otherwise a
+    // streaming `time.updated` would re-run this memo and defeat the throttle.
+    return untrack(activeSessionsRaw)
+  })
+
+
+  // #1525 B1: fold the projection's sessions into the active list (deduped
+  // against local, sorted by last activity). Empty/errored projection → the
+  // local list unchanged. Use the FULL projection set (local + remote): the
+  // local list is iterated only over KNOWN project directories, so a local
+  // session in a directory the store never iterates (a remote-created session
+  // that landed in the owner's ambient temp cwd, any unlisted project) was
+  // absent from BOTH the local list and the peer-only extractor → invisible on
+  // the owning machine's dropdown. mergePeerSessions dedupes (local store wins),
+  // so listed-dir rows are unchanged and only the missing ones are surfaced.
+  const activeSessionsWithPeers = createMemo<DropdownSession[]>(() => {
+    if (!open()) return []
+    const projectionSessions = allSessionsFromProjection(fleetProjection.latest)
+    return mergePeerSessions(activeSessions() as DropdownSession[], projectionSessions)
+  })
+
   // Fresh clients have no bootstrapped child stores for the fallback
   // directories (the dropdown reads with bootstrap: false) — kick the loads
   // once per open. Converges: re-runs find the stores populated and skip.
@@ -759,10 +1081,10 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
     }
   })
 
-  // Sort: open-tab sessions first
+  // Sort: open-tab sessions first, each partition sorted by the active mode.
   const sortedActiveSessions = createMemo(() => {
     if (!open()) return []
-    const all = activeSessions()
+    const all = activeSessionsWithPeers()
     const openTabs: Session[] = []
     const rest: Session[] = []
     for (const session of all) {
@@ -772,7 +1094,11 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
         rest.push(session)
       }
     }
-    return [...openTabs, ...rest]
+    const mode = sortMode()
+    return [
+      ...sortDropdownSessions(openTabs as DropdownSession[], mode),
+      ...sortDropdownSessions(rest as DropdownSession[], mode),
+    ]
   })
 
   // Search filtering
@@ -786,13 +1112,47 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
       return title.toLowerCase().includes(q)
     })
   })
+  // amicode#1599 follow-up — actually paginate the DOM. `activeLimit` bounded the
+  // backend fetch and the Show-more button, but the <For> rendered EVERY loaded
+  // + peer row: hundreds of rows, each carrying the per-row
+  // useSessionTabAvatarState subscriptions, re-diffed on every 3s fleet poll —
+  // the source of the flyout lag. Slice the rendered list to the limit. Search
+  // spans the full loaded set, so slice AFTER the filter (a query renders all
+  // matches; Show-more is hidden while searching).
+  // amicode#1652 — the 3s fleet poll (fleetPoll) re-fetches the projection, and
+  // mergePeerSessions mints a NEW object for every peer / owner-tagged row on each
+  // fetch. SolidJS <For> keys by referential identity, so those new references make
+  // it dispose + remount the row — resetting the CSS :hover state and replaying the
+  // machine-tag opacity transition under a resting pointer (the "flash"). An
+  // id-keyed identity cache returns the PREVIOUS row object when a row's render
+  // signature is unchanged, so unchanged rows keep their reference (and DOM node)
+  // across the poll. The cache is component-scoped so it survives memo re-runs; it
+  // self-evicts ids that leave the list.
+  const activeIdentityCache = new Map<string, { sig: string; row: DropdownSession }>()
+  const pagedActiveSessions = createMemo(() => {
+    const sliced = searchQuery()
+      ? filteredActiveSessions()
+      : filteredActiveSessions().slice(0, activeLimit())
+    return stabilizeSessionIdentity(sliced as DropdownSession[], activeIdentityCache)
+  })
+  // "More" = rows hidden by the slice, OR the backend fetch cap was hit (more may
+  // be loadable). Show-more reveals the next page and fetches the next backend page.
+  const hasMoreActive = createMemo(
+    () => filteredActiveSessions().length > pagedActiveSessions().length || activeSessions().length >= activeLimit(),
+  )
+  // amicode#1652 — same identity-stabilization as the active list: the archived
+  // tab has its own 5s poll (loadArchivedSessions) that setArchivedSessions with
+  // fresh objects, remounting owner-tagged archived rows and flashing their tag.
+  const archivedIdentityCache = new Map<string, { sig: string; row: DropdownSession }>()
   const filteredArchivedSessions = createMemo(() => {
     const q = searchQuery()
-    if (!q) return archivedSessions()
-    return archivedSessions().filter((session) => {
-      const title = sessionTitle(session.title) || session.id
-      return title.toLowerCase().includes(q)
-    })
+    const list = !q
+      ? archivedSessions()
+      : archivedSessions().filter((session) => {
+          const title = sessionTitle(session.title) || session.id
+          return title.toLowerCase().includes(q)
+        })
+    return stabilizeSessionIdentity(list as DropdownSession[], archivedIdentityCache)
   })
 
   // SDK access for archived sessions
@@ -811,14 +1171,22 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
       const result = await ctx.sdk.client.experimental.session.list(
         { archived: true, limit: ARCHIVED_PAGE_SIZE, ...(cursor ? { cursor: Number(cursor) } : {}) },
       )
-      const sessions: Session[] = (result.data ?? []) as Session[]
+      const local: Session[] = (result.data ?? []) as Session[]
       if (reset) {
-        setArchivedSessions(sessions)
+        // #1647 (S3): on the first page, fold in peer-owned archived sessions
+        // from the fleet projection (owner-tagged). Bounded recent window — not
+        // per-peer cursor-paginated (pragmatic first cut). A standalone machine
+        // or a fetch failure yields no remote rows → local list unchanged.
+        const proj = await amicodeGet(server.current, "/amicode/fleet/sessions?archived=true").catch(() => undefined)
+        setArchivedSessions(archivedSessionsWithRemote(local as DropdownSession[], proj) as Session[])
       } else {
-        setArchivedSessions((prev) => [...prev, ...sessions])
+        // Load-more appends the next LOCAL page; remote rows were merged on reset.
+        const have = new Set(archivedSessions().map((s) => s.id))
+        setArchivedSessions((prev) => [...prev, ...local.filter((s) => !have.has(s.id))])
       }
-      const lastSession = sessions[sessions.length - 1]
-      if (sessions.length >= ARCHIVED_PAGE_SIZE && lastSession) {
+      // Cursor tracks the LOCAL engine's pagination only (remote is a fixed window).
+      const lastSession = local[local.length - 1]
+      if (local.length >= ARCHIVED_PAGE_SIZE && lastSession) {
         setArchivedCursor(String(lastSession.time.updated ?? lastSession.time.created))
         setArchivedHasMore(true)
       } else {
@@ -832,69 +1200,163 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
     }
   }
 
+  // #1647 (S6): keep the Archived tab live while open (local + fan-in-relayed
+  // remote archive/unarchive), on the same 5s cadence the fleet projection uses.
+  // Bounded real-time (≤5s), robust, cleaned up on tab-close / unmount.
+  createEffect(() => {
+    if (flyoutTab() !== "archived") return
+    const timer = setInterval(() => void loadArchivedSessions(true), 5000)
+    onCleanup(() => clearInterval(timer))
+  })
+
   async function archiveSession(session: Session) {
     const ctx = getServerCtx()
     if (!ctx) return
-    try {
-      await (ctx.sdk.client.session.update as Function)({
-        sessionID: session.id,
-        directory: session.directory,
-        time: { archived: Date.now() },
-      })
-      setArchivedSessions((prev) => [session, ...prev])
-      // Reload active sessions for this session's directory
-      await serverSync().project.loadSessions(session.directory, { limit: 64 })
-    } catch (cause) {
-      showToast({
-        title: language.t("common.requestFailed"),
-        description: String(cause),
-      })
+    const dropdownSession = session as DropdownSession
+    const isRemote = isRemotePeerSession(dropdownSession)
+    // A REMOTE peer session is archived on its OWNER: the same session.update
+    // PATCH, keyed on the session's own id+directory, is intercepted by the
+    // #1542 observation WRITE plane (any non-GET to a peer-owned session routes
+    // to the owner by pathname) — provided control is held. The row only shows
+    // the archive affordance for a remote row when canWrite() is true, so this
+    // is reached only under held control; a control-less remote row shows the
+    // fail-closed chip instead and never gets here.
+    if (isRemote) {
+      const action = remoteDeleteAction(dropdownSession) // reuse the gate: allowed iff control held
+      if (!action.allowed) {
+        showToast({
+          title: "Control not enabled",
+          description: `Enable control of ${dropdownSession.amicode_owner?.owner_name ?? "the owner machine"} to archive its sessions from here.`,
+        })
+        return
+      }
     }
+    await restoreScrollAfter(async () => {
+      try {
+        await (ctx.sdk.client.session.update as Function)({
+          sessionID: session.id,
+          directory: session.directory,
+          time: { archived: Date.now() },
+        })
+        // A LOCAL archive moves the row into THIS machine's archived tab
+        // (which lists local archived sessions). A REMOTE archive lands on the
+        // owner — it will drop out of the fleet projection's active list on the
+        // next poll; we do NOT add it to the local archived tab (that tab is
+        // local-only and would show a phantom that vanishes on reload).
+        if (!isRemote) setArchivedSessions((prev) => [session, ...prev])
+        // Reload active sessions for this session's directory
+        await serverSync().project.loadSessions(session.directory, { limit: 64 })
+        // #1647 (S9): a REMOTE row in the active list comes from the FLEET
+        // PROJECTION (peerSessionsFromProjection), NOT the local list store that
+        // loadSessions above refreshes — so without refetching the projection the
+        // archived peer row lingered and the archive "did nothing" in the list.
+        // Refetch so the now-archived peer session drops out of the active list.
+        if (isRemote) void refetchFleetProjection()
+        // Refresh the Archived tab so the just-archived session appears there too.
+        void loadArchivedSessions(true)
+        // #1646: force-sync the PER-SESSION store so the composer flips to its
+        // archived read-only banner immediately. loadSessions above refreshes
+        // the LIST store, but the composer's `archived` memo reads the
+        // per-session store (sync().session.get(id).time.archived) — which the
+        // list reload does not touch. Without this the banner appeared only when
+        // the change lazily propagated (SSE / next projection cycle), so a
+        // remote (owner-routed) archive left the composer live for seconds. This
+        // mirrors the unarchive path, which already force-syncs (session.tsx).
+        await serverSync().session.sync(session.id, { force: true }).catch(() => {})
+      } catch (cause) {
+        showToast({
+          title: language.t("common.requestFailed"),
+          description: String(cause),
+        })
+      }
+    })
   }
 
   async function unarchiveSession(session: Session) {
     const ctx = getServerCtx()
     if (!ctx) return
-    try {
-      await (ctx.sdk.client.session.update as Function)({
-        sessionID: session.id,
-        directory: session.directory,
-        time: { archived: null },
-      })
-      setArchivedSessions((prev) => prev.filter((s) => s.id !== session.id))
-      await serverSync().project.loadSessions(session.directory, { limit: 64 })
-    } catch (cause) {
+    // #1647 (S4): a REMOTE archived row unarchives on its OWNER (the same
+    // owner-routed session.update, now routable because the owner map unions
+    // archived ids — S2). Gate on control exactly like the active archive path;
+    // a control-less remote row shows the fail-closed chip and never reaches here.
+    const dropdownSession = session as DropdownSession
+    if (isRemotePeerSession(dropdownSession) && !remoteDeleteAction(dropdownSession).allowed) {
       showToast({
-        title: language.t("common.requestFailed"),
-        description: String(cause),
+        title: "Control not enabled",
+        description: `Enable control of ${dropdownSession.amicode_owner?.owner_name ?? "the owner machine"} to unarchive its sessions from here.`,
       })
+      return
     }
+    await restoreScrollAfter(async () => {
+      try {
+        await (ctx.sdk.client.session.update as Function)({
+          sessionID: session.id,
+          directory: session.directory,
+          time: { archived: null },
+        })
+        setArchivedSessions((prev) => prev.filter((s) => s.id !== session.id))
+        await serverSync().project.loadSessions(session.directory, { limit: 64 })
+        // #1647 (S9): a remote unarchive re-activates the session on its owner —
+        // refetch the fleet projection so it reappears in the active peer list.
+        if (isRemotePeerSession(dropdownSession)) void refetchFleetProjection()
+      } catch (cause) {
+        showToast({
+          title: language.t("common.requestFailed"),
+          description: String(cause),
+        })
+      }
+    })
   }
 
   // amicode#255: permanently delete an archived session (inline confirm in row).
   async function deleteArchivedSession(session: Session) {
     const ctx = getServerCtx()
     if (!ctx) return
-    try {
-      await (ctx.sdk.client.session.delete as Function)({
-        sessionID: session.id,
-        directory: session.directory,
-      })
-      setArchivedSessions((prev) => prev.filter((s) => s.id !== session.id))
-    } catch (cause) {
+    // #1647 (S4): remote delete routes to the owner; gate on control.
+    const dropdownSession = session as DropdownSession
+    if (isRemotePeerSession(dropdownSession) && !remoteDeleteAction(dropdownSession).allowed) {
       showToast({
-        title: language.t("session.delete.failed.title"),
-        description: String(cause),
+        title: "Control not enabled",
+        description: `Enable control of ${dropdownSession.amicode_owner?.owner_name ?? "the owner machine"} to delete its sessions from here.`,
       })
+      return
     }
+    await restoreScrollAfter(async () => {
+      try {
+        await (ctx.sdk.client.session.delete as Function)({
+          sessionID: session.id,
+          directory: session.directory,
+        })
+        setArchivedSessions((prev) => prev.filter((s) => s.id !== session.id))
+        // #1647 (S9): drop the deleted peer session from the active list too.
+        if (isRemotePeerSession(dropdownSession)) void refetchFleetProjection()
+      } catch (cause) {
+        showToast({
+          title: language.t("session.delete.failed.title"),
+          description: String(cause),
+        })
+      }
+    })
   }
 
   async function openSession(session: Session) {
+    // #1537 B2a: OPEN a peer (remote) session by routing through the owner.
+    // Open is a READ — the session store lives on the owner machine and the
+    // multiplex routes reads by owner at the API boundary, so navigating to the
+    // row's raw directory/id IS the owner-routed open. B1's guard toast ("lives
+    // on <machine>, coming soon") was the dead end this replaces; a remote row
+    // now lands in the normal session view, byte-for-byte the same navigate a
+    // local row takes. No remote-write surface is added here (prompt / archive /
+    // delete of a peer row remain absent — that is B2b, design-gated). The row
+    // still hides its LOCAL-only archive action via `isRemotePeerSession`.
+
     // Close flyout first so its Portal unmounts cleanly.
     setOpen(false)
 
     // Mirror the dashboard's project setup: ensure the directory is registered and
-    // touched so the workspace context is warm when the session page mounts.
+    // touched so the workspace context is warm when the session page mounts. For a
+    // remote row this registers the owner's directory string locally — harmless
+    // bookkeeping; the actual session reads route to the owner via the multiplex.
     const conn = server.current
     if (conn) {
       const ctx = globalCtx.ensureServerCtx(conn)
@@ -919,11 +1381,15 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
     const existingTab = tabs.store.find(
       (t) => t.type === "session" && t.sessionId === session.id,
     )
-    if (existingTab) {
-      tabs.select(existingTab)
+    const action = resolveDropdownOpenAction(
+      session as DropdownSession,
+      !!existingTab,
+      (dir, id) => `/${base64Encode(dir)}/session/${id}`,
+    )
+    if (action.type === "select-tab") {
+      tabs.select(existingTab!)
     } else {
-      const path = `/${base64Encode(session.directory)}/session/${session.id}`
-      navigate(path)
+      navigate(action.path)
     }
   }
 
@@ -943,7 +1409,7 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
         if (flyoutRoot?.contains(target)) return
         if (triggerRef?.contains(target)) return
         // Don't dismiss if the click landed inside a dialog (e.g. delete confirmation)
-        if (target instanceof Element && target.closest("[data-dialog-layer], [data-component='dialog-overlay']")) return
+        if (target instanceof Element && target.closest("[data-dialog-layer], [data-component='dialog-overlay'], [data-component='menu-v2-content']")) return
         setOpen(false)
       }
       const onKey = (e: KeyboardEvent) => {
@@ -958,8 +1424,6 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
     }, 0)
     onCleanup(() => clearTimeout(timer))
   })
-
-  let triggerRef: HTMLButtonElement | undefined
 
   return (
     <>
@@ -984,8 +1448,8 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
             aria-label={language.t("sidebar.project.recentSessions")}
             style={{
               position: "fixed",
-              top: `${(triggerRef?.getBoundingClientRect().bottom ?? 0) + 8}px`,
-              right: `${document.documentElement.clientWidth - (triggerRef?.getBoundingClientRect().right ?? 0)}px`,
+              top: `${flyoutPos().top}px`,
+              right: `${flyoutPos().right}px`,
               "z-index": "9999",
               width: "min(440px, 88vw)",
               "max-height": "min(70vh, 680px)",
@@ -1053,6 +1517,41 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
               </button>
               <div class="flex-1" />
               <Show when={flyoutTab() === "active"}>
+                {/* modal={false} is load-bearing: a modal Kobalte DropdownMenu
+                    sets document.body { pointer-events: none } while open, so
+                    clicks on the flyout (rendered in a solid Portal under body)
+                    retarget to <body> — which the flyout's outside-click
+                    dismiss handler reads as "outside" and closes the whole
+                    session list. Non-modal keeps body interactive; the menu
+                    still dismisses itself on outside-click via its own layer. */}
+                <MenuV2 gutter={4} placement="bottom-end" modal={false}>
+                  <MenuV2.Trigger
+                    as={ButtonV2}
+                    variant="ghost-muted"
+                    size="small"
+                    class="!gap-1 !px-2 !py-1 !text-[10px] !font-semibold"
+                  >
+                    Sort by
+                    <IconV2 name="chevron-down" size="small" />
+                  </MenuV2.Trigger>
+                  <MenuV2.Content
+                    style={{ "min-width": "140px" }}
+                    class={[
+                      /* Match the flyout's 11px type scale, not MenuV2's default 13px */
+                      "[&_[data-slot=menu-v2-item-content]]:!text-[11px]",
+                      /* Checked state: checkmark is enough — drop the accent color + bold */
+                      "[&_[data-checked]_[data-slot=menu-v2-item-content]]:!text-v2-text-text-base",
+                      "[&_[data-checked]_[data-slot=menu-v2-item-content]]:!font-normal",
+                      "[&_[data-checked]_[data-slot=menu-v2-item-indicator]]:!text-v2-text-text-base",
+                    ].join(" ")}
+                  >
+                    <MenuV2.RadioGroup value={sortMode()} onChange={(v) => setSortMode(v as SortMode)}>
+                      <MenuV2.RadioItem value="recent">Recent</MenuV2.RadioItem>
+                      <MenuV2.RadioItem value="alpha">A–Z</MenuV2.RadioItem>
+                      <MenuV2.RadioItem value="machine">Machine</MenuV2.RadioItem>
+                    </MenuV2.RadioGroup>
+                  </MenuV2.Content>
+                </MenuV2>
                 <IconButtonV2
                   variant="ghost-muted"
                   size="large"
@@ -1065,7 +1564,7 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
             </div>
 
             {/* Tab content */}
-            <div class="min-h-0 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            <div ref={scrollContainerRef} class="min-h-0 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
               <Show when={flyoutTab() === "active"}>
                 <Show
                   when={filteredActiveSessions().length > 0}
@@ -1076,7 +1575,7 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
                   }
                 >
                   <div class="flex min-w-0 flex-col gap-px">
-                    <For each={filteredActiveSessions()}>
+                    <For each={pagedActiveSessions()}>
                       {(session) => (
                         <SessionDropdownRow
                           session={session}
@@ -1088,6 +1587,32 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
                       )}
                     </For>
                   </div>
+                  <Show when={hasMoreActive() && !searchQuery()}>
+                    <button
+                      type="button"
+                      class="mt-2 w-full text-center text-[12px] text-v2-text-text-muted cursor-pointer border-none bg-transparent hover:text-v2-text-text-base"
+                      onClick={() => {
+                        setLoadingMore(true)
+                        const newLimit = activeLimit() + ACTIVE_PAGE_SIZE
+                        setActiveLimit(newLimit)
+                        const conn = server.current
+                        if (conn) {
+                          const ctx = globalCtx.ensureServerCtx(conn)
+                          if (ctx) {
+                            const dirs = sessionListDirectories(ctx.projects.list(), ctx.sync.data?.project ?? [])
+                            void Promise.all(
+                              dirs.map((dir) => ctx.sync.project.loadSessions(dir, { limit: newLimit })),
+                            ).finally(() => setLoadingMore(false))
+                            return
+                          }
+                        }
+                        setLoadingMore(false)
+                      }}
+                      disabled={loadingMore()}
+                    >
+                      {loadingMore() ? language.t("common.loading") : "Show more"}
+                    </button>
+                  </Show>
                 </Show>
               </Show>
               <Show when={flyoutTab() === "archived"}>
@@ -1150,6 +1675,19 @@ function SessionDropdownRow(props: {
 }) {
   const language = useLanguage()
   const title = createMemo(() => sessionTitle(props.session.title) || props.session.id)
+  // #1525 B1: a remote peer session shows the owner machine name as a badge and
+  // hides local-only actions (archive is B2). Local/unowned rows are unbadged.
+  const badge = createMemo(() => deriveSessionBadge(props.session as DropdownSession))
+  const isRemote = createMemo(() => isRemotePeerSession(props.session as DropdownSession))
+  // #1544 (slice 4): the control state channel for THIS remote row. When control
+  // is NOT held, the write affordance is DISABLED with a visible reason chip
+  // (failClosedChip) — never a live erroring button. When held, the owner-routed
+  // ARCHIVE affordance appears. Delete is NOT offered on an active row: a remote
+  // session (like a local one) is archived first, then deleted from the Archived
+  // tab (ArchivedSessionDropdownRow, owner-routed via deleteArchivedSession).
+  const control = createMemo(() => readSessionControl(props.session as DropdownSession))
+  const chip = createMemo(() => failClosedChip(control()))
+  const canWrite = createMemo(() => writeAffordanceEnabled(control()))
   const rowServer = useServer()
   // #1292 hover prewarm: a hovered row is a click away — pull its first
   // message page the instant the pointer lands, so the open renders from
@@ -1196,23 +1734,87 @@ function SessionDropdownRow(props: {
         <span class="min-w-0 flex-[1_1_auto] overflow-hidden text-ellipsis whitespace-nowrap">
           {title()}
         </span>
+        {/* The owner machine tag — the row's resting identity. On hover the
+            action cluster to the right reveals IN FLOW (a 0fr→1fr grid column,
+            so it reserves exactly the controls' rendered width), which shrinks
+            this button and slides the whole tag left by that width. The tag is
+            never faded and never truncated on hover — it just moves over to make
+            room, and the archive stays pinned at the row's right edge. */}
+        <Show when={badge()}>
+          <span
+            data-slot="session-owner-badge"
+            class="shrink-0 ml-1 inline-flex items-center gap-1 whitespace-nowrap rounded-sm px-1 py-0.5 text-[10px] leading-none text-v2-text-text-faint bg-v2-background-bg-layer-02"
+            title={badge()!}
+          >
+            <IconV2 name="monitor" class="shrink-0 opacity-70" />
+            <span class="whitespace-nowrap">{badge()}</span>
+          </span>
+        </Show>
       </button>
-      <div class="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center opacity-0 group-hover/session:opacity-100 focus-within:opacity-100 transition-opacity">
-        <TooltipV2 placement="top" value={language.t("common.archive")}>
-          <IconButtonV2
-            data-action="session-dropdown-archive"
-            variant="ghost-muted"
-            size="large"
-            icon={<IconV2 name="archive" />}
-            aria-label={language.t("common.archive")}
-            onClick={(event: MouseEvent) => {
-              event.preventDefault()
-              event.stopPropagation()
-              void props.onArchive(props.session)
-            }}
-          />
-        </TooltipV2>
-      </div>
+      <Show when={!isRemote()}>
+        <div class="grid shrink-0 grid-cols-[0fr] transition-[grid-template-columns] duration-150 ease-in-out group-hover/session:grid-cols-[1fr] group-focus-within/session:grid-cols-[1fr]">
+          <div class="overflow-hidden">
+            <div class="flex items-center pl-1 opacity-0 transition-opacity duration-150 group-hover/session:opacity-100 group-focus-within/session:opacity-100">
+              <TooltipV2 placement="top" value={language.t("common.archive")}>
+                <IconButtonV2
+                  data-action="session-dropdown-archive"
+                  variant="ghost-muted"
+                  size="large"
+                  icon={<IconV2 name="archive" />}
+                  aria-label={language.t("common.archive")}
+                  onClick={(event: MouseEvent) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    void props.onArchive(props.session)
+                  }}
+                />
+              </TooltipV2>
+            </div>
+          </div>
+        </div>
+      </Show>
+      {/* #1544 (slice 4): a REMOTE peer row's control affordances. Control NOT
+          held → the write affordance is DISABLED with a visible reason chip
+          (failClosedChip, derived from the SoT reason) — never a live erroring
+          button. Control HELD → the owner-routed ARCHIVE. Delete lives on the
+          Archived tab (remote matches local: archive first, then delete). */}
+      <Show when={isRemote()}>
+        <div class="grid shrink-0 grid-cols-[0fr] transition-[grid-template-columns] duration-150 ease-in-out group-hover/session:grid-cols-[1fr] group-focus-within/session:grid-cols-[1fr]">
+          <div class="overflow-hidden">
+            <div class="flex items-center gap-1 pl-1 opacity-0 transition-opacity duration-150 group-hover/session:opacity-100 group-focus-within/session:opacity-100">
+              <Show when={chip()} keyed>
+                {(c) => (
+                  <span
+                    data-slot="session-control-chip"
+                    data-control-reason={c.reason}
+                    class="shrink-0 inline-flex items-center gap-1 rounded-sm px-1 py-0.5 text-[10px] leading-none text-v2-text-text-faint bg-v2-background-bg-layer-02"
+                    title={c.label}
+                  >
+                    <IconV2 name="lock" class="shrink-0 opacity-70" />
+                    <span>{c.label}</span>
+                  </span>
+                )}
+              </Show>
+              <Show when={canWrite()}>
+                <TooltipV2 placement="top" value="Archive on peer">
+                  <IconButtonV2
+                    data-action="session-remote-archive"
+                    variant="ghost-muted"
+                    size="large"
+                    icon={<IconV2 name="archive" />}
+                    aria-label="Archive on peer"
+                    onClick={(event: MouseEvent) => {
+                      event.preventDefault()
+                      event.stopPropagation()
+                      void props.onArchive(props.session)
+                    }}
+                  />
+                </TooltipV2>
+              </Show>
+            </div>
+          </div>
+        </div>
+      </Show>
     </div>
   )
 }
@@ -1224,6 +1826,15 @@ function ArchivedSessionDropdownRow(props: {
   onDelete: (session: Session) => void
 }) {
   const title = createMemo(() => sessionTitle(props.session.title) || props.session.id)
+  // #1647 (S4): archived rows now carry amicode_owner / amicode_control (they
+  // come from the fleet projection). A remote archived row shows the owner
+  // badge; its unarchive/delete are control-gated — fail-closed to a lock chip
+  // when control is not held, exactly like the active SessionDropdownRow.
+  const badge = createMemo(() => deriveSessionBadge(props.session as DropdownSession))
+  const isRemote = createMemo(() => isRemotePeerSession(props.session as DropdownSession))
+  const control = createMemo(() => readSessionControl(props.session as DropdownSession))
+  const canWrite = createMemo(() => writeAffordanceEnabled(control()))
+  const chip = createMemo(() => failClosedChip(control()))
   const [armed, setArmed] = createSignal(false)
   let resetTimer: ReturnType<typeof setTimeout> | undefined
 
@@ -1262,50 +1873,87 @@ function ArchivedSessionDropdownRow(props: {
         <span class="min-w-0 flex-[1_1_auto] overflow-hidden text-ellipsis whitespace-nowrap">
           {title()}
         </span>
-      </button>
-      <div class="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center gap-0.5 opacity-0 group-hover/archived:opacity-100 focus-within:opacity-100 transition-opacity">
-        <TooltipV2 placement="top" value="Unarchive">
-          <IconButtonV2
-            data-action="session-dropdown-unarchive"
-            variant="ghost-muted"
-            size="large"
-            icon={<Icon name="arrow-undo-down" size="small" />}
-            aria-label="Unarchive"
-            onClick={(event: MouseEvent) => {
-              event.preventDefault()
-              event.stopPropagation()
-              void props.onUnarchive(props.session)
-            }}
-          />
-        </TooltipV2>
-        <Show
-          when={armed()}
-          fallback={
-            <TooltipV2 placement="top" value="Delete permanently">
-              <IconButtonV2
-                data-action="session-dropdown-delete"
-                variant="ghost-muted"
-                size="large"
-                icon={<Icon name="trash" size="small" />}
-                aria-label="Delete permanently"
-                onClick={arm}
-              />
-            </TooltipV2>
-          }
-        >
-          <ButtonV2
-            data-action="session-dropdown-delete-confirm"
-            variant="danger"
-            size="small"
-            aria-label="Confirm delete"
-            aria-live="polite"
-            onClick={confirmDelete}
-            onBlur={disarm}
-            onKeyDown={(e: KeyboardEvent) => e.key === "Escape" && disarm()}
+        {/* Owner tag — the row's resting identity. Same behavior as the active
+            row: on hover the unarchive/delete cluster reveals IN FLOW (0fr→1fr
+            grid, reserving the controls' exact rendered width) and slides this
+            tag left by that width. Never faded, never truncated on hover. */}
+        <Show when={isRemote() && badge()}>
+          <span
+            data-slot="archived-session-owner-badge"
+            class="shrink-0 inline-flex items-center gap-1 whitespace-nowrap text-[10px] leading-none text-v2-text-text-faint"
+            title={badge()}
           >
-            Delete
-          </ButtonV2>
+            <IconV2 name="monitor" size="small" class="shrink-0 opacity-70" />
+            <span class="whitespace-nowrap">{badge()}</span>
+          </span>
         </Show>
+      </button>
+      <div class="grid shrink-0 grid-cols-[0fr] transition-[grid-template-columns] duration-150 ease-in-out group-hover/archived:grid-cols-[1fr] group-focus-within/archived:grid-cols-[1fr]">
+        <div class="overflow-hidden">
+          <div class="flex items-center gap-0.5 pl-1 opacity-0 transition-opacity duration-150 group-hover/archived:opacity-100 group-focus-within/archived:opacity-100">
+            <Show
+              when={!isRemote() || canWrite()}
+              fallback={
+                <Show when={chip()} keyed>
+                  {(c) => (
+                    <span
+                      data-slot="session-control-chip"
+                      data-control-reason={c.reason}
+                      class="shrink-0 inline-flex items-center gap-1 rounded-sm px-1 py-0.5 text-[10px] leading-none text-v2-text-text-faint bg-v2-background-bg-layer-02"
+                      title={c.label}
+                    >
+                      <IconV2 name="lock" class="shrink-0 opacity-70" />
+                      <span>{c.label}</span>
+                    </span>
+                  )}
+                </Show>
+              }
+            >
+              <TooltipV2 placement="top" value="Unarchive">
+                <IconButtonV2
+                  data-action="session-dropdown-unarchive"
+                  variant="ghost-muted"
+                  size="large"
+                  icon={<Icon name="arrow-undo-down" size="small" />}
+                  aria-label="Unarchive"
+                  onClick={(event: MouseEvent) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    void props.onUnarchive(props.session)
+                  }}
+                />
+              </TooltipV2>
+              <Show
+                when={armed()}
+                fallback={
+                  <TooltipV2 placement="top" value="Delete permanently">
+                    <IconButtonV2
+                      data-action="session-dropdown-delete"
+                      variant="ghost-muted"
+                      size="large"
+                      icon={<Icon name="trash" size="small" />}
+                      aria-label="Delete permanently"
+                      onClick={arm}
+                    />
+                  </TooltipV2>
+                }
+              >
+                <ButtonV2
+                  data-action="session-dropdown-delete-confirm"
+                  variant="danger"
+                  size="small"
+                  aria-label="Confirm delete"
+                  aria-live="polite"
+                  onClick={confirmDelete}
+                  onBlur={disarm}
+                  onKeyDown={(e: KeyboardEvent) => e.key === "Escape" && disarm()}
+                >
+                  Delete
+                </ButtonV2>
+              </Show>
+            </Show>
+          </div>
+        </div>
       </div>
     </div>
   )

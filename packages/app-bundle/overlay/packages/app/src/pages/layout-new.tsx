@@ -3,6 +3,7 @@ import { createStore } from "solid-js/store"
 import { TabsInfoPopup } from "@/components/help-button"
 import { Titlebar, type TitlebarUpdate } from "@/components/titlebar"
 import { SolverSwitchBanner } from "@/components/solver-switch-banner"
+import { installEngineStateListener } from "@/components/engine-state-signal"
 import { VaultPanel } from "@/components/vault-panel"
 import { usePlatform } from "@/context/platform"
 import { setV2Toast, ToastRegion } from "@/utils/toast"
@@ -16,6 +17,13 @@ export default function NewLayout(props: ParentProps) {
   useNotificationToasts()
   useWorktreeAutoRename()
   createEffect(() => setV2Toast(true))
+  // #1608: this layout is always mounted, so it owns the ONE global
+  // engine-state listener install (the engine toggle + composer refusal read
+  // the resulting signal). Idempotent — a second install from the status
+  // popover is a no-op — but this call guarantees pushes are received even
+  // while the popover is closed. The narration banner was removed; the toggle's
+  // own dot/lock is the whole story now.
+  installEngineStateListener()
 
   const update: TitlebarUpdate = {
     version: () => {

@@ -1,4 +1,9 @@
 import { describe, expect, test } from "bun:test"
+// #1537 B2a (AC6): the machine helpers are no longer defined here — they live in
+// the ONE real module the component also imports (`session-fleet-peers.ts`).
+// `deriveBadge` was a stale duplicate of the real `deriveSessionBadge`; the
+// per-machine narrowing `filterSessionsByMachine` is promoted alongside it.
+import { deriveSessionBadge, filterSessionsByMachine, sortDropdownSessions, type DropdownSession, type SortMode } from "./session-fleet-peers"
 
 /**
  * Tests for the Session Chats Dropdown logic (amicode#274).
@@ -7,12 +12,25 @@ import { describe, expect, test } from "bun:test"
  * flyout (amicode#273).
  */
 
+// Local fixture shape for this suite (a superset-tolerant subset of the SDK
+// session — `time.updated` optional, as the dropdown fixtures use it). The
+// promoted helpers are structural, so they accept this shape directly.
+type SessionOwnerTag = {
+  owner_machine_id: string
+  owner_name: string
+  device_type?: string
+  directory?: string
+  is_local: boolean
+}
+
 type Session = {
   id: string
   title?: string
   directory: string
   parentID?: string
   time: { created: number; updated?: number; archived?: number | null }
+  /** Fleet-wide owner overlay (#1439 — absent on pre-fleet sessions). */
+  amicode_owner?: SessionOwnerTag
 }
 
 // --- Helpers under test (pure logic extracted from the component) ---
@@ -230,6 +248,189 @@ describe("Session Chats Dropdown", () => {
 
       expect(state.open).toBe(false) // flyout closed BEFORE navigation
       expect(action.type).toBe("navigate") // would navigate after close
+    })
+  })
+
+  // ── fleet-wide machine badges (#1439, AC2) ─────────────────────────────────
+
+  describe("deriveSessionBadge — machine badge for fleet sessions", () => {
+    const localSession: Session = {
+      id: "ses_local",
+      title: "Local work",
+      directory: "/proj",
+      time: { created: 100 },
+      amicode_owner: {
+        owner_machine_id: "macbook-pro",
+        owner_name: "MacBook Pro",
+        device_type: "laptop",
+        is_local: true,
+      },
+    }
+
+    const remoteSession: Session = {
+      id: "ses_remote",
+      title: "Remote work",
+      directory: "/proj",
+      time: { created: 200 },
+      amicode_owner: {
+        owner_machine_id: "mac-studio",
+        owner_name: "Mac Studio",
+        device_type: "desktop",
+        is_local: false,
+      },
+    }
+
+    const preFleetsession: Session = {
+      id: "ses_old",
+      title: "Legacy",
+      directory: "/proj",
+      time: { created: 50 },
+      // no amicode_owner — pre-fleet session
+    }
+
+    test("local session is unbadged (absence = local)", () => {
+      expect(deriveSessionBadge(localSession)).toBeUndefined()
+    })
+
+    test("remote session shows the owner machine name as badge", () => {
+      expect(deriveSessionBadge(remoteSession)).toBe("Mac Studio")
+    })
+
+    test("pre-fleet session (no owner tag) is unbadged", () => {
+      expect(deriveSessionBadge(preFleetsession)).toBeUndefined()
+    })
+  })
+
+  // ── per-machine filter (#1439, AC3) ────────────────────────────────────────
+
+  describe("filterSessionsByMachine — per-machine narrowing", () => {
+    const fleetSessions: Session[] = [
+      {
+        id: "ses_a",
+        title: "Local session",
+        directory: "/proj",
+        time: { created: 100 },
+        amicode_owner: { owner_machine_id: "macbook", owner_name: "MacBook", is_local: true },
+      },
+      {
+        id: "ses_b",
+        title: "Studio session 1",
+        directory: "/proj",
+        time: { created: 200 },
+        amicode_owner: { owner_machine_id: "mac-studio", owner_name: "Mac Studio", is_local: false },
+      },
+      {
+        id: "ses_c",
+        title: "Studio session 2",
+        directory: "/proj",
+        time: { created: 300 },
+        amicode_owner: { owner_machine_id: "mac-studio", owner_name: "Mac Studio", is_local: false },
+      },
+      {
+        id: "ses_d",
+        title: "Mini session",
+        directory: "/proj",
+        time: { created: 400 },
+        amicode_owner: { owner_machine_id: "mac-mini", owner_name: "Mac Mini", is_local: false },
+      },
+    ]
+
+    test("null machineId returns all sessions (the 'all machines' state)", () => {
+      expect(filterSessionsByMachine(fleetSessions, null)).toHaveLength(4)
+    })
+
+    test("undefined machineId returns all sessions (the 'clear filter' state)", () => {
+      expect(filterSessionsByMachine(fleetSessions, undefined)).toHaveLength(4)
+    })
+
+    test("a specific machineId narrows to that machine's sessions only", () => {
+      const studio = filterSessionsByMachine(fleetSessions, "mac-studio")
+      expect(studio).toHaveLength(2)
+      expect(studio.every((s) => s.amicode_owner?.owner_machine_id === "mac-studio")).toBe(true)
+    })
+
+    test("the local machine's sessions are filterable by its machine_id", () => {
+      const local = filterSessionsByMachine(fleetSessions, "macbook")
+      expect(local).toHaveLength(1)
+      expect(local[0].id).toBe("ses_a")
+    })
+
+    test("a machineId with no sessions returns an empty list", () => {
+      expect(filterSessionsByMachine(fleetSessions, "nonexistent")).toHaveLength(0)
+    })
+
+    test("filter composes with filterSessionsByQuery", () => {
+      const getTitle = (s: Session) => s.title || s.id
+      const studioSessions = filterSessionsByMachine(fleetSessions, "mac-studio")
+      const searched = filterSessionsByQuery(studioSessions, "session 2", getTitle)
+      expect(searched).toHaveLength(1)
+      expect(searched[0].id).toBe("ses_c")
+    })
+  })
+
+  // ── sort modes compose with open-tab pinning (#1599) ──────────────────────
+
+  describe("sort modes compose with open-tab pinning", () => {
+    /**
+     * The display pipeline partitions into open-tab and rest, sorts EACH
+     * partition with sortDropdownSessions, then concatenates. Open-tab
+     * sessions must stay first regardless of which sort mode is applied.
+     *
+     * This mirrors the real pipeline in session-header.tsx.
+     */
+    function composeSortWithPinning(
+      sessions: DropdownSession[],
+      hasOpenTab: (s: DropdownSession) => boolean,
+      mode: SortMode,
+    ): DropdownSession[] {
+      const openTabs: DropdownSession[] = []
+      const rest: DropdownSession[] = []
+      for (const s of sessions) {
+        if (hasOpenTab(s)) openTabs.push(s)
+        else rest.push(s)
+      }
+      return [
+        ...sortDropdownSessions(openTabs, mode),
+        ...sortDropdownSessions(rest, mode),
+      ]
+    }
+
+    const all: DropdownSession[] = [
+      { id: "a", title: "Zebra", directory: "/p", time: { created: 100 } },
+      { id: "b", title: "Alpha", directory: "/p", time: { created: 300 } },
+      { id: "c", title: "Mid", directory: "/p", time: { created: 200 } },
+    ] as DropdownSession[]
+    const openIds = new Set(["c"])
+    const hasOpen = (s: DropdownSession) => openIds.has(s.id)
+
+    test("alpha sort: open-tab session stays first even if title sorts later", () => {
+      const result = composeSortWithPinning(all, hasOpen, "alpha")
+      // "c" (Mid) has an open tab — it must be first
+      expect(result[0].id).toBe("c")
+      // Rest sorted alphabetically: Alpha (b), Zebra (a)
+      expect(result.slice(1).map((s) => s.id)).toEqual(["b", "a"])
+    })
+
+    test("recent sort: open-tab session stays first even if older", () => {
+      const result = composeSortWithPinning(all, hasOpen, "recent")
+      expect(result[0].id).toBe("c")
+      // Rest sorted by recency: b (300), a (100)
+      expect(result.slice(1).map((s) => s.id)).toEqual(["b", "a"])
+    })
+
+    test("machine sort: open-tab session stays first", () => {
+      const machineAll: DropdownSession[] = [
+        { id: "r1", title: "R1", directory: "/p", time: { created: 300 }, amicode_owner: { owner_machine_id: "peer", owner_name: "Box", is_local: false } },
+        { id: "loc", title: "Local", directory: "/p", time: { created: 100 } },
+        { id: "r2", title: "R2", directory: "/p", time: { created: 200 }, amicode_owner: { owner_machine_id: "peer", owner_name: "Box", is_local: false } },
+      ] as DropdownSession[]
+      const machineOpen = new Set(["r1"])
+      const result = composeSortWithPinning(machineAll, (s) => machineOpen.has(s.id), "machine")
+      // r1 is the open tab — stays first despite being remote
+      expect(result[0].id).toBe("r1")
+      // Rest sorted by machine: local first, then remote
+      expect(result[1].id).toBe("loc")
+      expect(result[2].id).toBe("r2")
     })
   })
 })

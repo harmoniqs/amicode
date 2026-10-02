@@ -54,6 +54,14 @@ export class EngineProxy {
           }
         });
       });
+      // #1261 (AC5): exactly-once reattach — a client disconnect (a reloaded
+      // window closing its stream) tears down the engine upstream so a reload
+      // re-joins ONCE, never accumulating upstreams. Normal completion
+      // (writableFinished) already ended it.
+      res.on("close", () => {
+        if (res.writableFinished) return;
+        upstream.destroy();
+      });
       upstream.on("error", (err) => {
         // The engine went away mid-flight (restart gap, crash): honest 502
         // JSON when headers aren't sent yet, else just close the stream.

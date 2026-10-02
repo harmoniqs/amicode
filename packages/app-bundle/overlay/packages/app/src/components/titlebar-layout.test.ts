@@ -107,6 +107,32 @@ describe("titlebar layout", () => {
     expect(isSessionScoped("profile")).toBe(false)
     expect(isSessionScoped("settings")).toBe(false)
   })
+
+  // ── #1442 AC3: fleet-studio titlebar-unchanged contract ──────────────────
+  // The fleet studio slice (session-header provenance, machine picker, Preview
+  // remote edit) adds NO controls to the titlebar. The session-header provenance
+  // icon + caret live in the data-session-title sticky header, not the titlebar.
+  test("fleet studio adds no titlebar controls — TITLEBAR_CONTROL_IDS is exactly the canonical five (#1442 AC3)", () => {
+    // The canonical set is exactly these five, in this order
+    expect(TITLEBAR_CONTROL_IDS).toEqual(["sessions", "status", "side-panel", "profile", "settings"])
+    // No fleet/machine/provenance control was added
+    const ids = [...TITLEBAR_CONTROL_IDS]
+    expect(ids).not.toContain("machine")
+    expect(ids).not.toContain("fleet")
+    expect(ids).not.toContain("provenance")
+    expect(ids.length).toBe(5)
+  })
+
+  test("fleet studio does not change the default layout (#1442 AC3)", () => {
+    expect(defaultTitlebarLayout).toEqual({
+      left: [],
+      right: ["sessions", "status", "side-panel", "profile", "settings"],
+    })
+    // The union of left + right is exactly TITLEBAR_CONTROL_IDS (no new entries)
+    const all = [...defaultTitlebarLayout.left, ...defaultTitlebarLayout.right]
+    expect(all.length).toBe(TITLEBAR_CONTROL_IDS.length)
+    expect(new Set(all)).toEqual(new Set(TITLEBAR_CONTROL_IDS))
+  })
 })
 
 describe("edit mode state", () => {

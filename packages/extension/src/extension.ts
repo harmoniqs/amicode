@@ -7,7 +7,8 @@ import { resolveOpencodeBinary, OpencodeMissingError, unsupportedHostAdvice } fr
 import { resolveSelectedLaunch, HARNESS_REGISTRY } from "./harness";
 import { ChatPanel } from "./chat_panel";
 import { DeckPanel } from "./deck_panel";
-import { SidebarViewProvider, createNewProject, createNewEnvironment } from "./sidebar_view";
+import { SidebarViewProvider, createNewProject, createNewEnvironment, defaultFleetSectionDeps } from "./sidebar_view";
+import { FleetHeartbeat, resolveTailscaleDnsName, pushRowToPeer } from "./fleet_heartbeat";
 import { StatusBarManager } from "./status_bar";
 import {
   prepareOpencodeProject,
@@ -49,12 +50,13 @@ import {
   releaseOnboardingPanel,
 } from "./onboarding_panel";
 import { registerFleetPanel } from "./fleet_panel";
+import { registerFleetManagerCommands } from "./fleet_manager_command";
 import { isModelConfigured } from "./onboarding_routing";
 import { getWorkspaceProjects, type WorkspaceProjectDeps } from "./workspace_projects";
 import { detectProjectType } from "./project/detect";
 import { stagePasqalConnector } from "./pasqal_assets";
 import { stageModCards, opencodeGlobalConfigRoot } from "./mode_cards";
-import { stageModeBundles } from "@amicode/schema";
+import { stageModeBundles, parseRosterDocument, fleetRosterCachePath, type RosterRow } from "@amicode/schema";
 import { needsProvision, pasqalVenvDir, provisionPasqalPython } from "./pasqal_python";
 import { createLocalPersonalVault, sanitizeVaultName, suggestVaultName } from "./substrate/vault_setup";
 import {
@@ -73,14 +75,25 @@ import {
   readFleetTopology,
   readFleetTopologyWithRefresh,
   fleetConfigOf,
+  divertToFleetRelay,
+  FLEET_GUARD_BINARY_SUFFIX,
   verbRunnerWithPaths,
   type VerbRunResult,
 } from "./fleet_topology";
 import { resolveHubTarget, restartHub } from "./hub_ops";
+import { connectToHubOverRemoteSsh, connectToDeviceOverRemoteSsh, isRemoteSshAvailable } from "./fleet_connect_remote_ssh";
+import { handleConnectToDevice, type ConnectToDeviceMessage, type FleetConnectDeps } from "./fleet_connect_device";
+import { createFleetFocusHost } from "./fleet_focus";
 import { registerAmicodeTerminal } from "./terminal";
 import { amicodeServiceDisposal, startAmicodeService, frameOriginUrl } from "./amicode_service_wiring";
+import { buildFleetPeerProvider } from "./amicode_service/fleet_peer_provider";
+import { resolveLifecycleAuthority, recordLifecycleAuthority } from "./amicode_service/fleet_lifecycle_authority";
+import { handleEnableControlRequest } from "./amicode_service/fleet_control_bootstrap";
+import { readRosterRows } from "./amicode_service/roster";
 import { resolveAppDistRoot } from "./amicode_service/app_shelf";
 import { resolveFleetActivation, type FleetActivationConfig } from "./fleet_activation";
+import { recoverBootAttachment } from "./boot_attachment_recovery";
+import { bringUpSshAttachment } from "./amicode_service/attachment_transport";
 import { registerOpencodeUpdater } from "./opencode_updater_wiring";
 import { stageOpencodeCliLink } from "./opencode_cli_link";
 import { resolveMountStack, personalMount, defaultVaultsRoot } from "./substrate/mount_store";
@@ -97,11 +110,21 @@ import { loadGraph } from "./calibration_graph";
 import { parseStateJson } from "./device_registry";
 import { buildDeviceStatus, nextActions, capabilityHint, type DriveLine } from "./device_status";
 import { SchusterJobServer } from "./qick_client";
-import { adoptOrSpawn, buildLiveDeps, isPidAlive, reclaimOrphanPort, auditAdoptedEngine, restartAdoptedEngine } from "./server_lifecycle";
-import { handshakePath, readHandshake, deleteHandshake, serverLogPath, coldSpawnHandshakeHook, hashFile, hashString } from "./server_handshake";
+import { adoptOrSpawn, buildLiveDeps, isPidAlive, reclaimOrphanPort, auditAdoptedEngine, restartAdoptedEngine, readoptHubInPlace, sweepStrayEngines, listOpencodeEngines, hasLiveClient, reclaimEnginePid, planEngineRestart, planServerActivation, adoptedTheHub, probeUnarmedHub, shouldRideDeterministicHub, planHubYieldBack } from "./server_lifecycle";
+import { hubEnginePortFor } from "./amicode_service/fleet_hub_service";
+import { handshakePath, readHandshake, deleteHandshake, serverLogPath, coldSpawnHandshakeHook, hashFile, hashString, UNARMED_PASSWORD, isUnarmedHandshake } from "./server_handshake";
 import { startKeepalive, stopKeepalive, readGraceSeconds, pingKeepalive } from "./server_keepalive";
 import { FleetPollHysteresis } from "./fleet_poll_hysteresis";
+import { FleetPostureStateWriter } from "./fleet_posture_state";
+import { WindowModeStateWriter, windowModeFacts } from "./fleet_window_mode_state";
+import { recordPostureState } from "./fleet_posture_feed";
+import { HostFileClient } from "./fleet_host_fs/host_file_client";
+import { AmicoHostFileSystemProvider } from "./fleet_host_fs/provider";
+import { mountAmicoHostFs } from "./fleet_host_fs/mount";
+import { type CapabilityLabel } from "./fleet_host_fs/mount_policy";
 import { stopServer } from "./stop_server";
+import { quitAmicode } from "./quit_command";
+import { pushEngineState, pushFleetRole } from "./engine_state_push";
 import type { QueueView } from "./qick_job_server";
 import { postDeviceStatus, postDeviceActions, postDeviceActivate } from "./inspector_bridge";
 
@@ -127,6 +150,9 @@ let distillerSetup: DistillerSetup | undefined;
 let devicePollTimer: ReturnType<typeof setInterval> | undefined;
 /** Fleet client tunnel poll — when the machine is a fleet client (guard `exit 1`), we don't spawn. */
 let fleetClientPoll: ReturnType<typeof setInterval> | undefined;
+/** Fleet heartbeat producer (#1375) — periodically POSTs this machine's roster
+ *  row with a fresh last_report so peers see it as reachable. */
+let fleetHeartbeat: FleetHeartbeat | undefined;
 
 const DEVICE_POLL_MS = 2500; // mirror the RunsManager cadence
 
@@ -152,8 +178,13 @@ let fleetVerbRunner: (() => VerbRunResult) | undefined;
  *  — never a silent fallthrough, never a raw-file read. The GUARD remains the
  *  enforcement (it fails closed on a broken verb); this check is the UX layer. */
 function isFleetClientGuard(binary: string | undefined, log: (line: string) => void = () => {}): boolean {
-  if (process.platform !== "darwin") return false;
-  if (!binary || !binary.endsWith("amico-opencode-fleet-guard")) return false;
+  // #1261 (AC3): the never-fork decision is PLATFORM-AGNOSTIC — NO darwin gate.
+  // The guard binary is the OS-neutral installed signal; the role comes from
+  // the projection (fleet_topology, already OS-neutral). A client spawns no
+  // local engine on mac, linux, OR WSL alike — removing the old
+  // `process.platform !== "darwin"` early-return that let a linux/WSL client
+  // silently cold-spawn one (the ADR-0005 split-brain, #1227).
+  if (!binary || !binary.endsWith(FLEET_GUARD_BINARY_SUFFIX)) return false;
   const decision = readFleetTopologyWithRefresh({ runVerb: fleetVerbRunner });
   if (decision.state.kind === "ok" && decision.state.verdict !== undefined) {
     log(`[fleet] projection freshness: ${decision.state.verdict}${decision.state.advisory === undefined ? "" : ` — ${decision.state.advisory}`}`);
@@ -170,7 +201,7 @@ function isFleetClientGuard(binary: string | undefined, log: (line: string) => v
     log(`[fleet] ${decision.state.detail}`);
     return false;
   }
-  return decision.state.role === "client";
+  return divertToFleetRelay(binary, decision.state);
 }
 
 /** #398 (slice 4e): the fleet activation config, read from the workspace
@@ -205,6 +236,17 @@ function readFleetActivationConfig(cfg: vscode.WorkspaceConfiguration): FleetAct
         : {}),
     },
   };
+}
+
+/** #1260: the fleet transport provider selector (`amicode.fleetTransport`),
+ *  read into the wiring's fleetTransport option. Empty/unset → undefined → the
+ *  wiring defaults to `ssh` (today's launchd-forward behavior, byte-identical).
+ *  A disabled or not-yet-shipped provider yields the honest hub-down, never a
+ *  silent fallback to another provider (the selection is resolved in the
+ *  wiring via resolveFleetTransportKind). */
+function readFleetTransportOption(cfg: vscode.WorkspaceConfiguration): { kind?: string } {
+  const kind = cfg.get<string>("fleetTransport", "").trim();
+  return kind !== "" ? { kind } : {};
 }
 
 /** Drive-line + qubit list from a device card's YAML frontmatter (§3.1). The
@@ -306,6 +348,21 @@ const pendingStops = new Set<string>();
 // pack, always active today. The gate's former consumer (the Julia-setup
 // auto-offer) moved to agent-driven, on-block surfacing — the domain stays
 // implicit until a second domain pack exists.
+
+/** #1447 (W2): this machine's own stable id for the fleet-peer provider —
+ *  the SAME value readLocalDevice()/buildBootSelfReportRow/the heartbeat use
+ *  (canonical.host on a server/standalone, else os.hostname()). Threaded into
+ *  startAmicodeService so the fleet-sessions route serves the machine-keyed
+ *  N-peer projection. Defensive: any resolution failure yields undefined, and
+ *  the service then keeps the legacy 2-source projection (byte-identical). */
+function resolveLocalMachineId(): string | undefined {
+  try {
+    const id = defaultFleetSectionDeps({}).readLocalDevice?.()?.machineId;
+    return typeof id === "string" && id.trim() !== "" ? id : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   const opencodeChannel = vscode.window.createOutputChannel("Amicode — opencode");
@@ -444,6 +501,17 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     });
     // the harness's own additions (telaio: TELAIO_APP_DIR — the app shelf)
     Object.assign(env, harnessEnvCurrent);
+    // #1596 (ADR 0020): fleet server/hub role exemption — engines that serve
+    // fleet clients must never self-exit on the idle timer. Read the topology
+    // LAZILY at spawn time so a late enrollment is picked up on the next
+    // respawn. The env var is consumed by the engine overlay's self-shutdown
+    // module (process.env.AMICO_ENGINE_ROLE_EXEMPT === "1").
+    {
+      const topo = readFleetTopology();
+      if (topo.kind === "ok" && topo.role === "server") {
+        env.AMICO_ENGINE_ROLE_EXEMPT = "1";
+      }
+    }
     // Data & Storage overrides (#378): inject OPENCODE_DB / OPENCODE_CONFIG_DIR
     // from the user's VS Code settings when non-empty. On cold start + on
     // restartServer, the new env reaches the fresh server process.
@@ -463,7 +531,90 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     telemetryGateOpen(resolveTelemetryContext(ctx, { sessionId: telemetrySessionId }));
 
   // 1. UI surfaces — Workspace sidebar (webview, #673)
-  const sidebarProvider = new SidebarViewProvider(ctx.extensionUri);
+  //    #1321: the read-only fleet section reads the host-owned roster + this
+  //    machine's posture and pushes them to the webview. Manage stays honestly
+  //    disabled until the Fleet Manager tab (#1322) registers its command.
+  // #1451 — the single host-held FleetFocusStore. Every focus change posts ONE
+  // `{source:"amicode", kind:"fleet-focus", machineId}` down-message over the
+  // chat_bridge to the overlay (the chat panel); W4b (#1453) is the consumer.
+  // Focusing a machine NEVER connects/attaches it — it only scopes the working
+  // surfaces and pushes focus to the overlay.
+  const fleetFocusStore = createFleetFocusHost({
+    postToOverlay: (m) => { void ChatPanel.peek()?.postMessage(m); },
+  });
+  const sidebarProvider = new SidebarViewProvider(ctx.extensionUri, undefined, defaultFleetSectionDeps({
+    // #1363 — a CLIENT proxy-reads the host's roster through the live local
+    // amicode service. Lazy: the service boots AFTER this construction, so read
+    // the module-level handle at call time (null until up ⇒ honest degrade).
+    serviceEndpoint: () =>
+      amicodeService ? { origin: new URL(amicodeService.url).origin, authHeader: amicodeService.authHeader } : null,
+    // #1413 (ADR 0030 §D6): the connect-to-device Quick Pick handler. Builds a
+    // production FleetConnectDeps from the live service handle, roster, topology,
+    // and VS Code APIs, then delegates to handleConnectToDevice. Fire-and-forget
+    // from the sidebar (async errors are logged, never thrown to the webview).
+    connectToDevice: (msg) => {
+      const rosterPath = fleetRosterCachePath();
+      const connectDeps: FleetConnectDeps = {
+        readRoster: (): RosterRow[] => {
+          try {
+            if (!fs.existsSync(rosterPath)) return [];
+            const parsed = parseRosterDocument(JSON.parse(fs.readFileSync(rosterPath, "utf8")));
+            return parsed.ok ? parsed.doc.rows : [];
+          } catch { return []; }
+        },
+        readTopology: () => readFleetTopology(),
+        attachToDevice: async (payload) => {
+          const svc = amicodeService;
+          if (!svc) {
+            opencodeChannel.appendLine("[fleet] attach failed: amicodeService is not set (service not booted?)");
+            return { ok: false, reason: "Amicode service not running on this machine" };
+          }
+          const url = `${svc.url}/amicode/fleet/attach`;
+          opencodeChannel.appendLine(`[fleet] attach: POST ${url} machine_id=${payload.machine_id}`);
+          try {
+            const res = await fetch(url, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", Authorization: svc.authHeader },
+              body: JSON.stringify(payload),
+            });
+            if (!res.ok) {
+              opencodeChannel.appendLine(`[fleet] attach failed: HTTP ${res.status} from ${url}`);
+              return { ok: false, reason: `local service returned HTTP ${res.status}` };
+            }
+            const body = await res.json() as { ok?: boolean; switched?: boolean; error?: string };
+            if (!body.ok) {
+              opencodeChannel.appendLine(`[fleet] attach failed: server refused — ${body.error ?? "no reason"}`);
+              return { ok: false, reason: body.error ?? "server refused the request" };
+            }
+            return { ok: true, switched: body.switched };
+          } catch (e) {
+            const msg = (e as Error).message;
+            opencodeChannel.appendLine(`[fleet] attach failed: fetch error — ${msg}`);
+            return { ok: false, reason: `could not reach local service at ${url} (${msg})` };
+          }
+        },
+        connectRemoteSsh: (sshAlias) => connectToDeviceOverRemoteSsh(sshAlias),
+        goStandalone: () => { void vscode.commands.executeCommand("amicode.fleet.goStandalone"); },
+        isRemoteSshAvailable: () => isRemoteSshAvailable(),
+        reloadWindow: () => Promise.resolve(vscode.commands.executeCommand("workbench.action.reloadWindow")) as Promise<void>,
+        showQuickPick: (items, opts) => Promise.resolve(vscode.window.showQuickPick(items, opts)) as any,
+        showWarningMessage: (m, ...items) => Promise.resolve(vscode.window.showWarningMessage(m, ...items)),
+        showInformationMessage: (m, ...items) => Promise.resolve(vscode.window.showInformationMessage(m, ...items)),
+      };
+      void handleConnectToDevice(msg as ConnectToDeviceMessage, connectDeps).catch((e) => {
+        opencodeChannel.appendLine(`[fleet] connect-to-device error: ${(e as Error).message}`);
+      });
+    },
+    // #1451 — focus a fleet machine: set the host-held FleetFocusStore. A local
+    // machine collapses to home (fleet_focus.setFocus). DISTINCT from connect:
+    // it never attaches — it only scopes the working surfaces, and the store's
+    // onChange pushes focus to the overlay (chat panel) for W4b (#1453).
+    focusMachine: (msg) => {
+      fleetFocusStore.setFocus(
+        msg.isLocal ? null : { machineId: msg.machineId, name: msg.machineId, isLocal: false },
+      );
+    },
+  }));
   ctx.subscriptions.push(
     vscode.window.registerWebviewViewProvider("amicode.workspace", sidebarProvider, {
       webviewOptions: { retainContextWhenHidden: true },
@@ -476,6 +627,81 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // behavior: "reset" for explicit selection, "expand" for session/tab switch.
   ChatPanel.onProjectSelected((path, mode) => sidebarProvider.setActiveProject(path, mode));
   ChatPanel.onPreviewVisibleChildren((root, relativeDirectory) => sidebarProvider.previewVisibleChildren(root, relativeDirectory));
+  // #1551: the self-owned enable-control act. The composer scrim's CTA posts a
+  // `fleet-enable-control` envelope (carrying the target owner machineId +
+  // sessionID); here we show the ADR 0034 D4 native modal and, on confirm, mint
+  // the self-owned control grant via the LIVE fleet-peer provider + enroll-seeded
+  // authority resolver + grant store. Grant persistence is what flips the state:
+  // the next GET /amicode/fleet/sessions poll re-resolves the projected
+  // `amicode_control` to `interactive` and the driving banner lights — the app
+  // never self-declares interactive (the SoT projection is the source of truth).
+  ChatPanel.onFleetEnableControl(async ({ ownerMachineId, sessionID }) => {
+    const selfMachineId = resolveLocalMachineId();
+    if (!selfMachineId) return; // standalone / unenrolled → no self identity, nothing to mint
+    const provider = buildFleetPeerProvider({ localMachineId: selfMachineId });
+    let roster: ReturnType<typeof readRosterRows> = [];
+    try { roster = readRosterRows(); } catch { roster = []; }
+    // Identity keys (roster fingerprints) recorded on the grant; machineId is the
+    // honest fallback when a row carries no identity_key yet.
+    const identityKeyOf = (machineId: string): string =>
+      roster.find((r) => r.machine_id === machineId)?.identity_key ?? machineId;
+    const peerName = provider.rosterLookup(ownerMachineId)?.name ?? ownerMachineId;
+    const outcome = await handleEnableControlRequest(
+      { ownerMachineId, sessionID },
+      {
+        self: { machineId: selfMachineId, identityKey: identityKeyOf(selfMachineId) },
+        targetIdentityKey: (id) => identityKeyOf(id),
+        // The base is self-owned (the operator owns both machines); the
+        // shared-peer flip to request-control is the #1545 handshake.
+        ownershipOf: () => "self-owned",
+        getServingPeers: () => provider.getServingPeers(),
+        readPeerToken: (id) => ({ ok: provider.readPeerToken(id).ok }),
+        resolveAuthority: (id) => resolveLifecycleAuthority(id),
+        // #1562 SELF-HEAL: a self-owned, serving, token-held peer whose
+        // lifecycle-authority record is missing (any fleet enrolled before
+        // authority-seeding landed) records self as the authority, then proceeds.
+        // The handler gates this strictly on self-owned — a shared peer never
+        // reaches here (no privilege bleed).
+        recordAuthority: (rec) => recordLifecycleAuthority(rec),
+        now: () => new Date().toISOString(),
+        // ADR 0034 D4: the one net-new native-modal confirm.
+        confirm: async (owner) => {
+          const name = provider.rosterLookup(owner)?.name ?? owner;
+          const choice = await vscode.window.showWarningMessage(
+            `Enable control of ${name}?`,
+            {
+              modal: true,
+              detail: "This window will be able to drive that remote session — send prompts and act on your behalf — until you close it.",
+            },
+            "Enable control",
+          );
+          return choice === "Enable control";
+        },
+      },
+    );
+    if (outcome.outcome === "minted") {
+      void vscode.window.showInformationMessage(`Amicode: control enabled — now driving ${peerName}.`);
+    } else if (outcome.outcome === "peer-unreachable") {
+      // #1562: DISTINCT copy — the peer is genuinely not reachable, not "unverified".
+      void vscode.window.showWarningMessage(
+        `Amicode: couldn't enable control of ${peerName} — it isn't reachable right now (not serving, or no reader token).`,
+      );
+    } else if (outcome.outcome === "shared-requires-approval") {
+      // #1562: DISTINCT copy — a shared peer needs its owner's approval (#1545).
+      void vscode.window.showWarningMessage(
+        `Amicode: ${peerName} is a shared peer — enabling control needs its owner's approval.`,
+      );
+    } else if (outcome.outcome === "authority-not-established") {
+      // #1562: DISTINCT copy — a foreign lifecycle authority we won't overwrite.
+      void vscode.window.showWarningMessage(
+        `Amicode: couldn't enable control of ${peerName} — its lifecycle authority is held by another machine. Re-enroll the peer from this machine to establish authority.`,
+      );
+    } else if (outcome.outcome === "issue-failed") {
+      void vscode.window.showWarningMessage(
+        `Amicode: couldn't enable control of ${peerName} — grant issuance failed (${outcome.reason}).`,
+      );
+    }
+  });
   registerOnboardingPanel(ctx); // #433 — Stage 0 model-setup webview
   registerHarmoniqsConnectCommand(ctx); // Connect Provider dialog's branded Harmoniqs row
   // Heals a provider.harmoniqs entry written by an OLDER extension version
@@ -485,9 +711,146 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // the generic re-auth flow for an existing entry never touches the model
   // shape either). No-op when there's nothing to heal.
   reconcileHarmoniqsProviderConfig();
-  registerFleetPanel(ctx); // #527 — Fleet & Versions: the view over doctor's JSON
+  // #1322: the standalone Fleet & Versions panel is retired; its command
+  // (amicode.fleet.versions) + amicode.openFleetManager now route to the Fleet
+  // Manager Work Column tab. registerFleetPanel stays a no-op (retired).
+  registerFleetPanel(ctx);
+  registerFleetManagerCommands(ctx);
+
+  // #1375: fleet heartbeat producer — periodically re-POSTs this machine's
+  // roster row with a fresh last_report so peers see it as reachable. Lazy
+  // resolution: identity + service endpoint resolve at tick time (not at
+  // construction) because the service may not be up yet. Start unconditionally —
+  // resolveIdentity returns null for standalone/unenrolled and tick no-ops.
+  fleetHeartbeat = new FleetHeartbeat({
+    resolveIdentity: () => {
+      try {
+        const localDeps = defaultFleetSectionDeps({});
+        const local = localDeps.readLocalDevice?.();
+        if (!local || local.serveStance === "standalone") return null;
+        const topology = readFleetTopology();
+        const sshAlias = (topology.kind === "ok" ? topology.canonical?.sshAlias : undefined) ?? local.machineId;
+        // Read the configured transport (defaults to "ssh" when unset).
+        const cfg = vscode.workspace.getConfiguration("amicode");
+        const transport = cfg.get<string>("fleetTransport", "").trim() || "ssh";
+        // For tailscale transport, resolve this machine's MagicDNS peer_origin
+        // so peers can push heartbeats via HTTPS instead of SSH.
+        let peer_origin: string | undefined;
+        if (transport === "tailscale") {
+          const { execFileSync } = require("node:child_process");
+          // macOS GUI apps don't inherit the shell PATH — try known locations.
+          const tailscaleBin = [
+            "tailscale",
+            "/opt/homebrew/bin/tailscale",
+            "/usr/local/bin/tailscale",
+            "/usr/bin/tailscale",
+          ].find((bin) => {
+            try { execFileSync(bin, ["version"], { encoding: "utf8", timeout: 3_000 }); return true; } catch { return false; }
+          }) ?? "tailscale";
+          const dnsName = resolveTailscaleDnsName(
+            (_cmd: string, args: string[]) => execFileSync(tailscaleBin, args, { encoding: "utf8", timeout: 5_000 }),
+          );
+          if (dnsName) {
+            const port = (topology.kind === "ok" ? topology.canonical?.port : undefined) ?? 4096;
+            const { tailscaleServeMapping } = require("./amicode_service/fleet_transport");
+            const mapping = tailscaleServeMapping({ magicDnsName: dnsName, port });
+            peer_origin = mapping.magicDnsOrigin;
+          }
+        }
+        return {
+          machine_id: local.machineId,
+          name: local.name,
+          server_mode: local.serveStance,
+          capabilities: local.serveStance === "server" ? ["serving"] : [],
+          device_type: local.deviceType,
+          sshAlias,
+          transport,
+          ...(peer_origin !== undefined ? { peer_origin } : {}),
+        };
+      } catch {
+        return null;
+      }
+    },
+    fetchImpl: fetch,
+    get serviceUrl() {
+      // On a server, the roster route lives on the hub service (canonical port,
+      // auth=open). On a client, it proxies through the local extension service.
+      // The hub service is always localhost — it runs on this machine.
+      const topology = readFleetTopology();
+      if (topology.kind === "ok" && topology.role === "server") {
+        const port = topology.canonical?.port ?? 4096;
+        return `http://127.0.0.1:${port}`;
+      }
+      return amicodeService ? new URL(amicodeService.url).origin : "http://127.0.0.1:4095";
+    },
+    get authHeader() {
+      // The hub service runs with auth=open — no header needed for servers.
+      const topology = readFleetTopology();
+      if (topology.kind === "ok" && topology.role === "server") return "";
+      return amicodeService?.authHeader ?? "";
+    },
+    now: () => Date.now(),
+    // Peer roster sync: push this machine's heartbeat row to every known
+    // peer's hub service, dispatching on each peer's declared transport.
+    // Tailscale/direct peers are reached via HTTPS to their peer_origin;
+    // SSH peers are reached via ssh <alias> curl to loopback. Failures are
+    // swallowed independently — an unreachable peer never blocks others.
+    pushToPeers: async (rowJson: string) => {
+      try {
+        const rosterFile = (await import("./amicode_service/roster")).rosterFilePath();
+        const raw = fs.readFileSync(rosterFile, "utf8");
+        const doc = JSON.parse(raw);
+        const rows: Array<{ machine_id: string; sshAlias?: string; transport?: string; peer_origin?: string }> = doc?.rows ?? [];
+        const topology = readFleetTopology();
+        const localAlias = (topology.kind === "ok" ? topology.canonical?.sshAlias : undefined) ?? "";
+        const localId = (topology.kind === "ok" ? topology.canonical?.host : undefined) ?? "";
+        const port = (topology.kind === "ok" ? topology.canonical?.port : undefined) ?? 4096;
+        const { execFile } = await import("node:child_process");
+        for (const row of rows) {
+          if (!row.sshAlias && !row.peer_origin) continue;
+          // Skip self — don't push to ourselves.
+          if (row.sshAlias === localAlias || row.machine_id === localId) continue;
+          // Fire-and-forget, transport-aware push.
+          pushRowToPeer({
+            rowJson,
+            peer: row,
+            localPort: port,
+            fetchImpl: fetch as any,
+            execSsh: (alias, remoteCmd) => {
+              execFile("ssh", [
+                "-o", "BatchMode=yes",
+                "-o", "ConnectTimeout=5",
+                alias,
+                remoteCmd,
+              ], { timeout: 10_000 }, () => { /* swallow */ });
+            },
+          }).catch(() => { /* swallow */ });
+        }
+      } catch {
+        // swallow — peer sync is best-effort
+      }
+    },
+  });
+  fleetHeartbeat.start();
+  ctx.subscriptions.push({ dispose: () => { fleetHeartbeat?.dispose(); fleetHeartbeat = undefined; } });
+
   statusBar = new StatusBarManager();
   ctx.subscriptions.push({ dispose: () => statusBar?.dispose() });
+
+  // #1272 — WINDOW MODE (Remote-SSH vs editor-local), an axis ORTHOGONAL to the
+  // link-health posture (#780). Derived from the editor's remote indicator
+  // (vscode.env.remoteName: an "ssh-remote…" string under Remote-SSH, undefined
+  // when local), recorded to its OWN state file via its OWN transition-only
+  // writer (never the posture writer — a window-mode-only change must not be
+  // swallowed by the posture signature), and reflected in the status bar. This
+  // runs for EVERY window regardless of fleet role — a server or a standalone
+  // box can equally be opened over Remote-SSH. The writer never throws.
+  {
+    const windowMode = windowModeFacts(os.hostname(), vscode.env.remoteName);
+    new WindowModeStateWriter({ log: (m) => opencodeChannel.appendLine(m) }).record(windowMode);
+    statusBar.setWindowMode(windowMode.window_mode);
+    opencodeChannel.appendLine(`[fleet] window mode: ${windowMode.window_mode}${windowMode.remote_name ? ` (${windowMode.remote_name})` : ""}`);
+  }
 
   // 2. Start the multi-run RunsManager — tails the append-only runs/index;
   // #351: posts run data to the Work Column bridge (no bottom panel).
@@ -787,8 +1150,33 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           else if (pick === `Show log`) opencodeChannel.show();
         });
     };
+    // #780: the SOLE writer of the machine-posture state file. The context
+    // plugin reads it to render an honest posture block (which machine, mode,
+    // hub identity + reachability). We write it FROM this attach loop, only on
+    // FleetPollHysteresis TRANSITIONS (attach = fleet/hub-regained; detach =
+    // hub-lost/fell-back), so a blip below the threshold never rewrites it. The
+    // hub identity comes from the projection topology's canonical address; the
+    // client rides the local tunnel forward.
+    //
+    // #1265 (Slice 5): the fleet/standalone writes below go through the
+    // fleet_posture_feed seam (recordPostureState) — ONE fact-builder, the ONE
+    // writer. The relay's FleetPostureDetector computes the hub-up-but-slow
+    // DEGRADED steady state this up/down probe cannot see; when the client relay
+    // boot co-locates that detector with this loop, its snapshot feeds the SAME
+    // writer here via recordDetectorSnapshot (NO second writer). Its degraded
+    // posture already renders honestly (stack_state renderPostureLines).
+    const postureWriter = new FleetPostureStateWriter({ log: (m) => opencodeChannel.appendLine(m) });
+    const postureHostname = os.hostname();
+    const postureCanonical = topology.kind === "ok" ? topology.canonical : undefined;
+    const postureHubHost = postureCanonical?.host;
+    const postureHubPort = postureCanonical?.port ?? fleetPort;
+    const postureHub = {
+      name: postureHubHost ?? null,
+      base_url: postureHubHost ? `http://${postureHubHost}:${postureHubPort}` : `http://127.0.0.1:${fleetPort}`,
+    };
     const checkFleet = async () => {
       let up = false;
+      const probeStarted = Date.now();
       try {
         const r = await fetch(`http://127.0.0.1:${fleetPort}${fleetProbePath}`, {
           signal: AbortSignal.timeout(fleetPoll.isReady ? 1500 : attachBudgetCfg),
@@ -798,11 +1186,16 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       } catch {
         up = false; // connection refused / timeout — the same hysteresis applies
       }
+      const probeRttMs = Date.now() - probeStarted;
       const d = fleetPoll.onProbe(up);
       if (d.transition === "attach") {
         opencodeReadyUrl = new URL(`http://127.0.0.1:${fleetPort}`);
         statusBar?.setServerReady(true);
         sseClient?.connect(opencodeReadyUrl);
+        // #780: attach (first attach OR hub-regained) — record the live fleet
+        // posture so the next session's context names the hub + reachability.
+        // #1265: through the single-writer seam (recordPostureState).
+        recordPostureState("fleet", { hostname: postureHostname, hub: postureHub, rttMs: probeRttMs }, postureWriter);
         if (vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true)) {
           // Fleet client: no local service boots in this mode, so frameUrl()
           // resolves the tunnel engine origin — the honest available frame.
@@ -815,6 +1208,11 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       } else if (d.transition === "detach") {
         opencodeReadyUrl = undefined;
         statusBar?.setServerReady(false);
+        // #780: hub-lost — the client fell back. Record the standalone posture
+        // with this instant as the fallback time, so context stops rendering
+        // the stale role line as if attached (the 2026-09-03 outage failure).
+        // #1265: through the single-writer seam (recordPostureState).
+        recordPostureState("standalone", { hostname: postureHostname, hub: postureHub }, postureWriter);
         opencodeChannel.appendLine(
           `[fleet] tunnel down — ${d.failures} consecutive failed probes (threshold ${d.downThreshold}) — go standalone to work locally`,
         );
@@ -832,6 +1230,42 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     void checkFleet();
     // Fallback status bar already handles the fallback-active case; in pure
     // client mode we surface tunnel health via the fleet health warning above.
+
+    // #1267: native Explorer shows HOST files. Mount the amico-host:// provider
+    // over the ALREADY-PROXIED host data plane (the client relay + /amicode/*
+    // proxy) so the Explorer, open, and save operate on the host. The transport's
+    // base URL is the tunnel origin (undefined when the tunnel is down → the
+    // provider surfaces the honest hub-down posture, NEVER local files, AC5); the
+    // Authorization is the same header the relay translates to the hub mint. The
+    // mandatory capability label ships in the SAME step (AC4). Mounts ONLY here,
+    // in fleet-client posture (AC6) — standalone/server never reach this branch.
+    const hostExplorerEnabled = vscode.workspace.getConfiguration("amicode").get<boolean>("fleet.hostExplorer", true);
+    const hostFsClient = new HostFileClient({
+      baseUrl: () => opencodeReadyUrl?.toString(),
+      authHeader: () => serverAuthHeaders.Authorization,
+    });
+    const hostFsProvider = new AmicoHostFileSystemProvider(hostFsClient);
+    const hostFsMount = mountAmicoHostFs(
+      { isFleetClient: true, disabled: !hostExplorerEnabled },
+      {
+        registerProvider: (scheme, isReadonly) =>
+          vscode.workspace.registerFileSystemProvider(scheme, hostFsProvider, { isReadonly }),
+        addFolder: (scheme) =>
+          void vscode.workspace.updateWorkspaceFolders(vscode.workspace.workspaceFolders?.length ?? 0, 0, {
+            uri: vscode.Uri.parse(`${scheme}:/`),
+            name: "Host (fleet)",
+          }),
+        showLabel: (label: CapabilityLabel) => {
+          const item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
+          item.text = label.text;
+          item.tooltip = label.tooltip;
+          item.show();
+          return { dispose: () => item.dispose() };
+        },
+        log: (m) => opencodeChannel.appendLine(m),
+      },
+    );
+    for (const d of hostFsMount.disposables) ctx.subscriptions.push(d);
   } else if (binary !== undefined) {
     // The amico CLI is argv-only (β.1) — no AMICO_* env propagation (S37), with ONE
     // recorded exception: AMICO_PYTHON (Pasqal python provisioning) rides the
@@ -859,11 +1293,58 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     // recorded password and wire the event stream; on cold-spawn, proceed as
     // before; on error, surface it and skip server creation entirely.
     let adopted = false;
+    let adoptedPort = 0;
+    let adoptedPid = 0;
     // #1190: the adopted survivor's recorded binary/config hashes (from the
     // handshake) — captured here so the adopted path can compare them against
     // the on-disk build and surface a stale-engine notice.
     let adoptedHashes: { binaryHash: string; configHash: string } | undefined;
+    // #1579: track whether the adopted engine is the hub's unarmed engine —
+    // the audit must exempt unarmed engines from the config-hash comparison.
+    let adoptedUnarmed = false;
+    // #1579: on a role=server machine, the hub owns the engine — give it time
+    // to boot before the extension gives up and cold-spawns a rival.
+    const fleetState = readFleetTopology();
+    const isServerMachine = fleetState.kind === "ok" && fleetState.role === "server";
+    const hubPollBudget = isServerMachine ? 30_000 : undefined;
+    // #1607 Slice 3: the hub engine port is needed both by the deterministic
+    // probe below and by the local-fallback yield-back watcher, so hoist it here.
+    const hubEnginePort = hubEnginePortFor(
+      (fleetState.kind === "ok" ? fleetState.canonical?.port : undefined) ?? 4096,
+    );
+
+    // #1607 Slice 1: on a fleet server, find the hub DETERMINISTICALLY before
+    // trusting the handshake. Probe the hub engine port (canonical −
+    // HUB_ENGINE_PORT_OFFSET) and confirm it's the UNARMED hub (anonymous GET:
+    // 200 = unarmed hub; 401/403 = armed peer; down = fall through). This makes
+    // ride-hub survive a hub crash+respawn (stale handshake pid) and a deleted/
+    // absent handshake — the incident's exact failure. The hub pid comes from
+    // the hub's own PID file (not the clobberable handshake).
+    if (isServerMachine) {
+      const hubProbe = await probeUnarmedHub(hubEnginePort);
+      opencodeChannel.appendLine(`[boot] #1607 deterministic hub probe 127.0.0.1:${hubEnginePort} → ${hubProbe}`);
+      if (shouldRideDeterministicHub({ isServerMachine, hubProbe })) {
+        const hubPid = (() => {
+          try {
+            return parseInt(fs.readFileSync(path.join(os.homedir(), ".amico", "amicode", "hub-engine.pid"), "utf8").trim(), 10) || 0;
+          } catch {
+            return 0;
+          }
+        })();
+        adopted = true;
+        adoptedPort = hubEnginePort;
+        adoptedPid = hubPid;
+        adoptedUnarmed = true;
+        serverPassword = UNARMED_PASSWORD;
+        serverAuthHeaders.Authorization = serverAuthHeader(serverPassword);
+        opencodeReadyUrl = new URL(`http://127.0.0.1:${hubEnginePort}`);
+        opencodeChannel.appendLine(
+          `[boot] #1607 RIDING hub engine on ${hubEnginePort} (unarmed, deterministic probe; pid ${hubPid || "?"}) — no handshake dependency`,
+        );
+      }
+    }
     try {
+      if (!adopted) {
       const lifecycleResult = await adoptOrSpawn(
         handshakePath(),
         buildLiveDeps(async () => {
@@ -871,11 +1352,14 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           // spawn below via ServerManager. Return a sentinel so the lifecycle
           // function knows to proceed, but the real spawn is in the next block.
           return { port: configuredPort || 0, pid: 0, password: serverPassword };
-        }, configuredPort > 0 ? configuredPort : 43117, (l) => opencodeChannel.appendLine(l)),
+        }, configuredPort > 0 ? configuredPort : 43117, (l) => opencodeChannel.appendLine(l), hubPollBudget),
       );
       if (lifecycleResult.outcome === "adopted") {
         adopted = true;
+        adoptedPort = lifecycleResult.port;
+        adoptedPid = lifecycleResult.pid;
         adoptedHashes = lifecycleResult.adoptedHashes;
+        adoptedUnarmed = lifecycleResult.password === UNARMED_PASSWORD;
         // Replace the minted password with the recorded one — the surviving
         // server was spawned with it, so every auth surface must carry it.
         serverPassword = lifecycleResult.password;
@@ -894,9 +1378,151 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         // real ServerManager spawn below.
         opencodeChannel.appendLine(`[boot] no surviving server to adopt — cold-spawning`);
       }
+      } // #1607: end if (!adopted) — skipped when the deterministic probe already rode the hub
     } catch (e) {
       // Adoption check failed — non-fatal, proceed to cold-spawn.
       opencodeChannel.appendLine(`[boot] adopt-or-spawn check failed: ${(e as Error).message} — cold-spawning`);
+    }
+
+    // #1576: the one-engine-per-serving-machine activation plan. On a fleet
+    // SERVER the window rides the launchd hub engine (adopted, unarmed) — the
+    // #1354 "ext-engine on FLEET_PORT-2" allocation is retired here. A server
+    // must NEVER run the stray-engine sweep (the sweep SIGTERM-churned the hub —
+    // the hub owns its own engine lifecycle via its PID file, #1578) and NEVER
+    // write the shared handshake (the hub's record is authoritative; a window
+    // write is the clobber that points the next reload at a PEER window's engine
+    // instead of the hub). A server that could NOT adopt (hub genuinely down
+    // past the 30s poll budget) falls back to a local spawn with an honest
+    // banner — never engine-less on the daily driver. A standalone machine is
+    // byte-for-byte unchanged (own-engine: spawn + sweep + handshake).
+    // #1607: hubReachable means "adopted the UNARMED hub" — NOT "adopted
+    // anything". A clobbered handshake pointing {port, armed} at a PEER window's
+    // engine must NOT enter ride-hub; adoptedTheHub maps an armed adopt to
+    // false → local-fallback.
+    const activationPlan = planServerActivation({
+      isServerMachine,
+      hubReachable: adoptedTheHub({ adopted, adoptedUnarmed }),
+    });
+    opencodeChannel.appendLine(
+      `[boot] #1576 activation: ${activationPlan.mode} (server=${isServerMachine} adopted=${adopted} ` +
+      `spawn=${activationPlan.spawnLocalEngine} sweep=${activationPlan.runStraySweep} writeHandshake=${activationPlan.writeHandshake})`,
+    );
+    if (activationPlan.hubDownBanner) {
+      opencodeChannel.appendLine(
+        `[boot] #1576 hub engine unreachable after the poll budget — running a LOCAL engine (fallback). ` +
+        `Reload the window to re-adopt the hub once launchd brings it back.`,
+      );
+      const hubDownItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 49);
+      hubDownItem.text = "$(warning) Amicode: hub down — local engine";
+      hubDownItem.tooltip =
+        "The fleet hub engine is unreachable, so this window is running its own local engine as a fallback (#1576). " +
+        "Reload the window to switch back to the shared hub engine once it returns.";
+      hubDownItem.show();
+      ctx.subscriptions.push(hubDownItem);
+
+      // #1607 Slice 3: live yield-back. While in local-fallback, poll the hub
+      // engine port; when the UNARMED hub returns, yield back WITHOUT a manual
+      // reload. planHubYieldBack decides: a drained fallback switches quiesced
+      // (reload → the deterministic probe rides the hub, tearing down the local
+      // engine as the window restarts); a BUSY fallback gets an actionable prompt
+      // instead — never a silent hot-swap that would drop a live turn (AC3). We
+      // cannot cheaply read the local engine's in-flight/SSE counts from the
+      // extension host, so unknown busy-state is treated as BUSY (→ prompt): the
+      // conservative choice never interrupts a running turn.
+      let yieldBackHandled = false;
+      const readFallbackBusy = (): { inFlightTurns: number; activeEventStreamSubscribers: number } => {
+        // Honest conservative default: assume busy (→ prompt) unless a future
+        // seam supplies drained counts. Never returns drained on a guess.
+        return { inFlightTurns: 1, activeEventStreamSubscribers: 0 };
+      };
+      const doSwitchToHub = () => {
+        hubDownItem.hide();
+        opencodeChannel.appendLine(`[yield-back] #1607 hub returned — switching this window back to the hub engine`);
+        void vscode.commands.executeCommand("workbench.action.reloadWindow");
+      };
+      const yieldBackTimer = setInterval(() => {
+        if (yieldBackHandled) return;
+        void (async () => {
+          const hubProbe = await probeUnarmedHub(hubEnginePort);
+          const busy = readFallbackBusy();
+          const yieldPlan = planHubYieldBack({
+            mode: activationPlan.mode,
+            hubProbe,
+            inFlightTurns: busy.inFlightTurns,
+            activeEventStreamSubscribers: busy.activeEventStreamSubscribers,
+          });
+          if (yieldPlan.action === "stay") return;
+          yieldBackHandled = true;
+          if (yieldPlan.clearHubDownBanner) hubDownItem.hide();
+          if (yieldPlan.action === "switch-quiesced") {
+            doSwitchToHub();
+          } else {
+            // "prompt": an actionable notification; the user picks the moment.
+            const pick = await vscode.window.showInformationMessage(
+              "Amicode: the fleet hub engine is back. Switch this window to the shared hub engine? " +
+                "This reloads the window; finish any in-flight turn first.",
+              "Switch to hub",
+              "Not now",
+            );
+            if (pick === "Switch to hub") {
+              doSwitchToHub();
+            } else {
+              // User deferred — keep watching, re-offer on the next return.
+              yieldBackHandled = false;
+            }
+          }
+        })();
+      }, 15_000);
+      ctx.subscriptions.push({ dispose: () => clearInterval(yieldBackTimer) });
+    }
+
+    // #1592: machine-wide stray-engine sweep. adopt-or-spawn only guards the
+    // configured port; a stale install or a dead workspace can leave an engine
+    // orphaned on ANOTHER port. Reap every `opencode serve` that is neither the
+    // engine we kept nor still serving a live client. keepEnginePid is filled in
+    // once the surviving/spawned engine's PID is known (adopted path: now; cold-
+    // spawn path: after the handshake is written in onReady).
+    // #1576: GATED — a fleet server never sweeps (see activationPlan above). One
+    // guard here covers every call site (the adopt path below and wireReadyState).
+    const runStrayEngineSweep = async (keepPid: number | undefined) => {
+      if (!activationPlan.runStraySweep) {
+        opencodeChannel.appendLine(
+          `[sweep] skipped — ${activationPlan.mode}: a fleet server never reaps engines (the hub owns lifecycle) [#1576]`,
+        );
+        return;
+      }
+      try {
+        const res = await sweepStrayEngines({
+          keepPid,
+          // #1607 Slice 4: HARD hub protection — even though this closure is
+          // already gated (a fleet server never sweeps), pass the hub PID so the
+          // sweep itself will never reap the hub. Defense-in-depth: a future call
+          // site that bypasses the guard still cannot SIGTERM the hub.
+          hubEnginePid: (() => {
+            try {
+              return parseInt(fs.readFileSync(path.join(os.homedir(), ".amico", "amicode", "hub-engine.pid"), "utf8").trim(), 10) || undefined;
+            } catch {
+              return undefined;
+            }
+          })(),
+          listOpencodeEngines,
+          hasLiveClient,
+          killEngine: reclaimEnginePid,
+          log: (l) => opencodeChannel.appendLine(l),
+        });
+        if (res.reaped.length > 0) {
+          opencodeChannel.appendLine(`[sweep] reaped stray engine(s): ${res.reaped.join(", ")}`);
+        }
+        if (res.failed.length > 0) {
+          opencodeChannel.appendLine(`[sweep] could not confirm reap of: ${res.failed.join(", ")}`);
+        }
+      } catch (e) {
+        opencodeChannel.appendLine(`[sweep] stray-engine sweep failed (non-fatal): ${(e as Error).message}`);
+      }
+    };
+    if (adopted) {
+      const hs = readHandshake(handshakePath());
+      void runStrayEngineSweep(hs.status === "ok" ? hs.record.pid : undefined);
     }
 
     // #1147 (ADR 0020): keepalive helper — starts the ping loop for the
@@ -919,10 +1545,23 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           pingServer: pingKeepalive,
           pidAlive: isPidAlive,
           onServerGone: () => {
-            opencodeChannel.appendLine(`[keepalive] server gone — deleting handshake`);
-            deleteHandshake();
+            // #1607 Slice 2: on a fleet server the window must NOT delete the
+            // shared handshake — the hub owns its lifecycle (launchd respawns +
+            // rewrites). Deleting it here strands the next reload (the incident:
+            // hub crashed → this delete fired → window couldn't find the live
+            // hub → fell back to a rival engine). Symmetric to never-write.
+            if (activationPlan.mayDeleteHandshake) {
+              opencodeChannel.appendLine(`[keepalive] server gone — deleting handshake`);
+              deleteHandshake();
+            } else {
+              opencodeChannel.appendLine(
+                `[keepalive] server gone — NOT deleting the shared handshake (${activationPlan.mode}: the hub owns it) [#1607]`,
+              );
+            }
             statusBar?.setServerReady(false);
             opencodeReadyUrl = undefined;
+            // #1598: push engine-off to the app toggle.
+            pushEngineState("off");
           },
           log: (line) => opencodeChannel.appendLine(line),
         },
@@ -964,11 +1603,83 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       [path.resolve(ctx.extensionPath, "opencode-plugin", "amicode_context.ts")],
     );
 
+    // #1181/#1595: the hashes the handshake records — computed once, BEFORE the
+    // adopt/cold-spawn split so both paths can use them (cold-spawn records them;
+    // the adopted path compares them in the stale-engine audit AND passes them to
+    // the seeded manager's afterHealthy for restart-cycle handshakes).
+    const bootBinaryHash = await hashFile(binary).catch(() => "");
+    const bootConfigHash = hashString(configContent);
+
+    // #1576: the handshake-write hook, GATED on the activation plan. On a fleet
+    // server (ride-hub OR local-fallback) writeHandshake is false → undefined
+    // afterHealthy → the window NEVER writes the shared handshake, so the hub's
+    // record stays authoritative and the clobber that mis-pointed reloads is
+    // gone. A standalone machine (own-engine) writes it exactly as before.
+    const handshakeAfterHealthy = activationPlan.writeHandshake
+      ? coldSpawnHandshakeHook({
+          binaryHash: bootBinaryHash,
+          configHash: bootConfigHash,
+          password: serverPassword,
+          log: (l) => opencodeChannel.appendLine(l),
+        })
+      : undefined;
+
+    // #1595: shared ready-wiring — called from BOTH the cold-spawn onReady
+    // handler AND the adopted path's inline boot. The `isFirstReady` flag
+    // gates chat-open so it fires on boot but NOT on restart cycles.
+    let isFirstReady = true;
+    const wireReadyState = (url: URL) => {
+      opencodeReadyUrl = url;
+      statusBar?.setServerReady(true);
+      // #1598: push engine-on to the app toggle on every ready (boot + restart).
+      pushEngineState("on");
+      sseClient?.connect(url);
+      // keepalive
+      const readyPort = parseInt(url.port || "0", 10);
+      if (readyPort > 0) wireKeepalive(readyPort, serverPassword);
+      // stray-engine sweep
+      {
+        const hs = readHandshake(handshakePath());
+        void runStrayEngineSweep(hs.status === "ok" ? hs.record.pid : undefined);
+      }
+      // chat-open — only on first-ready (boot), not restart
+      if (isFirstReady) {
+        isFirstReady = false;
+        if (!isModelConfigured() && vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true)) {
+          void vscode.commands.executeCommand("amicode.onboarding.open");
+          onOnboardingCancelled(() => {
+            ChatPanel.openOrReveal(ctx, frameUrl() ?? url, serverAuthToken(serverPassword), opencodeProject.projectDir);
+          });
+        } else if (vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true)) {
+          if (ChatPanel.consumePendingOnboardingGreeting()) {
+            const onboardPanel = getOnboardingPanel();
+            if (onboardPanel) {
+              releaseOnboardingPanel();
+              const panel = ChatPanel.adopt(onboardPanel, ctx, frameUrl() ?? url, serverAuthToken(serverPassword), opencodeProject.projectDir);
+              panel.postOnboardingGreeting();
+            } else {
+              const panel = ChatPanel.openOrReveal(ctx, frameUrl() ?? url, serverAuthToken(serverPassword), opencodeProject.projectDir);
+              panel.postOnboardingGreeting();
+            }
+          } else {
+            ChatPanel.openOrReveal(ctx, frameUrl() ?? url, serverAuthToken(serverPassword), opencodeProject.projectDir);
+          }
+        }
+      }
+      // LLM-provider signal — fires on every ready (including restart, for diagnostics)
+      void fetchProviderSignal(url.toString(), { headers: serverAuthHeaders }).then((sig) => {
+        opencodeChannel.appendLine(
+          sig.ok
+            ? `[boot] LLM provider: configured (${sig.provider}${sig.source ? ` via ${sig.source}` : ""})`
+            : `[boot] LLM provider: ${sig.reason} → ${sig.fix}`,
+        );
+        if (sig.ok && sig.warning) {
+          opencodeChannel.appendLine(`[boot] LLM provider warning: ${sig.warning}`);
+        }
+      });
+    };
+
     if (!adopted) {
-    // #1181: the hashes the handshake records (computed once, so the hook is sync).
-    // hashFile is best-effort — an unreadable binary yields "" (treated as changed).
-    const coldSpawnBinaryHash = await hashFile(binary).catch(() => "");
-    const coldSpawnConfigHash = hashString(configContent);
     serverManager = new ServerManager({
       binary,
       cwd: opencodeProject.projectDir,
@@ -990,14 +1701,23 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       // #1181 (ADR 0020): write the handshake once the server is healthy — the
       // durable record a later reload adopts (the linchpin the feature was
       // missing). Best-effort; a failed write logs and never blocks boot.
-      afterHealthy: coldSpawnHandshakeHook({
-        binaryHash: coldSpawnBinaryHash,
-        configHash: coldSpawnConfigHash,
-        password: serverPassword,
-        log: (l) => opencodeChannel.appendLine(l),
-      }),
+      // #1576: GATED — undefined on a fleet server (never write the handshake).
+      afterHealthy: handshakeAfterHealthy,
     });
     ctx.subscriptions.push({ dispose: () => serverManager?.detach() });
+
+    // #1410 (ADR 0030 §D3): boot-time attachment pointer recovery. Read the
+    // on-disk attachment pointer and, when valid, spin up the per-attachment
+    // transport so the D3 resolver routes to the attached device after a
+    // window reload. Never throws — all failures degrade to local sessions
+    // with a log line.
+    const bootRecovery = await recoverBootAttachment({
+      bringUpTransport: bringUpSshAttachment,
+      log: opencodeChannel,
+    });
+    if (bootRecovery) {
+      ctx.subscriptions.push({ dispose: () => { void bootRecovery.stop(); } });
+    }
 
     // Amicode service (#451 M1; #822 added the shelf + the engine proxy; #823
     // is the M3 cutover): the extension-host owner of the 31 ported amicode
@@ -1048,11 +1768,40 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       // entitlement-staged gate still decides whether fleet surfaces exist.
       fleetActivation: () =>
         resolveFleetActivation({ config: readFleetActivationConfig(vscode.workspace.getConfiguration("amicode")) }),
+      // #1260: the pluggable transport provider selector (default ssh).
+      fleetTransport: readFleetTransportOption(vscode.workspace.getConfiguration("amicode")),
       // Derive a fixed service port from the engine port so the iframe origin
       // stays stable across window reloads — preserving localStorage (settings,
       // titlebar positions, developer tool paths). Falls back to ephemeral if
       // the derived port is busy.
       port: configuredPort > 0 ? configuredPort + 1 : undefined,
+      // #1410 (ADR 0030 §D3): boot-time attachment recovery. When a prior
+      // attachment pointer was found on disk, pass the recovered transport's
+      // getUrl so the fleet plane's D3 resolver routes to the attached device.
+      ...(bootRecovery ? { bootAttached: { getUrl: bootRecovery.getUrl } } : {}),
+      // #1447 (W2): this machine's stable id — flips the fleet-sessions route
+      // to the machine-keyed N-peer projection (undefined → legacy 2-source).
+      localMachineId: resolveLocalMachineId(),
+      // #1522 (ADR 0033 decision A): the real focus snapshot provider for the
+      // SSE fan-in connect frame. Adapts the fleet_focus.ts UI-level store into
+      // the structural getFocus interface the wiring needs. The UI store has
+      // `focused`/`isHome`/`scopedMachineId` — this closure computes `absent`
+      // from `availablePeers` at call time (LATE, per connect).
+      focusStore: {
+        getFocus(availablePeers?: ReadonlySet<string>) {
+          const mid = fleetFocusStore.scopedMachineId;
+          if (mid === undefined) {
+            return { machineId: undefined, isHome: true, absent: false };
+          }
+          const absent = availablePeers !== undefined && !availablePeers.has(mid);
+          return {
+            machineId: mid,
+            isHome: false,
+            absent,
+            ...(absent ? { reason: "peer-unavailable" } : {}),
+          };
+        },
+      },
     });
     amicodeService = serviceBoot ?? undefined;
     ctx.subscriptions.push(amicodeServiceDisposal(serviceBoot));
@@ -1242,57 +1991,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     ctx.subscriptions.push(sseClient);
 
     serverManager.onReady((url) => {
-      opencodeReadyUrl = url;
-      statusBar?.setServerReady(true);
-      sseClient?.connect(url);
-      // #1147: start keepalive after cold-spawn health passes
-      const readyPort = parseInt(url.port || "0", 10);
-      if (readyPort > 0) wireKeepalive(readyPort, serverPassword);
-      // Onboarding gate: if no model is configured, open the Stage 0 webview
-      // instead of chat. The webview will fire onOnboardingComplete when done,
-      // which then opens chat.
-      if (!isModelConfigured() && vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true)) {
-        void vscode.commands.executeCommand("amicode.onboarding.open");
-        // Wire: when onboarding completes, the server restarts and the
-        // onReady handler (else-if branch below) opens the chat panel.
-        // We do NOT open chat here — that would race the server restart
-        // and show behind the transition splash.
-        // Wire: when onboarding is cancelled (X), open chat normally
-        onOnboardingCancelled(() => {
-          ChatPanel.openOrReveal(ctx, frameUrl() ?? url, serverAuthToken(serverPassword), opencodeProject.projectDir);
-        });
-      } else if (vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true)) {
-        // Normal path: model configured → open chat directly
-        // Post-onboarding: adopt the onboarding panel as the chat panel (zero
-        // tab switching — the splash overlay fades out revealing the chat).
-        if (ChatPanel.consumePendingOnboardingGreeting()) {
-          const onboardPanel = getOnboardingPanel();
-          if (onboardPanel) {
-            releaseOnboardingPanel(); // detach from onboarding lifecycle
-            const panel = ChatPanel.adopt(onboardPanel, ctx, frameUrl() ?? url, serverAuthToken(serverPassword), opencodeProject.projectDir);
-            panel.postOnboardingGreeting();
-          } else {
-            // Fallback: no onboarding panel alive (user closed it manually)
-            const panel = ChatPanel.openOrReveal(ctx, frameUrl() ?? url, serverAuthToken(serverPassword), opencodeProject.projectDir);
-            panel.postOnboardingGreeting();
-          }
-        } else {
-          ChatPanel.openOrReveal(ctx, frameUrl() ?? url, serverAuthToken(serverPassword), opencodeProject.projectDir);
-        }
-      }
-      // Surface ONE explicit LLM-provider signal at boot, read from opencode's
-      // OWN resolution (its live /config/providers) — not a silent hang at the
-      // chat box (Q129). Key-free; never logs a credential.
-      void fetchProviderSignal(url.toString(), { headers: serverAuthHeaders }).then((sig) => {
-        opencodeChannel.appendLine(
-          sig.ok
-            ? `[boot] LLM provider: configured (${sig.provider}${sig.source ? ` via ${sig.source}` : ""})`
-            : `[boot] LLM provider: ${sig.reason} → ${sig.fix}`,
-        );
-        if (sig.ok && sig.warning) {
-          opencodeChannel.appendLine(`[boot] LLM provider warning: ${sig.warning}`);
-        }
-      });
+      wireReadyState(url);
     });
 
     serverManager.start().catch((err) => {
@@ -1301,20 +2000,41 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     });
     } // end if (!adopted)
 
-    // #1145: adopted path — the server is already running, wire the event
-    // stream + chat to the adopted server's URL with the recorded password.
+    // #1145/#1595: adopted path — the server is already running. Seed a
+    // ServerManager so stop()/start() work (Restart kills the adopted engine
+    // by PID, then cold-spawns fresh with a valid handshake).
     if (adopted && opencodeReadyUrl) {
+      // #1595: seed the manager with the SAME options a cold-spawn would use —
+      // so start() after stop() produces an identical fresh engine.
+      serverManager = ServerManager.seed({
+        binary,
+        cwd: opencodeProject.projectDir,
+        port: configuredPort > 0 ? configuredPort : undefined,
+        env: spawnEnv({
+          amicoRunBinDir,
+          serverPassword,
+          configContent,
+        }),
+        channel: opencodeChannel,
+        logFile: serverLogPath(),
+        // #1576: GATED — undefined on a fleet server (never write the handshake).
+        afterHealthy: handshakeAfterHealthy,
+      }, { port: adoptedPort, pid: adoptedPid });
+      ctx.subscriptions.push({ dispose: () => serverManager?.detach() });
+
       sseClient = new OpencodeEventClient({
         channel: opencodeChannel,
         statusBar,
         authorization: serverAuthHeaders.Authorization,
       });
       ctx.subscriptions.push(sseClient);
-      statusBar?.setServerReady(true);
-      sseClient.connect(opencodeReadyUrl);
-      // #1147: start keepalive after adoption
-      const adoptedPort = parseInt(opencodeReadyUrl.port || "0", 10);
-      if (adoptedPort > 0) wireKeepalive(adoptedPort, serverPassword);
+
+      // Register onReady for restart cycles — wireReadyState handles
+      // SSE reconnect, keepalive, sweep, and provider signal.
+      serverManager.onReady((url) => {
+        wireReadyState(url);
+      });
+
       // #1190 (ADR 0020): the gate matched only protocolVersion, so the adopted
       // survivor may be running a DIFFERENT build than what is now on disk.
       // Compare hashes and, if they diverge, surface a non-blocking notice that
@@ -1338,6 +2058,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
               }),
             },
           },
+          adoptedUnarmed,
         );
       }
       // #1192: the amicode service (the branded app shelf on configuredPort+1)
@@ -1364,7 +2085,29 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         ),
         fleetActivation: () =>
           resolveFleetActivation({ config: readFleetActivationConfig(vscode.workspace.getConfiguration("amicode")) }),
+        // #1260: the pluggable transport provider selector (default ssh).
+        fleetTransport: readFleetTransportOption(vscode.workspace.getConfiguration("amicode")),
         port: configuredPort > 0 ? configuredPort + 1 : undefined,
+        // #1447 (W2): this machine's stable id — flips the fleet-sessions route
+        // to the machine-keyed N-peer projection (undefined → legacy 2-source).
+        localMachineId: resolveLocalMachineId(),
+        // #1522 (ADR 0033 decision A): the real focus snapshot provider (same
+        // adapter as the primary boot path above).
+        focusStore: {
+          getFocus(availablePeers?: ReadonlySet<string>) {
+            const mid = fleetFocusStore.scopedMachineId;
+            if (mid === undefined) {
+              return { machineId: undefined, isHome: true, absent: false };
+            }
+            const absent = availablePeers !== undefined && !availablePeers.has(mid);
+            return {
+              machineId: mid,
+              isHome: false,
+              absent,
+              ...(absent ? { reason: "peer-unavailable" } : {}),
+            };
+          },
+        },
       });
       amicodeService = adoptedServiceBoot ?? undefined;
       ctx.subscriptions.push(amicodeServiceDisposal(adoptedServiceBoot));
@@ -1375,16 +2118,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       opencodeChannel.appendLine(
         `[boot] amicode service started on adopted path${amicodeService?.url ? ` (${amicodeService.url})` : ""}`,
       );
-      if (vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true)) {
-        ChatPanel.openOrReveal(ctx, frameUrl() ?? opencodeReadyUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
-      }
-      void fetchProviderSignal(opencodeReadyUrl.toString(), { headers: serverAuthHeaders }).then((sig) => {
-        opencodeChannel.appendLine(
-          sig.ok
-            ? `[boot] LLM provider: configured (${sig.provider}${sig.source ? ` via ${sig.source}` : ""})`
-            : `[boot] LLM provider: ${sig.reason} → ${sig.fix}`,
-        );
-      });
+      // #1595: wire readiness — SSE connect, keepalive, sweep, chat-open,
+      // provider signal. The same function handles restart cycles via onReady.
+      wireReadyState(opencodeReadyUrl);
     }
   }
 
@@ -1420,6 +2156,14 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // On app-ready: push the initial project list. Persistent (#870) — fires
   // on EVERY app-ready (new panels, re-activations), not just the first.
   ChatPanel.onAppReadyPersistent(pushWorkspaceProjects);
+
+  // #1598: push engine state + fleet role to every new/re-activated app panel.
+  // Persistent so newly opened panels get the current state immediately.
+  ChatPanel.onAppReadyPersistent(() => {
+    // Engine state: on if we have a ready URL, off otherwise.
+    pushEngineState(opencodeReadyUrl ? "on" : "off");
+    pushFleetRole();
+  });
 
   // On workspace folder change: push the updated list.
   ctx.subscriptions.push(
@@ -1847,6 +2591,23 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     const prevBinary = cfg.get<string>("opencodeBinary", "");
     const prevPort = cfg.get<number>("opencodePort", 0);
     goStandalone({ previousBinary: prevBinary, previousPort: prevPort });
+    // #1265 (Slice 5): the manual fallback is an attach-state TRANSITION too —
+    // persist the standalone posture through #780's single writer class so the
+    // context render stops claiming "attached" the instant the user chooses
+    // standalone (AC1: never a stale "attached" claim). Same writer discipline
+    // as the checkFleet loop (transition-only, atomic, never throws) — NOT a
+    // second write mechanism. The hub identity is the projection's canonical.
+    try {
+      const canonical = topology.kind === "ok" ? topology.canonical : undefined;
+      const host = canonical?.host;
+      recordPostureState(
+        "standalone",
+        { hostname: os.hostname(), hub: { name: host ?? null, base_url: host ? `http://${host}:${canonical?.port ?? 4096}` : null } },
+        new FleetPostureStateWriter({ log: (m) => opencodeChannel.appendLine(m) }),
+      );
+    } catch (e) {
+      opencodeChannel.appendLine(`[fleet] go standalone: posture-state write skipped — ${(e as Error).message}`);
+    }
     // #1106: the write changed the file amicissimo's ONE parser reads — refresh
     // the projection cache through the verb NOW so the guard + status bar + health
     // checks see role=standalone immediately (the coherence rule: every fleet.json
@@ -1949,6 +2710,42 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
 
   ctx.subscriptions.push(vscode.commands.registerCommand("amicode.fleet.goStandalone", () => void runFleetGoStandalone()));
 
+  // amicode#1319: "Amicode: Fleet — Enroll" — join THIS machine to a fleet by
+  // redeeming a join token from the server (`amico fleet enroll --as-server`).
+  // The handler delegates the whole flow to the enroll VERB (which writes
+  // fleet.json + the roster row, sets the transport, runs the installer that
+  // installs the never-fork guard, and verify-attaches) — it NEVER cold-spawns
+  // a local engine (ADR 0005 never-fork). The join token is a SECRET: collected
+  // masked, written to a 0600 temp file (never on the shell argv/history), and
+  // never logged. The visible terminal is the transparency surface, exactly like
+  // Fleet — Repair.
+  const runFleetEnroll = async (): Promise<void> => {
+    const token = await vscode.window.showInputBox({
+      title: "Amicode: Fleet — Enroll",
+      prompt:
+        "Paste the join token from the server (run `amico fleet enroll --as-server` there). It is a secret — handled at 0600, never logged.",
+      password: true,
+      ignoreFocusOut: true,
+    });
+    if (!token || token.trim() === "") return; // cancelled / empty
+    if (amicoRunBinDir === undefined) {
+      void vscode.window.showErrorMessage("Amicode: cannot enroll — the amico launcher is unavailable on this install.");
+      return;
+    }
+    const amico = path.join(amicoRunBinDir, "amico");
+    // The token is a secret: land it in a 0600 temp file so it never rides the
+    // shell argv/history; the terminal command removes it after enroll runs.
+    const tokenFile = path.join(os.tmpdir(), `amico-join-${process.pid}-${Date.now()}.json`);
+    fs.writeFileSync(tokenFile, token, { mode: 0o600 });
+    try { fs.chmodSync(tokenFile, 0o600); } catch { /* best-effort tighten */ }
+    const term = vscode.window.createTerminal({ name: "Amicode: Fleet enroll" });
+    term.show();
+    term.sendText(`"${amico}" fleet enroll --join-token "${tokenFile}"; rm -f "${tokenFile}"`);
+    // The token value is redacted from the log — only the flow is recorded.
+    opencodeChannel.appendLine("[fleet] enroll started (join token redacted) — watch the terminal; the projection refreshes on the next status tick");
+  };
+  ctx.subscriptions.push(vscode.commands.registerCommand("amicode.fleet.enroll", () => void runFleetEnroll()));
+
   // amicode#649: "Amicode: Restart Hub Server" — fleet clients restart the
   // canonical hub over SSH by driving ops/hub-restart.sh (the one restart-safe
   // path: atomic rename swap, single-verb restart, trap-verified). Initiated
@@ -2016,19 +2813,41 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   };
   ctx.subscriptions.push(vscode.commands.registerCommand("amicode.restartHub", () => void runRestartHub()));
 
-  // Activation-time fleet drift warning (darwin only). If this machine is a fleet
-  // client but the guard is missing/stale or the tunnel is mis-tuned, surface
-  // ONE warning with a Fix action — don't silently fork.
+  // #1271 (ADR 0025): "Amicode: Connect to Hub over Remote-SSH" — the opt-in
+  // ENTRY into the Remote-SSH posture. The hub coordinates come from the
+  // projection (the ONE topology reader, ADR 0023 — never a hand-built host
+  // string); a missing/broken/alias-less projection renders an honest,
+  // actionable message and opens NO window (AC2). The attach/adoption mechanics
+  // run host-side on activation (#1270) — this command is only the entry.
+  const runConnectRemoteSsh = async (): Promise<void> => {
+    const workspacePath = vscode.workspace.getConfiguration("amicode").get<string>("fleet.hubWorkspacePath", "");
+    const resolution = await connectToHubOverRemoteSsh({ workspacePath });
+    if (resolution.ok) {
+      opencodeChannel.appendLine(`[fleet] connect-remote-ssh → opening ${resolution.uri}`);
+    } else {
+      opencodeChannel.appendLine(`[fleet] connect-remote-ssh not resolved (${resolution.reason}): ${resolution.detail}`);
+    }
+  };
+  ctx.subscriptions.push(vscode.commands.registerCommand("amicode.fleet.connectRemoteSsh", () => void runConnectRemoteSsh()));
+
+  // Activation-time fleet health warning. If the health report surfaces a
+  // failure (e.g. a client missing the guard or tunnel), show ONE warning with
+  // a Troubleshoot action that opens a new chat session invoking the
+  // troubleshoot-fleet skill — the same path the sidebar's Troubleshoot button
+  // takes. The detail is always logged to the output channel.
   void (() => {
-    if (process.platform !== "darwin") return;
     try {
       const repoGuardPath = path.resolve(ctx.extensionPath, FLEET_GUARD_REL);
-      const plistPath = path.join(os.homedir(), "Library", "LaunchAgents", "co.harmoniqs.amico-tunnel.plist");
+      // The launchd tunnel plist is darwin-only; on linux/WSL this stays null
+      // and checkFleetTunnel self-skips (deferring the linux tunnel to #1260).
       let plistContent: string | null = null;
-      try {
-        plistContent = fs.readFileSync(plistPath, "utf8");
-      } catch {
-        plistContent = null;
+      if (process.platform === "darwin") {
+        const plistPath = path.join(os.homedir(), "Library", "LaunchAgents", "co.harmoniqs.amico-tunnel.plist");
+        try {
+          plistContent = fs.readFileSync(plistPath, "utf8");
+        } catch {
+          plistContent = null;
+        }
       }
       const checks = fleetHealthReport({
         repoGuardPath,
@@ -2041,10 +2860,18 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       const detail = failed.map((c) => `${c.name}: ${c.detail}`).join("; ");
       opencodeChannel.appendLine(`[fleet] drift detected: ${detail}`);
       void vscode.window
-        .showWarningMessage(`Amicode fleet drift — ${failed.map((c) => c.name).join(", ")}: ${failed[0].detail}`, "Fix fleet", "Show details")
+        .showWarningMessage(
+          `Amicode fleet issue — ${failed.map((c) => c.name).join(", ")}: ${failed[0].detail}`,
+          "Troubleshoot",
+        )
         .then((pick) => {
-          if (pick === "Fix fleet") void runFleetRepair();
-          else if (pick === "Show details") opencodeChannel.show();
+          if (pick === "Troubleshoot") {
+            const panel = ChatPanel.peek();
+            if (panel) {
+              const navPath = `/new-session?prompt=${encodeURIComponent("/troubleshoot-fleet")}&autoSend=1`;
+              void panel.postMessage({ source: "amicode", kind: "navigate", path: navPath });
+            }
+          }
         });
     } catch (e) {
       opencodeChannel.appendLine(`[fleet] drift check failed: ${(e as Error).message}`);
@@ -2430,8 +3257,24 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       // the bridge allowlist already permits it, so the server restart here
       // clears the "Something went wrong" state instead of being a no-op.
       opencodeChannel.appendLine(`[boot] restart requested`);
-      // Fleet client: no local server to restart — just re-probe the tunnel
-      if (binary !== undefined && isFleetClientGuard(binary, (line) => opencodeChannel.appendLine(line))) {
+
+      // #1598/#1354: the restart must be FLEET-AWARE, or "toggle on" re-creates
+      // the two-engine split. Decide the path from this window's role:
+      //   - fleet client      → re-probe the tunnel (no local engine to restart)
+      //   - riding unarmed hub → reclaim + re-adopt (kill the shared hub engine;
+      //                          launchd respawns it; re-adopt — NEVER cold-spawn
+      //                          a rival on the editor port)
+      //   - window owns engine → stop() then start() a fresh one
+      const isFleetClient =
+        binary !== undefined && isFleetClientGuard(binary, (line) => opencodeChannel.appendLine(line));
+      const hubRecord = (() => {
+        const hs = readHandshake(handshakePath());
+        return hs.status === "ok" && isUnarmedHandshake(hs.record) ? hs.record : undefined;
+      })();
+      const plan = planEngineRestart({ isFleetClient, ridingUnarmedHub: hubRecord !== undefined });
+      opencodeChannel.appendLine(`[boot] restart plan: ${plan}`);
+
+      if (plan === "reprobe-tunnel") {
         const topologyRestart = readFleetTopology();
         const restartPort = topologyRestart.kind === "ok" ? (topologyRestart.canonical?.port ?? 4096) : 4096;
         opencodeChannel.appendLine(`[fleet] client restart — re-probing tunnel 127.0.0.1:${restartPort}`);
@@ -2453,6 +3296,49 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         }
         return;
       }
+
+      if (plan === "reclaim-and-readopt") {
+        // Riding the launchd hub's shared engine: killing it via serverManager and
+        // cold-spawning would murder the hub AND spawn a rival on the editor port
+        // (the exact split the owner-guard fixes). Instead reclaim the hub engine's
+        // port (launchd KeepAlive respawns a fresh hub), then re-adopt it.
+        // #1615: re-adopt IN PLACE (poll the respawned hub → reattach SSE → push
+        // `on`, no reload) for a seamless toggle-on; fall back to the reload path
+        // only if the respawned hub does not answer within the poll budget.
+        opencodeChannel.appendLine(`[boot] restart: reclaiming hub engine on port ${hubRecord!.port} — launchd will respawn; re-adopting in place`);
+        pushEngineState("booting");
+        statusBar?.setServerReady(false);
+        opencodeReadyUrl = undefined;
+        await readoptHubInPlace({
+          port: hubRecord!.port,
+          reclaimPort: reclaimOrphanPort,
+          // Poll the respawned hub with a bounded budget; resolve to the ready
+          // URL once it answers, else undefined on timeout (→ reload fallback).
+          pollHub: async (port) => {
+            const deadline = Date.now() + 30_000;
+            while (Date.now() < deadline) {
+              const probe = await probeUnarmedHub(port);
+              if (probe === "unarmed") return `http://127.0.0.1:${port}`;
+              await new Promise((r) => setTimeout(r, 500));
+            }
+            return undefined;
+          },
+          reattachSse: (url) => {
+            opencodeReadyUrl = new URL(url);
+            statusBar?.setServerReady(true);
+            sseClient?.connect(opencodeReadyUrl);
+            opencodeChannel.appendLine(`[boot] hub re-adopted in place at ${opencodeReadyUrl}`);
+          },
+          pushEngineState: (state) => pushEngineState(state),
+          deleteHandshake: () => deleteHandshake(),
+          reloadWindow: () => void vscode.commands.executeCommand("workbench.action.reloadWindow"),
+          log: (line) => opencodeChannel.appendLine(line),
+        });
+        return;
+      }
+
+      // plan === "stop-and-respawn": the window owns its engine — the simple kill
+      // and fresh spawn.
       await serverManager?.stop();
       // #1146 (ADR 0020): Restart is the deliberate kill — delete the
       // handshake so the next activation cold-spawns instead of adopting
@@ -2460,23 +3346,22 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       deleteHandshake();
       statusBar?.setServerReady(false);
       opencodeReadyUrl = undefined;
+      // #1598: push booting before start (wireReadyState pushes "on" on ready).
+      pushEngineState("booting");
       try {
         await serverManager?.start();
       } catch (err) {
+        // #1598: start failed — push off so the toggle reflects the real state.
+        pushEngineState("off");
         vscode.window.showErrorMessage(`Amicode: restart failed — ${(err as Error).message}`);
       }
     }),
     // #1149 (ADR 0020): Stop server — the deliberate kill alongside Restart.
-    // Gated on in-flight turns (warns first). Always clears the handshake
-    // (#1144's primitive) so no stale record survives the kill.
+    // #1598: the deliberate kill — no confirmation (a toggle IS the intent).
+    // Always clears the handshake (#1144's primitive) so no stale record
+    // survives the kill.
     vscode.commands.registerCommand("amicode.stopServer", () =>
       void stopServer({
-        // In-flight turn detection: wired to the SSE event stream's liveness
-        // state. A "live" stream means the server is actively communicating;
-        // more granular per-session turn tracking is a future refinement.
-        hasInFlightTurns: () => sseClient?.sseState === "live",
-        showWarning: (msg, ...items) =>
-          vscode.window.showWarningMessage(msg, ...items) as Promise<string | undefined>,
         stop: async () => {
           await serverManager?.stop();
           statusBar?.setServerReady(false);
@@ -2484,8 +3369,26 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           opencodeChannel.appendLine("[server] stopped by user (amicode.stopServer)");
         },
         deleteHandshake: () => deleteHandshake(),
+        // #1608 AC7: narrate the deliberate off — `stopping` before the kill,
+        // `off` in a finally so a throwing stop never strands the toggle.
+        pushState: (state) => pushEngineState(state),
       }),
     ),
+    // #1597: Quit — stop engine + close window in one action.
+    // CRITICAL: stop() runs BEFORE closeWindow(). Closing first triggers
+    // deactivate's detach() (not kill) — the engine would survive until
+    // the idle timer fires.
+    vscode.commands.registerCommand("amicode.quit", async () => {
+      await quitAmicode({
+        stop: async () => {
+          await serverManager?.stop();
+          statusBar?.setServerReady(false);
+          opencodeReadyUrl = undefined;
+        },
+        deleteHandshake: () => deleteHandshake(),
+        closeWindow: () => vscode.commands.executeCommand("workbench.action.closeWindow"),
+      });
+    }),
     // Issue #573: skill provider changes take effect on next session start.
     // Live hot-reload (rewriting AGENTS.md while the server reads it) was
     // causing crashes — deferred until the engine supports atomic reload.
@@ -2568,6 +3471,8 @@ export function deactivate(): void {
     clearInterval(fleetClientPoll);
     fleetClientPoll = undefined;
   }
+  fleetHeartbeat?.dispose();
+  fleetHeartbeat = undefined;
   if (devicePollTimer) {
     clearInterval(devicePollTimer);
     devicePollTimer = undefined;

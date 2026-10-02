@@ -301,6 +301,20 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
   let bootedAt = 0
   let bootingRoot = false
   let eventFrame: number | undefined
+  // #1637 — reconcile session_status from /session/status (the FULL tri-state
+  // map — NOT /session/active, which is running-only and cannot carry the idle
+  // needed to downgrade a stale busy) on every reconnect edge / gap frame. The
+  // fetch is timestamped BEFORE the request so the store's recency guard can
+  // refuse a downgrade of a busy that was mutated locally after the snapshot.
+  const reconcileFromStatus = async () => {
+    const fetchedAt = Date.now()
+    try {
+      const statuses = (await serverSDK.client.session.status()).data ?? {}
+      session.reconcileStatuses(statuses, { fetchedAt })
+    } catch {
+      // A failed reconcile is non-fatal — the next edge retries.
+    }
+  }
   // #1264/#1289 (reconnect-storm debounce): the SSE preamble replays
   // `server.connected` to EVERY reconnecting member — over a flaky link a
   // reconnect flurry would re-bootstrap all active directories once per
@@ -548,11 +562,17 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
     const event = e.details
     const eventType: string = event.type
     const recent = bootingRoot || Date.now() - bootedAt < 1500
+    // #1539: remote-origin events must NOT mutate the local directory store.
+    // The origin field is set by the SSE loop when the event came from a remote
+    // peer's namespace in the fan-in composite cursor. `undefined` = local.
+    const isRemote = typeof event.origin === "string"
 
     if (event.current) session.applyV2(event.current)
     session.apply(event)
     if (event.type === "session.created" || event.type === "session.updated" || event.type === "session.deleted") {
-      homeSessions.apply(event)
+      // #1539: homeSessions feeds into the session list that mergePeerSessions
+      // deduplicates against; remote events contaminate it the same way.
+      if (!isRemote) homeSessions.apply(event)
     }
     homeSessions.refresh(event.type)
     if (eventType === "integration.connection.updated") void refreshProviders()
@@ -560,6 +580,10 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
     if (directory === "global") {
       if (eventType === "server.connected" && activeSessionsQuery.data === undefined && !activeSessionsQuery.isFetching)
         void activeSessionsQuery.refetch()
+      // #1637 — reconcile the tri-state status on every reconnect edge / gap
+      // frame so a status left stale during an outage self-corrects without a
+      // reload (a stale busy AND a stale idle), recency-guarded in the store.
+      if (eventType === "server.connected" || eventType === "amicode.sync.gap") void reconcileFromStatus()
       applyGlobalEvent({
         event,
         project: globalStore.project,
@@ -573,7 +597,14 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
         eventType === "config.updated" ||
         eventType === "catalog.updated" ||
         eventType === "agent.updated" ||
-        eventType === "project.directories.updated"
+        eventType === "project.directories.updated" ||
+        // #1617 (ADR 0033 Amendment 1): the fan-in aggregator dropped frames on
+        // buffer overflow while the downstream was backpressured and emitted a
+        // gap signal; the SDK loop re-emitted it as this synthetic global event.
+        // A gap is a real loss, so force a bootstrap refetch UNCONDITIONALLY —
+        // this branch runs before the #1289 `server.connected` debounce below and
+        // keys on a distinct type, so the forced refetch bypasses that debounce.
+        eventType === "amicode.sync.gap"
       )
         bootstrap.refetch()
       if (eventType === "server.connected" || eventType === "global.disposed") {
@@ -584,21 +615,27 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
         lastConnectedQueueAt = Date.now()
         for (const directory of Object.keys(children.children)) {
           if (!children.active(directory)) continue
-          queue.push(directory)
+          // #1539: a remote server.connected/global.disposed must not trigger
+          // local directory re-bootstraps.
+          if (!isRemote) queue.push(directory)
         }
       }
       return
     }
 
-    if (event.current?.type === "session.moved") {
-      const info = session.get(event.current.data.sessionID)
-      if (info) indexSession(info)
+    // #1539: indexSession inserts synthetic session.created events into the
+    // directory store — skip for remote events.
+    if (!isRemote) {
+      if (event.current?.type === "session.moved") {
+        const info = session.get(event.current.data.sessionID)
+        if (info) indexSession(info)
+      }
+      if (event.current?.type === "session.forked")
+        void session
+          .resolve(event.current.data.sessionID, { force: true })
+          .then(indexSession)
+          .catch(() => {})
     }
-    if (event.current?.type === "session.forked")
-      void session
-        .resolve(event.current.data.sessionID, { force: true })
-        .then(indexSession)
-        .catch(() => {})
 
     const existing = children.children[key]
     if (!existing) return
@@ -610,10 +647,16 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
       eventType === "command.updated" ||
       eventType === "config.updated" ||
       eventType === "agent.updated"
-    )
-      queue.push(key)
+    ) {
+      // #1539: queue.push triggers directory re-fetches that would pull remote
+      // sessions into the local store.
+      if (!isRemote) queue.push(key)
+    }
     if (eventType === "mcp.status.changed") void queryClient.invalidateQueries(queryOptionsApi.mcp(key))
     if (eventType === "mcp.resources.changed") void queryClient.invalidateQueries(queryOptionsApi.mcpResources(key))
+    // #1539: applyDirectoryEvent is the primary contamination point — remote
+    // events must not insert into or update the directory-scoped store.session.
+    if (isRemote) return
     const [store, setStore] = existing
     applyDirectoryEvent({
       event,

@@ -284,7 +284,13 @@ export function SessionContextTab() {
     return map.get(mount) === false
   }
 
-  const busy = createMemo(() => (sync().data.session_status[params.id ?? ""]?.type ?? "idle") !== "idle")
+  // #1637: the context-tab busy memo reflects session_working (the turn-active
+  // floor), NOT raw status type, so a stray idle during a live turn cannot flip
+  // a turn to done in the context tree.
+  const busy = createMemo(() => {
+    const id = params.id
+    return !!id && sync().data.session_working(id)
+  })
 
   const turns = createMemo<ContextTurn[]>(() => {
     const byPrompt = new Map<string, ContextTurn>()

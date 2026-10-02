@@ -20,6 +20,8 @@ import { showToast } from "@/utils/toast"
 import { canStartTabDrag, isTabCloseTarget } from "./titlebar-tab-gesture"
 import { adjacentTabKey, mergeVisibleTabOrder } from "./titlebar-tab-order"
 import type { Session } from "@opencode-ai/sdk/v2"
+import { useControlProjectionForConnection } from "@/components/session/session-fleet-control-projection"
+import { drivingBannerFromProjection, drivenByBannerFromProjection } from "@/components/session/session-fleet-peers"
 
 function SessionTabSlot(props: {
   tab: SessionTab
@@ -29,6 +31,8 @@ function SessionTabSlot(props: {
   forceTruncate: boolean
   session: () => Session | undefined
   fallbackTitle?: string
+  drivingMachineId?: () => string | undefined
+  drivenByMachine?: () => { machineId: string; machineName: string } | undefined
   onRename: (title: string) => Promise<void>
   onNavigate: (element: HTMLDivElement) => void
   onClose: () => void
@@ -59,6 +63,8 @@ function SessionTabSlot(props: {
         server={props.tab.server}
         session={props.session}
         fallbackTitle={props.fallbackTitle}
+        drivingMachineId={props.drivingMachineId}
+        drivenByMachine={props.drivenByMachine}
         onRename={props.onRename}
         onNavigate={() => props.onNavigate(ref)}
         onClose={props.onClose}
@@ -77,6 +83,8 @@ function SessionTabEntry(props: {
   active: () => boolean
   forceTruncate: boolean
   serverCtx: () => ServerCtx | undefined
+  drivingMachineId?: () => string | undefined
+  drivenByMachine?: () => { machineId: string; machineName: string } | undefined
   onVisibleChange: (visible: boolean) => void
   onNavigate: (element: HTMLDivElement) => void
   onClose: () => void
@@ -158,6 +166,8 @@ function SessionTabEntry(props: {
         active={props.active}
         forceTruncate={props.forceTruncate}
         session={session}
+        drivingMachineId={props.drivingMachineId}
+        drivenByMachine={props.drivenByMachine}
         fallbackTitle={persisted()?.title ?? (missingSession() ? language.t("session.tab.unknown") : loadedSession.loading ? "\u2026" : undefined)}
         onRename={rename}
         onNavigate={props.onNavigate}
@@ -221,6 +231,14 @@ export function TitlebarTabStrip(props: {
   const global = useGlobal()
   const language = useLanguage()
   const command = useCommand()
+
+  // Fleet driving indicator: acquire the shared control projection (same
+  // ref-counted singleton the session header's composer scrim consumes — no
+  // duplicate polling). For each session tab we derive a drivingMachineId;
+  // the tab renders a monitor icon when non-null.
+  const primaryConn = createMemo(() => global.servers.list()[0])
+  const controlProjection = useControlProjectionForConnection(primaryConn)
+
   let scrollRef!: HTMLDivElement
   let listRef!: HTMLDivElement
   let resizeFrame: number | undefined
@@ -346,6 +364,14 @@ export function TitlebarTabStrip(props: {
                 })
 
                 if (tab.type === "session") {
+                  const drivingMachineId = createMemo(() => {
+                    const driving = drivingBannerFromProjection(controlProjection(), tab.sessionId)
+                    return driving?.machineId
+                  })
+                  const drivenByMachine = createMemo(() => {
+                    const driven = drivenByBannerFromProjection(controlProjection(), tab.sessionId)
+                    return driven ?? undefined
+                  })
                   return (
                     <SessionTabEntry
                       tab={tab}
@@ -354,6 +380,8 @@ export function TitlebarTabStrip(props: {
                       active={() => props.currentTab() === tab}
                       forceTruncate={props.forceTruncate}
                       serverCtx={serverCtx}
+                      drivingMachineId={drivingMachineId}
+                      drivenByMachine={drivenByMachine}
                       onVisibleChange={(visible) => setVisibility(id, visible)}
                       onNavigate={(element) => {
                         ref = element

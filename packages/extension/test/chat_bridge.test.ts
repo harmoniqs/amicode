@@ -339,6 +339,21 @@ describe("chat panel relay — preview-file in iframe allowlist (#934)", () => {
   });
 });
 
+describe("chat panel relay — fleet-enable-control in the app→extension allowlist (#1551)", () => {
+  it("both outer-relay instances forward the enable envelope up to the extension host", () => {
+    const src = fs.readFileSync(
+      path.resolve(__dirname, "..", "src", "chat_panel.ts"),
+      "utf8",
+    );
+    // The inbound (app→extension) relay allowlist must carry fleet-enable-control
+    // in BOTH relay instances (renderHtml + renderTransitionHtml), else the
+    // envelope is dropped before handleAmicodeBridgeMessage sees it.
+    const matches = src.match(/d\.kind === "fleet-enable-control"/g);
+    expect(matches).not.toBeNull();
+    expect(matches!.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
 describe("amicode bridge — clipboard", () => {
   it("clipboard-request answers with the OS clipboard text and echoes the pane tab", async () => {
     const host = io();
@@ -467,6 +482,18 @@ describe("amicode bridge — commands & settings", () => {
     await flush();
     const ran = (vscode.commands as unknown as { executed: string[] }).executed ?? [];
     expect(ran).toContain("amicode.reportBug");
+  });
+
+  it("allowlists the Fleet Manager tab's This-machine/Hub commands (#1322 — invoke, not reimplement)", async () => {
+    const host = io();
+    // The Fleet Manager tab's This-machine (Repair / Go Standalone) buttons post
+    // these EXISTING commands over the bridge; the tab never reimplements them.
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "command", command: "amicode.fleet.repair" }, host)).toBe(true);
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "command", command: "amicode.fleet.goStandalone" }, host)).toBe(true);
+    await flush();
+    const ran = (vscode.commands as unknown as { executed: string[] }).executed ?? [];
+    expect(ran).toContain("amicode.fleet.repair");
+    expect(ran).toContain("amicode.fleet.goStandalone");
   });
 
   it("set-default-model accepts provider/model-id shapes and mirrors them to config", () => {
@@ -638,9 +665,15 @@ describe("amicode bridge — reportBug model handoff (amicode#277)", () => {
   it("no additional command gains a payload channel and the allowlist is unchanged in size (AC7)", async () => {
     const { BRIDGE_ALLOWED_COMMANDS } = await import("../src/chat_bridge");
     // amicode#653 added amicode.restartHub (payload-free, like restartServer).
-    expect(BRIDGE_ALLOWED_COMMANDS.size).toBe(11);
+    // #1322 added the Fleet Manager tab's This-machine actions (payload-free):
+    // amicode.fleet.repair + amicode.fleet.goStandalone.
+    // #1598 added amicode.stopServer for the engine on/off toggle.
+    expect(BRIDGE_ALLOWED_COMMANDS.size).toBe(14);
     expect(BRIDGE_ALLOWED_COMMANDS.has("amicode.reportBug")).toBe(true);
     expect(BRIDGE_ALLOWED_COMMANDS.has("amicode.restartHub")).toBe(true);
+    expect(BRIDGE_ALLOWED_COMMANDS.has("amicode.fleet.repair")).toBe(true);
+    expect(BRIDGE_ALLOWED_COMMANDS.has("amicode.fleet.goStandalone")).toBe(true);
+    expect(BRIDGE_ALLOWED_COMMANDS.has("amicode.stopServer")).toBe(true);
     // other allowlisted commands ignore model payload
     const host = io();
     let received: unknown = "sentinel";
@@ -806,6 +839,62 @@ describe("amicode bridge — project-selected (#663)", () => {
     );
     expect(handled).toBe(true);
     expect(selected).toEqual([]);
+  });
+});
+
+// ============================================================================
+// #1551 — the enable-control act rides a PAYLOAD envelope (kind:
+// "fleet-enable-control" carrying { ownerMachineId, sessionID }), NOT the
+// command lane: the bare command relay cannot carry the target peer. The
+// handler shape-validates the payload and forwards it to the host's
+// onFleetEnableControl callback (which shows the native modal + mints).
+// ============================================================================
+describe("amicode bridge — fleet-enable-control (#1551)", () => {
+  it("forwards a well-formed enable envelope to onFleetEnableControl with { ownerMachineId, sessionID }", () => {
+    const seen: Array<{ ownerMachineId: string; sessionID: string }> = [];
+    const host = { ...io(), onFleetEnableControl: (req: { ownerMachineId: string; sessionID: string }) => seen.push(req) };
+    const handled = handleAmicodeBridgeMessage(
+      { source: "amicode", kind: "fleet-enable-control", ownerMachineId: "the-studio", sessionID: "ses_1" },
+      host,
+    );
+    expect(handled).toBe(true);
+    expect(seen).toEqual([{ ownerMachineId: "the-studio", sessionID: "ses_1" }]);
+  });
+
+  it("consumes the envelope even without onFleetEnableControl wired (never foreign-noise)", () => {
+    const host = io();
+    expect(
+      handleAmicodeBridgeMessage(
+        { source: "amicode", kind: "fleet-enable-control", ownerMachineId: "the-studio", sessionID: "ses_1" },
+        host,
+      ),
+    ).toBe(true);
+  });
+
+  it("a malformed payload (missing/non-string ownerMachineId or sessionID) mints nothing — the callback never fires", () => {
+    const seen: unknown[] = [];
+    const host = { ...io(), onFleetEnableControl: (req: unknown) => seen.push(req) };
+    // missing sessionID
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "fleet-enable-control", ownerMachineId: "the-studio" }, host)).toBe(true);
+    // missing ownerMachineId
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "fleet-enable-control", sessionID: "ses_1" }, host)).toBe(true);
+    // non-string ownerMachineId
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "fleet-enable-control", ownerMachineId: 7, sessionID: "ses_1" }, host)).toBe(true);
+    // empty strings
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "fleet-enable-control", ownerMachineId: "", sessionID: "" }, host)).toBe(true);
+    expect(seen).toEqual([]);
+  });
+
+  it("the enable act is NOT on the command lane — the bare command is refused (payload envelope, not a command)", () => {
+    const host = io();
+    // Key Decision: the bare command lane cannot carry the target peer, so the
+    // enable command is deliberately NOT allowlisted.
+    expect(
+      handleAmicodeBridgeMessage(
+        { source: "amicode", kind: "command", command: "amicode.fleet.enableControl" },
+        host,
+      ),
+    ).toBe(false);
   });
 });
 

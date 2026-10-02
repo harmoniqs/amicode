@@ -30,6 +30,7 @@ import { useSDK } from "@/context/sdk"
 import { useSync } from "@/context/sync"
 import { useServerSDK } from "@/context/server-sdk"
 import { createStreamGap } from "@/context/stream-gap"
+import { effectiveEngineState } from "@/components/engine-state-signal"
 import { useComments } from "@/context/comments"
 import { Button } from "@opencode-ai/ui/button"
 import { DockShellForm, DockTray } from "@opencode-ai/ui/dock-surface"
@@ -110,6 +111,12 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
   // with the reason instead of optimistically posting into a dead tunnel.
   const serverSDK = useServerSDK()
   const streamGap = createStreamGap(() => serverSDK().event.status())
+  // #1608 AC6: refuse a send while the engine is deliberately off (or stopping)
+  // with an engine-specific reason, ahead of the generic stream-gap refusal.
+  const engineOff = () => {
+    const s = effectiveEngineState()
+    return s === "off" || s === "stopping"
+  }
   const files = useFile()
   const prompt = props.state ?? usePrompt()
   const layout = useLayout()
@@ -1232,6 +1239,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
       onAbort: props.onAbort,
       onSubmit: props.onSubmit,
       streamGap,
+      engineOff,
       model: props.controls.model.selection,
     })
 

@@ -1,0 +1,635 @@
+/**
+ * session-fleet-peers.ts — #1525 B1 (read-only)
+ *
+ * Pure logic for merging PEER sessions from the fleet-wide projection
+ * (GET /amicode/fleet/sessions, W2 #1447) into the titlebar Sessions dropdown.
+ *
+ * B1 scope is READ-ONLY: a peer's sessions APPEAR in the dropdown, badged with
+ * the owner machine name, searchable, and de-duped against the local list.
+ * Owner-routed OPEN and remote control (prompt / archive / delete) are B2 —
+ * this module deliberately carries no control surface. `isRemotePeerSession`
+ * is the predicate the component uses to keep destructive/local-only actions
+ * off a remote row.
+ *
+ * The projection's session entries carry the FULL raw session fields (id,
+ * title, time, directory) PLUS the `amicode_owner` overlay
+ * (merged_projection.ts `tagSessionsWithOwner`), so a remote entry is directly
+ * renderable as a dropdown row. Every reader here is TOLERANT: a malformed /
+ * absent / errored response yields [] and never throws (the dropdown must
+ * degrade to the local list, never blank out).
+ */
+
+import type { Session } from "@opencode-ai/sdk/v2/client"
+
+/** The per-session owner overlay the projection tags each entry with
+ *  (mirrors merged_projection.ts `SessionOwnerTag`). */
+export interface SessionOwnerTag {
+  owner_machine_id: string
+  owner_name: string
+  device_type?: string
+  directory?: string
+  is_local: boolean
+}
+
+/** #1568: the presence indicator overlay — which remote machine is controlling
+ *  this (local) session. Stamped on LOCAL session entries only. */
+export interface ControlledByTag {
+  machine_id: string
+  machine_name: string
+}
+
+/** A dropdown session row — the SDK session shape plus the optional owner
+ *  overlay a peer entry carries. */
+export type DropdownSession = Session & {
+  amicode_owner?: SessionOwnerTag
+  /** #1544 (slice 4): the state channel — the app-visible control shape the
+   *  fleet projection stamps beside `amicode_owner` (see SessionControlProjection). */
+  amicode_control?: SessionControlProjection
+  /** #1568: the presence indicator — which remote machine is controlling this
+   *  local session, if any. Absent on remote sessions and when no control grant
+   *  is active. */
+  amicode_controlled_by?: ControlledByTag
+}
+
+// ── #1544 (slice 4): the CONTROL STATE CHANNEL (mirror of the extension's
+// remote_session_state.SessionControlProjection, carried on GET
+// /amicode/fleet/sessions as the `amicode_control` sibling of `amicode_owner`).
+//
+// This module is the SINGLE consumer of that channel on the session surface:
+// the fail-closed chip, the enable/request affordance, the persistent driving
+// banner, and the owner-routed remote-delete gate all derive from it. The chip
+// reason is the SoT reason (the extension's write gate collapses
+// revocation-pending→grant-revoked; this channel keeps them distinct — ADR 0034
+// D4/D5), so the UI never reads the raw gate reason.
+
+/** EXACTLY the five reasons the SoT emits — mirrors the extension's
+ *  CONTROL_CHIP_REASONS (kept in sync as a literal, the same seam-crossing
+ *  precedent SessionOwnerTag sets). */
+export const CONTROL_CHIP_REASONS = [
+  "no-control-grant",
+  "grant-revoked",
+  "revocation-pending",
+  "insufficient-scope",
+  "transport-down",
+] as const
+
+export type ControlChipReason = (typeof CONTROL_CHIP_REASONS)[number]
+
+/** Which control affordance should appear. */
+export type ControlEligibility = "enable-control" | "request-control" | "none"
+
+/** The app-visible control shape (mirror of the extension's projection). */
+export interface SessionControlProjection {
+  controlState: "local" | "interactive" | "read-only" | "suspended"
+  reason: ControlChipReason | null
+  eligibility: ControlEligibility
+}
+
+const CONTROL_STATES = new Set(["local", "interactive", "read-only", "suspended"])
+const CONTROL_REASONS = new Set<string>(CONTROL_CHIP_REASONS)
+
+/** The default (control-held, no-affordance) projection — a local/unowned or
+ *  malformed session degrades to this, never to a live erroring affordance. */
+const CONTROL_LOCAL_DEFAULT: SessionControlProjection = { controlState: "local", reason: null, eligibility: "none" }
+
+/** Human, DISTINCT chip labels — one per SoT reason. revocation-pending and
+ *  grant-revoked are deliberately different (the write gate collapses them; the
+ *  chip must not). */
+const CONTROL_CHIP_LABELS: Record<ControlChipReason, string> = {
+  "no-control-grant": "Control not enabled",
+  "grant-revoked": "Control revoked",
+  "revocation-pending": "Revoking…",
+  "insufficient-scope": "Observe only",
+  "transport-down": "Peer unreachable",
+}
+
+/** The fail-closed default for a REMOTE peer session whose control channel is
+ *  absent/malformed. A missing channel must NOT read as "control held" on a
+ *  remote row — the server-side write gate (evaluateRemoteWriteGate) denies with
+ *  `no-control-grant` in exactly that case, so defaulting the client to
+ *  `local` (held) produced a delete button that silently failed against the
+ *  owner (amicode#1544 follow-up). Fail-closed keeps the client honest: no
+ *  live-erroring write button, a "Control not enabled" chip instead. */
+const CONTROL_REMOTE_FAIL_CLOSED: SessionControlProjection = {
+  controlState: "read-only",
+  reason: "no-control-grant",
+  eligibility: "enable-control",
+}
+
+/** Tolerant read of the control channel off a session. Absent / malformed →
+ *  a default that DEPENDS on ownership: a local/unowned session degrades to the
+ *  held no-affordance default (you own it); a REMOTE peer session degrades to
+ *  fail-closed (you do NOT hold control until the channel says so), matching the
+ *  server write gate. Never throws. */
+export function readSessionControl(
+  session: { amicode_control?: unknown; amicode_owner?: SessionOwnerTag } | undefined,
+): SessionControlProjection {
+  const missingDefault = isRemotePeerSession(session) ? CONTROL_REMOTE_FAIL_CLOSED : CONTROL_LOCAL_DEFAULT
+  const raw = session?.amicode_control
+  if (!raw || typeof raw !== "object") return missingDefault
+  const o = raw as Record<string, unknown>
+  if (typeof o.controlState !== "string" || !CONTROL_STATES.has(o.controlState)) return missingDefault
+  const reason = typeof o.reason === "string" && CONTROL_REASONS.has(o.reason) ? (o.reason as ControlChipReason) : null
+  const eligibility =
+    o.eligibility === "enable-control" || o.eligibility === "request-control" ? o.eligibility : "none"
+  return { controlState: o.controlState as SessionControlProjection["controlState"], reason, eligibility }
+}
+
+/** Control is HELD when the session is local or interactively controlled. */
+export function isControlHeld(control: SessionControlProjection): boolean {
+  return control.controlState === "local" || control.controlState === "interactive"
+}
+
+/** Write affordances (composer→peer, archive, delete) are enabled ONLY under
+ *  held control — otherwise disabled with a reason chip (never a live 500). */
+export function writeAffordanceEnabled(control: SessionControlProjection): boolean {
+  return isControlHeld(control)
+}
+
+/** The composer scrim's GATE decision, pure: a session is gated (composer
+ *  blurred + made inert, CTA centered) IFF it is a REMOTE peer session whose
+ *  control is NOT held (read-only / suspended). A local / unowned session, or a
+ *  remote one already driving (interactive → control held), is NOT gated. This
+ *  is the single home for the ungate-on-interactive rule the composer scrim and
+ *  its test both read, so a projection that flips to `interactive` provably
+ *  clears the scrim. */
+export function isComposerGated(
+  owner: SessionOwnerTag | undefined,
+  control: SessionControlProjection,
+): boolean {
+  return isRemotePeerSession({ amicode_owner: owner }) && !isControlHeld(control)
+}
+
+/** The fail-closed chip: disabled-with-reason when control is not held. Null
+ *  when control is held (no chip). The label is derived from the SoT reason. */
+export function failClosedChip(control: SessionControlProjection): { reason: ControlChipReason; label: string } | null {
+  if (isControlHeld(control) || control.reason === null) return null
+  return { reason: control.reason, label: CONTROL_CHIP_LABELS[control.reason] }
+}
+
+/** The enable/request affordance derived from eligibility. `request-control` is
+ *  present-but-INERT here — its backend (the request→approve handshake) is
+ *  #1545; `enable-control` is live (the self-owned one-act enable). */
+export function controlAffordance(control: SessionControlProjection): {
+  kind: ControlEligibility
+  label: string
+  inert: boolean
+} {
+  if (control.eligibility === "enable-control") return { kind: "enable-control", label: "Enable control", inert: false }
+  if (control.eligibility === "request-control") return { kind: "request-control", label: "Request control", inert: true }
+  return { kind: "none", label: "", inert: true }
+}
+
+/** The persistent driving banner's target: the peer machineId being driven,
+ *  or null when not interactively driving a peer. Read from the owner overlay
+ *  (the state channel carries no machineId — the owner tag does). */
+export function drivingBanner(
+  session: { amicode_owner?: SessionOwnerTag; amicode_control?: unknown } | undefined,
+): { machineId: string } | null {
+  const control = readSessionControl(session)
+  if (control.controlState !== "interactive") return null
+  const machineId = session?.amicode_owner?.owner_machine_id
+  if (!machineId) return null
+  return { machineId }
+}
+
+/** The owner-routed remote-delete action, GATED on held control. When allowed,
+ *  the request carries the owner machineId so the caller (and a reviewer) can
+ *  see it is owner-routed — the #1542 write plane resolves the non-GET to the
+ *  peer-owned session by pathname; this descriptor names the owner it targets.
+ *  When control is not held, it is disallowed and carries the fail-closed reason
+ *  (never a live erroring button). */
+export function remoteDeleteAction(
+  session: { id: string; directory?: string; amicode_owner?: SessionOwnerTag; amicode_control?: unknown } | undefined,
+): { allowed: boolean; request?: { sessionID: string; directory: string; ownerMachineId: string }; reason?: ControlChipReason } {
+  const control = readSessionControl(session)
+  if (!writeAffordanceEnabled(control) || !session) {
+    return { allowed: false, ...(control.reason ? { reason: control.reason } : {}) }
+  }
+  const ownerMachineId = session.amicode_owner?.owner_machine_id ?? ""
+  return {
+    allowed: true,
+    request: { sessionID: session.id, directory: session.directory ?? "", ownerMachineId },
+  }
+}
+
+/** Find a session's control off a raw GET /amicode/fleet/sessions response by
+ *  id — the session surface's read for the CURRENT session's banner/affordance.
+ *  Unknown id / garbage → the local default (never throws). */
+export function findSessionControlInProjection(raw: unknown, sessionId: string): SessionControlProjection {
+  return readSessionControl(findSessionEntryInProjection(raw, sessionId))
+}
+
+/** Find a raw projection entry by id (owner + control overlays intact), or
+ *  undefined. Tolerant. */
+function findSessionEntryInProjection(
+  raw: unknown,
+  sessionId: string,
+): { amicode_owner?: SessionOwnerTag; amicode_control?: unknown; amicode_controlled_by?: unknown } | undefined {
+  if (!raw || typeof raw !== "object") return undefined
+  const sessions = (raw as { sessions?: unknown }).sessions
+  if (!Array.isArray(sessions)) return undefined
+  const hit = sessions.find((s) => s && typeof s === "object" && (s as { id?: unknown }).id === sessionId)
+  return hit as { amicode_owner?: SessionOwnerTag; amicode_control?: unknown; amicode_controlled_by?: unknown } | undefined
+}
+
+/** The driving banner for the CURRENT session id, read off the fleet projection.
+ *  Non-null only when that session is interactively driving a remote peer — the
+ *  persistent "driving <peer>" banner's data source. Unknown id / not-driving /
+ *  garbage → null (no banner). */
+export function drivingBannerFromProjection(raw: unknown, sessionId: string): { machineId: string } | null {
+  return drivingBanner(findSessionEntryInProjection(raw, sessionId))
+}
+
+/** #1568: the REVERSE of drivingBanner — presence indicator for a locally-owned
+ *  session being remotely controlled. Non-null only when the session is LOCAL
+ *  (is_local === true) AND carries `amicode_controlled_by` (a remote machine
+ *  holds an active control grant targeting this machine). Remote sessions never
+ *  show this (they are the controller's sessions, not ours). */
+export function drivenByBanner(
+  session: { amicode_owner?: SessionOwnerTag; amicode_controlled_by?: unknown } | undefined,
+): { machineId: string; machineName: string } | null {
+  if (!session) return null
+  // Only local sessions can be "driven by" a remote controller
+  if (!session.amicode_owner || session.amicode_owner.is_local === false) return null
+  const cb = session.amicode_controlled_by
+  if (!cb || typeof cb !== "object") return null
+  const o = cb as Record<string, unknown>
+  if (typeof o.machine_id !== "string" || typeof o.machine_name !== "string") return null
+  return { machineId: o.machine_id, machineName: o.machine_name }
+}
+
+/** #1568: the driven-by banner for the CURRENT session id, read off the fleet
+ *  projection. Non-null only when that session is a LOCAL session being remotely
+ *  controlled. Unknown id / no controller / garbage → null. */
+export function drivenByBannerFromProjection(raw: unknown, sessionId: string): { machineId: string; machineName: string } | null {
+  return drivenByBanner(findSessionEntryInProjection(raw, sessionId))
+}
+
+/** The owner tag for the CURRENT session id, read off the fleet projection — the
+ *  composer scrim's source for the peer NAME (the CTA copy) and the owner
+ *  machineId (the enable-control envelope's target). Unknown id / local /
+ *  garbage → undefined. Tolerant (never throws). */
+export function findSessionOwnerInProjection(raw: unknown, sessionId: string): SessionOwnerTag | undefined {
+  return readOwnerTag(findSessionEntryInProjection(raw, sessionId)?.amicode_owner)
+}
+
+/** True when a session is a REMOTE peer session (has an owner overlay whose
+ *  `is_local` is explicitly false). Local / unowned sessions are false —
+ *  absence of an overlay means local (ADR 0031 §D6). B1 uses this to keep
+ *  local-only actions (archive) and the local open OFF a remote row. */
+export function isRemotePeerSession(session: { amicode_owner?: SessionOwnerTag } | undefined): boolean {
+  return !!session?.amicode_owner && session.amicode_owner.is_local === false
+}
+
+/** The machine badge for a dropdown row: the owner machine name for a remote
+ *  session, `undefined` for a local/unowned one (absence = local, unbadged). */
+export function deriveSessionBadge(session: { amicode_owner?: SessionOwnerTag } | undefined): string | undefined {
+  if (!isRemotePeerSession(session)) return undefined
+  return session!.amicode_owner!.owner_name
+}
+
+/** Filter dropdown rows to a specific owner machine (#1439, promoted here in
+ *  #1537 B2a AC6 as the single real home for the dropdown's machine helpers).
+ *  `null`/`undefined` machineId = all machines (the "clear filter" state). */
+export function filterSessionsByMachine<T extends { amicode_owner?: SessionOwnerTag }>(
+  sessions: T[],
+  machineId: string | null | undefined,
+): T[] {
+  if (machineId == null) return sessions
+  return sessions.filter((s) => s.amicode_owner?.owner_machine_id === machineId)
+}
+
+/** A grouped block of dropdown rows for display (#1562): either the LOCAL /
+ *  unowned sessions (machineId null, unlabeled) or ONE peer machine's sessions
+ *  (machineId set, labeled with the owner name). */
+export interface SessionGroup {
+  /** null for the local / unowned group; the owner machineId for a peer group. */
+  machineId: string | null
+  /** The owner machine name for a peer group; undefined for the local group. */
+  label?: string
+  sessions: DropdownSession[]
+}
+
+/** Group dropdown rows so a peer's sessions are not buried by recency under the
+ *  local list (#1562): the LOCAL / unowned rows first as ONE unlabeled group
+ *  (input order preserved — the caller's recency / open-tab-first ordering),
+ *  then ONE labeled group per peer machine (by owner_machine_id), in first-seen
+ *  order, each labeled with the owner name. Read-only presentation — no row is
+ *  dropped or reordered within a group. The local group is ALWAYS present
+ *  (possibly empty) so the caller renders its empty-state uniformly. Reuses
+ *  filterSessionsByMachine + deriveSessionBadge. */
+export function groupSessionsByOwner(sessions: DropdownSession[]): SessionGroup[] {
+  const local = sessions.filter((s) => !isRemotePeerSession(s))
+  const peers = sessions.filter((s) => isRemotePeerSession(s))
+  const groups: SessionGroup[] = [{ machineId: null, sessions: local }]
+  const seen = new Set<string>()
+  for (const s of peers) {
+    const machineId = s.amicode_owner!.owner_machine_id
+    if (seen.has(machineId)) continue
+    seen.add(machineId)
+    groups.push({
+      machineId,
+      label: deriveSessionBadge(s) ?? machineId,
+      sessions: filterSessionsByMachine(peers, machineId),
+    })
+  }
+  return groups
+}
+
+/** Tolerant reader for one raw owner overlay — returns the tag only when its
+ *  load-bearing fields are well-typed, else undefined. */
+function readOwnerTag(raw: unknown): SessionOwnerTag | undefined {
+  if (!raw || typeof raw !== "object") return undefined
+  const o = raw as Record<string, unknown>
+  if (typeof o.owner_machine_id !== "string") return undefined
+  if (typeof o.owner_name !== "string") return undefined
+  if (typeof o.is_local !== "boolean") return undefined
+  return {
+    owner_machine_id: o.owner_machine_id,
+    owner_name: o.owner_name,
+    ...(typeof o.device_type === "string" ? { device_type: o.device_type } : {}),
+    ...(typeof o.directory === "string" ? { directory: o.directory } : {}),
+    is_local: o.is_local,
+  }
+}
+
+/** Coerce one raw projection entry into a renderable DropdownSession, keeping
+ *  only the fields the dropdown needs. Returns undefined when the entry has no
+ *  usable id (never a fabricated row). */
+function readProjectionSession(raw: unknown): DropdownSession | undefined {
+  if (!raw || typeof raw !== "object") return undefined
+  const o = raw as Record<string, unknown>
+  if (typeof o.id !== "string" || o.id === "") return undefined
+  const owner = readOwnerTag(o.amicode_owner)
+  const timeRaw = (o.time && typeof o.time === "object" ? o.time : {}) as Record<string, unknown>
+  const created = typeof timeRaw.created === "number" ? timeRaw.created : 0
+  const updated = typeof timeRaw.updated === "number" ? timeRaw.updated : created
+  const time: DropdownSession["time"] = {
+    created,
+    updated,
+    ...(typeof timeRaw.archived === "number" ? { archived: timeRaw.archived } : {}),
+  }
+  return {
+    id: o.id,
+    ...(typeof o.title === "string" ? { title: o.title } : {}),
+    directory: typeof o.directory === "string" ? o.directory : "",
+    ...(typeof o.parentID === "string" ? { parentID: o.parentID } : {}),
+    time,
+    ...(owner ? { amicode_owner: owner } : {}),
+    // #1646: carry the raw control overlay onto the row. Without this the peer
+    // row has NO control channel, so readSessionControl always falls to the
+    // fail-closed default (`no-control-grant`) — the row could never reflect a
+    // real `interactive` grant, and archive/delete stayed refused forever. The
+    // overlay is passed through verbatim (an object) — readSessionControl is the
+    // single tolerant validator, so a malformed one still degrades safely there.
+    ...(o.amicode_control && typeof o.amicode_control === "object"
+      ? { amicode_control: o.amicode_control as SessionControlProjection }
+      : {}),
+  } as DropdownSession
+}
+
+/** From the raw GET /amicode/fleet/sessions response, extract the REMOTE peer
+ *  sessions (owner overlay present, `is_local === false`) as renderable rows.
+ *  A malformed / error / not-yet-resolved response → []. Local-owned and
+ *  unowned entries are dropped (the local list already carries those). */
+export function peerSessionsFromProjection(raw: unknown): DropdownSession[] {
+  if (!raw || typeof raw !== "object") return []
+  const sessions = (raw as { sessions?: unknown }).sessions
+  if (!Array.isArray(sessions)) return []
+  return sessions.flatMap((s) => {
+    const row = readProjectionSession(s)
+    if (!row || !isRemotePeerSession(row)) return []
+    return [row]
+  })
+}
+
+/** From the raw GET /amicode/fleet/sessions response, extract ALL renderable
+ *  rows — LOCAL and REMOTE alike (any entry with a usable id). This is the
+ *  complete cross-project, cross-machine session set the projection already
+ *  computes.
+ *
+ *  Distinct from `peerSessionsFromProjection`, which keeps ONLY remote rows on
+ *  the assumption that the dropdown's LOCAL list (iterated from the known
+ *  project directories) already carries every local session. That assumption
+ *  breaks for a local session in a directory the local store never iterates —
+ *  a remote-created session that landed in the owner's ambient temp cwd, or any
+ *  project not in `projects.list()`. Such a session is local (so dropped by the
+ *  peer-only extractor) AND absent from the directory-scoped local list, so it
+ *  was invisible on the owning machine's dropdown. Feeding THIS set through
+ *  `mergePeerSessions` (local store wins an id collision) leaves listed-dir
+ *  sessions unchanged and surfaces exactly the ones the local list is missing.
+ *  Tolerant: malformed / absent / errored ⇒ []. */
+export function allSessionsFromProjection(raw: unknown): DropdownSession[] {
+  if (!raw || typeof raw !== "object") return []
+  const sessions = (raw as { sessions?: unknown }).sessions
+  if (!Array.isArray(sessions)) return []
+  return sessions.flatMap((s) => {
+    const row = readProjectionSession(s)
+    return row ? [row] : []
+  })
+}
+
+/** Merge peer sessions into the local active list: local wins on an id
+ *  collision (a session that is somehow in both stays local, keeping its live
+ *  state), and the result is sorted by last activity (updated ?? created)
+ *  descending — the same order the dropdown already uses for the local list.
+ *
+ *  #1599 (badge-on-open fix): when a local row collides with a peer that
+ *  carries an `amicode_owner` overlay AND the local row has none, the local
+ *  row is enriched with the peer's owner tag. Opening a remote session pulls
+ *  an untagged copy into the local directory store (the intended open flow —
+ *  `openSession` calls projects.open + session.sync to render it); without
+ *  this enrichment that untagged copy would win the dedup and the machine
+ *  badge would vanish the moment a remote session goes live. The projection is
+ *  the source of truth for ownership, so carrying its tag onto the local copy
+ *  is honest: the row stays local (live state) but keeps its remote badge.
+ *
+ *  #1646 (stale-control fix): the projection is ALSO the source of truth for
+ *  the control channel (`amicode_control`), which flips read-only→interactive
+ *  when you enable control of a peer. A locally-pulled copy (from opening the
+ *  remote session) has NO control overlay, so on an id collision the merge must
+ *  carry the peer's control overlay across too — otherwise the merged row reads
+ *  fail-closed (`no-control-grant`) even after control is enabled, and the
+ *  archive/delete gate refuses with "Control not enabled" while the projection
+ *  says interactive. Owner AND control are grafted together, from the same peer. */
+export function mergePeerSessions(local: DropdownSession[], peers: DropdownSession[]): DropdownSession[] {
+  const peerById = new Map(peers.map((p) => [p.id, p]))
+  const merged = local.map((s) => {
+    const peer = peerById.get(s.id)
+    if (!peer) return s
+    // Graft the projection's ownership + control overlays onto a local copy that
+    // lacks them (the projection is SoT for both). Owner grafts only when the
+    // local row has none (#1599); control grafts from the peer whenever the peer
+    // is a remote row carrying one (#1646) — a live local copy has no fleet
+    // control channel of its own, so the peer's is strictly fresher.
+    const needsOwner = !s.amicode_owner && !!peer.amicode_owner
+    const needsControl = isRemotePeerSession(peer) && peer.amicode_control !== undefined
+    if (!needsOwner && !needsControl) return s
+    const grafted: DropdownSession = { ...s }
+    if (needsOwner) grafted.amicode_owner = peer.amicode_owner
+    if (needsControl) grafted.amicode_control = peer.amicode_control
+    return grafted
+  })
+  const seen = new Set(local.map((s) => s.id))
+  for (const p of peers) {
+    if (seen.has(p.id)) continue
+    seen.add(p.id)
+    merged.push(p)
+  }
+  return merged.sort((a, b) => (b.time.updated ?? b.time.created) - (a.time.updated ?? a.time.created))
+}
+
+/** The render-relevant signature of a dropdown row — every field the
+ *  SessionDropdownRow / ArchivedSessionDropdownRow actually paint. Two rows with
+ *  the same signature are visually identical, so the `<For>` should keep the
+ *  same DOM node for them. `time.updated` is deliberately EXCLUDED: it churns on
+ *  every streamed token but never changes what the row renders (the status dot
+ *  is driven by the live avatar-state subscription, not by this object), and
+ *  including it would defeat the whole point — a live row would re-key on every
+ *  frame. */
+export function sessionRowSignature(s: DropdownSession): string {
+  const owner = s.amicode_owner
+  const control = s.amicode_control
+  return [
+    s.id,
+    s.title ?? "",
+    s.directory ?? "",
+    owner ? `${owner.is_local ? "L" : "R"}:${owner.owner_name ?? ""}:${owner.owner_machine_id ?? ""}` : "-",
+    control ? `${control.controlState}:${control.reason ?? ""}:${control.eligibility}` : "-",
+  ].join("\u0001")
+}
+
+/** Stabilize row object identity across polls so SolidJS `<For>` (which keys by
+ *  referential identity) preserves each row's DOM node instead of disposing and
+ *  remounting it. Every 3s the fleet projection re-fetches and `mergePeerSessions`
+ *  mints brand-new objects for peer / owner-tagged rows; `<For>` then sees a new
+ *  reference at that index and remounts the row, resetting its CSS `:hover` state
+ *  and replaying the machine-tag opacity transition — the "flash" a user sees
+ *  when the pointer is resting on a tagged row (amicode#1652).
+ *
+ *  This keeps a caller-owned `Map<id, DropdownSession>` cache: when a row's
+ *  render signature is unchanged since last emit, the PREVIOUS object is
+ *  returned (stable reference → no remount); only a genuine content change (or a
+ *  new id) allocates. Order follows `next` exactly; ids absent from `next` are
+ *  evicted from the cache so it can't grow without bound. Pure aside from the
+ *  passed-in cache — the cache is the reuse state the caller persists across
+ *  memo runs. */
+export function stabilizeSessionIdentity(
+  next: readonly DropdownSession[],
+  cache: Map<string, { sig: string; row: DropdownSession }>,
+): DropdownSession[] {
+  const nextIds = new Set<string>()
+  const out = next.map((row) => {
+    nextIds.add(row.id)
+    const sig = sessionRowSignature(row)
+    const prev = cache.get(row.id)
+    if (prev && prev.sig === sig) return prev.row
+    cache.set(row.id, { sig, row })
+    return row
+  })
+  for (const id of cache.keys()) {
+    if (!nextIds.has(id)) cache.delete(id)
+  }
+  return out
+}
+
+/** #1647 (S3): the ARCHIVED list, fleet-aware. Given this machine's LOCAL
+ *  archived sessions (authoritative, engine-paginated) and the raw
+ *  `/amicode/fleet/sessions?archived=true` projection, return the merged
+ *  archived list: local archived PLUS every peer-owned archived session
+ *  (owner-tagged), local winning an id collision, sorted by last activity
+ *  descending. Standalone / fetch-failure ⇒ raw is undefined ⇒
+ *  `peerSessionsFromProjection` yields [] ⇒ the local list is unchanged
+ *  (byte-identical to the pre-fleet behavior). This is the composition of the
+ *  two already-tested peer helpers, named for the one place S3 consumes it. */
+export function archivedSessionsWithRemote(
+  localArchived: DropdownSession[],
+  archivedProjectionRaw: unknown,
+): DropdownSession[] {
+  return mergePeerSessions(localArchived, peerSessionsFromProjection(archivedProjectionRaw))
+}
+
+/** The action the dropdown's openSession() dispatches on when a row is clicked.
+ *  A READ-ONLY union — there is no delete/archive/prompt variant, so a reviewer
+ *  can confirm this open path carries no remote-write surface (#1537 B2a). */
+export type DropdownOpenAction =
+  | { type: "select-tab"; sessionId: string }
+  | { type: "navigate"; path: string }
+
+// ── Sort utilities (amicode#1599) ─────────────────────────────────────────────
+
+export type SortMode = "recent" | "alpha" | "machine"
+
+/** Title extraction for sort — falls back to id when title is empty/absent. */
+const sortTitle = (s: DropdownSession): string =>
+  typeof s.title === "string" && s.title ? s.title : s.id
+
+/**
+ * Sort a flat list of dropdown sessions by the given mode.
+ * Returns a new array — never mutates the input.
+ *
+ * - `recent`:  updated (or created) desc, tie-break by id asc
+ * - `alpha`:   title case-insensitive asc, tie-break by recency desc
+ * - `machine`: local/unowned first, then by owner_name asc, recency desc within group
+ */
+export function sortDropdownSessions(
+  sessions: readonly DropdownSession[],
+  mode: SortMode,
+): DropdownSession[] {
+  const sorted = [...sessions]
+  switch (mode) {
+    case "recent":
+      return sorted.sort((a, b) => {
+        const diff = (b.time.updated ?? b.time.created) - (a.time.updated ?? a.time.created)
+        if (diff !== 0) return diff
+        return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
+      })
+    case "alpha":
+      return sorted.sort((a, b) => {
+        const cmp = sortTitle(a).toLowerCase().localeCompare(sortTitle(b).toLowerCase())
+        if (cmp !== 0) return cmp
+        return (b.time.updated ?? b.time.created) - (a.time.updated ?? a.time.created)
+      })
+    case "machine": {
+      const isLocal = (s: DropdownSession): boolean =>
+        !s.amicode_owner || s.amicode_owner.is_local === true
+      const ownerName = (s: DropdownSession): string =>
+        s.amicode_owner?.owner_name ?? ""
+      return sorted.sort((a, b) => {
+        const aLocal = isLocal(a)
+        const bLocal = isLocal(b)
+        if (aLocal !== bLocal) return aLocal ? -1 : 1
+        if (!aLocal) {
+          const nameCmp = ownerName(a).localeCompare(ownerName(b))
+          if (nameCmp !== 0) return nameCmp
+        }
+        return (b.time.updated ?? b.time.created) - (a.time.updated ?? a.time.created)
+      })
+    }
+  }
+}
+
+/** Resolve how to open a dropdown row — the seam #1537 B2a wires for BOTH local
+ *  and REMOTE peer rows.
+ *
+ *  Before B2a, a remote (peer-owned) row short-circuited to a "lives on
+ *  <machine>" guard toast because opening a remote session was never wired.
+ *  B2a removes that dead end: a remote row resolves to the SAME owner-routed
+ *  navigate as a local one — the session store lives on the owner, and the
+ *  multiplex routes reads by owner at the API boundary, so navigating to the
+ *  row's raw `directory`/`id` IS the owner-routed open. This is a read: no
+ *  branch mutates a remote session.
+ *
+ *  - an already-open tab → select it (no re-navigate, no transition);
+ *  - otherwise → navigate to the encoded `directory`/`id` path.
+ *
+ *  Local-row behavior is byte-unchanged from B1 (same two outcomes). */
+export function resolveDropdownOpenAction(
+  session: DropdownSession,
+  hasExistingTab: boolean,
+  encodePath: (directory: string, id: string) => string,
+): DropdownOpenAction {
+  if (hasExistingTab) return { type: "select-tab", sessionId: session.id }
+  return { type: "navigate", path: encodePath(session.directory, session.id) }
+}

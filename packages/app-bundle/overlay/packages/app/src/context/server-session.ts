@@ -22,6 +22,7 @@ import { compareMessages, messageKey, normalizeSessionMessages } from "@/utils/s
 import { dropSessionCaches, pickSessionCacheEvictions, SESSION_CACHE_LIMIT } from "./global-sync/session-cache"
 import { createV2SessionReducer, type V2SessionReduction } from "./server-session-v2-reducer"
 import { deleteMirror, loadMirror, mirrorSlice, saveMirror } from "./session-mirror"
+import { cancelReconcileTimer } from "./session-status-reconcile"
 import type { ServerApi } from "@/utils/server"
 
 type MessageApi = ServerApi["message"]
@@ -142,9 +143,23 @@ function mergeOptimisticPage(page: MessagePage, items: OptimisticItem[]) {
   }
 }
 
-function runInflight(map: Map<string, Promise<void>>, key: string, task: () => Promise<void>) {
+export function runInflight(
+  map: Map<string, Promise<void>>,
+  key: string,
+  task: () => Promise<void>,
+  options?: { force?: boolean },
+) {
   const pending = map.get(key)
-  if (pending) return pending
+  // #1646: a FORCED run must NOT coalesce onto a pending NON-forced task. The
+  // pending task may have been issued BEFORE a just-committed mutation (e.g. the
+  // archive PATCH) and resolves with STALE state — the inflight-layer twin of
+  // the resolve() coalescing f54987a9 fixed at the requests layer. sync()'s
+  // force-sync (the archive read-only flip) rides through here, so without this
+  // the forced task never runs while any non-forced sync/prefetch is in flight
+  // for the session, and the composer never flips. A forced run always executes
+  // its own task and becomes the new pending; the finally-guard keeps that
+  // overwrite safe (only the promise still registered deletes itself).
+  if (pending && !options?.force) return pending
   const promise = task().finally(() => {
     if (map.get(key) === promise) map.delete(key)
   })
@@ -222,8 +237,42 @@ export function createServerSession(
     session_message: {} as Record<string, SessionMessageInfo[]>,
     part: {} as Record<string, Part[]>,
     part_text_accum_delta: {} as Record<string, string>,
+    // #1649 — ancestor-of-active-child floor. Count of non-idle DESCENDANT
+    // sessions per ancestor id, pushed reactively (setData) as child statuses
+    // change — the same shape as diff_version's ancestor propagation. A
+    // foreground subagent blocks its parent's turn inside the task tool
+    // (background.wait): the engine holds the parent runner busy but the parent
+    // emits no parts and no execution bracket, so neither the streamActiveParts
+    // nor the turnActive floor rises, and a stray/reconcile idle would blank the
+    // parent rail. This floor keeps the parent working while any descendant is
+    // non-idle. It MUST be a store leaf (not a plain-Map read) so the parent's
+    // projection memo re-runs on a first child spawn and on every child edge.
+    session_child_active: {} as Record<string, number>,
     session_working(id: string) {
-      return (this.session_status[id]?.type ?? "idle") !== "idle"
+      // #1637 — turn-active floor keyed on the server's execution bracket. The
+      // #1617 per-delta floor (streamActiveParts) only rises on
+      // `message.part.delta`, but most turns stream via `message.part.updated`
+      // and some turns produce NO parts at all (refusal, immediate provider
+      // error, empty completion, abort-before-first-token) — so that floor would
+      // never rise for them and a stale idle blanks the rail. The turn flag rises
+      // on `session.execution.started` (which brackets EVERY turn shape) and
+      // clears on the terminal execution events OR a fallback (session.error /
+      // eviction / a seq/recency-honored idle status frame / a bounded timeout)
+      // so a swallowed terminal cannot wedge it "working" forever.
+      if (turnActive.has(id)) return true
+      // #1617 — self-correcting floor against a racing/stale `idle`. Report working
+      // when the status says busy OR a text part for this session is mid-stream — a
+      // `message.part.delta` sets an accum entry (streamActiveParts records its
+      // session) and the finalizing `message.part.updated` clears it, so this
+      // floor is up exactly while tokens flow and cannot be blanked by a stray
+      // idle. When streaming genuinely stops, the entry clears and idle settles.
+      if ((this.session_status[id]?.type ?? "idle") !== "idle") return true
+      // #1649 — ancestor floor: a session with any non-idle descendant (a
+      // running foreground subagent) is working, even when its own status leaf
+      // has gone stray-idle (reconcile downgrade) and no part is streaming. This
+      // is a reactive store read, so the parent rail re-runs on the child edge.
+      if ((this.session_child_active[id] ?? 0) > 0) return true
+      return streamActiveParts.has(id)
     },
   })
   const requests = new Map<string, Promise<Session>>()
@@ -234,9 +283,92 @@ export function createServerSession(
   const messageLoads = new Map<string, MessageLoadState>()
   const pendingParts = new Map<string, Map<string, Set<string>>>()
   const orphanParts = new Map<string, Set<string>>()
+  // #1646 (transcript self-heal) — per-session guard so an orphan-part BURST
+  // (many parts arriving ahead of their parent message.updated after a
+  // reconnect gap) triggers at most ONE forced resync per session while one is
+  // outstanding. Cleared when the resync settles.
+  const orphanResyncInflight = new Set<string>()
   const removedMessages = new Map<string, Set<string>>()
   const deltaBases = new Map<string, { base: string; sessionID: string }>()
   const taskSpawnParent = new Map<string, string>()
+  // #1649 — per-child last-known contribution to the ancestor floor (0 = idle,
+  // 1 = non-idle). The floor is applied as a DELTA against this remembered
+  // value, so a duplicated or missed status frame cannot drift the ancestor
+  // counts (idempotent): re-applying the same contribution is a no-op.
+  const childActiveContribution = new Map<string, number>()
+  // #1617 — sessionID → set of part ids currently mid-stream (a `part.delta` has
+  // arrived and the finalizing `part.updated` has not). The session_working()
+  // floor reads this so a racing/stale `idle` cannot blank the rail while tokens
+  // are still flowing. Populated/cleared in lockstep with `part_text_accum_delta`.
+  const streamActiveParts = new Map<string, Set<string>>()
+  const markPartStreaming = (sessionID: string, partID: string) => {
+    const set = streamActiveParts.get(sessionID) ?? new Set<string>()
+    set.add(partID)
+    streamActiveParts.set(sessionID, set)
+  }
+  const clearPartStreaming = (sessionID: string | undefined, partID: string) => {
+    // sessionID is known at delta time; at clear time we may only have the partID,
+    // so sweep when the session is unknown (small sets; correctness over micro-opt).
+    if (sessionID !== undefined) {
+      const set = streamActiveParts.get(sessionID)
+      set?.delete(partID)
+      if (set && set.size === 0) streamActiveParts.delete(sessionID)
+      return
+    }
+    for (const [sid, set] of streamActiveParts) {
+      if (set.delete(partID) && set.size === 0) streamActiveParts.delete(sid)
+    }
+  }
+  // #1637 — sessionID → the turn is bracketed by a `session.execution.started`
+  // whose terminal has not yet arrived. This is the turn-active floor: it rises
+  // on the execution bracket the server emits for EVERY turn shape (part-bearing
+  // or not) and clears on the terminal execution events OR a fallback, so a
+  // no-part turn (refusal / immediate error / empty completion / abort) is
+  // covered and a swallowed terminal cannot wedge the rail "working".
+  const turnActive = new Set<string>()
+  const turnFloorTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  // The bounded staleness timeout: if no terminal (and no other clear) arrives
+  // within this window, the flag self-clears so the rail can never be stuck
+  // "working" forever from a fully-swallowed terminal path.
+  const TURN_FLOOR_TIMEOUT_MS = 5 * 60_000
+  const clearTurnFloorTimer = (sessionID: string) => {
+    const timer = turnFloorTimers.get(sessionID)
+    if (timer !== undefined) {
+      clearTimeout(timer)
+      turnFloorTimers.delete(sessionID)
+    }
+  }
+  const clearTurnActive = (sessionID: string) => {
+    turnActive.delete(sessionID)
+    clearTurnFloorTimer(sessionID)
+  }
+  const markTurnActive = (sessionID: string, timeoutMs = TURN_FLOOR_TIMEOUT_MS) => {
+    turnActive.add(sessionID)
+    clearTurnFloorTimer(sessionID)
+    const timer = setTimeout(() => {
+      turnFloorTimers.delete(sessionID)
+      turnActive.delete(sessionID)
+      // The bounded timeout is a hard safety net: settle the status to idle too,
+      // so a fully-swallowed terminal (which never set idle) cannot leave the
+      // status floor reading "busy" forever.
+      if ((data.session_status[sessionID]?.type ?? "idle") !== "idle")
+        setData("session_status", sessionID, { type: "idle" })
+    }, timeoutMs)
+    if (typeof timer === "object" && "unref" in timer) timer.unref()
+    turnFloorTimers.set(sessionID, timer)
+  }
+  // #1637 — sessionID → the max status `seq` seen for it (#1636 stamps a
+  // strictly-increasing-per-session seq on session.status event DATA). A status
+  // frame carrying seq <= what we have seen is stale/out-of-order and MUST be
+  // discarded so a reordered idle cannot overwrite a live busy. Absent seq
+  // (pre-#1636 wire) → the frame is always applied.
+  const lastStatusSeq = new Map<string, number>()
+  // #1637 — sessionID → the local wall-clock time of its last status mutation.
+  // The reconnect/gap reconcile from /session/status carries no seq, so its
+  // recency guard is temporal: a reconcile fetched BEFORE the last local status
+  // mutation is stale for that session and must not downgrade a live busy.
+  const lastStatusMutationAt = new Map<string, number>()
+  const stampStatusMutation = (sessionID: string) => lastStatusMutationAt.set(sessionID, Date.now())
   const completedFileDiffParts = new Map<string, Set<string>>()
   const deleteMessageParts = (
     cache: { part: Record<string, Part[] | undefined>; part_text_accum_delta: Record<string, string | undefined> },
@@ -292,6 +424,10 @@ export function createServerSession(
     if (typeof parentSessionId !== "string" || typeof sessionId !== "string") return
     if (!parentSessionId || !sessionId || parentSessionId !== part.sessionID) return
     taskSpawnParent.set(sessionId, parentSessionId)
+    // #1649 — the child's status may have arrived BEFORE this mapping existed
+    // (SSE frames are not ordered across sessions). Seed the ancestor floor from
+    // the child's current status now that the ancestry link is known.
+    refreshChildActive(sessionId)
   }
 
   const incrementFileDiffVersion = (part: Part) => {
@@ -308,6 +444,32 @@ export function createServerSession(
     while (ancestor && !seen.has(ancestor)) {
       seen.add(ancestor)
       setData("diff_version", ancestor, (version = 0) => version + 1)
+      ancestor = taskSpawnParent.get(ancestor)
+    }
+  }
+
+  // #1649 — recompute a child session's contribution to the ancestor floor and
+  // propagate the DELTA up the taskSpawnParent chain into the reactive
+  // session_child_active leaf. Called on every child session.status edge and on
+  // spawn. `nextContribution` overrides the derived value (used on eviction to
+  // force a session's contribution to 0). Idempotent: the delta is computed
+  // against the remembered contribution, so a duplicate/reordered frame is a
+  // no-op and a missed frame self-corrects on the next one.
+  const refreshChildActive = (childSessionID: string, nextContribution?: number) => {
+    // Only a spawned child (present in the ancestry map) can lift an ancestor.
+    if (!taskSpawnParent.has(childSessionID)) return
+    const derived = (data.session_status[childSessionID]?.type ?? "idle") !== "idle" ? 1 : 0
+    const next = nextContribution ?? derived
+    const prev = childActiveContribution.get(childSessionID) ?? 0
+    if (next === prev) return
+    const delta = next - prev
+    if (next === 0) childActiveContribution.delete(childSessionID)
+    else childActiveContribution.set(childSessionID, next)
+    const seen = new Set([childSessionID])
+    let ancestor = taskSpawnParent.get(childSessionID)
+    while (ancestor && !seen.has(ancestor)) {
+      seen.add(ancestor)
+      setData("session_child_active", ancestor, (count = 0) => Math.max(0, count + delta))
       ancestor = taskSpawnParent.get(ancestor)
     }
   }
@@ -359,8 +521,15 @@ export function createServerSession(
   const resolve = (sessionID: string, options?: { force?: boolean }) => {
     const cached = data.info[sessionID]
     if (cached && !options?.force) return Promise.resolve(cached)
+    // #1646: a FORCED resolve must NOT ride a non-forced in-flight request. That
+    // request may have been issued BEFORE a just-committed mutation (e.g. the
+    // archive PATCH) and will resolve with STALE info, re-remembering it and
+    // clobbering the fresh state — the exact regression where archiving a local
+    // session left the row gone from the list but the session live (no
+    // read-only banner, menu still "Archive"). A non-forced caller may still
+    // coalesce onto any pending request.
     const pending = requests.get(sessionID)
-    if (pending) return pending
+    if (pending && !options?.force) return pending
     const active = generation(sessionID)
     const request = sessionApi
       ? sessionApi.get({ sessionID }).then(normalizeSessionInfo)
@@ -539,6 +708,18 @@ export function createServerSession(
       generations.delete(sessionID)
       clearOptimistic(sessionID)
       completedFileDiffParts.delete(sessionID)
+      streamActiveParts.delete(sessionID) // #1617 streaming floor: session gone
+      clearTurnActive(sessionID) // #1637 turn-active floor: session gone
+      // #1649 — lower this session's contribution to its ancestors' floor
+      // BEFORE severing the ancestry links, then drop its own bookkeeping. A
+      // session that is itself an ancestor has its session_child_active leaf
+      // deleted in the produce block below.
+      refreshChildActive(sessionID, 0)
+      taskSpawnParent.delete(sessionID)
+      for (const [childSessionID, parentSessionID] of taskSpawnParent) {
+        if (parentSessionID === sessionID) taskSpawnParent.delete(childSessionID)
+      }
+      childActiveContribution.delete(sessionID)
       requests.delete(sessionID)
       inflight.delete(sessionID)
       inflightTodo.delete(sessionID)
@@ -550,7 +731,10 @@ export function createServerSession(
     })
     setData(
       produce((draft) => {
-        for (const sessionID of sessionIDs) delete draft.diff_version[sessionID]
+        for (const sessionID of sessionIDs) {
+          delete draft.diff_version[sessionID]
+          delete draft.session_child_active[sessionID] // #1649
+        }
         dropSessionCaches(draft, sessionIDs)
       }),
     )
@@ -769,6 +953,20 @@ export function createServerSession(
       preserveUnfetched,
       compare: compareMessages,
     })
+    // #1579: an empty reconcile result against a populated store is a
+    // transient wire anomaly (empty page from a just-created session, timing
+    // gap during a concurrent SSE stream), not a real history wipe. Applying
+    // it blanks the timeline for one reactive tick — the "responses
+    // disappear" flash — then the next SSE event or warm pass re-populates.
+    // Skip the replacement; the existing data is more truthful.
+    const currentCount = data.message[sessionID]?.length ?? 0
+    if (messages.length === 0 && currentCount > 0) {
+      loadDebug(sessionID, "skip-empty-replace", { currentCount })
+      // Still update meta so the session is marked as loaded, but don't
+      // touch the message/part stores.
+      setMeta("at", sessionID, Date.now())
+      return
+    }
     batch(() => {
       if (source) setData("session_message", sessionID, reconcile(source))
       const messageIDs = replaceMessages(sessionID, messages)
@@ -1050,7 +1248,7 @@ export function createServerSession(
           ? Promise.resolve()
           : loadMessages(sessionID, options?.messageLimit ?? meta.limit[sessionID] ?? initialMessagePageSize),
       ])
-    })
+    }, { force: options?.force })
   }
 
   const prefetch = async (sessionID: string, limit: number) => {
@@ -1103,7 +1301,26 @@ export function createServerSession(
 
   const projectV2 = (reduction: V2SessionReduction) => {
     reduction.touched.forEach((messageID) => messageLoads.get(reduction.sessionID)?.touchedSource.add(messageID))
-    setData("session_message", reduction.sessionID, reconcile(reduction.messages))
+    // #1579: the V2 reducer receives `data.session_message[id] ?? []` as its
+    // base. When session_message hasn't been loaded yet (the session was just
+    // opened and the wire fetch is still in flight), the base is `[]` and the
+    // reduction contains ONLY the messages the SSE event described — typically
+    // a single message. A wholesale reconcile here would replace a fully-loaded
+    // session_message with that one-message array, wiping the timeline for one
+    // reactive tick until the next event or the wire fetch lands. Guard: never
+    // shrink an already-populated session_message; merge the touched entries
+    // into the existing array instead.
+    const existing = data.session_message[reduction.sessionID]
+    if (existing && existing.length > reduction.messages.length) {
+      const incomingIDs = new Set(reduction.messages.map((m) => m.id))
+      const merged = [
+        ...existing.filter((m) => !incomingIDs.has(m.id)),
+        ...reduction.messages,
+      ].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+      setData("session_message", reduction.sessionID, reconcile(merged))
+    } else {
+      setData("session_message", reduction.sessionID, reconcile(reduction.messages))
+    }
     if (reduction.touched.length === 0) return
 
     const touched = new Set(reduction.touched)
@@ -1186,8 +1403,10 @@ export function createServerSession(
       event.type === "session.execution.succeeded" ||
       event.type === "session.execution.failed" ||
       event.type === "session.execution.interrupted"
-    )
+    ) {
+      cancelReconcileTimer(sessionID)
       setData("session_status", sessionID, { type: "idle" })
+    }
     if (event.type === "session.retry.scheduled")
       setData("session_status", sessionID, {
         type: "retry",
@@ -1239,10 +1458,10 @@ export function createServerSession(
         const properties = event.properties as { sessionID?: string; info?: Session }
         const sessionID = properties.info?.id ?? properties.sessionID
         if (!sessionID) return
-        taskSpawnParent.delete(sessionID)
-        for (const [childSessionID, parentSessionID] of taskSpawnParent) {
-          if (parentSessionID === sessionID) taskSpawnParent.delete(childSessionID)
-        }
+        // #1649 — taskSpawnParent teardown (self + children) now lives in evict(),
+        // which also lowers the ancestor floor BEFORE severing the links. Calling
+        // evict below performs it; the manual deletes here would sever the links
+        // first and leak the floor, so they are removed.
         completedFileDiffParts.delete(sessionID)
         infoSeen.delete(sessionID)
         setData(
@@ -1262,8 +1481,66 @@ export function createServerSession(
         return
       }
       case "session.status": {
-        const props = event.properties as { sessionID: string; status: SessionStatus }
+        const props = event.properties as { sessionID: string; status: SessionStatus; seq?: number }
+        // #1637 honor seq (#1636): drop a stale/out-of-order frame — a status
+        // whose seq is <= the last seen for this session is discarded so a
+        // reordered idle cannot overwrite a live busy. Absent seq → always apply.
+        if (typeof props.seq === "number") {
+          const seen = lastStatusSeq.get(props.sessionID)
+          if (seen !== undefined && props.seq <= seen) return
+          lastStatusSeq.set(props.sessionID, props.seq)
+        }
+        // #1637 fallback clear: an authoritative idle frame ends the turn bracket.
+        // (The mid-turn floor is held by an active part stream / a fresh execution
+        // bracket — a lone idle frame does not race those; it settles a turn that
+        // has otherwise gone quiet.)
+        if ((props.status?.type ?? "idle") === "idle") clearTurnActive(props.sessionID)
+        stampStatusMutation(props.sessionID)
         setData("session_status", props.sessionID, reconcile(props.status))
+        // #1649 — if this session is a spawned child, propagate its new
+        // idle/non-idle state to its ancestors' floor (no-op otherwise).
+        refreshChildActive(props.sessionID)
+        return
+      }
+      case "session.execution.started": {
+        // #1637 turn-active floor: rises on the execution bracket the server
+        // emits for EVERY turn shape (part-bearing or not).
+        const props = event.properties as { sessionID?: string; turnFloorTimeoutMs?: number } | undefined
+        const id = props?.sessionID ?? eventID
+        if (!id) return
+        markTurnActive(id, props?.turnFloorTimeoutMs)
+        stampStatusMutation(id)
+        setData("session_status", id, { type: "busy" })
+        return
+      }
+      case "session.execution.succeeded":
+      case "session.execution.failed":
+      case "session.execution.interrupted": {
+        // #1637 terminal clear: the turn bracket closed.
+        const props = event.properties as { sessionID?: string } | undefined
+        const id = props?.sessionID ?? eventID
+        if (!id) return
+        cancelReconcileTimer(id)
+        clearTurnActive(id)
+        stampStatusMutation(id)
+        setData("session_status", id, { type: "idle" })
+        // #1649 — a child turn's terminal lowers its ancestor floor.
+        refreshChildActive(id)
+        return
+      }
+      case "session.error": {
+        // #1637 fallback clear: a Session.Event.Error site (10 in prompt.ts) and
+        // /session/abort can skip the terminal execution event — session.error
+        // clears the turn flag AND settles a busy status to idle so a swallowed
+        // terminal cannot wedge the rail (neither the turn floor nor the status
+        // floor is left up).
+        const props = event.properties as { sessionID?: string } | undefined
+        const id = props?.sessionID ?? eventID
+        if (!id) return
+        clearTurnActive(id)
+        if ((data.session_status[id]?.type ?? "idle") !== "idle") setData("session_status", id, { type: "idle" })
+        // #1649 — a child error settles it idle; lower its ancestor floor.
+        refreshChildActive(id)
         return
       }
       case "message.updated": {
@@ -1342,14 +1619,38 @@ export function createServerSession(
         const messages = data.message[part.sessionID]
         const load = messageLoads.get(part.sessionID)
         const missing = !messages?.some((message) => message.id === part.messageID)
-        // Outside a page load, accepting a part without its ordered parent event would create an unbounded orphan.
+        // A part for a message we KNOW was removed/cleared must never be
+        // accepted — that would resurrect a deleted message. This short-circuit
+        // holds whether or not a load is active, and never triggers a resync.
         if (
           missing &&
-          (!load ||
-            load.clearedMessageParts.has(part.messageID) ||
+          (load?.clearedMessageParts.has(part.messageID) ||
             removedMessages.get(part.sessionID)?.has(part.messageID))
         )
           return
+        // #1646 (transcript self-heal) — outside a page load, a part whose
+        // ordered parent message.updated we never saw is a GENUINE orphan: the
+        // classic mid-stream reconnect gap where the parent frame was the one
+        // lost and the lastEventID cursor could not replay it. Silently dropping
+        // it (the old behavior) left the row permanently absent until a manual
+        // reload. Instead, request a forced resync to backfill the parent —
+        // debounced per session (novel-messageID + an in-flight guard) so a
+        // part burst yields at most one sync, and still dropping the part itself
+        // (a part without its parent cannot be ordered into the list).
+        if (missing && !load) {
+          const known = orphanParts.get(part.sessionID)
+          const novel = !known?.has(part.messageID)
+          const orphans = known ?? new Set<string>()
+          orphans.add(part.messageID)
+          orphanParts.set(part.sessionID, orphans)
+          if (novel && !orphanResyncInflight.has(part.sessionID)) {
+            orphanResyncInflight.add(part.sessionID)
+            void sync(part.sessionID, { force: true })
+              .catch(() => {})
+              .finally(() => orphanResyncInflight.delete(part.sessionID))
+          }
+          return
+        }
         if (missing) {
           const orphans = orphanParts.get(part.sessionID) ?? new Set<string>()
           orphans.add(part.messageID)
@@ -1375,6 +1676,7 @@ export function createServerSession(
         deltaBases.delete(part.id)
         trackPartChange(part.sessionID, part.messageID, part.id)
         confirmOptimisticPart(part.sessionID, part.messageID, part)
+        clearPartStreaming(part.sessionID, part.id) // #1617 streaming floor: part finalized
         setData(
           "part_text_accum_delta",
           produce((draft) => void delete draft[part.id]),
@@ -1419,6 +1721,7 @@ export function createServerSession(
         }
         trackPartChange(props.sessionID, props.messageID, props.partID)
         clearOptimisticPart(props.sessionID, props.messageID, props.partID)
+        clearPartStreaming(props.sessionID, props.partID) // #1617 streaming floor: part removed
         setData(
           produce((draft) => {
             delete draft.part_text_accum_delta[props.partID]
@@ -1445,6 +1748,7 @@ export function createServerSession(
         const result = Binary.search(parts, props.partID, (part) => part.id)
         if (!result.found) return
         trackPartChange(props.sessionID, props.messageID, props.partID)
+        markPartStreaming(props.sessionID, props.partID) // #1617 streaming floor
         const load = messageLoads.get(props.sessionID)
         if (load) {
           const parts = load.deltaParts.get(props.messageID) ?? new Set<string>()
@@ -1674,6 +1978,32 @@ export function createServerSession(
     },
     apply,
     applyV2,
+    // #1637 — reconcile session_status from a /session/status (tri-state) fetch
+    // on a reconnect edge / gap frame. Corrects BOTH a stale idle and a stale
+    // busy the client was left holding during an outage. Recency-guarded: a
+    // downgrade of a live busy to idle is refused when the fetched snapshot is
+    // OLDER than the last local status mutation for that session (the response
+    // carries no seq, so the guard is temporal). A stale idle→busy upgrade is
+    // always safe (it can only raise a floor, never wrongly blank a live rail).
+    reconcileStatuses(statuses: Record<string, SessionStatus>, opts?: { fetchedAt?: number }) {
+      const fetchedAt = opts?.fetchedAt ?? Date.now()
+      for (const [sessionID, status] of Object.entries(statuses)) {
+        if (!status) continue
+        const current = data.session_status[sessionID]
+        const currentType = current?.type ?? "idle"
+        const nextType = status.type
+        if (currentType === nextType && current) continue
+        // Recency guard: refuse a downgrade (→ idle) when the local status was
+        // mutated AFTER this snapshot was fetched — a live busy must survive an
+        // out-of-order reconcile. Raising a floor (→ non-idle) is always applied.
+        if (nextType === "idle" && currentType !== "idle") {
+          const localAt = lastStatusMutationAt.get(sessionID) ?? 0
+          if (localAt > fetchedAt) continue
+        }
+        stampStatusMutation(sessionID)
+        setData("session_status", sessionID, reconcile(status))
+      }
+    },
   }
 }
 

@@ -190,6 +190,21 @@ export function stageFleetDataPlane(opts: StageFleetDataPlaneOptions = {}): Flee
   return { staged: true, receipt };
 }
 
+/**
+ * #1524: the honest staging receipt for the OBSERVATION-ONLY base peer-studio
+ * path. The base observation authority (index.ts `baseStudioActivates`) is
+ * entitlement-FREE — it mounts the read/observation routes for a verified
+ * serving peer without ever consulting the premium staging gate. So on the
+ * observation-only path we do NOT call `stageFleetDataPlane` (AC5: no premium
+ * plane stages even if an entitlement is resolvable); instead this returns a
+ * receipt that honestly reports `entitlement: "absent", staged: false` — the
+ * SAME semantics the #1478 base-activation surface reports, never a forged
+ * present/staged flag.
+ */
+export function observationOnlyStagingReceipt(now: () => string = () => new Date().toISOString()): FleetStagingReceipt {
+  return emptyReceipt("absent", false, now());
+}
+
 /** Convenience for logging/boot lines: a one-line staging summary. */
 export function fleetStagingSummary(result: FleetStagingResult): string {
   if (result.receipt.entitlement === "absent") return "fleet staging: entitlement absent — zero fleet surfaces";

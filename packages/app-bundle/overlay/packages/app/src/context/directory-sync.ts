@@ -119,6 +119,17 @@ export const createDirSyncContext = (
         await serverSync.session.sync(sessionID, options)
         index(sessionID)
       },
+      // #1647 S7: an INFO-ONLY forced refresh (server session.get → remember; NO
+      // message re-fetch), delegating to the server store's `resolve`. The
+      // directory store previously omitted this, so the composer's archived-flag
+      // convergence effect (session-composer-region-controller.ts) called a
+      // nonexistent `.resolve` and silently no-op'd (threw each interval tick,
+      // caught/ignored) — the owner-side prompt flip never fired. Mirrors `sync`
+      // above but never loads messages, so it is safe to poll while a stream is live.
+      async resolve(sessionID: string, options?: { force?: boolean }) {
+        await serverSync.session.resolve(sessionID, options)
+        index(sessionID)
+      },
       // #1297: the render path hydrates from the mirror WITHOUT joining
       // an in-flight task — see createServerSession's hydrate.
       async hydrate(sessionID: string) {

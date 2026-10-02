@@ -13,3 +13,14 @@ export function smoothScrollInterpolate(startY: number, targetY: number, elapsed
 /** Duration for smooth-follow scrolls (ms). Kept short so the timeline feels
  *  responsive — native smooth-behavior is 500ms+ and browser-dependent. */
 export const SMOOTH_SCROLL_DURATION = 180
+
+/** Viewport-height multiplier above which smooth scroll falls back to instant.
+ *  Animating past this threshold chases a moving target while the virtualizer
+ *  is still measuring off-screen items, producing visible jank. */
+export const SMOOTH_SCROLL_MAX_VIEWPORTS = 1.5
+
+/** Should the scroll-to-end use an instant jump instead of the 180ms animation?
+ *  True when the distance exceeds SMOOTH_SCROLL_MAX_VIEWPORTS × clientHeight. */
+export function shouldInstantScroll(target: number, current: number, clientHeight: number): boolean {
+  return Math.abs(target - current) > clientHeight * SMOOTH_SCROLL_MAX_VIEWPORTS
+}

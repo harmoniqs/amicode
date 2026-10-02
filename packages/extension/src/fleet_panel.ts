@@ -384,165 +384,17 @@ export interface FleetPanelDeps {
   upgrade?: (surface: string, onLine: (line: string) => void) => Promise<UpgradeOutcome>;
 }
 
-interface FleetPanelState {
-  loading: boolean;
-  error: string | null;
-  report: DoctorReport | null;
-  upgrade: {
-    surface: string;
-    lines: string[];
-    running: boolean;
-    receipt: Record<string, unknown> | null;
-  } | null;
+/** RETIRED (#1322, AC5): the standalone "Fleet & Versions" webview panel is
+ *  absorbed into the Fleet Manager Work Column tab. This function no longer
+ *  registers `amicode.fleet.versions` — that command now routes to the tab
+ *  (see fleet_manager_command.ts, registerFleetManagerCommands). The pure
+ *  primitives above (renderFleetSection, runDoctor, upgradeEnabled, …) are the
+ *  Versions content and stay exported: the tab's Versions route runs doctor and
+ *  ships the report to the tab. Kept as a no-op (with its singleton reset) so
+ *  callers/tests referencing it degrade honestly rather than break. */
+export function registerFleetPanel(_ctx: vscode.ExtensionContext, _deps: FleetPanelDeps = {}): void {
+  // Intentionally registers nothing — the standalone panel is retired. See the
+  // module doc and registerFleetManagerCommands for the tab-routing that
+  // replaced it.
 }
 
-/** The full webview document: CSP + the loading/error/report states + the
- *  upgrade verb's live output and receipt of record. The click-proxy script is
- *  the only script — it maps [data-action] elements to postMessage envelopes
- *  the host handles; all rendering is host-side (pure functions above). */
-function renderFleetDocument(
-  state: FleetPanelState,
-  cspSource: string,
-  nonce: string,
-): string {
-  const body: string[] = [];
-  if (state.loading) {
-    body.push(`  <p class="fleet-status">Running amico doctor…</p>`);
-  }
-  if (state.error !== null) {
-    body.push(`  <p class="fleet-error">amico doctor failed: ${escapeText(state.error)}</p>`);
-  }
-  if (state.report !== null) {
-    body.push(renderFleetSection(state.report));
-  }
-  if (state.upgrade !== null) {
-    const u = state.upgrade;
-    const receipt =
-      u.receipt === null
-        ? ""
-        : `    <div class="fleet-receipt"><span class="fleet-receipt-label">receipt of record</span>
-      <pre>${escapeText(JSON.stringify(u.receipt, null, 2))}</pre>
-    </div>`;
-    body.push(`  <div class="fleet-upgrade-log" data-surface="${escapeAttr(u.surface)}">
-    <h4>upgrade: ${escapeAttr(u.surface)} ${u.running ? "(running…)" : "(finished)"}</h4>
-    <pre class="fleet-verb-output">${u.lines.map((l) => escapeText(l)).join("\n")}</pre>
-${receipt}
-  </div>`);
-  }
-  return `<!DOCTYPE html>
-<html lang="en"><head><meta charset="UTF-8" />
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-${nonce}'; style-src ${cspSource} 'unsafe-inline';">
-<style>
-  body { margin: 0; padding: 12px 20px; color: var(--vscode-foreground, #ccc); font-family: var(--vscode-font-family, system-ui); }
-  .fleet-header { display: flex; align-items: center; justify-content: space-between; }
-  .fleet-header h3 { margin: 8px 0; }
-  .fleet-refresh { padding: 4px 14px; cursor: pointer; }
-  .fleet-status, .fleet-error { padding: 8px 0; }
-  .fleet-error { color: var(--vscode-testing-iconFailed, #f14c4c); }
-  .fleet-upgrade-log { margin-top: 16px; border-top: 1px solid var(--vscode-panel-border, #2b2b2b); padding-top: 8px; }
-  .fleet-upgrade-log h4 { margin: 4px 0; font-weight: 600; }
-  .fleet-verb-output { font-family: var(--vscode-editor-font-family, monospace); font-size: 11px; color: var(--vscode-descriptionForeground, #9d9d9d); white-space: pre-wrap; margin: 4px 0; }
-  .fleet-receipt-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--vscode-descriptionForeground, #9d9d9d); }
-  .fleet-receipt pre { font-family: var(--vscode-editor-font-family, monospace); font-size: 11px; }
-</style>
-</head><body>
-  <div id="fleet-root">
-${body.join("\n")}
-  </div>
-  <script nonce="${nonce}">
-    (function () {
-      var vscode = acquireVsCodeApi();
-      document.addEventListener("click", function (e) {
-        var el = e.target && e.target.closest ? e.target.closest("[data-action]") : null;
-        if (!el) return;
-        if (el.dataset.action === "refresh") {
-          vscode.postMessage({ type: "fleet-refresh" });
-        } else if (el.dataset.action === "upgrade") {
-          vscode.postMessage({ type: "fleet-upgrade", surface: el.dataset.surface });
-        }
-      });
-    })();
-  </script>
-</body></html>`;
-}
-
-/** Register the "Amicode: Fleet & Versions" command. Call from extension.ts
- *  activate(). Singleton panel (onboarding pattern): re-open reveals. */
-export function registerFleetPanel(ctx: vscode.ExtensionContext, deps: FleetPanelDeps = {}): void {
-  const amicoBin = resolveAmicoCli(ctx.extensionUri.fsPath);
-  const doctorFn = deps.doctor ?? (() => runDoctor({ amicoBin }));
-  const upgradeFn =
-    deps.upgrade ?? ((surface: string, onLine: (line: string) => void) => runUpgrade(surface, { amicoBin, onLine }));
-
-  ctx.subscriptions.push(
-    vscode.commands.registerCommand("amicode.fleet.versions", async () => {
-      if (currentPanel) {
-        currentPanel.reveal(vscode.ViewColumn.One);
-        return;
-      }
-      const panel = vscode.window.createWebviewPanel(
-        "amicode.fleet",
-        "Fleet & Versions",
-        vscode.ViewColumn.One,
-        { enableScripts: true },
-      );
-      currentPanel = panel;
-      const state: FleetPanelState = { loading: true, error: null, report: null, upgrade: null };
-      const nonce = Math.random().toString(36).slice(2);
-      const render = () => {
-        panel.webview.html = renderFleetDocument(state, panel.webview.cspSource, nonce);
-      };
-      const refresh = async (): Promise<void> => {
-        state.loading = true;
-        state.error = null;
-        render();
-        const r = await doctorFn();
-        state.loading = false;
-        state.report = r.report;
-        state.error = r.error;
-        render();
-      };
-      panel.webview.onDidReceiveMessage(
-        async (msg: { type?: string; surface?: string }) => {
-          if (msg?.type === "fleet-refresh") {
-            await refresh();
-          } else if (msg?.type === "fleet-upgrade" && typeof msg.surface === "string") {
-            // Re-derive repairability from the CURRENT report — the button's
-            // disabled attribute is UX, not the guard (a stale message from a
-            // dead DOM must never upgrade a non-repairable surface).
-            const record = state.report?.surfaces.find((s) => s.surface === msg.surface);
-            if (!record || !upgradeEnabled(record.verdict)) return;
-            if (state.upgrade?.running) return; // one verb at a time — the CLI's flock is the real guard anyway
-            state.upgrade = { surface: msg.surface, lines: [], running: true, receipt: null };
-            render();
-            const out = await upgradeFn(msg.surface, (line) => {
-              state.upgrade?.lines.push(line);
-              render();
-            });
-            if (state.upgrade) {
-              state.upgrade.running = false;
-              state.upgrade.receipt = out.receipt;
-            }
-            render();
-            // the table follows the CLI's post-verb truth, not the receipt's claim
-            await refresh();
-          }
-        },
-        null,
-        ctx.subscriptions,
-      );
-      panel.onDidDispose(
-        () => {
-          // Deliberately NOT killing a running upgrade child: the verb may be
-          // replacing the extension hosting this panel (spec D3) — the receipt
-          // store is the exit state of record, not the panel's survival.
-          currentPanel = undefined;
-        },
-        null,
-        ctx.subscriptions,
-      );
-      render();
-      await refresh();
-    }),
-  );
-}
