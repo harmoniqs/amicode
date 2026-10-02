@@ -26,11 +26,12 @@
 // forces the full window, per the issue's AC); vault writes target the
 // personal mount (the amico-vault routing rule) — `--vault` overrides for
 // tests, $AMICO_VAULTS_ROOT/$AMICO_VAULT_DIR already flow through mounts.ts.
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { mkdtempSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { askJev, jevDisabled, type JevDeps, type JevQuestion } from "./jev_client.js";
 import type { JevPassStatus } from "./jev_curation.js";
 import { isGreetingTitle } from "./session_junk.js";
@@ -215,9 +216,10 @@ export interface CorrectionVerdict {
   error?: string;
 }
 
-/** The filing gate (pure): a kind-carrying correction at ≥ 0.90 confidence,
- *  corroborated by the noul at ≥ 0.5. `not-a-correction` never files;
- *  anything below threshold never files. */
+/** The filing gate (pure): a kind-carrying correction at ≥ 0.80 confidence
+ *  (CORRECTIONS_CONFIDENCE_MIN — recalibrated by the pasqal backfill), corroborated
+ *  by the noul at ≥ 0.5. `not-a-correction` never files; anything below
+ *  threshold never files. */
 export function filingAdmits(kind: string | undefined, kindConfidence: number, noul: number): boolean {
   if (kind === undefined) return false;
   if (!(CORRECTION_KINDS as readonly string[]).includes(kind)) return false;
@@ -234,6 +236,15 @@ export function severityOf(sev: string | undefined): string {
 /** P0/P1 severities ping Slack; everything else files silently. */
 export function pingWorthy(sev: string): boolean {
   return sev === "P0" || sev === "P1";
+}
+
+const SEVERITY_RANK: Record<string, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
+
+/** The cluster's severity is its WORST occurrence (a P2 cluster that escalates
+ *  to P1 on re-correction files as P1 — the ping gate reads this, so a first-
+ *  occurrence-severity would silently swallow the escalation). */
+export function maxSeverity(a: AdmittedCorrection[]): string {
+  return a.reduce((worst, o) => (SEVERITY_RANK[o.severity] < SEVERITY_RANK[worst] ? o.severity : worst), "P3");
 }
 
 /** The kind → finding-type mapping (TEMPLATE.md's two shapes): drift is a
@@ -306,7 +317,7 @@ export function readWatermarkMs(env: NodeJS.ProcessEnv): number | undefined {
 
 export function writeWatermarkMs(env: NodeJS.ProcessEnv, ms: number): void {
   const file = correctionsWatermarkFile(env);
-  mkdirSync(join(file, ".."), { recursive: true });
+  mkdirSync(dirname(file), { recursive: true });
   writeFileSync(file, JSON.stringify({ schema_version: 1, last_scanned_ms: ms, updated_at: new Date(ms).toISOString() }, null, 2) + "\n");
 }
 
@@ -357,6 +368,34 @@ function slugOf(s: string): string {
   return slug === "" ? "correction" : slug;
 }
 
+/** Escape untrusted text for a double-quoted YAML scalar — user messages are
+ *  attacker-controlled bytes from the chat DB: a bare `"` would end the
+ *  scalar early and let the message inject frontmatter keys (a `status:
+ *  fixed` line inside evidence would poison both Obsidian and the dedup
+ *  matcher). Newlines are collapsed first; backslash and quote are escaped. */
+function yamlScalar(s: string): string {
+  return s.replace(/\s+/g, " ").trim().replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+/** Atomic vault write: tmp sibling + rename — a crash mid-write must never
+ *  truncate a finding (the TEMPLATE rule: the original claim is never
+ *  rewritten, and a torn write rewrites it the hard way). The house pattern
+ *  (thread-noul's map write, slack_verb's token write). */
+function atomicWrite(target: string, content: string): void {
+  mkdirSync(dirname(target), { recursive: true });
+  const tmp = join(dirname(target), `.${randomBytes(6).toString("hex")}.tmp`);
+  try {
+    writeFileSync(tmp, content);
+    renameSync(tmp, target);
+  } finally {
+    try {
+      rmSync(tmp, { force: true });
+    } catch {
+      // rename moved it; a failed rm on a nonexistent tmp is fine
+    }
+  }
+}
+
 function isoDate(ms: number): string {
   return new Date(ms).toISOString().slice(0, 10);
 }
@@ -390,6 +429,7 @@ export function renderFinding(a: AdmittedCorrection[], passIso: string, seq: num
     )
     .join("\n");
   const autoNote = `\nAuto-filed by \`amico corrections scan\` (pass ${passIso}) — kind \`${first.kind}\`, severity ${a.map((o) => o.severity).join("/")}, Jev confidence ${first.kindConfidence.toFixed(2)}, noul ${first.noul.toFixed(2)}. Triage: the skills-integrity loop, step 3. Application is human-gated.\n`;
+  const severity = maxSeverity(a);
   const frontmatter =
     type === "skill-finding"
       ? [
@@ -397,9 +437,9 @@ export function renderFinding(a: AdmittedCorrection[], passIso: string, seq: num
           "type: skill-finding",
           `date: ${date}`,
           `finding_id: ${id}`,
-          `severity: ${a[0]!.severity}`,
+          `severity: ${severity}`,
           "status: open",
-          `session_id: "${first.candidate.sessionId}"`,
+          `session_id: "${yamlScalar(first.candidate.sessionId)}"`,
           `source: "corrections-scan pass ${passIso}"`,
           "skills: []",
           `tags: [corrections-scan, ${first.kind}]`,
@@ -414,9 +454,9 @@ export function renderFinding(a: AdmittedCorrection[], passIso: string, seq: num
           `date: ${date}`,
           `proposal_id: ${id}`,
           "status: open",
-          `session_id: "${first.candidate.sessionId}"`,
+          `session_id: "${yamlScalar(first.candidate.sessionId)}"`,
           "evidence:",
-          ...a.map((o) => `  - "${o.candidate.sessionId} ${new Date(o.candidate.timeCreated).toISOString()}: ${o.candidate.userText.replace(/\s+/g, " ").trim().slice(0, 160)}"`),
+          ...a.map((o) => `  - "${yamlScalar(`${o.candidate.sessionId} ${new Date(o.candidate.timeCreated).toISOString()}: ${o.candidate.userText.slice(0, 160)}`)}"`),
           `tags: [corrections-scan, new-skill, ${first.kind}]`,
           `correction_kind: ${first.kind}`,
           "corrections_scan: true",
@@ -431,8 +471,10 @@ export function renderFinding(a: AdmittedCorrection[], passIso: string, seq: num
 }
 
 /** Find an existing OPEN scan finding for the same session + kind — the
- *  cross-pass dedup (append an UPDATE, never a duplicate file). Naive
- *  frontmatter scan: the scan's own files carry flat scalar keys. */
+ *  cross-pass dedup (append an UPDATE, never a duplicate file). Scans ONLY
+ *  the frontmatter block: the body quotes user text verbatim, and matching
+ *  against the body would let a pasted finding-like message inside one
+ *  finding's quotes match a different (session, kind) pair. */
 export function findExistingScanFinding(dir: string, sessionId: string, kind: string): string | undefined {
   if (!existsSync(dir)) return undefined;
   for (const name of readdirSync(dir).sort()) {
@@ -443,10 +485,13 @@ export function findExistingScanFinding(dir: string, sessionId: string, kind: st
     } catch {
       continue;
     }
-    if (!content.includes("corrections_scan: true")) continue;
-    if (!content.includes(`correction_kind: ${kind}`)) continue;
-    if (!content.includes(`session_id: "${sessionId}"`)) continue;
-    if (!/\bstatus:\s*open\b/.test(content)) continue;
+    // the frontmatter block only: between the opening and closing --- lines
+    const fm = /^---\n([\s\S]*?)\n---/.exec(content)?.[1];
+    if (fm === undefined) continue;
+    if (!fm.includes("corrections_scan: true")) continue;
+    if (!fm.includes(`correction_kind: ${kind}`)) continue;
+    if (!fm.includes(`session_id: "${yamlScalar(sessionId)}"`)) continue;
+    if (!/\bstatus:\s*open\b/.test(fm)) continue;
     return join(dir, name);
   }
   return undefined;
@@ -469,6 +514,7 @@ export function renderDigestSection(p: {
   jevStatus: string;
   filed: { path: string; type: string; kind: string; severity: string; occurrences: number }[];
   unverified: { sessionId: string; excerpt: string }[];
+  unverifiedOverflow: number;
   overflow: number;
   pinged: string | undefined;
 }): string {
@@ -478,9 +524,10 @@ export function renderDigestSection(p: {
     `- window: ${p.days}d (since ${p.sinceIso}); scanned ${p.scanned} messages, ${p.candidates} correction candidates; jev: ${p.jevStatus}`,
     `- filed: ${p.filed.length} finding(s)${p.filed.length > 0 ? ` — ${p.filed.map((f) => `${f.type} ${f.severity} ${f.kind} (${f.occurrences}×) ${f.path}`).join("; ")}` : ""}`,
   ];
-  if (p.unverified.length > 0) {
-    lines.push(`- unverified candidates (jev ${p.jevStatus} — nothing filed, listed for the eye): ${p.unverified.length}`);
+  if (p.unverified.length > 0 || p.unverifiedOverflow > 0) {
+    lines.push(`- unverified candidates (jev ${p.jevStatus} — nothing filed, listed for the eye): ${p.unverified.length + p.unverifiedOverflow}`);
     for (const u of p.unverified) lines.push(`  - ${u.sessionId}: ${u.excerpt}`);
+    if (p.unverifiedOverflow > 0) lines.push(`  - …and ${p.unverifiedOverflow} more`);
   }
   if (p.overflow > 0) lines.push(`- overflow: ${p.overflow} candidate(s) past the --max-jev cap were not judged this pass`);
   if (p.pinged !== undefined) lines.push(`- slack: P0/P1 ping sent to ${p.pinged}`);
@@ -532,21 +579,29 @@ export interface CorrectionsDeps {
 
 /** The default middle layer: ONE askJev call per candidate (three questions,
  *  one receipt), unavailable/disabled short-circuits the whole pass — the
- *  curation loop convention (no call is made after unavailability is known). */
+ *  curation loop convention (no call is made after unavailability is known).
+ *  Circuit breaker: 5 consecutive transport/http/malformed failures degrade
+ *  the pass to `error` — at --max-jev 400 a hanging endpoint must not cost
+ *  400 × 10 s of serial waiting; the remaining candidates read as unverified. */
+const JEV_CONSECUTIVE_FAILURE_BREAK = 5;
+
 async function jevCorrections(
   candidates: CorrectionCandidate[],
   deps: { env: NodeJS.ProcessEnv; jev?: JevDeps },
-): Promise<{ status: JevPassStatus; verdicts: Record<string, CorrectionVerdict> }> {
+): Promise<{ status: JevPassStatus | "error"; verdicts: Record<string, CorrectionVerdict> }> {
   const verdicts: Record<string, CorrectionVerdict> = {};
+  let consecutiveFailures = 0;
   for (const c of candidates) {
     const { questions, state } = correctionsQuestions(c);
     const res = await askJev(questions, state, { sessionId: c.sessionId, deps: deps.jev ?? { env: deps.env } });
     if (!res.ok) {
       if (res.reason === "disabled" || res.reason === "key-missing")
         return { status: res.reason === "disabled" ? "disabled" : "unavailable", verdicts };
+      if (++consecutiveFailures >= JEV_CONSECUTIVE_FAILURE_BREAK) return { status: "error", verdicts };
       verdicts[c.messageId] = { error: res.error };
       continue;
     }
+    consecutiveFailures = 0;
     const correction = res.answers.correction;
     const kind = res.answers.kind;
     const severity = res.answers.severity;
@@ -628,12 +683,17 @@ export async function correctionsScan(argv: string[], env: NodeJS.ProcessEnv, de
   }
 
   // ── the gate (admitted findings) + clustering ────────────────────────────
+  // Only a fully-run pass admits: verdicts from a partially-failed pass (key
+  // vanished mid-loop, circuit breaker) must not show up as would-be findings
+  // in the dry-run tuning output.
   const admitted: AdmittedCorrection[] = [];
-  for (const c of judged) {
-    const v = verdicts[c.messageId];
-    if (v === undefined || v.error !== undefined || v.kind === undefined) continue;
-    if (!filingAdmits(v.kind, v.kind_confidence ?? 0, v.noul ?? 0)) continue;
-    admitted.push({ candidate: c, kind: v.kind as CorrectionKind, severity: severityOf(v.severity), kindConfidence: v.kind_confidence ?? 0, noul: v.noul ?? 0 });
+  if (jevStatus === "ran") {
+    for (const c of judged) {
+      const v = verdicts[c.messageId];
+      if (v === undefined || v.error !== undefined || v.kind === undefined) continue;
+      if (!filingAdmits(v.kind, v.kind_confidence ?? 0, v.noul ?? 0)) continue;
+      admitted.push({ candidate: c, kind: v.kind as CorrectionKind, severity: severityOf(v.severity), kindConfidence: v.kind_confidence ?? 0, noul: v.noul ?? 0 });
+    }
   }
   const clusters = new Map<string, AdmittedCorrection[]>();
   for (const a of admitted) {
@@ -645,7 +705,7 @@ export async function correctionsScan(argv: string[], env: NodeJS.ProcessEnv, de
     session_id: list[0]!.candidate.sessionId,
     session_title: list[0]!.candidate.sessionTitle,
     kind: list[0]!.kind,
-    severity: list[0]!.severity,
+    severity: maxSeverity(list),
     occurrences: list.length,
     quotes: list.map((o) => o.candidate.userText.replace(/\s+/g, " ").trim().slice(0, 140)),
   }));
@@ -660,28 +720,35 @@ export async function correctionsScan(argv: string[], env: NodeJS.ProcessEnv, de
     let seq = 0;
     for (const list of clusters.values()) {
       const first = list[0]!;
+      const severity = maxSeverity(list);
       const existing = findExistingScanFinding(findingsDir, first.candidate.sessionId, first.kind);
       if (existing !== undefined) {
-        writeFileSync(existing, readFileSync(existing, "utf8").replace(/\n+$/, "") + renderUpdate(list, passIso));
+        atomicWrite(existing, readFileSync(existing, "utf8").replace(/\n+$/, "") + renderUpdate(list, passIso));
         updated.push(existing);
         continue;
       }
+      // Collision-safe: the seq is pass-scoped, so a triaged closed finding
+      // from an earlier pass can regenerate the same filename (same first-
+      // occurrence date, restarted seq, same title slug) — bump until free
+      // instead of silently overwriting triage state.
       seq++;
-      const { filename, content } = renderFinding(list, passIso, seq);
-      const target = join(findingsDir, filename);
-      writeFileSync(target, content);
-      filed.push({ path: target, type: findingTypeOf(first.kind), kind: first.kind, severity: first.severity, occurrences: list.length });
+      let rendered = renderFinding(list, passIso, seq);
+      while (existsSync(join(findingsDir, rendered.filename))) rendered = renderFinding(list, passIso, ++seq);
+      const target = join(findingsDir, rendered.filename);
+      atomicWrite(target, rendered.content);
+      filed.push({ path: target, type: findingTypeOf(first.kind), kind: first.kind, severity, occurrences: list.length });
     }
     writeWatermarkMs(env, now);
   }
 
   // ── the digest (apply only) ──────────────────────────────────────────────
   // "unverified" = candidates Jev never cleanly judged: the whole pass
-  // unavailable/disabled, or the individual call failed (error verdict) —
-  // digest rows for the eye, never findings.
+  // unavailable/disabled/errored, or the individual call failed (error
+  // verdict) — digest rows for the eye, never findings. The COUNT is true
+  // (uncapped); the digest renders the first DIGEST_UNVERIFIED_CAP + an
+  // overflow line.
   const unverifiedList = judged
     .filter((c) => jevStatus !== "ran" || (verdicts[c.messageId] !== undefined && verdicts[c.messageId]!.error !== undefined))
-    .slice(0, DIGEST_UNVERIFIED_CAP)
     .map((c) => ({
       sessionId: c.sessionId,
       excerpt: c.userText.replace(/\s+/g, " ").trim().slice(0, 120),
@@ -697,15 +764,15 @@ export async function correctionsScan(argv: string[], env: NodeJS.ProcessEnv, de
       candidates: all.length,
       jevStatus,
       filed,
-      unverified: [...unverifiedList, ...(jevStatus === "ran" ? [] : judged.slice(DIGEST_UNVERIFIED_CAP).map((c) => ({ sessionId: c.sessionId, excerpt: "…" })))].slice(0, DIGEST_UNVERIFIED_CAP),
+      unverified: unverifiedList.slice(0, DIGEST_UNVERIFIED_CAP),
+      unverifiedOverflow: Math.max(0, unverifiedList.length - DIGEST_UNVERIFIED_CAP),
       overflow,
       pinged: undefined,
     });
-    mkdirSync(join(digestFile, ".."), { recursive: true });
     if (existsSync(digestFile)) {
-      writeFileSync(digestFile, readFileSync(digestFile, "utf8").replace(/\n+$/, "") + "\n\n" + section.replace(/\n+$/, "") + "\n");
+      atomicWrite(digestFile, readFileSync(digestFile, "utf8").replace(/\n+$/, "") + "\n\n" + section.replace(/\n+$/, "") + "\n");
     } else {
-      writeFileSync(digestFile, DIGEST_HEADER + "\n" + section.replace(/\n+$/, "") + "\n");
+      atomicWrite(digestFile, DIGEST_HEADER + "\n" + section.replace(/\n+$/, "") + "\n");
     }
     // ── the P0/P1 ping (fail-open: a failed post is a warning, never a failed pass) ──
     const channel = pingChannel(argv, env);
@@ -714,7 +781,7 @@ export async function correctionsScan(argv: string[], env: NodeJS.ProcessEnv, de
       const text = [`corrections-scan ${passIso}: ${pings.length} P0/P1 finding(s) filed`, "", ...pings.map((f) => `- ${f.severity} ${f.kind} (${f.occurrences}×): ${f.path}`)].join("\n");
       const post = deps.post !== undefined ? deps.post(channel, text) : postViaAmicoSlack(channel, text);
       ping = { ...post, channel };
-      writeFileSync(digestFile, readFileSync(digestFile, "utf8").replace(/\n+$/, "") + `\n- slack: ${post.ok ? `P0/P1 ping sent to ${channel}` : `ping FAILED (${post.error ?? "unknown"}) — findings are still filed`}\n`);
+      atomicWrite(digestFile, readFileSync(digestFile, "utf8").replace(/\n+$/, "") + `\n- slack: ${post.ok ? `P0/P1 ping sent to ${channel}` : `ping FAILED (${post.error ?? "unknown"}) — findings are still filed`}\n`);
     }
   }
 

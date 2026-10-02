@@ -23,6 +23,7 @@ import {
   filingAdmits,
   findExistingScanFinding,
   isCorrectionCandidate,
+  maxSeverity,
   pingWorthy,
   readWatermarkMs,
   renderDigestSection,
@@ -199,6 +200,28 @@ describe("finding rendering (TEMPLATE shapes)", () => {
     expect(clusterKey(a1)).not.toBe(clusterKey(a3));
     expect(clusterKey(a1)).not.toBe(clusterKey(a4));
   });
+
+  it("the cluster severity is its WORST occurrence — an escalation pings", () => {
+    const quiet = admitted({ severity: "P2" }, cand({ sessionId: "ses_a" }));
+    const escalated = admitted({ severity: "P0" }, cand({ sessionId: "ses_a" }));
+    expect(maxSeverity([quiet, escalated])).toBe("P0");
+    expect(maxSeverity([quiet])).toBe("P2");
+  });
+
+  it("escapes hostile user text in frontmatter evidence (review finding: YAML scalar injection)", () => {
+    const hostile = cand({
+      userText: 'x", status: fixed, y: " — he said "stop" and injected \\ backslashes',
+    });
+    const { content } = renderFinding([admitted({ kind: "behavior-gap" }, hostile)], "2026-10-02T00:00:00Z", 1);
+    const fm = /^---\n([\s\S]*?)\n---/.exec(content)![1]!;
+    // the evidence value carries the injection attempt ESCAPED, inside its scalar
+    expect(fm).toContain('\\"');
+    expect(fm).toContain("\\\\");
+    // and no injected key line materialized in the frontmatter
+    expect(fm).not.toMatch(/^status: fixed$/m);
+    // the block still closes: exactly one closing --- after the opening one
+    expect(content).toMatch(/^---\n[\s\S]*?\n---\n/);
+  });
 });
 
 describe("cross-pass dedup (UPDATE appends, never duplicates)", () => {
@@ -241,6 +264,7 @@ describe("the digest section", () => {
       jevStatus: "ran",
       filed: [{ path: "/v/finding.md", type: "skill-proposal", kind: "behavior-gap", severity: "P1", occurrences: 2 }],
       unverified: [],
+      unverifiedOverflow: 0,
       overflow: 0,
       pinged: undefined,
     });
@@ -248,6 +272,24 @@ describe("the digest section", () => {
     expect(section).toContain("jev: ran");
     expect(section).toContain("filed: 1 finding(s)");
     expect(section).toContain("behavior-gap");
+  });
+
+  it("renders the TRUE unverified count with a capped list + overflow line", () => {
+    const section = renderDigestSection({
+      passIso: "2026-10-02T00:00:00Z",
+      days: 7,
+      sinceIso: "2026-09-25T00:00:00Z",
+      scanned: 42,
+      candidates: 25,
+      jevStatus: "unavailable",
+      filed: [],
+      unverified: Array.from({ length: 20 }, (_, i) => ({ sessionId: `s${i}`, excerpt: "no" })),
+      unverifiedOverflow: 5,
+      overflow: 0,
+      pinged: undefined,
+    });
+    expect(section).toContain("unverified candidates (jev unavailable — nothing filed, listed for the eye): 25");
+    expect(section).toContain("…and 5 more");
   });
 });
 
@@ -417,16 +459,71 @@ describe("the scan flow", () => {
     expect(readdirSync(join(vault, "amicode", "skills-integrity", "findings"))).toHaveLength(1);
   });
 
-  it("fail-open: jev unavailable files NOTHING, and the digest lists the candidates as unverified", async () => {
+  it("fail-open: jev unavailable files NOTHING, advances NO watermark, and the digest lists the candidates as unverified", async () => {
     const r = await correctionsScan(argv(["--apply"]), env(), { jev: fakeJev("unavailable") });
     const json = r.json as Record<string, unknown>;
     expect(r.code).toBe(0);
     expect(json.jev_status).toBe("unavailable");
     expect(json.filed).toEqual([]);
-    expect(json.unverified).toBe(2);
+    expect(json.unverified).toBe(2); // the TRUE count, not the render cap
     expect(existsSync(join(vault, "amicode", "skills-integrity", "findings"))).toBe(false);
+    expect(existsSync(correctionsWatermarkFile(env()))).toBe(false); // a failed pass never advances the watermark
     const digest = readFileSync(join(vault, "dashboards", "user-corrections.md"), "utf8");
     expect(digest).toContain("unverified candidates (jev unavailable");
+  });
+
+  it("collision-safe filenames: a triaged CLOSED finding with the same generated name is never overwritten (review finding)", async () => {
+    // Pre-seed a closed scan finding that the new pass would regenerate the
+    // filename of: same first-occurrence date (today), same seq (cs1), same slug.
+    const findingsDir = join(vault, "amicode", "skills-integrity", "findings");
+    mkdirSync(findingsDir, { recursive: true });
+    const date = new Date(now).toISOString().slice(0, 10);
+    const collisionPath = join(findingsDir, `proposal-${date}-cs1-pasqal-gate-autoresearch.md`);
+    writeFileSync(collisionPath, renderFinding([admitted({ kind: "behavior-gap", severity: "P1" }, cand({ sessionId: "ses_paq", sessionTitle: "Pasqal gate autoresearch", timeCreated: min(50) }))], "2026-09-01T00:00:00Z", 1).content.replace("status: open", "status: fixed").replace("finding_id: CS-1", "finding_id: CS-1") + "\n\nTRIAGED CONTENT — MUST SURVIVE\n");
+    const r = await correctionsScan(argv(["--apply"]), env(), { jev: fakeJev() });
+    const json = r.json as Record<string, unknown>;
+    const filed = json.filed as { path: string }[];
+    expect(filed).toHaveLength(1);
+    // the new finding got a bumped seq, not the colliding name
+    expect(filed[0]!.path).not.toBe(collisionPath);
+    // the triaged original is byte-identical — no overwrite, no UPDATE append
+    expect(readFileSync(collisionPath, "utf8")).toContain("TRIAGED CONTENT — MUST SURVIVE");
+    expect(readFileSync(collisionPath, "utf8")).toContain("status: fixed");
+  });
+
+  it("an escalating cluster (first P2, then P0) files as P0 and pings", async () => {
+    const calls: string[] = [];
+    const r = await correctionsScan(argv(["--apply", "--post", "#fleet"]), env(), {
+      jev: async (cs: CorrectionCandidate[]) => {
+        const verdicts: Record<string, { noul: number; kind: string; kind_confidence: number; severity: string }> = {};
+        cs.forEach((c, i) => {
+          verdicts[c.messageId] = { noul: 0.9, kind: "behavior-gap", kind_confidence: 0.93, severity: i === 0 ? "p2" : "p0" };
+        });
+        return { status: "ran" as const, verdicts };
+      },
+      post: (_ch, text) => {
+        calls.push(text);
+        return { ok: true };
+      },
+    });
+    const json = r.json as Record<string, unknown>;
+    const filed = json.filed as { severity: string }[];
+    expect(filed).toHaveLength(1);
+    expect(filed[0]!.severity).toBe("P0");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toContain("P0");
+  });
+
+  it("the scan opens the DB READ-ONLY (chmod 444 — the server owns the DB)", async () => {
+    const { chmodSync } = await import("node:fs");
+    chmodSync(db, 0o444);
+    try {
+      const r = await correctionsScan(argv(), env(), { jev: fakeJev() });
+      expect(r.code).toBe(0);
+      expect((r.json as Record<string, unknown>).candidates).toBe(2);
+    } finally {
+      chmodSync(db, 0o644);
+    }
   });
 
   it("below-threshold confidence never files", async () => {
