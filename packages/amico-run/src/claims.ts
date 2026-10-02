@@ -209,17 +209,23 @@ function lintPointer(pointer: string, substrates: LintSubstrates, db: { sessions
 
 /** Load the chat-side ids (read-only) so each pointer is one set probe, not a
  *  query — the lint never writes a byte to the substrate. A missing DB yields
- *  empty sets (every chat pointer is then honestly flagged). */
-function loadChatIds(db: string | undefined): { sessions: Set<string>; messages: Set<string> } {
+ *  empty sets (every chat pointer is then honestly flagged); an UNREADABLE DB
+ *  (exists but not a chat DB) is a named error so the lint reports the broken
+ *  substrate instead of crashing or silently waving pointers through. */
+function loadChatIds(db: string | undefined): { sessions: Set<string>; messages: Set<string>; dbError?: string } {
   if (db === undefined || !existsSync(db)) return { sessions: new Set(), messages: new Set() };
-  const batch = sqliteBatch(db, "ro", [
-    { sql: "SELECT id FROM session" },
-    { sql: "SELECT id FROM message" },
-  ]);
-  return {
-    sessions: new Set(batch.results[0].rows.map((r) => String(r.id))),
-    messages: new Set(batch.results[1].rows.map((r) => String(r.id))),
-  };
+  try {
+    const batch = sqliteBatch(db, "ro", [
+      { sql: "SELECT id FROM session" },
+      { sql: "SELECT id FROM message" },
+    ]);
+    return {
+      sessions: new Set(batch.results[0].rows.map((r) => String(r.id))),
+      messages: new Set(batch.results[1].rows.map((r) => String(r.id))),
+    };
+  } catch (e) {
+    return { sessions: new Set(), messages: new Set(), dbError: e instanceof Error ? e.message : String(e) };
+  }
 }
 
 /** Lint the claims registry: every *.md's frontmatter must BE a valid claim
@@ -239,6 +245,7 @@ export function lintClaimsRegistry(registryDir: string, substrates: LintSubstrat
 
   const chatIds = loadChatIds(substrates.db);
   const findings: string[] = [];
+  if (chatIds.dbError !== undefined) findings.push(`chat substrate unreadable: ${chatIds.dbError} — chat pointers are flagged, not waved through`);
   for (const file of files) {
     const raw = readFileSync(join(registryDir, file), "utf8");
     const fm = parseFrontmatter(raw);

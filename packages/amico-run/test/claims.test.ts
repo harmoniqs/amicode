@@ -256,6 +256,19 @@ con.commit(); con.close()
     expect(lintClaimsRegistry(fine, { vaultRoot: VAULT_FIXTURE }).ok).toBe(true);
   });
 
+  it("an unreadable chat substrate is a NAMED finding, never a crash — chat pointers stay flagged, not waved through", () => {
+    const dbDir = mkdtempSync(join(tmpdir(), "claims-db-"));
+    const garbage = join(dbDir, "not-a-db");
+    writeFileSync(garbage, "definitely not sqlite\n");
+    const r = lintClaimsRegistry(
+      writeRegistry({ "chat.md": claimNote({ evidence: ["chat-session/ses_123"] }) }),
+      { db: garbage },
+    );
+    expect(r.ok).toBe(false);
+    expect(r.findings.some((f) => f.includes("chat substrate unreadable"))).toBe(true);
+    expect(r.findings.some((f) => f.includes("chat-session/ses_123: unresolved"))).toBe(true);
+  });
+
   it("flags a malformed note and ignores subdirectories (candidates/ is not the registry proper)", () => {
     const dir = writeRegistry({ "broken.md": "no frontmatter at all\n" });
     const r = lintClaimsRegistry(dir, { vaultRoot: VAULT_FIXTURE });

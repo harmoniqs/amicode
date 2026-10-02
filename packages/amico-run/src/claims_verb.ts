@@ -90,8 +90,8 @@ function projectSub(rest: string[], env: NodeJS.ProcessEnv, now: () => Date): Ve
     return fail(`--type must be one of (${CLAIM_TYPES.join(", ")}), got "${claimType}"`);
   }
 
-  const defaultOut = mount(env) !== undefined ? join(mount(env)!.path, "amicode", "claims") : undefined;
-  const registry = out ?? defaultOut;
+  const m = mount(env);
+  const registry = out ?? (m !== undefined ? join(m.path, "amicode", "claims") : undefined);
   if (registry === undefined)
     return fail("no personal vault mount resolved — pass --out <dir> explicitly (the claims registry is never a guess)");
 
@@ -126,12 +126,6 @@ function projectSub(rest: string[], env: NodeJS.ProcessEnv, now: () => Date): Ve
   return { json: { verb: "claims", ok: true, dry_run: false, valid: true, wrote: target, ...claim }, code: 0 };
 }
 
-// Bun/node readFile promise-free: cards are small; sync read is the verb norm.
-function readFileRaw(p: string): string {
-  // eslint-disable-next-line
-  return readFileSyncUtf8(p);
-}
-
 // ── claims lint ───────────────────────────────────────────────────────────────
 
 function lintSub(rest: string[], env: NodeJS.ProcessEnv): VerbResult {
@@ -154,12 +148,13 @@ function lintSub(rest: string[], env: NodeJS.ProcessEnv): VerbResult {
   const dir = registry ?? defaultRegistry;
   if (dir === undefined)
     return fail("no personal vault mount resolved — pass --registry <dir> explicitly (the claims registry is never a guess)");
+  if (!existsSync(dir))
+    return fail(`claims registry not found: ${dir} (empty is fine — missing is a typo or nothing projected yet)`);
   const vaultRoot = vault ?? m?.path;
 
   const r = lintClaimsRegistry(dir, { vaultRoot, db });
-  const base = { verb: "claims", ok: r.ok, subcommand: "lint", registry: dir, files: r.files.length, findings: r.findings };
-  if (r.findings.length === 0 && r.files.length === 0 && !existsSync(dir)) {
-    return { json: { ...base, clean: true, note: "registry is empty (or does not exist)" }, code: 0 };
-  }
-  return { json: { ...base, clean: r.ok }, code: r.ok ? 0 : 1 };
+  return {
+    json: { verb: "claims", ok: r.ok, subcommand: "lint", registry: dir, files: r.files.length, findings: r.findings, clean: r.ok },
+    code: r.ok ? 0 : 1,
+  };
 }
