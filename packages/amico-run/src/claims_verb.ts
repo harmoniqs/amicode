@@ -46,10 +46,11 @@
 // the vault is read for resolution; this verb never writes anywhere but the
 // claims registry (or a --out the caller named). No personal mount and no
 // explicit target → refuse (never guess a vault).
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { parseMemoryCard, projectMemoryCard, renderClaimNote, lintClaimsRegistry, claimFileBasename, loadRegistryClaims, renderIndexView, parseClaimNote, renderStampedNote, stampAdoption, STAMP_SOURCES, planAdoptionSweep, type AdoptionCitation } from "./claims.js";
+import { runLifecyclePass, renderQueueFile, rewriteClaimNote, DECAY_WINDOW_DAYS, type ContradictionSignal } from "./lifecycle.js";
 import { personalMount, resolveMountStack } from "./mounts.js";
 import { validateClaim, CLAIM_TYPES, type ClaimType } from "@amicode/schema";
 import type { VerbResult } from "./verbs.js";
@@ -60,6 +61,9 @@ const USAGE = [
   "amico claims render [--registry <dir>] [--out <MEMORY.md>] [--cap-per-type <n>] [--apply]",
   "amico claims stamp <claim.md> --via <recommend-outcome|solve-run> --ref <citation> [--detail <text>] [--registry <dir>] [--apply]",
   "amico claims sweep [--registry <dir>] [--problems <dir>] [--apply]",
+  "amico claims lifecycle [--registry <dir>] [--signals <contradictions.jsonl>]",
+  "                       [--corroborate-threshold <n>] [--merge-threshold <f>] [--decay-days <n>]",
+  "                       [--queue <file>] [--apply]",
   "",
   "  project — mechanically convert a memory card into a registry claim",
   "  (all fields preserved, provenance intact). Dry-run by default; --apply writes.",
@@ -72,6 +76,12 @@ const USAGE = [
   "  Dry-run by default; --apply writes.",
   "  sweep — the nightly backfill: stamp every claim its problems' recommend-outcome",
   "  events (events.jsonl) adopted. Idempotent: re-sweep changes nothing.",
+  "  lifecycle — the nightly dedupe-merge + status-transition + decay pass",
+  "  (#1684). Merges same-claim pairs onto the older claim, corroborates at the",
+  "  evidence threshold, refutes on contradicted-by-run signals, and proposes",
+  "  decayed claims for review (the queue never acts). Dry-run by default;",
+  "  --apply rewrites survivor frontmatter (prose untouched), archives",
+  "  duplicates under archive/, and writes the queue. Findings exit 1.",
 ].join("\n");
 
 function fail(error: string, extra: Record<string, unknown> = {}): VerbResult {
@@ -96,6 +106,7 @@ export async function claimsVerb(
   if (sub === "render") return renderSub(rest, env, now);
   if (sub === "stamp") return stampSub(rest, env, now);
   if (sub === "sweep") return sweepSub(rest, env, now);
+  if (sub === "lifecycle") return lifecycleSub(rest, env, now);
   return fail(sub === undefined ? "no subcommand" : `unknown subcommand "${sub}"`);
 }
 
@@ -462,4 +473,134 @@ function sweepSub(rest: string[], env: NodeJS.ProcessEnv, now: () => Date): Verb
     changed.push(file);
   }
   return { json: { ...json, stamped: changed.length, changed: [...new Set(changed)].sort() }, code: 0 };
+}
+
+// ── claims lifecycle — the nightly dedupe-merge + transitions + decay pass ────
+
+/** Parse a --signals file (JSONL, one contradicted-by-run signal per line).
+ *  Every malformed line becomes a NAMED finding — a signal is never guessed,
+ *  never silently dropped. A missing file is the caller's error (exit 64). */
+function loadSignals(file: string): { signals: ContradictionSignal[]; findings: string[] } | { error: string } {
+  if (!existsSync(file)) return { error: `--signals file not found: ${file} (contradiction signals are explicit — never a guess)` };
+  const signals: ContradictionSignal[] = [];
+  const findings: string[] = [];
+  const lines = readFileSync(file, "utf8").split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!.trim();
+    if (line === "") continue;
+    try {
+      const s = JSON.parse(line) as Record<string, unknown>;
+      if (typeof s.claim !== "string" || s.claim === "" || typeof s.run !== "string" || s.run === "" || (s.note !== undefined && typeof s.note !== "string")) {
+        findings.push(`signals line ${i + 1}: not a valid signal (expected {claim, run, note?} with non-empty string claim and run) — skipped`);
+        continue;
+      }
+      signals.push({ claim: s.claim, run: s.run, note: s.note as string | undefined });
+    } catch (e) {
+      findings.push(`signals line ${i + 1}: not a valid signal — ${JSON.stringify(line.slice(0, 60))} (${e instanceof Error ? e.message : String(e)}) — skipped`);
+    }
+  }
+  return { signals, findings };
+}
+
+function lifecycleSub(rest: string[], env: NodeJS.ProcessEnv, now: () => Date): VerbResult {
+  const valuedFlags = ["--registry", "--signals", "--corroborate-threshold", "--merge-threshold", "--decay-days", "--queue"];
+  let registry: string | undefined;
+  let signalsPath: string | undefined;
+  let corroborateThreshold: number | undefined;
+  let mergeThreshold: number | undefined;
+  let decayDays: number | undefined;
+  let queue: string | undefined;
+  let apply = false;
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i]!;
+    if (a === "--apply") {
+      apply = true;
+      continue;
+    }
+    if (!valuedFlags.includes(a)) return fail(`unknown flag "${a}"`);
+    if (rest[i + 1] === undefined) return fail(`flag "${a}" needs a value`);
+    const v = rest[i + 1]!;
+    if (a === "--registry") registry = v;
+    else if (a === "--signals") signalsPath = v;
+    else if (a === "--queue") queue = v;
+    else if (a === "--corroborate-threshold" || a === "--decay-days") {
+      const n = Number(v);
+      if (!Number.isInteger(n) || n < 1) return fail(`flag "${a}" must be a positive integer, got "${v}"`);
+      if (a === "--corroborate-threshold") corroborateThreshold = n;
+      else decayDays = n;
+    } else {
+      const t = Number(v);
+      if (!Number.isFinite(t) || t <= 0 || t > 1) return fail(`flag "--merge-threshold" must be a number in (0, 1], got "${v}"`);
+      mergeThreshold = t;
+    }
+    i++;
+  }
+
+  const m = mount(env);
+  const dir = registry ?? (m !== undefined ? join(m.path, "amicode", "claims") : undefined);
+  if (dir === undefined)
+    return fail("no personal vault mount resolved — pass --registry <dir> explicitly (the claims registry is never a guess)");
+  if (!existsSync(dir))
+    return fail(`claims registry not found: ${dir} (missing is a typo or nothing projected yet — nothing to metabolize)`);
+
+  let signals: ContradictionSignal[] = [];
+  let signalFindings: string[] = [];
+  if (signalsPath !== undefined) {
+    const loaded = loadSignals(signalsPath);
+    if ("error" in loaded) return fail(loaded.error);
+    signals = loaded.signals;
+    signalFindings = loaded.findings;
+  }
+
+  const { claims, skipped } = loadRegistryClaims(dir);
+  const r = runLifecyclePass(claims, {
+    now: now(),
+    signals,
+    corroborateThreshold,
+    mergeThreshold,
+    decayWindowDays: decayDays,
+  });
+  const findings = [...signalFindings, ...r.findings];
+  const queueFile = queue ?? join(dirname(dir), "review-queue.md");
+  const windowDays = decayDays ?? DECAY_WINDOW_DAYS;
+  const queueText = renderQueueFile(r.queue, { now: now(), windowDays });
+
+  const json: Record<string, unknown> = {
+    verb: "claims",
+    ok: findings.length === 0,
+    subcommand: "lifecycle",
+    dry_run: !apply,
+    registry: dir,
+    queue_file: queueFile,
+    signals: signals.length,
+    scanned: claims.length,
+    skipped,
+    merges: r.merges,
+    transitions: r.transitions,
+    queue: r.queue,
+    findings,
+    queue_text: queueText,
+  };
+  if (!apply) return { json, code: findings.length > 0 ? 1 : 0 };
+
+  // the write path: survivor frontmatter only (prose untouched), duplicates
+  // archived beside the registry (never deleted outright — the vault
+  // doctrine), the queue written at its home.
+  const changed = new Set<string>([...r.merges.map((x) => x.survivor), ...r.transitions.map((t) => t.file)]);
+  const after = new Map(r.claims.map((c) => [c.file, c.claim]));
+  for (const file of changed) {
+    const claim = after.get(file);
+    if (claim === undefined) continue; // a transition on a file this pass also merged away — already handled by the merge
+    writeFileSync(join(dir, file), rewriteClaimNote(readFileSync(join(dir, file), "utf8"), claim));
+  }
+  if (r.merges.length > 0) mkdirSync(join(dir, "archive"), { recursive: true });
+  for (const dup of r.merges.map((x) => x.duplicate)) renameSync(join(dir, dup), join(dir, "archive", dup));
+  mkdirSync(dirname(queueFile), { recursive: true });
+  writeFileSync(queueFile, queueText);
+  json.wrote = {
+    survivors: [...changed],
+    archived: r.merges.map((x) => `archive/${x.duplicate}`),
+    queue_file: queueFile,
+  };
+  return { json, code: findings.length > 0 ? 1 : 0 };
 }
