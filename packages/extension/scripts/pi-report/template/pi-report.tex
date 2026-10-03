@@ -1,0 +1,102 @@
+% ─────────────────────────────────────────────────────────────────────
+% Amicode PI report — the per-loop state-of-campaign, 1–2 pages.
+%
+% Filled by the director at each loop boundary from the campaign ledger;
+% built with tectonic; gated (page cap, slot presence, provenance).
+% Per-slot rules: FILL-CONTRACT.md (same directory).
+%
+% Fill rules that the gate enforces:
+%   * every %% SLOT marker below STAYS in the filled copy
+%   * numbers in adjudication rows appear VERBATIM in the source ledger
+%     and carry their provenance stamp via \stamp{...}
+%   * verdicts use the ledger's own vocabulary — never softened, never
+%     translated ("FALSIFIER A FIRED" stays "FALSIFIER A FIRED")
+%   * an empty section is an explicit \emph{none} line, never a deleted
+%     section
+% ─────────────────────────────────────────────────────────────────────
+\documentclass[10pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage[letterpaper,margin=2.1cm]{geometry}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{enumitem}
+\usepackage{amsmath,amssymb}
+\usepackage{xcolor}
+
+% ── fixed furniture: do not modify in fills ──
+\newcommand{\stamp}[1]{{\footnotesize\color{gray}(#1)}}
+\newcommand{\sect}[1]{\vspace{6pt}\textbf{#1}\par\vspace{2pt}}
+\setlist{nosep,leftmargin=1.5em}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{2pt}
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+
+\begin{document}
+
+%% SLOT: header (required)
+\begin{center}
+  {\Large\bfseries PI report --- <campaign>}\\[2pt]
+  {\small <posture> posture $\cdot$ <loop boundary or state> $\cdot$ <date>
+   $\cdot$ ledger: <ledger file>}
+\end{center}
+
+%% SLOT: summary (required — the generated state line)
+% Verdict counts from the ledger's hypothesis table, in its own
+% vocabulary, plus the one-sentence campaign state. No optimism: counts
+% are counted, not estimated.
+\noindent\textbf{State.} <counts line>. <one-sentence campaign state.>
+
+%% SLOT: adjudications (required)
+% This loop's new/changed verdicts (a closed campaign: the final verdict
+% table). One row per adjudication: H#, verdict verbatim, the outcome
+% with headline numbers and their legs named, provenance stamp last.
+\sect{This loop's adjudications}
+\begin{tabularx}{\textwidth}{@{}>{\footnotesize}p{1.1cm} >{\footnotesize\bfseries}p{2.9cm} Y@{}}
+\toprule
+H\# & verdict & outcome \\
+\midrule
+<H1> & <VERDICT> & <one-line hypothesis + headline number(s), legs named
+  \stamp{<artifact path or ledger row>}> \\
+\bottomrule
+\end{tabularx}
+
+%% SLOT: digest (required; collapses to counts when over cap)
+% One line per still-open hypothesis/thread: id, one-line state, the
+% last result that keeps it open. Every line earns its place — a thread
+% neither live nor next is not listed.
+\sect{Open threads}
+\begin{tabularx}{\textwidth}{@{}>{\footnotesize}p{1.1cm} Y@{}}
+\toprule
+id & state \\
+\midrule
+<H1> & <one-line state + last result> \\
+\bottomrule
+\end{tabularx}
+
+%% SLOT: inflight (required; \emph{none} when nothing is running)
+\sect{In flight}
+\begin{itemize}
+  \item <running cast/solve, one line each, with its expected artifacts>
+\end{itemize}
+
+%% SLOT: needsyou (required; \emph{none} when nothing needs the PI)
+\sect{Needs you}
+\begin{itemize}
+  \item <the decisions only the PI can make, one line each>
+\end{itemize}
+
+%% SLOT: next (required — top 3, mechanically cut)
+\sect{Next}
+\begin{enumerate}
+  \item <next queued work, one line each>
+\end{enumerate}
+
+%% SLOT: footer (required — leave as-is except the fill fields)
+\vspace{8pt}
+\hrule
+\vspace{2pt}
+{\footnotesize\color{gray} Filled from <ledger file> at <boundary> by the
+director $\cdot$ built with tectonic $\cdot$ page cap 2 \cdot
+provenance-gated (issue \#1700).}
+
+\end{document}
