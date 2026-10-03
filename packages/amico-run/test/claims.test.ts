@@ -36,6 +36,8 @@ import {
   renderIndexView,
   INDEX_MAX_LINES,
   INDEX_DEFAULT_PER_TYPE,
+  stampAdoption,
+  isStamped,
 } from "../src/claims.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -475,5 +477,80 @@ describe("the hot-layer index rendering (#1682, AC 3-4 — provenance header + t
     const r = lintClaimsRegistry(RENDER_REGISTRY_FIXTURE, { vaultRoot: VAULT_FIXTURE });
     expect(r.findings).toEqual([]);
     expect(r.ok).toBe(true);
+  });
+});
+
+// ── adoption stamping (amicode #1683, slice 4 — the feedback loop closes) ─────
+
+describe("adoption stamping (#1683, AC 1 + AC 3: counter + date, history appended, judgment never)", () => {
+  const STAMPED_AT = "2026-10-02T21:00:00.000Z";
+
+  /** A minimal valid claim to stamp — the claim object, nothing else. */
+  function stampableClaim() {
+    return {
+      type: "best-practice" as const,
+      statement: "gate on rollout truth only",
+      status: "unverified",
+      confidence: "medium",
+      evidence: ["memory-card/feedback_warm_starts.md"],
+      applied: 0,
+      last_applied: null,
+      history: [{ date: "2026-08-14T09:00:00.000Z", event: "created", note: "distilled" }],
+      scope: "personal" as const,
+      tags: ["warm-start"],
+    };
+  }
+
+  it("an adoption stamp increments applied, sets last_applied, and appends ONE applied history entry", () => {
+    const stamped = stampAdoption(stampableClaim(), { kind: "recommend-outcome", ref: "demo-quad-gate/2" }, STAMPED_AT);
+    expect(stamped.stamped).toBe(true);
+    expect(stamped.claim.applied).toBe(1); // the counter moved
+    expect(stamped.claim.last_applied).toBe(STAMPED_AT); // the date moved
+    const history = stamped.claim.history as { date: string; event: string; note: string }[];
+    expect(history).toHaveLength(2); // append-only: ONE new entry
+    const entry = history[1];
+    expect(entry.date).toBe(STAMPED_AT);
+    expect(entry.event).toBe("applied"); // the pinned vocabulary — no new event class
+    expect(entry.note).toContain("demo-quad-gate/2"); // the citation rides the note
+  });
+
+  it("never touches statement, status, confidence, evidence, scope, or tags (adoption is a counter + date, not a judgment)", () => {
+    const before = stampableClaim();
+    const stamped = stampAdoption(before, { kind: "solve-run", ref: "r20261002-090000Z-ab12" }, STAMPED_AT);
+    expect(stamped.claim.statement).toBe(before.statement);
+    expect(stamped.claim.status).toBe(before.status); // lifecycle is slice 5's, never the stamp's
+    expect(stamped.claim.confidence).toBe(before.confidence);
+    expect(stamped.claim.evidence).toEqual(before.evidence);
+    expect(stamped.claim.scope).toBe(before.scope);
+    expect(stamped.claim.tags).toEqual(before.tags);
+    // the pre-existing history is untouched — the trail is append-only
+    expect((stamped.claim.history as unknown[])[0]).toEqual(before.history[0]);
+  });
+
+  it("the stamped claim still passes the ONE contract (validateClaim)", () => {
+    const stamped = stampAdoption(stampableClaim(), { kind: "recommend-outcome", ref: "demo-quad-gate/2" }, STAMPED_AT);
+    expect(validateClaim(stamped.claim).ok).toBe(true);
+  });
+
+  it("idempotent: the SAME citation never double-stamps — a re-stamp is a stamped:false no-op", () => {
+    const once = stampAdoption(stampableClaim(), { kind: "recommend-outcome", ref: "demo-quad-gate/2" }, STAMPED_AT);
+    const again = stampAdoption(once.claim, { kind: "recommend-outcome", ref: "demo-quad-gate/2" }, "2026-10-03T04:00:00.000Z");
+    expect(again.stamped).toBe(false);
+    expect(again.claim).toEqual(once.claim); // byte-identical: same count, same date, same trail
+  });
+
+  it("a DIFFERENT citation stamps again (each adoption is its own history entry)", () => {
+    const once = stampAdoption(stampableClaim(), { kind: "recommend-outcome", ref: "demo-quad-gate/2" }, STAMPED_AT);
+    const twice = stampAdoption(once.claim, { kind: "solve-run", ref: "r20261002-090000Z-ab12", detail: "warm-started from the banked pulse" }, "2026-10-03T04:00:00.000Z");
+    expect(twice.stamped).toBe(true);
+    expect(twice.claim.applied).toBe(2);
+    expect(twice.claim.last_applied).toBe("2026-10-03T04:00:00.000Z");
+    expect((twice.claim.history as { note: string }[])[2].note).toContain("warm-started from the banked pulse");
+    expect(isStamped(twice.claim, { kind: "recommend-outcome", ref: "demo-quad-gate/2" })).toBe(true);
+  });
+
+  it("the citation check never confuses prefix siblings (ref a ≠ ref a-b)", () => {
+    const once = stampAdoption(stampableClaim(), { kind: "recommend-outcome", ref: "demo/2" }, STAMPED_AT);
+    expect(isStamped(once.claim, { kind: "recommend-outcome", ref: "demo/22" })).toBe(false);
   });
 });

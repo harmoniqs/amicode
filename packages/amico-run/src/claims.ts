@@ -441,3 +441,185 @@ export function renderIndexView(
   });
   return { ranked, scores, excluded, capped, text: [...header, "", ...bullets].join("\n") + "\n" };
 }
+
+// ── adoption stamping (amicode #1683, slice 4 — the feedback loop closes) ─────
+//
+// The last mile of the flywheel: knowledge USED must reach the card, or the
+// index's adoption axis is dead. An accepted recommend-outcome or a citation
+// in a solve run increments the claim's `applied` counter and sets
+// `last_applied` — a counter + a date, NEVER a judgment: statement, status,
+// confidence are untouched (lifecycle is slice 5's, a parallel concern).
+//
+// IDEMPOTENCY: the citation IS the key. Each stamp appends ONE history entry
+// whose note carries the citation in a fixed convention
+// (`applied via <kind> <ref>`), and a stamp whose citation already appears in
+// the claim's applied trail is a no-op — the nightly sweep may re-read the
+// same event streams forever and the registry never double-counts.
+//
+// PURITY: no I/O, no clock (stampedAt passed in); the stamp is a copy, the
+// original claim object is never mutated.
+
+/** The closed citation vocabulary — where an adoption event can come from. */
+export const STAMP_SOURCES = ["recommend-outcome", "solve-run"] as const;
+export type StampSourceKind = (typeof STAMP_SOURCES)[number];
+
+/** One adoption citation: the kind of use + the machine-checkable ref that
+ * identifies it (the problem slug + event seq for a recommend-outcome; the
+ * run id for a solve-run citation). */
+export interface AdoptionCitation {
+  kind: StampSourceKind;
+  ref: string;
+  /** free-text context (which param, what value) — never load-bearing */
+  detail?: string;
+}
+
+/** The applied history note for a citation — the ONE convention both the
+ * stamper and the idempotency check read, so they can never diverge. */
+export function appliedNote(citation: AdoptionCitation): string {
+  return `applied via ${citation.kind} ${citation.ref}${citation.detail !== undefined ? ` — ${citation.detail}` : ""}`;
+}
+
+/** Whether a claim's applied trail already carries this exact citation —
+ * the idempotency check. Exact-prefix against the note convention (with the
+ * ` — ` separator guard, so ref "a" never matches ref "a-b"). */
+export function isStamped(claim: Record<string, unknown>, citation: AdoptionCitation): boolean {
+  const history = Array.isArray(claim.history) ? claim.history : [];
+  const base = `applied via ${citation.kind} ${citation.ref}`;
+  return history.some((h) => {
+    const entry = h as { event?: unknown; note?: unknown };
+    return entry.event === "applied" && typeof entry.note === "string" && (entry.note === base || entry.note.startsWith(`${base} — `));
+  });
+}
+
+/** Stamp one adoption on a claim: applied +1, last_applied moved, ONE
+ * `applied` history entry appended (the pinned vocabulary — no new event
+ * class). Statement and status are never touched. An already-carried
+ * citation is a stamped:false no-op (the sweep's re-reads change nothing). */
+export function stampAdoption(
+  claim: Record<string, unknown>,
+  citation: AdoptionCitation,
+  stampedAt: string,
+): { stamped: boolean; claim: Record<string, unknown> } {
+  if (isStamped(claim, citation)) return { stamped: false, claim };
+  const applied = typeof claim.applied === "number" && claim.applied >= 0 ? claim.applied : 0;
+  const history = Array.isArray(claim.history) ? claim.history : [];
+  return {
+    stamped: true,
+    claim: {
+      ...claim,
+      applied: applied + 1,
+      last_applied: stampedAt,
+      history: [...history, { date: stampedAt, event: "applied", note: appliedNote(citation) }],
+    },
+  };
+}
+
+/** Re-render a stamped claim note: the frontmatter block is replaced by the
+ * claim object (deterministic YAML), everything after it — the rendering +
+ * the preserved card prose — survives VERBATIM. Machinery never edits
+ * prose; the stamp only moves the claim object it owns. */
+export function renderStampedNote(raw: string, claim: Record<string, unknown>): string {
+  const block = raw.match(/^---[ \t]*\r?\n[\s\S]*?\r?\n---[ \t]*(\r?\n|$)/);
+  if (block === null) throw new Error("malformed claim note: could not isolate the frontmatter block");
+  return raw.replace(block[0], `---\n${stringifyYaml(claim, { lineWidth: 0 }).trimEnd()}\n---\n`);
+}
+
+// The SWEEP half (the nightly backfill): the recommend-outcome event stream —
+// `<problem-workspace>/events.jsonl`, the records `amicode_recommend` appends
+// (entity "recommendation", action proposed|outcome) — is the ONE machine-
+// readable adoption record that exists today. An accepted outcome stamps the
+// claims its recommendation's PROVENANCE REFS name; a ref is resolved
+// MECHANICALLY (trailing path segment = a registry claim file, with or without
+// .md — the projection names claims after their cards) and a ref matching no
+// registry claim is a NAMED skip, never a guess. Overridden outcomes are
+// named and never stamp. No new event format is invented — refs stay the
+// free-form citations the propose events already carry; when a richer
+// machine-readable citation surface lands, this resolver is the one seam.
+
+/** Resolve one provenance ref against the registry: mechanical trailing-
+ *  segment match (the projection names the claim note after its card, so
+ *  `memory-card/x.md`, `claims/x.md`, and bare `x` all land on `x.md`).
+ *  Anything else is a named skip — never a fuzzy guess. */
+export function resolveClaimRef(ref: string, claims: RegistryClaim[]): RegistryClaim | undefined {
+  const segment = ref.split("/").pop() ?? ref;
+  return claims.find((c) => c.file === (segment.endsWith(".md") ? segment : `${segment}.md`));
+}
+
+export interface SweepStamp {
+  file: string;
+  citation: AdoptionCitation;
+}
+
+export interface AdoptionSweepPlan {
+  /** citations to stamp, in stream order */
+  stamps: SweepStamp[];
+  /** citations already carried in their claim's applied trail (re-sweep no-ops) */
+  already: number;
+  /** accepted-outcome refs matching no registry claim, named with their event */
+  skippedRefs: string[];
+  /** overridden outcomes seen — named, never stamped */
+  overridden: string[];
+  /** recommendation events read across all streams */
+  scanned: number;
+}
+
+/** The refs a proposed recommendation's provenance carries. */
+function provenanceRefs(diff: Record<string, unknown>): string[] {
+  const provenance = Array.isArray(diff.provenance) ? diff.provenance : [];
+  return provenance
+    .map((p) => (p as { ref?: unknown }).ref)
+    .filter((r): r is string => typeof r === "string" && r.trim() !== "");
+}
+
+/** Plan the adoption sweep over parsed event streams: for each problem, walk
+ *  its events in order, pair each ACCEPTED outcome with the refs of its key's
+ *  latest proposed event (a Veloce auto-accept carries outcome + provenance
+ *  on the propose itself), resolve refs against the registry, and emit one
+ *  stamp per (accepted event × distinct claim). Pure — the caller reads the
+ *  streams and applies the plan. */
+export function planAdoptionSweep(problems: { slug: string; events: unknown[] }[], claims: RegistryClaim[]): AdoptionSweepPlan {
+  const plan: AdoptionSweepPlan = { stamps: [], already: 0, skippedRefs: [], overridden: [], scanned: 0 };
+  const seen = new Set<string>(); // `${file}|${ref}` — dedupe stamps across the whole sweep? no, per event
+  for (const { slug, events } of problems) {
+    const proposed = new Map<string, string[]>(); // key → refs of its latest propose
+    for (const raw of events) {
+      const event = raw as { seq?: unknown; entity?: unknown; action?: unknown; diff?: unknown };
+      if (event.entity !== "recommendation") continue; // only recommendation events carry adoption
+      plan.scanned++;
+      const diff = (event.diff ?? {}) as Record<string, unknown>;
+      const seq = typeof event.seq === "number" ? event.seq : -1;
+      const key = typeof diff.key === "string" ? diff.key : "?";
+      const refs = provenanceRefs(diff);
+      const isPropose = event.action === "proposed";
+      const outcome = typeof diff.outcome === "string" ? diff.outcome : undefined;
+      if (isPropose) proposed.set(key, refs);
+      if (outcome === "overridden") {
+        plan.overridden.push(`${slug}/${seq}`); // a human declining is named, never stamped
+        continue;
+      }
+      if (outcome !== "accepted") continue;
+      // an accepted outcome: stamp the claims its recommendation's refs name. A
+      // Veloce auto-accept carries the outcome on the propose itself; a plain
+      // outcome pairs with its key's latest propose.
+      const pairRefs = isPropose ? refs : (proposed.get(key) ?? []);
+      const stamped = new Set<string>();
+      for (const ref of pairRefs) {
+        const claim = resolveClaimRef(ref, claims);
+        if (claim === undefined) {
+          plan.skippedRefs.push(`${slug}/${seq}: provenance ref "${ref}" matches no registry claim`);
+          continue;
+        }
+        if (stamped.has(claim.file)) continue; // one adoption per event, however the ref was phrased
+        stamped.add(claim.file);
+        const citation = { kind: "recommend-outcome", ref: `${slug}/${seq}` } as const;
+        if (isStamped(claim.claim, citation) || seen.has(`${claim.file}|${citation.ref}`)) {
+          plan.already++;
+          continue;
+        }
+        seen.add(`${claim.file}|${citation.ref}`);
+        plan.stamps.push({ file: claim.file, citation });
+      }
+    }
+  }
+  return plan;
+}

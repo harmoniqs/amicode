@@ -7,12 +7,14 @@
 // default-resolution checks — never the live vault.
 // Run: `pnpm --filter @amicode/amico-run test claims`
 import { describe, it, expect } from "vitest";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { claimsVerb } from "../src/claims_verb.js";
+import { parseClaimNote } from "../src/claims.js";
+import { validateClaim } from "@amicode/schema";
 import { SPINE_VERBS } from "../src/verbs.js";
 import { readDistillState } from "../src/distill.js";
 import { INDEX_MAX_LINES } from "../src/claims.js";
@@ -21,6 +23,15 @@ import { loadPluginIndexReader, pluginMemoryIndexCap } from "./helpers.js";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURES = join(HERE, "fixtures", "claims");
 const CARD_FILE = join(FIXTURES, "vault", "amicode", "memory", "project_two_qubit_challenge.md");
+
+/** Parse a claim note, throwing on a bad parse — every file these tests read
+ *  is a fixture the test just stamped; a bad parse is a test bug, never a
+ *  pass state. */
+function claimOf(raw: string): Record<string, unknown> {
+  const parsed = parseClaimNote(raw);
+  if (!parsed.ok) throw new Error(parsed.error);
+  return parsed.claim;
+}
 
 /** A fake vault root with one personal mount (the marker convention) — the
  *  hermetic stand-in for resolveMountStack's default resolution. */
@@ -279,4 +290,265 @@ describe("amico claims render — the hot-layer index verb (#1682)", () => {
 // the claims seam (one substrate, one CLI).
 it("the distill state seam remains untouched by this slice", () => {
   expect(readDistillState(join(tmpdir(), "definitely-absent-state.json")).entries).toEqual({});
+});
+
+// ── amico claims stamp — the adoption verb (amicode #1683, slice 4: the
+// feedback loop closes — knowledge USED reaches the card) ────────────────────
+
+describe("amico claims stamp — the adoption verb (#1683)", () => {
+  const STAMP_AT = () => new Date("2026-10-02T21:00:00.000Z");
+  const STAMP_REGISTRY = join(FIXTURES, "stamp-registry");
+  const PROBLEMS = join(FIXTURES, "sweep-problems");
+
+  /** A temp copy of the stamp registry — stamps mutate the registry, and the
+   * committed fixture is the contract, never the scratch space. */
+  function registryCopy(): string {
+    const dir = mkdtempSync(join(tmpdir(), "claims-stamp-"));
+    for (const f of readdirSync(STAMP_REGISTRY)) writeFileSync(join(dir, f), readFileSync(join(STAMP_REGISTRY, f)));
+    return dir;
+  }
+
+  it("the committed stamp fixtures are valid claims (the fixture of record IS the contract)", () => {
+    for (const f of readdirSync(STAMP_REGISTRY)) {
+      const parsed = parseClaimNote(readFileSync(join(STAMP_REGISTRY, f), "utf8"));
+      expect(parsed.ok).toBe(true);
+      if (parsed.ok) expect(validateClaim(parsed.claim).ok).toBe(true);
+    }
+  });
+
+  it("an accepted recommend-outcome referencing the claim stamps it: applied +1, last_applied set, ONE applied history entry", async () => {
+    const reg = registryCopy();
+    const r = await claimsVerb(
+      ["stamp", "feedback_warm_starts.md", "--via", "recommend-outcome", "--ref", "demo-quad-gate/2", "--registry", reg, "--apply"],
+      { AMICODE_PROBLEMS_DIR: PROBLEMS },
+      { now: STAMP_AT },
+    );
+    expect(r.code).toBe(0);
+    const j = r.json as Record<string, unknown>;
+    expect(j.stamped).toBe(true);
+    expect(j.dry_run).toBe(false);
+    const parsed = claimOf(readFileSync(join(reg, "feedback_warm_starts.md"), "utf8"));
+    expect(parsed.applied).toBe(1);
+    expect(parsed.last_applied).toBe("2026-10-02T21:00:00.000Z");
+    const history = parsed.history as { event: string; note: string }[];
+    expect(history).toHaveLength(2); // ONE new entry, appended
+    expect(history[1].event).toBe("applied");
+    expect(history[1].note).toContain("demo-quad-gate/2"); // the citation rides the note
+  });
+
+  it("dry-run by default: reports the stamp, writes NOTHING", async () => {
+    const reg = registryCopy();
+    const before = readFileSync(join(reg, "feedback_warm_starts.md"), "utf8");
+    const r = await claimsVerb(
+      ["stamp", "feedback_warm_starts.md", "--via", "recommend-outcome", "--ref", "demo-quad-gate/2", "--registry", reg],
+      { AMICODE_PROBLEMS_DIR: PROBLEMS },
+      { now: STAMP_AT },
+    );
+    expect(r.code).toBe(0);
+    expect((r.json as Record<string, unknown>).dry_run).toBe(true);
+    expect(readFileSync(join(reg, "feedback_warm_starts.md"), "utf8")).toBe(before); // untouched
+  });
+
+  it("refuses an OVERRIDDEN outcome even though its recommendation's ref would resolve — an override is a human declining, not a use", async () => {
+    const reg = registryCopy();
+    const r = await claimsVerb(
+      ["stamp", "two_qubit_challenge.md", "--via", "recommend-outcome", "--ref", "demo-quad-gate/4", "--registry", reg, "--apply"],
+      { AMICODE_PROBLEMS_DIR: PROBLEMS },
+    );
+    expect(r.code).toBe(64);
+    expect((r.json as { error: string }).error).toContain("only ACCEPTED");
+    // and nothing moved
+    const parsed = claimOf(readFileSync(join(reg, "two_qubit_challenge.md"), "utf8"));
+    expect(parsed.applied).toBe(0);
+  });
+
+  it("refuses citations that do not resolve: unknown problem, unknown event seq, a non-recommendation event", async () => {
+    const reg = registryCopy();
+    const env = { AMICODE_PROBLEMS_DIR: PROBLEMS };
+    const noProblem = await claimsVerb(["stamp", "feedback_warm_starts.md", "--via", "recommend-outcome", "--ref", "no-such-problem/2", "--registry", reg], env);
+    expect(noProblem.code).toBe(64);
+    const noSeq = await claimsVerb(["stamp", "feedback_warm_starts.md", "--via", "recommend-outcome", "--ref", "demo-quad-gate/99", "--registry", reg], env);
+    expect(noSeq.code).toBe(64);
+    // seq 6 in the fixture is a system-recorded event, not a recommendation
+    const wrongEntity = await claimsVerb(["stamp", "feedback_warm_starts.md", "--via", "recommend-outcome", "--ref", "demo-quad-gate/6", "--registry", reg], env);
+    expect(wrongEntity.code).toBe(64);
+  });
+
+  it("usage errors: missing --via / --ref, unknown --via, unknown claim, malformed ref", async () => {
+    const reg = registryCopy();
+    expect((await claimsVerb(["stamp", "a.md"], {})).code).toBe(64);
+    expect((await claimsVerb(["stamp", "a.md", "--via", "recommend-outcome"], {})).code).toBe(64);
+    expect((await claimsVerb(["stamp", "a.md", "--via", "vibe", "--ref", "x/1"], {})).code).toBe(64);
+    expect((await claimsVerb(["stamp", "absent.md", "--via", "recommend-outcome", "--ref", "demo-quad-gate/2", "--registry", reg], {})).code).toBe(64);
+    expect((await claimsVerb(["stamp", "a.md", "--via", "recommend-outcome", "--ref", "no-slash-here", "--registry", reg], {})).code).toBe(64);
+  });
+
+  it("idempotent: re-stamping the SAME citation moves NOTHING — the file is byte-identical", async () => {
+    const reg = registryCopy();
+    const env = { AMICODE_PROBLEMS_DIR: PROBLEMS };
+    await claimsVerb(["stamp", "feedback_warm_starts.md", "--via", "recommend-outcome", "--ref", "demo-quad-gate/2", "--registry", reg, "--apply"], env, { now: STAMP_AT });
+    const bytes = readFileSync(join(reg, "feedback_warm_starts.md"), "utf8");
+    const again = await claimsVerb(
+      ["stamp", "feedback_warm_starts.md", "--via", "recommend-outcome", "--ref", "demo-quad-gate/2", "--registry", reg, "--apply"],
+      env,
+      { now: () => new Date("2026-10-09T04:00:00.000Z") }, // a later clock must NOT move last_applied
+    );
+    expect(again.code).toBe(0);
+    expect((again.json as Record<string, unknown>).stamped).toBe(false);
+    expect(readFileSync(join(reg, "feedback_warm_starts.md"), "utf8")).toBe(bytes);
+  });
+
+  it("AC 3, byte-level: a stamp preserves statement + status + confidence + evidence + scope + tags AND the prose body verbatim", async () => {
+    const reg = registryCopy();
+    const before = readFileSync(join(reg, "feedback_warm_starts.md"), "utf8");
+    const r = await claimsVerb(
+      ["stamp", "feedback_warm_starts.md", "--via", "recommend-outcome", "--ref", "second-problem/2", "--registry", reg, "--apply"],
+      { AMICODE_PROBLEMS_DIR: PROBLEMS },
+      { now: STAMP_AT },
+    );
+    expect(r.code).toBe(0);
+    const after = readFileSync(join(reg, "feedback_warm_starts.md"), "utf8");
+
+    const beforeClaim = claimOf(before);
+    const afterClaim = claimOf(after);
+    expect(afterClaim.statement).toBe(beforeClaim.statement);
+    expect(afterClaim.status).toBe(beforeClaim.status); // lifecycle is slice 5's, never the stamp's
+    expect(afterClaim.confidence).toBe(beforeClaim.confidence);
+    expect(afterClaim.evidence).toEqual(beforeClaim.evidence);
+    expect(afterClaim.scope).toBe(beforeClaim.scope);
+    expect(afterClaim.tags).toEqual(beforeClaim.tags);
+    // the body survives VERBATIM — machinery never edits prose
+    expect(after.slice(after.indexOf("---", 3))).toBe(before.slice(before.indexOf("---", 3)));
+    expect(after).toContain("survive a stamp VERBATIM");
+  });
+
+  it("AC 2: a citation in a solve run stamps the cited claim (run dir must exist)", async () => {
+    const reg = registryCopy();
+    const runs = mkdtempSync(join(tmpdir(), "claims-runs-"));
+    const runDir = join(runs, "r20261002-090000Z-ab12");
+    mkdirSync(runDir); // the run dir IS the substrate a citation resolves into
+    const r = await claimsVerb(
+      ["stamp", "feedback_warm_starts.md", "--via", "solve-run", "--ref", runDir, "--detail", "warm-started from the banked pulse", "--registry", reg, "--apply"],
+      {},
+      { now: STAMP_AT },
+    );
+    expect(r.code).toBe(0);
+    const parsed = claimOf(readFileSync(join(reg, "feedback_warm_starts.md"), "utf8"));
+    expect(parsed.applied).toBe(1);
+    expect(parsed.last_applied).toBe("2026-10-02T21:00:00.000Z");
+    const entry = (parsed.history as { event: string; note: string }[])[1];
+    expect(entry.event).toBe("applied");
+    expect(entry.note).toContain("solve-run r20261002-090000Z-ab12"); // the run id is the citation
+    expect(entry.note).toContain("warm-started from the banked pulse");
+
+    // re-citing the SAME run (a different path alias to the same dir) is still the same citation → no-op
+    const alias = join(runs, ".", "r20261002-090000Z-ab12");
+    const again = await claimsVerb(["stamp", "feedback_warm_starts.md", "--via", "solve-run", "--ref", alias, "--registry", reg, "--apply"], {}, { now: STAMP_AT });
+    expect(again.code).toBe(0);
+    expect((again.json as Record<string, unknown>).stamped).toBe(false);
+    expect(claimOf(readFileSync(join(reg, "feedback_warm_starts.md"), "utf8")).applied).toBe(1);
+  });
+
+  it("refuses a solve-run citation whose run dir does not exist (pointers must resolve)", async () => {
+    const reg = registryCopy();
+    const r = await claimsVerb(
+      ["stamp", "feedback_warm_starts.md", "--via", "solve-run", "--ref", join(tmpdir(), "definitely-absent-run"), "--registry", reg],
+      {},
+    );
+    expect(r.code).toBe(64);
+    expect((r.json as { error: string }).error).toContain("does not resolve");
+  });
+
+});
+
+// ── amico claims sweep — the nightly backfill (#1683, AC 4: stamps from the
+// persisted event streams, re-sweep changes nothing) ──────────────────────────
+
+describe("amico claims sweep — the nightly adoption backfill (#1683)", () => {
+  const SWEEP_AT = () => new Date("2026-10-03T04:00:00.000Z");
+  const PROBLEMS = join(FIXTURES, "sweep-problems");
+
+  function registryCopy(): string {
+    const dir = mkdtempSync(join(tmpdir(), "claims-sweep-"));
+    for (const f of readdirSync(join(FIXTURES, "stamp-registry"))) {
+      writeFileSync(join(dir, f), readFileSync(join(FIXTURES, "stamp-registry", f)));
+    }
+    return dir;
+  }
+
+  it("backfills stamps from the recommend-outcome event stream: accepted outcomes stamp, overridden never, unresolved refs are named", async () => {
+    const reg = registryCopy();
+    const r = await claimsVerb(["sweep", "--registry", reg, "--problems", PROBLEMS, "--apply"], {}, { now: SWEEP_AT });
+    expect(r.code).toBe(0);
+    const j = r.json as Record<string, unknown>;
+    expect(j.dry_run).toBe(false);
+    expect(j.stamped).toBe(3); // demo-quad-gate/2, demo-quad-gate/5 (Veloce), second-problem/2
+
+    // feedback_warm_starts.md: TWO stamps (one per problem's accepted N outcome)
+    const warm = claimOf(readFileSync(join(reg, "feedback_warm_starts.md"), "utf8"));
+    expect(warm.applied).toBe(2);
+    expect(warm.last_applied).toBe("2026-10-03T04:00:00.000Z");
+    const warmHistory = warm.history as { event: string; note: string }[];
+    expect(warmHistory.filter((h) => h.event === "applied").map((h) => h.note)).toEqual([
+      "applied via recommend-outcome demo-quad-gate/2",
+      "applied via recommend-outcome second-problem/2",
+    ]);
+
+    // two_qubit_challenge.md: ONE stamp — the Veloce auto-accept (seq 5), NOT the
+    // overridden outcome (seq 4) even though its recommendation's ref resolves
+    const two = claimOf(readFileSync(join(reg, "two_qubit_challenge.md"), "utf8"));
+    expect(two.applied).toBe(1);
+    expect((two.history as { note: string }[])[1].note).toContain("demo-quad-gate/5");
+
+    // the accepted outcome whose ref matches NO registry claim is named, never guessed
+    expect((j.skipped_refs as string[]).some((s) => s.includes("transmon-rwa-breakdown.md"))).toBe(true);
+  });
+
+  it("dry-run by default: reports the plan, writes NOTHING", async () => {
+    const reg = registryCopy();
+    const before = readFileSync(join(reg, "feedback_warm_starts.md"), "utf8");
+    const r = await claimsVerb(["sweep", "--registry", reg, "--problems", PROBLEMS], {}, { now: SWEEP_AT });
+    expect(r.code).toBe(0);
+    expect((r.json as Record<string, unknown>).dry_run).toBe(true);
+    expect(readFileSync(join(reg, "feedback_warm_starts.md"), "utf8")).toBe(before);
+  });
+
+  it("idempotent (AC 4): a re-sweep changes NOTHING — every registry byte identical, stamped 0, already-stamped counted", async () => {
+    const reg = registryCopy();
+    await claimsVerb(["sweep", "--registry", reg, "--problems", PROBLEMS, "--apply"], {}, { now: SWEEP_AT });
+    const bytes = Object.fromEntries(readdirSync(reg).map((f) => [f, readFileSync(join(reg, f), "utf8")]));
+
+    const again = await claimsVerb(
+      ["sweep", "--registry", reg, "--problems", PROBLEMS, "--apply"],
+      {},
+      { now: () => new Date("2026-10-04T04:00:00.000Z") }, // a night later — the clock must not move anything
+    );
+    expect(again.code).toBe(0);
+    const j = again.json as Record<string, unknown>;
+    expect(j.stamped).toBe(0);
+    expect(j.already).toBe(3);
+    for (const f of readdirSync(reg)) expect(readFileSync(join(reg, f), "utf8")).toBe(bytes[f]);
+  });
+
+  it("usage: missing registry → 64; missing problems root → 64; no mount and no --registry → refuses to guess", async () => {
+    const bare = mkdtempSync(join(tmpdir(), "claims-bare-"));
+    const noMount = await claimsVerb(["sweep", "--problems", PROBLEMS], { AMICO_VAULTS_ROOT: bare });
+    expect(noMount.code).toBe(64);
+    expect((noMount.json as { error: string }).error).toContain("--registry");
+
+    const noRegistry = await claimsVerb(["sweep", "--registry", join(tmpdir(), "absent-registry"), "--problems", PROBLEMS], {});
+    expect(noRegistry.code).toBe(64);
+
+    const reg = registryCopy();
+    const noProblems = await claimsVerb(["sweep", "--registry", reg, "--problems", join(tmpdir(), "absent-problems")], {});
+    expect(noProblems.code).toBe(64);
+    expect((noProblems.json as { error: string }).error).toContain("problems");
+  });
+
+  it("is registered on the spine (CLI dispatch + MCP facade, one impl) with the adoption verbs in the summary", () => {
+    const claims = SPINE_VERBS.find((v) => v.name === "claims");
+    expect(claims, "the claims verb is registered").toBeDefined();
+    expect(claims!.summary).toContain("stamp");
+    expect(claims!.summary).toContain("sweep");
+  });
 });
