@@ -344,16 +344,18 @@ const distill: Verb = {
 // type-namespace collision); `lint` is the registry's gate — every claim
 // validates against the shared claim contract (unknown types, missing
 // required fields) and every evidence pointer resolves into its substrate
-// (the vault's amicode/memory/ subtree, the chat DB read-only). Notes are
-// renderings; machinery operates on claims only — the claim note's frontmatter
-// IS the claim object, exactly.
+// (the vault's amicode/memory/ subtree, the chat DB read-only). `render`
+// (#1682, slice 3) regenerates the hot-layer memory index (MEMORY.md) as a
+// ranked view of the registry — the index is derived, never authoritative.
+// Notes are renderings; machinery operates on claims only — the claim note's
+// frontmatter IS the claim object, exactly.
 const claims: Verb = {
   name: "claims",
   summary:
-    "the claims registry: project (memory card → claim, mechanical, fields preserved) / lint (contract + evidence-pointer resolution, findings exit 1)",
+    "the claims registry: project (memory card → claim, mechanical, fields preserved) / lint (contract + evidence-pointer resolution, findings exit 1) / render (the hot-layer index as a generated view of claims, ranked recency + adoption + confidence)",
   generalizes:
     "the hand-maintained memory hot-layer's type namespace (the collision the #1679 census flagged, dissolved: one store, claims as the atomic unit)",
-  slice: "company brain flywheel (amicode#1681, slice 2)",
+  slice: "company brain flywheel (amicode#1681, slice 2; #1682, slice 3)",
   run: (args) => claimsVerb(args),
 };
 

@@ -1,8 +1,11 @@
 import { mkdtempSync, readFileSync, writeFileSync, chmodSync, mkdirSync, copyFileSync, rmSync } from "node:fs";
+import fs from "node:fs";
+import path from "node:path";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import { parse } from "smol-toml";
 import type { SurfaceContext } from "../src/surfaces.js";
 import { realExec } from "../src/surfaces.js";
@@ -538,4 +541,50 @@ export function advanceRegistryOnRemote(bare: string, newTag: string, newRevisio
     fixtureGit(clone, ["tag", newTag]);
     fixtureGit(clone, ["push", "origin", newTag]);
   });
+}
+
+// ── the plugin's hot-layer index reader (the #1682 pin) ──────────────────────
+//
+// The stack_state plugin (packages/extension/opencode-plugin/stack_state.ts)
+// injects the memory index through readIndexLines: the lines of
+// amicode/memory/MEMORY.md starting with "- ", capped. The GENERATED index
+// (`amico claims render`, amicode #1682) must stay parseable by THAT exact
+// code — so these helpers extract the real function from the plugin source and
+// run it as real code instead of re-implementing its semantics. If the plugin
+// reader moves or changes shape, they throw — forcing a conscious re-pin,
+// never a silent semantic fork.
+
+function pluginStackStatePath(): string {
+  return join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "packages", "extension", "opencode-plugin", "stack_state.ts");
+}
+
+/** The plugin's readIndexLines, extracted byte-for-byte from the plugin source
+ *  and evaluated as real code. The two TS annotations the tiny function carries
+ *  are stripped; any OTHER surviving annotation throws (the reader changed
+ *  shape — re-pin, never guess). */
+export function loadPluginIndexReader(): (vaultDir: string, file: string, cap: number) => string[] {
+  const src = readFileSync(pluginStackStatePath(), "utf8");
+  const fn = src.match(/^function readIndexLines[\s\S]*?\n\}/m);
+  if (fn === null)
+    throw new Error("readIndexLines not found in the plugin source — the reader moved; re-pin this helper against stack_state.ts");
+  const js = fn[0]
+    .replace(/function readIndexLines\(vaultDir: string, file: string, cap: number\): string\[\]/, "function readIndexLines(vaultDir, file, cap)")
+    .replace(/let text: string;/, "let text;");
+  if (/:\s*(string|number)\b/.test(js))
+    throw new Error("unstripped TS annotations in readIndexLines — the reader changed shape; re-pin this helper");
+  return new Function("fs", "path", `${js}\nreturn readIndexLines;`)(fs, path) as (
+    vaultDir: string,
+    file: string,
+    cap: number,
+  ) => string[];
+}
+
+/** The cap the plugin passes at the MEMORY.md call site — the renderer's hard
+ *  bullet cap must equal it (the view never emits what the reader truncates). */
+export function pluginMemoryIndexCap(): number {
+  const src = readFileSync(pluginStackStatePath(), "utf8");
+  const call = src.match(/readIndexLines\(\s*vault,\s*path\.join\("memory", "MEMORY\.md"\),\s*(\d+)\s*\)/);
+  if (call === null)
+    throw new Error("the plugin's MEMORY.md call site moved — re-pin pluginMemoryIndexCap against stack_state.ts");
+  return Number(call[1]);
 }

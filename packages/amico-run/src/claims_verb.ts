@@ -1,5 +1,5 @@
-// claims_verb.ts — `amico claims` (amicode #1681, brain flywheel slice 2):
-// the claims registry's CLI surface. Two subcommands:
+// claims_verb.ts — `amico claims` (amicode #1681, brain flywheel slice 2 +
+// #1682 slice 3): the claims registry's CLI surface. Three subcommands:
 //
 //   project — the mechanical memory-card → claim migration (the spec's
 //   "47 memory cards project to claims mechanically"): dry-run by default
@@ -15,13 +15,21 @@
 //   cannot sit past unverified). Findings exit 1 — a lint that cannot fail
 //   gates nothing.
 //
+//   render — the hot-layer index as a GENERATED view (#1682): amicode/memory/
+//   MEMORY.md re-rendered from the registry, ranked by recency + adoption +
+//   confidence, capped per claim type. Dry-run by default; --apply writes.
+//   Idempotent by construction (same registry + same clock → same bytes);
+//   hand-edits are regenerated away — claims are the source of truth, never
+//   this file. A zero-live-claim registry is REFUSED, never silently blanking
+//   the index.
+//
 // ONE SUBSTRATE (the distill doctrine): the chat DB is opened READ-ONLY;
 // the vault is read for resolution; this verb never writes anywhere but the
 // claims registry (or a --out the caller named). No personal mount and no
 // explicit target → refuse (never guess a vault).
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
-import { parseMemoryCard, projectMemoryCard, renderClaimNote, lintClaimsRegistry, claimFileBasename } from "./claims.js";
+import { basename, dirname, join } from "node:path";
+import { parseMemoryCard, projectMemoryCard, renderClaimNote, lintClaimsRegistry, claimFileBasename, loadRegistryClaims, renderIndexView } from "./claims.js";
 import { personalMount, resolveMountStack } from "./mounts.js";
 import { validateClaim, CLAIM_TYPES, type ClaimType } from "@amicode/schema";
 import type { VerbResult } from "./verbs.js";
@@ -29,11 +37,14 @@ import type { VerbResult } from "./verbs.js";
 const USAGE = [
   "amico claims project <card.md> [--out <dir>] [--type <insight|hypothesis|best-practice|hazard|method>] [--apply]",
   "amico claims lint [--registry <dir>] [--vault <mount root>] [--db <chat.db>]",
+  "amico claims render [--registry <dir>] [--out <MEMORY.md>] [--cap-per-type <n>] [--apply]",
   "",
   "  project — mechanically convert a memory card into a registry claim",
   "  (all fields preserved, provenance intact). Dry-run by default; --apply writes.",
   "  lint — validate every claim in the registry against the claim contract and",
   "  resolve every evidence pointer. Findings exit 1.",
+  "  render — regenerate the hot-layer memory index (amicode/memory/MEMORY.md) as",
+  "  a ranked view of the claims registry. Dry-run by default; --apply writes.",
 ].join("\n");
 
 function fail(error: string, extra: Record<string, unknown> = {}): VerbResult {
@@ -55,6 +66,7 @@ export async function claimsVerb(
   const [sub, ...rest] = argv;
   if (sub === "project") return projectSub(rest, env, now);
   if (sub === "lint") return lintSub(rest, env);
+  if (sub === "render") return renderSub(rest, env, now);
   return fail(sub === undefined ? "no subcommand" : `unknown subcommand "${sub}"`);
 }
 
@@ -157,4 +169,69 @@ function lintSub(rest: string[], env: NodeJS.ProcessEnv): VerbResult {
     json: { verb: "claims", ok: r.ok, subcommand: "lint", registry: dir, files: r.files.length, findings: r.findings, clean: r.ok },
     code: r.ok ? 0 : 1,
   };
+}
+
+// ── claims render — the generated hot-layer index (#1682) ─────────────────────
+
+function renderSub(rest: string[], env: NodeJS.ProcessEnv, now: () => Date): VerbResult {
+  const valuedFlags = ["--registry", "--out", "--cap-per-type"];
+  let registry: string | undefined;
+  let out: string | undefined;
+  let capPerType: number | undefined;
+  let apply = false;
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i]!;
+    if (a === "--apply") {
+      apply = true;
+      continue;
+    }
+    if (!valuedFlags.includes(a)) return fail(`unknown flag "${a}"`);
+    if (rest[i + 1] === undefined) return fail(`flag "${a}" needs a value`);
+    if (a === "--registry") registry = rest[i + 1];
+    else if (a === "--out") out = rest[i + 1];
+    else {
+      const n = Number(rest[i + 1]);
+      if (!Number.isInteger(n) || n < 1) return fail(`--cap-per-type must be a positive integer, got "${rest[i + 1]}"`);
+      capPerType = n;
+    }
+    i++;
+  }
+
+  const m = mount(env);
+  const dir = registry ?? (m !== undefined ? join(m.path, "amicode", "claims") : undefined);
+  if (dir === undefined)
+    return fail("no personal vault mount resolved — pass --registry <dir> explicitly (the claims registry is never a guess)");
+  if (!existsSync(dir))
+    return fail(`claims registry not found: ${dir} (missing is a typo or nothing projected yet — nothing to render)`);
+  const target = out ?? (m !== undefined ? join(m.path, "amicode", "memory", "MEMORY.md") : undefined);
+  if (target === undefined)
+    return fail("no personal vault mount resolved — pass --out <MEMORY.md> explicitly (the index target is never a guess)");
+
+  const { claims, skipped } = loadRegistryClaims(dir);
+  const r = renderIndexView(claims, { now: now(), capPerType });
+  if (r.ranked.length === 0)
+    return fail(
+      `no live claims to render — the hot-layer index is never an empty guess (excluded: [${r.excluded.join(", ")}]; skipped: [${skipped.join("; ")}] — project or distill first)`,
+      { excluded: r.excluded, skipped },
+    );
+
+  const json = {
+    verb: "claims",
+    ok: true,
+    subcommand: "render",
+    dry_run: !apply,
+    registry: dir,
+    would_write: apply ? undefined : target,
+    wrote: apply ? target : undefined,
+    bullets: r.ranked.length,
+    per_type: Object.fromEntries([...new Set(r.ranked.map((c) => c.claim.type))].map((t) => [t, r.ranked.filter((c) => c.claim.type === t).length])),
+    excluded: r.excluded,
+    capped: r.capped,
+    skipped,
+    rendered: r.text,
+  };
+  if (!apply) return { json, code: 0 };
+  mkdirSync(dirname(target), { recursive: true });
+  writeFileSync(target, r.text);
+  return { json, code: 0 };
 }
