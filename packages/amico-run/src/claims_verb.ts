@@ -23,13 +23,33 @@
 //   this file. A zero-live-claim registry is REFUSED, never silently blanking
 //   the index.
 //
+//   stamp — the adoption verb (#1683, slice 4): an ACCEPTED recommend-outcome
+//   or a solve-run citation moves the cited claim's `applied` counter +
+//   `last_applied` and appends ONE `applied` history entry. Dry-run by
+//   default; --apply writes. The citation must RESOLVE into the substrate
+//   (the event exists in the problem's events.jsonl and IS accepted; the run
+//   dir exists) before anything moves. Re-stamping the same citation is a
+//   stamped:false no-op — adoption is a counter + a date, never a judgment.
+//
+//   sweep — the nightly backfill (#1683): walk every problem workspace's
+//   events.jsonl (the ONE machine-readable adoption record that exists today
+//   — the recommendation events amicode_recommend appends) and stamp every
+//   claim its ACCEPTED outcomes adopted, via the propose events' provenance
+//   refs (resolved mechanically against the registry). Overridden outcomes
+//   never stamp; unmatched refs are named skips. Idempotent: the citation is
+//   the idempotency key (each stamp's history note carries it), so a re-sweep
+//   changes nothing. No new event format is invented — the sweep reads the
+//   records that ARE persisted; a solve-run citation has no machine-readable
+//   stream yet and rides the stamp verb (the honest seam).
+//
 // ONE SUBSTRATE (the distill doctrine): the chat DB is opened READ-ONLY;
 // the vault is read for resolution; this verb never writes anywhere but the
 // claims registry (or a --out the caller named). No personal mount and no
 // explicit target → refuse (never guess a vault).
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { parseMemoryCard, projectMemoryCard, renderClaimNote, lintClaimsRegistry, claimFileBasename, loadRegistryClaims, renderIndexView } from "./claims.js";
+import { parseMemoryCard, projectMemoryCard, renderClaimNote, lintClaimsRegistry, claimFileBasename, loadRegistryClaims, renderIndexView, parseClaimNote, renderStampedNote, stampAdoption, STAMP_SOURCES, planAdoptionSweep, type AdoptionCitation } from "./claims.js";
 import { personalMount, resolveMountStack } from "./mounts.js";
 import { validateClaim, CLAIM_TYPES, type ClaimType } from "@amicode/schema";
 import type { VerbResult } from "./verbs.js";
@@ -38,6 +58,8 @@ const USAGE = [
   "amico claims project <card.md> [--out <dir>] [--type <insight|hypothesis|best-practice|hazard|method>] [--apply]",
   "amico claims lint [--registry <dir>] [--vault <mount root>] [--db <chat.db>]",
   "amico claims render [--registry <dir>] [--out <MEMORY.md>] [--cap-per-type <n>] [--apply]",
+  "amico claims stamp <claim.md> --via <recommend-outcome|solve-run> --ref <citation> [--detail <text>] [--registry <dir>] [--apply]",
+  "amico claims sweep [--registry <dir>] [--problems <dir>] [--apply]",
   "",
   "  project — mechanically convert a memory card into a registry claim",
   "  (all fields preserved, provenance intact). Dry-run by default; --apply writes.",
@@ -45,6 +67,11 @@ const USAGE = [
   "  resolve every evidence pointer. Findings exit 1.",
   "  render — regenerate the hot-layer memory index (amicode/memory/MEMORY.md) as",
   "  a ranked view of the claims registry. Dry-run by default; --apply writes.",
+  "  stamp — record one adoption: an accepted recommend-outcome (ref <slug>/<event-seq>)",
+  "  or a solve-run citation (ref <run dir>) moves the cited claim's applied counter.",
+  "  Dry-run by default; --apply writes.",
+  "  sweep — the nightly backfill: stamp every claim its problems' recommend-outcome",
+  "  events (events.jsonl) adopted. Idempotent: re-sweep changes nothing.",
 ].join("\n");
 
 function fail(error: string, extra: Record<string, unknown> = {}): VerbResult {
@@ -67,6 +94,8 @@ export async function claimsVerb(
   if (sub === "project") return projectSub(rest, env, now);
   if (sub === "lint") return lintSub(rest, env);
   if (sub === "render") return renderSub(rest, env, now);
+  if (sub === "stamp") return stampSub(rest, env, now);
+  if (sub === "sweep") return sweepSub(rest, env, now);
   return fail(sub === undefined ? "no subcommand" : `unknown subcommand "${sub}"`);
 }
 
@@ -234,4 +263,203 @@ function renderSub(rest: string[], env: NodeJS.ProcessEnv, now: () => Date): Ver
   mkdirSync(dirname(target), { recursive: true });
   writeFileSync(target, r.text);
   return { json, code: 0 };
+}
+
+// ── claims stamp — the adoption verb (#1683, slice 4: the feedback loop closes) ──
+
+/** The problems root (the extension's problemsDir seam: $AMICODE_PROBLEMS_DIR
+ *  overrides — the hermetic test point). */
+function problemsRoot(env: NodeJS.ProcessEnv): string {
+  const v = env.AMICODE_PROBLEMS_DIR;
+  return v && v.trim() !== "" ? v : join(homedir(), ".amico", "problems");
+}
+
+/** Read one problem's events.jsonl (read-only). Malformed lines are NAMED
+ *  skips, never crashes — a broken event stream must not take the stamp down. */
+function readEvents(file: string): { events: Record<string, unknown>[]; malformed: number } {
+  const events: Record<string, unknown>[] = [];
+  let malformed = 0;
+  for (const line of readFileSync(file, "utf8").split("\n")) {
+    if (line.trim() === "") continue;
+    try {
+      events.push(JSON.parse(line) as Record<string, unknown>);
+    } catch {
+      malformed++;
+    }
+  }
+  return { events, malformed };
+}
+
+function stampSub(rest: string[], env: NodeJS.ProcessEnv, now: () => Date): VerbResult {
+  const valuedFlags = ["--via", "--ref", "--detail", "--registry"];
+  let claim: string | undefined;
+  let via: string | undefined;
+  let ref: string | undefined;
+  let detail: string | undefined;
+  let registry: string | undefined;
+  let apply = false;
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i]!;
+    if (a === "--apply") {
+      apply = true;
+      continue;
+    }
+    if (valuedFlags.includes(a)) {
+      if (rest[i + 1] === undefined) return fail(`flag "${a}" needs a value`);
+      if (a === "--via") via = rest[i + 1];
+      else if (a === "--ref") ref = rest[i + 1];
+      else if (a === "--detail") detail = rest[i + 1];
+      else registry = rest[i + 1];
+      i++;
+      continue;
+    }
+    if (claim === undefined && !a.startsWith("--")) {
+      claim = a;
+      continue;
+    }
+    return fail(`unexpected argument "${a}"`);
+  }
+  if (claim === undefined) return fail("stamp needs a claim: amico claims stamp <claim.md> --via <kind> --ref <citation>");
+  if (via === undefined) return fail(`stamp needs --via <(${STAMP_SOURCES.join("|")}> and --ref <citation>`);
+  if (ref === undefined) return fail(`stamp needs --ref <citation> (a <problem-slug>/<event-seq> for a recommend-outcome, a run dir for a solve-run)`);
+  if (!(STAMP_SOURCES as readonly string[]).includes(via)) {
+    return fail(`--via must be one of (${STAMP_SOURCES.join(", ")}), got "${via}"`);
+  }
+
+  const m = mount(env);
+  const dir = registry ?? (m !== undefined ? join(m.path, "amicode", "claims") : undefined);
+  if (dir === undefined)
+    return fail("no personal vault mount resolved — pass --registry <dir> explicitly (the claims registry is never a guess)");
+  const file = claim.includes("/") ? claim : join(dir, claim);
+  if (!existsSync(file)) return fail(`claim note not found: ${file} (the stamp target is never a guess)`);
+
+  // the citation must RESOLVE into the substrate (the #1679 doctrine) before
+  // anything moves: a recommend-outcome event must EXIST and BE accepted;
+  // a solve-run dir must EXIST.
+  let citation: AdoptionCitation;
+  if (via === "recommend-outcome") {
+    const slash = ref.lastIndexOf("/");
+    const slug = slash === -1 ? "" : ref.slice(0, slash);
+    const seq = slash === -1 ? Number.NaN : Number(ref.slice(slash + 1));
+    if (slug === "" || !Number.isInteger(seq) || seq < 1)
+      return fail(`--ref for a recommend-outcome is <problem-slug>/<event-seq>, got "${ref}"`);
+    const eventsFile = join(problemsRoot(env), slug, "events.jsonl");
+    if (!existsSync(eventsFile))
+      return fail(`citation does not resolve: no events.jsonl for problem "${slug}" under ${problemsRoot(env)}`);
+    const { events } = readEvents(eventsFile);
+    const event = events.find((e) => e.seq === seq && e.entity === "recommendation");
+    if (event === undefined) return fail(`citation does not resolve: no recommendation event ${seq} in ${slug}/events.jsonl`);
+    const diff = (event.diff ?? {}) as { outcome?: unknown };
+    if (diff.outcome !== "accepted")
+      return fail(
+        `refused: recommendation event ${slug}/${seq} carries outcome ${JSON.stringify(diff.outcome ?? null)} — adoption stamps only ACCEPTED outcomes (an override is a human declining, not a use)`,
+      );
+    citation = { kind: "recommend-outcome", ref, detail };
+  } else {
+    if (!existsSync(ref)) return fail(`citation does not resolve: no run dir at ${ref}`);
+    citation = { kind: "solve-run", ref: basename(ref), detail };
+  }
+
+  const raw = readFileSync(file, "utf8");
+  const parsed = parseClaimNote(raw);
+  if (!parsed.ok) return fail(`${file}: ${parsed.error}`);
+  const v = validateClaim(parsed.claim);
+  if (!v.ok) return fail(`${file}: not a valid claim (${v.errors.join("; ")}) — the stamp never touches a broken note (the lint stays the registry's gate)`);
+
+  const stamped = stampAdoption(parsed.claim, citation, now().toISOString());
+  const json: Record<string, unknown> = {
+    verb: "claims",
+    ok: true,
+    subcommand: "stamp",
+    dry_run: !apply,
+    claim: file,
+    stamped: stamped.stamped,
+    applied: (stamped.claim.applied as number),
+    citation: `${citation.kind} ${citation.ref}`,
+    ...(!stamped.stamped ? { note: "citation already carried in the applied trail — nothing moved (idempotent)" } : {}),
+  };
+  if (!apply) return { json: { ...json, would_write: file }, code: 0 };
+  if (!stamped.stamped) return { json, code: 0 }; // idempotent re-stamp: no byte moves
+  const stampedValid = validateClaim(stamped.claim);
+  if (!stampedValid.ok)
+    return fail(`stamp produced an invalid claim (a bug, not a card problem): ${stampedValid.errors.join("; ")}`);
+  writeFileSync(file, renderStampedNote(raw, stamped.claim));
+  return { json: { ...json, wrote: file, last_applied: stamped.claim.last_applied }, code: 0 };
+}
+
+// ── claims sweep — the nightly adoption backfill (#1683, AC 4) ────────────────
+
+function sweepSub(rest: string[], env: NodeJS.ProcessEnv, now: () => Date): VerbResult {
+  const valuedFlags = ["--registry", "--problems"];
+  let registry: string | undefined;
+  let problems: string | undefined;
+  let apply = false;
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i]!;
+    if (a === "--apply") {
+      apply = true;
+      continue;
+    }
+    if (!valuedFlags.includes(a)) return fail(`unknown flag "${a}"`);
+    if (rest[i + 1] === undefined) return fail(`flag "${a}" needs a value`);
+    if (a === "--registry") registry = rest[i + 1];
+    else problems = rest[i + 1];
+    i++;
+  }
+
+  const m = mount(env);
+  const dir = registry ?? (m !== undefined ? join(m.path, "amicode", "claims") : undefined);
+  if (dir === undefined)
+    return fail("no personal vault mount resolved — pass --registry <dir> explicitly (the claims registry is never a guess)");
+  if (!existsSync(dir))
+    return fail(`claims registry not found: ${dir} (missing is a typo or nothing projected yet — nothing to sweep)`);
+  const root = problems ?? problemsRoot(env);
+  if (!existsSync(root))
+    return fail(`problems root not found: ${root} (pass --problems <dir> — the sweep never guesses a substrate)`);
+
+  const { claims, skipped } = loadRegistryClaims(dir);
+
+  // read every problem's event stream — the ONE substrate this sweep touches, read-only
+  const streams: { slug: string; events: Record<string, unknown>[] }[] = [];
+  let malformed = 0;
+  for (const entry of readdirSync(root, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort()) {
+    const eventsFile = join(root, entry, "events.jsonl");
+    if (!existsSync(eventsFile)) continue; // a problem with no events yet is a clean skip, not an error
+    const read = readEvents(eventsFile);
+    malformed += read.malformed;
+    streams.push({ slug: entry, events: read.events });
+  }
+
+  const plan = planAdoptionSweep(streams, claims);
+  const json: Record<string, unknown> = {
+    verb: "claims",
+    ok: true,
+    subcommand: "sweep",
+    dry_run: !apply,
+    registry: dir,
+    problems: root,
+    would_stamp: apply ? undefined : plan.stamps.length,
+    already: plan.already,
+    scanned: plan.scanned,
+    skipped_refs: plan.skippedRefs,
+    overridden: plan.overridden,
+    malformed,
+    skipped_claims: skipped,
+  };
+  if (!apply) return { json, code: 0 };
+
+  const changed: string[] = [];
+  for (const { file, citation } of plan.stamps) {
+    const path = join(dir, file);
+    const raw = readFileSync(path, "utf8");
+    const parsed = parseClaimNote(raw);
+    if (!parsed.ok) continue; // named via skipped/skipped_refs surfaces — never a crash
+    const stamped = stampAdoption(parsed.claim, citation, now().toISOString());
+    if (!stamped.stamped) continue; // raced an identical citation — idempotent no-op
+    const valid = validateClaim(stamped.claim);
+    if (!valid.ok) return fail(`sweep produced an invalid claim for ${file} (a bug): ${valid.errors.join("; ")}`);
+    writeFileSync(path, renderStampedNote(raw, stamped.claim));
+    changed.push(file);
+  }
+  return { json: { ...json, stamped: changed.length, changed: [...new Set(changed)].sort() }, code: 0 };
 }
