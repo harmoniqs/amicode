@@ -278,7 +278,7 @@ function loadSignals(file: string): { signals: ContradictionSignal[]; findings: 
       }
       signals.push({ claim: s.claim, run: s.run, note: s.note as string | undefined });
     } catch (e) {
-      findings.push(`signals line ${i + 1}: not a valid signal (${e instanceof Error ? e.message : String(e)}) — skipped`);
+      findings.push(`signals line ${i + 1}: not a valid signal — ${JSON.stringify(line.slice(0, 60))} (${e instanceof Error ? e.message : String(e)}) — skipped`);
     }
   }
   return { signals, findings };
