@@ -280,3 +280,164 @@ export function parseClaimNote(raw: string): { ok: true; claim: Record<string, u
   if (!fm.ok) return { ok: false, error: fm.error };
   return { ok: true, claim: fm.data };
 }
+
+// ── the hot-layer index (amicode #1682, slice 3 — MEMORY.md becomes a view) ───
+//
+// The hand-maintained memory index is dissolved: the hot layer is a DERIVED
+// rendering of the claims registry, ranked by recency + adoption + confidence
+// and capped per claim type. The registry is the source of truth; this view
+// is regenerated on every render and hand-edits are discarded by design. The
+// consumer contract is the stack_state plugin's readIndexLines (bullet lines
+// starting with "- ", capped at 50) — the output must stay parseable by that
+// exact reader, so the provenance header lives in an HTML comment whose lines
+// can never eat a bullet slot.
+//
+// PURITY: no I/O beyond the loader's registry read; no clock (now passed in);
+// the renderer is deterministic — same claims + same clock → identical bytes.
+
+/** The plugin reader's hard cap (packages/extension/opencode-plugin/
+ *  stack_state.ts, the readIndexLines call site for MEMORY.md) — the view
+ *  never emits more bullets than the reader takes. Pinned by test. */
+export const INDEX_MAX_LINES = 50;
+
+/** The default per-domain (per claim-type) cap: 5 types × 10 = the reader cap
+ *  exactly — one type can never flood the hot layer. */
+export const INDEX_DEFAULT_PER_TYPE = 10;
+
+/** The equal-thirds composite's confidence axis (calibrated bands → [0,1]). */
+const CONFIDENCE_FACTOR = { high: 1, medium: 0.6, low: 0.3 } as const;
+
+/** Recency decay per the flywheel's "hot layer" intent: a claim's heat halves
+ *  roughly monthly (days since its NEWEST history event). */
+const RECENCY_HALFLIFE_DAYS = 30;
+
+/** The hot statuses — superseded and refuted claims are replaced/refuted
+ *  knowledge; they stay out of the hot layer by design. */
+const HOT_STATUSES = ["unverified", "corroborated"] as const;
+
+/** One registry claim in renderable shape: its file name + its claim object. */
+export interface RegistryClaim {
+  file: string;
+  claim: Record<string, unknown>;
+}
+
+/** Load the registry through the slice-2 seam: top-level *.md notes, parsed
+ *  and validated against the ONE contract. A note that does not parse or does
+ *  not validate is SKIPPED and NAMED (the render never crashes on a broken
+ *  note, never waves one into the index) — the lint stays the registry's gate. */
+export function loadRegistryClaims(registryDir: string): { claims: RegistryClaim[]; skipped: string[] } {
+  const files = readdirSync(registryDir, { withFileTypes: true })
+    .filter((e) => e.isFile() && e.name.endsWith(".md"))
+    .map((e) => e.name)
+    .sort();
+  const claims: RegistryClaim[] = [];
+  const skipped: string[] = [];
+  for (const file of files) {
+    const parsed = parseClaimNote(readFileSync(join(registryDir, file), "utf8"));
+    if (!parsed.ok) {
+      skipped.push(`${file}: ${parsed.error}`);
+      continue;
+    }
+    const v = validateClaim(parsed.claim);
+    if (!v.ok) {
+      skipped.push(`${file}: ${v.errors.join("; ")}`);
+      continue;
+    }
+    claims.push({ file, claim: parsed.claim });
+  }
+  return { claims, skipped };
+}
+
+/** The ranking score ∈ [0,3]: an equal-thirds composite of
+ *   recency   exp(−ageDays/30) over the claim's newest history date,
+ *   adoption  applied/(applied+1) — saturating, so one stamp matters and
+ *             a hundred don't dominate,
+ *   confidence high 1 / medium 0.6 / low 0.3.
+ *  (The issue's "recency × adoption × confidence" is realized as the additive
+ *  composite: a literal product zeroes every claim at applied=0 — the whole
+ *  registry, until slice 4 stamps adoption — a degenerate day-one index.) */
+export function claimScore(claim: Record<string, unknown>, now: Date): number {
+  const history = Array.isArray(claim.history) ? claim.history : [];
+  const dates = history
+    .map((h) => Date.parse((h as { date?: unknown }).date as string))
+    .filter((d) => Number.isFinite(d));
+  const recency =
+    dates.length === 0 ? 0 : Math.exp(-Math.max(0, (now.getTime() - Math.max(...dates)) / (86_400_000 * RECENCY_HALFLIFE_DAYS)));
+  const applied = typeof claim.applied === "number" && claim.applied >= 0 ? claim.applied : 0;
+  const confidence = CONFIDENCE_FACTOR[(claim.confidence as keyof typeof CONFIDENCE_FACTOR) ?? ""] ?? 0;
+  return recency + applied / (applied + 1) + confidence;
+}
+
+/** The bullet label: the claim's statement, bracket-escaped for the markdown
+ *  link and truncated to a one-line pointer. */
+function bulletLabel(statement: string): string {
+  const escaped = statement.replace(/\[/g, "\\[").replace(/\]/g, "\\]");
+  return escaped.length > 160 ? escaped.slice(0, 159) + "…" : escaped;
+}
+
+export interface IndexRender {
+  /** the emitted claims, in ranked order (post-filter, post-caps) */
+  ranked: RegistryClaim[];
+  /** per-claim scores, parallel to ranked (transparency for the verb's json) */
+  scores: number[];
+  /** superseded/refuted claims kept out of the hot layer, named with status */
+  excluded: string[];
+  /** claims dropped by the per-domain or global caps, named */
+  capped: string[];
+  /** the rendered index — the exact bytes written to MEMORY.md */
+  text: string;
+}
+
+/** Render the hot-layer index: filter to hot statuses, rank by the composite
+ *  (tie → claim file, ascending, for stable re-renders), cap per claim type
+ *  and globally, and emit the provenance header + one bullet per claim.
+ *  Deterministic: same claims + same clock → identical bytes. */
+export function renderIndexView(
+  claims: RegistryClaim[],
+  opts: { now: Date; capPerType?: number; maxLines?: number },
+): IndexRender {
+  const capPerType = opts.capPerType ?? INDEX_DEFAULT_PER_TYPE;
+  const maxLines = opts.maxLines ?? INDEX_MAX_LINES;
+
+  const excluded: string[] = [];
+  const hot = claims.filter((c) => {
+    const status = c.claim.status as string;
+    if ((HOT_STATUSES as readonly string[]).includes(status)) return true;
+    excluded.push(`${c.file} (${status})`);
+    return false;
+  });
+
+  const scored = hot
+    .map((c) => ({ entry: c, score: claimScore(c.claim, opts.now) }))
+    .sort((a, b) => b.score - a.score || (a.entry.file < b.entry.file ? -1 : 1));
+
+  const ranked: RegistryClaim[] = [];
+  const scores: number[] = [];
+  const capped: string[] = [];
+  const perType = new Map<string, number>();
+  for (const { entry, score } of scored) {
+    const type = entry.claim.type as string;
+    if (ranked.length >= maxLines || (perType.get(type) ?? 0) >= capPerType) {
+      capped.push(entry.file);
+      continue;
+    }
+    perType.set(type, (perType.get(type) ?? 0) + 1);
+    ranked.push(entry);
+    scores.push(score);
+  }
+
+  const header = [
+    "<!--",
+    "generated view — `amico claims render` (amicode #1682, the brain-flywheel hot-layer index)",
+    "source of truth: the claims registry (amicode/claims/) — never this file. claims are the",
+    "atomic unit; this index is a DERIVED rendering, ranked by recency + adoption + confidence",
+    "and capped per claim type; superseded and refuted claims stay out of the hot layer.",
+    "hand-edits are regenerated away by design — edit claims, not this view.",
+    "-->",
+  ];
+  const bullets = ranked.map((c) => {
+    const claim = c.claim;
+    return `- [${bulletLabel(claim.statement as string)}](../claims/${c.file}) — ${claim.type} · ${claim.status} · ${claim.confidence} · applied ${claim.applied}×`;
+  });
+  return { ranked, scores, excluded, capped, text: [...header, "", ...bullets].join("\n") + "\n" };
+}
