@@ -40,7 +40,7 @@
       "enum": ["high", "medium", "low"]
     },
     "evidence": {
-      "description": "pointers into the substrate — MUST resolve (the lint checks). Vocabulary (extends slice 1's): chat-session/<id>, chat-message/<id> (the chat DB), memory-card/<relpath under amicode/memory/> (the vault). May be empty only while unverified.",
+      "description": "pointers into the substrate — MUST resolve (the lint checks). Vocabulary (extends slice 1's): chat-session/<id>, chat-message/<id> (the chat DB), memory-card/<relpath under amicode/memory/> (the vault), paper/<basename under papers/> (the literature intake, #1686), meeting-note/<relpath under the meeting vault root> (the meeting intake, #1686). May be empty only while unverified.",
       "type": "array",
       "items": { "type": "string", "minLength": 1 }
     },

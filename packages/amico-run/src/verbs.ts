@@ -33,6 +33,8 @@ import { skillsVerb } from "./skills_verb.js";
 import { notturnoVerb } from "./notturno_verb.js";
 import { distillVerb } from "./distill_verb.js";
 import { claimsVerb } from "./claims_verb.js";
+import { extractMeetingsVerb } from "./extract_meetings_verb.js";
+import { triagePapersVerb } from "./triage_papers_verb.js";
 export interface VerbResult {
   json: unknown; // structured result (stdout as JSON for the CLI; tool content for MCP)
   code: number; // process exit code (0 ok, 64 usage/gate, else failure)
@@ -364,6 +366,47 @@ const claims: Verb = {
   run: (args) => claimsVerb(args),
 };
 
+// extract-meetings — the brain flywheel's meeting-intake half (amicode #1686,
+// slice 7 of #1679): the weekly job over the meeting vault's pending-tag
+// backlog (57/60 notes never tagged, Context Links never fired). The vault's
+// OWN registry is the canon (closed tier-1 vocabularies; tier-2 entities
+// minted only from the note's own attendee canonicals + partnership phrases;
+// tier-3 themes free-form) — and where the closed vocabulary has no fit, the
+// proposal NAMES THE GAP rather than inventing tags (this is an LLM-adjacent
+// pipeline: proposals derive from the note's own content). Outputs are
+// PROPOSALS to a --out the caller names (the ro-mounted vault is never
+// written): the tagged-note proposal (prose verbatim), resolvable context
+// links (transcript sibling, series sessions, this pass's hopper proposals),
+// and next-steps → hopper proposals carrying resolvable meeting-note
+// provenance. Idempotent: deterministic naming + bytes; the notturno receipt
+// rides the distill chassis gates (deny-list, membership, record mode).
+const extractMeetings: Verb = {
+  name: "extract-meetings",
+  summary:
+    "triage a pending-tag meeting note: propose its three tag tiers (the vault registry's closed vocabularies, gaps named), resolvable context links, and next-steps → hopper proposals with meeting provenance",
+  generalizes: "the meeting vault's LLM tagging stage that never ran (status pending-tag, Context Links placeholders)",
+  slice: "company brain flywheel (amicode#1686, slice 7)",
+  run: (args) => extractMeetingsVerb(args),
+};
+
+// triage-papers — the brain flywheel's arjev-intake half (amicode #1686,
+// slice 7): the weekly job over the papers intake. A relevance-high paper
+// yields a claim-shaped hypothesis-seed proposal (frontmatter EXACTLY the
+// claim object, evidence a resolvable paper/ pointer, confidence low —
+// machinery links, it cannot calibrate a scientific prior) against the
+// problem cards whose platform identity matches the paper's systems (exact,
+// no fuzzy bridging); no matching card → no seed, named honestly. Seeds file
+// into the claim layer's candidates area; humans state the hypothesis
+// (triage proposes, humans dispose).
+const triagePapers: Verb = {
+  name: "triage-papers",
+  summary:
+    "triage the papers intake: a relevance-high paper becomes a claim-shaped hypothesis-seed proposal (paper evidence pointer) against the platform-matching problem cards",
+  generalizes: "the paper notes that accumulate without ever seeding the problem cards they bear on",
+  slice: "company brain flywheel (amicode#1686, slice 7)",
+  run: (args) => triagePapersVerb(args),
+};
+
 export const SPINE_VERBS: Verb[] = [
   catalog,
   vault,
@@ -385,4 +428,6 @@ export const SPINE_VERBS: Verb[] = [
   notturno,
   distill,
   claims,
+  extractMeetings,
+  triagePapers,
 ];

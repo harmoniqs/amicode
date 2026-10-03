@@ -76,10 +76,13 @@ export function memoryCardPointer(cardRel: string): string {
   return `memory-card/${cardRel}`;
 }
 
-/** The pointer kinds the lint can resolve — slice 1's chat vocabulary plus
- *  this slice's memory-card kind. An evidence pointer outside this vocabulary
+/** The pointer kinds the lint can resolve — slice 1's chat vocabulary, slice
+ *  2's memory-card kind, and slice 7's intake kinds (#1686): `paper/<basename
+ *  under papers/>` (the literature intake — hypothesis-seed evidence) and
+ *  `meeting-note/<relpath under the meeting vault root>` (the meeting intake —
+ *  hopper-proposal provenance). An evidence pointer outside this vocabulary
  *  is flagged, never waved through. */
-export const POINTER_KINDS = ["chat-session", "chat-message", "memory-card"] as const;
+export const POINTER_KINDS = ["chat-session", "chat-message", "memory-card", "paper", "meeting-note"] as const;
 
 // ── the projection (AC 3) ─────────────────────────────────────────────────────
 
@@ -174,12 +177,15 @@ export function renderClaimNote(claim: unknown, card: MemoryCard, cardRel: strin
 // ── the registry lint (AC 2) ─────────────────────────────────────────────────
 
 /** The substrates evidence pointers resolve into: the vault root (memory-card
- *  pointers resolve under `<root>/amicode/memory/`) and the chat DB (slice 1's
- *  chat-session / chat-message pointers). Both optional; an absent substrate
- *  makes its pointers' unresolvability a FINDING, never a silent pass. */
+ *  pointers resolve under `<root>/amicode/memory/`, paper pointers under
+ *  `<root>/papers/`), the chat DB (slice 1's chat-session / chat-message
+ *  pointers), and the meeting vault root (#1686's meeting-note pointers,
+ *  relative paths). All optional; an absent substrate makes its pointers'
+ *  unresolvability a FINDING, never a silent pass. */
 export interface LintSubstrates {
   vaultRoot?: string;
   db?: string;
+  meetingsRoot?: string;
 }
 
 export interface ClaimLintResult {
@@ -201,6 +207,14 @@ function lintPointer(pointer: string, substrates: LintSubstrates, db: { sessions
   if (kind === "memory-card") {
     if (substrates.vaultRoot === undefined) return `${pointer}: no vault substrate given — cannot resolve (pass --vault <mount root>)`;
     return existsSync(join(substrates.vaultRoot, "amicode", "memory", id)) ? undefined : `${pointer}: unresolved — no such memory card under ${join(substrates.vaultRoot, "amicode", "memory")}`;
+  }
+  if (kind === "paper") {
+    if (substrates.vaultRoot === undefined) return `${pointer}: no vault substrate given — cannot resolve (pass --vault <mount root>)`;
+    return existsSync(join(substrates.vaultRoot, "papers", id)) ? undefined : `${pointer}: unresolved — no such paper under ${join(substrates.vaultRoot, "papers")}`;
+  }
+  if (kind === "meeting-note") {
+    if (substrates.meetingsRoot === undefined) return `${pointer}: no meeting vault given — cannot resolve (pass --meetings <meeting vault root>)`;
+    return existsSync(join(substrates.meetingsRoot, id)) ? undefined : `${pointer}: unresolved — no such meeting note under ${substrates.meetingsRoot}`;
   }
   if (kind === "chat-session") return db.sessions.has(id) ? undefined : `${pointer}: unresolved — no such session in the chat DB`;
   if (kind === "chat-message") return db.messages.has(id) ? undefined : `${pointer}: unresolved — no such message in the chat DB`;
