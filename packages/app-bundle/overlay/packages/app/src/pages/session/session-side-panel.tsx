@@ -379,9 +379,13 @@ export function SessionSidePanel(props: {
 
   // ── Preview companion state ──────────────────────────────────────────────
   // The file to show in the Preview tab. Null = empty state ("Select a file
-  // from the sidebar"). Managed in the layout context's ephemeral store so
-  // the bridge message handler can set it from outside the side panel.
+  // from the sidebar"). Managed in the layout context's persisted session-view
+  // store (previewActive + previewPaths) so the bridge message handler can set
+  // it from outside the side panel AND it survives reloads.
   const previewFile = createMemo(() => view().previewFile.get())
+  const previewPaths = createMemo(() => view().previewPaths.get())
+  const setPreviewPaths = (paths: string[]) => view().previewPaths.set(paths)
+  const setPreviewActive = (path: string | null) => view().previewFile.set(path)
 
   createEffect(
     on(previewFile, (path) => {
@@ -920,7 +924,7 @@ export function SessionSidePanel(props: {
                             inert={activeTab() !== SESSION_PREVIEW_TAB}
                           >
                             <div class="relative flex-1 min-h-0 overflow-hidden">
-                              <SessionPreviewTab previewFile={previewFile} panelVisible={() => activeTab() === SESSION_PREVIEW_TAB} />
+                              <SessionPreviewTab previewFile={previewFile} panelVisible={() => activeTab() === SESSION_PREVIEW_TAB} openPaths={previewPaths} onOpenedPathsChange={setPreviewPaths} onActiveChange={setPreviewActive} hydrated={layout.ready} />
                             </div>
                           </Tabs.Content>
 
@@ -1250,7 +1254,7 @@ export function SessionSidePanel(props: {
                         inert={activeTab() !== SESSION_PREVIEW_TAB}
                       >
                         <div class="relative flex-1 min-h-0 overflow-hidden">
-                          <SessionPreviewTab previewFile={previewFile} panelVisible={() => activeTab() === SESSION_PREVIEW_TAB} />
+                          <SessionPreviewTab previewFile={previewFile} panelVisible={() => activeTab() === SESSION_PREVIEW_TAB} openPaths={previewPaths} onOpenedPathsChange={setPreviewPaths} onActiveChange={setPreviewActive} hydrated={layout.ready} />
                         </div>
                       </Tabs.Content>
 

@@ -3,7 +3,7 @@
  * retained pool and are relocated between leaf slots without being recreated.
  */
 
-import { createEffect, createSignal, For, on, onCleanup, onMount, Show, type Accessor, type JSX } from "solid-js"
+import { createEffect, createSignal, For, onCleanup, onMount, Show, type Accessor, type JSX } from "solid-js"
 import { createStore } from "solid-js/store"
 import { Portal } from "solid-js/web"
 import { DragDropProvider, PointerSensor } from "@dnd-kit/solid"
@@ -22,9 +22,12 @@ import {
   createPreviewWorkspace,
   movePreviewTab,
   openPreviewPath,
+  previewActiveAfterClose,
   previewLeafContaining,
   previewLeaves,
   previewMinimumExtent,
+  previewMissingPaths,
+  previewRestoreTarget,
   previewTabCount,
   removePreviewPath,
   resizePreviewSplit,
@@ -96,6 +99,19 @@ export function SessionPreviewTab(props: {
    *  a preview tab within the pane). Composed with isSelected to form the
    *  full `active` signal so hide/show fires on side-panel tab switches too. */
   panelVisible?: () => boolean
+  /** Persisted open-paths list (from the session view). Restores every open
+   *  preview tab across remounts and editor reloads; when absent the tab keeps
+   *  its old purely-local, non-persisted behavior. #1398 + reload persistence. */
+  openPaths?: Accessor<string[]>
+  onOpenedPathsChange?: (paths: string[]) => void
+  /** Update the persisted active file (previewFile). Called when the active tab
+   *  changes — including close, so a closed tab's path is never left as the
+   *  active file to be re-opened on the next re-instantiation. */
+  onActiveChange?: (path: string | null) => void
+  /** True once the persisted layout store has hydrated. Reconciliation of the
+   *  persisted open-paths list is held until this flips true (the store loads
+   *  async); reconciling earlier clobbers the list to just the active file. */
+  hydrated?: () => boolean
 }) {
   const platform = usePlatform()
   const [dirtyPaths, setDirtyPaths] = createStore<Record<string, boolean>>({})
@@ -118,6 +134,15 @@ export function SessionPreviewTab(props: {
 
   const openedPaths = () => previewLeaves(workspace().tree).flatMap((leaf) => leaf.tabs)
 
+  // Persist the current open set to the session view. Gated on hydration so a
+  // pre-hydration transient can't clobber the stored list; called EXPLICITLY at
+  // open/close (not from a reactive openedPaths watcher) so the stored list is
+  // always current and the restore below can never re-add a just-closed tab.
+  const syncOpenPaths = () => {
+    if (props.hydrated && !props.hydrated()) return
+    props.onOpenedPathsChange?.(openedPaths())
+  }
+
   const openPath = (path: string) => {
     const current = workspace()
     if (!previewLeafContaining(current.tree, path) && previewTabCount(current.tree) === MAX_PREVIEW_TABS) {
@@ -126,16 +151,50 @@ export function SessionPreviewTab(props: {
     }
     setWorkspace(openPreviewPath(current, path))
     setCapacityMessage(null)
+    syncOpenPaths()
   }
 
-  createEffect(
-    on(
-      () => props.previewFile(),
-      (path) => {
-        if (path) openPath(path)
-      },
-    ),
-  )
+  // The SOLE opener on mount / session re-instantiation. Restores the persisted
+  // open set — plus the active file, which covers a net-new open that mounted
+  // the Preview tab (the bridge sets previewFile before this component exists,
+  // and the mount message is missed) — by MERGING the target into the live
+  // workspace and focusing the active tab.
+  //
+  // Why this shape (each clause earns its place against a failure we hit live):
+  //  - Signature-guarded → runs once per DISTINCT target, never on its own
+  //    workspace writes, so it cannot loop (the freeze) and cannot re-open on a
+  //    plain tab switch (the reopen/shift). #1288 re-instantiation is inert here.
+  //  - Reactive on the persisted accessors → fires when they resolve, so it
+  //    survives async store hydration AND late session-key resolution.
+  //  - Merge-only (never removes) → a file closed via removePath (which writes
+  //    the shrunk list + reassigns previewActive) is absent from the target and
+  //    is never re-added.
+  //  - There is deliberately NO separate `on(previewFile)` open effect: that was
+  //    the reopen engine. Live opens arrive through the mount message listener;
+  //    the first-open-that-mounts is the `active` term of the target here.
+  // Split-pane / zoom / scroll are NOT restored — only the flat open set (#981).
+  let restoredSignature = ""
+  createEffect(() => {
+    const persisted = props.openPaths?.() ?? []
+    const active = props.previewFile()
+    const target = previewRestoreTarget(persisted, active)
+    const signature = target.join("\u0000")
+    if (signature === restoredSignature) return
+    restoredSignature = signature
+    if (target.length === 0) return
+    const missing = previewMissingPaths(target, openedPaths())
+    if (missing.length > 0) {
+      setWorkspace((current) => {
+        let next = current
+        for (const path of missing) next = openPreviewPath(next, path)
+        if (active) next = openPreviewPath(next, active)
+        return next
+      })
+    }
+    // Persist a net-new active file that mounted the tab (not yet in the list).
+    // Deduped in the setter, so a plain re-instantiation writes nothing.
+    if (active && !persisted.includes(active)) syncOpenPaths()
+  })
 
   onMount(() => {
     const handlePreviewFile = (event: MessageEvent) => {
@@ -168,9 +227,16 @@ export function SessionPreviewTab(props: {
   }
 
   const removePath = (path: string) => {
+    const wasActive = props.previewFile()
     setWorkspace((current) => removePreviewPath(current, path))
     setDirtyPaths(path, false)
     setHostMounts(path, undefined)
+    syncOpenPaths()
+    // If we just closed the active file, move the active pointer to a remaining
+    // tab (or null). Otherwise it stays pointing at the closed path and would be
+    // re-opened as the restore target on the next re-instantiation / tab switch.
+    const nextActive = previewActiveAfterClose(path, wasActive, openedPaths())
+    if (nextActive !== wasActive) props.onActiveChange?.(nextActive)
   }
 
   const closePath = (path: string) => {
@@ -474,7 +540,10 @@ export function SessionPreviewTab(props: {
       >
         <Tabs
           value={leaf.selectedPath ?? undefined}
-          onChange={(path) => setWorkspace((current) => selectPreviewPath(current, leaf.id, path))}
+          onChange={(path) => {
+            setWorkspace((current) => selectPreviewPath(current, leaf.id, path))
+            props.onActiveChange?.(path)
+          }}
           class="shrink-0"
           classList={{ "preview-tab-strip": true }}
         >
