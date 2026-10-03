@@ -1,4 +1,4 @@
-# Brain flywheel jobs — the curation motions on cadence (slice 6, #1685)
+# Brain flywheel jobs — the curation motions on cadence (slices 6 + 8, #1685 / #1687)
 
 The dream cycle's manual invocations — `/dream promote`, `/dream prune`,
 `/dream synthesize` (and the `/dream` orchestration that wrapped them) — are
@@ -8,14 +8,14 @@ registry, receipted in the scheduled-passes journal, testable in isolation.
 This page is the jobs' documentation of record — what each job does, its
 cadence, its registry row, and its trust boundaries.
 
-The verbs (all subcommands of `amico claims`, all dry-run by default,
-`--apply` writes):
+The verbs (all dry-run by default, `--apply` writes):
 
 | job | verb | cadence | what it does |
 |---|---|---|---|
 | `promote` | `amico claims promote` | weekly | scope-team live claims → ONE PR-body bundle per vault, 10-cap, **proposes only** |
 | `prune` | `amico claims prune` | weekly | schema-check (the claims lint) + unambiguous hygiene fixes; drift flagged for a human |
 | `synthesize` | `amico claims synthesize` | weekly | cross-claim tag clusters → hopper proposals, **never strategy** |
+| `brain-health` | `amico brain-health` | monthly | the five KPI families over pass receipts + claim state → the dated brief; **measures, never acts** (#1687) |
 
 Slices 1–5 of the flywheel (#1680 distill, #1681 claims schema, #1682 render,
 #1683 stamp/sweep, #1684 lifecycle) feed these jobs: they operate on the
@@ -87,6 +87,50 @@ Idempotent: a tag whose note already exists is a named skip.
 sections are human-fed by design; the verb has no code path that reads or
 writes a strategy file at all. A human curates hopper items into strategy at
 triage — the hopper skill's protocol.
+
+## brain-health — the brain measures itself (slice 8, #1687)
+
+`amico brain-health [--period YYYY-MM] --dashboards <dir|file> [--registry
+<dir>] [--candidates <dir>] [--state <distill-state.json>] [--queue
+<review-queue.md>] [--meetings <root>] [--out <file>] [--apply]`
+
+The monthly KPI report over the flywheel's own pass receipts + claim state —
+the five families the #1679 census named: **claims created vs applied**
+(created from the distill receipts' own counts, applied from the registry's
+`applied` history events), **time-to-distill** (the candidate notes' own
+`distilled_at` vs `session_updated`), **pending backlog trends** (the distill
+backlog = latest receipt's substantive − the state stamp's ever-distilled;
+the review queue's own rendered count; the pending-tag intake from the
+extract-meetings receipts + the meetings vault's own status frontmatter),
+**refutation rate** (refuted / (refuted + corroborated) history events in
+period + the registry snapshot), and **schema compliance** (the prune
+receipts' own drift-finding counts).
+
+Published as a dated brief in the vault's briefs area, period-keyed:
+`briefs/health-YYYY-MM.md` — **idempotent per period** (a re-run overwrites
+its own brief, the re-distill doctrine; each month's brief is the trend
+carrier). Every number carries the provenance that produced it (receipt
+dates, claim files); an unmeasured family is stated, never faked as zero; a
+receipt whose outcome left its writer's pinned shape is a named finding, not
+a silent skip.
+
+**The report measures, never acts** (#1687's Key Decision): every substrate —
+the receipts journal, the registry, the candidate area, the review queue, the
+meetings vault — is opened READ-ONLY. The only bytes an apply run writes are
+the brief itself (atomically) and the pass's own receipt. No fixes, no
+stamping, no transitions ride this pass.
+
+The registry row it honors (the membership key the receipt path checks):
+
+```toml
+[job.brain-health]
+workflow = "notturno-brain-health.yml"
+cadence  = "0 6 1 * *"        # the 1st of the month, 06:00 UTC (monthly, per the spec)
+surface  = "mini"
+warrant  = "report"           # a report — the read-only warrant tier
+enabled  = true
+record   = "always"
+```
 
 ## Receipts + cadences (the notturno chassis)
 
