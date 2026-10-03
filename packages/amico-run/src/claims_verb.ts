@@ -210,17 +210,19 @@ function projectSub(rest: string[], env: NodeJS.ProcessEnv, now: () => Date): Ve
 // ── claims lint ───────────────────────────────────────────────────────────────
 
 function lintSub(rest: string[], env: NodeJS.ProcessEnv): VerbResult {
-  const valuedFlags = ["--registry", "--vault", "--db"];
+  const valuedFlags = ["--registry", "--vault", "--db", "--meetings"];
   let registry: string | undefined;
   let vault: string | undefined;
   let db: string | undefined;
+  let meetings: string | undefined;
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i]!;
     if (!valuedFlags.includes(a)) return fail(`unknown flag "${a}"`);
     if (rest[i + 1] === undefined) return fail(`flag "${a}" needs a value`);
     if (a === "--registry") registry = rest[i + 1];
     else if (a === "--vault") vault = rest[i + 1];
-    else db = rest[i + 1];
+    else if (a === "--db") db = rest[i + 1];
+    else meetings = rest[i + 1];
     i++;
   }
 
@@ -233,7 +235,7 @@ function lintSub(rest: string[], env: NodeJS.ProcessEnv): VerbResult {
     return fail(`claims registry not found: ${dir} (empty is fine — missing is a typo or nothing projected yet)`);
   const vaultRoot = vault ?? m?.path;
 
-  const r = lintClaimsRegistry(dir, { vaultRoot, db });
+  const r = lintClaimsRegistry(dir, { vaultRoot: vaultRoot, db, meetingsRoot: meetings });
   return {
     json: { verb: "claims", ok: r.ok, subcommand: "lint", registry: dir, files: r.files.length, findings: r.findings, clean: r.ok },
     code: r.ok ? 0 : 1,
