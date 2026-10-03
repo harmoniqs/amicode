@@ -27,6 +27,23 @@ thread states), order rows, decide which threads earn a digest line.
 What it may *not* do: soften a verdict, merge legs, drop a legs-named
 pair into one flattering figure, round a number, or invent a state.
 
+## Style (the anti-slop rules)
+
+The report reads like a lab notebook, not a summary. Round 1 of the real
+fills failed review for reading "like slop" — dense em-dash-chained walls of
+compressed ledger prose. The cure is mechanical:
+
+- **Short declarative sentences.** Period-separated. One fact per sentence.
+  No em-dash chains, no parenthetical nestings, no narrative connective
+  tissue ("the campaign's payoff landed" is banned; "First rydberg pulse
+  promoted" is the register).
+- **Numbers lead.** Each adjudication row opens with the measured result,
+  then one clause of mechanism at most. The ledger keeps the story.
+- **Rows are 2–3 lines.** A row that wants 5+ lines is two facts — split
+  it or cut one.
+- **No restating hypotheses in full.** The id + one line of state; the
+  ledger carries the spec.
+
 ## Slots
 
 Every `%% SLOT:` marker stays in the filled copy — the gate greps them.
