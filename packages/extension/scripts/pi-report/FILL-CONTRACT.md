@@ -69,9 +69,17 @@ If the demoted report is *still* over cap, the fill failed — the loop
 records the degradation receipt (markdown projection + queue line) and
 moves on. The loop never waits on the report.
 
-## Filled examples
+## Where filled reports live
 
-Real campaign fills (pasqal loop close, OQC campaign final) are generated
-locally from the live ledgers for review — they are **never committed**
-(repo is public; campaign data is not). Committed fixtures are synthetic
+Real campaign fills are **never committed to this repo** (it is public;
+campaign data is not). Their durable home is the **personal vault's
+`amicode/pi-reports/`** — the git-synced vault carries every render to
+every fleet machine, where VS Code opens the PDF directly. That is the
+cross-machine review path: no fleet-session file links (they don't open
+across machines, amicode#1653) — the artifact syncs to the reader, the
+reader never fetches from the session host.
+
+Render loop: fill from the ledger → tectonic → `.pdf` + `.tex` land in
+`amicode/pi-reports/<campaign>-<boundary>.{pdf,tex}` → vault sync →
+review on any device. Committed fixtures in this repo stay synthetic
 (`fixtures/`), shaped like the two real ledger formats.
