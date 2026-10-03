@@ -312,8 +312,10 @@ const CONFIDENCE_FACTOR = { high: 1, medium: 0.6, low: 0.3 } as const;
 const RECENCY_HALFLIFE_DAYS = 30;
 
 /** The hot statuses — superseded and refuted claims are replaced/refuted
- *  knowledge; they stay out of the hot layer by design. */
-const HOT_STATUSES = ["unverified", "corroborated"] as const;
+ * knowledge; they stay out of the hot layer by design. Shared by the
+ * curation jobs (#1685): the same live set feeds promote's eligibility and
+ * synthesize's pattern economy. */
+export const HOT_STATUSES = ["unverified", "corroborated"] as const;
 
 /** One registry claim in renderable shape: its file name + its claim object. */
 export interface RegistryClaim {

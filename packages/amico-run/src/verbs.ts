@@ -352,12 +352,15 @@ const distill: Verb = {
 // counter + last_applied (ONE applied history entry, citation-keyed — a
 // counter + a date, never a judgment); the nightly sweep backfills the same
 // stamps from the problems' events.jsonl streams, idempotently.
+// `promote` + `prune` + `synthesize` (#1685, slice 6) put the dream cycle's
+// curation motions on cadence as notturno jobs — the manual /dream
+// invocations retire in favor of the jobs (docs/brain-flywheel-jobs.md).
 // Notes are renderings; machinery operates on claims only — the claim note's
 // frontmatter IS the claim object, exactly.
 const claims: Verb = {
   name: "claims",
   summary:
-    "the claims registry: project (memory card → claim, mechanical, fields preserved) / lint (contract + evidence-pointer resolution, findings exit 1) / render (the hot-layer index as a generated view of claims, ranked recency + adoption + confidence) / stamp (record one adoption: accepted recommend-outcome or solve-run citation → applied + last_applied) / sweep (the nightly backfill from the problems' recommend-outcome event streams, idempotent) / lifecycle (the nightly pass, #1684: dedupe-merge onto the older claim, corroborate at the evidence threshold, refute on contradicted-by-run signals, decay → the review queue — a proposal surface, never an actor)",
+    "the claims registry: project (memory card → claim, mechanical, fields preserved) / lint (contract + evidence-pointer resolution, findings exit 1) / render (the hot-layer index as a generated view of claims, ranked recency + adoption + confidence) / stamp (record one adoption: accepted recommend-outcome or solve-run citation → applied + last_applied) / sweep (the nightly backfill from the problems' recommend-outcome event streams, idempotent) / lifecycle (the nightly pass, #1684: dedupe-merge onto the older claim, corroborate at the evidence threshold, refute on contradicted-by-run signals, decay → the review queue — a proposal surface, never an actor) / promote (the weekly proposal bundle, #1685: scope-team live claims → ONE PR body + copies per vault, 10-cap, PROPOSES ONLY — a human merges) / prune (the weekly schema-check + hygiene pass: lint findings are drift for a human, only unambiguous fixes applied) / synthesize (the weekly pattern pass: cross-claim tag clusters → hopper proposals, never strategy)",
   generalizes:
     "the hand-maintained memory hot-layer's type namespace (the collision the #1679 census flagged, dissolved: one store, claims as the atomic unit)",
   slice: "company brain flywheel (amicode#1681, slice 2; #1682, slice 3; #1683, slice 4)",

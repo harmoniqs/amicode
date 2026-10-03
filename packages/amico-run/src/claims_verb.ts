@@ -42,6 +42,15 @@
 //   records that ARE persisted; a solve-run citation has no machine-readable
 //   stream yet and rides the stamp verb (the honest seam).
 //
+//   promote / prune / synthesize (#1685, slice 6 — the dream curation motions
+//   as weekly notturno jobs) live in curation_verb.ts and route from here:
+//   promote PROPOSES one PR-body bundle per vault (10-cap, human-merged,
+//   never auto-merged); prune reuses the lint as its schema-check (findings
+//   are drift, exit 1) and applies only unambiguous frontmatter fixes;
+//   synthesize writes hopper proposals from cross-claim tag clusters, never
+//   strategy. Each files its pass receipt on the distill chassis
+//   (--jobs + --dashboards, deny-list-gated, membership-checked).
+//
 // ONE SUBSTRATE (the distill doctrine): the chat DB is opened READ-ONLY;
 // the vault is read for resolution; this verb never writes anywhere but the
 // claims registry (or a --out the caller named). No personal mount and no
@@ -51,6 +60,7 @@ import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { parseMemoryCard, projectMemoryCard, renderClaimNote, lintClaimsRegistry, claimFileBasename, loadRegistryClaims, renderIndexView, parseClaimNote, renderStampedNote, stampAdoption, STAMP_SOURCES, planAdoptionSweep, type AdoptionCitation } from "./claims.js";
 import { runLifecyclePass, renderQueueFile, rewriteClaimNote, DECAY_WINDOW_DAYS, type ContradictionSignal } from "./lifecycle.js";
+import { promoteSub, pruneSub, synthesizeSub } from "./curation_verb.js";
 import { personalMount, resolveMountStack } from "./mounts.js";
 import { validateClaim, CLAIM_TYPES, type ClaimType } from "@amicode/schema";
 import type { VerbResult } from "./verbs.js";
@@ -64,6 +74,12 @@ const USAGE = [
   "amico claims lifecycle [--registry <dir>] [--signals <contradictions.jsonl>]",
   "                       [--corroborate-threshold <n>] [--merge-threshold <f>] [--decay-days <n>]",
   "                       [--queue <file>] [--apply]",
+  "amico claims promote [--registry <dir>] [--state <p>] [--out <bundles dir>] [--from <vault>]",
+  "                     [--apply] [--jobs <notturno.toml>] [--dashboards <dir|file>] [--deny-list <p>]",
+  "amico claims prune [--registry <dir>] [--vault <root>] [--db <chat.db>]",
+  "                   [--apply] [--jobs <notturno.toml>] [--dashboards <dir|file>] [--deny-list <p>]",
+  "amico claims synthesize [--registry <dir>] [--hopper <dir>]",
+  "                        [--apply] [--jobs <notturno.toml>] [--dashboards <dir|file>] [--deny-list <p>]",
   "",
   "  project — mechanically convert a memory card into a registry claim",
   "  (all fields preserved, provenance intact). Dry-run by default; --apply writes.",
@@ -82,6 +98,16 @@ const USAGE = [
   "  decayed claims for review (the queue never acts). Dry-run by default;",
   "  --apply rewrites survivor frontmatter (prose untouched), archives",
   "  duplicates under archive/, and writes the queue. Findings exit 1.",
+  "  promote — the weekly proposal bundle (#1685): scope-team live claims → ONE",
+  "  PR body + copies per vault, capped at 10 (overflow carries). PROPOSES ONLY —",
+  "  a human merges; the verb never opens a PR. Dry-run by default; --apply",
+  "  writes the bundle + the promote state stamp + the pass receipt.",
+  "  prune — the weekly schema-check + hygiene pass (#1685): the claims lint's",
+  "  findings are DRIFT (flagged, exit 1); only unambiguous frontmatter fixes",
+  "  are applied. The retired /dream prune's semantics, on cadence.",
+  "  synthesize — the weekly pattern pass (#1685): cross-claim tag clusters",
+  "  (3+ data points) → hopper proposals. Proposes to the hopper only, never",
+  "  to strategy. The retired /dream synthesize's destination, on cadence.",
 ].join("\n");
 
 function fail(error: string, extra: Record<string, unknown> = {}): VerbResult {
@@ -107,6 +133,9 @@ export async function claimsVerb(
   if (sub === "stamp") return stampSub(rest, env, now);
   if (sub === "sweep") return sweepSub(rest, env, now);
   if (sub === "lifecycle") return lifecycleSub(rest, env, now);
+  if (sub === "promote") return promoteSub(rest, env, now);
+  if (sub === "prune") return pruneSub(rest, env, now);
+  if (sub === "synthesize") return synthesizeSub(rest, env, now);
   return fail(sub === undefined ? "no subcommand" : `unknown subcommand "${sub}"`);
 }
 
