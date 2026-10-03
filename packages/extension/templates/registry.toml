@@ -30,12 +30,13 @@ packages = ["Piccolo", "CairoMakie", "JLD2", "LinearAlgebra", "TOML", "Printf"]
 # import scan allows (entitlement allowlist ∪ this set ∪ Julia stdlibs); without
 # it the scan would block the vetted template's OWN launch.
 [support]
-packages = ["JLD2", "CairoMakie", "Makie", "TOML", "Printf", "LinearAlgebra", "Random", "Statistics", "SparseArrays"]
+packages = ["JLD2", "CairoMakie", "Makie", "TOML", "Printf", "LinearAlgebra", "Random", "Statistics", "SparseArrays", "MadNLP"]  # MadNLP: the run-dir contract's AMICODE_ITER channel rides its raw user callback (#1676)
 
 # Sandbox uuid map (spec C) — name → uuid for [deps] in a generated env
 # Project.toml. Collected from the workspace package manifests.
 [uuids]
 Piccolo = "c4671d76-df94-11ed-2057-43d4fd632fad"
+MadNLP = "2621e9c9-9eb4-46b1-8089-e8c72242dfb6"
 Legato = "2220d95b-0ec6-412e-99be-c6a5d269006d"
 Intonato = "4c8581c7-0eaf-45eb-b8fa-a3474c50779c"
 NamedTrajectories = "538bc3a1-5ab9-4fc3-b776-35ca1e893e08"
