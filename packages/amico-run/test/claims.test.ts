@@ -31,6 +31,11 @@ import {
   MEMORY_CARD_TO_CLAIM_TYPE,
   claimFileBasename,
   memoryCardPointer,
+  claimScore,
+  loadRegistryClaims,
+  renderIndexView,
+  INDEX_MAX_LINES,
+  INDEX_DEFAULT_PER_TYPE,
 } from "../src/claims.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -279,5 +284,196 @@ con.commit(); con.close()
     writeFileSync(join(dir, "candidates", "junk.md"), "anything\n");
     const after = lintClaimsRegistry(dir, { vaultRoot: VAULT_FIXTURE });
     expect(after.files).toEqual(["broken.md"]);
+  });
+});
+
+// ── the hot-layer index (amicode #1682, brain flywheel slice 3 — MEMORY.md
+// becomes a view): the ranked rendering of the claims registry. The index is
+// DERIVED, never authoritative; claims are the source of truth. ───────────────
+
+const NOW = new Date("2026-10-02T12:00:00.000Z");
+const RENDER_REGISTRY_FIXTURE = join(FIXTURES, "render-registry");
+const INDEX_FIXTURE = join(FIXTURES, "index", "MEMORY.md");
+
+/** A clean synthetic claim at the contract's 10 keys — each ranking test
+ *  perturbs exactly one axis. */
+function aClaim(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    type: "insight",
+    statement: "a statement",
+    status: "unverified",
+    confidence: "medium",
+    evidence: ["memory-card/project_two_qubit_challenge.md"],
+    applied: 0,
+    last_applied: null,
+    history: [{ date: "2026-09-01T00:00:00.000Z", event: "created", note: "fixture" }],
+    scope: "personal",
+    tags: [],
+    ...overrides,
+  };
+}
+
+describe("the hot-layer index ranking (#1682, AC 1-2 — recency × adoption × confidence)", () => {
+  it("claimScore is the equal-thirds composite over [0,1] axes: fresh+adopted+high ≈ 3, stale+unapplied+low ≈ 0.3", () => {
+    const hot = claimScore(
+      aClaim({
+        confidence: "high",
+        applied: 999_999,
+        history: [{ date: NOW.toISOString(), event: "created", note: "x" }],
+      }),
+      NOW,
+    );
+    expect(hot).toBeCloseTo(3, 5);
+    const cold = claimScore(aClaim({ confidence: "low", history: [{ date: "1990-01-01T00:00:00.000Z", event: "created", note: "x" }] }), NOW);
+    expect(cold).toBeCloseTo(0.3, 5);
+  });
+
+  it("a claim with NO parseable history date scores on adoption+confidence alone (recency is never invented)", () => {
+    const noHistory = claimScore(aClaim({ applied: 1, history: [] }), NOW);
+    expect(noHistory).toBeCloseTo(0.5 + 0.6, 5); // 1/2 adoption + medium
+  });
+
+  it("higher RECENCY outranks lower (fixture-pinned ordering)", () => {
+    const fresh = { file: "z_fresh.md", claim: aClaim({ history: [{ date: "2026-10-01T00:00:00.000Z", event: "created", note: "x" }] }) };
+    const stale = { file: "a_stale.md", claim: aClaim({ history: [{ date: "2026-08-01T00:00:00.000Z", event: "created", note: "x" }] }) };
+    // file names chosen against the tiebreak: z_ sorts after a_, so only the
+    // score can produce this order
+    const r = renderIndexView([stale, fresh], { now: NOW });
+    expect(r.ranked.map((c) => c.file)).toEqual(["z_fresh.md", "a_stale.md"]);
+  });
+
+  it("higher ADOPTION outranks lower (fixture-pinned ordering)", () => {
+    const used = { file: "z_used.md", claim: aClaim({ applied: 4 }) };
+    const unused = { file: "a_unused.md", claim: aClaim({ applied: 0 }) };
+    const r = renderIndexView([unused, used], { now: NOW });
+    expect(r.ranked.map((c) => c.file)).toEqual(["z_used.md", "a_unused.md"]);
+  });
+
+  it("higher CONFIDENCE outranks lower (fixture-pinned ordering)", () => {
+    const hi = { file: "z_hi.md", claim: aClaim({ confidence: "high" }) };
+    const lo = { file: "a_lo.md", claim: aClaim({ confidence: "low" }) };
+    const r = renderIndexView([lo, hi], { now: NOW });
+    expect(r.ranked.map((c) => c.file)).toEqual(["z_hi.md", "a_lo.md"]);
+  });
+
+  it("equal scores tiebreak deterministically on the claim file (stable order — idempotent re-render)", () => {
+    const claims = [
+      { file: "b.md", claim: aClaim() },
+      { file: "a.md", claim: aClaim() },
+      { file: "c.md", claim: aClaim() },
+    ];
+    const first = renderIndexView(claims, { now: NOW }).ranked.map((c) => c.file);
+    const second = renderIndexView([...claims].reverse(), { now: NOW }).ranked.map((c) => c.file);
+    expect(first).toEqual(["a.md", "b.md", "c.md"]);
+    expect(second).toEqual(["a.md", "b.md", "c.md"]);
+  });
+});
+
+describe("the hot-layer index caps + lifecycle filter (#1682, AC 1)", () => {
+  it("caps PER DOMAIN: 12 same-score insight claims → 10 insight bullets at the default cap; other types unaffected", () => {
+    const insights = Array.from({ length: 12 }, (_, i) => ({ file: `i${String(i).padStart(2, "0")}.md`, claim: aClaim() }));
+    const hazard = { file: "h.md", claim: aClaim({ type: "hazard", confidence: "low" }) };
+    const r = renderIndexView([...insights, hazard], { now: NOW });
+    expect(r.ranked.filter((c) => c.claim.type === "insight").length).toBe(INDEX_DEFAULT_PER_TYPE);
+    expect(r.ranked.some((c) => c.file === "h.md")).toBe(true);
+    expect(r.capped.length).toBe(2);
+  });
+
+  it("the GLOBAL cap is the plugin reader's line cap — never emit what the reader truncates", () => {
+    const flood = Array.from({ length: 60 }, (_, i) => ({
+      file: `h${String(i).padStart(2, "0")}.md`,
+      claim: aClaim({ type: "hazard" }),
+    }));
+    const r = renderIndexView(flood, { now: NOW, capPerType: 100 });
+    expect(r.ranked.length).toBe(INDEX_MAX_LINES);
+  });
+
+  it("superseded and refuted claims stay OUT of the hot layer, named in excluded", () => {
+    const live = { file: "live.md", claim: aClaim() };
+    const sup = { file: "sup.md", claim: aClaim({ status: "superseded" }) };
+    const ref = { file: "ref.md", claim: aClaim({ status: "refuted" }) };
+    const r = renderIndexView([sup, ref, live], { now: NOW });
+    expect(r.ranked.map((c) => c.file)).toEqual(["live.md"]);
+    expect(r.excluded.length).toBe(2);
+    expect(r.excluded.some((e) => e.includes("sup.md") && e.includes("superseded"))).toBe(true);
+    expect(r.excluded.some((e) => e.includes("ref.md") && e.includes("refuted"))).toBe(true);
+  });
+
+  it("the loader skips and NAMES invalid claim notes — a broken note never crashes or sneaks into the index", () => {
+    const dir = mkdtempSync(join(tmpdir(), "claims-load-"));
+    writeFileSync(join(dir, "good.md"), "---\ntype: insight\nstatement: good\nstatus: unverified\nconfidence: medium\nevidence: []\napplied: 0\nlast_applied: null\nhistory:\n  - date: 2026-09-01T00:00:00.000Z\n    event: created\n    note: f\nscope: personal\ntags: []\n---\n\nbody\n");
+    writeFileSync(join(dir, "broken.md"), "no frontmatter at all\n");
+    writeFileSync(join(dir, "invalid.md"), "---\ntype: rant\nstatement: bad\nstatus: unverified\nconfidence: medium\nevidence: []\napplied: 0\nlast_applied: null\nhistory: []\nscope: personal\ntags: []\n---\n\nbody\n");
+    const { claims, skipped } = loadRegistryClaims(dir);
+    expect(claims.map((c) => c.file)).toEqual(["good.md"]);
+    expect(skipped.some((s) => s.includes("broken.md"))).toBe(true);
+    expect(skipped.some((s) => s.includes("invalid.md") && s.includes("/type"))).toBe(true);
+  });
+});
+
+describe("the hot-layer index rendering (#1682, AC 3-4 — provenance header + the bullet-line reader)", () => {
+  it("each bullet links its claim note and carries the ranking signals", () => {
+    const r = renderIndexView(
+      [
+        {
+          file: "warm.md",
+          claim: aClaim({
+            type: "best-practice",
+            status: "corroborated",
+            confidence: "high",
+            applied: 3,
+            statement: "warm-start from the bank",
+          }),
+        },
+      ],
+      { now: NOW },
+    );
+    expect(r.text).toContain("- [warm-start from the bank](../claims/warm.md) — best-practice · corroborated · high · applied 3×");
+  });
+
+  it("long statements truncate deterministically for a one-line pointer", () => {
+    const long = "x".repeat(200);
+    const r = renderIndexView([{ file: "long.md", claim: aClaim({ statement: long }) }], { now: NOW });
+    expect(r.text).toContain(`- [${"x".repeat(159)}…](../claims/long.md)`);
+    expect(r.text.split("\n").filter((l) => l.startsWith("- "))[0]!.length).toBeLessThan(250);
+  });
+
+  it("the provenance header: derived-not-authoritative, regenerate-by-design — and NO header line can eat a bullet slot", () => {
+    const r = renderIndexView([{ file: "a.md", claim: aClaim() }], { now: NOW });
+    for (const needle of ["generated view", "amico claims render", "#1682", "hand-edits are regenerated away by design", "claims registry"])
+      expect(r.text).toContain(needle);
+    // the plugin reader takes EVERY "- " line, header included — the header's
+    // lines must never start with "- "
+    const beforeBullets = r.text.split("\n").filter((l) => !l.startsWith("- ")).filter((l) => l.trim() !== "");
+    expect(beforeBullets.every((l) => !l.startsWith("- "))).toBe(true);
+    expect(beforeBullets.length).toBe(7); // exactly the HTML-comment block (<!--, 5 lines, -->)
+  });
+
+  it("deterministic: same claims + same clock → byte-identical view (idempotent re-render)", () => {
+    const claims = [
+      { file: "a.md", claim: aClaim() },
+      { file: "b.md", claim: aClaim({ applied: 2, confidence: "high" }) },
+    ];
+    expect(renderIndexView(claims, { now: NOW }).text).toBe(renderIndexView(claims, { now: NOW }).text);
+  });
+
+  it("the committed fixture of record: the render registry renders BYTE-IDENTICAL to the committed index", () => {
+    const { claims, skipped } = loadRegistryClaims(RENDER_REGISTRY_FIXTURE);
+    expect(skipped).toEqual([]);
+    expect(claims.length).toBe(5);
+    const r = renderIndexView(claims, { now: NOW });
+    expect(r.ranked.map((c) => c.file)).toEqual([
+      "best_practice_warm_start.md",
+      "insight_recent_unverified.md",
+      "insight_two_qubit_challenge.md",
+    ]);
+    expect(r.excluded.length).toBe(2); // the refuted hazard + the superseded method
+    expect(r.text).toBe(readFileSync(INDEX_FIXTURE, "utf8"));
+  });
+
+  it("the fixture render registry stays lint-clean against the fixture vault (the slice-2 contract holds)", () => {
+    const r = lintClaimsRegistry(RENDER_REGISTRY_FIXTURE, { vaultRoot: VAULT_FIXTURE });
+    expect(r.findings).toEqual([]);
+    expect(r.ok).toBe(true);
   });
 });
