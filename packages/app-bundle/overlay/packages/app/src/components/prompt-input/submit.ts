@@ -20,6 +20,7 @@ import { buildRequestParts } from "./build-request-parts"
 import { setCursorPosition } from "./editor-dom"
 import { formatServerError } from "@/utils/server-errors"
 import { ScopedKey } from "@/utils/server-scope"
+import { conciseKey, conciseMode } from "@/context/concise-mode"
 import { createPromptSubmissionState } from "./submission-state"
 import { normalizeSessionInfo } from "@/utils/session"
 import { Event } from "@opencode-ai/schema/event"
@@ -40,6 +41,9 @@ export type FollowupDraft = {
   agent: string
   model: { providerID: string; modelID: string }
   variant?: string
+  // amicode: per-turn system instruction (e.g. the concise directive). Reaches
+  // the model for this turn but is NOT rendered as a visible message part.
+  system?: string
 }
 
 type FollowupSendInput = {
@@ -55,6 +59,12 @@ type FollowupSendInput = {
 const draftText = (prompt: Prompt) => prompt.map((part) => ("content" in part ? part.content : "")).join("")
 
 const draftImages = (prompt: Prompt) => prompt.filter((part): part is ImageAttachmentPart => part.type === "image")
+
+// amicode: the concise directive. When the composer's concise switch is on it
+// rides as the message's per-turn `system` instruction (invisible — reaches the
+// model, not rendered as a user part), never appended to the visible text.
+const CONCISE_DIRECTIVE =
+  "Concise mode is on for this message. Respond concisely: lead with the answer or next action, no preamble or closing pleasantries, and keep it tight — without dropping required caveats, questions, or safety confirmations."
 
 export async function sendFollowupDraft(input: FollowupSendInput) {
   const text = draftText(input.draft.prompt)
@@ -135,6 +145,7 @@ export async function sendFollowupDraft(input: FollowupSendInput) {
     time: { created: Date.now() },
     agent: input.draft.agent,
     model: { ...input.draft.model, variant: input.draft.variant },
+    system: input.draft.system,
   }
 
   const add = () =>
@@ -172,6 +183,7 @@ export async function sendFollowupDraft(input: FollowupSendInput) {
       agent: input.draft.agent,
       model: input.draft.model,
       variant: input.draft.variant,
+      system: input.draft.system,
       legacyParts: requestParts,
       text: requestParts.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n"),
       files: requestParts.flatMap((part) => {
@@ -234,6 +246,12 @@ type PromptSubmitInput = {
    *  notice instead of optimistically posting into a dead tunnel. */
   streamGap?: Accessor<boolean>
   model?: ModelSelection
+  /** amicode: when true at send time, the concise directive rides as the
+   *  message's per-turn `system` instruction (normal prose turns only) so the
+   *  response comes back concise — the composer's concise switch drives this.
+   *  #1651: the switch is session-keyed; a new chat's value is promoted to the
+   *  created session below. */
+  concise?: Accessor<boolean>
 }
 
 export function createPromptSubmit(input: PromptSubmitInput) {
@@ -372,6 +390,10 @@ export function createPromptSubmit(input: PromptSubmitInput) {
     const permissionState = permission.currentServerState()
     const isNewSession = !params.id
     const shouldAutoAccept = isNewSession && input.autoAccept()
+    // amicode#1651: read the concise switch (and the new chat's draft key) NOW,
+    // before any await — once the session exists the composer's key moves to it.
+    const conciseAtSend = input.concise?.() ?? false
+    const conciseDraftKey = conciseKey.draft(sdk().scope, projectDirectory, search.draftId)
     const worktreeSelection = input.newSessionWorktree?.() || "main"
 
     let sessionDirectory = projectDirectory
@@ -444,6 +466,8 @@ export function createPromptSubmit(input: PromptSubmitInput) {
             model: { providerID: currentModel.provider.id, modelID: currentModel.id },
             variant: variant ?? null,
           })
+          // amicode#1651: the new chat's concise switch follows it into the session.
+          conciseMode.promote(conciseDraftKey, conciseKey.session(sdk().scope, sessionDirectory, session.id))
           layout.handoff.setTabs(base64Encode(sessionDirectory), session.id)
           const draftID = search.draftId
           if (draftID) tabs.promoteDraft(draftID, { server: tabs.draft(draftID).server, sessionId: session.id })
@@ -473,6 +497,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       agent,
       model,
       variant,
+      system: conciseAtSend ? CONCISE_DIRECTIVE : undefined,
     }
 
     const clearInput = () => {
