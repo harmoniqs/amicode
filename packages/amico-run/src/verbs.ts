@@ -352,7 +352,7 @@ const distill: Verb = {
 const claims: Verb = {
   name: "claims",
   summary:
-    "the claims registry: project (memory card → claim, mechanical, fields preserved) / lint (contract + evidence-pointer resolution, findings exit 1) / render (the hot-layer index as a generated view of claims, ranked recency + adoption + confidence)",
+    "the claims registry: project (memory card → claim, mechanical, fields preserved) / lint (contract + evidence-pointer resolution, findings exit 1) / render (the hot-layer index as a generated view of claims, ranked recency + adoption + confidence) / lifecycle (the nightly pass, #1684: dedupe-merge onto the older claim, corroborate at the evidence threshold, refute on contradicted-by-run signals, decay → the review queue — a proposal surface, never an actor)",
   generalizes:
     "the hand-maintained memory hot-layer's type namespace (the collision the #1679 census flagged, dissolved: one store, claims as the atomic unit)",
   slice: "company brain flywheel (amicode#1681, slice 2; #1682, slice 3)",
