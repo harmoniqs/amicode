@@ -35,6 +35,7 @@ import { distillVerb } from "./distill_verb.js";
 import { claimsVerb } from "./claims_verb.js";
 import { extractMeetingsVerb } from "./extract_meetings_verb.js";
 import { triagePapersVerb } from "./triage_papers_verb.js";
+import { brainHealthVerb } from "./brain_health_verb.js";
 export interface VerbResult {
   json: unknown; // structured result (stdout as JSON for the CLI; tool content for MCP)
   code: number; // process exit code (0 ok, 64 usage/gate, else failure)
@@ -410,6 +411,26 @@ const triagePapers: Verb = {
   run: (args) => triagePapersVerb(args),
 };
 
+// brain-health — the brain flywheel's measurement half (amicode #1687, slice
+// 8 of #1679): the monthly notturno job that renders the KPI report over the
+// flywheel's own pass receipts + claim state — claims created vs applied,
+// time-to-distill, pending backlog trends (distill backlog, review queue,
+// pending-tag intake), refutation rate, schema compliance (the lint findings
+// trend) — and publishes it as a dated brief in the vault's briefs area,
+// period-keyed (health-YYYY-MM.md, idempotent per period). The report
+// MEASURES, never acts: every substrate is read-only, every number carries
+// its provenance, unmeasured families are stated, never faked. The notturno
+// receipt rides the distill chassis gates (deny-list, membership, record
+// mode).
+const brainHealth: Verb = {
+  name: "brain-health",
+  summary:
+    "the monthly brain-health report: the five KPI families over pass receipts + claim state (created vs applied, time-to-distill, backlog trends, refutation rate, schema compliance), published as a dated brief",
+  generalizes: "the brain has no KPIs (improvement is unmeasurable without a report the flywheel renders about itself)",
+  slice: "company brain flywheel (amicode#1687, slice 8)",
+  run: (args) => brainHealthVerb(args),
+};
+
 export const SPINE_VERBS: Verb[] = [
   catalog,
   vault,
@@ -433,4 +454,5 @@ export const SPINE_VERBS: Verb[] = [
   claims,
   extractMeetings,
   triagePapers,
+  brainHealth,
 ];
