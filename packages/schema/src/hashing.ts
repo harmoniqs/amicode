@@ -166,10 +166,13 @@ function wrapperDict(wrap: Raw): Json {
 }
 
 // _solver_dict ALWAYS emits backend, device, precision, max_iter, strategy; tol if present.
+// An OMITTED backend is the inherited default — MadNLP since DirectTrajOpt 0.11 / Piccolo 2.2
+// (Piccolo parse.jl: `get(raw, "backend", "madnlp")`; #1676). Mirrors it exactly, or the
+// cross-language problem_hash diverges on precisely those specs.
 function solverDict(solver: Raw): Json {
   const s = obj(solver);
   const d: Record<string, Json> = {
-    backend: String(s.backend ?? "ipopt"),
+    backend: String(s.backend ?? "madnlp"),
     device: String(s.device ?? "cpu"),
     precision: String(s.precision ?? "f64"),
     max_iter: (s.max_iter ?? 500) as Json,
@@ -229,7 +232,7 @@ export function structureFields(spec: Raw): Json {
 
   const solverIn = obj(s.solver);
   d.solver = {
-    backend: String(solverIn.backend ?? "ipopt"),
+    backend: String(solverIn.backend ?? "madnlp"),
     device: String(solverIn.device ?? "cpu"),
     precision: String(solverIn.precision ?? "f64"),
     strategy: String(solverIn.strategy ?? "direct"),

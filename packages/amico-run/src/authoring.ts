@@ -23,7 +23,8 @@ export interface AuthoringConfig {
 }
 
 export const DEFAULT_ALLOWLIST = ["Piccolo", "Legato", "Intonato", "NamedTrajectories", "DirectTrajOpt"];
-export const DEFAULT_SUPPORT = ["JLD2", "CairoMakie", "Makie", "TOML", "Printf"];
+// #1676: MadNLP is a run-dir-contract package since DTO 0.11 — the AMICODE_ITER state columns ride its raw user callback on the (default) MadNLP arm, so the vetted templates carry `import MadNLP` and the scan must admit it.
+export const DEFAULT_SUPPORT = ["JLD2", "CairoMakie", "Makie", "TOML", "Printf", "MadNLP"];
 const DEFAULT_TOLERANCE = 0.001;
 
 function defaults(): AuthoringConfig {

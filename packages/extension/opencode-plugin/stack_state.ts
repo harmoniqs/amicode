@@ -146,12 +146,16 @@ function buildSolverModeSection(): string {
     "`EmbeddedOperator`, `UnitaryTrajectory` — every problem-setup name comes from Piccolo. The failure is " +
     "an UndefVarError at load time, before any solve starts, and on a cloud run you pay the full queue and " +
     "instance-boot wait before seeing it. " +
-    "**Solver backend:** the default remains IPOPT (`IpoptOptions`), which is what streams per-iteration " +
-    "telemetry — its `intermediate_callback` produces the Inspector's frames and the `AMICODE_ITER` lines. " +
+    "**Solver backend:** the default is **MadNLP** (the DirectTrajOpt 0.11 default, inherited by Piccolo 2.2) — " +
+    "a plain `solve!(qcp; max_iter = …)` rides it with no options struct, which is exactly what the template's " +
+    "`SOLVER = :default` does. Ipopt remains the documented selectable path (`SOLVER = :ipopt` → " +
+    "`options = IpoptOptions(…)`). Both backends stream per-iteration telemetry: the Inspector's frames ride " +
+    "the backend's `intermediate_callback`, and the `AMICODE_ITER` lines ride the backend's rich-state channel " +
+    "(Ipopt's raw callback; MadNLP's raw `MadNLP.AbstractUserCallback`, regular-mode filtered — Q74 amended). " +
     "If the researcher asks for the **Altissimo** backend (the augmented-Lagrangian GPU solver, " +
     "`AltissimoOptions`), switch it by setting **`SOLVER = :altissimo`** in the template's FILL-IN block — that " +
     "one line is the whole change. Do NOT hand-roll the solve call: the template already re-hangs BOTH telemetry " +
-    "channels onto Altissimo's `(x, info)` hook (the frames come off `IpoptOptions.intermediate_callback`, which " +
+    "channels onto Altissimo's `(x, info)` hook (the frames come off the backend's `intermediate_callback`, which " +
     "`AltissimoOptions` does not have, so a hand-written call loses the Inspector's frames as well as its " +
     "numbers), passes the budget as `AltissimoOptions(max_outer_iter = max_iter)` (a `max_iter` given to " +
     "`solve!` is silently DROPPED on that path — the solve would quietly run 20 outer iterations), and derives " +
