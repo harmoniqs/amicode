@@ -32,6 +32,7 @@ import { sotaVerb } from "./sota_verb.js";
 import { skillsVerb } from "./skills_verb.js";
 import { notturnoVerb } from "./notturno_verb.js";
 import { distillVerb } from "./distill_verb.js";
+import { claimsVerb } from "./claims_verb.js";
 export interface VerbResult {
   json: unknown; // structured result (stdout as JSON for the CLI; tool content for MCP)
   code: number; // process exit code (0 ok, 64 usage/gate, else failure)
@@ -336,6 +337,26 @@ const distill: Verb = {
   run: (args) => distillVerb(args),
 };
 
+// claims — the claims registry's surface (amicode #1681, slice 2 of the
+// company-brain flywheel #1679): the ONE type namespace's machinery. `project`
+// mechanically converts a memory card into a registry claim (all fields
+// preserved, provenance intact — the migration that dissolves the memory/vault
+// type-namespace collision); `lint` is the registry's gate — every claim
+// validates against the shared claim contract (unknown types, missing
+// required fields) and every evidence pointer resolves into its substrate
+// (the vault's amicode/memory/ subtree, the chat DB read-only). Notes are
+// renderings; machinery operates on claims only — the claim note's frontmatter
+// IS the claim object, exactly.
+const claims: Verb = {
+  name: "claims",
+  summary:
+    "the claims registry: project (memory card → claim, mechanical, fields preserved) / lint (contract + evidence-pointer resolution, findings exit 1)",
+  generalizes:
+    "the hand-maintained memory hot-layer's type namespace (the collision the #1679 census flagged, dissolved: one store, claims as the atomic unit)",
+  slice: "company brain flywheel (amicode#1681, slice 2)",
+  run: (args) => claimsVerb(args),
+};
+
 export const SPINE_VERBS: Verb[] = [
   catalog,
   vault,
@@ -356,4 +377,5 @@ export const SPINE_VERBS: Verb[] = [
   skills,
   notturno,
   distill,
+  claims,
 ];
