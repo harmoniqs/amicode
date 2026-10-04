@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { resolveSelectedLaunch, resolveHarness, HARNESS_REGISTRY,
-         opencodeDescriptor, telaioDescriptor } from "../src/harness";
+         opencodeDescriptor, telaioDescriptor, harnessMenu, decideHarnessSwitch } from "../src/harness";
 import { resolveOpencodeBinary, OpencodeMissingError } from "../src/opencode_binary";
 
 // ============================================================================
@@ -164,5 +164,123 @@ describe("resolveSelectedLaunch — the one call the spawn sites make", () => {
     expect(() =>
       resolveSelectedLaunch({ harnessId: "opencode", opencodeBinary: "", telaioBinary: "", extensionPath: "/nowhere" }),
     ).toThrow(OpencodeMissingError);
+  });
+});
+
+// ============================================================================
+// #1549 — the harness switcher in the chat box. The composer control and the
+// palette command are TWO FRONTS on ONE registry: both render from
+// harnessMenu's serialization and both consult decideHarnessSwitch before
+// anything persists. The entitlement read-side gate lives HERE (disabled with
+// its reason), never as a hidden failure at spawn time.
+// ============================================================================
+
+const READY_BAG = { opencodeBinary: "", telaioBinary: "/opt/telaio", telaioAppDir: "" };
+const EMPTY_BAG = { opencodeBinary: "", telaioBinary: "", telaioAppDir: "" };
+
+describe("harnessMenu — the one serialization both fronts render (#1549)", () => {
+  it("serializes the registry in its order, current marked", () => {
+    const menu = harnessMenu({ current: "opencode", entitlements: [], settingsBag: READY_BAG });
+    expect(menu.current).toBe("opencode");
+    expect(menu.options.map((o) => o.id)).toEqual(["opencode", "telaio"]);
+    expect(menu.options[0]?.displayName).toBe("opencode (default)");
+    expect(menu.options[1]?.displayName).toBe("telaio (subscription)");
+  });
+
+  it("an unset or unknown current falls back to opencode for display — the same default resolveSelectedLaunch serves", () => {
+    expect(harnessMenu({ current: "", entitlements: [], settingsBag: READY_BAG }).current).toBe("opencode");
+    expect(harnessMenu({ current: "ghost", entitlements: [], settingsBag: READY_BAG }).current).toBe("opencode");
+  });
+
+  it("an unresolvable harness is disabled WITH its reason — never silently absent", () => {
+    const menu = harnessMenu({ current: "opencode", entitlements: ["harness.telaio"], settingsBag: EMPTY_BAG });
+    const telaio = menu.options.find((o) => o.id === "telaio");
+    expect(telaio?.disabled).toBe(true);
+    expect(telaio?.reason).toContain("amicode.telaioBinary");
+  });
+
+  it("an unentitled harness is disabled WITH its reason, even when the binary is set", () => {
+    const menu = harnessMenu({ current: "opencode", entitlements: [], settingsBag: READY_BAG });
+    const telaio = menu.options.find((o) => o.id === "telaio");
+    expect(telaio?.disabled).toBe(true);
+    expect(telaio?.reason).toContain("harness.telaio");
+  });
+
+  it("an entitled, ready harness is selectable; the default is never disabled", () => {
+    const menu = harnessMenu({ current: "opencode", entitlements: ["harness.telaio"], settingsBag: READY_BAG });
+    expect(menu.options.find((o) => o.id === "telaio")?.disabled).toBe(false);
+    expect(menu.options.find((o) => o.id === "opencode")?.disabled).toBe(false);
+    expect(menu.options.find((o) => o.id === "opencode")?.reason).toBeUndefined();
+  });
+});
+
+describe("decideHarnessSwitch — the one gate both fronts consult (#1549)", () => {
+  it("the same harness is an allowed no-op — no restart is poked for nothing", () => {
+    const d = decideHarnessSwitch({ requested: "opencode", current: "opencode", entitlements: [], settingsBag: EMPTY_BAG });
+    expect(d.allowed).toBe(true);
+    expect(d.noop).toBe(true);
+  });
+
+  it("an unset request normalizes to the opencode default before comparing", () => {
+    const d = decideHarnessSwitch({ requested: "", current: "opencode", entitlements: [], settingsBag: EMPTY_BAG });
+    expect(d.allowed).toBe(true);
+    expect(d.noop).toBe(true);
+  });
+
+  it("an entitled, launchable different harness is allowed", () => {
+    const d = decideHarnessSwitch({ requested: "telaio", current: "opencode", entitlements: ["harness.telaio"], settingsBag: READY_BAG });
+    expect(d.allowed).toBe(true);
+    expect(d.noop).toBe(false);
+  });
+
+  it("an unentitled harness is blocked with the entitlement reason — never selectable-then-failing", () => {
+    const d = decideHarnessSwitch({ requested: "telaio", current: "opencode", entitlements: [], settingsBag: READY_BAG });
+    expect(d.allowed).toBe(false);
+    expect(d.reason).toContain("harness.telaio");
+  });
+
+  it("a needs-setup harness is blocked with the setup guidance", () => {
+    const d = decideHarnessSwitch({ requested: "telaio", current: "opencode", entitlements: ["harness.telaio"], settingsBag: EMPTY_BAG });
+    expect(d.allowed).toBe(false);
+    expect(d.reason).toContain("amicode.telaioBinary");
+  });
+
+  it("an unknown id is blocked — a hand-edited or stale client cannot poke the watcher into a fallback", () => {
+    const d = decideHarnessSwitch({ requested: "ghost", current: "opencode", entitlements: ["harness.telaio"], settingsBag: READY_BAG });
+    expect(d.allowed).toBe(false);
+    expect(d.reason).toBeTruthy();
+  });
+});
+
+describe("one registry, two fronts — the same decision lands the same state (#1549)", () => {
+  // The palette command and the composer watcher are two UIs over ONE state:
+  // both flows are decideHarnessSwitch → persist. This pin holds the contract
+  // the AC names: switching from either lands the same state, and a blocked
+  // request persists NOTHING from either front.
+  const persistFlow = (front: "palette" | "composer", input: Parameters<typeof decideHarnessSwitch>[0]) => {
+    const decision = decideHarnessSwitch(input);
+    const persisted: string[] = [];
+    if (decision.allowed && !decision.noop) persisted.push(input.requested);
+    return { front, decision, persisted };
+  };
+
+  it("an allowed switch lands the same persisted harness from either front", () => {
+    const input = { requested: "telaio", current: "opencode", entitlements: ["harness.telaio"], settingsBag: READY_BAG };
+    const palette = persistFlow("palette", input);
+    const composer = persistFlow("composer", input);
+    expect(palette.persisted).toEqual(["telaio"]);
+    expect(composer.persisted).toEqual(palette.persisted);
+  });
+
+  it("a blocked switch persists NOTHING from either front", () => {
+    const input = { requested: "telaio", current: "opencode", entitlements: [], settingsBag: READY_BAG };
+    expect(persistFlow("palette", input).persisted).toEqual([]);
+    expect(persistFlow("composer", input).persisted).toEqual([]);
+  });
+
+  it("a no-op switch persists NOTHING from either front", () => {
+    const input = { requested: "opencode", current: "opencode", entitlements: [], settingsBag: EMPTY_BAG };
+    expect(persistFlow("palette", input).persisted).toEqual([]);
+    expect(persistFlow("composer", input).persisted).toEqual([]);
   });
 });

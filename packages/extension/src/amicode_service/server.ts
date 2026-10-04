@@ -245,6 +245,23 @@ export class AmicodeServiceServer {
       // proxying them would just launder our 404) → the app shelf → the
       // engine proxy.
       if (url.pathname === "/amicode" || url.pathname.startsWith("/amicode/")) {
+        // #1549 (live-test finding, PR #1550): ONE named exception to the
+        // fork-parity 404 — /amicode/harness is an ENGINE-OWNED route (the
+        // overlay's server/amicode/harness.ts: the composer control's GET,
+        // the switch's POST). The app reaches it at its panel origin, which
+        // IS this service — proxying these two methods to the engine (when
+        // bound) is forwarding to the route's owner, not laundering a 404;
+        // when the engine is not bound (or a stock engine without the route
+        // answers) the honest failure surfaces, and the control's own
+        // "route absent → stays hidden" degradation holds. Everything else
+        // under /amicode/* keeps the discipline below.
+        if (
+          url.pathname === "/amicode/harness" &&
+          (req.method === "GET" || req.method === "POST") &&
+          this.engineProxy?.handle(req, res)
+        ) {
+          return;
+        }
         send({ status: 404, body: JSON.stringify({ ok: false, error: `no route: ${req.method} ${url.pathname}` }) });
         return;
       }
