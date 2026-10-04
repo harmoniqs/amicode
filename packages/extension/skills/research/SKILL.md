@@ -150,12 +150,21 @@ reference the in-flight casts? Append the audit row to §9.
    check: scan raw artifacts for instructions-vs-reality mismatches (→ finding) and
    repeated un-skilled idioms (→ `proposal`-type finding, a new-skill candidate,
    provenance-tagged with sessions/artifacts).
-7. **Commit the ledger update** (sole writer): H-table row, loop-log row, §3 state, next
-   queue. Close every advisory (fixed / waived-with-reason / obsolete) and record closures.
-   The update also carries the campaign's **skill delta** row — findings filed, skills
-   touched, proposals pending — so the loop's own improvement is part of its record.
-8. **Repeat.** Compact only at a boundary, and only when the user is present to choose it —
-   the protocol does not otherwise try to time compaction (see below).
+ 7. **Commit the ledger update** (sole writer): H-table row, loop-log row, §3 state, next
+    queue. Close every advisory (fixed / waived-with-reason / obsolete) and record closures.
+    The update also carries the campaign's **skill delta** row — findings filed, skills
+    touched, proposals pending — so the loop's own improvement is part of its record.
+ 8. **Fill + render the PI report** (amicode #1700, the pi-report fill contract): fill the
+    memo template from the ledger → build → land
+    `amicode/pi-reports/<campaign>-<boundary>.{pdf,tex}` in the personal vault → commit +
+    push (pull-before-push, retry on non-fast-forward; the vault's sole writer is the
+    server). The **needs-you** slot is the loop's ask to the PI; the **reading** slot is
+    never silent (when nothing was read, say so and name the prior reading the loop rests
+    on). A problem statement rides the report only as the **generated block from the run's
+    `formulation.toml`** (the formulation-record contract) — never recalled by the agent.
+    Best-effort by construction: a report failure is a receipt line, never a loop pause.
+ 9. **Repeat.** Compact only at a boundary, and only when the user is present to choose it —
+    the protocol does not otherwise try to time compaction (see below).
 
 ## Roles at a glance
 
