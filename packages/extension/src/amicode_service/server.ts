@@ -68,6 +68,11 @@ interface RouteEntry {
 
 const MAX_BODY_BYTES = 1024 * 1024;
 
+/** #1707: the stop grace — how long in-flight requests get before every open
+ * socket is destroyed. 2 s: a stop means stop, and the teardown must be
+ * bounded no matter what the frontdoor's pooled sockets are doing. */
+const STOP_GRACE_MS = 2000;
+
 function unauthorized(): AmicodeHandlerResult {
   // The fork's auth middleware 401s anonymous requests with a Basic challenge;
   // consumers (widgets, app) attach the per-boot credential on every call, so
@@ -342,6 +347,40 @@ export class AmicodeServiceServer {
     if (!server) return;
     this.server = undefined;
     this._port = undefined;
-    await new Promise<void>((resolve) => server.close(() => resolve()));
+    // #1707: a bare server.close() waits for every open keep-alive socket to
+    // END — and the hub frontdoor holds long-lived pooled backend connections
+    // to this origin plus SSE fan-outs, so the close parked the unit in
+    // "deactivating" anywhere between 6 seconds and systemd's SIGKILL (three
+    // wedged stops on 2026-10-04). Stop means stop: close() first (no new
+    // accepts), a short grace for in-flight requests, then destroy every open
+    // socket and resolve REGARDLESS — the teardown sequence must be bounded,
+    // never a race against the proxy's socket lifecycle.
+    await new Promise<void>((resolve) => {
+      let settled = false;
+      const settle = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(graceTimer);
+        resolve();
+      };
+      const graceTimer = setTimeout(() => {
+        try {
+          server.closeAllConnections();
+        } catch {
+          /* pre-18.2 node: close() alone; the resolve below still bounds us */
+        }
+        settle();
+      }, STOP_GRACE_MS);
+      server.close(() => {
+        try {
+          // The happy path's belt: sockets may have opened between close()
+          // and its callback draining them.
+          server.closeAllConnections();
+        } catch {
+          /* pre-18.2 node */
+        }
+        settle();
+      });
+    });
   }
 }
