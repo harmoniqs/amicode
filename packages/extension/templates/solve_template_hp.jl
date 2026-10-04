@@ -116,7 +116,10 @@ end
 # AMICODE_ITER text telemetry stays on the RAW Ipopt callback — it needs the rich
 # IPM state (obj_value/inf_pr/inf_du) that the agnostic `(primal, iter)` contract
 # doesn't carry. Both callbacks fire once per iteration (DTO composes the raw
-# callback with `intermediate_callback`); the live inspector is ipopt-only (Q74).
+# callback with `intermediate_callback`). Q74 was AMENDED by the DTO 0.11
+# MadNLP-default flip (#1676): the Inspector is solver-agnostic now (the state
+# columns ride MadNLP's raw user callback there); THIS template stays on the
+# Ipopt arm by its DTO-0.9.7 pin (below), where the raw channel is the only one.
 const CB = Piccolo.Callbacks
 iters = Ref(0)
 function cb_log(optimizer, st; kwargs...)

@@ -46,6 +46,9 @@ describe("readAuthoring", () => {
     expect(config.allowlist).toEqual(["Piccolo", "Legato", "Intonato", "NamedTrajectories", "DirectTrajOpt"]);
     expect(config.support_set).toEqual(DEFAULT_SUPPORT);
     expect(config.support_set).toEqual(expect.arrayContaining(["JLD2", "CairoMakie", "TOML"]));
+    // #1676: the run-dir contract's AMICODE_ITER channel now rides MadNLP's raw
+    // user callback on the default arm — `import MadNLP` must be admissible.
+    expect(config.support_set).toContain("MadNLP");
     expect(config.verify_tolerance).toBe(0.001); // spec-20260704-113005 §6 (resolves spec-C open q1)
   });
 

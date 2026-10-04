@@ -61,6 +61,34 @@ describe("landmine: int/float-agnostic canonical JSON", () => {
 });
 
 // Unit checks for the pinned numeric rule (mirror the Julia @testitem in hashes.jl).
+// ─────────────────────────────────────────────────────────────────────────────
+
+// P3a (#1676): an omitted [solver] backend is the INHERITED default — MadNLP
+// since DirectTrajOpt 0.11 / Piccolo 2.2 (Piccolo parse.jl:
+// `get(raw, "backend", "madnlp")`, tested as "An omitted [solver] block declares
+// the inherited default backend"). The TS mirror must hash it identically or
+// the cross-language problem_hash diverges for exactly those specs.
+describe("omitted solver.backend hashes as the inherited default (madnlp)", () => {
+  const spec = {
+    schema_version: 1,
+    kind: "control",
+    system: { kind: "template", template: "TransmonSystem" },
+    goal: { kind: "unitary", gate: "CZ" },
+    pulse: { kind: "cubic_spline", T: 100.0 },
+    problem: { template: "SplinePulseProblem", N: 100 },
+  };
+  it("fullDict: backend madnlp (+ Piccolo's 500 max_iter default)", () => {
+    const d = JSON.parse(canonicalJson(fullDict(spec)));
+    expect(d.solver.backend).toBe("madnlp");
+    expect(d.solver.max_iter).toBe(500);
+  });
+  it("structureFields: backend madnlp (the type-determining projection)", () => {
+    const d = JSON.parse(canonicalJson(structureFields(spec)));
+    expect(d.solver.backend).toBe("madnlp");
+  });
+});
+
+// Unit checks for the pinned numeric rule (mirror the Julia @testitem in hashes.jl).
 describe("canonicalJson numeric rule (mirror of Julia)", () => {
   it("integer-valued numbers render as bare integers", () => {
     expect(canonicalJson(100)).toBe("100");

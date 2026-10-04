@@ -247,6 +247,16 @@ describe("HP solver-mode guidance: how to select Altissimo", () => {
     expect(s).toMatch(/max_outer_iter/);
     expect(s).toMatch(/silently DROPPED/);
   });
+
+  // P3a (#1676, Q74 amended): the backend default is MadNLP since DirectTrajOpt
+  // 0.11 (inherited by Piccolo 2.2) — the old "the default remains IPOPT" line
+  // is a false statement post-flip and must not come back.
+  it("states the post-DTO-0.11 backend default honestly: MadNLP default, Ipopt selectable", async () => {
+    const s = await hpSection();
+    expect(s).toMatch(/default is \*\*MadNLP\*\*/);
+    expect(s).toMatch(/SOLVER = :ipopt/);
+    expect(s).not.toMatch(/default remains IPOPT/);
+  });
 })
 
 // A cloud solve failed with an UndefVarError at load time because the agent wrote

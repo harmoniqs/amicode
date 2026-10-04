@@ -2,19 +2,28 @@
 # Amicode solve template — fill in the `# FILL IN` block, then:
 #   amico run --project <julia-project> solve.jl
 # Emits the run-dir contract (AMICODE_ITER, iter_<N>.png, result.toml, pulse.jld2, DONE).
-# Vetted against Piccolo 2.1 / DirectTrajOpt 0.10 / NamedTrajectories 0.9.4 (the
-# provisioned env refresh, #540): single-qubit family gates (X/Y/Z/H/√X/T) on a
+# Vetted against Piccolo 2.2 / DirectTrajOpt 0.11 / NamedTrajectories 0.9.4 (the
+# MadNLP-default release train, #1676): single-qubit family gates (X/Y/Z/H/√X/T) on a
 # 3-level transmon converge to subspace fidelity > 0.999 on the linear-spline
-# parameterization at R-from-the-grid (the DTO #122 construction).
+# parameterization at R-from-the-grid (the DTO #122 construction), under the
+# MadNLP default (the DTO 0.11 flip; QualityFunctionUpdate barrier) at the 60-iter
+# audit-safe budget.
 using Piccolo
 using CairoMakie   # loads PiccoloMakieExt → gives LivePulsePlotCallback its impl
 using JLD2
 using TOML
 using Printf
+import MadNLP   # hard dep of DirectTrajOpt ≥ 0.11 — the raw user-callback channel below needs it
 
-# ── version probe (#540, plan step 5) ─────────────────────────────────────
-# This template REQUIRES Piccolo ≥ 2.1 (DTO ≥ 0.10, NT ≥ 0.9.4). On a pre-2.x
-# Piccolo it refuses to run — never silently misbehaves:
+# ── version probe (#540, plan step 5; #1676) ─────────────────────────────
+# This template REQUIRES Piccolo ≥ 2.2 (DTO ≥ 0.11, NT ≥ 0.9.4): the MadNLP
+# default + its hard dep landed with DTO 0.11 (the #155 flip), inherited by
+# Piccolo 2.2 (#360). On an older stack it refuses to run — never silently
+# misbehaves:
+#   - The default arm rides DTO's MadNLP default and a raw
+#     `MadNLP.AbstractUserCallback` for the AMICODE_ITER state columns — neither
+#     exists pre-0.11 (MadNLP was a lazy package extension and the raw
+#     `callback` kwarg was Ipopt-only, Q74).
 #   - R below is computed from the grid for the post-DTO-#122 single-Δt
 #     QuadraticRegularizer weighting; under the OLD Δt² weighting that R would
 #     be 5× under-regularized at the default grid (every non-default grid worse).
@@ -22,13 +31,17 @@ using Printf
 #     family's spline-faithful integrator (`SplineIntegrator` — the parked
 #     cubic/bend follow-up's dynamics, and the probe's forward guard for it)
 #     is a 2.x-only surface.
-if !(isdefined(Piccolo, :SplineIntegrator) && isdefined(Piccolo, :shape_metrics))
+if !(isdefined(Piccolo, :SplineIntegrator) && isdefined(Piccolo, :shape_metrics) &&
+     isdefined(DirectTrajOpt, :MadNLPOptions) && isdefined(DirectTrajOpt, :Solvers) &&
+     isdefined(DirectTrajOpt.Solvers, :_get_DefaultSolverOptions) &&
+     DirectTrajOpt.Solvers._get_DefaultSolverOptions() === DirectTrajOpt.MadNLPOptions)
     error(
-        "Amicode vetted template requires Piccolo ≥ 2.1 (DirectTrajOpt ≥ 0.10, " *
-        "NamedTrajectories ≥ 0.9.4); this environment has an older Piccolo. The " *
-        "template's grid-computed R assumes the post-#122 Δt-weighted " *
-        "QuadraticRegularizer — on a pre-2.x Piccolo it would run 5× under-regularized. " *
-        "Point --project at the provisioned env (see the #540 env refresh).",
+        "Amicode vetted template requires Piccolo ≥ 2.2 (DirectTrajOpt ≥ 0.11 — the " *
+        "MadNLP-default flip; NamedTrajectories ≥ 0.9.4); this environment has an older " *
+        "stack. The default arm rides the DTO MadNLP default + its raw user callback " *
+        "(the AMICODE_ITER state columns); a pre-0.11 DTO has neither (the raw `callback` " *
+        "kwarg was Ipopt-only, Q74). Point --project at the provisioned env (the " *
+        "MadNLP-default release train, #1676).",
     )
 end
 
@@ -39,11 +52,11 @@ gate       = GATES[:X]
 T          = 10.0       # gate time (ns)
 N          = 50         # timesteps
 drive_max  = 0.2        # per-quadrature drive bound (GHz)
-max_iter   = 60
-SOLVER     = :ipopt     # :ipopt (default) or :altissimo (High-Performance + Cloud)
+max_iter   = 60         # audit-safe under the MadNLP default (the DTO #155 restoration audit)
+SOLVER     = :default   # :default (MadNLP — the DTO 0.11 default), :ipopt, or :altissimo (High-Performance + Cloud)
 # ─────────────────────────────────────────────────────────────────────────
 
-SOLVER in (:ipopt, :altissimo) || error("SOLVER must be :ipopt or :altissimo, got $SOLVER")
+SOLVER in (:default, :ipopt, :altissimo) || error("SOLVER must be :default (MadNLP), :ipopt, or :altissimo, got $SOLVER")
 if SOLVER === :altissimo
     @eval using Piccolissimo   # AltissimoOptions lives here, not in Piccolo
 end
@@ -185,11 +198,21 @@ let ls = join(("\"a_$i\"" for i in 1:sys.n_drives), ","),
     emit("AMICODE_PULSE_META drives=$(sys.n_drives) knots=$N labels=$ls bounds=$bs")
 end
 
-# On IPOPT, AMICODE_ITER rides the RAW Ipopt callback — it needs the rich IPM
-# state (obj_value/inf_pr/inf_du) that the agnostic `(primal, iter)` contract
-# doesn't carry. Both callbacks fire once per iteration (DTO composes the raw
-# callback with `intermediate_callback` — the raw channel's factory lives at
-# DirectTrajOpt.Callbacks since DTO 0.10; Piccolo no longer re-homes it).
+# AMICODE_ITER — the rich-state text telemetry (f/inf_pr/inf_du per iteration).
+# Both backend arms carry it, through backend-native channels: the solver-agnostic
+# `(primal, iter)` contract cannot carry the IPM state columns the Inspector's
+# stats row reads (Q74 amended — no longer "ipopt-only"; the channel moved, not
+# the requirement):
+#   - IPOPT (selectable): the RAW Ipopt callback via `callback =
+#     CB.callback_factory(cb_log)` — DTO composes the raw channel with
+#     `intermediate_callback`, both firing once per IPM iteration (the factory's
+#     home is DirectTrajOpt.Callbacks since DTO 0.10; Piccolo no longer re-homes it).
+#   - MADNLP (the default since DTO 0.11): the raw `callback` kwarg is DEAD on
+#     the MadNLP arm — emission rides `intermediate_callback` as a raw
+#     `MadNLP.AbstractUserCallback`, and restore/robust phases fire that
+#     callback WITHOUT advancing the iteration counter, so the emitter filters
+#     on `UserCallbackRegular` (mirrors DTO's own `_MadNLPCallbackAdapter` and
+#     Piccolo 2.2's specs/run.jl — the emitted iters stay monotone).
 const CB = DirectTrajOpt.Callbacks
 iters = Ref(0)
 function cb_log(optimizer, st; kwargs...)
@@ -198,12 +221,35 @@ function cb_log(optimizer, st; kwargs...)
     return true
 end
 
+# The MadNLP arm's ONE channel carries BOTH: it delegates to pulse_emit first
+# (frames + AMICODE_PULSE + the cooperative STOP — the same solver-agnostic
+# `(primal, iter)` contract; `MadNLP.variable(solver.x)` strips the slack tail
+# and hands back the full NLP primal), then emits the AMICODE_ITER line from
+# MadNLP's own state accessors. A raw user callback manages its own
+# fixed-variable treatment: pulse_emit maps the primal back onto the trajectory,
+# which needs the fixed (lb==ub) variables present in solver.x — hence the
+# explicit `fixed_variable_treatment = MadNLP.RelaxBound` on the solve call
+# below (DTO auto-couples that only for AbstractIntermediateCallback installs).
+struct IterEmitCallbackMadNLP <: MadNLP.AbstractUserCallback
+    inner::Any   # pulse_emit — frames + AMICODE_PULSE + cooperative STOP
+end
+function (cb::IterEmitCallbackMadNLP)(solver, mode)
+    mode isa MadNLP.UserCallbackRegular || return true   # main IPM loop only
+    k = Int(MadNLP.get_cnt(solver).k)
+    ok = cb.inner(MadNLP.variable(solver.x), k)
+    iters[] = max(iters[], k)
+    emit(@sprintf("AMICODE_ITER iter=%d f=%.6e inf_pr=%.3e inf_du=%.3e", k,
+                  MadNLP.get_obj_val(solver), MadNLP.get_inf_pr(solver), MadNLP.get_inf_du(solver)))
+    return ok
+end
+
 # Altissimo carries no `intermediate_callback` — its only per-iteration hook is
 # the `callback` kwarg on `Altissimo.optimize!`, which Piccolissimo forwards from
 # `solve!(::AltissimoOptions)`, and it arrives as `(x, info)` rather than
 # `(optimizer, IpoptOptimizerState)`. So BOTH channels have to be re-hung here:
-# without this the frames stop too (they come off IpoptOptions), and an Altissimo
-# solve leaves the Run Inspector completely dark rather than merely numberless.
+# without this the frames stop too (they come off the backend's
+# `intermediate_callback`), and an Altissimo solve leaves the Run Inspector
+# completely dark rather than merely numberless.
 #
 # `x` IS the primal, so pulse_emit's solver-agnostic `(primal, iter)` contract
 # takes it unchanged — same frames, same AMICODE_PULSE lines, same STOP handling
@@ -229,10 +275,25 @@ if SOLVER === :altissimo
     # `max_iter =` here is silently dropped and the solve quietly runs Altissimo's
     # default 20 outer iterations instead of the FILL-IN value.
     solve!(qcp; options = Piccolissimo.AltissimoOptions(max_outer_iter = max_iter), callback = alt_cb)
-else
+elseif SOLVER === :ipopt
+    # The documented selectable Ipopt path (unchanged construction): the raw
+    # `callback` channel is Ipopt-only there — DTO composes it with
+    # `intermediate_callback`, both firing once per IPM iteration.
     solve!(qcp; max_iter = max_iter, print_level = 1,
            options = IpoptOptions(intermediate_callback = pulse_emit),
            callback = CB.callback_factory(cb_log))
+else
+    # The default arm rides DTO's own default — MadNLP since 0.11 (#155,
+    # inherited by Piccolo 2.2) — with no options struct named: the kwargs land
+    # on the default MadNLPOptions fields. print_level 0 = MadNLP ERROR (the
+    # Ipopt-scale silence idiom carries through the flip; 1 is quiet on the
+    # Ipopt arm but TRACE-loud on MadNLP's reversed 1=TRACE…6=ERROR scale).
+    # Budget: 60 — audit-safe under the QualityFunctionUpdate barrier default
+    # (the DTO #155 restoration audit: 0.99999996 @ 60 on the previously-failing
+    # seed class, zero restore/robust events across the audited matrix).
+    solve!(qcp; max_iter = max_iter, print_level = 0,
+           intermediate_callback = IterEmitCallbackMadNLP(pulse_emit),
+           fixed_variable_treatment = MadNLP.RelaxBound)
 end
 wall = time() - t0
 

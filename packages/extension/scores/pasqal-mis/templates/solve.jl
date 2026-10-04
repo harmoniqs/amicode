@@ -9,8 +9,9 @@
 #   H(t)/ħ = (Ω(t)/2) Σᵢ σₓⁱ − δ(t) Σᵢ nᵢ + Σᵢ<ⱼ (C₆/rᵢⱼ⁶) nᵢnⱼ .
 # We optimize the two GLOBAL waveforms (Ω, δ), warm-started from the textbook
 # adiabatic ramp, to maximize the probability of measuring the MIS bitstring.
-# Pure public Piccolo (1.19); the MIS target is brute-forced classically, so the
-# validation is airtight for these instance sizes.
+# Pure public Piccolo (2.2 — the MadNLP-default release train, #1676); the MIS
+# target is brute-forced classically, so the validation is airtight for these
+# instance sizes.
 using Piccolo
 using CairoMakie   # loads PiccoloMakieExt → gives LivePulsePlotCallback its impl
 using JLD2
@@ -18,6 +19,22 @@ using TOML
 using Printf
 using LinearAlgebra
 using SparseArrays
+import MadNLP   # hard dep of DirectTrajOpt ≥ 0.11 — the raw user-callback channel below needs it
+
+# ── version probe (#1676) ────────────────────────────────────────────────
+# Requires Piccolo ≥ 2.2 (DTO ≥ 0.11): the solve below rides the DTO MadNLP
+# default + its raw user callback for the AMICODE_ITER state columns — neither
+# exists pre-0.11 (the raw `callback` kwarg was Ipopt-only, Q74).
+if !(isdefined(Piccolo, :SplineIntegrator) &&
+     isdefined(DirectTrajOpt, :MadNLPOptions) && isdefined(DirectTrajOpt, :Solvers) &&
+     isdefined(DirectTrajOpt.Solvers, :_get_DefaultSolverOptions) &&
+     DirectTrajOpt.Solvers._get_DefaultSolverOptions() === DirectTrajOpt.MadNLPOptions)
+    error(
+        "Amicode pasqal-mis template requires Piccolo ≥ 2.2 (DirectTrajOpt ≥ 0.11 — " *
+        "the MadNLP-default flip); this environment has an older stack. Point " *
+        "--project at the provisioned env (the MadNLP-default release train, #1676).",
+    )
+end
 BLAS.set_num_threads(1)   # avoid OpenBLAS × Julia-thread oversubscription (/solve rule)
 
 # ── FILL IN ──────────────────────────────────────────────────────────────
@@ -129,13 +146,25 @@ let ls = "\"Ω\",\"δ\"",
     flush(stdout)
 end
 
-const CB = Piccolo.Callbacks
+# AMICODE_ITER — the rich-state text telemetry. The raw `callback` kwarg is
+# DEAD on the MadNLP arm (the default since DTO 0.11, Q74 amended): emission
+# rides `intermediate_callback` as a raw `MadNLP.AbstractUserCallback`, and
+# restore/robust phases fire that callback WITHOUT advancing the iteration
+# counter — the emitter filters on `UserCallbackRegular` (mirrors DTO's own
+# adapter and Piccolo 2.2's specs/run.jl; the emitted iters stay monotone).
 iters = Ref(0)
-function cb_log(optimizer, st; kwargs...)
-    k = Int(st.iter_count); iters[] = k
-    @printf("AMICODE_ITER iter=%d f=%.6e inf_pr=%.3e inf_du=%.3e\n", k, st.obj_value, st.inf_pr, st.inf_du)
+struct IterEmitCallbackMadNLP <: MadNLP.AbstractUserCallback
+    inner::Any   # pulse_emit — frames + AMICODE_PULSE + cooperative STOP
+end
+function (cb::IterEmitCallbackMadNLP)(solver, mode)
+    mode isa MadNLP.UserCallbackRegular || return true   # main IPM loop only
+    k = Int(MadNLP.get_cnt(solver).k)
+    ok = cb.inner(MadNLP.variable(solver.x), k)
+    iters[] = max(iters[], k)
+    @printf("AMICODE_ITER iter=%d f=%.6e inf_pr=%.3e inf_du=%.3e\n", k,
+            MadNLP.get_obj_val(solver), MadNLP.get_inf_pr(solver), MadNLP.get_inf_du(solver))
     flush(stdout)
-    return true
+    return ok
 end
 
 t0 = time()
@@ -143,9 +172,17 @@ t0 = time()
 # (2^n iso-dim × N knots) costs minutes per iteration — L-BFGS converges the
 # waveform in wall-clock a hackathon can sit through. The quality upgrade for
 # patient runs is a short exact-Hessian polish: solve!(qcp; max_iter=20) after.
-solve!(qcp; max_iter = max_iter, eval_hessian = false, print_level = 1,
-       options = IpoptOptions(intermediate_callback = pulse_emit),
-       callback = CB.callback_factory(cb_log))
+# On the MadNLP arm `eval_hessian=false` maps to
+# hessian_approximation=compact_lbfgs (the DTO 0.11 kwarg translation).
+# Solver-agnostic default construction: no options struct — the DTO default
+# (MadNLP since 0.11) rides, the kwargs land on the default MadNLPOptions
+# fields. print_level 0 = MadNLP ERROR (the Ipopt-scale silence idiom; 1 would
+# be TRACE-loud on MadNLP's reversed scale). A raw user callback manages its
+# own fixed-variable treatment, hence the explicit RelaxBound (pulse_emit maps
+# the primal back onto the trajectory).
+solve!(qcp; max_iter = max_iter, eval_hessian = false, print_level = 0,
+       intermediate_callback = IterEmitCallbackMadNLP(pulse_emit),
+       fixed_variable_treatment = MadNLP.RelaxBound)
 wall = time() - t0
 
 # Verification: independent re-rollout of the OPTIMIZED PULSE through a fresh

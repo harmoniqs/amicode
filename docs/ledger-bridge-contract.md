@@ -62,7 +62,7 @@ schemas in `packages/schema/schemas/{run,result,finished}.schema.json`):
 | `result.toml` | written by the **solve script**, atomically. At least `fidelity` (float) + `iterations` (int). |
 | `FINISHED` | written **last**, atomically, by the harness. `status` + `exit_code`. Its existence is the durable terminal marker; `FINISHED` without `result.toml` reads as a failed script. |
 | `events.jsonl` | the problem workspace's provenance spine: append-only, `seq` monotonic from 1 (seq IS the line count at write time), each event stamped `ts` + a content `hash` over the recorded entity's canonical JSON (`recorded`/`notes` excluded — clock and prose never churn identity). Entity sidecars (`entities/*.json`) are the recorded state; the LAST event per entity kind hashes to exactly them. |
-| `run.log` | the stdout contract: `AMICODE_PULSE_META` once (before the solve), `AMICODE_PULSE` + `AMICODE_ITER` per Ipopt iteration, `DONE fidelity=<f>` last. The grammar is pinned in the extension's `run_dir_reader.ts`; the number in `DONE` and in `result.toml` is the same number. |
+| `run.log` | the stdout contract: `AMICODE_PULSE_META` once (before the solve), `AMICODE_PULSE` + `AMICODE_ITER` per solver iteration (MadNLP default or Ipopt — the line grammar is backend-blind), `DONE fidelity=<f>` last. The grammar is pinned in the extension's `run_dir_reader.ts`; the number in `DONE` and in `result.toml` is the same number. |
 
 **The amicode record is a pair, not one directory.** The run dir and the
 problem-workspace spine are disjoint in production (`~/.amico/runs/<lab>/` vs
