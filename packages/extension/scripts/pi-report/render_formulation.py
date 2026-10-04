@@ -22,10 +22,10 @@ import tomllib
 from pathlib import Path
 
 _INTEGRATOR_FORMS = {
-    "bilinear": r"$U_{k+1} = A(\mathbf{a}_k)\,U_k$ (piecewise-constant, first-order)",
-    "hermitian_exponential": r"$U_{k+1} = e^{-iH(\mathbf{a}_k)\Delta t}\,U_k$ (Pad\'e-13 internal step evaluation)",
-    "nonhermitian_exponential": r"$\rho_{k+1} = e^{\mathcal{L}(\mathbf{a}_k)\Delta t}\rho_k$, $\mathcal{L}(\cdot) = -i[H,\cdot] + \text{diss.}$ (Daleckii--Krein derivative)",
-    "spline": r"spline-faithful: the constraint integrates the exact spline waveform reconstructed from knot values",
+    "bilinear": r"U_{k+1} = A(\mathbf{a}_k)\,U_k \text{ (piecewise-constant, first-order)}",
+    "hermitian_exponential": r"U_{k+1} = e^{-iH(\mathbf{a}_k)\Delta t}\,U_k \text{ (Pad\'e-13 internal step evaluation)}",
+    "nonhermitian_exponential": r"\rho_{k+1} = e^{\mathcal{L}(\mathbf{a}_k)\Delta t}\rho_k,\; \mathcal{L}(\cdot) = -i[H,\cdot] + \text{diss.} \text{ (Daleckii--Krein derivative)}",
+    "spline": r"\text{spline-faithful: the constraint integrates the exact spline waveform reconstructed from knot values}",
 }
 
 
@@ -37,14 +37,14 @@ def _weight_terms(problem: dict) -> list[str]:
     """Regularizer/objective weights actually present — never invented."""
     terms = []
     for key, label in (
-        ("Q", r"$Q\,\ell(\widetilde{U}_N)$"),
-        ("R", r"$R\,\lVert\mathbf{a}\rVert^2$"),
-        ("R_u", r"$R_u\,\lVert u\rVert^2$"),
-        ("R_du", r"$R_{du}\,\lVert \mathrm{d}u\rVert^2$"),
-        ("R_ddu", r"$R_{ddu}\,\lVert \mathrm{d}^2u\rVert^2$"),
+        ("Q", r"Q\,\ell(\widetilde{U}_N)"),
+        ("R", r"R\,\lVert\mathbf{a}\rVert^2"),
+        ("R_u", r"R_u\,\lVert u\rVert^2"),
+        ("R_du", r"R_{du}\,\lVert \mathrm{d}u\rVert^2"),
+        ("R_ddu", r"R_{ddu}\,\lVert \mathrm{d}^2u\rVert^2"),
     ):
         if key in problem:
-            terms.append(f"{label} with {key} = {problem[key]}")
+            terms.append(f"{label} \\text{{ with }} {key} = {problem[key]}")
     if "objectives" in problem:
         terms.append(_fmt(str(problem["objectives"])))
     return terms
@@ -53,9 +53,9 @@ def _weight_terms(problem: dict) -> list[str]:
 def _bound_terms(problem: dict) -> list[str]:
     bounds = []
     if "du_bound" in problem:
-        bounds.append(r"$\lVert\mathrm{d}u\rVert \le " + str(problem["du_bound"]) + "$")
+        bounds.append(r"\lVert\mathrm{d}u\rVert \le " + str(problem["du_bound"]))
     if "ddu_bound" in problem:
-        bounds.append(r"$\lVert\mathrm{d}^2u\rVert \le " + str(problem["ddu_bound"]) + "$")
+        bounds.append(r"\lVert\mathrm{d}^2u\rVert \le " + str(problem["ddu_bound"]))
     if "global_bounds" in problem:
         bounds.append(_fmt(f"global bounds: {problem['global_bounds']}"))
     return bounds
@@ -103,15 +103,27 @@ def render_block(record: dict) -> str:
         )
         lines.append("")
 
-    lines.append(r"\begin{split}")
+    split_start = len(lines)
+    lines.append(r"\[\begin{split}")
     traj = record.get("trajectory", {}).get("kind", "unknown")
     lines.append(
         r"\underset{z_{1:N}}{\text{minimize}}\quad & "
         + (r" + ".join(_weight_terms(problem)) if _weight_terms(problem) else r"\ell(\widetilde{U}_N)")
     )
-    lines.append(r"\text{subject to}\quad & " + _INTEGRATOR_FORMS.get(integrator.get("kind", "bilinear"), _INTEGRATOR_FORMS["bilinear"]))
-    if integrator.get("alg"):
-        lines[-1] += rf", \text{{alg: {_fmt(integrator['alg'])}}}"
+    integrator_kind = integrator.get("kind")
+    integrator_alg = integrator.get("alg") or solver.get("integrator_alg")
+    if integrator_kind is None and integrator_alg:
+        # best-effort records can drop the integrator block; the call-site
+        # actuals still carry the alg — use it, labeled as actuals-sourced.
+        lines.append(
+            r"\text{subject to}\quad & "
+            + _INTEGRATOR_FORMS["spline"]
+            + rf", \text{{alg: {_fmt(integrator_alg)} (from solver actuals)}}"
+        )
+    else:
+        lines.append(r"\text{subject to}\quad & " + _INTEGRATOR_FORMS.get(integrator_kind or "bilinear", _INTEGRATOR_FORMS["bilinear"]))
+        if integrator_alg:
+            lines[-1] += rf", \text{{alg: {_fmt(integrator_alg)}}}"
     lines.append(r"& \widetilde{U}_1 = I" + (rf",\; N = {problem['N']}" if "N" in problem else ""))
     bounds = _bound_terms(problem)
     if bounds:
@@ -122,7 +134,9 @@ def render_block(record: dict) -> str:
         lines.append(r"& \Delta t_k \text{ free}")
     if "final_fidelity" in problem:
         lines.append(r"& \mathcal{F}(U_N) \ge " + str(problem["final_fidelity"]))
-    lines.append(r"\end{split}")
+    for i in range(split_start + 1, len(lines)):
+        lines[i] += r" \\"
+    lines.append(r"\end{split}\]")
 
     meta: list[str] = []
     meta.append(f"trajectory: {_fmt(traj)}")
@@ -144,7 +158,7 @@ def render_block(record: dict) -> str:
     lines.append("")
     lines.append(r"{\footnotesize\color{gray}" + "; ".join(meta) + "}")
 
-    stamp = "retained ProblemSpec (extract_spec, verified upstream)" if canonical else "best-effort extraction (upstream `_best_effort_spec`)"
+    stamp = r"retained ProblemSpec (extract_spec, verified upstream)" if canonical else r"best-effort extraction (upstream \texttt{\_best\_effort\_spec})"
     lines.append(r"{\footnotesize\color{gray}record: " + stamp + "}")
     return "\n".join(lines)
 
