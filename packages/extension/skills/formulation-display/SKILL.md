@@ -129,6 +129,69 @@ standards (never duplicating them):
 | Robustness ensemble | Nominal + worst-case, members overlaid; the per-member breakdown table |
 | Any free-phase solve | The virtual-Z frame note — which phases were free and their optimized values |
 
+## The component inventory — full disclosure
+
+The user is fully informed: a stated problem lets the reader reconstruct
+the NLP. Every formulation statement names the **trajectory type,
+integrator (with its core), every objective term with its weight, every
+constraint with its bound, and the solver**. The tables below map API to
+classic form. Every name is verified against package source; the classic
+forms follow the papers' notation.
+
+### Integrators (the dynamics constraint each one enforces)
+
+| Integrator | Form it enforces | Notes |
+| --- | --- | --- |
+| `HermitianExponentialIntegrator` (unitary / ket / multiket / sampling variants) | $U_{k+1} = e^{-iH(\mathbf{a}_k)\Delta t} U_k$ | The step's exponential evaluates via an internal Padé-13 approximation (source: `integrators_exponential/_exponential_integrators.jl`). The published Padé-integrator collocation form is the paper's $P^{(4)}$ (arXiv:2305.03261 §III-B) |
+| `NonhermitianExponentialIntegrator` (density / multidensity) | $\rho_{k+1} = e^{\mathcal{L}(\mathbf{a}_k)\Delta t}\rho_k$, $\mathcal{L}(\cdot) = -i[H,\cdot] + \text{dissipation}$ | Daleckii–Krein for the Fréchet derivative (`daleckii_krein.jl`) |
+| `BilinearIntegrator` | Piecewise-constant control, first-order | The simplest collocation step |
+| `SplineIntegrator` (Piccolo) | The constraint integrates the **exact spline waveform** reconstructed from knot values — the emitted pulse and the optimized pulse are the same object | Per trajectory type (unitary/ket/multiket/density/multidensity) |
+| Piccolissimo `SplineIntegrator` cores | Magnus series: `MagnusGL4Alg`, `MagnusAdapt4Alg`; `ChebyshevAlg` (ket); Duhamel for density (`density_duhamel.jl`) | State which core ran — they are different approximations, and "Magnus does not apply to the dissipative density ODE (non-skew rhs)" is a recorded lesson |
+| `SplitOperatorIntegrator` (Piccolissimo) | Strang split-step, matrix-free: kinetic factor $e^{-ik^2\Delta t/2m}$ (control-independent) + potential kicks; analytic JVP/VJP, no AD near the FFT | Atom-transport venue (issue #270) |
+| Tsit5 (explicit RK) | Adaptive rollout only | **Never** a collocation constraint; verification/rollout path — quote its agreement separately (density paths are Tsit5-primary + Tsit5-cross-check: weaker integrator independence, a recorded honesty note) |
+
+### Objective terms
+
+| Term | Classic form | Source |
+| --- | --- | --- |
+| `UnitaryInfidelityObjective` | $\ell(U) = 1 - \frac{1}{n}\lvert\mathrm{tr}(U_\text{goal}^\dagger U)\rvert$ | Paper Eq. (3), arXiv:2305.03261 |
+| `KetInfidelityObjective` | $1 - \lvert\langle\psi_\text{goal}\vert\psi_N\rangle^2\rvert$ | `objectives.jl` |
+| Free-phase variants (`UnitaryFreePhaseInfidelityObjective`, `KetFreePhase...`, `CoherentKetFreePhase...`) | Gate infidelity over the computational subspace **up to free per-component virtual-Z phases** — objective-only; the frame is exact software, never a cheat | `objectives.jl`; the free-phase-decisiveness convention |
+| `DensityMatrixInfidelityObjective` | $1 - \mathrm{tr}(\rho_\text{goal}\rho_N)$ (Hilbert–Schmidt) | `objectives.jl` |
+| `LeakageObjective` | $\lVert(I - \Pi)\psi_k\rVert^2$ at knot points | `objectives.jl` |
+| `QuadraticRegularizer` | $R = \sum_k r\lVert\mathbf{a}_k\rVert^2$ | `docs_cache.jl` usage |
+| Minimum-time term | $D\sum_k \Delta t_k$ | Paper Eq. (22) continuation |
+| Piccolissimo regularizers (`HermiteBendingEnergyRegularizer`, `HermiteC2Regularizer`) | Bending energy $\int\lvert u''\rvert^2$ and C² forms on the spline | `objectives/hermite_bending_energy_regularizer.jl` |
+| Adjoint robustness / `UnitarySensitivityObjective` | First-order infidelity response $\lvert\partial J/\partial\theta\rvert$ to Hamiltonian-parameter perturbations, via adjoints (no finite differences) | `objectives_robustness/`; Piccolissimo reexports |
+| Channel process infidelity (Piccolissimo) | $F_\mathrm{pro}$ exact vs Choi, linear coordinates + HS-dual $\tau_k$ | `objectives/channel_process_infidelity.jl` |
+| `MeasurementMatchingObjective` (Intonatissimo) | $\lVert y(z) - y_\text{target}\rVert^2_{Q_\text{meas}}$ | The intonatissimo card's display section |
+
+### Constraints
+
+| Constraint | Classic form | Where it lives |
+| --- | --- | --- |
+| Control amplitude bounds | $\lvert a_i(t)\rvert \le a_{i,\max}$ | The z-vector's bound layer (never a nonlinear row) |
+| Slew / interior overshoot (`CubicSplineBoundConstraint`, `du_bound`) | The **emitted spline** stays within bounds between knots — the knot values alone do not guarantee it | `constraints_spline/`; the knots-vs-emitted distinction is load-bearing |
+| Leakage bound (`KnotPointConstraint` / `NonlinearKnotPointConstraint`) | $\lVert(I-\Pi)\psi(t_k)\rVert^2 \le \varepsilon$ at knots | `constraints.jl` |
+| `FinalUnitaryFidelityConstraint` | $\mathcal{F}(U_N) \ge \bar{\mathcal{F}}$ | `templates/minimum_time_problem.jl` |
+| `DurationConstraint` | $\sum_k \Delta t_k \le T_{\max}$ (or per-interval $\Delta t$ bounds) | `templates/`; per-interval floors encode physics (settling, clock) |
+| QILC trust region | $\lVert u - u_\text{ref}\rVert^2_{R_\text{tr}}$ recentered on $z_\text{ref}$ each iteration | The intonatissimo card |
+
+### Solvers
+
+| Solver | What it is | When stated |
+| --- | --- | --- |
+| IPOPT (via DirectTrajOpt) | Interior-point, exact sparse NLP | Every Piccolo solve; `exact_hessian=false` on MultiKet is a recorded caveat |
+| Altissimo (Piccolissimo) | Matrix-free interior-point; callback fields $f_\text{val}$, $eq\_viol$, $kkt\_error$ are the honest convergence line | Piccolissimo solves |
+| Gauss–Newton second-order mode | Matrix-free HVP composition | When Piccolissimo's GN default runs |
+| Armijo backtracking (ILC) | Accept/reject on objective descent; show accepted **and** rejected steps | QILC convergence displays |
+
+**Completeness rule.** A formulation statement that omits any row the
+problem actually used is incomplete — the reader must be able to
+reconstruct the NLP from the statement plus the run dir. When a component
+is not in these tables (a new upstream constructor, an inline constraint),
+state its form from source and mark it `unverified` until smoked.
+
 ## Where these render
 
 - **PI-report findings** (`pi-report` fill contract, amicode #1700): a
