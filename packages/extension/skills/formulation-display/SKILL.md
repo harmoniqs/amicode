@@ -210,6 +210,45 @@ state its form from source and mark it `unverified` until smoked.
 - **Spec cards**: the falsifiable acceptance entries pair with the formal
   statement — state the problem, then the gates that adjudicate it.
 
+## The record is the truth — render from `formulation.toml`
+
+These forms are **generated from the run's `formulation.toml`**, never
+hand-written from memory of the script (the formulation-record contract,
+amicode #1700/#1710). The renderer (`scripts/pi-report/render_formulation.py`)
+turns the record into the classic-form block; the agent writes the explanation
+*around* it — zero agent invention inside the math. Corrections target the
+record's source (the spec or the script) and re-render; a correction made in
+rendered prose is lost on the next render.
+
+**The papers' register** (the two exemplar papers, Hong-ye appendix G): ONE
+clean display equation carrying symbols only — no `\text{}` sentences, no
+identifiers, no weights inside the math — then a single "Here, ..." prose
+paragraph carrying every detail: weights, integrator + algorithm, $N$,
+bounds, free-phase/free-time flags, solver. The equation states the shape;
+the prose carries the numbers.
+
+**Provenance rules the render obeys:**
+
+- `canonical` is **derived upstream** (retained spec, verified against the
+  object) — a kwargs-built problem renders as a *Non-canonical record*
+  (best-effort extraction) with its call-site `template_actuals` and
+  `solver_actuals` labeled as actuals, never as verified round-trips.
+- Call-site actuals **beat template-name inference**: a `SplinePulseProblem`
+  running PWC collocation (`integrator_type = "pwc"` in `template_actuals`)
+  renders piecewise-constant — never "spline-faithful" (the #540 case).
+- Raw matrices are capped to digest + dims (emission caps them in the record;
+  the render passes the capped marker through) — full matrices live in the
+  spec/script source, never in synced run dirs.
+- Receipt meanings: **UNBACKED** — no record in the run dir; any stated
+  formulation is unbacked. **PARTIAL-RECORD** — the record is missing
+  inventory rows (schema fields, objective weights, integrator, solver
+  actuals); fix the emission or the upstream extraction, not the render.
+  Unmapped record sections are preserved and named, never fatal.
+
+The fill contract (`../../../scripts/pi-report/FILL-CONTRACT.md` relative
+to this skill's directory, in the extension's pi-report scripts) carries the
+full report-side doctrine; this section governs the forms wherever they render.
+
 ## Honesty bars (inherit `display-conventions`)
 
 - Legs named, never merged; the researcher's notation; provenance stamps.
