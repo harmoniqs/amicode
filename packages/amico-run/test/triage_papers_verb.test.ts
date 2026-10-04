@@ -76,9 +76,15 @@ describe("amico triage-papers — usage + resolution", () => {
 });
 
 describe("amico triage-papers — the dry-run default", () => {
+  // HERMETIC (#1703): every named-paper run passes --papers explicitly. The
+  // verb falls back to the machine's real personal mount (~/.amico/vaults)
+  // when --papers is absent — CI has no vault, so those runs exit 64 there
+  // while green on any dev box that happens to have one. Ambient vault state
+  // is never a test fixture; the intake is never a guess.
+
   it("a named relevance-high paper yields the seed as a report — nothing written", async () => {
     const out = mkdtempSync(join(tmpdir(), "papers-out-"));
-    const r = await triagePapersVerb([MITTEN, "--problems", PROBLEMS, "--out", out], {});
+    const r = await triagePapersVerb([MITTEN, "--papers", PAPERS, "--problems", PROBLEMS, "--out", out], {});
     expect(r.code).toBe(0);
     const j = r.json as Record<string, unknown>;
     expect(j.dry_run).toBe(true);
@@ -92,7 +98,7 @@ describe("amico triage-papers — the dry-run default", () => {
 
   it("a named paper below relevance-high is an honest no-op (named, exit 0)", async () => {
     const out = mkdtempSync(join(tmpdir(), "papers-out-"));
-    const r = await triagePapersVerb([join(PAPERS, "paper-20260703-104000-strathearn-2018-tempo.md"), "--problems", PROBLEMS, "--out", out], {});
+    const r = await triagePapersVerb([join(PAPERS, "paper-20260703-104000-strathearn-2018-tempo.md"), "--papers", PAPERS, "--problems", PROBLEMS, "--out", out], {});
     expect(r.code).toBe(0);
     const j = r.json as Record<string, unknown>;
     expect(j.seeds).toEqual([]);
@@ -115,7 +121,7 @@ describe("amico triage-papers — the dry-run default", () => {
 describe("amico triage-papers — apply: the seed files into the claim layer", () => {
   it("writes ONE claim-shaped seed per paper, linked to the matched problem cards, evidence-pointer resolvable", async () => {
     const out = mkdtempSync(join(tmpdir(), "papers-out-"));
-    const r = await triagePapersVerb([MITTEN, "--problems", PROBLEMS, "--out", out, "--apply"], {});
+    const r = await triagePapersVerb([MITTEN, "--papers", PAPERS, "--problems", PROBLEMS, "--out", out, "--apply"], {});
     expect(r.code).toBe(0);
     const seedPath = join(out, basename(MITTEN));
     expect(existsSync(seedPath)).toBe(true);
