@@ -216,7 +216,71 @@ def emitted(tmp_path_factory):
     # D — the skeleton, authored per its own example, through its CONTRACT.
     run("skeleton", _build_skeleton_fixture_script())
 
+    # E — the BARE extraction of the same template construction (no overlay):
+    #     the probe-script path. The identity test proves the idiom's overlay
+    #     (canonical flag, actuals blocks, matrix capping) is additive-only —
+    #     the spec content itself is untouched.
+    dir_e = base / "bare"
+    dir_e.mkdir()
+    construction_idx = next(
+        i for i, line in enumerate(tlines) if line.startswith("prob = hasproperty")
+    )
+    bare_script = (
+        "\n".join(tlines[: construction_idx + 1])
+        + '\nbare = full_dict(extract_spec(qcp))\n'
+        + 'open("bare.toml", "w") do io; TOML.print(io, bare); end\n'
+        + 'println("BARE_DONE")\n'
+    )
+    (dir_e / "run.jl").write_text(bare_script, encoding="utf-8")
+    proc_e = _run_julia(dir_e / "run.jl", dir_e)
+    out["bare"] = {
+        "proc": proc_e,
+        "record": _read_record(dir_e / "bare.toml"),
+    }
+    if proc_e.returncode != 0:
+        pytest.fail(
+            f"bare: probe-path extraction failed (exit {proc_e.returncode}). "
+            f"stderr tail:\n{proc_e.stderr[-2000:]}"
+        )
+
     return out
+
+
+def test_record_structure_identity(emitted):
+    """The overlay is additive-only: the emitted record's SPEC CONTENT is
+    structure-identical to a bare extraction of the same construction (the
+    probe-script path), modulo the declared overlay keys and the capped
+    matrices. Parsed-structure equality, never byte equality (Julia float
+    formatting differs from nothing here — both sides come from the same
+    TOML writer — but the comparison is on parsed structures by contract)."""
+    emitted_record = emitted["template"]["record"]
+    bare_record = emitted["bare"]["record"]
+    assert emitted_record is not None and bare_record is not None
+
+    overlay_keys = {"canonical", "template_actuals", "solver_actuals"}
+    matrix_paths = (("system", "H_drift"), ("system", "H_drives"), ("goal", "matrix"))
+
+    def normalize(record: dict) -> dict:
+        out = {k: v for k, v in record.items() if k not in overlay_keys}
+        system = dict(out.get("system", {}))
+        for key in ("H_drift", "H_drives"):
+            if key in system:
+                system[key] = "MATRIX"
+        out["system"] = system
+        goal = dict(out.get("goal", {}))
+        if "matrix" in goal:
+            goal["matrix"] = "MATRIX"
+        out["goal"] = goal
+        return out
+
+    assert normalize(emitted_record) == normalize(bare_record), (
+        "the emission overlay must not touch the spec content beyond the "
+        "declared keys (canonical, template_actuals, solver_actuals) and "
+        "the matrix caps"
+    )
+    # the overlay is exactly where it claims to be
+    assert overlay_keys <= set(emitted_record)
+    assert not overlay_keys & set(bare_record)
 
 
 def test_template_emits_best_effort_record(emitted):
