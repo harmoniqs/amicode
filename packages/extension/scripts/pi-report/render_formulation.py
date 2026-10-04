@@ -77,9 +77,11 @@ def _cap_matrix(m: object) -> str:
 
 
 def render_block(record: dict) -> str:
-    """The classic-form block, generated from the record. Every line either
-    comes from the record or is a fixed furniture string — no invented
-    component."""
+    """The classic-form statement, in the papers' register: one clean
+    display equation, then a 'Here, ...' prose paragraph carrying every
+    detail from the record — numbers, integrator, alg, weights, bounds,
+    solver. Nothing but symbols inside the math; no identifiers crammed
+    into equations."""
     if not record:
         return (
             r"\emph{UNBACKED --- no formulation record in the run dir. "
@@ -93,74 +95,138 @@ def render_block(record: dict) -> str:
     goal = record.get("goal", {})
     wrappers = record.get("wrappers", [])
     canonical = record.get("canonical", True)
+    traj = record.get("trajectory", {}).get("kind", "unitary")
 
-    lines: list[str] = []
-    if not canonical:
-        lines.append(
-            r"\emph{Non-canonical record} (hand-built problem; best-effort "
-            "extraction): the system and goal are raw inlines, and the solver "
-            "block below is the call-site actuals, not a verified round-trip."
-        )
-        lines.append("")
+    state_sym = r"\widetilde{U}" if traj != "ket" else r"\widetilde{\psi}"
 
-    split_start = len(lines)
-    lines.append(r"\[\begin{split}")
-    traj = record.get("trajectory", {}).get("kind", "unknown")
-    lines.append(
-        r"\underset{z_{1:N}}{\text{minimize}}\quad & "
-        + (r" + ".join(_weight_terms(problem)) if _weight_terms(problem) else r"\ell(\widetilde{U}_N)")
-    )
+    # ── the equation: symbols only ──
+    obj_terms = []
+    if "Q" in problem:
+        obj_terms.append(rf"Q\,\ell({state_sym}_N)")
+    for key, term in (
+        ("R", r"R\,\lVert\mathbf{a}\rVert^2"),
+        ("R_u", r"R_u\,\lVert u\rVert^2"),
+        ("R_du", r"R_{du}\,\lVert \mathrm{d}u\rVert^2"),
+        ("R_ddu", r"R_{ddu}\,\lVert \mathrm{d}^2u\rVert^2"),
+    ):
+        if key in problem:
+            obj_terms.append(term)
+    if "objectives" in problem:
+        obj_terms.append(r"\text{(recorded terms)}")
+    objective = r" + ".join(obj_terms) if obj_terms else rf"\ell({state_sym}_N)"
+
+    rows = [rf"\underset{{z_{{1:N}}}}{{\text{{minimize}}}}\quad & {objective}"]
+    rows.append(rf"\text{{subject to}}\quad & {state_sym}_{{k+1}} = F({state_sym}_k, \mathbf{{a}}_k, \Delta t_k)")
+    rows.append(rf"& {state_sym}_1 = I" + (rf",\; N = {problem['N']}" if "N" in problem else ""))
+    bounds_rows = []
+    if "du_bound" in problem:
+        bounds_rows.append(r"\lVert\mathrm{d}u\rVert \le d_u")
+    if "ddu_bound" in problem:
+        bounds_rows.append(r"\lVert\mathrm{d}^2u\rVert \le d_{du}")
+    if "global_bounds" in problem:
+        bounds_rows.append(r"\text{(recorded global bounds)}")
+    if bounds_rows:
+        rows.append("& " + r",\quad ".join(bounds_rows))
+    if "final_fidelity" in problem:
+        rows.append(r"& \mathcal{F}(" + state_sym + r"_N) \ge \bar{\mathcal{F}}")
+
+    eq_lines = [r"\[\begin{split}"]
+    for i, row in enumerate(rows):
+        eq_lines.append(row + (r" \\" if i < len(rows) - 1 else ""))
+    eq_lines.append(r"\end{split}\]")
+
+    # ── the 'Here, ...' prose: every detail from the record ──
+    prose: list[str] = []
+    weight_details = ", ".join(f"{k} = {problem[k]}" for k in ("Q", "R", "R_u", "R_du", "R_ddu") if k in problem)
+    if weight_details:
+        prose.append(f"Here, ${weight_details}$;")
+
     integrator_kind = integrator.get("kind")
     integrator_alg = integrator.get("alg") or solver.get("integrator_alg")
+    integrator_phrase = {
+        "bilinear": "piecewise-constant (bilinear, first-order)",
+        "hermitian_exponential": r"the exact exponential step $U_{k+1} = e^{-iH(\mathbf{a}_k)\Delta t}U_k$",
+        "nonhermitian_exponential": r"the exact exponential of the Liouvillian, $\rho_{k+1} = e^{\mathcal{L}(\mathbf{a}_k)\Delta t}\rho_k$",
+        "spline": "spline-faithful --- the constraint integrates the exact spline waveform reconstructed from the knot values",
+    }.get(integrator_kind or "spline" if integrator_kind is None and integrator_alg else integrator_kind or "bilinear",
+          "piecewise-constant (bilinear, first-order)")
     if integrator_kind is None and integrator_alg:
-        # best-effort records can drop the integrator block; the call-site
-        # actuals still carry the alg — use it, labeled as actuals-sourced.
-        lines.append(
-            r"\text{subject to}\quad & "
-            + _INTEGRATOR_FORMS["spline"]
-            + rf", \text{{alg: {_fmt(integrator_alg)} (from solver actuals)}}"
-        )
+        alg_note = f" ({_fmt(integrator_alg)}, from the call-site actuals)"
     else:
-        lines.append(r"\text{subject to}\quad & " + _INTEGRATOR_FORMS.get(integrator_kind or "bilinear", _INTEGRATOR_FORMS["bilinear"]))
-        if integrator_alg:
-            lines[-1] += rf", \text{{alg: {_fmt(integrator_alg)}}}"
-    lines.append(r"& \widetilde{U}_1 = I" + (rf",\; N = {problem['N']}" if "N" in problem else ""))
-    bounds = _bound_terms(problem)
-    if bounds:
-        lines.append(r"& " + r",\quad ".join(bounds))
+        alg_note = f" ({_fmt(integrator_alg)})" if integrator_alg else ""
+    prose.append(f"the dynamics $F$ are {integrator_phrase}{alg_note};")
+
+    details: list[str] = []
+    if "N" in problem:
+        details.append(f"$N = {problem['N']}$ knots")
     if problem.get("free_phase"):
-        lines.append(r"& \text{free per-component virtual-Z phases (objective-only)}")
+        details.append("per-component virtual-Z phases free (objective-only)")
     if problem.get("free_dt"):
-        lines.append(r"& \Delta t_k \text{ free}")
+        details.append(r"$\Delta t_k$ free")
     if "final_fidelity" in problem:
-        lines.append(r"& \mathcal{F}(U_N) \ge " + str(problem["final_fidelity"]))
-    for i in range(split_start + 1, len(lines)):
-        lines[i] += r" \\"
-    lines.append(r"\end{split}\]")
-
-    meta: list[str] = []
-    meta.append(f"trajectory: {_fmt(traj)}")
-    if integrator.get("kind"):
-        meta.append(f"integrator: {_fmt(integrator['kind'])}" + (f" ({_fmt(integrator['alg'])})" if integrator.get("alg") else ""))
-    if system.get("template"):
-        meta.append(f"system: {_fmt(system['template'])}")
-    elif system.get("kind") == "raw":
-        meta.append(f"system: raw ({_cap_matrix(system.get('H_drift', '?'))})")
-    if goal.get("kind"):
-        g = f"goal: {_fmt(goal['kind'])}"
-        if goal.get("gate"):
-            g += f" {_fmt(goal['gate'])}"
-        meta.append(g)
+        details.append(rf"final-fidelity floor $\mathcal{{F}} \ge {problem['final_fidelity']}$")
+    if "du_bound" in problem:
+        details.append(f"$d_u = {problem['du_bound']}$")
+    if "ddu_bound" in problem:
+        details.append(f"$d_{{du}} = {problem['ddu_bound']}$")
     if wrappers:
-        meta.append(f"wrappers: {_fmt(wrappers)}")
-    if solver:
-        meta.append("solver: " + _fmt(", ".join(f"{k}={v}" for k, v in solver.items())))
-    lines.append("")
-    lines.append(r"{\footnotesize\color{gray}" + "; ".join(meta) + "}")
+        details.append(f"wrappers: {_fmt(wrappers)}")
+    if details:
+        prose.append("; ".join(details) + ".")
 
-    stamp = r"retained ProblemSpec (extract_spec, verified upstream)" if canonical else r"best-effort extraction (upstream \texttt{\_best\_effort\_spec})"
-    lines.append(r"{\footnotesize\color{gray}record: " + stamp + "}")
-    return "\n".join(lines)
+    goal_bits = []
+    if goal.get("kind"):
+        base = f"a {goal['kind']} target"
+    else:
+        base = "the target"
+    if goal.get("gate"):
+        base = f"the {_fmt(goal['gate'])} {goal.get('kind', '')} target"
+    if goal.get("subsystem_levels"):
+        base += f" on the {_fmt(goal['subsystem_levels'])} computational subspace"
+    if goal.get("matrix") is not None:
+        base += " (inline goal matrix)"
+    goal_bits.append(base)
+    sys_bits = []
+    if system.get("template"):
+        sys_bits.append(f"the {_fmt(system['template'])} system template")
+    elif system.get("kind") == "raw":
+        sys_bits.append(f"a raw system (Hamiltonian inline, {_cap_matrix(system.get('H_drift', '?'))})")
+    sentences = []
+    if goal_bits:
+        sentences.append("The target is " + ", ".join(goal_bits))
+    if sys_bits:
+        sentences.append("the system is " + ", ".join(sys_bits))
+    if sentences:
+        prose.append("; ".join(sentences) + ".")
+
+    if solver:
+        named = []
+        backend = solver.get("backend", "ipopt")
+        iters = solver.get("max_iter", solver.get("max_iter_phase1"))
+        named.append(f"{backend}")
+        if iters:
+            named.append(f"max\_iter {iters}")
+        if solver.get("max_cpu_time_s") or solver.get("max_cpu_time"):
+            named.append(f"max\_cpu\_time {solver.get('max_cpu_time_s', solver.get('max_cpu_time'))} s")
+        if solver.get("tol"):
+            named.append(f"tol {solver['tol']}")
+        hess = [(k.replace("eval_hessian_", ""), v) for k, v in solver.items() if k.startswith("eval_hessian_")]
+        if hess:
+            named.append("eval\_hessian " + ", ".join(f"{str(v).lower()} ({k})" for k, v in hess))
+        rest = [f"{k}={v}" for k, v in solver.items() if k not in ("backend", "max_iter", "max_iter_phase1", "max_cpu_time_s", "max_cpu_time", "tol", "integrator_alg", "integrator_tol") and not k.startswith("eval_hessian_")]
+        prose.append("Solved with " + ", ".join(named) + ("; " + _fmt(", ".join(rest)) if rest else "") + ".")
+
+    stamp = (
+        r"retained ProblemSpec (extract\_spec, verified upstream)"
+        if canonical
+        else r"best-effort extraction (upstream \texttt{\_best\_effort\_spec}); call-site solver actuals"
+    )
+
+    out = eq_lines + [""] + prose
+    if not canonical:
+        out.append(r"{\footnotesize\color{gray}\emph{Non-canonical record} (hand-built problem; system and goal are raw inlines; the solver block is call-site actuals, not a verified round-trip).}")
+    out.append(r"{\footnotesize\color{gray}record: " + stamp + "}")
+    return "\n".join(out)
 
 
 def stated_components(record: dict) -> list[str]:
