@@ -1,88 +1,76 @@
 % ─────────────────────────────────────────────────────────────────────
-% Amicode PI report — the per-loop state-of-campaign, 1–2 pages.
+% Amicode PI report — the per-loop state-of-campaign, memo format.
 %
-% Filled by the director at each loop boundary from the campaign ledger;
-% built with tectonic; gated (page cap, slot presence, provenance).
-% Per-slot rules: FILL-CONTRACT.md (same directory).
+% Filled by the director at every loop boundary from the campaign ledger;
+% built with tectonic. Fill contract: FILL-CONTRACT.md (same directory).
 %
-% Fill rules that the gate enforces:
-%   * every %% SLOT marker below STAYS in the filled copy
-%   * numbers in adjudication rows appear VERBATIM in the source ledger
-%     and carry their provenance stamp via \stamp{...}
-%   * verdicts use the ledger's own vocabulary — never softened, never
-%     translated ("FALSIFIER A FIRED" stays "FALSIFIER A FIRED")
-%   * an empty section is an explicit \emph{none} line, never a deleted
-%     section
+% Rules the fill obeys (see the contract for the full rulebook):
+%   * every %% SLOT marker stays in the filled copy
+%   * numbers in findings appear VERBATIM in the source ledger and carry
+%     a \stamp{...} provenance stamp
+%   * citations must trace: every external reference's arXiv ID appears
+%     in the ledger or a vault card; every cited vault note exists
+%   * NO PAGE CAP — a quiet loop is one page, a rich loop runs three;
+%     over-length is a receipt signal, never a truncation
 % ─────────────────────────────────────────────────────────────────────
 \documentclass[10pt]{article}
 \usepackage[T1]{fontenc}
-\usepackage[letterpaper,margin=2.1cm]{geometry}
-\usepackage{booktabs}
-\usepackage{tabularx}
+\usepackage[letterpaper,margin=2.2cm]{geometry}
 \usepackage{enumitem}
 \usepackage{amsmath,amssymb}
 \usepackage{xcolor}
 
 % ── fixed furniture: do not modify in fills ──
 \newcommand{\stamp}[1]{{\footnotesize\color{gray}(#1)}}
-\newcommand{\sect}[1]{\vspace{6pt}\textbf{#1}\par\vspace{2pt}}
-\setlist{nosep,leftmargin=1.5em}
+\newcommand{\sect}[1]{\vspace{10pt}\textbf{#1}\par\vspace{3pt}}
+\newcommand{\finding}[2]{\vspace{8pt}\textbf{#2}\par\vspace{2pt}#1\par}
+\setlist{nosep,leftmargin=1.6em}
 \setlength{\parindent}{0pt}
-\setlength{\parskip}{2pt}
-\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+\setlength{\parskip}{3pt}
 
 \begin{document}
 
 %% SLOT: header (required)
 \begin{center}
   {\Large\bfseries PI report --- <campaign>}\\[2pt]
-  {\small <posture> posture $\cdot$ <loop boundary or state> $\cdot$ <date>
+  {\small <posture> posture $\cdot$ <boundary or state> $\cdot$ <date>
    $\cdot$ ledger: <ledger file>}
 \end{center}
 
 %% SLOT: summary (required — the generated state line)
-% Verdict counts from the ledger's hypothesis table, in its own
-% vocabulary, plus the one-sentence campaign state. No optimism: counts
-% are counted, not estimated.
-\noindent\textbf{State.} <counts line>. <one-sentence campaign state.>
-
-%% SLOT: adjudications (required)
-% This loop's new/changed verdicts (a closed campaign: the final verdict
-% table). One row per adjudication: H#, verdict verbatim, the outcome
-% with headline numbers and their legs named, provenance stamp last.
-\sect{This loop's adjudications}
-\begin{tabularx}{\textwidth}{@{}>{\footnotesize}p{1.1cm} >{\footnotesize\bfseries}p{2.9cm} Y@{}}
-\toprule
-H\# & verdict & outcome \\
-\midrule
-<H1> & <VERDICT> & <one-line hypothesis + headline number(s), legs named
-  \stamp{<artifact path or ledger row>}> \\
-\bottomrule
-\end{tabularx}
-
-%% SLOT: digest (required; collapses to counts when over cap)
-% One line per still-open hypothesis/thread: id, one-line state, the
-% last result that keeps it open. Every line earns its place — a thread
-% neither live nor next is not listed.
-\sect{Open threads}
-\begin{tabularx}{\textwidth}{@{}>{\footnotesize}p{1.1cm} Y@{}}
-\toprule
-id & state \\
-\midrule
-<H1> & <one-line state + last result> \\
-\bottomrule
-\end{tabularx}
-
-%% SLOT: inflight (required; \emph{none} when nothing is running)
-\sect{In flight}
-\begin{itemize}
-  \item <running cast/solve, one line each, with its expected artifacts>
-\end{itemize}
+\noindent\textbf{State.} <counts line, from the ledger's own vocabulary,
+counted not estimated>. <one sentence of campaign state.>
 
 %% SLOT: needsyou (required; \emph{none} when nothing needs the PI)
 \sect{Needs you}
 \begin{itemize}
-  \item <the decisions only the PI can make, one line each>
+  \item <the decisions only the PI can make>
+\end{itemize}
+
+%% SLOT: findings (required — prose, one \finding per adjudication)
+% Each finding EXPLAINS: what the hypothesis was, in plain language,
+% before anything else. Then what was done, what the numbers say, and
+% what they mean mechanically. Numbers verbatim + \stamp{...}. A quiet
+% loop with no adjudications is an explicit sentence saying so.
+\sect{Findings this loop}
+\finding{<prose: what the hypothesis was — stated so a reader who does
+  not know the H-number understands it. What was run. What the numbers
+  say, legs named. What it means. \stamp{<artifact or ledger row>}>}
+  {N. <short finding title>}
+
+%% SLOT: digest (required; every thread states what the hypothesis IS)
+% Bold id + plain-language statement of the idea, then its state. A
+% reader must never meet an unexplained H-number. Citations welcome.
+\sect{Open threads}
+\begin{itemize}
+  \item \textbf{<id> --- <name of the idea>.} <what it is, one to two
+    sentences>. <current state + last result> [ref.~[n]].
+\end{itemize}
+
+%% SLOT: inflight (required; \emph{none} when nothing is running)
+\sect{In flight}
+\begin{itemize}
+  \item <running cast/solve + expected artifacts>
 \end{itemize}
 
 %% SLOT: next (required — top 3, mechanically cut)
@@ -91,12 +79,26 @@ id & state \\
   \item <next queued work, one line each>
 \end{enumerate}
 
+%% SLOT: reading (required; empty is an explicit statement, never silence)
+% What was read this loop — external and vault — and what it changed
+% (seeded, sharpened, or reframed which hypothesis). When nothing was
+% read, say so and name what prior reading the loop still rests on.
+\sect{Reading this loop}
+<prose: reads + what they changed, or the honest empty statement>
+
+%% SLOT: references (required — numbered; external IDs must appear in
+%% the ledger or a vault card; vault pointers must exist)
+\sect{References}
+\begin{enumerate}[label={[\arabic*]},leftmargin=2.2em]
+  \item <author(s). \emph{title.} arXiv:<id>. Vault: <pointer>>
+\end{enumerate}
+
 %% SLOT: footer (required — leave as-is except the fill fields)
 \vspace{8pt}
 \hrule
 \vspace{2pt}
 {\footnotesize\color{gray} Filled from <ledger file> at <boundary> by the
-director $\cdot$ built with tectonic $\cdot$ page cap 2 \cdot
-provenance-gated (issue \#1700).}
+director $\cdot$ built with tectonic $\cdot$ no page cap (length is a
+receipt signal, not a gate) $\cdot$ provenance-gated (issue \#1700).}
 
 \end{document}

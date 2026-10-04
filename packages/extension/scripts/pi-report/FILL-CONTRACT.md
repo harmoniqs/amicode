@@ -1,48 +1,55 @@
 # The PI report fill contract
 
-The per-loop state-of-campaign report (amicode #1700): a 1–2 page LaTeX
+The per-loop state-of-campaign report (amicode #1700): a memo-format LaTeX
 document the director fills at every research-loop boundary, built with
-tectonic, gated mechanically. The template lives in `template/pi-report.tex`;
-this file is the per-slot rulebook the fill obeys.
+tectonic. The template lives in `template/pi-report.tex`; this file is the
+per-slot rulebook the fill obeys.
 
 ## The doctrine, and what replaced it
 
 The amicissimo origin spec (#356 M3) demanded a **pure mechanical
 projection** — no agent-authored prose anywhere. Issue #1700 deliberately
 **supersedes that**: the agent fills the template. The replacement
-guardrails, all three mechanical, are what keep the report honest:
+guardrails, all mechanical, keep the report honest:
 
-1. **Verbatim verdicts + numbers.** Every verdict string and every number
-   in an adjudication row is copied from the ledger. The gate checks
-   number-bearing strings against the ledger (see `build_report.py`).
+1. **Verbatim numbers.** Every number in a finding is copied from the
+   ledger. The gate checks number-bearing strings against the ledger.
 2. **Provenance stamps.** Every number rides with its artifact path or
    ledger row, via `\stamp{...}`. A number that cannot name its source
    does not go in the report.
-3. **The gate.** tectonic build + 1–2 page cap + slot presence + the
-   provenance lint. Over-cap is a red with the demotion ladder below —
-   never a silent truncation.
+3. **Traceable citations.** Every external reference's arXiv ID must
+   appear in the ledger or a vault card; every cited vault note must
+   exist. Untraceable references fail the gate.
+4. **The gate.** tectonic build + slot presence + the provenance/citation
+   lints. There is **no page cap** (see below).
 
-What the agent *may* do: compress prose (one-line hypotheses, one-line
-thread states), order rows, decide which threads earn a digest line.
-What it may *not* do: soften a verdict, merge legs, drop a legs-named
-pair into one flattering figure, round a number, or invent a state.
+What the agent *may* do: explain, order, cite, decide which threads earn
+a digest line. What it may *not* do: soften a verdict, merge legs, drop a
+legs-named pair into one flattering figure, round a number, or invent a
+state or a citation.
 
-## Style (the anti-slop rules)
+## Writing rules
 
-The report reads like a lab notebook, not a summary. Round 1 of the real
-fills failed review for reading "like slop" — dense em-dash-chained walls of
-compressed ledger prose. The cure is mechanical:
+The report is a memo to the PI, not a dashboard and not a summary. Two
+earlier shapes failed review for opposite sins — round 1 was compressed
+ledger prose (unreadable walls), round 2 was telegraphese (no
+understanding). The rules that fix both:
 
-- **Short declarative sentences.** Period-separated. One fact per sentence.
-  No em-dash chains, no parenthetical nestings, no narrative connective
-  tissue ("the campaign's payoff landed" is banned; "First rydberg pulse
-  promoted" is the register).
-- **Numbers lead.** Each adjudication row opens with the measured result,
-  then one clause of mechanism at most. The ledger keeps the story.
-- **Rows are 2–3 lines.** A row that wants 5+ lines is two facts — split
-  it or cut one.
-- **No restating hypotheses in full.** The id + one line of state; the
-  ledger carries the spec.
+- **Explain before you state.** A reader who does not know what H9 is must
+  understand it from the report. Every finding opens with what the
+  hypothesis was, in plain language; every digest thread names the idea
+  before its state. Never an unexplained H-number.
+- **Prose findings, not table rows.** Each adjudication is a `\finding`:
+  what was asked, what ran, what the numbers say (legs named), what it
+  means mechanically. Short declarative sentences; one fact per sentence;
+  no em-dash chains, no narrative flourishes.
+- **Numbers in context.** 0.5033 alone is noise; 0.5033 at a −1%
+  atom-spacing error, against the 0.98 bar, with the mechanism measured to
+  2×10⁻³ — is a finding. Scale anchors welcome (analytic limits, prior
+  results).
+- **Citations are first-class.** Numbered references, cited inline
+  `[ref.~[n]]`. External literature from the ledger's lit rows; vault
+  pointers (insight cards, experiment notes) count as references.
 
 ## Slots
 
@@ -50,41 +57,48 @@ Every `%% SLOT:` marker stays in the filled copy — the gate greps them.
 
 | Slot | Rule |
 | --- | --- |
-| **header** | Campaign, posture, boundary (loop #, or "closed" for a final report), date, ledger filename. The ledger file is the report's source of record. |
-| **summary** | Verdict counts from the hypothesis table, **counted** — grouped in the ledger's own vocabulary (supported, falsified, open, queued...). Then one sentence of campaign state. Counts are generated: count the table, never estimate. |
-| **adjudications** | Rows adjudicated **this loop** (a final report: the campaign's verdict table). Columns: id, verdict verbatim, outcome. The outcome line: one-line hypothesis + the headline number(s) with legs named (`F_emu` / `F_mod`, never one figure), + `\stamp{provenance}` last. |
-| **digest** | One line per still-open thread: id + one-line state + the last result that keeps it open. A thread that is neither live nor next does not appear. Over-cap: collapse to a counts line ("N open: a supported-at-budget, b open, ..."), never drop rows silently. |
-| **inflight** | Running casts/solves, one line each, with expected artifacts. Nothing running: a single `\emph{none}` line. |
-| **needsyou** | Only the decisions the PI can make (rulings, dispositions, sign-offs, connections, holds). `\emph{none}` when empty — never invented urgency. |
-| **next** | The top 3 queued items, mechanically cut at 3. Each names the work in one line. |
+| **header** | Campaign, posture, boundary (loop #, or "closed" for a final report), date, ledger filename. |
+| **summary** | Verdict counts from the hypothesis table, **counted** in the ledger's own vocabulary. Then one sentence of campaign state. |
+| **needsyou** | Only the decisions the PI can make (rulings, dispositions, sign-offs, connections, holds). `\emph{none}` when empty. |
+| **findings** | One `\finding` per adjudication this loop (final report: the campaign's verdicts). Each explains the hypothesis in plain language, then the numbers (verbatim, legs named) with `\stamp{...}`, then the mechanical meaning. A loop with no adjudications says so explicitly. |
+| **digest** | Still-open threads. Bold id + the idea's name + a one-to-two-sentence plain-language statement, then state + last result. Citations welcome. |
+| **inflight** | Running casts/solves + expected artifacts. `\emph{none}` when nothing runs. |
+| **next** | Top 3 queued items, mechanically cut at 3. |
+| **reading** | What was read this loop — external and vault — and what it changed (seeded, sharpened, reframed which thread). When nothing was read, say so explicitly and name the prior reading the loop still rests on. Never silent. |
+| **references** | Numbered. External: arXiv IDs traceable to the ledger or a vault card. Vault: existing notes. |
 | **footer** | Leave as-is except the fill fields (ledger file, boundary). |
 
 ## Honesty bars (inherited from the display conventions)
 
-- Legs are named: `F_gate 0.9929 / F_mod 0.9884` — never "F ≈ 0.99".
+- Legs are named: `F_gate 0.9929 / F_mod 0.9884` — never one flattering figure.
 - The researcher's notation: infidelity as `2.1e-4`, fidelity as
   `F = 0.9982`, the way the ledger writes it.
 - Verdicts ride verbatim: "FALSIFIER A FIRED", "OPEN-AT-BUDGET",
   "UNADJUDICATED-FOR-BRANCH" stay exactly as the ledger states them.
-- A stale report is visibly stale — the state file's stale-marker pattern
-  carries over from the superseded amicissimo implementation.
-- The report never writes back: it is a read-only projection of the
-  ledger; no ledger, board, or catalog writes.
+- A stale report is visibly stale — the stale-marker pattern carries over
+  from the superseded amicissimo implementation.
+- The report never writes back: read-only projection of the ledger.
+
+## Length: no cap, a receipt
+
+A quiet loop renders one page; a rich loop runs three. The page count is
+recorded in the render receipt as a signal, never enforced as a gate —
+forcing rich loops into a fixed cap is what produced the unreadable early
+fills. If a report runs past ~4 pages, the receipt flags it for the
+director to consider splitting (loop report + separate deep-dive), but the
+build never truncates, demotes silently, or blocks the loop.
 
 ## Build & gate
 
 ```
-tectonic <filled>.tex          # build; 1–2 page cap asserted after
+tectonic <filled>.tex
 ```
 
-Over-cap demotion ladder (apply in order, re-render, re-check):
-1. digest rows → a counts line
-2. in-flight/needs-you lines beyond 5 → the top 5 with a "+N more" line
-3. next → top 2, then top 1
-
-If the demoted report is *still* over cap, the fill failed — the loop
-records the degradation receipt (markdown projection + queue line) and
-moves on. The loop never waits on the report.
+Gate checks (in order): build succeeds; every `%% SLOT:` marker present;
+number-bearing strings in findings appear in the source ledger; every
+arXiv ID appears in the ledger or a vault card; cited vault notes exist.
+Any failure is a receipt line, exit 0 — the loop never waits on the
+report.
 
 ## Where filled reports live
 
