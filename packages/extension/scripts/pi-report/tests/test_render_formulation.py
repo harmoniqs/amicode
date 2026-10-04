@@ -63,3 +63,21 @@ def test_renderer_cli(capsys):
     out = capsys.readouterr().out
     assert rc == 0
     assert "spline-faithful" in out
+
+def test_template_implies_spline_integrator():
+    """Best-effort record with no integrator block but a Spline template:
+    the render states spline-faithful dynamics, honestly sourced."""
+    rec = {
+        "problem": {"template": "SplinePulseProblem", "N": 11, "Q": 200.0, "free_phase": True},
+        "trajectory": {"kind": "unitary"},
+        "goal": {"kind": "unitary", "subsystem_levels": [2, 2]},
+        "system": {"kind": "raw", "H_drift": [[0.0]]},
+        "canonical": False,
+        "solver_actuals": {"backend": "ipopt", "max_iter": 500},
+        "construction_notes": ["tail knots pinned [0,0] via fixed columns"],
+    }
+    block = render_block(rec)
+    assert "spline-faithful" in block
+    assert "bilinear" not in block
+    assert "Construction: tail knots pinned" in block
+    assert "Non-canonical record" in block

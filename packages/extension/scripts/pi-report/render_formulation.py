@@ -143,15 +143,25 @@ def render_block(record: dict) -> str:
 
     integrator_kind = integrator.get("kind")
     integrator_alg = integrator.get("alg") or solver.get("integrator_alg")
+    template_name = str(problem.get("template", ""))
+    integrator_source = None
+    if integrator_kind is None and not integrator_alg:
+        # best-effort records can drop the integrator block; the problem
+        # template tag still implies the integrator class honestly.
+        if "Spline" in template_name:
+            integrator_kind, integrator_source = "spline", "implied by the problem template"
     integrator_phrase = {
         "bilinear": "piecewise-constant (bilinear, first-order)",
         "hermitian_exponential": r"the exact exponential step $U_{k+1} = e^{-iH(\mathbf{a}_k)\Delta t}U_k$",
         "nonhermitian_exponential": r"the exact exponential of the Liouvillian, $\rho_{k+1} = e^{\mathcal{L}(\mathbf{a}_k)\Delta t}\rho_k$",
         "spline": "spline-faithful --- the constraint integrates the exact spline waveform reconstructed from the knot values",
-    }.get(integrator_kind or "spline" if integrator_kind is None and integrator_alg else integrator_kind or "bilinear",
-          "piecewise-constant (bilinear, first-order)")
+    }.get(integrator_kind or "bilinear", "piecewise-constant (bilinear, first-order)")
+
     if integrator_kind is None and integrator_alg:
-        alg_note = f" ({_fmt(integrator_alg)}, from the call-site actuals)"
+        if str(integrator_alg).strip() == "spline":
+            alg_note = " (from the call-site actuals)"
+        else:
+            alg_note = f" ({_fmt(integrator_alg)}, from the call-site actuals)"
     else:
         alg_note = f" ({_fmt(integrator_alg)})" if integrator_alg else ""
     prose.append(f"the dynamics $F$ are {integrator_phrase}{alg_note};")
@@ -199,20 +209,23 @@ def render_block(record: dict) -> str:
     if sentences:
         prose.append("; ".join(sentences) + ".")
 
+    notes = record.get("construction_notes") or []
+    if notes:
+        prose.append("Construction: " + "; ".join(_fmt(n) for n in notes) + ".")
     if solver:
         named = []
         backend = solver.get("backend", "ipopt")
         iters = solver.get("max_iter", solver.get("max_iter_phase1"))
         named.append(f"{backend}")
         if iters:
-            named.append(f"max\_iter {iters}")
+            named.append(rf"max\_iter {iters}")
         if solver.get("max_cpu_time_s") or solver.get("max_cpu_time"):
-            named.append(f"max\_cpu\_time {solver.get('max_cpu_time_s', solver.get('max_cpu_time'))} s")
+            named.append(rf"max\_cpu\_time {solver.get('max_cpu_time_s', solver.get('max_cpu_time'))} s")
         if solver.get("tol"):
             named.append(f"tol {solver['tol']}")
         hess = [(k.replace("eval_hessian_", ""), v) for k, v in solver.items() if k.startswith("eval_hessian_")]
         if hess:
-            named.append("eval\_hessian " + ", ".join(f"{str(v).lower()} ({k})" for k, v in hess))
+            named.append(r"eval\_hessian " + ", ".join(rf"{str(v).lower()} ({k})" for k, v in hess))
         rest = [f"{k}={v}" for k, v in solver.items() if k not in ("backend", "max_iter", "max_iter_phase1", "max_cpu_time_s", "max_cpu_time", "tol", "integrator_alg", "integrator_tol") and not k.startswith("eval_hessian_")]
         prose.append("Solved with " + ", ".join(named) + ("; " + _fmt(", ".join(rest)) if rest else "") + ".")
 
