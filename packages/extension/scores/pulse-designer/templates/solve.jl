@@ -124,6 +124,54 @@ qcp = SplinePulseProblem(qtraj, N;
     piccolo_options = PiccoloOptions(timesteps_all_equal = true))
 prob = hasproperty(qcp, :prob) ? qcp.prob : qcp
 
+# ── formulation record actuals (#1710) ─────────────────────────────────────
+# What the retained params DROP for this template (the piccolo#366 gap class):
+# per-template extras. These travel in the record as call-site actuals,
+# honestly labeled — when the upstream fix lands they retire.
+const TEMPLATE_ACTUALS = Dict{String,Any}(
+    "integrator_type" => "pwc",   # the #540 PWC dynamics collocation
+    "R_rule" => "R = 1e-2 * Δt computed from the grid (DTO #122 single-Δt weighting)",
+)
+const SOLVER_ACTUALS = Dict{String,Any}(
+    "backend" => string(SOLVER),
+    "max_iter" => max_iter,
+)
+
+# ── CONTRACT: formulation record (#1710) ───────────────────────────────────
+# The machine-readable problem statement, derived from the problem object —
+# never hand-authored (the formulation-record contract). FIRE-AND-FORGET: a
+# failed emission is one receipt line and the solve always proceeds. Atomic
+# write; raw matrices capped to digest + dims AT EMISSION (run dirs sync
+# across machines — the parent spec's trust obligation).
+_cap_matrix(v) = begin
+    h = 0xcbf29ce484222325
+    for b in codeunits(repr(v))
+        h = (h ⊻ UInt64(b)) * 0x100000001b3
+    end
+    "<capped matrix: $(length(v))x$(length(v[1])), fnv64:$(string(h, base = 16))>"
+end
+try
+    record = full_dict(extract_spec(qcp))
+    record["canonical"] = Piccolo.Control.retained_spec(qcp) !== nothing
+    @isdefined(TEMPLATE_ACTUALS) && (record["template_actuals"] = TEMPLATE_ACTUALS)
+    @isdefined(SOLVER_ACTUALS) && (record["solver_actuals"] = SOLVER_ACTUALS)
+    # raw matrices never enter a synced run dir: cap to digest + dims
+    sys_d = get(record, "system", Dict{String,Any}())
+    haskey(sys_d, "H_drift") && (sys_d["H_drift"] = _cap_matrix(sys_d["H_drift"]))
+    haskey(sys_d, "H_drives") && (sys_d["H_drives"] = [_cap_matrix(m) for m in sys_d["H_drives"]])
+    goal_d = get(record, "goal", Dict{String,Any}())
+    haskey(goal_d, "matrix") && (goal_d["matrix"] = _cap_matrix(goal_d["matrix"]))
+    open("formulation.toml.tmp", "w") do io
+        TOML.print(io, record)
+    end
+    mv("formulation.toml.tmp", "formulation.toml"; force = true)
+    emit("AMICODE_RECORD formulation.toml written (canonical=$(record["canonical"]))")
+catch e
+    @warn "formulation record emission failed" exception = e maxlog = 3
+    emit("AMICODE_RECORD emission failed — run continues without a record")
+end
+# ── end formulation record ──────────────────────────────────────────────────
+
 # Per-iter live plot flows through Piccolo's `LivePulsePlotCallback`, an
 # `AbstractIntermediateCallback` (the blessed, solver-agnostic per-iter plot
 # idiom — see AGENTS.md). It reconstructs the pulse from the optimizer's primal
