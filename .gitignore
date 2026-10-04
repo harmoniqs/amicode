@@ -13,3 +13,4 @@ packages/extension/bin/
 
 # personal local dev config — machine-specific, not for the container
 opencode.json
+__pycache__/

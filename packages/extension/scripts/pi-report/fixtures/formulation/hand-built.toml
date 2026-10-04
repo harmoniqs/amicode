@@ -1,0 +1,28 @@
+schema_version = "1"
+kind = "control"
+canonical = false
+
+[integrator]
+kind = "hermitian_exponential"
+
+[system]
+kind = "raw"
+H_drift = [[0.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 8.2]]
+H_drives = [[[0.0, 1.0, 0.0], [1.0, 0.0, 1.414], [0.0, 1.414, 0.0]]]
+
+[goal]
+kind = "unitary"
+matrix = [[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]]
+
+[trajectory]
+kind = "unitary"
+
+[problem]
+template = "smooth_pulse_problem"
+N = 61
+Q = 200.0
+
+[solver_actuals]
+backend = "ipopt"
+max_iter = 500
+exact_hessian = "false"
