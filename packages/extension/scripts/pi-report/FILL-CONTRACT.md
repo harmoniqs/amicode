@@ -68,6 +68,32 @@ Every `%% SLOT:` marker stays in the filled copy — the gate greps them.
 | **references** | Numbered. External: arXiv IDs traceable to the ledger or a vault card. Vault: existing notes. |
 | **footer** | Leave as-is except the fill fields (ledger file, boundary). |
 
+## The formulation record (the user stays in the loop)
+
+A problem statement is **derived from the run, never recalled by the agent**.
+Every solve emits `formulation.toml` into the run dir — for spec-built
+problems, the retained `ProblemSpec` (`extract_spec`, verified against the
+object upstream); for hand-built problems, the upstream best-effort
+extraction (`canonical = false`) plus a `solver_actuals` block from the
+call site (the declarative `[solver]` never enters the problem, so the
+actuals must come from the `solve!` call).
+
+- **The classic-form block is generated from the record** —
+  `render_formulation.py` turns `formulation.toml` into the LaTeX block
+  per the `formulation-display` skill's forms. Zero agent invention in
+  the math; the agent writes the explanation *around* it.
+- **The gate checks component references**: every integrator, objective
+  term, constraint, weight, or bound the prose names must appear in the
+  run's record (`stated_components`). A stated component absent from the
+  record is a red receipt; a finding with no record behind it is marked
+  **UNBACKED**.
+- **Corrections target the source** (the spec or the script), then
+  re-render. A formulation correction made in the rendered prose is lost
+  on the next render — the contract forbids it.
+- Raw inline matrices in best-effort records are capped to digest + dims
+  in renders (full matrices live in the spec/script source; run dirs
+  sync across machines).
+
 ## Honesty bars (inherited from the display conventions)
 
 - Legs are named: `F_gate 0.9929 / F_mod 0.9884` — never one flattering figure.
