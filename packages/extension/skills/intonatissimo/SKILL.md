@@ -178,3 +178,55 @@ c     = capture(sub, direction)                           # fraction of the dire
 > wrong, `using Intonatissimo` fails at
 > load with a missing-name error — re-pair the environment; the calls above do
 > not change.
+
+## Display — the QILC problem in classic form
+
+A QILC write-up (report finding, demo, paper section) states the problem
+in classic optimization form, in the `formulation-display` house style,
+before any results. Three equations, all from the constructors above:
+
+**The measurement model.** Operators $\{M_j\}$ evaluated on the state at
+measurement knots $t_k$:
+
+$$y_k = \big(\langle\psi(t_k)| M_j |\psi(t_k)\rangle\big)_{j}, \qquad
+y_{\text{model}} = h(z) \ \text{(NLP rollout)}, \qquad
+y_{\text{exp}} = h_{\text{device}}(\text{pulse}) + \text{noise}$$
+
+**The measurement-matching subproblem** (`build_subproblem`): control NLP
+minimizing measurement error against shifted targets under a trust region:
+
+$$\begin{split}
+\underset{z}{\text{minimize}}\quad &
+\lVert y(z) - y_{\text{target}} \rVert^2_{Q_{\text{meas}}}
++ R_{\text{tr}}\lVert u - u_{\text{ref}}\rVert^2
++ R_{\theta}\lVert\theta - \theta_{\text{ref}}\rVert^2 \\
+\text{subject to}\quad & \text{trajectory dynamics (collocation)},\quad
+\text{control + global bounds}
+\end{split}$$
+
+with the option to compose the original objective (infidelity) in when
+measurement-matching alone does not drive fidelity.
+
+**The ILC correction** (`compute_ilc_targets`): the model error estimate
+$\hat\varepsilon = y_{\text{exp}} - y_{\text{model}}$ is pre-compensated
+into the targets,
+$y_{\text{target}} = y_{\text{goal}} + y_{\text{model}} - y_{\text{exp}}$,
+and the loop iterates solve $\to$ apply $\to$ measure with Armijo
+backtracking acceptance and the trust-region schedule $\gamma$; the
+convergence criterion is measurement error $\le$ `tol`.
+
+### The required display set (a QILC write-up always carries)
+
+1. **The measurement model, drawn**: the operators, their knots, the goal
+   targets $y_{\text{goal}}$ — a reader must see *what is being matched*
+   before any correction makes sense.
+2. **Pulse + correction plots, per iteration**: the applied pulse against
+   the nominal, and the correction $\delta u$ per accepted iteration —
+   the ILC's actual movement.
+3. **Convergence**: measurement error and objective per outer iteration,
+   accepted/rejected Armijo steps marked, trust-region radius against
+   iteration.
+
+A QILC result reported without these three is incomplete — the
+calibration tier's results live or die on whether the measurement model
+was honest, and only these displays let the reader check.
