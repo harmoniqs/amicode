@@ -10,12 +10,22 @@
 # so the pattern's "--port=4095" (equals) could never match on any port.
 # Match by binary path instead: immune to port moves and separator style.
 #
+# 2026-10-04 storm fix (same incident, hours later): a single RSS sample is
+# NOT the wedge. A healthy engine under active session load rides 2.3-2.9 GB
+# routinely; the single-sample threshold restart-stormed the hub 4x in one
+# morning (05:05/05:15/08:20/10:00), killing in-flight sessions mid-run.
+# The wedge is "TCP accepts, HTTP silent" — RSS over threshold now triggers
+# the HTTP corroboration probe FIRST: restart only when /session does not
+# answer. A serving engine is never restarted, whatever its RSS.
+#
 # Every sample is logged — the trajectory file doubles as the #775 dataset.
 set -u
 
-THRESHOLD_KB="${WATCHDOG_THRESHOLD_KB:-1536000}"   # 1.5 GB — mid-burn, well above the ~400-700 MB healthy baseline
+THRESHOLD_KB="${WATCHDOG_THRESHOLD_KB:-1536000}"   # 1.5 GB — corroboration-gated, no longer restart-authoritative alone
 SERVICE="${WATCHDOG_SERVICE:-co.harmoniqs.amicode-server.service}"
 PATTERN="${WATCHDOG_PATTERN:-$HOME/.amico/server/bin/opencode serve}"
+HEALTH_PORT="${WATCHDOG_HEALTH_PORT:-4094}"
+HEALTH_TIMEOUT="${WATCHDOG_HEALTH_TIMEOUT:-10}"
 LOG_DIR="${WATCHDOG_LOG_DIR:-$HOME/.amico/server/fleet-watchdog}"
 LOG="$LOG_DIR/rss-trajectory.log"
 STAMP="$(date '+%Y-%m-%dT%H:%M:%S')"
@@ -34,10 +44,21 @@ if [ -z "$rss_kb" ]; then
   exit 0
 fi
 
+serving() {
+  curl -sS -o /dev/null -m "$HEALTH_TIMEOUT" "http://127.0.0.1:${HEALTH_PORT}/session" >/dev/null 2>&1
+}
+
+if [ "$rss_kb" -ge "$THRESHOLD_KB" ]; then
+  if serving; then
+    echo "$STAMP pid=$pid rss_kb=$rss_kb status=rss-high-but-serving (no restart)" >> "$LOG"
+    exit 0
+  fi
+fi
+
 echo "$STAMP pid=$pid rss_kb=$rss_kb threshold_kb=$THRESHOLD_KB" >> "$LOG"
 
 if [ "$rss_kb" -ge "$THRESHOLD_KB" ]; then
-  echo "$STAMP action=restart reason=rss-over-threshold rss_kb=$rss_kb" >> "$LOG"
+  echo "$STAMP action=restart reason=rss-over-threshold-and-http-silent rss_kb=$rss_kb" >> "$LOG"
   systemctl --user restart "$SERVICE"
   sleep 5
   new_pid="$(pgrep -f "$PATTERN" | head -1)"
