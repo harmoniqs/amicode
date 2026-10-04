@@ -29,6 +29,42 @@ _INTEGRATOR_FORMS = {
 }
 
 
+_KNOWN_TOP = {
+    "schema_version", "kind", "canonical", "integrator", "system", "goal",
+    "pulse", "trajectory", "problem", "wrappers", "solver", "solver_actuals",
+    "template_actuals", "construction_notes",
+}
+
+
+def _missing_inventory(record: dict) -> list[str]:
+    """The fixed record inventory, standing check: rows a record should carry
+    that this one does not. The alarm is rendered on EVERY render — a future
+    problem shape that drops different fields gets caught here, not by
+    remembering to re-run a checker."""
+    missing = []
+    if not record.get("schema_version"):
+        missing.append("schema_version")
+    for key in ("system", "goal", "trajectory"):
+        if not record.get(key):
+            missing.append(key)
+    problem = record.get("problem") or {}
+    if not any(key in problem for key in ("Q", "R", "R_u", "R_du", "R_ddu", "objectives")):
+        missing.append("objective weights")
+    integrator = record.get("integrator") or {}
+    covered = (
+        integrator.get("kind")
+        or integrator.get("alg")
+        or (record.get("solver_actuals") or {}).get("integrator_alg")
+        or (record.get("template_actuals") or {}).get("integrator_type")
+        or "Spline" in str(problem.get("template", ""))
+    )
+    if not covered:
+        missing.append("integrator")
+    if not (record.get("solver_actuals") or record.get("solver")):
+        missing.append("solver actuals")
+    return missing
+
+
 def _fmt(x: object) -> str:
     return str(x).replace("_", r"\_")
 
@@ -63,7 +99,13 @@ def _bound_terms(problem: dict) -> list[str]:
 
 def _cap_matrix(m: object) -> str:
     """The trust obligation: never inline full Hamiltonians into run-synced
-    records — digest + dims only; the full matrices live in the spec/script."""
+    records — digest + dims only; the full matrices live in the spec/script.
+    A record capped AT EMISSION carries the capped marker as the value —
+    pass it through as-is, never re-digest the marker into a phantom
+    'inline' matrix."""
+    if isinstance(m, str) and "capped matrix" in m:
+        return m
+
     import json
 
     dump = json.dumps(m, sort_keys=True, default=str)
@@ -144,11 +186,17 @@ def render_block(record: dict) -> str:
     integrator_kind = integrator.get("kind")
     integrator_alg = integrator.get("alg") or solver.get("integrator_alg")
     template_name = str(problem.get("template", ""))
+    actual_type = (record.get("template_actuals") or {}).get("integrator_type")
     integrator_source = None
     if integrator_kind is None and not integrator_alg:
-        # best-effort records can drop the integrator block; the problem
-        # template tag still implies the integrator class honestly.
-        if "Spline" in template_name:
+        if actual_type:
+            # Call-site actuals beat template-name inference (#540 honesty
+            # case: a SplinePulseProblem can run PWC collocation — never
+            # call that spline-faithful). An unmapped actual still suppresses
+            # the inference, which would be a guess.
+            integrator_kind = {"pwc": "bilinear"}.get(str(actual_type), "bilinear")
+            integrator_source = f"integrator\\_type = {actual_type}, from the template actuals"
+        elif "Spline" in template_name:
             integrator_kind, integrator_source = "spline", "implied by the problem template"
     integrator_phrase = {
         "bilinear": "piecewise-constant (bilinear, first-order)",
@@ -164,6 +212,8 @@ def render_block(record: dict) -> str:
             alg_note = f" ({_fmt(integrator_alg)}, from the call-site actuals)"
     else:
         alg_note = f" ({_fmt(integrator_alg)})" if integrator_alg else ""
+    if integrator_source:
+        alg_note += f" ({integrator_source})"
     prose.append(f"the dynamics $F$ are {integrator_phrase}{alg_note};")
 
     details: list[str] = []
@@ -194,13 +244,17 @@ def render_block(record: dict) -> str:
     if goal.get("subsystem_levels"):
         base += f" on the {_fmt(goal['subsystem_levels'])} computational subspace"
     if goal.get("matrix") is not None:
-        base += " (inline goal matrix)"
+        base += (
+            " (goal matrix capped at emission)"
+            if isinstance(goal.get("matrix"), str) and "capped matrix" in goal.get("matrix", "")
+            else " (inline goal matrix)"
+        )
     goal_bits.append(base)
     sys_bits = []
     if system.get("template"):
         sys_bits.append(f"the {_fmt(system['template'])} system template")
     elif system.get("kind") == "raw":
-        sys_bits.append(f"a raw system (Hamiltonian inline, {_cap_matrix(system.get('H_drift', '?'))})")
+        sys_bits.append(f"a raw system (Hamiltonian {_cap_matrix(system.get('H_drift', '?'))})")
     sentences = []
     if goal_bits:
         sentences.append("The target is " + ", ".join(goal_bits))
@@ -236,6 +290,20 @@ def render_block(record: dict) -> str:
     )
 
     out = eq_lines + [""] + prose
+    missing = _missing_inventory(record)
+    if missing:
+        out.append(
+            r"{\footnotesize\color{gray}\emph{PARTIAL-RECORD} (missing: "
+            + _fmt(", ".join(missing))
+            + ")}"
+        )
+    unmapped = sorted(k for k in record if k not in _KNOWN_TOP)
+    if unmapped:
+        out.append(
+            r"{\footnotesize\color{gray}record carries unmapped sections: "
+            + _fmt(", ".join(unmapped))
+            + " (preserved in the record; this render does not interpret them)}"
+        )
     if not canonical:
         out.append(r"{\footnotesize\color{gray}\emph{Non-canonical record} (hand-built problem; system and goal are raw inlines; the solver block is call-site actuals, not a verified round-trip).}")
     out.append(r"{\footnotesize\color{gray}record: " + stamp + "}")

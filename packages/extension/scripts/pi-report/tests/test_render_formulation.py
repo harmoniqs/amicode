@@ -64,6 +64,72 @@ def test_renderer_cli(capsys):
     assert rc == 0
     assert "spline-faithful" in out
 
+def test_template_actuals_integrator_beats_inference():
+    """The #540 honesty case: a SplinePulseProblem whose dynamics are PWC
+    collocation (integrator_type = pwc in template_actuals) must NEVER render
+    as spline-faithful — call-site actuals beat template-name inference."""
+    record = tomllib.loads(
+        (FIXTURES / "hand-built.toml").read_text(encoding="utf-8")
+    )
+    record.pop("integrator", None)
+    record["problem"] = {"template": "SplinePulseProblem", "N": 50, "Q": 100.0}
+    record["template_actuals"] = {
+        "integrator_type": "pwc",
+        "R_rule": "R = 1e-2 * dt computed from the grid",
+    }
+    out = render_block(record)
+    assert "piecewise-constant" in out
+    assert "spline-faithful" not in out
+    assert "template actuals" in out
+
+
+def test_partial_record_alarm():
+    """A record missing inventory rows renders with a visible PARTIAL-RECORD
+    flag naming the missing rows — the standing alarm, not a one-time probe."""
+    record = {
+        "kind": "control",
+        "system": {"kind": "raw", "H_drift": "[[0,0],[0,4]]"},
+        "trajectory": {"kind": "unitary"},
+        "problem": {"template": "SplinePulseProblem", "N": 50},
+    }
+    out = render_block(record)
+    assert "PARTIAL-RECORD" in out
+    assert r"schema\_version" in out  # row names ride LaTeX-escaped
+    assert "goal" in out
+    assert "objective weights" in out
+    assert "solver actuals" in out
+
+
+def test_complete_record_has_no_partial_alarm():
+    record = tomllib.loads((FIXTURES / "hand-built.toml").read_text(encoding="utf-8"))
+    record["schema_version"] = 1
+    out = render_block(record)
+    assert "PARTIAL-RECORD" not in out
+
+
+def test_unknown_block_tolerated():
+    """D5: a record carrying a block this renderer does not map renders fine,
+    never fails, and the unmapped block is named in the output (preserved,
+    not silently dropped)."""
+    record = tomllib.loads((FIXTURES / "spec-built.toml").read_text(encoding="utf-8"))
+    record["experiment"] = {"shots": 1024, "readout": "default"}
+    out = render_block(record)  # must not raise
+    assert "The target is" in out
+    assert "experiment" in out
+
+
+def test_emission_capped_matrix_passthrough():
+    """A record capped AT EMISSION carries the capped marker as the matrix
+    value; the render passes it through as-is instead of re-digesting the
+    marker string into a phantom 'inline' matrix."""
+    record = load("hand-built.toml")
+    capped = "<capped matrix: 3x3, fnv64:d3adbeefcafe1234>"
+    record["system"]["H_drift"] = capped
+    out = render_block(record)
+    assert capped in out
+    assert "inline matrix" not in out
+
+
 def test_template_implies_spline_integrator():
     """Best-effort record with no integrator block but a Spline template:
     the render states spline-faithful dynamics, honestly sourced."""
