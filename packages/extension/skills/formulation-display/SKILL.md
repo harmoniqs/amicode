@@ -1,6 +1,6 @@
 ---
 name: formulation-display
-description: Present an optimization problem in classic form — the papers' notation (Direct Collocation for Quantum Optimal Control, arXiv:2305.03261; Universal Dynamics with Globally Controlled Analog Quantum Simulators, arXiv:2508.19075): continuous core, direct collocation, indirect/GRAPE contrast, free-time/min-time, robustness ensembles, plus the per-solve display set. Use when writing a problem statement for a PI-report finding, demo, paper, or spec, or when a report/paper must show what was actually solved.
+description: Present an optimization problem in classic form — objective, constraints, dynamics written out the way QOC trajectory-optimization papers do (style exemplars: Direct Collocation for Quantum Optimal Control, arXiv:2305.03261; Universal Dynamics with Globally Controlled Analog Quantum Simulators, arXiv:2508.19075): continuous core, direct collocation, indirect/GRAPE contrast, free-time/min-time, robustness ensembles, the full component inventory, plus the per-solve display set. Use when writing a problem statement for a PI-report finding, demo, paper, or spec, or when a report/paper must show what was actually solved.
 agents: [researcher, experimenter, engineer]
 surface: public
 scenarios: [pi-report-findings, demo-writeup, paper-section, spec-cards]
@@ -8,15 +8,18 @@ scenarios: [pi-report-findings, demo-writeup, paper-section, spec-cards]
 
 # Formulation display — the problem in classic optimization form
 
-House style, from the two papers: whenever a solve is described beyond a
-headline number, the optimization problem itself is **written out** —
-objective, constraints, dynamics — in the papers' notation. The
-direct-collocation paper (arXiv:2305.03261) is the canonical source for the
-DIRCOL forms; the global-control paper's Appendix G (arXiv:2508.19075) is
-the canonical source for the continuous core and the direct/indirect
-contrast. Equation pointers below cite those sources.
+Whenever a solve is described beyond a headline number, the optimization
+problem itself is **written out** — objective, constraints, dynamics — in
+the classic minimize/subject-to layout that QOC papers use. The two
+papers named above are **style exemplars, not sources of truth**: the
+source of truth for *what was solved* is always the package source (the
+inventory below maps API to math, every name verified there); the papers
+exemplify *how to write it*. Write the form the package actually solves,
+in the classic layout — do not copy a paper's equation where the package
+differs.
 
-The LaTeX idiom for all forms (the papers' `split` layout):
+The LaTeX idiom for all forms (the classic `split` layout the exemplars
+use):
 
 ```latex
 \begin{split}
@@ -29,8 +32,9 @@ The LaTeX idiom for all forms (the papers' `split` layout):
 
 ## Form 1 — the continuous core
 
-Source: arXiv:2508.19075, App. G, Eq. (111). Over time-dependent state and
-control trajectories:
+The parent problem every discrete form below discretizes (style exemplar:
+arXiv:2508.19075, App. G; the affine Hamiltonian layout: arXiv:2305.03261,
+Eq. (2)). Over time-dependent state and control trajectories:
 
 $$\min_{x(t),u(t)} \int_0^T \ell(x(t),u(t))\,dt + \ell_T(x(T))
 \quad \text{s.t.} \quad \dot{x}(t) = f(x(t),u(t),t),\; x(0)=x_\mathrm{init}$$
@@ -46,13 +50,14 @@ below.
 
 ## Form 2 — direct collocation (the house default)
 
-Source: arXiv:2305.03261, Eqs. (9), (10), (11). States and controls are
-decision variables jointly; dynamics are enforced as **equality constraints**
-between knots:
+The method Piccolo solves (introduced in arXiv:2305.03261, Eqs. (9)–(11) —
+the paper is the method's provenance, the package source is the truth about
+what runs). States and controls are decision variables jointly; dynamics
+are enforced as **equality constraints** between knots:
 
 $$\begin{split}
 \underset{z_{1:N}}{\text{minimize}}\quad & J(z_{1:N}) \\
-\text{subject to}\quad & f(z_k, z_{k+1}) = 0 \quad \text{(collocation, e.g. Pad\'e-integrator: } U_{k+1} - e^{-iH(\mathbf{a}_k)\Delta t}U_k\text{)} \\
+\text{subject to}\quad & f(z_k, z_{k+1}) = 0 \quad \text{(collocation, e.g. exponential step: } U_{k+1} = e^{-iH(\mathbf{a}_k)\Delta t}U_k\text{)} \\
 & U_1 = I_{2n} \\
 & |\mathbf{a}_k| \le \mathbf{a}_{\max}
 \end{split}$$
@@ -73,8 +78,8 @@ finding that formulates a new problem.
 
 ## Form 3 — indirect (GRAPE) contrast
 
-Source: arXiv:2508.19075, Eqs. (114)–(115). Optimize over controls only;
-states are retrieved by propagation:
+The contrast form (style exemplar: arXiv:2508.19075, Eqs. (114)–(115)).
+Optimize over controls only; states are retrieved by propagation:
 
 $$\underset{u_{1:N-1}}{\text{minimize}} \sum_{k=1}^{N-1} \ell(x_k(u_{1:k-1}),u_k) + \ell_T(x_N)
 \quad \text{s.t.} \quad |u(t)| \le u_{\max}$$
@@ -87,7 +92,9 @@ do the same, not present it as a competing option we run.
 
 ## Form 4 — free-time / minimum-time
 
-Source: arXiv:2305.03261, Eq. (22) and its warm-start continuation. Stage
+The two-stage construction the min-time toolchain runs (method provenance:
+arXiv:2305.03261, Eq. (22) and its warm-start continuation; what runs is
+`MinimumTimeProblem` per the package). Stage
 one solves a free-time problem (knot times $\Delta t_k$ are decision
 variables) for a regularized objective:
 
@@ -154,13 +161,13 @@ forms follow the papers' notation.
 
 | Term | Classic form | Source |
 | --- | --- | --- |
-| `UnitaryInfidelityObjective` | $\ell(U) = 1 - \frac{1}{n}\lvert\mathrm{tr}(U_\text{goal}^\dagger U)\rvert$ | Paper Eq. (3), arXiv:2305.03261 |
+| `UnitaryInfidelityObjective` | $\ell(U) = 1 - \frac{1}{n}\lvert\mathrm{tr}(U_\text{goal}^\dagger U)\rvert$ | `objectives.jl` (the implemented loss; the same form appears in the style exemplar, arXiv:2305.03261 Eq. (3)) |
 | `KetInfidelityObjective` | $1 - \lvert\langle\psi_\text{goal}\vert\psi_N\rangle^2\rvert$ | `objectives.jl` |
 | Free-phase variants (`UnitaryFreePhaseInfidelityObjective`, `KetFreePhase...`, `CoherentKetFreePhase...`) | Gate infidelity over the computational subspace **up to free per-component virtual-Z phases** — objective-only; the frame is exact software, never a cheat | `objectives.jl`; the free-phase-decisiveness convention |
 | `DensityMatrixInfidelityObjective` | $1 - \mathrm{tr}(\rho_\text{goal}\rho_N)$ (Hilbert–Schmidt) | `objectives.jl` |
 | `LeakageObjective` | $\lVert(I - \Pi)\psi_k\rVert^2$ at knot points | `objectives.jl` |
 | `QuadraticRegularizer` | $R = \sum_k r\lVert\mathbf{a}_k\rVert^2$ | `docs_cache.jl` usage |
-| Minimum-time term | $D\sum_k \Delta t_k$ | Paper Eq. (22) continuation |
+| Minimum-time term | $D\sum_k \Delta t_k$ | `templates/minimum_time_problem.jl`; the two-stage construction follows arXiv:2305.03261's continuation |
 | Piccolissimo regularizers (`HermiteBendingEnergyRegularizer`, `HermiteC2Regularizer`) | Bending energy $\int\lvert u''\rvert^2$ and C² forms on the spline | `objectives/hermite_bending_energy_regularizer.jl` |
 | Adjoint robustness / `UnitarySensitivityObjective` | First-order infidelity response $\lvert\partial J/\partial\theta\rvert$ to Hamiltonian-parameter perturbations, via adjoints (no finite differences) | `objectives_robustness/`; Piccolissimo reexports |
 | Channel process infidelity (Piccolissimo) | $F_\mathrm{pro}$ exact vs Choi, linear coordinates + HS-dual $\tau_k$ | `objectives/channel_process_infidelity.jl` |
