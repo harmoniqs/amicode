@@ -30,6 +30,8 @@ import { useServerSDK } from "@/context/server-sdk"
 import { PreviewEditor } from "@opencode-ai/session-ui/v2/preview-editor"
 import type { PreviewViewState } from "@opencode-ai/session-ui/v2/preview-view-state"
 import { PdfCanvasView } from "./pdf-canvas-view"
+import { createPdfFindController } from "./pdf-find-controller"
+import { PdfFindPill } from "./pdf-find-pill"
 import { toAbsolutePath, shouldApplyWatcherRead } from "./preview-file-helpers"
 
 // ---------------------------------------------------------------------------
@@ -82,6 +84,12 @@ export function PreviewFileView(props: {
   onSaveComplete?: () => void
   saveRequest?: () => number
   onSaveStatusChange?: (status: "idle" | "saving" | "saved") => void
+  /** Request-counter for "open the PDF find pill" (Cmd+F / Cmd+G routing).
+   *  Bump to open; the pill consumes the bump. Parallel to saveRequest. */
+  findRequest?: () => number
+  /** Direction for Cmd+G / Shift+Cmd+G — 1 next, -1 previous. Only consumed
+   *  while the find pill is open. */
+  findDirection?: () => number
   viewState?: () => PreviewViewState | undefined
   onViewStateChange?: (state: PreviewViewState) => void
   zoom: () => number
@@ -98,6 +106,78 @@ export function PreviewFileView(props: {
   const [fileType, setFileType] = createSignal<FileType>(null)
   const [pdfNavigation, setPdfNavigation] = createSignal<PdfPageNavigation | null>(null)
   const pageInputID = `pdf-page-input-${props.filePath}`
+
+  // ─── PDF find (S1) ───────────────────────────────────────────────────
+  // Per-pane find controller. Lives here (above the viewer) so it survives
+  // reloads and zoom re-renders. The index is built lazily on first open
+  // from the PdfCanvasView wrapper; rebuilt when the PDF payload changes.
+  let pdfRoot: HTMLElement | undefined
+  let findInput: HTMLInputElement | undefined
+  const pdfFind = createPdfFindController({
+    pdfRoot: () => pdfRoot,
+    scrollContainer: () => scrollRef,
+  })
+
+  const focusPdfPane = () => scrollRef?.focus({ preventScroll: true })
+
+  const openPdfFind = () => {
+    if (category() !== "pdf") return
+    pdfFind.openFind()
+    // Focus lands on the pill input a frame later so the open state (and the
+    // pill's mount) has settled.
+    requestAnimationFrame(() => {
+      findInput?.focus({ preventScroll: true })
+    })
+  }
+
+  const closePdfFind = () => {
+    pdfFind.close()
+    focusPdfPane()
+  }
+
+  createEffect(
+    on(
+      () => props.findRequest?.() ?? 0,
+      (request) => {
+        if (request === 0) return
+        openPdfFind()
+      },
+    ),
+  )
+
+  // Cmd+G / Shift+Cmd+G step the current match while the pill is open.
+  // The parent packs direction into the counter's sign: bumping the find
+  // counter opens the pill; bumping with a NEGATIVE tick steps previous.
+  // Consumed via the same request-counter pattern as findRequest, so each
+  // keypress lands exactly once regardless of Solid re-renders.
+  createEffect(
+    on(
+      () => props.findDirection?.() ?? 0,
+      (request) => {
+        if (request === 0) return
+        if (!pdfFind.open()) {
+          openPdfFind()
+          return
+        }
+        if (request > 0) pdfFind.next()
+        else pdfFind.prev()
+      },
+    ),
+  )
+
+  // Rebuild the find index when the PDF payload changes (recompile, tab
+  // restore). Naive for S1 — a fresh build on every base64 swap.
+  createEffect(
+    on(
+      () => binaryData()?.base64,
+      (base64) => {
+        if (!base64) return
+        pdfFind.rebuild()
+      },
+    ),
+  )
+
+  onCleanup(() => pdfFind.dispose())
 
   // Binary data for image/PDF rendering (data URI / blob URL)
   const [binaryData, setBinaryData] = createSignal<{ base64: string; mime: string } | null>(null)
@@ -358,7 +438,9 @@ export function PreviewFileView(props: {
   const startIdleTimer = () => {
     if (idleTimer) clearTimeout(idleTimer)
     idleTimer = setTimeout(() => {
-      if (!controlsHovered) setShowControls(false)
+      // The find pill is exempt from auto-hide while open — it holds the
+      // user's query and focus; hiding it mid-search would lose both.
+      if (!controlsHovered && !pdfFind.open()) setShowControls(false)
     }, 2000)
   }
 
@@ -544,8 +626,11 @@ export function PreviewFileView(props: {
           "z-index": "20",
           display: "flex",
           "align-items": "center",
-          opacity: showControls() ? "1" : "0",
-          "pointer-events": showControls() ? "auto" : "none",
+          gap: "6px",
+          // The find pill stays visible (and interactive) even when the rest
+          // of the floating controls have idled out.
+          opacity: showControls() || pdfFind.open() ? "1" : "0",
+          "pointer-events": showControls() || pdfFind.open() ? "auto" : "none",
           transition: "opacity 200ms ease",
         }}
       >
@@ -735,10 +820,55 @@ export function PreviewFileView(props: {
             </div>
           </div>
         </Show>
+        {/* PDF find pill — sits after the zoom controls. Placement is
+            load-bearing: the routing test slices from the FIRST
+            `category() === "pdf"` to the next Match close tag and expects
+            PdfCanvasView inside, so this Show must live AFTER that slice
+            closes — here, at the end of the controls row. */}
+        <Show when={category() === "pdf" && pdfFind.open()}>
+          <PdfFindPill
+            query={pdfFind.query}
+            index={pdfFind.currentIndex}
+            count={pdfFind.count}
+            hasText={pdfFind.hasText}
+            setInput={(el) => {
+              findInput = el
+            }}
+            onInput={(value) => pdfFind.setQuery(value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.preventDefault()
+                event.stopPropagation()
+                closePdfFind()
+                return
+              }
+              if (event.key === "Enter") {
+                event.preventDefault()
+                if (event.shiftKey) pdfFind.prev()
+                else pdfFind.next()
+              }
+            }}
+            onClose={closePdfFind}
+            onPrev={() => pdfFind.prev()}
+            onNext={() => pdfFind.next()}
+          />
+        </Show>
       </div>
 
       {/* Content */}
-      <div ref={scrollRef} data-preview-scroll class="h-full overflow-auto">
+      {/* tabIndex -1 + pointerdown focus: clicking into the pane makes it the
+          keyboard target, so Cmd+F routes here (and the find pill can return
+          focus to the pane on Esc). */}
+      <div
+        ref={scrollRef}
+        data-preview-scroll
+        tabIndex={-1}
+        class="h-full overflow-auto outline-none"
+        onPointerDown={() => {
+          if (category() !== "pdf") return
+          if (document.activeElement !== scrollRef) focusPdfPane()
+        }}
+      >
         <Show when={!loading()} fallback={<div class="p-4 text-12-regular text-text-weak">Loading...</div>}>
           <Switch>
             <Match when={fileType() === "error"}>
@@ -767,6 +897,10 @@ export function PreviewFileView(props: {
                 filePath={props.filePath}
                 active={props.active}
                 onPageNavigationChange={setPdfNavigation}
+                onRootChange={(root) => {
+                  pdfRoot = root ?? undefined
+                  pdfFind.rebuild()
+                }}
                 initialPage={props.viewState?.()?.pdf?.page}
                 initialScrollTop={props.viewState?.()?.pdf?.scrollTop}
                 onViewStateChange={(pdf) => props.onViewStateChange?.({ pdf })}
