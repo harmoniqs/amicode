@@ -34,6 +34,7 @@
     "packages/app/test-browser/keybind-migration.test.ts": "192418880d432ff62d15fd80f6250ece6233e43d0dbe11d5a4fbb5f4d9e45a06",
     "packages/core/script/migration.ts": "218db90a7fdf86273fc816cf7861e91c27223d42b374128eb396d5b55c9acace",
     "packages/core/src/config.ts": "0b6b81bea6a3a09285daa4bd70757e6bbe93cf2508121e1062b71bb24654d692",
+    "packages/core/src/file-mutation.ts": "fbb1f15e9932c938cfe573a715f744171a8ec182768f6eb494721e395bf95e4b",
     "packages/core/src/location-mutation.ts": "5fa852c48e98cec513346f848b422c2d5d6d4b753b39da851c73be073a03511a",
     "packages/core/src/location.ts": "16325cfecf6c83bd4e653a0f1313d78172a31fb93cd28672f180053ae4719aef",
     "packages/core/src/models-dev.ts": "dbbbe33f470e219d5fdaa6ec8e4998be95356e80756f29c18e3656562523923c",
@@ -45,6 +46,7 @@
     "packages/core/test/session-prompt.test.ts": "2af05be037473266c7b38721abbf7f865a4dfe35c9e779282cb7f697ba0a2adc",
     "packages/core/test/session-runner-recorded.test.ts": "962301989a4a315379819bc3d4600d56c3e646b1a9390d02d01556578fc66adc",
     "packages/core/test/session-runner.test.ts": "ed62a4ee8d0bc9dbc308940a04731b07de5803339e6c6bc560ce8424460fbf23",
+    "packages/core/test/tool-file-edited-events.test.ts": "edeff13a1327ff32b03d8e8245135485ff5cd8b3871ca8c5cfc1ba0fa102dcb9",
     "packages/core/test/tool-question.test.ts": "4df41393f15104a1d3a9c3d06e30cef515108490b41fcf4d9a7d9399fd4ed945",
     "packages/llm/src/cache-policy.ts": "04c1fb5d3d061cfa95d04e54df0a1c2cdaafac921224242446eaa2968bff7857",
     "packages/llm/test/cache-policy.test.ts": "e921095c4301440c786105063439e49b2fedbaf6d46f30457e0a96388d268f4b",
@@ -873,7 +875,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-09-24T04:46:38.771Z",
+  "extracted_at": "2026-10-02T20:02:51.831Z",
   "per_package": {
     "packages/app": {
       "A": 186,
@@ -881,8 +883,8 @@
       "D": 0
     },
     "packages/core": {
-      "A": 8,
-      "M": 42,
+      "A": 9,
+      "M": 43,
       "D": 0
     },
     "packages/llm": {
@@ -922,7 +924,7 @@
     }
   },
   "counts": {
-    "overlay_total": 851,
+    "overlay_total": 853,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -953,6 +955,7 @@
     "packages/app/test-browser/keybind-migration.test.ts": "A",
     "packages/core/script/migration.ts": "M",
     "packages/core/src/config.ts": "M",
+    "packages/core/src/file-mutation.ts": "M",
     "packages/core/src/location-mutation.ts": "M",
     "packages/core/src/location.ts": "M",
     "packages/core/src/models-dev.ts": "M",
@@ -964,6 +967,7 @@
     "packages/core/test/session-prompt.test.ts": "M",
     "packages/core/test/session-runner-recorded.test.ts": "M",
     "packages/core/test/session-runner.test.ts": "M",
+    "packages/core/test/tool-file-edited-events.test.ts": "A",
     "packages/core/test/tool-question.test.ts": "M",
     "packages/llm/src/cache-policy.ts": "M",
     "packages/llm/test/cache-policy.test.ts": "M",
