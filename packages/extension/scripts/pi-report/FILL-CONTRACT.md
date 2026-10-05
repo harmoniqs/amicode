@@ -1,9 +1,19 @@
-# The PI report fill contract
+# The research loop report fill contract
 
-The per-loop state-of-campaign report (amicode #1700): a memo-format LaTeX
-document the director fills at every research-loop boundary, built with
-tectonic. The template lives in `template/pi-report.tex`; this file is the
-per-slot rulebook the fill obeys.
+The per-loop state-of-campaign report (amicode #1700, format v2 #1718): a
+memo-format LaTeX document the director fills at every research-loop
+boundary, built with tectonic. The template lives in `template/pi-report.tex`;
+this file is the per-slot rulebook the fill obeys.
+
+## The register — a letter to the researcher who owns the campaign
+
+The report speaks directly to the researcher, in their own campaign's
+vocabulary: findings explain what was asked and what the numbers say;
+"needs you" lists the decisions only the owner can make. No role labels, no
+committee voice, no "as your PI" — the researcher-is-the-PI posture stays
+implicit. String checks pin what strings can verify (the rendered text and
+the sources carry no role branding); tone beyond that is **review-carried**,
+stated here rather than pretended gate-carried.
 
 ## The doctrine, and what replaced it
 
@@ -42,7 +52,9 @@ understanding). The rules that fix both:
 - **Prose findings, not table rows.** Each adjudication is a `\finding`:
   what was asked, what ran, what the numbers say (legs named), what it
   means mechanically. Short declarative sentences; one fact per sentence;
-  no em-dash chains, no narrative flourishes.
+  no em-dash chains, no narrative flourishes. The register is direct
+  address — the report reads as a letter to the researcher who owns the
+  campaign, never as a memo to a role.
 - **Numbers in context.** 0.5033 alone is noise; 0.5033 at a −1%
   atom-spacing error, against the 0.98 bar, with the mechanism measured to
   2×10⁻³ — is a finding. Scale anchors welcome (analytic limits, prior
@@ -59,7 +71,7 @@ Every `%% SLOT:` marker stays in the filled copy — the gate greps them.
 | --- | --- |
 | **header** | Campaign, posture, boundary (loop #, or "closed" for a final report), date, ledger filename. |
 | **summary** | Verdict counts from the hypothesis table, **counted** in the ledger's own vocabulary. Then one sentence of campaign state. |
-| **needsyou** | Only the decisions the PI can make (rulings, dispositions, sign-offs, connections, holds). `\emph{none}` when empty. |
+| **needsyou** | Only the decisions you can make (rulings, dispositions, sign-offs, connections, holds). `\emph{none}` when empty. |
 | **findings** | One `\finding` per adjudication this loop (final report: the campaign's verdicts). Each explains the hypothesis in plain language, then the numbers (verbatim, legs named) with `\stamp{...}`, then the mechanical meaning. A loop with no adjudications says so explicitly. |
 | **digest** | Still-open threads. Bold id + the idea's name + a one-to-two-sentence plain-language statement, then state + last result. Citations welcome. |
 | **inflight** | Running casts/solves + expected artifacts. `\emph{none}` when nothing runs. |
@@ -113,6 +125,43 @@ forcing rich loops into a fixed cap is what produced the unreadable early
 fills. If a report runs past ~4 pages, the receipt flags it for the
 director to consider splitting (loop report + separate deep-dive), but the
 build never truncates, demotes silently, or blocks the loop.
+
+## The figures layer (v2, #1718)
+
+Findings **embed their evidence** — the report is self-contained because
+run-dir paths don't open across machines (amicode #1653). Figures render at
+the record boundary from what the run actually saved, through ONE entry
+point (`render_figures.py`), and land in a per-report `figures/` directory
+beside the `.tex` (the synced vault package stays self-contained; the
+directory doubles as the provenance audit surface).
+
+- **Per-finding display sets**, keyed by the finding's recorded problem tier
+  (unresolvable tier → the control set + a receipt flag). Control problems:
+  the final pulse (knots + bounds) and one results figure the finding
+  adjudicates on. Calibration findings: the required set, pinned verbatim —
+  measurement model, per-iteration pulse + correction, convergence with
+  accepted/rejected Armijo steps.
+- **Provenance is correspondence, not a stamp string**: every figure carries
+  the artifact it rendered from, the run-id and loop it served, and the
+  render timestamp; the manifest (`figures/figures.json`) records the
+  artifact→figure pair, and a figure from another run or loop is detectable
+  by the gate, not by trust.
+- **Captions carry the verdict numbers with their stamps** — the
+  caption↔figure↔number triangle: a figure whose caption carries no stamped
+  number is decorative, and decorative figures don't ship.
+- **Failure semantics are receipts-not-gates**: a missing or unreadable
+  artifact, a failed plot script, or a render timeout degrades to a
+  `\figurereceipt` (FIGURE UNAVAILABLE) line naming the artifact and
+  reason. The numbers and stamps stay, the report ships, the build never
+  blocks, nothing is placeholder-substituted.
+- **Legibility bars**: ≤4 figures per finding (the calibration set's own
+  size — a smaller cap pressures set-splitting); a total-figures backstop
+  per report rides the receipt; over-cap is a receipt flag, never a
+  truncation.
+- **In-flight work names expected artifacts** (run-id + filename —
+  resolvable on the server, greppable in the ledger); it never embeds and
+  never links. Their cross-machine unactionability is acknowledged, not
+  hidden.
 
 ## Build & gate
 
