@@ -154,15 +154,18 @@ reference the in-flight casts? Append the audit row to §9.
     queue. Close every advisory (fixed / waived-with-reason / obsolete) and record closures.
     The update also carries the campaign's **skill delta** row — findings filed, skills
     touched, proposals pending — so the loop's own improvement is part of its record.
- 8. **Fill + render the PI report** (amicode #1700, the pi-report fill contract): fill the
-    memo template from the ledger → build → land
+ 8. **Fill + render the research loop report** (amicode #1700, the fill contract in the
+    extension's pi-report scripts): fill the memo template from the ledger → build → land
     `amicode/pi-reports/<campaign>-<boundary>.{pdf,tex}` in the personal vault → commit +
     push (pull-before-push, retry on non-fast-forward; the vault's sole writer is the
-    server). The **needs-you** slot is the loop's ask to the PI; the **reading** slot is
+    server). The **needs-you** slot is the loop's ask to you; the **reading** slot is
     never silent (when nothing was read, say so and name the prior reading the loop rests
     on). A problem statement rides the report only as the **generated block from the run's
     `formulation.toml`** (the formulation-record contract) — never recalled by the agent.
-    Best-effort by construction: a report failure is a receipt line, never a loop pause.
+    An experiment finding **embeds its evidence figures** (rendered from the run's saved
+    artifacts through the report's figure pipeline; a missing figure is a receipt line,
+    never a hole). Best-effort by construction: a report failure is a receipt line,
+    never a loop pause.
  9. **Repeat.** Compact only at a boundary, and only when the user is present to choose it —
     the protocol does not otherwise try to time compaction (see below).
 
