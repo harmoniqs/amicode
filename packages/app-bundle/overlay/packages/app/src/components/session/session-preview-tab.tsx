@@ -14,9 +14,11 @@ import type { DragDropManager } from "@dnd-kit/dom"
 import { Icon } from "@opencode-ai/ui/icon"
 import { Tabs } from "@opencode-ai/ui/tabs"
 import { MenuV2 } from "@opencode-ai/ui/v2/menu-v2"
+import { useCommand, type CommandOption } from "@/context/command"
 import { usePlatform } from "@/context/platform"
 import type { PreviewViewState } from "@opencode-ai/session-ui/v2/preview-view-state"
 import { PreviewFileView } from "./preview-file-view"
+import { isPdfFindTarget } from "./pdf-find-guard"
 import { FileVisual } from "./session-sortable-tab"
 import {
   createPreviewWorkspace,
@@ -98,8 +100,13 @@ export function SessionPreviewTab(props: {
   panelVisible?: () => boolean
 }) {
   const platform = usePlatform()
+  const command = useCommand()
   const [dirtyPaths, setDirtyPaths] = createStore<Record<string, boolean>>({})
   const [saveRequests, setSaveRequests] = createStore<Record<string, number>>({})
+  // Find-request counters, parallel to saveRequests: bump to open the pane's
+  // find pill; findDirection carries the Cmd+G direction in its sign.
+  const [findRequests, setFindRequests] = createStore<Record<string, number>>({})
+  const [findDirections, setFindDirections] = createStore<Record<string, number>>({})
   const [localViewState, setLocalViewState] = createStore<Record<string, PreviewViewState | undefined>>({})
   const [workspace, setWorkspace] = createSignal(createPreviewWorkspace())
   const [capacityMessage, setCapacityMessage] = createSignal<string | null>(null)
@@ -170,6 +177,8 @@ export function SessionPreviewTab(props: {
   const removePath = (path: string) => {
     setWorkspace((current) => removePreviewPath(current, path))
     setDirtyPaths(path, false)
+    setFindRequests(path, 0)
+    setFindDirections(path, 0)
     setHostMounts(path, undefined)
   }
 
@@ -268,6 +277,64 @@ export function SessionPreviewTab(props: {
   }
 
   const isSelected = (path: string) => previewLeafContaining(workspace().tree, path)?.selectedPath === path
+
+  // ─── Cmd+F routing to the focused PDF pane's find pill (S1) ─────────
+  // `when` gates on the event target: the key fires only when the target is
+  // inside a find-capable Preview PDF pane ([data-preview-scroll] under a
+  // [data-preview-host] whose path ends .pdf) and not inside an editable
+  // field. The scroll container is focusable (tabIndex -1, focuses on
+  // pointerdown), so a clicked-into pane is the event target; the find
+  // pill's own input IS inside the scroll container, so Cmd+F with the pill
+  // focused still routes here (refocuses the input — no toggle-off).
+  const findPathFromTarget = (target: EventTarget | null): string | undefined => {
+    if (!isPdfFindTarget(target)) return undefined
+    const host = (target as Element).closest("[data-preview-host]")
+    return host?.getAttribute("data-preview-host") ?? undefined
+  }
+  const findPathFromFocus = (): string | undefined => {
+    const active = document.activeElement
+    if (!active) return undefined
+    return findPathFromTarget(active)
+  }
+
+  command.register("preview-pdf-find", (): CommandOption[] => [
+    {
+      id: "preview.find",
+      title: "Find in PDF",
+      keybind: "mod+f",
+      hidden: true,
+      when: (event) => findPathFromTarget(event.target) !== undefined,
+      onSelect: () => {
+        const path = findPathFromFocus()
+        if (!path) return
+        setFindRequests(path, (request) => (request ?? 0) + 1)
+      },
+    },
+    {
+      id: "preview.findNext",
+      title: "Find next in PDF",
+      keybind: "mod+g",
+      hidden: true,
+      when: (event) => findPathFromTarget(event.target) !== undefined,
+      onSelect: () => {
+        const path = findPathFromFocus()
+        if (!path) return
+        setFindDirections(path, (request) => (request ?? 0) + 1)
+      },
+    },
+    {
+      id: "preview.findPrevious",
+      title: "Find previous in PDF",
+      keybind: "shift+mod+g",
+      hidden: true,
+      when: (event) => findPathFromTarget(event.target) !== undefined,
+      onSelect: () => {
+        const path = findPathFromFocus()
+        if (!path) return
+        setFindDirections(path, (request) => (request ?? 0) - 1)
+      },
+    },
+  ])
 
   const rememberPreviewFocus = (path: string) => {
     const activeElement = document.activeElement
@@ -605,6 +672,8 @@ export function SessionPreviewTab(props: {
                               active={() => isSelected(path) && (props.panelVisible?.() ?? true)}
                               onDirtyChange={(dirty) => setDirtyPaths(path, dirty)}
                               saveRequest={() => saveRequests[path] ?? 0}
+                              findRequest={() => findRequests[path] ?? 0}
+                              findDirection={() => findDirections[path] ?? 0}
                               onSaveComplete={() => {
                                 removePath(path)
                                 setClosingPath(null)
