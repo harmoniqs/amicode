@@ -7,9 +7,12 @@ import { KeybindV2 } from "@opencode-ai/ui/v2/keybind-v2"
 import { TooltipV2 } from "@opencode-ai/ui/v2/tooltip-v2"
 import type { ReferenceInfo } from "@opencode-ai/sdk/v2/client"
 import { createEffect, createMemo, on, onCleanup, Show } from "solid-js"
+import { useSearchParams } from "@solidjs/router"
+import { bindConcise, conciseKey, conciseMode } from "@/context/concise-mode"
 import { ModelSelectorPopoverV2 } from "@/components/dialog-select-model"
 import { DialogSelectModelUnpaidV2 } from "@/components/dialog-select-model-unpaid-v2"
 import { ReportBugButton } from "@/components/report-bug-button"
+import { ConciseModeToggle } from "@/components/concise-mode-toggle"
 import type { PromptInputProps } from "@/components/prompt-input/contracts"
 import { normalizePromptHistoryEntry, promptLength, type PromptHistoryComment } from "@/components/prompt-input/history"
 import { createPersistedPromptInputHistory } from "@/components/prompt-input/history-store"
@@ -48,6 +51,10 @@ export type PromptInputV2ComposerProps = {
 export type PromptInputV2ControllerProps = Omit<PromptInputProps, "class" | "submission">
 export type PromptInputV2ComposerController = PromptInputV2Interaction & {
   readonly model: PromptInputProps["controls"]["model"]
+  // amicode: the concise-mode toggle state + setter, surfaced to the composer's
+  // trailing controls. `on` is a reactive accessor; `set` flips a persistent
+  // per-session flag — it sends nothing. The flag is read at submit time.
+  readonly concise: { readonly on: () => boolean; readonly set: (next: boolean) => void }
 }
 
 export function PromptInputV2Composer(props: PromptInputV2ComposerProps) {
@@ -56,7 +63,7 @@ export function PromptInputV2Composer(props: PromptInputV2ComposerProps) {
   const language = useLanguage()
 
   return (
-    <div class="flex flex-col gap-3">
+    <div class="amicode-composer-cq flex flex-col gap-3">
       <PromptInputV2
         controller={props.controller}
         borderUnderlay={props.borderUnderlay}
@@ -67,7 +74,17 @@ export function PromptInputV2Composer(props: PromptInputV2ComposerProps) {
         // amicode/opencode#116: report-a-bug, right-anchored immediately left
         // of send. The boot-param gate lives HERE (not inside the button) so a
         // gated-off button passes `undefined` and the row's layout never shifts.
-        trailingControl={bugReportEnabled() ? <ReportBugButton /> : undefined}
+        trailingControl={
+          <>
+            <div class="amicode-concise-toggle-wrap flex items-center">
+              <ConciseModeToggle
+                active={props.controller.concise.on()}
+                onToggle={(next) => props.controller.concise.set(next)}
+              />
+            </div>
+            {bugReportEnabled() ? <ReportBugButton /> : undefined}
+          </>
+        }
         modelControl={
           <PromptInputV2ModelControl
             loading={props.controller.model.loading}
@@ -216,6 +233,21 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
     if (!id) return permission.isAutoAcceptingDirectory(sdk().directory)
     return permission.isAutoAccepting(id, sdk().directory)
   })
+  // amicode: concise-mode flag. A per-session switch — flipping it sends
+  // nothing; it is read at submit time (createPromptSubmit's `concise`) to attach
+  // the concise directive to the outgoing prose message. #1651: held in the
+  // session-keyed concise store, NOT component state, so a composer remount (new
+  // chat → session, Changes tab, session switch) reads the value back. A new
+  // chat writes under its draft key; submit promotes it to the session key.
+  const [conciseSearch] = useSearchParams<{ draftId?: string }>()
+  const conciseKeyNow = () => {
+    const id = props.controls.session.id
+    return id
+      ? conciseKey.session(sdk().scope, sdk().directory, id)
+      : conciseKey.draft(sdk().scope, sdk().directory, conciseSearch.draftId)
+  }
+  const concise = bindConcise(conciseMode, conciseKeyNow)
+  const conciseOn = concise.on
   const submission = createPromptSubmit({
     prompt,
     info,
@@ -241,6 +273,7 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
     onSubmit: props.onSubmit,
     streamGap,
     model: props.controls.model.selection,
+    concise: conciseOn,
   })
 
   const referenceDescription = (reference: ReferenceInfo) =>
@@ -437,6 +470,7 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
     },
   })
   Object.defineProperty(controller, "model", { get: () => props.controls.model })
+  Object.defineProperty(controller, "concise", { get: () => concise })
 
   // Framed webview: the window-level fallback (global-clipboard.ts) is the
   // sole ⌘V owner. When the clipboard carries no text it offers the media to
