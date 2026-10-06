@@ -5,6 +5,38 @@
 set -euo pipefail
 
 AMICO_SERVER_DIR="$HOME/.amico/server"
+
+# --- shard derivation (amicode #1717 phase 1) ---------------------------------
+# A shard is one instance of co.harmoniqs.amicode-server@<i>; the index derives
+# the service/engine/inspect ports (table in ops/hub/README.md). Explicit env
+# still wins. No index = legacy single-server behavior, unchanged.
+# --print-shard-env: print the derived ports and exit (used by
+# ops/hub/test-shard-config.sh — never starts anything).
+if [ -n "${AMICODE_SHARD_INDEX:-}" ]; then
+  case "$AMICODE_SHARD_INDEX" in
+    *[!0-9]*)
+      echo "amicode-server: bad AMICODE_SHARD_INDEX='$AMICODE_SHARD_INDEX' (want a number >= 2)" >&2
+      exit 1 ;;
+  esac
+  if [ "$AMICODE_SHARD_INDEX" -lt 2 ]; then
+    echo "amicode-server: shard index 1 is the legacy unit (co.harmoniqs.amicode-server.service) — the template must not be instantiated for it (port collision)" >&2
+    exit 1
+  fi
+  OFF=$((100 * (AMICODE_SHARD_INDEX - 1)))
+  AMICODE_SERVER_PORT="${AMICODE_SERVER_PORT:-$((4095 + OFF))}"
+  AMICODE_ENGINE_PORT="${AMICODE_ENGINE_PORT:-$((4094 + OFF))}"
+  # MUST be distinct per shard: two engines with one BUN_INSPECT port fail at
+  # boot with EADDRINUSE (the wedge postmortem's cdp-stack hook depends on it).
+  AMICODE_ENGINE_INSPECT="${AMICODE_ENGINE_INSPECT:-127.0.0.1:$((9229 + AMICODE_SHARD_INDEX - 1))}"
+  export AMICODE_SERVER_PORT AMICODE_ENGINE_PORT AMICODE_ENGINE_INSPECT
+fi
+if [ "${1:-}" = "--print-shard-env" ]; then
+  echo "shard_index=${AMICODE_SHARD_INDEX:-none}"
+  echo "service_port=${AMICODE_SERVER_PORT:-4096-default}"
+  echo "engine_port=${AMICODE_ENGINE_PORT:-4094-runner-default}"
+  echo "inspect=${AMICODE_ENGINE_INSPECT:-127.0.0.1:9229-default}"
+  exit 0
+fi
 PORT="${AMICODE_SERVER_PORT:-4096}"
 
 # --- resolve the opencode binary: the FROZEN server copy first ---------------
