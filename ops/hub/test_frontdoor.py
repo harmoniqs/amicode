@@ -92,7 +92,10 @@ def http_request(port, target, method="GET", body=None, timeout=15):
 
 def sse_read(port, target, want=b"server.connected", timeout=12):
     """Open an SSE stream through the frontdoor; return the first bytes
-    (upstream response head + frames) once `want` appears (or timeout)."""
+    (upstream response head + frames) once `want` appears (or timeout).
+    want=None: read until the full timeout (a fixed observation window —
+    used by the merged-stream test, where `want` on one shard's frame races
+    the siblings' unsynchronized heartbeats)."""
     s = socket.create_connection(("127.0.0.1", port), timeout=timeout)
     s.settimeout(timeout)
     try:
@@ -100,7 +103,9 @@ def sse_read(port, target, want=b"server.connected", timeout=12):
                    "Accept: text/event-stream\r\n\r\n").encode())
         buf = b""
         deadline = time.time() + timeout
-        while want not in buf and time.time() < deadline:
+        while time.time() < deadline:
+            if want is not None and want in buf:
+                break
             d = s.recv(65536)
             if not d:
                 break
@@ -431,15 +436,20 @@ class TestShardedRouter(RouterTest):
             self.assertEqual(hdr["x-backend-shard"], "1", target)
 
     def test_sse_routes_to_owning_shard(self):
-        """A session-scoped event stream joins the OWNING shard's group; a
-        global stream joins the default shard's group. The upstream head
-        (with its X-Backend-Shard echo) is what the client receives first."""
+        """A session-scoped event stream joins the OWNING shard's single group
+        (upstream head echoes the shard); the session-LESS stream is MERGED
+        across the pool (slice 1c): one client stream carries heartbeats from
+        every pool member -- the wire /event is directory-scoped, so the union
+        is the only stream that carries off-default sessions' frames."""
         fd = self.start_pool(premap={"ses_sse": 2})
         buf = sse_read(fd.port, "/event?session=ses_sse")
         self.assertIn(b"X-Backend-Shard: 2", buf)
         self.assertIn(b"server.connected", buf)
-        gbuf = sse_read(fd.port, "/event")
-        self.assertIn(b"X-Backend-Shard: 1", gbuf)
+        # merged: a fixed 3s observation window (the members' heartbeats are
+        # unsynchronized) — then ALL THREE shards must be in the buffer
+        gbuf = sse_read(fd.port, "/event", want=None, timeout=3)
+        for n in (1, 2, 3):
+            self.assertIn(('"shard":%d' % n).encode(), gbuf)
         self.assertIn(b"server.connected", gbuf)
 
     def test_dead_backend_blast_radius(self):

@@ -191,6 +191,14 @@ def _get_group(shard, path):
             GROUPS[(shard, path)] = g
         return g
 
+def _get_merged_group(path):
+    with _groups_lock:
+        g = GROUPS.get(("merged", path))
+        if g is None:
+            g = Group(path, TABLE["default_shard"], None, merge=dict(TABLE["backends"]))
+            GROUPS[("merged", path)] = g
+        return g
+
 def _shed_503(c, retry_after=2):
     """Fast 503 -- never queue retries (queued retries amplify into storms; the
     client's own backoff governs). Retry-After 2 for dead-dial / ceiling cases:
@@ -389,7 +397,9 @@ def build_snapshot(top):
     for t in ths: t.join()
     last_eid = None
     try:
-        g = GROUPS.get((TABLE["default_shard"] if SHARDED else 1, "/global/event"))
+        # slice 1c: the /global/event history lives in the MERGED group's
+        # shared ring in sharded mode (the union is the stream of record)
+        g = GROUPS.get(("merged" if SHARDED else 1, "/global/event"))
         if g:
             with g.lock:
                 if g.history: last_eid = g.history[-1][0]
@@ -512,23 +522,37 @@ def _parse_frames(buf):
     return out, buf
 
 class Group:
-    def __init__(self, path, shard=1, backend=None):
+    def __init__(self, path, shard=1, backend=None, merge=None):
         self.path = path
         # #1717 phase 1: a group owns exactly one (shard, path) upstream --
-        # session-scoped streams join the OWNING shard's group, global streams
+        # session-scoped streams join the OWNING shard's group, global ones
         # the default shard's.
+        # #1717 phase 1 slice 1c (MERGED groups): the real /event stream is
+        # DIRECTORY-scoped and session-less on the wire (WorkspaceRoutingQuery
+        # -- no session param), so a client's live stream must carry frames
+        # from EVERY pool member or off-default sessions stream to nobody.
+        # merge = {shard_id: backend_addr}: one upstream thread per member,
+        # fanning the UNION into one shared history + member queues; the first
+        # upstream to connect provides the join preamble (any one head is a
+        # valid head). Event ids stay unique across shards via the shared DB's
+        # event_sequence.
         self.shard = shard
         self.backend = backend if backend else BACKEND
+        self.merge = merge
+        self.live_upstreams = 0
         self.lock = threading.Lock()
         self.members = {}    # member socket -> outbound queue.Queue
         self.preamble = b""
         self.upstream = None
         self.history = []   # [(event_id, frame_bytes)] — bounded ring
-        self.reasm = b""    # frame reassembly buffer (upstream side)
-        threading.Thread(target=self.upstream_loop, daemon=True).start()
-    def build_preamble(self):
-        req = f"GET {self.path} HTTP/1.1\r\nHost: 127.0.0.1:{self.backend[1]}\r\nAccept: text/event-stream\r\n\r\n".encode()
-        s = socket.create_connection(self.backend)
+        if merge:
+            for _sid, _addr in merge.items():
+                threading.Thread(target=self.upstream_loop, args=(_sid, _addr), daemon=True).start()
+        else:
+            threading.Thread(target=self.upstream_loop, args=(shard, self.backend), daemon=True).start()
+    def build_preamble(self, addr):
+        req = f"GET {self.path} HTTP/1.1\r\nHost: 127.0.0.1:{addr[1]}\r\nAccept: text/event-stream\r\n\r\n".encode()
+        s = socket.create_connection(addr)
         s.sendall(req)
         buf = b""
         s.settimeout(60)
@@ -556,29 +580,34 @@ class Group:
                 c.sendall(chunk)
         except Exception: pass
         self._drop(c)
-    def upstream_loop(self):
+    def upstream_loop(self, shard_id, addr):
+        # reasm is per-upstream (each stream has its own partial tail); history
+        # + member fan-out are shared under self.lock.
         backoff = 0.5
         while True:
             try:
-                s, pre = self.build_preamble()
+                s, pre = self.build_preamble(addr)
             except Exception as e:
-                log(f"[{self.path}] upstream down ({e}); retry in {backoff}s")
+                log(f"[{self.path}/s{shard_id}] upstream down ({e}); retry in {backoff}s")
                 time.sleep(backoff); backoff = min(backoff * 2, 5); continue
             backoff = 0.5
-            frames, tail = _parse_frames(pre)
-            self.reasm = tail
+            reasm = b""
+            frames, reasm = _parse_frames(pre)
             with self.lock:
-                self.upstream = s
-                self.preamble = pre
-                self.history = []   # history spans the NEW upstream's stream
+                if self.upstream is None:
+                    # first live upstream: the preamble provider for joins
+                    self.upstream = s
+                    self.preamble = pre
+                    self.history = []   # history spans the (new) live stream
+                self.live_upstreams += 1
                 n_waiting = len(self.members)
-            log(f"[{self.path}] upstream live ({n_waiting} waiting members)")
+            log(f"[{self.path}/s{shard_id}] upstream live ({n_waiting} waiting members)")
             try:
                 while True:
                     chunk = s.recv(65536)
                     if not chunk: break
-                    self.reasm += chunk
-                    frames, self.reasm = _parse_frames(self.reasm)
+                    reasm += chunk
+                    frames, reasm = _parse_frames(reasm)
                     for frame in frames:
                         # #1306: state changed — the snapshot cache must not
                         # outlive the events that changed it.
@@ -602,8 +631,8 @@ class Group:
                                 self.members.pop(m, None)
                                 q.put(None)
                                 try: m.close()
-                                except Exception: pass
-                                log(f"[{self.path}] member dropped — stalled (queue full)")
+                                except: pass
+                                log(f"[{self.path}/s{shard_id}] member dropped — stalled (queue full)")
                                 continue
                             for frame in frames:
                                 q.put(frame)
@@ -611,13 +640,24 @@ class Group:
             try: s.close()
             except: pass
             with self.lock:
-                self.upstream = None
-                members = list(self.members)
-            for m in members:
-                self.leave(m)
-                try: m.close()
-                except: pass
-            log(f"[{self.path}] upstream lost; closed {len(members)} members")
+                self.live_upstreams -= 1
+                was_preamble = s is self.upstream
+                if was_preamble:
+                    self.upstream = None
+                all_down = self.live_upstreams == 0
+                members = list(self.members) if all_down else []
+            if was_preamble:
+                # a rejoining upstream (this one or a sibling) re-seeds the preamble
+                log(f"[{self.path}/s{shard_id}] preamble upstream lost; joins wait for a re-seed")
+            if all_down:
+                # every upstream is gone: close the members (the app's reconnect
+                # heals with fresh streams) — the pre-pool behavior, now scoped to
+                # the whole pool being down.
+                for m in members:
+                    self.leave(m)
+                    try: m.close()
+                    except: pass
+                log(f"[{self.path}/s{shard_id}] all upstreams lost; closed {len(members)} members")
     def join(self, c, last_event_id=None):
         with self.lock:
             if c in self.members: return
@@ -683,15 +723,20 @@ class Group:
         if q is not None:
             q.put(None)
 
-# #1717 phase 1: groups are (shard, path) -- one upstream per shard. A client
-# joins the group of the shard that owns the stream: session-sticky for
-# session-scoped streams, the default shard for global ones. Only the default
-# shard's two groups are pre-created (warm, exactly the pre-pool posture);
-# session-scoped groups are created lazily on first join via _get_group().
+# #1717 phase 1: groups are (shard, path) -- one upstream per shard -- except
+# the client-facing event paths in sharded mode, which are MERGED under the
+# ("merged", path) key: one upstream thread per pool member fanning the union
+# into one shared history + member queues (slice 1c -- the wire /event is
+# directory-scoped and session-less, so only a merged stream carries
+# off-default sessions' frames). Legacy mode pre-creates exactly the two warm
+# single-upstream groups the pre-pool frontdoor had.
 GROUPS = {}
 _default_shard_id = TABLE["default_shard"] if SHARDED else 1
 for _p in ("/event", "/global/event"):
-    GROUPS[(_default_shard_id, _p)] = Group(_p, _default_shard_id, _shard_backend(_default_shard_id))
+    if SHARDED:
+        GROUPS[("merged", _p)] = Group(_p, _default_shard_id, None, merge=dict(TABLE["backends"]))
+    else:
+        GROUPS[(_default_shard_id, _p)] = Group(_p, _default_shard_id, _shard_backend(_default_shard_id))
 
 # --- GET response cache: poll floods must not become backend connection floods ----
 CACHE_TTL = 5.0
@@ -971,17 +1016,22 @@ def handle(c, addr, cid):
                 return
             key = None   # directory-scoped responses must NEVER be shared across clients
         if path in ("/event", "/global/event"):
-            # #1717 phase 1: join the OWNING shard's group -- session-sticky
-            # for session-scoped streams, the default shard for global ones.
-            # NO placement here: an event stream for an unknown session is a
-            # client reconnecting to a pre-pool (shard-1) session.
-            g_shard = TABLE["default_shard"] if SHARDED else 1
+            # #1717 slice 1c: the client-facing event streams are MERGED across
+            # the pool -- the wire /event is directory-scoped and session-less
+            # (WorkspaceRoutingQuery has no session param), so the union of all
+            # pool members' streams is the only stream that carries
+            # off-default sessions' frames. A session id in the target (no
+            # known client does this today) keeps sticky single-shard semantics.
             if SHARDED:
                 m = _SES_RE.search(raw)
                 if m:
                     with _sess_map_lock:
-                        g_shard = _sess_map.get(m.group(0), g_shard)
-            g = _get_group(g_shard, path)
+                        g_shard = _sess_map.get(m.group(0), TABLE["default_shard"])
+                    g = _get_group(g_shard, path)
+                else:
+                    g = _get_merged_group(path)
+            else:
+                g = GROUPS[(1, path)]
             last_eid = None
             try:
                 qs = raw.split("?", 1)[1] if "?" in raw else ""
