@@ -72,6 +72,55 @@ hot-fixed; the pre-Phase-1 single-shard posture is shard 1's legacy unit —
 disabling the pool = stop `…@2` / `…@3`, point the frontdoor's route table
 back at shard 1 for everything (single-entry table), restart the frontdoor.
 
+## The frontdoor router (slice 1b)
+
+`hub-frontdoor.py` routes across the pool. Configuration lives in env vars:
+
+| Env | Default | Meaning |
+| --- | --- | --- |
+| `AMICODE_ROUTING_TABLE` | `~/.amico/server/routing.json` | the shard table (below); missing/unparseable/single-shard = legacy single-backend, byte-compatible with the pre-pool frontdoor — the rollback path AND the no-downtime rollout |
+| `AMICODE_SESSION_MAP` | `~/.amico/server/routing-sessions.json` | sticky placements (`{"ses_...": shard}`), write-through, survives frontdoor restarts |
+| `AMICODE_MAX_DIALS` | `256` | global in-flight dial ceiling; above it requests get a fast 503 (storms shed, never pile) |
+| `AMICODE_FRONTDOOR_PORT` | `4096` | listen port (+1 for the second origin); tests run on ephemeral ports |
+| `AMICODE_FRONTDOOR_LOG` | `~/.amico/server/frontdoor.log` | log path |
+
+Table shape:
+
+```json
+{"shards": [{"id": 1, "backend": "127.0.0.1:4095"}, ...],
+ "default_shard": 1,
+ "directory_pools": {"/home/aaron/harmoniqs/opencode": [1, 2, 3]}}
+```
+
+Routing semantics (placement is **admission-time only** — engines hold
+process-local session state, in-flight sessions cannot migrate):
+
+- **Known session** → its owning shard, forever (sticky, persisted map).
+- **Unknown session on a pooled directory** → placed on the least-loaded pool
+  member (in-flight dials + live SSE groups; ties → lowest id) and pinned.
+  This is `place_session()` — the deterministic floor that the Jev provider
+  (slice 2) wraps and fails open to.
+- **POST /session (create)** → placed on the least-loaded member; the
+  server-created id is sniffed from the response the moment its bytes flow
+  (never after — the client's follow-up request races a post-join pin) and
+  pinned to the creating shard.
+- **Session-scoped SSE** (`/event?…ses_…`) → the owning shard's group; global
+  streams → the default shard's group. Groups are keyed `(shard, path)`.
+- **GET /session?directory=… (pooled)** → fan-out merge across every member
+  (bare-array envelope, dedupe by id, `time.updated` desc); unpooled
+  directories passthrough to the default shard. The snapshot's session list
+  fans out the same way.
+- **Dead shard** → its requests 503 fast (`Retry-After: 2`); other shards
+  unaffected. No per-IP caps — fleet tunnels share addresses; a client-aware
+  shed is an open question.
+- `SIGHUP` reloads the table (existing SSE groups keep their upstreams until
+  restart).
+
+Gates: `python3 ops/hub/test_frontdoor.py` (11-test fake-backend suite —
+sticky/persistence, least-loaded placement, fan-out merge, SSE routing,
+dead-shard blast radius, dial ceiling, create-sniff pinning, legacy
+regressions) and `bash ops/hub/test-shard-config.sh` (26 checks).
+
 ## Provenance
 
 - Imported 2026-10-05 (amicode #1717 Phase 1 campaign) verbatim from the

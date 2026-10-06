@@ -1,5 +1,12 @@
 import queue as _qmod
 import socket, threading, time
+import os as _os
+import json as _json0
+import re as _re1
+
+def _env(key, default):
+    v = _os.environ.get(key)
+    return v if v else default
 
 # 2026-10-04 (panel-stale-app incident): APP_DIST now points at the service's
 # shelf dist (single source of truth, what amicode-server.sh gates + what deploys
@@ -7,10 +14,202 @@ import socket, threading, time
 # 2026-09-20 -- the fleet panel rode a stale app (missing pickers, composer
 # "select agent and model" toast) while the canary sat one origin away.
 APP_DIST = "/home/aaron/.amico/server/service/dist-app"
-BACKEND = ("127.0.0.1", 4095)
-LOG = open("/home/aaron/.amico/server/frontdoor.log", "a", buffering=1)
+DEFAULT_BACKEND = ("127.0.0.1", 4095)
+LOG = open(_env("AMICODE_FRONTDOOR_LOG", "/home/aaron/.amico/server/frontdoor.log"), "a", buffering=1)
 _last_req = {}
 def log(m): LOG.write(time.strftime("%H:%M:%S ") + m + "\n")
+
+# --- #1717 phase 1: the shard pool ----------------------------------------------
+# One engine process cannot carry the fleet: every session shares one JS event
+# loop and one heap; under parallel load the loop saturates, the watchdog probe
+# goes silent, and the restart kills EVERY session at once (9 kills on the
+# 2026-10-04/05 night, all 29 active sessions in one directory). The pool shards
+# the hot directory across N engines; this router is the switchboard. PLACEMENT
+# IS ADMISSION-TIME ONLY: a session is placed once (first sight or creation) and
+# sticky forever after -- engines hold process-local session state, in-flight
+# sessions cannot migrate, and no request ever waits on a placement decision.
+TABLE_PATH = _env("AMICODE_ROUTING_TABLE", _os.path.expanduser("~/.amico/server/routing.json"))
+SESSION_MAP_PATH = _env("AMICODE_SESSION_MAP", _os.path.expanduser("~/.amico/server/routing-sessions.json"))
+try:
+    MAX_DIALS = int(_env("AMICODE_MAX_DIALS", "256"))
+except ValueError:
+    MAX_DIALS = 256
+
+def _load_table():
+    """The routing table. MISSING / unparseable / zero shards = LEGACY
+    single-backend mode, byte-compatible with the pre-pool frontdoor -- the
+    deploy-time rollback path AND the no-downtime rollout (the table ships
+    absent, then grows shard by shard). A single-shard table adopts that
+    shard as the backend."""
+    try:
+        with open(TABLE_PATH) as f:
+            t = _json0.load(f)
+        shards = t.get("shards") or []
+        if not shards:
+            return None
+        backends = {}
+        for s in shards:
+            host, port = str(s["backend"]).rsplit(":", 1)
+            backends[int(s["id"])] = (host, int(port))
+        default = int(t.get("default_shard", next(iter(backends))))
+        pools = {str(k): [int(x) for x in v]
+                 for k, v in (t.get("directory_pools") or {}).items()}
+        return {"backends": backends, "default_shard": default, "pools": pools}
+    except Exception as e:
+        log(f"routing table load failed ({e}) -- legacy single-backend mode")
+        return None
+
+TABLE = _load_table()
+SHARDED = TABLE is not None and len(TABLE["backends"]) > 1
+BACKEND = TABLE["backends"][TABLE["default_shard"]] if TABLE else DEFAULT_BACKEND
+
+def _shard_backend(shard):
+    if not SHARDED:
+        return BACKEND
+    return TABLE["backends"].get(shard, BACKEND)
+
+# session stickiness: ses_<id> -> shard id, persisted write-through (tmp+rename)
+_sess_map = {}
+_sess_map_lock = threading.Lock()
+if SHARDED:
+    try:
+        with open(SESSION_MAP_PATH) as f:
+            _sess_map = {k: int(v) for k, v in _json0.load(f).items()}
+    except Exception:
+        _sess_map = {}
+
+def _pin(sid, shard):
+    if not SHARDED:
+        return
+    with _sess_map_lock:
+        if _sess_map.get(sid) == shard:
+            return
+        _sess_map[sid] = shard
+        try:
+            tmp = SESSION_MAP_PATH + ".tmp"
+            with open(tmp, "w") as f:
+                _json0.dump(_sess_map, f)
+            _os.replace(tmp, SESSION_MAP_PATH)
+        except Exception as e:
+            log(f"session map write failed: {e}")
+
+# str pattern for the decoded request target (routing); bytes pattern for raw
+# response sniffing — a str pattern raises TypeError on bytes, which the pipe's
+# except would silently swallow (found the hard way, run 1 + run 2 of the suite).
+_SES_RE = _re1.compile(r"ses_[A-Za-z0-9]+")
+_SES_RE_B = _re1.compile(rb"ses_[A-Za-z0-9]+")
+
+def _directory_of(raw):
+    if "?" not in raw:
+        return None
+    try:
+        import urllib.parse as _up
+        for kv in raw.split("?", 1)[1].split("&"):
+            if kv.startswith("directory="):
+                return _up.unquote(kv[len("directory="):])
+    except Exception:
+        return None
+    return None
+
+# per-shard in-flight dial accounting: the placement load signal + the ceiling
+_dial_lock = threading.Lock()
+_dials_in_flight = 0
+_dials_per_shard = {}
+
+def _group_load(shard):
+    n = 0
+    with _groups_lock:
+        for (s, _), g in GROUPS.items():
+            if s == shard and g.upstream is not None:
+                n += 1
+    return n
+
+def place_session(sid, directory, raw):
+    """The deterministic placement FLOOR: least (in-flight upstream dials +
+    live SSE groups), ties -> lowest shard id. Slice 2 wraps this with the Jev
+    provider (advisory-only, fail-open, the arjev doctrine); this function is
+    what Jev fails open TO."""
+    pool = TABLE["pools"].get(directory) if directory else None
+    if not pool:
+        pool = [TABLE["default_shard"]]
+    with _dial_lock:
+        loads = {i: _dials_per_shard.get(i, 0) for i in pool}
+    for i in pool:
+        loads[i] += _group_load(i)
+    return min(pool, key=lambda i: (loads[i], i))
+
+def _route(raw):
+    """Resolve the shard for a request target. Sticky for known sessions;
+    placement (+pin) for unknown sessions on a pooled directory; stateless
+    directory routes ride the least-loaded member; everything else -> default."""
+    if not SHARDED:
+        return 1
+    m = _SES_RE.search(raw)
+    sid = m.group(0) if m else None
+    d = _directory_of(raw)
+    pool = TABLE["pools"].get(d) if d else None
+    if sid is not None:
+        with _sess_map_lock:
+            if sid in _sess_map:
+                return _sess_map[sid]
+        if pool:
+            shard = pool[0] if len(pool) == 1 else place_session(sid, d, raw)
+            _pin(sid, shard)
+            return shard
+        return TABLE["default_shard"]
+    if pool and len(pool) > 1:
+        return place_session(None, d, raw)
+    if pool:
+        return pool[0]
+    return TABLE["default_shard"]
+
+_groups_lock = threading.Lock()
+
+def _get_group(shard, path):
+    with _groups_lock:
+        g = GROUPS.get((shard, path))
+        if g is None:
+            g = Group(path, shard, _shard_backend(shard))
+            GROUPS[(shard, path)] = g
+        return g
+
+def _shed_503(c, retry_after=2):
+    """Fast 503 -- never queue retries (queued retries amplify into storms; the
+    client's own backoff governs). Retry-After 2 for dead-dial / ceiling cases:
+    a dead shard refuses cheap, and a per-shard 503 is self-limiting. (The
+    #1310 storm was against a busy-but-ALIVE backend where dials succeed -- that
+    case still rides the existing slow-passthrough paths.) NO per-IP caps:
+    fleet tunnels share addresses and would shed legitimate tabs; a client-aware
+    shed is an open question, not silently guessed here."""
+    try:
+        c.sendall(("HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n"
+                   f"Retry-After: {retry_after}\r\n\r\n").encode())
+    except Exception:
+        pass
+    c.close()
+
+def _reload_table(signum, frame):
+    global TABLE, SHARDED
+    t = _load_table()
+    if t is not None:
+        TABLE = t
+        SHARDED = len(t["backends"]) > 1
+        log(f"routing table reloaded: {len(t['backends'])} shards, default {t['default_shard']}"
+            " (existing SSE groups keep their upstreams until restart)")
+    else:
+        log("routing table reload FAILED -- keeping the live table")
+
+try:
+    import signal as _sig
+    _sig.signal(_sig.SIGHUP, _reload_table)
+except Exception:
+    pass
+
+if SHARDED:
+    log(f"sharded mode: {len(TABLE['backends'])} shards, default {TABLE['default_shard']}, "
+        f"{len(TABLE['pools'])} pooled dir(s), {len(_sess_map)} pinned session(s)")
+else:
+    log(f"legacy single-backend mode -> {BACKEND[0]}:{BACKEND[1]}")
 
 # --- #1311: UA census — the GET / storm (484 doc fetches / 2min observed) must
 # be attributed to a client. Count requests by (path-class, User-Agent),
@@ -59,12 +258,13 @@ def _dechunk(body):
         out += body[j + 2: j + 2 + n]
         i = j + 2 + n + 2
 
-def backend_get(target, timeout=60):
+def backend_get(target, timeout=60, shard=None):
     """One-shot localhost GET. Slow answers stream; only failures return None."""
+    b = _shard_backend(shard) if (SHARDED and shard is not None) else BACKEND
     try:
-        s = socket.create_connection(BACKEND, timeout=8)
+        s = socket.create_connection(b, timeout=8)
         s.settimeout(timeout)
-        s.sendall(("GET " + target + " HTTP/1.1\r\nHost: 127.0.0.1:4095\r\nConnection: close\r\nAccept-Encoding: identity\r\n\r\n").encode())
+        s.sendall(("GET " + target + f" HTTP/1.1\r\nHost: 127.0.0.1:{b[1]}\r\nConnection: close\r\nAccept-Encoding: identity\r\n\r\n").encode())
         buf = b""
         while True:
             d = s.recv(262144)
@@ -103,11 +303,51 @@ def _trim(obj):
         return obj[:_TRIM_KEEP] + "\u2026[__trimmed]"
     return obj
 
+def _merge_session_lists(lists):
+    """#1717 phase 1: merge shard session lists. Envelope: BARE array (the
+    engine's GET /session answers Schema.Array(Session.Info), verified against
+    packages/opencode/src/server/routes/instance/httpapi/groups/session.ts).
+    Dedupe by id -- defensive: stickiness prevents cross-shard dupes, and with
+    the shared DB every shard's list is a superset until Phase 2 partitions DBs.
+    Order: time.updated desc."""
+    seen = {}
+    for lst in lists:
+        if isinstance(lst, dict):
+            lst = lst.get("sessions") or lst.get("data") or []
+        if not isinstance(lst, list):
+            continue
+        for s in lst:
+            if isinstance(s, dict) and s.get("id") and s["id"] not in seen:
+                seen[s["id"]] = s
+    def _u(s):
+        t = s.get("time") or {}
+        u = t.get("updated")
+        return u if isinstance(u, (int, float)) else 0
+    return sorted(seen.values(), key=lambda s: -_u(s))
+
+def _merged_session_list():
+    """The hub-wide session list: every shard in sharded mode, one backend_get
+    in legacy mode. A dead member contributes nothing (per-shard blast radius)."""
+    if not SHARDED:
+        return backend_get("/session?limit=100")
+    lists = []
+    for shard in TABLE["backends"]:
+        b = backend_get("/session?limit=100", shard=shard)
+        if not b:
+            continue
+        try:
+            lists.append(_json0.loads(b))
+        except Exception:
+            pass
+    if not lists:
+        return None
+    return _json0.dumps(_merge_session_lists(lists)).encode()
+
 def build_snapshot(top):
     import json as _json
     health = backend_get("/global/health")
     if health is None: return None
-    lst = backend_get("/session?limit=100")   # same cap the frontdoor enforces on client lists
+    lst = _merged_session_list()   # same cap the frontdoor enforces on client lists
     if lst is None: return None
     try: sessions = _json.loads(lst)
     except Exception: return None
@@ -131,7 +371,7 @@ def build_snapshot(top):
     for t in ths: t.join()
     last_eid = None
     try:
-        g = GROUPS.get("/global/event")
+        g = GROUPS.get((TABLE["default_shard"] if SHARDED else 1, "/global/event"))
         if g:
             with g.lock:
                 if g.history: last_eid = g.history[-1][0]
@@ -254,8 +494,13 @@ def _parse_frames(buf):
     return out, buf
 
 class Group:
-    def __init__(self, path):
+    def __init__(self, path, shard=1, backend=None):
         self.path = path
+        # #1717 phase 1: a group owns exactly one (shard, path) upstream --
+        # session-scoped streams join the OWNING shard's group, global streams
+        # the default shard's.
+        self.shard = shard
+        self.backend = backend if backend else BACKEND
         self.lock = threading.Lock()
         self.members = {}    # member socket -> outbound queue.Queue
         self.preamble = b""
@@ -264,8 +509,8 @@ class Group:
         self.reasm = b""    # frame reassembly buffer (upstream side)
         threading.Thread(target=self.upstream_loop, daemon=True).start()
     def build_preamble(self):
-        req = f"GET {self.path} HTTP/1.1\r\nHost: 127.0.0.1:4095\r\nAccept: text/event-stream\r\n\r\n".encode()
-        s = socket.create_connection(BACKEND)
+        req = f"GET {self.path} HTTP/1.1\r\nHost: 127.0.0.1:{self.backend[1]}\r\nAccept: text/event-stream\r\n\r\n".encode()
+        s = socket.create_connection(self.backend)
         s.sendall(req)
         buf = b""
         s.settimeout(60)
@@ -420,7 +665,15 @@ class Group:
         if q is not None:
             q.put(None)
 
-GROUPS = {p: Group(p) for p in ("/event", "/global/event")}
+# #1717 phase 1: groups are (shard, path) -- one upstream per shard. A client
+# joins the group of the shard that owns the stream: session-sticky for
+# session-scoped streams, the default shard for global ones. Only the default
+# shard's two groups are pre-created (warm, exactly the pre-pool posture);
+# session-scoped groups are created lazily on first join via _get_group().
+GROUPS = {}
+_default_shard_id = TABLE["default_shard"] if SHARDED else 1
+for _p in ("/event", "/global/event"):
+    GROUPS[(_default_shard_id, _p)] = Group(_p, _default_shard_id, _shard_backend(_default_shard_id))
 
 # --- GET response cache: poll floods must not become backend connection floods ----
 CACHE_TTL = 5.0
@@ -442,7 +695,7 @@ def refresh_index():
     that defeat the streaming capture) and cache a complete HTTP/1.1 response."""
     try:
         import subprocess
-        r = subprocess.run(["curl", "-s", "-m", "5", "http://127.0.0.1:4095/"],
+        r = subprocess.run(["curl", "-s", "-m", "5", f"http://{BACKEND[0]}:{BACKEND[1]}/"],
                            capture_output=True, timeout=8)
         if r.returncode == 0 and r.stdout:
             # 2026-09-19 cache bust: fleet webviews hold hashed JS assets as
@@ -462,77 +715,115 @@ def refresh_index():
         try: index_refresh.release()
         except Exception: pass
 
-def passthrough_capture(c, first_chunk, key=None, force_close=False):
-    """Passthrough; capture small fast 200 GET responses for the cache."""
+def passthrough_capture(c, first_chunk, key=None, force_close=False, shard=None, pin_create=None):
+    """Passthrough; capture small fast 200 GET responses for the cache.
+    #1717 phase 1: dials the ROUTED shard (default when unrouted); admits to
+    the global dial ceiling (MAX_DIALS -- storms must shed, not pile); on a
+    dead shard answers a fast 503 (the rest of the pool is untouched); with
+    pin_create, sniffs a POST /session response for the server-created id and
+    pins it to the serving shard."""
+    global _dials_in_flight
     bid = id(c) % 10000
-    try: u = socket.create_connection(BACKEND, timeout=8)
-    except Exception as e:
-        log(f"upstream fail: {e}")
-        try:
-            # #1310: Retry-After 10 — a 2s Retry-After AMPLIFIED client retries
-            # into a 2s-cadence storm against a busy backend.
-            c.sendall(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nRetry-After: 10\r\n\r\n")
+    backend = _shard_backend(shard) if (SHARDED and shard is not None) else BACKEND
+    with _dial_lock:
+        if _dials_in_flight >= MAX_DIALS:
+            _shed_503(c)
+            return
+        _dials_in_flight += 1
+        if SHARDED and shard is not None:
+            _dials_per_shard[shard] = _dials_per_shard.get(shard, 0) + 1
+    try:
+        try: u = socket.create_connection(backend, timeout=8)
+        except Exception as e:
+            log(f"upstream fail (shard {shard}): {e}")
+            # dead shard: fast 503 (Retry-After 2 -- a dead shard refuses
+            # cheap; the pre-pool #1310 Retry-After 10 guarded a BUSY backend
+            # where dials SUCCEED and retries pile, a different failure mode).
+            _shed_503(c)
+            return
+        # #1310: create_connection(timeout=8) LEAVES an 8s recv timeout on the
+        # socket — any backend response slower than 8s was KILLED mid-stream
+        # (the +3.1s-to-8s wire fetches, the connection-death retry patterns
+        # while sessions ran). Slow must mean SLOW, never DEAD.
+        u.settimeout(90)
+        if force_close and first_chunk.endswith(b"\r\n\r\n"):
+            # keep-alive upstreams never close → capture never completes → cache never fills.
+            # HTTP honors the last Connection header, so appending wins.
+            first_chunk = first_chunk[:-2] + b"Connection: close\r\n\r\n"
+        log(f"be+{bid} opened")
+        done = threading.Event()
+        cap = {"buf": bytearray(), "ok": False}
+        _sniffed = [False]
+        _pinned = [False]
+        cap_flag = key is not None or pin_create is not None
+        def pipe(src, dst, capture=False, sniff=False):
+            try:
+                while True:
+                    d = src.recv(65536)
+                    if not d: break
+                    if sniff and not _sniffed[0]:
+                        _sniffed[0] = True
+                        try:
+                            if b"content-type: text/html" in d[:1024].lower():
+                                log(f"HTML-RESPONSE for: {_last_req.get(cid, '?')[:130]}")
+                                # #1457: HTML crossing the tunnel must NEVER be
+                                # cacheable — a 200 text/html response is cacheable
+                                # by default, and a cached HTML body for a data or
+                                # chunk URL poisons it client-side forever (the
+                                # "Failed to fetch dynamically imported module" and
+                                # "Unexpected token '<'" classes). Stamp no-store.
+                                d = _no_store_html(d)
+                        except Exception: pass
+                    if capture:
+                        if len(cap["buf"]) + len(d) <= CACHE_MAX + 65536:
+                            cap["buf"] += d
+                        else:
+                            cap["ok"] = False; cap["buf"] = bytearray()
+                        # #1717 phase 1 create-sniff: pin the server-created id
+                        # the MOMENT its bytes flow through the pipe — the
+                        # client's very next request (the follow-up to the id it
+                        # just learned) must already stick to the creating
+                        # shard. Pinning after the pipes close loses that race.
+                        if pin_create is not None and not _pinned[0]:
+                            m = _SES_RE_B.search(bytes(cap["buf"]))
+                            if m:
+                                # bytes pattern -> bytes group; the session map
+                                # is a str-keyed JSON file
+                                sid = m.group(0).decode("utf-8", "replace")
+                                _pinned[0] = True
+                                _pin(sid, pin_create)
+                                log(f"pinned {sid} -> shard {pin_create} (create-sniff)")
+                    dst.sendall(d)
+            except Exception: cap["ok"] = False
+            finally:
+                if capture: done.set()
+                try: dst.shutdown(socket.SHUT_WR)
+                except: pass
+        t1 = threading.Thread(target=pipe, args=(c, u), daemon=True)
+        t2 = threading.Thread(target=pipe, args=(u, c, cap_flag, True), daemon=True)
+        t2.start()
+        try: u.sendall(first_chunk)
         except Exception: pass
-        c.close(); return
-    # #1310: create_connection(timeout=8) LEAVES an 8s recv timeout on the
-    # socket — any backend response slower than 8s was KILLED mid-stream
-    # (the +3.1s-to-8s wire fetches, the connection-death retry patterns
-    # while sessions ran). Slow must mean SLOW, never DEAD.
-    u.settimeout(90)
-    if force_close and first_chunk.endswith(b"\r\n\r\n"):
-        # keep-alive upstreams never close → capture never completes → cache never fills.
-        # HTTP honors the last Connection header, so appending wins.
-        first_chunk = first_chunk[:-2] + b"Connection: close\r\n\r\n"
-    log(f"be+{bid} opened")
-    done = threading.Event()
-    cap = {"buf": bytearray(), "ok": False}
-    _sniffed = [False]
-    def pipe(src, dst, capture=False, sniff=False):
-        try:
-            while True:
-                d = src.recv(65536)
-                if not d: break
-                if sniff and not _sniffed[0]:
-                    _sniffed[0] = True
-                    try:
-                        if b"content-type: text/html" in d[:1024].lower():
-                            log(f"HTML-RESPONSE for: {_last_req.get(cid, '?')[:130]}")
-                            # #1457: HTML crossing the tunnel must NEVER be
-                            # cacheable — a 200 text/html response is cacheable
-                            # by default, and a cached HTML body for a data or
-                            # chunk URL poisons it client-side forever (the
-                            # "Failed to fetch dynamically imported module" and
-                            # "Unexpected token '<'" classes). Stamp no-store.
-                            d = _no_store_html(d)
-                    except Exception: pass
-                if capture:
-                    if len(cap["buf"]) + len(d) <= CACHE_MAX + 65536:
-                        cap["buf"] += d
-                    else:
-                        cap["ok"] = False; cap["buf"] = bytearray()
-                dst.sendall(d)
-        except Exception: cap["ok"] = False
-        finally:
-            if capture: done.set()
-            try: dst.shutdown(socket.SHUT_WR)
-            except: pass
-    t1 = threading.Thread(target=pipe, args=(c, u), daemon=True)
-    t2 = threading.Thread(target=pipe, args=(u, c, key is not None, True), daemon=True)
-    t2.start()
-    try: u.sendall(first_chunk)
-    except Exception: pass
-    t1.start()
-    t1.join(); t2.join()
-    c.close(); u.close()
-    log(f"be-{bid} closed")
-    # #1313: name every HTML response to a non-asset path — the opencode SPA
-    # fallback serves index.html (200) for routes it doesn't know; clients
-    # that JSON.parse it throw "Unexpected token '<'" with no stack frames.
-    # The path list in the log IS the culprit list.
-    if key is not None and done.is_set() and cap["ok"] and len(cap["buf"]) <= CACHE_MAX:
-        b = bytes(cap["buf"])
-        if b.startswith(b"HTTP/1.1 200"):
-            with cache_lock: cache[key] = (time.time(), b)
+        t1.start()
+        t1.join(); t2.join()
+        c.close(); u.close()
+        log(f"be-{bid} closed")
+        # #1313: name every HTML response to a non-asset path — the opencode SPA
+        # fallback serves index.html (200) for routes it doesn't know; clients
+        # that JSON.parse it throw "Unexpected token '<'" with no stack frames.
+        # The path list in the log IS the culprit list.
+        if key is not None and done.is_set() and cap["ok"] and len(cap["buf"]) <= CACHE_MAX:
+            b = bytes(cap["buf"])
+            if b.startswith(b"HTTP/1.1 200"):
+                with cache_lock: cache[key] = (time.time(), b)
+        # (create-sniff pinning happens inside the pipe, above — the moment the
+        # id bytes flow; a post-join pin loses the race to the client's
+        # immediate follow-up request.)
+    finally:
+        with _dial_lock:
+            _dials_in_flight -= 1
+            if SHARDED and shard is not None:
+                _dials_per_shard[shard] = max(0, _dials_per_shard.get(shard, 1) - 1)
 
 def _no_store_html(chunk: bytes) -> bytes:
     """#1457: rewrite an HTML response's headers to Cache-Control: no-store."""
@@ -549,6 +840,50 @@ def _no_store_html(chunk: bytes) -> bytes:
         return head + sep + body
     except Exception:
         return chunk
+
+def serve_session_list(c, first, raw):
+    """#1717 phase 1: GET /session across the pool. A pooled directory merges
+    every member (threads, 8s dial timeout each -- a dead member contributes
+    nothing); unpooled / absent directories passthrough to the default shard.
+    Computed per request -- directory-scoped responses are never shared across
+    clients (standing rule)."""
+    try:
+        target = first.split(b"\r\n", 1)[0].split(b" ")[1].decode("utf-8", "replace")
+    except Exception:
+        target = raw
+    d = _directory_of(raw)
+    pool = TABLE["pools"].get(d) if d else None
+    if not pool or len(pool) < 2:
+        passthrough_capture(c, first, key=None, shard=TABLE["default_shard"])
+        return
+    results = [None] * len(pool)
+    threads = []
+    def fetch(i, shard):
+        results[i] = backend_get(target, shard=shard)
+    for i, shard in enumerate(pool):
+        t = threading.Thread(target=fetch, args=(i, shard), daemon=True)
+        t.start(); threads.append(t)
+    for t in threads:
+        t.join()
+    lists = []
+    for b in results:
+        if not b:
+            continue
+        try:
+            lists.append(_json0.loads(b))
+        except Exception:
+            pass
+    if not lists:
+        _shed_503(c, retry_after=10)
+        return
+    body = _json0.dumps(_merge_session_lists(lists)).encode()
+    hdr = ("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+           + f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n")
+    try:
+        c.sendall(hdr.encode() + body)
+    except Exception:
+        pass
+    c.close()
 
 def passthrough(c, first_chunk):
     passthrough_capture(c, first_chunk, key=None)
@@ -609,9 +944,26 @@ def handle(c, addr, cid):
             if n:
                 first = capped
                 log(f"#{cid} capped /session limit to 100")
+            # #1717 phase 1: the session list spans every shard of a pooled
+            # directory (each shard's list is a shared-DB superset today, so the
+            # merge dedupes; Phase 2 partitions DBs and it becomes a true
+            # union). Unpooled / absent directories passthrough to the default.
+            if SHARDED:
+                serve_session_list(c, first, raw)
+                return
             key = None   # directory-scoped responses must NEVER be shared across clients
-        if path in GROUPS:
-            g = GROUPS[path]
+        if path in ("/event", "/global/event"):
+            # #1717 phase 1: join the OWNING shard's group -- session-sticky
+            # for session-scoped streams, the default shard for global ones.
+            # NO placement here: an event stream for an unknown session is a
+            # client reconnecting to a pre-pool (shard-1) session.
+            g_shard = TABLE["default_shard"] if SHARDED else 1
+            if SHARDED:
+                m = _SES_RE.search(raw)
+                if m:
+                    with _sess_map_lock:
+                        g_shard = _sess_map.get(m.group(0), g_shard)
+            g = _get_group(g_shard, path)
             last_eid = None
             try:
                 qs = raw.split("?", 1)[1] if "?" in raw else ""
@@ -653,7 +1005,7 @@ def handle(c, addr, cid):
             if hit is None:
                 try:
                     import subprocess as _sp
-                    r = _sp.run(["curl", "-s", "-m", "10", "http://127.0.0.1:4095" + path],
+                    r = _sp.run(["curl", "-s", "-m", "10", f"http://{BACKEND[0]}:{BACKEND[1]}" + path],
                                 capture_output=True, timeout=15)
                     body = r.stdout
                     n = body.count(b"degraded:t.degraded(),label")
@@ -758,24 +1110,47 @@ def handle(c, addr, cid):
                 # complete late (upstream idle timeout) and overwrite the
                 # refresh_index entry (the BUSTED index) with RAW bytes long
                 # after the refresh wrote it. refresh_index is the SOLE writer.
-                passthrough_capture(c, first, key=None)
+                passthrough_capture(c, first, key=None, shard=_route(raw) if SHARDED else None)
         else:
-            passthrough(c, first)
+            # #1717 phase 1: POST /session CREATES a session — place it on the
+            # directory's pool (least-loaded; ties -> lowest id), then pin the
+            # server-created id to the serving shard by sniffing the response
+            # (the client only learns the id from this response; every later
+            # request must stick to the creating shard).
+            if SHARDED and parts[0] == "POST" and path == "/session":
+                d = _directory_of(raw)
+                pool = TABLE["pools"].get(d) if d else None
+                if pool and len(pool) == 1:
+                    passthrough_capture(c, first, key=None, shard=pool[0], pin_create=pool[0])
+                    return
+                shard = place_session(None, d, raw) if pool else TABLE["default_shard"]
+                passthrough_capture(c, first, key=None, shard=shard, pin_create=shard)
+                return
+            passthrough_capture(c, first, key=None, shard=_route(raw) if SHARDED else None)
     except Exception as e:
         log(f"#{cid} err {e}")
         try: c.close()
         except: pass
 
+# #1717 phase 1: AMICODE_FRONTDOOR_PORT lets tests (and any future secondary
+# frontdoor) run an instance on an ephemeral port; production keeps 4096.
+try:
+    PORT = int(_env("AMICODE_FRONTDOOR_PORT", "4096"))
+except ValueError:
+    PORT = 4096
 srv = socket.socket(); srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-srv.bind(("0.0.0.0", 4096)); srv.listen(128)
+srv.bind(("0.0.0.0", PORT)); srv.listen(128)
 # 2026-09-19 origin shift: fleet clients' Chromium HTTP cache holds the
 # binary-era index (stored without revalidation headers) and self-assembles
 # the whole app from cache on every reload — app updates NEVER reach them.
 # The app now also listens on 4097; fleet.json points clients there. A fresh
 # origin has no cache anywhere. 4096 stays for the watchdog + stragglers.
 srv2 = socket.socket(); srv2.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-srv2.bind(("0.0.0.0", 4097)); srv2.listen(128)
-log("front-door v2.1 (sse-splitter) listening 4096 -> 4095")
+srv2.bind(("0.0.0.0", PORT + 1)); srv2.listen(128)
+log("front-door v3 (sharded-router, #1717 phase 1) listening %d+%d -> %s"
+    % (PORT, PORT + 1,
+       ("%d shards, default %d" % (len(TABLE["backends"]), TABLE["default_shard"])) if SHARDED
+       else ("%s:%d (legacy)" % (BACKEND[0], BACKEND[1]))))
 cid = 0
 def accept_loop(sock):
     global cid

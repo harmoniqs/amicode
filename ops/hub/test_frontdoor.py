@@ -507,7 +507,11 @@ class TestLegacyRegression(RouterTest):
         st, hdr, body = http_request(fd.port, "/session/ses_leg/message?directory=" + POOLDIR)
         self.assertEqual(st, 200)
         self.assertEqual(hdr["x-backend-shard"], "1")
-        self.assertEqual(json.loads(body)["path"], "/session/ses_leg/message")
+        # passthrough-intact = the client's EXACT target reaches the backend
+        # (query included — the engine needs ?directory= to scope the request).
+        # (Director adjudication 2026-10-06: the RED suite's original literal
+        # omitted the query, which would require the frontdoor to STRIP it.)
+        self.assertEqual(json.loads(body)["path"], "/session/ses_leg/message?directory=" + POOLDIR)
         st2, hdr2, body2 = http_request(fd.port, "/session", method="POST",
                                         body=b'{"hello":"world"}')
         self.assertEqual(st2, 201)
@@ -532,7 +536,8 @@ class TestLegacyRegression(RouterTest):
         st, hdr, body = http_request(fd.port, "/session/ses_leg2/message?directory=/anywhere")
         self.assertEqual(st, 200)
         self.assertEqual(hdr["x-backend-shard"], "1")
-        self.assertEqual(json.loads(body)["path"], "/session/ses_leg2/message")
+        # exact-target passthrough (same adjudication as the single-shard test)
+        self.assertEqual(json.loads(body)["path"], "/session/ses_leg2/message?directory=/anywhere")
         self.assertFalse(os.path.exists(fd.map_path))
 
 
