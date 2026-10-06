@@ -1,0 +1,27 @@
+# Amicode engine shard N — one instance per pool member (amicode #1717 Phase 1).
+# Instance %i = the shard index: ports and inspect port are derived from it by
+# amicode-server.sh (see ops/hub/README.md for the port table).
+# Shard 1 intentionally has NO instance of this unit — the legacy non-template
+# co.harmoniqs.amicode-server.service keeps serving shard 1 (ports 4095/4094,
+# inspect 9229) so the live hub never depends on the new template to boot.
+# Enable a shard: systemctl --user enable --now co.harmoniqs.amicode-server@2.service
+
+[Unit]
+Description=Amicode engine shard %i (pool member — service + engine) — amicode #1717 phase 1
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=AMICODE_SHARD_INDEX=%i
+ExecStart=/bin/bash -lc '%h/.amico/server/amicode-server.sh'
+Restart=always
+RestartSec=10
+# Per-shard logs: shard 1 keeps the legacy server.log; instances get their own
+# so a wedged shard's tail is attributable (RSS is attributable per process —
+# the whole point of the pool).
+StandardOutput=append:%h/.amico/server/server-shard%i.log
+StandardError=append:%h/.amico/server/server-shard%i.log
+
+[Install]
+WantedBy=default.target
