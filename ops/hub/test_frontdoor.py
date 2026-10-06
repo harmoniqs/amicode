@@ -541,5 +541,93 @@ class TestLegacyRegression(RouterTest):
         self.assertFalse(os.path.exists(fd.map_path))
 
 
+# --- #1717 phase 1 slice 2: the Jev placement provider through the real frontdoor --
+
+class _SystemoneHandler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.0"
+    def log_message(self, *args):
+        pass
+    def do_POST(self):
+        n = int(self.headers.get("Content-Length", 0) or 0)
+        self.rfile.read(n)
+        body = json.dumps(self.server.behavior).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+def systemone_answer(shard, p):
+    """A choice answer in the arjev wire shape, confident (p) on <shard>."""
+    others = [s for s in (1, 2, 3) if s != shard]
+    rest = round((1.0 - p) / 2, 4)
+    return {"model": "jev-test", "answers": {"placement": {
+        "type": "choice", "choice": str(shard), "confidence": p,
+        "probabilities": {str(shard): p, str(others[0]): rest, str(others[1]): rest}}}}
+
+
+class TestJevPlacement(RouterTest):
+
+    def start_jev_frontdoor(self, answer, premap):
+        httpd = _ThreadingHTTP(("127.0.0.1", 0), _SystemoneHandler)
+        httpd.behavior = answer
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.shutdown)
+        receipts = os.path.join(self.tmpdir, "routing-receipts.jsonl")
+        ports = {}
+        for i in (1, 2, 3):
+            sh = self.start_shard(i)
+            ports[i] = sh.port
+        with open(os.path.join(self.tmpdir, "routing-sessions.json"), "w") as f:
+            json.dump(premap, f)
+        fd = self.start_frontdoor(
+            routing_table([(i, ports[i]) for i in (1, 2, 3)]),
+            extra_env={"AMICODE_JEV_PLACEMENT": "1", "ARJEV_JEV_KEY": "test-key",
+                       "AMICODE_JEV_URL": "http://127.0.0.1:%d" % httpd.server_address[1],
+                       "AMICODE_ROUTING_RECEIPTS": receipts})
+        return fd, receipts
+
+    def jev_receipts(self, path):
+        with open(path) as f:
+            return [json.loads(x) for x in f.read().splitlines() if x.strip()]
+
+    def test_jev_confident_overrides_floor(self):
+        # floor is shard 2 (3 held sessions on shard 1 -> loads 5,0,0, tie 2/3);
+        # Jev confidently says 3 -> the session lands on 3 and the receipt says jev.
+        fd, receipts = self.start_jev_frontdoor(systemone_answer(3, 0.9),
+                                                premap={"ses_jh1": 1, "ses_jh2": 1, "ses_jh3": 1})
+        hs = [self.hold(fd, s) for s in ("ses_jh1", "ses_jh2", "ses_jh3")]
+        time.sleep(0.5)
+        st, hdr, _ = http_request(fd.port, "/session/ses_jev1/message?directory=" + POOLDIR)
+        self.assertEqual(st, 200)
+        self.assertEqual(hdr["x-backend-shard"], "3")
+        rows = self.jev_receipts(receipts)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["mode"], "jev")
+        self.assertEqual(rows[0]["decision"], 3)
+        self.assertEqual(rows[0]["session_id"], "ses_jev1")
+        # sticky after the Jev placement
+        st2, hdr2, _ = http_request(fd.port, "/session/ses_jev1/message")
+        self.assertEqual(hdr2["x-backend-shard"], "3")
+        for t in hs:
+            t.join(10)
+
+    def test_jev_low_confidence_falls_to_floor(self):
+        # Jev answers below min_confidence (0.4 < 0.6) -> the deterministic floor.
+        fd, receipts = self.start_jev_frontdoor(systemone_answer(3, 0.4),
+                                                premap={"ses_kh1": 1, "ses_kh2": 1, "ses_kh3": 1})
+        hs = [self.hold(fd, s) for s in ("ses_kh1", "ses_kh2", "ses_kh3")]
+        time.sleep(0.5)
+        st, hdr, _ = http_request(fd.port, "/session/ses_jev2/message?directory=" + POOLDIR)
+        self.assertEqual(st, 200)
+        self.assertEqual(hdr["x-backend-shard"], "2")   # the floor, not Jev's 3
+        rows = self.jev_receipts(receipts)
+        self.assertEqual(rows[0]["mode"], "deterministic")
+        self.assertEqual(rows[0]["fail_reason"], "low-confidence")
+        for t in hs:
+            t.join(10)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

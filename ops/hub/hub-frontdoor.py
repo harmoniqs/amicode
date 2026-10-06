@@ -124,11 +124,19 @@ def _group_load(shard):
                 n += 1
     return n
 
+# #1717 phase 1 slice 2: the optional Jev placement provider (advisory-only,
+# fail-open -- the arjev doctrine; see jev_placement.py). Missing module or
+# any failure -> the deterministic floor, which is the contract.
+try:
+    import jev_placement as _jev
+except Exception:
+    _jev = None
+
 def place_session(sid, directory, raw):
-    """The deterministic placement FLOOR: least (in-flight upstream dials +
-    live SSE groups), ties -> lowest shard id. Slice 2 wraps this with the Jev
-    provider (advisory-only, fail-open, the arjev doctrine); this function is
-    what Jev fails open TO."""
+    """Placement at session admission: the deterministic FLOOR is least
+    (in-flight upstream dials + live SSE groups), ties -> lowest shard id; the
+    Jev provider (slice 2, advisory-only, fail-open) may override it for real
+    sessions, and the floor is what Jev fails open TO."""
     pool = TABLE["pools"].get(directory) if directory else None
     if not pool:
         pool = [TABLE["default_shard"]]
@@ -136,7 +144,17 @@ def place_session(sid, directory, raw):
         loads = {i: _dials_per_shard.get(i, 0) for i in pool}
     for i in pool:
         loads[i] += _group_load(i)
-    return min(pool, key=lambda i: (loads[i], i))
+    floor = min(pool, key=lambda i: (loads[i], i))
+    # The Jev provider decides at SESSION admission only -- stateless directory
+    # routes (sid None) never pay a model call.
+    if sid is not None and _jev is not None:
+        try:
+            shard, mode, fail_reason, _dist = _jev.place_with_jev(sid, directory, pool, loads, floor)
+            log(f"placed {sid} -> shard {shard} (mode={mode}{' ' + (fail_reason or '') if fail_reason else ''})")
+            return shard
+        except Exception as e:
+            log(f"jev placement failed ({e}) -- deterministic floor")
+    return floor
 
 def _route(raw):
     """Resolve the shard for a request target. Sticky for known sessions;

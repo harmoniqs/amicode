@@ -121,6 +121,41 @@ sticky/persistence, least-loaded placement, fan-out merge, SSE routing,
 dead-shard blast radius, dial ceiling, create-sniff pinning, legacy
 regressions) and `bash ops/hub/test-shard-config.sh` (26 checks).
 
+## The Jev placement provider (slice 2)
+
+`jev_placement.py` wraps the floor: at session admission (never per-request,
+never for stateless routes), the frontdoor may ask Jev (TypeSafe System One,
+the arjev decision model) which pool member should host the new session.
+**Advisory-only, fail-open, never load-bearing** — the arjev doctrine,
+verbatim: no key, outage, low confidence, or out-of-pool choice → the
+deterministic least-loaded floor, and the receipt says why.
+
+Flag-off by default; env surface:
+
+| Env | Default | Meaning |
+| --- | --- | --- |
+| `AMICODE_JEV_PLACEMENT` | off | the flag; on = the provider answers at admission |
+| `ARJEV_JEV_KEY` / `ARJEV_JEV_KEY_FILE` | — | key resolution identical to arjev (env key, then the explicit opt-in file) |
+| `ARJEV_JEV_DISABLED` | off | the kill switch (zero behavioral delta, arjev convention) |
+| `AMICODE_JEV_URL` | `https://api.typesafe.ai/v1/systemone` | the systemone endpoint (tests point it at a fake) |
+| `AMICODE_JEV_TIMEOUT` | `1.5` s | admission carries a live user request; the floor answers while Jev thinks |
+| `AMICODE_JEV_MIN_CONFIDENCE` | `0.6` | below it → the floor, `fail_reason: low-confidence` |
+| `AMICODE_ROUTING_RECEIPTS` | `~/.amico/server/routing-receipts.jsonl` | one JSONL line per ATTEMPTED call (disabled/no-key write nothing) |
+
+Receipt schema: `ts, session_id, directory, pool, loads, decision, mode
+(jev|deterministic), fail_reason, confidence, distribution, latency_ms,
+model_version, state_bytes`. This is the calibration dataset — join it with
+per-shard wedge/RSS outcomes later (the `arjev calibrate` loop, pointed at
+routing). Wire contract: `POST /v1/systemone, {"model": "jev-latest",
+"state", "questions": {"placement": {choice over shard ids}}}`; answer
+carries `probabilities`, confidence = max probability.
+
+Gates: `python3 ops/hub/test_jev_placement.py` (11 unit tests: gating,
+confident override, low-confidence, timeout bounded, garbage, out-of-pool,
+HTTP error, state-overflow, dead URL) plus the two integration tests in
+`test_frontdoor.py` (`TestJevPlacement`: Jev overrides the floor through the
+real frontdoor; low confidence falls to it; sticky after a Jev placement).
+
 ## Provenance
 
 - Imported 2026-10-05 (amicode #1717 Phase 1 campaign) verbatim from the
