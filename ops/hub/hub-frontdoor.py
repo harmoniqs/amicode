@@ -78,13 +78,28 @@ if SHARDED:
     except Exception:
         _sess_map = {}
 
+# Pin counts per shard — the placement floor's LONG-RUN balance signal.
+# In-flight dials + live SSE groups are instantaneous, and admission happens
+# at a quiet moment (dials ~0, groups not yet opened), so without pin counts
+# every placement ties to the lowest shard id: 2026-10-07 production had the
+# pool live with all 1274 pinned sessions on shard 1 and shards 2/3 idle —
+# the wedge the pool was built to contain still killed every session at once.
+_sess_count = {}
+if SHARDED:
+    for _s in _sess_map.values():
+        _sess_count[_s] = _sess_count.get(_s, 0) + 1
+
 def _pin(sid, shard):
     if not SHARDED:
         return
     with _sess_map_lock:
-        if _sess_map.get(sid) == shard:
+        prev = _sess_map.get(sid)
+        if prev == shard:
             return
+        if prev is not None:
+            _sess_count[prev] = max(0, _sess_count.get(prev, 0) - 1)
         _sess_map[sid] = shard
+        _sess_count[shard] = _sess_count.get(shard, 0) + 1
         try:
             tmp = SESSION_MAP_PATH + ".tmp"
             with open(tmp, "w") as f:
@@ -134,9 +149,9 @@ except Exception:
 
 def place_session(sid, directory, raw):
     """Placement at session admission: the deterministic FLOOR is least
-    (in-flight upstream dials + live SSE groups), ties -> lowest shard id; the
-    Jev provider (slice 2, advisory-only, fail-open) may override it for real
-    sessions, and the floor is what Jev fails open TO."""
+    (in-flight upstream dials + live SSE groups + pinned sessions), ties ->
+    lowest shard id; the Jev provider (slice 2, advisory-only, fail-open) may
+    override it for real sessions, and the floor is what Jev fails open TO."""
     pool = TABLE["pools"].get(directory) if directory else None
     if not pool:
         pool = [TABLE["default_shard"]]
@@ -144,6 +159,9 @@ def place_session(sid, directory, raw):
         loads = {i: _dials_per_shard.get(i, 0) for i in pool}
     for i in pool:
         loads[i] += _group_load(i)
+    with _sess_map_lock:
+        for i in pool:
+            loads[i] += _sess_count.get(i, 0)
     floor = min(pool, key=lambda i: (loads[i], i))
     # The Jev provider decides at SESSION admission only -- stateless directory
     # routes (sid None) never pay a model call.

@@ -409,6 +409,29 @@ class TestShardedRouter(RouterTest):
         for t in hs:
             t.join(10)
 
+    def test_pin_count_balances_the_floor(self):
+        """Pin counts join the floor: the instantaneous signals (dials,
+        groups) are ~0 at admission, so without counting pinned sessions every
+        placement ties to the lowest shard id — 2026-10-07 production had all
+        1274 pins on shard 1 with shards 2/3 idle. A skewed premap with NO
+        in-flight load must still spread new sessions to the empty shards."""
+        fd = self.start_pool(premap={
+            "ses_old1": 1, "ses_old2": 1, "ses_old3": 1, "ses_old4": 1,
+            "ses_old5": 1, "ses_old6": 1,
+        })
+        # all pins on shard 1, nothing in flight -> new sessions avoid shard 1
+        st, hdr, _ = http_request(fd.port, "/session/ses_bal1/message?directory=" + POOLDIR)
+        self.assertEqual(st, 200)
+        self.assertIn(hdr["x-backend-shard"], ("2", "3"))
+        # placement increments the pin count -> the next one rides the other
+        st2, hdr2, _ = http_request(fd.port, "/session/ses_bal2/message?directory=" + POOLDIR)
+        self.assertEqual(st2, 200)
+        self.assertNotEqual(hdr2["x-backend-shard"], hdr["x-backend-shard"])
+        # and it persists: the map carries the spread
+        m = self.map_contents(fd)
+        self.assertEqual(m["ses_bal1"], int(hdr["x-backend-shard"]))
+        self.assertEqual(m["ses_bal2"], int(hdr2["x-backend-shard"]))
+
     def test_fanout_merge(self):
         """GET /session?directory=<pooled dir> merges every pool member's list:
         exact envelope (bare array), dedupe by id, order time_updated desc."""
