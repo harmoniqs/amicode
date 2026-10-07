@@ -13,7 +13,7 @@ def _env(key, default):
 # write). The old ~/.amico/server/app-dist copy shadowed every dist deploy since
 # 2026-09-20 -- the fleet panel rode a stale app (missing pickers, composer
 # "select agent and model" toast) while the canary sat one origin away.
-APP_DIST = "/home/aaron/.amico/server/service/dist-app"
+APP_DIST = _env("AMICODE_APP_DIST", "/home/aaron/.amico/server/service/dist-app")
 DEFAULT_BACKEND = ("127.0.0.1", 4095)
 LOG = open(_env("AMICODE_FRONTDOOR_LOG", "/home/aaron/.amico/server/frontdoor.log"), "a", buffering=1)
 _last_req = {}
@@ -236,6 +236,90 @@ if SHARDED:
         f"{len(TABLE['pools'])} pooled dir(s), {len(_sess_map)} pinned session(s)")
 else:
     log(f"legacy single-backend mode -> {BACKEND[0]}:{BACKEND[1]}")
+
+# --- #1723: the UI-revert guard --------------------------------------------------
+# Three incident classes shipped clients an OLD ui with no signal anywhere
+# (#1283 cache self-assembly, the 2026-10-04 stale-dist panel, the vanished
+# harness picker). The guard promotes the signals the logs already held into
+# actions: a stale client's dead-asset request HEALS (one reload hop); a stale
+# DIST crash-lands loudly instead of passing as a working panel; one route
+# answers "what UI is live".
+UI_FLOOR_PATH = _env("AMICODE_UI_FLOOR", _os.path.expanduser("~/.amico/server/ui-floor.json"))
+
+def _ui_deploy_record():
+    """The dist's deploy record — the freshness oracle. A missing record is
+    itself a violation: every legitimate deploy since the live-test pattern
+    started writes one."""
+    try:
+        with open(_os.path.join(APP_DIST, "deploy.json")) as f:
+            d = _json0.load(f)
+        return {"commit": str(d.get("commit", ""))[:12], "built_at": str(d.get("built_at", ""))}
+    except Exception:
+        return None
+
+def _ui_floor():
+    """No floor file = no enforcement (the guard arms by a deliberate ops
+    act, never by default)."""
+    try:
+        with open(UI_FLOOR_PATH) as f:
+            return _json0.load(f)
+    except Exception:
+        return None
+
+def _ui_floor_ok():
+    rec = _ui_deploy_record()
+    if rec is None:
+        return None, False
+    floor = _ui_floor()
+    if not floor:
+        return rec, True
+    min_at = str(floor.get("min_built_at", ""))
+    if min_at and rec["built_at"] < min_at:
+        return rec, False
+    return rec, True
+
+# The heal: a stale client asked for a content-hashed .js that no longer exists;
+# answer VALID JS that reloads the no-cache index once. Bounded — the fresh
+# index boots and requests only live assets; if the DIST is stale the floor
+# crash-lands the very next hop.
+_UI_HEAL_JS = b'location.replace("/?ui-heal=" + Date.now());'
+
+def _crash_landing(rec):
+    """#1723: the floor-violation interstitial. Fully self-contained (inline
+    CSS/JS, no dist bytes) — it runs precisely when the dist is untrustworthy.
+    Auto-reloads on a slow timer so a fixed deploy heals without intervention."""
+    floor = _ui_floor() or {}
+    live = f"{rec['commit']} ({rec['built_at']})" if rec else "MISSING deploy record"
+    min_at = str(floor.get("min_built_at", "(unset)"))
+    return ("""<!doctype html><html><head><meta charset="utf-8"><title>Amicode — UI freshness check failed</title>
+<style>body{background:#111;color:#eee;font-family:ui-sans-serif,system-ui;margin:0;display:flex;align-items:center;justify-content:center;height:100vh}
+.c{max-width:640px;padding:2rem;border:1px solid #444;border-radius:10px;background:#181818}
+h1{color:#f0b429;font-size:1.3rem;margin:0 0 .5rem}code{color:#f0b429}p{line-height:1.5;color:#bbb}
+.refresh{color:#888;font-size:.85rem;margin-top:1rem}</style>
+</head><body><div class="c"><h1>The panel UI failed its freshness check</h1>
+<p>This is loud on purpose: the hub is serving a UI build <strong>older than the allowed floor</strong>,
+and a stale panel must never pass as a working one.</p>
+<p>Live UI build: <code>LIVE_BUILD</code><br>Allowed floor: <code>FLOOR_BUILD</code></p>
+<p>This usually means a dist deploy was reverted or half-deployed. It heals itself when a
+current dist lands — this page reloads every 15 seconds.</p>
+<p class="refresh">amicode #1723 crash-landing</p></div>
+<script>setTimeout(function(){location.reload()},15000)</script></body></html>"""
+    ).replace("LIVE_BUILD", live).replace("FLOOR_BUILD", min_at).encode()
+
+def _serve_bytes(c, body, ctype, extra_headers=""):
+    hdr = ("HTTP/1.1 200 OK\r\nContent-Type: " + ctype + "\r\n"
+           + extra_headers
+           + f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n")
+    try:
+        c.sendall(hdr.encode() + body)
+    except Exception:
+        pass
+    c.close()
+
+rec0, ok0 = _ui_floor_ok()
+log("ui-build: %s, floor %s"
+    % ((rec0["commit"] + " " + rec0["built_at"]) if rec0 else "NO DEPLOY RECORD",
+       "ok" if ok0 else "VIOLATION"))
 
 # --- #1311: UA census — the GET / storm (484 doc fetches / 2min observed) must
 # be attributed to a client. Count requests by (path-class, User-Agent),
@@ -470,7 +554,24 @@ def app_dist_serve(c, path):
     # immutable; the index is no-cache so dist swaps propagate immediately.
     import os.path as _p
     if path == "/":
-        return serve_file(c, _p.join(APP_DIST, "index.html"), "text/html; charset=utf-8", "no-cache")
+        # #1723: the floor check gates every index serve (both origins, plus
+        # the SPA-INDEX document fallbacks below) — a dist older than the
+        # floor crash-lands loudly; a fresh dist serves as today, with its
+        # build stamped on the response.
+        rec, ok = _ui_floor_ok()
+        if not ok:
+            log(f"UI-REVERT caught: floor violation at index serve — crash-landing (live={rec})")
+            _serve_bytes(c, _crash_landing(rec), "text/html; charset=utf-8")
+            return True
+        try:
+            body = open(_p.join(APP_DIST, "index.html"), "rb").read()
+        except OSError as e:
+            log("app-dist missing index.html (%s) - 503" % e)
+            return False
+        _serve_bytes(c, body, "text/html; charset=utf-8",
+                     extra_headers=("Cache-Control: no-cache\r\n"
+                                    + ("X-UI-Build: %s\r\n" % rec["commit"] if rec else "")))
+        return True
     if path.startswith("/assets/"):
         rel = path[len("/assets/"):]
         if ".." in rel or rel.startswith("/"):
@@ -973,6 +1074,14 @@ def handle(c, addr, cid):
             serve_snapshot(c, first, parts[1])
             return
         log(f"#{cid} {line}")
+        # --- #1723: the build surface — one request answers "what UI is live"
+        if path == "/__amicode_ui_build" and parts[0] == "GET":
+            rec, ok = _ui_floor_ok()
+            _serve_bytes(c, _json0.dumps({
+                "commit": rec["commit"] if rec else None,
+                "built_at": rec["built_at"] if rec else None,
+                "floor_ok": ok}).encode(), "application/json")
+            return
         # --- #1290 client-error log: the app's debug badge POSTs captured
         # errors here (Solid routes reactive teardowns through console.error,
         # invisible to window.onerror). Append to a file; answer 204.
@@ -1076,6 +1185,20 @@ def handle(c, addr, cid):
                     r = _sp.run(["curl", "-s", "-m", "10", f"http://{BACKEND[0]}:{BACKEND[1]}" + path],
                                 capture_output=True, timeout=15)
                     body = r.stdout
+                    # #1723: HTML (or emptiness) answering a content-hashed .js
+                    # request IS the revert signature — #1313's "Unexpected
+                    # token '<'" class, the stale-client signal the logs held
+                    # all along. Heal it: valid JS, one reload hop to the
+                    # no-cache index. (The backend's SPA fallback serves the
+                    # index for routes it doesn't know — that is what makes a
+                    # dead asset look like HTML here.)
+                    _head = body.lstrip()[:15].lower()
+                    if not body or _head.startswith((b"<!doctype", b"<html")):
+                        log(f"UI-REVERT caught: dead asset {path} answered "
+                            + ("HTML" if body else "nothing") + " — healing reload")
+                        _serve_bytes(c, _UI_HEAL_JS, "text/javascript; charset=utf-8",
+                                     extra_headers="Cache-Control: no-store\r\n")
+                        return
                     n = body.count(b"degraded:t.degraded(),label")
                     if n:
                         body = body.replace(b"degraded:t.degraded(),label",

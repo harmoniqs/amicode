@@ -146,6 +146,17 @@ class ShardHandler(BaseHTTPRequestHandler):
         path = self.path.split("?")[0]
         if path == "/session":
             self._json(self.server.sessions)
+        elif path.startswith("/assets/") and path.endswith(".js"):
+            # mimic the engine/service SPA fallback: unknown hashed assets get
+            # index.html (200 HTML) — the #1313 revert signature the #1723
+            # guard detects and heals
+            body = b"<!doctype html><html><head><title>fallback</title></head></html>"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.send_header("X-Backend-Shard", str(self.shard))
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
         elif "hold" in path:
             ms = 2000
             if "ms=" in self.path:
@@ -637,6 +648,80 @@ class TestJevPlacement(RouterTest):
         self.assertEqual(rows[0]["fail_reason"], "low-confidence")
         for t in hs:
             t.join(10)
+
+
+# --- #1723: the UI-revert guard ---------------------------------------------------
+
+class TestUIGuard(RouterTest):
+    DIST_INDEX = b"<html>the current app</html>"
+
+    def make_dist(self, built_at="2026-10-04T12:03:15.452Z", with_record=True):
+        dist = os.path.join(self.tmpdir, "dist")
+        os.makedirs(os.path.join(dist, "assets"), exist_ok=True)
+        with open(os.path.join(dist, "index.html"), "wb") as f:
+            f.write(self.DIST_INDEX)
+        if with_record:
+            with open(os.path.join(dist, "deploy.json"), "w") as f:
+                json.dump({"commit": "8ff7606b78ebbdeca", "built_at": built_at,
+                           "branch": "t", "deployed_by": "test"}, f)
+        return dist, os.path.join(self.tmpdir, "ui-floor.json")
+
+    def start_guard(self, dist, floor, min_built_at=None):
+        if min_built_at is not None:
+            with open(floor, "w") as f:
+                json.dump({"min_built_at": min_built_at}, f)
+        sh = self.start_shard(1)
+        return self.start_frontdoor(
+            routing_table([(1, sh.port)]),
+            extra_env={"AMICODE_APP_DIST": dist, "AMICODE_UI_FLOOR": floor})
+
+    def test_floor_ok_serves_index(self):
+        dist, floor = self.make_dist()
+        fd = self.start_guard(dist, floor, min_built_at="2026-10-01T00:00:00")
+        st, hdr, body = http_request(fd.port, "/")
+        self.assertEqual(st, 200)
+        self.assertEqual(body, self.DIST_INDEX)
+        self.assertEqual(hdr["x-ui-build"], "8ff7606b78eb")
+
+    def test_floor_violation_crash_lands(self):
+        dist, floor = self.make_dist(built_at="2026-10-04T12:03:15.452Z")
+        fd = self.start_guard(dist, floor, min_built_at="2026-10-05T00:00:00")
+        st, hdr, body = http_request(fd.port, "/")
+        self.assertEqual(st, 200)
+        self.assertIn(b"freshness check failed", body)
+        self.assertIn(b"2026-10-05T00:00:00", body)          # the floor value is shown
+        self.assertNotIn(b"the current app", body)            # never the stale bytes
+
+    def test_missing_record_crash_lands(self):
+        dist, floor = self.make_dist(with_record=False)
+        fd = self.start_guard(dist, floor, min_built_at="2026-10-01T00:00:00")
+        st, hdr, body = http_request(fd.port, "/")
+        self.assertIn(b"freshness check failed", body)
+        self.assertIn(b"MISSING deploy record", body)
+
+    def test_no_floor_no_enforcement(self):
+        dist, floor = self.make_dist()
+        fd = self.start_guard(dist, floor, min_built_at=None)
+        st, hdr, body = http_request(fd.port, "/")
+        self.assertEqual(body, self.DIST_INDEX)
+
+    def test_build_route(self):
+        dist, floor = self.make_dist()
+        fd = self.start_guard(dist, floor, min_built_at="2026-10-01T00:00:00")
+        st, hdr, body = http_request(fd.port, "/__amicode_ui_build")
+        self.assertEqual(st, 200)
+        d = json.loads(body)
+        self.assertTrue(d["floor_ok"])
+        self.assertEqual(d["commit"], "8ff7606b78eb")
+        self.assertEqual(d["built_at"], "2026-10-04T12:03:15.452Z")
+
+    def test_dead_asset_heals(self):
+        dist, floor = self.make_dist()
+        fd = self.start_guard(dist, floor, min_built_at="2026-10-01T00:00:00")
+        st, hdr, body = http_request(fd.port, "/assets/deadbeef-DEAD.js")
+        self.assertEqual(st, 200)
+        self.assertTrue(hdr.get("content-type", "").startswith("text/javascript"))
+        self.assertIn(b"location.replace", body)               # the heal, not the broken HTML
 
 
 if __name__ == "__main__":
