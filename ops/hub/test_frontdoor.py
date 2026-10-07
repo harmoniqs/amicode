@@ -673,6 +673,58 @@ class TestJevPlacement(RouterTest):
             t.join(10)
 
 
+    def start_jev_local_frontdoor(self, premap=None):
+        """A pool frontdoor with the LOCAL weighted allocator on and the
+        sampler fast; no external systemone, so jev-local governs."""
+        receipts = os.path.join(self.tmpdir, "routing-receipts.jsonl")
+        fd = self.start_pool(
+            premap=premap,
+            extra_env={"AMICODE_JEV_LOCAL": "1", "AMICODE_SHARD_SAMPLE_INTERVAL": "0.3",
+                       "AMICODE_ROUTING_RECEIPTS": receipts})
+        return fd
+
+    def test_jev_local_avoids_probe_dead_shard(self):
+        # shard 2's backend is stopped -> the sampler marks it dead -> the
+        # local allocator only ever offers the alive members, floor-shaped
+        # ties or not.
+        fd = self.start_jev_local_frontdoor()
+        self.shards[1].stop()
+        time.sleep(1.2)   # let the sampler record a failed probe
+        seen = set()
+        for i in range(8):
+            st, hdr, _ = http_request(fd.port, "/session/ses_jl%d/message?directory=" % i + POOLDIR)
+            self.assertEqual(st, 200)
+            seen.add(int(hdr["x-backend-shard"]))
+        self.assertNotIn(2, seen)
+        self.assertGreaterEqual(len(seen), 1)
+
+    def test_jev_local_spreads_equal_shards(self):
+        # equal-looking members -> the weighted pick spreads a burst instead
+        # of piling onto the lowest id (the 1274-pins-on-shard-1 failure).
+        fd = self.start_jev_local_frontdoor()
+        time.sleep(1.2)   # first sampler pass
+        seen = set()
+        for i in range(9):
+            st, hdr, _ = http_request(fd.port, "/session/ses_jls%d/message?directory=" % i + POOLDIR)
+            self.assertEqual(st, 200)
+            seen.add(int(hdr["x-backend-shard"]))
+        self.assertGreaterEqual(len(seen), 2)
+
+    def test_jev_local_receipts_written(self):
+        # every local decision receipts its mode, samples and scores
+        fd = self.start_jev_local_frontdoor()
+        time.sleep(1.2)
+        st, _, _ = http_request(fd.port, "/session/ses_jlr/message?directory=" + POOLDIR)
+        self.assertEqual(st, 200)
+        path = os.path.join(fd.tmpdir, "routing-receipts.jsonl")
+        with open(path) as f:
+            rows = [json.loads(x) for x in f.read().splitlines() if x.strip()]
+        self.assertGreaterEqual(len(rows), 1)
+        self.assertEqual(rows[0]["mode"], "jev-local")
+        self.assertIn("scores", rows[0])
+        self.assertIn("samples", rows[0])
+
+
 # --- #1723: the UI-revert guard ---------------------------------------------------
 
 class TestUIGuard(RouterTest):

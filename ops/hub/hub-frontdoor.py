@@ -166,8 +166,10 @@ def place_session(sid, directory, raw):
     # The Jev provider decides at SESSION admission only -- stateless directory
     # routes (sid None) never pay a model call.
     if sid is not None and _jev is not None:
+        with _shard_samples_lock:
+            samples = {i: dict(v) for i, v in _shard_samples.items() if i in pool}
         try:
-            shard, mode, fail_reason, _dist = _jev.place_with_jev(sid, directory, pool, loads, floor)
+            shard, mode, fail_reason, _dist = _jev.place_with_jev(sid, directory, pool, loads, floor, samples)
             log(f"placed {sid} -> shard {shard} (mode={mode}{' ' + (fail_reason or '') if fail_reason else ''})")
             return shard
         except Exception as e:
@@ -200,6 +202,58 @@ def _route(raw):
     return TABLE["default_shard"]
 
 _groups_lock = threading.Lock()
+
+# #1717 slice 2b: live shard busy-ness sampling for Jev placement. NEVER in
+# the per-request path: a daemon thread probes each shard's cheap route on an
+# interval and tails the watchdog RSS trajectories; placement reads the last
+# snapshot. The probe rides the same service+engine path real requests take,
+# so probe_ms measures the latency a user would actually feel -- a wedging
+# shard (the #775 signature: main loop saturated, HTTP silent) shows up as
+# probe failure or latency long before the RSS rail is crossed.
+_shard_samples = {}
+_shard_samples_lock = threading.Lock()
+
+def _watchdog_rss_kb(shard):
+    """Last RSS the fleet watchdog recorded for a shard (5-min staleness is
+    fine: it is a slow pressure signal, not an instantaneous one)."""
+    try:
+        name = "rss-trajectory.log" if shard == 1 else "rss-trajectory-shard%d.log" % shard
+        path = _os.path.join(_env("AMICODE_WATCHDOG_DIR",
+                                  _os.path.expanduser("~/.amico/server/fleet-watchdog")), name)
+        with open(path) as f:
+            for line in f:
+                if "rss_kb=" in line:
+                    rss = int(line.rsplit("rss_kb=", 1)[1].split()[0])
+        return rss
+    except Exception:
+        return None
+
+def _sample_shards():
+    import urllib.parse as _up0
+    import urllib.request as _ur0
+    while True:
+        if SHARDED:
+            probe_dir = next(iter(TABLE["pools"]), "/home/aaron")
+            snap = {}
+            for shard, (host, port) in TABLE["backends"].items():
+                t0 = time.monotonic()
+                try:
+                    req = _ur0.Request("http://%s:%d/config?directory=%s"
+                                       % (host, port, _up0.quote(probe_dir, safe="")))
+                    with _ur0.urlopen(req, timeout=2.0) as r:
+                        r.read(1)
+                    snap[shard] = {"probe_ok": True,
+                                   "probe_ms": int((time.monotonic() - t0) * 1000)}
+                except Exception:
+                    snap[shard] = {"probe_ok": False, "probe_ms": None}
+                snap[shard]["rss_kb"] = _watchdog_rss_kb(shard)
+                snap[shard]["ts"] = time.time()
+            with _shard_samples_lock:
+                _shard_samples.update(snap)
+        time.sleep(float(_env("AMICODE_SHARD_SAMPLE_INTERVAL", "5")))
+
+if SHARDED:
+    threading.Thread(target=_sample_shards, daemon=True).start()
 
 def _get_group(shard, path):
     with _groups_lock:

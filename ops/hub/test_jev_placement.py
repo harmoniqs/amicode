@@ -100,6 +100,64 @@ class EnvMixin:
             return []
 
 
+class TestLocalAllocator(EnvMixin, unittest.TestCase):
+    """Slice 2b: the local weighted allocator — busy-ness snapshot in,
+    weighted pick out, dead probes excluded while any member answers."""
+
+    ALIVE = {1: {"probe_ok": True, "probe_ms": 5, "rss_kb": None},
+             2: {"probe_ok": True, "probe_ms": 5, "rss_kb": None},
+             3: {"probe_ok": False, "probe_ms": None, "rss_kb": None}}
+
+    def test_dead_probe_never_chosen_when_alternatives_exist(self):
+        with self.env(AMICODE_JEV_PLACEMENT="0", AMICODE_JEV_LOCAL="1"):
+            for _ in range(20):
+                shard, mode, fail, _ = jev_placement.place_with_jev(
+                    "ses_a", "/d", POOL, LOADS, FLOOR, self.ALIVE)
+                self.assertEqual(mode, "jev-local")
+                self.assertIn(shard, (1, 2))
+        rows = self.receipts_lines()
+        self.assertEqual(len(rows), 20)
+        self.assertEqual(rows[0]["mode"], "jev-local")
+        self.assertEqual(rows[0]["superseded"], "disabled")
+        self.assertIn("scores", rows[0])
+
+    def test_all_dead_still_places_someone(self):
+        dead = {i: {"probe_ok": False, "probe_ms": None} for i in POOL}
+        with self.env(AMICODE_JEV_PLACEMENT="0", AMICODE_JEV_LOCAL="1"):
+            shard, mode, fail, _ = jev_placement.place_with_jev(
+                "ses_a", "/d", POOL, LOADS, FLOOR, dead)
+        self.assertEqual(mode, "jev-local")
+        self.assertIn(shard, POOL)
+
+    def test_heavy_queue_shard_statistically_avoided(self):
+        # queue 50 (capped) vs 0 with equal probes: the loaded shard's weight
+        # is ~1/52^2 vs ~1/1.03^2 -- it must never win 30 draws.
+        loads = {1: 50, 2: 0, 3: 0}
+        with self.env(AMICODE_JEV_PLACEMENT="0", AMICODE_JEV_LOCAL="1"):
+            for _ in range(30):
+                shard, mode, fail, _ = jev_placement.place_with_jev(
+                    "ses_a", "/d", POOL, loads, FLOOR, self.ALIVE)
+                self.assertIn(shard, (2, 3))
+
+    def test_off_by_default_when_not_flagged(self):
+        with self.env(AMICODE_JEV_PLACEMENT="0"):
+            shard, mode, fail, _ = jev_placement.place_with_jev(
+                "ses_a", "/d", POOL, LOADS, FLOOR, self.ALIVE)
+        self.assertEqual((shard, mode, fail), (FLOOR, "deterministic", "disabled"))
+        self.assertEqual(self.receipts_lines(), [])
+
+    def test_outage_falls_to_local_not_floor(self):
+        # external Jev configured but unreachable -> the local allocator
+        # answers (with the outage receipted), instead of the dumb floor.
+        with self.api_env({"sleep": 30}, AMICODE_JEV_LOCAL="1", AMICODE_JEV_TIMEOUT="0.1"):
+            shard, mode, fail, _ = jev_placement.place_with_jev(
+                "ses_a", "/d", POOL, LOADS, FLOOR, self.ALIVE)
+        self.assertEqual(mode, "jev-local")
+        self.assertIn(shard, (1, 2))
+        rows = self.receipts_lines()
+        self.assertEqual(rows[-1]["superseded"], "outage")
+
+
 class TestGating(EnvMixin, unittest.TestCase):
     def test_flag_off_is_disabled_no_receipt(self):
         with self.env(AMICODE_JEV_PLACEMENT="0"):
