@@ -144,6 +144,10 @@ class ShardHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = self.path.split("?")[0]
+        try:
+            self.server.counts[path] = self.server.counts.get(path, 0) + 1
+        except Exception:
+            pass
         if path == "/session":
             self._json(self.server.sessions)
         elif path.startswith("/assets/") and path.endswith(".js"):
@@ -182,10 +186,14 @@ class ShardHandler(BaseHTTPRequestHandler):
         self.end_headers()
         try:
             self.wfile.write(('data: {"type":"server.connected","shard":%d}\n\n' % self.shard).encode())
+            for extra in getattr(self.server, "sse_inject", ()):
+                self.wfile.write(extra)
             self.wfile.flush()
             while True:
                 time.sleep(0.25)
                 self.wfile.write(('data: {"type":"server.heartbeat","shard":%d}\n\n' % self.shard).encode())
+                while getattr(self.server, "sse_inject", None):
+                    self.wfile.write(self.server.sse_inject.pop(0))
                 self.wfile.flush()
         except Exception:
             pass
@@ -222,6 +230,8 @@ class FakeShard:
         self.httpd.shard_id = shard_id
         self.httpd.sessions = sessions or []
         self.httpd.created = 0
+        self.httpd.counts = {}
+        self.httpd.sse_inject = []
         self.port = self.httpd.server_address[1]
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
 
@@ -744,6 +754,60 @@ class TestJevPlacement(RouterTest):
         self.assertEqual(rows[0]["mode"], "jev-local")
         self.assertIn("scores", rows[0])
         self.assertIn("samples", rows[0])
+
+
+    def _snapshot_pull_counts(self):
+        """message-endpoint pull counts per shard, keyed by sid path."""
+        out = {}
+        for sh in self.shards:
+            for path, n in sh.httpd.counts.items():
+                if "/message" in path:
+                    out[path] = out.get(path, 0) + n
+        return out
+
+    def test_snapshot_idle_rebuild_pulls_only_dirty(self):
+        """#1724: an event names ONE session -> the rebuild re-pulls that
+        session's page only; idle rebuilds pull nothing at all."""
+        fd = self.start_pool(sessions={
+            1: [sess("ses_sn1", 100)],
+            2: [sess("ses_sn2", 200)],
+            3: [sess("ses_sn3", 300)],
+        })
+        st, _, body = http_request(fd.port, "/snapshot?top=3")
+        self.assertEqual(st, 200)
+        snap = json.loads(body)
+        self.assertEqual(set(snap["messages"]), {"ses_sn1", "ses_sn2", "ses_sn3"})
+        base = self._snapshot_pull_counts()
+        self.assertEqual(base, {"/session/ses_sn1/message": 1,
+                                "/session/ses_sn2/message": 1,
+                                "/session/ses_sn3/message": 1})
+        # one event touches ses_sn2 -> only its page is re-pulled
+        frame = (b"data: {\"type\":\"message.updated\",\"data\":"
+                 b"{\"info\":{\"sessionID\":\"ses_sn2\"}}}\n\n")
+        for sh in self.shards:
+            sh.httpd.sse_inject.append(frame)
+        time.sleep(1.0)   # the merged upstream fans the frames in
+        st2, _, _ = http_request(fd.port, "/snapshot?top=3")
+        self.assertEqual(st2, 200)
+        after = self._snapshot_pull_counts()
+        self.assertEqual(after["/session/ses_sn2/message"], 2, "dirty session re-pulled")
+        self.assertEqual(after["/session/ses_sn1/message"], 1, "clean session untouched")
+        self.assertEqual(after["/session/ses_sn3/message"], 1, "clean session untouched")
+
+    def test_snapshot_pulls_route_to_owning_shard(self):
+        """#1724: a pinned session's message pull is served by its OWNING
+        shard, not silently by the default shard."""
+        fd = self.start_pool(
+            premap={"ses_snA": 2},
+            sessions={1: [], 2: [sess("ses_snA", 100)], 3: []})
+        st, _, body = http_request(fd.port, "/snapshot?top=3")
+        self.assertEqual(st, 200)
+        snap = json.loads(body)
+        self.assertIn("ses_snA", snap["messages"])
+        self.assertEqual(self.shards[0].httpd.counts.get("/session/ses_snA/message", 0), 0,
+                         "default shard must not serve a shard-2 session")
+        self.assertGreaterEqual(self.shards[1].httpd.counts.get("/session/ses_snA/message", 0), 1,
+                                "owning shard serves the pull")
 
 
 # --- #1723: the UI-revert guard ---------------------------------------------------

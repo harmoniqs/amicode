@@ -428,6 +428,19 @@ _snap_lock = threading.Lock()
 _snap_cache = {"t": 0.0, "body": None}
 _SNAP_TTL = 15.0
 
+# #1724: event-driven per-session message pages. The snapshot used to re-pull
+# every top-N session's messages on every rebuild — cost proportional to
+# DISPLAYED sessions (not active ones), all against the DEFAULT shard, and any
+# event nuked the whole cache so churn re-pulled everything. Instead: the
+# merged event frames mark the session they touch dirty, and rebuilds pull
+# ONLY dirty pages (plus a slow TTL safety refresh). An idle hub performs
+# zero message pulls.
+_MSG_LOCK = threading.Lock()
+_MSG_CACHE = {}      # sid -> (page, ts)
+_MSG_DIRTY = set()
+_MSG_TTL = float(_env("AMICODE_SNAPSHOT_MSG_TTL", "300"))
+_MSG_CACHE_MAX = 200
+
 def _dechunk(body):
     out = bytearray()
     i = 0
@@ -581,15 +594,39 @@ def build_snapshot(top):
     messages = {}
     trimmed = set()
     def pull(sid):
-        b = backend_get("/session/" + sid + "/message?limit=20")
-        if not b: return
-        try: page = _json.loads(b)
-        except Exception: return
-        raw = len(b)
-        page = _trim(page)
-        if len(_json.dumps(page)) < raw - 64:   # something was actually trimmed
-            trimmed.add(sid)
-        messages[sid] = page
+        # #1724: shard-aware — the session's OWNING shard serves the pull
+        # (the shared DB makes the default shard *work*, which is why months
+        # of display load silently piled onto shard 1), cached + dirty-marked
+        # (idle rebuilds re-pull nothing).
+        with _sess_map_lock:
+            shard = _sess_map.get(sid)
+        with _MSG_LOCK:
+            cached = _MSG_CACHE.get(sid)
+            dirty = sid in _MSG_DIRTY
+        if cached is not None and not dirty and time.time() - cached[1] < _MSG_TTL:
+            messages[sid] = cached[0]
+            return
+        b = backend_get("/session/" + sid + "/message?limit=20", shard=shard)
+        if b:
+            try:
+                page = _json.loads(b)
+            except Exception:
+                if cached is not None:
+                    messages[sid] = cached[0]
+                return
+            raw = len(b)
+            page = _trim(page)
+            if len(_json.dumps(page)) < raw - 64:   # something was actually trimmed
+                trimmed.add(sid)
+            messages[sid] = page
+            with _MSG_LOCK:
+                _MSG_DIRTY.discard(sid)
+                if len(_MSG_CACHE) >= _MSG_CACHE_MAX and sid not in _MSG_CACHE:
+                    _MSG_CACHE.pop(next(iter(_MSG_CACHE)))
+                _MSG_CACHE[sid] = (page, time.time())
+        elif cached is not None:
+            # stale beats empty: a failed pull degrades to the cached page
+            messages[sid] = cached[0]
     ids = [s.get("id") for s in sessions if isinstance(s, dict) and s.get("id")][:top]
     ths = [threading.Thread(target=pull, args=(i,)) for i in ids]
     for t in ths: t.start()
@@ -597,8 +634,14 @@ def build_snapshot(top):
     last_eid = None
     try:
         # slice 1c: the /global/event history lives in the MERGED group's
-        # shared ring in sharded mode (the union is the stream of record)
-        g = GROUPS.get(("merged" if SHARDED else 1, "/global/event"))
+        # shared ring in sharded mode (the union is the stream of record).
+        # #1724: GET the group, not just .get() — creating it starts the
+        # upstream loops whose frames dirty-mark message pages, so the
+        # snapshot is event-driven even with no tab holding the stream.
+        if SHARDED:
+            g = _get_merged_group("/global/event")
+        else:
+            g = _get_group(1, "/global/event")
         if g:
             with g.lock:
                 if g.history: last_eid = g.history[-1][0]
@@ -611,6 +654,19 @@ def build_snapshot(top):
 
 def snapshot_invalidate():
     with _snap_lock: _snap_cache["body"] = None
+
+def mark_session_dirty(frame):
+    """#1724: an event frame names the session it changed — dirty-mark that
+    session's message page instead of forcing every page to be re-pulled."""
+    m = _SES_RE_B.search(frame)
+    if m is None:
+        return
+    try:
+        sid = m.group(0).decode("ascii")
+    except Exception:
+        return
+    with _MSG_LOCK:
+        _MSG_DIRTY.add(sid)
 
 def serve_snapshot(c, first, raw):
     qs = raw.split("?", 1)[1] if "?" in raw else ""
@@ -826,11 +882,15 @@ class Group:
                     frames, reasm = _parse_frames(reasm)
                     for frame in frames:
                         # #1306: state changed — the snapshot cache must not
-                        # outlive the events that changed it.
+                        # outlive the events that changed it. #1724: the body
+                        # still drops for immediate freshness, but only the
+                        # session the frame NAMES is dirty-marked — the
+                        # rebuild re-pulls that one page, not all of them.
                         try:
                             if b'"message.' in frame or b'"session.' in frame or b'"server.' in frame:
                                 if b'"server.heartbeat' not in frame:
                                     snapshot_invalidate()
+                                    mark_session_dirty(frame)
                         except Exception: pass
                     with self.lock:
                         for frame in frames:
