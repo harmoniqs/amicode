@@ -451,6 +451,27 @@ class TestShardedRouter(RouterTest):
             self.assertIn("time", s)
             self.assertIn("updated", s["time"])
 
+    def test_fanout_dead_member_degrades_not_hangs(self):
+        """One wedged pool member must not hang the merged session list: the
+        deadline drops its contribution and the alive shards answer (the
+        2026-10-07 'switching sessions is laggy' failure — a 60s sequential
+        stall on every list switch while a shard was wedged)."""
+        fd = self.start_pool(sessions={
+            1: [sess("ses_d1", 100)],
+            2: [sess("ses_d2", 200)],
+            3: [sess("ses_d3", 300)],
+        })
+        self.shards[0].stop()
+        time.sleep(0.2)
+        t0 = time.time()
+        st, hdr, body = http_request(fd.port, "/session?directory=" + POOLDIR + "&limit=50",
+                                     timeout=15)
+        elapsed = time.time() - t0
+        self.assertEqual(st, 200)
+        self.assertLess(elapsed, 8.0, "dead member must not exceed the merge deadline")
+        ids = {s["id"] for s in json.loads(body)}
+        self.assertEqual(ids, {"ses_d2", "ses_d3"}, "only alive members contribute")
+
     def test_directory_default_routes_to_default_shard(self):
         """An unknown session requesting a NON-pooled ?directory= gets
         default_shard (no placement, no session-map pinning)."""

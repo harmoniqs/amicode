@@ -441,17 +441,43 @@ def _dechunk(body):
         i = j + 2 + n + 2
 
 def backend_get(target, timeout=60, shard=None):
-    """One-shot localhost GET. Slow answers stream; only failures return None."""
+    """One-shot localhost GET. Slow answers stream; only failures return None.
+
+    2026-10-07: the read loop can NOT wait for EOF — the service app sends the
+    body promptly but holds the socket ~6s after a Connection: close request
+    (keep-alive wins), so every merged-list fetch paid the full hold and the
+    5s merge deadline turned 'slow' into 'failed' (the 503s). Parse the
+    framing instead: read Content-Length body bytes exactly, or the chunked
+    terminator; EOF is only the fallback for neither being present."""
     b = _shard_backend(shard) if (SHARDED and shard is not None) else BACKEND
     try:
         s = socket.create_connection(b, timeout=8)
         s.settimeout(timeout)
         s.sendall(("GET " + target + f" HTTP/1.1\r\nHost: 127.0.0.1:{b[1]}\r\nConnection: close\r\nAccept-Encoding: identity\r\n\r\n").encode())
         buf = b""
+        want = None     # exact body length from Content-Length, once headers land
+        chunked = False
         while True:
+            if want is not None and len(buf) >= want:
+                break
             d = s.recv(262144)
-            if not d: break
+            if not d:
+                break
             buf += d
+            if want is None and b"\r\n\r\n" in buf:
+                i0 = buf.find(b"\r\n\r\n")
+                head0 = buf[:i0]
+                if b"transfer-encoding: chunked" in head0.lower():
+                    chunked = True
+                    if b"0\r\n\r\n" in buf:
+                        break
+                else:
+                    for line in head0.split(b"\r\n"):
+                        if line.lower().startswith(b"content-length:"):
+                            want = int(line.split(b":", 1)[1].strip()) + i0 + 4
+                            break
+                    if want is None and not chunked:
+                        break   # no framing at all: bodyless/no-content response
         s.close()
     except Exception:
         return None
@@ -509,14 +535,31 @@ def _merge_session_lists(lists):
 
 def _merged_session_list():
     """The hub-wide session list: every shard in sharded mode, one backend_get
-    in legacy mode. A dead member contributes nothing (per-shard blast radius)."""
+    in legacy mode. Parallel fan-out under the same merge deadline as the
+    pooled-directory list — a dead or wedged member contributes nothing and
+    delays nothing (the sequential version serially paid every dead shard's
+    full timeout)."""
     if not SHARDED:
         return backend_get("/session?limit=100")
-    lists = []
+    deadline = float(_env("AMICODE_MERGE_DEADLINE", "5"))
+    results = {}
+    threads = []
+
+    def fetch(shard):
+        try:
+            b = backend_get("/session?limit=100", timeout=deadline, shard=shard)
+            if b:
+                results[shard] = b
+        except Exception:
+            pass
+
     for shard in TABLE["backends"]:
-        b = backend_get("/session?limit=100", shard=shard)
-        if not b:
-            continue
+        t = threading.Thread(target=fetch, args=(shard,), daemon=True)
+        t.start(); threads.append(t)
+    for t in threads:
+        t.join(deadline + 1.0)
+    lists = []
+    for b in results.values():
         try:
             lists.append(_json0.loads(b))
         except Exception:
@@ -1094,13 +1137,19 @@ def serve_session_list(c, first, raw):
         return
     results = [None] * len(pool)
     threads = []
+    # 2026-10-07: the docstring always promised "a dead member contributes
+    # nothing" but the join was unbounded and backend_get's default timeout
+    # is 60s — one wedged shard hung every session-list switch for a full
+    # minute (the "switching sessions is laggy" reports). The deadline makes
+    # the promise real: slow members miss the merge, the rest answer.
+    deadline = float(_env("AMICODE_MERGE_DEADLINE", "5"))
     def fetch(i, shard):
-        results[i] = backend_get(target, shard=shard)
+        results[i] = backend_get(target, timeout=deadline, shard=shard)
     for i, shard in enumerate(pool):
         t = threading.Thread(target=fetch, args=(i, shard), daemon=True)
         t.start(); threads.append(t)
     for t in threads:
-        t.join()
+        t.join(deadline + 1.0)
     lists = []
     for b in results:
         if not b:
