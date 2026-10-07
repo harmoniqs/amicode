@@ -15,7 +15,7 @@ set -u
 
 THRESHOLD_KB="${WATCHDOG_THRESHOLD_KB:-2621440}"   # 1.5 GB — mid-burn, well above the ~400-700 MB healthy baseline
 SERVICE="${WATCHDOG_SERVICE:-co.harmoniqs.amicode-server.service}"
-PATTERN="${WATCHDOG_PATTERN:-$HOME/.amico/server/bin/opencode serve}"
+PATTERN="${WATCHDOG_PATTERN:-$HOME/.amico/server/bin/opencode serve --port 4094}"
 HEALTH_PORT="${WATCHDOG_HEALTH_PORT:-4094}"
 HEALTH_TIMEOUT="${WATCHDOG_HEALTH_TIMEOUT:-10}"
 # 2026-10-05: the corroboration probe must be CHEAP. /session is the heaviest
@@ -113,7 +113,10 @@ capture() {
 # TWO consecutive silent probes capture forensics and restart the engine
 # regardless of RSS. A single silent tick only arms the state (one blip
 # must not kill in-flight sessions).
-SILENT_MARKER="$LOG_DIR/http-silent-tick"
+# Per-shard marker (2026-10-07: a SHARED marker was a cross-shard kill race —
+# the healthy shards' watchdog instances wiped the wedged shard's marker on
+# their serving ticks, so the wedged shard armed forever and never fired).
+SILENT_MARKER="$LOG_DIR/http-silent-tick${AMICODE_SHARD_INDEX:+-shard$AMICODE_SHARD_INDEX}"
 if ! serving; then
   if [ -f "$SILENT_MARKER" ]; then
     rm -f "$SILENT_MARKER"
