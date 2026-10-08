@@ -28,6 +28,7 @@ import { stringify as stringifyYaml } from "yaml";
 import { claimsVerb } from "../src/claims_verb.js";
 import { SPINE_VERBS } from "../src/verbs.js";
 import { parseClaimNote } from "../src/claims.js";
+import { resolveMountStack } from "../src/mounts.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURES = join(HERE, "fixtures", "claims");
@@ -467,5 +468,178 @@ describe("amico claims curation — the /dream retirement (AC 5)", () => {
     for (const job of ["promote", "prune", "synthesize"]) expect(text).toContain(job);
     // the doc names the notturno job registry rows (the cadence contract the instance registers)
     expect(text).toContain("cadence");
+  });
+});
+
+// ── the public tier (amicode #1688, brain flywheel slice 9) ─────────────────────
+//
+// The brain's outbound face on the SAME promote machinery: a hermetic mount
+// stack (the committed fixtures — the source personal vault with the
+// public-registry claims + the two-note evidence cards, and the kind: public
+// target mount), the two-note visibility split checked at promotion time (the
+// public-safe claim passes; the two taint classes refuse BY NAME), the
+// marker/kind mount conventions (verified, never guessed), and the bundle's
+// third artifact — INDEX.md, the public vault's generated index.
+describe("amico claims promote --tier public — the public tier (#1688)", () => {
+  /** A hermetic mount stack: <root>/vault-aaron (personal, the claims registry
+   *  + the evidence cards) + <root>/vault-public (public) — assembled from the
+   *  committed fixtures so the mount conventions are exercised for real. */
+  function publicStack(): { root: string; registry: string; mount: string } {
+    const root = mkdtempSync(join(tmpdir(), "public-stack-"));
+    const source = join(root, "vault-aaron");
+    mkdirSync(join(source, "amicode"), { recursive: true });
+    cpSync(join(FIXTURES, "public-registry"), join(source, "amicode", "claims"), { recursive: true });
+    cpSync(join(FIXTURES, "vault", "amicode", "memory"), join(source, "amicode", "memory"), { recursive: true });
+    writeFileSync(join(source, ".amico-vault.toml"), 'kind = "personal"\nname = "vault-aaron"\n');
+    cpSync(join(FIXTURES, "public-mount"), join(root, "vault-public"), { recursive: true });
+    return { root, registry: join(source, "amicode", "claims"), mount: join(root, "vault-public") };
+  }
+
+  it("the mount is discoverable by the conventions: the stack resolves the public mount (marker kind, last in read precedence, read-only)", async () => {
+    const { root, mount } = publicStack();
+    const stack = resolveMountStack(root);
+    expect(stack.mounts).toHaveLength(2);
+    expect(stack.mounts[0]).toMatchObject({ kind: "personal", name: "vault-aaron", writable: true });
+    expect(stack.mounts[1]).toMatchObject({ kind: "public", name: "vault-public", writable: false });
+    // read precedence: the public tier is the stack's outer face (rank last)
+    expect(stack.mounts[1]!.path).toBe(mount);
+  });
+
+  it("dry-run: the plan names the target mount, the public-safe claim, and the refusals — nothing written", async () => {
+    const { root } = publicStack();
+    const r = await claimsVerb(["promote", "--tier", "public", "--from", "vault-aaron"], { ...ENV, AMICO_VAULTS_ROOT: root }, { now: NOON });
+    expect(r.code).toBe(0);
+    const json = r.json as Record<string, unknown>;
+    expect(json.dry_run).toBe(true);
+    expect(json.tier).toBe("public");
+    expect(json.target).toMatchObject({ name: "vault-public" });
+    // the public-safe claim is selected; the two taint classes refuse BY NAME
+    expect(json.selected).toEqual(["best_practice_public_safe.md"]);
+    expect(json.refused).toEqual([
+      { file: "insight_local_evidence.md", refusals: [expect.stringContaining("private-mechanism") as unknown as string] },
+      { file: "insight_mechanism_link.md", refusals: [expect.stringContaining("mechanism") as unknown as string] },
+    ]);
+    // the proposal body targets the public mount and names the refusals
+    const body = json.pr_body as string;
+    expect(body).toContain("promote: vault-aaron → vault-public (1 claims, 2026-10-02)");
+    expect(body).toContain("Refused by the two-note check");
+    // the index render rides the dry-run (the bundle's third artifact)
+    expect(json.index as string).toContain("best_practice_public_safe.md");
+    expect(existsSync(join(root, "vault-aaron", "amicode", "claims", "promotions"))).toBe(false);
+  });
+
+  it("apply: the bundle carries PR-BODY + the public-safe copy + INDEX.md; the refused claims are NOT in the bundle, NOT stamped, named in the body", async () => {
+    const { root, registry } = publicStack();
+    const state = join(mkdtempSync(join(tmpdir(), "public-state-")), "promote-state.json");
+    const r = await claimsVerb(
+      ["promote", "--tier", "public", "--from", "vault-aaron", "--state", state, "--apply"],
+      { ...ENV, AMICO_VAULTS_ROOT: root },
+      { now: NOON },
+    );
+    expect(r.code).toBe(0);
+    const json = r.json as Record<string, unknown>;
+    expect(json.proposes_only).toBe(true);
+    expect(json.auto_merge).toBe(false);
+    const bundle = join(registry, "promotions", "promote-20261002-120000");
+    expect(readdirSync(bundle).sort()).toEqual(["INDEX.md", "PR-BODY.md", "best_practice_public_safe.md"]);
+    // the copy is verbatim + both-ways provenance (promoted_from/promoted_to)
+    const copy = readFileSync(join(bundle, "best_practice_public_safe.md"), "utf8");
+    expect(copy.startsWith(readFileSync(join(registry, "best_practice_public_safe.md"), "utf8"))).toBe(true);
+    expect(copy).toContain("promoted_from: vault-aaron");
+    expect(copy).toContain("promoted_to: vault-public");
+    // the refused claims never ride the bundle, and are named in the body
+    expect(existsSync(join(bundle, "insight_local_evidence.md"))).toBe(false);
+    expect(existsSync(join(bundle, "insight_mechanism_link.md"))).toBe(false);
+    const body = readFileSync(join(bundle, "PR-BODY.md"), "utf8");
+    expect(body).toContain("insight_local_evidence.md");
+    expect(body).toContain("insight_mechanism_link.md");
+    // the INDEX render is generated from the bundle's claims
+    expect(readFileSync(join(bundle, "INDEX.md"), "utf8")).toContain("best_practice_public_safe.md");
+    // copy-never-move: the registry keeps every claim, untouched
+    expect(readdirSync(registry).filter((f) => f.endsWith(".md")).sort()).toEqual(
+      readdirSync(join(FIXTURES, "public-registry")).sort(),
+    );
+    // only the public-safe claim is stamped as proposed; refusals stay in the pool
+    const stamped = JSON.parse(readFileSync(state, "utf8")).proposals as Record<string, unknown>;
+    expect(Object.keys(stamped)).toEqual(["best_practice_public_safe.md"]);
+  });
+
+  it("a refused claim stays in the pool: the re-run re-refuses it BY NAME, never proposes it", async () => {
+    const { root, registry } = publicStack();
+    const state = join(mkdtempSync(join(tmpdir(), "public-state-")), "promote-state.json");
+    const first = await claimsVerb(
+      ["promote", "--tier", "public", "--from", "vault-aaron", "--state", state, "--apply"],
+      { ...ENV, AMICO_VAULTS_ROOT: root },
+      { now: NOON },
+    );
+    expect(first.code).toBe(0);
+    const second = await claimsVerb(
+      ["promote", "--tier", "public", "--from", "vault-aaron", "--state", state, "--apply"],
+      { ...ENV, AMICO_VAULTS_ROOT: root },
+      { now: () => new Date("2026-10-09T12:00:00.000Z") },
+    );
+    expect(second.code).toBe(0);
+    const json = second.json as Record<string, unknown>;
+    expect(json.selected).toEqual([]);
+    expect((json.refused as { file: string }[]).map((x) => x.file)).toEqual([
+      "insight_local_evidence.md",
+      "insight_mechanism_link.md",
+    ]);
+    // no second bundle: the safe claim is proposed, the taints are refused, nothing else exists
+    expect(existsSync(join(registry, "promotions", "promote-20261009-120000"))).toBe(false);
+  });
+
+  it("--to an explicit public mount is marker-verified and works without a stack; a NON-public --to is refused (never guessed)", async () => {
+    const { root, registry, mount } = publicStack();
+    const state = join(mkdtempSync(join(tmpdir(), "public-state-")), "promote-state.json");
+    // the explicit mount works even with no public mount in the stack
+    const bare = mkdtempSync(join(tmpdir(), "public-bare-"));
+    const ok = await claimsVerb(
+      ["promote", "--tier", "public", "--registry", registry, "--vault", join(FIXTURES, "vault"), "--to", mount, "--from", "vault-aaron", "--state", state, "--apply"],
+      { ...ENV, AMICO_VAULTS_ROOT: bare },
+      { now: NOON },
+    );
+    expect(ok.code).toBe(0);
+    expect((ok.json as Record<string, unknown>).target).toMatchObject({ name: "vault-public", path: mount });
+    // a non-public dir is refused by its marker — the target is verified, never guessed
+    const bad = await claimsVerb(
+      ["promote", "--tier", "public", "--registry", registry, "--vault", join(FIXTURES, "vault"), "--to", join(root, "vault-aaron"), "--from", "vault-aaron"],
+      { ...ENV, AMICO_VAULTS_ROOT: bare },
+      { now: NOON },
+    );
+    expect(bad.code).toBe(64);
+    expect((bad.json as { error: string }).error).toContain("public");
+  });
+
+  it("no public mount in the stack and no --to → 64 (the destination is never a guess)", async () => {
+    const bare = mkdtempSync(join(tmpdir(), "public-bare-"));
+    const registry = tempRegistry(); // scope-team claims only — the target refusal fires before the pool matters
+    const r = await claimsVerb(["promote", "--tier", "public", "--registry", registry], { ...ENV, AMICO_VAULTS_ROOT: bare }, { now: NOON });
+    expect(r.code).toBe(64);
+    expect((r.json as { error: string }).error).toContain("--to");
+  });
+
+  it("--tier bogus → 64", async () => {
+    const r = await claimsVerb(["promote", "--tier", "everywhere"], ENV, { now: NOON });
+    expect(r.code).toBe(64);
+    expect((r.json as { error: string }).error).toContain("--tier");
+  });
+
+  it("the public tier files the SAME promote job receipt (one job, two tiers — no second promotion path)", async () => {
+    const { root } = publicStack();
+    const dir = mkdtempSync(join(tmpdir(), "public-dash-"));
+    const dashboards = join(dir, "dashboards");
+    const state = join(mkdtempSync(join(tmpdir(), "public-state-")), "promote-state.json");
+    const r = await claimsVerb(
+      ["promote", "--tier", "public", "--from", "vault-aaron", "--state", state, "--apply", "--jobs", jobsRegistry(dir), "--dashboards", dashboards],
+      { ...ENV, AMICO_VAULTS_ROOT: root },
+      { now: NOON },
+    );
+    expect(r.code).toBe(0);
+    expect((r.json as Record<string, Record<string, unknown>>).receipt).toMatchObject({ filed: true, job: "promote" });
+    const text = readFileSync(join(dashboards, "scheduled-passes.md"), "utf8");
+    expect(text).toContain("## Pass 2026-10-02 — promote — ok");
+    expect(text).toContain("public tier");
+    expect(text).toContain("refused");
   });
 });
