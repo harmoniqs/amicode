@@ -2,7 +2,8 @@
 // open_threads — derived open-thread digest for the onset context (#1305).
 // Mechanizes the open-threads skill's classification step: sweep recent
 // sessions and classify each surviving one into a bucket
-// (blocked-on-user / awaiting-review / interrupted / parked / stale), then
+// (blocked-on-user / awaiting-review / interrupted / parked / todo-residue /
+// stale), then
 // compose a small markdown block for prompt injection, rendered after the
 // recent-sessions recap block in amicode_context.ts.
 //
@@ -21,8 +22,15 @@
 //                        waiting condition (report-only: the human owes it)
 //   awaiting-review   -> PR-state input feature says a PR awaits review
 //                        (report-only)
-//   parked            -> pending todos (resume candidate; todo-carrying
-//                        buckets may refine later)
+//   parked            -> pending todos with NO wrap-up in the final text
+//                        (resume candidate)
+//   todo-residue      -> pending todos BUT the final text wraps up — the
+//                        session closed with todos un-cleared. Surfaced as
+//                        its own bucket, never silently dropped and never
+//                        "parked": a finished campaign with lingering todos
+//                        is not an open thread. The upstream fix is the
+//                        loop-boundary todo rewrite (the derived-view rule
+//                        in the director-core skill).
 //   interrupted       -> last text is mid-action with no wrap-up (prime
 //                        resume candidate)
 //   stale             -> any of the above, older than the stale threshold
@@ -49,6 +57,7 @@ export type ThreadBucket =
   | "awaiting-review"
   | "interrupted"
   | "parked"
+  | "todo-residue"
   | "stale";
 
 /** PR-state as an INPUT feature — the caller's network spend, never fetched here. */
@@ -168,8 +177,12 @@ function isBlockedSignal(text: string): boolean {
 
 function isInterruptedSignal(text: string): boolean {
   const last = lastSentence(text);
-  if (WRAPPED_UP_PATTERN.test(last)) return false;
+  if (isWrappedUpSignal(text)) return false;
   return INTERRUPTED_PATTERNS.some(p => p.test(text)) || ANNOUNCED_ACTION_PATTERN.test(last);
+}
+
+function isWrappedUpSignal(text: string): boolean {
+  return WRAPPED_UP_PATTERN.test(lastSentence(text));
 }
 
 // ── Classification (pure, testable) ──────────────────────────────────────────
@@ -187,7 +200,10 @@ export function classifyThread(features: ThreadFeatures, staleAfterDays: number)
     : features.prState === "awaiting-review"
       ? "awaiting-review"
       : features.pendingTodos > 0
-        ? "parked"
+        // A wrap-up in the final text splits the pending-todo reading: the
+        // session CLOSED with todos un-cleared — residue, surfaced as its
+        // own bucket, never a parked resume candidate (#1733).
+        ? (isWrappedUpSignal(features.lastAssistantText) ? "todo-residue" : "parked")
         : isInterruptedSignal(features.lastAssistantText)
           ? "interrupted"
           : null;
@@ -208,6 +224,10 @@ function threadSignal(features: ThreadFeatures, bucket: ThreadBucket): string {
       return features.pendingTodos === 1
         ? "1 pending todo"
         : `${features.pendingTodos} pending todos`;
+    case "todo-residue":
+      return features.pendingTodos === 1
+        ? "wrapped up, 1 lingering todo (residue, not an open thread)"
+        : `wrapped up, ${features.pendingTodos} lingering todos (residue, not an open thread)`;
     case "interrupted":
       return "ended mid-action";
     case "stale":

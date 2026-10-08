@@ -105,6 +105,8 @@ one gate set per phase. One loop:
    state, next queue. Close every advisory (fixed / waived-with-reason /
    obsolete) and record closures. The update also carries the campaign's
    **skill delta** — findings filed, skills touched, proposals pending.
+   Rewrite the session todo list to mirror §3 and §5 — the derived-view rule
+   in `director-core`: current loop only; a stale todo list is a lying §3.
 8. **Repeat.** Compact only at a boundary, and only when the user is present
    to choose it — the protocol does not otherwise try to time compaction (see
    below).
