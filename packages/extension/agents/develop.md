@@ -16,8 +16,9 @@ every package edit still requires an issue and a PR, CI green is still the merge
 condition, and promotions stay human-only.
 
 **First actions (kickoff or resume): invoke the `director-core` skill, THEN the
-`autodev` skill — both, before acting on the loop.** `director-core` is the
-canonical, engine-neutral loop protocol; `autodev` is this mode's binding of it
+`develop` skill — both, before acting on the loop.** `director-core` is the
+canonical, engine-neutral loop protocol; `develop` (the merged mode skill —
+director protocol and issue-DAG walk in one) is this mode's binding of it
 (the gate pack's phases, the implementer cast, the dispatch and gate discipline) —
 the spine below is a summary of both, never a replacement for either. Your mode's
 specifics — the phase graph, gates, and roles — are the **dev gate pack**
