@@ -245,23 +245,25 @@ def _seed_question_map():
     try:
         import urllib.parse as _upq
         for d, pool in TABLE["pools"].items():
-            target = "/question?directory=" + _upq.quote(d, safe="")
-            for shard in pool:
-                b = backend_get(target, timeout=4, shard=shard)
-                if not b:
-                    continue
-                try:
-                    arr = _json0.loads(b)
-                except Exception:
-                    continue
-                if not isinstance(arr, list):
-                    continue
-                with _QUESTION_LOCK:
-                    for q in arr:
-                        if isinstance(q, dict) and isinstance(q.get("id"), str) and q["id"].startswith("que_"):
-                            _QUESTION_SHARD[q["id"]] = shard
-                            if len(_QUESTION_SHARD) > _QUESTION_MAX:
-                                _QUESTION_SHARD.pop(next(iter(_QUESTION_SHARD)))
+            for base in ("/question", "/permission"):
+                target = base + "?directory=" + _upq.quote(d, safe="")
+                for shard in pool:
+                    b = backend_get(target, timeout=4, shard=shard)
+                    if not b:
+                        continue
+                    try:
+                        arr = _json0.loads(b)
+                    except Exception:
+                        continue
+                    if not isinstance(arr, list):
+                        continue
+                    with _QUESTION_LOCK:
+                        for q in arr:
+                            if (isinstance(q, dict) and isinstance(q.get("id"), str)
+                                    and (q["id"].startswith("que_") or q["id"].startswith("per_"))):
+                                _QUESTION_SHARD[q["id"]] = shard
+                                if len(_QUESTION_SHARD) > _QUESTION_MAX:
+                                    _QUESTION_SHARD.pop(next(iter(_QUESTION_SHARD)))
     except Exception:
         pass
 
@@ -713,14 +715,15 @@ def mark_session_dirty(frame):
 # sessions moved off it). The question events riding the merged streams
 # carry the mapping: a question.v2.asked frame ARRIVED from the posing
 # shard's upstream, so the frame + the upstream's shard id ARE the map.
-_QUE_RE = _re1.compile(r"que_[A-Za-z0-9]+")
-_QUE_RE_B = _re1.compile(rb"que_[A-Za-z0-9]+")
+_QUE_RE = _re1.compile(r"(?:que|per)_[A-Za-z0-9]+")
+_QUE_RE_B = _re1.compile(rb"(?:que|per)_[A-Za-z0-9]+")
 _QUESTION_LOCK = threading.Lock()
-_QUESTION_SHARD = {}    # que_id -> shard that posed it
+_QUESTION_SHARD = {}    # que_/per_ id -> shard that posed it (process-local)
 _QUESTION_MAX = 500
+_REQ_EVENT_MARKERS = (b"question.v2", b"permission.v2")
 
 def note_question_frame(frame, shard_id):
-    if b"question.v2" not in frame:
+    if not any(marker in frame for marker in _REQ_EVENT_MARKERS):
         return
     m = _QUE_RE_B.search(frame)
     if m is None:
@@ -730,7 +733,7 @@ def note_question_frame(frame, shard_id):
     except Exception:
         return
     with _QUESTION_LOCK:
-        if b"question.v2.replied" in frame or b"question.v2.rejected" in frame:
+        if b"replied" in frame or b"rejected" in frame:
             _QUESTION_SHARD.pop(qid, None)
         else:
             _QUESTION_SHARD[qid] = shard_id
@@ -1411,7 +1414,7 @@ def handle(c, addr, cid):
             return
         # --- 2026-09-04 caps (#775 mitigation): starve the attach-boot leak feed ---
         raw = parts[1] if len(parts) > 1 else "/"
-        if parts[0] == "GET" and raw.split("?")[0] == "/question" and SHARDED:
+        if parts[0] == "GET" and raw.split("?")[0] in ("/question", "/permission") and SHARDED:
             serve_question_list(c, first, raw)
             return
         if parts[0] == "GET" and raw.split("?")[0] == "/session":

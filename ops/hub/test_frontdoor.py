@@ -860,6 +860,25 @@ class TestJevPlacement(RouterTest):
         self.assertEqual(st, 200)
         self.assertEqual(hdr["x-backend-shard"], "2")
 
+    def test_permission_reply_routes_to_posing_shard(self):
+        """2026-10-07: permission requests are process-local state too — the
+        reply route is the same shape as questions (/permission/per_X/reply,
+        no session id, no directory) and needs the same posing-shard routing."""
+        fd = self.start_pool()
+        frame = (b"data: {\"type\":\"permission.v2.asked\",\"data\":"
+                 b"{\"id\":\"per_test1\"}}\n\n")
+        for sh in self.shards:
+            sh.httpd.sse_inject.append(frame if sh.shard_id == 3 else
+                                       b"data: {}\n\n")
+        time.sleep(1.0)
+        st, hdr, _ = http_request(fd.port, "/permission/per_test1/reply", method="POST",
+                                  body=b'{"action":"allow"}')
+        self.assertEqual(st, 200)
+        self.assertEqual(hdr["x-backend-shard"], "3")
+        self.assertGreaterEqual(self.shards[2].httpd.counts.get("/permission/per_test1/reply", 0), 1)
+        self.assertEqual(self.shards[0].httpd.counts.get("/permission/per_test1/reply", 0), 0)
+
+
 
 # --- #1723: the UI-revert guard ---------------------------------------------------
 
