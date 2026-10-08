@@ -93,7 +93,7 @@ export function stampPromoted(state: PromoteState, files: string[], stamp: Promo
 }
 
 export interface PromotePlan {
-  /** scope-team live claims not yet proposed (deterministic: file order) */
+  /** scope-tier live claims not yet proposed (deterministic: file order) */
   eligible: string[];
   /** the first `cap` eligible — this bundle's proposals */
   selected: string[];
@@ -103,20 +103,29 @@ export interface PromotePlan {
   excluded: string[];
 }
 
-/** Plan the promotion: eligible = `scope: team` AND live (the hot statuses —
- *  terminal knowledge never crosses the ladder) AND not already proposed.
- *  Public-scoped claims are excluded BY NAME (the public tier is a later
- *  slice's outer face, never this job's pool); personal claims are simply
- *  out of the pool. The cap keeps one bundle at 10; overflow carries. */
-export function planPromotion(claims: RegistryClaim[], state: PromoteState, opts: { cap?: number } = {}): PromotePlan {
+/** The promotion ladder's two bundle destinations (#1688): `team` (the
+ *  armonissima PR flow, the default) and `public` (the brain's outbound
+ *  face — the kind: public mount, generated from scope-public claims). */
+export type PromotionTier = "team" | "public";
+
+/** Plan the promotion: eligible = claims at the run's `tier` scope AND live
+ *  (the hot statuses — terminal knowledge never crosses the ladder) AND not
+ *  already proposed. Cross-tier claims are excluded BY NAME (a scope-public
+ *  claim in a team run, a scope-team claim in a public run — the tier's own
+ *  run is named, never a silent drop); personal claims are simply out of
+ *  every pool. The cap keeps one bundle at 10; overflow carries. */
+export function planPromotion(claims: RegistryClaim[], state: PromoteState, opts: { cap?: number; tier?: PromotionTier } = {}): PromotePlan {
   const cap = opts.cap ?? PROMOTE_CAP;
+  const tier = opts.tier ?? "team";
   const eligible: string[] = [];
   const excluded: string[] = [];
   for (const { file, claim } of [...claims].sort((a, b) => (a.file < b.file ? -1 : 1))) {
-    if (claim.scope !== "team") {
-      if (claim.scope === "public")
-        excluded.push(`${file} (scope: public — the public tier is a later slice's outer face, never this job's pool)`);
-      continue; // personal is simply out of the pool — no naming, no guessing
+    if (claim.scope !== tier) {
+      if (claim.scope === "public" && tier === "team")
+        excluded.push(`${file} (scope: public — the public tier rides this same job's --tier public run, never the team tier's pool)`);
+      else if (claim.scope === "team" && tier === "public")
+        excluded.push(`${file} (scope: team — the team tier's pool (this job's default run), never the public tier's)`);
+      continue; // personal is simply out of every pool — no naming, no guessing
     }
     if (state.proposals[file] !== undefined) continue; // pending a human merge — out of the pool
     if (!(HOT_STATUSES as readonly string[]).includes(claim.status as string)) {
@@ -145,27 +154,68 @@ function prRow(entry: RegistryClaim): string {
 
 /** Render the promotion bundle's PR body — the PROPOSAL artifact a human
  *  merges. Carries the double gate, the dream-promote branch convention, one
- *  row per proposed claim, the carried overflow, and the exact human-run
- *  steps. Deterministic. */
+ *  row per proposed claim, the carried overflow, the exact human-run steps,
+ *  and (the public tier, #1688) the two-note refusals by name. Deterministic. */
 export function renderPrBody(
   plan: PromotePlan,
   claims: RegistryClaim[],
-  meta: { sourceVault: string; bundleId: string; now: Date },
+  meta: {
+    sourceVault: string;
+    bundleId: string;
+    now: Date;
+    /** the bundle's tier (#1688) — default team (the armonissima flow) */
+    tier?: PromotionTier;
+    /** the destination vault's name — default armonissima (the team tier) */
+    destination?: string;
+    /** the public tier: the destination mount's path (the checkout step) */
+    targetPath?: string;
+    /** the public tier: one named refusal line per refused claim */
+    refusals?: string[];
+  },
 ): string {
   const date = meta.now.toISOString().slice(0, 10);
+  const tier = meta.tier ?? "team";
+  const destination = meta.destination ?? "armonissima";
   const byFile = new Map(claims.map((c) => [c.file, c]));
   const rows = plan.selected.map((file) => byFile.get(file)).filter((c): c is RegistryClaim => c !== undefined).map(prRow);
+  const steps =
+    tier === "public"
+      ? [
+          "1. Review the table; drop any claim that should not leave the vault by deleting",
+          "   its copy from this bundle.",
+          `2. In the public mount's checkout (${meta.targetPath ?? "<the kind: public mount>"}): \`git checkout -b promote/${meta.sourceVault}\` (reuse the`,
+          "   branch from a prior unmerged run if it exists).",
+          "3. Copy each remaining claim file from this bundle into `amicode/claims/`, and",
+          "   replace `amicode/claims/INDEX.md` with this bundle's INDEX.md — the index is",
+          "   generated from claims, never hand-authored.",
+          "4. Commit, push, and open the PR against the public vault's own repository.",
+          "5. Only AFTER the merge does anything change downstream — stamping the source",
+          "   claims (`promoted_to`, the both-ways provenance) is a later, merged-PR",
+          "   writeback (dream-promote Step 1), never this verb's.",
+        ]
+      : [
+          "1. Review the table; drop any claim that should not leave the vault by deleting",
+          "   its copy from this bundle.",
+          `2. In the armonissima checkout: \`git checkout -b promote/${meta.sourceVault}\` (reuse the`,
+          "   branch from a prior unmerged run if it exists).",
+          "3. Copy each remaining claim file from this bundle into `amicode/claims/`.",
+          `4. Commit, push, and open the PR: \`gh pr create --repo harmoniqs/armonissima --base main --title "promote: ${meta.sourceVault} → armonissima (${plan.selected.length} claims, ${date})" --body-file PR-BODY.md\`.`,
+          "5. Only AFTER the merge does anything change downstream — stamping the source",
+          "   claims is a later, merged-PR-driven writeback (dream-promote Step 1), never",
+          "   this verb's.",
+        ];
   return [
     "<!--",
-    "generated view — `amico claims promote` (amicode #1685, brain flywheel slice 6)",
+    "generated view — `amico claims promote` (amicode #1685, brain flywheel slice 6;",
+    tier === "public" ? "public tier: amicode #1688, slice 9)" : undefined,
     "a PROPOSAL, never an action: this verb never opens a PR, never merges, never",
     "pushes. The double gate is the trust boundary — gate 1 is the author tagging",
-    "`scope: team` on each claim (already done; that is why they are here); gate 2 is",
+    `\`scope: ${tier}\` on each claim (already done; that is why they are here); gate 2 is`,
     "a HUMAN reviewing this bundle and merging it by hand. The bundle is the audit",
     "artifact: nothing has left the source vault until a human opens the PR.",
     "-->",
     "",
-    `# promote: ${meta.sourceVault} → armonissima (${plan.selected.length} claims, ${date})`,
+    `# promote: ${meta.sourceVault} → ${destination} (${plan.selected.length} claims, ${date})`,
     "",
     `Bundle \`${meta.bundleId}\` — proposed ${meta.now.toISOString()} by the weekly promote job`,
     `(notturno job id \`promote\`, amicode #1685). Branch: \`promote/${meta.sourceVault}\` (the`,
@@ -183,40 +233,92 @@ export function renderPrBody(
       ? ["none — every eligible claim fit under the cap"]
       : plan.overflow.map((f) => `- \`${f}\``)),
     "",
-    "## What a human does next (gate 2 — the only path to armonissima)",
+    ...(meta.refusals !== undefined && meta.refusals.length > 0
+      ? [
+          "## Refused by the two-note check (named, never silently dropped)",
+          "",
+          ...meta.refusals.map((r) => `- ${r}`),
+          "",
+          "A refused claim is NOT proposed and NOT stamped — it stays in the pool.",
+          "Fix the two-note split (the public-safe statement apart from the private",
+          "mechanism) and it rides the next run.",
+          "",
+        ]
+      : []),
+    `## What a human does next (gate 2 — the only path to ${destination})`,
     "",
-    "1. Review the table; drop any claim that should not leave the vault by deleting",
-    "   its copy from this bundle.",
-    `2. In the armonissima checkout: \`git checkout -b promote/${meta.sourceVault}\` (reuse the`,
-    "   branch from a prior unmerged run if it exists).",
-    "3. Copy each remaining claim file from this bundle into `amicode/claims/`.",
-    `4. Commit, push, and open the PR: \`gh pr create --repo harmoniqs/armonissima --base main --title "promote: ${meta.sourceVault} → armonissima (${plan.selected.length} claims, ${date})" --body-file PR-BODY.md\`.`,
-    "5. Only AFTER the merge does anything change downstream — stamping the source",
-    "   claims is a later, merged-PR-driven writeback (dream-promote Step 1), never",
-    "   this verb's.",
+    ...steps,
     "",
     "Excluded from this proposal (named, never silently dropped):",
     ...(plan.excluded.length === 0 ? ["- none"] : plan.excluded.map((e) => `- ${e}`)),
     "",
-  ].join("\n");
+  ]
+    .filter((line): line is string => line !== undefined)
+    .join("\n");
 }
 
 /** Render one promotion copy: the claim note VERBATIM (the frontmatter IS the
  *  claim object — untouched, the ONE contract survives promotion) + a
- *  provenance footer. Copy-never-move: the source claim stays. */
+ *  provenance footer carrying the BOTH-WAYS stamps (#1688 AC: promoted_from /
+ *  promoted_to — the copy's own record of where it came from and where it is
+ *  going; the source claim's own promoted_to writeback stays the
+ *  merged-PR-driven human step). Copy-never-move: the source claim stays. */
 export function renderPromotionCopy(
   raw: string,
-  meta: { file: string; sourceVault: string; bundleId: string; now: Date },
+  meta: { file: string; sourceVault: string; bundleId: string; now: Date; targetVault?: string },
 ): string {
+  const target = meta.targetVault ?? "armonissima";
   return [
     raw.replace(/\n+$/, ""),
     "",
     "## Provenance",
     "",
+    `promoted_from: ${meta.sourceVault} · amicode/claims/${meta.file}`,
+    `promoted_to: ${target} · amicode/claims/${meta.file}`,
+    "",
     `Promoted by \`amico claims promote\` (amicode #1685) on ${meta.now.toISOString().slice(0, 10)} —`,
     `bundle \`${meta.bundleId}\`, copy-never-move from ${meta.sourceVault}'s claims registry`,
     `(\`amicode/claims/${meta.file}\`). The source claim stays where it is; a human merges`,
     "this bundle (the double gate: the author's scope tag + the human PR merge).",
+    "",
+  ].join("\n");
+}
+
+// ── the public tier's index render (amicode #1688, slice 9 — AC 4) ────────────
+
+/** Render the public vault's claims index — the bundle's third artifact
+ *  (PR-BODY.md + the copies + this), generated FROM the bundle's claims:
+ *  the public tier is a projection of scope-public claims, never
+ *  hand-authored (hand-edits are regenerated away by the next bundle).
+ *  Deterministic. */
+export function renderPublicIndex(
+  selected: RegistryClaim[],
+  meta: { sourceVault: string; bundleId: string; now: Date },
+): string {
+  const date = meta.now.toISOString().slice(0, 10);
+  const rows = selected.map((entry) => {
+    const c = entry.claim;
+    const statement = String(c.statement).replace(/\|/g, "\\|");
+    return `| [${entry.file}](${entry.file}) | ${statement} | ${c.type} | ${c.status} | ${c.confidence} | ${c.applied}× |`;
+  });
+  return [
+    "<!--",
+    "generated view — `amico claims promote --tier public` (amicode #1688, brain flywheel slice 9)",
+    "source of truth: the source vault's claims registry — never this file. The public",
+    "tier is GENERATED from scope-public claims, never hand-authored — it rides the",
+    "proposes-only bundle (a human merges); hand-edits are regenerated away by the",
+    "next bundle — edit claims, not this view.",
+    "-->",
+    "",
+    `# Public claims — ${meta.sourceVault} (${date})`,
+    "",
+    `Bundle \`${meta.bundleId}\` — ${selected.length} claim${selected.length === 1 ? "" : "s"}, proposed ${meta.now.toISOString()}.`,
+    "Provenance rides each claim copy's footer (promoted_from / promoted_to, both",
+    "ways) and its evidence pointers — one substrate, every artifact a projection.",
+    "",
+    "| claim | statement | type | status | confidence | applied |",
+    "|---|---|---|---|---|---|",
+    ...rows,
     "",
   ].join("\n");
 }

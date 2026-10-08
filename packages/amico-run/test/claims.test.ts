@@ -38,6 +38,8 @@ import {
   INDEX_DEFAULT_PER_TYPE,
   stampAdoption,
   isStamped,
+  checkPublicSafety,
+  PUBLIC_SAFE_VISIBILITIES,
 } from "../src/claims.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -552,5 +554,91 @@ describe("adoption stamping (#1683, AC 1 + AC 3: counter + date, history appende
   it("the citation check never confuses prefix siblings (ref a ≠ ref a-b)", () => {
     const once = stampAdoption(stampableClaim(), { kind: "recommend-outcome", ref: "demo/2" }, STAMPED_AT);
     expect(isStamped(once.claim, { kind: "recommend-outcome", ref: "demo/22" })).toBe(false);
+  });
+});
+
+// ── the public-tier promotion gate (amicode #1688, brain flywheel slice 9) ────
+
+// The two-note visibility split, CHECKED at promotion time: a scope-public
+// claim's copy must not carry the private half of the split along — neither
+// evidence resolving into private-mechanism content (a visibility: local
+// note; absent visibility is the vault default local) nor a `mechanism:`
+// wikilink to a local note carried in the claim's own note. Fixtures are the
+// committed contract (the two-note cards under the vault fixture); the check
+// is a read-only substrate probe, the lint pattern.
+describe("claims core — checkPublicSafety (the two-note split at the public promotion gate, #1688)", () => {
+  const SAFE = { vaultRoot: VAULT_FIXTURE };
+
+  it("public-safe evidence (visibility: public) passes clean", () => {
+    const r = checkPublicSafety("", { evidence: ["memory-card/reference_public_best_practice.md"] }, SAFE);
+    expect(r.ok).toBe(true);
+    expect(r.refusals).toEqual([]);
+  });
+
+  it("team-visibility evidence passes (company-safe is not private-mechanism content)", () => {
+    const r = checkPublicSafety("", { evidence: ["memory-card/reference_team_context.md"] }, SAFE);
+    expect(r.ok).toBe(true);
+  });
+
+  it("evidence resolving into private-mechanism content (visibility: local) is refused BY NAME", () => {
+    const r = checkPublicSafety("", { evidence: ["memory-card/fluxonium_private_params.md"] }, SAFE);
+    expect(r.ok).toBe(false);
+    expect(r.refusals[0]).toContain("memory-card/fluxonium_private_params.md");
+    expect(r.refusals[0]).toContain("local");
+    expect(r.refusals[0]).toContain("private");
+  });
+
+  it("absent visibility is the vault default local — refused, never waved through on a guess", () => {
+    const r = checkPublicSafety("", { evidence: ["memory-card/feedback_warm_starts.md"] }, SAFE);
+    expect(r.ok).toBe(false);
+    expect(r.refusals[0]).toContain("default");
+  });
+
+  it("a mechanism link to a local note in the claim's own note is refused BY NAME (the split's private half never rides)", () => {
+    const raw = [
+      "---",
+      "type: insight",
+      "---",
+      "",
+      "## Original card — frontmatter (preserved verbatim)",
+      "",
+      "```yaml",
+      'mechanism: "[[fluxonium-private-params]]"',
+      "```",
+      "",
+    ].join("\n");
+    const r = checkPublicSafety(raw, { evidence: ["memory-card/reference_public_best_practice.md"] }, SAFE);
+    expect(r.ok).toBe(false);
+    expect(r.refusals[0]).toContain("mechanism");
+    expect(r.refusals[0]).toContain("[[fluxonium-private-params]]");
+  });
+
+  it("a mechanism line without a wikilink is not a link — prose is never false-positived", () => {
+    const raw = "---\ntype: insight\n---\n\nthe convergence mechanism: bilinear pairing\n";
+    const r = checkPublicSafety(raw, { evidence: ["memory-card/reference_public_best_practice.md"] }, SAFE);
+    expect(r.ok).toBe(true);
+  });
+
+  it("chat pointers are substrate provenance ids, not content — they pass (one substrate, provenance intact)", () => {
+    const r = checkPublicSafety("", { evidence: ["chat-session/ses_abc123", "chat-message/msg_def456"] }, SAFE);
+    expect(r.ok).toBe(true);
+  });
+
+  it("memory-card evidence with no vault substrate is refused honestly (visibility cannot be checked, never guessed)", () => {
+    const r = checkPublicSafety("", { evidence: ["memory-card/reference_public_best_practice.md"] }, {});
+    expect(r.ok).toBe(false);
+    expect(r.refusals[0]).toContain("cannot");
+    expect(r.refusals[0]).toContain("--vault");
+  });
+
+  it("unresolvable memory-card evidence is refused (an uncheckable pointer is never waved through)", () => {
+    const r = checkPublicSafety("", { evidence: ["memory-card/gone_card.md"] }, SAFE);
+    expect(r.ok).toBe(false);
+    expect(r.refusals[0]).toContain("gone_card.md");
+    expect(r.refusals[0]).toContain("does not resolve");
+  });
+
+  it("PUBLIC_SAFE_VISIBILITIES is the closed set (team + public ride; local never)", () => {
+    expect([...PUBLIC_SAFE_VISIBILITIES]).toEqual(["team", "public"]);
   });
 });

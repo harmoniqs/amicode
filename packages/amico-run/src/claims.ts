@@ -295,6 +295,91 @@ export function parseClaimNote(raw: string): { ok: true; claim: Record<string, u
   return { ok: true, claim: fm.data };
 }
 
+// ── the public-tier promotion gate (amicode #1688, brain flywheel slice 9) ────
+//
+// The two-note visibility split, CHECKED at promotion time: a scope-public
+// claim's copy must not carry the private half of the split along — neither
+// an evidence pointer resolving into private-mechanism content (a
+// `visibility: local` note; ABSENT visibility is the vault default local,
+// never waved through on a guess) nor a `mechanism:` wikilink to a local
+// note carried in the claim's own note (it rides the preserved card
+// frontmatter or the prose; the claim's own frontmatter is closed by the
+// contract and can never carry it). Chat / paper / meeting-note pointers are
+// SUBSTRATE provenance ids — opaque, content-free — they pass: the
+// one-substrate doctrine keeps evidence riding every copy.
+//
+// HONEST LIMIT: statement TEXT is not judged here — a machine cannot read a
+// sentence for IP; the check enforces the split mechanically (pointers +
+// links), and the author owns the statement. Read-only substrate probes only
+// (the lint pattern); every refusal is named, never guessed.
+
+/** The visibility values evidence may resolve into for the public tier:
+ *  `team` content is company-safe (not private-mechanism), `public` is
+ *  world-safe; anything else — including ABSENT, the vault default local —
+ *  never rides a public copy. */
+export const PUBLIC_SAFE_VISIBILITIES = ["team", "public"] as const;
+
+export interface PublicSafetyCheck {
+  ok: boolean;
+  /** one named refusal per taint (the pointer or link, the class, the fix) */
+  refusals: string[];
+}
+
+/** Check one claim's two-note safety for the public tier. `raw` is the claim
+ *  note's full text (the mechanism-link scan reads the preserved card
+ *  frontmatter + prose below the frontmatter); `claim` is the parsed claim
+ *  object; `substrates.vaultRoot` resolves memory-card evidence. Never
+ *  throws — every problem is a named refusal. */
+export function checkPublicSafety(
+  raw: string,
+  claim: Record<string, unknown>,
+  substrates: { vaultRoot?: string },
+): PublicSafetyCheck {
+  const refusals: string[] = [];
+  // the mechanism link: a line-initial `mechanism:` key carrying a wikilink —
+  // the public-safe half's pointer to its private mechanism note. Without the
+  // `[[…]]` it is not a link (prose is never false-positived).
+  const mechanism = raw.match(/^[ \t]*mechanism[ \t]*:[ \t]*(.+)$/m);
+  if (mechanism !== null) {
+    const link = mechanism[1]!.match(/\[\[([^\]|#]+)/);
+    if (link !== null) {
+      refusals.push(
+        `mechanism link to a local note "[[${link[1]!.trim()}]]" — the public tier never carries the two-note split's private half along (author the split apart; the mechanism stays in its local mount)`,
+      );
+    }
+  }
+  const evidence = Array.isArray(claim.evidence) ? (claim.evidence as string[]) : [];
+  for (const pointer of evidence) {
+    const slash = pointer.indexOf("/");
+    const kind = slash === -1 ? "" : pointer.slice(0, slash);
+    const id = slash === -1 ? "" : pointer.slice(slash + 1);
+    if (kind !== "memory-card") continue; // substrate/intake pointers are provenance ids, not content
+    if (substrates.vaultRoot === undefined) {
+      refusals.push(`${pointer}: cannot check visibility — no vault substrate given (pass --vault <mount root>); the public gate never guesses`);
+      continue;
+    }
+    const card = join(substrates.vaultRoot, "amicode", "memory", id);
+    if (!existsSync(card)) {
+      refusals.push(
+        `${pointer}: evidence does not resolve under ${join(substrates.vaultRoot, "amicode", "memory")} — an uncheckable pointer is refused, never waved through (the lint stays the gate)`,
+      );
+      continue;
+    }
+    const fm = parseFrontmatter(readFileSync(card, "utf8"));
+    if (!fm.ok) {
+      refusals.push(`${pointer}: unreadable card — visibility cannot be checked (${fm.error})`);
+      continue;
+    }
+    const visibility = fm.data.visibility;
+    if (typeof visibility !== "string" || !(PUBLIC_SAFE_VISIBILITIES as readonly string[]).includes(visibility)) {
+      refusals.push(
+        `${pointer}: evidence resolves into private-mechanism content (visibility: ${typeof visibility === "string" ? visibility : "absent — the vault default is local"}) — local notes never leave their mount; the two-note split means the mechanism stays behind`,
+      );
+    }
+  }
+  return { ok: refusals.length === 0, refusals };
+}
+
 // ── the hot-layer index (amicode #1682, slice 3 — MEMORY.md becomes a view) ───
 //
 // The hand-maintained memory index is dissolved: the hot layer is a DERIVED
