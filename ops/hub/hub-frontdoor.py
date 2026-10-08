@@ -720,7 +720,13 @@ _QUE_RE_B = _re1.compile(rb"(?:que|per)_[A-Za-z0-9]+")
 _QUESTION_LOCK = threading.Lock()
 _QUESTION_SHARD = {}    # que_/per_ id -> shard that posed it (process-local)
 _QUESTION_MAX = 500
-_REQ_EVENT_MARKERS = (b"question.v2", b"permission.v2")
+# 2026-10-08: the engine's wire carries BOTH question namings — the V2 schema
+# says question.v2.asked, but the instance /event route emits the raw bus type
+# question.asked / question.replied (verified against shard 3's replay ring).
+# Matching only the .v2 names left LIVE learning dead — the sampler's seed pass
+# masked it for reply routing. Both generations now match.
+_REQ_EVENT_MARKERS = (b"question.v2", b"permission.v2", b"question.asked",
+                      b"question.replied", b"permission.asked", b"permission.replied")
 
 def note_question_frame(frame, shard_id):
     if not any(marker in frame for marker in _REQ_EVENT_MARKERS):
