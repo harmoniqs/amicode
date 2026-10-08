@@ -123,6 +123,11 @@ if [ -n "$STAGED_BIN" ]; then
   }
   run_check "staged binary boot smoke (isolated XDG, port $SMOKE_PORT)" smoke
   rm -rf "$SMOKE_DATA" "$SMOKE_CFG"
+  # the smoke pass is the STAMP OF APPROVAL for this exact binary: hub-restart
+  # stage accepts the canonical sha OR this one (a gate-approved NEW build),
+  # while still refusing binaries that never passed a gate.
+  sha256sum "$STAGED_BIN" | awk '{print $1}' > "$HOME/.amico/server/bin/opencode.GATE-APPROVED-sha"
+  echo "gate-approved sha recorded: $(sha256sum "$STAGED_BIN" | cut -c1-16)…"
 fi
 
 # ── verdict ─────────────────────────────────────────────────────────────────

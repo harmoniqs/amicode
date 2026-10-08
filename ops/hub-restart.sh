@@ -31,6 +31,7 @@ STAGED="$BIN_DIR/.opencode.staging"
 # stage (the provenance guard: the 2026-10-08 04:30 revert shipped a week-old
 # pre-canary binary over the live fleet and resurrected the #775 wedges)
 CANON_SHA_FILE="${CANON_SHA_FILE:-$HOME/.amico/server/bin/opencode.CANONICAL-sha}"
+GATE_APPROVED_FILE="$HOME/.amico/server/bin/opencode.GATE-APPROVED-sha"
 SIDECAR="$BIN_DIR/opencode.sha256"
 UNIT="co.harmoniqs.amicode-server.service"
 PORT="${AMICODE_SERVER_PORT:-4096}"
@@ -82,7 +83,9 @@ case "$mode" in
     # AMICODE_ALLOW_BINARY_DOWNGRADE=1 escape hatch, loudly.
     if [ -f "$CANON_SHA_FILE" ] && [ "${AMICODE_ALLOW_BINARY_DOWNGRADE:-}" != "1" ]; then
       a="$(sha256sum "$src" | awk '{print $1}')"
-      if [ "$a" != "$(cat "$CANON_SHA_FILE")" ]; then
+      approved=""
+      [ -f "$GATE_APPROVED_FILE" ] && approved="$(cat "$GATE_APPROVED_FILE")"
+      if [ "$a" != "$(cat "$CANON_SHA_FILE")" ] && [ "$a" != "$approved" ]; then
         echo "FAIL: staged binary sha ${a:0:16}… is NOT the canonical engine build $(cut -c1-16 "$CANON_SHA_FILE")…"
         echo "      (recorded at the last gate-passing deploy). The 2026-10-08 04:30 revert"
         echo "      shipped a pre-canary binary this way and resurrected the #775 wedges."
@@ -95,10 +98,20 @@ case "$mode" in
     a="$(sha256sum "$src" | awk '{print $1}')"
     b="$(sha256sum "$STAGED" | awk '{print $1}')"
     if [ "$a" != "$b" ]; then echo "FAIL: staged sha mismatch"; exit 1; fi
+    echo "$b" > "$STAGED.sha"
     echo "OK staged $(basename "$src") sha=${b:0:16}… (swap to activate)"
     ;;
   swap)
     if [ ! -f "$STAGED" ]; then echo "FAIL: nothing staged at $STAGED"; exit 1; fi
+    # stale-staged protection (2026-10-08: a leftover staged file from a
+    # refused run got swapped over the live binary): the swap only moves what
+    # THIS stage put there — the staged sha marker must exist and match.
+    if [ ! -f "$STAGED.sha" ] || [ "$(sha256sum "$STAGED" | awk '{print $1}')" != "$(cat "$STAGED.sha")" ]; then
+      echo "FAIL: the staged file does not match this flow's staged sha marker."
+      echo "      A leftover from an older stage attempt is sitting there — remove it"
+      echo "      and stage again (never swap unverified leftovers)."
+      exit 1
+    fi
     mv -f "$STAGED" "$BIN"
     chmod 0755 "$BIN"
     sha256sum "$BIN" | awk '{print $1}' > "$SIDECAR"
