@@ -189,6 +189,31 @@ describe("classifyThread — open-threads bucket classification", () => {
     expect(classifyThread(f, STALE)).toBe("parked");
   });
 
+  it("todo-residue: a wrapped-up session with lingering todos is residue, never parked (#1733)", () => {
+    const f = makeFeatures({
+      pendingTodos: 2,
+      lastAssistantText: "Solved — F = 0.9982 in 137 iterations. The pulse is banked and we are done.",
+    });
+    expect(classifyThread(f, STALE)).toBe("todo-residue");
+  });
+
+  it("parked: pending todos WITHOUT a wrap-up still classify parked (the regression guard)", () => {
+    const f = makeFeatures({
+      pendingTodos: 1,
+      lastAssistantText: "Next up is the min-time pass over the saved pulse.",
+    });
+    expect(classifyThread(f, STALE)).toBe("parked");
+  });
+
+  it("todo-residue still retires to stale past the threshold (residue is surfaced, not immortal)", () => {
+    const f = makeFeatures({
+      pendingTodos: 2,
+      lastAssistantText: "Everything landed and we are done.",
+      ageDays: 21,
+    });
+    expect(classifyThread(f, STALE)).toBe("stale");
+  });
+
   it("awaiting-review: PR-state is an INPUT feature — no network in the module", () => {
     const f = makeFeatures({
       lastAssistantText: "The branch is pushed and the PR is up.",
@@ -240,6 +265,18 @@ describe("buildThread — OpenThread assembly with a per-bucket signal", () => {
     expect(t!.bucket).toBe("parked");
     expect(t!.signal).toContain("3");
     expect(t!.signal).toContain("todo");
+  });
+
+  it("carries the todo-residue signal with the todo count (#1733)", () => {
+    const t = buildThread("ses_r", "2026-09-18T10:00:00.000Z", makeFeatures({
+      pendingTodos: 2,
+      lastAssistantText: "The gate is green and the work is merged — done.",
+    }), 14);
+    expect(t).not.toBeNull();
+    expect(t!.bucket).toBe("todo-residue");
+    expect(t!.signal).toContain("2");
+    expect(t!.signal).toContain("lingering");
+    expect(t!.signal).toContain("residue");
   });
 
   it("returns null for junk titles and signal-less sessions", () => {
