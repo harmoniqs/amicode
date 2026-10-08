@@ -57,7 +57,13 @@ export function adaptServerEvent(event: OpenCodeEvent): ServerEvent {
     return { id: event.id, type: "question.replied", properties: event.data, current: event } as ServerEvent
   if (event.type === "question.v2.rejected")
     return { id: event.id, type: "question.rejected", properties: event.data, current: event } as ServerEvent
-  return { id: event.id, type: event.type, properties: event.data, current: event } as ServerEvent
+  // 2026-10-08: the instance /event route emits the V1 wire shape — the
+  // payload rides `properties`, not `data` (the V2 shape the named cases
+  // above normalize). The default case mapped `event.data` blindly, so every
+  // live V1 event reached the reducers with properties: undefined — live
+  // question.asked cards never rendered; every card the panel ever showed
+  // came from the /question list fetch on session open or reload.
+  return { id: event.id, type: event.type, properties: event.data ?? event.properties, current: event } as ServerEvent
 }
 
 const coalescedKey = (event: QueuedServerEvent) => {
