@@ -840,6 +840,118 @@ def app_dist_serve(c, path):
 # the first stalled member — freezing SSE for EVERY member fleet-wide.
 MEMBER_QUEUE_MAX_ITEMS = 64   # ≈4MB at 64KB chunks; beyond this the member is stalled
 
+# 2026-10-08: the delta flood. An active turn emits thousands of
+# message.part.delta frames; a tab over the tunnel reads slower than the
+# model writes, the 64-frame member queue fills, and the member is DROPPED
+# — the tab reconnects, replays a 512-frame ring that covers seconds of a
+# hot turn, then floods again: live activity never renders while the
+# thinker runs (only the post-turn reload shows anything — the reported
+# "session activity is not being displayed"). Consecutive deltas for the
+# SAME part now coalesce in the member queue: lossless text (the panel
+# appends delta strings), tiny queue. The history ring keeps original
+# per-event frames, so reconnect replay stays exact.
+DELTA_MERGE_MAX_BYTES = 262144
+
+def _delta_part_key(frame):
+    """(messageID, partID, field) for message.part.delta frames, else None.
+    The payload may ride the event's `properties` (the /event wire shape) or
+    the event body itself — unwrap whichever is present."""
+    if b'"message.part.delta"' not in frame:
+        return None
+    try:
+        ev = _frame_data(frame)
+    except Exception:
+        return None
+    if not isinstance(ev, dict):
+        return None
+    d = ev.get("properties") if isinstance(ev.get("properties"), dict) else ev
+    key = (d.get("messageID"), d.get("partID"), d.get("field"))
+    return key if key[0] is not None and key[1] is not None else None
+
+def _frame_data(frame):
+    """The data: line's JSON payload of an SSE frame."""
+    for line in frame.split(b"\r\n"):
+        if line.startswith(b"data:"):
+            return _json0.loads(line[5:].strip())
+    for line in frame.split(b"\n"):
+        if line.startswith(b"data:"):
+            return _json0.loads(line[5:].strip())
+    raise ValueError("no data line")
+
+def _merge_delta_frames(prev, nxt):
+    """Two same-part delta frames -> one frame with concatenated delta text
+    (keeping prev's event id, so ring replay and dedupe stay coherent), or
+    None when not mergeable. Wire-shape tolerant: frames may or may not
+    carry id: lines."""
+    try:
+        ep = _frame_data(prev)
+        en = _frame_data(nxt)
+        if not isinstance(ep, dict) or not isinstance(en, dict):
+            return None
+        # same unwrapping as _delta_part_key: payload may ride `properties`
+        pp = ep.get("properties") if isinstance(ep.get("properties"), dict) else ep
+        pn = en.get("properties") if isinstance(en.get("properties"), dict) else en
+        tp, tn = pp.get("delta"), pn.get("delta")
+        if not isinstance(tp, str) or not isinstance(tn, str):
+            return None
+        merged = dict(pp)
+        merged["delta"] = tp + tn
+        # the emitted frame keeps the EVENT shape of prev (id/type wrapper
+        # included) so ring dedupe and the panel see a normal frame
+        if ep.get("properties") is pp:
+            merged = dict(ep)
+            merged["properties"] = dict(pp)
+            merged["properties"]["delta"] = tp + tn
+        body = _json0.dumps(merged).encode()
+        if len(body) > DELTA_MERGE_MAX_BYTES:
+            return None
+        # rebuild with prev's shape: keep any leading id: line from prev
+        lines = [l for l in prev.split(b"\n") if l.startswith(b"id:")]
+        lines.append(b"data: " + body)
+        return b"\n".join(lines) + b"\n\n"
+    except Exception:
+        return None
+
+class MemberQueue:
+    """A queue.Queue drop-in (get/put/qsize/None sentinel) whose tail can be
+    REPLACED under lock — the delta-coalescing seam. get() blocks like
+    queue.Queue.get(); the sentinel None passes through."""
+    def __init__(self):
+        import collections as _collections
+        import threading as _threading
+        self._items = _collections.deque()
+        self._cv = _threading.Condition()
+        self._tail_key = None
+    def put(self, item):
+        with self._cv:
+            self._items.append(item)
+            if item is None:
+                self._tail_key = None
+            else:
+                self._tail_key = item if not isinstance(item, bytes) else None
+            self._cv.notify()
+    def put_coalescing(self, frame, key):
+        """Delta frames with the same part key merge into the queued tail."""
+        with self._cv:
+            if (key is not None and self._items and self._tail_key == key
+                    and isinstance(self._items[-1], bytes)):
+                merged = _merge_delta_frames(self._items[-1], frame)
+                if merged is not None:
+                    self._items[-1] = merged
+                    return
+            self._items.append(frame)
+            self._tail_key = key
+            self._cv.notify()
+    def get(self):
+        with self._cv:
+            while not self._items:
+                self._cv.wait()
+            item = self._items.popleft()
+            self._tail_key = None
+            return item
+    def qsize(self):
+        return len(self._items)
+
 # --- #1264 lossless SSE reconnect: the frontdoor reassembles upstream
 # bytes into complete SSE frames, keeps a bounded ring of them keyed by
 # the event id in the payload, and replays the gap after a client's
@@ -870,6 +982,7 @@ def _parse_frames(buf):
         out.append(buf[:end])
         buf = buf[end:]
     return out, buf
+
 
 class Group:
     def __init__(self, path, shard=1, backend=None, merge=None):
@@ -990,7 +1103,11 @@ class Group:
                                 log(f"[{self.path}/s{shard_id}] member dropped — stalled (queue full)")
                                 continue
                             for frame in frames:
-                                q.put(frame)
+                                dkey = _delta_part_key(frame)
+                                if dkey is not None:
+                                    q.put_coalescing(frame, dkey)
+                                else:
+                                    q.put(frame)
             except Exception: pass
             try: s.close()
             except: pass
@@ -1016,7 +1133,7 @@ class Group:
     def join(self, c, last_event_id=None):
         with self.lock:
             if c in self.members: return
-            q = _qmod.Queue()
+            q = MemberQueue()
             self.members[c] = q
         threading.Thread(target=self._writer, args=(c, q), daemon=True).start()
         while True:
