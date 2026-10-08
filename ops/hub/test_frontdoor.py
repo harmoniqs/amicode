@@ -150,6 +150,8 @@ class ShardHandler(BaseHTTPRequestHandler):
             pass
         if path == "/session":
             self._json(self.server.sessions)
+        elif path == "/question":
+            self._json(list(getattr(self.server, "questions", ())))
         elif path.startswith("/assets/") and path.endswith(".js"):
             # mimic the engine/service SPA fallback: unknown hashed assets get
             # index.html (200 HTML) — the #1313 revert signature the #1723
@@ -202,6 +204,10 @@ class ShardHandler(BaseHTTPRequestHandler):
         n = int(self.headers.get("Content-Length", 0) or 0)
         body = self.rfile.read(n) if n else b""
         path = self.path.split("?")[0]
+        try:
+            self.server.counts[path] = self.server.counts.get(path, 0) + 1
+        except Exception:
+            pass
         if path == "/session":
             # session create: server-generated id (alnum after the ses_ prefix,
             # matching the engine's id charset)
@@ -232,6 +238,7 @@ class FakeShard:
         self.httpd.created = 0
         self.httpd.counts = {}
         self.httpd.sse_inject = []
+        self.httpd.questions = []
         self.port = self.httpd.server_address[1]
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
 
@@ -808,6 +815,50 @@ class TestJevPlacement(RouterTest):
                          "default shard must not serve a shard-2 session")
         self.assertGreaterEqual(self.shards[1].httpd.counts.get("/session/ses_snA/message", 0), 1,
                                 "owning shard serves the pull")
+
+    def test_question_reply_routes_to_posing_shard(self):
+        """2026-10-07: question replies name PROCESS-LOCAL state — the reply
+        must reach the shard that posed the question, not the default. The
+        question events riding the merged streams carry the mapping."""
+        fd = self.start_pool(premap={"ses_q1": 3})
+        # a question posed on shard 2 (its upstream carries the event)
+        frame = (b"data: {\"type\":\"question.v2.asked\",\"data\":"
+                 b"{\"id\":\"que_test1\"}}\n\n")
+        for sh in self.shards:
+            sh.httpd.sse_inject.append(frame if sh.shard_id == 2 else
+                                       b"data: {}\n\n")
+        time.sleep(1.0)   # upstreams fan the frames in
+        st, hdr, _ = http_request(fd.port, "/question/que_test1/reply", method="POST",
+                                  body=b'{"answer":"y"}')
+        self.assertEqual(st, 200)
+        self.assertEqual(hdr["x-backend-shard"], "2")
+        self.assertGreaterEqual(self.shards[1].httpd.counts.get("/question/que_test1/reply", 0), 1)
+        self.assertEqual(self.shards[0].httpd.counts.get("/question/que_test1/reply", 0), 0)
+
+    def test_question_list_merges_across_pool(self):
+        """GET /question on a pooled directory is the UNION of pending
+        questions — one member's list must not hide another's."""
+        fd = self.start_pool()
+        self.shards[1].httpd.questions = [{"id": "que_m2", "title": "on shard 2"}]
+        self.shards[2].httpd.questions = [{"id": "que_m3", "title": "on shard 3"}]
+        st, hdr, body = http_request(fd.port, "/question?directory=" + POOLDIR)
+        self.assertEqual(st, 200)
+        data = json.loads(body)
+        ids = {q["id"] for q in data}
+        self.assertEqual(ids, {"que_m2", "que_m3"}, "union of every member's pending questions")
+
+
+    def test_question_map_seeds_after_frontdoor_restart(self):
+        """A question posed BEFORE the frontdoor started still routes correctly:
+        each shard's own /question list reports its process-local pending
+        questions, and the sampler loop seeds the map from them."""
+        fd = self.start_pool(extra_env={"AMICODE_SHARD_SAMPLE_INTERVAL": "0.3"})
+        self.shards[1].httpd.questions = [{"id": "que_seed2", "title": "pre-existing"}]
+        time.sleep(1.2)   # one sampler pass seeds the map
+        st, hdr, _ = http_request(fd.port, "/question/que_seed2/reply", method="POST",
+                                  body=b'{"answer":"y"}')
+        self.assertEqual(st, 200)
+        self.assertEqual(hdr["x-backend-shard"], "2")
 
 
 # --- #1723: the UI-revert guard ---------------------------------------------------

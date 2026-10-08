@@ -195,6 +195,14 @@ def _route(raw):
             _pin(sid, shard)
             return shard
         return TABLE["default_shard"]
+    # 2026-10-07: question replies name a process-local request — route them
+    # to the shard that posed the question (learned from question events).
+    qm = _QUE_RE.search(raw)
+    if qm is not None:
+        with _QUESTION_LOCK:
+            qshard = _QUESTION_SHARD.get(qm.group(0))
+        if qshard is not None and qshard in TABLE["backends"]:
+            return qshard
     if pool and len(pool) > 1:
         return place_session(None, d, raw)
     if pool:
@@ -228,6 +236,35 @@ def _watchdog_rss_kb(shard):
     except Exception:
         return None
 
+def _seed_question_map():
+    """2026-10-07: recover the question->shard map for questions posed BEFORE
+    a frontdoor restart (the event-learned map is in-memory). Each engine's
+    /question list reports ITS OWN process-local pending questions — the
+    answering shard IS the posing shard. Runs in the sampler loop, so a
+    restart re-learns every still-pending question within one interval."""
+    try:
+        import urllib.parse as _upq
+        for d, pool in TABLE["pools"].items():
+            target = "/question?directory=" + _upq.quote(d, safe="")
+            for shard in pool:
+                b = backend_get(target, timeout=4, shard=shard)
+                if not b:
+                    continue
+                try:
+                    arr = _json0.loads(b)
+                except Exception:
+                    continue
+                if not isinstance(arr, list):
+                    continue
+                with _QUESTION_LOCK:
+                    for q in arr:
+                        if isinstance(q, dict) and isinstance(q.get("id"), str) and q["id"].startswith("que_"):
+                            _QUESTION_SHARD[q["id"]] = shard
+                            if len(_QUESTION_SHARD) > _QUESTION_MAX:
+                                _QUESTION_SHARD.pop(next(iter(_QUESTION_SHARD)))
+    except Exception:
+        pass
+
 def _sample_shards():
     import urllib.parse as _up0
     import urllib.request as _ur0
@@ -250,6 +287,7 @@ def _sample_shards():
                 snap[shard]["ts"] = time.time()
             with _shard_samples_lock:
                 _shard_samples.update(snap)
+            _seed_question_map()
         time.sleep(float(_env("AMICODE_SHARD_SAMPLE_INTERVAL", "5")))
 
 if SHARDED:
@@ -668,6 +706,37 @@ def mark_session_dirty(frame):
     with _MSG_LOCK:
         _MSG_DIRTY.add(sid)
 
+# 2026-10-07: pending questions are PROCESS-LOCAL engine state — the reply
+# must reach the SAME shard that posed the question, or the engine answers
+# "question request not found" (the wire POST /question/que_X/reply carries no
+# session id and no directory, so it fell to the default shard the moment
+# sessions moved off it). The question events riding the merged streams
+# carry the mapping: a question.v2.asked frame ARRIVED from the posing
+# shard's upstream, so the frame + the upstream's shard id ARE the map.
+_QUE_RE = _re1.compile(r"que_[A-Za-z0-9]+")
+_QUE_RE_B = _re1.compile(rb"que_[A-Za-z0-9]+")
+_QUESTION_LOCK = threading.Lock()
+_QUESTION_SHARD = {}    # que_id -> shard that posed it
+_QUESTION_MAX = 500
+
+def note_question_frame(frame, shard_id):
+    if b"question.v2" not in frame:
+        return
+    m = _QUE_RE_B.search(frame)
+    if m is None:
+        return
+    try:
+        qid = m.group(0).decode("ascii")
+    except Exception:
+        return
+    with _QUESTION_LOCK:
+        if b"question.v2.replied" in frame or b"question.v2.rejected" in frame:
+            _QUESTION_SHARD.pop(qid, None)
+        else:
+            _QUESTION_SHARD[qid] = shard_id
+            if len(_QUESTION_SHARD) > _QUESTION_MAX:
+                _QUESTION_SHARD.pop(next(iter(_QUESTION_SHARD)))
+
 def serve_snapshot(c, first, raw):
     qs = raw.split("?", 1)[1] if "?" in raw else ""
     top = 30
@@ -891,6 +960,7 @@ class Group:
                                 if b'"server.heartbeat' not in frame:
                                     snapshot_invalidate()
                                     mark_session_dirty(frame)
+                            note_question_frame(frame, shard_id)
                         except Exception: pass
                     with self.lock:
                         for frame in frames:
@@ -1180,6 +1250,56 @@ def _no_store_html(chunk: bytes) -> bytes:
     except Exception:
         return chunk
 
+def serve_question_list(c, first, raw):
+    """2026-10-07: GET /question across a pooled directory — pending questions
+    are PROCESS-LOCAL, so the true list is the union of every member's; one
+    member's list misses questions posed by the others (the panel saw exactly
+    that once sessions moved off the default shard). Same merge-deadline
+    contract as the session list: dead members contribute nothing and delay
+    nothing; dedupe by id (the same question never poses twice, but the
+    shared DB's read paths make defensive dedupe free)."""
+    try:
+        target = first.split(b"\r\n", 1)[0].split(b" ")[1].decode("utf-8", "replace")
+    except Exception:
+        target = raw
+    d = _directory_of(raw)
+    pool = TABLE["pools"].get(d) if d else None
+    if not pool or len(pool) < 2:
+        passthrough_capture(c, first, key=None, shard=TABLE["default_shard"])
+        return
+    deadline = float(_env("AMICODE_MERGE_DEADLINE", "5"))
+    results = [None] * len(pool)
+    threads = []
+    def fetch(i, shard):
+        results[i] = backend_get(target, timeout=deadline, shard=shard)
+    for i, shard in enumerate(pool):
+        t = threading.Thread(target=fetch, args=(i, shard), daemon=True)
+        t.start(); threads.append(t)
+    for t in threads:
+        t.join(deadline + 1.0)
+    merged = {}
+    for b in results:
+        if not b: continue
+        try:
+            arr = _json0.loads(b)
+        except Exception:
+            continue
+        if isinstance(arr, list):
+            for q in arr:
+                if isinstance(q, dict) and q.get("id") is not None:
+                    merged[q["id"]] = q
+    if not merged:
+        # an empty pending list is a legitimate answer — serve it as one
+        merged = {}
+    body = _json0.dumps(list(merged.values())).encode()
+    hdr = ("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+           + f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n")
+    try:
+        c.sendall(hdr.encode() + body)
+    except Exception:
+        pass
+    c.close()
+
 def serve_session_list(c, first, raw):
     """#1717 phase 1: GET /session across the pool. A pooled directory merges
     every member (threads, 8s dial timeout each -- a dead member contributes
@@ -1291,6 +1411,9 @@ def handle(c, addr, cid):
             return
         # --- 2026-09-04 caps (#775 mitigation): starve the attach-boot leak feed ---
         raw = parts[1] if len(parts) > 1 else "/"
+        if parts[0] == "GET" and raw.split("?")[0] == "/question" and SHARDED:
+            serve_question_list(c, first, raw)
+            return
         if parts[0] == "GET" and raw.split("?")[0] == "/session":
             import re
             capped, n = re.subn(rb"([?&])limit=\d+", rb"\g<1>limit=100", first)
