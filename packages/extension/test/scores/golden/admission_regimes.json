@@ -7,5 +7,6 @@
     "internal-mount-present": ["atoms-gold", "director-core-gold", "transmon-gold", "write-an-issue-gold"],
     "internal-mount-absent": ["atoms-gold", "transmon-gold"],
     "internal-mount-unadmitted": ["atoms-gold", "transmon-gold"]
-  }
+  },
+  "never_stages_on_any_session_surface": ["dream-gold", "legacy-gold", "pr-gold"]
 }

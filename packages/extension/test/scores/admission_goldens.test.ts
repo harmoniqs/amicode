@@ -187,4 +187,36 @@ describe("admission goldens — the staged skill set across regimes (#1743)", ()
     expectRegimeGolden("internal-mount-unadmitted", observed);
     expect(observed.stagedDirs).not.toContain("director-core-gold");
   });
+
+  it("LEAST-PRIVILEGE INVARIANT (AC4): a process-internal skill never stages on any session surface", () => {
+    // pr-gold + dream-gold are surface:internal content sitting INSIDE the
+    // public-shaped shipped library — the leak hazard: a session scans that
+    // root on every start. legacy-gold is untagged (default-deny). None may
+    // ever stage, on any regime's roots/entitlements — the sweep runs the
+    // full regime matrix so no future regime definition escapes the pin.
+    const golden = loadGolden();
+    const banned = golden.never_stages_on_any_session_surface;
+    expect(banned, "golden must pin the never-stages set").toBeDefined();
+    expect(banned).toContain("pr-gold");
+    expect(banned).toContain("dream-gold");
+    const fx = buildFixture();
+    const allRegimes: Record<string, { roots: LibraryRootSpec[]; entitlements: string[] }> = {
+      "public-only": { roots: [fx.inRepo, fx.vaultAbsent], entitlements: [] },
+      entitled: { roots: [fx.inRepo, fx.vaultAbsent], entitlements: [ENTITLED_CODE] },
+      "entitled-wrong-code": { roots: [fx.inRepo, fx.vaultAbsent], entitlements: ["other-gold"] },
+      "internal-mount-present": { roots: [fx.inRepo, fx.vaultPresent], entitlements: [] },
+      "internal-mount-absent": { roots: [fx.inRepo, fx.vaultAbsent], entitlements: [] },
+      "internal-mount-unadmitted": { roots: [fx.inRepo, { path: fx.vaultPresent.path, surfaces: ["public"] }], entitlements: [] },
+    };
+    for (const [key, r] of Object.entries(allRegimes)) {
+      const observed = admit(fx, r.roots, r.entitlements);
+      for (const name of banned) {
+        expect(observed.stagedDirs, `regime "${key}": ${name} staged on a session surface`).not.toContain(name);
+        expect(
+          observed.entries.map((e) => e.name),
+          `regime "${key}": ${name} resolved for staging`,
+        ).not.toContain(name);
+      }
+    }
+  });
 });
