@@ -57,11 +57,25 @@ const ringAppend = (event: EventV2.Payload): Effect.Effect<void> =>
   })
 
 function eventData(data: unknown): Sse.Event {
-  const encoded = Schema.encodeUnknownSync(OpenCodeEvent)(data) as { id?: string }
+  // 2026-10-10 (#1730 follow-through): the engine publishes V1-named events
+  // (question.asked, permission.asked — the live bus types), which are NOT in
+  // the V2 wire schema. A throwing encoder here KILLED the live stream at the
+  // first question/permission event — the panel's session view (this route)
+  // went dark mid-turn and the card only ever appeared via the post-reload
+  // list. Same contract as the replay ring's raw fallback: encode when the
+  // schema accepts the event, else carry the raw shape ({id, type, data}) —
+  // the panel's reducers take both namings.
+  let encoded: Record<string, unknown>
+  try {
+    encoded = Schema.encodeUnknownSync(OpenCodeEvent)(data) as Record<string, unknown>
+  } catch {
+    encoded = data as Record<string, unknown>
+  }
+  const id = typeof encoded.id === "string" ? encoded.id : undefined
   return {
     _tag: "Event",
     event: "message",
-    id: encoded.id,
+    id,
     data: JSON.stringify(encoded),
   }
 }

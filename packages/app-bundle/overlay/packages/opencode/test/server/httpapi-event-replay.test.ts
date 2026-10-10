@@ -1,6 +1,7 @@
 import { Session } from "@/session/session"
 import { SessionID as SessionIDType } from "@opencode-ai/schema/session-id"
 import { SessionTodo } from "@opencode-ai/schema/session-todo"
+import { Event as QuestionEvent } from "@/question"
 import { EventV2Bridge } from "../../src/event-v2-bridge"
 import { memoMap } from "@opencode-ai/core/effect/memo-map"
 import { afterEach, describe, expect } from "bun:test"
@@ -140,6 +141,15 @@ describe("event SSE replay", () => {
   // The routes' event bus instances resolve through the process-wide memoMap
   // (the same one Server.Default uses), so a body-side layer built through it
   // publishes onto the very bus the SSE routes listen to.
+  const publishEvent = (definition: any, data: any) =>
+    Effect.gen(function* () {
+      const scope = yield* Scope.make()
+      const ctx = yield* Layer.buildWithMemoMap(eventsLayer, memoMap, scope)
+      const bridge = yield* EventV2Bridge.Service.pipe(Effect.provide(ctx))
+      const event = yield* bridge.publish(definition, data)
+      return event.id
+    }).pipe(Effect.orDie)
+
   const publishTodo = (sessionID: SessionIDType, content: string) =>
     Effect.gen(function* () {
       const scope = yield* Scope.make()
@@ -209,6 +219,41 @@ describe("event SSE replay", () => {
       expect(reconnected.some((event) => event.type === "state.resync")).toBe(false)
       expect(reconnected.some((event) => mentionsText(event, "replay-m3"))).toBe(true)
       expect(reconnected.some((event) => mentionsText(event, "replay-m2"))).toBe(false)
+    }).pipe(Effect.provide(AppNodeBuilder.build(CrossSpawnSpawner.node))),
+  )
+
+  it.live("V1-named events survive the V2 encoder and reach live subscribers", () =>
+    // 2026-10-10: the engine publishes question.asked (V1 name — the V1
+    // question service the live routes use); the V2 wire schema rejects it
+    // and the THROWING encoder killed the stream at the first question —
+    // the panel's session view went dark mid-turn, cards only surfaced on
+    // reload (list fetch). The encoder now carries unknown-shaped events
+    // raw. A raw question.asked publish must (a) reach the /api/event
+    // subscriber, (b) not kill the stream, (c) still deliver events after.
+    Effect.gen(function* () {
+      const directory = yield* setupSession("ses_v1live")
+      const queue = yield* openSse(eventPath(directory))
+      yield* Queue.take(queue) // server.connected
+
+      const before = yield* publishTodo(SessionIDType.make("ses_v1live"), "before")
+      yield* publishEvent(QuestionEvent.Asked, {
+        id: "que_v1live",
+        sessionID: SessionIDType.make("ses_v1live"),
+        questions: [{ header: "h", question: "live?", options: [{ label: "a", description: "d" }] }],
+      })
+      const after = yield* publishTodo(SessionIDType.make("ses_v1live"), "after")
+
+      let sawQuestion = false
+      let seen = 0
+      while (seen < 2 || !sawQuestion) {
+        const next = yield* Queue.take(queue).pipe(Effect.timeout("10 seconds"), Effect.orDie)
+        if (next.id === before || next.id === after) {
+          seen++
+          continue
+        }
+        if (String(next.type).includes("question")) sawQuestion = true
+      }
+      expect(sawQuestion).toBe(true)
     }).pipe(Effect.provide(AppNodeBuilder.build(CrossSpawnSpawner.node))),
   )
 
