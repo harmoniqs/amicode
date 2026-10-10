@@ -100,11 +100,6 @@ function buildFixture(): Fixture {
   };
 }
 
-/** One admission regime: the session's library roots + resolved entitlements. */
-function regime(fx: Fixture, roots: LibraryRootSpec[], entitlements: string[]) {
-  return { roots, entitlements };
-}
-
 /** Run the REAL admission pipeline for one regime and report what staged:
  *  the staged dir set, the receipt's staged names, and the resolved entries. */
 function admit(fx: Fixture, roots: LibraryRootSpec[], entitlements: string[]) {
@@ -151,5 +146,19 @@ describe("admission goldens — the staged skill set across regimes (#1743)", ()
     // LEAK PIN (AC3 direction): internal-surface skills never stage without the mount
     expect(observed.stagedDirs).not.toContain("director-core-gold");
     expect(observed.stagedDirs).not.toContain("write-an-issue-gold");
+  });
+
+  it("regime entitled (entitlement held): entitled-surface skills stage alongside public", () => {
+    const fx = buildFixture();
+    const observed = admit(fx, [fx.inRepo, fx.vaultAbsent], [ENTITLED_CODE]);
+    expectRegimeGolden("entitled", observed);
+  });
+
+  it("regime entitled-wrong-code (LEAK PIN, AC2): an entitled skill NEVER stages when the entitlement is absent", () => {
+    const fx = buildFixture();
+    // a held code that is not the skill's — the entitlement gate must hold
+    const observed = admit(fx, [fx.inRepo, fx.vaultAbsent], ["other-gold"]);
+    expectRegimeGolden("entitled-wrong-code", observed);
+    expect(observed.stagedDirs).not.toContain("piccolissimo-gold");
   });
 });
