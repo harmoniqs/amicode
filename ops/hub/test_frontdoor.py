@@ -968,6 +968,37 @@ class TestDeltaCoalescing(unittest.TestCase):
         finally:
             t.tearDown()
 
+    def test_question_frame_reaches_members_live(self):
+        """2026-10-10: the live question card never rendered even post-fix —
+        every prior test verified the MAP learning, never the MEMBER delivery.
+        A question.asked frame must reach a joined member's socket live."""
+        t = RouterTest()
+        t.setUp()
+        try:
+            fd = t.start_pool()
+            sock = socket.create_connection(("127.0.0.1", fd.port), timeout=10)
+            sock.sendall(b"GET /event?directory=" + POOLDIR.encode() + b" HTTP/1.1\r\nHost: x\r\nAccept: text/event-stream\r\n\r\n")
+            time.sleep(0.6)
+            qframe = (b'data: {"id":"evt_liveq","type":"question.asked","properties":'
+                      b'{"id":"que_live1","sessionID":"ses_q1","questions":'
+                      b'[{"header":"h","question":"live?","options":[]}]}}\n\n')
+            t.shards[1].httpd.sse_inject.append(qframe)
+            body = b""
+            sock.settimeout(3)
+            deadline = time.time() + 4
+            while time.time() < deadline and b"question.asked" not in body:
+                try:
+                    d = sock.recv(65536)
+                except socket.timeout:
+                    continue
+                if not d:
+                    break
+                body += d
+            sock.close()
+            self.assertIn(b"question.asked", body, "the live question frame reached the member")
+        finally:
+            t.tearDown()
+
 
 # --- #1723: the UI-revert guard ---------------------------------------------------
 
