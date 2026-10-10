@@ -360,6 +360,12 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
     webviewView.webview.options = {
       enableScripts: true,
       localResourceRoots: localRoots,
+      // 2026-10-10: the chat deck and chat panel both retain context when
+      // hidden; the sidebar did not, so VS Code SUSPENDED it the moment the
+      // user switched to their editor — the SSE stream froze, live turns ran
+      // invisible on the hub, and the panel showed "stuck thinking" until a
+      // full reload. Same retention as its sibling panels.
+      retainContextWhenHidden: true,
     };
 
     // CSP nonce — regenerated per resolve (not cached).

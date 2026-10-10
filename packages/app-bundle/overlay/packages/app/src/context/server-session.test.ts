@@ -154,3 +154,29 @@ describe("ServerSession live file-edit route", () => {
     expect(session.data.diff_version.worker).toBe(1)
   })
 })
+
+
+// 2026-10-10: the live question card never rendered even with the V1-shape
+// normalizer deployed — this pins the REDUCER: a question.asked event in the
+// V1 wire shape (payload in `properties`) must land in the question store.
+test("question.asked (V1 wire shape) lands in the question store", () => {
+  const session = createServerSession({ session: { get: async () => ({ data: undefined }) } } as unknown as OpencodeClient)
+  session.apply({ type: "session.created", properties: { info: sessionInfo("root") } })
+  session.apply({
+    type: "question.asked",
+    properties: {
+      id: "que_test1",
+      sessionID: sessionInfo("root").id,
+      questions: [{ header: "h", question: "live?", options: [{ label: "a", description: "d" }] }],
+    },
+  })
+  const stored = session.data.question[sessionInfo("root").id]
+  expect(stored?.length).toBe(1)
+  expect(stored?.[0]?.id).toBe("que_test1")
+  expect(stored?.[0]?.questions?.[0]?.header).toBe("h")
+  session.apply({
+    type: "question.replied",
+    properties: { sessionID: sessionInfo("root").id, requestID: "que_test1" },
+  })
+  expect(session.data.question[sessionInfo("root").id]?.length ?? 0).toBe(0)
+})

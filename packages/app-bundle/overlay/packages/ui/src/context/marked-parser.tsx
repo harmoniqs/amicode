@@ -35,12 +35,15 @@ export function createMarkdownParser(highlight: (code: string, language: string)
 
 // Single-$ inline math — restored after #34850 removed it for currency false
 // positives. Pandoc-style tight delimiters (no whitespace just inside either
-// $), no digit-led content (so $5, and $30-and-$50 pairs, stay literal), no
-// $$ adjacency, no escaped \$. One regex family, three shapes: the tokenizer
-// start hint, the anchored tokenizer match, and the global replace below.
+// $): the opening $ drops the digit-led guard so $3.53\times10^{-5}$ renders;
+// instead the closing $ must not be followed by a digit (Pandoc's actual
+// currency rule — $30-and-$50 pairs stay literal because the first closing $
+// abuts a digit). No $$ adjacency, no escaped \$. One regex family, three
+// shapes: the tokenizer start hint, the anchored tokenizer match, and the
+// global replace below.
 const singleDollarStartRegex = /(?<![\\$])\$(?!\$)/
-const singleDollarTokenizerRegex = /^\$(?!\$|\s|\d)((?:\\.|[^$\\\n])+?)(?<![\\\s])\$(?!\$)/
-const singleDollarInlineRegex = /(?<![\\$])\$(?!\$|\s|\d)((?:\\.|[^$\\\n])+?)(?<![\\\s])\$(?!\$)/g
+const singleDollarTokenizerRegex = /^\$(?!\$|\s)((?:\\.|[^$\\\n])+?)(?<![\\\s])\$(?!\$|\d)/
+const singleDollarInlineRegex = /(?<![\\$])\$(?!\$|\s)((?:\\.|[^$\\\n])+?)(?<![\\\s])\$(?!\$|\d)/g
 
 export function renderMathInText(text: string): string {
   let result = text

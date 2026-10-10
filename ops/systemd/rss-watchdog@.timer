@@ -1,0 +1,13 @@
+# Per-shard watchdog cadence — same 5-min rhythm as the legacy rss-watchdog.timer
+# (which keeps watching shard 1; the legacy timer is NOT migrated to the template).
+
+[Unit]
+Description=Amicode shard %i RSS watchdog — every 5 minutes
+
+[Timer]
+OnBootSec=4min
+OnUnitActiveSec=5min
+AccuracySec=15s
+
+[Install]
+WantedBy=timers.target
