@@ -4,7 +4,10 @@ import {
   applySseError,
   coalesceServerEvents,
   createDeadMansSwitch,
+  DEAD_MAN_MISSES,
+  deadManThresholdMs,
   enqueueServerEvent,
+  HEARTBEAT_CADENCE_MS,
   resumeStreamAfterPageShow,
 } from "./server-sdk"
 import type { OpenCodeEvent } from "@opencode-ai/client/promise"
@@ -117,6 +120,64 @@ describe("dead-man's switch (#1751) — the stream reader's own liveness clock",
       deadMan.frame()
     }
     expect(dead).toBe(0)
+  })
+
+  test("close() disarms the switch — a clean close never fires it (regression pin)", () => {
+    // The clean-close path reconnects on its own (the loop goes round when
+    // the iterator ends); the switch must stay invisible to it. This pins
+    // that disarm: no frame needed, no abort requested.
+    vi.useFakeTimers()
+    let dead = 0
+    const deadMan = createDeadMansSwitch(() => {
+      dead += 1
+    })
+
+    deadMan.open()
+    vi.advanceTimersByTime(44_000)
+    deadMan.close()
+    vi.advanceTimersByTime(120_000)
+    expect(dead).toBe(0)
+
+    // Re-arming after the reconnect works: the next attempt starts a fresh
+    // silent window.
+    deadMan.open()
+    vi.advanceTimersByTime(44_999)
+    expect(dead).toBe(0)
+    vi.advanceTimersByTime(1)
+    expect(dead).toBe(1)
+  })
+
+  test("the threshold is configurable — the switch honors a custom window", () => {
+    vi.useFakeTimers()
+    let dead = 0
+    const deadMan = createDeadMansSwitch(() => {
+      dead += 1
+    }, 5_000)
+    deadMan.open()
+
+    vi.advanceTimersByTime(4_999)
+    expect(dead).toBe(0)
+
+    vi.advanceTimersByTime(1)
+    expect(dead).toBe(1)
+  })
+})
+
+describe("dead-man threshold seam (#1751)", () => {
+  test("derives from the heartbeat cadence it documents: 3 × 15s = 45s", () => {
+    expect(HEARTBEAT_CADENCE_MS).toBe(15_000)
+    expect(DEAD_MAN_MISSES).toBe(3)
+    expect(deadManThresholdMs({})).toBe(HEARTBEAT_CADENCE_MS * DEAD_MAN_MISSES)
+  })
+
+  test("AMICODE_SSE_DEADMAN_MS overrides the threshold", () => {
+    expect(deadManThresholdMs({ AMICODE_SSE_DEADMAN_MS: "12000" })).toBe(12_000)
+  })
+
+  test("an unusable override degrades to the derived default — never disables the switch", () => {
+    expect(deadManThresholdMs({ AMICODE_SSE_DEADMAN_MS: "not-a-number" })).toBe(45_000)
+    expect(deadManThresholdMs({ AMICODE_SSE_DEADMAN_MS: "0" })).toBe(45_000)
+    expect(deadManThresholdMs({ AMICODE_SSE_DEADMAN_MS: "-5" })).toBe(45_000)
   })
 })
 

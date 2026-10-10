@@ -205,6 +205,19 @@ export function applySseError(input: { closed: boolean; disconnect: () => void; 
 // lastEventID replay (#1264) makes cheap. Threshold derivation: 3 × 15s = 45s.
 export const HEARTBEAT_CADENCE_MS = 15_000
 export const DEAD_MAN_MISSES = 3
+export const DEFAULT_DEAD_MAN_THRESHOLD_MS = HEARTBEAT_CADENCE_MS * DEAD_MAN_MISSES
+
+/** The threshold seam (#1751): 3 × the heartbeat cadence by default,
+ *  overridable via AMICODE_SSE_DEADMAN_MS (milliseconds). An unusable
+ *  override degrades to the derived default — it can never disable the
+ *  switch. */
+export function deadManThresholdMs(
+  env: { AMICODE_SSE_DEADMAN_MS?: string | undefined } | undefined =
+    typeof globalThis.process !== "undefined" ? globalThis.process.env : undefined,
+): number {
+  const parsed = Number(env?.AMICODE_SSE_DEADMAN_MS)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_DEAD_MAN_THRESHOLD_MS
+}
 
 /** The reader's own liveness clock — the connection owns its liveness. `open`
  *  arms it once the stream is nominally open; `frame` re-arms it on every
@@ -212,7 +225,7 @@ export const DEAD_MAN_MISSES = 3
  *  as they arrive); `close` disarms it when the stream ends for any reason.
  *  When no frame arrives within the threshold while armed, `onDead` fires
  *  exactly once per silent window. */
-export function createDeadMansSwitch(onDead: () => void, thresholdMs = HEARTBEAT_CADENCE_MS * DEAD_MAN_MISSES) {
+export function createDeadMansSwitch(onDead: () => void, thresholdMs = deadManThresholdMs()) {
   let timer: ReturnType<typeof setTimeout> | undefined
   const fire = () => {
     timer = undefined
