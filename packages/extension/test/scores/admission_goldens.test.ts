@@ -161,4 +161,30 @@ describe("admission goldens — the staged skill set across regimes (#1743)", ()
     expectRegimeGolden("entitled-wrong-code", observed);
     expect(observed.stagedDirs).not.toContain("piccolissimo-gold");
   });
+
+  it("regime internal-mount-present (vault mount present): all internal-surface skills stage", () => {
+    const fx = buildFixture();
+    const observed = admit(fx, [fx.inRepo, fx.vaultPresent], []);
+    expectRegimeGolden("internal-mount-present", observed);
+    expect(observed.stagedDirs).toContain("director-core-gold");
+    expect(observed.stagedDirs).toContain("write-an-issue-gold");
+  });
+
+  it("regime internal-mount-absent (LEAK PIN, AC3): an internal-surface skill NEVER stages without the mount — and nothing crashes", () => {
+    const fx = buildFixture();
+    // the vault root points at an absent dir — the unmounted-machine shape;
+    // resolve + stage must complete (no crash) and stage nothing internal
+    const observed = admit(fx, [fx.inRepo, fx.vaultAbsent], []);
+    expectRegimeGolden("internal-mount-absent", observed);
+    expect(observed.stagedDirs).not.toContain("director-core-gold");
+    expect(observed.stagedDirs).not.toContain("write-an-issue-gold");
+  });
+
+  it("regime internal-mount-unadmitted (LEAK PIN, AC3): a mount whose root does not admit internal never stages internal skills", () => {
+    const fx = buildFixture();
+    // the vault dir EXISTS but the root admits {public} only — per-root guard
+    const observed = admit(fx, [fx.inRepo, { path: fx.vaultPresent.path, surfaces: ["public"] }], []);
+    expectRegimeGolden("internal-mount-unadmitted", observed);
+    expect(observed.stagedDirs).not.toContain("director-core-gold");
+  });
 });

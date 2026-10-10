@@ -3,6 +3,9 @@
   "regimes": {
     "public-only": ["atoms-gold", "transmon-gold"],
     "entitled": ["atoms-gold", "piccolissimo-gold", "transmon-gold"],
-    "entitled-wrong-code": ["atoms-gold", "transmon-gold"]
+    "entitled-wrong-code": ["atoms-gold", "transmon-gold"],
+    "internal-mount-present": ["atoms-gold", "director-core-gold", "transmon-gold", "write-an-issue-gold"],
+    "internal-mount-absent": ["atoms-gold", "transmon-gold"],
+    "internal-mount-unadmitted": ["atoms-gold", "transmon-gold"]
   }
 }
