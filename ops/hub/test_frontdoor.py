@@ -1130,8 +1130,18 @@ class TestHeartbeatAlarm(RouterTest):
 
     # 3x headroom like production (60s beat vs 180s threshold): beat gaps
     # (~0.15s) and the 0.6s member-join gap both stay well under the alarm.
+    # The ingest target ALWAYS points at the tmpdir — the production log is
+    # never a test write target (the alarm only reads in-memory state).
     ALARM_ENV = {"AMICODE_HEARTBEAT_ALARM_S": "0.9",
-                 "AMICODE_HEARTBEAT_CHECK_S": "0.2"}
+                 "AMICODE_HEARTBEAT_CHECK_S": "0.2",
+                 "AMICODE_CLIENT_LOG": "__set_by_start_alarm_frontdoor__"}
+
+    def start_alarm_frontdoor(self):
+        sh = self.start_shard(1)
+        env = dict(self.ALARM_ENV)
+        env["AMICODE_CLIENT_LOG"] = os.path.join(self.tmpdir, "client-errors.log")
+        fd = self.start_frontdoor(routing_table([(1, sh.port)]), extra_env=env)
+        return fd
 
     def open_member(self, fd):
         """A joined SSE member = an open panel's live stream."""
@@ -1149,9 +1159,7 @@ class TestHeartbeatAlarm(RouterTest):
             return ""
 
     def test_alarm_fires_when_streams_live_but_no_heartbeat(self):
-        sh = self.start_shard(1)
-        fd = self.start_frontdoor(routing_table([(1, sh.port)]),
-                                  extra_env=dict(self.ALARM_ENV))
+        fd = self.start_alarm_frontdoor()
         member = self.open_member(fd)
         try:
             deadline = time.time() + 4
@@ -1167,17 +1175,13 @@ class TestHeartbeatAlarm(RouterTest):
     def test_no_alarm_when_no_streams_are_live(self):
         """A closed panel is legitimate quiet — no SSE members means the
         silence alarm must stay OFF (the freshness check covers staleness)."""
-        sh = self.start_shard(1)
-        fd = self.start_frontdoor(routing_table([(1, sh.port)]),
-                                  extra_env=dict(self.ALARM_ENV))
+        fd = self.start_alarm_frontdoor()
         time.sleep(1.5)   # several check passes, never a member
         self.assertNotIn("HEARTBEAT-ALARM", self.frontdoor_log(fd),
                          "no live streams -> no alarm (false-positive guard)")
 
     def test_no_alarm_while_heartbeats_stay_fresh(self):
-        sh = self.start_shard(1)
-        fd = self.start_frontdoor(routing_table([(1, sh.port)]),
-                                  extra_env=dict(self.ALARM_ENV))
+        fd = self.start_alarm_frontdoor()
         # the panel's real order: the telemetry's first beat fires at mount,
         # BEFORE its stream joins — the canary must have its baseline first
         http_request(fd.port, "/__amicode_client_log", method="POST",
