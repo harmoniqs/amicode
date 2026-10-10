@@ -217,7 +217,9 @@ export const DEFAULT_DEAD_MAN_THRESHOLD_MS = HEARTBEAT_CADENCE_MS * DEAD_MAN_MIS
  *  switch. */
 export function deadManThresholdMs(
   env: { AMICODE_SSE_DEADMAN_MS?: string | undefined } | undefined =
-    typeof globalThis.process !== "undefined" ? globalThis.process.env : undefined,
+    typeof globalThis.process !== "undefined"
+      ? (globalThis.process.env as { AMICODE_SSE_DEADMAN_MS?: string | undefined })
+      : undefined,
 ): number {
   const parsed = Number(env?.AMICODE_SSE_DEADMAN_MS)
   return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_DEAD_MAN_THRESHOLD_MS
@@ -392,9 +394,11 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
   let generation = 0
   // Amicode webview: connection visibility for the ConnectionBanner. The loop
   // below reconnects silently every RECONNECT_DELAY_MS, so without a signal a
-  // dead server reads as an endless "thinking" wave. (The branch's 15s
-  // heartbeat timer is NOT carried — upstream's bounded SSE heartbeat already
-  // governs liveness; two abort clocks would fight.)
+  // dead server reads as an endless "thinking" wave. Liveness itself rides the
+  // dead-man's switch below (#1751) — the earlier claim here that upstream's
+  // bounded SSE heartbeat "already governs liveness" was disproven live
+  // (17:22:50: an abruptly-dead host sends no clean close, so the reader parks
+  // in for-await and nothing fires; zero reconnects for 12 minutes).
   const [streamStatus, setStreamStatus] = createSignal<"connected" | "disconnected">("disconnected")
 
   const start = () => {
@@ -411,6 +415,14 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
           attempt?.abort()
         }
         abort.signal.addEventListener("abort", onAbort)
+        // #1751 dead-man's switch: the attempt's own liveness clock. Fired
+        // (disconnect + abort) when the armed window lapses with no frame —
+        // the abort ends the parked reader, which brings the loop round for a
+        // reconnect with the lastEventID cursor exactly like a clean close.
+        const deadMan = createDeadMansSwitch(() => {
+          setStreamStatus("disconnected")
+          attempt?.abort()
+        })
         try {
           const kind = await protocol
           const onSseError = (error: unknown) => {
@@ -433,8 +445,10 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
               ? (await eventSdk.global.event({ signal: attempt.signal, onSseError })).stream
               : eventApi.event.subscribe({ signal: attempt.signal })
           setStreamStatus("connected")
+          deadMan.open()
           let yielded = Date.now()
           for await (const event of events) {
+            deadMan.frame()
             streamErrorLogged = false
             const legacy = "payload" in event
             if (legacy && event.payload.type === "sync") continue
@@ -458,6 +472,7 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
             })
           }
         } finally {
+          deadMan.close()
           abort.signal.removeEventListener("abort", onAbort)
           attempt = undefined
         }

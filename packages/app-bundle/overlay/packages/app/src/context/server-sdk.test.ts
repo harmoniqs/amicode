@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, test, vi } from "bun:test"
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
 import {
   adaptServerEvent,
   applySseError,
@@ -261,6 +263,46 @@ describe("dead-man threshold seam (#1751)", () => {
     // silent reconnect, no error latch — the while-condition is untouched,
     // so the loop goes round and reopens with the lastEventID cursor.
     expect(isStreamClosed(result, attempt.signal)).toBe(true)
+  })
+})
+
+describe("dead-man wiring in the reader loop (#1751)", () => {
+  // SOURCE assertions (the submit-stream-gap #1203 precedent): the reader
+  // loop in createServerSdkContextBase pulls platform/protocol context with
+  // no provider harness in this package. The switch's behavior is pinned
+  // above; this pins where it rides — the connection owns its own liveness.
+
+  const source = readFileSync(join(import.meta.dir, "server-sdk.tsx"), "utf8")
+
+  test("the switch rides the reader — armed once the stream is nominally open", () => {
+    const connected = source.indexOf('setStreamStatus("connected")')
+    const open = source.indexOf("deadMan.open()")
+    expect(connected).toBeGreaterThan(-1)
+    expect(open).toBeGreaterThan(connected)
+  })
+
+  test("every frame re-arms it — before any continue fast-path in the for-await", () => {
+    const forAwait = source.indexOf("for await (const event of events)")
+    const frame = source.indexOf("deadMan.frame()")
+    const fastPath = source.indexOf("continue", forAwait)
+    expect(forAwait).toBeGreaterThan(-1)
+    expect(frame).toBeGreaterThan(forAwait)
+    expect(frame).toBeLessThan(fastPath)
+  })
+
+  test("teardown disarms it before the attempt is released", () => {
+    const close = source.indexOf("deadMan.close()")
+    const release = source.indexOf("attempt = undefined", close)
+    expect(close).toBeGreaterThan(-1)
+    expect(release).toBeGreaterThan(close)
+  })
+
+  test("a fired switch marks the stream disconnected and aborts the attempt", () => {
+    const onDead = source.indexOf("createDeadMansSwitch(() => {")
+    expect(onDead).toBeGreaterThan(-1)
+    const body = source.slice(onDead, onDead + 200)
+    expect(body).toContain('setStreamStatus("disconnected")')
+    expect(body).toContain("attempt?.abort()")
   })
 })
 
