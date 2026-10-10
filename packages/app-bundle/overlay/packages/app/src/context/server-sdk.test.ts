@@ -1,8 +1,9 @@
-import { describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, test, vi } from "bun:test"
 import {
   adaptServerEvent,
   applySseError,
   coalesceServerEvents,
+  createDeadMansSwitch,
   enqueueServerEvent,
   resumeStreamAfterPageShow,
 } from "./server-sdk"
@@ -63,6 +64,34 @@ describe("applySseError", () => {
     applySseError({ closed: false, ...s })
     applySseError({ closed: false, ...s })
     expect(s.calls.abort).toBe(2)
+  })
+})
+
+describe("dead-man's switch (#1751) — the stream reader's own liveness clock", () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  test("a stream that goes silent while nominally open fires the switch at the threshold, once", () => {
+    // The 17:22:50 frontdoor death: connection open, zero frames, zero
+    // reconnects for 12 minutes. The switch must notice the silence itself.
+    vi.useFakeTimers()
+    let dead = 0
+    const deadMan = createDeadMansSwitch(() => {
+      dead += 1
+    })
+    deadMan.open()
+
+    vi.advanceTimersByTime(44_999)
+    expect(dead).toBe(0)
+
+    vi.advanceTimersByTime(1)
+    expect(dead).toBe(1)
+
+    // One abort per silent window, not a recurring alarm — the reconnect
+    // loop owns the gap once the dead stream has been torn down.
+    vi.advanceTimersByTime(60_000)
+    expect(dead).toBe(1)
   })
 })
 

@@ -191,6 +191,46 @@ export function applySseError(input: { closed: boolean; disconnect: () => void; 
   return true
 }
 
+// #1751 — the dead-man's switch. The servers the panel streams from heartbeat
+// on a cadence: the frontdoor's merged /api/event pool frames every ~15s (the
+// live evidence behind the issue), and the instance route's own SSE heartbeat
+// ticks even faster (10s), so a healthy stream never goes a few cadences
+// without a frame. An abruptly-dead host (process kill, rolling deploy, network
+// partition) produces no clean close and no error — the reader sits parked
+// inside `for await` and the panel freezes "thinking" (17:22:50: the frontdoor
+// died mid-turn and ZERO reconnect attempts followed for 12 minutes, while a
+// clean-close reconnect worked a minute earlier). The switch converts every
+// abrupt-death mode into a self-heal: 3 missed cadences — one is noise, three
+// in a row is a dead stream. A misfire costs one reconnect, which the
+// lastEventID replay (#1264) makes cheap. Threshold derivation: 3 × 15s = 45s.
+export const HEARTBEAT_CADENCE_MS = 15_000
+export const DEAD_MAN_MISSES = 3
+
+/** The reader's own liveness clock — the connection owns its liveness. `open`
+ *  arms it once the stream is nominally open; `frame` re-arms it on every
+ *  received frame (never blocks, never busy-waits — it only observes frames
+ *  as they arrive); `close` disarms it when the stream ends for any reason.
+ *  When no frame arrives within the threshold while armed, `onDead` fires
+ *  exactly once per silent window. */
+export function createDeadMansSwitch(onDead: () => void, thresholdMs = HEARTBEAT_CADENCE_MS * DEAD_MAN_MISSES) {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const fire = () => {
+    timer = undefined
+    onDead()
+  }
+  const arm = () => {
+    if (timer !== undefined) clearTimeout(timer)
+    timer = setTimeout(fire, thresholdMs)
+  }
+  return {
+    open: arm,
+    close: () => {
+      if (timer !== undefined) clearTimeout(timer)
+      timer = undefined
+    },
+  }
+}
+
 type ServerEventEmitter = ReturnType<typeof createGlobalEmitter<{ [key: string]: ServerEvent }>>
 type ServerSDKBase = {
   server: ServerConnection.Any
