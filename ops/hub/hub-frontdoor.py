@@ -16,6 +16,9 @@ def _env(key, default):
 APP_DIST = _env("AMICODE_APP_DIST", "/home/aaron/.amico/server/service/dist-app")
 DEFAULT_BACKEND = ("127.0.0.1", 4095)
 LOG = open(_env("AMICODE_FRONTDOOR_LOG", "/home/aaron/.amico/server/frontdoor.log"), "a", buffering=1)
+# #1745: the #1290 client-log ingest's append target. Env-addressable so tests
+# (and any future secondary frontdoor) never write the production log.
+CLIENT_LOG_PATH = _env("AMICODE_CLIENT_LOG", "/home/aaron/.amico/server/client-errors.log")
 _last_req = {}
 def log(m): LOG.write(time.strftime("%H:%M:%S ") + m + "\n")
 
@@ -1525,7 +1528,7 @@ def handle(c, addr, cid):
                     chunk = c.recv(65536)
                     if not chunk: break
                     body += chunk
-                with open("/home/aaron/.amico/server/client-errors.log", "ab") as f:
+                with open(CLIENT_LOG_PATH, "ab") as f:
                     f.write(body.rstrip(b"\r\n") + b"\n")
             except Exception as e:
                 log(f"client-log write failed: {e}")

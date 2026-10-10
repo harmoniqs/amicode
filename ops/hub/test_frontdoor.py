@@ -1075,5 +1075,47 @@ class TestUIGuard(RouterTest):
         self.assertIn(b"location.replace", body)               # the heal, not the broken HTML
 
 
+# --- #1745: the client-log ingest + the heartbeat canary ------------------------
+
+class TestClientLogIngest(RouterTest):
+    """#1745: client telemetry was dead for six weeks (Sep 23 → Oct 10) — the
+    panel's error captures never reached client-errors.log. These pin the
+    ingest contract: a panel-shaped POST lands in the log file, answers 204
+    (never the engine SPA fallback's 200 text/html), and the engine backend
+    is never dialed for it."""
+
+    def start_log_frontdoor(self, extra_env=None):
+        sh = self.start_shard(1)
+        env = {"AMICODE_CLIENT_LOG": os.path.join(self.tmpdir, "client-errors.log")}
+        env.update(extra_env or {})
+        fd = self.start_frontdoor(routing_table([(1, sh.port)]), extra_env=env)
+        return fd, sh
+
+    def test_capture_post_lands_in_log_answers_204(self):
+        fd, sh = self.start_log_frontdoor()
+        body = ("C abc123\nTypeError: t is not a function\n"
+                "    at SessionStreamVeil (assets/index-abc123.js:1:2)")
+        st, hdr, resp = http_request(fd.port, "/__amicode_client_log",
+                                     method="POST", body=body.encode())
+        self.assertEqual(st, 204, "the ingest must answer 204 No Content")
+        self.assertNotIn("text/html", hdr.get("content-type", ""),
+                         "the SPA fallback must never answer the ingest route")
+        self.assertEqual(resp, b"", "204 carries no body")
+        with open(os.path.join(self.tmpdir, "client-errors.log")) as f:
+            self.assertEqual(f.read(), body + "\n",
+                             "the capture must land verbatim in client-errors.log")
+        # the ingest is frontdoor-local: the backend is never dialed (the
+        # engine's SPA fallback is the text/html that killed the telemetry)
+        self.assertNotIn("/__amicode_client_log", sh.httpd.counts)
+
+    def test_heartbeat_post_lands_in_log(self):
+        fd, _ = self.start_log_frontdoor()
+        st, _, _ = http_request(fd.port, "/__amicode_client_log", method="POST",
+                                body=b'{"heartbeat":1790000000000}')
+        self.assertEqual(st, 204)
+        with open(os.path.join(self.tmpdir, "client-errors.log")) as f:
+            self.assertEqual(f.read().splitlines(), ['{"heartbeat":1790000000000}'])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
