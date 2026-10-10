@@ -47,7 +47,7 @@
     "packages/app/src/amicode/inspector/inspector-context.tsx": "ac81b9e0e2a4035f85b6af68b7f0cefcb9f256a175b244ba13136f3a307c0c77",
     "packages/app/src/amicode/inspector/run-inspector.tsx": "63a6351fad12a8377550eb87f7602a712bae586fe482ff46cd847c8544fc6e8a",
     "packages/app/src/app-desktop-commands.test.ts": "1d2057f238dc14e4407ff5c4e53afe091784790bc0fd0dbfde0eacd91e2bd968",
-    "packages/app/src/app.tsx": "07b292f88de59fad23b0e7564e0c536214917b65b50326552894925a9c0e17d1",
+    "packages/app/src/app.tsx": "6fe2c1136330b0b76beb10b15c0ca9df2c62877c98ba3eb4cb91844125916a82",
     "packages/app/src/components/amicode-default-model-value.ts": "416bb4a7cf051c678bdfc5246ddc5796a9a6efe48d1e5c2e933756800cfdae8d",
     "packages/app/src/components/amicode-default-model.test.ts": "941750d074706bd5f4e433c9737b19ebc0ac0f9ba9cd1faaa599a24b22126e05",
     "packages/app/src/components/amicode-default-model.tsx": "16a2de1feb12e07416fe5fbb25879391f912ee0909b553c868c1b531f2ed1f2d",
@@ -884,7 +884,9 @@
     "packages/ui/src/v2/components/toast-v2.css": "9b652d908f39e35cdf1764f1675e4db3dea1d7abf43cb792cfa2d27b699f2723",
     "packages/ui/src/v2/components/tooltip-v2.css": "7cbd2523d9f183b7e24bfbc1f523c370abf8e32836f8be90cfdf75e1c70f05a9",
     "packages/ui/src/v2/components/wordmark-v2.tsx": "6037a68db862ddd67235cbae8dae5a95c9f7403e7c5f268b78fdaaf013950166",
-    "packages/ui/src/v2/styles/theme.css": "3b6fc14460c39ed8b48c71f7527ab510282c014fc385ed6a08cae3686fd145bc"
+    "packages/ui/src/v2/styles/theme.css": "3b6fc14460c39ed8b48c71f7527ab510282c014fc385ed6a08cae3686fd145bc",
+    "packages/app/src/amicode/client-telemetry.ts": "e08bc59f7fdf2d3e75506f2c8c395449cb758027340d004a5e0d5683c6ae89de",
+    "packages/app/src/amicode/client-telemetry.test.ts": "c94cc710ac327153307344ee235678c56e5aeaf08b55bcc16a38d0490b48bde5"
   },
   "symlinks": [
     "packages/app/public/amico.svg"
@@ -902,7 +904,7 @@
   "extracted_at": "2026-09-29T08:37:54.625Z",
   "per_package": {
     "packages/app": {
-      "A": 192,
+      "A": 194,
       "M": 157,
       "D": 0
     },
@@ -948,7 +950,7 @@
     }
   },
   "counts": {
-    "overlay_total": 859,
+    "overlay_total": 879,
     "deletions": 7,
     "server_coupled": 0
   },

@@ -1075,5 +1075,128 @@ class TestUIGuard(RouterTest):
         self.assertIn(b"location.replace", body)               # the heal, not the broken HTML
 
 
+# --- #1745: the client-log ingest + the heartbeat canary ------------------------
+
+class TestClientLogIngest(RouterTest):
+    """#1745: client telemetry was dead for six weeks (Sep 23 → Oct 10) — the
+    panel's error captures never reached client-errors.log. These pin the
+    ingest contract: a panel-shaped POST lands in the log file, answers 204
+    (never the engine SPA fallback's 200 text/html), and the engine backend
+    is never dialed for it."""
+
+    def start_log_frontdoor(self, extra_env=None):
+        sh = self.start_shard(1)
+        env = {"AMICODE_CLIENT_LOG": os.path.join(self.tmpdir, "client-errors.log")}
+        env.update(extra_env or {})
+        fd = self.start_frontdoor(routing_table([(1, sh.port)]), extra_env=env)
+        return fd, sh
+
+    def test_capture_post_lands_in_log_answers_204(self):
+        fd, sh = self.start_log_frontdoor()
+        body = ("C abc123\nTypeError: t is not a function\n"
+                "    at SessionStreamVeil (assets/index-abc123.js:1:2)")
+        st, hdr, resp = http_request(fd.port, "/__amicode_client_log",
+                                     method="POST", body=body.encode())
+        self.assertEqual(st, 204, "the ingest must answer 204 No Content")
+        self.assertNotIn("text/html", hdr.get("content-type", ""),
+                         "the SPA fallback must never answer the ingest route")
+        self.assertEqual(resp, b"", "204 carries no body")
+        with open(os.path.join(self.tmpdir, "client-errors.log")) as f:
+            self.assertEqual(f.read(), body + "\n",
+                             "the capture must land verbatim in client-errors.log")
+        # the ingest is frontdoor-local: the backend is never dialed (the
+        # engine's SPA fallback is the text/html that killed the telemetry)
+        self.assertNotIn("/__amicode_client_log", sh.httpd.counts)
+
+    def test_heartbeat_post_lands_in_log(self):
+        fd, _ = self.start_log_frontdoor()
+        st, _, _ = http_request(fd.port, "/__amicode_client_log", method="POST",
+                                body=b'{"heartbeat":1790000000000}')
+        self.assertEqual(st, 204)
+        with open(os.path.join(self.tmpdir, "client-errors.log")) as f:
+            self.assertEqual(f.read().splitlines(), ['{"heartbeat":1790000000000}'])
+
+
+class TestHeartbeatAlarm(RouterTest):
+    """#1745 AC3: the heartbeat canary — the panel heartbeats while open; the
+    frontdoor alarms when live SSE members exist (a panel IS open — the
+    Oct-10 signature: server mechanically healthy, streams held for hours,
+    client dead) but no heartbeat arrived within the threshold window.
+
+    The live-members guard is the false-positive rule: a closed panel is
+    LEGITIMATE quiet and must never alarm. 'No heartbeat ever' (a panel from
+    a pre-#1745 build) alarms too — a telemetry surface that can die
+    invisibly is itself a defect."""
+
+    # 3x headroom like production (60s beat vs 180s threshold): beat gaps
+    # (~0.15s) and the 0.6s member-join gap both stay well under the alarm.
+    # The ingest target ALWAYS points at the tmpdir — the production log is
+    # never a test write target (the alarm only reads in-memory state).
+    ALARM_ENV = {"AMICODE_HEARTBEAT_ALARM_S": "0.9",
+                 "AMICODE_HEARTBEAT_CHECK_S": "0.2",
+                 "AMICODE_CLIENT_LOG": "__set_by_start_alarm_frontdoor__"}
+
+    def start_alarm_frontdoor(self):
+        sh = self.start_shard(1)
+        env = dict(self.ALARM_ENV)
+        env["AMICODE_CLIENT_LOG"] = os.path.join(self.tmpdir, "client-errors.log")
+        fd = self.start_frontdoor(routing_table([(1, sh.port)]), extra_env=env)
+        return fd
+
+    def open_member(self, fd):
+        """A joined SSE member = an open panel's live stream."""
+        s = socket.create_connection(("127.0.0.1", fd.port), timeout=10)
+        s.sendall((b"GET /event?directory=" + POOLDIR.encode() +
+                   b" HTTP/1.1\r\nHost: x\r\nAccept: text/event-stream\r\n\r\n"))
+        time.sleep(0.6)   # preamble + join
+        return s
+
+    def frontdoor_log(self, fd):
+        try:
+            with open(os.path.join(fd.tmpdir, "frontdoor.log")) as f:
+                return f.read()
+        except OSError:
+            return ""
+
+    def test_alarm_fires_when_streams_live_but_no_heartbeat(self):
+        fd = self.start_alarm_frontdoor()
+        member = self.open_member(fd)
+        try:
+            deadline = time.time() + 4
+            while time.time() < deadline:
+                if "HEARTBEAT-ALARM" in self.frontdoor_log(fd):
+                    break
+                time.sleep(0.2)
+            self.assertIn("HEARTBEAT-ALARM", self.frontdoor_log(fd),
+                          "live streams + zero heartbeats must alarm")
+        finally:
+            member.close()
+
+    def test_no_alarm_when_no_streams_are_live(self):
+        """A closed panel is legitimate quiet — no SSE members means the
+        silence alarm must stay OFF (the freshness check covers staleness)."""
+        fd = self.start_alarm_frontdoor()
+        time.sleep(1.5)   # several check passes, never a member
+        self.assertNotIn("HEARTBEAT-ALARM", self.frontdoor_log(fd),
+                         "no live streams -> no alarm (false-positive guard)")
+
+    def test_no_alarm_while_heartbeats_stay_fresh(self):
+        fd = self.start_alarm_frontdoor()
+        # the panel's real order: the telemetry's first beat fires at mount,
+        # BEFORE its stream joins — the canary must have its baseline first
+        http_request(fd.port, "/__amicode_client_log", method="POST",
+                     body=b'{"heartbeat":%d}' % int(time.time() * 1000))
+        member = self.open_member(fd)
+        try:
+            for _ in range(8):
+                http_request(fd.port, "/__amicode_client_log", method="POST",
+                             body=b'{"heartbeat":%d}' % int(time.time() * 1000))
+                time.sleep(0.15)
+            self.assertNotIn("HEARTBEAT-ALARM", self.frontdoor_log(fd),
+                             "fresh heartbeats under the threshold must stay quiet")
+        finally:
+            member.close()
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

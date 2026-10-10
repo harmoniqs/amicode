@@ -73,6 +73,9 @@ check "wd legacy pattern"   "pattern=$HOME/.amico/server/bin/opencode serve" "$(
 check "wd legacy log"        "log=$HOME/.amico/server/fleet-watchdog/rss-trajectory.log" "$(echo "$WL" | grep '^log=')"
 check "wd legacy inspect"   "inspect_port=9229" "$(echo "$WL" | grep '^inspect_port=')"
 
+# --- #1745: client-log freshness self-test (never touches production paths) ----
+bash "$HERE/client-log-freshness.sh" --self-test && echo "ok   client-log-freshness self-test" || FAILS=$((FAILS + 1))
+
 # --- verdict -------------------------------------------------------------------
 if [ "$FAILS" -gt 0 ]; then
   echo "test-shard-config: $FAILS FAILURES"; exit 1
