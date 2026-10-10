@@ -1213,6 +1213,52 @@ for _p in ("/event", "/api/event", "/global/event"):
     else:
         GROUPS[(_default_shard_id, _p)] = Group(_p, _default_shard_id, _shard_backend(_default_shard_id))
 
+# --- #1745: the heartbeat canary --------------------------------------------------
+# The panel posts {"heartbeat": <epoch_ms>} to /__amicode_client_log every ~60s
+# while it is open. Silence used to be invisible: client-errors.log went quiet
+# Sep 23 -> Oct 10 while panel-side failures piled up unlogged (the Oct-10
+# stream saga: seven fixes across four layers, zero server-side log footprint).
+# The alarm belongs server-side — the panel cannot report its own death — and
+# its false-positive rule is the LIVE-MEMBER guard: it fires ONLY while SSE
+# members are joined (a panel IS open — the suspended-webview signature is
+# "streams held for hours, client JS dead") and no heartbeat arrived within
+# AMICODE_HEARTBEAT_ALARM_S. No members = a closed panel = legitimate quiet;
+# "never any heartbeat this boot" also alarms (a stale pre-#1745 panel build).
+# Bounded noise: one HEARTBEAT-ALARM line per alarm window. State resets on
+# frontdoor restart (conservative — a restart never fabricates an alarm).
+HB_ALARM_S = float(_env("AMICODE_HEARTBEAT_ALARM_S", "180"))
+HB_CHECK_S = float(_env("AMICODE_HEARTBEAT_CHECK_S", "30"))
+_hb_lock = threading.Lock()
+_last_hb = None        # epoch of the newest heartbeat POST seen this boot
+
+def _note_heartbeat():
+    global _last_hb
+    with _hb_lock:
+        _last_hb = time.time()
+
+def _live_member_count():
+    with _groups_lock:
+        return sum(len(g.members) for g in GROUPS.values())
+
+def _heartbeat_watch_loop():
+    last_alarm = 0.0
+    while True:
+        time.sleep(HB_CHECK_S)
+        try:
+            if _live_member_count() == 0:
+                continue
+            with _hb_lock:
+                last = _last_hb
+            now = time.time()
+            quiet = None if last is None else now - last
+            if (quiet is None or quiet > HB_ALARM_S) and now - last_alarm >= HB_ALARM_S:
+                last_alarm = now
+                log("HEARTBEAT-ALARM %s" % ("no heartbeat seen this boot"
+                    if quiet is None else "quiet %.1fs (> %.1fs)" % (quiet, HB_ALARM_S)))
+        except Exception:
+            pass
+threading.Thread(target=_heartbeat_watch_loop, daemon=True).start()
+
 # --- GET response cache: poll floods must not become backend connection floods ----
 CACHE_TTL = 5.0
 CACHE_MAX = 2097152          # 2 MB — the SPA index and capped session lists must fit
@@ -1530,6 +1576,8 @@ def handle(c, addr, cid):
                     body += chunk
                 with open(CLIENT_LOG_PATH, "ab") as f:
                     f.write(body.rstrip(b"\r\n") + b"\n")
+                if b'"heartbeat":' in body:
+                    _note_heartbeat()
             except Exception as e:
                 log(f"client-log write failed: {e}")
             try:
