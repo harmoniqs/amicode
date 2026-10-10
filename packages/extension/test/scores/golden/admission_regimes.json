@@ -1,0 +1,12 @@
+{
+  "$comment": "Admission goldens (amicode#1743, spec-20261008-054129 §D4/B1) — the pinned STAGED skill SET per regime. Keys mirror the regimes built in test/scores/admission_goldens.test.ts (synthetic fixture inventory: atoms-gold/transmon-gold public, piccolissimo-gold entitled (code issimo-gold), legacy-gold untagged, pr-gold/dream-gold internal-in-public-root, director-core-gold/write-an-issue-gold internal in the vault root). Values are the observed output of the REAL admission pipeline (resolveLibrarySkillsWithProvenance → stageOpencodeSkills) on green main. Goldens assert the SET, never file contents. A golden update reviews like any contract change.",
+  "regimes": {
+    "public-only": ["atoms-gold", "transmon-gold"],
+    "entitled": ["atoms-gold", "piccolissimo-gold", "transmon-gold"],
+    "entitled-wrong-code": ["atoms-gold", "transmon-gold"],
+    "internal-mount-present": ["atoms-gold", "director-core-gold", "transmon-gold", "write-an-issue-gold"],
+    "internal-mount-absent": ["atoms-gold", "transmon-gold"],
+    "internal-mount-unadmitted": ["atoms-gold", "transmon-gold"]
+  },
+  "never_stages_on_any_session_surface": ["dream-gold", "legacy-gold", "pr-gold"]
+}
