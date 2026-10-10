@@ -93,6 +93,31 @@ describe("dead-man's switch (#1751) — the stream reader's own liveness clock",
     vi.advanceTimersByTime(60_000)
     expect(dead).toBe(1)
   })
+
+  test("a healthy stream is NEVER aborted — frames within the threshold keep re-arming", () => {
+    // Invisibility to a healthy stream is the invariant: no behavior change
+    // while frames flow, only silence may fire the switch.
+    vi.useFakeTimers()
+    let dead = 0
+    const deadMan = createDeadMansSwitch(() => {
+      dead += 1
+    })
+    deadMan.open()
+
+    // Heartbeats every cadence (15s < 45s threshold), for a long while.
+    for (let beat = 0; beat < 40; beat += 1) {
+      vi.advanceTimersByTime(15_000)
+      deadMan.frame()
+    }
+    expect(dead).toBe(0)
+
+    // Deltas faster than the heartbeat are just more liveness.
+    for (let beat = 0; beat < 100; beat += 1) {
+      vi.advanceTimersByTime(1_000)
+      deadMan.frame()
+    }
+    expect(dead).toBe(0)
+  })
 })
 
 describe("adaptServerEvent", () => {

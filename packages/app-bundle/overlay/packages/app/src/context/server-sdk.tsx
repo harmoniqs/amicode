@@ -224,6 +224,7 @@ export function createDeadMansSwitch(onDead: () => void, thresholdMs = HEARTBEAT
   }
   return {
     open: arm,
+    frame: arm,
     close: () => {
       if (timer !== undefined) clearTimeout(timer)
       timer = undefined
