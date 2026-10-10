@@ -16,6 +16,13 @@ import {
 import type { OpenCodeEvent } from "@opencode-ai/client/promise"
 import type { Event } from "@opencode-ai/sdk/v2/client"
 
+// Fake timers are process-global in bun's single-process suite run — a file
+// that leaves them installed stalls every later file's real-timer tests (the
+// global-sync queue tests' 10ms tick). Restore after every test in this file.
+afterEach(() => {
+  vi.useRealTimers()
+})
+
 describe("resumeStreamAfterPageShow", () => {
   test("restarts the stream on pageshow regardless of persisted flag", () => {
     let starts = 0
@@ -74,10 +81,6 @@ describe("applySseError", () => {
 })
 
 describe("dead-man's switch (#1751) — the stream reader's own liveness clock", () => {
-  afterEach(() => {
-    vi.useRealTimers()
-  })
-
   test("a stream that goes silent while nominally open fires the switch at the threshold, once", () => {
     // The 17:22:50 frontdoor death: connection open, zero frames, zero
     // reconnects for 12 minutes. The switch must notice the silence itself.
