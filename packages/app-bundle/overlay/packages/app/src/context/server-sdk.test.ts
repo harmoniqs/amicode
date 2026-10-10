@@ -8,6 +8,7 @@ import {
   deadManThresholdMs,
   enqueueServerEvent,
   HEARTBEAT_CADENCE_MS,
+  isStreamClosed,
   resumeStreamAfterPageShow,
 } from "./server-sdk"
 import type { OpenCodeEvent } from "@opencode-ai/client/promise"
@@ -178,6 +179,88 @@ describe("dead-man threshold seam (#1751)", () => {
     expect(deadManThresholdMs({ AMICODE_SSE_DEADMAN_MS: "not-a-number" })).toBe(45_000)
     expect(deadManThresholdMs({ AMICODE_SSE_DEADMAN_MS: "0" })).toBe(45_000)
     expect(deadManThresholdMs({ AMICODE_SSE_DEADMAN_MS: "-5" })).toBe(45_000)
+  })
+
+  test("the abrupt-death scenario: silence aborts the parked reader, and the abort reads as a closed stream", async () => {
+    // The 17:22:50 repro as a unit scenario. The stream is nominally open and
+    // delivering; the host dies with no clean close — the reader sits parked
+    // inside next(). The fetch-stream contract (the one applySseError's abort
+    // relies on) is that aborting the attempt's signal is what makes that
+    // parked promise reject. The switch must notice the silence itself and
+    // convert the death into exactly the kind of stream end the reconnect
+    // loop already knows how to go round on — a closed one.
+    vi.useFakeTimers()
+    const attempt = new AbortController()
+    let parkedResolve: ((result: { value: { type: string }; done: boolean }) => void) | undefined
+    let parkedReject: ((error: unknown) => void) | undefined
+    attempt.signal.addEventListener("abort", () => {
+      parkedResolve = undefined
+      parkedReject?.(Object.assign(new Error("The operation was aborted"), { name: "AbortError" }))
+    })
+    const stream = {
+      [Symbol.asyncIterator]() {
+        return {
+          next: () =>
+            new Promise((resolve, reject) => {
+              parkedResolve = resolve
+              parkedReject = reject
+            }),
+        }
+      },
+    }
+    // one healthy heartbeat arrives at t=10s, then the host dies: silence.
+    setTimeout(() => {
+      const resolve = parkedResolve
+      parkedResolve = undefined
+      resolve?.({ value: { type: "server.heartbeat" }, done: false })
+    }, 10_000)
+
+    const status: string[] = []
+    // the reader loop's liveness wiring, verbatim: arm on connect, frame per
+    // frame, disconnect + abort when the switch fires, disarm on teardown.
+    const deadMan = createDeadMansSwitch(() => {
+      status.push("disconnected")
+      attempt.abort()
+    })
+    const seen: string[] = []
+    const read = (async () => {
+      try {
+        deadMan.open()
+        for await (const frame of stream as AsyncIterable<{ type: string }>) {
+          deadMan.frame()
+          seen.push(frame.type)
+        }
+        return "done"
+      } catch (error) {
+        return error
+      } finally {
+        deadMan.close()
+      }
+    })()
+    const settle = async (turns = 30) => {
+      for (let i = 0; i < turns; i += 1) await Promise.resolve()
+    }
+    await settle()
+
+    vi.advanceTimersByTime(10_000)
+    await settle()
+    expect(seen).toEqual(["server.heartbeat"])
+
+    // silence past the re-armed deadline: healthy at 44.999s past the frame…
+    vi.advanceTimersByTime(44_999)
+    expect(status).toEqual([])
+    // …dead at the full threshold.
+    vi.advanceTimersByTime(1)
+    await settle()
+    const result = await read
+
+    expect(status).toEqual(["disconnected"])
+    expect(seen).toEqual(["server.heartbeat"])
+    expect((result as Error).name).toBe("AbortError")
+    // the loop's catch classifier reads our own abort as a closed stream:
+    // silent reconnect, no error latch — the while-condition is untouched,
+    // so the loop goes round and reopens with the lastEventID cursor.
+    expect(isStreamClosed(result, attempt.signal)).toBe(true)
   })
 })
 

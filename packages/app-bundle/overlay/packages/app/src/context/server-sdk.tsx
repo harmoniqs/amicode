@@ -17,7 +17,11 @@ import { createCompatibleApi, type CompatibleApi } from "@/utils/server-compat"
 const isAbortError = (error: unknown) =>
   error !== null && typeof error === "object" && "name" in error && error.name === "AbortError"
 
-const isStreamClosed = (error: unknown, signal?: AbortSignal) => isAbortError(error) || signal?.aborted === true
+/** Whether an ended stream attempt was closed on purpose (our own abort) —
+ *  the reconnect loop's classifier: a closed stream reconnects silently,
+ *  a real failure marks the status and latches the error log. */
+export const isStreamClosed = (error: unknown, signal?: AbortSignal) =>
+  isAbortError(error) || signal?.aborted === true
 export type ServerEvent = Event & { current?: OpenCodeEvent }
 type QueuedServerEvent = { directory: string; payload: ServerEvent }
 /** A minimal fetch call signature. Newer lib types make `typeof fetch` require
