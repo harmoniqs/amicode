@@ -9,6 +9,7 @@ against a file that lived nowhere. This import fixes that.
 | File | Live deploy target (erlich) | Role |
 | --- | --- | --- |
 | `hub-frontdoor.py` | `~/.amico/server/hub-frontdoor.py` | Connection-serializing proxy, 4096 → the amicode service (see `incidents/20260903-wedge`); owns routing, SSE fan-out, snapshot cache |
+| `client-log-freshness.sh` | `~/.amico/server/client-log-freshness.sh` | #1745: mechanical freshness check on the panel telemetry log — age of the newest heartbeat, loudly reported (exit 0 fresh / 1 stale, never-heartbeat, or missing) |
 | `amicode-server.sh` | `~/.amico/server/amicode-server.sh` | systemd wrapper: binary resolution, skill staging, env, spawns the service runner (M3 cutover, #955) |
 | `fleet-watchdog/rss-watchdog.sh` | `~/.amico/server/fleet-watchdog/rss-watchdog.sh` | 5-min RSS trajectory + corroboration probe + wedge capture + restart authority |
 | `fleet-watchdog/cdp-stack.mjs` | `~/.amico/server/fleet-watchdog/cdp-stack.mjs` | CDP all-threads JS stack capture for wedge postmortems (connects to the engine's BUN_INSPECT port) |
@@ -65,7 +66,10 @@ default grabs an arbitrary shard's engine via `head -1`.
    an agent hosted on the hub (the standing rule from the 2026-09 incidents;
    restarts race the agent's own tool loop).
 5. Verify: `hub-upgrade-smoke.sh` (grows router checks in Phase 1), then
-   watch `~/.amico/server/fleet-watchdog/rss-trajectory.log` per shard.
+   `client-log-freshness.sh` (#1745 — with a panel open, its heartbeat must
+   land within a minute; a STALE verdict right after a deploy means the
+   client telemetry died again and must NOT pass silently), then watch
+   `~/.amico/server/fleet-watchdog/rss-trajectory.log` per shard.
 
 Rollback: the hub keeps `*.bak-*` copies beside every live script it has ever
 hot-fixed; the pre-Phase-1 single-shard posture is shard 1's legacy unit —
@@ -83,6 +87,9 @@ back at shard 1 for everything (single-entry table), restart the frontdoor.
 | `AMICODE_MAX_DIALS` | `256` | global in-flight dial ceiling; above it requests get a fast 503 (storms shed, never pile) |
 | `AMICODE_FRONTDOOR_PORT` | `4096` | listen port (+1 for the second origin); tests run on ephemeral ports |
 | `AMICODE_FRONTDOOR_LOG` | `~/.amico/server/frontdoor.log` | log path |
+| `AMICODE_CLIENT_LOG` | `~/.amico/server/client-errors.log` | the `POST /__amicode_client_log` ingest append target (#1745) |
+| `AMICODE_HEARTBEAT_ALARM_S` | `180` | heartbeat-canary threshold: with live SSE members and no heartbeat within this window, the frontdoor logs a `HEARTBEAT-ALARM` line (#1745; 3x the panel's ~60s beat) |
+| `AMICODE_HEARTBEAT_CHECK_S` | `30` | heartbeat-canary check interval |
 
 Table shape:
 
@@ -116,10 +123,12 @@ process-local session state, in-flight sessions cannot migrate):
 - `SIGHUP` reloads the table (existing SSE groups keep their upstreams until
   restart).
 
-Gates: `python3 ops/hub/test_frontdoor.py` (11-test fake-backend suite —
+Gates: `python3 ops/hub/test_frontdoor.py` (38-test fake-backend suite —
 sticky/persistence, least-loaded placement, fan-out merge, SSE routing,
 dead-shard blast radius, dial ceiling, create-sniff pinning, legacy
-regressions) and `bash ops/hub/test-shard-config.sh` (26 checks).
+regressions, the #1745 client-log ingest + heartbeat-alarm canaries) and
+`bash ops/hub/test-shard-config.sh` (26 checks, including the
+client-log-freshness self-test).
 
 ## The Jev placement provider (slice 2)
 
