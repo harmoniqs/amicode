@@ -906,6 +906,12 @@ export function openOnboardingPanel(
     vscode.ViewColumn.One,
     {
       enableScripts: true,
+      // retain-exempt: one-shot welcome walkthrough — no live stream; the
+      // form state is transient by design and onDidDispose below clears the
+      // singleton (and held credentials) so a re-open rebuilds the
+      // walkthrough from scratch. Recorded against
+      // test/panel_registration_invariants.test.ts — see the 7b658cc1
+      // sidebar failure for why the STREAM-bearing panels are not exempt.
       localResourceRoots: [
         vscode.Uri.joinPath(ctx.extensionUri, "dist"),
         vscode.Uri.joinPath(ctx.extensionUri, "media"),
