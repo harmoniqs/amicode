@@ -4,7 +4,9 @@ import * as fs from "node:fs";
 import { ServerManager } from "./server_manager";
 import { fetchProviderSignal, fetchProviderIds } from "./llm_creds.mjs";
 import { resolveOpencodeBinary, OpencodeMissingError, unsupportedHostAdvice } from "./opencode_binary";
-import { resolveSelectedLaunch, HARNESS_REGISTRY } from "./harness";
+import { resolveSelectedLaunch, harnessMenu, decideHarnessSwitch } from "./harness";
+import { watchHarnessSwitch, writeHarnessOptionsFile } from "./harness_switch";
+import { readLocalEntitlements } from "./scores/entitlements";
 import { ChatPanel } from "./chat_panel";
 import { DeckPanel } from "./deck_panel";
 import { SidebarViewProvider, createNewProject, createNewEnvironment } from "./sidebar_view";
@@ -151,6 +153,39 @@ let fleetVerbRunner: (() => VerbRunResult) | undefined;
  *  rejection + the refresh pointer), and the D1 freshness verdict each render
  *  — never a silent fallthrough, never a raw-file read. The GUARD remains the
  *  enforcement (it fails closed on a broken verb); this check is the UX layer. */
+// ============================================================================
+// #1549 — the harness switcher. One registry, two fronts: the palette command
+// and the composer control (via the engine's GET/POST /amicode/harness routes)
+// both render from currentHarnessMenu's serialization and both consult
+// decideHarnessSwitch before anything persists or restarts.
+// ============================================================================
+
+/** The current registry menu for the running settings — the ONE serialization
+ *  the options file publishes and both fronts render. Entitlements resolve
+ *  from the ops-dir entitlements.toml, the same file the mode-card gate reads. */
+function currentHarnessMenu(cfg: vscode.WorkspaceConfiguration) {
+  return harnessMenu({
+    current: cfg.get<string>("harness", "opencode"),
+    entitlements: readLocalEntitlements(path.join(os.homedir(), ".amico", "amicode")).entitlements,
+    settingsBag: {
+      opencodeBinary: cfg.get<string>("opencodeBinary", ""),
+      telaioBinary: cfg.get<string>("telaioBinary", ""),
+      telaioAppDir: cfg.get<string>("telaioAppDir", ""),
+    },
+  });
+}
+
+/** Publish the registry menu for the engine's GET /amicode/harness. Best-
+ *  effort: a failed write must never block boot — the composer control simply
+ *  stays hidden until the next publish. */
+function publishHarnessOptions(cfg: vscode.WorkspaceConfiguration, log: (line: string) => void): void {
+  try {
+    writeHarnessOptionsFile(currentHarnessMenu(cfg));
+  } catch (e) {
+    log(`[harness] options publish failed — ${(e as Error).message}`);
+  }
+}
+
 function isFleetClientGuard(binary: string | undefined, log: (line: string) => void = () => {}): boolean {
   if (process.platform !== "darwin") return false;
   if (!binary || !binary.endsWith("amico-opencode-fleet-guard")) return false;
@@ -617,6 +652,10 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     });
     harnessConsumesOpencodeConfig = launch.descriptor.consumesOpencodeConfig;
     binary = launch.binary;
+    // #1549: publish the registry menu so the composer control can render it
+    // (the engine's GET /amicode/harness serves this file; the POST route
+    // validates against it). Boot is the first publish; every switch republishes.
+    publishHarnessOptions(bootCfg, (line) => opencodeChannel.appendLine(line));
     opencodeChannel.appendLine(
       bootCfg.get<string>("opencodeBinary", "").trim() !== "" && launch.descriptor.id === "opencode"
         ? `[boot] OVERRIDE: amicode.opencodeBinary = ${binary}`
@@ -1135,6 +1174,45 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
             ? "Amicode: High-Performance + Cloud active (Piccolissimo + Altissimo — solves run in the cloud; connect an API key if you haven't)."
             : "Amicode: back on the Piccolo stack (free, local).",
         );
+      }),
+    );
+
+    // Harness switcher (#1549): the composer control POSTs {harness} to the
+    // engine's /amicode/harness route, which writes {harness,
+    // status:"switching"}; we do the REAL switch — the registry gate (the
+    // same decideHarnessSwitch the palette consults), the `amicode.harness`
+    // setting persist, the restartServer respawn — and the watcher settles
+    // status:"ready" at the harness onSwitch reports. A refused switch (the
+    // gate blocked it between the UI's read and the watcher's run) settles
+    // ready at the STILL-CURRENT harness — never a ready file claiming a
+    // switch that didn't happen.
+    ctx.subscriptions.push(
+      watchHarnessSwitch(async (harness) => {
+        opencodeChannel.appendLine(`[harness] switching → ${harness}`);
+        const cfg = vscode.workspace.getConfiguration("amicode");
+        const decision = decideHarnessSwitch({
+          requested: harness,
+          current: cfg.get<string>("harness", "opencode"),
+          entitlements: readLocalEntitlements(path.join(os.homedir(), ".amico", "amicode")).entitlements,
+          settingsBag: {
+            opencodeBinary: cfg.get<string>("opencodeBinary", ""),
+            telaioBinary: cfg.get<string>("telaioBinary", ""),
+            telaioAppDir: cfg.get<string>("telaioAppDir", ""),
+          },
+        });
+        if (!decision.allowed) {
+          opencodeChannel.appendLine(`[harness] switch to "${harness}" refused — ${decision.reason ?? "blocked"}`);
+          void vscode.window.showWarningMessage(`Amicode: harness switch refused — ${decision.reason ?? "blocked"}`);
+          return cfg.get<string>("harness", "opencode");
+        }
+        if (decision.noop) return cfg.get<string>("harness", "opencode");
+        await cfg.update("harness", harness, vscode.ConfigurationTarget.Global);
+        // Republish BEFORE the restart: the fresh server's first GET must
+        // already show the new current.
+        publishHarnessOptions(cfg, (line) => opencodeChannel.appendLine(line));
+        await vscode.commands.executeCommand("amicode.restartServer");
+        opencodeChannel.appendLine(`[harness] switched → ${harness} (server back up)`);
+        return harness;
       }),
     );
 
@@ -2096,56 +2174,75 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
 
   // 5. Commands
   ctx.subscriptions.push(
-    // The harness picker (ADR-0011, #659): the registry IS the menu. Entries
-    // carry honest availability; an unavailable option routes to guidance
-    // instead of switching. The disclosure rides every entry: sessions are
-    // harness-local — switching harnesses switches session history. Switch =
-    // persist + the existing restartServer respawn path.
+    // The harness picker (ADR-0011, #659; #1549): the registry IS the menu —
+    // rendered from harnessMenu, the SAME serialization the composer control
+    // renders, and gated by decideHarnessSwitch, the SAME decision the
+    // composer's watcher path consults (one registry, two fronts). Entries
+    // carry honest availability + the entitlement read-side gate as
+    // disabled-with-reason; a blocked pick routes to guidance instead of
+    // switching. The disclosure rides every entry: sessions are harness-local
+    // — switching harnesses switches session history. Switch = persist + the
+    // existing restartServer respawn path.
     vscode.commands.registerCommand("amicode.selectHarness", async () => {
       const cfg = vscode.workspace.getConfiguration("amicode");
-      const current = cfg.get<string>("harness", "opencode");
-      const settingsBag = {
-        opencodeBinary: cfg.get<string>("opencodeBinary", ""),
-        telaioBinary: cfg.get<string>("telaioBinary", ""),
-        telaioAppDir: cfg.get<string>("telaioAppDir", ""),
-      };
-      const items = HARNESS_REGISTRY.map((d) => {
-        const avail = d.availability(settingsBag);
-        const isCurrent = d.id === current;
+      const menu = currentHarnessMenu(cfg);
+      const items = menu.options.map((option) => {
+        const isCurrent = option.id === menu.current;
         return {
-          descriptor: d,
-          avail,
-          label: isCurrent ? `$(check) ${d.displayName}` : d.displayName,
-          description: isCurrent ? "current" : avail.state,
-          detail: `${avail.detail} Sessions are harness-local — switching switches session history.`,
+          option,
+          isCurrent,
+          label: isCurrent ? `$(check) ${option.displayName}` : option.displayName,
+          description: isCurrent ? "current" : option.disabled ? "unavailable" : option.state,
+          detail: `${option.detail} Sessions are harness-local — switching switches session history.`,
         };
       });
       const pick = await vscode.window.showQuickPick(items, {
         placeHolder: "Amicode: select the chat harness",
       });
-      if (!pick || pick.descriptor.id === current) return;
-      if (pick.avail.state === "needs-setup") {
+      if (!pick || pick.isCurrent) return;
+      if (pick.option.disabled) {
+        const needsSetup = pick.option.state === "needs-setup";
         const action = await vscode.window.showWarningMessage(
-          `${pick.descriptor.displayName} isn't ready yet`,
+          `${pick.option.displayName} isn't available — ${pick.option.reason ?? "unavailable"}`,
           { modal: false },
-          "Open Settings",
+          ...(needsSetup ? ["Open Settings"] : []),
         );
         if (action === "Open Settings") {
           void vscode.commands.executeCommand(
             "workbench.action.openSettings",
-            pick.descriptor.id === "telaio" ? "amicode.telaioBinary" : "amicode.harness",
+            pick.option.id === "telaio" ? "amicode.telaioBinary" : "amicode.harness",
           );
         }
         return;
       }
       const confirm = await vscode.window.showWarningMessage(
-        `Switch to ${pick.descriptor.displayName}? Sessions are harness-local — the new harness starts with its own (empty) history.`,
+        `Switch to ${pick.option.displayName}? Sessions are harness-local — the new harness starts with its own (empty) history.`,
         { modal: true },
         "Switch & Restart",
       );
       if (confirm !== "Switch & Restart") return;
-      await cfg.update("harness", pick.descriptor.id, vscode.ConfigurationTarget.Global);
-      opencodeChannel.appendLine(`[harness] selected: ${pick.descriptor.id} — restarting the server`);
+      // The SAME gate the composer's watcher path consults — if state changed
+      // between the menu render and this confirm, the decision, not the stale
+      // menu, decides. The persist + restart below is the palette front of
+      // the same state the watcher lands.
+      const decision = decideHarnessSwitch({
+        requested: pick.option.id,
+        current: cfg.get<string>("harness", "opencode"),
+        entitlements: readLocalEntitlements(path.join(os.homedir(), ".amico", "amicode")).entitlements,
+        settingsBag: {
+          opencodeBinary: cfg.get<string>("opencodeBinary", ""),
+          telaioBinary: cfg.get<string>("telaioBinary", ""),
+          telaioAppDir: cfg.get<string>("telaioAppDir", ""),
+        },
+      });
+      if (!decision.allowed) {
+        void vscode.window.showWarningMessage(`Amicode: harness switch refused — ${decision.reason ?? "blocked"}`);
+        return;
+      }
+      if (decision.noop) return;
+      await cfg.update("harness", pick.option.id, vscode.ConfigurationTarget.Global);
+      publishHarnessOptions(cfg, (line) => opencodeChannel.appendLine(line));
+      opencodeChannel.appendLine(`[harness] selected: ${pick.option.id} — restarting the server`);
       void vscode.commands.executeCommand("amicode.restartServer");
     }),
   );

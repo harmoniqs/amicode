@@ -3,6 +3,7 @@ import { createStore } from "solid-js/store"
 import { TabsInfoPopup } from "@/components/help-button"
 import { Titlebar, type TitlebarUpdate } from "@/components/titlebar"
 import { SolverSwitchBanner } from "@/components/solver-switch-banner"
+import { HarnessSwitchBanner } from "@/components/harness-switch-banner"
 import { VaultPanel } from "@/components/vault-panel"
 import { usePlatform } from "@/context/platform"
 import { setV2Toast, ToastRegion } from "@/utils/toast"
@@ -55,6 +56,10 @@ export default function NewLayout(props: ParentProps) {
           under the webview. Speaks only for switches the app requested — unlike
           the removed ConnectionBanner, silence is still the default. */}
       <SolverSwitchBanner />
+      {/* amicode#1549: a harness switch restarts the server under the webview
+          too — the composer's harness control narrates through the gap. Same
+          discipline: speaks only for switches the app requested. */}
+      <HarnessSwitchBanner />
       {/* DebugBar removed with the fork's debug-bar deletion (kept during the
           upstream merge) — the debugTools toggle state stays for the titlebar's
           channel indicator. */}
