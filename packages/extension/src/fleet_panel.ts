@@ -484,7 +484,15 @@ export function registerFleetPanel(ctx: vscode.ExtensionContext, deps: FleetPane
         "amicode.fleet",
         "Fleet & Versions",
         vscode.ViewColumn.One,
-        { enableScripts: true },
+        {
+          enableScripts: true,
+          // retain-exempt: on-demand status report — no live stream to keep
+          // warm. Suspension disposes the panel, onDidDispose clears the
+          // singleton below, and a re-open rebuilds it and re-runs doctor
+          // from scratch (unlike the sidebar/chat panels, whose SSE stream
+          // froze under suspension — the 7b658cc1 failure this exemption is
+          // recorded against in test/panel_registration_invariants.test.ts).
+        },
       );
       currentPanel = panel;
       const state: FleetPanelState = { loading: true, error: null, report: null, upgrade: null };
