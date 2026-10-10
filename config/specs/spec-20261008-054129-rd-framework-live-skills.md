@@ -151,8 +151,23 @@ paragraphs are their design-of-record. Launch-shaped: none (bookkeeping + implem
 - V1/TUI hot-reload parity (A1 documents hub-first honestly).
 - Rewriting historical records (ledgers, prior specs, the alias tables) — forward-only.
 
-## Review (by hand — tooling=manual, `amico spec review` absent; a weaker claim than tool-run,
-perspective-isolated critics, recorded as such)
+## Review (amended 2026-10-10: the tooling was never absent — the Step-0 probe was broken)
+
+**Correction of record.** The original review header claimed `tooling=manual` on the basis of
+`amico spec review --help` failing — but the CLI rejects `--help`; the probe was broken, not
+the tooling. `amico spec review` runs on this box. Re-run against this spec post-hoc
+(2026-10-10): **verdict `approved-mechanical`, round 1, zero findings, zero blocking** — the
+schema, falsifiable, and provenance lenses all ran tool-clean; no judgment critics were
+available (`critics: []`), so the judgment tier remains the by-hand pass below. The three
+manual lenses stand as the judgment-tier complement to the tool-run mechanical tier, not as
+a replacement for it.
+
+`amico plan compile` DOES fail on this box (no `$AMICO_CRITIC_BIN` / agent CLI — the
+documented degraded path): the reviewed spec + parent-tracked steps in the campaign
+ledger's loop log stand in for the compiled plan, and the campaign session ledger is the
+tracking artifact of record.
+
+The original by-hand review (round 2, three lenses — recorded as the judgment tier):
 
 Three lenses applied manually. No blocking contradiction found (no two spec lines that cannot
 both be true). All findings advisory; each resolved into the spec or carried as an obligation.
