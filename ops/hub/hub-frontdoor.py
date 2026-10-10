@@ -446,7 +446,7 @@ def ua_census(first, path):
             if line.lower().startswith("user-agent:"):
                 ua = line.split(":", 1)[1].strip()[:90]
                 break
-        cls = "doc" if path == "/" else "sse" if path in ("/event", "/global/event") else "api"
+        cls = "doc" if path == "/" else "sse" if path in ("/event", "/api/event", "/global/event") else "api"
         with _ua_lock:
             k = (cls, ua)
             _ua_counts[k] = _ua_counts.get(k, 0) + 1
@@ -1204,7 +1204,7 @@ class Group:
 # single-upstream groups the pre-pool frontdoor had.
 GROUPS = {}
 _default_shard_id = TABLE["default_shard"] if SHARDED else 1
-for _p in ("/event", "/global/event"):
+for _p in ("/event", "/api/event", "/global/event"):
     if SHARDED:
         GROUPS[("merged", _p)] = Group(_p, _default_shard_id, None, merge=dict(TABLE["backends"]))
     else:
@@ -1554,7 +1554,7 @@ def handle(c, addr, cid):
                 serve_session_list(c, first, raw)
                 return
             key = None   # directory-scoped responses must NEVER be shared across clients
-        if path in ("/event", "/global/event"):
+        if path in ("/event", "/api/event", "/global/event"):
             # #1717 slice 1c: the client-facing event streams are MERGED across
             # the pool -- the wire /event is directory-scoped and session-less
             # (WorkspaceRoutingQuery has no session param), so the union of all

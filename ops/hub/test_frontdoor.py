@@ -979,7 +979,8 @@ class TestDeltaCoalescing(unittest.TestCase):
             sock = socket.create_connection(("127.0.0.1", fd.port), timeout=10)
             sock.sendall(b"GET /event?directory=" + POOLDIR.encode() + b" HTTP/1.1\r\nHost: x\r\nAccept: text/event-stream\r\n\r\n")
             time.sleep(0.6)
-            qframe = (b'data: {"id":"evt_liveq","type":"question.asked","properties":'
+            qframe = (b"/event",
+                      b'data: {"id":"evt_liveq","type":"question.asked","properties":'
                       b'{"id":"que_live1","sessionID":"ses_q1","questions":'
                       b'[{"header":"h","question":"live?","options":[]}]}}\n\n')
             t.shards[1].httpd.sse_inject.append(qframe)
