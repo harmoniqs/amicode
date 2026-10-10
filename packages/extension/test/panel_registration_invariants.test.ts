@@ -144,11 +144,19 @@ function enumerateSrc(): PanelRegistration[] {
 // is one entry here — the enumeration applies it to all panels automatically;
 // exemptions stay per-registration and explicit at the registration site.
 
-const EXEMPT_MARKER_RE = /retain-exempt:/;
+/** The exemption's stated reason: the rest of the `retain-exempt:` line in
+ *  the options object's comments. A marker with no reason is NOT an
+ *  exemption — "explicit and recorded, never silent" means the panel says
+ *  why, at the registration site. */
+function exemptionReason(options: string): string | null {
+  const match = options.match(/retain-exempt:[ \t]*([^\n]+)/);
+  const reason = match?.[1].replace(/\*\/\s*$/, "").trim();
+  return reason && reason.length > 0 ? reason : null;
+}
 
 function statusOf(reg: PanelRegistration): "retained" | "exempt" | "UNFLAGGED" {
   if (reg.flagged) return "retained";
-  if (EXEMPT_MARKER_RE.test(reg.options)) return "exempt";
+  if (exemptionReason(reg.options) !== null) return "exempt";
   return "UNFLAGGED";
 }
 
@@ -201,5 +209,47 @@ describe("panel-registration invariants (#1747)", () => {
   it("every enumerated registration retains context when hidden or records an explicit exemption", () => {
     const failed = invariantViolations(enumerateSrc());
     expect(failed.map((f) => `${f.reg.file} [${f.reg.kind} ${f.reg.viewType}]: ${f.failed.join("; ")}`)).toEqual([]);
+  });
+
+  it("leak pin: retain-exempt with NO stated reason is still a violation — exemptions are never silent", () => {
+    const synthetic = `vscode.window.createWebviewPanel("amicode.silent", "S", vscode.ViewColumn.One, {
+      enableScripts: true,
+      // retain-exempt:
+    });`;
+    const failed = invariantViolations(collectRegistrations(synthetic, "silent_fixture.ts"));
+    expect(failed.map((f) => `${f.reg.viewType}: ${f.failed.join("; ")}`)).toEqual([
+      "amicode.silent: registered without retainContextWhenHidden: true and without an explicit retain-exempt reason",
+    ]);
+  });
+
+  it("leak pin: a panel registered WITHOUT the flag and WITHOUT an exemption fails red — the golden bites", () => {
+    // The leak direction this guards is real, not hypothetical: the first run
+    // of the golden caught exactly this in production code (fleet_panel.ts
+    // and onboarding_panel.ts both registered unflagged). This fixture pins
+    // it permanently: the NEXT panel registered without the flag fails red
+    // at this boundary, not in front of the user.
+    const synthetic = `const panel = vscode.window.createWebviewPanel(
+      "amicode.synthetic",
+      "Synthetic",
+      vscode.ViewColumn.One,
+      { enableScripts: true },
+    );`;
+    const failed = invariantViolations(collectRegistrations(synthetic, "unflagged_fixture.ts"));
+    expect(failed).toHaveLength(1);
+    expect(failed[0].reg.viewType).toBe("amicode.synthetic");
+    expect(failed[0].failed).toEqual([
+      "registered without retainContextWhenHidden: true and without an explicit retain-exempt reason",
+    ]);
+  });
+
+  it("leak pin: a properly flagged registration is not a violation — the detector is not a blanket flagger", () => {
+    const synthetic = `const panel = vscode.window.createWebviewPanel("amicode.flagged", "F", vscode.ViewColumn.One, {
+      enableScripts: true,
+      retainContextWhenHidden: true,
+    });
+    vscode.window.registerWebviewViewProvider("amicode.flaggedview", provider, {
+      webviewOptions: { retainContextWhenHidden: true },
+    });`;
+    expect(invariantViolations(collectRegistrations(synthetic, "flagged_fixture.ts"))).toEqual([]);
   });
 });
