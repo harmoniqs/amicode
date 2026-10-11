@@ -299,6 +299,7 @@
     "packages/opencode/src/agent/agent.ts": "512372a4c62997e9565266638ada19b9dc0a3685b0c0483fd28fede2abdb5c9b",
     "packages/opencode/src/mcp/browser.ts": "ecdda42cbd55a97b8d14050aa15c6e6450a1d63b0a641c8c8e5b81e50f957c87",
     "packages/opencode/src/mcp/index.ts": "da45165e6791a5b30c8962c7fd0ea391bb8e1931cc2357c6b90e9fd090cdeb0d",
+    "packages/opencode/src/permission/index.ts": "9aa34698375f981004fb6df68af17fa4f01db3adddc06060691ee397f0e4581b",
     "packages/opencode/src/project/instance-context.ts": "65a35792e50e96a50ea14cd9f928045c0e2fc15eb49506f5bbceee38c4af1457",
     "packages/opencode/src/project/instance-store.ts": "c22d3e2499e63dd8d9395d58189df75444d306774df833e746f22e327edcf2ab",
     "packages/opencode/src/provider/auth.ts": "b0ab1322c1039e27176bf9e3500603eae27506065ac141a69710220f3361f6b8",
@@ -339,6 +340,7 @@
     "packages/opencode/src/worktree/index.ts": "a86f542b579ef40f2940d36e2c8011ce5592d4811cd5ed437bafe614789fb87e",
     "packages/opencode/test/fixture/fixture.ts": "357bdaa06c6233a91069db20cc5f1cbb2d6eafa3bc7ba3e89b019859d195d6ef",
     "packages/opencode/test/lib/cli-process.ts": "110c43d247930e834ffffb9068682c5ab2e1b95460ec1ac3d0a75cafbdee60ff",
+    "packages/opencode/test/permission/permission-store.test.ts": "afbcc6a6b3ca674e1183ba4c09e41c678f2123601a333683599b2e562eeb113c",
     "packages/opencode/test/project/worktree-rename.test.ts": "3ec168c9f8595249b75832895a251483ec1f3641ce44ad0bd5a664b5bbd6dad1",
     "packages/opencode/test/provider/harmoniqs-tools.test.ts": "0c626daa51c312eb81dd854509a2e1944712ee9620a36eb4db66078ab80d6b82",
     "packages/opencode/test/provider/provider.test.ts": "5b2cbed8994d3bbc968a72d01459460c1de72b6117a0795c2bc6a10abbf02926",
@@ -905,7 +907,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-11T22:03:42.153Z",
+  "extracted_at": "2026-10-11T22:15:21.047Z",
   "per_package": {
     "packages/app": {
       "A": 192,
@@ -923,8 +925,8 @@
       "D": 0
     },
     "packages/opencode": {
-      "A": 74,
-      "M": 85,
+      "A": 75,
+      "M": 86,
       "D": 0
     },
     "packages/schema": {
@@ -954,7 +956,7 @@
     }
   },
   "counts": {
-    "overlay_total": 883,
+    "overlay_total": 885,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1250,6 +1252,7 @@
     "packages/opencode/src/agent/agent.ts": "M",
     "packages/opencode/src/mcp/browser.ts": "M",
     "packages/opencode/src/mcp/index.ts": "M",
+    "packages/opencode/src/permission/index.ts": "M",
     "packages/opencode/src/project/instance-context.ts": "M",
     "packages/opencode/src/project/instance-store.ts": "M",
     "packages/opencode/src/provider/auth.ts": "M",
@@ -1290,6 +1293,7 @@
     "packages/opencode/src/worktree/index.ts": "M",
     "packages/opencode/test/fixture/fixture.ts": "M",
     "packages/opencode/test/lib/cli-process.ts": "M",
+    "packages/opencode/test/permission/permission-store.test.ts": "A",
     "packages/opencode/test/project/worktree-rename.test.ts": "A",
     "packages/opencode/test/provider/harmoniqs-tools.test.ts": "A",
     "packages/opencode/test/provider/provider.test.ts": "M",
