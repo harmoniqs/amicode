@@ -472,10 +472,10 @@
     "packages/opencode/src/server/routes/instance/httpapi/handlers/provider.ts": "8baf16cad0992c5351b61b0c0fb27903bb25b17e1b25fc7c5d77f807c24413a6",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/session.ts": "b37ff4136c4aea85b23083bf441f03e09820e3e4cdd95e4118ca570d8435b94f",
     "packages/opencode/src/server/routes/instance/httpapi/middleware/workspace-routing.ts": "6ded09e0f424f894e100e1f4904787d97ae1512f25688cfa2f05cbfbd3811a2a",
-    "packages/opencode/src/server/routes/instance/httpapi/server.ts": "8a8e47c2242bc61be078c2fb97ecaa37ebe45cb410b95819102731b52f2b3c31",
+    "packages/opencode/src/server/routes/instance/httpapi/server.ts": "29f049349b7c70d94dd59007a61657cab3457cf5e0233e95c3bcf27607d26f8b",
     "packages/opencode/src/server/server.ts": "56b3c2047917aa80d1dfb29bfa9839bcc2ad7f5a6f4db12103cd962a98fba866",
     "packages/opencode/src/server/shared/public-ui.ts": "a843b4e84673d9a5e34f36eb7cffbb499850f7588154c23061fc8a81cd1369ef",
-    "packages/opencode/src/server/shared/ui.ts": "eba93fdd47c786d723d2593e788f6b7278b072548acb916d19eeb2e9616a4197",
+    "packages/opencode/src/server/shared/ui.ts": "c66ef686ee090f442ee69b6a5f3c985ff005dc135b8265eaf5955f83ecfb86ea",
     "packages/opencode/src/server/shared/workspace-routing.ts": "3704b6cf218fc165ce9c1cdad0ee42fc9cf604976e4a552478200f85db80876a",
     "packages/opencode/src/session/business-record.ts": "d82db061055d0dd26ad95b34bff688ce23fd06a8fb9248dd335c6726c6ff0f5e",
     "packages/opencode/src/session/compaction.ts": "fd6159a8b04050706b6968c7a1b091f79d06e6e4aa988a12629a7616b8128e94",
@@ -884,7 +884,9 @@
     "packages/ui/src/v2/components/toast-v2.css": "9b652d908f39e35cdf1764f1675e4db3dea1d7abf43cb792cfa2d27b699f2723",
     "packages/ui/src/v2/components/tooltip-v2.css": "7cbd2523d9f183b7e24bfbc1f523c370abf8e32836f8be90cfdf75e1c70f05a9",
     "packages/ui/src/v2/components/wordmark-v2.tsx": "6037a68db862ddd67235cbae8dae5a95c9f7403e7c5f268b78fdaaf013950166",
-    "packages/ui/src/v2/styles/theme.css": "3b6fc14460c39ed8b48c71f7527ab510282c014fc385ed6a08cae3686fd145bc"
+    "packages/ui/src/v2/styles/theme.css": "3b6fc14460c39ed8b48c71f7527ab510282c014fc385ed6a08cae3686fd145bc",
+    "packages/opencode/src/server/routes/instance/httpapi/middleware/gateway-secret.ts": "ec6133ee5d331920ded81042fbeb05221bec0c4b26f5897b3f28bc267d26aefa",
+    "packages/opencode/test/server/gateway-secret.test.ts": "8d38ec187098be99f698c5e795b867a0e2fe5e2ef2aa3a9e2c03a8b0147d4473"
   },
   "symlinks": [
     "packages/app/public/amico.svg"
@@ -917,7 +919,7 @@
       "D": 0
     },
     "packages/opencode": {
-      "A": 71,
+      "A": 73,
       "M": 81,
       "D": 0
     },
@@ -948,7 +950,7 @@
     }
   },
   "counts": {
-    "overlay_total": 859,
+    "overlay_total": 861,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1811,7 +1813,9 @@
     "packages/opencode/src/server/routes/instance/httpapi/handlers/file.ts": "M",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/mcp.ts": "M",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/provider.ts": "M",
-    "packages/opencode/src/server/routes/instance/httpapi/handlers/session.ts": "M"
+    "packages/opencode/src/server/routes/instance/httpapi/handlers/session.ts": "M",
+    "packages/opencode/src/server/routes/instance/httpapi/middleware/gateway-secret.ts": "A",
+    "packages/opencode/test/server/gateway-secret.test.ts": "A"
   },
   "upstream_base_archive_sha256": "4b5f2e5edfc796082a353fd09c1b1dec3e7a108a4b080fe3a86b12d9fa59fae6"
 }
