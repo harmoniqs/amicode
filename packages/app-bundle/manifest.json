@@ -46,6 +46,7 @@
     "packages/core/test/database-migration.test.ts": "e5ffa9b36028a8bf31ae7d3eac7fe34fb0566a609325c8dc29e59021d5ee0b1a",
     "packages/core/test/location-mutation.test.ts": "2c4c8faa220cc8fabfe12d57bd74ec8dd8aac8485d0ecafd2761cdee1806d6b0",
     "packages/core/test/runtime-state.test.ts": "e532a5aa2d91a9b8bb8ca3b78a5d29644e5d43532c9de133d96e464729e28986",
+    "packages/core/test/session-execution-local.test.ts": "25720c59550b85faaa2594e9580391df4c4bf31c688bf074208aab40156579f3",
     "packages/core/test/session-prompt.test.ts": "2af05be037473266c7b38721abbf7f865a4dfe35c9e779282cb7f697ba0a2adc",
     "packages/core/test/session-runner-recorded.test.ts": "962301989a4a315379819bc3d4600d56c3e646b1a9390d02d01556578fc66adc",
     "packages/core/test/session-runner.test.ts": "ed62a4ee8d0bc9dbc308940a04731b07de5803339e6c6bc560ce8424460fbf23",
@@ -68,6 +69,7 @@
     "packages/schema/test/provenance-matrix.test.ts": "80c7b10e7c249d20e14aea3f6e1341450f63ff8ee99f3c69ac9e2db52d7340e1",
     "packages/schema/test/question.test.ts": "511f4fabf2841ed89e1fed9594f2e3a1be8eea5bcb50b680d762c49d6ef572d9",
     "packages/schema/test/session-receipt.test.ts": "7306eea76f14c7ddc178cf221e1b52c9c48ec87ae5bbf9633afdfa12eb7fc611",
+    "packages/server/src/routes.ts": "7bc666b8c9684767c790717d3e137d0fd8b39aedda1e938f6adde188e5914dd0",
     "packages/ui/src/solid-dnd.d.ts": "f1faf22b0773252852ff0865f68a00fa479777f5d0b4602ea4d1660c366793ff",
     "packages/app/docs/adr/0001-chat-first-landing.md": "d19c42a8aa56f585f92a3e0ffd072c55804ca029c6d19fb7d772c69d7e5de3be",
     "packages/app/docs/adr/0002-brain-as-chat-background.md": "bda9bc065e16684e1daffdc3f7d8ac5b3c81a82de5c27fa1ba7d6268659c32c1",
@@ -739,7 +741,7 @@
     "packages/core/src/database/migration/20260913212936_session-receipt-storage.ts": "cc9570ff52caf718dc517f65c48b2f185cebaefcbf723eb2f74d02eee4d5e0cb",
     "packages/core/src/database/migration/20260913221452_session-receipt-budget-reservation.ts": "a09f5e22bbbd6bdc38f39860e2521bd9ccd338c4d2f15fe20cc78badd5ca893b",
     "packages/core/src/database/migration/20261011215119_runtime_state.ts": "d8752a96e714a99ecc688719726397b7136c649ee5953d5ca9c01b8fd8cac63e",
-    "packages/core/src/session/execution/local.ts": "a5101e97c78384a0109ba6e5a8cb4af9f914f5d21e123ab21d1ee70c0690a2d6",
+    "packages/core/src/session/execution/local.ts": "027aa53781e1e3ef3043c12558cea912372851e9de5ad7b5c945f8c7ac015402",
     "packages/core/src/session/runner/index.ts": "b723fbd7f3fc8e7afeebae936e917341511600301c0a8993d25d5c27756bd373",
     "packages/core/src/session/runner/llm.ts": "d11a8b4f31b37e16f16a14acd3a12fb45a323a7d8c460c21e67f94c3a2307b45",
     "packages/core/src/session/runner/publish-llm-event.ts": "3862db7062c101f2f7da1a69a505d1db5ae4a95ef1219c5db2c364a38feb626c",
@@ -884,7 +886,7 @@
     "packages/sdk/js/src/v2/gen/types.gen.ts": "0c23b262085d1e14b89bd03292a380c9ec8b52e66c4308304a05173362b79339",
     "packages/session-ui/src/v2/components/prompt-input/attachments.ts": "ff66078f2edc9a67a4df0d7dfd76a49be5eab27ac332b303f3412721ef7268ea",
     "packages/session-ui/src/v2/components/prompt-input/index.tsx": "098bf84bf22573fcab2826a827e6789d41ad660545a0364ffb4a77cda5e01b30",
-    "packages/opencode/src/server/routes/instance/httpapi/server.ts": "8a8e47c2242bc61be078c2fb97ecaa37ebe45cb410b95819102731b52f2b3c31",
+    "packages/opencode/src/server/routes/instance/httpapi/server.ts": "bb9feec0e6c91c85a5a9b3b152b9c653f1bb53ea0d415d9f6641f45aefe76b9e",
     "packages/opencode/src/server/routes/instance/httpapi/groups/experimental.ts": "944a0aee215a917e867fd9482f3c2bd40f49082bd3174c8a7d967ca40e34ec15",
     "packages/opencode/src/server/routes/instance/httpapi/groups/file.ts": "ed165131c62eeb29375db39edf89db8f87488e24ef99fc6f2cf19705ba35751a",
     "packages/opencode/src/server/routes/instance/httpapi/groups/mcp.ts": "048efa7b74d43c4ad4a75d0f8421c808760c8c0dcd593f0051a87044e40487d6",
@@ -911,7 +913,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-11T22:24:53.652Z",
+  "extracted_at": "2026-10-11T22:30:27.235Z",
   "per_package": {
     "packages/app": {
       "A": 192,
@@ -919,7 +921,7 @@
       "D": 0
     },
     "packages/core": {
-      "A": 17,
+      "A": 18,
       "M": 47,
       "D": 0
     },
@@ -945,7 +947,7 @@
     },
     "packages/server": {
       "A": 0,
-      "M": 2,
+      "M": 3,
       "D": 0
     },
     "packages/session-ui": {
@@ -960,7 +962,7 @@
     }
   },
   "counts": {
-    "overlay_total": 889,
+    "overlay_total": 891,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1003,6 +1005,7 @@
     "packages/core/test/database-migration.test.ts": "M",
     "packages/core/test/location-mutation.test.ts": "M",
     "packages/core/test/runtime-state.test.ts": "A",
+    "packages/core/test/session-execution-local.test.ts": "A",
     "packages/core/test/session-prompt.test.ts": "M",
     "packages/core/test/session-runner-recorded.test.ts": "M",
     "packages/core/test/session-runner.test.ts": "M",
@@ -1025,6 +1028,7 @@
     "packages/schema/test/provenance-matrix.test.ts": "A",
     "packages/schema/test/question.test.ts": "A",
     "packages/schema/test/session-receipt.test.ts": "A",
+    "packages/server/src/routes.ts": "M",
     "packages/ui/src/solid-dnd.d.ts": "A",
     "packages/app/docs/adr/0001-chat-first-landing.md": "A",
     "packages/app/docs/adr/0002-brain-as-chat-background.md": "A",
