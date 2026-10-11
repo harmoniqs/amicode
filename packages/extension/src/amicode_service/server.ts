@@ -68,6 +68,11 @@ interface RouteEntry {
 
 const MAX_BODY_BYTES = 1024 * 1024;
 
+/** #1707: the stop grace — how long in-flight requests get before every open
+ * socket is destroyed. 2 s: a stop means stop, and the teardown must be
+ * bounded no matter what the frontdoor's pooled sockets are doing. */
+const STOP_GRACE_MS = 2000;
+
 function unauthorized(): AmicodeHandlerResult {
   // The fork's auth middleware 401s anonymous requests with a Basic challenge;
   // consumers (widgets, app) attach the per-boot credential on every call, so
@@ -245,6 +250,23 @@ export class AmicodeServiceServer {
       // proxying them would just launder our 404) → the app shelf → the
       // engine proxy.
       if (url.pathname === "/amicode" || url.pathname.startsWith("/amicode/")) {
+        // #1549 (live-test finding, PR #1550): ONE named exception to the
+        // fork-parity 404 — /amicode/harness is an ENGINE-OWNED route (the
+        // overlay's server/amicode/harness.ts: the composer control's GET,
+        // the switch's POST). The app reaches it at its panel origin, which
+        // IS this service — proxying these two methods to the engine (when
+        // bound) is forwarding to the route's owner, not laundering a 404;
+        // when the engine is not bound (or a stock engine without the route
+        // answers) the honest failure surfaces, and the control's own
+        // "route absent → stays hidden" degradation holds. Everything else
+        // under /amicode/* keeps the discipline below.
+        if (
+          url.pathname === "/amicode/harness" &&
+          (req.method === "GET" || req.method === "POST") &&
+          this.engineProxy?.handle(req, res)
+        ) {
+          return;
+        }
         send({ status: 404, body: JSON.stringify({ ok: false, error: `no route: ${req.method} ${url.pathname}` }) });
         return;
       }
@@ -325,6 +347,40 @@ export class AmicodeServiceServer {
     if (!server) return;
     this.server = undefined;
     this._port = undefined;
-    await new Promise<void>((resolve) => server.close(() => resolve()));
+    // #1707: a bare server.close() waits for every open keep-alive socket to
+    // END — and the hub frontdoor holds long-lived pooled backend connections
+    // to this origin plus SSE fan-outs, so the close parked the unit in
+    // "deactivating" anywhere between 6 seconds and systemd's SIGKILL (three
+    // wedged stops on 2026-10-04). Stop means stop: close() first (no new
+    // accepts), a short grace for in-flight requests, then destroy every open
+    // socket and resolve REGARDLESS — the teardown sequence must be bounded,
+    // never a race against the proxy's socket lifecycle.
+    await new Promise<void>((resolve) => {
+      let settled = false;
+      const settle = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(graceTimer);
+        resolve();
+      };
+      const graceTimer = setTimeout(() => {
+        try {
+          server.closeAllConnections();
+        } catch {
+          /* pre-18.2 node: close() alone; the resolve below still bounds us */
+        }
+        settle();
+      }, STOP_GRACE_MS);
+      server.close(() => {
+        try {
+          // The happy path's belt: sockets may have opened between close()
+          // and its callback draining them.
+          server.closeAllConnections();
+        } catch {
+          /* pre-18.2 node */
+        }
+        settle();
+      });
+    });
   }
 }

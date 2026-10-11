@@ -36,6 +36,28 @@ async function startMockEngine(): Promise<{ hits: RecordedHit[]; url: string; st
         res.end(JSON.stringify({ ok: true, engine: true, sessions: [] }));
         return;
       }
+      // #1549 (the harness seam): the engine-owned route the service
+      // forwards for the composer control — GET serves the registry view,
+      // POST records the switch request.
+      if (req.method === "GET" && req.url === "/amicode/harness") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify({
+            harness: "opencode",
+            status: "ready",
+            options: [
+              { id: "opencode", displayName: "opencode (default)", state: "ready", detail: "mock", disabled: false },
+              { id: "telaio", displayName: "telaio", state: "needs-setup", detail: "mock", disabled: true, reason: "not installed" },
+            ],
+          }),
+        );
+        return;
+      }
+      if (req.method === "POST" && req.url === "/amicode/harness") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: true, harness: JSON.parse(body || "{}").harness ?? "opencode", status: "switching" }));
+        return;
+      }
       if (req.method === "POST" && req.url === "/echo") {
         res.writeHead(200, { "content-type": String(req.headers["content-type"] ?? "text/plain") });
         res.end(body);
@@ -151,15 +173,49 @@ describe("amicode service — engine proxy (transparent passthrough to the spawn
   it("precedence: an exact /amicode/* route never reaches the proxy, and a static shelf hit never reaches the proxy", async () => {
     // /amicode/* is the service's OWN namespace — the mock engine must never
     // see it (a proxied /amicode/* would launder our route table upstream).
+    // #1549's named exception: /amicode/harness GET+POST IS forwarded (the
+    // engine-owned route — see the dedicated tests below); every OTHER
+    // /amicode/* path keeps this discipline.
     const route = await fetch(base + "/amicode/profile", { headers: { Authorization: engineAuth } });
     expect(route.status).toBe(200);
-    expect(engine.hits.some((h) => h.url.startsWith("/amicode")), "no /amicode/* hit may reach the engine").toBe(false);
+    expect(engine.hits.some((h) => h.url.startsWith("/amicode/")), "no /amicode/* hit may reach the engine").toBe(false);
     // A static asset is served by the shelf — the engine never sees it.
     const asset = await fetch(base + "/assets/app.js", { headers: { Authorization: engineAuth } });
     expect(asset.status).toBe(200);
     expect(asset.headers.get("content-type")).toContain("text/javascript");
     expect(await asset.text()).toContain("console.log");
     expect(engine.hits.some((h) => h.url.startsWith("/assets")), "no /assets hit may reach the engine").toBe(false);
+  });
+
+  it("#1549 the harness seam: GET /amicode/harness forwards to the ENGINE-owned route (the composer's menu fetch)", async () => {
+    // The composer control fetches this at its panel origin — the service —
+    // so the service must reach the route's owner. Without this forwarding
+    // the control renders nothing (the live-test finding on PR #1550).
+    const r = await fetch(base + "/amicode/harness", { headers: { Authorization: engineAuth } });
+    expect(r.status).toBe(200);
+    const menu = (await r.json()) as { harness: string; options: { id: string; disabled: boolean }[] };
+    expect(menu.harness).toBe("opencode");
+    expect(menu.options.map((o) => o.id)).toEqual(["opencode", "telaio"]);
+    expect(menu.options[1].disabled).toBe(true);
+    expect(engine.hits.some((h) => h.url === "/amicode/harness" && h.method === "GET"), "the menu fetch reached the engine").toBe(true);
+  });
+
+  it("#1549 the harness seam: POST /amicode/harness forwards too (the switch write path)", async () => {
+    const r = await fetch(base + "/amicode/harness", {
+      method: "POST",
+      headers: { Authorization: engineAuth, "content-type": "application/json" },
+      body: JSON.stringify({ harness: "opencode" }),
+    });
+    expect(r.status).toBe(200);
+    const answer = (await r.json()) as { status: string };
+    expect(answer.status).toBe("switching");
+    expect(engine.hits.some((h) => h.url === "/amicode/harness" && h.method === "POST"), "the switch POST reached the engine").toBe(true);
+  });
+
+  it("#1549 the exception is NARROW: an unmatched /amicode/* path still 404s at the service and never reaches the engine", async () => {
+    const r = await fetch(base + "/amicode/no-such-route", { headers: { Authorization: engineAuth } });
+    expect(r.status).toBe(404);
+    expect(engine.hits.some((h) => h.url.startsWith("/amicode/no-such-route")), "the unmatched path must never reach the engine").toBe(false);
   });
 
   it("SSE (/event) streams UNBUFFERED through the proxy (chunks arrive as the engine sends them)", async () => {

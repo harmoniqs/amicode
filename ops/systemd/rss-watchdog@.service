@@ -1,0 +1,15 @@
+# Per-shard RSS watchdog — one instance per engine shard (amicode #1717 Phase 1).
+# The script's env knobs (WATCHDOG_SERVICE, WATCHDOG_PATTERN, WATCHDOG_HEALTH_PORT,
+# WATCHDOG_HEALTH_PATH) are the whole configuration; the shard index derives
+# them in rss-watchdog.sh (see ops/hub/README.md).
+# The PATTERN must disambiguate by engine port — with multiple shards,
+# binary-path-only matching + `head -1` grabs an arbitrary shard's engine.
+# Enable: systemctl --user enable --now rss-watchdog@2.timer rss-watchdog@3.timer
+
+[Unit]
+Description=Amicode fleet watchdog — shard %i RSS check (single sample, amicode #1717 phase 1)
+
+[Service]
+Type=oneshot
+Environment=AMICODE_SHARD_INDEX=%i
+ExecStart=%h/.amico/server/fleet-watchdog/rss-watchdog.sh
