@@ -45,7 +45,7 @@
     "packages/core/src/session.ts": "c4147b433b07f62439054ac3367c4780d203a08f9fa0fcd691e1be653e4794b6",
     "packages/core/test/database-migration.test.ts": "e5ffa9b36028a8bf31ae7d3eac7fe34fb0566a609325c8dc29e59021d5ee0b1a",
     "packages/core/test/location-mutation.test.ts": "2c4c8faa220cc8fabfe12d57bd74ec8dd8aac8485d0ecafd2761cdee1806d6b0",
-    "packages/core/test/runtime-state.test.ts": "d68fdae7d0a7ff17e3074f5280e4398e4d94ae7f879b7652f86ca69d0a0234d7",
+    "packages/core/test/runtime-state.test.ts": "e532a5aa2d91a9b8bb8ca3b78a5d29644e5d43532c9de133d96e464729e28986",
     "packages/core/test/session-prompt.test.ts": "2af05be037473266c7b38721abbf7f865a4dfe35c9e779282cb7f697ba0a2adc",
     "packages/core/test/session-runner-recorded.test.ts": "962301989a4a315379819bc3d4600d56c3e646b1a9390d02d01556578fc66adc",
     "packages/core/test/session-runner.test.ts": "ed62a4ee8d0bc9dbc308940a04731b07de5803339e6c6bc560ce8424460fbf23",
@@ -273,7 +273,7 @@
     "packages/core/src/observability/otlp.ts": "be20b97f84b2a5b4a1663fa3bed0b31c6c387950f7c28b76fbaa8525cd24d6e8",
     "packages/core/src/permission/provider-saved.ts": "029f02a7120fde4ca1d499294f73f22ca8f0dbaba030a901f94093fb36674025",
     "packages/core/src/permission/sql.ts": "c8c44e00cf957511282e35cbb192c0be36ed33d41d6b15e98d79eab4378661cd",
-    "packages/core/src/runtime-state/index.ts": "8695721e4cfc7165f247f688dfa2de778b874ec1766e1d531fe48cee79524d04",
+    "packages/core/src/runtime-state/index.ts": "effe8356b5ec7db872360f60576c51095443cc9942f5cc53686f511a5a123163",
     "packages/core/src/runtime-state/sql.ts": "01a0221e6b726f549b5a59cfd8a87f330ec9fb81281669c40f8ea2cc9d879fe6",
     "packages/core/src/session/execution.ts": "a5255896a0feacaa40ec1d8ad30b0d439dd44474a01c20f4211320b57a03c0d5",
     "packages/core/src/session/sql.ts": "df6f0a26816037681d649abd70c0d99d0d3502cfd3f4a30ff00c7f62c7c5932b",
@@ -305,7 +305,7 @@
     "packages/opencode/src/provider/error.ts": "7f3c8210c775e2ce98140bf015dc97e61192912af062c75e18ecb09ee2736a0f",
     "packages/opencode/src/provider/provider.ts": "abe4bcfd92c7b1d24760d6a8ad9dd97e12fe3278e0168edb19c3b8d3da497ef2",
     "packages/opencode/src/provider/transform.ts": "70c7492d4a23a30ebc340a5605702b1602960f4b412e18557534e02962c137b8",
-    "packages/opencode/src/question/index.ts": "3a079bc55dc4fd0d71d029a7155ca433d66952815cc97f46612c4db61974fa40",
+    "packages/opencode/src/question/index.ts": "7b1168b9da0f25d397728b2a51ba46355aa98e0ffe060dfa98bd380c07c25ef5",
     "packages/opencode/src/server/server.ts": "56b3c2047917aa80d1dfb29bfa9839bcc2ad7f5a6f4db12103cd962a98fba866",
     "packages/opencode/src/session/business-record.ts": "d82db061055d0dd26ad95b34bff688ce23fd06a8fb9248dd335c6726c6ff0f5e",
     "packages/opencode/src/session/compaction.ts": "fd6159a8b04050706b6968c7a1b091f79d06e6e4aa988a12629a7616b8128e94",
@@ -343,6 +343,7 @@
     "packages/opencode/test/provider/harmoniqs-tools.test.ts": "0c626daa51c312eb81dd854509a2e1944712ee9620a36eb4db66078ab80d6b82",
     "packages/opencode/test/provider/provider.test.ts": "5b2cbed8994d3bbc968a72d01459460c1de72b6117a0795c2bc6a10abbf02926",
     "packages/opencode/test/provider/transform.test.ts": "ecf9dd1bdec36c2126f3140d43125728c06211b9771d47619ff65f7453ff37fd",
+    "packages/opencode/test/question/question-store.test.ts": "859b0333d6ba04c5f22f120247211dd40894c238decb5a1c14c9af6401a18bb3",
     "packages/opencode/test/server/amicode-connections-routes.test.ts": "de8ddeaabe23e20a0dc33eef6c70232ba20cca0301cbea08fe9fd751a07d6649",
     "packages/opencode/test/server/amicode-connections.test.ts": "dfe3dc70044ef2d6bf90dd494480439cb945d330d241fb3501a3e43bf6341967",
     "packages/opencode/test/server/amicode-credentials.test.ts": "ba77d064fd2be799930524510ce6e32c6f6a0d144d3cdf41673a8283dbe95bf6",
@@ -904,7 +905,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-11T21:54:35.323Z",
+  "extracted_at": "2026-10-11T22:03:42.153Z",
   "per_package": {
     "packages/app": {
       "A": 192,
@@ -922,7 +923,7 @@
       "D": 0
     },
     "packages/opencode": {
-      "A": 73,
+      "A": 74,
       "M": 85,
       "D": 0
     },
@@ -953,7 +954,7 @@
     }
   },
   "counts": {
-    "overlay_total": 882,
+    "overlay_total": 883,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1293,6 +1294,7 @@
     "packages/opencode/test/provider/harmoniqs-tools.test.ts": "A",
     "packages/opencode/test/provider/provider.test.ts": "M",
     "packages/opencode/test/provider/transform.test.ts": "M",
+    "packages/opencode/test/question/question-store.test.ts": "A",
     "packages/opencode/test/server/amicode-connections-routes.test.ts": "A",
     "packages/opencode/test/server/amicode-connections.test.ts": "A",
     "packages/opencode/test/server/amicode-credentials.test.ts": "A",

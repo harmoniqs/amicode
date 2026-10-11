@@ -125,9 +125,19 @@ describe("RuntimeState", () => {
       expect(settled?.resolution).toEqual([["One"]])
       expect(yield* state.livePending("question")).toEqual([])
 
-      // The owner's exit cleanup removes the row entirely.
+      // The owner's exit cleanup keeps a settled row (the replay window) and
+      // removes a still-pending one.
       yield* state.discardPending({ kind: "question", id: "que_1", owner: ownerA })
-      expect(yield* state.getPending("question", "que_1")).toBeUndefined()
+      expect((yield* state.getPending("question", "que_1"))?.state).toBe("replied")
+      yield* state.recordPending({
+        kind: "question",
+        id: "que_2",
+        sessionID: "ses_q",
+        data: { id: "que_2" },
+        owner: ownerA,
+      })
+      yield* state.discardPending({ kind: "question", id: "que_2", owner: ownerA })
+      expect(yield* state.getPending("question", "que_2")).toBeUndefined()
     }),
   )
 

@@ -1,6 +1,6 @@
 export * as RuntimeState from "./index"
 
-import { and, eq, gt, lt, ne } from "drizzle-orm"
+import { and, eq, gt, lt, ne, or } from "drizzle-orm"
 import { Clock, Context, Effect, Exit, Layer } from "effect"
 import { Database } from "../database/database"
 import { makeGlobalNode } from "../effect/app-node"
@@ -128,7 +128,7 @@ export interface Interface {
     readonly state: "replied" | "rejected"
     readonly resolution?: unknown
   }) => Effect.Effect<boolean>
-  /** Removes the owner's row (any state) — the ask-exit cleanup. */
+  /** Removes the owner's row while it is still pending — the ask-exit cleanup. */
   readonly discardPending: (input: {
     readonly kind: PendingKind
     readonly id: string
@@ -157,7 +157,7 @@ export function bestEffort<A>(effect: Effect.Effect<A>): Effect.Effect<A | undef
   )
 }
 
-export const layer = Layer.effect(
+export const serviceLayer = Layer.effect(
   Service,
   Effect.gen(function* () {
     const { db } = yield* Database.Service
@@ -369,6 +369,21 @@ export const layer = Layer.effect(
     }) {
       const owner = input.owner ?? self
       const t = yield* now
+      // Bounded growth without a sweeper: a new request in the same session
+      // prunes its rows that are long-settled or whose owner's heartbeat lapsed.
+      yield* db
+        .delete(RuntimePendingTable)
+        .where(
+          and(
+            eq(RuntimePendingTable.session_id, input.sessionID),
+            or(
+              and(ne(RuntimePendingTable.state, "pending"), lt(RuntimePendingTable.time_updated, t - TTL_MS)),
+              and(eq(RuntimePendingTable.state, "pending"), lt(RuntimePendingTable.time_heartbeat, t - TTL_MS)),
+            ),
+          ),
+        )
+        .run()
+        .pipe(Effect.orDie)
       yield* db
         .insert(RuntimePendingTable)
         .values({
@@ -446,6 +461,8 @@ export const layer = Layer.effect(
       owner?: Owner
     }) {
       const owner = input.owner ?? self
+      // Only a still-pending row goes: a settled row keeps its recorded state
+      // so mis-routed replays stay idempotent until the TTL prunes it.
       yield* db
         .delete(RuntimePendingTable)
         .where(
@@ -453,6 +470,7 @@ export const layer = Layer.effect(
             eq(RuntimePendingTable.kind, input.kind),
             eq(RuntimePendingTable.id, input.id),
             eq(RuntimePendingTable.owner_id, owner.owner_id),
+            eq(RuntimePendingTable.state, "pending"),
           ),
         )
         .run()
@@ -502,12 +520,12 @@ export const layer = Layer.effect(
   }),
 )
 
-export const locationLayer = layer// ── Process-global handle ──────────────────────────────────────────────────
+// ── Process-global handle ──────────────────────────────────────────────────
 // Hooks in services that predate the shared store (V1 question/permission/
 // status, the V2 execution coordinator) cannot take it as a layer dependency
 // without dragging the shared Database into every unit-test graph. They read
-// it through this handle instead: the server graph builds `node` (registering
-// the handle), and store-less environments simply skip the mirroring.
+// it through this handle instead: any environment that builds `layer`/`node`
+// registers the handle, and store-less environments simply skip the mirroring.
 
 let handle: Interface | undefined
 
@@ -515,10 +533,13 @@ export function getGlobal(): Interface | undefined {
   return handle
 }
 
-const registeredLayer = Layer.effect(
-  Service,
+/**
+ * The store layer, wrapped to register the process-global handle on
+ * construction and restore the previous one on close.
+ */
+const registration = Layer.effectDiscard(
   Effect.gen(function* () {
-    const service = yield* layer
+    const service = yield* Service
     const previous = handle
     handle = service
     yield* Effect.addFinalizer(() =>
@@ -526,8 +547,11 @@ const registeredLayer = Layer.effect(
         if (handle === service) handle = previous
       }),
     )
-    return service
   }),
 )
 
-export const node = makeGlobalNode({ service: Service, layer: registeredLayer, deps: [Database.node] })
+export const layer = Layer.provideMerge(registration, serviceLayer)
+
+export const locationLayer = layer
+
+export const node = makeGlobalNode({ service: Service, layer, deps: [Database.node] })
