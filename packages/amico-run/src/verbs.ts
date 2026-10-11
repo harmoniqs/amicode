@@ -32,6 +32,12 @@ import { envVerb } from "./env_verb.js";
 import { sessionsVerb } from "./sessions_verb.js";
 import { sotaVerb } from "./sota_verb.js";
 import { skillsVerb } from "./skills_verb.js";
+import { notturnoVerb } from "./notturno_verb.js";
+import { distillVerb } from "./distill_verb.js";
+import { claimsVerb } from "./claims_verb.js";
+import { extractMeetingsVerb } from "./extract_meetings_verb.js";
+import { triagePapersVerb } from "./triage_papers_verb.js";
+import { brainHealthVerb } from "./brain_health_verb.js";
 export interface VerbResult {
   json: unknown; // structured result (stdout as JSON for the CLI; tool content for MCP)
   code: number; // process exit code (0 ok, 64 usage/gate, else failure)
@@ -308,6 +314,135 @@ const skills: Verb = {
   run: skillsVerb,
 };
 
+// notturno — the scheduled-agentic-work framework, TS-native (#1669, the
+// #852 step-6 A1′ leg): the job registry (parse + the total-coverage check),
+// the warrant tiers as typed values, and the scheduled-pass recorder. Parity
+// over rewrite — verdicts and file bytes match amicissimo's Python engine
+// (automation/notturno, post-#490) against the SAME registry file, and the
+// two runners coexist during the boundary window (no Python deletion). The
+// instance deny-list is the load-bearing gate: a registry named by a deny row
+// fails loudly (64) pointing at the private instance's runner — a public
+// binary never runs org config.
+const notturno: Verb = {
+  name: "notturno",
+  summary:
+    "registry-check (total-coverage verdicts) / list (the job slate) / pass (append a scheduled-passes.md record) — the scheduled-work registry, deny-list-gated",
+  generalizes: "amicissimo's automation/notturno registry + passes runners (the #852 A1′ TS-native port)",
+  slice: "amico-run sunset (#852 step 6, amicode#1669)",
+  run: notturnoVerb,
+};
+
+// distill — the brain flywheel's artery (amicode #1680, slice 1 of the
+// company-brain flywheel #1679): the nightly notturno job over the chat DB.
+// Worklist = #1304's substantive classification (never a second classifier);
+// ONE confidence-gated Jev Choice per eligible session types the candidate
+// claim; the note is a deterministic projection with provenance pointers
+// back into the substrate (session id + message ids — resolvable by
+// construction). Dry-run by default; --apply writes candidate notes into the
+// dedicated candidate area, the distill state stamp (re-runs are no-ops), and
+// the notturno pass receipt (deny-list-gated, membership-checked,
+// record-mode-respecting). The chat DB is opened READ-ONLY — one substrate,
+// no second capture path.
+const distill: Verb = {
+  name: "distill",
+  summary:
+    "distill the chat DB's classified-substantive sessions into candidate claim-notes (provenance-carrying drafts) + the state stamp + the notturno pass receipt",
+  generalizes: "the dream-distill pass (the severed substrate, rewired to the chat DB through the notturno chassis)",
+  slice: "company brain flywheel (amicode#1680, slice 1)",
+  run: (args) => distillVerb(args),
+};
+
+// claims — the claims registry's surface (amicode #1681, slice 2 of the
+// company-brain flywheel #1679): the ONE type namespace's machinery. `project`
+// mechanically converts a memory card into a registry claim (all fields
+// preserved, provenance intact — the migration that dissolves the memory/vault
+// type-namespace collision); `lint` is the registry's gate — every claim
+// validates against the shared claim contract (unknown types, missing
+// required fields) and every evidence pointer resolves into its substrate
+// (the vault's amicode/memory/ subtree, the chat DB read-only). `render`
+// (#1682, slice 3) regenerates the hot-layer memory index (MEMORY.md) as a
+// ranked view of the registry — the index is derived, never authoritative.
+// `stamp` + `sweep` (#1683, slice 4) close the feedback loop: an accepted
+// recommend-outcome or a solve-run citation moves the cited claim's applied
+// counter + last_applied (ONE applied history entry, citation-keyed — a
+// counter + a date, never a judgment); the nightly sweep backfills the same
+// stamps from the problems' events.jsonl streams, idempotently.
+// `promote` + `prune` + `synthesize` (#1685, slice 6) put the dream cycle's
+// curation motions on cadence as notturno jobs — the manual /dream
+// invocations retire in favor of the jobs (docs/brain-flywheel-jobs.md).
+// Notes are renderings; machinery operates on claims only — the claim note's
+// frontmatter IS the claim object, exactly.
+const claims: Verb = {
+  name: "claims",
+  summary:
+    "the claims registry: project (memory card → claim, mechanical, fields preserved) / lint (contract + evidence-pointer resolution, findings exit 1) / render (the hot-layer index as a generated view of claims, ranked recency + adoption + confidence) / stamp (record one adoption: accepted recommend-outcome or solve-run citation → applied + last_applied) / sweep (the nightly backfill from the problems' recommend-outcome event streams, idempotent) / lifecycle (the nightly pass, #1684: dedupe-merge onto the older claim, corroborate at the evidence threshold, refute on contradicted-by-run signals, decay → the review queue — a proposal surface, never an actor) / promote (the weekly proposal bundle, #1685: scope-team live claims → ONE PR body + copies per vault, 10-cap, PROPOSES ONLY — a human merges; #1688 --tier public: the SAME machinery targets the kind: public mount — scope-public pool, the two-note split checked at promotion time, INDEX.md the public vault's generated index) / prune (the weekly schema-check + hygiene pass: lint findings are drift for a human, only unambiguous fixes applied) / synthesize (the weekly pattern pass: cross-claim tag clusters → hopper proposals, never strategy)",
+  generalizes:
+    "the hand-maintained memory hot-layer's type namespace (the collision the #1679 census flagged, dissolved: one store, claims as the atomic unit)",
+  slice: "company brain flywheel (amicode#1681, slice 2; #1682, slice 3; #1683, slice 4)",
+  run: (args) => claimsVerb(args),
+};
+
+// extract-meetings — the brain flywheel's meeting-intake half (amicode #1686,
+// slice 7 of #1679): the weekly job over the meeting vault's pending-tag
+// backlog (57/60 notes never tagged, Context Links never fired). The vault's
+// OWN registry is the canon (closed tier-1 vocabularies; tier-2 entities
+// minted only from the note's own attendee canonicals + partnership phrases;
+// tier-3 themes free-form) — and where the closed vocabulary has no fit, the
+// proposal NAMES THE GAP rather than inventing tags (this is an LLM-adjacent
+// pipeline: proposals derive from the note's own content). Outputs are
+// PROPOSALS to a --out the caller names (the ro-mounted vault is never
+// written): the tagged-note proposal (prose verbatim), resolvable context
+// links (transcript sibling, series sessions, this pass's hopper proposals),
+// and next-steps → hopper proposals carrying resolvable meeting-note
+// provenance. Idempotent: deterministic naming + bytes; the notturno receipt
+// rides the distill chassis gates (deny-list, membership, record mode).
+const extractMeetings: Verb = {
+  name: "extract-meetings",
+  summary:
+    "triage a pending-tag meeting note: propose its three tag tiers (the vault registry's closed vocabularies, gaps named), resolvable context links, and next-steps → hopper proposals with meeting provenance",
+  generalizes: "the meeting vault's LLM tagging stage that never ran (status pending-tag, Context Links placeholders)",
+  slice: "company brain flywheel (amicode#1686, slice 7)",
+  run: (args) => extractMeetingsVerb(args),
+};
+
+// triage-papers — the brain flywheel's arjev-intake half (amicode #1686,
+// slice 7): the weekly job over the papers intake. A relevance-high paper
+// yields a claim-shaped hypothesis-seed proposal (frontmatter EXACTLY the
+// claim object, evidence a resolvable paper/ pointer, confidence low —
+// machinery links, it cannot calibrate a scientific prior) against the
+// problem cards whose platform identity matches the paper's systems (exact,
+// no fuzzy bridging); no matching card → no seed, named honestly. Seeds file
+// into the claim layer's candidates area; humans state the hypothesis
+// (triage proposes, humans dispose).
+const triagePapers: Verb = {
+  name: "triage-papers",
+  summary:
+    "triage the papers intake: a relevance-high paper becomes a claim-shaped hypothesis-seed proposal (paper evidence pointer) against the platform-matching problem cards",
+  generalizes: "the paper notes that accumulate without ever seeding the problem cards they bear on",
+  slice: "company brain flywheel (amicode#1686, slice 7)",
+  run: (args) => triagePapersVerb(args),
+};
+
+// brain-health — the brain flywheel's measurement half (amicode #1687, slice
+// 8 of #1679): the monthly notturno job that renders the KPI report over the
+// flywheel's own pass receipts + claim state — claims created vs applied,
+// time-to-distill, pending backlog trends (distill backlog, review queue,
+// pending-tag intake), refutation rate, schema compliance (the lint findings
+// trend) — and publishes it as a dated brief in the vault's briefs area,
+// period-keyed (health-YYYY-MM.md, idempotent per period). The report
+// MEASURES, never acts: every substrate is read-only, every number carries
+// its provenance, unmeasured families are stated, never faked. The notturno
+// receipt rides the distill chassis gates (deny-list, membership, record
+// mode).
+const brainHealth: Verb = {
+  name: "brain-health",
+  summary:
+    "the monthly brain-health report: the five KPI families over pass receipts + claim state (created vs applied, time-to-distill, backlog trends, refutation rate, schema compliance), published as a dated brief",
+  generalizes: "the brain has no KPIs (improvement is unmeasurable without a report the flywheel renders about itself)",
+  slice: "company brain flywheel (amicode#1687, slice 8)",
+  run: (args) => brainHealthVerb(args),
+};
+
 export const SPINE_VERBS: Verb[] = [
   catalog,
   vault,
@@ -326,4 +461,10 @@ export const SPINE_VERBS: Verb[] = [
   sessions,
   sota,
   skills,
+  notturno,
+  distill,
+  claims,
+  extractMeetings,
+  triagePapers,
+  brainHealth,
 ];

@@ -16,4 +16,14 @@ if ! command -v node >/dev/null 2>&1; then
   echo "gh: node >= 20 not found on PATH (amico-gh shim cannot run; install node or fix PATH)" >&2
   exit 64
 fi
+# resolve the CLI source (#1666): a PINNED dist root first — a repo checkout is
+# a moving target (observed 2026-09-25: the live shim served a stale
+# side-checkout on an old branch for weeks). The pin is the frozen-bundle
+# convention (ops/install-cli-pin.sh); AMICO_CLI_FROM_CHECKOUT=1 is the
+# EXPLICIT dev override back to the checkout dist beside this launcher (never
+# implicit) — and that dist stays the pre-pin fallback.
+if [[ "${AMICO_CLI_FROM_CHECKOUT:-}" != "1" ]]; then
+  PIN="${AMICO_CLI_PIN_ROOT:-$HOME/.amico/server/cli}/gh.js"
+  [[ -f "$PIN" ]] && exec node "$PIN" "$@"
+fi
 exec node "$DIR/../dist/gh.js" "$@"

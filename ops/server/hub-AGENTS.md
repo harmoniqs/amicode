@@ -44,14 +44,14 @@ Sound like it — not a generic assistant.
 ## Workflow (this is the whole job)
 
 The script is authored at an explicit TRUST TIER and launched through the gate
-`amico-run --spec`. All paths below use the active Problem workspace
+`amico run --spec`. All paths below use the active Problem workspace
 `~/.amico/problems/<slug>/` (open/create/rename with `amicode_problem`; the
 workspace owns `solve.jl` — never author in `/tmp`).
 
 1. **Resolve the tier** once the System + Formulation are recorded. From the
    Formulation, run:
    ```bash
-   amico-run resolve --platform <transmon|rydberg|…> --kind <gate_synthesis|state_prep|…> --size <n>
+   amico resolve --platform <transmon|rydberg|…> --kind <gate_synthesis|state_prep|…> --size <n>
    ```
    It prints JSON: `{tier, source?, template_path?|exemplar_path?, packages, blocked_higher?}`.
 2. **Author `solve.jl` per the tier** into `~/.amico/problems/<slug>/solve.jl`:
@@ -72,7 +72,7 @@ workspace owns `solve.jl` — never author in `/tmp`).
 4. **free tier only — generate the env** (vetted/composed use the provisioned
    env unless `resolve` said otherwise):
    ```bash
-   amico-run sandbox ~/.amico/problems/<slug> --packages <comma-list from resolve>
+   amico sandbox ~/.amico/problems/<slug> --packages <comma-list from resolve>
    # then run the printed  JULIA_PKG_USE_CLI_GIT=true julia --project=… Pkg.instantiate()  line
    ```
 5. **Estimate, confirm routing, then assemble `~/.amico/problems/<slug>/solvespec.json`.**
@@ -85,7 +85,7 @@ workspace owns `solve.jl` — never author in `/tmp`).
      it specifies and do **not** ask where the solve should run. When the section is
      **absent**, this solve is LOCAL: run local and do NOT offer remote.
    - **Estimate (informs, never decides).** Run
-     `amico-run estimate ~/.amico/problems/<slug>/solve.jl` — it prints ONE JSON line
+     `amico estimate ~/.amico/problems/<slug>/solve.jl` — it prints ONE JSON line
      `{sizeClass, estimatedBytes, localRamBytes, offloadSuggested, reason, …}`. Surface it
      at the decision point: tell the researcher the `sizeClass`, the `estimatedBytes` vs
      local RAM, and the `reason`. The estimate only **suggests**, and only where a choice
@@ -103,7 +103,7 @@ workspace owns `solve.jl` — never author in `/tmp`).
     `~/armonia/data/env`; resolve `$HOME` on whatever machine you run) for vetted/composed, or the
    sandbox env from step 4 for free (it must equal the spec's `env.project`).
    ```bash
-   ( nohup amico-run --spec ~/.amico/problems/<slug>/solvespec.json \
+   ( nohup amico run --spec ~/.amico/problems/<slug>/solvespec.json \
        --project ~/.amico/julia --lab default \
        ~/.amico/problems/<slug>/solve.jl \
        > ~/.amico/problems/<slug>/solve.log 2>&1 < /dev/null & )
@@ -123,9 +123,9 @@ workspace owns `solve.jl` — never author in `/tmp`).
    agree/disagree honestly — a `free` run is UNTRUSTED and cannot be promoted
    until verification agrees.
 
-There is **no MCP server**. The solve runs through `amico-run` via bash; the
+There is **no MCP server**. The solve runs through `amico run` via bash; the
 `amicode_*` tools below (when present) record design state under the Problem
-workspace — they never replace the bash launch. `amico-run --help` prints usage.
+workspace — they never replace the bash launch. `amico --help` prints usage.
 
 ### Bookkeeping verbs (`amico` — same bash surface)
 
@@ -300,7 +300,7 @@ not be entered until the gate's checks pass.
    - executor: `local`
    - vetted template: `scores/pulse-designer/templates/solve.jl` inside the newest
      installed `harmoniqs.amicode-*` extension dir (Linux: `~/.vscode-server/extensions`,
-     macOS: `~/.vscode/extensions`) — `amico-run resolve` prints the resolved absolute path
+     macOS: `~/.vscode/extensions`) — `amico resolve` prints the resolved absolute path
    - Q `solve_params`: "Pulse duration T (ns), timesteps N, and max_iter?" — default: T = 10 ns, N = 50, max_iter = 60
 7. **inspect**
 8. **hardware** (optional)
@@ -485,7 +485,7 @@ Per-stage notes:
    drops silently; short/fast gates also want higher N and possibly larger
    `drive_max`). `max_iter`: 60 near the default regime, ~150–200 for harder
    cases. Then author `solve.jl` and launch it through the tiered gate per the
-   solve workflow (`amico-run resolve` → author per tier → `amico-run --spec`
+   solve workflow (`amico resolve` → author per tier → `amico run --spec`
    via bash; `amicode_solve` records the Run entity with its tier). A stock
    single-qubit transmon gate resolves to the **vetted** tier — the
    fill-in-the-block flow.
@@ -581,12 +581,21 @@ lists it — honestly caveated (see the PLATFORM stage).
 
 ## The run-dir contract your script MUST emit
 
-`amico-run` writes `run.toml` (first) and `FINISHED` (last) itself. Your
+`amico run` writes `run.toml` (first) and `FINISHED` (last) itself. Your
 script, running with cwd = the run dir, must emit:
 
 - `AMICODE_ITER iter=<n> f=<obj> inf_pr=<…> inf_du=<…>` to stdout, flushed,
-  once per Ipopt iteration (drives the live stats row). This stays on the raw
-  Ipopt callback — it needs the rich IPM state the agnostic callback can't carry.
+  once per solver iteration (drives the live stats row). It needs the rich IPM
+  state the agnostic `(primal, iter)` contract can't carry, so it rides the
+  backend's own channel — MadNLP (the default since DirectTrajOpt 0.11,
+  inherited by Piccolo 2.2): a raw `MadNLP.AbstractUserCallback` installed via
+  `intermediate_callback`, which must filter on `UserCallbackRegular`
+  (restore/robust phases fire the callback WITHOUT advancing the iteration
+  counter — emitters filter on regular mode, or the iters repeat); Ipopt
+  (selectable): the raw `callback` kwarg via `DirectTrajOpt.Callbacks.
+  callback_factory` (composed with `intermediate_callback` by DTO, both firing
+  once per IPM iteration). Q74 amended: the live Inspector is solver-agnostic
+  as of DTO 0.11 — it was never "ipopt-only", its telemetry channel was.
 - `AMICODE_PULSE_META` (once, before the solve) and `AMICODE_PULSE` (once per
   iteration) to stdout, flushed — **this is what the Inspector's live pulse
   plot renders**. Prototype-grade line shapes (candidate GA format):
@@ -604,9 +613,8 @@ script, running with cwd = the run dir, must emit:
 
 - `iter_<N>.png` every few iterations — **archival/publication artifact**
   (`plot_pulse` is canonical there); the Inspector no longer displays PNGs. See
-  the per-iter plotting idiom below — **`LivePulsePlotCallback`** once the bundled
-  Julia project pins DirectTrajOpt ≥ 0.9.7, else the hand-rolled Ipopt-callback
-  path (the only one that runs on 0.9.6).
+  the per-iter plotting idiom below — **`LivePulsePlotCallback`**, solver-agnostic
+  under both backends (MadNLP default, Ipopt selectable) since DTO 0.11.
 - `result.toml`, written **atomically** (write `result.toml.tmp`, then `mv`),
   with at least `fidelity` (float) and `iterations` (int).
 - `pulse.jld2` (the solved pulse) via `JLD2.save`.
@@ -616,40 +624,34 @@ The template already does all of this — you only fill in numbers.
 
 ### Per-iter plotting idiom
 
-Two idioms, by what the bundled Julia project pins:
-
-**Preferred — once DirectTrajOpt ≥ 0.9.7 is pinned: `LivePulsePlotCallback`.**
-It subtypes DirectTrajOpt's solver-agnostic `AbstractIntermediateCallback` and is
-installed via the solver's `intermediate_callback` option (the Ipopt path; live
-inspector is ipopt-only, Q74). It reconstructs the pulse from the optimizer's
-primal each iteration and writes `iter_<N>.png` — the same object would install
-on MadNLP via `MadNLPOptions(intermediate_callback = …)`:
+**Preferred: `LivePulsePlotCallback`.** It subtypes DirectTrajOpt's
+solver-agnostic `AbstractIntermediateCallback` and is installed via the
+backend's `intermediate_callback` option — identically under the MadNLP
+default (DTO wraps the agnostic callback in a mode-filtered adapter) and under
+Ipopt (`IpoptOptions(intermediate_callback = …)`). It reconstructs the pulse
+from the optimizer's primal each iteration and writes `iter_<N>.png`.
 
 ```julia
 live_plot  = LivePulsePlotCallback(qtraj, prob.trajectory; every = 6, save_dir = ".")
 pulse_emit = PulseEmitCallback(live_plot, prob.trajectory)   # wraps live_plot; adds AMICODE_PULSE lines
-solve!(qcp; max_iter = max_iter,
-       options = IpoptOptions(intermediate_callback = pulse_emit), # → iter_<N>.png + AMICODE_PULSE
-       callback = CB.callback_factory(cb_log))                     # → AMICODE_ITER text
+solve!(qcp; max_iter = max_iter, print_level = 0,
+       intermediate_callback = IterEmitCallbackMadNLP(pulse_emit),  # → iter_<N>.png + AMICODE_PULSE + AMICODE_ITER
+       fixed_variable_treatment = MadNLP.RelaxBound)               # a raw user callback manages this itself
 ```
 
-`PulseEmitCallback` is defined in the template — copy it verbatim (it qualifies
-`update!` against the Makie name collision and resolves the drive component
-`:u`-then-`:a`). It delegates to the PNG callback first, so archival frames and
-pulse telemetry ride one hook.
+`PulseEmitCallback` and `IterEmitCallbackMadNLP` are defined in the template —
+copy them verbatim (`PulseEmitCallback` qualifies `update!` against the Makie
+name collision and resolves the drive component `:u`-then-`:a`; the MadNLP
+emitter delegates to `pulse_emit` first, then prints the `AMICODE_ITER` line
+from `MadNLP.get_obj_val`/`get_inf_pr`/`get_inf_du`, filtered on
+`MadNLP.UserCallbackRegular`). On the selectable Ipopt arm the AMICODE_ITER
+channel instead rides the raw callback — `options =
+IpoptOptions(intermediate_callback = pulse_emit), callback =
+CB.callback_factory(cb_log)` — the only arm where that kwarg is wired.
 
-**Fallback on DirectTrajOpt 0.9.6 (no Ipopt `intermediate_callback` field yet):
-hand-roll the PNG from the raw Ipopt callback** — `IpoptOptions(intermediate_callback=…)`
-throws at construction on 0.9.6, so if you author a script against a project still
-pinned to 0.9.6, use the text-callback path instead: in `cb_log`, every few iters
-call `plot_pulse(qcp; bounds = true, title = …)` and `CairoMakie.save` the figure
-(alongside `callback_update_trajectory_factory` to keep the iterate in sync) —
-and still print the `AMICODE_PULSE_META`/`AMICODE_PULSE` lines from that same
-callback (the synced trajectory has the drive values), or the live plot is dead.
-
-The bundled template uses the preferred `LivePulsePlotCallback` path; it lands
-together with the DirectTrajOpt ≥ 0.9.7 `Manifest.toml` bump (lockstep), so the
-template and the pin are never out of step on `main`.
+**Historical fallback (pre-DTO-0.9.6 projects only): hand-roll the PNG from
+the raw Ipopt callback** — `IpoptOptions(intermediate_callback=…)` throws at
+construction on 0.9.6. Modern stacks (DTO ≥ 0.11) never need this path.
 
 ## Warm-start idiom
 

@@ -37,6 +37,7 @@ const PRIVATE_ONLY = [
   "staged", // solver.strategy
   "hermite_bending_energy", // problem.objectives[].kind
   "hermite_c2", // problem.objectives[].kind
+  "adjoint_robustness", // problem.objectives[].kind (the Piccolissimo robust family)
   "robust", // wrappers[].kind
 ] as const;
 
@@ -92,16 +93,19 @@ describe("problemspec OSS/FULL variant split", () => {
     expect(onlyInOss, `OSS has values FULL lacks (variants built from divergent revisions?)`).toEqual([]);
   });
 
-  // ── The set-difference assertions above cannot see this one ──────────────────
+  // ── The set-difference assertions above cannot see shape-level leaks ────────
   //
   // `enumValues` flattens every enum in the document into one Set, so a value is
-  // invisible to it once that value appears ANYWHERE. `exponential` and `spline`
-  // already appear in the OSS schema inside a CONDITIONAL — allOf[3].then requires
-  // `integrator.kind ∈ {exponential, spline}` for a spline pulse — so they are
-  // members of `ossEnums` even though the OSS schema does not OFFER them in the
-  // integrator enum a caller picks from. They therefore cancel out of
-  // `onlyInFull`, and an OSS schema that started offering the paid spline and
-  // exponential backends would pass every test above.
+  // invisible to it once that value appears ANYWHERE — e.g. a public kind that a
+  // CONDITIONAL references cancels out of `onlyInFull` even if a future emission
+  // offered it in the wrong place. The `offeredIntegratorKinds` positional checks
+  // above exist for exactly this reason: they pin the enum a caller actually
+  // chooses from to the public-kind set, so a schema that quietly grows an
+  // offered integrator kind outside the registered public set fails here loudly
+  // instead of cancelling out above. On the 2.2.0 surface the conditional for
+  // spline pulses references `spline` — which IS an offered public kind now —
+  // so the leak class this block guards has moved from "private kind offered"
+  // to "unregistered kind offered": the equality assertions catch both.
   //
   // That is the exact open-core leak this file exists to prevent, so it needs a
   // positional check on the enum a caller actually chooses from. Reaching into a
@@ -119,25 +123,36 @@ describe("problemspec OSS/FULL variant split", () => {
     return [...(kinds as string[])].sort();
   };
 
-  // The integrator backends that require Piccolissimo. Unlike PRIVATE_ONLY these are
-  // NOT absent from the OSS document — they are referenced by its conditional and
-  // merely not offered — which is precisely why they need their own assertion.
-  const PRIVATE_INTEGRATOR_KINDS = ["exponential", "spline"];
+  // The public integrator kinds as of the Piccolo 2.2.0 open-core surface: the
+  // BilinearIntegrator demotion (#334) and slice 3b (#430) made the native
+  // integrator tier public — spline and the hermitian/nonhermitian exponential
+  // families are REGISTERED kinds in Piccolo's own registry now (Piccolo's
+  // src/specs/schema/drift.jl dropped them from its private-exclusion list in
+  // lockstep). The paid surface no longer lives in offered integrator kinds;
+  // it lives in the PRIVATE_ONLY capabilities above.
+  const PUBLIC_INTEGRATOR_KINDS = [
+    "bilinear",
+    "hermitian_exponential",
+    "nonhermitian_exponential",
+    "spline",
+  ];
 
-  it("the OSS variant OFFERS only the public integrator backend", () => {
-    expect(offeredIntegratorKinds("problemspec.oss.schema.json")).toEqual(["bilinear"]);
-  });
-
-  it("the FULL variant offers the public backend plus exactly the private ones", () => {
-    expect(offeredIntegratorKinds("problemspec.schema.json")).toEqual(
-      ["bilinear", ...PRIVATE_INTEGRATOR_KINDS].sort(),
+  it("the OSS variant offers exactly the public integrator kinds", () => {
+    expect(offeredIntegratorKinds("problemspec.oss.schema.json")).toEqual(
+      [...PUBLIC_INTEGRATOR_KINDS].sort(),
     );
   });
 
-  it("the offered-integrator difference is exactly the private backends", () => {
+  it("the FULL variant offers exactly the public integrator kinds", () => {
+    expect(offeredIntegratorKinds("problemspec.schema.json")).toEqual(
+      [...PUBLIC_INTEGRATOR_KINDS].sort(),
+    );
+  });
+
+  it("no private integrator kind remains (the 2.2.0 demotion made the tier public)", () => {
     const oss = offeredIntegratorKinds("problemspec.oss.schema.json");
     const full = offeredIntegratorKinds("problemspec.schema.json");
-    expect(full.filter((k) => !oss.includes(k)).sort()).toEqual([...PRIVATE_INTEGRATOR_KINDS].sort());
+    expect(full.filter((k) => !oss.includes(k)).sort()).toEqual([]);
     // And nothing OSS offers is missing from FULL (the other mis-vendor direction).
     expect(oss.filter((k) => !full.includes(k))).toEqual([]);
   });

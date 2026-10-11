@@ -4,7 +4,7 @@
 # they are the frozen run-dir contract (AMICODE_ITER / AMICODE_PULSE / iter PNGs
 # / pulse.jld2 / result.toml / DONE) plus the tier-3 verification snapshot the
 # fixed re-rollout harness checks. Launch through the gate:
-#   amico-run --spec solvespec.json --project <sandbox-env> solve.jl
+#   amico run --spec solvespec.json --project <sandbox-env> solve.jl
 # Results are UNTRUSTED until verification.toml records agree = true.
 using Piccolo
 using CairoMakie   # loads PiccoloMakieExt → gives LivePulsePlotCallback its impl

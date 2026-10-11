@@ -48,7 +48,7 @@ export const GREETING_TITLE_VOCABULARY = [
   "new session",
 ] as const;
 
-function isGreetingTitle(title: string): boolean {
+export function isGreetingTitle(title: string): boolean {
   const t = title.toLowerCase();
   return GREETING_TITLE_VOCABULARY.some((word) => new RegExp(`\\b${word}\\b`).test(t));
 }

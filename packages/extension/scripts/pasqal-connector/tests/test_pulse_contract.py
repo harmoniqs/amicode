@@ -14,6 +14,7 @@ Run from the spike directory:
 import copy
 import sys
 import unittest
+import warnings
 from pathlib import Path
 
 SPIKE_DIR = Path(__file__).resolve().parent.parent
@@ -24,9 +25,11 @@ import pulser  # noqa: E402
 from pulse_contract import (  # noqa: E402
     ContractError,
     DUST_TOL,
+    NonIdleEndpointsWarning,
     build_sequence,
     load_knots,
     validate_schema,
+    warn_non_idle_endpoints,
     zero_order_hold,
 )
 
@@ -187,6 +190,69 @@ class TestGoldenSimulation(unittest.TestCase):
         self.assertGreater(p_r, 0.999)  # 8 MHz filter must not break the gate
 
 
+
+
+class TestIdleEndpoints(unittest.TestCase):
+    """S-19/S-20 (campaign pasqal-gate-autoresearch): a pulse that does not
+    return both drives to idle (Ω=Δ=0) at its endpoints is an incomplete
+    hardware gate. The contract WARNS, never rejects — existing valid pulses
+    keep validating. H17 measured that clamping costs nothing and pays on
+    both legs (ΔF_emu +4.7e-5/+1.7e-3, ΔF_mod +0.039/+2.3e-3)."""
+
+    def corrupt(self, **changes):
+        data = copy.deepcopy(golden())
+        data.update(changes)
+        return data
+
+    def build_catching_warnings(self, data):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            seq = build_sequence(data)
+        idle = [w for w in caught if issubclass(w.category, NonIdleEndpointsWarning)]
+        return seq, idle
+
+    def test_golden_fixture_is_idle_ended(self):
+        # The committed Jul-8 X-gate solve converged to idle endpoints, so
+        # it must sail through with NO warning — a clamped pulse validates clean.
+        seq, idle = self.build_catching_warnings(golden())
+        self.assertEqual(seq.get_duration(), 400)
+        self.assertEqual(idle, [])
+
+    def test_non_idle_endpoints_warn_but_validate(self):
+        data = self.corrupt()
+        data["amplitude"][0] = 5.0
+        data["amplitude"][-1] = 4.0
+        data["detuning"][-1] = 57.0
+        seq, idle = self.build_catching_warnings(data)
+        # warn, never reject: the pulse still validates and builds
+        self.assertEqual(seq.get_duration(), 400)
+        self.assertEqual(len(idle), 1)
+        msg = str(idle[0].message)
+        self.assertIn("amplitude[0]", msg)
+        self.assertIn("amplitude[100]", msg)
+        self.assertIn("detuning[100]", msg)
+
+    def test_one_sided_endpoint_still_warns(self):
+        data = self.corrupt()
+        data["detuning"][0] = -0.17
+        seq, idle = self.build_catching_warnings(data)
+        self.assertEqual(seq.get_duration(), 400)
+        self.assertEqual(len(idle), 1)
+        self.assertIn("detuning[0]", str(idle[0].message))
+
+    def test_dust_level_endpoints_count_as_idle(self):
+        data = self.corrupt()
+        data["amplitude"][0] = DUST_TOL / 10
+        data["detuning"][-1] = -DUST_TOL / 10
+        seq, idle = self.build_catching_warnings(data)
+        self.assertEqual(seq.get_duration(), 400)
+        self.assertEqual(idle, [])
+
+    def test_standalone_call_ignores_malformed_arrays(self):
+        # public helper must not explode on dicts that fail schema validation
+        # elsewhere — structural validation reports those with its own errors
+        warn_non_idle_endpoints({"amplitude": "junk", "detuning": None})
+        warn_non_idle_endpoints({})
 
 
 class TestAtomsKey(unittest.TestCase):

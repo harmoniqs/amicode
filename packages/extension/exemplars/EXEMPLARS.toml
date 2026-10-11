@@ -3,7 +3,7 @@
 # in v1 — cross-exemplar = tier 3). build_exemplars.mjs aggregates this file ∪
 # any $AMICODE_DEMOS_ROOT/*/EXEMPLARS.toml, copies external scripts in-tree,
 # computes a masked baseline_hash per entry, and writes exemplars/index.json
-# (the artifact amico-run reads — this .toml is the build input, not the index).
+# (the artifact `amico run` reads — this .toml is the build input, not the index).
 
 [[exemplar]]
 id = "rydberg-cz"

@@ -8,7 +8,7 @@ describe("resolveAmicoRunBinDir", () => {
   it("prefers the staged bin/launcher when present (packaged VSIX)", () => {
     const ext = mkdtempSync(join(tmpdir(), "ext-"));
     mkdirSync(join(ext, "bin", "launcher"), { recursive: true });
-    writeFileSync(join(ext, "bin", "launcher", "amico-run"), "#!/usr/bin/env bash\n");
+    writeFileSync(join(ext, "bin", "launcher", "amico"), "#!/usr/bin/env bash\n");
     expect(resolveAmicoRunBinDir(ext)).toBe(join(ext, "bin", "launcher"));
   });
   it("falls back to the workspace sibling launcher (dev Extension Host)", () => {
@@ -17,8 +17,19 @@ describe("resolveAmicoRunBinDir", () => {
     mkdirSync(ext, { recursive: true });
     const sib = join(pkgs, "amico-run", "launcher");
     mkdirSync(sib, { recursive: true });
-    writeFileSync(join(sib, "amico-run"), "#!/usr/bin/env bash\n");
+    writeFileSync(join(sib, "amico"), "#!/usr/bin/env bash\n");
     expect(resolveAmicoRunBinDir(ext)).toBe(sib);
+  });
+  // #1667: the amico-run bin is deleted — the launcher dir is probed for the
+  // `amico` verb router (the delegated surface). A leftover amico-run shim
+  // must NOT satisfy the resolution.
+  it("keys the probe on the amico router bin (#1667) — a leftover amico-run alone does not resolve", () => {
+    const ext = mkdtempSync(join(tmpdir(), "ext-"));
+    mkdirSync(join(ext, "bin", "launcher"), { recursive: true });
+    writeFileSync(join(ext, "bin", "launcher", "amico-run"), "#!/usr/bin/env bash\n");
+    expect(resolveAmicoRunBinDir(ext)).toBeUndefined();
+    writeFileSync(join(ext, "bin", "launcher", "amico"), "#!/usr/bin/env bash\n");
+    expect(resolveAmicoRunBinDir(ext)).toBe(join(ext, "bin", "launcher"));
   });
   it("returns undefined when neither exists", () => {
     expect(resolveAmicoRunBinDir(mkdtempSync(join(tmpdir(), "none-")))).toBeUndefined();

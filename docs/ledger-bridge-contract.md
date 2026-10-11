@@ -43,7 +43,7 @@ writer:
    skips; malformed is corruption. Writers validate their own input strictly;
    readers tolerate.
 5. **Single writer.** No file, and no *field*, has two writers. amicode:
-   `amico-run` owns `run.toml` and `FINISHED`; the solve script owns
+   `amico run` owns `run.toml` and `FINISHED`; the solve script owns
    `result.toml`/`pulse.jld2`/the stdout contract; the recorded tools own
    `events.jsonl`. strumento: the spawner owns `pid` for supervised runs, the
    script stamps its own `config_content_id`, and no agent-reachable surface
@@ -53,7 +53,7 @@ writer:
 
 ### (a) amicode's run-dir contract
 
-Written by the `amico-run` launch path (`packages/amico-run/src/run_dir.ts`;
+Written by the `amico run` launch path (`packages/amico-run/src/run_dir.ts`;
 schemas in `packages/schema/schemas/{run,result,finished}.schema.json`):
 
 | element | rule |
@@ -62,7 +62,7 @@ schemas in `packages/schema/schemas/{run,result,finished}.schema.json`):
 | `result.toml` | written by the **solve script**, atomically. At least `fidelity` (float) + `iterations` (int). |
 | `FINISHED` | written **last**, atomically, by the harness. `status` + `exit_code`. Its existence is the durable terminal marker; `FINISHED` without `result.toml` reads as a failed script. |
 | `events.jsonl` | the problem workspace's provenance spine: append-only, `seq` monotonic from 1 (seq IS the line count at write time), each event stamped `ts` + a content `hash` over the recorded entity's canonical JSON (`recorded`/`notes` excluded — clock and prose never churn identity). Entity sidecars (`entities/*.json`) are the recorded state; the LAST event per entity kind hashes to exactly them. |
-| `run.log` | the stdout contract: `AMICODE_PULSE_META` once (before the solve), `AMICODE_PULSE` + `AMICODE_ITER` per Ipopt iteration, `DONE fidelity=<f>` last. The grammar is pinned in the extension's `run_dir_reader.ts`; the number in `DONE` and in `result.toml` is the same number. |
+| `run.log` | the stdout contract: `AMICODE_PULSE_META` once (before the solve), `AMICODE_PULSE` + `AMICODE_ITER` per solver iteration (MadNLP default or Ipopt — the line grammar is backend-blind), `DONE fidelity=<f>` last. The grammar is pinned in the extension's `run_dir_reader.ts`; the number in `DONE` and in `result.toml` is the same number. |
 
 **The amicode record is a pair, not one directory.** The run dir and the
 problem-workspace spine are disjoint in production (`~/.amico/runs/<lab>/` vs
@@ -97,7 +97,7 @@ understands, never failing the read. Amicode's half does not depend on the
 fold: **the F3 non-arrival reduction** — if T4 slips indefinitely, this seam
 completes as this note + the fixtures, and amicode's reports stay readable
 through its own surfaces (the Run Inspector, the problem-workspace spine, the
-`amico-run` launch/verify path) exactly as they do today.
+   `amico run` launch/verify path) exactly as they do today.
 
 ### (d) the SOTA staging sidecar (living-sota D3 — slice 2 of spec-20260905-103000)
 

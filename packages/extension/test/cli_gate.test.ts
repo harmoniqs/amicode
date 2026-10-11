@@ -25,15 +25,15 @@ interface StubSpec {
   body: string;
 }
 
-/** A fresh (post-remote-merge) amico-run/amico stub: --help lists remote,
- *  a remote invocation fails config-class (script not found), never the
+/** A fresh (post-remote-merge) amico stub: --help lists remote, a remote
+ *  invocation fails config-class (script not found), never the
  *  unknown-executor rejection. */
 const FRESH_LAUNCH = `
 if [ "$1" = "--help" ] || { [ "$1" = "run" ] && [ "$2" = "--help" ]; }; then
-  echo 'usage: amico-run <script.jl> [--executor local|remote] [--lab <id-or-path>]'
+  echo 'usage: amico run <script.jl> [--executor local|remote] [--lab <id-or-path>]'
   exit 0
 fi
-echo "amico-run: script not found: $1" >&2
+echo "amico run: script not found: $1" >&2
 exit 64
 `;
 
@@ -41,10 +41,10 @@ exit 64
  *  knows only local. */
 const STALE_LAUNCH = `
 if [ "$1" = "--help" ] || { [ "$1" = "run" ] && [ "$2" = "--help" ]; }; then
-  echo 'usage: amico-run <script.jl> [--executor local] [--lab <id-or-path>]'
+  echo 'usage: amico run <script.jl> [--executor local] [--lab <id-or-path>]'
   exit 0
 fi
-echo "amico-run: unknown --executor remote (supported: local)" >&2
+echo "amico run: unknown --executor remote (supported: local)" >&2
 exit 64
 `;
 
@@ -85,12 +85,12 @@ function failing(results: { ok: boolean; bin: string; check: string; detail: str
 // ── declared-bin enumeration ────────────────────────────────────────────────
 
 describe("declaredBins", () => {
-  it("reads the REAL bin map: amico-run, amico, amico-pasqal all declared", () => {
+  it("reads the REAL bin map: amico, amico-pasqal, amico-git-credential all declared — the amico-run bin is GONE (#1667)", () => {
     const names = declaredBins(REAL_BIN_MAP).map((b) => b.name);
-    expect(names).toContain("amico-run");
     expect(names).toContain("amico");
     expect(names).toContain("amico-pasqal");
     expect(names).toContain("amico-git-credential");
+    expect(names).not.toContain("amico-run");
   });
   it("appends the #399 shadow bins (gh) under their STAGED names — gated like declared bins", () => {
     const gh = declaredBins(REAL_BIN_MAP).find((b) => b.name === "gh")!;
@@ -99,9 +99,9 @@ describe("declaredBins", () => {
     expect(gh.dist).toBe(join("dist", "gh.js"));
   });
   it("maps each bin to its staged launcher + dist bundle", () => {
-    const run = declaredBins(REAL_BIN_MAP).find((b) => b.name === "amico-run")!;
-    expect(run.launcher).toBe(join("launcher", "amico-run"));
-    expect(run.dist).toBe(join("dist", "amico-run.js"));
+    const run = declaredBins(REAL_BIN_MAP).find((b) => b.name === "amico-pasqal")!;
+    expect(run.launcher).toBe(join("launcher", "amico-pasqal"));
+    expect(run.dist).toBe(join("dist", "amico-pasqal.js"));
   });
   it("an empty/missing bin map is an error, never a vacuous pass", () => {
     const root = mkdtempSync(join(tmpdir(), "cli-gate-empty-"));
@@ -121,7 +121,6 @@ describe("declaredBins", () => {
 describe("runGate", () => {
   it("passes a fresh staged set (remote accepted, usage lists remote, all bins present)", async () => {
     const { binDir, binMapPath } = stageFixture({
-      "amico-run": { body: FRESH_LAUNCH },
       amico: { body: FRESH_LAUNCH },
       "amico-pasqal": { body: FRESH_PASQAL },
     });
@@ -131,7 +130,7 @@ describe("runGate", () => {
   });
 
   it("REDS on a stale bundle: the unknown-executor rejection is the failure signature", async () => {
-    const { binDir, binMapPath } = stageFixture({ "amico-run": { body: STALE_LAUNCH } });
+    const { binDir, binMapPath } = stageFixture({ amico: { body: STALE_LAUNCH } });
     const { ok, results } = await runGate({ binDir, binMapPath });
     expect(ok).toBe(false);
     const bad = failing(results);
@@ -142,7 +141,7 @@ describe("runGate", () => {
 
   it("REDS on a declared-but-missing staged bin (absence lane)", async () => {
     const { binDir, binMapPath } = stageFixture({
-      "amico-run": { body: FRESH_LAUNCH },
+      amico: { body: FRESH_LAUNCH },
       "amico-pasqal": null, // declared in the map, absent from the staged set
     });
     const { ok, results } = await runGate({ binDir, binMapPath });
@@ -152,9 +151,9 @@ describe("runGate", () => {
 
   it("REDS on a hermetic success: exit 0 with no cloud config means the probe proved nothing", async () => {
     const { binDir, binMapPath } = stageFixture({
-      "amico-run": {
+      amico: {
         body: `
-if [ "$1" = "--help" ]; then echo 'usage: amico-run <script.jl> [--executor local|remote]'; exit 0; fi
+if [ "$1" = "--help" ]; then echo 'usage: amico run <script.jl> [--executor local|remote]'; exit 0; fi
 exit 0`,
       },
     });
@@ -171,9 +170,9 @@ exit 0`,
   });
 
   it("REDS on a staged launcher whose dist bundle is missing", async () => {
-    const { binDir, binMapPath } = stageFixture({ "amico-run": { body: FRESH_LAUNCH } });
+    const { binDir, binMapPath } = stageFixture({ amico: { body: FRESH_LAUNCH } });
     const { rmSync } = await import("node:fs");
-    rmSync(join(binDir, "dist", "amico-run.js"));
+    rmSync(join(binDir, "dist", "amico.js"));
     const { ok, results } = await runGate({ binDir, binMapPath });
     expect(ok).toBe(false);
     expect(failing(results).some((r) => r.check === "dist bundle staged")).toBe(true);

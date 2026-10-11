@@ -23,7 +23,7 @@ rename(2) over the running executable — atomic, no stop, ever.
 
 | script | cadence (launchd) | reads | writes / posts |
 |---|---|---|---|
-| `fleet-status.sh` | every 5 min (`co.harmoniqs.fleet-status`) | ssh probes (mini/macbook/erlich), canonical chat DB, server lsof, `~/.amico/sync.log`, local repo scan | `~/.amico/ops/fleet-status.json` (the dashboard widget's input); macOS notification on server-guard state change |
+| `fleet-status.sh` | every 5 min (mini/macbook: launchd `co.harmoniqs.fleet-status`; **erlich**: systemd pair `co.harmoniqs.fleet-status.{service,timer}` under `ops/systemd/` — the unit ALSO runs the projection refresh `amico fleet status --projection` (#1560), the Fleet (live) block's role line (#1106 P3b-2); exit 75 is the honest unenrolled-host bootstrap exception, never a failed cadence) | ssh probes (mini/macbook/erlich), canonical chat DB, server lsof, `~/.amico/sync.log`, local repo scan | `~/.amico/ops/fleet-status.json` (the dashboard widget's input); on erlich also `~/.amico/ops/fleet/projection.json` (the projection cache the system-prompt block and every #1106 consumer reads); macOS notification on server-guard state change |
 | `fleet-alert.sh` | every 15 min (`co.harmoniqs.fleet-alert`) | `fleet-status.json`, state file | **Slack `#fleet`** — device transitions only (noise-gated; always-on hosts `mini erlich` notify, laptops never do); down->24h re-reminds once daily |
 | `papers-digest/daily.sh` | daily ~09:00 (`co.harmoniqs.amicode-papers-digest`) | the frozen bundle | **Slack `#papers`** — top-5 quant-ph digest; appends to `papers-digest/log.txt` |
 | `skill-freshness/run-skill-freshness.sh` | daily ~04:30 (`co.harmoniqs.skill-freshness`) | the three skill surfaces (repo public library, armonissima vault library, server staging tree), Julia package checkouts, the `#586` lint CLI | receipt line appended to `~/.amico/server/upgrade-receipts/upgrade-receipts.jsonl`; on drift, the tracking issue "Skill freshness report (nightly)" in `harmoniqs/armonissima` (created once, then commented); reports under `skill-freshness/reports/` |
@@ -66,6 +66,33 @@ cd ~/.amico/ops/papers-digest/bin && shasum -a 256 amico.js > amico.js.sha256
 
 The sha sidecar is what an operator compares against to know what's deployed; the
 digest job never needs a restart (it execs the bundle each run).
+
+## The pinned CLI root (`install-cli-pin.sh`, amicode#1666)
+
+The same frozen-bundle doctrine, applied to the CLI itself. The `~/.local/bin/amico`
+(+ `gh`, `amico-pasqal`, `amico-git-credential`) shims are symlinks into a
+**moving checkout** — and a checkout is a moving target. Observed 2026-09-25: the live
+shim resolved into a stale side-checkout on an old branch, and every ops job silently
+ran months-old code for weeks. The launchers (`packages/amico-run/launcher/`) therefore
+resolve a **pinned dist root** FIRST — `~/.amico/server/cli/` by default
+(`AMICO_CLI_PIN_ROOT` overrides; a bundle present there wins), with the checkout dist
+beside the launcher as the pre-pin fallback. Development against the checkout is the
+EXPLICIT override: `AMICO_CLI_FROM_CHECKOUT=1` — never implicit.
+
+**Pin / upgrade procedure** (from a fresh checkout build):
+
+```sh
+pnpm --filter @amicode/amico-run build
+bash ops/install-cli-pin.sh --dist packages/amico-run/dist
+# → copies every dist bundle to ~/.amico/server/cli/ + writes <name>.js.sha256
+#   sidecars (shasum format) — the papers-digest convention
+```
+
+`amico doctor` reports the pin as the `pinned_cli` record: the root, the bundle
+count, the `amico.js` sha, and the sidecars' freshness (a mismatched or missing
+sidecar is an integrity error — refresh the pin; an absent root is a warning, the
+pre-pin state). Structural proof post-deploy: break the checkout's branch, the CLI
+still runs the pinned dist.
 
 ## Hunts: `hunt.sh` (#426)
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env julia
 # Amicode solve template — fill in the `# FILL IN` block, then:
-#   amico-run --project <julia-project> solve.jl
+#   amico run --project <julia-project> solve.jl
 # Emits the run-dir contract (AMICODE_ITER, iter_<N>.png, result.toml, pulse.jld2, DONE).
 # Vetted against Piccolo 1.19 (the version `Pkg.add Piccolo` installs today): a
 # single-qubit X gate on a 3-level transmon converges to subspace fidelity ~1.0.
@@ -97,7 +97,11 @@ end
 # AMICODE_ITER text telemetry stays on the RAW Ipopt callback — it needs the rich
 # IPM state (obj_value/inf_pr/inf_du) that the agnostic `(primal, iter)` contract
 # doesn't carry. Both callbacks fire once per iteration (DTO composes the raw
-# callback with `intermediate_callback`); the live inspector is ipopt-only (Q74).
+# callback with `intermediate_callback`). Q74 was AMENDED by the DTO 0.11
+# MadNLP-default flip (#1676): the Inspector is solver-agnostic now (the state
+# columns ride MadNLP's raw user callback there, regular-mode filtered); THIS
+# template stays on the Ipopt arm by its pre-2.2 env pin (the raw channel is
+# the only one wired there).
 const CB = Piccolo.Callbacks
 iters = Ref(0)
 function cb_log(optimizer, st; kwargs...)

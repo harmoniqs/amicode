@@ -10,7 +10,7 @@
 //
 // Two surfaces:
 //   - Command `Amicode: Open Amicode Terminal` — opens a shell whose
-//     PATH is prepended with the vendored opencode dir + amico-run
+//     PATH is prepended with the vendored opencode dir + the amico CLI
 //     launcher, and whose env carries OPENCODE_CONFIG_CONTENT (and
 //     OPENCODE_SERVER_PASSWORD when relevant). `opencode` there is the
 //     amicode-aware one; plain `bash` still works and `amico` resolves.
@@ -50,14 +50,14 @@ export function registerAmicodeTerminal(ctx: vscode.ExtensionContext, deps: Amic
     const vendorBin = path.join(vendorDir, "opencode");
     const hasVendor = fs.existsSync(vendorBin);
 
-    // Resolve amico-run launcher for PATH
+    // Resolve the amico CLI launcher for PATH
     const amicoRunCandidates = [
       path.join(deps.extensionPath, "bin", "launcher"),
-      path.join(deps.extensionPath, "..", "amico-run", "launcher"),
+      path.join(deps.extensionPath, "..", "amico-run/launcher"),
     ];
     let amicoRunDir: string | undefined;
     for (const c of amicoRunCandidates) {
-      if (fs.existsSync(path.join(c, "amico-run"))) {
+      if (fs.existsSync(path.join(c, "amico"))) {
         amicoRunDir = c;
         break;
       }
@@ -65,7 +65,7 @@ export function registerAmicodeTerminal(ctx: vscode.ExtensionContext, deps: Amic
 
     // Build env for the terminal: same OPENCODE_CONFIG_CONTENT the chat server
     // was spawned with, plus PATH prepended so `opencode` and `amico` resolve
-    // to the vendored/amico-run bins. Also carry OPENCODE_SERVER_PASSWORD so
+    // to the vendored / amico CLI bins. Also carry OPENCODE_SERVER_PASSWORD so
     // a terminal `opencode attach` can auth to the fleet tunnel when needed.
     const spawnEnv = deps.getSpawnEnv?.() ?? {};
     const configContent = deps.getConfigContent?.();
@@ -73,7 +73,8 @@ export function registerAmicodeTerminal(ctx: vscode.ExtensionContext, deps: Amic
 
     // PATH: managed canonical FIRST (#451 D2 — canonical wins), then the fork
     // shim dir (opencode-amicode), then the vendored fork dir (fallback while
-    // the managed bootstrap is pending), then amico-run, then the user PATH.
+    // the managed bootstrap is pending), then the amico CLI launcher, then the
+    // user PATH.
     const pathParts: string[] = [];
     pathParts.push(...managedPathEntries(deps.extensionPath));
     if (hasVendor) pathParts.push(vendorDir);

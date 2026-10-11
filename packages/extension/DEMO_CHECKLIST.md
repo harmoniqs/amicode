@@ -7,12 +7,12 @@ net; rows 4–6 are the live run.
 ## Pre-flight (arm the fallback first)
 
 - [ ] **Install clean** — followed `RUNBOOK.md` end-to-end on the target machine; total time recorded below (target ≤ 60 min).
-- [ ] **Healthcheck green** — `node packages/extension/scripts/healthcheck.mjs` exits `0` (julia + pinned Piccolo project · opencode `/event` · `amico-run` · Bedrock creds).
+- [ ] **Healthcheck green** — `node packages/extension/scripts/healthcheck.mjs` exits `0` (julia + pinned Piccolo project · opencode `/event` · `amico` CLI · Bedrock creds).
 - [ ] **Fallback armed** — Command Palette → **"Amicode: Replay demo run"** stages the bundled solve and the Run Inspector renders it (iter frames + final fidelity + promote prompt), with **no Julia, no opencode, no creds**. Confirm this works _before_ relying on the live path.
 
 ## Live run
 
-- [ ] **Chat → script** — a chat prompt makes the agent read the template, author `solve.jl`, and launch `amico-run` **detached** (`( nohup … & )`); the chat returns immediately with "Solve launched — watch the Run Inspector" and is **not** blocked by the solve.
+- [ ] **Chat → script** — a chat prompt makes the agent read the template, author `solve.jl`, and launch `amico run` **detached** (`( nohup … & )`); the chat returns immediately with "Solve launched — watch the Run Inspector" and is **not** blocked by the solve.
 - [ ] **Inspector streams** — the Run Inspector shows `AMICODE_ITER` rows advancing + `iter_*.png` frames updating while the solve runs in the background.
 - [ ] **Fidelity shown** — on completion the inspector reports the final fidelity (F ≥ 0.99 → promote prompt fires automatically).
 

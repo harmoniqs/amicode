@@ -50,7 +50,7 @@ export function filterRepertoire(scores: Score[], ents: string[]): Score[] {
 
 // Entitlement → Harmoniqs package allowlist (spec C). Reads the [packages]
 // table of entitlements.toml: `default` (public base) plus each held
-// entitlement's package list. Feeds the resolver + the amico-run import scan —
+// entitlement's package list. Feeds the resolver + the amico CLI import scan —
 // SEPARATE from filterRepertoire (score visibility). Missing file / malformed
 // table → public defaults, never throws (an entitlement failure must not
 // dead-end authoring).
