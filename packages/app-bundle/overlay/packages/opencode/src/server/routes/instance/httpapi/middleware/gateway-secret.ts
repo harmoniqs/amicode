@@ -48,8 +48,8 @@ const unauthorized = () =>
 export const gatewaySecretLayer = HttpRouter.middleware()(
   Effect.gen(function* () {
     const config = yield* Config
-    if (!required(config)) return (effect) => effect
-    const want = config.sharedSecret.value
+    const want = Option.isSome(config.sharedSecret) ? config.sharedSecret.value : ""
+    if (want === "") return (effect) => effect
     return (effect) =>
       Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest

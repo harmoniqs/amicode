@@ -21,19 +21,10 @@ function secretConfigLayer(secret?: string) {
   })
 }
 
-function handlerToClient(handler: (request: Request, context: unknown) => Promise<Response>) {
-  return {
-    request(input: string, init?: RequestInit) {
-      return Effect.promise(() =>
-        Promise.resolve(handler(new Request(new URL(input, "http://localhost"), init), HttpApiApp.context)),
-      )
-    },
-  }
-}
-
 // A minimal router with the global gateway-secret middleware — the same
 // provision position createRoutes uses (global middleware provided to the
-// route layers).
+// route layers). The router is fully provided, so its handler needs no
+// request context.
 function gatewayApp(secret?: string) {
   const handler = HttpRouter.toWebHandler(
     HttpRouter.use((router) =>
@@ -47,7 +38,11 @@ function gatewayApp(secret?: string) {
     ),
     { disableLogger: true },
   ).handler
-  return handlerToClient(handler)
+  return {
+    request(input: string, init?: RequestInit) {
+      return Effect.promise(() => Promise.resolve(handler(new Request(new URL(input, "http://localhost"), init))))
+    },
+  }
 }
 
 function httpClient(response: Response, onRequest?: (request: HttpClientRequest.HttpClientRequest) => void) {
@@ -74,7 +69,7 @@ function uiApp(secret?: string) {
         )
       }),
     ).pipe(
-      Layer.provide(authorizationBypass(secret)),
+      Layer.provide(gatewaySecretLayer.pipe(Layer.provide(secretConfigLayer(secret)))),
       Layer.provide([
         fsUtilLayer,
         RuntimeFlags.layer({ disableEmbeddedWebUi: true }),
@@ -84,18 +79,18 @@ function uiApp(secret?: string) {
     ),
     { disableLogger: true },
   ).handler
-  return handlerToClient(handler)
-}
-
-// The uiApp harness routes are raw router routes; the gateway layer applies
-// globally so the SSE-404 path is reachable with and without the secret.
-function authorizationBypass(secret?: string) {
-  return gatewaySecretLayer.pipe(Layer.provide(secretConfigLayer(secret)))
+  return {
+    request(input: string, init?: RequestInit) {
+      return Effect.promise(() => Promise.resolve(handler(new Request(new URL(input, "http://localhost"), init))))
+    },
+  }
 }
 
 // The FULL engine route tree (HttpApiApp.routes = createRoutes()) — proves the
 // middleware is wired into the real server assembly, not just the minimal
 // harness. Config arrives via ConfigProvider, exactly like env in production.
+// The tree has route requirements, so its handler takes the module context —
+// the same call shape as httpapi-ui.test.ts's app().
 function fullApp(env: Record<string, string | undefined>) {
   const handler = HttpRouter.toWebHandler(
     HttpApiApp.routes.pipe(
@@ -105,7 +100,13 @@ function fullApp(env: Record<string, string | undefined>) {
     ),
     { disableLogger: true },
   ).handler
-  return handlerToClient(handler)
+  return {
+    request(input: string, init?: RequestInit) {
+      return Effect.promise(() =>
+        Promise.resolve(handler(new Request(new URL(input, "http://localhost"), init), HttpApiApp.context)),
+      )
+    },
+  }
 }
 
 describe("gateway-secret middleware (#1760 P1: one door)", () => {
