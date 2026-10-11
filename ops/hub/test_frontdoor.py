@@ -197,7 +197,10 @@ class ShardHandler(BaseHTTPRequestHandler):
                 if not isinstance(extra, tuple):
                     return True   # raw bytes drain on any stream
                 target = extra[0].decode() if isinstance(extra[0], bytes) else extra[0]
-                return target == self.path
+                # 2026-10-11: upstreams connect with query strings
+                # (/event?directory=... — dd2788a6); match on the
+                # query-stripped path so targeted injections still land.
+                return target == self.path.split("?")[0]
             for extra in getattr(self.server, "sse_inject", ()):
                 if _targeted(extra):
                     self.wfile.write(extra[1] if isinstance(extra, tuple) else extra)
