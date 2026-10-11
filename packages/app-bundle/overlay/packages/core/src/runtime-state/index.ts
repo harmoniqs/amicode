@@ -128,8 +128,12 @@ export interface Interface {
     readonly state: "replied" | "rejected"
     readonly resolution?: unknown
   }) => Effect.Effect<boolean>
-  /** Removes this process's row (any state) — the ask-exit cleanup. */
-  readonly discardPending: (input: { readonly kind: PendingKind; readonly id: string }) => Effect.Effect<void>
+  /** Removes the owner's row (any state) — the ask-exit cleanup. */
+  readonly discardPending: (input: {
+    readonly kind: PendingKind
+    readonly id: string
+    readonly owner?: Owner
+  }) => Effect.Effect<void>
   /** The row as a fact, regardless of heartbeat freshness. */
   readonly getPending: (kind: PendingKind, id: string) => Effect.Effect<PendingRow | undefined>
   /** All live (fresh-heartbeat, state=pending) rows of one kind, any owner. */
@@ -180,7 +184,7 @@ export const layer = Layer.effect(
         .pipe(Effect.orDie)
     })
 
-    /** Advisory ghost marker: flag this owner's row when another live owner claims the same session. */
+    /** Advisory ghost marker: flag every live claim when two owners hold the same session. */
     const flagConflict = Effect.fnUntraced(function* (
       sessionID: string,
       owner: Owner,
@@ -208,7 +212,7 @@ export const layer = Layer.effect(
       yield* db
         .update(table)
         .set({ conflict: true })
-        .where(and(eq(table.session_id, sessionID), eq(table.owner_id, owner.owner_id)))
+        .where(and(eq(table.session_id, sessionID), gt(table.time_heartbeat, cutoff)))
         .run()
         .pipe(Effect.orDie)
     })
@@ -439,14 +443,16 @@ export const layer = Layer.effect(
     const discardPending = Effect.fn("RuntimeState.discardPending")(function* (input: {
       kind: PendingKind
       id: string
+      owner?: Owner
     }) {
+      const owner = input.owner ?? self
       yield* db
         .delete(RuntimePendingTable)
         .where(
           and(
             eq(RuntimePendingTable.kind, input.kind),
             eq(RuntimePendingTable.id, input.id),
-            eq(RuntimePendingTable.owner_id, self.owner_id),
+            eq(RuntimePendingTable.owner_id, owner.owner_id),
           ),
         )
         .run()
