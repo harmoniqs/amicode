@@ -1069,7 +1069,7 @@ export function buildMachineStableConfig(opts: MachineStableConfigOptions = {}):
     // but non-empty instruction file so the merge is never a no-op.
     const raw = agentsSrc && fs.existsSync(agentsSrc)
       ? fs.readFileSync(agentsSrc, "utf8")
-      : "# Amicode\nRead the template at {{TEMPLATE_PATH}}, fill params, run `amico-run <script>`.\n";
+      : "# Amicode\nRead the template at {{TEMPLATE_PATH}}, fill params, run `amico run <script>`.\n";
     const filled = raw
       .replaceAll("{{JULIA_PROJECT}}", opts.juliaProject ?? resolveJuliaProject(""))
       .replaceAll("{{TEMPLATE_PATH}}", templateSrc);

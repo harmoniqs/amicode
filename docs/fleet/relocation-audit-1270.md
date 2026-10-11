@@ -110,7 +110,7 @@ happened instead in Notes).
 ### 6. Integrated terminal  — on the host
 
 - **Host-correct:** the integrated terminal is a shell **on the host**; `amico` /
-  `amico-run` resolve, and it talks to the same adopted engine.
+  `amico run` resolve, and it talks to the same adopted engine.
 - **Manual check:** open the integrated terminal → `hostname` = the hub; `which amico`
   resolves on the host; `amico fleet status` shows role server; `pnpm sync --check` runs
   against the host checkout.
