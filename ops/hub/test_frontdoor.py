@@ -187,6 +187,19 @@ class ShardHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-cache")
         self.end_headers()
         try:
+            # #1757 fixture: a wedged upstream accepts the preamble
+            # (server.connected — build_preamble needs it), then holds the
+            # socket OPEN in total silence: no heartbeats, no FIN — recv()
+            # parks forever. wedge_sse_once is a set of query-stripped paths;
+            # the path is consumed on first wedge so the RECONNECT (what the
+            # dead-man's switch must produce) hits a healthy stream.
+            wedged = self.path.split("?")[0]
+            if wedged in getattr(self.server, "wedge_sse_once", set()):
+                self.server.wedge_sse_once.discard(wedged)
+                self.wfile.write(('data: {"type":"server.connected","shard":%d}\n\n' % self.shard).encode())
+                self.wfile.flush()
+                time.sleep(120)
+                return
             self.wfile.write(('data: {"type":"server.connected","shard":%d}\n\n' % self.shard).encode())
             # inject entries: raw bytes (any SSE connection drains them — the
             # question-map tests rely on any-upstream learning) or (path, bytes)
@@ -895,6 +908,183 @@ class TestJevPlacement(RouterTest):
         self.assertGreaterEqual(self.shards[2].httpd.counts.get("/permission/per_test1/reply", 0), 1)
         self.assertEqual(self.shards[0].httpd.counts.get("/permission/per_test1/reply", 0), 0)
 
+
+
+# --- #1757: the upstream dead-man's switch ----------------------------------------
+
+class TestUpstreamDeadman(RouterTest):
+    """The merged groups' s2/s3 upstreams wedged: recv() parked forever on a
+    silent-but-open upstream (the preamble leaves settimeout(None)), members
+    streamed that shard's silence, and nothing in the frontdoor ever noticed
+    or recovered. The wedge shape on the wire: the engine's SSE connection
+    stays open, delivers the preamble, then goes silent with NO FIN — recv()
+    has no bound and no liveness accounting.
+
+    The dead-man's switch: an upstream delivering no NON-heartbeat frames
+    (heartbeats are per-connection keepalive ticks, NOT bus events — engine
+    handlers/event.ts Stream.tick — they keep flowing while the event
+    binding is dead) for AMICODE_UPSTREAM_DEADMAN_S while its group has live
+    members is wedged -> close + reconnect through the existing backoff."""
+
+    def start_pool_with_wedge(self, wedge_paths, extra_env=None):
+        """A 3-shard pool whose shard-2 fake wedges its FIRST SSE connection
+        for each path in wedge_paths (the frontdoor dials its merged-group
+        upstreams at boot, so the flags must be set BEFORE it starts)."""
+        ports = {}
+        for i in (1, 2, 3):
+            sh = self.start_shard(i)
+            ports[i] = sh.port
+        self.shards[1].httpd.wedge_sse_once = set(wedge_paths)
+        return self.start_frontdoor(
+            routing_table([(i, ports[i]) for i in (1, 2, 3)]),
+            extra_env=extra_env)
+
+    def drip_events(self, shard_index, interval=0.5):
+        """A background drip of non-heartbeat event frames into one shard's
+        /event stream — keeps that upstream provably alive for the dead-man
+        (heartbeat-only streams carry zero event frames)."""
+        def drip():
+            n = 0
+            while True:
+                n += 1
+                self.shards[shard_index].httpd.sse_inject.append(
+                    (b"/event", b'data: {"id":"evt_drip%d","type":"server.alive",'
+                                b'"shard":%d}\n\n' % (n, shard_index + 1)))
+                time.sleep(interval)
+        threading.Thread(target=drip, daemon=True).start()
+
+    def sse_join(self, fd, target):
+        s = socket.create_connection(("127.0.0.1", fd.port), timeout=10)
+        s.sendall((f"GET {target} HTTP/1.1\r\nHost: x\r\nAccept: text/event-stream\r\n\r\n").encode())
+        return s
+
+    def fd_log(self, fd):
+        with open(os.path.join(fd.tmpdir, "frontdoor.log")) as f:
+            return f.read()
+
+    def test_merged_wedged_upstream_recycled_and_members_keep_receiving(self):
+        """The regression for the live wedge: a merged group's s2 upstream
+        wedges after the preamble. The current code parks in recv() forever —
+        with the dead-man, it is recycled, the reconnect re-binds a healthy
+        stream, and the member keeps receiving from the live upstreams
+        throughout."""
+        fd = self.start_pool_with_wedge(
+            ("/event",), extra_env={"AMICODE_UPSTREAM_DEADMAN_S": "2",
+                                    "AMICODE_UPSTREAM_CADENCE_S": "1"})
+        self.drip_events(0)   # shard 1's upstream stays provably alive
+        marker = b'data: {"id":"evt_recovered","type":"marker.after.recovery","shard":2}\n\n'
+        self.shards[1].httpd.sse_inject.append((b"/event", marker))
+
+        sock = self.sse_join(fd, "/event?directory=" + POOLDIR)
+        sock.settimeout(1)
+        body = b""
+        deadline = time.time() + 12
+        while time.time() < deadline and marker not in body:
+            try:
+                d = sock.recv(65536)
+            except socket.timeout:
+                continue
+            if not d:
+                break
+            body += d
+        sock.close()
+        self.assertIn(b'"server.alive","shard":1', body,
+                      "the LIVE upstream (s1) kept feeding the member throughout the wedge")
+        self.assertIn(marker, body,
+                      "wedged s2 upstream recycled; its reconnected stream delivered")
+        self.assertIn("[/event/s2] upstream silent", self.fd_log(fd))
+
+    def test_session_scoped_wedge_closes_member_and_heals_on_rejoin(self):
+        """The off-shard-session shape of the live symptom: a session pinned
+        to a wedged shard streams on that shard's SINGLE upstream — zero
+        frames of any kind. The dead-man recycles it; the single-upstream
+        group hits the existing all-down path (member closed), and the
+        client's rejoin heals against the recycled upstream."""
+        # the session-scoped group dials its upstream at FIRST JOIN (the
+        # merged groups already consumed shard 2's /event at boot), so the
+        # wedge is armed AFTER boot: the session group's own dial is the one
+        # that wedges.
+        fd = self.start_pool(
+            premap={"ses_w": 2},
+            extra_env={"AMICODE_UPSTREAM_DEADMAN_S": "2", "AMICODE_UPSTREAM_CADENCE_S": "1"})
+        self.shards[1].httpd.wedge_sse_once = {"/event"}
+        sock = self.sse_join(fd, "/event?session=ses_w")
+        sock.settimeout(1)
+        first_closed = False
+        deadline = time.time() + 8
+        while time.time() < deadline:
+            try:
+                d = sock.recv(65536)
+            except socket.timeout:
+                continue
+            if not d:
+                first_closed = True
+                break
+        sock.close()
+        self.assertTrue(first_closed,
+                        "the dead-man must recycle the wedged upstream (all-down closes the member)")
+        # the recycle consumed the wedge: a fresh join heals
+        sock2 = self.sse_join(fd, "/event?session=ses_w")
+        sock2.settimeout(4)
+        healed = b""
+        t0 = time.time()
+        while time.time() - t0 < 6:
+            try:
+                d = sock2.recv(65536)
+            except socket.timeout:
+                break
+            if not d:
+                break
+            healed += d
+            if b"server.heartbeat" in healed:
+                break
+        sock2.close()
+        self.assertIn(b"server.heartbeat", healed, "the rejoined stream carries frames again")
+
+    def test_upstream_cadence_logged(self):
+        """AC#2: per-upstream frame cadence is visible in frontdoor.log —
+        a wedged upstream (0 event frames, 0 heartbeats) is distinguishable
+        from a heartbeat-only quiet one, without a probe run."""
+        fd = self.start_pool_with_wedge(
+            ("/event",), extra_env={"AMICODE_UPSTREAM_DEADMAN_S": "10",
+                                    "AMICODE_UPSTREAM_CADENCE_S": "1"})
+        self.drip_events(0)
+        sock = self.sse_join(fd, "/event?directory=" + POOLDIR)
+        time.sleep(3.5)
+        sock.close()
+        logtext = self.fd_log(fd)
+        self.assertRegex(logtext, r"\[/event/s1\] upstream cadence: [1-9]\d* event frames, \d+ heartbeats",
+                         "busy upstream reports its frame cadence")
+        self.assertRegex(logtext, r"\[/event/s2\] upstream cadence: 0 event frames, 0 heartbeats",
+                         "wedged upstream is visible as total silence while members watch")
+        self.assertNotRegex(logtext, r"\[/api/event/s\d\] upstream cadence",
+                            "member-less quiet groups stay silent (no noise)")
+
+    def test_healthy_upstream_with_events_never_recycled(self):
+        """Guard: an upstream delivering event frames within the threshold is
+        NEVER dropped — heartbeats plus events flowing means healthy."""
+        fd = self.start_pool(
+            extra_env={"AMICODE_UPSTREAM_DEADMAN_S": "2", "AMICODE_UPSTREAM_CADENCE_S": "30"})
+        for i in range(3):
+            self.drip_events(i)
+        sock = self.sse_join(fd, "/event?directory=" + POOLDIR)
+        time.sleep(6)   # > 2x the deadman window with frames flowing
+        sock.close()
+        logtext = self.fd_log(fd)
+        self.assertNotIn("recycling", logtext)
+        for n in (1, 2, 3):
+            self.assertEqual(logtext.count("[/event/s%d] upstream live" % n), 1,
+                             "healthy upstream s%d must not reconnect" % n)
+
+    def test_quiet_group_without_members_never_churned(self):
+        """Guard: no members + no events = parked and silent — no recycle, no
+        cadence noise (a quiet group must not be churned by the dead-man)."""
+        fd = self.start_pool(
+            extra_env={"AMICODE_UPSTREAM_DEADMAN_S": "2", "AMICODE_UPSTREAM_CADENCE_S": "1"})
+        time.sleep(4)   # > 2x the deadman window, several cadence windows
+        logtext = self.fd_log(fd)
+        self.assertNotIn("recycling", logtext)
+        self.assertNotIn("upstream cadence", logtext)
 
 
 class TestDeltaCoalescing(unittest.TestCase):
