@@ -25,6 +25,11 @@ HEALTH_TIMEOUT="${WATCHDOG_HEALTH_TIMEOUT:-10}"
 # liveness is measured by its cheapest substantive route: a cached
 # per-directory config. Heavy routes measure load, not life.
 HEALTH_PATH="${WATCHDOG_HEALTH_PATH:-/config?directory=%2Fhome%2Faaron%2Fharmoniqs%2Fopencode}"
+# amicode #1760 P1: once armed, the engine requires the gateway stamp on its
+# API routes — the probe must carry it or it measures the auth gate, not the
+# engine (and a wedged-but-authed engine would look dead). Read fresh per
+# probe: arming/disarming needs no watchdog restart.
+GW_SECRET_FILE="${WATCHDOG_SECRET_FILE:-$HOME/.amico/server/engine-gateway-secret.env}"
 LOG_DIR="${WATCHDOG_LOG_DIR:-$HOME/.amico/server/fleet-watchdog}"
 LOG="$LOG_DIR/rss-trajectory.log"
 STAMP="$(date '+%Y-%m-%dT%H:%M:%S')"
@@ -55,6 +60,11 @@ if [ "${1:-}" = "--print-shard-env" ]; then
   echo "pattern=$PATTERN"
   echo "log=$LOG"
   echo "inspect_port=$INSPECT_PORT"
+  if [ -s "$GW_SECRET_FILE" ]; then
+    echo "gateway_secret=armed"
+  else
+    echo "gateway_secret=absent"
+  fi
   exit 0
 fi
 
@@ -80,7 +90,12 @@ fi
 # probe FIRST: restart only when /session does not answer. A serving engine
 # is never restarted, whatever its RSS.
 serving() {
-  curl -sS -o /dev/null -m "$HEALTH_TIMEOUT" "http://127.0.0.1:${HEALTH_PORT}${HEALTH_PATH}" >/dev/null 2>&1
+  local gw=()
+  if [ -s "$GW_SECRET_FILE" ]; then
+    gw=(-H "X-Amicode-Gateway-Secret: $(cut -d= -f2- "$GW_SECRET_FILE")")
+  fi
+  curl -sS -o /dev/null -m "$HEALTH_TIMEOUT" "${gw[@]}" \
+    "http://127.0.0.1:${HEALTH_PORT}${HEALTH_PATH}" >/dev/null 2>&1
 }
 
 # 2026-10-04 #775 diagnostics: the wedge is recurring under active session load
