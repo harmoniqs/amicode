@@ -1,6 +1,7 @@
 import "@/index.css"
 import * as Sentry from "@sentry/solid"
 import { retryImport } from "@/utils/retry-import"
+import { getLastClientError, postClientLog, startClientTelemetry } from "@/amicode/client-telemetry"
 import { requestComputeConnect } from "@/components/amicode-defaults-capsule"
 import { adoptWorkspaceProjects, workspaceProjects, requestAddWorkspaceProject } from "@/utils/amicode-workspace-projects"
 import { I18nProvider } from "@opencode-ai/ui/context"
@@ -67,7 +68,6 @@ import { SettingsProvider, useSettings } from "@/context/settings"
 import { TabsProvider, tabHref, useTabs, type DraftTab } from "@/context/tabs"
 import { SDKProvider, useSDK } from "@/context/sdk"
 import { resolveLandingDirectory } from "@/pages/new-session-landing"
-import { authTokenFromCredentials } from "@/utils/server"
 import { normalizeSessionInfo } from "@/utils/session"
 import {
   BULK_WARM_MESSAGES,
@@ -582,76 +582,17 @@ function isDebugBadgeEnabled(): boolean {
  *  inert. Shows the running build + whether the frozen-hold registry has a
  *  snapshot. When the pane disappears, read this: `hold:n` = the registry
  *  never populated (a registration wiring gap); `hold:Y` + a beat anyway =
- *  the fallback render path is failing. */
+ *  the fallback render path is failing.
+ *  #1745: the error capture + shipper moved OUT of the badge into
+ *  startClientTelemetry (always mounted — telemetry that depends on this
+ *  opt-in diagnostic's gate is not telemetry: the badge lost its per-origin
+ *  localStorage flag in the 2026-09-19 origin shift and the log went silent
+ *  for six weeks). The badge now only DISPLAYS the telemetry module's newest
+ *  capture and ships its own diagnostic rings. */
 function HoldDebugBadge() {
   const [state, setState] = createSignal("")
   const [history, setHistory] = createSignal<string[]>([])
-  const [lastErr, setLastErr] = createSignal("")
-  const server = useServer()
-  const dataUrl = () => {
-    const current = (server as unknown as { current?: { http?: { url?: string } } }).current
-    return current?.http?.url ?? location.origin
-  }
-  // #1294: the local service in fleet mode authenticates every request
-  // (per-boot Basic) — the frontdoor never did, which is why the shipper
-  // silently 401'd on the real panel while working against the mock/rig.
-  const dataAuth = () => {
-    const current = (server as unknown as { current?: { username?: string; password?: string } }).current
-    if (!current?.password) return undefined
-    try {
-      return authTokenFromCredentials({ username: current.username, password: current.password })
-    } catch {
-      return undefined
-    }
-  }
   {
-    // #1290: Solid routes unhandled reactive errors through console.error,
-    // NOT window.onerror — the teardown error behind the blank was never
-    // visible to the window capture. Intercept console.error too, and ship
-    // every capture to the hub's client-error log so nobody has to read
-    // them off the screen: POST /__amicode_client_log (the frontdoor
-    // appends to ~/.amico/server/client-errors.log on the hub).
-    const shipped = new Set<string>()
-    const ship = (kind: string, text: string) => {
-      if (shipped.has(text)) return
-      shipped.add(text)
-      try {
-        // The same-origin service 404s unknown routes (no proxy passthrough
-        // for POSTs). Post DIRECTLY to the data server's own origin (the
-        // fleet tunnel / the engine itself) — a simple text/plain POST so
-        // no CORS preflight is required; the frontdoor logs it regardless.
-        const target = new URL("/__amicode_client_log", dataUrl())
-        const auth = dataAuth()
-        void fetch(target, {
-          headers: auth ? { Authorization: `Basic ${auth}` } : {},
-          method: "POST",
-          body: `${kind} ${build}\n${text.slice(0, 600)}`,
-        }).catch(() => {})
-      } catch {}
-    }
-    const originalError = console.error
-    console.error = (...args: unknown[]) => {
-      const first = args.find((a) => a instanceof Error) ?? args[0]
-      const text = String(first instanceof Error ? first.message : (first as unknown))
-      const stack = args.find((a) => a instanceof Error) instanceof Error
-        ? String((args.find((a) => a instanceof Error) as Error).stack ?? "").slice(0, 400)
-        : ""
-      if (!text.includes("ResizeObserver loop")) {
-        setLastErr(`C:${text.slice(0, 80)}`)
-        ship("C", `${text}\n${stack}`)
-      }
-      originalError(...(args as Parameters<typeof console.error>))
-    }
-    const onWindowError = (e: ErrorEvent) => {
-      setLastErr(`E:${(e.message || "unknown").slice(0, 70)}`)
-      ship("E", `${e.message ?? "unknown"}\n${(e.error as Error | undefined)?.stack ?? ""}`)
-    }
-    const onRejection = (e: PromiseRejectionEvent) => {
-      setLastErr(`R:${String(e.reason).slice(0, 70)}`)
-      ship("R", `${String(e.reason)}\n${e.reason instanceof Error ? e.reason.stack ?? "" : ""}`)
-    }
-    window.addEventListener("error", onWindowError)
-    window.addEventListener("unhandledrejection", onRejection)
     const entry = performance
       .getEntriesByType("resource")
       .map((r) => r.name)
@@ -664,14 +605,11 @@ function HoldDebugBadge() {
     // rings to the hub's client log on an interval — the panel self-
     // reports what its loads/gates/mirror did, and the log is read
     // remotely. Strips together with the badge once trusted.
+    // #1745: rides postClientLog (the serving-origin POST) — the old
+    // dataUrl()-based target died with the origin shift.
     const diagStart = Date.now()
     const postRaw = (kind: string, text: string) => {
-      try {
-        const target = new URL("/__amicode_client_log", dataUrl())
-        const auth = dataAuth()
-        void fetch(target, { method: "POST", headers: auth ? { Authorization: `Basic ${auth}` } : {}, body: `${kind} ${build}
-${text.slice(0, 12000)}` }).catch(() => {})  // #1294: 2400 truncated snapshots mid-JSON
-      } catch {}
+      postClientLog(`${kind} ${build}\n${text.slice(0, 12000)}`)  // #1294: 2400 truncated snapshots mid-JSON
     }
     const briefMap = (m?: Map<string, unknown[]>) =>
       m
@@ -782,15 +720,12 @@ ${text.slice(0, 12000)}` }).catch(() => {})  // #1294: 2400 truncated snapshots 
       const warmState = prewarm
         ? `warm:${prewarm.n}@${Math.round((Date.now() - prewarm.at) / 1000)}s`
         : `warm:none${prewarmErr ? "!" + prewarmErr.slice(0, 40) : ""}`
-      setState(`${build} | up:${Math.round(performance.now() / 1000)}s | ${warmState} | hold:${heldPanelViewState() ? "Y" : "n"} | now:${frame ? frame.childElementCount + "k/" + frame.innerHTML.length + "h" : "none"} | main:${mainKids} | p${pill} | ${location.pathname.slice(-34)}${lastErr() ? "\n" + lastErr() : ""}`)
+      setState(`${build} | up:${Math.round(performance.now() / 1000)}s | ${warmState} | hold:${heldPanelViewState() ? "Y" : "n"} | now:${frame ? frame.childElementCount + "k/" + frame.innerHTML.length + "h" : "none"} | main:${mainKids} | p${pill} | ${location.pathname.slice(-34)}${getLastClientError() ? "\n" + getLastClientError() : ""}`)
     }, 500)
-    // #1287: clean up EVERY effect this badge installs, not just the 500ms
-    // interval — restore console.error, drop both window listeners, and clear
-    // the diagnostic timeout/interval and the animation-frame loop.
+    // #1287: clean up every interval/timeout/animation-frame this badge
+    // installs. (#1745: the console.error restore + window listeners moved
+    // to startClientTelemetry's own cleanup, outside the badge.)
     onCleanup(() => {
-      console.error = originalError
-      window.removeEventListener("error", onWindowError)
-      window.removeEventListener("unhandledrejection", onRejection)
       clearTimeout(shipTimeout)
       clearInterval(shipInterval)
       clearInterval(renderScanTimer)
@@ -822,6 +757,16 @@ ${text.slice(0, 12000)}` }).catch(() => {})  // #1294: 2400 truncated snapshots 
       {history().join("  ")}
     </div>
   )
+}
+
+/** #1745: always-on client telemetry — error captures + the liveness
+ *  heartbeat, mounted UNCONDITIONALLY (no settings gate, no debug-badge
+ *  localStorage gate). The telemetry that went dead for six weeks was gated
+ *  on a per-origin flag that the 2026-09-19 origin shift wiped; a diagnostic
+ *  opt-in must never gate telemetry. Installs nothing visible. */
+function ClientTelemetry() {
+  onCleanup(startClientTelemetry())
+  return <></>
 }
 
 function SessionLineagePrewarmer() {
@@ -1221,6 +1166,10 @@ export function AppInterface(props: {
     >
       <GlobalProvider>
         <SettingsProvider>
+          {/* #1745: client telemetry (error capture + heartbeat) mounts before
+              everything else and OUTSIDE every layout gate — it must run for
+              old and new layouts alike, fire-and-forget, no UI. */}
+          <ClientTelemetry />
           <ConnectionGate disableHealthCheck={props.disableHealthCheck} startup={props.startup}>
             <Show when={useSettings().general.newLayoutDesigns().toString()} keyed>
               <Dynamic
@@ -1232,8 +1181,9 @@ export function AppInterface(props: {
                     {/* #1287/#1290 debug badge — opt-in via localStorage so it
                         never shows to users by default. Enable:
                         localStorage.setItem("amicode_debug_badge","1") + reload.
-                        The badge, its RAF ring, error shipper, and diagnostic
-                        intervals only mount when the flag is set. */}
+                        The badge, its RAF ring, and diagnostic intervals only
+                        mount when the flag is set (#1745: the error capture
+                        moved to ClientTelemetry, which mounts regardless). */}
                     <Show when={useSettings().general.newLayoutDesigns() && isDebugBadgeEnabled()}>
                       <HoldDebugBadge />
                     </Show>
