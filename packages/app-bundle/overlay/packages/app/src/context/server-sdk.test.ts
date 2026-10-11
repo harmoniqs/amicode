@@ -81,6 +81,39 @@ describe("adaptServerEvent", () => {
       current,
     })
   })
+
+  // 2026-10-11 (#1753): the instance /event route emits the V1 wire shape — the
+  // payload rides `properties`, not `data` (the 2026-10-08 fix, 50782e60, made
+  // the default case shape-agnostic after live question cards died on this
+  // exact seam). Pins BOTH live request lifecycles' payloads reaching the
+  // reducers: question.asked and permission.asked in the V1 shape.
+  test("carries the V1 wire shape's properties payload for live question and permission events", () => {
+    const question = adaptServerEvent({
+      id: "evt_q",
+      type: "question.asked",
+      properties: {
+        id: "que_1",
+        sessionID: "ses_1",
+        questions: [{ header: "h", question: "q?", options: [{ label: "a", description: "" }] }],
+      },
+    } as unknown as OpenCodeEvent)
+    expect(question).toMatchObject({
+      id: "evt_q",
+      type: "question.asked",
+      properties: { id: "que_1", sessionID: "ses_1" },
+    })
+
+    const permission = adaptServerEvent({
+      id: "evt_p",
+      type: "permission.asked",
+      properties: { id: "per_1", sessionID: "ses_1" },
+    } as unknown as OpenCodeEvent)
+    expect(permission).toMatchObject({
+      id: "evt_p",
+      type: "permission.asked",
+      properties: { id: "per_1", sessionID: "ses_1" },
+    })
+  })
 })
 
 describe("coalesceServerEvents", () => {
