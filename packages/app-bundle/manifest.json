@@ -322,7 +322,9 @@
     "packages/opencode/src/session/receipt.ts": "06fd30326424112b8dacd756e4bba5424b3a7a2d10318464a5670aeabb0c4808",
     "packages/opencode/src/session/reminders.ts": "abcd602de7f8ab8ab1a0364d30d28f1eb04fe81bf7cd837db9e926ffecf2dc6c",
     "packages/opencode/src/session/rollout.ts": "55518da37d6d4d1298eeab1c7ee208f59b80b7246f3370438de98ad774e4b02e",
+    "packages/opencode/src/session/run-state.ts": "e66a3410e0db84426d8625569bfc5e10ca9db247d5d5c787cf1b6bad3d791d8a",
     "packages/opencode/src/session/session.ts": "1d94c364a55c3124ba6ab762f599cc4194905d7e23ec91ba79552671cd4d86c7",
+    "packages/opencode/src/session/status.ts": "aa95251ab60b10351361ca0ae678f6dc4dd23b5839563211488b615bedec8197",
     "packages/opencode/src/session/summary.ts": "09f546db362a992156bdb4901cce58e495bd38bab6ba41b4386cca77bebab7f3",
     "packages/opencode/src/session/system.ts": "f607576faf505085c2e31f208f06f45eaec32f0509570fa9cf6e4c130a0a50a5",
     "packages/opencode/src/session/turn-output.ts": "889624ca54a8149d35f200c7efa732771dfca36984e8a322a9781b1a25434762",
@@ -388,7 +390,9 @@
     "packages/opencode/test/session/prose-guard.test.ts": "7239a758cbf27df4c3879fa9ee0374964559c1461773c2f5a85196f64632e6c4",
     "packages/opencode/test/session/receipt-privacy.test.ts": "6c8777edc280a061fec1a4d16e2504aec18bdf9cd6dd2cedc7a09ef8fc6c2ca0",
     "packages/opencode/test/session/rollout.test.ts": "3153fad45639db647d98d7fd96b3b5c2f0d938fca3a40598a4f88b8f62dda397",
+    "packages/opencode/test/session/run-state-store.test.ts": "50be06abb9dddc9ae2ffc7b5b3140e92a40e7167ba8570de18148c34f8afb656",
     "packages/opencode/test/session/session.test.ts": "c182f3e5311324175c9ba44a7164737a75ee6d2f22e4a024d66518b5ae91f5f2",
+    "packages/opencode/test/session/status-store.test.ts": "6e62765c18e6ace57ff7e04d836628235cb42c41aca7c0e50251f783ca260c2b",
     "packages/opencode/test/session/turn-output.test.ts": "3e92f545d10054e501ad2c8857b43719f5a8f768065643d343c0c37c2e6fb60c",
     "packages/opencode/test/session/user-mutation.test.ts": "d06d6646cbf3b9796931660fd23292c450f8083c438ef78f4d6d01d75f575454",
     "packages/opencode/test/share/share-next.test.ts": "d94076118b558644c06de3ef315041a6fd8895098377da843e98530311e9e609",
@@ -907,7 +911,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-11T22:15:21.047Z",
+  "extracted_at": "2026-10-11T22:24:53.652Z",
   "per_package": {
     "packages/app": {
       "A": 192,
@@ -925,8 +929,8 @@
       "D": 0
     },
     "packages/opencode": {
-      "A": 75,
-      "M": 86,
+      "A": 77,
+      "M": 88,
       "D": 0
     },
     "packages/schema": {
@@ -956,7 +960,7 @@
     }
   },
   "counts": {
-    "overlay_total": 885,
+    "overlay_total": 889,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1275,7 +1279,9 @@
     "packages/opencode/src/session/receipt.ts": "A",
     "packages/opencode/src/session/reminders.ts": "M",
     "packages/opencode/src/session/rollout.ts": "A",
+    "packages/opencode/src/session/run-state.ts": "M",
     "packages/opencode/src/session/session.ts": "M",
+    "packages/opencode/src/session/status.ts": "M",
     "packages/opencode/src/session/summary.ts": "M",
     "packages/opencode/src/session/system.ts": "M",
     "packages/opencode/src/session/turn-output.ts": "A",
@@ -1341,7 +1347,9 @@
     "packages/opencode/test/session/prose-guard.test.ts": "A",
     "packages/opencode/test/session/receipt-privacy.test.ts": "A",
     "packages/opencode/test/session/rollout.test.ts": "A",
+    "packages/opencode/test/session/run-state-store.test.ts": "A",
     "packages/opencode/test/session/session.test.ts": "M",
+    "packages/opencode/test/session/status-store.test.ts": "A",
     "packages/opencode/test/session/turn-output.test.ts": "A",
     "packages/opencode/test/session/user-mutation.test.ts": "A",
     "packages/opencode/test/share/share-next.test.ts": "M",
