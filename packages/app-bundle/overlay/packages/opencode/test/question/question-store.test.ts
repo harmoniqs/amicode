@@ -87,7 +87,6 @@ describe("Question shared runtime state (#1760 P2)", () => {
         yield* TestClock.adjust(Duration.seconds(2))
         expect(yield* Fiber.join(fiber)).toEqual([["Option 1"]])
       }),
-    { git: true },
   )
 
   lifecycle.effect("list shows pending questions held by other instances and owners", () =>
@@ -101,11 +100,14 @@ describe("Question shared runtime state (#1760 P2)", () => {
       )
       const request = yield* waitForAsked
 
-      // Another directory instance sees the pending request through the store…
+      // Same-process rows are EXCLUDED from the store merge: per-instance
+      // memory is authoritative within the process, preserving the upstream
+      // directory-isolation contract (the merge is cross-PROCESS visibility —
+      // P2's actual contract — not cross-directory).
       const fromTwo = yield* Question.Service.use((svc) => svc.list()).pipe(provideInstance(two))
-      expect(fromTwo.map((item) => item.id)).toContain(request.id)
+      expect(fromTwo.map((item) => item.id)).not.toContain(request.id)
 
-      // …and so does a row recorded by a different owner process entirely.
+      // …but a row recorded by a different owner process entirely still merges.
       const runtime = yield* RuntimeState.Service
       yield* runtime.recordPending({
         kind: "question",
@@ -115,7 +117,7 @@ describe("Question shared runtime state (#1760 P2)", () => {
         owner: { owner_id: "own_other", pid: 999 },
       })
       const merged = yield* Question.Service.use((svc) => svc.list()).pipe(provideInstance(two))
-      expect(merged.map((item) => item.id)).toEqual(["que_foreign", request.id].sort())
+      expect(merged.map((item) => item.id)).toEqual([QuestionID.make("que_foreign")])
 
       yield* Fiber.interrupt(fiber)
     }),

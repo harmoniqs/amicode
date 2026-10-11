@@ -218,12 +218,16 @@ const layer = Layer.effect(
               // Uninterruptible: succeeding the target's deferred lets the ask
               // win its raceFirst and interrupt this reconcile fiber — the
               // always/reject cascade that FOLLOWS the deferred wake must
-              // complete before that interruption lands.
+              // complete before that interruption lands. A NotFound here is a
+              // benign race (the row pruned between the read and the reply):
+              // the deferred carries the truth.
               yield* Effect.uninterruptible(
                 reply({ requestID: id, reply: resolution.reply, message: resolution.message }),
+              ).pipe(
+                Effect.catchTag("Permission.NotFoundError", () => Effect.void),
               )
             }
-            return
+            return yield* Deferred.await(deferred)
           }
           yield* Effect.sleep(RuntimeState.RECONCILE_INTERVAL_MS)
         }
@@ -292,16 +296,16 @@ const layer = Layer.effect(
       const memory = Array.from(pending.values(), (item) => item.info)
       const runtime = RuntimeState.getGlobal()
       if (!runtime) return memory
-      const directory = yield* pendingDirectory
       const rows = yield* RuntimeState.bestEffort(runtime.livePending("permission"))
       if (rows === undefined) return memory
-      // Memory is the truth for this instance's own rows; the store adds rows
-      // held by other instances (same process, other directories) and other
-      // processes entirely.
+      // Merge only rows held by OTHER owner processes: within one process the
+      // per-instance memory is authoritative (each directory's list stays
+      // isolated — #1760 P2 changes cross-PROCESS visibility, not the V1
+      // per-directory API contract); across processes the store is the truth.
       const memoryIds = new Set(memory.map((item) => item.id))
       const merged: PermissionV1.Request[] = [...memory]
       for (const row of rows) {
-        if (row.owner_id === RuntimeState.self.owner_id && row.directory === directory) continue
+        if (row.owner_id === RuntimeState.self.owner_id) continue
         if (memoryIds.has(row.id as PermissionV1.ID)) continue
         const decoded = decodeRequest(row.data)
         if (decoded._tag === "Some") merged.push(decoded.value)

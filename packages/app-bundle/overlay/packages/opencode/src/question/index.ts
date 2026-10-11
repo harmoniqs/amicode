@@ -104,7 +104,9 @@ const layer = Layer.effect(
     }) {
       const pending = (yield* InstanceState.get(state)).pending
       const existing = pending.get(input.requestID)
-      if (!existing) return yield* new NotFoundError({ requestID: input.requestID })
+      // A missing entry is a benign race for the reconcile caller: the public
+      // reply path pre-checks, and here the deferred carries the truth.
+      if (!existing) return
       pending.delete(input.requestID)
       yield* Effect.logInfo("replied", { requestID: input.requestID, answers: input.answers })
       yield* events.publish(Event.Replied, {
@@ -119,7 +121,7 @@ const layer = Layer.effect(
     const applyReject = Effect.fnUntraced(function* (requestID: QuestionID) {
       const pending = (yield* InstanceState.get(state)).pending
       const existing = pending.get(requestID)
-      if (!existing) return yield* new NotFoundError({ requestID })
+      if (!existing) return
       pending.delete(requestID)
       yield* Effect.logInfo("rejected", { requestID })
       yield* events.publish(Event.Rejected, {
@@ -181,11 +183,11 @@ const layer = Layer.effect(
           const row = yield* RuntimeState.bestEffort(runtime.getPending("question", id))
           if (row?.state === "replied") {
             yield* applyReply({ requestID: id, answers: (row.resolution ?? []) as ReadonlyArray<Answer> })
-            return
+            return yield* Deferred.await(deferred)
           }
           if (row?.state === "rejected") {
             yield* applyReject(id)
-            return
+            return yield* Deferred.await(deferred)
           }
           yield* Effect.sleep(RuntimeState.RECONCILE_INTERVAL_MS)
         }
@@ -295,16 +297,16 @@ const layer = Layer.effect(
       const memory = Array.from(pending.values(), (x) => x.info)
       const runtime = RuntimeState.getGlobal()
       if (!runtime) return memory
-      const directory = yield* pendingDirectory
       const rows = yield* RuntimeState.bestEffort(runtime.livePending("question"))
       if (rows === undefined) return memory
-      // Memory is the truth for this instance's own rows; the store adds rows
-      // held by other instances (same process, other directories) and other
-      // processes entirely.
+      // Merge only rows held by OTHER owner processes: within one process the
+      // per-instance memory is authoritative (each directory's list stays
+      // isolated — #1760 P2 changes cross-PROCESS visibility, not the V1
+      // per-directory API contract); across processes the store is the truth.
       const memoryIds = new Set(memory.map((item) => item.id))
       const merged: Request[] = [...memory]
       for (const row of rows) {
-        if (row.owner_id === RuntimeState.self.owner_id && row.directory === directory) continue
+        if (row.owner_id === RuntimeState.self.owner_id) continue
         if (memoryIds.has(row.id as QuestionID)) continue
         const decoded = decodeRequest(row.data)
         if (decoded._tag === "Some") merged.push(decoded.value)

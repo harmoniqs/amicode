@@ -49,7 +49,7 @@ describe("SessionRunState shared runtime state (#1760 P2)", () => {
           }),
         ),
       ).pipe(provideInstance(directory))
-      expect(result).toBe(undefined)
+      expect(result).toBeUndefined()
 
       // The run went idle: the coordinator registration is gone.
       expect((yield* runtime.ownersLive(sessionID)).length).toBe(0)

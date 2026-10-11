@@ -28,7 +28,7 @@ const busyClaim =
             yield* Effect.sleep(RuntimeState.HEARTBEAT_INTERVAL_MS)
             yield* RuntimeState.bestEffort(runtime.busyHeartbeat({ sessionID }))
           }
-        }).pipe(Effect.forkIn(yield* Effect.scope))
+        }).pipe(Effect.forkDetach)
         return { runtime, fiber, sessionID }
       }),
       () => self,

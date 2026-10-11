@@ -42,7 +42,7 @@ const layer = Layer.effect(
     const heartbeats = yield* InstanceState.make(
       Effect.fn("SessionStatus.heartbeats")(function* () {
         const scope = yield* Scope.Scope
-        const fibers = new Map<SessionID, Fiber.RuntimeFiber<void, unknown>>()
+        const fibers = new Map<SessionID, Fiber.Fiber<void, unknown>>()
         // Belt to the scope's own close: any heartbeat still running when the
         // instance tears down is interrupted here as well.
         yield* Effect.addFinalizer(() =>
