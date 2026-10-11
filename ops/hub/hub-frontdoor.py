@@ -218,12 +218,17 @@ def _route(raw):
         return TABLE["default_shard"]
     # 2026-10-07: question replies name a process-local request — route them
     # to the shard that posed the question (learned from question events).
+    # 2026-10-11: the map also carries the posing INSTANCE's directory; the
+    # forwarder injects it when the client's reply lacks it (the panel's dock
+    # sends replies with location.directory that never reaches the query —
+    # without it the engine resolves its default instance and answers
+    # "question request not found" for a question it IS holding).
     qm = _QUE_RE.search(raw)
     if qm is not None:
         with _QUESTION_LOCK:
-            qshard = _QUESTION_SHARD.get(qm.group(0))
-        if qshard is not None and qshard in TABLE["backends"]:
-            return qshard
+            qent = _QUESTION_SHARD.get(qm.group(0))
+        if qent is not None and qent[0] in TABLE["backends"]:
+            return qent[0]
     if pool and len(pool) > 1:
         return place_session(None, d, raw)
     if pool:
@@ -282,7 +287,7 @@ def _seed_question_map():
                         for q in arr:
                             if (isinstance(q, dict) and isinstance(q.get("id"), str)
                                     and (q["id"].startswith("que_") or q["id"].startswith("per_"))):
-                                _QUESTION_SHARD[q["id"]] = shard
+                                _QUESTION_SHARD[q["id"]] = (shard, d)
                                 if len(_QUESTION_SHARD) > _QUESTION_MAX:
                                     _QUESTION_SHARD.pop(next(iter(_QUESTION_SHARD)))
     except Exception:
@@ -743,7 +748,7 @@ def mark_session_dirty(frame):
 _QUE_RE = _re1.compile(r"(?:que|per)_[A-Za-z0-9]+")
 _QUE_RE_B = _re1.compile(rb"(?:que|per)_[A-Za-z0-9]+")
 _QUESTION_LOCK = threading.Lock()
-_QUESTION_SHARD = {}    # que_/per_ id -> shard that posed it (process-local)
+_QUESTION_SHARD = {}    # que_/per_ id -> (shard that posed it, directory) — process-local
 _QUESTION_MAX = 500
 # 2026-10-08: the engine's wire carries BOTH question namings — the V2 schema
 # says question.v2.asked, but the instance /event route emits the raw bus type
@@ -763,11 +768,26 @@ def note_question_frame(frame, shard_id):
         qid = m.group(0).decode("ascii")
     except Exception:
         return
+    # 2026-10-11: the reply must land on the POSING INSTANCE, not the
+    # engine's default one — learn the frame's directory alongside the shard
+    # (the wire frame carries it: {"directory": ..., "payload": ...}).
+    import json as _json_q
+    qdir = None
+    try:
+        dpos = frame.find(b'"directory":"')
+        if dpos >= 0:
+            start = dpos + len(b'"directory":"')
+            end = frame.find(b'"', start)
+            if end > start:
+                import urllib.parse as _upq2
+                qdir = _upq2.unquote(frame[start:end].decode("utf-8", "replace"))
+    except Exception:
+        qdir = None
     with _QUESTION_LOCK:
         if b"replied" in frame or b"rejected" in frame:
             _QUESTION_SHARD.pop(qid, None)
         else:
-            _QUESTION_SHARD[qid] = shard_id
+            _QUESTION_SHARD[qid] = (shard_id, qdir)
             if len(_QUESTION_SHARD) > _QUESTION_MAX:
                 _QUESTION_SHARD.pop(next(iter(_QUESTION_SHARD)))
 
@@ -1791,6 +1811,32 @@ def handle(c, addr, cid):
                 # after the refresh wrote it. refresh_index is the SOLE writer.
                 passthrough_capture(c, first, key=None, shard=_route(raw) if SHARDED else None)
         else:
+            # 2026-10-11: question/permission reply+reject requests carry the
+            # process-local id but the panel's location.directory never
+            # reaches the query string — the engine resolves its DEFAULT
+            # instance and 404s a question it is holding. The map knows the
+            # posing instance's directory (learned from the event frame /
+            # per-shard seed lists): inject it onto the request line (the
+            # request LINE only — headers and body ride untouched).
+            if SHARDED and parts[0] == "POST" \
+                    and (path.startswith("/question/") or path.startswith("/permission/")) \
+                    and (path.endswith("/reply") or path.endswith("/reject") or path.endswith("/respond")):
+                qm2 = _QUE_RE.search(raw)
+                if qm2 is not None:
+                    with _QUESTION_LOCK:
+                        qent2 = _QUESTION_SHARD.get(qm2.group(0))
+                    if qent2 and qent2[1] and "directory=" not in raw:
+                        import urllib.parse as _upi
+                        newpath = path + ("&" if "?" in raw else "?") \
+                            + "directory=" + _upi.quote(qent2[1], safe="")
+                        newline = parts[0] + " " + newpath + " HTTP/1.1"
+                        try:
+                            cut = first.index(b"\r\n")
+                            first = newline.encode("utf-8") + first[cut:]
+                        except ValueError:
+                            pass
+                        raw = newpath
+                        log(f"#{cid} question-dir-inject {qm2.group(0)[:22]} -> {qent2[1]}")
             # #1717 phase 1: POST /session CREATES a session — place it on the
             # directory's pool (least-loaded; ties -> lowest id), then pin the
             # server-created id to the serving shard by sniffing the response
