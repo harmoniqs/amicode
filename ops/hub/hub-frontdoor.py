@@ -63,6 +63,27 @@ TABLE = _load_table()
 SHARDED = TABLE is not None and len(TABLE["backends"]) > 1
 BACKEND = TABLE["backends"][TABLE["default_shard"]] if TABLE else DEFAULT_BACKEND
 
+# 2026-10-10: the merged event groups' upstreams must carry ?directory=<dir>.
+# The engines are multi-instance: an event route without a directory binds the
+# engine's default instance's bus, which carries NONE of the pooled project's
+# traffic -- the merged groups streamed silence for a full day while every
+# client-side component was bisected. The V1 SDK (/global/event) sends no
+# directory at all, so the pool's directory fills the gap.
+def _pool_default_dir():
+    if not TABLE:
+        return None
+    pools = TABLE.get("pools") or {}
+    return next(iter(pools), None)
+
+POOL_DEFAULT_DIR = _pool_default_dir()
+
+def _upstream_path_for(path, directory):
+    if not directory:
+        return path
+    import urllib.parse as _up
+    sep = "&" if "?" in path else "?"
+    return f"{path}{sep}directory={_up.quote(directory, safe='')}"
+
 def _shard_backend(shard):
     if not SHARDED:
         return BACKEND
@@ -134,8 +155,8 @@ _dials_per_shard = {}
 def _group_load(shard):
     n = 0
     with _groups_lock:
-        for (s, _), g in GROUPS.items():
-            if s == shard and g.upstream is not None:
+        for key, g in GROUPS.items():
+            if key[0] == shard and g.upstream is not None:
                 n += 1
     return n
 
@@ -296,6 +317,8 @@ if SHARDED:
     threading.Thread(target=_sample_shards, daemon=True).start()
 
 def _get_group(shard, path):
+    """path may carry its own query (directory etc.) -- it is used verbatim as
+    the upstream request line, so callers with a directory pass it through."""
     with _groups_lock:
         g = GROUPS.get((shard, path))
         if g is None:
@@ -303,12 +326,14 @@ def _get_group(shard, path):
             GROUPS[(shard, path)] = g
         return g
 
-def _get_merged_group(path):
+def _get_merged_group(path, directory=None):
+    key = ("merged", path, directory)
     with _groups_lock:
-        g = GROUPS.get(("merged", path))
+        g = GROUPS.get(key)
         if g is None:
-            g = Group(path, TABLE["default_shard"], None, merge=dict(TABLE["backends"]))
-            GROUPS[("merged", path)] = g
+            g = Group(path, TABLE["default_shard"], None, merge=dict(TABLE["backends"]),
+                      upstream_path=_upstream_path_for(path, directory or POOL_DEFAULT_DIR))
+            GROUPS[key] = g
         return g
 
 def _shed_503(c, retry_after=2):
@@ -679,7 +704,7 @@ def build_snapshot(top):
         # upstream loops whose frames dirty-mark message pages, so the
         # snapshot is event-driven even with no tab holding the stream.
         if SHARDED:
-            g = _get_merged_group("/global/event")
+            g = _get_merged_group("/global/event", POOL_DEFAULT_DIR)
         else:
             g = _get_group(1, "/global/event")
         if g:
@@ -985,8 +1010,12 @@ def _parse_frames(buf):
 
 
 class Group:
-    def __init__(self, path, shard=1, backend=None, merge=None):
+    def __init__(self, path, shard=1, backend=None, merge=None, upstream_path=None):
         self.path = path
+        # 2026-10-10: the upstream request line can differ from the client path
+        # (merged event groups append ?directory=<pool dir> -- see
+        # _upstream_path_for). build_preamble GETs upstream_path.
+        self.upstream_path = upstream_path or path
         # #1717 phase 1: a group owns exactly one (shard, path) upstream --
         # session-scoped streams join the OWNING shard's group, global ones
         # the default shard's.
@@ -1014,7 +1043,7 @@ class Group:
         else:
             threading.Thread(target=self.upstream_loop, args=(shard, self.backend), daemon=True).start()
     def build_preamble(self, addr):
-        req = f"GET {self.path} HTTP/1.1\r\nHost: 127.0.0.1:{addr[1]}\r\nAccept: text/event-stream\r\n\r\n".encode()
+        req = f"GET {self.upstream_path} HTTP/1.1\r\nHost: 127.0.0.1:{addr[1]}\r\nAccept: text/event-stream\r\n\r\n".encode()
         s = socket.create_connection(addr)
         s.sendall(req)
         buf = b""
@@ -1197,16 +1226,20 @@ class Group:
 
 # #1717 phase 1: groups are (shard, path) -- one upstream per shard -- except
 # the client-facing event paths in sharded mode, which are MERGED under the
-# ("merged", path) key: one upstream thread per pool member fanning the union
-# into one shared history + member queues (slice 1c -- the wire /event is
-# directory-scoped and session-less, so only a merged stream carries
-# off-default sessions' frames). Legacy mode pre-creates exactly the two warm
+# ("merged", path, directory) key: one upstream thread per pool member fanning
+# the union into one shared history + member queues (slice 1c -- the wire
+# /event is directory-scoped and session-less, so only a merged stream carries
+# off-default sessions' frames). 2026-10-10: the upstreams carry
+# ?directory=<pool dir> -- without it they bind the engine's default
+# instance and stream silence. Legacy mode pre-creates exactly the warm
 # single-upstream groups the pre-pool frontdoor had.
 GROUPS = {}
 _default_shard_id = TABLE["default_shard"] if SHARDED else 1
 for _p in ("/event", "/api/event", "/global/event"):
     if SHARDED:
-        GROUPS[("merged", _p)] = Group(_p, _default_shard_id, None, merge=dict(TABLE["backends"]))
+        GROUPS[("merged", _p, POOL_DEFAULT_DIR)] = Group(
+            _p, _default_shard_id, None, merge=dict(TABLE["backends"]),
+            upstream_path=_upstream_path_for(_p, POOL_DEFAULT_DIR))
     else:
         GROUPS[(_default_shard_id, _p)] = Group(_p, _default_shard_id, _shard_backend(_default_shard_id))
 
@@ -1495,6 +1528,21 @@ def handle(c, addr, cid):
         except Exception:
             pass
         _last_req[cid] = line[:140]
+        # 2026-10-10: an SSE request (Accept: text/event-stream) for any path
+        # the frontdoor does NOT serve must fail LOUDLY (404 JSON). The
+        # engines' SPA fallback answers unknown GETs with index.html/200, and
+        # an SSE reader handed HTML hangs forever with no error and no
+        # reconnect — the silent stream death this exact class of bug caused.
+        if parts[0] == "GET" and b"Accept: text/event-stream" in first \
+                and path not in ("/event", "/api/event", "/global/event"):
+            body = b'{"error":"no such event stream route"}'
+            hdr = ("HTTP/1.1 404 Not Found\r\nContent-Type: application/json\r\n"
+                   f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n")
+            try: c.sendall(hdr.encode() + body)
+            except Exception: pass
+            log(f"#{cid} 404 sse-fallback-guard {path}")
+            c.close()
+            return
         ua_census(first, path)
         if path == "/snapshot" and parts[0] == "GET":
             log(f"#{cid} SNAPSHOT {line.split('?')[1] if '?' in line else ''}")
@@ -1562,13 +1610,23 @@ def handle(c, addr, cid):
             # off-default sessions' frames. A session id in the target (no
             # known client does this today) keeps sticky single-shard semantics.
             if SHARDED:
+                # 2026-10-10: the upstream (and group key) carry the directory --
+                # the client's own ?directory= when present, else the pool's.
+                # Without it the upstream binds the engine's default instance
+                # and streams silence (the V1 SDK sends no directory at all).
+                qs = raw.split("?", 1)[1] if "?" in raw else ""
+                cdir = None
+                for kv in qs.split("&"):
+                    if kv.startswith("directory="):
+                        import urllib.parse as _up
+                        cdir = _up.unquote(kv[len("directory="):]) or None
                 m = _SES_RE.search(raw)
                 if m:
                     with _sess_map_lock:
                         g_shard = _sess_map.get(m.group(0), TABLE["default_shard"])
-                    g = _get_group(g_shard, path)
+                    g = _get_group(g_shard, _upstream_path_for(path, cdir or POOL_DEFAULT_DIR))
                 else:
-                    g = _get_merged_group(path)
+                    g = _get_merged_group(path, cdir or POOL_DEFAULT_DIR)
             else:
                 g = GROUPS[(1, path)]
             last_eid = None
