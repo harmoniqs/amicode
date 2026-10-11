@@ -59,12 +59,14 @@ def free_port_pair():
             s.close()
 
 
-def http_request(port, target, method="GET", body=None, timeout=15):
+def http_request(port, target, method="GET", body=None, timeout=15, headers=None):
     """One-shot raw-socket HTTP client; returns (status, headers-lower, body)."""
     s = socket.create_connection(("127.0.0.1", port), timeout=timeout)
     try:
         req = (f"{method} {target} HTTP/1.1\r\nHost: localhost\r\n"
                "Connection: close\r\nAccept-Encoding: identity\r\n")
+        for k, v in (headers or {}).items():
+            req += f"{k}: {v}\r\n"
         if body is not None:
             req += f"Content-Length: {len(body)}\r\nContent-Type: application/json\r\n"
         req += "\r\n"
@@ -142,7 +144,24 @@ class ShardHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _note_gateway_header(self):
+        """#1760 P1 test seam: record the gateway-secret header value this
+        connection carried (None when absent), before any 401 gate."""
+        try:
+            self.server.seen[self.path.split("?")[0]] = \
+                self.headers.get("X-Amicode-Gateway-Secret")
+        except Exception:
+            pass
+
+    def _gateway_rejected(self):
+        want = getattr(self.server, "require_secret", None)
+        return bool(want) and self.headers.get("X-Amicode-Gateway-Secret") != want
+
     def do_GET(self):
+        self._note_gateway_header()
+        if self._gateway_rejected():
+            self._json({"error": "missing or invalid x-amicode-gateway-secret"}, status=401)
+            return
         path = self.path.split("?")[0]
         try:
             self.server.counts[path] = self.server.counts.get(path, 0) + 1
@@ -218,6 +237,10 @@ class ShardHandler(BaseHTTPRequestHandler):
             pass
 
     def do_POST(self):
+        self._note_gateway_header()
+        if self._gateway_rejected():
+            self._json({"error": "missing or invalid x-amicode-gateway-secret"}, status=401)
+            return
         n = int(self.headers.get("Content-Length", 0) or 0)
         body = self.rfile.read(n) if n else b""
         path = self.path.split("?")[0]
@@ -256,6 +279,8 @@ class FakeShard:
         self.httpd.counts = {}
         self.httpd.sse_inject = []
         self.httpd.questions = []
+        self.httpd.seen = {}           # path -> gateway-secret header value (#1760 P1)
+        self.httpd.require_secret = None
         self.port = self.httpd.server_address[1]
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
 
@@ -1076,6 +1101,102 @@ class TestUIGuard(RouterTest):
         self.assertEqual(st, 200)
         self.assertTrue(hdr.get("content-type", "").startswith("text/javascript"))
         self.assertIn(b"location.replace", body)               # the heal, not the broken HTML
+
+
+# --- #1760 P1: one door — the gateway shared secret --------------------------------
+
+class TestGatewaySecret(RouterTest):
+    """The frontdoor stamps x-amicode-gateway-secret on EVERY engine-facing
+    connection: passthrough dials, backend_get merges (session/question lists,
+    snapshot pulls, seeds), the SSE upstreams' preamble, the sampler probe, and
+    the curl index/asset fetches. A 401-ing upstream (secret mismatch) must
+    surface as upstream-down/retry — a 503 or a forwarded 401, never silence."""
+
+    def _all_seen(self):
+        out = {}
+        for sh in self.shards:
+            for path, val in sh.httpd.seen.items():
+                out["s%d %s" % (sh.shard_id, path)] = val
+        return out
+
+    def test_stamps_every_engine_connection(self):
+        fd = self.start_pool(
+            extra_env={"AMICODE_ENGINE_SHARED_SECRET": "gw-test-secret",
+                       "AMICODE_SHARD_SAMPLE_INTERVAL": "0.3"},
+            sessions={1: [sess("ses_gw1", 100)], 2: [], 3: []})
+        # passthrough dial
+        st, hdr, _ = http_request(fd.port, "/session/ses_gw1/message?directory=" + POOLDIR)
+        self.assertEqual(st, 200)
+        # backend_get merge (session list fan-out)
+        st, _, _ = http_request(fd.port, "/session?directory=" + POOLDIR + "&limit=50")
+        self.assertEqual(st, 200)
+        # merged question list (backend_get per member)
+        st, _, _ = http_request(fd.port, "/question?directory=" + POOLDIR)
+        self.assertEqual(st, 200)
+        # SSE upstream preamble
+        buf = sse_read(fd.port, "/event", want=b"server.connected")
+        self.assertIn(b"server.connected", buf)
+        # snapshot pulls (health + list merge + message pages)
+        st, _, _ = http_request(fd.port, "/snapshot?top=3")
+        self.assertEqual(st, 200)
+        time.sleep(1.2)   # one sampler pass: /config probe + question-map seeds
+        seen = self._all_seen()
+        self.assertGreaterEqual(len(seen), 10, "expected connections recorded: %r" % (seen,))
+        for key, val in seen.items():
+            self.assertEqual(val, "gw-test-secret", f"{key} missing the gateway stamp (got {val!r})")
+
+    def test_client_cannot_forge_the_gateway_header(self):
+        """A client-supplied x-amicode-gateway-secret is REPLACED by the
+        frontdoor's own — the door is the only authority that can stamp."""
+        fd = self.start_pool(extra_env={"AMICODE_ENGINE_SHARED_SECRET": "gw-test-secret"})
+        st, _, _ = http_request(fd.port, "/global/health",
+                                 headers={"X-Amicode-Gateway-Secret": "client-forged"})
+        self.assertEqual(st, 200)
+        seen = self._all_seen()
+        self.assertTrue(any(v == "gw-test-secret" for v in seen.values()), seen)
+        self.assertFalse(any(v == "client-forged" for v in seen.values()), seen)
+
+    def test_env_unset_stamps_nothing(self):
+        """Compat window: with the env unset, no connection carries the header
+        (today's open behavior — the rollback/rollout safety valve)."""
+        fd = self.start_pool(
+            extra_env={"AMICODE_SHARD_SAMPLE_INTERVAL": "0.3"},
+            sessions={1: [sess("ses_open1", 100)], 2: [], 3: []})
+        st, _, _ = http_request(fd.port, "/session?directory=" + POOLDIR + "&limit=50")
+        self.assertEqual(st, 200)
+        buf = sse_read(fd.port, "/event", want=b"server.connected")
+        self.assertIn(b"server.connected", buf)
+        st2, _, _ = http_request(fd.port, "/session/ses_open1/message")
+        self.assertEqual(st2, 200)
+        time.sleep(1.2)
+        for key, val in self._all_seen().items():
+            self.assertIsNone(val, f"{key} unexpectedly stamped in compat mode (got {val!r})")
+
+    def test_secret_mismatch_surfaces_as_upstream_down(self):
+        """The #1757 lesson: an engine that 401s the frontdoor (a half-rolled
+        or mismatched secret) must surface LOUDLY — the merged list answers
+        503, the SSE upstream logs upstream-down and retries, a passthrough
+        request forwards the 401 to the client. Never silent silence."""
+        fd = self.start_pool(
+            extra_env={"AMICODE_ENGINE_SHARED_SECRET": "frontdoor-secret"},
+            sessions={1: [sess("ses_mm", 100)], 2: [], 3: []})
+        for sh in self.shards:
+            sh.httpd.require_secret = "different-secret"
+        # passthrough: the engine's 401 JSON reaches the client
+        st, hdr, body = http_request(fd.port, "/session/ses_mm/message?directory=" + POOLDIR,
+                                     timeout=20)
+        self.assertEqual(st, 401)
+        self.assertIn(b"gateway-secret", body)
+        # merged session list: every member 401s -> 503 (Retry-After 10), not silence
+        st2, hdr2, _ = http_request(fd.port, "/session?directory=" + POOLDIR, timeout=20)
+        self.assertEqual(st2, 503)
+        self.assertEqual(hdr2.get("retry-after"), "10")
+        # SSE upstreams: the preamble sees the 401, logs upstream down + retries
+        time.sleep(1.5)
+        with open(os.path.join(fd.tmpdir, "frontdoor.log")) as f:
+            logtext = f.read()
+        self.assertIn("upstream down", logtext)
+        self.assertIn("401", logtext)
 
 
 if __name__ == "__main__":
