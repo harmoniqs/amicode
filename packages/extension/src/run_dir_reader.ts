@@ -11,7 +11,7 @@ import type { RunStatus } from "./types";
 
 // Float group accepts Julia's @printf %e output incl. Inf/-Inf/NaN, so stagnation
 // and blow-up iters aren't silently dropped (they're what a researcher most wants
-// to see) — matching amico-run's own classifier, which keeps them.
+// to see) — matching the amico CLI's own classifier, which keeps them.
 const NUM = String.raw`-?(?:Inf|NaN|\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)`;
 export const AMICODE_ITER_RE = new RegExp(
   String.raw`^AMICODE_ITER\s+iter=(\d+)\s+f=(${NUM})\s+inf_pr=(${NUM})\s+inf_du=(${NUM})\s*$`,

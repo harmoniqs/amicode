@@ -1,0 +1,23 @@
+# The claim object as a TOML fixture (golden-corpus parity — the claim of
+# record from test/claim.test.ts, carrying an applied stamp; the `null`
+# last_applied / unverified branches are covered in claim.test.ts directly).
+# amicode #1681, brain flywheel slice 2 — the ONE type namespace.
+type = "insight"
+statement = "Two-qubit gates (SWAP, CX, CZ) are significantly harder than single-qubit gates"
+status = "corroborated"
+confidence = "medium"
+evidence = ["memory-card/project_two_qubit_challenge.md", "chat-session/ses_f03fed087ffeKchCXg58Bid6lK"]
+applied = 1
+last_applied = "2026-10-01T09:00:00.000Z"
+scope = "personal"
+tags = ["memory", "two-qubit"]
+
+[[history]]
+date = "2026-10-02T12:00:00.000Z"
+event = "projected"
+note = "projected from memory card project_two_qubit_challenge.md (card type: project) by amico claims project"
+
+[[history]]
+date = "2026-10-01T09:00:00.000Z"
+event = "applied"
+note = "cited in a solve"

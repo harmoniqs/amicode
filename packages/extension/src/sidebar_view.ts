@@ -421,7 +421,7 @@ export interface DefaultFleetDepsOptions {
    *  elsewhere/on failure). Inject for tests — never shells out in a test run. */
   detectDeviceType?: () => string | undefined;
   /** Read a device-identity setting override (#1371 AC10, ADR 0028) — the SAME
-   *  namespace the amico-run enroll producer reads: `amicode.device.name` /
+   *  namespace the @amicode/amico-run enroll producer reads: `amicode.device.name` /
    *  `amicode.device.type`. Default: the VS Code `amicode` configuration.
    *  Inject for tests so the override precedence is exercisable. */
   readDeviceSetting?: (key: string) => string | undefined;
@@ -581,7 +581,7 @@ export function defaultFleetSectionDeps(opts: DefaultFleetDepsOptions = {}): Fle
       // THIS machine's own identity, independent of the roster (#1359): the
       // serve-stance mirrors fleet.json (same reader readPosture uses), the
       // name and device_type resolve via the SAME override namespace + precedence
-      // the amico-run enroll producer uses (#1371, ADR 0028): setting override
+      // the @amicode/amico-run enroll producer uses (#1371, ADR 0028): setting override
       // (amicode.device.name / amicode.device.type) → OS detection → prettified
       // hostname (name) / undefined (type). deviceType is best-effort (never
       // blocks on failure — the type pill falls back to serveStance).

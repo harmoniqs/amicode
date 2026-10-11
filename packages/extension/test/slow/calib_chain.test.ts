@@ -46,7 +46,7 @@ const SOLVE_PROJECT = process.env.AMICO_TEST_JULIA_PROJECT;
 const REHEARSAL_PROJECT = process.env.AMICO_TEST_REHEARSAL_PROJECT;
 const JULIA = process.env.AMICO_TEST_JULIA_BIN ?? "julia";
 const AMICO_RUN_PKG = join(__dirname, "..", "..", "..", "amico-run");
-const RUN_BIN = join(AMICO_RUN_PKG, "dist", "amico-run.js"); // β.1 bundle (solve launch)
+const RUN_BIN = join(AMICO_RUN_PKG, "dist", "amico.js"); // the verb-router bundle (`amico run`, #1667; solve launch)
 const AMICO_BIN = join(AMICO_RUN_PKG, "dist", "amico.js"); // the verb router (catalog ingest)
 const TEMPLATE = join(__dirname, "..", "..", "templates", "solve_template.jl");
 const REHEARSAL_SCRIPT = join(__dirname, "..", "..", "templates", "mocksoc_rehearsal.jl");
@@ -97,7 +97,7 @@ describe.skipIf(!(SOLVE_PROJECT && REHEARSAL_PROJECT))(
         const scriptA = solveScript(root, "solve_A.jl", [["max_iter   = 60", "max_iter   = 15"]]);
         const outA = execFileSync(
           "node",
-          [RUN_BIN, scriptA, "--runs-root", runsRoot, "--project", SOLVE_PROJECT!, "--lab", "devlab"],
+          [RUN_BIN, "run", scriptA, "--runs-root", runsRoot, "--project", SOLVE_PROJECT!, "--lab", "devlab"],
           { encoding: "utf8", timeout: 900_000 },
         );
         expect(outA).toMatch(/AMICODE_FINISHED status=completed/);
@@ -178,7 +178,7 @@ qtraj = UnitaryTrajectory(sys, ZeroOrderPulse(warm), op)`,
         ]);
         const outB = execFileSync(
           "node",
-          [RUN_BIN, scriptB, "--runs-root", runsRoot, "--project", SOLVE_PROJECT!, "--lab", "devlab"],
+          [RUN_BIN, "run", scriptB, "--runs-root", runsRoot, "--project", SOLVE_PROJECT!, "--lab", "devlab"],
           { encoding: "utf8", timeout: 900_000 },
         );
         expect(outB).toMatch(/AMICODE_FINISHED status=completed/);

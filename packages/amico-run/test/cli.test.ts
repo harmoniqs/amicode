@@ -5,14 +5,17 @@ import { join } from "node:path";
 import { fakeJulia, hermeticOpsEnv, readToml, tmpRoot } from "./helpers.js";
 import { FakeCloud } from "./fake_cloud.js";
 
-const BUNDLE = join(__dirname, "..", "dist", "amico-run.js");
+// The launch path, exercised through the `amico` verb router (`amico run …`) —
+// byte-for-byte the historical `amico-run` bin (deleted in #1667; the delegation
+// was proven equivalent, so these tests now pin the live surface).
+const BUNDLE = join(__dirname, "..", "dist", "amico.js");
 beforeAll(() => {
   execFileSync("node", [join(__dirname, "..", "esbuild.config.mjs")], { cwd: join(__dirname, "..") });
 });
 
 function run(args: string[], env: Record<string, string> = {}): { code: number; stdout: string; stderr: string } {
   try {
-    const stdout = execFileSync("node", [BUNDLE, ...args], {
+    const stdout = execFileSync("node", [BUNDLE, "run", ...args], {
       encoding: "utf8",
       env: { ...process.env, ...hermeticOpsEnv(), ...env },
     });
@@ -23,7 +26,7 @@ function run(args: string[], env: Record<string, string> = {}): { code: number; 
   }
 }
 
-describe("amico-run CLI", () => {
+describe("amico run — the launch path (≡ the deleted amico-run bin)", () => {
   it("clean solve: relays iter lines, prints AMICODE_FINISHED, exits 0", () => {
     const root = tmpRoot();
     const julia = fakeJulia(root, "j", `console.log('AMICODE_ITER iter=1 f=0.5'); console.log('DONE f=0.99')`);
@@ -111,7 +114,7 @@ describe("amico-run CLI", () => {
         let stdout = "";
         const child = execFile(
           "node",
-          [BUNDLE, script, "--executor", "remote", "--runs-root", join(root, "runs")],
+          [BUNDLE, "run", script, "--executor", "remote", "--runs-root", join(root, "runs")],
           { env: { ...process.env, ...hermeticOpsEnv(), AMICO_CLOUD_URL: fake.base, AMICO_CLOUD_TOKEN: fake.token } },
         );
         child.stdout!.on("data", (d: string) => {
@@ -289,7 +292,7 @@ describe("amico-run CLI", () => {
     const julia = fakeJulia(root, "j", `console.log('READY'); setInterval(() => {}, 1000)`);
     const script = fakeJulia(root, "s.jl", "");
     const code: number = await new Promise((resolveP) => {
-      const child = execFile("node", [BUNDLE, script, "--runs-root", join(root, "runs"), "--julia", julia], {
+      const child = execFile("node", [BUNDLE, "run", script, "--runs-root", join(root, "runs"), "--julia", julia], {
         env: { ...process.env, ...hermeticOpsEnv() },
       });
       child.stdout!.on("data", (d: string) => {

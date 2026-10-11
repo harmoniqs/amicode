@@ -5,7 +5,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readToml } from "./helpers.js";
 
-const BUNDLE = join(__dirname, "..", "dist", "amico-run.js");
+// The resolve/sandbox subcommands, exercised through the `amico` verb router
+// (`amico resolve …` / `amico sandbox …` — top-level verbs delegating verbatim
+// into the launch path; the historical `amico-run` bin is deleted, #1667).
+const BUNDLE = join(__dirname, "..", "dist", "amico.js");
 beforeAll(() => {
   execFileSync("node", [join(__dirname, "..", "esbuild.config.mjs")], { cwd: join(__dirname, "..") });
 });

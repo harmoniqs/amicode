@@ -113,6 +113,29 @@ describe("LocalExecutor.settle() emits the solve ledger stanza", () => {
     expect(rec.summary.integrator).toBe("magnus_adapt4");
   });
 
+  // #1676: an omitted solver.backend is the inherited default — MadNLP since
+  // DirectTrajOpt 0.11 / Piccolo 2.2. The ledger summary must record the
+  // executed default, not the pre-flip Ipopt (mirrors @amicode/schema hashing's
+  // parse.jl parity).
+  it("summary.solver records the inherited MadNLP default when the spec omits a backend", async () => {
+    const root = tmpRoot();
+    const julia = fakeJulia(root, "julia-solve", WRITE_RESULT);
+    const spec: SpecStamp = {
+      canonical: "not-a-spec",
+      problem_spec: { ...PROBLEM_SPEC, solver: { strategy: "direct", max_iter: 300 } },
+    };
+    const h = await new LocalExecutor().submit(undefined, {
+      runsRoot: join(root, "runs"),
+      julia: { julia },
+      spec,
+    });
+    await collect(h.events);
+    await h.finished;
+    const recs = readRecords().filter((r): r is SolveRecord => r.type === "solve");
+    expect(recs).toHaveLength(1);
+    expect(recs[0].summary.solver).toBe("madnlp");
+  });
+
   it("respects AMICO_LEDGER_SOURCE (so L-I replay can stamp source=replay)", async () => {
     process.env.AMICO_LEDGER_SOURCE = "replay";
     try {

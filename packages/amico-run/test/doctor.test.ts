@@ -4,9 +4,10 @@
 // list). Pure core (fs injected); the CLI verb prints the table.
 import { describe, test, expect } from "vitest";
 import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { diagnoseStudio, parseDoctorArgs } from "../src/doctor.js";
+import { diagnoseStudio, parseDoctorArgs, diagnosePinnedCli, type PinnedCliProbes } from "../src/doctor.js";
 import type { StudioPaths } from "@amicode/schema";
 import { legacyStudioPaths } from "@amicode/schema";
 
@@ -155,6 +156,78 @@ describe("parseDoctorArgs", () => {
     expect(usageError(parseDoctorArgs(["--nope"]))).toMatch(/unknown doctor flag/);
     expect(usageError(parseDoctorArgs(["--root-server"]))).toMatch(/requires a path/);
     expect(usageError(parseDoctorArgs(["--running-binary"]))).toMatch(/requires a path/);
+  });
+});
+
+// ── #1666: the pinned CLI root record — the shims' frozen-bundle pin ─────────
+describe("diagnosePinnedCli (#1666)", () => {
+  const hex = (s: string) => createHash("sha256").update(s, "utf8").digest("hex");
+
+  // a hermetic probe set over an in-memory fs map: entries + file bytes.
+  function probes(fs: Record<string, string>): PinnedCliProbes {
+    const names = Object.keys(fs);
+    return {
+      list: async (p) => names.filter((n) => n.startsWith(`${p}/`)).map((n) => n.slice(p.length + 1)),
+      read: async (p) => (p in fs ? fs[p] : null),
+      sha: async (p) => (p in fs ? hex(fs[p]) : null),
+    };
+  }
+
+  test("a fresh pin (every bundle's sidecar matches its sha) is ok and reports root + amico.js sha", async () => {
+    const fs: Record<string, string> = {
+      "/pin/amico.js": "router bundle",
+      "/pin/amico-pasqal.js": "runner bundle",
+    };
+    fs["/pin/amico.js.sha256"] = `${hex("router bundle")}  amico.js\n`;
+    fs["/pin/amico-pasqal.js.sha256"] = `${hex("runner bundle")}  amico-pasqal.js\n`;
+    const r = await diagnosePinnedCli("/pin", probes(fs));
+    expect(r.name).toBe("pinned_cli");
+    expect(r.status).toBe("ok");
+    expect(r.detail).toContain("/pin");
+    expect(r.detail).toContain(hex("router bundle").slice(0, 12));
+    expect(r.detail).toContain("2");
+  });
+
+  test("an ABSENT pin is a warning (the pre-pin state: resolving through the moving checkout), never an error", async () => {
+    const r = await diagnosePinnedCli("/no-pin", probes({}));
+    expect(r.status).toBe("warn");
+    expect(r.detail).toContain("/no-pin");
+    expect(r.detail).toMatch(/moving checkout|install-cli-pin/);
+  });
+
+  test("a sidecar MISMATCH is an error naming the file and both digests (tampered dist or stale sidecar)", async () => {
+    const fs: Record<string, string> = { "/pin/amico.js": "router bundle" };
+    fs["/pin/amico.js.sha256"] = `${hex("a DIFFERENT bundle")}  amico.js\n`;
+    const r = await diagnosePinnedCli("/pin", probes(fs));
+    expect(r.status).toBe("error");
+    expect(r.detail).toContain("amico.js");
+    expect(r.detail).toContain(hex("router bundle"));
+    expect(r.detail).toContain(hex("a DIFFERENT bundle"));
+  });
+
+  test("a MISSING sidecar is an integrity error (the freeze contract is bundle + sidecar pair)", async () => {
+    const fs: Record<string, string> = { "/pin/amico.js": "router bundle" };
+    const r = await diagnosePinnedCli("/pin", probes(fs));
+    expect(r.status).toBe("error");
+    expect(r.detail).toMatch(/sidecar missing.*amico\.js\.sha256/);
+  });
+
+  test("a sidecar with no sha digest in it is an error, not a silent pass", async () => {
+    const fs: Record<string, string> = {
+      "/pin/amico.js": "router bundle",
+      "/pin/amico.js.sha256": "\n",
+    };
+    const r = await diagnosePinnedCli("/pin", probes(fs));
+    expect(r.status).toBe("error");
+    expect(r.detail).toMatch(/no sha256 digest/);
+  });
+
+  test("a pin that holds bundles but NOT amico.js is a warning — the amico shim still resolves through the checkout", async () => {
+    const fs: Record<string, string> = { "/pin/amico-pasqal.js": "runner bundle" };
+    fs["/pin/amico-pasqal.js.sha256"] = `${hex("runner bundle")}  amico-pasqal.js\n`;
+    const r = await diagnosePinnedCli("/pin", probes(fs));
+    expect(r.status).toBe("warn");
+    expect(r.detail).toMatch(/no amico\.js/);
   });
 });
 

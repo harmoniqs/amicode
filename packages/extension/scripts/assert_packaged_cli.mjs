@@ -83,23 +83,10 @@ function remoteRejection({ code, stderr }) {
 }
 
 export const PROBES = {
-  "amico-run": [
-    {
-      check: "accepts remote executor",
-      args: (missing) => [missing, "--executor", "remote"],
-      expect: remoteRejection,
-    },
-    {
-      check: "usage lists remote",
-      args: () => ["--help"],
-      expect: ({ code, stdout }) =>
-        code === 0 && /--executor\s+local\|remote/.test(stdout)
-          ? null
-          : `--help does not list the remote executor (exit ${code})`,
-    },
-  ],
-  // The verb router delegates `amico run` verbatim to the same launch path —
-  // probed through the verb so the ROUTER's own staging is what's gated.
+  // The verb router owns the launch surface — `amico run <args>` is the
+  // byte-for-byte equivalent of the deleted amico-run bin (#1667), and the
+  // launch path is probed through the verb so the ROUTER's own staging is
+  // what's gated.
   amico: [
     {
       check: "accepts remote executor",

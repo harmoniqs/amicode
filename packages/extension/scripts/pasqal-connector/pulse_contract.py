@@ -17,6 +17,7 @@ Design rules:
 
 import math
 import tomllib
+import warnings
 
 import numpy as np
 import pulser
@@ -29,9 +30,17 @@ UNITS = "rad/us"
 # bad solve are orders of magnitude larger.
 DUST_TOL = 1e-6
 
+# Endpoints are "at idle" when both drives sit at Ω=Δ=0 to within the same
+# dust tolerance the bounds checks use.
+IDLE_TOL = DUST_TOL
+
 
 class ContractError(ValueError):
     """A pulse violates the Piccolo→Pulser contract. Message says how."""
+
+
+class NonIdleEndpointsWarning(UserWarning):
+    """The pulse does not return both drives to idle (Ω=Δ=0) at its endpoints."""
 
 
 def load_knots(path: str) -> dict:
@@ -140,6 +149,42 @@ def validate_against_device(
                         f"atoms[{i}] and atoms[{j}] are {dist:.3g} µm apart — below the "
                         f"device's minimum atom distance ({device.min_atom_distance} µm)"
                     )
+
+    warn_non_idle_endpoints(data)
+
+
+def warn_non_idle_endpoints(data: dict) -> None:
+    """Warn (never reject) when the pulse's endpoints are not idle (S-19/S-20,
+    campaign pasqal-gate-autoresearch).
+
+    The contract validates duration/amplitude/atoms — this is the missing
+    return-to-idle check. A pulse that ends mid-drive is an incomplete
+    hardware gate: the channel plays the tail, and the free endpoint can
+    absorb phase the device never sees. Measured (H17): pinning endpoints to
+    zero cost nothing in the solve and PAID on both legs (ΔF_emu up to
+    +1.7e-3, ΔF_mod up to +0.039) — clamping removes the ending transient the
+    output-modulation filter is still settling. So: warn loudly, reject
+    nothing; existing valid pulses keep validating.
+    """
+    offenders = []
+    for key in ("amplitude", "detuning"):
+        values = data.get(key)
+        if not isinstance(values, list) or len(values) < 2:
+            continue  # structural validation reports malformed arrays itself
+        for index in (0, len(values) - 1):
+            if abs(values[index]) > IDLE_TOL:
+                offenders.append(f"{key}[{index}] = {values[index]:.6g} rad/us")
+    if offenders:
+        warnings.warn(
+            "pulse does not return to idle (Ω=Δ=0) at its endpoints: "
+            + "; ".join(offenders)
+            + " — the channel plays this tail mid-drive, so the emitted gate is "
+            "incomplete. Re-solve with initial_value/final_value pinned to zero "
+            "(measured: the clamp costs nothing and improves both legs; "
+            "campaign pasqal-gate-autoresearch H17).",
+            NonIdleEndpointsWarning,
+            stacklevel=2,
+        )
 
 
 def _check_bounds(name: str, values: list, lo: float, hi: float) -> None:

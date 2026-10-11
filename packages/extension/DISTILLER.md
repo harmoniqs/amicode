@@ -77,7 +77,7 @@ sqlite3 "file:...opencode.db?mode=ro" \
 ```
 
 ALL matched sessions are contributing `sessions:`. The **launching** session is
-the one whose matching part contains the launch command itself (`amico-run`);
+the one whose matching part contains the launch command itself (`amico run`);
 fallback: the earliest mention by `part.time_created`. The workspace is the
 `~/.amico/problems/<slug>` path appearing in that launch command or that
 session's `amicode_*` records. A run that joins to nothing still gets a card

@@ -80,6 +80,12 @@ export async function main(argv: string[]): Promise<number> {
       return launch(["sandbox", ...rest]);
     case "estimate":
       return launch(["estimate", ...rest]);
+    // the strategy-brief renderer as a TOP-LEVEL verb — the notturno weekly-
+    // synthesis seam invokes `bun …/src/amico.ts strategy-brief …` (its
+    // documented contract); without the case the head falls to the switch's
+    // default and the seam dies as "unknown verb" (dry-run 36836288143).
+    case "strategy-brief":
+      return launch(["strategy-brief", ...rest]);
 
     case "doctor": {
       // The studio binding's health check (#402) + the fleet surface inventory
