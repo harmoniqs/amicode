@@ -538,33 +538,11 @@ describe("renderFleetSection — read-only navigation contract (AC3, AC4)", () =
 
 // ── #1451 — the sidebar focus selector (render) ──────────────────────────────
 //
-// W3 (#1451): the fleet section gains a per-row FOCUS affordance that posts
-// `{kind:"focus-machine", machineId, isLocal}`, DISTINCT from the row-body
-// connect-to-device click (#1413). The model carries `focusedMachineId` so the
-// focused row renders highlighted. Focus and connect are INDEPENDENT affordances.
-describe("renderFleetSection — focus selector (#1451, AC1)", () => {
-  it("renders a distinct focus affordance per device row", () => {
-    const el = document.createElement("div");
-    renderFleetSection(el, populatedModel(), () => {});
-    const rows = el.querySelectorAll(".fleet-device-row");
-    expect(rows).toHaveLength(1);
-    expect((rows[0] as HTMLElement).querySelector(".fleet-focus-btn")).not.toBeNull();
-  });
-
-  it("clicking the focus affordance posts EXACTLY the focus-machine message (identity + isLocal)", () => {
-    const el = document.createElement("div");
-    const post = vi.fn();
-    renderFleetSection(el, populatedModel(), post);
-    const focusBtn = el.querySelector(".fleet-focus-btn") as HTMLElement;
-    focusBtn.click();
-    expect(post).toHaveBeenCalledTimes(1);
-    expect(post).toHaveBeenCalledWith({
-      kind: "focus-machine",
-      machineId: "mac-studio-01",
-      isLocal: false,
-    });
-  });
-
+// W3 (#1451): the fleet section carries a focused-row marking driven by the
+// model's `focusedMachineId`. The per-row focus CONTROL was removed for now
+// (#1764 follow-up); the marking and the focus subsystem stay. The row-body
+// click still posts connect-to-device (#1413).
+describe("renderFleetSection — focus marking (#1451, AC1)", () => {
   it("marks the focused row when the model names it in focusedMachineId (render reflects focus)", () => {
     const el = document.createElement("div");
     renderFleetSection(el, populatedModel({ focusedMachineId: "mac-studio-01" }), () => {});
@@ -582,8 +560,8 @@ describe("renderFleetSection — focus selector (#1451, AC1)", () => {
   });
 });
 
-describe("renderFleetSection — connect and focus are INDEPENDENT (#1451, AC2)", () => {
-  it("the device-row body click still posts connect-to-device UNCHANGED (no focus message)", () => {
+describe("renderFleetSection — the row-body click connects (#1451, AC2)", () => {
+  it("the device-row body click posts connect-to-device (no focus control to interfere)", () => {
     const el = document.createElement("div");
     const post = vi.fn();
     renderFleetSection(el, populatedModel(), post);
@@ -596,33 +574,15 @@ describe("renderFleetSection — connect and focus are INDEPENDENT (#1451, AC2)"
       deviceName: "Mac Studio",
       isLocal: false,
     });
-    // A connect click emits ZERO focus-machine messages.
+    // No focus control ships, so a row click emits ZERO focus-machine messages.
     expect(post.mock.calls.some((c) => (c[0] as { kind: string }).kind === "focus-machine")).toBe(false);
-  });
-
-  it("clicking focus does NOT emit connect-to-device (focus is a distinct affordance)", () => {
-    const el = document.createElement("div");
-    const post = vi.fn();
-    renderFleetSection(el, populatedModel(), post);
-    const focusBtn = el.querySelector(".fleet-focus-btn") as HTMLElement;
-    focusBtn.click();
-    expect(post.mock.calls.some((c) => (c[0] as { kind: string }).kind === "connect-to-device")).toBe(false);
-  });
-
-  it("focusing then connecting: focus does not suppress a subsequent connect click", () => {
-    const el = document.createElement("div");
-    const post = vi.fn();
-    renderFleetSection(el, populatedModel(), post);
-    (el.querySelector(".fleet-focus-btn") as HTMLElement).click();
-    (el.querySelector(".fleet-device-row") as HTMLElement).click();
-    const kinds = post.mock.calls.map((c) => (c[0] as { kind: string }).kind);
-    expect(kinds).toContain("focus-machine");
-    expect(kinds).toContain("connect-to-device");
+    // And the removed control leaves no button in the row.
+    expect(el.querySelector(".fleet-focus-btn")).toBeNull();
   });
 });
 
 describe("renderFleetSection — fleet-of-one degrades gracefully (#1451)", () => {
-  it("renders the sole local row with a focus affordance (self is the only focusable machine)", () => {
+  it("renders the sole local row (self is the only machine), with no focus control", () => {
     const el = document.createElement("div");
     const post = vi.fn();
     // A fleet-of-one: only this machine, synthesized as the self-row.
@@ -633,15 +593,7 @@ describe("renderFleetSection — fleet-of-one degrades gracefully (#1451)", () =
     renderFleetSection(el, model, post);
     const rows = el.querySelectorAll(".fleet-device-row");
     expect(rows).toHaveLength(1);
-    const focusBtn = (rows[0] as HTMLElement).querySelector(".fleet-focus-btn") as HTMLElement;
-    expect(focusBtn).not.toBeNull();
-    // Focusing the local row posts isLocal:true — the host collapses it to home.
-    focusBtn.click();
-    expect(post).toHaveBeenCalledWith({
-      kind: "focus-machine",
-      machineId: "local-mbp",
-      isLocal: true,
-    });
+    expect((rows[0] as HTMLElement).querySelector(".fleet-focus-btn")).toBeNull();
   });
 });
 
@@ -1216,8 +1168,8 @@ describe("createFleetRefreshControl — Refresh busy state (#1764)", () => {
   });
 });
 
-// ── #1764 — the focus control: glyph, tooltips, focused-row rules ────────────
-describe("renderFleetSection — focus control glyph + focused-row rules (#1764)", () => {
+// ── #1764 — the focused-row marking rules (the per-row control was removed) ──
+describe("renderFleetSection — focused-row marking rules (#1764)", () => {
   const local = { machineId: "this-mac", name: "This Mac", serveStance: "server" };
   function model(focusedMachineId?: string, roster = [row({ machine_id: "peer-01", name: "Peer One" })]) {
     return buildFleetSectionModel(input({ roster, localDevice: local, focusedMachineId }));
@@ -1228,26 +1180,11 @@ describe("renderFleetSection — focus control glyph + focused-row rules (#1764)
     return el;
   }
   const focusedRows = (el: HTMLElement) => [...el.querySelectorAll(".fleet-device-row[data-focused='true']")] as HTMLElement[];
-  const btnOf = (el: HTMLElement, id: string) =>
-    el.querySelector(`.fleet-device-row[data-machine-id='${id}'] .fleet-focus-btn`) as HTMLButtonElement;
 
-  it("every row's focus control carries a target glyph and the tooltip 'Focus ‹machine name›'", () => {
+  it("ships no per-row focus control (removed for now)", () => {
     const el = render(model("peer-01"));
-    const btn = btnOf(el, "this-mac");
-    expect(btn.querySelector("svg.fleet-focus-glyph")).not.toBeNull();
-    expect(btn.querySelector("svg .fleet-focus-ring")).not.toBeNull();
-    expect(btn.querySelector("svg .fleet-focus-dot")).not.toBeNull();
-    expect(btn.title).toBe("Focus This Mac");
-    expect(btn.getAttribute("aria-label")).toBe("Focus This Mac");
-    expect(btn.getAttribute("aria-pressed")).toBe("false");
-  });
-
-  it("the focused row's control is pressed with the tooltip 'Focused'", () => {
-    const el = render(model("peer-01"));
-    const btn = btnOf(el, "peer-01");
-    expect(btn.getAttribute("aria-pressed")).toBe("true");
-    expect(btn.title).toBe("Focused");
-    expect(btn.getAttribute("aria-label")).toBe("Focus Peer One");
+    expect(el.querySelector(".fleet-focus-btn")).toBeNull();
+    expect(el.querySelector("svg.fleet-focus-glyph")).toBeNull();
   });
 
   it("at home the local self-row is the one focused row", () => {
@@ -1255,8 +1192,6 @@ describe("renderFleetSection — focus control glyph + focused-row rules (#1764)
     const rows = focusedRows(el);
     expect(rows).toHaveLength(1);
     expect(rows[0].getAttribute("data-machine-id")).toBe("this-mac");
-    expect(btnOf(el, "this-mac").getAttribute("aria-pressed")).toBe("true");
-    expect(btnOf(el, "peer-01").getAttribute("aria-pressed")).toBe("false");
   });
 
   it("at home the self-row is focused in the unreachable state too", () => {
@@ -1273,7 +1208,6 @@ describe("renderFleetSection — focus control glyph + focused-row rules (#1764)
   it("when the focused machine is absent from the list, no row is focused", () => {
     const el = render(model("gone-99"));
     expect(focusedRows(el)).toHaveLength(0);
-    expect(el.querySelectorAll(".fleet-focus-btn[aria-pressed='true']")).toHaveLength(0);
   });
 
   it("focus matches byte-for-byte: a case-different id is not the focused row", () => {
@@ -1281,21 +1215,18 @@ describe("renderFleetSection — focus control glyph + focused-row rules (#1764)
     expect(focusedRows(el)).toHaveLength(0);
   });
 
-  it("round trip: the row's own posted machine id, through the focus store, focuses that same row", async () => {
+  it("round trip: a focus request through the store marks that same row (subsystem intact)", async () => {
     const { FleetFocusStore, applyFocusRequest } = await import("../src/fleet_focus");
     const store = new FleetFocusStore();
-    const posts: any[] = [];
     const id = "Peer-01.local";
-    let el = render(model(store.scopedMachineId, [row({ machine_id: id, name: "Peer" })]), (m) => posts.push(m));
-    btnOf(el, id).click();
-    applyFocusRequest(store, posts[0]);
+    // The control is gone, but the subsystem still accepts a focus request —
+    // simulate what the control used to post straight into applyFocusRequest.
+    applyFocusRequest(store, { machineId: id, isLocal: false });
     expect(store.scopedMachineId).toBe(id);
-    el = render(model(store.scopedMachineId, [row({ machine_id: id, name: "Peer" })]), (m) => posts.push(m));
+    let el = render(model(store.scopedMachineId, [row({ machine_id: id, name: "Peer" })]));
     expect(focusedRows(el).map((r) => r.getAttribute("data-machine-id"))).toEqual([id]);
     // Focusing the local row clears to home — and home focuses the local row.
-    posts.length = 0;
-    btnOf(el, "this-mac").click();
-    applyFocusRequest(store, posts[0]);
+    applyFocusRequest(store, { machineId: "this-mac", isLocal: true });
     expect(store.scopedMachineId).toBeUndefined();
     el = render(model(store.scopedMachineId, [row({ machine_id: id, name: "Peer" })]));
     expect(focusedRows(el).map((r) => r.getAttribute("data-machine-id"))).toEqual(["this-mac"]);

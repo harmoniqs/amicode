@@ -812,12 +812,15 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
         troubleshootFleet: () => {
           this.fleetDeps?.launchSession("/troubleshoot-fleet");
         },
-        // #1764 — Add machine: standalone → create-a-fleet; populated / empty /
-        // unreachable / nothing posted yet → add-fleet-device (that skill hands
-        // off to create-a-fleet itself when no fleet exists).
+        // #1764 — Add machine: standalone / empty → create-a-fleet (no fleet
+        // exists yet, so start one); populated / unreachable / nothing posted
+        // yet → add-fleet-device. For unreachable we can't know the fleet is
+        // empty (host down), so we keep the add-fleet-device fallback, which
+        // itself hands off to create-a-fleet when no fleet turns out to exist.
         addFleetMachine: () => {
           if (!this.fleetDeps) return;
-          const prompt = this.lastPostedFleetModel?.state === "standalone" ? "/create-a-fleet" : "/add-fleet-device";
+          const s = this.lastPostedFleetModel?.state;
+          const prompt = s === "standalone" || s === "empty" ? "/create-a-fleet" : "/add-fleet-device";
           this.fleetDeps.launchSession(prompt);
         },
         // #1764 — Refresh: re-arm the change watcher exactly once (it may have
@@ -1616,40 +1619,8 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
       color: var(--vscode-badge-foreground, var(--vscode-foreground));
       background: var(--vscode-badge-background);
     }
-    /* #1764 — the per-row focus control: a target glyph, fixed size so nothing
-       shifts. Hidden by opacity (never display/visibility, so it stays in tab
-       order) and revealed on row hover or keyboard focus; the focused row's is
-       pressed, always visible, with the centre dot filled. */
-    .fleet-focus-btn {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      flex-shrink: 0;
-      width: 18px;
-      height: 18px;
-      padding: 0;
-      margin: 0;
-      background: transparent;
-      border: none;
-      border-radius: 4px;
-      color: var(--vscode-icon-foreground, var(--vscode-foreground));
-      cursor: pointer;
-      opacity: 0;
-    }
-    .fleet-device-row:hover .fleet-focus-btn { opacity: 1; }
-    .fleet-focus-btn:hover {
-      opacity: 1;
-      background: var(--vscode-toolbar-hoverBackground, transparent);
-    }
-    .fleet-focus-btn:focus { outline: none; }
-    .fleet-focus-btn:focus-visible {
-      opacity: 1;
-      outline: 1px solid var(--vscode-focusBorder, #007fd4);
-      outline-offset: -1px;
-    }
-    .fleet-focus-btn[aria-pressed="true"] { opacity: 1; }
-    .fleet-focus-btn[aria-pressed="true"] .fleet-focus-dot { fill: currentColor; }
-    .fleet-focus-btn svg { display: block; }
+    /* #1764 — the per-row focus control was removed for now; its CSS went with
+       it. The focused-row marking (.fleet-device-row-focused) is unaffected. */
     .fleet-action-bar { display: flex; gap: 6px; margin: 4px 8px; }
     .fleet-action-bar button {
       padding: 2px 10px;

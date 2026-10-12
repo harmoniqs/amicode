@@ -612,8 +612,8 @@ function dotStatusTooltip(device: FleetDeviceRow, now?: number): string {
 /** Render one device row: a file-list-style line — status dot, name, type pill
  *  (#1359). Clickable: posts a `connect-to-device` message (#1413, ADR 0030 §D1).
  *  `role` / `last-seen` / `capabilities` move to the row's `title` tooltip.
- *  #1451: also carries a DISTINCT focus affordance (posts `focus-machine`) and
- *  a focused-row marking when `focusedMachineId` names this row. */
+ *  #1451: carries a focused-row marking when `focusedMachineId` names this row.
+ *  (The per-row focus CONTROL was removed for now; the marking + subsystem stay.) */
 function renderDeviceRow(
   device: FleetDeviceRow,
   now: number | undefined,
@@ -673,62 +673,13 @@ function renderDeviceRow(
   pill.textContent = device.typeLabel;
   rowEl.appendChild(pill);
 
-  // #1451: the DISTINCT focus affordance. Posts `focus-machine` (scope the
-  // working surfaces to this machine) — NEVER connect-to-device. stopPropagation
-  // keeps it independent of the row-body connect click: a focus click emits ONLY
-  // the focus message, and a row-body click still connects (they never suppress
-  // each other). Every row gets one, including the sole self-row on a
-  // fleet-of-one (the host collapses a local focus to home).
-  const focusBtn = document.createElement("button");
-  focusBtn.type = "button";
-  focusBtn.className = "fleet-focus-btn";
-  focusBtn.setAttribute("aria-label", `Focus ${device.name}`);
-  focusBtn.setAttribute("aria-pressed", isFocused ? "true" : "false");
-  // #1764: a target glyph (ring + centre dot; the dot fills when pressed) and a
-  // tooltip in the domain term only.
-  focusBtn.title = isFocused ? "Focused" : `Focus ${device.name}`;
-  focusBtn.appendChild(createFocusGlyph());
-  focusBtn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    post({
-      kind: "focus-machine",
-      machineId: device.machineId,
-      isLocal: device.isLocal,
-    });
-  });
-  rowEl.appendChild(focusBtn);
+  // #1451: the per-row focus CONTROL was removed for now (the manual target
+  // glyph did not earn its place in the UI). The focus SUBSYSTEM stays wired —
+  // the `focus-machine` message/handler, FleetFocusStore, focus-follows-tab,
+  // and the focused-row marking above are all intact — so restoring the control
+  // is re-adding this button; nothing downstream was torn out.
 
   return rowEl;
-}
-
-/** #1764: the 12×12 line-art target glyph for the focus control. CSS fills the
- *  centre dot on the pressed (focused) row; theme colour via currentColor. */
-function createFocusGlyph(): SVGElement {
-  const ns = "http://www.w3.org/2000/svg";
-  const svg = document.createElementNS(ns, "svg");
-  svg.setAttribute("class", "fleet-focus-glyph");
-  svg.setAttribute("width", "12");
-  svg.setAttribute("height", "12");
-  svg.setAttribute("viewBox", "0 0 12 12");
-  svg.setAttribute("fill", "none");
-  svg.setAttribute("aria-hidden", "true");
-  const ring = document.createElementNS(ns, "circle");
-  ring.setAttribute("class", "fleet-focus-ring");
-  ring.setAttribute("cx", "6");
-  ring.setAttribute("cy", "6");
-  ring.setAttribute("r", "4.5");
-  ring.setAttribute("stroke", "currentColor");
-  ring.setAttribute("stroke-width", "1.2");
-  svg.appendChild(ring);
-  const dot = document.createElementNS(ns, "circle");
-  dot.setAttribute("class", "fleet-focus-dot");
-  dot.setAttribute("cx", "6");
-  dot.setAttribute("cy", "6");
-  dot.setAttribute("r", "1.75");
-  dot.setAttribute("stroke", "currentColor");
-  dot.setAttribute("stroke-width", "1.2");
-  svg.appendChild(dot);
-  return svg;
 }
 
 /** Map the raw `server_mode` to a user-friendly display role.

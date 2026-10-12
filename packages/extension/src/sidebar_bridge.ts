@@ -124,7 +124,7 @@ export type OpenFleetManagerMessage = { kind: "open-fleet-manager" };
 /** Request to spawn a troubleshoot-fleet session from the sidebar. */
 export type TroubleshootFleetMessage = { kind: "troubleshoot-fleet" };
 /** #1764 — the FLEET header's Add machine action. No payload: the host routes
- *  on its cache of the section view-model it last posted (standalone →
+ *  on its cache of the section view-model it last posted (standalone/empty →
  *  create-a-fleet, otherwise add-fleet-device), so the button and the section
  *  agree by construction. Opens a chat; never writes fleet config or roster. */
 export type AddFleetMachineMessage = { kind: "add-fleet-machine" };

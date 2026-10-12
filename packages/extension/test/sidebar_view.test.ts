@@ -480,7 +480,7 @@ describe("SidebarViewProvider — fleet section host wiring (#1321)", () => {
     it.each([
       ["standalone", { machineId: "this-mac", name: "Mac", serveStance: "standalone" }, { rows: [deviceRow()], reachable: true }, "/create-a-fleet"],
       ["populated", { machineId: "this-mac", name: "Mac", serveStance: "server" }, { rows: [deviceRow()], reachable: true }, "/add-fleet-device"],
-      ["empty", null, { rows: [], reachable: true }, "/add-fleet-device"],
+      ["empty", null, { rows: [], reachable: true }, "/create-a-fleet"],
       ["unreachable", null, { rows: [], reachable: false }, "/add-fleet-device"],
     ])("a %s section routes Add machine on its posted state", (stateName, local, roster, prompt) => {
       const { state, deps, launchSession } = fleetHarness();
@@ -975,18 +975,9 @@ describe("sidebar webview — fleet section styling (#1321, design-system tokens
     expect(css).toMatch(/\.fleet-type-pill[^{]*\{[^}]*var\(--vscode-badge-/);
   });
 
-  it("the focus control: hidden-but-tabbable glyph, revealed on row hover / keyboard focus, filled + always visible when pressed (#1764)", () => {
+  it("the per-row focus control was removed for now — no .fleet-focus-btn styles ship (#1764)", () => {
     const css = html();
-    expect(css).toMatch(/\.fleet-focus-btn\s*\{[^}]*opacity:\s*0/);
-    expect(css).not.toMatch(/\.fleet-focus-btn\s*\{[^}]*(display:\s*none|visibility:\s*hidden)/);
-    expect(css).toMatch(/\.fleet-device-row:hover \.fleet-focus-btn/);
-    expect(css).toMatch(/\.fleet-focus-btn:focus-visible\s*\{[^}]*outline:\s*1px solid var\(--vscode-focusBorder/);
-    expect(css).toMatch(/\.fleet-focus-btn\[aria-pressed="true"\]\s*\{[^}]*opacity:\s*1/);
-    expect(css).toMatch(/\.fleet-focus-btn\[aria-pressed="true"\] \.fleet-focus-dot\s*\{[^}]*fill:\s*currentColor/);
-    // token-driven, transparent, and fixed-size (nothing shifts on hover/press)
-    expect(css).toMatch(/\.fleet-focus-btn\s*\{[^}]*background:\s*transparent/);
-    expect(css).toMatch(/\.fleet-focus-btn\s*\{[^}]*width:\s*18px/);
-    expect(css).toMatch(/\.fleet-focus-btn:hover\s*\{[^}]*var\(--vscode-/);
+    expect(css).not.toMatch(/\.fleet-focus-btn/);
   });
 
   it("Refresh busy spins its glyph, and with reduced motion preferred shows busy without spinning (#1764)", () => {
