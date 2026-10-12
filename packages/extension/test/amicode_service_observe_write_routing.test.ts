@@ -878,6 +878,121 @@ describe("#1774 AC4 — an unknown-owner write is tried locally; a local miss is
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
+// #1774 AC5 — the two "just created" bridges keep working under the unknown-owner
+// outcome: a just-created LOCAL session (not yet in the owner map) is found by the
+// local-first probe and served locally; a just-created REMOTE session's pending
+// binding keeps routing to its peer — even across a refresh in which that peer
+// failed — and never consults the local engine.
+// ══════════════════════════════════════════════════════════════════════════════
+describe("#1774 AC5 — a just-created local session routes locally; the pending remote-create binding keeps working", () => {
+  /** An engine that CREATES sessions: POST /session mints ses-made-N and holds it. */
+  async function startCreatingEngine() {
+    const held = new Set<string>();
+    const requests: Array<{ method: string; path: string }> = [];
+    let n = 0;
+    const server = http.createServer((req, res) => {
+      const u = new URL(req.url ?? "/", "http://stub");
+      requests.push({ method: req.method ?? "GET", path: u.pathname });
+      res.setHeader("content-type", "application/json");
+      if (u.pathname === "/session" && req.method === "POST") {
+        const id = `ses-made-${++n}`;
+        held.add(id);
+        return void res.writeHead(200).end(JSON.stringify({ id }));
+      }
+      const id = /^\/(?:api\/)?session\/([^/]+)/.exec(u.pathname)?.[1];
+      if (id !== undefined && !held.has(id)) return void res.writeHead(404).end('{"name":"NotFoundError"}');
+      res.writeHead(200).end(JSON.stringify({ ok: true, marker: "LOCAL-CREATING", id }));
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    return {
+      url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
+      requests,
+      stop: () => new Promise<void>((r) => server.close(() => r())),
+    };
+  }
+
+  it("create locally, then read and write it at once (the owner map has not refreshed) → both served by the LOCAL engine", async () => {
+    const engine = await startCreatingEngine();
+    const ownerMap = new SessionOwnerMap(); // the map knows nothing of the new session
+    const noPeers = (): PeerTransport | undefined => undefined;
+    const server = new AmicodeServiceServer({ password: PW });
+    server.attachEngineProxy(new EngineProxy({ getUrl: () => engine.url }));
+    server.attachObservationReadPlane(createObservationReadPlane({ ownerMap, localMachineId: "macbook", peer: noPeers, localEngineUrl: () => engine.url }));
+    server.attachObservationWritePlane(
+      createObservationWritePlane({ ownerMap, localMachineId: "macbook", peer: noPeers, grantReader: () => undefined, localEngineUrl: () => engine.url }),
+    );
+    const origin = (await server.start()).toString().replace(/\/$/, "");
+    try {
+      const created = await fetch(`${origin}/session`, { method: "POST", headers: { ...authed, "content-type": "application/json" }, body: "{}" });
+      const { id } = (await created.json()) as { id: string };
+      expect(ownerMap.resolveOwner(id)).toBeUndefined();
+
+      const read = await fetch(`${origin}/session/${id}`, { headers: authed });
+      expect(read.status).toBe(200);
+      expect(((await read.json()) as { marker: string }).marker).toBe("LOCAL-CREATING");
+
+      const write = await fetch(`${origin}/session/${id}/message`, {
+        method: "POST",
+        headers: { ...authed, "content-type": "application/json" },
+        body: JSON.stringify({ text: "hi" }),
+      });
+      expect(write.status).toBe(200);
+      expect(((await write.json()) as { marker: string }).marker).toBe("LOCAL-CREATING");
+      expect(engine.requests.some((r) => r.method === "POST" && r.path === `/session/${id}/message`)).toBe(true);
+    } finally {
+      await server.stop();
+      await engine.stop();
+    }
+  });
+
+  it("a remote create's pending binding survives a refresh in which its peer FAILED: the follow-up read reaches the peer, local never consulted", async () => {
+    const engine = await startCreatingEngine();
+    const peerSrv = http.createServer((req, res) => {
+      res.setHeader("content-type", "application/json");
+      if (req.method === "POST") return void res.writeHead(200).end(JSON.stringify({ id: "ses-remote-pending" }));
+      res.writeHead(200).end(JSON.stringify({ ok: true, marker: "PEER-PENDING" }));
+    });
+    await new Promise<void>((r) => peerSrv.listen(0, "127.0.0.1", r));
+    const peerUrl = `http://127.0.0.1:${(peerSrv.address() as AddressInfo).port}`;
+    const ownerMap = new SessionOwnerMap();
+    const peer = (id: string): PeerTransport | undefined => (id === "studio" ? { getUrl: () => peerUrl, token: "tok-studio" } : undefined);
+    const server = new AmicodeServiceServer({ password: PW });
+    server.attachEngineProxy(new EngineProxy({ getUrl: () => engine.url }));
+    server.attachObservationReadPlane(createObservationReadPlane({ ownerMap, localMachineId: "macbook", peer, localEngineUrl: () => engine.url }));
+    server.attachObservationWritePlane(
+      createObservationWritePlane({
+        ownerMap,
+        localMachineId: "macbook",
+        peer,
+        grantReader: (o) => (o === "studio" ? { scope: "control", state: "active" } : undefined),
+        localEngineUrl: () => engine.url,
+      }),
+    );
+    const origin = (await server.start()).toString().replace(/\/$/, "");
+    try {
+      const created = await fetch(`${origin}/session`, {
+        method: "POST",
+        headers: { ...authed, [OWNER_ROUTING_HEADER]: "studio", "content-type": "application/json" },
+        body: "{}",
+      });
+      expect(((await created.json()) as { id: string }).id).toBe("ses-remote-pending");
+      // the next owner-map refresh: studio's fetch timed out (an empty slice)
+      ownerMap.update([], [{ machineId: "studio", outcome: "timeout", reason: "fetch-failed" }]);
+      expect(ownerMap.resolveOwner("ses-remote-pending")).toBe("studio");
+
+      const read = await fetch(`${origin}/session/ses-remote-pending`, { headers: authed });
+      expect(read.status).toBe(200);
+      expect(((await read.json()) as { marker: string }).marker).toBe("PEER-PENDING");
+      expect(engine.requests).toEqual([]); // the local engine was never asked
+    } finally {
+      await server.stop();
+      await new Promise<void>((r) => peerSrv.close(() => r()));
+      await engine.stop();
+    }
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
 // Byte-identity when UNATTACHED — a server with NO write plane consults nothing:
 // a POST for a peer-owned session falls through to the local engine (the
 // `if (this.observeWrite)` block is a structural no-op). This is the flag-off /
