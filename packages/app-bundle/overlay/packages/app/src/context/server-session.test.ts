@@ -180,3 +180,32 @@ test("question.asked (V1 wire shape) lands in the question store", () => {
   })
   expect(session.data.question[sessionInfo("root").id]?.length ?? 0).toBe(0)
 })
+
+// #1753: the permission card rides the SAME live dispatch seam as the question
+// card (session.apply → the shared session store the composer reads via
+// directory-sync's sessionFields proxy). This pins the permission analog of
+// the 2026-10-10 question pin above: a permission.asked event in the V1 wire
+// shape must land in the permission store — the card-rendering state — and
+// leave it again on permission.replied.
+test("permission.asked (V1 wire shape) lands in the permission store", () => {
+  const session = createServerSession({ session: { get: async () => ({ data: undefined }) } } as unknown as OpencodeClient)
+  session.apply({ type: "session.created", properties: { info: sessionInfo("root") } })
+  session.apply({
+    type: "permission.asked",
+    properties: {
+      id: "per_test1",
+      sessionID: sessionInfo("root").id,
+      permission: "edit",
+      patterns: ["src/**"],
+    },
+  })
+  const stored = session.data.permission[sessionInfo("root").id]
+  expect(stored?.length).toBe(1)
+  expect(stored?.[0]?.id).toBe("per_test1")
+  expect(stored?.[0]?.permission).toBe("edit")
+  session.apply({
+    type: "permission.replied",
+    properties: { sessionID: sessionInfo("root").id, requestID: "per_test1" },
+  })
+  expect(session.data.permission[sessionInfo("root").id]?.length ?? 0).toBe(0)
+})
