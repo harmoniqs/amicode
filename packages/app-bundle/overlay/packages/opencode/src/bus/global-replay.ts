@@ -18,6 +18,12 @@ export type Frame = {
   readonly time: number
   /** Push order; unlike `seq` it is unique per frame (a sync copy shares its source's seq). */
   readonly ordinal: number
+  /**
+   * A sync copy sharing the sequence of the frame it mirrors (#1778). Sent only
+   * to subscribers that request sync copies; dropping it leaves no hole in a
+   * subscriber's sequence, because its source carries the same one.
+   */
+  readonly syncCopy: boolean
 }
 
 export type Bounds = {
@@ -116,7 +122,7 @@ export class ReplayBuffer {
     return this.#listeners.size
   }
 
-  push(seq: number, data: string): Frame {
+  push(seq: number, data: string, options: { syncCopy?: boolean } = {}): Frame {
     const frame: Frame = {
       id: formatID(this.epoch, seq),
       seq,
@@ -124,6 +130,7 @@ export class ReplayBuffer {
       bytes: Buffer.byteLength(data),
       time: this.#now(),
       ordinal: ++this.#ordinal,
+      syncCopy: options.syncCopy === true,
     }
     this.#current = Math.max(this.#current, seq)
     this.#frames.push(frame)
@@ -142,18 +149,26 @@ export class ReplayBuffer {
    * Subscribe, optionally resuming after `cursor`. The live listener is
    * registered BEFORE the buffer is read, and live frames already covered by
    * the replay are dropped, so nothing published around the reconnect is
-   * missed or delivered twice.
+   * missed or delivered twice. Sync copies reach the subscription only when it
+   * asks for them (`sync`), in its replay and its live frames alike.
    */
-  subscribe(cursor?: string): Subscription {
+  subscribe(cursor?: string, options: { sync?: boolean } = {}): Subscription {
+    const wanted = options.sync === true ? () => true : (frame: Frame) => !frame.syncCopy
     let deliver: ((frame: Frame) => void) | undefined
     let pending: Frame[] = []
-    const listener = (frame: Frame) => (deliver ? deliver(frame) : pending.push(frame))
+    const listener = (frame: Frame) => {
+      if (!wanted(frame)) return
+      if (deliver) deliver(frame)
+      else pending.push(frame)
+    }
     this.#listeners.add(listener)
 
     this.#evict()
     const watermark = this.#ordinal
     const resolved = this.#resolve(cursor)
-    const replay = resolved.reset ? [] : this.#retained().filter((frame) => frame.seq > resolved.position)
+    const replay = resolved.reset
+      ? []
+      : this.#retained().filter((frame) => frame.seq > resolved.position && wanted(frame))
 
     return {
       ...resolved,
@@ -214,6 +229,10 @@ export const GlobalEventReplay = new ReplayBuffer({
 })
 
 GlobalBus.tap((event, seq) => {
+  // A sync copy whose sequence was already handed out mirrors its source. One
+  // that consumed a fresh sequence (no source framed nearby) is a frame of its
+  // own and reaches every subscriber, so filtering never opens a hole.
+  const syncCopy = event.payload?.type === "sync" && seq <= GlobalEventReplay.current
   let data: string
   try {
     data = JSON.stringify(event)
@@ -224,5 +243,5 @@ GlobalBus.tap((event, seq) => {
     GlobalEventReplay.skip(seq)
     return
   }
-  GlobalEventReplay.push(seq, data)
+  GlobalEventReplay.push(seq, data, { syncCopy })
 })

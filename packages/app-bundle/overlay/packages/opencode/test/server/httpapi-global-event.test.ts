@@ -148,11 +148,27 @@ const connect = (input: { headers?: Record<string, string>; query?: string } = {
 const emit = (type: string, properties: Record<string, unknown> = {}) =>
   GlobalBus.emit("event", { directory: "/tmp/i1776", payload: { type, properties } })
 
+/** The event-v2 bridge's twin emission: a durable event, then its sync copy. */
+const twin = (id: string, type = "test.durable") => {
+  GlobalBus.emit("event", { directory: "/tmp/i1778", payload: { id, type, properties: {} } })
+  GlobalBus.emit("event", {
+    directory: "/tmp/i1778",
+    payload: { type: "sync", syncEvent: { id, type: `${type}.1`, seq: 1, aggregateID: "agg", data: {} } },
+  })
+}
+
+const typesOf = (frames: Frame[]) => frames.map((frame) => frame.data.payload.type)
+const seqsOf = (frames: Frame[]) => frames.map((frame) => idOf(frame).seq)
+/** Resolves `undefined` when no further frame arrives within `ms`. */
+const quiet = (stream: { next: Effect.Effect<Frame, Error> }, ms = 200) =>
+  stream.next.pipe(Effect.timeoutOrElse({ duration: ms, orElse: () => Effect.succeed(undefined) }))
+
 describe("global event stream — sequenced ids (#1776)", () => {
   it.live("every frame carries an <epoch>:<seq> id shared by all subscribers; a sync copy carries its source's id", () =>
     Effect.gen(function* () {
-      const a = yield* connect()
-      const b = yield* connect()
+      // sync copies are opt-in (#1778): both subscribers request them
+      const a = yield* connect({ query: "?sync=true" })
+      const b = yield* connect({ query: "?sync=true" })
       const connectedA = yield* a.next
       const connectedB = yield* b.next
       expect(connectedA.data.payload.type).toBe("server.connected")
@@ -178,6 +194,82 @@ describe("global event stream — sequenced ids (#1776)", () => {
       const seqs = framesA.map((f) => idOf(f).seq)
       expect(framesA.every((f) => idOf(f).epoch === start.epoch)).toBe(true)
       expect(seqs).toEqual([start.seq + 1, start.seq + 2, start.seq + 2, start.seq + 3])
+    }),
+  )
+})
+
+describe("global event stream — sync copies are opt-in (#1778)", () => {
+  it.live("a default subscriber gets no sync copies and its sequence stays gap-free; an opt-in subscriber gets them all", () =>
+    Effect.gen(function* () {
+      const plain = yield* connect()
+      // the header carrier (what the workspace control plane sends); `?sync=true` is the query twin
+      const synced = yield* connect({ headers: { "x-opencode-sync-copies": "true" } })
+      const start = idOf(yield* plain.next)
+      expect(idOf(yield* synced.next)).toEqual(start)
+
+      emit("test.first")
+      twin("evt_i1778_optin_a")
+      twin("evt_i1778_optin_b")
+      emit("test.last")
+
+      const plainFrames = yield* plain.take(4)
+      expect(typesOf(plainFrames)).toEqual(["test.first", "test.durable", "test.durable", "test.last"])
+      // filtering the copies punches no hole: a copy shares its source's sequence
+      expect(seqsOf(plainFrames)).toEqual([1, 2, 3, 4].map((n) => start.seq + n))
+      expect(yield* quiet(plain)).toBeUndefined()
+
+      const syncedFrames = yield* synced.take(6)
+      expect(typesOf(syncedFrames)).toEqual(["test.first", "test.durable", "sync", "test.durable", "sync", "test.last"])
+      expect(seqsOf(syncedFrames)).toEqual([1, 2, 2, 3, 3, 4].map((n) => start.seq + n))
+      // the frames both subscribers get are the same frames
+      expect(syncedFrames.filter((f) => f.data.payload.type !== "sync").map((f) => f.id)).toEqual(
+        plainFrames.map((f) => f.id),
+      )
+    }),
+  )
+
+  it.live("a resumed connection replays sync copies only when it requests them", () =>
+    Effect.gen(function* () {
+      const a = yield* connect()
+      const cursor = (yield* a.next).id!
+      a.abort()
+      twin("evt_i1778_replay_a")
+      emit("test.between")
+      twin("evt_i1778_replay_b")
+
+      const plain = yield* connect({ headers: { "last-event-id": cursor } })
+      const synced = yield* connect({ headers: { "last-event-id": cursor }, query: "?sync=true" })
+      const base = idOf(yield* plain.next).seq
+      yield* synced.next
+      emit("test.live")
+
+      const plainFrames = yield* plain.take(4)
+      expect(typesOf(plainFrames)).toEqual(["test.durable", "test.between", "test.durable", "test.live"])
+      expect(seqsOf(plainFrames)).toEqual([1, 2, 3, 4].map((n) => base + n))
+      expect(yield* quiet(plain)).toBeUndefined()
+
+      const syncedFrames = yield* synced.take(6)
+      expect(typesOf(syncedFrames)).toEqual(["test.durable", "sync", "test.between", "test.durable", "sync", "test.live"])
+      expect(seqsOf(syncedFrames)).toEqual([1, 1, 2, 3, 3, 4].map((n) => base + n))
+    }),
+  )
+
+  it.live("a sync copy with no framed source keeps its own sequence and reaches every subscriber, so no hole opens", () =>
+    Effect.gen(function* () {
+      const plain = yield* connect()
+      const start = idOf(yield* plain.next)
+      emit("test.before")
+      GlobalBus.emit("event", {
+        directory: "/tmp/i1778",
+        payload: {
+          type: "sync",
+          syncEvent: { id: "evt_i1778_orphan", type: "test.orphan.1", seq: 1, aggregateID: "agg", data: {} },
+        },
+      })
+      emit("test.after")
+      const frames = yield* plain.take(3)
+      expect(typesOf(frames)).toEqual(["test.before", "sync", "test.after"])
+      expect(seqsOf(frames)).toEqual([1, 2, 3].map((n) => start.seq + n))
     }),
   )
 })

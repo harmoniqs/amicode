@@ -24,6 +24,18 @@ function cursorOf(request: HttpServerRequest.HttpServerRequest) {
   return new URL(request.url, "http://localhost").searchParams.get("lastEventID")?.trim() || undefined
 }
 
+// Sync copies (the event-v2 bridge's `type: "sync"` twin of every durable
+// event) are opt-in per subscription (#1778): only a subscriber that replays
+// them (the workspace control plane, control-plane/workspace.ts) asks — with
+// the `x-opencode-sync-copies` header, else the `sync` query parameter; every
+// other subscriber discards them, so they stay off its wire.
+function syncRequested(request: HttpServerRequest.HttpServerRequest) {
+  const raw =
+    request.headers["x-opencode-sync-copies"] ?? new URL(request.url, "http://localhost").searchParams.get("sync")
+  const value = raw?.trim().toLowerCase()
+  return value === "true" || value === "1"
+}
+
 function frameEvent(frame: Pick<Frame, "id" | "data">): Sse.Event {
   return { _tag: "Event", event: "message", id: frame.id, data: frame.data }
 }
@@ -66,6 +78,7 @@ function eventResponse() {
   return Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest
     const cursor = cursorOf(request)
+    const sync = syncRequested(request)
     const gone = yield* clientGone(request)
     // Registration is eager and synchronous: a bus event emitted while the
     // response body is starting is queued, never lost.
@@ -76,7 +89,7 @@ function eventResponse() {
       Effect.andThen(Effect.sync(() => subscription.close()), Queue.shutdown(queue))
     const subscription = yield* Effect.acquireRelease(
       Effect.sync(() => {
-        const subscription = GlobalEventReplay.subscribe(cursor)
+        const subscription = GlobalEventReplay.subscribe(cursor, { sync })
         // An unservable cursor is never silent: a reset frame comes first,
         // carrying the current epoch and sequence, and the client resyncs.
         if (subscription.reset)
@@ -99,6 +112,7 @@ function eventResponse() {
         subscribers: GlobalEventReplay.subscribers,
         resume: subscription.reset ? `reset:${subscription.reset}` : cursor ? "replay" : "live",
         replayed: subscription.replay.length,
+        sync,
       }),
     )
     // The heartbeat enters the connection's own queue, behind every frame up to
