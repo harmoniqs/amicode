@@ -77,11 +77,49 @@ export function extractSessionIdFromReadPath(pathname: string): string | undefin
  *  never really created, or was deleted) and drops back to local. */
 export const PENDING_OWNER_TTL_MS = 60_000;
 
+/** #1774: how long a peer's last-good owner entries survive refreshes in which
+ *  that peer's fetch FAILED (timeout / network error / 5xx). A peer's session set
+ *  changes slowly relative to this; past it the entries expire. Configurable per
+ *  map (`retentionMs`). */
+export const OWNER_RETENTION_MS = 60_000;
+
 /** A session entry with owner tag (the fleet-wide projection's shape). */
 export interface SessionEntry {
   id: string;
   amicode_owner?: SessionOwnerTag;
   [key: string]: unknown;
+}
+
+/** #1774: does a failed peer refresh RETAIN the peer's last-good entries? Decided
+ *  from #1771's per-peer outcome: a timeout, or a transport failure (a network
+ *  error, a 5xx, the peer's upstream momentarily absent) retains. A credential or
+ *  trust problem — unauthorized, untrusted, credential missing, identity
+ *  conflict — does not: it is not a blip, and it surfaces as unavailable. */
+export function refreshRetains(peer: Pick<OwnerRefreshPeer, "outcome" | "reason">): boolean {
+  if (peer.outcome === "timeout") return true;
+  if (peer.outcome !== "error") return false;
+  return peer.reason === "fetch-failed" || peer.reason === "no-upstream";
+}
+
+/** #1774: what one refresh did to ONE peer's owner entries (for the refresh log).
+ *   - retained   — the fetch failed within the window: `held` last-good entries
+ *                  kept, last confirmed `ageMs` ago;
+ *   - expired    — the window lapsed: `dropped` entries expired, the peer is now
+ *                  named unavailable;
+ *   - dropped    — a non-retaining failure (unauthorized, …): `dropped` entries
+ *                  removed at once, the peer is now named unavailable;
+ *   - unavailable — the peer holds nothing and is still named unavailable.
+ *  A successful refresh (or a failure with nothing ever held) has no record. */
+export type OwnerRetention =
+  | { kind: "retained"; held: number; ageMs: number }
+  | { kind: "expired"; dropped: number }
+  | { kind: "dropped"; dropped: number }
+  | { kind: "unavailable" };
+
+/** One owned entry as the map holds it (the owner is the map key's peer). */
+interface HeldEntry {
+  id: string;
+  directory?: string;
 }
 
 /** The per-session owner binding — maps session IDs to their owner machine_id.
@@ -92,7 +130,16 @@ export interface SessionEntry {
  *  a peer is not yet in the pull-only projection, so a PENDING overlay bridges
  *  the gap — `recordPendingOwner` binds the new id at create time, the binding
  *  survives projection refreshes that don't yet include it, is superseded once
- *  the projection does, and expires after a TTL. */
+ *  the projection does, and expires after a TTL.
+ *
+ *  #1774: when the projection carries #1771's PER-PEER refresh outcomes, the
+ *  update is authoritative only for the peers that answered. A peer whose fetch
+ *  failed (an empty slice, not an error) keeps its LAST-GOOD entries for
+ *  `retentionMs` — its sessions keep routing to it and its fan-in arm stays open
+ *  — then they expire and the peer is NAMED unavailable (still an owner in
+ *  `ownerMachineIds()`, never a reachable arm — see `fanInReachable`) until a
+ *  successful refresh. A non-retaining failure (unauthorized, …) drops the
+ *  entries at once and names the peer unavailable the same way. */
 export class SessionOwnerMap {
   private readonly owners = new Map<string, string>();
   /** #1766: each OWNED session's working directory (id → directory), recorded
@@ -101,34 +148,107 @@ export class SessionOwnerMap {
   private readonly directories = new Map<string, string>();
   /** Create-time bindings awaiting projection confirmation (id → {owner, at}). */
   private readonly pending = new Map<string, { machineId: string; at: number }>();
+  /** #1774: each peer's entries as of its last SUCCESSFUL refresh (peer → {at, entries}). */
+  private readonly lastGood = new Map<string, { at: number; entries: HeldEntry[] }>();
+  /** #1774: peers whose entries expired or were dropped — named unavailable. */
+  private readonly unavailablePeers = new Set<string>();
   private readonly now: () => number;
+  private readonly retentionMs: number;
 
-  constructor(opts: { now?: () => number } = {}) {
+  constructor(opts: { now?: () => number; retentionMs?: number } = {}) {
     this.now = opts.now ?? Date.now;
+    this.retentionMs = opts.retentionMs ?? OWNER_RETENTION_MS;
   }
 
   /** Rebuild the map from a fleet-wide projection's session list. The projection
    *  is authoritative: a pending binding now present in it is superseded (dropped
-   *  from the overlay); expired pending bindings are pruned. */
-  update(sessions: SessionEntry[]): void {
+   *  from the overlay); expired pending bindings are pruned.
+   *
+   *  #1774: `peers` (the projection's per-peer refresh outcomes) scopes that
+   *  authority — see the class comment. Returns what the update did to each
+   *  failed peer's entries (absent for a peer that answered). Without `peers`
+   *  every owner is replaced, exactly as before. */
+  update(
+    sessions: SessionEntry[],
+    peers?: ReadonlyArray<Pick<OwnerRefreshPeer, "machineId" | "outcome" | "reason">>,
+  ): Map<string, OwnerRetention> {
     this.owners.clear();
     this.directories.clear();
+    const fresh = new Map<string, HeldEntry[]>();
     for (const s of sessions) {
       if (typeof s.id === "string" && s.amicode_owner?.owner_machine_id) {
-        this.owners.set(s.id, s.amicode_owner.owner_machine_id);
+        const owner = s.amicode_owner.owner_machine_id;
         // #1766: the session record's own `directory` (the cross-project list
         // carries it verbatim); the owner tag mirrors the same value, so it is
         // the fallback when an entry carries no top-level field.
         const directory = typeof s.directory === "string" && s.directory !== "" ? s.directory : s.amicode_owner.directory;
-        if (typeof directory === "string" && directory !== "") this.directories.set(s.id, directory);
+        const held: HeldEntry = { id: s.id, ...(typeof directory === "string" && directory !== "" ? { directory } : {}) };
+        this.hold(owner, held);
+        const list = fresh.get(owner);
+        if (list) list.push(held);
+        else fresh.set(owner, [held]);
       }
     }
+    const retention = peers === undefined ? this.replaceAll(fresh) : this.applyPeerOutcomes(fresh, peers);
     // Prune the pending overlay: drop entries the authoritative projection now
     // carries (superseded), and any that have outlived the TTL.
     const cutoff = this.now() - PENDING_OWNER_TTL_MS;
     for (const [id, entry] of this.pending) {
       if (this.owners.has(id) || entry.at < cutoff) this.pending.delete(id);
     }
+    return retention;
+  }
+
+  private hold(owner: string, e: HeldEntry): void {
+    this.owners.set(e.id, owner);
+    if (e.directory !== undefined) this.directories.set(e.id, e.directory);
+  }
+
+  /** No per-peer outcomes: the projection is authoritative for every owner. */
+  private replaceAll(fresh: Map<string, HeldEntry[]>): Map<string, OwnerRetention> {
+    this.lastGood.clear();
+    this.unavailablePeers.clear();
+    const at = this.now();
+    for (const [owner, entries] of fresh) this.lastGood.set(owner, { at, entries });
+    return new Map();
+  }
+
+  /** #1774: per peer — an answer replaces, a retaining failure keeps the
+   *  last-good entries inside the window, anything else drops them. */
+  private applyPeerOutcomes(
+    fresh: Map<string, HeldEntry[]>,
+    peers: ReadonlyArray<Pick<OwnerRefreshPeer, "machineId" | "outcome" | "reason">>,
+  ): Map<string, OwnerRetention> {
+    const now = this.now();
+    const out = new Map<string, OwnerRetention>();
+    const refreshed = new Set(peers.map((p) => p.machineId));
+    // A peer no longer refreshed at all left the fleet's serving set: nothing
+    // of it is retained, and it is not unavailable — it is gone.
+    for (const id of [...this.lastGood.keys()]) if (!refreshed.has(id)) this.lastGood.delete(id);
+    for (const id of [...this.unavailablePeers]) if (!refreshed.has(id)) this.unavailablePeers.delete(id);
+    for (const peer of peers) {
+      const id = peer.machineId;
+      if (peer.outcome === "ok") {
+        const entries = fresh.get(id) ?? [];
+        if (entries.length > 0) this.lastGood.set(id, { at: now, entries });
+        else this.lastGood.delete(id);
+        this.unavailablePeers.delete(id);
+        continue;
+      }
+      const last = this.lastGood.get(id);
+      if (last && refreshRetains(peer) && now - last.at <= this.retentionMs) {
+        // keep what this refresh did not re-confirm; never shadow a fresh entry
+        for (const e of last.entries) if (!this.owners.has(e.id)) this.hold(id, e);
+        out.set(id, { kind: "retained", held: last.entries.length, ageMs: now - last.at });
+      } else if (last) {
+        this.lastGood.delete(id);
+        this.unavailablePeers.add(id);
+        out.set(id, refreshRetains(peer) ? { kind: "expired", dropped: last.entries.length } : { kind: "dropped", dropped: last.entries.length });
+      } else if (this.unavailablePeers.has(id)) {
+        out.set(id, { kind: "unavailable" });
+      }
+    }
+    return out;
   }
 
   /** Bind a just-created session to its owner peer BEFORE the projection catches
@@ -170,6 +290,12 @@ export class SessionOwnerMap {
     return [...new Set(this.owners.values())];
   }
 
+  /** #1774: is this peer NAMED unavailable — its retention window lapsed, or its
+   *  refresh was refused — with no successful refresh since? */
+  isUnavailable(machineId: string): boolean {
+    return this.unavailablePeers.has(machineId);
+  }
+
   /** The number of tracked sessions (for diagnostics). */
   get size(): number {
     return this.owners.size;
@@ -177,6 +303,18 @@ export class SessionOwnerMap {
 }
 
 // ── owner-map feed (#1449, W1b) ──────────────────────────────────────────────
+
+/** #1774: the fan-in driver's per-owner reachability, composed over the owner
+ *  map — an owner-peer the map NAMES unavailable is never an active arm, whatever
+ *  its transport says, so the aggregator closes its arm with the existing named
+ *  unavailable comment instead of dropping it in silence. Both fan-in drivers in
+ *  index.ts are wired with this. */
+export function fanInReachable(
+  ownerMap: SessionOwnerMap,
+  transportUp: (machineId: string) => boolean,
+): (machineId: string) => boolean {
+  return (machineId) => !ownerMap.isUnavailable(machineId) && transportUp(machineId);
+}
 
 /** The live loop that keeps a SessionOwnerMap populated (#1449, W1b, AC1).
  *
@@ -238,7 +376,9 @@ export class OwnerMapFeed {
       return; // last-good map intact — never clear on a transient failure
     }
     if (this.stopped) return; // a stop() raced the in-flight build
-    this.opts.ownerMap.update(projection.sessions ?? []);
+    // #1774: the per-peer outcomes scope the update — a failed peer keeps its
+    // last-good entries for the retention window instead of vanishing.
+    this.opts.ownerMap.update(projection.sessions ?? [], projection.peers);
     for (const peer of projection.peers ?? []) this.log(ownerRefreshLine(peer));
   }
 

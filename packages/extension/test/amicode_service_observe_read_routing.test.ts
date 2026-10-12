@@ -280,6 +280,40 @@ describe("#1537 AC5 — a known-but-unreachable owner answers honestly, never lo
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
+// #1774 AC1 — a refresh in which the owner peer timed out keeps its sessions
+// routed to it: the read is proxied to the peer, never to the local engine.
+// ══════════════════════════════════════════════════════════════════════════════
+describe("#1774 AC1 — a peer-owned read keeps routing to the owner across a failed refresh", () => {
+  it("GET for a session whose owner's last refresh timed out → still the PEER; local NOT dialed", async () => {
+    const ownerMap = new SessionOwnerMap();
+    const studioOwned = { id: "ses-studio", amicode_owner: { owner_machine_id: "studio", owner_name: "studio", is_local: false } };
+    ownerMap.update([studioOwned], [{ machineId: "studio", outcome: "ok" }]);
+    ownerMap.update([], [{ machineId: "studio", outcome: "timeout", reason: "fetch-failed" }]); // the slice is empty
+    const server = new AmicodeServiceServer({ password: PW });
+    server.attachEngineProxy(new EngineProxy({ getUrl: () => localStub.url }));
+    server.attachObservationReadPlane(
+      createObservationReadPlane({
+        ownerMap,
+        localMachineId: "macbook",
+        peer: (id) => (id === "studio" ? { getUrl: () => peerStub.url, token: "tok-studio" } : undefined),
+      }),
+    );
+    const origin = (await server.start()).toString().replace(/\/$/, "");
+    const localBefore = localStub.requests.length;
+    const peerBefore = peerStub.requests.length;
+    try {
+      const res = await fetch(`${origin}/api/session/ses-studio`, { headers: authed });
+      expect(res.status).toBe(200);
+      expect(((await res.json()) as { marker: string }).marker).toBe(peerStub.marker);
+      expect(peerStub.requests.length).toBe(peerBefore + 1);
+      expect(localStub.requests.length).toBe(localBefore);
+    } finally {
+      await server.stop();
+    }
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
 // AC6 — production wiring: createAmicodeService on the OBSERVATION-ONLY path
 // wires the seam (a peer-owned read routes to the peer); the armed path stays
 // unchanged (the seam is never attached there).

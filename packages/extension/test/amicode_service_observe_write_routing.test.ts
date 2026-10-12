@@ -748,6 +748,41 @@ describe("#1542 AC4 — local-owned / unowned writes fall through byte-identical
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
+// #1774 AC1 — a refresh in which the owner peer errored (5xx) keeps its sessions
+// routed to it: the authorized write is proxied to the peer, never run locally.
+// ══════════════════════════════════════════════════════════════════════════════
+describe("#1774 AC1 — a peer-owned write keeps routing to the owner across a failed refresh", () => {
+  it("POST for a session whose owner's last refresh answered 502 → still the PEER; local NOT dialed", async () => {
+    const ownerMap = new SessionOwnerMap();
+    const studioOwned = { id: "ses-studio", amicode_owner: { owner_machine_id: "studio", owner_name: "studio", is_local: false } };
+    ownerMap.update([studioOwned], [{ machineId: "studio", outcome: "ok" }]);
+    ownerMap.update([], [{ machineId: "studio", outcome: "error", reason: "fetch-failed" }]); // HTTP 502: an empty slice
+    const peer = (id: string): PeerTransport | undefined => (id === "studio" ? { getUrl: () => peerStub.url, token: "tok-studio" } : undefined);
+    const server = new AmicodeServiceServer({ password: PW });
+    server.attachEngineProxy(new EngineProxy({ getUrl: () => localStub.url }));
+    server.attachObservationReadPlane(createObservationReadPlane({ ownerMap, localMachineId: "macbook", peer }));
+    server.attachObservationWritePlane(
+      createObservationWritePlane({ ownerMap, localMachineId: "macbook", peer, grantReader: (o) => (o === "studio" ? { scope: "control", state: "active" } : undefined) }),
+    );
+    const origin = (await server.start()).toString().replace(/\/$/, "");
+    const localBefore = localStub.requests.length;
+    const peerBefore = peerStub.requests.length;
+    try {
+      const res = await fetch(`${origin}/api/session/ses-studio/message`, {
+        method: "POST",
+        headers: { ...authed, "content-type": "application/json" },
+        body: JSON.stringify({ text: "hi" }),
+      });
+      expect(((await res.json()) as { marker: string }).marker).toBe(peerStub.marker);
+      expect(peerStub.requests.slice(peerBefore).some((r) => r.method === "POST" && r.path === "/api/session/ses-studio/message")).toBe(true);
+      expect(localStub.requests.length).toBe(localBefore);
+    } finally {
+      await server.stop();
+    }
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
 // Byte-identity when UNATTACHED — a server with NO write plane consults nothing:
 // a POST for a peer-owned session falls through to the local engine (the
 // `if (this.observeWrite)` block is a structural no-op). This is the flag-off /
