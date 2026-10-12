@@ -9,6 +9,7 @@ import { resolveSyntaxTheme } from "./syntax_theme_bridge";
 import { ExternalMutationTransport } from "./external_mutation_transport";
 import type { MutationTrackingContext } from "./external_mutation";
 import { shouldReframe } from "./amicode_service_wiring";
+import type { LaunchTarget } from "./chat_session_launcher";
 
 // ============================================================================
 // ChatPanel — a WebviewPanel that iframes opencode's SolidJS chat at
@@ -44,7 +45,7 @@ export function tabIconPath(ctx: vscode.ExtensionContext): { light: vscode.Uri; 
   };
 }
 
-export class ChatPanel {
+export class ChatPanel implements LaunchTarget {
   private static current?: ChatPanel;
   /** The only panel eligible to attribute a Sidebar mutation. Never primary-by-default. */
   private static lastFocused?: ChatPanel;
@@ -92,6 +93,12 @@ export class ChatPanel {
   private frameOrigin!: URL;
   private frameAuthToken?: string;
   private frameHideProjectDir?: string;
+  /** #1764: true only once THIS panel's app signalled app-ready since the host
+   *  last set its frame html (construction / reframe); false again on dispose.
+   *  The shared chat-session launcher posts immediately only when this is set. */
+  private appReady = false;
+  private readonly appReadySubscribers = new Set<() => void>();
+  private readonly disposeSubscribers = new Set<() => void>();
 
   /** Subscribe to live-panel count changes. Used by the workspace tree to mute the chat button. */
   static onLiveChange(cb: (count: number) => void): void {
@@ -121,9 +128,11 @@ export class ChatPanel {
     hideProjectDir?: string,
     withSplash?: boolean,
   ) {
-    this.panel.webview.html = withSplash
-      ? this.renderTransitionHtml(opencodeUrl, authToken, hideProjectDir)
-      : this.renderHtml(opencodeUrl, authToken, hideProjectDir);
+    this.setFrameHtml(
+      withSplash
+        ? this.renderTransitionHtml(opencodeUrl, authToken, hideProjectDir)
+        : this.renderHtml(opencodeUrl, authToken, hideProjectDir),
+    );
     // #1188: retain the frame origin + render inputs so reframe() can re-point
     // the iframe at the service shelf if this panel came up on the engine fallback.
     this.frameOrigin = opencodeUrl;
@@ -184,6 +193,9 @@ export class ChatPanel {
           // has not registered its message listener yet. app-ready is the
           // first reliable point to deliver the initial VS Code token theme.
           this.postSyntaxTheme();
+          // #1764: per-panel ready state + subscribers (the launcher's queue).
+          this.appReady = true;
+          for (const cb of [...this.appReadySubscribers]) cb();
           const cbs = ChatPanel.appReadyCallbacks.slice();
           ChatPanel.appReadyCallbacks = [];
           for (const cb of cbs) cb();
@@ -420,7 +432,36 @@ export class ChatPanel {
   reframe(newUrl: URL): void {
     if (!shouldReframe(this.frameHref(), newUrl.toString())) return;
     this.frameOrigin = newUrl;
-    this.panel.webview.html = this.renderHtml(newUrl, this.frameAuthToken, this.frameHideProjectDir);
+    this.setFrameHtml(this.renderHtml(newUrl, this.frameAuthToken, this.frameHideProjectDir));
+  }
+
+  /** #1764: every frame set goes through here so the app-ready state resets —
+   *  the new document has not mounted, so a launch must queue, not post. */
+  private setFrameHtml(html: string): void {
+    this.appReady = false;
+    this.panel.webview.html = html;
+  }
+
+  /** #1764: has this panel's app signalled ready since its last frame set? */
+  isAppReady(): boolean {
+    return this.appReady;
+  }
+
+  /** #1764: subscribe to THIS panel's app-ready (fires on every app-ready until
+   *  unsubscribed). Returns the unsubscribe. */
+  subscribeAppReady(cb: () => void): () => void {
+    this.appReadySubscribers.add(cb);
+    return () => {
+      this.appReadySubscribers.delete(cb);
+    };
+  }
+
+  /** #1764: subscribe to THIS panel's dispose. Returns the unsubscribe. */
+  subscribeDispose(cb: () => void): () => void {
+    this.disposeSubscribers.add(cb);
+    return () => {
+      this.disposeSubscribers.delete(cb);
+    };
   }
 
   /** DOWN lane for the bug-report dock (amicode#250): open-bug-report /
@@ -801,6 +842,10 @@ export class ChatPanel {
   }
 
   dispose(): void {
+    this.appReady = false;
+    this.appReadySubscribers.clear();
+    const goneCbs = [...this.disposeSubscribers];
+    this.disposeSubscribers.clear();
     for (const d of this.disposables) {
       try {
         d.dispose();
@@ -811,6 +856,11 @@ export class ChatPanel {
     ChatPanel.onLiveChangeCallback?.(ChatPanel.live.size);
     if (ChatPanel.current === this) ChatPanel.current = undefined;
     if (ChatPanel.lastFocused === this) ChatPanel.lastFocused = undefined;
+    for (const cb of goneCbs) {
+      try {
+        cb();
+      } catch {}
+    }
   }
 
   /** Close the current singleton chat panel (if one exists). Used by redo-onboarding
