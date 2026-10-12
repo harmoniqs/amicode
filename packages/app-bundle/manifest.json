@@ -393,7 +393,7 @@
     "packages/opencode/test/server/httpapi-compression.test.ts": "5f7603d7018e0b95f1c2f36c01dd297c01770bfcdd91ce29778e03b7d6143f75",
     "packages/opencode/test/server/httpapi-file-write-gate.test.ts": "0c91b7417e615850edfde3f2878207dab6b6624d4cfbb6e6783b2e6d9aa4dff0",
     "packages/opencode/test/server/httpapi-file.test.ts": "d3386129bc81467ecbcc57a3861f53767ee56ac41b4ff6ad58d8b168fb3b3373",
-    "packages/opencode/test/server/httpapi-global-event.test.ts": "357e374d73bfb167869f19cbdd1090d171b0e7ef4e51071247428aaa03c6f7a2",
+    "packages/opencode/test/server/httpapi-global-event.test.ts": "f7c80f685ea285d7c034baeb3aff3500711bf3605a261bb5ac95900c4200447c",
     "packages/opencode/test/server/httpapi-instance-route-auth.test.ts": "4b73a89d2431c02bc3b665d93f9002914e51eb1add979dc1867efbcbc0c36e25",
     "packages/opencode/test/server/httpapi-provider.test.ts": "9e8b3e085b478e3f99b689ffff600e10c0b4b50b3cabdbd749f88dae19bf5904",
     "packages/opencode/test/server/httpapi-session.test.ts": "eda6fd763ac4c17891cedaa4ccd49597c03e7227fcfdcf0f94a1b4545ba623ed",
@@ -947,7 +947,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-12T20:42:42.315Z",
+  "extracted_at": "2026-10-12T21:17:20.369Z",
   "per_package": {
     "packages/app": {
       "A": 237,

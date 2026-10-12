@@ -5,6 +5,7 @@
 // (exact headers, real aborts) against the in-process server, which runs on the
 // same Bun node:http shim as the compiled binary.
 import { NodeHttpServer } from "@effect/platform-node"
+import Http from "node:http"
 import { describe, expect } from "bun:test"
 import { Clock, Context, Effect, Fiber, Layer, Logger, Option, Queue, References, Scope } from "effect"
 import * as TestClock from "effect/testing/TestClock"
@@ -36,7 +37,11 @@ const apiLayer = HttpRouter.serve(
   ),
   { disableListenLog: true, disableLogger: true },
 ).pipe(
-  Layer.provideMerge(NodeHttpServer.layerTest),
+  // Bound to 127.0.0.1 — the address the raw fetch client dials — not
+  // `NodeHttpServer.layerTest`'s wildcard. The kernel only skips ephemeral ports
+  // already bound on the SAME address, so a wildcard bind can share its port
+  // with another process's 127.0.0.1 listener, which then answers our requests.
+  Layer.provideMerge(NodeHttpServer.layer(Http.createServer, { host: "127.0.0.1", port: 0 })),
   Layer.provide(Layer.mock(Auth.Service)({})),
   Layer.provide(Layer.mock(Config.Service)({})),
   Layer.provide(Layer.mock(MoveSession.Service)({})),
@@ -89,40 +94,18 @@ function parseFrame(block: string): Frame {
   return frame
 }
 
-// The test server starts accepting connections a moment before its request
-// handler is attached (the router is served from a forked fiber); a request in
-// that window gets an empty 200 instead of a route. Wait until the server
-// answers a real route — polled in real time, so TestClock cannot stall it.
-const ready = new Set<number>()
-const awaitReady = (port: number) =>
-  Effect.promise(async () => {
-    if (ready.has(port)) return
-    for (let attempt = 0; attempt < 200; attempt++) {
-      const response = await fetch(`http://127.0.0.1:${port}${GlobalPaths.health}`).catch(() => undefined)
-      const json = response?.headers.get("content-type")?.includes("application/json")
-      await response?.body?.cancel()
-      if (response?.status === 200 && json) {
-        ready.add(port)
-        return
-      }
-      await new Promise((resolve) => setTimeout(resolve, 10))
-    }
-    throw new Error(`test server on ${port} never became ready`)
-  })
-
 /** Open a raw SSE connection to the in-process server's global stream. */
 const connect = (input: { headers?: Record<string, string>; query?: string } = {}) =>
   Effect.gen(function* () {
-    const server = yield* HttpServer.HttpServer
-    const address = server.address
-    if (address._tag !== "TcpAddress") throw new Error("expected a TCP test server")
-    yield* awaitReady(address.port)
+    // The router is attached while the layer builds, so the server routes from
+    // the first request; dial exactly the address it is bound to.
+    const url = HttpServer.formatAddress((yield* HttpServer.HttpServer).address)
     const frames = yield* Queue.unbounded<Frame>()
     const seen: string[] = []
     let ended = ""
     const controller = new AbortController()
     const response = yield* Effect.promise(() =>
-      fetch(`http://127.0.0.1:${address.port}${GlobalPaths.event}${input.query ?? ""}`, {
+      fetch(`${url}${GlobalPaths.event}${input.query ?? ""}`, {
         headers: { accept: "text/event-stream", ...input.headers },
         signal: controller.signal,
       }),
