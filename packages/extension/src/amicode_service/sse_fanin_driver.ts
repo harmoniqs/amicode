@@ -167,7 +167,10 @@ export function openHttpSseSource(r: FanInUpstreamRequest): SseFrameSource {
  *  aggregator on this response, the open upstream sources keyed by namespace,
  *  and this connection's own reconcile timer. Closing it closes only its arms.
  *  #1771: it is also the census's view of this listener — per-arm opens and
- *  closes-by-reason live here, traffic/pending/drops/gaps in the aggregator. */
+ *  closes-by-reason live here, traffic/pending/drops/gaps in the aggregator.
+ *  #1773: it never ends its listener silently — every close except a graceful
+ *  service shutdown is an ERROR close (the listener sees a transport error and
+ *  resyncs), and a fleet-of-one local-arm loss severs the listener that way. */
 class FanInConnection implements CensusConnection {
   private readonly agg: SseFanInAggregator;
   private readonly sources = new Map<string, SseFrameSource>();
@@ -178,6 +181,9 @@ class FanInConnection implements CensusConnection {
   private closed = false;
   /** #1771 — per arm: how often it opened, and why it closed. */
   private readonly armLife = new Map<string, { opens: number; closes: Record<FanInCloseReason, number> }>();
+  /** #1773 — per arm: the reason of its most recent close (a severed
+   *  listener's close is named after the loss that caused it). */
+  private readonly lastClose = new Map<string, FanInCloseReason>();
   /** #1771 — sources THIS connection closed (their reason is already recorded;
    *  the pump's exit must not re-count them as an upstream end). */
   private readonly closedByUs = new WeakSet<SseFrameSource>();
@@ -188,6 +194,8 @@ class FanInConnection implements CensusConnection {
     private readonly census: FanInCensus,
     private readonly req: http.IncomingMessage,
     private readonly res: http.ServerResponse,
+    /** Invoked exactly once, when this connection closes (for any reason). */
+    private readonly onClosed: (reason: FanInCloseReason) => void,
   ) {
     this.open = deps.openUpstream ?? openHttpSseSource;
     const a = req.headers.authorization;
@@ -240,6 +248,7 @@ class FanInConnection implements CensusConnection {
   /** #1771 — record (and log) an arm's close, once. */
   private noteArmClosed(namespace: string, reason: FanInCloseReason): void {
     this.lifeOf(namespace).closes[reason] += 1;
+    this.lastClose.set(namespace, reason);
     this.census.armClosed(this.id, namespace, reason);
   }
 
@@ -376,13 +385,20 @@ class FanInConnection implements CensusConnection {
   /** #1638 — re-open an arm from the aggregator's LIVE last-delivered cursor (not
    *  the stale connect-time id) and, on a NON-INITIAL re-open, force a client
    *  refetch via the aggregator's composite-mode gap. `agg.reopenArm` is a no-op
-   *  for an arm that has never delivered (an initial open) and in fleet-of-one
-   *  (where a synthetic frame would break the #1264 byte-identity guard), so it
-   *  is safe to call at every reconcile-time open. Falls back to the connect-time
-   *  resume id when the arm has delivered nothing yet. */
+   *  for an arm that has never delivered (an initial open), so it is safe to call
+   *  at every reconcile-time open. Falls back to the connect-time resume id when
+   *  the arm has delivered nothing yet.
+   *
+   *  #1773 — in fleet-of-one the verdict for an arm that delivered is `sever`: a
+   *  synthetic gap frame may not enter the verbatim stream (#1264), so instead of
+   *  re-opening silently (losing the stretch unannounced) the listener is ended
+   *  with a transport error, named after the loss that caused it. */
   private reopenAndTrack(namespace: string, url: string | undefined, authHeader: string | undefined): void {
     if (this.sources.has(namespace)) return;
-    this.agg.reopenArm(namespace);
+    if (this.agg.reopenArm(namespace) === "sever") {
+      this.close(this.lastClose.get(namespace) ?? "upstream-end");
+      return;
+    }
     const lastEventId = this.agg.cursorFor(namespace) ?? this.resume.get(namespace);
     this.openArm(namespace, url, authHeader, lastEventId);
   }
@@ -443,6 +459,11 @@ class FanInConnection implements CensusConnection {
     this.sources.delete(namespace);
   }
 
+  /** Close this listener's connection: stop its reconcile, close its arms, and
+   *  end its response. #1773 — only a graceful service SHUTDOWN ends the stream
+   *  cleanly; every other reason ERRORS it (`res.destroy(err)`), so the listener
+   *  — or the relay in front of it — sees a transport error, never a clean end
+   *  that reads as "nothing was lost". Idempotent: the first reason wins. */
   close(reason: FanInCloseReason = "listener-closed"): void {
     if (this.closed) return;
     this.closed = true;
@@ -453,10 +474,12 @@ class FanInConnection implements CensusConnection {
     for (const [namespace, s] of this.sources) this.closeSource(namespace, s, reason);
     this.sources.clear();
     try {
-      this.res.end();
+      if (reason === "shutdown") this.res.end();
+      else this.res.destroy(new Error(`amicode fan-in: listener stream closed (${reason}); resync required`));
     } catch {
       /* already torn down */
     }
+    this.onClosed(reason);
   }
 }
 
@@ -516,20 +539,20 @@ export class SseFanInDriver implements EventFanInDriver {
     }
     // #1565: always accept on the observation path. Zero non-local owners starts
     // in fleet-of-one mode (the aggregator's §D4 byte-identity relay); reconcile
-    // opens peer arms as the OwnerMapFeed discovers them.
-    const conn = new FanInConnection(`c${++this.nextConnection}`, this.deps, this.census, req, res);
+    // opens peer arms as the OwnerMapFeed discovers them. #1773: a connection
+    // can also close ITSELF (a fleet-of-one local-arm loss severs the listener);
+    // either way it leaves the live set and the census once, under its reason.
+    const conn: FanInConnection = new FanInConnection(`c${++this.nextConnection}`, this.deps, this.census, req, res, (reason) => {
+      this.connections.delete(conn);
+      this.census.listenerClosed(conn.id, reason);
+    });
     this.connections.add(conn);
     this.census.listenerAccepted(conn);
     conn.start();
     // A departing listener closes ONLY its own connection (and so only its own
     // upstream arms); every other listener keeps streaming. #1771: a close the
     // service's own teardown caused is attributed to `shutdown`.
-    res.on("close", () => {
-      this.connections.delete(conn);
-      const reason: FanInCloseReason = this.shuttingDown ? "shutdown" : "listener-closed";
-      conn.close(reason);
-      this.census.listenerClosed(conn.id, reason);
-    });
+    res.on("close", () => conn.close(this.shuttingDown ? "shutdown" : "listener-closed"));
     return true;
   }
 

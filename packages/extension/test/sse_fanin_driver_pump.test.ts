@@ -36,24 +36,28 @@ const peerEvt = (seq: number, properties: Record<string, unknown>, type?: string
 const localId = (seq: number) => engineId(LOCAL_EPOCH, seq);
 const peerId = (seq: number) => engineId(PEER_EPOCH, seq);
 
-/** A controllable frame source: push frames into it, end it on demand. */
+/** A controllable frame source: push frames into it, end it on demand. #1773:
+ *  `end("error")` models an upstream that FAILED (the real reader's
+ *  `endReason()`); a bare `end()` is a clean upstream end. */
 interface Ctl {
   push(frame: string): void;
-  end(): void;
+  end(why?: "end" | "error"): void;
   source: SseFrameSource;
 }
 function controllableSource(): Ctl {
   const queue: string[] = [];
   const waiters: Array<(v: string | null) => void> = [];
   let ended = false;
+  let reason: "end" | "error" | undefined;
   const push = (f: string): void => {
     const w = waiters.shift();
     if (w) w(f);
     else queue.push(f);
   };
-  const end = (): void => {
+  const end = (why: "end" | "error" = "end"): void => {
     if (ended) return;
     ended = true;
+    reason = why;
     let w: ((v: string | null) => void) | undefined;
     while ((w = waiters.shift())) w(null);
   };
@@ -70,17 +74,23 @@ function controllableSource(): Ctl {
       close(): void {
         end();
       },
+      endReason: () => reason,
     },
   };
 }
 
 /** A mock ServerResponse that collects writes. #1772 — also records whether the
  *  response was ENDED (an evicted listener is ended by the driver) and the
- *  status/headers/body of a non-stream answer (the beyond-cap refusal). */
+ *  status/headers/body of a non-stream answer (the beyond-cap refusal). #1773 —
+ *  and whether it was DESTROYED (an error close: the listener sees a transport
+ *  error, not a clean end), with the error; like a real socket teardown, a
+ *  destroy fires the response's `close` listeners. */
 type MockRes = http.ServerResponse & {
   text(): string;
   fireClose(): void;
   ended: boolean;
+  destroyed: boolean;
+  destroyError?: Error;
   status?: number;
   headerMap: Record<string, string>;
   body: string;
@@ -91,6 +101,8 @@ function mockRes(): MockRes {
   const res = {
     headersSent: false,
     ended: false,
+    destroyed: false,
+    destroyError: undefined as Error | undefined,
     status: undefined as number | undefined,
     headerMap: {} as Record<string, string>,
     body: "",
@@ -122,6 +134,13 @@ function mockRes(): MockRes {
     end(chunk?: string) {
       if (typeof chunk === "string") res.body += chunk;
       res.ended = true;
+    },
+    destroy(err?: Error) {
+      if (res.destroyed) return res;
+      res.destroyed = true;
+      res.destroyError = err;
+      for (const cb of closeListeners) cb();
+      return res;
     },
     text() {
       return chunks.join("");
@@ -760,11 +779,14 @@ describe("#1638 — re-open resumes from last-delivered id + composite-mode reco
     res.fireClose()
   })
 
-  it("FLEET-OF-ONE (zero peers): a re-opened LOCAL arm emits NO gap and stays byte-identical (#1264)", async () => {
+  // #1773 AC2 supersedes #1638's "the solo-mode arm re-opens silently": a silent
+  // re-open loses the stretch between the arm's end and its re-subscription with
+  // nothing to announce it. The #1264 guards stay: no synthetic frame, and the
+  // stream is byte-identical to what the local source delivered while connected.
+  it("FLEET-OF-ONE (zero peers): a re-opened LOCAL arm emits NO gap, stays byte-identical (#1264), and severs the listener (#1773)", async () => {
     const ownerMap = new SessionOwnerMap() // no owners → fleet-of-one
 
     const L1 = localEvt(1, { from: "macbook", n: 1 })
-    const L2 = localEvt(2, { from: "macbook", n: 2 })
 
     const localCtls: Ctl[] = []
 
@@ -793,20 +815,22 @@ describe("#1638 — re-open resumes from last-delivered id + composite-mode reco
     await tick()
     driver.reconcile()
     await tick()
-    // the re-opened arm delivers another frame
-    localCtls[localCtls.length - 1].push(L2)
-    await tick()
 
-    // NO synthetic frame anywhere; the verbatim stream is exactly the two frames.
+    // NO synthetic frame anywhere; the verbatim stream is exactly what was delivered.
     expect(res.text()).not.toContain("amicode.sync.gap")
     expect(res.text()).not.toContain("local\u001f")
-    expect(res.text()).toBe(L1 + L2) // byte-identical, in order
+    expect(res.text()).toBe(L1) // byte-identical
+    // the loss is announced by severing: a transport error, not a clean end
+    expect(res.destroyed).toBe(true)
+    expect(res.destroyError).toBeInstanceOf(Error)
+    expect(res.ended).toBe(false)
+    expect(localCtls).toHaveLength(1) // and the severed listener opens nothing more
 
     localCtls.forEach((c) => c.end())
     res.fireClose()
   })
 
-  it("a re-opened LOCAL arm in fleet-of-one resumes from the last-delivered id too", async () => {
+  it("fleet-of-one cursor bookkeeping: a never-delivered arm re-opens from the connect cursor; a severed listener's reconnect resumes from the last-delivered id", async () => {
     const ownerMap = new SessionOwnerMap()
 
     const L1 = localEvt(1, { from: "macbook", n: 1 })
@@ -834,18 +858,202 @@ describe("#1638 — re-open resumes from last-delivered id + composite-mode reco
     await tick()
     expect(opened[0].lastEventId).toBe(localId(0)) // initial: connect cursor
 
-    localCtls[0].push(L1)
-    await tick()
-    localCtls[0].end()
+    // the arm fails before delivering anything: nothing was lost → a plain re-open,
+    // still resumed from the connect-time cursor (the #1638 fallback)
+    localCtls[0].end("error")
     await tick()
     driver.reconcile()
     await tick()
+    expect(opened).toHaveLength(2)
+    expect(opened[1].lastEventId).toBe(localId(0))
+    expect(res.destroyed).toBe(false)
 
-    const localOpens = opened.filter((o) => o.namespace === LOCAL_NAMESPACE)
-    expect(localOpens[1].lastEventId).toBe(localId(1)) // re-open resumes from last-delivered
+    // the re-opened arm delivers, then drops → the listener is severed
+    localCtls[1].push(L1)
+    await tick()
+    localCtls[1].end()
+    await tick()
+    driver.reconcile()
+    await tick()
+    expect(res.destroyed).toBe(true)
+    expect(opened).toHaveLength(2)
+
+    // the client's cursor is the last SSE id it saw on the verbatim stream …
+    const lastSeen = [...res.text().matchAll(/^id: (.*)$/gm)].at(-1)?.[1]
+    expect(lastSeen).toBe(localId(1))
+    // … and its reconnect resumes the local arm from exactly that id
+    const again = mockRes()
+    driver.handle(mockReq(`/event?lastEventID=${lastSeen}`), again)
+    await tick()
+    expect(opened[2].lastEventId).toBe(localId(1)) // last-delivered, not the stale connect id
 
     localCtls.forEach((c) => c.end())
+    again.fireClose()
+  })
+})
+
+// ══════════════════════════════════════════════════════════════════════════════
+// #1773 AC2 — FLEET-OF-ONE loss is signalled by SEVERING, never by a frame. A
+// synthetic gap frame may not enter the solo pass-through stream (#1264), so a
+// re-opened local arm (one that delivered data) ends the listener's stream with a
+// transport error: the client registers the disconnect and resyncs. While
+// connected, the stream stays byte-identical to the local source. Engine-shaped
+// fixtures in both modes (legacy id-less, sequenced).
+// ══════════════════════════════════════════════════════════════════════════════
+describe("#1773 AC2 — fleet-of-one: a re-opened local arm severs the listener with a transport error", () => {
+  for (const mode of ["legacy", "sequenced"] as const) {
+    for (const why of ["end", "error"] as const) {
+      it(`${mode} engine, upstream ${why}: no synthetic frame, byte-identical while connected, then an error close named ${why === "end" ? "upstream-end" : "upstream-error"}`, async () => {
+        const { census, lines } = testCensus()
+        const localCtls: Ctl[] = []
+        const driver = twoListenerDriver(fakeOrigins(), new SessionOwnerMap(), {
+          census,
+          openUpstream: () => {
+            const ctl = controllableSource()
+            localCtls.push(ctl)
+            return ctl.source
+          },
+        })
+        const engine = mode === "legacy" ? fakeEngine({ legacy: true }) : fakeEngine({ epoch: LOCAL_EPOCH })
+        const res = mockRes()
+        driver.handle(mockReq("/global/event"), res)
+        const frames = [
+          engine.connected(),
+          engine.event("session.status", { sessionID: "ses_1", status: { type: "busy" } }),
+          ...engine.stored("message.part.updated", { part: { id: "prt_1", text: "ciao" } }, { aggregateID: "ses_1" }),
+          engine.heartbeat(),
+        ]
+        for (const f of frames) localCtls[0].push(f)
+        await flush()
+        expect(res.text()).toBe(frames.join("")) // connected: byte-identical (#1264)
+
+        localCtls[0].end(why) // the local upstream is lost …
+        await flush()
+        expect(res.destroyed).toBe(false) // … nothing is decided until the re-open
+        driver.reconcile() // the re-open: sever, never re-open silently
+        await flush()
+
+        expect(res.text()).toBe(frames.join("")) // no synthetic frame was injected
+        expect(res.destroyed).toBe(true)
+        expect(res.destroyError).toBeInstanceOf(Error)
+        expect(res.ended).toBe(false) // an error close, never a clean end
+        expect(localCtls).toHaveLength(1) // the severed listener re-opened nothing
+
+        // the census names the listener's close by its cause (#1771's set)
+        const reason = why === "end" ? "upstream-end" : "upstream-error"
+        expect(lines).toContain(`[fanin] arm-closed plane=observe conn=c1 arm=local reason=${reason}`)
+        expect(lines).toContain(`[fanin] listener-closed plane=observe conn=c1 reason=${reason} listeners=0`)
+        expect(census.snapshot()).toMatchObject({ listeners: 0, accepted: 1, closed: 1, evictions: 0 })
+      })
+    }
+  }
+
+  it("a local arm that never delivered a data frame re-opens normally — no sever (nothing was lost)", async () => {
+    const localCtls: Ctl[] = []
+    const driver = twoListenerDriver(fakeOrigins(), new SessionOwnerMap(), {
+      openUpstream: () => {
+        const ctl = controllableSource()
+        localCtls.push(ctl)
+        return ctl.source
+      },
+    })
+    const res = mockRes()
+    driver.handle(mockReq("/global/event"), res)
+    localCtls[0].push(": keep-alive\n\n") // a comment is not data
+    await flush()
+    localCtls[0].end("error")
+    await flush()
+    driver.reconcile()
+    await flush()
+    expect(res.destroyed).toBe(false)
+    expect(localCtls).toHaveLength(2)
+    const f = fakeEngine({ legacy: true }).connected()
+    localCtls[1].push(f)
+    await flush()
+    expect(res.text()).toBe(": keep-alive\n\n" + f)
+    localCtls.forEach((c) => c.end())
     res.fireClose()
+  })
+
+  it("severing one listener leaves another listener's stream untouched", async () => {
+    const localCtls: Ctl[] = []
+    const driver = twoListenerDriver(fakeOrigins(), new SessionOwnerMap(), {
+      openUpstream: () => {
+        const ctl = controllableSource()
+        localCtls.push(ctl)
+        return ctl.source
+      },
+    })
+    const engine = fakeEngine({ legacy: true })
+    const resA = mockRes()
+    const resB = mockRes()
+    driver.handle(mockReq("/global/event"), resA) // localCtls[0]
+    driver.handle(mockReq("/global/event"), resB) // localCtls[1]
+    const c = engine.connected()
+    localCtls[0].push(c)
+    localCtls[1].push(c)
+    await flush()
+    localCtls[0].end() // only A's upstream is lost
+    await flush()
+    driver.reconcile()
+    await flush()
+    expect(resA.destroyed).toBe(true)
+    expect(resB.destroyed).toBe(false)
+    const h = engine.heartbeat()
+    localCtls[1].push(h)
+    await flush()
+    expect(resB.text()).toBe(c + h)
+    localCtls.forEach((x) => x.end())
+    resB.fireClose()
+  })
+
+  it("over REAL sockets: the listener's response errors (no clean end) after exactly the frames the local engine sent", async () => {
+    const engine = fakeEngine({ legacy: true }) // an old engine: id-less frames
+    const sent = [engine.connected(), engine.event("session.status", { sessionID: "ses_1", status: { type: "idle" } })]
+    const upstream = await startEngineSseServer((res) => {
+      for (const f of sent) res.write(f)
+      setImmediate(() => res.end()) // the local engine ends its stream (a restart)
+    })
+    const lines: string[] = []
+    const w = lineWaiter(lines)
+    const driver = new SseFanInDriver({
+      ownerMap: new SessionOwnerMap(),
+      localMachineId: "macbook",
+      localEventUrl: () => upstream.url,
+      peerBaseUrl: () => undefined,
+      peerToken: () => ({ ok: false as const, reason: "absent" as const }),
+      reconcileMs: 999_999,
+      census: new FanInCensus({ plane: "observe", sink: w.sink }),
+    })
+    const front = http.createServer((req, res) => void driver.handle(req, res))
+    await new Promise<void>((r) => front.listen(0, "127.0.0.1", r))
+    const { port } = front.address() as import("node:net").AddressInfo
+    try {
+      let body = ""
+      let haveAll: () => void = () => undefined
+      const received = new Promise<void>((r) => (haveAll = r))
+      const outcome = new Promise<"end" | "error">((resolve) => {
+        http.get(`http://127.0.0.1:${port}/global/event`, (res) => {
+          res.setEncoding("utf8")
+          res.on("data", (c: string) => {
+            body += c
+            if (body === sent.join("")) haveAll()
+          })
+          res.on("end", () => resolve("end"))
+          res.on("error", () => resolve("error"))
+        })
+      })
+      await w.waitFor((l) => l.includes("arm=local reason=upstream-end"))
+      await received // the listener holds every frame (production's reconcile is a later timer tick)
+      driver.reconcile() // the re-open → sever
+      expect(await outcome).toBe("error") // a transport error, never a clean end of stream
+      expect(body).toBe(sent.join("")) // byte-identical while connected, nothing injected
+      expect(await w.waitFor((l) => l.startsWith("[fanin] listener-closed"))).toContain("reason=upstream-end")
+    } finally {
+      front.closeAllConnections?.()
+      await new Promise<void>((r) => front.close(() => r()))
+      await upstream.stop()
+    }
   })
 })
 
@@ -1718,12 +1926,17 @@ describe("#1771 AC5 — the census adds no frames to any stream and changes no d
       vi.advanceTimersByTime(FANIN_CENSUS_INTERVAL_MS); // a census line mid-stream
       localCtls[0].end(); // the arm drops …
       await flush();
-      driver.reconcile(); // … and re-opens (no gap in fleet-of-one)
+      driver.reconcile(); // … and the re-open severs the listener (#1773 — no gap frame in fleet-of-one)
+      expect(res.text()).toBe(first.join(""));
+      expect(res.destroyed).toBe(true);
+      // the client reconnects; the stream resumes on the new listener
+      const again = mockRes();
+      driver.handle(mockReq("/global/event"), again);
       const second = [engine.heartbeat(), engine.event("session.status", { status: "idle" })];
       for (const f of second) localCtls[1].push(f);
       await flush();
-      expect(res.text()).toBe([...first, ...second].join(""));
-      res.fireClose();
+      expect(again.text()).toBe(second.join(""));
+      again.fireClose();
     }
     expect(lines.some((l) => l.startsWith("[fanin] census "))).toBe(true);
     expect(lines.some((l) => l.includes("arm-closed"))).toBe(true);
