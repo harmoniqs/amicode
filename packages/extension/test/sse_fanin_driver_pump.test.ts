@@ -1098,3 +1098,71 @@ describe("#1772 AC4 — a listener beyond the cap is refused (retryable), never 
     for (const res of [...accepted, retry]) res.fireClose();
   });
 });
+
+/** #1772 — a VIEW that behaves like the app's stream loop: when the driver ENDS
+ *  its stream (an eviction is a clean end), the socket closes and the view
+ *  reconnects after `delayMs` (the client's reconnect delay, shortened). Two
+ *  such views against an evicting driver re-open against each other forever —
+ *  the Studio's ~340-reconnects-in-15-minutes storm. */
+function reconnectingView(driver: SseFanInDriver, delayMs = 5): { connects(): number; current(): MockRes; stop(): void } {
+  let stopped = false;
+  let connects = 0;
+  let current!: MockRes;
+  const connect = (): void => {
+    if (stopped) return;
+    connects += 1;
+    const res = mockRes();
+    const end = res.end.bind(res);
+    res.end = ((chunk?: string) => {
+      end(chunk);
+      setTimeout(() => {
+        res.fireClose();
+        connect();
+      }, delayMs);
+    }) as typeof res.end;
+    current = res;
+    driver.handle(mockReq("/global/event"), res);
+  };
+  connect();
+  return {
+    connects: () => connects,
+    current: () => current,
+    stop() {
+      stopped = true;
+      current.fireClose();
+    },
+  };
+}
+
+describe("#1772 AC5 — two listeners: one local arm each, kept open — no repeating re-open pattern", () => {
+  it("two reconnecting views over many live reconcile ticks: 2 local arms opened, 0 closed, 0 view reconnects", async () => {
+    const ownerMap = new SessionOwnerMap();
+    ownerMap.update(STUDIO_OWNED);
+    const origins = fakeOrigins();
+    const driver = twoListenerDriver(origins, ownerMap, { reconcileMs: 10 });
+
+    const viewA = reconnectingView(driver);
+    await tick();
+    const viewB = reconnectingView(driver);
+    await tick(250); // ~25 reconcile ticks per connection
+
+    try {
+      expect(viewA.connects()).toBe(1);
+      expect(viewB.connects()).toBe(1);
+      expect(origins.opens(LOCAL_NAMESPACE)).toBe(2); // one local arm per listener
+      expect(origins.closes(LOCAL_NAMESPACE)).toBe(0); // …and each is kept open
+      expect(origins.live(LOCAL_NAMESPACE)).toBe(2);
+      expect(origins.opens("studio")).toBe(2);
+      expect(origins.closes("studio")).toBe(0);
+
+      // Both views are live on those same arms.
+      origins.broadcast(LOCAL_NAMESPACE, sseFrame("event: message", 'data: {"n":"steady"}', "id: l1"));
+      await tick();
+      expect(viewA.current().text()).toContain('"n":"steady"');
+      expect(viewB.current().text()).toContain('"n":"steady"');
+    } finally {
+      viewA.stop();
+      viewB.stop();
+    }
+  });
+});
