@@ -921,3 +921,55 @@ describe("#1772 AC1 — two concurrent listeners both stay connected and both re
     resB.fireClose();
   });
 });
+
+describe("#1772 AC2 — closing one listener closes ONLY that listener's upstream arms", () => {
+  it("A departs → exactly A's local + peer arms close; B keeps its arms and keeps streaming, uninterrupted", async () => {
+    const ownerMap = new SessionOwnerMap();
+    ownerMap.update(STUDIO_OWNED);
+    const origins = fakeOrigins();
+    const driver = twoListenerDriver(origins, ownerMap);
+
+    const resA = mockRes();
+    const resB = mockRes();
+    driver.handle(mockReq("/global/event"), resA);
+    await tick();
+    driver.handle(mockReq("/global/event"), resB);
+    await tick();
+    // Both listeners hold their own local + peer arm.
+    expect(origins.live(LOCAL_NAMESPACE)).toBe(2);
+    expect(origins.live("studio")).toBe(2);
+
+    origins.broadcast(LOCAL_NAMESPACE, sseFrame("event: message", 'data: {"n":"before"}', "id: l1"));
+    await tick();
+
+    // Listener A departs (its socket closes).
+    resA.fireClose();
+    await tick();
+
+    // Exactly A's two arms closed; B's two arms untouched.
+    expect(origins.closes(LOCAL_NAMESPACE)).toBe(1);
+    expect(origins.closes("studio")).toBe(1);
+    expect(origins.live(LOCAL_NAMESPACE)).toBe(1);
+    expect(origins.live("studio")).toBe(1);
+
+    // B keeps streaming on the SAME arms (no re-open), from both origins.
+    driver.reconcile();
+    await tick();
+    origins.broadcast(LOCAL_NAMESPACE, sseFrame("event: message", 'data: {"n":"after-local"}', "id: l2"));
+    origins.broadcast("studio", sseFrame("event: message", 'data: {"n":"after-peer"}', "id: p2"));
+    await tick();
+    expect(resB.ended).toBe(false);
+    expect(resB.text()).toContain('"n":"before"');
+    expect(resB.text()).toContain('"n":"after-local"');
+    expect(resB.text()).toContain('"n":"after-peer"');
+    expect(origins.opens(LOCAL_NAMESPACE)).toBe(2); // one per listener, never re-opened
+    expect(origins.opens("studio")).toBe(2);
+    // The departed listener receives nothing further.
+    expect(resA.text()).not.toContain('"n":"after-local"');
+
+    resB.fireClose();
+    await tick();
+    expect(origins.live(LOCAL_NAMESPACE)).toBe(0);
+    expect(origins.live("studio")).toBe(0);
+  });
+});
