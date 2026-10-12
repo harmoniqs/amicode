@@ -27,7 +27,7 @@ what you say:
 | hub / server / canonical | "home base" — the machine that hosts your work |
 | enroll / join token | "link this machine in" |
 | client | "a window onto home base" |
-| standalone + advertise `serving` (peer) | "its own studio you can hop to" |
+| standalone + advertise `serving` (peer) | "its own studio, with fleet sessions and prompts syncing between machines" |
 | verify-attach / roster health | "check the link actually works" |
 | transport (ssh / tailscale) | "how the machines reach each other" |
 
@@ -57,18 +57,15 @@ first"). Do not try to stand up home base here.
 
 Frame the topology choice as an outcome, never with the words "hub" or "peer":
 
-> **"When this machine is away from home base (or home base is off), what should happen?"**
-> - **"It's my window into home base — I mostly work off the other machine"** → a
->   window onto home base (recommended, and the fully-wired path: your sessions
->   follow you, this machine shows the same work).
-> - **"It should fully work on its own, and I'll hop between the two"** → its own
->   studio.
+> **"Should this machine run its own studio, or depend on one host?"**
+> - **"Run its own studio, and keep fleet sessions in sync"** (recommended) → peer
+>   studio. Each machine has its own engine; session activity and prompts sync
+>   between them in near real time.
+> - **"Use one host for all my work"** → a window onto home base. The other machine
+>   depends on that host being reachable.
 
-If they choose "its own studio," add the honest caveat immediately: *"You can set
-that up today and hop between them — but running a live chat directly on the other
-machine's engine is still landing, so the smoothest 'both machines as one' is
-keeping one as home base. Want the window setup instead, or the independent one
-with that caveat?"* Then honor their choice.
+Honor their choice. Do not describe peer studios as simply hopping between isolated
+histories: session activity and prompts sync between peer machines.
 
 ## Step 3 — pick the one machine
 
@@ -80,10 +77,15 @@ you like").
 
 ## Step 4 — readiness: can the two machines already reach each other?
 
-Ask the plain question first, before anything is changed:
+First choose the connection method in Step 5. SSH is not a prerequisite when the
+machines will connect over Tailscale. For Tailscale, check both devices are signed
+in and online, and that MagicDNS resolves. If it is not set up, direct the user to
+[Tailscale's install guide](https://tailscale.com/kb/1017/install) and resume when
+they are ready. Do not ask for router port-forwarding.
 
-> **"Have you ever connected to this machine over SSH from here? (If you've `ssh`'d
-> into it before, yes.)"**
+For SSH, ask the plain question first, before anything is changed:
+
+> **"Have you ever connected to this machine over SSH from here? (If you've `ssh`'d into it before, yes.)"**
 
 Then **probe silently** and only surface a prerequisite if it actually fails:
 
@@ -101,20 +103,20 @@ pipeline:
   I'll retry." (Behind the scenes: enable the service, append this machine's public
   key to the target's `~/.ssh/authorized_keys`, add a `Host <alias>` block to
   `~/.ssh/config`.)
-- **No SSH alias** → the enroll step requires one; add the `Host <alias>` block
-  before proceeding (the link install refuses without it).
+- **No SSH alias** → add the `Host <alias>` block only if SSH is the chosen
+  connection method.
 
 ## Step 5 — how the machines connect (transport), by OS
 
-Default is **SSH** — the universal floor, works everywhere. Choose **Tailscale**
-only when the machine roams between networks *and* Tailscale is actually up:
+Recommend **Tailscale** when the machines may be on different or changing networks.
+It provides private reachability without router port-forwarding. If it is not
+installed or signed in, direct the user to [Tailscale's install guide](https://tailscale.com/kb/1017/install)
+and pause until setup is complete. Use **SSH** for a trusted reachable network or
+when the user prefers SSH:
 
-- Before choosing Tailscale, verify both machines are online in `tailscale status`,
-  MagicDNS resolves, and home base is sharing its engine with `tailscale serve`
-  (never `funnel`). If any of that isn't true, fall back to SSH and say so.
-- **Safety, not just reachability:** home base trusts the connection itself as the
-  boundary, so the link must stay private — a private SSH tunnel or the tailnet via
-  `serve` — and never a publicly exposed port (`funnel`, or a public bind).
+- Before relying on Tailscale, verify both machines are online in `tailscale
+  status` and the peer's MagicDNS name resolves. Do not ask the user to expose a
+  port publicly, use `tailscale funnel`, or configure router port-forwarding.
 
 **Per-OS reality of the steady link** (the machine being added is what matters):
 
@@ -142,13 +144,12 @@ amico fleet enroll --join-token ~/.amico/ops/fleet/join-token.json \
 The verb runs the whole thing: build check → link config → register → install the
 guard/link → confirm. Read its JSON verdict (Step 6a).
 
-**Its own studio (peer).** There is no turnkey wizard yet — guide it: on the new
+**Its own studio (peer, recommended).** There is no turnkey wizard yet — guide it: on the new
 machine run **Amicode: Fleet — Go Standalone** (it runs its own engine), then have
 it advertise itself (`serving`) and point the directory pointer
 (`~/.amico/ops/fleet/keeper.json`) at the roster host so both machines see each
-other with an **Attach** control. Repeat the honest caveat: attaching flips the
-pointer, but running your live session *on* the other machine's engine is still
-landing.
+other with an **Attach** control. Explain that each machine runs its own engine
+and session activity and prompts sync between machines in near real time.
 
 ### Step 6a — read the verdict, but trust the real link
 

@@ -103,9 +103,10 @@ substrate for it. Horizon 2 itself is **declared, not built** (`compute` stays i
 
 ### What a peer is
 
-- **Independent studio.** Each peer runs its own engine on its own DB (single-writer-per-DB
-  preserved *per machine* by the existing adopt-or-spawn gate). If one peer is off, the others
-  keep working — **there is no single engine whose loss stops the fleet.** This is the key
+- **Independent studio with synced fleet sessions.** Each peer runs its own engine on its own DB
+  (single-writer-per-DB preserved *per machine* by the existing adopt-or-spawn gate), while
+  session activity and prompts sync between machines in near real time. If one peer is off, the
+  others keep working — **there is no single engine whose loss stops the fleet.** This is the key
   difference from a hub client, which is dead whenever the hub is down.
 - **Standalone, never a client.** A peer keeps `role: standalone` (or no `fleet.json`) and
   *advertises*; it never writes `role: client` and never installs the never-fork guard.
@@ -119,25 +120,16 @@ substrate for it. Horizon 2 itself is **declared, not built** (`compute` stays i
 | Directory keeper pointer | `keeper_pointer.ts` → `~/.amico/ops/fleet/keeper.json` (env `$AMICO_FLEET_KEEPER_FILE`) | A resolvable `{sshAlias, transport}` coordinate for the roster host, carried in its own file (never derived from the `roster.json` it hosts — that would be circular). |
 | Switch-control pointer | `attachment_pointer.ts` (env `$AMICO_FLEET_ATTACHMENT_FILE`); honesty surface `GET /amicode/fleet/attachment` | The "currently attached server". Empty ⇒ local. Never proxied. |
 | Attach / detach | `POST /amicode/fleet/attach {machine_id, base_url?, token?}` and `POST /amicode/fleet/detach` (registered **unconditionally** — a standalone peer must attach) | Adds/removes an upstream and drives the pointer; the roster is the sole candidate source. A switch resets the SSE cursor. |
-| Per-attachment transport + credential | `attachment_transport.ts`, `attachment_credential.ts` | SSH is the universal default; `roaming` → tailscale, direct opt-in. Each attach injects a UI client credential to authenticate to the peer engine. |
+| Per-attachment transport + credential | `attachment_transport.ts`, `attachment_credential.ts` | Tailscale is recommended for machines on different networks; SSH works when peers are already privately reachable. Each attach injects a UI client credential to authenticate to the peer engine. |
 | Fleet Manager **Attach** control | overlay `packages/app/src/pages/session/fleet-manager.ts:219` | The per-device-row Attach/Detach button — the front-end that drives the attach route. |
 | Placement seam | `amicode_session` / Task dispatch `placement` field, default `local` | Threaded and defaulted for Horizon 2; **provably inert** today (nothing routes on it). |
 
-### The honest limitation — live re-target is NOT wired yet
+### Shared sessions across peers
 
-This is the one caveat to state plainly, and the reason a peer setup does not yet fully
-replace a hub for *shared* work: **`server.ts` is held byte-identical, so the three-way
-resolver (`resolveAmicodeTarget`, `attachment_pointer.ts`) is not in the live proxy's
-`dispatch()`.** An attach flips the switch-control pointer and resets the SSE cursor, but the
-**live proxy/SSE still target the local (or hub) engine** — "switch → now driving the peer's
-live engine end-to-end" needs the `server.ts` invariant relaxed in a scoped, reviewed edit
-(a flagged follow-up from #1353). So today:
-
-- **Works:** each peer as an independent, resilient studio; advertising; the roster/keeper
-  directory; the Attach control and pointer flip; the credential/transport plumbing;
-  everything at the unit/route level.
-- **Not yet:** clicking Attach and having your live session actually run on the other peer's
-  engine.
+Peer machines keep their own engines and databases, while session activity and prompts sync
+between them in near real time. Users can work with fleet sessions from either machine without
+making one peer the sole host. The Attach control selects a peer; it does not merge the peers'
+local databases into one shared database.
 
 ### Making two hub machines into peers (no single point of failure)
 
@@ -155,8 +147,13 @@ machine is a single point of failure:
    keeper bootstrap pointer (`~/.amico/ops/fleet/keeper.json`) to the roster host, so both show
    up in the Fleet Manager and expose the Attach control.
 
+For peers on different networks, use Tailscale for private reachability rather than asking users
+to configure router port-forwarding. Direct users to
+[Tailscale's install guide](https://tailscale.com/kb/1017/install) when needed. Never expose
+fleet services with `tailscale funnel` or a public bind.
+
 After step 1–2 the single-point-of-failure is gone (each machine has its own engine); step 3
-adds mutual discovery + the Attach scaffolding, with the live hop pending the caveat above.
+adds mutual discovery. Session activity and prompts sync between the peers when they are online.
 
 ## Prevention
 
