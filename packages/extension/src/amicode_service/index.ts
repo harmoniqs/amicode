@@ -61,7 +61,7 @@ import {
   readPendingRequests,
 } from "./fleet_control_request";
 import { HubCredentialRead, mintRegistry, readHubCredential } from "./hub_credential";
-import { buildMergedProjection, buildFleetProjection, buildOwnerRoutingProjection, type UpstreamMode, type MergedProjection, type FleetProjection } from "./merged_projection";
+import { buildMergedProjection, buildFleetProjection, buildOwnerRoutingProjection, type UpstreamMode, type MergedProjection, type FleetProjection, type OwnerRefreshPeer } from "./merged_projection";
 import { buildControlResolver } from "./remote_session_state";
 import { FleetPostureDetector, type FleetPostureTuning } from "./fleet_posture";
 import { handleFleetWrite, type FleetWriteDeps } from "./fleet_writes";
@@ -1173,7 +1173,7 @@ export function createAmicodeService(
       if (fleetPeers) {
         const ownerMapFeed = new OwnerMapFeed({
           ownerMap,
-          buildProjection: async (): Promise<{ sessions: SessionEntry[] }> => {
+          buildProjection: async (): Promise<{ sessions: SessionEntry[]; peers: OwnerRefreshPeer[] }> => {
             const peers = fleetPeers.getServingPeers().map((p) => {
               const tokenRead = fleetPeers.readPeerToken(p.machineId);
               return {
@@ -1188,8 +1188,10 @@ export function createAmicodeService(
               peers,
               rosterLookup: fleetPeers.rosterLookup,
             });
-            return { sessions: projection.sessions as SessionEntry[] };
+            return { sessions: projection.sessions as SessionEntry[], peers: projection.peers };
           },
+          // #1771: each refresh's per-peer outcome → the service log.
+          ...(opts.log ? { log: opts.log } : {}),
         });
         ownerMapFeed.start();
         server.registerCleanup(() => ownerMapFeed.stop());
@@ -1366,7 +1368,7 @@ export function createAmicodeService(
         const ownerMap = new SessionOwnerMap();
         const ownerMapFeed = new OwnerMapFeed({
           ownerMap,
-          buildProjection: async (): Promise<{ sessions: SessionEntry[] }> => {
+          buildProjection: async (): Promise<{ sessions: SessionEntry[]; peers: OwnerRefreshPeer[] }> => {
             const peers = fleetPeers.getServingPeers().map((p) => {
               const tokenRead = fleetPeers.readPeerToken(p.machineId);
               return {
@@ -1381,8 +1383,10 @@ export function createAmicodeService(
               peers,
               rosterLookup: fleetPeers.rosterLookup,
             });
-            return { sessions: projection.sessions as SessionEntry[] };
+            return { sessions: projection.sessions as SessionEntry[], peers: projection.peers };
           },
+          // #1771: each refresh's per-peer outcome → the service log.
+          ...(opts.log ? { log: opts.log } : {}),
         });
         ownerMapFeed.start();
         server.registerCleanup(() => ownerMapFeed.stop());

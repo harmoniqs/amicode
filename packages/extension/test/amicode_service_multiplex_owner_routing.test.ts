@@ -40,6 +40,7 @@ import { EngineProxy } from "../src/amicode_service/engine_proxy";
 import { writeAttachmentPointerFile } from "../src/amicode_service/attachment_pointer";
 import { writeKeeperPointerFile } from "../src/amicode_service/keeper_pointer";
 import { writeHubCredential, readHubCredential } from "../src/amicode_service/hub_credential";
+import { buildOwnerRoutingProjection } from "../src/amicode_service/merged_projection";
 import { serverAuthHeader } from "../src/server_auth";
 
 // ── a marker stub: returns a distinct marker for every request; records paths ──
@@ -145,6 +146,86 @@ describe("#1449 AC1 — SessionOwnerMap fed by a live projection loop (not a tes
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// #1771 — every ownership refresh logs, PER PEER, its outcome (ok / timeout /
+// error / unauthorized), duration and entry count. The projection builder never
+// throws and the feed never throws, so before this a peer whose refresh failed
+// was silently missing from the map (its event arm closed, its sessions routed
+// local) with nothing in any log.
+// ══════════════════════════════════════════════════════════════════════════════
+describe("#1771 — each ownership refresh logs a per-peer outcome record", () => {
+  it("one line per peer: outcome, duration, entries — a failed peer refresh is visible though nothing throws", async () => {
+    const ownerMap = new SessionOwnerMap();
+    const lines: string[] = [];
+    const feed = new OwnerMapFeed({
+      ownerMap,
+      log: (l) => lines.push(l),
+      buildProjection: async () => ({
+        sessions: [{ id: "ses-A", amicode_owner: { owner_machine_id: "studio", owner_name: "Studio", is_local: false } }],
+        peers: [
+          { machineId: "studio", outcome: "ok", durationMs: 120, entries: 1 },
+          { machineId: "mini", outcome: "timeout", durationMs: 10_004, entries: 0, reason: "fetch-failed", detail: "The operation was aborted due to timeout" },
+        ],
+      }),
+    });
+    await expect(feed.refreshOnce()).resolves.toBeUndefined();
+    expect(ownerMap.resolveOwner("ses-A")).toBe("studio");
+    expect(lines).toEqual([
+      "[owner-map] refresh peer=studio outcome=ok duration_ms=120 entries=1",
+      '[owner-map] refresh peer=mini outcome=timeout duration_ms=10004 entries=0 reason=fetch-failed detail="The operation was aborted due to timeout"',
+    ]);
+  });
+
+  it("through the REAL routing projection: an unauthorized peer is a named outcome; the healthy peer still lands", async () => {
+    const ownerMap = new SessionOwnerMap();
+    const lines: string[] = [];
+    const fetchImpl = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.startsWith("http://peer-b")) return new Response("no", { status: 401 });
+      if (url.endsWith("/global/health")) return new Response(JSON.stringify({ version: "t" }), { status: 200 });
+      if (url.startsWith("http://peer-a")) return new Response(JSON.stringify([{ id: "ses-a1" }, { id: "ses-a2" }]), { status: 200 });
+      return new Response(JSON.stringify([]), { status: 200 }); // local
+    }) as unknown as typeof fetch;
+    const feed = new OwnerMapFeed({
+      ownerMap,
+      log: (l) => lines.push(l),
+      buildProjection: async () => {
+        const p = await buildOwnerRoutingProjection({
+          localMachineId: "macbook",
+          local: { getUrl: () => "http://local" },
+          peers: [
+            { machineId: "peer-a", getUrl: () => "http://peer-a", token: "tok-a" },
+            { machineId: "peer-b", getUrl: () => "http://peer-b", token: "tok-b" },
+          ],
+          rosterLookup: () => undefined,
+          fetchImpl,
+        });
+        return { sessions: p.sessions as SessionEntry[], peers: p.peers };
+      },
+    });
+    await expect(feed.refreshOnce()).resolves.toBeUndefined(); // never throws
+    expect(ownerMap.resolveOwner("ses-a1")).toBe("peer-a");
+    const a = lines.find((l) => l.includes("peer=peer-a "))!;
+    const b = lines.find((l) => l.includes("peer=peer-b "))!;
+    expect(a).toMatch(/^\[owner-map\] refresh peer=peer-a outcome=ok duration_ms=\d+ entries=2$/);
+    expect(b).toMatch(/^\[owner-map\] refresh peer=peer-b outcome=unauthorized duration_ms=\d+ entries=0 reason=unauthorized$/);
+    expect(lines).toHaveLength(2); // per PEER — the local engine is not a peer
+  });
+
+  it("a projection BUILD failure is logged too (and still never throws)", async () => {
+    const lines: string[] = [];
+    const feed = new OwnerMapFeed({
+      ownerMap: new SessionOwnerMap(),
+      log: (l) => lines.push(l),
+      buildProjection: async () => {
+        throw new Error("peer fan-out failed");
+      },
+    });
+    await expect(feed.refreshOnce()).resolves.toBeUndefined();
+    expect(lines).toEqual(['[owner-map] refresh failed error="peer fan-out failed"']);
   });
 });
 

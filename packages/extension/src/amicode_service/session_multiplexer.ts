@@ -17,7 +17,7 @@
 // it is a proxy, never a redirect. The app holds ONE base URL throughout.
 
 import * as http from "node:http";
-import type { SessionOwnerTag } from "./merged_projection";
+import type { SessionOwnerTag, OwnerRefreshPeer } from "./merged_projection";
 import { evaluateRemoteWriteGate, type WriteGrantRead } from "./remote_write_gate";
 
 // ── owner-routing header ─────────────────────────────────────────────────────
@@ -196,12 +196,25 @@ export class SessionOwnerMap {
 export interface OwnerMapFeedOpts {
   ownerMap: SessionOwnerMap;
   /** Build the fleet-wide projection whose `.sessions` carry the amicode_owner
-   *  overlay. Injected so the feed is unit-testable without a real fan-out. */
-  buildProjection: () => Promise<{ sessions: SessionEntry[] }>;
+   *  overlay. Injected so the feed is unit-testable without a real fan-out.
+   *  #1771: `peers` (optional) carries each peer's refresh outcome — the feed
+   *  logs one line per peer, so a failed peer refresh is visible even though
+   *  neither the builder nor the feed ever throws. */
+  buildProjection: () => Promise<{ sessions: SessionEntry[]; peers?: OwnerRefreshPeer[] }>;
   /** The refresh cadence in ms. Default 5000. */
   intervalMs?: number;
   /** Observe a build failure (diagnostics only — the feed never throws). */
   onError?: (err: unknown) => void;
+  /** #1771: the service log for per-peer refresh outcomes. Absent → silent. */
+  log?: (line: string) => void;
+}
+
+/** #1771: one per-peer refresh line: outcome, duration, entry count, and for a
+ *  failure its named reason and detail. */
+export function ownerRefreshLine(p: OwnerRefreshPeer): string {
+  const reason = p.reason !== undefined ? ` reason=${p.reason}` : "";
+  const detail = p.detail !== undefined ? ` detail=${JSON.stringify(p.detail)}` : "";
+  return `[owner-map] refresh peer=${p.machineId} outcome=${p.outcome} duration_ms=${p.durationMs} entries=${p.entries}${reason}${detail}`;
 }
 
 /** The default owner-map refresh cadence. */
@@ -216,15 +229,25 @@ export class OwnerMapFeed {
   /** Rebuild the projection ONCE and update the owner-map. Never throws: a
    *  build failure is reported via `onError` and the last-good map is kept. */
   async refreshOnce(): Promise<void> {
-    let projection: { sessions: SessionEntry[] };
+    let projection: { sessions: SessionEntry[]; peers?: OwnerRefreshPeer[] };
     try {
       projection = await this.opts.buildProjection();
     } catch (err) {
       this.opts.onError?.(err);
+      this.log(`[owner-map] refresh failed error=${JSON.stringify(err instanceof Error ? err.message : String(err))}`);
       return; // last-good map intact — never clear on a transient failure
     }
     if (this.stopped) return; // a stop() raced the in-flight build
     this.opts.ownerMap.update(projection.sessions ?? []);
+    for (const peer of projection.peers ?? []) this.log(ownerRefreshLine(peer));
+  }
+
+  private log(line: string): void {
+    try {
+      this.opts.log?.(line);
+    } catch {
+      /* a broken log sink never breaks the feed */
+    }
   }
 
   /** Start the loop: fire an immediate refresh, then re-refresh on the
