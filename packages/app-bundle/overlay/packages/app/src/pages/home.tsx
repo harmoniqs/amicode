@@ -16,7 +16,7 @@ import {
   untrack,
 } from "solid-js"
 import { makeEventListener } from "@solid-primitives/event-listener"
-import { createStore, reconcile } from "solid-js/store"
+import { createStore, produce, reconcile } from "solid-js/store"
 import { useQuery } from "@tanstack/solid-query"
 import { Button } from "@opencode-ai/ui/button"
 import { Logo } from "@opencode-ai/ui/logo"
@@ -442,20 +442,30 @@ function HomeDesign() {
       })
       // Add to archived list
       setArchivedSessions((prev) => [session, ...prev])
-      // Reload active sessions so it disappears from the open list
-      await Promise.all(
-        projectDirectories().map((directory) =>
-          focusedSync().project.loadSessions(directory, { limit: HOME_SESSION_LIMIT }),
-        ),
+      // PERF (#archive-lag cleanup): remove the archived row from its directory
+      // store DIRECTLY instead of re-fetching + reconciling EVERY project
+      // directory's session list on each archive (wasted work). roots()
+      // (pages/layout/helpers.ts) filters archived sessions out of the list, so
+      // this splice is the entire removal; the next natural loadSessions
+      // reconciles from the server. Matches the Rail (layout.tsx) and chat-menu
+      // (message-timeline.tsx) archive paths, which already splice. (The
+      // measured dropdown lag was a different cause — the cached fleet
+      // projection re-filling the row; see session-header.tsx's tombstones.)
+      const [, setChildStore] = focusedSync().child(session.directory, { bootstrap: false })
+      setChildStore(
+        produce((draft) => {
+          const index = draft.session.findIndex((s) => s.id === session.id)
+          if (index !== -1) draft.session.splice(index, 1)
+        }),
       )
       // #1646: flip the composer of the viewed session to its read-only banner
-      // in place. loadSessions refreshes the LIST store; the composer's `archived`
-      // memo reads the PER-SESSION store (focusedSync().session.get(id)), which
-      // only a forced per-session refresh lands. INFO-ONLY `resolve` (session.get
-      // → remember), NOT `sync`: the archived flag is metadata, so a forced `sync`
-      // additionally re-pulled the viewed session's full message history + parents
-      // (seconds of wasted wire). `resolve` lands the flag without touching
-      // messages, matching the composer controller's own convergence.
+      // in place. The removal above touches the LIST store; the composer's
+      // `archived` memo reads the PER-SESSION store (focusedSync().session.get(id)),
+      // which only a forced per-session refresh lands. INFO-ONLY `resolve`
+      // (session.get → remember), NOT `sync`: the archived flag is metadata, so a
+      // forced `sync` additionally re-pulled the viewed session's full message
+      // history + parents (seconds of wasted wire). `resolve` lands the flag
+      // without touching messages, matching the composer controller's convergence.
       void focusedSync()
         .session.resolve(session.id, { force: true })
         .catch(() => {})

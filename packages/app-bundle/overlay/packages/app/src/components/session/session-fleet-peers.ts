@@ -399,7 +399,14 @@ export function peerSessionsFromProjection(raw: unknown): DropdownSession[] {
   if (!Array.isArray(sessions)) return []
   return sessions.flatMap((s) => {
     const row = readProjectionSession(s)
-    if (!row || !isRemotePeerSession(row)) return []
+    // Drop CHILD sessions (parentID set) — the dropdown is a ROOT-session list,
+    // mirroring the local path's roots() filter (pages/layout/helpers.ts). The
+    // fleet projection carries every session, INCLUDING subagent children
+    // (@explore / @implementer / critic sub-sessions), and without this filter
+    // they flood the dropdown (amicode#archive-lag follow-up: 76 of 100 sessions
+    // were subagent children). Owner-routing reads the raw projection directly,
+    // so filtering the display extractor here does not affect routing.
+    if (!row || row.parentID || !isRemotePeerSession(row)) return []
     return [row]
   })
 }
@@ -426,7 +433,12 @@ export function allSessionsFromProjection(raw: unknown): DropdownSession[] {
   if (!Array.isArray(sessions)) return []
   return sessions.flatMap((s) => {
     const row = readProjectionSession(s)
-    return row ? [row] : []
+    // Drop CHILD sessions (parentID set): the dropdown lists ROOT sessions only,
+    // mirroring the local path's roots() filter. The projection carries subagent
+    // children (@explore / @implementer / critic sub-sessions); without this they
+    // flood the dropdown AND bloat every merge/sort/render (the active list was
+    // ~100 rows instead of ~24). Owner-routing reads the raw projection directly.
+    return row && !row.parentID ? [row] : []
   })
 }
 
@@ -478,6 +490,43 @@ export function mergePeerSessions(local: DropdownSession[], peers: DropdownSessi
     merged.push(p)
   }
   return merged.sort((a, b) => (b.time.updated ?? b.time.created) - (a.time.updated ?? a.time.created))
+}
+
+/** #archive-lag (the measured root cause): hide optimistically-archived ids
+ *  from the merged active list. The dropdown merges the CACHED fleet projection,
+ *  and `allSessionsFromProjection` keeps LOCAL rows too — so once an archive
+ *  drops a row from the local store, `mergePeerSessions` re-fills it from the
+ *  stale projection (a twin row) until the next 3s poll lands. A tombstone hides
+ *  the id from the click onward, for local and remote rows alike. No tombstones
+ *  ⇒ the SAME array back, so the common path allocates nothing. */
+export function hideArchivedTombstones(rows: DropdownSession[], tombstones: ReadonlySet<string>): DropdownSession[] {
+  if (tombstones.size === 0) return rows
+  return rows.filter((s) => !tombstones.has(s.id))
+}
+
+/** Retire the tombstones a FRESH active projection has confirmed: an id the
+ *  projection no longer lists is archived server-side, so hiding it is no longer
+ *  needed. An id still listed stays tombstoned — that is a stale response (e.g.
+ *  a poll in flight across the archive PATCH), exactly the resurrection the
+ *  tombstone exists to block. An absent / errored / malformed projection settles
+ *  nothing (keep hiding; the caller's TTL is the backstop). Returns the SAME set
+ *  when nothing settled, so writing it back to a signal is a no-op. */
+export function settleArchivedTombstones(tombstones: ReadonlySet<string>, raw: unknown): ReadonlySet<string> {
+  if (tombstones.size === 0 || !raw || typeof raw !== "object") return tombstones
+  const sessions = (raw as { sessions?: unknown }).sessions
+  if (!Array.isArray(sessions)) return tombstones
+  const listed = new Set<string>()
+  for (const s of sessions) {
+    const id = s && typeof s === "object" ? (s as { id?: unknown }).id : undefined
+    if (typeof id === "string") listed.add(id)
+  }
+  let settled = false
+  const next = new Set<string>()
+  for (const id of tombstones) {
+    if (listed.has(id)) next.add(id)
+    else settled = true
+  }
+  return settled ? next : tombstones
 }
 
 /** The render-relevant signature of a dropdown row — every field the

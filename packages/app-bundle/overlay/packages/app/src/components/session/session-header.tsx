@@ -12,8 +12,8 @@ import { Tooltip, TooltipKeybind } from "@opencode-ai/ui/tooltip"
 import { ButtonV2 } from "@opencode-ai/ui/v2/button-v2"
 import { MenuV2 } from "@opencode-ai/ui/v2/menu-v2"
 import { getFilename } from "@opencode-ai/core/util/path"
-import { batch, createEffect, createMemo, createResource, createRoot, createSignal, For, onCleanup, onMount, Show, untrack, type JSX } from "solid-js"
-import { createStore } from "solid-js/store"
+import { batch, createEffect, createMemo, createResource, createRoot, createSignal, For, on, onCleanup, onMount, Show, untrack, type JSX } from "solid-js"
+import { createStore, produce } from "solid-js/store"
 import { createMediaQuery } from "@solid-primitives/media"
 import { Portal } from "solid-js/web"
 import { useCommand } from "@/context/command"
@@ -47,6 +47,8 @@ import { postAmicodeFleetEnableControl } from "@/utils/amicode-bridge"
 import {
   allSessionsFromProjection,
   mergePeerSessions,
+  hideArchivedTombstones,
+  settleArchivedTombstones,
   stabilizeSessionIdentity,
   archivedSessionsWithRemote,
   deriveSessionBadge,
@@ -982,6 +984,63 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
     onCleanup(() => clearInterval(timer))
   })
 
+  // #archive-lag (the measured root cause — round 6). The active list merges the
+  // CACHED fleet projection, which lists LOCAL sessions too. Removing an archived
+  // row from the local store (splice or reload — either) is therefore NOT enough:
+  // mergePeerSessions re-fills the id from the stale projection as a twin row
+  // until the next 3s poll lands. Measured in headless Chromium against the live
+  // service: the original DOM node detached in 14ms, the twin stayed visible
+  // 1.3–2.2s — the "couple of seconds". A REMOTE archive only felt instant because
+  // its path refetched the projection immediately.
+  //
+  // Tombstones hide an archived id from the CLICK onward (local and remote alike)
+  // and retire when (a) a fresh projection response no longer lists it, (b) it is
+  // unarchived, (c) the archive PATCH fails, or (d) a TTL backstop fires (so a
+  // session unarchived elsewhere before the projection ever confirmed can't stay
+  // hidden forever).
+  const ARCHIVE_TOMBSTONE_TTL_MS = 15_000
+  const [archivedTombstones, setArchivedTombstones] = createSignal<ReadonlySet<string>>(new Set())
+  const tombstoneTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  function untombstoneArchived(id: string) {
+    const timer = tombstoneTimers.get(id)
+    if (timer) clearTimeout(timer)
+    tombstoneTimers.delete(id)
+    setArchivedTombstones((prev) => {
+      if (!prev.has(id)) return prev
+      const next = new Set(prev)
+      next.delete(id)
+      return next
+    })
+  }
+  function tombstoneArchived(id: string) {
+    setArchivedTombstones((prev) => (prev.has(id) ? prev : new Set(prev).add(id)))
+    const existing = tombstoneTimers.get(id)
+    if (existing) clearTimeout(existing)
+    tombstoneTimers.set(id, setTimeout(() => untombstoneArchived(id), ARCHIVE_TOMBSTONE_TTL_MS))
+  }
+  // Settle ONLY when a new projection response lands — not when a tombstone is
+  // added (untracked), or the still-cached pre-archive projection would be judged
+  // against a fresh tombstone before the PATCH even returned. An id whose PATCH is
+  // still in flight is never settled: its local-store row has not been removed
+  // yet, so retiring the tombstone early would flash the row back.
+  const archivePending = new Set<string>()
+  createEffect(
+    on(
+      () => fleetProjection.latest,
+      (latest) => {
+        const current = untrack(archivedTombstones)
+        const next = settleArchivedTombstones(current, latest)
+        if (next === current) return
+        for (const id of current) if (!next.has(id) && !archivePending.has(id)) untombstoneArchived(id)
+      },
+      { defer: true },
+    ),
+  )
+  onCleanup(() => {
+    for (const timer of tombstoneTimers.values()) clearTimeout(timer)
+    tombstoneTimers.clear()
+  })
+
   // Active sessions — only computed when the flyout is open to avoid
   // triggering reactive subscriptions (serverSync().child pins the directory
   // and can cascade re-renders to the parent Portal).
@@ -1063,7 +1122,13 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
   const activeSessionsWithPeers = createMemo<DropdownSession[]>(() => {
     if (!open()) return []
     const projectionSessions = allSessionsFromProjection(fleetProjection.latest)
-    return mergePeerSessions(activeSessions() as DropdownSession[], projectionSessions)
+    // #archive-lag: the projection above is a CACHE (≤3s old) that lists LOCAL
+    // sessions too, so a just-archived row the local store already dropped would
+    // be re-filled from it by the merge. Tombstones hide it from the click on.
+    return hideArchivedTombstones(
+      mergePeerSessions(activeSessions() as DropdownSession[], projectionSessions),
+      archivedTombstones(),
+    )
   })
 
   // Fresh clients have no bootstrapped child stores for the fallback
@@ -1231,6 +1296,13 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
         return
       }
     }
+    // #archive-lag: hide the row NOW — before the PATCH round-trip — for local
+    // and remote alike. The tombstone also blocks the cached fleet projection from
+    // re-minting the row (the measured couple-of-seconds lag); see the tombstone
+    // block above. A failed PATCH un-tombstones so the row comes back.
+    tombstoneArchived(session.id)
+    archivePending.add(session.id)
+    let patched = false
     await restoreScrollAfter(async () => {
       try {
         await (ctx.sdk.client.session.update as Function)({
@@ -1238,42 +1310,53 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
           directory: session.directory,
           time: { archived: Date.now() },
         })
-        // A LOCAL archive moves the row into THIS machine's archived tab
-        // (which lists local archived sessions). A REMOTE archive lands on the
-        // owner — it will drop out of the fleet projection's active list on the
-        // next poll; we do NOT add it to the local archived tab (that tab is
-        // local-only and would show a phantom that vanishes on reload).
-        if (!isRemote) setArchivedSessions((prev) => [session, ...prev])
-        // Reload active sessions for this session's directory
-        await serverSync().project.loadSessions(session.directory, { limit: 64 })
-        // #1647 (S9): a REMOTE row in the active list comes from the FLEET
-        // PROJECTION (peerSessionsFromProjection), NOT the local list store that
-        // loadSessions above refreshes — so without refetching the projection the
-        // archived peer row lingered and the archive "did nothing" in the list.
-        // Refetch so the now-archived peer session drops out of the active list.
-        if (isRemote) void refetchFleetProjection()
+        patched = true
+        if (!isRemote) {
+          // A LOCAL archive moves the row into THIS machine's archived tab.
+          setArchivedSessions((prev) => [session, ...prev])
+          // Remove the archived row from its directory store DIRECTLY instead of
+          // re-fetching + reconciling the whole session list (`loadSessions`
+          // re-`remember`ed every row on every archive — wasted work). roots()
+          // (pages/layout/helpers.ts) filters archived rows anyway, and the next
+          // natural loadSessions reconciles from the server. Matches the Rail
+          // (layout.tsx) and chat-menu (message-timeline.tsx) archive paths.
+          const [, setChildStore] = serverSync().child(session.directory, { bootstrap: false })
+          setChildStore(
+            produce((draft) => {
+              const index = draft.session.findIndex((s) => s.id === session.id)
+              if (index !== -1) draft.session.splice(index, 1)
+            }),
+          )
+        }
+        // Refetch the fleet projection for BOTH paths. #1647 (S9): a remote row
+        // lives only in the projection. #archive-lag: a LOCAL row is ALSO in the
+        // projection (allSessionsFromProjection keeps local rows), so the cache
+        // must converge too — the fresh response is what retires the tombstone.
+        void refetchFleetProjection()
         // Refresh the Archived tab so the just-archived session appears there too.
         void loadArchivedSessions(true)
         // #1646: refresh the PER-SESSION store so the composer flips to its
-        // archived read-only banner immediately. loadSessions above refreshes
-        // the LIST store, but the composer's `archived` memo reads the
-        // per-session store (sync().session.get(id).time.archived) — which the
-        // list reload does not touch. Without this the banner appeared only when
-        // the change lazily propagated (SSE / next projection cycle), so a
-        // remote (owner-routed) archive left the composer live for seconds.
+        // archived read-only banner immediately. The removal above touches the
+        // LIST store, but the composer's `archived` memo reads the per-session
+        // store (sync().session.get(id).time.archived) — which the list change
+        // does not touch. Without this the banner appeared only when the change
+        // lazily propagated (SSE / next projection cycle), so a remote
+        // (owner-routed) archive left the composer live for seconds.
         // INFO-ONLY `resolve` (session.get → remember), NOT `sync`: the archived
         // flag is METADATA, so re-fetching the whole message page is pure waste.
-        // A forced `sync` did exactly that — on a LOCAL archive of a warmed/open
-        // session it re-pulled the full history + every parent message (seconds),
-        // which is why local archive lagged while remote (nothing loaded) was
-        // instant. `resolve` lands the flag without touching messages, matching
-        // the composer controller's own convergence (session-composer-region-controller).
+        // `resolve` lands the flag without touching messages, matching the
+        // composer controller's own convergence (session-composer-region-controller).
         await serverSync().session.resolve(session.id, { force: true }).catch(() => {})
       } catch (cause) {
+        // Only a FAILED archive brings the row back; a post-PATCH hiccup must not
+        // resurrect a session the server has already archived.
+        if (!patched) untombstoneArchived(session.id)
         showToast({
           title: language.t("common.requestFailed"),
           description: String(cause),
         })
+      } finally {
+        archivePending.delete(session.id)
       }
     })
   }
@@ -1300,6 +1383,9 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
           directory: session.directory,
           time: { archived: null },
         })
+        // #archive-lag: a quick archive→unarchive must not leave the row hidden
+        // behind a still-live tombstone.
+        untombstoneArchived(session.id)
         setArchivedSessions((prev) => prev.filter((s) => s.id !== session.id))
         await serverSync().project.loadSessions(session.directory, { limit: 64 })
         // #1647 (S9): a remote unarchive re-activates the session on its owner —

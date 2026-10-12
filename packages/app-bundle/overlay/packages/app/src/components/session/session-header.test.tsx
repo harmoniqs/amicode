@@ -102,21 +102,43 @@ describe("#1544 session-header control wiring", () => {
     expect(source).toContain('data-action="session-dropdown-delete-confirm"')
   })
 
-  // #1646: the archive handler must refresh the PER-SESSION store, not only
-  // reload the list — the composer's archived read-only banner reads the
-  // per-session store, so without this the banner lagged (seconds) behind an
-  // owner-routed remote archive. It uses the INFO-ONLY `resolve(force)` (not
-  // `sync(force)`): the archived flag is metadata, and a forced `sync` also
-  // re-fetched the whole message page + parents, which made a LOCAL archive of
-  // a warmed session hang for seconds. `resolve` lands the flag without that.
-  test("#1646 archive refreshes the per-session store (info-only) so the composer flips immediately", () => {
-    // the archive handler still reloads the list…
-    expect(source).toContain("project.loadSessions(session.directory")
-    // …AND refreshes the per-session store via INFO-ONLY resolve (the composer's `archived` source)
+  // #archive-lag cleanup: the archive handler removes the row by splicing it out
+  // of its directory store, NOT by re-fetching + reconciling the whole session
+  // list (`loadSessions` re-fetched + re-`remember`ed 100+ sessions on every
+  // archive — wasted work, though NOT the measured lag: that was the cached
+  // fleet projection re-filling the row; see the tombstone test below). The
+  // composer's archived banner still flips via the INFO-ONLY resolve (metadata;
+  // no message re-fetch). Mirrors the Rail + chat-menu archive paths
+  // (layout.tsx / message-timeline.tsx), which splice.
+  test("#archive-lag archive splices the row from the store (no full list reload) + flips the composer info-only", () => {
+    // the archived row is removed by a targeted splice, not a whole-list reload
+    expect(source).toContain("draft.session.splice(")
+    // …AND the composer's archived banner flips via the INFO-ONLY resolve
     expect(source).toContain("session.resolve(session.id, { force: true })")
     // …and must NOT use the heavy sync(force), which re-pulls the full message
-    // history + parents and was the source of the local-archive lag.
+    // history + parents and was the earlier (wrong) suspected cause.
     expect(source).not.toContain("session.sync(session.id, { force: true })")
+  })
+
+  // #archive-lag ROOT CAUSE (measured in headless Chromium against the live
+  // service): the row's DOM node detached in 14ms, but a TWIN row re-minted from
+  // the CACHED fleet projection (allSessionsFromProjection lists LOCAL sessions
+  // too) stayed visible until the next 3s poll landed (1.3–2.2s). Remote archive
+  // felt instant only because it refetched the projection. Fix: tombstone the id
+  // at click, filter the merged list through it, settle on a fresh projection,
+  // and refetch the projection on LOCAL archive too.
+  test("#archive-lag archive tombstones the row so the stale projection cannot resurrect it", () => {
+    // the merged active list is filtered through the tombstones
+    expect(source).toContain("hideArchivedTombstones(")
+    // tombstones settle only when a FRESH projection lands
+    expect(source).toContain("settleArchivedTombstones(")
+    // the archive handler tombstones optimistically and un-tombstones on failure
+    expect(source).toContain("tombstoneArchived(session.id)")
+    expect(source).toContain("untombstoneArchived(session.id)")
+    // a LOCAL archive refetches the projection too (not only the remote path)
+    const archiveBody = source.slice(source.indexOf("async function archiveSession("), source.indexOf("async function unarchiveSession("))
+    expect(archiveBody).toContain("void refetchFleetProjection()")
+    expect(archiveBody).not.toContain("} else {\n          // #1647 (S9)")
   })
 })
 

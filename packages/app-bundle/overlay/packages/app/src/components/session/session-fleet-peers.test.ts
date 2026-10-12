@@ -7,6 +7,8 @@ import {
   mergePeerSessions,
   stabilizeSessionIdentity,
   sessionRowSignature,
+  hideArchivedTombstones,
+  settleArchivedTombstones,
   deriveSessionBadge,
   isRemotePeerSession,
   resolveDropdownOpenAction,
@@ -101,6 +103,18 @@ describe("#1525 peerSessionsFromProjection — keep only remote peer sessions", 
     expect(out[0].amicode_control).toBeUndefined()
     // No overlay on the row → readSessionControl applies the remote fail-closed default.
     expect(readSessionControl(out[0]).reason).toBe("no-control-grant")
+  })
+
+  // #archive-lag follow-up: a REMOTE subagent child (parentID set) must NOT show
+  // as a dropdown row — the dropdown lists root sessions only (mirrors roots()).
+  test("drops a REMOTE child session (parentID set)", () => {
+    const out = peerSessionsFromProjection(
+      projection([
+        { id: "ses_peer_root", amicode_owner: studioTag },
+        { id: "ses_peer_child", parentID: "ses_peer_root", amicode_owner: studioTag },
+      ]),
+    )
+    expect(out.map((s) => s.id)).toEqual(["ses_peer_root"])
   })
 })
 
@@ -728,6 +742,87 @@ describe("allSessionsFromProjection — local + remote (the Studio-dropdown fix)
     expect(allSessionsFromProjection(undefined)).toEqual([])
     expect(allSessionsFromProjection({})).toEqual([])
     expect(allSessionsFromProjection({ sessions: "nope" })).toEqual([])
+  })
+
+  // #archive-lag follow-up: the dropdown is a ROOT-session list. The fleet
+  // projection carries subagent CHILD sessions (parentID set — @explore /
+  // @implementer / critic sub-sessions); without filtering them they flooded the
+  // dropdown (76 of 100 sessions were children) and bloated every merge/render.
+  // Mirror the local path's roots() filter.
+  test("drops CHILD sessions (parentID set) — mirrors roots()", () => {
+    const raw = projection([
+      { id: "ses_root", time: { created: 2 }, title: "Root", directory: "/p", amicode_owner: localTag },
+      { id: "ses_child", time: { created: 3 }, title: "Lane A (@explore subagent)", directory: "/p", parentID: "ses_root", amicode_owner: localTag },
+      { id: "ses_remote_child", time: { created: 4 }, title: "slice (@implementer)", parentID: "ses_x", amicode_owner: studioTag },
+    ])
+    const ids = allSessionsFromProjection(raw).map((s) => s.id)
+    expect(ids).toEqual(["ses_root"])
+    expect(ids).not.toContain("ses_child")
+    expect(ids).not.toContain("ses_remote_child")
+  })
+})
+
+// #archive-lag ROOT CAUSE (measured): the dropdown merges the CACHED fleet
+// projection, which lists LOCAL sessions too (allSessionsFromProjection). Once a
+// local archive removes the row from the local store, mergePeerSessions re-fills
+// it from the stale projection until the next 3s poll lands — the "couple of
+// seconds" lag. Archive tombstones hide the id immediately and retire only once a
+// FRESH projection stops listing it (or on unarchive / failure / TTL).
+describe("#archive-lag archive tombstones — hide immediately, settle on a fresh projection", () => {
+  const row = (id: string, created: number, extra: Partial<DropdownSession> = {}): DropdownSession =>
+    ({ id, title: id, directory: "/d", time: { created }, ...extra }) as DropdownSession
+
+  test("a tombstoned id is hidden even when the stale projection re-surfaces it", () => {
+    // The local store has ALREADY dropped ses_archived (splice); the cached
+    // projection still lists it as active, so the merge alone resurrects it.
+    const local = [row("ses_keep", 2)]
+    const staleProjection = projection([
+      { id: "ses_keep", time: { created: 2 }, directory: "/d", amicode_owner: localTag },
+      { id: "ses_archived", time: { created: 3 }, directory: "/d", amicode_owner: localTag },
+    ])
+    const merged = mergePeerSessions(local, allSessionsFromProjection(staleProjection))
+    expect(merged.map((s) => s.id)).toContain("ses_archived") // the bug, reproduced
+    const shown = hideArchivedTombstones(merged, new Set(["ses_archived"]))
+    expect(shown.map((s) => s.id)).toEqual(["ses_keep"])
+  })
+
+  test("hides REMOTE rows too (one optimistic path for local + remote)", () => {
+    const merged = [row("ses_local", 2), row("ses_peer", 1, { amicode_owner: studioTag })]
+    expect(hideArchivedTombstones(merged, new Set(["ses_peer"])).map((s) => s.id)).toEqual(["ses_local"])
+  })
+
+  test("no tombstones ⇒ the SAME array (no needless downstream re-render)", () => {
+    const merged = [row("ses_a", 1)]
+    expect(hideArchivedTombstones(merged, new Set())).toBe(merged)
+  })
+
+  test("a fresh projection that no longer lists the id retires its tombstone", () => {
+    const fresh = projection([{ id: "ses_keep", time: { created: 2 }, amicode_owner: localTag }])
+    const next = settleArchivedTombstones(new Set(["ses_archived"]), fresh)
+    expect([...next]).toEqual([])
+  })
+
+  test("a STALE projection (in flight across the PATCH) still listing the id keeps it hidden", () => {
+    const tombstones = new Set(["ses_archived", "ses_other"])
+    const stale = projection([
+      { id: "ses_archived", time: { created: 3 }, amicode_owner: localTag },
+      { id: "ses_other", time: { created: 4 }, amicode_owner: studioTag },
+    ])
+    // nothing settled ⇒ the SAME set back (a signal write is a no-op)
+    expect(settleArchivedTombstones(tombstones, stale)).toBe(tombstones)
+  })
+
+  test("settles only the confirmed ids, keeps the rest", () => {
+    const fresh = projection([{ id: "ses_still_listed", time: { created: 1 }, amicode_owner: localTag }])
+    const next = settleArchivedTombstones(new Set(["ses_gone", "ses_still_listed"]), fresh)
+    expect([...next]).toEqual(["ses_still_listed"])
+  })
+
+  test("absent / errored / garbage projection settles NOTHING (keep hiding; TTL backstops)", () => {
+    const tombstones = new Set(["ses_archived"])
+    expect(settleArchivedTombstones(tombstones, undefined)).toBe(tombstones)
+    expect(settleArchivedTombstones(tombstones, {})).toBe(tombstones)
+    expect(settleArchivedTombstones(tombstones, { sessions: "nope" })).toBe(tombstones)
   })
 })
 

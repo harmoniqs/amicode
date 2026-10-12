@@ -2,13 +2,17 @@
  * home-archive.test.ts
  *
  * The Home flyout's session-list archive action (home.archiveSession) is a
- * LOCAL archive. #1646: archiving the session you are VIEWING must flip its
- * composer to the read-only banner in place. loadSessions refreshes the LIST
- * store, but the composer's `archived` memo reads the PER-SESSION store, which
- * only a forced per-session refresh lands — so the handler must refresh it after
- * the reload. It uses the INFO-ONLY `resolve(force)` (not `sync(force)`): the
- * archived flag is metadata, and a forced `sync` also re-pulled the whole
- * message page + parents (seconds of wasted wire on a warmed session).
+ * LOCAL archive. Two things it must do:
+ *
+ *  1. PERF (#archive-lag cleanup): remove the archived row by SPLICING it out
+ *     of its directory store, NOT by re-fetching + reconciling every project
+ *     directory's session list (the old reload re-`remember`ed 100+ sessions on
+ *     each archive — wasted work). roots() (pages/layout/helpers.ts) filters
+ *     archived sessions out of the list, so the splice is the whole removal.
+ *  2. #1646: flip the viewed composer to its read-only banner in place via the
+ *     INFO-ONLY `resolve(force)` (not `sync(force)`): the archived flag is
+ *     metadata, and a forced `sync` also re-pulled the whole message page +
+ *     parents (seconds of wasted wire on a warmed session).
  *
  * Source-assertion pattern (mirrors message-timeline-archive.test.ts): the
  * wiring is asserted against the .tsx source; the per-session store BEHAVIOR is
@@ -31,9 +35,12 @@ function archiveSessionBody(src: string): string {
   return src.slice(start, next)
 }
 
-describe("Home flyout archive — info-only resolve so the viewed composer flips (#1646)", () => {
-  test("archiveSession refreshes the per-session store (info-only) after the list reload", () => {
+describe("Home flyout archive — splice the row, flip the composer info-only (#archive-lag / #1646)", () => {
+  test("archiveSession splices the row from the store (no full list reload) + flips the composer info-only", () => {
     const body = archiveSessionBody(source)
+    // the archived row is removed by a targeted splice, not a whole-list reload
+    expect(body).toContain("draft.session.splice(")
+    // …and the composer's archived banner flips via the INFO-ONLY resolve
     expect(body).toContain("session.resolve(session.id, { force: true })")
     // must NOT use the heavy sync(force), which re-pulls the full message history
     expect(body).not.toContain("session.sync(session.id, { force: true })")
