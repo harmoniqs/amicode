@@ -8,6 +8,59 @@ def _env(key, default):
     v = _os.environ.get(key)
     return v if v else default
 
+# --- #1760 P1: one door — the gateway shared secret -----------------------------
+# The engines require x-amicode-gateway-secret on every API route once
+# AMICODE_ENGINE_SHARED_SECRET arms them; the frontdoor stamps the header on
+# EVERY engine-facing connection (preamble dials, backend_get pulls, passthrough
+# forwards, the sampler probe, the curl index/asset fetches). Env UNSET =
+# today's open behavior: the compat window during rollout AND the safety valve
+# for a half-rolled fleet (the secret must land on the frontdoor and all
+# engines in ONE restart cycle).
+GW_SECRET = _env("AMICODE_ENGINE_SHARED_SECRET", "")
+GW_HEADER_NAME = "X-Amicode-Gateway-Secret"
+
+def _gw_header_line():
+    return f"{GW_HEADER_NAME}: {GW_SECRET}\r\n".encode() if GW_SECRET else b""
+
+def _gw_stamp_request_head(head):
+    """Rewrite a request's header BLOCK: drop any client-supplied
+    gateway-secret line, then inject the frontdoor's own. The client can never
+    forge the engine secret — the door is the only stamper."""
+    out = []
+    for ln in head.split(b"\r\n"):
+        if ln.lower().startswith(b"x-amicode-gateway-secret:"):
+            continue
+        out.append(ln)
+    if GW_SECRET:
+        out.append(GW_HEADER_NAME.encode() + b": " + GW_SECRET.encode())
+    return b"\r\n".join(out)
+
+def _gw_stamp_first_chunk(chunk):
+    """Stamp a client-forwarded first chunk (passthrough dials): the head is
+    complete by the time handle() dispatches (it waits for \\r\\n\\r\\n)."""
+    head, sep, rest = chunk.partition(b"\r\n\r\n")
+    if not sep:
+        return chunk
+    return _gw_stamp_request_head(head) + sep + rest
+
+# #1757 lesson: a 401 from an engine (secret mismatch / half-rolled fleet) must
+# be LOUD, never silent — throttle to one line per backend per 30s so polling
+# cannot drown the log, but always fire on the first sight.
+_gw_401_last = {}
+_gw_401_lock = threading.Lock()
+
+def _gw_note_401(where):
+    if not GW_SECRET:
+        return
+    now = time.time()
+    with _gw_401_lock:
+        last = _gw_401_last.get(where, 0.0)
+        if now - last < 30:
+            return
+        _gw_401_last[where] = now
+    log(f"GATEWAY-SECRET 401 from {where} — the engine rejected the frontdoor's secret "
+        "(mismatch or half-rolled rollout); surface + fix before clients pile up")
+
 # 2026-10-04 (panel-stale-app incident): APP_DIST now points at the service's
 # shelf dist (single source of truth, what amicode-server.sh gates + what deploys
 # write). The old ~/.amico/server/app-dist copy shadowed every dist deploy since
@@ -308,6 +361,8 @@ def _sample_shards():
                 try:
                     req = _ur0.Request("http://%s:%d/config?directory=%s"
                                        % (host, port, _up0.quote(probe_dir, safe="")))
+                    if GW_SECRET:
+                        req.add_header(GW_HEADER_NAME, GW_SECRET)
                     with _ur0.urlopen(req, timeout=2.0) as r:
                         r.read(1)
                     snap[shard] = {"probe_ok": True,
@@ -539,7 +594,10 @@ def backend_get(target, timeout=60, shard=None):
     try:
         s = socket.create_connection(b, timeout=8)
         s.settimeout(timeout)
-        s.sendall(("GET " + target + f" HTTP/1.1\r\nHost: 127.0.0.1:{b[1]}\r\nConnection: close\r\nAccept-Encoding: identity\r\n\r\n").encode())
+        # #1760 P1: every engine-facing GET carries the gateway stamp.
+        s.sendall(("GET " + target + f" HTTP/1.1\r\nHost: 127.0.0.1:{b[1]}\r\nConnection: close\r\n"
+                   + (f"{GW_HEADER_NAME}: {GW_SECRET}\r\n" if GW_SECRET else "")
+                   + "Accept-Encoding: identity\r\n\r\n").encode())
         buf = b""
         want = None     # exact body length from Content-Length, once headers land
         chunked = False
@@ -570,6 +628,9 @@ def backend_get(target, timeout=60, shard=None):
     i = buf.find(b"\r\n\r\n")
     if i < 0: return None
     head, body = buf[:i], buf[i + 4:]
+    # #1757: a 401 here is a secret mismatch — LOUD, never silent silence.
+    if b" 401 " in head.split(b"\r\n", 1)[0]:
+        _gw_note_401(f"{b[0]}:{b[1]} (backend_get {target.split('?')[0]})")
     if b" 200 " not in head.split(b"\r\n", 1)[0]: return None
     if b"transfer-encoding: chunked" in head.lower(): body = _dechunk(body)
     if b"content-encoding: gzip" in head.lower():
@@ -1086,17 +1147,25 @@ class Group:
         else:
             threading.Thread(target=self.upstream_loop, args=(shard, self.backend), daemon=True).start()
     def build_preamble(self, addr):
-        req = f"GET {self.upstream_path} HTTP/1.1\r\nHost: 127.0.0.1:{addr[1]}\r\nAccept: text/event-stream\r\n\r\n".encode()
+        # #1760 P1: the SSE upstream dial carries the gateway stamp. A 401
+        # (secret mismatch / half-rolled fleet) must fail FAST and loud — the
+        # #1757 lesson: waiting on server.connected that never arrives is
+        # silent silence; the status line is in the first bytes.
+        req = (f"GET {self.upstream_path} HTTP/1.1\r\nHost: 127.0.0.1:{addr[1]}\r\n"
+               "Accept: text/event-stream\r\n"
+               + (f"{GW_HEADER_NAME}: {GW_SECRET}\r\n" if GW_SECRET else "")
+               + "\r\n").encode()
         s = socket.create_connection(addr)
         s.sendall(req)
         buf = b""
         s.settimeout(60)
-        # The server emits CRLF SSE frames — stop at the first server.connected
-        # frame; any partial trailing bytes complete naturally from the live stream.
         while b"server.connected" not in buf:
             chunk = s.recv(65536)
             if not chunk: raise RuntimeError("upstream closed during preamble")
             buf += chunk
+            if b" 401 " in buf.split(b"\r\n", 1)[0]:
+                _gw_note_401(f"{addr[0]}:{addr[1]} (sse {self.path})")
+                raise RuntimeError("upstream refused: 401 (gateway secret mismatch)")
             if len(buf) > 262144: raise RuntimeError("preamble too large")
         s.settimeout(None)
         return s, buf
@@ -1405,8 +1474,13 @@ def refresh_index():
     that defeat the streaming capture) and cache a complete HTTP/1.1 response."""
     try:
         import subprocess
-        r = subprocess.run(["curl", "-s", "-m", "5", f"http://{BACKEND[0]}:{BACKEND[1]}/"],
-                           capture_output=True, timeout=8)
+        # #1760 P1: the index refresh rides the door too — stamped + fail-fast
+        # (-f: a non-200 answers nothing, so a stale copy outlives a mismatch
+        # instead of caching the error body as the index).
+        cmd = ["curl", "-s", "-f", "-m", "5", f"http://{BACKEND[0]}:{BACKEND[1]}/"]
+        if GW_SECRET:
+            cmd += ["-H", f"{GW_HEADER_NAME}: {GW_SECRET}"]
+        r = subprocess.run(cmd, capture_output=True, timeout=8)
         if r.returncode == 0 and r.stdout:
             # 2026-09-19 cache bust: fleet webviews hold hashed JS assets as
             # immutable — a patched asset under the SAME url never re-fetches.
@@ -1474,6 +1548,12 @@ def passthrough_capture(c, first_chunk, key=None, force_close=False, shard=None,
                     if sniff and not _sniffed[0]:
                         _sniffed[0] = True
                         try:
+                            # #1760 P1: an engine 401 crossing a passthrough dial
+                            # is a secret mismatch — name it server-side too
+                            # (#1757: the client sees the 401; the log must show
+                            # WHY).
+                            if b" 401 " in d[:64]:
+                                _gw_note_401(f"{backend[0]}:{backend[1]} (passthrough)")
                             if b"content-type: text/html" in d[:1024].lower():
                                 log(f"HTML-RESPONSE for: {_last_req.get(cid, '?')[:130]}")
                                 # #1457: HTML crossing the tunnel must NEVER be
@@ -1512,6 +1592,9 @@ def passthrough_capture(c, first_chunk, key=None, force_close=False, shard=None,
         t1 = threading.Thread(target=pipe, args=(c, u), daemon=True)
         t2 = threading.Thread(target=pipe, args=(u, c, cap_flag, True), daemon=True)
         t2.start()
+        # #1760 P1: strip any client-supplied gateway-secret header and stamp
+        # the frontdoor's own — a client can never forge the engine secret.
+        first_chunk = _gw_stamp_first_chunk(first_chunk)
         try: u.sendall(first_chunk)
         except Exception: pass
         t1.start()
@@ -1814,8 +1897,14 @@ def handle(c, addr, cid):
             if hit is None:
                 try:
                     import subprocess as _sp
-                    r = _sp.run(["curl", "-s", "-m", "10", f"http://{BACKEND[0]}:{BACKEND[1]}" + path],
-                                capture_output=True, timeout=15)
+                    # #1760 P1: stamped + fail-fast — a 401/404 answers empty,
+                    # which the heal path turns into the reload hop (a 401
+                    # body must never be cached as immutable JS).
+                    acmd = ["curl", "-s", "-f", "-m", "10",
+                            f"http://{BACKEND[0]}:{BACKEND[1]}" + path]
+                    if GW_SECRET:
+                        acmd += ["-H", f"{GW_HEADER_NAME}: {GW_SECRET}"]
+                    r = _sp.run(acmd, capture_output=True, timeout=15)
                     body = r.stdout
                     # #1723: HTML (or emptiness) answering a content-hashed .js
                     # request IS the revert signature — #1313's "Unexpected

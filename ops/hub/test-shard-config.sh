@@ -75,6 +75,44 @@ check "wd legacy inspect"   "inspect_port=9229" "$(echo "$WL" | grep '^inspect_p
 
 # --- #1745: client-log freshness self-test (never touches production paths) ----
 bash "$HERE/client-log-freshness.sh" --self-test && echo "ok   client-log-freshness self-test" || FAILS=$((FAILS + 1))
+# --- #1760 P1: the gateway secret provisioning --------------------------------
+# A temp HOME isolates generation + the armed/absent seams; nothing real is
+# touched (the helper resolves $HOME/.amico/server).
+bash -n "$HERE/engine-gateway-secret.sh" && echo "ok   engine-gateway-secret.sh syntax" || FAILS=$((FAILS + 1))
+
+GWT="$(mktemp -d)"
+trap 'rm -rf "$GWT"' EXIT
+GWH="$GWT/home"; mkdir -p "$GWH"
+
+GWA="$(HOME="$GWH" "$HERE/engine-gateway-secret.sh" ensure 2>&1)"
+[ -f "$GWH/.amico/server/engine-gateway-secret.env" ] \
+  && echo "ok   ensure creates the env file" || { echo "FAIL ensure creates the env file"; FAILS=$((FAILS + 1)); }
+GWPERM="$(stat -c '%a' "$GWH/.amico/server/engine-gateway-secret.env" 2>/dev/null)"
+check "env file mode 600" "600" "$GWPERM"
+GWS1="$(HOME="$GWH" "$HERE/engine-gateway-secret.sh" print)"
+check "secret shape (64 hex)" "64" "${#GWS1}"
+case "$GWS1" in
+  *[!0-9a-f]*|"" ) echo "FAIL secret must be hex"; FAILS=$((FAILS + 1)) ;;
+  *) echo "ok   secret is hex" ;;
+esac
+GWS2="$(HOME="$GWH" "$HERE/engine-gateway-secret.sh" print)"
+check "ensure is idempotent (never rotates)" "$GWS1" "$GWS2"
+check "env file shape" "AMICODE_ENGINE_SHARED_SECRET=$GWS1" "$(cat "$GWH/.amico/server/engine-gateway-secret.env")"
+
+# amicode-server.sh seam: armed when the env file exists, absent without it
+AS_ARM="$(HOME="$GWH" AMICO_SERVER_DIR="$GWH/.amico/server" env -u AMICODE_SERVER_PORT -u AMICODE_ENGINE_PORT -u AMICODE_ENGINE_INSPECT "$HERE/amicode-server.sh" --print-shard-env)"
+check "server seam armed" "gateway_secret=armed" "$(echo "$AS_ARM" | grep '^gateway_secret=')"
+rm "$GWH/.amico/server/engine-gateway-secret.env"
+AS_NONE="$(HOME="$GWH" AMICO_SERVER_DIR="$GWH/.amico/server" env -u AMICODE_SERVER_PORT -u AMICODE_ENGINE_PORT -u AMICODE_ENGINE_INSPECT "$HERE/amicode-server.sh" --print-shard-env)"
+check "server seam no file" "gateway_secret=absent" "$(echo "$AS_NONE" | grep '^gateway_secret=')"
+
+# rss-watchdog.sh seam: same armed/absent contract
+HOME="$GWH" "$HERE/engine-gateway-secret.sh" ensure >/dev/null 2>&1
+WD_ABS="$(HOME="$GWH" env -u WATCHDOG_SERVICE -u WATCHDOG_HEALTH_PORT -u WATCHDOG_PATTERN "$HERE/fleet-watchdog/rss-watchdog.sh" --print-shard-env)"
+check "watchdog seam armed" "gateway_secret=armed" "$(echo "$WD_ABS" | grep '^gateway_secret=')"
+rm "$GWH/.amico/server/engine-gateway-secret.env"
+WD_NONE="$(HOME="$GWH" env -u WATCHDOG_SERVICE -u WATCHDOG_HEALTH_PORT -u WATCHDOG_PATTERN "$HERE/fleet-watchdog/rss-watchdog.sh" --print-shard-env)"
+check "watchdog seam absent" "gateway_secret=absent" "$(echo "$WD_NONE" | grep '^gateway_secret=')"
 
 # --- verdict -------------------------------------------------------------------
 if [ "$FAILS" -gt 0 ]; then

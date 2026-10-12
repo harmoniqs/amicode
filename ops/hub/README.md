@@ -11,6 +11,7 @@ against a file that lived nowhere. This import fixes that.
 | `hub-frontdoor.py` | `~/.amico/server/hub-frontdoor.py` | Connection-serializing proxy, 4096 → the amicode service (see `incidents/20260903-wedge`); owns routing, SSE fan-out, snapshot cache |
 | `client-log-freshness.sh` | `~/.amico/server/client-log-freshness.sh` | #1745: mechanical freshness check on the panel telemetry log — age of the newest heartbeat, loudly reported (exit 0 fresh / 1 stale, never-heartbeat, or missing) |
 | `amicode-server.sh` | `~/.amico/server/amicode-server.sh` | systemd wrapper: binary resolution, skill staging, env, spawns the service runner (M3 cutover, #955) |
+| `engine-gateway-secret.sh` | `~/.amico/server/engine-gateway-secret.sh` | #1760 P1: generates/serves the one-door shared secret (`~/.amico/server/engine-gateway-secret.env`, mode 600) |
 | `fleet-watchdog/rss-watchdog.sh` | `~/.amico/server/fleet-watchdog/rss-watchdog.sh` | 5-min RSS trajectory + corroboration probe + wedge capture + restart authority |
 | `fleet-watchdog/cdp-stack.mjs` | `~/.amico/server/fleet-watchdog/cdp-stack.mjs` | CDP all-threads JS stack capture for wedge postmortems (connects to the engine's BUN_INSPECT port) |
 
@@ -129,6 +130,23 @@ dead-shard blast radius, dial ceiling, create-sniff pinning, legacy
 regressions, the #1745 client-log ingest + heartbeat-alarm canaries) and
 `bash ops/hub/test-shard-config.sh` (26 checks, including the
 client-log-freshness self-test).
+
+## The one-door gateway secret (amicode #1760 P1)
+
+Once armed, every engine API route requires the `x-amicode-gateway-secret`
+header (401 JSON without it) and the frontdoor is the only stamper — every
+client must use the door. The single authority is
+`~/.amico/server/engine-gateway-secret.env`
+(`AMICODE_ENGINE_SHARED_SECRET=<64-hex>`, mode 600, created by
+`engine-gateway-secret.sh ensure` — never auto-generated at boot). Env UNSET
+on any component = today's open behavior: the compat window during rollout
+and the rollback valve. **The secret must land on the frontdoor AND all
+engines in ONE restart cycle** — a half-rolled state is a fleet outage; the
+frontdoor logs `GATEWAY-SECRET 401 from …` when it sees one. Full arming
+ritual + the post-deploy multi-client matrix: `GATEWAY-SECRET-RUNBOOK.md`.
+Gates: `python3 ops/hub/test_frontdoor.py` (the `TestGatewaySecret` class)
+and `bash ops/hub/test-shard-config.sh` (run with `AMICODE_SHARD_INDEX`
+scrubbed on hub-hosted sessions — the documented leak).
 
 ## The Jev placement provider (slice 2)
 

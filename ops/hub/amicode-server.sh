@@ -30,11 +30,29 @@ if [ -n "${AMICODE_SHARD_INDEX:-}" ]; then
   AMICODE_ENGINE_INSPECT="${AMICODE_ENGINE_INSPECT:-127.0.0.1:$((9229 + AMICODE_SHARD_INDEX - 1))}"
   export AMICODE_SERVER_PORT AMICODE_ENGINE_PORT AMICODE_ENGINE_INSPECT
 fi
+# --- #1760 P1: the one-door gateway shared secret -------------------------------
+# The frontdoor-only stamp the engine requires on every API route once armed.
+# The env file is created by ops/hub/engine-gateway-secret.sh — an EXPLICIT ops
+# act, never auto-generated at boot — and sourcing it here exports the secret
+# into the service-runner env, so the engine this unit owns inherits it.
+# ABSENT = today's open behavior: the compat window during rollout AND the
+# rollback valve (delete the file, restart, everything is open again).
+GW_ENV_FILE="$AMICO_SERVER_DIR/engine-gateway-secret.env"
+if [ -f "$GW_ENV_FILE" ]; then
+  . "$GW_ENV_FILE"
+  export AMICODE_ENGINE_SHARED_SECRET
+fi
+
 if [ "${1:-}" = "--print-shard-env" ]; then
   echo "shard_index=${AMICODE_SHARD_INDEX:-none}"
   echo "service_port=${AMICODE_SERVER_PORT:-4096-default}"
   echo "engine_port=${AMICODE_ENGINE_PORT:-4094-runner-default}"
   echo "inspect=${AMICODE_ENGINE_INSPECT:-127.0.0.1:9229-default}"
+  if [ -n "${AMICODE_ENGINE_SHARED_SECRET:-}" ]; then
+    echo "gateway_secret=armed"
+  else
+    echo "gateway_secret=absent"
+  fi
   exit 0
 fi
 PORT="${AMICODE_SERVER_PORT:-4096}"
