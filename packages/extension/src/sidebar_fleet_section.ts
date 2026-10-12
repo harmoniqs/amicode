@@ -278,7 +278,7 @@ export function buildFleetSectionModel(input: FleetSectionInput): FleetSectionMo
   // No fleet.json at all (serve-stance standalone) ⇒ this machine was never
   // part of a fleet — the peer roster's reachability is irrelevant to that
   // fact, so this collapse takes PRIORITY over the unreachable check below
-  // (#1359: "Current device not registered with a fleet", never a fleet-list
+  // (#1359/#1764: "This machine isn't in a fleet yet.", never a fleet-list
   // UI for a fleet that doesn't exist).
   if (local && local.serveStance === "standalone") {
     return {
@@ -467,9 +467,105 @@ export interface TroubleshootFleetRequest {
   kind: "troubleshoot-fleet";
 }
 
+/** #1764 — the FLEET header's Add machine: the host opens the routed guided
+ *  skill in a chat. No payload (the host routes on its last-posted model). */
+export interface AddFleetMachineRequest {
+  kind: "add-fleet-machine";
+}
+
+/** #1764 — the FLEET header's Refresh: re-arm the change watcher, then re-read
+ *  the roster. Read-only — a client re-fetches only the hub's roster. */
+export interface RefreshFleetRequest {
+  kind: "refresh-fleet";
+}
+
 /** The union of navigation messages the fleet section can emit. Navigation
- *  actions only — no roster-write path (ADR 0026, updated for #1413/#1451). */
-export type FleetSectionMessage = OpenFleetManagerRequest | TroubleshootFleetRequest | ConnectToDeviceRequest | FocusMachineRequest;
+ *  actions and reads only — no roster-write path (ADR 0026, updated for
+ *  #1413/#1451/#1764). */
+export type FleetSectionMessage =
+  | OpenFleetManagerRequest
+  | TroubleshootFleetRequest
+  | ConnectToDeviceRequest
+  | FocusMachineRequest
+  | AddFleetMachineRequest
+  | RefreshFleetRequest;
+
+// ── #1764 the FLEET header Refresh control ───────────────────────────────────
+
+/** The Refresh button's accessible name and resting tooltip. */
+export const FLEET_REFRESH_LABEL = "Refresh fleet";
+/** The tooltip after the backstop fired, until the next section update. */
+export const FLEET_REFRESH_STALE_LABEL = "Refresh fleet (the last refresh did not complete)";
+/** How long busy waits for a section update before the backstop clears it. */
+export const FLEET_REFRESH_BACKSTOP_MS = 10_000;
+
+export interface FleetRefreshControl {
+  /** Bind the (re-)rendered button and apply the current state to it. */
+  bind(btn: HTMLElement): void;
+  /** The button's click: post one refresh unless a refresh is already busy. */
+  click(): void;
+  /** Any fleet section update arrived: clear busy and the backstop note. */
+  sectionUpdated(): void;
+}
+
+/** The Refresh busy state machine: idle → busy (click) → idle (any section
+ *  update) or stale (the backstop fired; idle again on the next update). Busy
+ *  is shown by class + aria-busy, never by a size change, so nothing shifts. */
+export function createFleetRefreshControl(opts: {
+  post: (msg: RefreshFleetRequest) => void;
+  setTimer?: (fn: () => void, ms: number) => unknown;
+  clearTimer?: (handle: unknown) => void;
+}): FleetRefreshControl {
+  const setTimer = opts.setTimer ?? ((fn: () => void, ms: number) => setTimeout(fn, ms));
+  const clearTimer = opts.clearTimer ?? ((h: unknown) => clearTimeout(h as ReturnType<typeof setTimeout>));
+  let state: "idle" | "busy" | "stale" = "idle";
+  let btn: HTMLElement | null = null;
+  let backstop: unknown;
+
+  function apply(): void {
+    if (!btn) return;
+    btn.setAttribute("aria-label", FLEET_REFRESH_LABEL);
+    btn.title = state === "stale" ? FLEET_REFRESH_STALE_LABEL : FLEET_REFRESH_LABEL;
+    btn.classList.toggle("is-busy", state === "busy");
+    if (state === "busy") {
+      btn.setAttribute("aria-busy", "true");
+      btn.setAttribute("aria-disabled", "true");
+    } else {
+      btn.removeAttribute("aria-busy");
+      btn.removeAttribute("aria-disabled");
+    }
+  }
+
+  function stopBackstop(): void {
+    if (backstop !== undefined) clearTimer(backstop);
+    backstop = undefined;
+  }
+
+  return {
+    bind(next) {
+      btn = next;
+      apply();
+    },
+    click() {
+      if (state === "busy") return;
+      state = "busy";
+      apply();
+      stopBackstop();
+      backstop = setTimer(() => {
+        backstop = undefined;
+        if (state !== "busy") return;
+        state = "stale";
+        apply();
+      }, FLEET_REFRESH_BACKSTOP_MS);
+      opts.post({ kind: "refresh-fleet" });
+    },
+    sectionUpdated() {
+      stopBackstop();
+      state = "idle";
+      apply();
+    },
+  };
+}
 
 /** #1413 — connect to a fleet device. Posted on device row click. The message
  *  carries identity only; all precondition data is resolved host-side. */
@@ -516,8 +612,8 @@ function dotStatusTooltip(device: FleetDeviceRow, now?: number): string {
 /** Render one device row: a file-list-style line — status dot, name, type pill
  *  (#1359). Clickable: posts a `connect-to-device` message (#1413, ADR 0030 §D1).
  *  `role` / `last-seen` / `capabilities` move to the row's `title` tooltip.
- *  #1451: also carries a DISTINCT focus affordance (posts `focus-machine`) and
- *  a focused-row marking when `focusedMachineId` names this row. */
+ *  #1451: carries a focused-row marking when `focusedMachineId` names this row.
+ *  (The per-row focus CONTROL was removed for now; the marking + subsystem stay.) */
 function renderDeviceRow(
   device: FleetDeviceRow,
   now: number | undefined,
@@ -529,9 +625,11 @@ function renderDeviceRow(
   rowEl.setAttribute("data-machine-id", device.machineId);
   rowEl.title = deviceTooltip(device, device.rosterHealth, now);
 
-  // #1451: mark the focused row so the render reflects focus state. Focus is
-  // home (undefined) OR a specific machine — only a named match highlights.
-  const isFocused = focusedMachineId !== undefined && device.machineId === focusedMachineId;
+  // #1451/#1764: mark the focused row. Focus is home (undefined) OR a roster
+  // machine id matched byte-for-byte. At home the local self-row is the focused
+  // row (ADR 0031 §D4: single-select, default this machine); with a machine
+  // focused only that row is; an absent focused machine marks no row.
+  const isFocused = focusedMachineId === undefined ? device.isLocal : device.machineId === focusedMachineId;
   if (isFocused) {
     rowEl.classList.add("fleet-device-row-focused");
     rowEl.setAttribute("data-focused", "true");
@@ -575,26 +673,11 @@ function renderDeviceRow(
   pill.textContent = device.typeLabel;
   rowEl.appendChild(pill);
 
-  // #1451: the DISTINCT focus affordance. Posts `focus-machine` (scope the
-  // working surfaces to this machine) — NEVER connect-to-device. stopPropagation
-  // keeps it independent of the row-body connect click: a focus click emits ONLY
-  // the focus message, and a row-body click still connects (they never suppress
-  // each other). Every row gets one, including the sole self-row on a
-  // fleet-of-one (the host collapses a local focus to home).
-  const focusBtn = document.createElement("button");
-  focusBtn.type = "button";
-  focusBtn.className = "fleet-focus-btn";
-  focusBtn.setAttribute("aria-label", `Focus ${device.name}`);
-  focusBtn.setAttribute("aria-pressed", isFocused ? "true" : "false");
-  focusBtn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    post({
-      kind: "focus-machine",
-      machineId: device.machineId,
-      isLocal: device.isLocal,
-    });
-  });
-  rowEl.appendChild(focusBtn);
+  // #1451: the per-row focus CONTROL was removed for now (the manual target
+  // glyph did not earn its place in the UI). The focus SUBSYSTEM stays wired —
+  // the `focus-machine` message/handler, FleetFocusStore, focus-follows-tab,
+  // and the focused-row marking above are all intact — so restoring the control
+  // is re-adding this button; nothing downstream was torn out.
 
   return rowEl;
 }
@@ -743,7 +826,7 @@ export function renderFleetSection(
     // No action bar either — there's no fleet to manage or troubleshoot.
     const notice = document.createElement("div");
     notice.className = "fleet-standalone fleet-placeholder-text";
-    notice.textContent = "Current device not registered with a fleet.";
+    notice.textContent = "This machine isn't in a fleet yet.";
     container.appendChild(notice);
   } else {
     // Action bar (Manage + Troubleshoot) renders at the TOP, before the
@@ -759,7 +842,7 @@ export function renderFleetSection(
     } else if (model.state === "empty") {
       const empty = document.createElement("div");
       empty.className = "fleet-empty fleet-placeholder-text";
-      empty.textContent = "No devices reporting yet";
+      empty.textContent = "No machines reporting yet";
       container.appendChild(empty);
     }
     if (model.devices.length > 0) {

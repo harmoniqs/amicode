@@ -760,3 +760,77 @@ describe("ChatPanel — clipboard-image-request routes through extension host", 
     expect(html).not.toContain("navigator.clipboard.read");
   });
 });
+
+// #1764 — per-panel app-ready tracking for the shared chat-session launcher.
+// Ready is true only once THIS panel's app signalled app-ready since the host
+// last set its frame (construction or reframe) and it resets on dispose.
+describe("ChatPanel — per-panel app-ready state (#1764)", () => {
+  let restore: (() => void) | undefined;
+  let created: CapturedPanel[] = [];
+  afterEach(() => {
+    for (const p of created) p.dispose();
+    restore?.();
+    restore = undefined;
+    created = [];
+    ChatPanel.clearAppReadyCallbacks();
+  });
+
+  type Sim = { webview: { _simulateMessage: (m: unknown) => void } };
+
+  it("is not ready at construction and becomes ready on this panel's app-ready", () => {
+    const cap = capturePanel();
+    restore = cap.restore;
+    created = cap.created;
+    const panel = ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
+    expect(panel.isAppReady()).toBe(false);
+    (cap.created[0] as unknown as Sim).webview._simulateMessage({ source: "amicode", kind: "app-ready" });
+    expect(panel.isAppReady()).toBe(true);
+  });
+
+  it("resets when the host sets the panel's frame (reframe)", () => {
+    const cap = capturePanel();
+    restore = cap.restore;
+    created = cap.created;
+    const panel = ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
+    (cap.created[0] as unknown as Sim).webview._simulateMessage({ source: "amicode", kind: "app-ready" });
+    expect(panel.isAppReady()).toBe(true);
+    panel.reframe(new URL("http://127.0.0.1:43200/"));
+    expect(panel.isAppReady()).toBe(false);
+  });
+
+  it("resets on dispose, and the reopened primary starts not-ready", () => {
+    const cap = capturePanel();
+    restore = cap.restore;
+    created = cap.created;
+    const panel = ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
+    (cap.created[0] as unknown as Sim).webview._simulateMessage({ source: "amicode", kind: "app-ready" });
+    cap.created[0].dispose();
+    expect(panel.isAppReady()).toBe(false);
+    const reopened = ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
+    expect(reopened).not.toBe(panel);
+    expect(reopened.isAppReady()).toBe(false);
+  });
+
+  it("subscribeAppReady / subscribeDispose are per-panel and unsubscribable", () => {
+    const cap = capturePanel();
+    restore = cap.restore;
+    created = cap.created;
+    const panel = ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
+    const side = ChatPanel.openNew(fakeCtx(), new URL("http://127.0.0.1:43117/"));
+    const ready = vi.fn();
+    const gone = vi.fn();
+    const unsub = panel.subscribeAppReady(ready);
+    panel.subscribeDispose(gone);
+    // Another panel's app-ready does not reach this panel's subscriber.
+    (cap.created[1] as unknown as Sim).webview._simulateMessage({ source: "amicode", kind: "app-ready" });
+    expect(ready).not.toHaveBeenCalled();
+    expect(side.isAppReady()).toBe(true);
+    (cap.created[0] as unknown as Sim).webview._simulateMessage({ source: "amicode", kind: "app-ready" });
+    expect(ready).toHaveBeenCalledTimes(1);
+    unsub();
+    (cap.created[0] as unknown as Sim).webview._simulateMessage({ source: "amicode", kind: "app-ready" });
+    expect(ready).toHaveBeenCalledTimes(1);
+    cap.created[0].dispose();
+    expect(gone).toHaveBeenCalledTimes(1);
+  });
+});

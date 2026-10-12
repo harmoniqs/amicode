@@ -13,7 +13,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import { execSync } from "node:child_process";
 import { handleSidebarMessage, type SidebarMessageHandlers, type SidebarDownMessage, type FileOpRequest, type FileOpResult, type TreeEntry, type TreeRoot } from "./sidebar_bridge";
-import { buildFleetSectionModel, type RosterRowLike, type FleetPostureInput, type LocalDeviceInput, type CanonicalServerInput } from "./sidebar_fleet_section";
+import { buildFleetSectionModel, type RosterRowLike, type FleetPostureInput, type LocalDeviceInput, type CanonicalServerInput, type FleetSectionModel } from "./sidebar_fleet_section";
 import { parseRosterDocument, fleetRosterCachePath, fleetTopologyPath, classifyMacModel } from "@amicode/schema";
 import { fleetPostureStateFile } from "./fleet_posture_state";
 import { SidebarTreeService, type RawDirEntry } from "./sidebar_tree_service";
@@ -394,6 +394,10 @@ function friendlyHostname(): string | undefined {
   /** #1451 — FOCUS a fleet machine (set the host FleetFocusStore). Distinct
    *  from connectToDevice: never connects/attaches. Optional; honest degrade. */
   focusMachine?: (msg: { machineId: string; isLocal: boolean }) => void;
+  /** #1764 — READ the focused machine: the focus host's scoped machine id, or
+   *  undefined for home. Stamped onto every posted model. A read seam only —
+   *  there is no focus write seam here. Optional; absent ⇒ home. */
+  readFocusedMachineId?: () => string | undefined;
 }
 
 /** The roster read result — rows + whether the read succeeded (false ⇒ host
@@ -445,6 +449,9 @@ export interface DefaultFleetDepsOptions {
   /** #1451 — override the focus-machine handler. Default: undefined (honest
    *  degrade). Production wires the host FleetFocusStore from extension.ts. */
   focusMachine?: (msg: { machineId: string; isLocal: boolean }) => void;
+  /** #1764 — the focused-machine read. Default: undefined (home). Production
+   *  binds it to the real focus host's scoped machine id. */
+  readFocusedMachineId?: () => string | undefined;
 }
 
 /** The proxied route a CLIENT reads the host's authoritative roster from — the
@@ -615,6 +622,7 @@ export function defaultFleetSectionDeps(opts: DefaultFleetDepsOptions = {}): Fle
     },
     connectToDevice: opts.connectToDevice,
     focusMachine: opts.focusMachine,
+    readFocusedMachineId: opts.readFocusedMachineId,
   };
 }
 
@@ -648,6 +656,10 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
    *  display health transitions (reachable → degraded → down) even when
    *  roster.json is static and fs.watch fires nothing. */
   private fleetStalenessTimer?: ReturnType<typeof setInterval>;
+  /** #1764: the fleet view-model this host last POSTED — Add machine routes on
+   *  it at click time (never recomputing stance from fleet config), so the
+   *  button and the rendered section agree. Undefined until the first post. */
+  private lastPostedFleetModel?: FleetSectionModel;
 
   static readonly DEFAULT_SECTION_ORDER = ["research", "dev", "fleet"];
   private static readonly SECTION_ORDER_KEY = "amicode.sectionOrder";
@@ -800,6 +812,21 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
         troubleshootFleet: () => {
           this.fleetDeps?.launchSession("/troubleshoot-fleet");
         },
+        // #1764 — Add machine: standalone / empty → create-a-fleet (no fleet
+        // exists yet, so start one); populated / unreachable / nothing posted
+        // yet → add-fleet-device. For unreachable we can't know the fleet is
+        // empty (host down), so we keep the add-fleet-device fallback, which
+        // itself hands off to create-a-fleet when no fleet turns out to exist.
+        addFleetMachine: () => {
+          if (!this.fleetDeps) return;
+          const s = this.lastPostedFleetModel?.state;
+          const prompt = s === "standalone" || s === "empty" ? "/create-a-fleet" : "/add-fleet-device";
+          this.fleetDeps.launchSession(prompt);
+        },
+        // #1764 — Refresh: re-arm the change watcher exactly once (it may have
+        // found no fleet directory at load), THEN re-read and post — so a change
+        // landing during the read is still caught by the live watcher.
+        refreshFleet: () => this.refreshFleet(),
         connectToDevice: (msg) => {
           this.fleetDeps?.connectToDevice?.(msg);
         },
@@ -830,7 +857,7 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
     // fleet deps were injected (backward compatible).
     if (this.fleetDeps) {
       this.pushFleetStatus();
-      this.fleetSub = this.fleetDeps.onPostureChange(() => this.pushFleetStatus());
+      this.armFleetWatcher();
       // #1375: staleness sweep — re-push every 60s so display health degrades
       // even when roster.json is static (no fs.watch event). The model's
       // effectiveHealth re-evaluates staleness against the current clock.
@@ -908,6 +935,34 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
     this.postDown({ kind: "section-order", order });
   }
 
+  /** (Re-)subscribe the fleet change watcher, disposing any previous one. A
+   *  subscription failure leaves no watcher — the 30 s sweep still covers it. */
+  private armFleetWatcher(): void {
+    if (!this.fleetDeps) return;
+    this.fleetSub?.dispose();
+    this.fleetSub = undefined;
+    try {
+      this.fleetSub = this.fleetDeps.onPostureChange(() => this.pushFleetStatus());
+    } catch {
+      /* no watcher this time; the staleness sweep keeps the section current */
+    }
+  }
+
+  /** #1764 — re-render the FLEET section (the focus host's change hook): a
+   *  full rebuild from the same reads as every other push, so it also
+   *  refreshes the Add machine routing cache. */
+  rerenderFleetSection(): void {
+    this.pushFleetStatus();
+  }
+
+  /** #1764 — the FLEET header's Refresh. Read-only: health comes from each
+   *  machine's own heartbeat; this only re-arms the watcher and re-reads. */
+  private refreshFleet(): void {
+    if (!this.fleetDeps) return;
+    this.armFleetWatcher();
+    this.pushFleetStatus();
+  }
+
   private postDown(msg: SidebarDownMessage): void {
     this.view?.webview.postMessage(msg);
   }
@@ -921,7 +976,6 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
   private pushFleetStatus(): void {
     if (!this.fleetDeps) return;
     const deps = this.fleetDeps;
-    const result = deps.readRoster();
     const build = (roster: RosterRead) => {
       // Re-check: an async read may resolve after the view/deps were torn down.
       if (!this.fleetDeps) return;
@@ -933,12 +987,21 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
         troubleshootAvailable: true,
         localDevice: deps.readLocalDevice?.() ?? null,
         canonicalServer: deps.readCanonicalServer?.() ?? null,
+        focusedMachineId: deps.readFocusedMachineId?.(),
       });
+      this.lastPostedFleetModel = model;
       this.postDown({ kind: "fleet-status", model });
     };
     // The SERVER/standalone read is synchronous — post immediately (keeps every
     // existing synchronous injection posting in the same tick). The CLIENT read
     // is a Promise (the host proxy-read) — build when it resolves (#1363).
+    // A read that throws is the honest unreachable state, posted like any other.
+    let result: RosterRead | Promise<RosterRead>;
+    try {
+      result = deps.readRoster();
+    } catch {
+      result = { rows: [], reachable: false };
+    }
     if (result instanceof Promise) {
       void result.then(build).catch(() => build({ rows: [], reachable: false }));
     } else {
@@ -1438,6 +1501,22 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
       height: 14px;
       display: block;
     }
+    /* #1764 Fleet "Refresh fleet" busy: dimmed + spinning glyph; no size change. */
+    .tree-section-label .section-action.is-busy {
+      opacity: 0.6;
+      cursor: progress;
+    }
+    .tree-section-label .section-action.is-busy svg {
+      animation: amc-fleet-refresh-spin 1s linear infinite;
+    }
+    @keyframes amc-fleet-refresh-spin {
+      to { transform: rotate(360deg); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .tree-section-label .section-action.is-busy svg {
+        animation: none;
+      }
+    }
     .fleet-placeholder-text {
       padding: 8px 12px 8px 32px;
       font-size: 12px;
@@ -1540,6 +1619,8 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
       color: var(--vscode-badge-foreground, var(--vscode-foreground));
       background: var(--vscode-badge-background);
     }
+    /* #1764 — the per-row focus control was removed for now; its CSS went with
+       it. The focused-row marking (.fleet-device-row-focused) is unaffected. */
     .fleet-action-bar { display: flex; gap: 6px; margin: 4px 8px; }
     .fleet-action-bar button {
       padding: 2px 10px;
