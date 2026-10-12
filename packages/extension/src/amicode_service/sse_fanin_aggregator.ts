@@ -50,8 +50,9 @@ export interface SseFrameSource {
   /** #1617 — resume pulling once the downstream has drained. */
   resume?(): void;
   /** #1771 — once `next()` has resolved null: did the upstream END cleanly or
-   *  fail with an ERROR? Census only (the close reason); both still end the
-   *  source the same way. Absent / undefined ⇒ a clean end. */
+   *  fail with an ERROR? The census's close reason (and, #1773, the reason a
+   *  fleet-of-one listener is severed under); both still end the source the
+   *  same way. Absent / undefined ⇒ a clean end. */
   endReason?(): "end" | "error" | undefined;
 }
 

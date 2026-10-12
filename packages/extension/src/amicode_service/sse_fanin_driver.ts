@@ -365,7 +365,8 @@ class FanInConnection implements CensusConnection {
       // namespace (its composite cursor), NOT the stale connect-time id. A
       // re-open of an arm that already delivered is a NON-INITIAL re-open — the
       // aggregator emits one composite-mode gap (reopenArm is a no-op for a
-      // never-delivered arm and in fleet-of-one, so calling it here is safe).
+      // never-delivered arm; a peer arm is only active in composite mode, so
+      // its verdict is never `sever`).
       this.reopenAndTrack(machineId, this.deps.peerBaseUrl(machineId), this.peerAuth(machineId));
     }
     // Close the real upstream for any peer arm no longer active (dark peer, or
@@ -387,6 +388,8 @@ class FanInConnection implements CensusConnection {
     // until reload"). Guard at the call site so a HEALTHY local arm is never
     // re-opened or duplicated (openArm early-returns on a present source too);
     // resume from LOCAL's live cursor for lossless replay — mirrors start().
+    // #1773: in fleet-of-one a local arm that delivered is not re-opened at all —
+    // reopenAndTrack severs the listener (an error close) so the client resyncs.
     if (!this.sources.has(LOCAL_NAMESPACE)) {
       this.reopenAndTrack(LOCAL_NAMESPACE, this.deps.localEventUrl(), this.authHeader);
     }
