@@ -581,7 +581,9 @@ export class AmicodeServiceServer {
         return;
       }
       // #1519 (W1c, ADR 0033 §D1): the SSE fan-in interception for the app's
-      // ONE global /event stream (ADR 0027 single-origin). AHEAD of every
+      // global /event stream. #1772: one fan-in connection PER LISTENER (windows,
+      // Chat Deck panes, split panes) — a second view no longer evicts the first;
+      // beyond the driver's cap a listener gets a retryable 503. AHEAD of every
       // downstream path (the fleet hub block, the engine proxy) so a machine
       // that owns peer sessions fans their events IN onto this one response.
       // A SINGLE flag-gated expression: with the flag OFF (default) the `&&`

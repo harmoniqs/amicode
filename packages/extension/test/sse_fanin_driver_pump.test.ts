@@ -54,32 +54,63 @@ function controllableSource(): Ctl {
   };
 }
 
-/** A mock ServerResponse that collects writes. */
-function mockRes(): http.ServerResponse & { text(): string; fireClose(): void } {
+/** A mock ServerResponse that collects writes. #1772 — also records whether the
+ *  response was ENDED (an evicted listener is ended by the driver) and the
+ *  status/headers/body of a non-stream answer (the beyond-cap refusal). */
+type MockRes = http.ServerResponse & {
+  text(): string;
+  fireClose(): void;
+  ended: boolean;
+  status?: number;
+  headerMap: Record<string, string>;
+  body: string;
+};
+function mockRes(): MockRes {
   const chunks: string[] = [];
   const closeListeners: Array<() => void> = [];
-  return {
+  const res = {
     headersSent: false,
+    ended: false,
+    status: undefined as number | undefined,
+    headerMap: {} as Record<string, string>,
+    body: "",
     write(chunk: string) {
       chunks.push(chunk);
       return true;
     },
-    writeHead() {
-      return this;
+    writeHead(status: number, headers?: Record<string, string | number>) {
+      res.status = status;
+      for (const [k, v] of Object.entries(headers ?? {})) res.headerMap[k.toLowerCase()] = String(v);
+      res.headersSent = true;
+      return res;
+    },
+    setHeader(k: string, v: string | number) {
+      res.headerMap[k.toLowerCase()] = String(v);
+      return res;
+    },
+    set statusCode(s: number) {
+      res.status = s;
+    },
+    get statusCode(): number {
+      return res.status ?? 200;
     },
     flushHeaders() {},
     on(event: string, cb: (...args: unknown[]) => void) {
       if (event === "close") closeListeners.push(cb as () => void);
-      return this;
+      return res;
     },
-    end() {},
+    end(chunk?: string) {
+      if (typeof chunk === "string") res.body += chunk;
+      res.ended = true;
+    },
     text() {
       return chunks.join("");
     },
     fireClose() {
       for (const cb of closeListeners) cb();
     },
-  } as unknown as http.ServerResponse & { text(): string; fireClose(): void };
+  };
+  return res as unknown as MockRes;
 }
 
 /** #1617 — a mock ServerResponse that models REAL Node backpressure: `write()`
@@ -793,3 +824,449 @@ describe("#1638 — re-open resumes from last-delivered id + composite-mode reco
     res.fireClose()
   })
 })
+
+// ══════════════════════════════════════════════════════════════════════════════
+// #1772 — the fan-in serves EVERY listener. Each global-stream listener gets its
+// own FanInConnection (aggregator + upstream arms + reconcile); a second view
+// (another window, a Chat Deck pane, a split pane) no longer evicts the first.
+// The harness models the upstream origins as BROADCAST buses (the engine's
+// global bus delivers every event to every open subscription), so a listener
+// whose arms were torn down by an eviction visibly stops receiving frames.
+// ══════════════════════════════════════════════════════════════════════════════
+
+/** A fake set of upstream origins: every `openUpstream` call is a NEW
+ *  subscription on its namespace's bus; `broadcast` delivers a frame to every
+ *  OPEN subscription of that namespace. Records every open and every close. */
+interface FakeOrigins {
+  openUpstream: (r: { namespace: string; lastEventId?: string }) => SseFrameSource;
+  broadcast(namespace: string, frame: string): void;
+  opens(namespace: string): number;
+  closes(namespace: string): number;
+  live(namespace: string): number;
+}
+function fakeOrigins(): FakeOrigins {
+  const subs = new Map<string, Set<Ctl>>();
+  const openCount = new Map<string, number>();
+  const closeCount = new Map<string, number>();
+  const bump = (m: Map<string, number>, ns: string) => m.set(ns, (m.get(ns) ?? 0) + 1);
+  return {
+    openUpstream(r) {
+      const ctl = controllableSource();
+      const set = subs.get(r.namespace) ?? new Set<Ctl>();
+      subs.set(r.namespace, set);
+      set.add(ctl);
+      bump(openCount, r.namespace);
+      return {
+        next: () => ctl.source.next(),
+        close: () => {
+          if (set.delete(ctl)) bump(closeCount, r.namespace);
+          ctl.end();
+        },
+      };
+    },
+    broadcast(namespace, frame) {
+      for (const ctl of subs.get(namespace) ?? []) ctl.push(frame);
+    },
+    opens: (ns) => openCount.get(ns) ?? 0,
+    closes: (ns) => closeCount.get(ns) ?? 0,
+    live: (ns) => subs.get(ns)?.size ?? 0,
+  };
+}
+
+const STUDIO_OWNED = [
+  { id: "ses-studio", amicode_owner: { owner_machine_id: "studio", owner_name: "studio", is_local: false } },
+];
+
+function twoListenerDriver(origins: FakeOrigins, ownerMap: SessionOwnerMap, extra: Partial<ConstructorParameters<typeof SseFanInDriver>[0]> = {}): SseFanInDriver {
+  return new SseFanInDriver({
+    ownerMap,
+    localMachineId: "macbook",
+    localEventUrl: () => "http://local.invalid",
+    peerBaseUrl: (id) => (id === "studio" ? "http://studio.invalid" : undefined),
+    peerToken: (id) =>
+      id === "studio"
+        ? { ok: true as const, credential: { baseUrl: "http://studio.invalid", token: "tok-studio" } }
+        : { ok: false as const, reason: "absent" as const },
+    reconcileMs: 999_999,
+    openUpstream: origins.openUpstream,
+    ...extra,
+  });
+}
+
+describe("#1772 AC1 — two concurrent listeners both stay connected and both receive every frame", () => {
+  it("listener A and listener B each receive the local arm's AND the peer arm's frames; neither is ended", async () => {
+    const ownerMap = new SessionOwnerMap();
+    ownerMap.update(STUDIO_OWNED);
+    const origins = fakeOrigins();
+    const driver = twoListenerDriver(origins, ownerMap);
+
+    const resA = mockRes();
+    const resB = mockRes();
+    expect(driver.handle(mockReq("/global/event"), resA)).toBe(true);
+    await tick();
+    expect(driver.handle(mockReq("/global/event"), resB)).toBe(true);
+    await tick();
+
+    origins.broadcast(LOCAL_NAMESPACE, sseFrame("event: message", 'data: {"from":"macbook","n":1}', "id: l1"));
+    origins.broadcast("studio", sseFrame("event: message", 'data: {"from":"studio","n":2}', "id: p1"));
+    await tick();
+
+    for (const res of [resA, resB]) {
+      expect(res.ended).toBe(false); // still connected — no eviction
+      expect(res.text()).toContain('"from":"macbook"');
+      expect(res.text()).toContain('"from":"studio"');
+    }
+
+    resA.fireClose();
+    resB.fireClose();
+  });
+});
+
+describe("#1772 AC2 — closing one listener closes ONLY that listener's upstream arms", () => {
+  it("A departs → exactly A's local + peer arms close; B keeps its arms and keeps streaming, uninterrupted", async () => {
+    const ownerMap = new SessionOwnerMap();
+    ownerMap.update(STUDIO_OWNED);
+    const origins = fakeOrigins();
+    const driver = twoListenerDriver(origins, ownerMap);
+
+    const resA = mockRes();
+    const resB = mockRes();
+    driver.handle(mockReq("/global/event"), resA);
+    await tick();
+    driver.handle(mockReq("/global/event"), resB);
+    await tick();
+    // Both listeners hold their own local + peer arm.
+    expect(origins.live(LOCAL_NAMESPACE)).toBe(2);
+    expect(origins.live("studio")).toBe(2);
+
+    origins.broadcast(LOCAL_NAMESPACE, sseFrame("event: message", 'data: {"n":"before"}', "id: l1"));
+    await tick();
+
+    // Listener A departs (its socket closes).
+    resA.fireClose();
+    await tick();
+
+    // Exactly A's two arms closed; B's two arms untouched.
+    expect(origins.closes(LOCAL_NAMESPACE)).toBe(1);
+    expect(origins.closes("studio")).toBe(1);
+    expect(origins.live(LOCAL_NAMESPACE)).toBe(1);
+    expect(origins.live("studio")).toBe(1);
+
+    // B keeps streaming on the SAME arms (no re-open), from both origins.
+    driver.reconcile();
+    await tick();
+    origins.broadcast(LOCAL_NAMESPACE, sseFrame("event: message", 'data: {"n":"after-local"}', "id: l2"));
+    origins.broadcast("studio", sseFrame("event: message", 'data: {"n":"after-peer"}', "id: p2"));
+    await tick();
+    expect(resB.ended).toBe(false);
+    expect(resB.text()).toContain('"n":"before"');
+    expect(resB.text()).toContain('"n":"after-local"');
+    expect(resB.text()).toContain('"n":"after-peer"');
+    expect(origins.opens(LOCAL_NAMESPACE)).toBe(2); // one per listener, never re-opened
+    expect(origins.opens("studio")).toBe(2);
+    // The departed listener receives nothing further.
+    expect(resA.text()).not.toContain('"n":"after-local"');
+
+    resB.fireClose();
+    await tick();
+    expect(origins.live(LOCAL_NAMESPACE)).toBe(0);
+    expect(origins.live("studio")).toBe(0);
+  });
+});
+
+/** Poll until `cond` holds (or time out) — for the cadence-driven tests, where
+ *  each connection's own reconcile timer (not a manual call) does the work. */
+async function until(cond: () => boolean, timeoutMs = 2000): Promise<boolean> {
+  const start = Date.now();
+  while (!cond() && Date.now() - start < timeoutMs) await tick(5);
+  return cond();
+}
+
+describe("#1772 AC3 — reconcile updates EVERY live connection's membership", () => {
+  it("driver.reconcile() opens a newly-owned peer's arm on BOTH listeners, and closes it on both when it goes dark", async () => {
+    const ownerMap = new SessionOwnerMap(); // fleet-of-one at connect
+    const origins = fakeOrigins();
+    const driver = twoListenerDriver(origins, ownerMap);
+
+    const resA = mockRes();
+    const resB = mockRes();
+    driver.handle(mockReq("/global/event"), resA);
+    driver.handle(mockReq("/global/event"), resB);
+    await tick();
+    expect(origins.opens("studio")).toBe(0);
+
+    ownerMap.update(STUDIO_OWNED);
+    driver.reconcile();
+    await tick();
+    expect(origins.live("studio")).toBe(2); // one peer arm per listener
+    origins.broadcast("studio", sseFrame("event: message", 'data: {"from":"studio"}', "id: p1"));
+    await tick();
+    expect(resA.text()).toContain('"from":"studio"');
+    expect(resB.text()).toContain('"from":"studio"');
+
+    ownerMap.update([]);
+    driver.reconcile();
+    await tick();
+    expect(origins.live("studio")).toBe(0); // both listeners dropped the dark peer
+    expect(origins.live(LOCAL_NAMESPACE)).toBe(2); // local arms untouched (§D4)
+
+    resA.fireClose();
+    resB.fireClose();
+  });
+
+  it("on its CADENCE (no manual reconcile): both listeners pick up a new owner, then drop it", async () => {
+    const ownerMap = new SessionOwnerMap();
+    const origins = fakeOrigins();
+    const driver = twoListenerDriver(origins, ownerMap, { reconcileMs: 20 });
+
+    const resA = mockRes();
+    const resB = mockRes();
+    driver.handle(mockReq("/global/event"), resA);
+    driver.handle(mockReq("/global/event"), resB);
+    await tick();
+
+    ownerMap.update(STUDIO_OWNED);
+    expect(await until(() => origins.live("studio") === 2)).toBe(true);
+    origins.broadcast("studio", sseFrame("event: message", 'data: {"from":"studio"}', "id: p1"));
+    await tick();
+    expect(resA.text()).toContain('"from":"studio"');
+    expect(resB.text()).toContain('"from":"studio"');
+
+    ownerMap.update([]);
+    expect(await until(() => origins.live("studio") === 0)).toBe(true);
+
+    resA.fireClose();
+    resB.fireClose();
+    // A closed listener's timer is stopped: a later owner change opens nothing.
+    const opensAfterClose = origins.opens("studio");
+    ownerMap.update(STUDIO_OWNED);
+    await tick(80);
+    expect(origins.opens("studio")).toBe(opensAfterClose);
+  });
+});
+
+describe("#1772 AC4 — a listener beyond the cap is refused (retryable), never by evicting one", () => {
+  it("default cap 16: the 17th listener gets 503 + Retry-After, opens no arm, and all 16 keep streaming; a freed slot is reusable", async () => {
+    const ownerMap = new SessionOwnerMap();
+    ownerMap.update(STUDIO_OWNED);
+    const origins = fakeOrigins();
+    const driver = twoListenerDriver(origins, ownerMap);
+
+    const accepted: MockRes[] = [];
+    for (let i = 0; i < 16; i++) {
+      const res = mockRes();
+      expect(driver.handle(mockReq("/global/event"), res)).toBe(true);
+      accepted.push(res);
+    }
+    await tick();
+    expect(origins.live(LOCAL_NAMESPACE)).toBe(16);
+
+    // The 17th is ANSWERED (handle owns the response) with a retryable refusal.
+    const refused = mockRes();
+    expect(driver.handle(mockReq("/global/event"), refused)).toBe(true);
+    await tick();
+    expect(refused.status).toBe(503);
+    expect(Number(refused.headerMap["retry-after"])).toBeGreaterThan(0);
+    expect(refused.ended).toBe(true);
+    const body = JSON.parse(refused.body) as { ok: boolean; reason: string; max_listeners: number };
+    expect(body.ok).toBe(false);
+    expect(body.reason).toBe("listener-cap");
+    expect(body.max_listeners).toBe(16);
+
+    // No existing listener was closed to make room, and the refused one opened nothing.
+    expect(origins.opens(LOCAL_NAMESPACE)).toBe(16);
+    expect(origins.closes(LOCAL_NAMESPACE)).toBe(0);
+    expect(origins.live("studio")).toBe(16);
+    origins.broadcast(LOCAL_NAMESPACE, sseFrame("event: message", 'data: {"n":"after-refusal"}', "id: l1"));
+    await tick();
+    for (const res of accepted) {
+      expect(res.ended).toBe(false);
+      expect(res.text()).toContain('"n":"after-refusal"');
+    }
+    expect(refused.text()).toBe("");
+
+    // The cap bounds CONCURRENT listeners: once one departs, a retry is accepted.
+    accepted[0].fireClose();
+    await tick();
+    const retry = mockRes();
+    driver.handle(mockReq("/global/event"), retry);
+    await tick();
+    expect(retry.status).toBe(200);
+    expect(retry.ended).toBe(false);
+    expect(origins.live(LOCAL_NAMESPACE)).toBe(16);
+
+    for (const res of [...accepted, retry]) res.fireClose();
+  });
+});
+
+/** #1772 — a VIEW that behaves like the app's stream loop: when the driver ENDS
+ *  its stream (an eviction is a clean end), the socket closes and the view
+ *  reconnects after `delayMs` (the client's reconnect delay, shortened). Two
+ *  such views against an evicting driver re-open against each other forever —
+ *  the Studio's ~340-reconnects-in-15-minutes storm. */
+function reconnectingView(driver: SseFanInDriver, delayMs = 5): { connects(): number; current(): MockRes; stop(): void } {
+  let stopped = false;
+  let connects = 0;
+  let current!: MockRes;
+  const connect = (): void => {
+    if (stopped) return;
+    connects += 1;
+    const res = mockRes();
+    const end = res.end.bind(res);
+    res.end = ((chunk?: string) => {
+      end(chunk);
+      setTimeout(() => {
+        res.fireClose();
+        connect();
+      }, delayMs);
+    }) as typeof res.end;
+    current = res;
+    driver.handle(mockReq("/global/event"), res);
+  };
+  connect();
+  return {
+    connects: () => connects,
+    current: () => current,
+    stop() {
+      stopped = true;
+      current.fireClose();
+    },
+  };
+}
+
+describe("#1772 AC5 — two listeners: one local arm each, kept open — no repeating re-open pattern", () => {
+  it("two reconnecting views over many live reconcile ticks: 2 local arms opened, 0 closed, 0 view reconnects", async () => {
+    const ownerMap = new SessionOwnerMap();
+    ownerMap.update(STUDIO_OWNED);
+    const origins = fakeOrigins();
+    const driver = twoListenerDriver(origins, ownerMap, { reconcileMs: 10 });
+
+    const viewA = reconnectingView(driver);
+    await tick();
+    const viewB = reconnectingView(driver);
+    await tick(250); // ~25 reconcile ticks per connection
+
+    try {
+      expect(viewA.connects()).toBe(1);
+      expect(viewB.connects()).toBe(1);
+      expect(origins.opens(LOCAL_NAMESPACE)).toBe(2); // one local arm per listener
+      expect(origins.closes(LOCAL_NAMESPACE)).toBe(0); // …and each is kept open
+      expect(origins.live(LOCAL_NAMESPACE)).toBe(2);
+      expect(origins.opens("studio")).toBe(2);
+      expect(origins.closes("studio")).toBe(0);
+
+      // Both views are live on those same arms.
+      origins.broadcast(LOCAL_NAMESPACE, sseFrame("event: message", 'data: {"n":"steady"}', "id: l1"));
+      await tick();
+      expect(viewA.current().text()).toContain('"n":"steady"');
+      expect(viewB.current().text()).toContain('"n":"steady"');
+    } finally {
+      viewA.stop();
+      viewB.stop();
+    }
+  });
+});
+
+describe("#1772 invariants — #1264 / #1601 / #1617 hold PER LISTENER", () => {
+  it("#1264 fleet-of-one: each of two listeners receives the local stream byte-identical", async () => {
+    const origins = fakeOrigins();
+    const driver = twoListenerDriver(origins, new SessionOwnerMap());
+    const resA = mockRes();
+    const resB = mockRes();
+    driver.handle(mockReq("/global/event"), resA);
+    driver.handle(mockReq("/global/event"), resB);
+    await tick();
+
+    const F1 = sseFrame("event: message", 'data: {"a":1}', "id: 1");
+    const F2 = sseFrame("event: message", 'data: {"b":2}', "id: 2");
+    origins.broadcast(LOCAL_NAMESPACE, F1);
+    origins.broadcast(LOCAL_NAMESPACE, F2);
+    await tick();
+    expect(resA.text()).toBe(F1 + F2);
+    expect(resB.text()).toBe(F1 + F2);
+
+    resA.fireClose();
+    resB.fireClose();
+  });
+
+  it("#1601 per connection: one listener's dead local arm is re-opened for THAT listener only", async () => {
+    const ownerMap = new SessionOwnerMap();
+    ownerMap.update(STUDIO_OWNED);
+    const localCtls: Ctl[] = [];
+    const driver = twoListenerDriver(fakeOrigins(), ownerMap, {
+      openUpstream: (r) => {
+        const ctl = controllableSource();
+        if (r.namespace === LOCAL_NAMESPACE) localCtls.push(ctl);
+        return ctl.source;
+      },
+    });
+    const resA = mockRes();
+    const resB = mockRes();
+    driver.handle(mockReq("/global/event"), resA); // localCtls[0]
+    driver.handle(mockReq("/global/event"), resB); // localCtls[1]
+    await tick();
+    expect(localCtls.length).toBe(2);
+
+    localCtls[0].end(); // A's local upstream drops
+    await tick();
+    driver.reconcile();
+    await tick();
+    expect(localCtls.length).toBe(3); // exactly one re-open — A's
+
+    localCtls[2].push(sseFrame("event: message", 'data: {"to":"A"}', "id: a1"));
+    localCtls[1].push(sseFrame("event: message", 'data: {"to":"B"}', "id: b1"));
+    await tick();
+    expect(resA.text()).toContain('"to":"A"');
+    expect(resA.text()).not.toContain('"to":"B"');
+    expect(resB.text()).toContain('"to":"B"');
+    expect(resB.text()).not.toContain('"to":"A"');
+
+    localCtls.forEach((c) => c.end());
+    resA.fireClose();
+    resB.fireClose();
+  });
+
+  it("#1617 per connection: a backpressured listener pauses only ITS upstreams and heals on ITS drain", async () => {
+    const ownerMap = new SessionOwnerMap();
+    ownerMap.update(STUDIO_OWNED);
+    const ctls: PausableCtl[] = [];
+    const driver = twoListenerDriver(fakeOrigins(), ownerMap, {
+      openUpstream: () => {
+        const ctl = pausableSource();
+        ctls.push(ctl);
+        return ctl.source;
+      },
+    });
+    const resA = backpressureRes();
+    driver.handle(mockReq("/global/event"), resA); // ctls[0] local, ctls[1] studio
+    await tick();
+    const resB = mockRes();
+    driver.handle(mockReq("/global/event"), resB); // ctls[2] local, ctls[3] studio
+    await tick();
+    const [aLocal, aPeer, bLocal, bPeer] = ctls;
+
+    resA.block();
+    aLocal.push(sseFrame("event: message", 'data: {"n":1}', "id: l1")); // trips A's backpressure
+    await tick();
+    aLocal.push(sseFrame("event: message", 'data: {"n":2}', "id: l2")); // stranded behind it
+    await tick();
+    expect(aLocal.pauseCalls).toBeGreaterThan(0);
+    expect(aPeer.pauseCalls).toBeGreaterThan(0);
+    expect(bLocal.pauseCalls).toBe(0); // B is not throttled by A's slow socket
+    expect(bPeer.pauseCalls).toBe(0);
+
+    bLocal.push(sseFrame("event: message", 'data: {"to":"B"}', "id: b1"));
+    await tick();
+    expect(resB.text()).toContain('"to":"B"'); // B streams on while A is backpressured
+    expect(resA.text()).not.toContain('"n":2');
+
+    resA.fireDrain();
+    await tick();
+    expect(resA.text()).toContain('"n":2');
+    expect(aLocal.resumeCalls).toBeGreaterThan(0);
+
+    ctls.forEach((c) => c.end());
+    resA.fireClose();
+    resB.fireClose();
+  });
+});
