@@ -45,6 +45,7 @@ import {
   type SessionEntry,
 } from "./session_multiplexer";
 import { SseFanInDriver } from "./sse_fanin_driver";
+import { readFleetSessionStatus, type StatusOwnerLookup } from "./fleet_session_status";
 import { createObservationReadPlane } from "./observation_read_plane";
 import { createObservationWritePlane } from "./observation_write_plane";
 import { findControlGrantByTarget, readAllLifecycleGrants, sanitizeGrantForDisplay } from "./fleet_control_lifecycle";
@@ -768,6 +769,67 @@ export function registerFleetRoutes(server: AmicodeServiceServer, deps: FleetRou
   return server;
 }
 
+/** #1766: the fleet session-status read — the machine's own, never-proxied
+ *  (/amicode/fleet/* prefix) fleet-wide, per-(owner, directory) status read the
+ *  app's reconnect re-seed and self-heal call with its pinned session ids. */
+export const FLEET_SESSION_STATUS_ROUTE = "/amicode/fleet/session-status";
+
+/** The live inputs the fleet session-status read needs: the owner map a boot
+ *  branch built (and feeds), the SAME fleet-peer provider the sessions route
+ *  assembles peers from, and the local engine source. */
+export interface FleetSessionStatusRouteDeps {
+  ownerMap: StatusOwnerLookup;
+  fleetPeers: NonNullable<FleetRouteDeps["fleetPeers"]>;
+  engine: { getUrl(): string | undefined; password?: string };
+  fetchImpl?: typeof fetch;
+}
+
+/** GET /amicode/fleet/session-status?ids=<id>,<id>… (#1766). Registered on
+ *  EVERY boot so a machine without fleet peers answers the documented
+ *  not-served 404 `{ok:false, reason:"no-fleet-peers"}` (the app's silent
+ *  fallback signal) rather than the generic no-route 404. `resolveDeps` is read
+ *  PER REQUEST: it returns the live owner map of whichever boot branch built
+ *  one, or undefined where no fleet-peer provider / owner map exists. Peers,
+ *  tokens, trust, and blocked identities are assembled per request exactly as
+ *  the /amicode/fleet/sessions route assembles them. Never throws. */
+export function registerFleetSessionStatusRoute(
+  server: AmicodeServiceServer,
+  resolveDeps: () => FleetSessionStatusRouteDeps | undefined,
+): AmicodeServiceServer {
+  server.add("GET", FLEET_SESSION_STATUS_ROUTE, async ({ url }) => {
+    const deps = resolveDeps();
+    if (!deps) return { status: 404, body: JSON.stringify({ ok: false, reason: "no-fleet-peers" }) };
+    try {
+      const fp = deps.fleetPeers;
+      const peers = fp.getServingPeers().map((p) => {
+        const tokenRead = fp.readPeerToken(p.machineId);
+        return {
+          machineId: p.machineId,
+          getUrl: () => (tokenRead.ok ? tokenRead.credential.baseUrl : undefined),
+          token: tokenRead.ok ? tokenRead.credential.token : undefined,
+          // #1481 (AC1): holding the reader token IS the trust relationship.
+          trusted: tokenRead.ok,
+        };
+      });
+      const body = await readFleetSessionStatus(url.searchParams.get("ids"), {
+        ownerMap: deps.ownerMap,
+        sources: {
+          localMachineId: fp.localMachineId,
+          local: { getUrl: deps.engine.getUrl, password: deps.engine.password },
+          peers,
+          blockedPeers: fp.getBlockedPeers?.() ?? [],
+        },
+        ...(deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}),
+      });
+      return { body: JSON.stringify(body) };
+    } catch {
+      // A provider that threw: nothing covered (every id keeps its client value).
+      return { body: JSON.stringify({ ok: true, statuses: {}, sources: {}, unresolved: [] }) };
+    }
+  });
+  return server;
+}
+
 /** #955: the auth mode's env carrier — the runner passes
  *  AMICODE_SERVICE_AUTH through (the fork-hub cutover's open-boundary
  *  posture on the tunnel/LAN). Only the exact value "open" arms it; anything
@@ -971,6 +1033,12 @@ export function createAmicodeService(
   // leaves it undefined; the route handler checks for its presence.
   let attachLifecycle: AttachLifecycleImpl | undefined;
   let fleetMultiplexerArmed = false;
+  // #1766: the fleet session-status read's live inputs — hoisted like
+  // sessionResumeRef so the ALWAYS-ON route (registered below the fleet block)
+  // reads the owner map of whichever branch built one (premium staged plane or
+  // observation-only base peer). Left undefined where no fleet-peer provider /
+  // owner map exists → the route answers its not-served 404.
+  let fleetSessionStatusDeps: FleetSessionStatusRouteDeps | undefined;
   // #391: the fleet plane stages ONLY through the resolver's dispatch. No
   // entitlement → this block never arms anything → zero fleet surfaces,
   // byte-identical.
@@ -1120,6 +1188,11 @@ export function createAmicodeService(
         });
         ownerMapFeed.start();
         server.registerCleanup(() => ownerMapFeed.stop());
+        fleetSessionStatusDeps = {
+          ownerMap,
+          fleetPeers,
+          engine: { getUrl: opts.engine?.getUrl ?? ((): string | undefined => undefined), password: opts.engine?.password },
+        };
       }
       // #1519 (W1c, ADR 0033 §D1): the /event fan-in driver — wires the #1511
       // aggregator to the app's ONE global stream behind AMICO_FLEET_MULTIPLEX
@@ -1300,6 +1373,11 @@ export function createAmicodeService(
         });
         ownerMapFeed.start();
         server.registerCleanup(() => ownerMapFeed.stop());
+        fleetSessionStatusDeps = {
+          ownerMap,
+          fleetPeers,
+          engine: { getUrl: opts.engine?.getUrl ?? ((): string | undefined => undefined), password: opts.engine?.password },
+        };
         server.attachObservationReadPlane(
           createObservationReadPlane({
             ownerMap,
@@ -1377,6 +1455,10 @@ export function createAmicodeService(
       }
     }
   }
+  // #1766: the fleet session-status read — ALWAYS-ON so a machine without fleet
+  // peers answers the documented not-served 404 (the app's silent fallback)
+  // instead of the generic no-route 404. Under /amicode/fleet/* → never proxied.
+  registerFleetSessionStatusRoute(server, () => fleetSessionStatusDeps);
   registerProfileRoutes(server);
   registerVaultRoutes(server);
   registerProblemRoutes(server);

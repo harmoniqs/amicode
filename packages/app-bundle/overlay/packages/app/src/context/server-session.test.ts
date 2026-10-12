@@ -523,3 +523,76 @@ describe("#1637 — reconcileStatuses from /session/status (tri-state)", () => {
     expect(session.data.session_status.r3?.type).toBe("busy") // live busy preserved
   })
 })
+
+// ── #1766 — the fleet re-seed relies on these reconcile semantics ───────────
+// The fleet session-status read returns a tri-state map in which every COVERED
+// session has an explicit status (idle by absence in its own successfully
+// queried directory) and every uncovered session is OMITTED. Through the
+// existing recency-guarded reconcile: an explicit idle downgrades a stale busy;
+// an omitted key never changes the store (an unreachable owner never blanks a
+// live rail); a busy the store mutated after the read was issued survives.
+describe("#1766 — fleet re-seed through reconcileStatuses", () => {
+  test("an explicit idle from the fleet read settles a stale busy to idle", () => {
+    const session = createSession()
+    session.apply({ type: "session.status", properties: { sessionID: "f1", status: { type: "busy" } } })
+    const fetchedAt = Date.now() + 1000 // the read was issued after the last local mutation
+    session.reconcileStatuses({ f1: { type: "idle" } }, { fetchedAt })
+    expect(session.data.session_status.f1?.type).toBe("idle")
+  })
+
+  test("a session OMITTED from the fleet map keeps its current status (busy stays busy, idle stays idle)", () => {
+    const session = createSession()
+    session.apply({ type: "session.status", properties: { sessionID: "f2", status: { type: "busy" } } })
+    session.apply({ type: "session.status", properties: { sessionID: "f3", status: { type: "idle" } } })
+    session.reconcileStatuses({ other: { type: "idle" } }, { fetchedAt: Date.now() + 1000 })
+    expect(session.data.session_status.f2?.type).toBe("busy")
+    expect(session.data.session_status.f3?.type).toBe("idle")
+  })
+
+  test("a peer session reported busy becomes busy in the store, so session_working rises", () => {
+    const session = createSession()
+    expect(session.data.session_working("ses_peer")).toBe(false)
+    session.reconcileStatuses({ ses_peer: { type: "busy" } }, { fetchedAt: Date.now() })
+    expect(session.data.session_status.ses_peer?.type).toBe("busy")
+    expect(session.data.session_working("ses_peer")).toBe(true)
+  })
+
+  test("a busy the store mutated AFTER the read was issued is not downgraded by the read's idle", () => {
+    const session = createSession()
+    const issuedAt = Date.now() - 5_000
+    session.apply({ type: "session.status", properties: { sessionID: "f4", status: { type: "busy" } } })
+    session.reconcileStatuses({ f4: { type: "idle" } }, { fetchedAt: issuedAt })
+    expect(session.data.session_status.f4?.type).toBe("busy")
+  })
+})
+
+// ── #1766 — the pinned set the fleet re-seed names ───────────────────────────
+describe("#1766 — pinnedIds / onPinned", () => {
+  test("pinnedIds lists every currently pinned session once, however many pins it holds", () => {
+    const session = createSession()
+    session.pin("a")
+    session.pin("b")
+    session.pin("a") // a tab pin + the route pin
+    expect([...session.pinnedIds()].sort()).toEqual(["a", "b"])
+    session.unpin("a")
+    expect([...session.pinnedIds()].sort()).toEqual(["a", "b"]) // still one pin on a
+    session.unpin("a")
+    session.unpin("b")
+    expect(session.pinnedIds()).toEqual([])
+  })
+
+  test("onPinned fires only when a session becomes NEWLY pinned (0 → 1), and stops after unsubscribe", () => {
+    const session = createSession()
+    const seen: string[] = []
+    const off = session.onPinned((id) => seen.push(id))
+    session.pin("a")
+    session.pin("a") // already pinned → not new
+    session.pin("b")
+    session.unpin("a")
+    session.unpin("a")
+    session.pin("a") // pinned again after reaching zero → new again
+    off()
+    session.pin("c")
+    expect(seen).toEqual(["a", "b", "a"])
+  })
+})
