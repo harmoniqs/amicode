@@ -467,9 +467,105 @@ export interface TroubleshootFleetRequest {
   kind: "troubleshoot-fleet";
 }
 
+/** #1764 — the FLEET header's Add machine: the host opens the routed guided
+ *  skill in a chat. No payload (the host routes on its last-posted model). */
+export interface AddFleetMachineRequest {
+  kind: "add-fleet-machine";
+}
+
+/** #1764 — the FLEET header's Refresh: re-arm the change watcher, then re-read
+ *  the roster. Read-only — a client re-fetches only the hub's roster. */
+export interface RefreshFleetRequest {
+  kind: "refresh-fleet";
+}
+
 /** The union of navigation messages the fleet section can emit. Navigation
- *  actions only — no roster-write path (ADR 0026, updated for #1413/#1451). */
-export type FleetSectionMessage = OpenFleetManagerRequest | TroubleshootFleetRequest | ConnectToDeviceRequest | FocusMachineRequest;
+ *  actions and reads only — no roster-write path (ADR 0026, updated for
+ *  #1413/#1451/#1764). */
+export type FleetSectionMessage =
+  | OpenFleetManagerRequest
+  | TroubleshootFleetRequest
+  | ConnectToDeviceRequest
+  | FocusMachineRequest
+  | AddFleetMachineRequest
+  | RefreshFleetRequest;
+
+// ── #1764 the FLEET header Refresh control ───────────────────────────────────
+
+/** The Refresh button's accessible name and resting tooltip. */
+export const FLEET_REFRESH_LABEL = "Refresh fleet";
+/** The tooltip after the backstop fired, until the next section update. */
+export const FLEET_REFRESH_STALE_LABEL = "Refresh fleet (the last refresh did not complete)";
+/** How long busy waits for a section update before the backstop clears it. */
+export const FLEET_REFRESH_BACKSTOP_MS = 10_000;
+
+export interface FleetRefreshControl {
+  /** Bind the (re-)rendered button and apply the current state to it. */
+  bind(btn: HTMLElement): void;
+  /** The button's click: post one refresh unless a refresh is already busy. */
+  click(): void;
+  /** Any fleet section update arrived: clear busy and the backstop note. */
+  sectionUpdated(): void;
+}
+
+/** The Refresh busy state machine: idle → busy (click) → idle (any section
+ *  update) or stale (the backstop fired; idle again on the next update). Busy
+ *  is shown by class + aria-busy, never by a size change, so nothing shifts. */
+export function createFleetRefreshControl(opts: {
+  post: (msg: RefreshFleetRequest) => void;
+  setTimer?: (fn: () => void, ms: number) => unknown;
+  clearTimer?: (handle: unknown) => void;
+}): FleetRefreshControl {
+  const setTimer = opts.setTimer ?? ((fn: () => void, ms: number) => setTimeout(fn, ms));
+  const clearTimer = opts.clearTimer ?? ((h: unknown) => clearTimeout(h as ReturnType<typeof setTimeout>));
+  let state: "idle" | "busy" | "stale" = "idle";
+  let btn: HTMLElement | null = null;
+  let backstop: unknown;
+
+  function apply(): void {
+    if (!btn) return;
+    btn.setAttribute("aria-label", FLEET_REFRESH_LABEL);
+    btn.title = state === "stale" ? FLEET_REFRESH_STALE_LABEL : FLEET_REFRESH_LABEL;
+    btn.classList.toggle("is-busy", state === "busy");
+    if (state === "busy") {
+      btn.setAttribute("aria-busy", "true");
+      btn.setAttribute("aria-disabled", "true");
+    } else {
+      btn.removeAttribute("aria-busy");
+      btn.removeAttribute("aria-disabled");
+    }
+  }
+
+  function stopBackstop(): void {
+    if (backstop !== undefined) clearTimer(backstop);
+    backstop = undefined;
+  }
+
+  return {
+    bind(next) {
+      btn = next;
+      apply();
+    },
+    click() {
+      if (state === "busy") return;
+      state = "busy";
+      apply();
+      stopBackstop();
+      backstop = setTimer(() => {
+        backstop = undefined;
+        if (state !== "busy") return;
+        state = "stale";
+        apply();
+      }, FLEET_REFRESH_BACKSTOP_MS);
+      opts.post({ kind: "refresh-fleet" });
+    },
+    sectionUpdated() {
+      stopBackstop();
+      state = "idle";
+      apply();
+    },
+  };
+}
 
 /** #1413 — connect to a fleet device. Posted on device row click. The message
  *  carries identity only; all precondition data is resolved host-side. */

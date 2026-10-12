@@ -812,6 +812,10 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
           const prompt = this.lastPostedFleetModel?.state === "standalone" ? "/create-a-fleet" : "/add-fleet-device";
           this.fleetDeps.launchSession(prompt);
         },
+        // #1764 — Refresh: re-arm the change watcher exactly once (it may have
+        // found no fleet directory at load), THEN re-read and post — so a change
+        // landing during the read is still caught by the live watcher.
+        refreshFleet: () => this.refreshFleet(),
         connectToDevice: (msg) => {
           this.fleetDeps?.connectToDevice?.(msg);
         },
@@ -842,7 +846,7 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
     // fleet deps were injected (backward compatible).
     if (this.fleetDeps) {
       this.pushFleetStatus();
-      this.fleetSub = this.fleetDeps.onPostureChange(() => this.pushFleetStatus());
+      this.armFleetWatcher();
       // #1375: staleness sweep — re-push every 60s so display health degrades
       // even when roster.json is static (no fs.watch event). The model's
       // effectiveHealth re-evaluates staleness against the current clock.
@@ -920,6 +924,27 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
     this.postDown({ kind: "section-order", order });
   }
 
+  /** (Re-)subscribe the fleet change watcher, disposing any previous one. A
+   *  subscription failure leaves no watcher — the 30 s sweep still covers it. */
+  private armFleetWatcher(): void {
+    if (!this.fleetDeps) return;
+    this.fleetSub?.dispose();
+    this.fleetSub = undefined;
+    try {
+      this.fleetSub = this.fleetDeps.onPostureChange(() => this.pushFleetStatus());
+    } catch {
+      /* no watcher this time; the staleness sweep keeps the section current */
+    }
+  }
+
+  /** #1764 — the FLEET header's Refresh. Read-only: health comes from each
+   *  machine's own heartbeat; this only re-arms the watcher and re-reads. */
+  private refreshFleet(): void {
+    if (!this.fleetDeps) return;
+    this.armFleetWatcher();
+    this.pushFleetStatus();
+  }
+
   private postDown(msg: SidebarDownMessage): void {
     this.view?.webview.postMessage(msg);
   }
@@ -933,7 +958,6 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
   private pushFleetStatus(): void {
     if (!this.fleetDeps) return;
     const deps = this.fleetDeps;
-    const result = deps.readRoster();
     const build = (roster: RosterRead) => {
       // Re-check: an async read may resolve after the view/deps were torn down.
       if (!this.fleetDeps) return;
@@ -952,6 +976,13 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
     // The SERVER/standalone read is synchronous — post immediately (keeps every
     // existing synchronous injection posting in the same tick). The CLIENT read
     // is a Promise (the host proxy-read) — build when it resolves (#1363).
+    // A read that throws is the honest unreachable state, posted like any other.
+    let result: RosterRead | Promise<RosterRead>;
+    try {
+      result = deps.readRoster();
+    } catch {
+      result = { rows: [], reachable: false };
+    }
     if (result instanceof Promise) {
       void result.then(build).catch(() => build({ rows: [], reachable: false }));
     } else {
@@ -1450,6 +1481,22 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
       width: 14px;
       height: 14px;
       display: block;
+    }
+    /* #1764 Fleet "Refresh fleet" busy: dimmed + spinning glyph; no size change. */
+    .tree-section-label .section-action.is-busy {
+      opacity: 0.6;
+      cursor: progress;
+    }
+    .tree-section-label .section-action.is-busy svg {
+      animation: amc-fleet-refresh-spin 1s linear infinite;
+    }
+    @keyframes amc-fleet-refresh-spin {
+      to { transform: rotate(360deg); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .tree-section-label .section-action.is-busy svg {
+        animation: none;
+      }
     }
     .fleet-placeholder-text {
       padding: 8px 12px 8px 32px;

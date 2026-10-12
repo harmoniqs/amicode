@@ -163,6 +163,20 @@ describe("sidebar bridge — FLEET header actions (#1764)", () => {
     expect(troubleshootFleet).not.toHaveBeenCalled();
   });
 
+  it("routes refresh-fleet (no payload) to the refreshFleet handler only", async () => {
+    const { handleSidebarMessage } = await import("../src/sidebar_bridge");
+    const addFleetMachine = vi.fn();
+    const refreshFleet = vi.fn();
+    handleSidebarMessage({ kind: "refresh-fleet" } as any, { addFleetMachine, refreshFleet } as any);
+    expect(refreshFleet).toHaveBeenCalledTimes(1);
+    expect(addFleetMachine).not.toHaveBeenCalled();
+  });
+
+  it("tolerates a missing refreshFleet handler", async () => {
+    const { handleSidebarMessage } = await import("../src/sidebar_bridge");
+    expect(() => handleSidebarMessage({ kind: "refresh-fleet" } as any, {} as any)).not.toThrow();
+  });
+
   it("tolerates a missing addFleetMachine handler", async () => {
     const { handleSidebarMessage } = await import("../src/sidebar_bridge");
     expect(() => handleSidebarMessage({ kind: "add-fleet-machine" } as any, {} as any)).not.toThrow();
@@ -181,7 +195,7 @@ describe("section header actions (Research / Development label bars)", () => {
   it("Research, Development, and Fleet each get their own actions", () => {
     expect(webviewSrc).toMatch(/renderSectionHeader\("Research", "research", researchSectionActions\(\)\)/);
     expect(webviewSrc).toMatch(/renderSectionHeader\("Development", "dev", devSectionActions\(\)\)/);
-    expect(webviewSrc).toMatch(/renderSectionHeader\("Fleet", "fleet", fleetSectionActions\(\)\)/);
+    expect(webviewSrc).toMatch(/renderSectionHeader\("Fleet", "fleet"\);\s*mountSectionActions\(section\.querySelector\("\.tree-section-label"\) as HTMLElement, fleetSectionActions\(\)\)/);
   });
 
   it("Fleet's header actions: Add machine to fleet (+) posts add-fleet-machine with no payload", () => {
@@ -191,6 +205,28 @@ describe("section header actions (Research / Development label bars)", () => {
     expect(block).toContain('label: "Add machine to fleet"');
     expect(block).toContain("icon: createPlusIconEl()");
     expect(block).toContain('vscode.postMessage({ kind: "add-fleet-machine" })');
+  });
+
+  it("Fleet's header actions: Add machine to fleet THEN Refresh fleet (↻), Refresh driven by the busy control", () => {
+    const start = webviewSrc.indexOf("function fleetSectionActions");
+    const block = webviewSrc.slice(start, webviewSrc.indexOf("// ── Development create menu"));
+    const add = block.indexOf('label: "Add machine to fleet"');
+    const refresh = block.indexOf("label: FLEET_REFRESH_LABEL");
+    expect(add).toBeGreaterThan(-1);
+    expect(refresh).toBeGreaterThan(add);
+    expect(block).toContain("icon: createRefreshIconEl()");
+    expect(block).toContain("onMount: (btn) => fleetRefresh.bind(btn)");
+    expect(block).toContain("onClick: () => fleetRefresh.click()");
+    expect(webviewSrc).toMatch(/function createRefreshIconEl\(\): HTMLElement/);
+    // the header renderer lets an action bind its rendered button.
+    expect(webviewSrc).toContain("action.onMount?.(btn)");
+  });
+
+  it("any fleet section update clears the Refresh busy state", () => {
+    const start = webviewSrc.indexOf('case "fleet-status": {');
+    expect(start).toBeGreaterThan(-1);
+    const block = webviewSrc.slice(start, webviewSrc.indexOf("break;", start));
+    expect(block).toContain("fleetRefresh.sectionUpdated()");
   });
 
   it("research actions post new-project and add-existing and are named for assistive tech", () => {

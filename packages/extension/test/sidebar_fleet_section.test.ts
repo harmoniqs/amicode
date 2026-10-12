@@ -1114,3 +1114,104 @@ describe("#1544 AC5 — sidebar fleet section carries NO control affordance", ()
     }
   });
 });
+
+// ── #1764 — the FLEET header Refresh control (busy / backstop state) ─────────
+describe("createFleetRefreshControl — Refresh busy state (#1764)", () => {
+  async function load() {
+    return await import("../src/sidebar_fleet_section");
+  }
+
+  it("is named and tooltipped 'Refresh fleet' at rest", async () => {
+    const { createFleetRefreshControl, FLEET_REFRESH_LABEL } = await load();
+    const btn = document.createElement("button");
+    const ctl = createFleetRefreshControl({ post: () => {} });
+    ctl.bind(btn);
+    expect(FLEET_REFRESH_LABEL).toBe("Refresh fleet");
+    expect(btn.title).toBe("Refresh fleet");
+    expect(btn.getAttribute("aria-label")).toBe("Refresh fleet");
+    expect(btn.classList.contains("is-busy")).toBe(false);
+  });
+
+  it("a click marks the button busy immediately and posts exactly one refresh-fleet", async () => {
+    const { createFleetRefreshControl } = await load();
+    const btn = document.createElement("button");
+    const post = vi.fn();
+    const ctl = createFleetRefreshControl({ post });
+    ctl.bind(btn);
+    ctl.click();
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(post).toHaveBeenCalledWith({ kind: "refresh-fleet" });
+    expect(btn.classList.contains("is-busy")).toBe(true);
+    expect(btn.getAttribute("aria-busy")).toBe("true");
+  });
+
+  it("clicks while busy are ignored", async () => {
+    const { createFleetRefreshControl } = await load();
+    const btn = document.createElement("button");
+    const post = vi.fn();
+    const ctl = createFleetRefreshControl({ post });
+    ctl.bind(btn);
+    ctl.click();
+    ctl.click();
+    ctl.click();
+    expect(post).toHaveBeenCalledTimes(1);
+  });
+
+  it("any section update clears busy — no backstop wait, and a click works again", async () => {
+    vi.useFakeTimers();
+    try {
+      const { createFleetRefreshControl, FLEET_REFRESH_LABEL } = await load();
+      const btn = document.createElement("button");
+      const post = vi.fn();
+      const ctl = createFleetRefreshControl({ post });
+      ctl.bind(btn);
+      ctl.click();
+      ctl.sectionUpdated();
+      expect(btn.classList.contains("is-busy")).toBe(false);
+      expect(btn.hasAttribute("aria-busy")).toBe(false);
+      vi.advanceTimersByTime(20_000); // the cleared backstop never fires
+      expect(btn.title).toBe(FLEET_REFRESH_LABEL);
+      ctl.click();
+      expect(post).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("the 10 s backstop clears busy and the tooltip says the last refresh did not complete until the next update", async () => {
+    vi.useFakeTimers();
+    try {
+      const { createFleetRefreshControl, FLEET_REFRESH_BACKSTOP_MS, FLEET_REFRESH_LABEL } = await load();
+      expect(FLEET_REFRESH_BACKSTOP_MS).toBeLessThanOrEqual(10_000);
+      const btn = document.createElement("button");
+      const ctl = createFleetRefreshControl({ post: () => {} });
+      ctl.bind(btn);
+      ctl.click();
+      vi.advanceTimersByTime(FLEET_REFRESH_BACKSTOP_MS - 1);
+      expect(btn.classList.contains("is-busy")).toBe(true);
+      vi.advanceTimersByTime(1);
+      expect(btn.classList.contains("is-busy")).toBe(false);
+      expect(btn.title).toMatch(/last refresh did not complete/);
+      expect(btn.getAttribute("aria-label")).toBe(FLEET_REFRESH_LABEL);
+      ctl.sectionUpdated();
+      expect(btn.title).toBe(FLEET_REFRESH_LABEL);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a re-rendered button re-binds to the current busy state (a header re-render mid-refresh keeps busy)", async () => {
+    const { createFleetRefreshControl } = await load();
+    const post = vi.fn();
+    const ctl = createFleetRefreshControl({ post });
+    ctl.bind(document.createElement("button"));
+    ctl.click();
+    const rerendered = document.createElement("button");
+    ctl.bind(rerendered);
+    expect(rerendered.classList.contains("is-busy")).toBe(true);
+    ctl.click();
+    expect(post).toHaveBeenCalledTimes(1);
+    ctl.sectionUpdated();
+    expect(rerendered.classList.contains("is-busy")).toBe(false);
+  });
+});
