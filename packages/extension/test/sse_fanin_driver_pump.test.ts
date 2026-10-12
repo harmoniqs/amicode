@@ -1574,3 +1574,89 @@ describe("#1771 AC2 — close reasons are an enumerated set", () => {
     expect(lines.some((l) => l.includes("reason=evicted"))).toBe(false);
   });
 });
+
+describe("#1771 AC3 — each transition logs one line immediately, with its connection and arm", () => {
+  it("listener accepted → arm opened (local, peer) — synchronously, before any frame or timer", () => {
+    const ownerMap = new SessionOwnerMap();
+    ownerMap.update(STUDIO_OWNED);
+    const { census, lines } = testCensus();
+    const driver = twoListenerDriver(fakeOrigins(), ownerMap, { census });
+    const res = mockRes();
+    driver.handle(mockReq("/global/event"), res);
+    // no flush, no timer: the lines are already there
+    expect(lines).toEqual([
+      "[fanin] listener-accepted plane=observe conn=c1 listeners=1",
+      "[fanin] arm-opened plane=observe conn=c1 arm=local opens=1",
+      "[fanin] arm-opened plane=observe conn=c1 arm=studio opens=1",
+    ]);
+    res.fireClose();
+  });
+
+  it("frames are never logged; an arm that drops and re-opens logs closed → gap emitted → opened", async () => {
+    const ownerMap = new SessionOwnerMap();
+    ownerMap.update(STUDIO_OWNED);
+    const { census, lines } = testCensus();
+    const peerCtls: Ctl[] = [];
+    const driver = twoListenerDriver(fakeOrigins(), ownerMap, {
+      census,
+      openUpstream: (r) => {
+        const ctl = controllableSource();
+        if (r.namespace === "studio") peerCtls.push(ctl);
+        return ctl.source;
+      },
+    });
+    const studio = fakeEngine({ epoch: PEER_EPOCH });
+    const res = mockRes();
+    driver.handle(mockReq("/global/event"), res);
+    const before = lines.length;
+    for (let i = 0; i < 25; i++) peerCtls[0].push(studio.event("message.part.delta", { i }));
+    peerCtls[0].push(studio.heartbeat());
+    await flush();
+    expect(lines.length).toBe(before); // 26 frames delivered, zero lines
+
+    peerCtls[0].end();
+    await flush();
+    driver.reconcile();
+    expect(lines.slice(before)).toEqual([
+      "[fanin] arm-closed plane=observe conn=c1 arm=studio reason=upstream-end",
+      "[fanin] gap-emitted plane=observe conn=c1 arm=studio cause=reopen",
+      "[fanin] arm-opened plane=observe conn=c1 arm=studio opens=2",
+    ]);
+    peerCtls.forEach((c) => c.end());
+    res.fireClose();
+  });
+
+  it("an overflow episode logs ONE overflow-drop line (not one per dropped frame), then its gap on drain", async () => {
+    const ownerMap = new SessionOwnerMap();
+    ownerMap.update(STUDIO_OWNED);
+    const origins = fakeOrigins();
+    const { census, lines } = testCensus();
+    const driver = twoListenerDriver(origins, ownerMap, { census });
+    const studio = fakeEngine({ epoch: PEER_EPOCH });
+    const res = backpressureRes();
+    driver.handle(mockReq("/global/event"), res);
+    await flush();
+    const before = lines.length;
+
+    res.block();
+    for (let i = 0; i < 300; i++) origins.broadcast("studio", studio.event("message.part.delta", { i }));
+    await flush();
+    expect(lines.slice(before)).toEqual(["[fanin] overflow-drop plane=observe conn=c1 arm=studio pending=256"]);
+
+    res.fireDrain();
+    await flush();
+    expect(lines.slice(before + 1)).toEqual(["[fanin] gap-emitted plane=observe conn=c1 arm=studio cause=overflow"]);
+    res.fireClose();
+  });
+
+  it("a beyond-cap refusal logs one line naming the cap (and counts in the census)", () => {
+    const { census, lines } = testCensus();
+    const driver = twoListenerDriver(fakeOrigins(), new SessionOwnerMap(), { census, maxListeners: 1 });
+    const ok = mockRes();
+    driver.handle(mockReq("/global/event"), ok);
+    driver.handle(mockReq("/global/event"), mockRes());
+    expect(lines.at(-1)).toBe("[fanin] listener-refused plane=observe listeners=1 cap=1");
+    expect(census.snapshot()).toMatchObject({ listeners: 1, accepted: 1, refusals: 1, evictions: 0 });
+    ok.fireClose();
+  });
+});

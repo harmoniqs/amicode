@@ -41,6 +41,7 @@ import {
 import { SessionOwnerMap } from "../src/amicode_service/session_multiplexer";
 import { peerAuthHeader } from "../src/amicode_service/merged_projection";
 import type { PeerTokenRead } from "../src/amicode_service/fleet_peer_store";
+import { fakeEngine, sequencedEvent, LOCAL_EPOCH, PEER_EPOCH } from "./fixtures/engine_stream/engine_frames";
 
 // ── test helpers ──────────────────────────────────────────────────────────────
 
@@ -941,5 +942,108 @@ describe("#1638 — control/gap/focus writes are return-checked and drain in tru
     expect(n2Idx).toBeGreaterThanOrEqual(0);
     expect(gapIdx).toBeGreaterThanOrEqual(0);
     expect(n2Idx).toBeLessThan(gapIdx); // control frame AFTER the preceding data frame
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// #1771 — the aggregator's census counters (per arm, per connection) and its
+// transition observer. Observation only: the frames on the sink are unchanged.
+// ══════════════════════════════════════════════════════════════════════════════
+describe("#1771 — per-arm traffic counters, pending depth, and the drop/gap observer", () => {
+  function blockableSink() {
+    const chunks: string[] = [];
+    let blocked = false;
+    return {
+      write(chunk: string): boolean {
+        chunks.push(chunk);
+        return !blocked;
+      },
+      flush() {},
+      block() {
+        blocked = true;
+      },
+      unblock() {
+        blocked = false;
+      },
+      text: () => chunks.join(""),
+    };
+  }
+
+  it("counts every ingested frame per arm — frames, UTF-8 bytes, largest, last-frame time — whether delivered or buffered", () => {
+    let t = 500;
+    const sink = blockableSink();
+    const agg = new SseFanInAggregator({ sink, now: () => t });
+    agg.connect();
+    agg.setMembership([{ machineId: "studio", reachable: true, token: "tok-studio" }]);
+    const local = fakeEngine({ epoch: LOCAL_EPOCH });
+    const studio = fakeEngine({ legacy: true }); // an old peer engine: id-less frames
+    const localFrames = [local.connected(), ...local.stored("message.part.updated", { text: "résumé" }, { aggregateID: "ses_1" })];
+    for (const f of localFrames) agg.ingest(LOCAL_NAMESPACE, f);
+    t = 900;
+    sink.block();
+    const studioFrames = [studio.event("session.status", { status: "busy" }), studio.heartbeat()];
+    for (const f of studioFrames) agg.ingest("studio", f); // the 1st trips backpressure, the 2nd buffers
+
+    expect(agg.traffic(LOCAL_NAMESPACE)).toEqual({
+      frames: 3,
+      bytes: localFrames.reduce((n, f) => n + Buffer.byteLength(f), 0),
+      largestFrame: Math.max(...localFrames.map((f) => Buffer.byteLength(f))),
+      lastFrameAt: 500,
+      drops: 0,
+      gaps: 0,
+    });
+    expect(agg.traffic("studio")).toMatchObject({ frames: 2, lastFrameAt: 900, drops: 0 });
+    expect(agg.pendingDepth("studio")).toBe(1);
+    expect(agg.pendingDepth(LOCAL_NAMESPACE)).toBe(0);
+    expect(agg.traffic("mini")).toEqual({ frames: 0, bytes: 0, largestFrame: 0, drops: 0, gaps: 0 }); // never ingested
+  });
+
+  it("the observer sees the FIRST drop of an overflow episode, then the gap that ends it; drops stay cumulative", () => {
+    const sink = blockableSink();
+    const drops: Array<[string, number]> = [];
+    const gaps: Array<[string[], string]> = [];
+    const agg = new SseFanInAggregator({
+      sink,
+      bufferBound: 2,
+      observer: { onOverflowDrop: (ns, pending) => drops.push([ns, pending]), onGap: (nss, cause) => gaps.push([nss, cause]) },
+    });
+    agg.connect();
+    agg.setMembership([{ machineId: "studio", reachable: true, token: "tok-studio" }]);
+    sink.block();
+    for (let n = 1; n <= 6; n++) agg.ingest("studio", sequencedEvent(PEER_EPOCH, n, { n })); // 1 written, 2 buffered, 3 dropped
+    expect(drops).toEqual([["studio", 2]]); // one episode → one callback
+    expect(agg.traffic("studio").drops).toBe(3);
+
+    sink.unblock();
+    agg.resume();
+    expect(gaps).toEqual([[["studio"], "overflow"]]);
+    expect(agg.traffic("studio")).toMatchObject({ drops: 3, gaps: 1 });
+    expect(agg.pendingDepth("studio")).toBe(0);
+
+    // a NEW episode after the gap is a new first drop
+    sink.block();
+    for (let n = 7; n <= 10; n++) agg.ingest("studio", sequencedEvent(PEER_EPOCH, n, { n }));
+    expect(drops).toHaveLength(2);
+
+    agg.reopenArm("studio"); // composite mode, already delivered → a reopen gap
+    expect(gaps.at(-1)).toEqual([["studio"], "reopen"]);
+  });
+
+  it("a throwing observer never breaks delivery", () => {
+    const sink = collectingSink();
+    const agg = new SseFanInAggregator({
+      sink,
+      observer: {
+        onGap: () => {
+          throw new Error("broken census");
+        },
+      },
+    });
+    agg.connect();
+    agg.setMembership([{ machineId: "studio", reachable: true, token: "tok-studio" }]);
+    const f = sequencedEvent(PEER_EPOCH, 1, { n: 1 });
+    agg.ingest("studio", f);
+    expect(() => agg.reopenArm("studio")).not.toThrow();
+    expect(sink.text()).toContain("amicode.sync.gap");
   });
 });
