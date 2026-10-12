@@ -698,13 +698,17 @@ describe("#1638 — re-open resumes from last-delivered id + composite-mode reco
     res.fireClose()
   })
 
-  it("COMPOSITE MODE: re-opening a dropped peer arm emits exactly one amicode.sync.gap naming it", async () => {
+  // #1773 AC1: in BOTH engine modes — an older peer engine sends no `id:` lines,
+  // and its re-open must gap all the same ("delivered" = any data frame).
+  for (const mode of ["sequenced", "legacy"] as const)
+  it(`COMPOSITE MODE (${mode} peer engine): re-opening a dropped peer arm emits exactly one amicode.sync.gap naming it`, async () => {
     const ownerMap = new SessionOwnerMap()
     ownerMap.update([
       { id: "ses-studio", amicode_owner: { owner_machine_id: "studio", owner_name: "studio", is_local: false } },
     ])
 
-    const P1 = peerEvt(1, { from: "studio", n: 1 })
+    const studio = mode === "legacy" ? fakeEngine({ legacy: true }) : fakeEngine({ epoch: PEER_EPOCH })
+    const P1 = studio.event("message.part.updated", { from: "studio", n: 1 })
 
     const localCtl = controllableSource()
     const peerCtls: Ctl[] = []

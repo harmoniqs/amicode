@@ -834,6 +834,73 @@ describe("#1638 — composite-mode reopenArm emits exactly one id-less gap; flee
   });
 });
 
+// ══════════════════════════════════════════════════════════════════════════════
+// #1773 AC1 — "delivered" means ANY data frame, not only an id'd one. The re-open
+// gap used to fire only for arms that had delivered a frame carrying an SSE id —
+// which a peer running an older engine never sends — so a re-opened arm never
+// announced its gap. Engine-shaped fixtures in BOTH modes: legacy (id-less) and
+// sequenced (#1776, `id: <epoch>:<seq>`).
+// ══════════════════════════════════════════════════════════════════════════════
+describe("#1773 AC1 — a re-open of an arm that delivered ANY data frame emits exactly one gap (composite mode)", () => {
+  const gapFrames = (text: string) => text.split("\n\n").filter((f) => f.includes("amicode.sync.gap"));
+  const gapOf = (f: string) => JSON.parse(f.split("\n").find((l) => l.startsWith("data:"))!.slice(5).trim());
+
+  for (const mode of ["legacy", "sequenced"] as const) {
+    it(`${mode} engine: a non-initial re-open emits exactly one id-less gap naming that namespace, and never advances a cursor`, () => {
+      const sink = collectingSink();
+      const agg = new SseFanInAggregator({ sink });
+      agg.connect(`local=${LOCAL_EPOCH}:3`);
+      agg.setMembership([{ machineId: "studio", reachable: true, token: "tok-studio" }]);
+      const studio = mode === "legacy" ? fakeEngine({ legacy: true }) : fakeEngine({ epoch: PEER_EPOCH });
+
+      // the initial open: no gap
+      expect(agg.reopenArm("studio")).toBe("open");
+      // the arm delivers the engine's real stream: connected, an event, a stored
+      // event's plain + sync twin, a heartbeat
+      for (const f of [
+        studio.connected(),
+        studio.event("session.status", { sessionID: "ses_1", status: { type: "busy" } }),
+        ...studio.stored("message.part.updated", { part: { id: "prt_1" } }, { aggregateID: "ses_1" }),
+        studio.heartbeat(),
+      ])
+        agg.ingest("studio", f);
+      const cursorBefore = agg.cursor();
+      expect(sink.text()).not.toContain("amicode.sync.gap");
+
+      // the arm drops and the driver re-opens it
+      expect(agg.reopenArm("studio")).toBe("gap");
+
+      const gaps = gapFrames(sink.text());
+      expect(gaps).toHaveLength(1);
+      expect(gapOf(gaps[0])).toEqual({ type: "amicode.sync.gap", namespaces: ["studio"] });
+      expect(gaps[0].split("\n").some((l) => l.startsWith("id:"))).toBe(false); // id-less
+      expect(agg.cursor()).toBe(cursorBefore); // a gap signal never advances a cursor
+    });
+  }
+
+  it("an arm that delivered only a comment frame (no data line) has not delivered — its re-open is still an initial open", () => {
+    const sink = collectingSink();
+    const agg = new SseFanInAggregator({ sink });
+    agg.connect();
+    agg.setMembership([{ machineId: "studio", reachable: true, token: "tok-studio" }]);
+    agg.ingest("studio", frame(": keep-alive"));
+    expect(agg.reopenArm("studio")).toBe("open");
+    expect(sink.text()).not.toContain("amicode.sync.gap");
+  });
+
+  it("the LOCAL arm (legacy engine) in composite mode gaps on re-open too, naming `local`", () => {
+    const sink = collectingSink();
+    const agg = new SseFanInAggregator({ sink });
+    agg.connect();
+    agg.setMembership([{ machineId: "studio", reachable: true, token: "tok-studio" }]);
+    agg.ingest(LOCAL_NAMESPACE, fakeEngine({ legacy: true }).connected());
+    expect(agg.reopenArm(LOCAL_NAMESPACE)).toBe("gap");
+    const gaps = gapFrames(sink.text());
+    expect(gaps).toHaveLength(1);
+    expect(gapOf(gaps[0]).namespaces).toEqual([LOCAL_NAMESPACE]);
+  });
+});
+
 describe("#1638 — resume() no-op WHEN ALREADY FLOWING (not when the sink is full); #1617 drain-flush preserved", () => {
   function controllableSink() {
     const chunks: string[] = [];

@@ -165,6 +165,16 @@ export function frameRawId(rawFrame: string): string | undefined {
   return id === undefined || id === "" ? undefined : id;
 }
 
+/** #1773 — does the frame carry a `data` field (an event the client dispatches)?
+ *  This is what "delivered" means for the reconnect gap: ANY data frame, with or
+ *  without an `id:` line. A comment-only frame (`: keep-alive`) is not data. */
+export function isDataFrame(rawFrame: string): boolean {
+  for (const line of rawFrame.split(/\r?\n/)) {
+    if (line === "data" || line.startsWith("data:")) return true;
+  }
+  return false;
+}
+
 /** Rebuild a frame with its `id:` line set to `newId` (or removed when null),
  *  preserving every other line (`event:`/`data:`/`retry:`/comments) verbatim.
  *  The single canonical `id:` line is placed just before the trailing blank so
@@ -233,6 +243,16 @@ export interface ArmTraffic {
 /** #1771 — why a gap frame was emitted: an arm re-opened after delivering
  *  (#1638), or frames were dropped on overflow (#1617). */
 export type GapCause = "reopen" | "overflow";
+
+/** #1773 — what a re-open of an arm must do (`reopenArm`'s verdict):
+ *  - `open`  — the arm never delivered a data frame (an initial open): nothing
+ *              was lost, open it silently;
+ *  - `gap`   — composite mode: the gap frame naming it was written; open it;
+ *  - `sever` — fleet-of-one: a synthetic frame is not allowed in the verbatim
+ *              stream (#1264), so the caller must END THE LISTENER WITH A
+ *              TRANSPORT ERROR instead of re-opening — the client registers the
+ *              disconnect and resyncs. Nothing was written. */
+export type ReopenVerdict = "open" | "gap" | "sever";
 
 /** #1771 — the aggregator's transitions, for the census. Observation only:
  *  callbacks run after the aggregator decided, and a throwing observer is
@@ -304,7 +324,9 @@ export class SseFanInAggregator {
   /** #1638 — namespaces whose arm has EVER delivered a frame this connection.
    *  A re-open of an arm not in this set is the INITIAL open (no gap); a re-open
    *  of one already here is a NON-INITIAL re-open (the #1601 path → gap in
-   *  composite mode). */
+   *  composite mode, a severed listener in fleet-of-one). #1773: ANY data frame
+   *  counts (an older engine sends no `id:` lines at all), counted as the arm
+   *  hands it over — whether it is then delivered, buffered, or dropped. */
   private readonly everDelivered = new Set<string>();
   /** #1617 (fleet-of-one) — frames stranded on the zero-peer VERBATIM path while
    *  the downstream is backpressured. Kept SEPARATE from the composite `buffers`
@@ -380,6 +402,7 @@ export class SseFanInAggregator {
    *  arm; a machineId for a peer arm. */
   ingest(namespace: string, rawFrame: string): void {
     this.countFrame(namespace, rawFrame); // #1771 census — observation only
+    if (isDataFrame(rawFrame)) this.everDelivered.add(namespace); // #1773 — any data frame
     const rawId = frameRawId(rawFrame);
     const fleetOfOne = this.peerArms.size === 0;
 
@@ -387,10 +410,7 @@ export class SseFanInAggregator {
       // §D4 / AC1 byte-identity: with no peer arms the local frame is written
       // VERBATIM (bare id, every line untouched). The composite still tracks the
       // local position silently, so a peer that joins mid-stream inherits it.
-      if (rawId !== undefined) {
-        this.composite.set(LOCAL_NAMESPACE, rawId);
-        this.everDelivered.add(LOCAL_NAMESPACE);
-      }
+      if (rawId !== undefined) this.composite.set(LOCAL_NAMESPACE, rawId);
       // #1617 (fleet-of-one) — honor backpressure on the verbatim path too. When
       // the downstream is already backpressured, hold the frame VERBATIM in the
       // verbatim buffer (never namespaced) so it is not fired into an over-full
@@ -500,19 +520,24 @@ export class SseFanInAggregator {
   /** #1638 — a peer/local arm is being RE-OPENED (the #1601 reconcile path). In
    *  composite mode (≥1 peer arm) a NON-INITIAL re-open forces a client refetch
    *  via exactly one id-less `amicode.sync.gap` naming that namespace, because
-   *  the upstream `/global/event` route does NOT replay on `?lastEventID` (Step 0
-   *  = no replay) so the cursor-advance alone cannot recover the reconnect gap.
-   *  In FLEET-OF-ONE (zero peers) NO gap is emitted — a synthetic frame in the
-   *  verbatim stream would violate the #1264 byte-identity guard; the solo-mode
-   *  arm re-opens silently (its verbatim stream stays frame-for-frame identical).
-   *  The INITIAL open of an arm (never delivered a frame) emits no gap either —
-   *  only a re-open of an arm that has already delivered. */
-  reopenArm(namespace: string): void {
-    if (this.peerArms.size === 0) return; // fleet-of-one → NO synthetic frame (#1264)
-    if (!this.everDelivered.has(namespace)) return; // initial open → no gap
+   *  the cursor-advance alone cannot recover the reconnect gap (an older engine
+   *  has no ids to resume from; replay is #1777).
+   *
+   *  #1773 — every loss is loud. "Non-initial" means the arm delivered ANY data
+   *  frame (id'd or not). In FLEET-OF-ONE (zero peers) a synthetic frame in the
+   *  verbatim stream would violate the #1264 byte-identity guard, so instead of
+   *  re-opening silently the verdict is `sever`: the caller ends the listener
+   *  with a transport error, and the client's disconnect is the gap signal.
+   *  Nothing is written for `sever`. The INITIAL open of an arm (never delivered
+   *  a data frame) is `open` in both modes — nothing was lost. A gap never
+   *  advances any cursor. */
+  reopenArm(namespace: string): ReopenVerdict {
+    if (!this.everDelivered.has(namespace)) return "open"; // initial open → nothing lost
+    if (this.peerArms.size === 0) return "sever"; // fleet-of-one → NO synthetic frame (#1264)
     const data = JSON.stringify({ type: "amicode.sync.gap", namespaces: [namespace] });
     this.writeControl(`event: amicode.sync.gap\ndata: ${data}\n\n`);
     this.noteGap([namespace], "reopen");
+    return "gap";
   }
 
   /** #1617 — the overflow defense-in-depth. When resume() observes a nonzero
@@ -611,10 +636,7 @@ export class SseFanInAggregator {
    *  downstream (subsequent frames enqueue onto the ordered pending stream). */
   private deliver(namespace: string, rawFrame: string): void {
     const rawId = frameRawId(rawFrame);
-    if (rawId !== undefined) {
-      this.composite.set(namespace, rawId);
-      this.everDelivered.add(namespace);
-    }
+    if (rawId !== undefined) this.composite.set(namespace, rawId);
     const wire = rewriteFrameId(rawFrame, formatCompositeCursor(this.composite));
     const accepted = this.sink.write(wire);
     this.sink.flush?.();
