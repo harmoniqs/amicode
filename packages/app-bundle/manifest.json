@@ -359,6 +359,8 @@
     "packages/opencode/src/tool/edit.ts": "38aa4ce0751ff99bbb0807bcda52f8b9a1d32b6e342df4cc2aedab1f03d342b1",
     "packages/opencode/src/tool/question.txt": "49bbecb33a825620c2ed14ec9b61faa294359c3673c33277e32f57c1070d2806",
     "packages/opencode/src/tool/registry.ts": "0097ab8a7904559d0354d165245caff6bf0e887c99ce267be77fa4ee4b66ec3c",
+    "packages/opencode/src/tool/shell-output-throttle.ts": "00933a5c28bf4f3026541b1ca226678778177146b5b0b56bb5f189d837be9067",
+    "packages/opencode/src/tool/shell.ts": "09808bb3865574853d162bfd7e1492a618c230828b95ec3989e9e0afa4acb97c",
     "packages/opencode/src/tool/task.ts": "ddeb07a1cf009dcafc1d1d1c86b9d507676a8991db33a4632c8f29ae0e70e654",
     "packages/opencode/src/tool/truncate.ts": "92c59d83c4a660116d6ecc48e900aeb16bde93962bfae9f520193fda18273379",
     "packages/opencode/src/tool/widget-author.ts": "912be8636b162adca8796a501e927019c2449393c14bb5f3ff478b02083b73a9",
@@ -428,6 +430,7 @@
     "packages/opencode/test/tool/edit.test.ts": "ec1ed35002b1af4e2ff508aeac456c3edbb2e1dde3f6df4abd957eda9ef6d056",
     "packages/opencode/test/tool/question.test.ts": "75760ba6ed98f2fdfd75945c3b492342dfe91026f99cde86db19cf52444260c2",
     "packages/opencode/test/tool/registry-schema.test.ts": "053cb9732299ea6554db007bad873d8d61cd3769aa9514d66c70c3bf0d405b90",
+    "packages/opencode/test/tool/shell-output-throttle.test.ts": "9fed6f4ea8f7c62941280ab4f973848ea4184274830a153fbea83aae2c028576",
     "packages/opencode/test/tool/task.test.ts": "fb0276cc33add808c669a4f43649d189d8f62c75974f3092a5f05e45cf176486",
     "packages/opencode/test/tool/truncation.test.ts": "582ef7199b3f294b1c1588fadda8a1c0ea43ca9af0424a97f48747ade1654ad1",
     "packages/opencode/test/tool/write.test.ts": "820d36fde2314abbd939ce43ca5bcc4cfa0139d12a4c669716249060d9a955ff",
@@ -956,7 +959,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-12T22:06:29.073Z",
+  "extracted_at": "2026-10-12T22:11:06.337Z",
   "per_package": {
     "packages/app": {
       "A": 237,
@@ -974,8 +977,8 @@
       "D": 0
     },
     "packages/opencode": {
-      "A": 80,
-      "M": 92,
+      "A": 82,
+      "M": 93,
       "D": 0
     },
     "packages/schema": {
@@ -1005,7 +1008,7 @@
     }
   },
   "counts": {
-    "overlay_total": 934,
+    "overlay_total": 937,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1361,6 +1364,8 @@
     "packages/opencode/src/tool/edit.ts": "M",
     "packages/opencode/src/tool/question.txt": "M",
     "packages/opencode/src/tool/registry.ts": "M",
+    "packages/opencode/src/tool/shell-output-throttle.ts": "A",
+    "packages/opencode/src/tool/shell.ts": "M",
     "packages/opencode/src/tool/task.ts": "M",
     "packages/opencode/src/tool/truncate.ts": "M",
     "packages/opencode/src/tool/widget-author.ts": "A",
@@ -1430,6 +1435,7 @@
     "packages/opencode/test/tool/edit.test.ts": "M",
     "packages/opencode/test/tool/question.test.ts": "M",
     "packages/opencode/test/tool/registry-schema.test.ts": "A",
+    "packages/opencode/test/tool/shell-output-throttle.test.ts": "A",
     "packages/opencode/test/tool/task.test.ts": "M",
     "packages/opencode/test/tool/truncation.test.ts": "M",
     "packages/opencode/test/tool/write.test.ts": "M",
