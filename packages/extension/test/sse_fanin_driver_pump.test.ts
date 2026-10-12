@@ -15,6 +15,8 @@ import {
   startEngineSseServer,
   writeChunks,
   largeSummaryFrame,
+  sequencedEvent,
+  engineId,
   chunkBytes,
   CHUNK_64K,
   TEN_MB,
@@ -24,9 +26,15 @@ import {
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
-function sseFrame(...lines: string[]): string {
-  return lines.join("\n") + "\n\n";
-}
+/** #1771: ENGINE-SHAPED upstream frames (test/fixtures/engine_stream) — the
+ *  wire the engine's `/global/event` actually writes: a sequenced (#1776) bus
+ *  event `id: <epoch>:<seq>` + one `data:` line of the serialized global event,
+ *  no `event:` line. These replace the synthetic `event: message` / `id: l1`
+ *  frames the suite used to feed (a wire production never sees). */
+const localEvt = (seq: number, properties: Record<string, unknown>, type?: string) => sequencedEvent(LOCAL_EPOCH, seq, properties, type);
+const peerEvt = (seq: number, properties: Record<string, unknown>, type?: string) => sequencedEvent(PEER_EPOCH, seq, properties, type);
+const localId = (seq: number) => engineId(LOCAL_EPOCH, seq);
+const peerId = (seq: number) => engineId(PEER_EPOCH, seq);
 
 /** A controllable frame source: push frames into it, end it on demand. */
 interface Ctl {
@@ -227,8 +235,8 @@ describe("#1566 — dead arm zombie: pump exit cleans up source so reconcile re-
       { id: "ses-studio", amicode_owner: { owner_machine_id: "studio", owner_name: "studio", is_local: false } },
     ]);
 
-    const F1 = sseFrame("event: message", 'data: {"from":"studio","n":1}', "id: p1");
-    const F2 = sseFrame("event: message", 'data: {"from":"studio","n":2}', "id: p2");
+    const F1 = peerEvt(1, { from: "studio", n: 1 });
+    const F2 = peerEvt(2, { from: "studio", n: 2 });
 
     // Track every openUpstream call and the controllable sources they return.
     const openCalls: string[] = [];
@@ -370,8 +378,8 @@ describe("#1601 — dead LOCAL arm: reconcile re-opens the local arm", () => {
       { id: "ses-studio", amicode_owner: { owner_machine_id: "studio", owner_name: "studio", is_local: false } },
     ]);
 
-    const L1 = sseFrame("event: message", 'data: {"from":"macbook","n":1}', "id: l1");
-    const L2 = sseFrame("event: message", 'data: {"from":"macbook","n":2}', "id: l2");
+    const L1 = localEvt(1, { from: "macbook", n: 1 });
+    const L2 = localEvt(2, { from: "macbook", n: 2 });
 
     // Track every openUpstream call; hand out a FRESH local source per open so we
     // can distinguish the re-opened arm from the original.
@@ -510,8 +518,8 @@ describe("#1617 — driver wires drain→resume + upstream pause/resume", () => 
       { id: "ses-studio", amicode_owner: { owner_machine_id: "studio", owner_name: "studio", is_local: false } },
     ])
 
-    const F1 = sseFrame("event: message", 'data: {"from":"macbook","n":1}', "id: l1")
-    const F2 = sseFrame("event: message", 'data: {"from":"macbook","n":2}', "id: l2") // the stranded idle-equivalent
+    const F1 = localEvt(1, { from: "macbook", n: 1 })
+    const F2 = localEvt(2, { from: "macbook", n: 2 }) // the stranded idle-equivalent
 
     const localCtl = pausableSource()
     const peerCtl = pausableSource()
@@ -568,8 +576,8 @@ describe("#1617 — driver wires drain→resume + upstream pause/resume", () => 
     // the solo-machine wedge the composite test above does NOT exercise.
     const ownerMap = new SessionOwnerMap()
 
-    const F1 = sseFrame("event: message", 'data: {"big":"tool-output"}', "id: 7")
-    const F2 = sseFrame("event: session.status", 'data: {"status":"idle"}', "id: 8") // clears the rail
+    const F1 = localEvt(7, { big: "tool-output" })
+    const F2 = localEvt(8, { status: "idle" }, "session.status") // clears the rail
 
     const localCtl = pausableSource()
 
@@ -606,7 +614,7 @@ describe("#1617 — driver wires drain→resume + upstream pause/resume", () => 
     expect(res.text()).toContain('"status":"idle"')
     expect(res.text()).toBe(F1 + F2)
     expect(res.text()).not.toContain("local\u001f")
-    expect(res.text()).not.toContain("local=8")
+    expect(res.text()).not.toContain(`local=${localId(8)}`)
     expect(localCtl.resumeCalls).toBeGreaterThan(0)
 
     localCtl.end()
@@ -630,8 +638,8 @@ describe("#1638 — re-open resumes from last-delivered id + composite-mode reco
       { id: "ses-studio", amicode_owner: { owner_machine_id: "studio", owner_name: "studio", is_local: false } },
     ])
 
-    const L1 = sseFrame("event: message", 'data: {"from":"macbook","n":1}', "id: l1")
-    const L2 = sseFrame("event: message", 'data: {"from":"macbook","n":2}', "id: l2")
+    const L1 = localEvt(1, { from: "macbook", n: 1 })
+    const L2 = localEvt(2, { from: "macbook", n: 2 })
 
     const opened: Array<{ namespace: string; lastEventId?: string }> = []
     const localCtls: Ctl[] = []
@@ -659,12 +667,12 @@ describe("#1638 — re-open resumes from last-delivered id + composite-mode reco
     })
 
     const res = mockRes()
-    driver.handle(mockReq("/event?lastEventID=local=l0;studio=p0"), res)
+    driver.handle(mockReq(`/event?lastEventID=local=${localId(0)};studio=${peerId(0)}`), res)
     await tick()
 
     // initial local open used the connect cursor l0
     const initialLocalOpen = opened.find((o) => o.namespace === LOCAL_NAMESPACE)
-    expect(initialLocalOpen?.lastEventId).toBe("l0")
+    expect(initialLocalOpen?.lastEventId).toBe(localId(0))
 
     // deliver two local frames — the aggregator's live local cursor advances to l2
     localCtls[0].push(L1)
@@ -683,7 +691,7 @@ describe("#1638 — re-open resumes from last-delivered id + composite-mode reco
 
     const reopenLocal = opened.filter((o) => o.namespace === LOCAL_NAMESPACE)
     expect(reopenLocal.length).toBe(2)
-    expect(reopenLocal[1].lastEventId).toBe("l2") // <── last-delivered, not l0
+    expect(reopenLocal[1].lastEventId).toBe(localId(2)) // <── last-delivered, not the connect-time id
 
     localCtls.forEach((c) => c.end())
     peerCtl.end()
@@ -696,7 +704,7 @@ describe("#1638 — re-open resumes from last-delivered id + composite-mode reco
       { id: "ses-studio", amicode_owner: { owner_machine_id: "studio", owner_name: "studio", is_local: false } },
     ])
 
-    const P1 = sseFrame("event: message", 'data: {"from":"studio","n":1}', "id: p1")
+    const P1 = peerEvt(1, { from: "studio", n: 1 })
 
     const localCtl = controllableSource()
     const peerCtls: Ctl[] = []
@@ -751,8 +759,8 @@ describe("#1638 — re-open resumes from last-delivered id + composite-mode reco
   it("FLEET-OF-ONE (zero peers): a re-opened LOCAL arm emits NO gap and stays byte-identical (#1264)", async () => {
     const ownerMap = new SessionOwnerMap() // no owners → fleet-of-one
 
-    const L1 = sseFrame("event: message", 'data: {"from":"macbook","n":1}', "id: l1")
-    const L2 = sseFrame("event: message", 'data: {"from":"macbook","n":2}', "id: l2")
+    const L1 = localEvt(1, { from: "macbook", n: 1 })
+    const L2 = localEvt(2, { from: "macbook", n: 2 })
 
     const localCtls: Ctl[] = []
 
@@ -797,7 +805,7 @@ describe("#1638 — re-open resumes from last-delivered id + composite-mode reco
   it("a re-opened LOCAL arm in fleet-of-one resumes from the last-delivered id too", async () => {
     const ownerMap = new SessionOwnerMap()
 
-    const L1 = sseFrame("event: message", 'data: {"from":"macbook","n":1}', "id: l1")
+    const L1 = localEvt(1, { from: "macbook", n: 1 })
 
     const opened: Array<{ namespace: string; lastEventId?: string }> = []
     const localCtls: Ctl[] = []
@@ -818,9 +826,9 @@ describe("#1638 — re-open resumes from last-delivered id + composite-mode reco
     })
 
     const res = mockRes()
-    driver.handle(mockReq("/event?lastEventID=l0"), res)
+    driver.handle(mockReq(`/event?lastEventID=${localId(0)}`), res)
     await tick()
-    expect(opened[0].lastEventId).toBe("l0") // initial: connect cursor
+    expect(opened[0].lastEventId).toBe(localId(0)) // initial: connect cursor
 
     localCtls[0].push(L1)
     await tick()
@@ -830,7 +838,7 @@ describe("#1638 — re-open resumes from last-delivered id + composite-mode reco
     await tick()
 
     const localOpens = opened.filter((o) => o.namespace === LOCAL_NAMESPACE)
-    expect(localOpens[1].lastEventId).toBe("l1") // re-open resumes from last-delivered
+    expect(localOpens[1].lastEventId).toBe(localId(1)) // re-open resumes from last-delivered
 
     localCtls.forEach((c) => c.end())
     res.fireClose()
@@ -919,8 +927,8 @@ describe("#1772 AC1 — two concurrent listeners both stay connected and both re
     expect(driver.handle(mockReq("/global/event"), resB)).toBe(true);
     await tick();
 
-    origins.broadcast(LOCAL_NAMESPACE, sseFrame("event: message", 'data: {"from":"macbook","n":1}', "id: l1"));
-    origins.broadcast("studio", sseFrame("event: message", 'data: {"from":"studio","n":2}', "id: p1"));
+    origins.broadcast(LOCAL_NAMESPACE, localEvt(1, { from: "macbook", n: 1 }));
+    origins.broadcast("studio", peerEvt(1, { from: "studio", n: 2 }));
     await tick();
 
     for (const res of [resA, resB]) {
@@ -951,7 +959,7 @@ describe("#1772 AC2 — closing one listener closes ONLY that listener's upstrea
     expect(origins.live(LOCAL_NAMESPACE)).toBe(2);
     expect(origins.live("studio")).toBe(2);
 
-    origins.broadcast(LOCAL_NAMESPACE, sseFrame("event: message", 'data: {"n":"before"}', "id: l1"));
+    origins.broadcast(LOCAL_NAMESPACE, localEvt(1, { n: "before" }));
     await tick();
 
     // Listener A departs (its socket closes).
@@ -967,8 +975,8 @@ describe("#1772 AC2 — closing one listener closes ONLY that listener's upstrea
     // B keeps streaming on the SAME arms (no re-open), from both origins.
     driver.reconcile();
     await tick();
-    origins.broadcast(LOCAL_NAMESPACE, sseFrame("event: message", 'data: {"n":"after-local"}', "id: l2"));
-    origins.broadcast("studio", sseFrame("event: message", 'data: {"n":"after-peer"}', "id: p2"));
+    origins.broadcast(LOCAL_NAMESPACE, localEvt(2, { n: "after-local" }));
+    origins.broadcast("studio", peerEvt(2, { n: "after-peer" }));
     await tick();
     expect(resB.ended).toBe(false);
     expect(resB.text()).toContain('"n":"before"');
@@ -1011,7 +1019,7 @@ describe("#1772 AC3 — reconcile updates EVERY live connection's membership", (
     driver.reconcile();
     await tick();
     expect(origins.live("studio")).toBe(2); // one peer arm per listener
-    origins.broadcast("studio", sseFrame("event: message", 'data: {"from":"studio"}', "id: p1"));
+    origins.broadcast("studio", peerEvt(1, { from: "studio" }));
     await tick();
     expect(resA.text()).toContain('"from":"studio"');
     expect(resB.text()).toContain('"from":"studio"');
@@ -1039,7 +1047,7 @@ describe("#1772 AC3 — reconcile updates EVERY live connection's membership", (
 
     ownerMap.update(STUDIO_OWNED);
     expect(await until(() => origins.live("studio") === 2)).toBe(true);
-    origins.broadcast("studio", sseFrame("event: message", 'data: {"from":"studio"}', "id: p1"));
+    origins.broadcast("studio", peerEvt(1, { from: "studio" }));
     await tick();
     expect(resA.text()).toContain('"from":"studio"');
     expect(resB.text()).toContain('"from":"studio"');
@@ -1089,7 +1097,7 @@ describe("#1772 AC4 — a listener beyond the cap is refused (retryable), never 
     expect(origins.opens(LOCAL_NAMESPACE)).toBe(16);
     expect(origins.closes(LOCAL_NAMESPACE)).toBe(0);
     expect(origins.live("studio")).toBe(16);
-    origins.broadcast(LOCAL_NAMESPACE, sseFrame("event: message", 'data: {"n":"after-refusal"}', "id: l1"));
+    origins.broadcast(LOCAL_NAMESPACE, localEvt(1, { n: "after-refusal" }));
     await tick();
     for (const res of accepted) {
       expect(res.ended).toBe(false);
@@ -1168,7 +1176,7 @@ describe("#1772 AC5 — two listeners: one local arm each, kept open — no repe
       expect(origins.closes("studio")).toBe(0);
 
       // Both views are live on those same arms.
-      origins.broadcast(LOCAL_NAMESPACE, sseFrame("event: message", 'data: {"n":"steady"}', "id: l1"));
+      origins.broadcast(LOCAL_NAMESPACE, localEvt(1, { n: "steady" }));
       await tick();
       expect(viewA.current().text()).toContain('"n":"steady"');
       expect(viewB.current().text()).toContain('"n":"steady"');
@@ -1189,13 +1197,22 @@ describe("#1772 invariants — #1264 / #1601 / #1617 hold PER LISTENER", () => {
     driver.handle(mockReq("/global/event"), resB);
     await tick();
 
-    const F1 = sseFrame("event: message", 'data: {"a":1}', "id: 1");
-    const F2 = sseFrame("event: message", 'data: {"b":2}', "id: 2");
-    origins.broadcast(LOCAL_NAMESPACE, F1);
-    origins.broadcast(LOCAL_NAMESPACE, F2);
-    await tick();
-    expect(resA.text()).toBe(F1 + F2);
-    expect(resB.text()).toBe(F1 + F2);
+    // #1771: the engine's real stream — an old (id-less) engine and a #1776
+    // (sequenced) one — connected, an event, the plain + sync twin of a stored
+    // event, a heartbeat. Every byte relays verbatim to every listener.
+    for (const engine of [fakeEngine({ legacy: true }), fakeEngine({ epoch: LOCAL_EPOCH })]) {
+      const frames = [
+        engine.connected(),
+        engine.event("session.status", { a: 1 }),
+        ...engine.stored("message.updated", { b: 2 }, { aggregateID: "ses_1" }),
+        engine.heartbeat(),
+      ];
+      const before = [resA.text(), resB.text()];
+      for (const f of frames) origins.broadcast(LOCAL_NAMESPACE, f);
+      await tick();
+      expect(resA.text()).toBe(before[0] + frames.join(""));
+      expect(resB.text()).toBe(before[1] + frames.join(""));
+    }
 
     resA.fireClose();
     resB.fireClose();
@@ -1225,8 +1242,8 @@ describe("#1772 invariants — #1264 / #1601 / #1617 hold PER LISTENER", () => {
     await tick();
     expect(localCtls.length).toBe(3); // exactly one re-open — A's
 
-    localCtls[2].push(sseFrame("event: message", 'data: {"to":"A"}', "id: a1"));
-    localCtls[1].push(sseFrame("event: message", 'data: {"to":"B"}', "id: b1"));
+    localCtls[2].push(localEvt(2, { to: "A" }));
+    localCtls[1].push(localEvt(1, { to: "B" }));
     await tick();
     expect(resA.text()).toContain('"to":"A"');
     expect(resA.text()).not.toContain('"to":"B"');
@@ -1258,16 +1275,16 @@ describe("#1772 invariants — #1264 / #1601 / #1617 hold PER LISTENER", () => {
     const [aLocal, aPeer, bLocal, bPeer] = ctls;
 
     resA.block();
-    aLocal.push(sseFrame("event: message", 'data: {"n":1}', "id: l1")); // trips A's backpressure
+    aLocal.push(localEvt(1, { n: 1 })); // trips A's backpressure
     await tick();
-    aLocal.push(sseFrame("event: message", 'data: {"n":2}', "id: l2")); // stranded behind it
+    aLocal.push(localEvt(2, { n: 2 })); // stranded behind it
     await tick();
     expect(aLocal.pauseCalls).toBeGreaterThan(0);
     expect(aPeer.pauseCalls).toBeGreaterThan(0);
     expect(bLocal.pauseCalls).toBe(0); // B is not throttled by A's slow socket
     expect(bPeer.pauseCalls).toBe(0);
 
-    bLocal.push(sseFrame("event: message", 'data: {"to":"B"}', "id: b1"));
+    bLocal.push(localEvt(1, { to: "B" }));
     await tick();
     expect(resB.text()).toContain('"to":"B"'); // B streams on while A is backpressured
     expect(resA.text()).not.toContain('"n":2');
