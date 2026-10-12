@@ -61,6 +61,49 @@ let goal_is_embedded = isdefined(Main, :op) && hasproperty(op, :operator) && has
 end
 # ──────────────────────────────────────────────────────────────────────────
 
+# ── CONTRACT: formulation record (DO NOT EDIT) ─────────────────────────────
+# The machine-readable problem statement, derived from the problem object —
+# never hand-authored (the formulation-record contract, amicode #1710).
+# FIRE-AND-FORGET: a failed emission is one receipt line; the solve always
+# proceeds. Atomic write; raw matrices capped to digest + dims AT EMISSION
+# (run dirs sync across machines). The author's own kwargs beyond the
+# TemplateBlock fields are not captured here — the record's problem block
+# carries what the retained params keep; solver actuals are the contract's.
+TEMPLATE_ACTUALS = Dict{String,Any}(
+    "note" => "author kwargs beyond the TemplateBlock fields are not captured — see solve.jl for the full call site",
+)
+SOLVER_ACTUALS = Dict{String,Any}(
+    "backend" => "ipopt",
+    "max_iter" => max_iter,
+)
+_cap_matrix(v) = begin
+    h = 0xcbf29ce484222325
+    for b in codeunits(repr(v))
+        h = (h ⊻ UInt64(b)) * 0x100000001b3
+    end
+    "<capped matrix: $(length(v))x$(length(v[1])), fnv64:$(string(h, base = 16))>"
+end
+try
+    record = full_dict(extract_spec(qcp))
+    record["canonical"] = Piccolo.Control.retained_spec(qcp) !== nothing
+    record["template_actuals"] = TEMPLATE_ACTUALS
+    record["solver_actuals"] = SOLVER_ACTUALS
+    sys_d = get(record, "system", Dict{String,Any}())
+    haskey(sys_d, "H_drift") && (sys_d["H_drift"] = _cap_matrix(sys_d["H_drift"]))
+    haskey(sys_d, "H_drives") && (sys_d["H_drives"] = [_cap_matrix(m) for m in sys_d["H_drives"]])
+    goal_d = get(record, "goal", Dict{String,Any}())
+    haskey(goal_d, "matrix") && (goal_d["matrix"] = _cap_matrix(goal_d["matrix"]))
+    open("formulation.toml.tmp", "w") do io
+        TOML.print(io, record)
+    end
+    mv("formulation.toml.tmp", "formulation.toml"; force = true)
+    println("AMICODE_RECORD formulation.toml written (canonical=$(record["canonical"]))"); flush(stdout)
+catch e
+    @warn "formulation record emission failed" exception = e maxlog = 3
+    println("AMICODE_RECORD emission failed — run continues without a record"); flush(stdout)
+end
+# ──────────────────────────────────────────────────────────────────────────
+
 # ── CONTRACT: telemetry + solve + artifacts (DO NOT EDIT) ──────────────────
 const PLOT_EVERY = 6
 live_plot = LivePulsePlotCallback(qtraj, prob.trajectory; every = PLOT_EVERY, save_dir = ".")
