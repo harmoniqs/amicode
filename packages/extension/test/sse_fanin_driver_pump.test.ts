@@ -3,18 +3,38 @@
 // pump() method removes it from the internal sources Map so the next
 // reconcile() tick can re-open the arm — not leave a zombie that blocks
 // reconnection indefinitely.
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import * as http from "node:http";
 import { SseFanInDriver } from "../src/amicode_service/sse_fanin_driver";
 import type { SseFrameSource } from "../src/amicode_service/sse_fanin_aggregator";
 import { LOCAL_NAMESPACE } from "../src/amicode_service/sse_fanin_aggregator";
 import { SessionOwnerMap } from "../src/amicode_service/session_multiplexer";
+import { FanInCensus, FANIN_CENSUS_INTERVAL_MS, FANIN_CLOSE_REASONS } from "../src/amicode_service/fanin_census";
+import {
+  fakeEngine,
+  startEngineSseServer,
+  writeChunks,
+  largeSummaryFrame,
+  sequencedEvent,
+  engineId,
+  chunkBytes,
+  CHUNK_64K,
+  TEN_MB,
+  LOCAL_EPOCH,
+  PEER_EPOCH,
+} from "./fixtures/engine_stream/engine_frames";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
-function sseFrame(...lines: string[]): string {
-  return lines.join("\n") + "\n\n";
-}
+/** #1771: ENGINE-SHAPED upstream frames (test/fixtures/engine_stream) — the
+ *  wire the engine's `/global/event` actually writes: a sequenced (#1776) bus
+ *  event `id: <epoch>:<seq>` + one `data:` line of the serialized global event,
+ *  no `event:` line. These replace the synthetic `event: message` / `id: l1`
+ *  frames the suite used to feed (a wire production never sees). */
+const localEvt = (seq: number, properties: Record<string, unknown>, type?: string) => sequencedEvent(LOCAL_EPOCH, seq, properties, type);
+const peerEvt = (seq: number, properties: Record<string, unknown>, type?: string) => sequencedEvent(PEER_EPOCH, seq, properties, type);
+const localId = (seq: number) => engineId(LOCAL_EPOCH, seq);
+const peerId = (seq: number) => engineId(PEER_EPOCH, seq);
 
 /** A controllable frame source: push frames into it, end it on demand. */
 interface Ctl {
@@ -215,8 +235,8 @@ describe("#1566 — dead arm zombie: pump exit cleans up source so reconcile re-
       { id: "ses-studio", amicode_owner: { owner_machine_id: "studio", owner_name: "studio", is_local: false } },
     ]);
 
-    const F1 = sseFrame("event: message", 'data: {"from":"studio","n":1}', "id: p1");
-    const F2 = sseFrame("event: message", 'data: {"from":"studio","n":2}', "id: p2");
+    const F1 = peerEvt(1, { from: "studio", n: 1 });
+    const F2 = peerEvt(2, { from: "studio", n: 2 });
 
     // Track every openUpstream call and the controllable sources they return.
     const openCalls: string[] = [];
@@ -358,8 +378,8 @@ describe("#1601 — dead LOCAL arm: reconcile re-opens the local arm", () => {
       { id: "ses-studio", amicode_owner: { owner_machine_id: "studio", owner_name: "studio", is_local: false } },
     ]);
 
-    const L1 = sseFrame("event: message", 'data: {"from":"macbook","n":1}', "id: l1");
-    const L2 = sseFrame("event: message", 'data: {"from":"macbook","n":2}', "id: l2");
+    const L1 = localEvt(1, { from: "macbook", n: 1 });
+    const L2 = localEvt(2, { from: "macbook", n: 2 });
 
     // Track every openUpstream call; hand out a FRESH local source per open so we
     // can distinguish the re-opened arm from the original.
@@ -498,8 +518,8 @@ describe("#1617 — driver wires drain→resume + upstream pause/resume", () => 
       { id: "ses-studio", amicode_owner: { owner_machine_id: "studio", owner_name: "studio", is_local: false } },
     ])
 
-    const F1 = sseFrame("event: message", 'data: {"from":"macbook","n":1}', "id: l1")
-    const F2 = sseFrame("event: message", 'data: {"from":"macbook","n":2}', "id: l2") // the stranded idle-equivalent
+    const F1 = localEvt(1, { from: "macbook", n: 1 })
+    const F2 = localEvt(2, { from: "macbook", n: 2 }) // the stranded idle-equivalent
 
     const localCtl = pausableSource()
     const peerCtl = pausableSource()
@@ -556,8 +576,8 @@ describe("#1617 — driver wires drain→resume + upstream pause/resume", () => 
     // the solo-machine wedge the composite test above does NOT exercise.
     const ownerMap = new SessionOwnerMap()
 
-    const F1 = sseFrame("event: message", 'data: {"big":"tool-output"}', "id: 7")
-    const F2 = sseFrame("event: session.status", 'data: {"status":"idle"}', "id: 8") // clears the rail
+    const F1 = localEvt(7, { big: "tool-output" })
+    const F2 = localEvt(8, { status: "idle" }, "session.status") // clears the rail
 
     const localCtl = pausableSource()
 
@@ -594,7 +614,7 @@ describe("#1617 — driver wires drain→resume + upstream pause/resume", () => 
     expect(res.text()).toContain('"status":"idle"')
     expect(res.text()).toBe(F1 + F2)
     expect(res.text()).not.toContain("local\u001f")
-    expect(res.text()).not.toContain("local=8")
+    expect(res.text()).not.toContain(`local=${localId(8)}`)
     expect(localCtl.resumeCalls).toBeGreaterThan(0)
 
     localCtl.end()
@@ -618,8 +638,8 @@ describe("#1638 — re-open resumes from last-delivered id + composite-mode reco
       { id: "ses-studio", amicode_owner: { owner_machine_id: "studio", owner_name: "studio", is_local: false } },
     ])
 
-    const L1 = sseFrame("event: message", 'data: {"from":"macbook","n":1}', "id: l1")
-    const L2 = sseFrame("event: message", 'data: {"from":"macbook","n":2}', "id: l2")
+    const L1 = localEvt(1, { from: "macbook", n: 1 })
+    const L2 = localEvt(2, { from: "macbook", n: 2 })
 
     const opened: Array<{ namespace: string; lastEventId?: string }> = []
     const localCtls: Ctl[] = []
@@ -647,12 +667,12 @@ describe("#1638 — re-open resumes from last-delivered id + composite-mode reco
     })
 
     const res = mockRes()
-    driver.handle(mockReq("/event?lastEventID=local=l0;studio=p0"), res)
+    driver.handle(mockReq(`/event?lastEventID=local=${localId(0)};studio=${peerId(0)}`), res)
     await tick()
 
     // initial local open used the connect cursor l0
     const initialLocalOpen = opened.find((o) => o.namespace === LOCAL_NAMESPACE)
-    expect(initialLocalOpen?.lastEventId).toBe("l0")
+    expect(initialLocalOpen?.lastEventId).toBe(localId(0))
 
     // deliver two local frames — the aggregator's live local cursor advances to l2
     localCtls[0].push(L1)
@@ -671,7 +691,7 @@ describe("#1638 — re-open resumes from last-delivered id + composite-mode reco
 
     const reopenLocal = opened.filter((o) => o.namespace === LOCAL_NAMESPACE)
     expect(reopenLocal.length).toBe(2)
-    expect(reopenLocal[1].lastEventId).toBe("l2") // <── last-delivered, not l0
+    expect(reopenLocal[1].lastEventId).toBe(localId(2)) // <── last-delivered, not the connect-time id
 
     localCtls.forEach((c) => c.end())
     peerCtl.end()
@@ -684,7 +704,7 @@ describe("#1638 — re-open resumes from last-delivered id + composite-mode reco
       { id: "ses-studio", amicode_owner: { owner_machine_id: "studio", owner_name: "studio", is_local: false } },
     ])
 
-    const P1 = sseFrame("event: message", 'data: {"from":"studio","n":1}', "id: p1")
+    const P1 = peerEvt(1, { from: "studio", n: 1 })
 
     const localCtl = controllableSource()
     const peerCtls: Ctl[] = []
@@ -739,8 +759,8 @@ describe("#1638 — re-open resumes from last-delivered id + composite-mode reco
   it("FLEET-OF-ONE (zero peers): a re-opened LOCAL arm emits NO gap and stays byte-identical (#1264)", async () => {
     const ownerMap = new SessionOwnerMap() // no owners → fleet-of-one
 
-    const L1 = sseFrame("event: message", 'data: {"from":"macbook","n":1}', "id: l1")
-    const L2 = sseFrame("event: message", 'data: {"from":"macbook","n":2}', "id: l2")
+    const L1 = localEvt(1, { from: "macbook", n: 1 })
+    const L2 = localEvt(2, { from: "macbook", n: 2 })
 
     const localCtls: Ctl[] = []
 
@@ -785,7 +805,7 @@ describe("#1638 — re-open resumes from last-delivered id + composite-mode reco
   it("a re-opened LOCAL arm in fleet-of-one resumes from the last-delivered id too", async () => {
     const ownerMap = new SessionOwnerMap()
 
-    const L1 = sseFrame("event: message", 'data: {"from":"macbook","n":1}', "id: l1")
+    const L1 = localEvt(1, { from: "macbook", n: 1 })
 
     const opened: Array<{ namespace: string; lastEventId?: string }> = []
     const localCtls: Ctl[] = []
@@ -806,9 +826,9 @@ describe("#1638 — re-open resumes from last-delivered id + composite-mode reco
     })
 
     const res = mockRes()
-    driver.handle(mockReq("/event?lastEventID=l0"), res)
+    driver.handle(mockReq(`/event?lastEventID=${localId(0)}`), res)
     await tick()
-    expect(opened[0].lastEventId).toBe("l0") // initial: connect cursor
+    expect(opened[0].lastEventId).toBe(localId(0)) // initial: connect cursor
 
     localCtls[0].push(L1)
     await tick()
@@ -818,7 +838,7 @@ describe("#1638 — re-open resumes from last-delivered id + composite-mode reco
     await tick()
 
     const localOpens = opened.filter((o) => o.namespace === LOCAL_NAMESPACE)
-    expect(localOpens[1].lastEventId).toBe("l1") // re-open resumes from last-delivered
+    expect(localOpens[1].lastEventId).toBe(localId(1)) // re-open resumes from last-delivered
 
     localCtls.forEach((c) => c.end())
     res.fireClose()
@@ -907,8 +927,8 @@ describe("#1772 AC1 — two concurrent listeners both stay connected and both re
     expect(driver.handle(mockReq("/global/event"), resB)).toBe(true);
     await tick();
 
-    origins.broadcast(LOCAL_NAMESPACE, sseFrame("event: message", 'data: {"from":"macbook","n":1}', "id: l1"));
-    origins.broadcast("studio", sseFrame("event: message", 'data: {"from":"studio","n":2}', "id: p1"));
+    origins.broadcast(LOCAL_NAMESPACE, localEvt(1, { from: "macbook", n: 1 }));
+    origins.broadcast("studio", peerEvt(1, { from: "studio", n: 2 }));
     await tick();
 
     for (const res of [resA, resB]) {
@@ -939,7 +959,7 @@ describe("#1772 AC2 — closing one listener closes ONLY that listener's upstrea
     expect(origins.live(LOCAL_NAMESPACE)).toBe(2);
     expect(origins.live("studio")).toBe(2);
 
-    origins.broadcast(LOCAL_NAMESPACE, sseFrame("event: message", 'data: {"n":"before"}', "id: l1"));
+    origins.broadcast(LOCAL_NAMESPACE, localEvt(1, { n: "before" }));
     await tick();
 
     // Listener A departs (its socket closes).
@@ -955,8 +975,8 @@ describe("#1772 AC2 — closing one listener closes ONLY that listener's upstrea
     // B keeps streaming on the SAME arms (no re-open), from both origins.
     driver.reconcile();
     await tick();
-    origins.broadcast(LOCAL_NAMESPACE, sseFrame("event: message", 'data: {"n":"after-local"}', "id: l2"));
-    origins.broadcast("studio", sseFrame("event: message", 'data: {"n":"after-peer"}', "id: p2"));
+    origins.broadcast(LOCAL_NAMESPACE, localEvt(2, { n: "after-local" }));
+    origins.broadcast("studio", peerEvt(2, { n: "after-peer" }));
     await tick();
     expect(resB.ended).toBe(false);
     expect(resB.text()).toContain('"n":"before"');
@@ -999,7 +1019,7 @@ describe("#1772 AC3 — reconcile updates EVERY live connection's membership", (
     driver.reconcile();
     await tick();
     expect(origins.live("studio")).toBe(2); // one peer arm per listener
-    origins.broadcast("studio", sseFrame("event: message", 'data: {"from":"studio"}', "id: p1"));
+    origins.broadcast("studio", peerEvt(1, { from: "studio" }));
     await tick();
     expect(resA.text()).toContain('"from":"studio"');
     expect(resB.text()).toContain('"from":"studio"');
@@ -1027,7 +1047,7 @@ describe("#1772 AC3 — reconcile updates EVERY live connection's membership", (
 
     ownerMap.update(STUDIO_OWNED);
     expect(await until(() => origins.live("studio") === 2)).toBe(true);
-    origins.broadcast("studio", sseFrame("event: message", 'data: {"from":"studio"}', "id: p1"));
+    origins.broadcast("studio", peerEvt(1, { from: "studio" }));
     await tick();
     expect(resA.text()).toContain('"from":"studio"');
     expect(resB.text()).toContain('"from":"studio"');
@@ -1077,7 +1097,7 @@ describe("#1772 AC4 — a listener beyond the cap is refused (retryable), never 
     expect(origins.opens(LOCAL_NAMESPACE)).toBe(16);
     expect(origins.closes(LOCAL_NAMESPACE)).toBe(0);
     expect(origins.live("studio")).toBe(16);
-    origins.broadcast(LOCAL_NAMESPACE, sseFrame("event: message", 'data: {"n":"after-refusal"}', "id: l1"));
+    origins.broadcast(LOCAL_NAMESPACE, localEvt(1, { n: "after-refusal" }));
     await tick();
     for (const res of accepted) {
       expect(res.ended).toBe(false);
@@ -1156,7 +1176,7 @@ describe("#1772 AC5 — two listeners: one local arm each, kept open — no repe
       expect(origins.closes("studio")).toBe(0);
 
       // Both views are live on those same arms.
-      origins.broadcast(LOCAL_NAMESPACE, sseFrame("event: message", 'data: {"n":"steady"}', "id: l1"));
+      origins.broadcast(LOCAL_NAMESPACE, localEvt(1, { n: "steady" }));
       await tick();
       expect(viewA.current().text()).toContain('"n":"steady"');
       expect(viewB.current().text()).toContain('"n":"steady"');
@@ -1177,13 +1197,22 @@ describe("#1772 invariants — #1264 / #1601 / #1617 hold PER LISTENER", () => {
     driver.handle(mockReq("/global/event"), resB);
     await tick();
 
-    const F1 = sseFrame("event: message", 'data: {"a":1}', "id: 1");
-    const F2 = sseFrame("event: message", 'data: {"b":2}', "id: 2");
-    origins.broadcast(LOCAL_NAMESPACE, F1);
-    origins.broadcast(LOCAL_NAMESPACE, F2);
-    await tick();
-    expect(resA.text()).toBe(F1 + F2);
-    expect(resB.text()).toBe(F1 + F2);
+    // #1771: the engine's real stream — an old (id-less) engine and a #1776
+    // (sequenced) one — connected, an event, the plain + sync twin of a stored
+    // event, a heartbeat. Every byte relays verbatim to every listener.
+    for (const engine of [fakeEngine({ legacy: true }), fakeEngine({ epoch: LOCAL_EPOCH })]) {
+      const frames = [
+        engine.connected(),
+        engine.event("session.status", { a: 1 }),
+        ...engine.stored("message.updated", { b: 2 }, { aggregateID: "ses_1" }),
+        engine.heartbeat(),
+      ];
+      const before = [resA.text(), resB.text()];
+      for (const f of frames) origins.broadcast(LOCAL_NAMESPACE, f);
+      await tick();
+      expect(resA.text()).toBe(before[0] + frames.join(""));
+      expect(resB.text()).toBe(before[1] + frames.join(""));
+    }
 
     resA.fireClose();
     resB.fireClose();
@@ -1213,8 +1242,8 @@ describe("#1772 invariants — #1264 / #1601 / #1617 hold PER LISTENER", () => {
     await tick();
     expect(localCtls.length).toBe(3); // exactly one re-open — A's
 
-    localCtls[2].push(sseFrame("event: message", 'data: {"to":"A"}', "id: a1"));
-    localCtls[1].push(sseFrame("event: message", 'data: {"to":"B"}', "id: b1"));
+    localCtls[2].push(localEvt(2, { to: "A" }));
+    localCtls[1].push(localEvt(1, { to: "B" }));
     await tick();
     expect(resA.text()).toContain('"to":"A"');
     expect(resA.text()).not.toContain('"to":"B"');
@@ -1246,16 +1275,16 @@ describe("#1772 invariants — #1264 / #1601 / #1617 hold PER LISTENER", () => {
     const [aLocal, aPeer, bLocal, bPeer] = ctls;
 
     resA.block();
-    aLocal.push(sseFrame("event: message", 'data: {"n":1}', "id: l1")); // trips A's backpressure
+    aLocal.push(localEvt(1, { n: 1 })); // trips A's backpressure
     await tick();
-    aLocal.push(sseFrame("event: message", 'data: {"n":2}', "id: l2")); // stranded behind it
+    aLocal.push(localEvt(2, { n: 2 })); // stranded behind it
     await tick();
     expect(aLocal.pauseCalls).toBeGreaterThan(0);
     expect(aPeer.pauseCalls).toBeGreaterThan(0);
     expect(bLocal.pauseCalls).toBe(0); // B is not throttled by A's slow socket
     expect(bPeer.pauseCalls).toBe(0);
 
-    bLocal.push(sseFrame("event: message", 'data: {"to":"B"}', "id: b1"));
+    bLocal.push(localEvt(1, { to: "B" }));
     await tick();
     expect(resB.text()).toContain('"to":"B"'); // B streams on while A is backpressured
     expect(resA.text()).not.toContain('"n":2');
@@ -1268,5 +1297,536 @@ describe("#1772 invariants — #1264 / #1601 / #1617 hold PER LISTENER", () => {
     ctls.forEach((c) => c.end());
     resA.fireClose();
     resB.fireClose();
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// #1771 — the fan-in CENSUS. A wedged, evicted, or flapping arm used to look
+// identical to a quiet one in every log: nothing recorded who subscribed, why an
+// arm re-opened, or what was dropped. Every fan-in service now keeps counters per
+// listener connection and per arm, logs one census line every 30 s, and one line
+// immediately on each transition. The upstream frames below are ENGINE-SHAPED
+// (test/fixtures/engine_stream): id-less or `<epoch>:<seq>` data frames, the
+// plain + sync twin of a stored event, heartbeats.
+// ══════════════════════════════════════════════════════════════════════════════
+
+/** A census wired to a collecting sink and a hand-driven clock. */
+function testCensus(plane = "observe") {
+  const lines: string[] = [];
+  let t = 1_000_000;
+  const census = new FanInCensus({ plane, sink: (l) => lines.push(l), now: () => t });
+  return {
+    census,
+    lines,
+    advance(ms: number) {
+      t += ms;
+    },
+    censusLines: () => lines.filter((l) => l.startsWith("[fanin] census ")),
+  };
+}
+
+/** One `key=value key=value` segment → a record. */
+function kv(segment: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const tok of segment.trim().split(" ")) {
+    const i = tok.indexOf("=");
+    if (i > 0) out[tok.slice(0, i)] = tok.slice(i + 1);
+  }
+  return out;
+}
+
+/** A census line: its service-level head, then one segment per (connection, arm). */
+function parseCensus(line: string): { head: Record<string, string>; arms: Array<Record<string, string>> } {
+  const [head, ...arms] = line.split(" | ");
+  return { head: kv(head), arms: arms.map(kv) };
+}
+
+/** Drain the pumps: every pending microtask runs before the immediate fires —
+ *  no wall-clock sleep. */
+const flush = () => new Promise<void>((r) => setImmediate(r));
+
+const bytesOf = (frames: string[]) => frames.reduce((n, f) => n + Buffer.byteLength(f), 0);
+
+describe("#1771 AC1 — a fan-in service logs a census line every 30 s", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("listeners, accepted/closed since boot, evictions, and per arm: frames, bytes, largest, time since last frame, opens, closes", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const ownerMap = new SessionOwnerMap();
+    ownerMap.update(STUDIO_OWNED);
+    const origins = fakeOrigins();
+    const { census, advance, censusLines } = testCensus();
+    census.start();
+    const driver = twoListenerDriver(origins, ownerMap, { census });
+    const local = fakeEngine({ epoch: LOCAL_EPOCH });
+    const studio = fakeEngine({ epoch: PEER_EPOCH });
+
+    const resA = mockRes();
+    const resB = mockRes();
+    driver.handle(mockReq("/global/event"), resA);
+    driver.handle(mockReq("/global/event"), resB);
+    await flush();
+
+    const localFrames = [
+      local.connected(),
+      local.event("session.status", { sessionID: "ses_1", status: { type: "busy" } }),
+      ...local.stored("message.part.updated", { part: { id: "prt_1", text: "bravo" } }, { aggregateID: "ses_1" }),
+      local.heartbeat(),
+    ];
+    for (const f of localFrames) origins.broadcast(LOCAL_NAMESPACE, f);
+    const studioFrame = studio.event("message.part.updated", { from: "studio" });
+    origins.broadcast("studio", studioFrame);
+    await flush();
+    resA.fireClose(); // listener A departs; B stays
+    await flush();
+    advance(1500);
+
+    expect(censusLines()).toHaveLength(0); // nothing before the first period
+    vi.advanceTimersByTime(FANIN_CENSUS_INTERVAL_MS);
+    expect(censusLines()).toHaveLength(1);
+
+    const { head, arms } = parseCensus(censusLines()[0]);
+    expect(head).toMatchObject({ plane: "observe", listeners: "1", accepted: "2", closed: "1", evictions: "0" });
+    // Only the LIVE listener's arms are listed: B's local arm and B's peer arm.
+    expect(arms.map((a) => a.arm).sort()).toEqual(["local", "studio"]);
+    expect(new Set(arms.map((a) => a.conn)).size).toBe(1);
+    const bLocal = arms.find((a) => a.arm === "local")!;
+    expect(bLocal).toMatchObject({
+      frames: "5",
+      bytes: String(bytesOf(localFrames)),
+      largest: String(Math.max(...localFrames.map((f) => Buffer.byteLength(f)))),
+      since_last_ms: "1500",
+      opens: "1",
+      closes: "-",
+      pending: "0",
+      drops: "0",
+      gaps: "0",
+    });
+    expect(arms.find((a) => a.arm === "studio")).toMatchObject({
+      frames: "1",
+      bytes: String(Buffer.byteLength(studioFrame)),
+      largest: String(Buffer.byteLength(studioFrame)),
+      since_last_ms: "1500",
+      opens: "1",
+      closes: "-",
+    });
+
+    // The cadence repeats every 30 s, and stops with the census.
+    vi.advanceTimersByTime(FANIN_CENSUS_INTERVAL_MS);
+    expect(censusLines()).toHaveLength(2);
+    census.stop();
+    vi.advanceTimersByTime(FANIN_CENSUS_INTERVAL_MS * 3);
+    expect(censusLines()).toHaveLength(2);
+
+    resB.fireClose();
+  });
+
+  it("per arm: pending depth while backpressured, overflow drops, and gaps emitted", async () => {
+    const ownerMap = new SessionOwnerMap();
+    ownerMap.update(STUDIO_OWNED);
+    const origins = fakeOrigins(); // its sources cannot pause → frames keep arriving
+    const { census, censusLines } = testCensus();
+    const driver = twoListenerDriver(origins, ownerMap, { census });
+    const studio = fakeEngine({ epoch: PEER_EPOCH });
+
+    const res = backpressureRes();
+    driver.handle(mockReq("/global/event"), res);
+    await flush();
+    const studioArm = () => parseCensus(censusLines().at(-1)!).arms.find((a) => a.arm === "studio")!;
+
+    res.block();
+    // 1 trip-frame written, 256 buffered (the per-namespace bound), 43 dropped.
+    for (let i = 0; i < 300; i++) origins.broadcast("studio", studio.event("message.part.delta", { i }));
+    await flush();
+    census.emit();
+    expect(studioArm()).toMatchObject({ frames: "300", pending: "256", drops: "43", gaps: "0" });
+
+    res.fireDrain(); // the buffer flushes in order, then ONE overflow gap names the arm
+    await flush();
+    census.emit();
+    expect(studioArm()).toMatchObject({ frames: "300", pending: "0", drops: "43", gaps: "1" });
+
+    res.fireClose();
+  });
+});
+
+/** Resolve once the census sink has received a line matching `pred` —
+ *  event-driven (the sink notifies), never a polling sleep. */
+function lineWaiter(lines: string[]): { sink: (l: string) => void; waitFor(pred: (l: string) => boolean): Promise<string> } {
+  const waiters: Array<{ pred: (l: string) => boolean; resolve: (l: string) => void }> = [];
+  return {
+    sink(l: string) {
+      lines.push(l);
+      for (const w of [...waiters]) {
+        if (w.pred(l)) {
+          waiters.splice(waiters.indexOf(w), 1);
+          w.resolve(l);
+        }
+      }
+    },
+    waitFor(pred) {
+      const hit = lines.find(pred);
+      if (hit !== undefined) return Promise.resolve(hit);
+      return new Promise((resolve) => waiters.push({ pred, resolve }));
+    },
+  };
+}
+
+describe("#1771 AC2 — close reasons are an enumerated set", () => {
+  it("the set is exactly: upstream end, upstream error, membership change, listener closed, evicted, shutdown", () => {
+    expect([...FANIN_CLOSE_REASONS]).toEqual([
+      "upstream-end",
+      "upstream-error",
+      "membership-change",
+      "listener-closed",
+      "evicted",
+      "shutdown",
+    ]);
+  });
+
+  it("an arm's closes are counted under their reason: upstream end, upstream error, membership change", async () => {
+    const ownerMap = new SessionOwnerMap();
+    ownerMap.update(STUDIO_OWNED);
+    const { census, lines, censusLines } = testCensus();
+    const localCtls: Ctl[] = [];
+    const failing: Array<(err: Error) => void> = [];
+    const driver = twoListenerDriver(fakeOrigins(), ownerMap, {
+      census,
+      openUpstream: (r) => {
+        if (r.namespace === LOCAL_NAMESPACE) {
+          const ctl = controllableSource();
+          localCtls.push(ctl);
+          return ctl.source;
+        }
+        // the peer's upstream FAILS: next() rejects
+        return {
+          next: () => new Promise<string | null>((_, reject) => failing.push(reject)),
+          close() {},
+        };
+      },
+    });
+    const res = mockRes();
+    driver.handle(mockReq("/global/event"), res);
+    await flush();
+
+    localCtls[0].end(); // the local engine ends the stream cleanly
+    failing.shift()!(new Error("ECONNRESET")); // the peer's stream errors
+    await flush();
+    expect(lines).toContainEqual(expect.stringMatching(/^\[fanin\] arm-closed plane=observe conn=c1 arm=local reason=upstream-end$/));
+    expect(lines).toContainEqual(expect.stringMatching(/^\[fanin\] arm-closed plane=observe conn=c1 arm=studio reason=upstream-error$/));
+
+    driver.reconcile(); // both re-open
+    await flush();
+    ownerMap.update([]); // the peer's sessions end → its arm leaves the membership
+    driver.reconcile();
+    await flush();
+    expect(lines).toContainEqual(expect.stringMatching(/^\[fanin\] arm-closed plane=observe conn=c1 arm=studio reason=membership-change$/));
+
+    census.emit();
+    const arms = parseCensus(censusLines().at(-1)!).arms;
+    expect(arms.find((a) => a.arm === "local")).toMatchObject({ opens: "2", closes: "upstream-end:1" });
+    expect(arms.find((a) => a.arm === "studio")).toMatchObject({ opens: "2", closes: "upstream-error:1,membership-change:1" });
+    expect(parseCensus(censusLines().at(-1)!).head.evictions).toBe("0"); // no eviction path exists (#1772)
+
+    localCtls.forEach((c) => c.end());
+    res.fireClose();
+  });
+
+  it("the REAL upstream reader tells a clean end (upstream-end) from a mid-stream failure (upstream-error)", async () => {
+    const local = fakeEngine({ legacy: true }); // an old engine: id-less frames
+    const peer = fakeEngine({ legacy: true });
+    const ends = await startEngineSseServer((res) => {
+      res.write(local.connected());
+      res.end(); // clean end of stream
+    });
+    const dies = await startEngineSseServer((res) => {
+      res.write(peer.connected());
+      setImmediate(() => res.destroy()); // the link dies mid-stream
+    });
+    const lines: string[] = [];
+    const w = lineWaiter(lines);
+    const ownerMap = new SessionOwnerMap();
+    ownerMap.update(STUDIO_OWNED);
+    const driver = new SseFanInDriver({
+      ownerMap,
+      localMachineId: "macbook",
+      localEventUrl: () => ends.url,
+      peerBaseUrl: (id) => (id === "studio" ? dies.url : undefined),
+      peerToken: (id) =>
+        id === "studio"
+          ? { ok: true as const, credential: { baseUrl: dies.url, token: "tok-studio" } }
+          : { ok: false as const, reason: "absent" as const },
+      reconcileMs: 999_999,
+      census: new FanInCensus({ plane: "observe", sink: w.sink }),
+      // no openUpstream → the production http reader
+    });
+    const res = mockRes();
+    try {
+      driver.handle(mockReq("/global/event"), res);
+      expect(await w.waitFor((l) => l.includes("arm=local reason="))).toMatch(/reason=upstream-end$/);
+      expect(await w.waitFor((l) => l.includes("arm=studio reason="))).toMatch(/reason=upstream-error$/);
+    } finally {
+      res.fireClose();
+      await ends.stop();
+      await dies.stop();
+    }
+  });
+
+  it("a departing listener's arms close as listener-closed; after shutdown() the teardown's closes are shutdown", async () => {
+    const ownerMap = new SessionOwnerMap();
+    ownerMap.update(STUDIO_OWNED);
+    const { census, lines } = testCensus();
+    const driver = twoListenerDriver(fakeOrigins(), ownerMap, { census });
+    const resA = mockRes();
+    const resB = mockRes();
+    driver.handle(mockReq("/global/event"), resA);
+    driver.handle(mockReq("/global/event"), resB);
+    await flush();
+
+    resA.fireClose(); // a view goes away
+    expect(lines.filter((l) => l.includes("conn=c1") && l.includes("reason="))).toEqual([
+      "[fanin] arm-closed plane=observe conn=c1 arm=local reason=listener-closed",
+      "[fanin] arm-closed plane=observe conn=c1 arm=studio reason=listener-closed",
+      "[fanin] listener-closed plane=observe conn=c1 reason=listener-closed listeners=1",
+    ]);
+
+    driver.shutdown(); // the service stops: its socket teardown closes the rest
+    resB.fireClose();
+    expect(lines.filter((l) => l.includes("conn=c2") && l.includes("reason="))).toEqual([
+      "[fanin] arm-closed plane=observe conn=c2 arm=local reason=shutdown",
+      "[fanin] arm-closed plane=observe conn=c2 arm=studio reason=shutdown",
+      "[fanin] listener-closed plane=observe conn=c2 reason=shutdown listeners=0",
+    ]);
+    // shutdown() closed nothing itself — B's stream ended only with its socket.
+    expect(lines.some((l) => l.includes("reason=evicted"))).toBe(false);
+  });
+});
+
+describe("#1771 AC3 — each transition logs one line immediately, with its connection and arm", () => {
+  it("listener accepted → arm opened (local, peer) — synchronously, before any frame or timer", () => {
+    const ownerMap = new SessionOwnerMap();
+    ownerMap.update(STUDIO_OWNED);
+    const { census, lines } = testCensus();
+    const driver = twoListenerDriver(fakeOrigins(), ownerMap, { census });
+    const res = mockRes();
+    driver.handle(mockReq("/global/event"), res);
+    // no flush, no timer: the lines are already there
+    expect(lines).toEqual([
+      "[fanin] listener-accepted plane=observe conn=c1 listeners=1",
+      "[fanin] arm-opened plane=observe conn=c1 arm=local opens=1",
+      "[fanin] arm-opened plane=observe conn=c1 arm=studio opens=1",
+    ]);
+    res.fireClose();
+  });
+
+  it("frames are never logged; an arm that drops and re-opens logs closed → gap emitted → opened", async () => {
+    const ownerMap = new SessionOwnerMap();
+    ownerMap.update(STUDIO_OWNED);
+    const { census, lines } = testCensus();
+    const peerCtls: Ctl[] = [];
+    const driver = twoListenerDriver(fakeOrigins(), ownerMap, {
+      census,
+      openUpstream: (r) => {
+        const ctl = controllableSource();
+        if (r.namespace === "studio") peerCtls.push(ctl);
+        return ctl.source;
+      },
+    });
+    const studio = fakeEngine({ epoch: PEER_EPOCH });
+    const res = mockRes();
+    driver.handle(mockReq("/global/event"), res);
+    const before = lines.length;
+    for (let i = 0; i < 25; i++) peerCtls[0].push(studio.event("message.part.delta", { i }));
+    peerCtls[0].push(studio.heartbeat());
+    await flush();
+    expect(lines.length).toBe(before); // 26 frames delivered, zero lines
+
+    peerCtls[0].end();
+    await flush();
+    driver.reconcile();
+    expect(lines.slice(before)).toEqual([
+      "[fanin] arm-closed plane=observe conn=c1 arm=studio reason=upstream-end",
+      "[fanin] gap-emitted plane=observe conn=c1 arm=studio cause=reopen",
+      "[fanin] arm-opened plane=observe conn=c1 arm=studio opens=2",
+    ]);
+    peerCtls.forEach((c) => c.end());
+    res.fireClose();
+  });
+
+  it("an overflow episode logs ONE overflow-drop line (not one per dropped frame), then its gap on drain", async () => {
+    const ownerMap = new SessionOwnerMap();
+    ownerMap.update(STUDIO_OWNED);
+    const origins = fakeOrigins();
+    const { census, lines } = testCensus();
+    const driver = twoListenerDriver(origins, ownerMap, { census });
+    const studio = fakeEngine({ epoch: PEER_EPOCH });
+    const res = backpressureRes();
+    driver.handle(mockReq("/global/event"), res);
+    await flush();
+    const before = lines.length;
+
+    res.block();
+    for (let i = 0; i < 300; i++) origins.broadcast("studio", studio.event("message.part.delta", { i }));
+    await flush();
+    expect(lines.slice(before)).toEqual(["[fanin] overflow-drop plane=observe conn=c1 arm=studio pending=256"]);
+
+    res.fireDrain();
+    await flush();
+    expect(lines.slice(before + 1)).toEqual(["[fanin] gap-emitted plane=observe conn=c1 arm=studio cause=overflow"]);
+    res.fireClose();
+  });
+
+  it("a beyond-cap refusal logs one line naming the cap (and counts in the census)", () => {
+    const { census, lines } = testCensus();
+    const driver = twoListenerDriver(fakeOrigins(), new SessionOwnerMap(), { census, maxListeners: 1 });
+    const ok = mockRes();
+    driver.handle(mockReq("/global/event"), ok);
+    driver.handle(mockReq("/global/event"), mockRes());
+    expect(lines.at(-1)).toBe("[fanin] listener-refused plane=observe listeners=1 cap=1");
+    expect(census.snapshot()).toMatchObject({ listeners: 1, accepted: 1, refusals: 1, evictions: 0 });
+    ok.fireClose();
+  });
+});
+
+describe("#1771 AC5 — the census adds no frames to any stream and changes no delivery", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("FLEET-OF-ONE under a live census (cadence ticking, every transition logging): the stream is the engine's frames, byte-identical (#1264)", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const { census, lines } = testCensus();
+    census.start();
+    const localCtls: Ctl[] = [];
+    const driver = twoListenerDriver(fakeOrigins(), new SessionOwnerMap(), {
+      census,
+      openUpstream: () => {
+        const ctl = controllableSource();
+        localCtls.push(ctl);
+        return ctl.source;
+      },
+    });
+    for (const engine of [fakeEngine({ legacy: true }), fakeEngine({ epoch: LOCAL_EPOCH })]) {
+      localCtls.length = 0;
+      const res = mockRes();
+      driver.handle(mockReq("/global/event"), res);
+      const first = [engine.connected(), engine.event("session.status", { status: "busy" }), ...engine.stored("message.part.updated", { text: "ciao" }, { aggregateID: "ses_1" })];
+      for (const f of first) localCtls[0].push(f);
+      await flush();
+      vi.advanceTimersByTime(FANIN_CENSUS_INTERVAL_MS); // a census line mid-stream
+      localCtls[0].end(); // the arm drops …
+      await flush();
+      driver.reconcile(); // … and re-opens (no gap in fleet-of-one)
+      const second = [engine.heartbeat(), engine.event("session.status", { status: "idle" })];
+      for (const f of second) localCtls[1].push(f);
+      await flush();
+      expect(res.text()).toBe([...first, ...second].join(""));
+      res.fireClose();
+    }
+    expect(lines.some((l) => l.startsWith("[fanin] census "))).toBe(true);
+    expect(lines.some((l) => l.includes("arm-closed"))).toBe(true);
+  });
+
+  it("COMPOSITE: the same scripted sequence (overflow, gap, membership change, re-open) is byte-identical with and without a census sink", async () => {
+    async function run(sink: ((l: string) => void) | undefined): Promise<string> {
+      const ownerMap = new SessionOwnerMap();
+      ownerMap.update(STUDIO_OWNED);
+      const origins = fakeOrigins();
+      const driver = twoListenerDriver(origins, ownerMap, sink ? { census: new FanInCensus({ sink, now: () => 0 }) } : {});
+      const local = fakeEngine({ legacy: true }); // an old local engine: id-less
+      const studio = fakeEngine({ epoch: PEER_EPOCH });
+      const res = backpressureRes();
+      driver.handle(mockReq(`/global/event?lastEventID=studio=${studio.idAt(0)}`), res);
+      await flush();
+      for (const f of [local.connected(), ...local.stored("message.updated", { n: 1 }, { aggregateID: "ses_1" }), local.heartbeat()]) {
+        origins.broadcast(LOCAL_NAMESPACE, f);
+      }
+      origins.broadcast("studio", studio.connected());
+      await flush();
+      res.block();
+      for (let i = 0; i < 300; i++) origins.broadcast("studio", studio.event("message.part.delta", { i }));
+      await flush();
+      res.fireDrain();
+      await flush();
+      ownerMap.update([]);
+      driver.reconcile(); // membership change closes the peer arm
+      ownerMap.update(STUDIO_OWNED);
+      driver.reconcile(); // … and it re-opens (a reopen gap)
+      await flush();
+      origins.broadcast("studio", studio.heartbeat());
+      await flush();
+      res.fireClose();
+      return res.text();
+    }
+    const lines: string[] = [];
+    const silent = await run(undefined);
+    const logged = await run((l) => lines.push(l));
+    expect(logged).toBe(silent);
+    expect(lines.length).toBeGreaterThan(5); // the census did see it all …
+    expect(logged).not.toContain("[fanin]"); // … and none of it reached the stream
+    expect(logged).not.toContain("[owner-map]");
+  });
+
+  it("a census sink that throws never breaks delivery", async () => {
+    const census = new FanInCensus({
+      sink: () => {
+        throw new Error("log pipe closed");
+      },
+    });
+    census.start();
+    const origins = fakeOrigins();
+    const driver = twoListenerDriver(origins, new SessionOwnerMap(), { census });
+    const engine = fakeEngine({ epoch: LOCAL_EPOCH });
+    const res = mockRes();
+    expect(() => driver.handle(mockReq("/global/event"), res)).not.toThrow();
+    const f = engine.event("session.status", { status: "busy" });
+    origins.broadcast(LOCAL_NAMESPACE, f);
+    await flush();
+    expect(() => census.emit()).not.toThrow();
+    expect(res.text()).toBe(f);
+    res.fireClose();
+    census.stop();
+  });
+});
+
+describe("#1771 AC6 — a 10 MB engine frame delivered in 64 KB chunks (the #1779 surface)", () => {
+  it("the real reader reassembles it whole; the stream carries it byte-identical; the census counts its bytes and largest frame", async () => {
+    const engine = fakeEngine({ epoch: LOCAL_EPOCH });
+    const connected = engine.connected();
+    const big = largeSummaryFrame({ epoch: LOCAL_EPOCH, seq: 1 });
+    const after = engine.heartbeat();
+    const chunks = chunkBytes(connected + big + after, CHUNK_64K);
+    expect(Buffer.byteLength(big)).toBeGreaterThanOrEqual(TEN_MB);
+    expect(chunks.length).toBeGreaterThan(160);
+    const server = await startEngineSseServer(async (res) => {
+      await writeChunks(res, chunks);
+      res.end();
+    });
+    const lines: string[] = [];
+    const w = lineWaiter(lines);
+    const census = new FanInCensus({ plane: "observe", sink: w.sink, now: () => 0 });
+    const driver = new SseFanInDriver({
+      ownerMap: new SessionOwnerMap(), // fleet-of-one: the verbatim relay
+      localMachineId: "macbook",
+      localEventUrl: () => server.url,
+      peerBaseUrl: () => undefined,
+      peerToken: () => ({ ok: false as const, reason: "absent" as const }),
+      reconcileMs: 999_999,
+      census,
+    });
+    const res = mockRes();
+    try {
+      driver.handle(mockReq("/global/event"), res);
+      await w.waitFor((l) => l.includes("arm=local reason="));
+      expect(res.text()).toBe(connected + big + after); // whole, in order, byte-identical
+      census.emit();
+      const local = parseCensus(lines.at(-1)!).arms.find((a) => a.arm === "local")!;
+      expect(local).toMatchObject({
+        frames: "3",
+        bytes: String(Buffer.byteLength(connected + big + after)),
+        largest: String(Buffer.byteLength(big)),
+      });
+    } finally {
+      res.fireClose();
+      await server.stop();
+    }
   });
 });

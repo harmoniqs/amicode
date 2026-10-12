@@ -10,7 +10,7 @@
 // The route dispatch → the observation `/event` interception → the #1511
 // aggregator → the real downstream `res` is exercised deterministically via an
 // INJECTED upstream opener; the live cross-machine delivery is the opt-in E2E.
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -356,6 +356,30 @@ describe("#1543 — production wiring (createAmicodeService observation-only pat
       expect(peerEventReqs.at(-1)!.auth).toBe(peerAuthHeader("tok-studio")); // authed as the peer, its own token
     } finally {
       await svc.stop();
+    }
+  });
+
+  it("#1771: the observation fan-in's census goes to the service log every 30 s, and stops with the service", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const lines: string[] = [];
+    try {
+      const svc = createAmicodeService({
+        password: PW,
+        engine: { password: "engine-mint", getUrl: () => engineStub.url },
+        fleet: { hub: { getUrl: () => undefined }, observationOnly: true, fleetPeers: servingPeerProvider() },
+        log: (line) => lines.push(line),
+      });
+      const census = () => lines.filter((l) => l.startsWith("[fanin] census "));
+      expect(census()).toHaveLength(0);
+      vi.advanceTimersByTime(30_000);
+      expect(census()).toHaveLength(1);
+      expect(census()[0]).toContain("plane=observe");
+      expect(census()[0]).toContain("listeners=0 accepted=0 closed=0 evictions=0");
+      await svc.stop();
+      vi.advanceTimersByTime(90_000);
+      expect(census()).toHaveLength(1); // the cadence is torn down with the service
+    } finally {
+      vi.useRealTimers();
     }
   });
 });

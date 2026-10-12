@@ -331,6 +331,9 @@ export async function startAmicodeService(
       shelf: opts.appDistRoot !== undefined ? { distRoot: opts.appDistRoot } : undefined,
       fleet: fleet ?? opts.fleet,
       modelRouting: opts.modelRouting,
+      // #1771: the fan-in census + owner-map refresh outcomes → the Amicode
+      // output channel.
+      log: (line) => log.appendLine(line),
     });
     let url: URL;
     if (opts.port && opts.port > 0) {

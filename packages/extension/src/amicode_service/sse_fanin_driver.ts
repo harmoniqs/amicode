@@ -33,6 +33,7 @@ import {
 } from "./sse_fanin_aggregator";
 import type { SessionOwnerMap } from "./session_multiplexer";
 import type { PeerTokenRead } from "./fleet_peer_store";
+import { FanInCensus, emptyCloses, type FanInCloseReason, type CensusConnection } from "./fanin_census";
 
 /** The one thing dispatch needs from the driver (server.ts imports this type and
  *  exposes it on FleetPlane.eventFanIn). `handle` always returns true on the
@@ -84,6 +85,10 @@ export interface SseFanInDriverDeps {
    *  listener beyond it is refused with a retryable 503 + Retry-After; no live
    *  listener is ever closed to make room. Default DEFAULT_FANIN_MAX_LISTENERS. */
   maxListeners?: number;
+  /** #1771 — this service's census (counters + log lines). The caller owns its
+   *  cadence (`start()`) and its sink. Absent ⇒ a silent census (counted,
+   *  logged nowhere). */
+  census?: FanInCensus;
 }
 
 /** #1772 — default concurrent-listener cap per fan-in service. A service rarely
@@ -98,20 +103,24 @@ export const FANIN_LISTENER_CAP_ERROR = "fan-in listener cap reached";
  *  byte stream on the SSE blank-line delimiter into WHOLE frames (delimiter-
  *  inclusive) so `event:`/`data:`/`retry:`/`id:` lines survive intact for the
  *  aggregator's §D2 relay. Never throws — a connection error just ends the
- *  source (the aggregator names the gap; D3 replays it on reconnect). */
+ *  source (the aggregator names the gap; D3 replays it on reconnect). #1771:
+ *  the source remembers WHICH ended it — a clean upstream end or an error — for
+ *  the census's close reason; both still end it identically. */
 export function openHttpSseSource(r: FanInUpstreamRequest): SseFrameSource {
   const queue: string[] = [];
   const waiters: Array<(v: string | null) => void> = [];
   let ended = false;
+  let reason: "end" | "error" | undefined;
   let clientReq: http.ClientRequest | undefined;
   const pushFrame = (f: string): void => {
     const w = waiters.shift();
     if (w) w(f);
     else queue.push(f);
   };
-  const end = (): void => {
+  const end = (why: "end" | "error"): void => {
     if (ended) return;
     ended = true;
+    reason = why;
     let w: ((v: string | null) => void) | undefined;
     while ((w = waiters.shift())) w(null);
   };
@@ -132,12 +141,12 @@ export function openHttpSseSource(r: FanInUpstreamRequest): SseFrameSource {
           buf = buf.slice(idx + 2);
         }
       });
-      res.on("end", () => end());
-      res.on("error", () => end());
+      res.on("end", () => end("end"));
+      res.on("error", () => end("error"));
     });
-    clientReq.on("error", () => end());
+    clientReq.on("error", () => end("error"));
   } catch {
-    end();
+    end("error");
   }
   return {
     next(): Promise<string | null> {
@@ -148,15 +157,18 @@ export function openHttpSseSource(r: FanInUpstreamRequest): SseFrameSource {
     },
     close(): void {
       clientReq?.destroy();
-      end();
+      end("end");
     },
+    endReason: () => reason,
   };
 }
 
 /** One live `/event` fan-in connection — ONE PER LISTENER (#1772): the
  *  aggregator on this response, the open upstream sources keyed by namespace,
- *  and this connection's own reconcile timer. Closing it closes only its arms. */
-class FanInConnection {
+ *  and this connection's own reconcile timer. Closing it closes only its arms.
+ *  #1771: it is also the census's view of this listener — per-arm opens and
+ *  closes-by-reason live here, traffic/pending/drops/gaps in the aggregator. */
+class FanInConnection implements CensusConnection {
   private readonly agg: SseFanInAggregator;
   private readonly sources = new Map<string, SseFrameSource>();
   private resume = new Map<string, string>();
@@ -164,9 +176,16 @@ class FanInConnection {
   private readonly authHeader?: string;
   private timer?: ReturnType<typeof setInterval>;
   private closed = false;
+  /** #1771 — per arm: how often it opened, and why it closed. */
+  private readonly armLife = new Map<string, { opens: number; closes: Record<FanInCloseReason, number> }>();
+  /** #1771 — sources THIS connection closed (their reason is already recorded;
+   *  the pump's exit must not re-count them as an upstream end). */
+  private readonly closedByUs = new WeakSet<SseFrameSource>();
 
   constructor(
+    readonly id: string,
     private readonly deps: SseFanInDriverDeps,
+    private readonly census: FanInCensus,
     private readonly req: http.IncomingMessage,
     private readonly res: http.ServerResponse,
   ) {
@@ -188,7 +207,53 @@ class FanInConnection {
       // cursor). The `drain` edge (wired in start()) resumes them and calls
       // agg.resume() to flush the buffers in order and re-arm `flowing`.
       onBackpressure: () => this.pauseUpstreams(),
+      // #1771 — the census clock and its view of drops and gaps.
+      now: census.now,
+      observer: {
+        onOverflowDrop: (ns, pending) => census.overflowDrop(this.id, ns, pending),
+        onGap: (nss, cause) => census.gapEmitted(this.id, nss, cause),
+      },
     });
+  }
+
+  /** #1771 — this listener's arms as the census reports them (read at census
+   *  time, never pushed per frame). */
+  arms(): ReturnType<CensusConnection["arms"]> {
+    return [...this.armLife.entries()].map(([arm, life]) => ({
+      arm,
+      traffic: this.agg.traffic(arm),
+      pending: this.agg.pendingDepth(arm),
+      opens: life.opens,
+      closes: { ...life.closes },
+    }));
+  }
+
+  private lifeOf(namespace: string): { opens: number; closes: Record<FanInCloseReason, number> } {
+    let life = this.armLife.get(namespace);
+    if (!life) {
+      life = { opens: 0, closes: emptyCloses() };
+      this.armLife.set(namespace, life);
+    }
+    return life;
+  }
+
+  /** #1771 — record (and log) an arm's close, once. */
+  private noteArmClosed(namespace: string, reason: FanInCloseReason): void {
+    this.lifeOf(namespace).closes[reason] += 1;
+    this.census.armClosed(this.id, namespace, reason);
+  }
+
+  /** Close an upstream THIS connection decided to close (membership change,
+   *  listener closed, shutdown) — recorded with its reason before the source's
+   *  own end reaches the pump. */
+  private closeSource(namespace: string, source: SseFrameSource, reason: FanInCloseReason): void {
+    this.closedByUs.add(source);
+    this.noteArmClosed(namespace, reason);
+    try {
+      source.close();
+    } catch {
+      /* already gone */
+    }
   }
 
   /** #1617 — pause every live upstream source that supports it. A source
@@ -289,11 +354,7 @@ class FanInConnection {
     for (const machineId of [...this.sources.keys()]) {
       if (machineId === LOCAL_NAMESPACE) continue;
       if (!active.has(machineId)) {
-        try {
-          this.sources.get(machineId)?.close();
-        } catch {
-          /* already gone */
-        }
+        this.closeSource(machineId, this.sources.get(machineId)!, "membership-change");
         this.sources.delete(machineId);
       }
     }
@@ -350,6 +411,9 @@ class FanInConnection {
       ...(lastEventId ? { lastEventId } : {}),
     });
     this.sources.set(namespace, source);
+    const life = this.lifeOf(namespace);
+    life.opens += 1;
+    this.census.armOpened(this.id, namespace, life.opens);
     void this.pump(namespace, source);
   }
 
@@ -358,35 +422,35 @@ class FanInConnection {
    *  the client tracks — NOT the bare `pipeToResponse` relay, which would emit
    *  the NS_SEP form the composite cursor cannot round-trip). */
   private async pump(namespace: string, source: SseFrameSource): Promise<void> {
+    let threw = false;
     for (;;) {
       let frame: string | null;
       try {
         frame = await source.next();
       } catch {
+        threw = true;
         break;
       }
       if (frame === null || this.closed) break;
       this.agg.ingest(namespace, frame);
+    }
+    // #1771 — the upstream's OWN end (not one this connection caused): name it.
+    if (!this.closed && !this.closedByUs.has(source)) {
+      this.noteArmClosed(namespace, threw || source.endReason?.() === "error" ? "upstream-error" : "upstream-end");
     }
     // The upstream ended or errored — remove the dead source so the next
     // reconcile() tick can re-open the arm (#1566).
     this.sources.delete(namespace);
   }
 
-  close(): void {
+  close(reason: FanInCloseReason = "listener-closed"): void {
     if (this.closed) return;
     this.closed = true;
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = undefined;
     }
-    for (const s of this.sources.values()) {
-      try {
-        s.close();
-      } catch {
-        /* already gone */
-      }
-    }
+    for (const [namespace, s] of this.sources) this.closeSource(namespace, s, reason);
     this.sources.clear();
     try {
       this.res.end();
@@ -431,8 +495,14 @@ function refuseBeyondCap(res: http.ServerResponse, cap: number): void {
  *  bounded by `maxListeners` (refusal beyond it, never an eviction). */
 export class SseFanInDriver implements EventFanInDriver {
   private readonly connections = new Set<FanInConnection>();
+  /** #1771 — this service's census (a silent one when none was injected). */
+  readonly census: FanInCensus;
+  private nextConnection = 0;
+  private shuttingDown = false;
 
-  constructor(private readonly deps: SseFanInDriverDeps) {}
+  constructor(private readonly deps: SseFanInDriverDeps) {
+    this.census = deps.census ?? new FanInCensus();
+  }
 
   handle(req: http.IncomingMessage, res: http.ServerResponse): boolean {
     // #1772: beyond the cap the listener is REFUSED — answered here (so dispatch
@@ -441,19 +511,24 @@ export class SseFanInDriver implements EventFanInDriver {
     const cap = this.deps.maxListeners ?? DEFAULT_FANIN_MAX_LISTENERS;
     if (this.connections.size >= cap) {
       refuseBeyondCap(res, cap);
+      this.census.listenerRefused(cap);
       return true;
     }
     // #1565: always accept on the observation path. Zero non-local owners starts
     // in fleet-of-one mode (the aggregator's §D4 byte-identity relay); reconcile
     // opens peer arms as the OwnerMapFeed discovers them.
-    const conn = new FanInConnection(this.deps, req, res);
+    const conn = new FanInConnection(`c${++this.nextConnection}`, this.deps, this.census, req, res);
     this.connections.add(conn);
+    this.census.listenerAccepted(conn);
     conn.start();
     // A departing listener closes ONLY its own connection (and so only its own
-    // upstream arms); every other listener keeps streaming.
+    // upstream arms); every other listener keeps streaming. #1771: a close the
+    // service's own teardown caused is attributed to `shutdown`.
     res.on("close", () => {
       this.connections.delete(conn);
-      conn.close();
+      const reason: FanInCloseReason = this.shuttingDown ? "shutdown" : "listener-closed";
+      conn.close(reason);
+      this.census.listenerClosed(conn.id, reason);
     });
     return true;
   }
@@ -463,5 +538,13 @@ export class SseFanInDriver implements EventFanInDriver {
    *  determinism). */
   reconcile(): void {
     for (const conn of this.connections) conn.reconcile();
+  }
+
+  /** #1771 — the service is stopping: the listener and arm closes its socket
+   *  teardown triggers next are attributed `shutdown` (not `listener-closed`),
+   *  and the census cadence stops. Closes nothing itself — delivery unchanged. */
+  shutdown(): void {
+    this.shuttingDown = true;
+    this.census.stop();
   }
 }

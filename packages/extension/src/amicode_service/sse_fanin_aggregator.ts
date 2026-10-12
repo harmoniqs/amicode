@@ -49,6 +49,10 @@ export interface SseFrameSource {
   pause?(): void;
   /** #1617 — resume pulling once the downstream has drained. */
   resume?(): void;
+  /** #1771 — once `next()` has resolved null: did the upstream END cleanly or
+   *  fail with an ERROR? Census only (the close reason); both still end the
+   *  source the same way. Absent / undefined ⇒ a clean end. */
+  endReason?(): "end" | "error" | undefined;
 }
 
 /** The downstream response, narrowed to what the relay needs. In production an
@@ -210,6 +214,37 @@ export async function pipeToResponse(
 
 // ── the aggregator core ──────────────────────────────────────────────────────
 
+/** #1771 — one arm's traffic counters on this connection (the census reads
+ *  them; nothing about delivery depends on them). Counted per INGESTED frame —
+ *  whether it is delivered, buffered, or dropped. */
+export interface ArmTraffic {
+  frames: number;
+  /** UTF-8 bytes of the upstream frames as received. */
+  bytes: number;
+  largestFrame: number;
+  /** Clock time of the last frame (the aggregator's `now`); undefined if none. */
+  lastFrameAt?: number;
+  /** Frames dropped on overflow, cumulative (never zeroed by a gap). */
+  drops: number;
+  /** Gap frames emitted that named this arm. */
+  gaps: number;
+}
+
+/** #1771 — why a gap frame was emitted: an arm re-opened after delivering
+ *  (#1638), or frames were dropped on overflow (#1617). */
+export type GapCause = "reopen" | "overflow";
+
+/** #1771 — the aggregator's transitions, for the census. Observation only:
+ *  callbacks run after the aggregator decided, and a throwing observer is
+ *  swallowed. */
+export interface SseFanInObserver {
+  /** The FIRST overflow drop of an episode for `namespace` (an episode ends
+   *  when the overflow gap naming it is emitted). `pending` is its live depth. */
+  onOverflowDrop?(namespace: string, pending: number): void;
+  /** A gap frame was emitted naming `namespaces`. */
+  onGap?(namespaces: string[], cause: GapCause): void;
+}
+
 export interface SseFanInOptions {
   /** The one downstream `/event` response every arm fans into. */
   sink: SseSink;
@@ -226,6 +261,10 @@ export interface SseFanInOptions {
    *  buffers cannot overflow-drop. Absent ⇒ buffer-and-drain only (today's
    *  behavior for injected test sources). */
   onBackpressure?: () => void;
+  /** #1771 — the clock stamping each arm's last-frame time. Default Date.now. */
+  now?: () => number;
+  /** #1771 — the census's view of drops and gaps. Absent ⇒ unobserved. */
+  observer?: SseFanInObserver;
 }
 
 export class SseFanInAggregator {
@@ -233,6 +272,10 @@ export class SseFanInAggregator {
   private readonly bufferBound: number;
   private readonly focusProvider?: () => FocusSnapshot | undefined;
   private readonly onBackpressure?: () => void;
+  private readonly now: () => number;
+  private readonly observer?: SseFanInObserver;
+  /** #1771 — per-arm traffic counters (census only). */
+  private readonly trafficByArm = new Map<string, ArmTraffic>();
 
   /** namespace → last delivered upstream id (the composite cursor state). */
   private readonly composite = new Map<string, string>();
@@ -275,6 +318,8 @@ export class SseFanInAggregator {
     this.bufferBound = opts.bufferBound ?? 256;
     this.focusProvider = opts.focusSnapshot;
     this.onBackpressure = opts.onBackpressure;
+    this.now = opts.now ?? Date.now;
+    this.observer = opts.observer;
   }
 
   /** Begin (or reconnect): parse the client's opaque composite cursor into the
@@ -334,6 +379,7 @@ export class SseFanInAggregator {
   /** Ingest one raw SSE frame from an arm. `namespace === "local"` for the local
    *  arm; a machineId for a peer arm. */
   ingest(namespace: string, rawFrame: string): void {
+    this.countFrame(namespace, rawFrame); // #1771 census — observation only
     const rawId = frameRawId(rawFrame);
     const fleetOfOne = this.peerArms.size === 0;
 
@@ -466,6 +512,7 @@ export class SseFanInAggregator {
     if (!this.everDelivered.has(namespace)) return; // initial open → no gap
     const data = JSON.stringify({ type: "amicode.sync.gap", namespaces: [namespace] });
     this.writeControl(`event: amicode.sync.gap\ndata: ${data}\n\n`);
+    this.noteGap([namespace], "reopen");
   }
 
   /** #1617 — the overflow defense-in-depth. When resume() observes a nonzero
@@ -483,6 +530,7 @@ export class SseFanInAggregator {
     const data = JSON.stringify({ type: "amicode.sync.gap", namespaces: dropped });
     this.writeControl(`event: amicode.sync.gap\ndata: ${data}\n\n`);
     for (const ns of dropped) this.droppedCount.set(ns, 0);
+    this.noteGap(dropped, "overflow");
   }
 
   /** The number of frames DROPPED for a namespace on buffer overflow (decision
@@ -506,7 +554,56 @@ export class SseFanInAggregator {
     return this.composite.get(namespace);
   }
 
+  /** #1771 — one arm's traffic counters on this connection (a copy; zeros for
+   *  an arm that has ingested nothing). */
+  traffic(namespace: string): ArmTraffic {
+    const t = this.trafficByArm.get(namespace);
+    return t ? { ...t } : { frames: 0, bytes: 0, largestFrame: 0, drops: 0, gaps: 0 };
+  }
+
+  /** #1771 — how many of this arm's frames wait undelivered right now: its data
+   *  entries on the ordered pending stream, plus (local) the fleet-of-one
+   *  verbatim buffer. */
+  pendingDepth(namespace: string): number {
+    let n = 0;
+    for (const entry of this.pending) if (entry.kind === "data" && entry.namespace === namespace) n++;
+    if (namespace === LOCAL_NAMESPACE) n += this.verbatimBuffer.length;
+    return n;
+  }
+
   // ── internals ────────────────────────────────────────────────────────────
+
+  private trafficOf(namespace: string): ArmTraffic {
+    let t = this.trafficByArm.get(namespace);
+    if (!t) {
+      t = { frames: 0, bytes: 0, largestFrame: 0, drops: 0, gaps: 0 };
+      this.trafficByArm.set(namespace, t);
+    }
+    return t;
+  }
+
+  private countFrame(namespace: string, rawFrame: string): void {
+    const t = this.trafficOf(namespace);
+    const bytes = Buffer.byteLength(rawFrame, "utf8");
+    t.frames += 1;
+    t.bytes += bytes;
+    if (bytes > t.largestFrame) t.largestFrame = bytes;
+    t.lastFrameAt = this.now();
+  }
+
+  private noteGap(namespaces: string[], cause: GapCause): void {
+    for (const ns of namespaces) this.trafficOf(ns).gaps += 1;
+    this.observe((o) => o.onGap?.([...namespaces], cause));
+  }
+
+  private observe(fn: (o: SseFanInObserver) => void): void {
+    if (!this.observer) return;
+    try {
+      fn(this.observer);
+    } catch {
+      /* the census must never break delivery */
+    }
+  }
 
   /** Write one frame downstream in composite mode: advance the namespace's
    *  cursor from the frame's id, stamp the full composite as the wire `id:`,
@@ -543,7 +640,10 @@ export class SseFanInAggregator {
       if (entry.kind === "data" && entry.namespace === namespace) live++;
     }
     if (live >= this.bufferBound) {
-      this.droppedCount.set(namespace, (this.droppedCount.get(namespace) ?? 0) + 1);
+      const before = this.droppedCount.get(namespace) ?? 0;
+      this.droppedCount.set(namespace, before + 1);
+      this.trafficOf(namespace).drops += 1; // #1771 census
+      if (before === 0) this.observe((o) => o.onOverflowDrop?.(namespace, live));
       return;
     }
     this.pending.push({ kind: "data", namespace, frame: rawFrame });
