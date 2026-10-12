@@ -13,7 +13,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import { execSync } from "node:child_process";
 import { handleSidebarMessage, type SidebarMessageHandlers, type SidebarDownMessage, type FileOpRequest, type FileOpResult, type TreeEntry, type TreeRoot } from "./sidebar_bridge";
-import { buildFleetSectionModel, type RosterRowLike, type FleetPostureInput, type LocalDeviceInput, type CanonicalServerInput } from "./sidebar_fleet_section";
+import { buildFleetSectionModel, type RosterRowLike, type FleetPostureInput, type LocalDeviceInput, type CanonicalServerInput, type FleetSectionModel } from "./sidebar_fleet_section";
 import { parseRosterDocument, fleetRosterCachePath, fleetTopologyPath, classifyMacModel } from "@amicode/schema";
 import { fleetPostureStateFile } from "./fleet_posture_state";
 import { SidebarTreeService, type RawDirEntry } from "./sidebar_tree_service";
@@ -648,6 +648,10 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
    *  display health transitions (reachable → degraded → down) even when
    *  roster.json is static and fs.watch fires nothing. */
   private fleetStalenessTimer?: ReturnType<typeof setInterval>;
+  /** #1764: the fleet view-model this host last POSTED — Add machine routes on
+   *  it at click time (never recomputing stance from fleet config), so the
+   *  button and the rendered section agree. Undefined until the first post. */
+  private lastPostedFleetModel?: FleetSectionModel;
 
   static readonly DEFAULT_SECTION_ORDER = ["research", "dev", "fleet"];
   private static readonly SECTION_ORDER_KEY = "amicode.sectionOrder";
@@ -800,6 +804,14 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
         troubleshootFleet: () => {
           this.fleetDeps?.launchSession("/troubleshoot-fleet");
         },
+        // #1764 — Add machine: standalone → create-a-fleet; populated / empty /
+        // unreachable / nothing posted yet → add-fleet-device (that skill hands
+        // off to create-a-fleet itself when no fleet exists).
+        addFleetMachine: () => {
+          if (!this.fleetDeps) return;
+          const prompt = this.lastPostedFleetModel?.state === "standalone" ? "/create-a-fleet" : "/add-fleet-device";
+          this.fleetDeps.launchSession(prompt);
+        },
         connectToDevice: (msg) => {
           this.fleetDeps?.connectToDevice?.(msg);
         },
@@ -934,6 +946,7 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
         localDevice: deps.readLocalDevice?.() ?? null,
         canonicalServer: deps.readCanonicalServer?.() ?? null,
       });
+      this.lastPostedFleetModel = model;
       this.postDown({ kind: "fleet-status", model });
     };
     // The SERVER/standalone read is synchronous — post immediately (keeps every

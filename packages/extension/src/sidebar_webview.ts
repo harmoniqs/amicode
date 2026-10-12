@@ -1171,6 +1171,19 @@ function createIconEl(icon: string): HTMLElement {
     ];
   }
 
+  /** Fleet (#1764): "+" opens a chat running the guided add-a-machine skill the
+   *  host routes on the section's last-posted state. Navigation only — the
+   *  sidebar never writes fleet config or roster rows. */
+  function fleetSectionActions(): SectionAction[] {
+    return [
+      {
+        label: "Add machine to fleet",
+        icon: createPlusIconEl(),
+        onClick: () => vscode.postMessage({ kind: "add-fleet-machine" }),
+      },
+    ];
+  }
+
   // ── Development create menu (shared by the "+" icon and the empty-area context menu)
 
   type CreateMenuItem = { label: string; run: () => void } | { separator: true };
@@ -1361,7 +1374,7 @@ function createIconEl(icon: string): HTMLElement {
         }
         treeRoot.appendChild(section);
       } else if (key === "fleet") {
-        const { section, body } = renderSectionHeader("Fleet", "fleet");
+        const { section, body } = renderSectionHeader("Fleet", "fleet", fleetSectionActions());
         body.classList.add("fleet-section-body");
         // Read-only glanceable fleet section (#1321): render the last-pushed
         // view-model; the only up-message is the Manage navigation.

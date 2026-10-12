@@ -474,6 +474,64 @@ describe("SidebarViewProvider — fleet section host wiring (#1321)", () => {
       vi.useRealTimers();
     }
   });
+
+  // ── #1764 — Add machine routes on the LAST-POSTED section state ──
+  describe("add-fleet-machine routing (#1764)", () => {
+    it.each([
+      ["standalone", { machineId: "this-mac", name: "Mac", serveStance: "standalone" }, { rows: [deviceRow()], reachable: true }, "/create-a-fleet"],
+      ["populated", { machineId: "this-mac", name: "Mac", serveStance: "server" }, { rows: [deviceRow()], reachable: true }, "/add-fleet-device"],
+      ["empty", null, { rows: [], reachable: true }, "/add-fleet-device"],
+      ["unreachable", null, { rows: [], reachable: false }, "/add-fleet-device"],
+    ])("a %s section routes Add machine on its posted state", (stateName, local, roster, prompt) => {
+      const { state, deps, launchSession } = fleetHarness();
+      state.localDevice = local as any;
+      state.roster = roster as any;
+      const provider = new SidebarViewProvider(makeExtensionUri(), undefined, deps);
+      const view = makeWebviewView();
+      resolve(provider, view);
+      expect(lastFleetStatus(view).model.state).toBe(stateName);
+      view.webview._simulateMessage({ kind: "add-fleet-machine" });
+      expect(launchSession).toHaveBeenCalledTimes(1);
+      expect(launchSession).toHaveBeenCalledWith(prompt);
+    });
+
+    it("nothing posted yet (an async read still pending) routes to /add-fleet-device", () => {
+      const { deps, launchSession } = fleetHarness();
+      const pending = { ...deps, readRoster: () => new Promise<never>(() => {}) };
+      const provider = new SidebarViewProvider(makeExtensionUri(), undefined, pending);
+      const view = makeWebviewView();
+      resolve(provider, view);
+      expect(lastFleetStatus(view)).toBeUndefined();
+      view.webview._simulateMessage({ kind: "add-fleet-machine" });
+      expect(launchSession).toHaveBeenCalledWith("/add-fleet-device");
+    });
+
+    it("routes on the cached posted model at click time, never recomputing stance from fleet config", () => {
+      const { state, deps, launchSession } = fleetHarness();
+      state.localDevice = { machineId: "this-mac", name: "Mac", serveStance: "standalone" };
+      const provider = new SidebarViewProvider(makeExtensionUri(), undefined, deps);
+      const view = makeWebviewView();
+      resolve(provider, view);
+      // The machine joins a fleet on disk, but no section update was posted yet:
+      // the button must agree with what the section still shows (standalone).
+      state.localDevice = { machineId: "this-mac", name: "Mac", serveStance: "client" };
+      view.webview._simulateMessage({ kind: "add-fleet-machine" });
+      expect(launchSession).toHaveBeenLastCalledWith("/create-a-fleet");
+      // Once the section re-posts, the route follows the new posted state.
+      state.postureCb();
+      view.webview._simulateMessage({ kind: "add-fleet-machine" });
+      expect(launchSession).toHaveBeenLastCalledWith("/add-fleet-device");
+    });
+
+    it("troubleshoot-fleet launches /troubleshoot-fleet through the same launchSession seam", () => {
+      const { deps, launchSession } = fleetHarness();
+      const provider = new SidebarViewProvider(makeExtensionUri(), undefined, deps);
+      const view = makeWebviewView();
+      resolve(provider, view);
+      view.webview._simulateMessage({ kind: "troubleshoot-fleet" });
+      expect(launchSession).toHaveBeenCalledWith("/troubleshoot-fleet");
+    });
+  });
 });
 
 describe("defaultFleetSectionDeps — production readers (#1321)", () => {

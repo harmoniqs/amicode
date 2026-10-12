@@ -123,6 +123,11 @@ export type ReorderRootMessage = { kind: "reorder-root"; sourcePath: string; tar
 export type OpenFleetManagerMessage = { kind: "open-fleet-manager" };
 /** Request to spawn a troubleshoot-fleet session from the sidebar. */
 export type TroubleshootFleetMessage = { kind: "troubleshoot-fleet" };
+/** #1764 — the FLEET header's Add machine action. No payload: the host routes
+ *  on its cache of the section view-model it last posted (standalone →
+ *  create-a-fleet, otherwise add-fleet-device), so the button and the section
+ *  agree by construction. Opens a chat; never writes fleet config or roster. */
+export type AddFleetMachineMessage = { kind: "add-fleet-machine" };
 /** #1413 — connect to a fleet device from the sidebar. The message carries
  *  identity only; all precondition data is resolved host-side. */
 export type ConnectToDeviceMessage = {
@@ -171,6 +176,7 @@ export type SidebarUpMessage =
   | PromoteToEnvironmentMessage
   | OpenFleetManagerMessage
   | TroubleshootFleetMessage
+  | AddFleetMachineMessage
   | ConnectToDeviceMessage
   | FocusMachineMessage;
 
@@ -302,6 +308,8 @@ export interface SidebarMessageHandlers {
   openFleetManager?: () => void;
   /** Spawn a new chat session invoking the troubleshoot-fleet skill. */
   troubleshootFleet?: () => void;
+  /** #1764 — the FLEET header's Add machine: open the routed guided skill. */
+  addFleetMachine?: () => void;
   /** #1413 — connect to a fleet device (show the Quick Pick). */
   connectToDevice?: (msg: ConnectToDeviceMessage) => void;
   /** #1451 — FOCUS a fleet machine (set the host-held FleetFocusStore). Distinct
@@ -375,6 +383,9 @@ export function handleSidebarMessage(
       break;
     case "troubleshoot-fleet":
       handlers.troubleshootFleet?.();
+      break;
+    case "add-fleet-machine":
+      handlers.addFleetMachine?.();
       break;
     case "connect-to-device":
       handlers.connectToDevice?.(msg);

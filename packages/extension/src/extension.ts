@@ -6,6 +6,7 @@ import { fetchProviderSignal, fetchProviderIds } from "./llm_creds.mjs";
 import { resolveOpencodeBinary, OpencodeMissingError, unsupportedHostAdvice } from "./opencode_binary";
 import { resolveSelectedLaunch, HARNESS_REGISTRY } from "./harness";
 import { ChatPanel } from "./chat_panel";
+import { createChatSessionLauncher } from "./chat_session_launcher";
 import { DeckPanel } from "./deck_panel";
 import { SidebarViewProvider, createNewProject, createNewEnvironment, defaultFleetSectionDeps } from "./sidebar_view";
 import { FleetHeartbeat, resolveTailscaleDnsName, pushRowToPeer } from "./fleet_heartbeat";
@@ -542,7 +543,24 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   const fleetFocusStore = createFleetFocusHost({
     postToOverlay: (m) => { void ChatPanel.peek()?.postMessage(m); },
   });
+  // #1764 — the shared chat-session launcher: open-or-reveal the chat panel and
+  // deliver one navigate envelope exactly once (immediately when the panel's app
+  // is ready, else queued for app-ready under a deadline). Sidebar Troubleshoot,
+  // Add machine, and the boot-warning Troubleshoot all launch through it. The
+  // frame/credential/project bindings below are read at launch time, which the
+  // server-ready check gates to after they are initialized.
+  const chatSessionLauncher = createChatSessionLauncher({
+    isServerReady: () => !!opencodeReadyUrl,
+    openOrReveal: () => {
+      const readyUrl = opencodeReadyUrl!;
+      return ChatPanel.openOrReveal(ctx, frameUrl() ?? readyUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
+    },
+    warn: (m) => { void vscode.window.showWarningMessage(m); },
+    log: (line) => opencodeChannel.appendLine(line),
+  });
   const sidebarProvider = new SidebarViewProvider(ctx.extensionUri, undefined, defaultFleetSectionDeps({
+    // #1764 — sidebar Troubleshoot + Add machine launch through the shared launcher.
+    launchSession: (prompt) => chatSessionLauncher.launch(prompt),
     // #1363 — a CLIENT proxy-reads the host's roster through the live local
     // amicode service. Lazy: the service boots AFTER this construction, so read
     // the module-level handle at call time (null until up ⇒ honest degrade).
@@ -2866,11 +2884,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         )
         .then((pick) => {
           if (pick === "Troubleshoot") {
-            const panel = ChatPanel.peek();
-            if (panel) {
-              const navPath = `/new-session?prompt=${encodeURIComponent("/troubleshoot-fleet")}&autoSend=1`;
-              void panel.postMessage({ source: "amicode", kind: "navigate", path: navPath });
-            }
+            // #1764 — opens the chat panel when it is closed (the launcher).
+            chatSessionLauncher.launch("/troubleshoot-fleet");
           }
         });
     } catch (e) {

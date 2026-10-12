@@ -150,6 +150,25 @@ describe("sidebar bridge — handleSidebarMessage dispatches focus-machine (#145
   });
 });
 
+describe("sidebar bridge — FLEET header actions (#1764)", () => {
+  it("routes add-fleet-machine (no payload) to the addFleetMachine handler only", async () => {
+    const { handleSidebarMessage } = await import("../src/sidebar_bridge");
+    const addFleetMachine = vi.fn();
+    const refreshFleet = vi.fn();
+    const troubleshootFleet = vi.fn();
+    handleSidebarMessage({ kind: "add-fleet-machine" } as any, { addFleetMachine, refreshFleet, troubleshootFleet } as any);
+    expect(addFleetMachine).toHaveBeenCalledTimes(1);
+    expect(addFleetMachine).toHaveBeenCalledWith();
+    expect(refreshFleet).not.toHaveBeenCalled();
+    expect(troubleshootFleet).not.toHaveBeenCalled();
+  });
+
+  it("tolerates a missing addFleetMachine handler", async () => {
+    const { handleSidebarMessage } = await import("../src/sidebar_bridge");
+    expect(() => handleSidebarMessage({ kind: "add-fleet-machine" } as any, {} as any)).not.toThrow();
+  });
+});
+
 // ── Section-label actions: New Project / Add Existing on Research + Development ──
 
 describe("section header actions (Research / Development label bars)", () => {
@@ -159,10 +178,19 @@ describe("section header actions (Research / Development label bars)", () => {
     expect(webviewSrc).toContain('btn.className = "section-action"');
   });
 
-  it("Research and Development each get their own actions; Fleet gets none", () => {
+  it("Research, Development, and Fleet each get their own actions", () => {
     expect(webviewSrc).toMatch(/renderSectionHeader\("Research", "research", researchSectionActions\(\)\)/);
     expect(webviewSrc).toMatch(/renderSectionHeader\("Development", "dev", devSectionActions\(\)\)/);
-    expect(webviewSrc).toMatch(/renderSectionHeader\("Fleet", "fleet"\)/);
+    expect(webviewSrc).toMatch(/renderSectionHeader\("Fleet", "fleet", fleetSectionActions\(\)\)/);
+  });
+
+  it("Fleet's header actions: Add machine to fleet (+) posts add-fleet-machine with no payload", () => {
+    const start = webviewSrc.indexOf("function fleetSectionActions");
+    expect(start).toBeGreaterThan(-1);
+    const block = webviewSrc.slice(start, webviewSrc.indexOf("// ── Development create menu"));
+    expect(block).toContain('label: "Add machine to fleet"');
+    expect(block).toContain("icon: createPlusIconEl()");
+    expect(block).toContain('vscode.postMessage({ kind: "add-fleet-machine" })');
   });
 
   it("research actions post new-project and add-existing and are named for assistive tech", () => {
