@@ -199,6 +199,36 @@ describe("#1766 — unknown retries (cold owner map)", () => {
     await h.clock.advance(FLEET_UNKNOWN_RETRY_MS * 3)
     expect(h.calls).toHaveLength(1)
   })
+
+  // PR #1768 review (CodeRabbit): the retry budget is per TRIGGER (edge / new
+  // pin) — a self-heal TICK must not re-arm it. A pinned id that stays
+  // `unknown` forever (a tab for a deleted session, or for a peer that stopped
+  // serving) would otherwise cost the tick's read + 3 retries every interval.
+  test("a permanently-unknown pinned id: self-heal ticks cost ONE read per interval (ticks do not re-arm the retry budget)", async () => {
+    const h = harness({ respond: (ids) => applied(ids, { statuses: {}, unresolved: [{ id: "ses_a", reason: "unknown" }] }) })
+    h.scheduler.start()
+    h.scheduler.trigger("connected")
+    // the edge + its 3 retries drain well inside the first interval
+    await h.clock.advance(FLEET_UNKNOWN_RETRY_MS * (FLEET_UNKNOWN_RETRY_MAX + 1))
+    expect(h.calls).toHaveLength(1 + FLEET_UNKNOWN_RETRY_MAX)
+    const afterEdge = h.calls.length
+    // three more intervals: exactly one read per tick, no retry bursts
+    await h.clock.advance(FLEET_RESEED_INTERVAL_MS * 3)
+    expect(h.calls.length - afterEdge).toBe(3)
+    h.scheduler.stop()
+  })
+
+  test("a NEW trigger (edge / pin) after ticks re-arms the retry budget", async () => {
+    const h = harness({ respond: (ids) => applied(ids, { statuses: {}, unresolved: [{ id: "ses_a", reason: "unknown" }] }) })
+    h.scheduler.start()
+    h.scheduler.trigger("connected")
+    await h.clock.advance(FLEET_RESEED_INTERVAL_MS * 2) // edge + 3 retries, then 2 ticks
+    const before = h.calls.length
+    h.scheduler.trigger("gap") // a fresh trigger
+    await h.clock.advance(FLEET_UNKNOWN_RETRY_MS * (FLEET_UNKNOWN_RETRY_MAX + 1))
+    expect(h.calls.length - before).toBe(1 + FLEET_UNKNOWN_RETRY_MAX)
+    h.scheduler.stop()
+  })
 })
 
 describe("#1766 — self-heal scheduler", () => {

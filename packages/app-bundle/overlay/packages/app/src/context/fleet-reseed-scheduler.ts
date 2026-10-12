@@ -106,9 +106,12 @@ export function createFleetReseedScheduler(deps: FleetReseedSchedulerDeps): Flee
   }
 
   const observe = (ids: readonly string[], outcome: FleetReseedOutcome, kind: RunKind): void => {
-    // per trigger: a fresh trigger (not a retry) re-arms the retry budget and
-    // supersedes any retry still waiting
-    if (kind !== "retry") {
+    // per TRIGGER: a fresh trigger (an edge or a new pin) re-arms the retry
+    // budget and supersedes any retry still waiting. A self-heal TICK does not:
+    // it is already the periodic re-read, and re-arming on every tick would make
+    // a permanently-`unknown` pinned id (a deleted session, a peer that stopped
+    // serving) cost the tick's read + every retry, each interval (PR #1768 review).
+    if (kind === "edge" || kind === "pin") {
       if (retryTimer !== undefined) timers.clearTimeout(retryTimer)
       retryTimer = undefined
       retriesLeft = unknownRetryMax
