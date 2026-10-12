@@ -77,7 +77,19 @@ export interface SseFanInDriverDeps {
   /** The live reconcile cadence per connection (ms). Default 1000. Tests set a
    *  large value and call `reconcile()` directly for determinism. */
   reconcileMs?: number;
+  /** #1772 — the cap on CONCURRENT listeners (one FanInConnection each). A
+   *  listener beyond it is refused with a retryable 503 + Retry-After; no live
+   *  listener is ever closed to make room. Default DEFAULT_FANIN_MAX_LISTENERS. */
+  maxListeners?: number;
 }
+
+/** #1772 — default concurrent-listener cap per fan-in service. A service rarely
+ *  has more than a handful of views (windows, Chat Deck panes, split panes). */
+export const DEFAULT_FANIN_MAX_LISTENERS = 16;
+/** #1772 — the Retry-After hint (seconds) on a beyond-cap refusal. */
+export const FANIN_LISTENER_CAP_RETRY_AFTER_S = 5;
+/** #1772 — the named error on a beyond-cap refusal. */
+export const FANIN_LISTENER_CAP_ERROR = "fan-in listener cap reached";
 
 /** The production upstream reader: a frame-preserving http SSE source. Splits the
  *  byte stream on the SSE blank-line delimiter into WHOLE frames (delimiter-
@@ -380,19 +392,53 @@ class FanInConnection {
   }
 }
 
+/** #1772 — the explicit, retryable beyond-cap refusal: 503 + Retry-After and a
+ *  named JSON body (the `{ ok: false, error, reason }` shape of the service's
+ *  other 503s). The app's stream loop treats any non-200 as a disconnect and
+ *  retries; nothing about this response is an eviction of anyone else. */
+function refuseBeyondCap(res: http.ServerResponse, cap: number): void {
+  try {
+    res.writeHead(503, {
+      "content-type": "application/json",
+      "cache-control": "no-cache",
+      "retry-after": String(FANIN_LISTENER_CAP_RETRY_AFTER_S),
+    });
+    res.end(
+      JSON.stringify({
+        ok: false,
+        error: FANIN_LISTENER_CAP_ERROR,
+        reason: "listener-cap",
+        max_listeners: cap,
+        retry_after_s: FANIN_LISTENER_CAP_RETRY_AFTER_S,
+      }),
+    );
+  } catch {
+    /* the refused socket is already gone — nothing to answer */
+  }
+}
+
 /** The `/event` fan-in driver (ADR 0033 §D1). #1772 — ONE FanInConnection PER
  *  LISTENER: the single-origin assumption (ADR 0027: the app opens exactly one
  *  `/event`) no longer holds with multiple windows, Chat Deck panes and split
  *  panes onto the same hub. Evicting the prior listener made two views re-open
  *  against each other once per second, indefinitely, silently dropping whatever
  *  the evicted view would have received. Each listener now owns its aggregator,
- *  upstream arms and reconcile timer; the driver only tracks the live set. */
+ *  upstream arms and reconcile timer; the driver only tracks the live set,
+ *  bounded by `maxListeners` (refusal beyond it, never an eviction). */
 export class SseFanInDriver implements EventFanInDriver {
   private readonly connections = new Set<FanInConnection>();
 
   constructor(private readonly deps: SseFanInDriverDeps) {}
 
   handle(req: http.IncomingMessage, res: http.ServerResponse): boolean {
+    // #1772: beyond the cap the listener is REFUSED — answered here (so dispatch
+    // never falls through to an un-fanned engine stream) with a retryable 503
+    // and a Retry-After hint. No existing listener is closed to make room.
+    const cap = this.deps.maxListeners ?? DEFAULT_FANIN_MAX_LISTENERS;
+    if (this.connections.size >= cap) {
+      refuseBeyondCap(res, cap);
+      return true;
+    }
     // #1565: always accept on the observation path. Zero non-local owners starts
     // in fleet-of-one mode (the aggregator's §D4 byte-identity relay); reconcile
     // opens peer arms as the OwnerMapFeed discovers them.

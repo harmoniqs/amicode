@@ -568,3 +568,30 @@ describe("#1772 — the real dispatch path accepts concurrent global-stream list
     }
   });
 });
+
+describe("#1772 AC4 — beyond the (configured) cap, the real dispatch path refuses — retryable, no eviction", () => {
+  it("maxListeners: 1 → a second /global/event gets 503 + Retry-After; the first listener keeps streaming", async () => {
+    const origins = broadcastOrigins();
+    const svc = new AmicodeServiceServer({ password: PW });
+    svc.attachObservationEventPlane(observeDriver(origins, { maxListeners: 1 }));
+    const origin = (await svc.start()).toString().replace(/\/$/, "");
+    try {
+      const readA = readSseFrames(`${origin}/global/event`, authed, { maxFrames: 1, timeoutMs: 3000 });
+      await until(() => origins.opens("local") >= 1);
+
+      const refused = await fetch(`${origin}/global/event`, { headers: authed, signal: AbortSignal.timeout(3000) });
+      expect(refused.status).toBe(503);
+      expect(Number(refused.headers.get("retry-after"))).toBeGreaterThan(0);
+      const body = (await refused.json()) as { ok: boolean; reason: string; max_listeners: number };
+      expect(body).toMatchObject({ ok: false, reason: "listener-cap", max_listeners: 1 });
+
+      // The refusal opened no arm and closed none: the first listener is intact.
+      expect(origins.opens("local")).toBe(1);
+      expect(origins.live("local")).toBe(1);
+      origins.broadcast("local", sseFrame("event: message", 'data: {"n":"after-refusal"}', "id: l9"));
+      expect((await readA).join("")).toContain('"n":"after-refusal"');
+    } finally {
+      await svc.stop();
+    }
+  });
+});

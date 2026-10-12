@@ -1044,3 +1044,57 @@ describe("#1772 AC3 — reconcile updates EVERY live connection's membership", (
     expect(origins.opens("studio")).toBe(opensAfterClose);
   });
 });
+
+describe("#1772 AC4 — a listener beyond the cap is refused (retryable), never by evicting one", () => {
+  it("default cap 16: the 17th listener gets 503 + Retry-After, opens no arm, and all 16 keep streaming; a freed slot is reusable", async () => {
+    const ownerMap = new SessionOwnerMap();
+    ownerMap.update(STUDIO_OWNED);
+    const origins = fakeOrigins();
+    const driver = twoListenerDriver(origins, ownerMap);
+
+    const accepted: MockRes[] = [];
+    for (let i = 0; i < 16; i++) {
+      const res = mockRes();
+      expect(driver.handle(mockReq("/global/event"), res)).toBe(true);
+      accepted.push(res);
+    }
+    await tick();
+    expect(origins.live(LOCAL_NAMESPACE)).toBe(16);
+
+    // The 17th is ANSWERED (handle owns the response) with a retryable refusal.
+    const refused = mockRes();
+    expect(driver.handle(mockReq("/global/event"), refused)).toBe(true);
+    await tick();
+    expect(refused.status).toBe(503);
+    expect(Number(refused.headerMap["retry-after"])).toBeGreaterThan(0);
+    expect(refused.ended).toBe(true);
+    const body = JSON.parse(refused.body) as { ok: boolean; reason: string; max_listeners: number };
+    expect(body.ok).toBe(false);
+    expect(body.reason).toBe("listener-cap");
+    expect(body.max_listeners).toBe(16);
+
+    // No existing listener was closed to make room, and the refused one opened nothing.
+    expect(origins.opens(LOCAL_NAMESPACE)).toBe(16);
+    expect(origins.closes(LOCAL_NAMESPACE)).toBe(0);
+    expect(origins.live("studio")).toBe(16);
+    origins.broadcast(LOCAL_NAMESPACE, sseFrame("event: message", 'data: {"n":"after-refusal"}', "id: l1"));
+    await tick();
+    for (const res of accepted) {
+      expect(res.ended).toBe(false);
+      expect(res.text()).toContain('"n":"after-refusal"');
+    }
+    expect(refused.text()).toBe("");
+
+    // The cap bounds CONCURRENT listeners: once one departs, a retry is accepted.
+    accepted[0].fireClose();
+    await tick();
+    const retry = mockRes();
+    driver.handle(mockReq("/global/event"), retry);
+    await tick();
+    expect(retry.status).toBe(200);
+    expect(retry.ended).toBe(false);
+    expect(origins.live(LOCAL_NAMESPACE)).toBe(16);
+
+    for (const res of [...accepted, retry]) res.fireClose();
+  });
+});
