@@ -35,14 +35,20 @@
 // path in-process).
 // ============================================================================
 
-import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { spawn, execSync, type ChildProcess } from "node:child_process";
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { createServer } from "node:net";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createAmicodeService } from "./amicode_service";
 import type { AmicodeServiceServer } from "./amicode_service/server";
 import { mintServerPassword, serverAuthHeader } from "./server_auth";
+import { writeHubHandshake, deleteHandshake, hashFile } from "./server_handshake";
+import { buildMachineStableConfig } from "./opencode_config";
+import { buildHubFleetOption } from "./hub_fleet_wiring";
+import { readFleetTopology } from "./fleet_topology";
+import { buildFleetPeerProvider } from "./amicode_service/fleet_peer_provider";
 
 /** The named boot-abort: `reason` is the stable grep-able phrase, `message`
  *  carries the detail (engine output tail for health failures). */
@@ -100,8 +106,123 @@ export interface AmicodeServiceRunnerOptions {
   engineUnarmed?: boolean;
   /** Engine health-wait budget. Default 30_000 (the ServerManager budget). */
   healthTimeoutMs?: number;
+  /** PID file path for stale-engine cleanup on restart. When set, the runner:
+   *  (1) reads any existing PID file on boot and kills a stale opencode engine
+   *      (best-effort — missing file, dead PID, or non-opencode PID is silently
+   *      skipped); (2) writes the new engine child's PID after spawn; (3)
+   *  removes the file on shutdown. Default: undefined (no PID file — backward
+   *  compatible). */
+  pidFile?: string;
+  /** Handshake file path for extension adoption (#1579). When set, the runner
+   *  writes the handshake record after the engine is healthy AND the service is
+   *  up, and removes it on shutdown (BEFORE killing the engine — order matters:
+   *  the extension must not read a handshake for a dying engine). The handshake
+   *  carries the UNARMED_PASSWORD sentinel (the hub engine is unarmed, so the
+   *  password challenge is vacuously true). Default: undefined (no handshake —
+   *  backward compatible, same pattern as pidFile). */
+  handshakePath?: string;
+  /** #1581 Layer 1 (machine-stable, on the hub spawn): the machine skill root
+   *  the adopted hub engine must index so a session's `skill` tool sees the
+   *  amicode catalog (not the bare ~/.claude/skills global pack). Threaded from
+   *  the CLI (AMICODE_MACHINE_SKILL_ROOT / the fleet unit's extraEnv). When set,
+   *  buildHubEngineEnv injects an OPENCODE_CONFIG_CONTENT whose `skills.paths`
+   *  carries it. External-skill suppression (OPENCODE_DISABLE_EXTERNAL_SKILLS)
+   *  is injected unconditionally — it is the env-only #573 boundary the
+   *  pre-#1576 spawn path (server_auth.buildServerSpawnEnv) carried and the
+   *  launchd hub dropped (#1581 regression). Undefined = fall back to the
+   *  SHIPPED library skills dir (resolveShippedSkillsDir), so suppression never
+   *  ships without a real catalog; only a truly unresolvable shipped dir leaves
+   *  skills.paths omitted (suppression still applies). */
+  machineSkillRoot?: string;
   /** Log sink (the structural-interface convention — vscode-free). */
   log?: (line: string) => void;
+}
+
+/** #1581 Layer 1 (env-only necessity) + Layer 2 (the FULL machine-stable config):
+ *  the PURE hub-engine env builder, extracted from the inlined merge that
+ *  spawned the launchd hub engine WITHOUT the amico config the pre-#1576 editor
+ *  spawn injected (server_auth.buildServerSpawnEnv:258/270). Mirrors that
+ *  builder's shape: it layers OVER the host env + the caller's engineEnv, arms
+ *  the credential unless unarmed, and — the #1581 fix — injects:
+ *    - OPENCODE_DISABLE_EXTERNAL_SKILLS: "true" (AC2, ALWAYS — env-only: a
+ *      RuntimeFlags boot read, absent from the Config schema, so it cannot ride
+ *      a config file);
+ *    - OPENCODE_CONFIG_CONTENT — the machine-stable config opencode merges over
+ *      each per-directory session config at boot. L2: this is the FULL
+ *      machine-stable config (instructions merge, external_directory grants,
+ *      mcp.amicode, default_agent, skills.paths) resolved by the caller
+ *      (buildMachineStableConfig, at the fs-touching boot call site) and passed
+ *      here as `configContent`. When `configContent` is absent, fall back to the
+ *      L1 subset ({skills:{paths:[machineSkillRoot]}}) — still better than the
+ *      bare regression, and the shape older callers exercise.
+ *  Pure (no process/fs reads beyond the passed baseEnv) so the runner suite
+ *  drives it headlessly; the fs-touching machine-stable resolution happens at
+ *  the boot call site (mirrors resolveShippedSkillsDir's placement). */
+export function buildHubEngineEnv(opts: {
+  /** The base env the spawn inherits (the host env on the hub). */
+  baseEnv: NodeJS.ProcessEnv;
+  /** The caller's extra engine env (the OPENCODE_DB pin, test FAKE_ENGINE_DUMP). */
+  engineEnv?: Record<string, string | undefined>;
+  /** The armed credential, or undefined in the unarmed posture. */
+  password?: string;
+  /** The unarmed posture (#955): OPENCODE_SERVER_PASSWORD stays ABSENT. */
+  unarmed: boolean;
+  /** #1581 L2: the FULL machine-stable OPENCODE_CONFIG_CONTENT (stringified),
+   *  resolved by the caller via buildMachineStableConfig. Wins over the L1
+   *  machineSkillRoot subset when present. */
+  configContent?: string;
+  /** #1581 L1: the machine skill root to index (AC1-machine). Used to build the
+   *  L1 subset config ONLY when `configContent` is absent. Undefined = omit
+   *  skills from the L1 fallback. */
+  machineSkillRoot?: string;
+}): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {
+    ...opts.baseEnv,
+    ...opts.engineEnv,
+    // AC2 (#573 / #1581): external-skill auto-discovery suppression. Env-only —
+    // the extension owns skill loading; ~/.claude/skills must never auto-load.
+    OPENCODE_DISABLE_EXTERNAL_SKILLS: "true",
+    ...(opts.unarmed || opts.password === undefined ? {} : { OPENCODE_SERVER_PASSWORD: opts.password }),
+  };
+  // L2: the caller resolved the FULL machine-stable config — use it verbatim.
+  if (opts.configContent) {
+    env.OPENCODE_CONFIG_CONTENT = opts.configContent;
+  } else if (opts.machineSkillRoot) {
+    // L1 fallback: point the engine's skill index at the machine skill root via
+    // a minimal OPENCODE_CONFIG_CONTENT (opencode merges it over global config).
+    env.OPENCODE_CONFIG_CONTENT = JSON.stringify({
+      $schema: "https://opencode.ai/config.json",
+      skills: { paths: [opts.machineSkillRoot] },
+    });
+  }
+  if (opts.unarmed) delete env.OPENCODE_SERVER_PASSWORD;
+  return env;
+}
+
+/** #1581 Layer 1 (self-sufficient default): resolve the SHIPPED library skills
+ *  directory (packages/extension/skills) RELATIVE TO THIS RUNNER MODULE — never
+ *  via process.cwd() (the hub cwd is a throwaway temp dir). This is the
+ *  machine-stable skill root the hub engine indexes when the installer/plist
+ *  does not set AMICODE_MACHINE_SKILL_ROOT, so external-skill suppression never
+ *  ships with an EMPTY catalog (the "strictly worse than pre-#1576" gap).
+ *
+ *  The module lives at one of two depths under packages/extension depending on
+ *  build shape, and the skills ship at packages/extension/skills either way:
+ *    - source (vitest):   src/amicode_service_runner.ts        → ../skills
+ *    - compiled (VSIX):   bin/dist/amicode-service-runner.mjs   → ../../skills
+ *  Try the candidates in order and return the FIRST that exists; undefined if
+ *  none does (then the env omits skills.paths — suppression still applies, same
+ *  as an unset explicit root). */
+export function resolveShippedSkillsDir(): string | undefined {
+  const moduleDir = dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    resolve(moduleDir, "..", "skills"), // src/  → packages/extension/skills
+    resolve(moduleDir, "..", "..", "skills"), // bin/dist/ → packages/extension/skills
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return undefined;
 }
 
 export interface AmicodeServiceRunnerBoot {
@@ -164,6 +285,113 @@ async function waitForHealth(baseUrl: string, timeoutMs: number, authorization: 
   return false;
 }
 
+// ── PID-file lifecycle helpers (#1578) ──────────────────────────────────────
+// Exported for unit testing; the boot path calls them when opts.pidFile is set.
+
+/** Check whether a PID is alive (signal 0 — no signal sent, just the liveness
+ *  check). Returns false if the process does not exist or is not reachable. */
+export function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Check whether `pid` is an opencode process. Uses `ps -p <pid> -o comm=` on
+ *  macOS/darwin and reads `/proc/<pid>/comm` on Linux. Returns false on any
+ *  error (process gone, permission denied, etc.). */
+export function isOpencodeProcess(pid: number): boolean {
+  try {
+    let comm: string;
+    if (process.platform === "linux") {
+      try {
+        comm = readFileSync(`/proc/${pid}/comm`, "utf8").trim();
+      } catch {
+        return false;
+      }
+    } else {
+      // macOS (darwin) and other POSIX: `ps -p <pid> -o comm=` prints the
+      // command name with no header.
+      comm = execSync(`ps -p ${pid} -o comm=`, { encoding: "utf8", timeout: 5_000 }).trim();
+    }
+    // The vendored binary's basename is "opencode" — match it (the comm field
+    // is typically just the basename, but on macOS it can be the full path).
+    const basename = comm.split("/").pop() ?? "";
+    return basename === "opencode";
+  } catch {
+    return false;
+  }
+}
+
+/** Write the engine's PID to the PID file (creates intermediate dirs). */
+export function writePidFile(pidFile: string, pid: number): void {
+  mkdirSync(dirname(pidFile), { recursive: true });
+  writeFileSync(pidFile, `${pid}\n`);
+}
+
+/** Remove the PID file. Best-effort: a missing file is silently ignored. */
+export function removePidFile(pidFile: string, log: (line: string) => void): void {
+  try {
+    unlinkSync(pidFile);
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      log(`[service-runner] PID file removal failed (continuing): ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+}
+
+/** Pre-boot cleanup: if a PID file exists and points at a live opencode
+ *  process, SIGTERM it (with a 3s SIGKILL fallback). Best-effort: never
+ *  blocks boot on failure. */
+export async function cleanupStalePid(pidFile: string, log: (line: string) => void): Promise<void> {
+  let raw: string;
+  try {
+    raw = readFileSync(pidFile, "utf8").trim();
+  } catch {
+    return; // No PID file — nothing to clean up.
+  }
+
+  const pid = Number(raw);
+  if (!Number.isFinite(pid) || pid <= 0) {
+    log(`[service-runner] PID file ${pidFile} has invalid content "${raw}" — ignoring`);
+    return;
+  }
+
+  if (!isProcessAlive(pid)) {
+    log(`[service-runner] stale PID file (pid ${pid} is dead) — ignoring`);
+    return;
+  }
+
+  if (!isOpencodeProcess(pid)) {
+    log(`[service-runner] PID ${pid} is alive but NOT an opencode process — skipping kill (safety check)`);
+    return;
+  }
+
+  // It's alive and it's opencode — kill it.
+  log(`[service-runner] killing stale opencode engine (pid ${pid}) from PID file`);
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch {
+    return; // Gone between the check and the kill — fine.
+  }
+
+  // Wait up to 3s for it to die, then SIGKILL.
+  const deadline = Date.now() + 3_000;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 100));
+    if (!isProcessAlive(pid)) return;
+  }
+
+  log(`[service-runner] stale engine (pid ${pid}) did not die after SIGTERM — sending SIGKILL`);
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {
+    /* already gone */
+  }
+}
+
 /**
  * Boot the runner's pair: engine + service. Throws AmicodeServiceRunnerError
  * (named reason) on any boot failure — never a silent half-boot. The CLI
@@ -178,6 +406,11 @@ export async function bootAmicodeServiceRunner(opts: AmicodeServiceRunnerOptions
     throw new AmicodeServiceRunnerError(`no engine binary at ${opts.engineBin} — set AMICODE_ENGINE_BIN (or run \`pnpm --filter amicode fetch:opencode\`)`);
   if (!existsSync(join(opts.appDistRoot, "index.html")))
     throw new AmicodeServiceRunnerError(`no built app dist at ${opts.appDistRoot} (missing index.html) — run \`pnpm --filter amicode run build:app\` or set AMICODE_APP_DIST`);
+
+  // ── PID-file pre-boot cleanup (#1578) ───────────────────────────────────
+  if (opts.pidFile) {
+    await cleanupStalePid(opts.pidFile, log);
+  }
 
   // ── the engine: spawn + health wait (the ServerManager/probe idiom) ──────
   // #955: engineUnarmed is the hub's anonymous boundary posture — no
@@ -203,12 +436,27 @@ export async function bootAmicodeServiceRunner(opts: AmicodeServiceRunnerOptions
   log(
     `[service-runner] spawning engine ${opts.engineBin} serve --port=${port} (cwd=${cwd}${dbPin ? `, OPENCODE_DB=${dbPin}` : ", OPENCODE_DB=(host env)"})${unarmed ? " UNARMED (the hub's anonymous boundary posture)" : ""}`,
   );
-  const engineEnv = {
-    ...process.env,
-    ...opts.engineEnv,
-    ...(unarmed ? {} : { OPENCODE_SERVER_PASSWORD: password }),
-  };
-  if (unarmed) delete engineEnv.OPENCODE_SERVER_PASSWORD;
+  const engineEnv = buildHubEngineEnv({
+    baseEnv: process.env,
+    engineEnv: opts.engineEnv,
+    password,
+    unarmed,
+    // #1581 L2: resolve the FULL machine-stable config at the boot call site
+    // (the fs-touching resolution stays OUT of the pure buildHubEngineEnv, same
+    // placement discipline as resolveShippedSkillsDir below). skills.paths rides
+    // the machine skill root — an explicit override (AMICODE_MACHINE_SKILL_ROOT /
+    // opts) wins; otherwise the SHIPPED library skills dir (module-relative), so
+    // suppression never ships without a real catalog. The full config carries
+    // the amico instruction merge, external_directory grants, mcp.amicode, and
+    // default_agent — everything the launchd hub dropped (#1581 regression),
+    // minus the per-workspace skills (L3). If the machine-stable resolution
+    // fails, configContent is undefined and buildHubEngineEnv falls back to the
+    // L1 skills-only subset.
+    configContent: buildMachineStableConfig({
+      machineSkillRoot: opts.machineSkillRoot ?? resolveShippedSkillsDir(),
+    }),
+    machineSkillRoot: opts.machineSkillRoot ?? resolveShippedSkillsDir(),
+  });
 
   const engine: ChildProcess = spawn(opts.engineBin, ["serve", "--port", String(port)], {
     cwd,
@@ -221,6 +469,16 @@ export async function bootAmicodeServiceRunner(opts: AmicodeServiceRunnerOptions
   let engineLog = "";
   engine.stdout?.on("data", (d: Buffer) => (engineLog += d));
   engine.stderr?.on("data", (d: Buffer) => (engineLog += d));
+
+  // ── PID-file write (#1578): record the engine child's PID ───────────────
+  if (opts.pidFile && engine.pid !== undefined) {
+    try {
+      writePidFile(opts.pidFile, engine.pid);
+      log(`[service-runner] wrote PID file ${opts.pidFile} (pid ${engine.pid})`);
+    } catch (err) {
+      log(`[service-runner] failed to write PID file (continuing): ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
 
   const killEngine = () =>
     new Promise<void>((resolve) => {
@@ -254,12 +512,49 @@ export async function bootAmicodeServiceRunner(opts: AmicodeServiceRunnerOptions
   }
   log(`[service-runner] engine up at ${engineUrl}`);
 
+  // ── Handshake write (#1579): write IMMEDIATELY after engine healthy, BEFORE
+  // the service starts — minimizing the window where the extension sees
+  // status=absent and races to cold-spawn. The binary hash is real (the same
+  // binary the extension would hash); configHash stays empty (the hub has no
+  // OPENCODE_CONFIG_CONTENT — the audit exempts unarmed engines from the
+  // config-hash comparison). ──────────────────────────────────────────────────
+  if (opts.handshakePath) {
+    try {
+      const hubBinaryHash = await hashFile(opts.engineBin).catch(() => "");
+      writeHubHandshake({
+        port,
+        pid: engine.pid!,
+        binaryHash: hubBinaryHash,
+        configHash: "", // hub has no config content — audit exempts unarmed engines
+        dbPath: opts.engineEnv?.OPENCODE_DB,
+        filePath: opts.handshakePath,
+      });
+      log(`[service-runner] wrote handshake to ${opts.handshakePath} (binaryHash=${hubBinaryHash.slice(0, 12)}…)`);
+    } catch (err) {
+      log(`[service-runner] failed to write handshake (continuing): ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   // ── the service: the SAME wiring startAmicodeService performs ────────────
-  // No fleetActivation is ever passed here (H3): the hub runs the byte-
-  // identical unarmed base service; arming is an extension-host decision.
+  // #1607 regression fix: on a role=server machine the app RIDES this hub as
+  // its server. A byte-identical unarmed base service (no fleet) means every
+  // /amicode/fleet/* route — the N-peer projection, the grant surface, and the
+  // #1643 remote-create routes — 404s on the very server the app talks to.
+  // Build the OBSERVATION-ONLY fleet (same shape as amicode_service_wiring.ts's
+  // base-studio path) so createAmicodeService mounts the fleet routes via
+  // baseStudioActivates. GUARDED: only when a machine id resolves from the
+  // topology (server/standalone-with-canonical); a true standalone / client /
+  // unreadable topology → undefined → the byte-identical base (H3 preserved).
+  // No fleetActivation is passed (no hub proxy / multiplex / premium plane) —
+  // observationOnly:true keeps this a pure local-observation surface.
+  const hubFleet = buildHubFleetOption({
+    readTopology: () => readFleetTopology(),
+    buildProvider: (localMachineId) => buildFleetPeerProvider({ localMachineId }),
+  });
   const service = createAmicodeService({
     engine: { password: unarmed ? undefined : password, getUrl: () => engineUrl },
     shelf: { distRoot: opts.appDistRoot },
+    ...(hubFleet ? { fleet: hubFleet } : {}),
   });
   const servicePort = opts.servicePort ?? 4095;
   let url: URL;
@@ -313,8 +608,17 @@ export async function bootAmicodeServiceRunner(opts: AmicodeServiceRunnerOptions
     if (shutdownPromise !== undefined) return shutdownPromise;
     shutDown = true;
     shutdownPromise = (async () => {
+      // ── Handshake removal (#1579): BEFORE killing the engine — order
+      //    matters: the extension must not read a handshake for a dying engine.
+      if (opts.handshakePath) {
+        try { deleteHandshake(opts.handshakePath); } catch { /* best-effort */ }
+      }
       await service.stop().catch(() => undefined);
       await killEngine();
+      // ── PID-file removal (#1578) ──────────────────────────────────────
+      if (opts.pidFile) {
+        removePidFile(opts.pidFile, log);
+      }
       log("[service-runner] stopped — service closed, engine torn down");
       resolveDone?.();
     })();

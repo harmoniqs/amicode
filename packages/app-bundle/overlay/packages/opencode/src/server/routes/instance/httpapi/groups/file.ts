@@ -2,10 +2,12 @@ import { FileSystem } from "@opencode-ai/core/filesystem"
 import { NonNegativeInt } from "@opencode-ai/core/schema"
 import { LSP } from "@/lsp/lsp"
 import { Schema } from "effect"
-import { HttpApi, HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/unstable/httpapi"
+import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware, OpenApi } from "effect/unstable/httpapi"
+import { ForbiddenError } from "../errors"
 import { Authorization } from "../middleware/authorization"
 import { InstanceContextMiddleware } from "../middleware/instance-context"
 import {
+  WorkspaceRouteContext,
   WorkspaceRoutingMiddleware,
   WorkspaceRoutingQuery,
   WorkspaceRoutingQueryFields,
@@ -97,6 +99,19 @@ export const FileWriteBody = Schema.Struct({
   content: Schema.String,
 })
 
+/**
+ * #1454 (W5): endpoint-only human HTTP write gate. The implementation runs
+ * upstream of the deliberately permissive handler, after workspace routing
+ * has established its directory. Agent tool writes are in-process and do not
+ * traverse this HTTP endpoint.
+ */
+export class FileWriteWorkspaceMiddleware extends HttpApiMiddleware.Service<
+  FileWriteWorkspaceMiddleware,
+  {
+    requires: WorkspaceRouteContext
+  }
+>()("@opencode/ExperimentalHttpApiFileWriteWorkspace", { error: ForbiddenError }) {}
+
 export const FilePaths = {
   findText: "/find",
   findFile: "/find/file",
@@ -175,7 +190,9 @@ export const FileApi = HttpApi.make("file")
           query: WorkspaceRoutingQuery,
           payload: FileWriteBody,
           success: described(Schema.Struct({ ok: Schema.Boolean }), "Write result"),
-        }).annotateMerge(
+        })
+          .middleware(FileWriteWorkspaceMiddleware)
+          .annotateMerge(
           OpenApi.annotations({
             identifier: "file.write",
             summary: "Write file",

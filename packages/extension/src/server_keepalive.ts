@@ -161,18 +161,13 @@ export function readGraceSeconds(cfg: { get<T>(key: string, defaultValue: T): T 
 
 // ── Production ping implementation ──────────────────────────────────────────
 //
-// TODO (#1147 engine-side): The engine needs a matching /keepalive route:
-//   - Authenticated POST route (check the per-boot password via ServerAuth)
-//   - Updates a lastPing timestamp in memory
-//   - Reads graceSeconds from the request body (JSON { graceSeconds: number })
-//   - A background timer checks: if now - lastPing > graceSeconds AND the
-//     in-flight turn count (SessionRunState) is 0, self-exit with process.exit(0)
-//     and delete the handshake file (deleteHandshake from server_handshake.ts)
-//   - Unauthenticated calls get 401
-//   - Until the engine route exists, the production ping will get a 404 — the
-//     extension treats any HTTP response as "server alive" (it connected), so
-//     the keepalive loop keeps running harmlessly. The self-shutdown timer is
-//     the part that is not wired yet.
+// #1596: the engine's /keepalive route (server/amicode/self-shutdown.ts) is now
+// wired — an authenticated POST that updates the last-ping timestamp and reads
+// graceSeconds from the request body. The self-shutdown idle watcher checks
+// every 5 seconds: if the grace window elapsed AND no in-flight turns AND no
+// active SSE subscribers AND NOT role-exempt, it deletes the handshake and
+// calls process.exit(0). Fleet server/hub roles set AMICO_ENGINE_ROLE_EXEMPT=1
+// at spawn time and are exempt from the idle timer entirely.
 //
 
 /**

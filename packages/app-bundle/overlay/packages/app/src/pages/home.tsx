@@ -16,7 +16,7 @@ import {
   untrack,
 } from "solid-js"
 import { makeEventListener } from "@solid-primitives/event-listener"
-import { createStore, reconcile } from "solid-js/store"
+import { createStore, produce, reconcile } from "solid-js/store"
 import { useQuery } from "@tanstack/solid-query"
 import { Button } from "@opencode-ai/ui/button"
 import { Logo } from "@opencode-ai/ui/logo"
@@ -65,6 +65,7 @@ import { ServerRowMenu } from "@/components/server/server-row-menu"
 import { ServerHealthIndicator } from "@/components/server/server-row"
 import { type ServerHealth } from "@/utils/server-health"
 import { amicodeGet, amicodePost } from "@/utils/amicode-fetch"
+import { archivedSessionsWithRemote, isRemotePeerSession, deriveSessionBadge, readSessionControl, writeAffordanceEnabled, failClosedChip, remoteDeleteAction, type DropdownSession } from "@/components/session/session-fleet-peers"
 import { AmicodeRunGallery } from "@opencode-ai/ui/amicode-run-gallery"
 import { AmicodeOnboardingWizard, shouldShowWizard } from "@opencode-ai/ui/amicode-onboarding-wizard"
 import { AMICODE_MANAGE_VAULTS_PROMPT } from "@opencode-ai/ui/amicode-vaults-tab"
@@ -356,15 +357,20 @@ function HomeDesign() {
       const result = await ctx.sdk.client.experimental.session.list(
         { archived: true, limit: ARCHIVED_PAGE_SIZE, ...(cursor ? { cursor: Number(cursor) } : {}) },
       )
-      const sessions: Session[] = (result.data ?? []) as Session[]
+      const local: Session[] = (result.data ?? []) as Session[]
       if (reset) {
-        setArchivedSessions(sessions)
+        // #1647 (S3): fold in peer-owned archived sessions from the fleet
+        // projection (owner-tagged). Bounded recent window, merged only on the
+        // first page. Standalone / fetch failure → no remote rows → unchanged.
+        const proj = await amicodeGet(focusedServer(), "/amicode/fleet/sessions?archived=true").catch(() => undefined)
+        setArchivedSessions(archivedSessionsWithRemote(local as DropdownSession[], proj) as Session[])
       } else {
-        setArchivedSessions((prev) => [...prev, ...sessions])
+        const have = new Set(archivedSessions().map((s) => s.id))
+        setArchivedSessions((prev) => [...prev, ...local.filter((s) => !have.has(s.id))])
       }
-      // Cursor-based pagination: if we got a full page, there may be more
-      const lastSession = sessions[sessions.length - 1]
-      if (sessions.length >= ARCHIVED_PAGE_SIZE && lastSession) {
+      // Cursor-based pagination tracks the LOCAL engine only (remote is a window)
+      const lastSession = local[local.length - 1]
+      if (local.length >= ARCHIVED_PAGE_SIZE && lastSession) {
         setArchivedCursor(String(lastSession.time.updated ?? lastSession.time.created))
         setArchivedHasMore(true)
       } else {
@@ -378,9 +384,30 @@ function HomeDesign() {
     }
   }
 
+  // #1647 (S6): keep the Archived tab live while it is open. A local OR remote
+  // (fan-in-relayed) archive/unarchive should surface without a manual refresh.
+  // Remote archive events are owned by a peer and don't reliably flow through
+  // the local directory stores, so instead of fragile cross-store reactivity we
+  // refresh on the SAME 5s cadence the fleet projection / owner-map already use
+  // — bounded real-time (≤5s), robust, and cleaned up on tab-close / unmount.
+  createEffect(() => {
+    if (flyoutTab() !== "archived") return
+    const timer = setInterval(() => void loadArchivedSessions(true), 5000)
+    onCleanup(() => clearInterval(timer))
+  })
+
   async function unarchiveSession(session: Session) {
     const ctx = focusedServerCtx()
     if (!ctx) return
+    // #1647 (S4): a remote archived row unarchives on its owner; gate on control.
+    const ds = session as DropdownSession
+    if (isRemotePeerSession(ds) && !remoteDeleteAction(ds).allowed) {
+      showToast({
+        title: "Control not enabled",
+        description: `Enable control of ${ds.amicode_owner?.owner_name ?? "the owner machine"} to unarchive its sessions from here.`,
+      })
+      return
+    }
     try {
       // Unarchive via the v1 session.update endpoint (same as archive, but nulling the timestamp)
       await (ctx.sdk.client.session.update as Function)({
@@ -415,12 +442,33 @@ function HomeDesign() {
       })
       // Add to archived list
       setArchivedSessions((prev) => [session, ...prev])
-      // Reload active sessions so it disappears from the open list
-      await Promise.all(
-        projectDirectories().map((directory) =>
-          focusedSync().project.loadSessions(directory, { limit: HOME_SESSION_LIMIT }),
-        ),
+      // PERF (#archive-lag cleanup): remove the archived row from its directory
+      // store DIRECTLY instead of re-fetching + reconciling EVERY project
+      // directory's session list on each archive (wasted work). roots()
+      // (pages/layout/helpers.ts) filters archived sessions out of the list, so
+      // this splice is the entire removal; the next natural loadSessions
+      // reconciles from the server. Matches the Rail (layout.tsx) and chat-menu
+      // (message-timeline.tsx) archive paths, which already splice. (The
+      // measured dropdown lag was a different cause — the cached fleet
+      // projection re-filling the row; see session-header.tsx's tombstones.)
+      const [, setChildStore] = focusedSync().child(session.directory, { bootstrap: false })
+      setChildStore(
+        produce((draft) => {
+          const index = draft.session.findIndex((s) => s.id === session.id)
+          if (index !== -1) draft.session.splice(index, 1)
+        }),
       )
+      // #1646: flip the composer of the viewed session to its read-only banner
+      // in place. The removal above touches the LIST store; the composer's
+      // `archived` memo reads the PER-SESSION store (focusedSync().session.get(id)),
+      // which only a forced per-session refresh lands. INFO-ONLY `resolve`
+      // (session.get → remember), NOT `sync`: the archived flag is metadata, so a
+      // forced `sync` additionally re-pulled the viewed session's full message
+      // history + parents (seconds of wasted wire). `resolve` lands the flag
+      // without touching messages, matching the composer controller's convergence.
+      void focusedSync()
+        .session.resolve(session.id, { force: true })
+        .catch(() => {})
     } catch (cause) {
       showToast({
         title: language.t("common.requestFailed"),
@@ -433,6 +481,15 @@ function HomeDesign() {
   async function deleteArchivedSession(session: Session) {
     const ctx = focusedServerCtx()
     if (!ctx) return
+    // #1647 (S4): remote delete routes to the owner; gate on control.
+    const ds = session as DropdownSession
+    if (isRemotePeerSession(ds) && !remoteDeleteAction(ds).allowed) {
+      showToast({
+        title: "Control not enabled",
+        description: `Enable control of ${ds.amicode_owner?.owner_name ?? "the owner machine"} to delete its sessions from here.`,
+      })
+      return
+    }
     try {
       await (ctx.sdk.client.session.delete as Function)({
         sessionID: session.id,
@@ -2180,6 +2237,14 @@ function ArchivedSessionRow(props: {
   onDelete: (session: Session) => void
 }) {
   const title = createMemo(() => sessionTitle(props.session.title) || props.session.id)
+  // #1647 (S4): a remote archived row (owner-tagged from the fleet projection)
+  // shows the owner badge and control-gates unarchive/delete — fail-closed to a
+  // lock chip when control is not held.
+  const badge = createMemo(() => deriveSessionBadge(props.session as DropdownSession))
+  const isRemote = createMemo(() => isRemotePeerSession(props.session as DropdownSession))
+  const control = createMemo(() => readSessionControl(props.session as DropdownSession))
+  const canWrite = createMemo(() => writeAffordanceEnabled(control()))
+  const chip = createMemo(() => failClosedChip(control()))
   const [armed, setArmed] = createSignal(false)
   let resetTimer: ReturnType<typeof setTimeout> | undefined
 
@@ -2218,10 +2283,38 @@ function ArchivedSessionRow(props: {
         <span class="min-w-0 flex-[1_1_auto] overflow-hidden text-ellipsis whitespace-nowrap">
           {title()}
         </span>
+        <Show when={isRemote() && badge()}>
+          <span
+            data-slot="archived-session-owner-badge"
+            class="shrink-0 inline-flex items-center gap-1 text-[10px] leading-none text-v2-text-text-faint"
+            title={badge()}
+          >
+            <IconV2 name="monitor" size="small" class="shrink-0 opacity-70" />
+            <span class="max-w-24 overflow-hidden text-ellipsis whitespace-nowrap">{badge()}</span>
+          </span>
+        </Show>
       </button>
       <div
         class="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center gap-0.5 opacity-0 group-hover/archived:opacity-100 focus-within:opacity-100 transition-opacity"
       >
+        <Show
+          when={!isRemote() || canWrite()}
+          fallback={
+            <Show when={chip()} keyed>
+              {(c) => (
+                <span
+                  data-slot="session-control-chip"
+                  data-control-reason={c.reason}
+                  class="shrink-0 inline-flex items-center gap-1 rounded-sm px-1 py-0.5 text-[10px] leading-none text-v2-text-text-faint bg-v2-background-bg-layer-02"
+                  title={c.label}
+                >
+                  <IconV2 name="lock" class="shrink-0 opacity-70" />
+                  <span>{c.label}</span>
+                </span>
+              )}
+            </Show>
+          }
+        >
         <TooltipV2 placement="top" value="Unarchive">
           <IconButtonV2
             data-action="home-session-unarchive"
@@ -2263,6 +2356,7 @@ function ArchivedSessionRow(props: {
           >
             Delete
           </ButtonV2>
+        </Show>
         </Show>
       </div>
     </div>

@@ -16,6 +16,8 @@ import {
   solverModeFile,
   PICCOLO_FLIP_WARNING,
 } from "../src/amicode_service/solver_mode";
+import { createTailscaleProvider, tailscaleServeMapping } from "../src/amicode_service/fleet_transport";
+import { isLoopbackHostname } from "../src/amicode_service/bind_host";
 
 describe("solverModeResponse — refusal shapes (fixed strings, sibling discipline)", () => {
   it("off-shape body refuses with bad_request", () => {
@@ -43,6 +45,67 @@ describe("solverModeResponse — refusal shapes (fixed strings, sibling discipli
   it("non-loopback bind refuses with non_loopback", () => {
     const parsed = JSON.parse(solverModeResponse(JSON.stringify({ mode: "piccolo" }), { bindHostname: "10.1.2.3" }));
     expect(parsed).toEqual({
+      ok: false,
+      mode: null,
+      error: "non_loopback: solver mutations serve loopback binds only",
+    });
+  });
+});
+
+// ── #1260 tailscale slice: the loopback-bind-preservation assertion ──────────
+// The load-bearing invariant of the tailscale provider (ADR 0024): `tailscale
+// serve` fronts a LOOPBACK service, so resolving the host's MagicDNS origin as
+// the CLIENT's base URL does NOT change the HOST's engine/service bind — it
+// stays 127.0.0.1 and THIS mutation guard never trips. The AC requires the
+// MagicDNS resolution AND the loopback-bind preservation asserted TOGETHER.
+describe("#1260 tailscale serve — the host loopback bind is preserved (AC1: asserted TOGETHER with MagicDNS resolution)", () => {
+  let ops: string;
+  let savedOps: string | undefined;
+  beforeEach(() => {
+    // a clean, empty ops dir so the guard-PASSED path is a deterministic
+    // settled-piccolo no-op ({ok:true}), never a poke at the ambient machine
+    ops = mkdtempSync(join(tmpdir(), "amicode-tailscale-loopback-"));
+    savedOps = process.env.AMICODE_OPS_DIR;
+    process.env.AMICODE_OPS_DIR = ops;
+  });
+  afterEach(() => {
+    if (savedOps === undefined) delete process.env.AMICODE_OPS_DIR;
+    else process.env.AMICODE_OPS_DIR = savedOps;
+    rmSync(ops, { recursive: true, force: true });
+  });
+
+  it("resolves the MagicDNS origin as the base URL AND the host bind stays loopback so the mutation guard never trips — TOGETHER", () => {
+    const magicDnsName = "amico-host.tail9c7b.ts.net";
+    const port = 4096;
+
+    // (1) the CLIENT resolves the host's MagicDNS origin as its base URL — a
+    // public tailnet name, deliberately NOT loopback (it is the client's pipe)
+    const provider = createTailscaleProvider({ resolveMagicDnsOrigin: () => `https://${magicDnsName}` });
+    const base = provider.resolveBaseUrl();
+    expect(base?.hostname).toBe(magicDnsName);
+    expect(isLoopbackHostname(base?.hostname)).toBe(false);
+
+    // (2) `tailscale serve` fronts that origin onto a LOOPBACK target, so the
+    // HOST's engine/service bind hostname REMAINS loopback (127.0.0.1)
+    const mapping = tailscaleServeMapping({ magicDnsName, port });
+    const hostBind = new URL(mapping.target).hostname;
+    expect(hostBind).toBe("127.0.0.1");
+    expect(isLoopbackHostname(hostBind)).toBe(true);
+
+    // (3) TOGETHER: with the host still bound loopback, the REAL mutation guard
+    // does NOT trip — a solver mutation is served, never refused non_loopback
+    const guarded = JSON.parse(solverModeResponse(JSON.stringify({ mode: "piccolo" }), { bindHostname: hostBind }));
+    expect(guarded.error).not.toBe("non_loopback: solver mutations serve loopback binds only");
+    expect(guarded).toEqual({ ok: true, mode: "piccolo", error: null }); // the guard passed BECAUSE the bind stayed loopback
+  });
+
+  it("contrast — the REJECTED direct tailnet-IP bind (100.x) WOULD trip the guard (this is WHY `serve` is chosen, ADR 0024)", () => {
+    // binding the engine to the tailnet 100.x directly is the rejected approach:
+    // a 100.x bind is non-loopback, so this same guard fails closed.
+    const tailnetIp = "100.101.102.103";
+    expect(isLoopbackHostname(tailnetIp)).toBe(false);
+    const guarded = JSON.parse(solverModeResponse(JSON.stringify({ mode: "piccolo" }), { bindHostname: tailnetIp }));
+    expect(guarded).toEqual({
       ok: false,
       mode: null,
       error: "non_loopback: solver mutations serve loopback binds only",

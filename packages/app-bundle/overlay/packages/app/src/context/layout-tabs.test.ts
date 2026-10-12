@@ -91,4 +91,17 @@ describe("closeSessionTab", () => {
       state([], undefined),
     )
   })
+
+  // #1322: fleetManager rides the same generic close path as pulseInspector.
+  test("removes fleetManager and selects an adjacent tab", () => {
+    expect(
+      closeSessionTab(state(["context", "fleetManager", "file://a.ts"], "fleetManager"), "fleetManager"),
+    ).toEqual(state(["context", "file://a.ts"], "context"))
+  })
+
+  test("removes fleetManager when it is the only tab", () => {
+    expect(closeSessionTab(state(["fleetManager"], "fleetManager"), "fleetManager")).toEqual(
+      state([], undefined),
+    )
+  })
 })

@@ -72,6 +72,10 @@ const SANDBOX_ENV_PASSTHROUGH = [
   "AMICO_PASQAL_VALIDATOR",
   "AMICO_GITHUB_FILE",
   "AMICO_GITHUB_TOKEN_FILE",
+  // #1596 (ADR 0020): fleet server/hub role exemption — engines that serve
+  // fleet clients must never self-exit on the idle timer. The extension sets
+  // this in the spawn env when readFleetTopology().role === "server".
+  "AMICO_ENGINE_ROLE_EXEMPT",
 ] as const
 
 // ============================================================================

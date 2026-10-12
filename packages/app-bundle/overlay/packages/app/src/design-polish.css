@@ -691,6 +691,9 @@ span[data-component="tag"][data-variant="accent"] {
   }
 }
 
+/* engine banner (#1608) — REMOVED. The floating narration pill was cut per
+   user preference; the engine toggle's own dot/lock is the whole story now. */
+
 /* ── Onboarding walkthrough spotlight (session-tour.tsx) ───────────────────
    A ring traced on the chrome element the current "Tour · X" stop names. The
    ring is the whole marker — there is no label, because the stop's own text

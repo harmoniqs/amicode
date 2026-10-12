@@ -34,6 +34,7 @@ describe("parseSpawnArgs", () => {
       mode: "fresh",
       force: false,
       workspace: null,
+      placement: "local",
     });
   });
 
@@ -170,6 +171,35 @@ describe("parseSpawnArgs", () => {
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.args.workspace).toBeNull();
   });
+
+  // ── placement target (#1345, ADR-0027 §7 seam 4) ───────────────────────────
+  // The H2 compute-federation "where" dimension: an OPTIONAL spawn-path target
+  // that always resolves to at least "local". Inert in H1 — threaded + defaulted,
+  // never routed on (see the spawnGateKey inertness block below).
+  it("placement_target_defaults_local: absence resolves to \"local\"", () => {
+    const r = parseSpawnArgs({ prompt: "x" });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.args.placement).toBe("local");
+  });
+
+  it("placement: null → resolves to \"local\"", () => {
+    const r = parseSpawnArgs({ prompt: "x", placement: null });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.args.placement).toBe("local");
+  });
+
+  it("placement: \"\" (empty/whitespace) → resolves to \"local\"", () => {
+    const empty = parseSpawnArgs({ prompt: "x", placement: "" });
+    const ws = parseSpawnArgs({ prompt: "x", placement: "   " });
+    expect(empty.ok && empty.args.placement).toBe("local");
+    expect(ws.ok && ws.args.placement).toBe("local");
+  });
+
+  it("an explicit placement target passes through (trimmed)", () => {
+    const r = parseSpawnArgs({ prompt: "x", placement: "  peer-xyz  " });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.args.placement).toBe("peer-xyz");
+  });
 });
 
 describe("computeDepth", () => {
@@ -281,6 +311,30 @@ describe("spawnGateKey workspace semantics (#1060)", () => {
 
   it("workspace: null spawns coalesce normally (existing behavior)", () => {
     const a = parseSpawnArgs({ prompt: "x" });
+    const b = parseSpawnArgs({ prompt: "x" });
+    if (!a.ok || !b.ok) throw new Error("parse failed");
+    expect(spawnGateKey("ses_a", "/w", a.args)).toBe(spawnGateKey("ses_a", "/w", b.args));
+  });
+});
+
+describe("spawnGateKey placement inertness (#1345 — H1 seam, not a router)", () => {
+  it("placement does NOT perturb the dedup key — default and explicit targets coalesce identically", () => {
+    const def = parseSpawnArgs({ prompt: "x" }); // placement defaults to "local"
+    const peer = parseSpawnArgs({ prompt: "x", placement: "peer-xyz" });
+    if (!def.ok || !peer.ok) throw new Error("parse failed");
+    expect(def.args.placement).toBe("local");
+    expect(peer.args.placement).toBe("peer-xyz");
+    // H1 HARD constraint: placement is threaded but NOT routed on. The gate key
+    // must be byte-identical whether placement is default or explicit — nothing
+    // branches or dedups on it (no silent routing). When placement goes live
+    // (H2) it must ENTER the key so spawns to different targets stop coalescing.
+    expect(spawnGateKey("ses_a", "/w", def.args)).toBe(spawnGateKey("ses_a", "/w", peer.args));
+  });
+
+  it("a default-placement spawn key is unchanged by the slice: it still coalesces a bare spawn", () => {
+    // Proves adding placement did not perturb the coalescing of existing
+    // (non-placement) spawns — the default-local key is exactly today's.
+    const a = parseSpawnArgs({ prompt: "x", count: 1, mode: "fresh", force: false });
     const b = parseSpawnArgs({ prompt: "x" });
     if (!a.ok || !b.ok) throw new Error("parse failed");
     expect(spawnGateKey("ses_a", "/w", a.args)).toBe(spawnGateKey("ses_a", "/w", b.args));

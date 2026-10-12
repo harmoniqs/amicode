@@ -347,4 +347,65 @@ describe("createSessionTabs", () => {
       dispose()
     })
   })
+
+  // #1322: fleetManager is a Work Column surface with the same lifecycle as
+  // pulseInspector — open/active, closable, reopenable, and excluded from the
+  // file panelTabs (it is a named surface, never a file tab).
+  test("fleetManager is closable and reopenable", () => {
+    // Step 1: fleetManager is open and active
+    const initial = {
+      tabs: { all: ["fleetManager"], active: "fleetManager" as string | undefined },
+      preview: undefined,
+    }
+
+    createRoot((dispose) => {
+      const tabs = createMemo(() => ({ active: () => initial.tabs.active, all: () => initial.tabs.all }))
+      const result = createSessionTabs({
+        tabs,
+        pathFromTab: () => undefined,
+        normalizeTab: (tab) => tab,
+      })
+      expect(result.fleetManagerOpen()).toBe(true)
+      expect(result.activeTab()).toBe("fleetManager")
+      expect(result.closableTab()).toBe("fleetManager")
+      // named surface — never a file/panel tab
+      expect(result.panelTabs()).toEqual([])
+      dispose()
+    })
+
+    // Step 2: close fleetManager — removed from state
+    const afterClose = closeSessionTab(initial, "fleetManager")
+    expect(afterClose.tabs.all).toEqual([])
+    expect(afterClose.tabs.active).toBeUndefined()
+
+    createRoot((dispose) => {
+      const tabs = createMemo(() => ({ active: () => afterClose.tabs.active, all: () => afterClose.tabs.all }))
+      const result = createSessionTabs({
+        tabs,
+        pathFromTab: () => undefined,
+        normalizeTab: (tab) => tab,
+      })
+      expect(result.fleetManagerOpen()).toBe(false)
+      expect(result.activeTab()).toBe("home")
+      dispose()
+    })
+
+    // Step 3: re-open fleetManager
+    const afterReopen = openSessionTab({ tabs: afterClose.tabs, preview: afterClose.preview }, "fleetManager")
+    expect(afterReopen.tabs.all).toContain("fleetManager")
+    expect(afterReopen.tabs.active).toBe("fleetManager")
+
+    createRoot((dispose) => {
+      const tabs = createMemo(() => ({ active: () => afterReopen.tabs.active, all: () => afterReopen.tabs.all }))
+      const result = createSessionTabs({
+        tabs,
+        pathFromTab: () => undefined,
+        normalizeTab: (tab) => tab,
+      })
+      expect(result.fleetManagerOpen()).toBe(true)
+      expect(result.activeTab()).toBe("fleetManager")
+      expect(result.closableTab()).toBe("fleetManager")
+      dispose()
+    })
+  })
 })

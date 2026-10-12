@@ -21,11 +21,113 @@
 import { createHash } from "node:crypto";
 import { HubCredentialRead, hubUpstreamAuthHeader } from "./hub_credential";
 import { serverAuthHeader } from "../server_auth";
+import type { SessionControlProjection } from "./remote_session_state";
 
-export type SourceTag = "local" | "hub";
+export type SourceTag = string;
 export type UpstreamMode = "engine" | "fleet";
 
-export type SourceAbsenceReason = "credential-missing" | "no-upstream" | "fetch-failed" | "unauthorized";
+// ── N-peer fleet-wide projection (#1439) ─────────────────────────────────────
+
+/** The owner tag overlaid on each session in a fleet-wide projection —
+ *  an OVERLAY, not a field on Session.Info (ADR 0031 §D3). */
+export interface SessionOwnerTag {
+  owner_machine_id: string;
+  owner_name: string;
+  device_type?: string;
+  directory?: string;
+  is_local: boolean;
+}
+
+/** #1568: the presence indicator — which remote machine is controlling this
+ *  (local) machine's sessions, if any. Stamped on LOCAL session entries only. */
+export interface ControlledByTag {
+  machine_id: string;
+  machine_name: string;
+}
+
+/** A remote peer source for the fleet-wide fan-out. */
+export interface FleetPeerSource {
+  machineId: string;
+  getUrl(): string | undefined;
+  /** The peer token (from the reader peer-token store). */
+  token?: string;
+  /** #1481 (AC1): whether THIS machine holds a valid Observe grant for the peer
+   *  — TRUST, not reachability, gates observation. `false` means untrusted: the
+   *  peer contributes NO session metadata and is recorded as `untrusted` (never
+   *  fetched). Omitted/`true` = trusted (the #1455 back-compat default, so every
+   *  existing caller behaves exactly as before). */
+  trusted?: boolean;
+}
+
+/** Roster entry for name/device_type enrichment. */
+export interface RosterEntry {
+  name: string;
+  device_type?: string;
+}
+
+/** Options for the N-peer fleet-wide projection. */
+export interface FleetProjectionOptions {
+  /** This machine's stable id. */
+  localMachineId: string;
+  /** The local engine source. */
+  local: ProjectionSourceOptions;
+  /** Remote peers to fan out to (keyed by machineId). */
+  peers: FleetPeerSource[];
+  /** #1481 (AC3): peers EXCLUDED from selection by a blocking identity state
+   *  (alias-conflict / key-changed). They are NOT fetched, but each is recorded
+   *  as a NAMED source (default reason `identity-conflict`) so a conflicted peer
+   *  never silently vanishes from the projection — the central AC3 invariant. */
+  blockedPeers?: Array<{ machineId: string; reason?: SourceAbsenceReason; detail?: string }>;
+  /** Roster lookup for owner_name/device_type enrichment. */
+  rosterLookup: (machineId: string) => RosterEntry | undefined;
+  /** #1544 (slice 4): the OPTIONAL state-channel injector. When present, each
+   *  session entry is stamped with the app-visible `amicode_control`
+   *  ({ controlState, reason, eligibility }) derived from the SoT
+   *  (remote_session_state) for its owner. Absent ⇒ no field (back-compat). */
+  resolveControl?: (ownerMachineId: string, isLocal: boolean) => SessionControlProjection;
+  /** #1568: the OPTIONAL presence-indicator resolver. When present and returning
+   *  a value, LOCAL session entries are stamped with `amicode_controlled_by`
+   *  ({ machine_id, machine_name }) — the controlling machine's identity. Remote
+   *  sessions are never stamped (they are owned by a peer, not by this machine).
+   *  Absent or returning undefined ⇒ no field (back-compat). */
+  resolveControlledBy?: () => ControlledByTag | undefined;
+  /** #1647 (S1): when true, fan out the ARCHIVED session list rather than the
+   *  active one — every source is fetched with `?archived=true`, and the
+   *  archived peer sessions come back owner-tagged exactly like active ones.
+   *  Absent/false ⇒ the existing active-only fan-out (byte-identical). */
+  archived?: boolean;
+  fetchImpl?: typeof fetch;
+  timeoutMs?: number;
+}
+
+/** The fleet-wide projection result — N sources, machine-keyed. */
+export interface FleetProjection {
+  ok: true;
+  mode: "fleet";
+  /** Each entry carries `amicode_owner` (the owner tag overlay) and, when a
+   *  control resolver was supplied, `amicode_control` (the state channel).
+   *  #1568: LOCAL entries may also carry `amicode_controlled_by` when a remote
+   *  machine holds an active control grant targeting this machine. */
+  sessions: Array<Record<string, unknown> & { amicode_owner?: SessionOwnerTag; amicode_control?: SessionControlProjection; amicode_controlled_by?: ControlledByTag }>;
+  /** Keyed by machine_id (string), not the old "local"|"hub" pair. */
+  sources: Record<string, SourceFetchRecord>;
+  currency: { token: string; sources: string[]; derived_over: "fetched" };
+}
+
+export type SourceAbsenceReason =
+  | "credential-missing"
+  | "no-upstream"
+  | "fetch-failed"
+  | "unauthorized"
+  // #1481 (AC1): the peer is reachable but this machine holds NO Observe grant
+  // for it — trust, not reachability, gates observation. A DISTINCT state from
+  // `no-upstream` (a trusted peer whose URL is down); an untrusted peer is never
+  // fetched, so no session metadata can leak.
+  | "untrusted"
+  // #1481 (AC3): a blocking identity reconciliation state (alias-conflict /
+  // key-changed) — the peer is NAMED (never silently excluded from the
+  // projection), but is not selected for observation until re-admitted.
+  | "identity-conflict";
 
 /** One source's fetch record: the NAMED outcome plus, when fetched, the
  *  currency aggregates derived over exactly what came back. */
@@ -97,11 +199,25 @@ async function fetchSessions(
   authHeader: string | undefined,
   fetchImpl: typeof fetch,
   timeoutMs: number,
+  /** The session-list endpoint path. Defaults to `/session` (project-scoped).
+   *  The fleet-wide projection passes `/experimental/session` to fetch ALL
+   *  sessions regardless of the engine's ambient project context — the right
+   *  semantic for cross-machine fan-out where the hub engine runs in a temp
+   *  directory and would otherwise resolve to `project_id=global`. */
+   endpointPath = "/session",
+  /** The LOCAL loopback source is an OPEN engine on localhost — it does not
+   *  require the per-boot Basic password (the EngineProxy already dials it
+   *  credential-less). When true, a missing `authHeader` is NOT a bail: the
+   *  fetch proceeds WITHOUT an Authorization header and the engine answers
+   *  (200 → sessions; a 401 would still be named `unauthorized` honestly).
+   *  Peers/hub keep the old behavior (false): no credential ⇒ do not fire an
+   *  unauthenticated cross-machine request. */
+  allowUnauthenticated = false,
 ): Promise<{ record: SourceFetchRecord; entries: Record<string, unknown>[] }> {
   const base: SourceFetchRecord = { source: tag, present: false };
   const origin = opts.getUrl();
   if (!origin) return { record: { ...base, reason: "no-upstream" }, entries: [] };
-  if (!authHeader) {
+  if (!authHeader && !allowUnauthenticated) {
     return {
       record: {
         ...base,
@@ -111,9 +227,12 @@ async function fetchSessions(
       entries: [],
     };
   }
+  // Send Authorization only when we actually hold one — the open loopback
+  // engine is queried bare (allowUnauthenticated with no password).
+  const authHeaders: Record<string, string> = authHeader ? { Authorization: authHeader } : {};
   try {
-    const res = await fetchImpl(`${origin.replace(/\/+$/, "")}/session`, {
-      headers: { Authorization: authHeader },
+    const res = await fetchImpl(`${origin.replace(/\/+$/, "")}${endpointPath}`, {
+      headers: authHeaders,
       signal: AbortSignal.timeout(timeoutMs),
     });
     if (res.status === 401) return { record: { ...base, reason: "unauthorized" }, entries: [] };
@@ -142,7 +261,7 @@ async function fetchSessions(
     let version: string | null = null;
     try {
       const health = await fetchImpl(`${origin.replace(/\/+$/, "")}/global/health`, {
-        headers: { Authorization: authHeader },
+        headers: authHeaders,
         signal: AbortSignal.timeout(timeoutMs),
       });
       if (health.ok) {
@@ -232,4 +351,172 @@ export async function buildMergedProjection(opts: BuildProjectionOptions): Promi
   const sessions = mergeSessions(local.entries, hub.entries);
   const currency = deriveCurrency([local.record, hub.record]);
   return { ok: true, mode: "fleet", sessions, sources, currency: { ...currency, derived_over: "fetched" } };
+}
+
+// ── peer auth header (#1439) ─────────────────────────────────────────────────
+
+/** Auth header for a peer-to-peer request (same Basic scheme as the engine/hub). */
+export function peerAuthHeader(token: string): string {
+  return serverAuthHeader(token);
+}
+
+// ── N-peer fleet-wide projection (#1439) ─────────────────────────────────────
+
+/** Tag each session entry with its owner machine's identity, joining the
+ *  roster for name/device_type. When `resolveControl` is supplied (#1544), the
+ *  app-visible `amicode_control` state channel is stamped alongside — one
+ *  resolution per source (state is per-owner, not per-session).
+ *  #1568: when `controlledBy` is supplied AND the session is local, the entry
+ *  gains `amicode_controlled_by` — the presence indicator for remote control. */
+function tagSessionsWithOwner(
+  entries: Record<string, unknown>[],
+  machineId: string,
+  isLocal: boolean,
+  rosterLookup: (id: string) => RosterEntry | undefined,
+  resolveControl?: (ownerMachineId: string, isLocal: boolean) => SessionControlProjection,
+  controlledBy?: ControlledByTag,
+): Array<Record<string, unknown> & { amicode_owner?: SessionOwnerTag; amicode_control?: SessionControlProjection; amicode_controlled_by?: ControlledByTag }> {
+  const roster = rosterLookup(machineId);
+  const control = resolveControl ? resolveControl(machineId, isLocal) : undefined;
+  return entries.map((e) => ({
+    ...e,
+    amicode_provenance: machineId,
+    amicode_owner: {
+      owner_machine_id: machineId,
+      owner_name: roster?.name ?? machineId,
+      ...(roster?.device_type !== undefined ? { device_type: roster.device_type } : {}),
+      ...(typeof e.directory === "string" ? { directory: e.directory } : {}),
+      is_local: isLocal,
+    },
+    ...(control ? { amicode_control: control } : {}),
+    ...(isLocal && controlledBy ? { amicode_controlled_by: controlledBy } : {}),
+  }));
+}
+
+/** Merge N sources into one deduplicated list. Later sources (by array order)
+ *  win on conflict (same session id in multiple stores). */
+function mergeNSources(
+  taggedSources: Array<{ machineId: string; entries: Array<Record<string, unknown> & { amicode_owner?: SessionOwnerTag; amicode_control?: SessionControlProjection; amicode_controlled_by?: ControlledByTag }> }>,
+): Array<Record<string, unknown> & { amicode_owner?: SessionOwnerTag; amicode_control?: SessionControlProjection; amicode_controlled_by?: ControlledByTag }> {
+  const out: Array<Record<string, unknown> & { amicode_owner?: SessionOwnerTag; amicode_control?: SessionControlProjection; amicode_controlled_by?: ControlledByTag }> = [];
+  const seen = new Map<string, number>();
+  for (const { entries } of taggedSources) {
+    for (const e of entries) {
+      const id = entryId(e);
+      if (id !== undefined && seen.has(id)) {
+        // later source wins — replace
+        out[seen.get(id)!] = e;
+      } else {
+        if (id !== undefined) seen.set(id, out.length);
+        out.push(e);
+      }
+    }
+  }
+  return out;
+}
+
+/** Build the fleet-wide projection (N-peer, machine-keyed fan-out, #1439).
+ *  Never throws: every peer failure is a NAMED record inside an otherwise-valid
+ *  projection — the read path degrades by naming, not by vanishing. */
+export async function buildFleetProjection(opts: FleetProjectionOptions): Promise<FleetProjection> {
+  const fetchImpl = opts.fetchImpl ?? fetch;
+  const timeoutMs = opts.timeoutMs ?? 10_000;
+  const localAuth = opts.local.password !== undefined ? serverAuthHeader(opts.local.password) : undefined;
+
+  // Fan out: local + all peers in parallel.
+  // Use /experimental/session (cross-project) so the fleet projection sees ALL
+  // sessions from each source — not just whatever project the engine happens to
+  // resolve in its ambient cwd. This is critical: the hub engine runs in a temp
+  // directory and would otherwise return only project_id=global sessions.
+  // The generous limit ensures a machine with thousands of sessions is not
+  // silently truncated at the engine's default page size (100).
+  // #1647 (S1): the ARCHIVED variant fetches the same cross-project endpoint
+  // with `?archived=true` so the archived list fans out to peers identically
+  // to the active list (the engine's listGlobal flips IS NOT NULL vs IS NULL).
+  const fleetEndpoint = opts.archived
+    ? "/experimental/session?archived=true&limit=10000"
+    : "/experimental/session?limit=10000";
+  const localPromise = fetchSessions(opts.localMachineId, opts.local, localAuth, fetchImpl, timeoutMs, fleetEndpoint, true);
+  const peerPromises = opts.peers.map((peer) => {
+    // #1481 (AC1): TRUST gates Observe. An untrusted peer (no Observe grant) is
+    // never contacted — it resolves to a NAMED `untrusted` record with zero
+    // entries, so no session metadata can leak. Trust is checked BEFORE the
+    // fetch, upstream of the URL/token, so reachability is irrelevant here.
+    if (peer.trusted === false) {
+      return Promise.resolve({
+        record: { source: peer.machineId, present: false, reason: "untrusted" as const } satisfies SourceFetchRecord,
+        entries: [] as Record<string, unknown>[],
+      });
+    }
+    const auth = peer.token !== undefined ? peerAuthHeader(peer.token) : undefined;
+    return fetchSessions(peer.machineId, { getUrl: peer.getUrl }, auth, fetchImpl, timeoutMs, fleetEndpoint);
+  });
+
+  const [localResult, ...peerResults] = await Promise.all([localPromise, ...peerPromises]);
+
+  // Build the sources record keyed by machine_id
+  const sources: Record<string, SourceFetchRecord> = {};
+  sources[opts.localMachineId] = localResult.record;
+  for (let i = 0; i < opts.peers.length; i++) {
+    sources[opts.peers[i].machineId] = peerResults[i].record;
+  }
+  // #1481 (AC3): blocked-identity peers are NAMED (never fetched, never
+  // silently dropped) so a conflicted peer stays visible as a source state
+  // rather than vanishing from the projection.
+  for (const blocked of opts.blockedPeers ?? []) {
+    sources[blocked.machineId] = {
+      source: blocked.machineId,
+      present: false,
+      reason: blocked.reason ?? "identity-conflict",
+      ...(blocked.detail !== undefined ? { detail: blocked.detail } : {}),
+    };
+  }
+
+  // Tag each source's sessions with owner info (roster join) + the #1544 state
+  // channel (amicode_control), when a resolver was supplied.
+  // #1568: resolve the controlled_by overlay for LOCAL sessions (once, not
+  // per-session — it is machine-scoped, not session-scoped).
+  const controlledBy = opts.resolveControlledBy ? opts.resolveControlledBy() : undefined;
+  const taggedSources: Array<{ machineId: string; entries: Array<Record<string, unknown> & { amicode_owner?: SessionOwnerTag; amicode_control?: SessionControlProjection; amicode_controlled_by?: ControlledByTag }> }> = [];
+  taggedSources.push({
+    machineId: opts.localMachineId,
+    entries: tagSessionsWithOwner(localResult.entries, opts.localMachineId, true, opts.rosterLookup, opts.resolveControl, controlledBy),
+  });
+  for (let i = 0; i < opts.peers.length; i++) {
+    taggedSources.push({
+      machineId: opts.peers[i].machineId,
+      entries: tagSessionsWithOwner(peerResults[i].entries, opts.peers[i].machineId, false, opts.rosterLookup, opts.resolveControl),
+    });
+  }
+
+  // Merge all sources
+  const sessions = mergeNSources(taggedSources);
+
+  // Currency derives over what is actually fetched
+  const allRecords = [localResult.record, ...peerResults.map((r) => r.record)];
+  const currency = deriveCurrency(allRecords);
+
+  return { ok: true, mode: "fleet", sessions, sources, currency: { ...currency, derived_over: "fetched" } };
+}
+
+/** #1647 (S2): the OWNER-ROUTING session set — active AND archived unioned.
+ *  The multiplexer's owner map (OwnerMapFeed) is populated from a projection's
+ *  `.sessions`; if it only ever sees ACTIVE sessions, a write to a peer-owned
+ *  ARCHIVED session (unarchive / delete of an archived row) has no owner entry
+ *  and misroutes to the LOCAL engine (the #1382 silent-local failure). This
+ *  runs BOTH variants and unions by id so every peer-owned session — active or
+ *  archived — is routable. Owner tags are carried through unchanged. */
+export async function buildOwnerRoutingProjection(
+  opts: Omit<FleetProjectionOptions, "archived">,
+): Promise<{ sessions: FleetProjection["sessions"] }> {
+  const [active, archived] = await Promise.all([
+    buildFleetProjection({ ...opts, archived: false }),
+    buildFleetProjection({ ...opts, archived: true }),
+  ]);
+  const byId = new Map<string, FleetProjection["sessions"][number]>();
+  for (const s of [...active.sessions, ...archived.sessions]) {
+    const id = typeof s.id === "string" ? s.id : undefined;
+    if (id && !byId.has(id)) byId.set(id, s);
+  }
+  return { sessions: [...byId.values()] };
 }

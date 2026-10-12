@@ -4,6 +4,8 @@
 
 import { groupRootsForResearchSection } from "./sidebar_bridge";
 import type { EnvGroup } from "./sidebar_bridge";
+import { renderFleetSection, createFleetRefreshControl, FLEET_REFRESH_LABEL } from "./sidebar_fleet_section";
+import type { FleetSectionModel } from "./sidebar_fleet_section";
 
 declare function acquireVsCodeApi(): {
   postMessage(msg: unknown): void;
@@ -943,6 +945,15 @@ function createIconEl(icon: string): HTMLElement {
   // (drag-reorder and section-order re-renders bypass the host's pushGitStatus).
   let lastGitStatusMap: Record<string, string> = {};
 
+  // #1321 — the last fleet view-model the host pushed. Defaults to the honest
+  // empty state so the section renders something real before the first
+  // fleet-status arrives (never a spinner, never a fabricated device list).
+  let lastFleetModel: FleetSectionModel = { state: "empty", devices: [], posture: null, manage: { enabled: false }, troubleshoot: { enabled: false } };
+  // #1764 — the FLEET header Refresh button's busy/backstop state. Lives here,
+  // not on the button, so a header re-render mid-refresh keeps it; any
+  // fleet-status clears it.
+  const fleetRefresh = createFleetRefreshControl({ post: (m) => vscode.postMessage(m) });
+
   /** Walk all rendered nodes and apply/remove git-status CSS classes. */
   function applyGitStatus(statusMap: Record<string, string>): void {
     const gitClasses = ["git-modified", "git-added", "git-deleted", "git-untracked", "git-ignored", "git-conflict"];
@@ -1085,6 +1096,9 @@ function createIconEl(icon: string): HTMLElement {
     label: string;
     icon: HTMLElement;
     onClick: (e: MouseEvent, anchor: HTMLElement) => void;
+    /** Called with the rendered button — lets a stateful action (Refresh's
+     *  busy control) re-bind after a header re-render. */
+    onMount?: (btn: HTMLElement) => void;
   };
 
   /** 16×16 inline SVG plus icon for the "New Project" section action. */
@@ -1164,6 +1178,50 @@ function createIconEl(icon: string): HTMLElement {
     ];
   }
 
+  /** 16×16 inline SVG circular-arrow icon for the Fleet "Refresh fleet" action (line art). */
+  function createRefreshIconEl(): HTMLElement {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("width", "16");
+    svg.setAttribute("height", "16");
+    svg.setAttribute("viewBox", "0 0 16 16");
+    svg.setAttribute("fill", "none");
+    svg.setAttribute("aria-hidden", "true");
+    const arc = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    arc.setAttribute("d", "M13 8a5 5 0 1 1-1.46-3.54");
+    arc.setAttribute("stroke", "currentColor");
+    arc.setAttribute("stroke-width", "1.4");
+    arc.setAttribute("stroke-linecap", "round");
+    svg.appendChild(arc);
+    const head = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    head.setAttribute("d", "M13 2.5v3h-3");
+    head.setAttribute("stroke", "currentColor");
+    head.setAttribute("stroke-width", "1.4");
+    head.setAttribute("stroke-linecap", "round");
+    head.setAttribute("stroke-linejoin", "round");
+    svg.appendChild(head);
+    return svg as unknown as HTMLElement;
+  }
+
+  /** Fleet (#1764): "+" opens a chat running the guided add-a-machine skill the
+   *  host routes on the section's last-posted state; the circular arrow re-reads
+   *  the roster now and re-arms the change watcher. Navigation and reads only —
+   *  the sidebar never writes fleet config or roster rows. */
+  function fleetSectionActions(): SectionAction[] {
+    return [
+      {
+        label: "Add machine to fleet",
+        icon: createPlusIconEl(),
+        onClick: () => vscode.postMessage({ kind: "add-fleet-machine" }),
+      },
+      {
+        label: FLEET_REFRESH_LABEL,
+        icon: createRefreshIconEl(),
+        onMount: (btn) => fleetRefresh.bind(btn),
+        onClick: () => fleetRefresh.click(),
+      },
+    ];
+  }
+
   // ── Development create menu (shared by the "+" icon and the empty-area context menu)
 
   type CreateMenuItem = { label: string; run: () => void } | { separator: true };
@@ -1239,6 +1297,27 @@ function createIconEl(icon: string): HTMLElement {
     }
   }
 
+  /** Append a section's icon actions to its label bar, after the title. The
+   *  header's collapse-toggle and drag guards skip anything inside
+   *  `.section-actions`, so an action click neither collapses nor drags. */
+  function mountSectionActions(header: HTMLElement, actions: SectionAction[]): void {
+    if (actions.length === 0) return;
+    const actionsEl = document.createElement("div");
+    actionsEl.className = "section-actions";
+    for (const action of actions) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "section-action";
+      btn.title = action.label;
+      btn.setAttribute("aria-label", action.label);
+      btn.appendChild(action.icon);
+      btn.addEventListener("click", (e: MouseEvent) => action.onClick(e, btn));
+      action.onMount?.(btn);
+      actionsEl.appendChild(btn);
+    }
+    header.appendChild(actionsEl);
+  }
+
   function renderSectionHeader(
     title: string,
     sectionKey: string,
@@ -1262,21 +1341,7 @@ function createIconEl(icon: string): HTMLElement {
     header.appendChild(chevron);
     header.appendChild(titleEl);
 
-    if (actions.length > 0) {
-      const actionsEl = document.createElement("div");
-      actionsEl.className = "section-actions";
-      for (const action of actions) {
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.className = "section-action";
-        btn.title = action.label;
-        btn.setAttribute("aria-label", action.label);
-        btn.appendChild(action.icon);
-        btn.addEventListener("click", (e: MouseEvent) => action.onClick(e, btn));
-        actionsEl.appendChild(btn);
-      }
-      header.appendChild(actionsEl);
-    }
+    mountSectionActions(header, actions);
 
     const body = document.createElement("div");
     body.className = sectionExpanded[sectionKey] ? "section-body expanded" : "section-body";
@@ -1355,10 +1420,11 @@ function createIconEl(icon: string): HTMLElement {
         treeRoot.appendChild(section);
       } else if (key === "fleet") {
         const { section, body } = renderSectionHeader("Fleet", "fleet");
-        const placeholder = document.createElement("div");
-        placeholder.className = "fleet-placeholder-text";
-        placeholder.textContent = "Coming soon";
-        body.appendChild(placeholder);
+        mountSectionActions(section.querySelector(".tree-section-label") as HTMLElement, fleetSectionActions());
+        body.classList.add("fleet-section-body");
+        // Read-only glanceable fleet section (#1321): render the last-pushed
+        // view-model; the only up-message is the Manage navigation.
+        renderFleetSection(body, lastFleetModel, (m) => vscode.postMessage(m));
         treeRoot.appendChild(section);
       }
     }
@@ -2386,6 +2452,20 @@ function createIconEl(icon: string): HTMLElement {
         for (const dir of orphanedDirs) {
           delete childrenCache[dir];
           vscode.postMessage({ kind: "get-children", path: dir });
+        }
+        break;
+      }
+
+      case "fleet-status": {
+        // #1321 — the host pushed a fresh read-only fleet view-model. Cache it
+        // (so a later renderRoots re-render keeps it) and re-render the fleet
+        // section body in place if it is mounted. No manual reload needed —
+        // this fires on every posture-change.
+        if (msg.model) lastFleetModel = msg.model as FleetSectionModel;
+        fleetRefresh.sectionUpdated();
+        const fleetBody = treeRoot?.querySelector(".fleet-section-body") as HTMLElement | null;
+        if (fleetBody) {
+          renderFleetSection(fleetBody, lastFleetModel, (m) => vscode.postMessage(m));
         }
         break;
       }

@@ -30,14 +30,36 @@
 //                        Wins over AMICODE_ENGINE_PASSWORD.
 //   OPENCODE_DB          the canonical pin — passed through to the spawned
 //                        engine untouched (the hub's session store).
+//   AMICODE_MACHINE_SKILL_ROOT  the machine-stable skill root the adopted hub
+//                        engine must index (#1581 Layer 1). The runner injects
+//                        it into the engine's OPENCODE_CONFIG_CONTENT as
+//                        `skills.paths` so a session's `skill` tool sees the
+//                        amicode catalog, not the bare ~/.claude/skills global
+//                        pack. The fleet unit bakes it into the launchd/systemd
+//                        EnvironmentVariables (hubServiceEnv). External-skill
+//                        suppression rides unconditionally regardless of this.
+//   AMICODE_HUB_PID_FILE the engine's PID file path (#1578). Default:
+//                        ~/.amico/amicode/hub-engine.pid. On boot, the runner
+//                        reads any existing PID file to kill stale opencode
+//                        engine processes, writes the new child's PID, and
+//                        removes the file on shutdown.
+//   AMICODE_HUB_HANDSHAKE  the handshake file path (#1579). Default:
+//                        ~/.amico/ops/server/standalone.json (the
+//                        server_handshake canonical path). On boot, the runner
+//                        writes the handshake after the engine is healthy AND
+//                        the service is up; on shutdown, removes it BEFORE
+//                        killing the engine. The extension's adoptOrSpawn reads
+//                        this to adopt instead of spawning a rival engine.
 //
 // EXIT CODES: 0 = graceful (SIGTERM/SIGINT teardown completed); 1 = any
 // boot/lifecycle failure, with a `[service-runner] FAIL: <reason>` line on
 // stderr — never a silent half-boot, never a hang.
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
+import os from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { AmicodeServiceRunnerError, bootAmicodeServiceRunner } from "./amicode_service_runner";
+import { handshakePath as defaultHandshakePath } from "./server_handshake";
 
 const invokedAsMain = (() => {
   try {
@@ -83,6 +105,9 @@ async function main(): Promise<never> {
     enginePassword: (process.env.AMICODE_ENGINE_PASSWORD ?? "").trim() || undefined,
     engineUnarmed: (process.env.AMICODE_ENGINE_UNARMED ?? "").trim() === "1",
     engineEnv: (process.env.OPENCODE_DB ?? "").trim() ? { OPENCODE_DB: process.env.OPENCODE_DB } : undefined,
+    machineSkillRoot: (process.env.AMICODE_MACHINE_SKILL_ROOT ?? "").trim() || undefined,
+    pidFile: (process.env.AMICODE_HUB_PID_FILE ?? "").trim() || join(os.homedir(), ".amico", "amicode", "hub-engine.pid"),
+    handshakePath: (process.env.AMICODE_HUB_HANDSHAKE ?? "").trim() || defaultHandshakePath(),
     log: (line) => console.log(line),
   });
 

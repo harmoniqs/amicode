@@ -31,6 +31,9 @@ export interface HandshakeRecord {
   binaryHash: string;
   configHash: string;
   protocolVersion: string;
+  /** #1576: the canonical DB path the engine opened. Optional — present when
+   *  the hub service writes the handshake (AC2: runtime readback). */
+  dbPath?: string;
 }
 
 /** Result of reading the handshake file. */
@@ -65,6 +68,64 @@ export function writeHandshake(record: HandshakeRecord, filePath?: string): void
   writeFileSync(p, JSON.stringify(record, null, 2) + "\n", { mode: 0o600 });
 }
 
+// ── Hub handshake (#1576) ──────────────────────────────────────────────────
+
+/** The password sentinel written by the hub service's handshake. The hub engine
+ *  runs unarmed (AMICODE_ENGINE_UNARMED=1, no password check), so a real
+ *  password is meaningless. The sentinel tells the adoption gate that the
+ *  "password challenge" for this server is vacuously true — the health check IS
+ *  the ownership proof for an unarmed engine behind the SSH tunnel. */
+export const UNARMED_PASSWORD = "__hub_unarmed__";
+
+/** True when the handshake record was written by an unarmed hub engine. */
+export function isUnarmedHandshake(record: HandshakeRecord): boolean {
+  return record.password === UNARMED_PASSWORD;
+}
+
+/** Default PID-liveness probe (signal 0 = existence check, no signal sent).
+ *  EPERM means the process EXISTS but is not ours to signal → still alive.
+ *  Injectable as a seam so the owner-guard is unit-testable. */
+function defaultPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e: any) {
+    return e?.code === "EPERM";
+  }
+}
+
+export interface WriteHubHandshakeOpts {
+  port: number;
+  pid: number;
+  binaryHash: string;
+  configHash: string;
+  /** The canonical DB path the hub engine opened (AC2: runtime readback). */
+  dbPath?: string;
+  /** Override the handshake file path (tests). */
+  filePath?: string;
+}
+
+/** Write the hub engine's handshake record after it passes its health check.
+ *  The hub is unarmed, so the password field carries the UNARMED_PASSWORD
+ *  sentinel. The adoption gate verifies reachability-only for unarmed engines
+ *  (the SSH tunnel is the auth boundary). Generates startedAt and stamps
+ *  PROTOCOL_VERSION automatically. */
+export function writeHubHandshake(opts: WriteHubHandshakeOpts): void {
+  writeHandshake(
+    {
+      port: opts.port,
+      pid: opts.pid,
+      startedAt: new Date().toISOString(),
+      password: UNARMED_PASSWORD,
+      binaryHash: opts.binaryHash,
+      configHash: opts.configHash,
+      protocolVersion: PROTOCOL_VERSION,
+      dbPath: opts.dbPath,
+    },
+    opts.filePath,
+  );
+}
+
 // ── Read ────────────────────────────────────────────────────────────────────
 
 /** Read and validate the handshake record. Never throws — malformed / absent
@@ -94,6 +155,7 @@ function parseHandshake(raw: string): HandshakeReadResult {
   const obj = parsed as Record<string, unknown>;
   const required: (keyof HandshakeRecord)[] = [
     "port", "pid", "startedAt", "password", "binaryHash", "configHash", "protocolVersion",
+    // Note: dbPath is intentionally NOT in this list — it's optional (#1576).
   ];
   for (const key of required) {
     if (!(key in obj)) return { status: "invalid", reason: `missing field: ${key}` };
@@ -115,6 +177,8 @@ function parseHandshake(raw: string): HandshakeReadResult {
       binaryHash: obj.binaryHash as string,
       configHash: obj.configHash as string,
       protocolVersion: obj.protocolVersion as string,
+      // #1576: optional — present when the hub service writes the handshake
+      ...(typeof obj.dbPath === "string" ? { dbPath: obj.dbPath } : {}),
     },
   };
 }
@@ -200,12 +264,31 @@ export interface ColdSpawnHandshakeOpts {
   configHash: string;
   /** Override the handshake file path (tests). */
   filePath?: string;
+  /** Owner-guard seam (tests): is the given PID alive? Defaults to
+   *  process.kill(pid, 0). */
+  isPidAlive?: (pid: number) => boolean;
 }
 
 /** Write the handshake record after a cold spawn completes its health probe.
  *  Called from the server manager's onReady handler — NEVER before health
- *  passes. Generates startedAt and stamps PROTOCOL_VERSION automatically. */
-export function writeColdSpawnHandshake(opts: ColdSpawnHandshakeOpts): void {
+ *  passes. Generates startedAt and stamps PROTOCOL_VERSION automatically.
+ *
+ *  OWNER-GUARD (#1354/#1576): on a fleet server the launchd hub owns the
+ *  handshake and records its UNARMED engine. A window cold-spawn must NEVER
+ *  clobber a LIVE unarmed hub record with its own armed one — that is exactly
+ *  what turned one hub engine into two rival engines on one DB (stale sessions,
+ *  lost connections). When a live unarmed hub record is present, skip the write
+ *  and return false; the window then adopts the hub instead of a rival. A dead
+ *  unarmed record (hub gone) is not authoritative, so the write proceeds.
+ *
+ *  Returns true when the record was written, false when the owner-guard skipped
+ *  it. */
+export function writeColdSpawnHandshake(opts: ColdSpawnHandshakeOpts): boolean {
+  const existing = readHandshake(opts.filePath);
+  if (existing.status === "ok" && isUnarmedHandshake(existing.record)) {
+    const pidAlive = opts.isPidAlive ?? defaultPidAlive;
+    if (pidAlive(existing.record.pid)) return false; // a live hub owns this handshake
+  }
   writeHandshake(
     {
       port: opts.port,
@@ -218,6 +301,7 @@ export function writeColdSpawnHandshake(opts: ColdSpawnHandshakeOpts): void {
     },
     opts.filePath,
   );
+  return true;
 }
 
 export interface ColdSpawnHookOpts {
@@ -229,6 +313,9 @@ export interface ColdSpawnHookOpts {
   password: string;
   /** Override the handshake path (tests). */
   filePath?: string;
+  /** Owner-guard seam (tests): is the given PID alive? Defaults to
+   *  process.kill(pid, 0). */
+  isPidAlive?: (pid: number) => boolean;
   /** Optional log sink for the best-effort write. */
   log?: (line: string) => void;
 }
@@ -241,21 +328,32 @@ export interface ColdSpawnHookOpts {
  * writes the durable record a later reload adopts. Hashes are precomputed so
  * the hook is synchronous. The write is BEST-EFFORT — a failure logs and never
  * throws, so a handshake problem degrades to "no adoption", never a boot crash.
+ *
+ * OWNER-GUARD (#1354/#1576): the write is skipped (logged, not an error) when a
+ * live unarmed hub record already owns the handshake — the window must never
+ * clobber the hub and reinstate two rival engines.
  */
 export function coldSpawnHandshakeHook(
   opts: ColdSpawnHookOpts,
 ): (info: { port: number; pid: number }) => void {
   return ({ port, pid }) => {
     try {
-      writeColdSpawnHandshake({
+      const wrote = writeColdSpawnHandshake({
         port,
         pid,
         password: opts.password,
         binaryHash: opts.binaryHash,
         configHash: opts.configHash,
         filePath: opts.filePath,
+        isPidAlive: opts.isPidAlive,
       });
-      opts.log?.(`[handshake] recorded cold-spawn server (port ${port}, pid ${pid})`);
+      if (wrote) {
+        opts.log?.(`[handshake] recorded cold-spawn server (port ${port}, pid ${pid})`);
+      } else {
+        opts.log?.(
+          `[handshake] cold-spawn write skipped — a live unarmed hub owns the handshake (not clobbering; the window will adopt the hub)`,
+        );
+      }
     } catch (e) {
       opts.log?.(`[handshake] write failed (non-fatal): ${(e as Error).message}`);
     }

@@ -721,10 +721,7 @@ export default function LegacyLayout(props: ParentProps) {
 
   async function archiveSession(session: Session) {
     if ((await serverSDK().protocol) !== "v1") return
-    const [store, setStore] = serverSync().child(session.directory)
-    const sessions = store.session ?? []
-    const index = sessions.findIndex((s) => s.id === session.id)
-    const nextSession = sessions[index + 1] ?? sessions[index - 1]
+    const [, setStore] = serverSync().child(session.directory)
 
     await serverSDK().client.session.update({
       sessionID: session.id,
@@ -737,13 +734,18 @@ export default function LegacyLayout(props: ParentProps) {
         if (match.found) draft.session.splice(match.index, 1)
       }),
     )
-    if (session.id === params.id) {
-      if (nextSession) {
-        navigate(`/${params.dir}/session/${nextSession.id}`)
-      } else {
-        navigate(`/${params.dir}/session`)
-      }
-    }
+    // #1646: archiving the session you are VIEWING flips it to the read-only
+    // banner IN PLACE (matching the chat menu) instead of navigating away — the
+    // old bounce meant the read-only mode was never seen. The splice above
+    // touches only the LIST store; the composer's `archived` memo reads the
+    // PER-SESSION store (serverSync().session.get(id).time.archived), which only
+    // a forced per-session refresh lands. INFO-ONLY `resolve` (session.get →
+    // remember), NOT `sync`: the archived flag is metadata, so a forced `sync`
+    // additionally re-pulled the viewed session's full message history + parents
+    // (seconds of wasted wire). `resolve` lands the flag without touching messages.
+    void serverSync()
+      .session.resolve(session.id, { force: true })
+      .catch(() => {})
   }
 
   command.register("layout", () => {

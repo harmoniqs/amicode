@@ -13,6 +13,7 @@ describe("side panel tab order", () => {
       "context",
       "review",
       "pulseInspector",
+      "fleetManager",
     ])
   })
 
@@ -23,10 +24,20 @@ describe("side panel tab order", () => {
       "review",
       "context",
       "pulseInspector",
+      "fleetManager",
     ])
   })
 
   test("does not move Home", () => {
     expect(reorderSidePanelTabs(DEFAULT_SIDE_PANEL_TAB_ORDER, "home", 4)).toEqual(DEFAULT_SIDE_PANEL_TAB_ORDER)
+  })
+
+  // #1322: the Fleet Manager Work Column tab is a named side-panel surface,
+  // ordered as pulseInspector's sibling (after it, before Preview).
+  test("includes the fleetManager surface after pulseInspector", () => {
+    expect(DEFAULT_SIDE_PANEL_TAB_ORDER).toContain("fleetManager")
+    expect(DEFAULT_SIDE_PANEL_TAB_ORDER.indexOf("fleetManager")).toBe(
+      DEFAULT_SIDE_PANEL_TAB_ORDER.indexOf("pulseInspector") + 1,
+    )
   })
 })

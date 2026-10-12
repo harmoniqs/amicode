@@ -28,6 +28,7 @@ import { useSDK } from "@/context/sdk"
 import { useSync } from "@/context/sync"
 import { useServerSDK } from "@/context/server-sdk"
 import { createStreamGap } from "@/context/stream-gap"
+import { effectiveEngineState } from "@/components/engine-state-signal"
 import { createSessionTabs } from "@/pages/session/helpers"
 import { showToast } from "@/utils/toast"
 import { bugReportEnabled } from "@/utils/amicode-bug-report"
@@ -96,6 +97,12 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
   // with the reason instead of optimistically posting into a dead tunnel.
   const serverSDK = useServerSDK()
   const streamGap = createStreamGap(() => serverSDK().event.status())
+  // #1608 AC6: refuse a send while the engine is deliberately off (or stopping)
+  // with an engine-specific reason, ahead of the generic stream-gap refusal.
+  const engineOff = () => {
+    const s = effectiveEngineState()
+    return s === "off" || s === "stopping"
+  }
   const files = useFile()
   const layout = useLayout()
   const comments = useComments()
@@ -240,6 +247,7 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
     onAbort: props.onAbort,
     onSubmit: props.onSubmit,
     streamGap,
+    engineOff,
     model: props.controls.model.selection,
   })
 
