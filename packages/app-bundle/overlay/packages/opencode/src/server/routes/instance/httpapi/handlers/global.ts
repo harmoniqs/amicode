@@ -6,7 +6,7 @@ import { EventV2 } from "@opencode-ai/core/event"
 import { Installation } from "@/installation"
 import { disposeAllInstancesAndEmitGlobalDisposed } from "@/server/global-lifecycle"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
-import { Effect, Queue } from "effect"
+import { Clock, Effect, Queue } from "effect"
 import * as Stream from "effect/Stream"
 import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
@@ -27,12 +27,13 @@ function frameEvent(frame: Pick<Frame, "id" | "data">): Sse.Event {
   return { _tag: "Event", event: "message", id: frame.id, data: frame.data }
 }
 
-// A per-connection control frame (connected, heartbeat). It never consumes a
-// sequence — that would punch a hole in every other subscriber's stream — and
-// carries the connection's current position as its id instead.
+// A per-connection control frame (connected, heartbeat, reset). It never
+// consumes a sequence — that would punch a hole in every other subscriber's
+// stream — and carries the connection's current position as its id instead,
+// so ids on one connection never decrease.
 function controlEvent(seq: number, type: string, properties: Record<string, unknown> = {}): Sse.Event {
   return frameEvent({
-    id: formatID(GlobalBus.epoch, seq),
+    id: formatID(GlobalEventReplay.epoch, seq),
     data: JSON.stringify({ payload: { id: EventV2.ID.create(), type, properties } }),
   })
 }
@@ -65,9 +66,18 @@ function eventResponse() {
       (subscription) => Effect.sync(() => subscription.close()),
     )
     yield* Effect.logInfo("global event connected")
+    // The heartbeat enters the connection's own queue, behind every frame up to
+    // the current sequence, so a backlogged connection never sees a heartbeat
+    // claim a sequence it has not been sent yet (that would read as a hole).
     const heartbeat = Stream.tick("10 seconds").pipe(
       Stream.drop(1),
-      Stream.map(() => controlEvent(GlobalBus.seq, "server.heartbeat")),
+      Stream.mapEffect(() =>
+        Effect.map(Clock.currentTimeMillis, (time) => {
+          const seq = GlobalEventReplay.current
+          Queue.offerUnsafe(queue, controlEvent(seq, "server.heartbeat", { time, seq }))
+        }),
+      ),
+      Stream.drain,
     )
 
     return HttpServerResponse.stream(

@@ -7,7 +7,8 @@
 import { NodeHttpServer } from "@effect/platform-node"
 import { describe, expect } from "bun:test"
 import http from "node:http"
-import { Context, Effect, Fiber, Layer, Option, Queue, Scope } from "effect"
+import { Clock, Context, Effect, Fiber, Layer, Option, Queue, Scope } from "effect"
+import * as TestClock from "effect/testing/TestClock"
 import { HttpRouter, HttpServer } from "effect/unstable/http"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import { Auth } from "../../src/auth"
@@ -228,4 +229,29 @@ describe("global event stream — unservable cursor resets (#1776)", () => {
       }),
     )
   }
+})
+
+describe("global event stream — heartbeats (#1776)", () => {
+  it.effect("a heartbeat carries server time in milliseconds and the current sequence, and ids itself with it", () =>
+    Effect.gen(function* () {
+      const a = yield* connect()
+      yield* a.next
+      emit("test.beat")
+      const live = yield* a.next
+
+      yield* TestClock.adjust("10 seconds")
+      const beat = yield* a.next
+      expect(beat.data.payload.type).toBe("server.heartbeat")
+      expect(beat.data.payload.properties).toEqual({ time: yield* Clock.currentTimeMillis, seq: idOf(live).seq })
+      expect(idOf(beat)).toEqual(idOf(live))
+
+      emit("test.after-beat")
+      yield* TestClock.adjust("10 seconds")
+      const [after, second] = yield* a.take(2)
+      expect(after.data.payload.type).toBe("test.after-beat")
+      expect(second.data.payload.type).toBe("server.heartbeat")
+      expect(second.data.payload.properties).toEqual({ time: yield* Clock.currentTimeMillis, seq: idOf(after).seq })
+      expect(idOf(second)).toEqual(idOf(after))
+    }),
+  )
 })
