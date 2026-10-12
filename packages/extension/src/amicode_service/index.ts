@@ -1413,6 +1413,8 @@ export function createAmicodeService(
               const r = fleetPeers.readPeerToken(machineId);
               return r.ok ? { getUrl: () => r.credential.baseUrl, token: r.credential.token } : { getUrl: () => undefined };
             },
+            // #1774: the local-first probe for an unknown-owner read.
+            localEngineUrl: opts.engine?.getUrl ?? ((): string | undefined => undefined),
             ...(opts.fleet.dataPlaneTimeoutMs !== undefined ? { timeoutMs: opts.fleet.dataPlaneTimeoutMs } : {}),
           }),
         );
@@ -1444,6 +1446,8 @@ export function createAmicodeService(
               const g = findControlGrantByTarget(owner);
               return g ? { scope: g.scope, state: g.state } : undefined;
             },
+            // #1774: the local-first probe for an unknown-owner write.
+            localEngineUrl: opts.engine?.getUrl ?? ((): string | undefined => undefined),
             ...(opts.fleet.dataPlaneTimeoutMs !== undefined ? { timeoutMs: opts.fleet.dataPlaneTimeoutMs } : {}),
           }),
         );

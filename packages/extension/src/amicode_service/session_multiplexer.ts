@@ -430,16 +430,26 @@ export interface PeerTransport {
 /** A REACHABLE peer read target — proxy the read to `url` with `token`. */
 export type ObservationReadPeerTarget = { kind: "peer"; machineId: string; url: string; token: string };
 
+/** #1774: a session-scoped request whose id has NO known owner (not in the owner
+ *  map, no pending binding). The caller tries the LOCAL engine first; if the
+ *  local engine does not hold the session it answers a retryable owner-unknown
+ *  503 — never a 404 or an empty result (the map may simply not have caught up). */
+export type ObservationUnknownOwner = { kind: "unknown-owner"; sessionId: string };
+
 /** The resolution of an observation-mode read:
  *   - a REACHABLE peer target → proxy to the owner with its reader token;
  *   - the honest DEGRADED variant (owner is a KNOWN peer, but its transport is
  *     down — getUrl() undefined / no token) → the caller answers a named 503,
  *     NEVER local-dressed-as-peer (the #1382 invariant);
+ *   - #1774 the unknown-owner outcome → local first, then a retryable 503;
  *   - `undefined` (NOT a target) → LOCAL, the fail-safe: a write, a keyless /
- *     non-session path, /amicode/*, a local-owned or unowned session, or an
- *     owner that is not a known peer. The read falls through BYTE-IDENTICAL to
- *     the local engine. */
-export type ObservationReadResolution = ObservationReadPeerTarget | { kind: "degraded"; machineId: string };
+ *     non-session path, /amicode/*, a local-owned session, or an owner that is
+ *     not a known peer. The read falls through BYTE-IDENTICAL to the local
+ *     engine. */
+export type ObservationReadResolution =
+  | ObservationReadPeerTarget
+  | { kind: "degraded"; machineId: string }
+  | ObservationUnknownOwner;
 
 /** Options for the ObservationReadRouter. */
 export interface ObservationReadRouterOpts {
@@ -480,7 +490,7 @@ export class ObservationReadRouter {
    *   0. NON-read (POST/PATCH/DELETE/…) → local (writes NEVER route)
    *   1. /amicode/* (the machine's own honesty + local surface) → local
    *   2. no session id extractable from the path → local
-   *   3. owner unknown (unowned) → local
+   *   3. owner unknown (unowned) → #1774 the unknown-owner outcome (local first)
    *   4. owner == localMachineId (local-owned) → local
    *   5. owner is not a known peer → local
    *   6. owner is a known peer, transport down (no url/token) → DEGRADED (503)
@@ -494,7 +504,7 @@ export class ObservationReadRouter {
     const sessionId = extractSessionIdFromReadPath(pathname); // (2)
     if (!sessionId) return undefined;
     const owner = this.ownerMap.resolveOwner(sessionId); // (3)
-    if (!owner) return undefined;
+    if (!owner) return { kind: "unknown-owner", sessionId };
     if (owner === this.localMachineId) return undefined; // (4)
     const peer = this.peer(owner); // (5)
     if (!peer) return undefined;
@@ -524,11 +534,12 @@ export type ObservationWriteDenied = { kind: "denied"; machineId: string; reason
  *     credential (the reader token);
  *   - a NAMED deny → the caller answers the gate's honest deny (an auth denial,
  *     or the peer-unreachable 503 for `transport-down`), NEVER local (#1382);
+ *   - #1774 the unknown-owner outcome → local first, then a retryable 503;
  *   - `undefined` (NOT a target) → LOCAL, the fail-safe: a GET/HEAD (the read
  *     plane owns those — the INVERTED decision), a keyless / non-session path,
- *     /amicode/*, a local-owned or unowned session, or an owner that is not a
- *     serving peer. The write falls through BYTE-IDENTICAL to the local engine. */
-export type ObservationWriteResolution = ObservationWritePeerTarget | ObservationWriteDenied;
+ *     /amicode/*, a local-owned session, or an owner that is not a serving
+ *     peer. The write falls through BYTE-IDENTICAL to the local engine. */
+export type ObservationWriteResolution = ObservationWritePeerTarget | ObservationWriteDenied | ObservationUnknownOwner;
 
 /** Options for the ObservationWriteRouter. */
 export interface ObservationWriteRouterOpts {
@@ -591,7 +602,7 @@ export class ObservationWriteRouter {
    *   0. GET/HEAD → local (the read plane owns reads — writes NEVER touch GET)
    *   1. /amicode/* (the machine's own surface) → local
    *   2. no session id extractable from the path → local
-   *   3. owner unknown (unowned) → local
+   *   3. owner unknown (unowned) → #1774 the unknown-owner outcome (local first)
    *   4. owner == localMachineId (local-owned) → local
    *   5. owner is not a serving peer → local
    *   6. owner is a serving peer → AUTHORIZE via the pure write gate:
@@ -605,7 +616,7 @@ export class ObservationWriteRouter {
     const sessionId = extractSessionIdFromReadPath(pathname); // (2)
     if (!sessionId) return undefined;
     const owner = this.ownerMap.resolveOwner(sessionId); // (3)
-    if (!owner) return undefined;
+    if (!owner) return { kind: "unknown-owner", sessionId };
     if (owner === this.localMachineId) return undefined; // (4)
     const peer = this.peer(owner); // (5)
     if (!peer) return undefined; // owner is not a serving peer → local fall-through

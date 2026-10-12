@@ -28,7 +28,7 @@ import { join } from "node:path";
 import * as http from "node:http";
 import { AddressInfo } from "node:net";
 
-import { AmicodeServiceServer } from "../src/amicode_service/server";
+import { AmicodeServiceServer, OWNER_UNKNOWN_ERROR, OWNER_UNKNOWN_RETRY_AFTER_S } from "../src/amicode_service/server";
 import { createAmicodeService } from "../src/amicode_service";
 import { EngineProxy } from "../src/amicode_service/engine_proxy";
 import {
@@ -147,10 +147,14 @@ describe("#1542 — ObservationWriteRouter resolution order (GET/non-GET INVERTE
     expect(r.resolve("HEAD", "/api/session/ses-studio")).toBeUndefined();
   });
 
-  it("local-owned / unowned / not-a-known-peer → undefined (BYTE-IDENTICAL local fall-through)", () => {
+  it("local-owned / not-a-known-peer → undefined (BYTE-IDENTICAL local fall-through)", () => {
     expect(r.resolve("POST", "/session/ses-local")).toBeUndefined(); // local-owned
-    expect(r.resolve("POST", "/api/session/ses-unknown/message")).toBeUndefined(); // unowned
     expect(r.resolve("POST", "/api/session/ses-stranger/message")).toBeUndefined(); // owner not a serving peer
+  });
+
+  it("#1774: an UNOWNED session (no known owner) → the unknown-owner outcome: the caller tries local first", () => {
+    expect(r.resolve("POST", "/api/session/ses-unknown/message")).toEqual({ kind: "unknown-owner", sessionId: "ses-unknown" });
+    expect(r.resolve("DELETE", "/session/ses-unknown")).toEqual({ kind: "unknown-owner", sessionId: "ses-unknown" });
   });
 
   it("/amicode/* and non-session paths → undefined (never a write target)", () => {
@@ -776,6 +780,97 @@ describe("#1774 AC1 — a peer-owned write keeps routing to the owner across a f
       expect(((await res.json()) as { marker: string }).marker).toBe(peerStub.marker);
       expect(peerStub.requests.slice(peerBefore).some((r) => r.method === "POST" && r.path === "/api/session/ses-studio/message")).toBe(true);
       expect(localStub.requests.length).toBe(localBefore);
+    } finally {
+      await server.stop();
+    }
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// #1774 AC4 — a session-scoped WRITE for an id with NO known owner is tried on the
+// LOCAL engine first (an existence probe — never the write itself); if the local
+// engine does not have it, the answer is a retryable owner-unknown 503 and the
+// write is NOT executed anywhere.
+// ══════════════════════════════════════════════════════════════════════════════
+describe("#1774 AC4 — an unknown-owner write is tried locally; a local miss is a retryable owner-unknown 503", () => {
+  let engine: Stub;
+  beforeAll(async () => {
+    // engine-like: GET /session/{id} → 200 for a held session, the engine's 404 otherwise
+    const requests: Stub["requests"] = [];
+    const server = http.createServer((req, res) => {
+      const u = new URL(req.url ?? "/", "http://stub");
+      requests.push({ method: req.method ?? "GET", path: u.pathname });
+      res.setHeader("content-type", "application/json");
+      const held = /^\/(api\/)?session\/ses-here(\/|$)/.test(u.pathname);
+      if (!held) return void res.writeHead(404).end('{"name":"NotFoundError"}');
+      res.writeHead(200).end(JSON.stringify({ ok: true, marker: "ENGINE-LIKE" }));
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    engine = {
+      url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
+      marker: "ENGINE-LIKE",
+      requests,
+      stop: () => new Promise((r) => server.close(() => r())),
+    };
+  });
+  afterAll(async () => {
+    await engine?.stop();
+  });
+
+  function boot(): AmicodeServiceServer {
+    const ownerMap = new SessionOwnerMap();
+    const noPeers = (): PeerTransport | undefined => undefined;
+    const server = new AmicodeServiceServer({ password: PW });
+    server.attachEngineProxy(new EngineProxy({ getUrl: () => engine.url }));
+    server.attachObservationReadPlane(createObservationReadPlane({ ownerMap, localMachineId: "macbook", peer: noPeers, localEngineUrl: () => engine.url }));
+    server.attachObservationWritePlane(
+      createObservationWritePlane({ ownerMap, localMachineId: "macbook", peer: noPeers, grantReader: () => undefined, localEngineUrl: () => engine.url }),
+    );
+    return server;
+  }
+
+  for (const [method, path] of [
+    ["POST", "/api/session/ses-ghost/message"],
+    ["DELETE", "/session/ses-ghost"],
+    ["PATCH", "/api/session/ses-ghost"],
+  ] as const) {
+    it(`${method} ${path} (not on the local engine) → 503 owner-unknown + Retry-After; the write is never executed`, async () => {
+      const server = boot();
+      const origin = (await server.start()).toString().replace(/\/$/, "");
+      const before = engine.requests.length;
+      try {
+        const res = await fetch(`${origin}${path}`, {
+          method,
+          headers: { ...authed, "content-type": "application/json" },
+          ...(method === "DELETE" ? {} : { body: JSON.stringify({ text: "hi" }) }),
+        });
+        expect(res.status).toBe(503);
+        expect(res.headers.get("retry-after")).toBe(String(OWNER_UNKNOWN_RETRY_AFTER_S));
+        expect(await res.json()).toEqual({ ok: false, error: OWNER_UNKNOWN_ERROR, reason: "owner-unknown", session_id: "ses-ghost", retry_after_s: OWNER_UNKNOWN_RETRY_AFTER_S });
+        // only the existence probe reached the local engine — never the write
+        expect(engine.requests.slice(before)).toEqual([{ method: "GET", path: "/session/ses-ghost" }]);
+      } finally {
+        await server.stop();
+      }
+    });
+  }
+
+  it("an unowned id the LOCAL engine holds → the write runs on the local engine (local first)", async () => {
+    const server = boot();
+    const origin = (await server.start()).toString().replace(/\/$/, "");
+    const before = engine.requests.length;
+    try {
+      const res = await fetch(`${origin}/api/session/ses-here/message`, {
+        method: "POST",
+        headers: { ...authed, "content-type": "application/json" },
+        body: JSON.stringify({ text: "hi" }),
+      });
+      expect(res.status).toBe(200);
+      expect(((await res.json()) as { marker: string }).marker).toBe("ENGINE-LIKE");
+      expect(engine.requests.slice(before)).toEqual([
+        { method: "GET", path: "/session/ses-here" },
+        { method: "POST", path: "/api/session/ses-here/message" },
+      ]);
     } finally {
       await server.stop();
     }
