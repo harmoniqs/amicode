@@ -1027,8 +1027,12 @@ if (cancelBtn) {
 
 // Focused connect skips the brand animation entirely — the user just clicked
 // a specific "Connect X" entry point elsewhere in the product; the welcome
-// beat belongs to first-run Stage-0 only.
+// beat belongs to first-run Stage-0 only. #animation defaults to visible
+// (display:flex; height:100vh), so skipping the animation must also hide
+// it — otherwise it still occupies the viewport and pushes the form below
+// the fold.
 if (focusProvider) {
+  animationEl.style.display = "none";
   revealForm();
 } else {
   playWelcomeAnimation();
