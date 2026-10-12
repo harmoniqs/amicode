@@ -1,12 +1,11 @@
 // #1776 — the global event stream is sequenced and replayable: every frame
 // carries an `<epoch>:<seq>` SSE id, a resume cursor replays the gap, an
 // unservable cursor gets an explicit reset, heartbeats carry time + seq, and a
-// client abort releases its subscription. Exercised through a raw node:http
-// client against the in-process server (so headers and aborts are exact), on
-// the same Bun node:http shim the compiled binary runs on.
+// client abort releases its subscription. Exercised with a raw fetch client
+// (exact headers, real aborts) against the in-process server, which runs on the
+// same Bun node:http shim as the compiled binary.
 import { NodeHttpServer } from "@effect/platform-node"
 import { describe, expect } from "bun:test"
-import http from "node:http"
 import { Clock, Context, Effect, Fiber, Layer, Logger, Option, Queue, References, Scope } from "effect"
 import * as TestClock from "effect/testing/TestClock"
 import { HttpRouter, HttpServer } from "effect/unstable/http"
@@ -60,6 +59,13 @@ const it = testEffect(apiLayer)
 const logs: { message: string; annotations: Record<string, unknown> }[] = []
 const logged = (message: string) => logs.filter((line) => line.message === message)
 
+/** Poll until `probe` holds (true), or give up after `ms` (false). */
+const eventually = (probe: () => boolean, ms = 3_000) =>
+  Effect.gen(function* () {
+    while (!probe()) yield* Effect.sleep("20 millis")
+    return true
+  }).pipe(Effect.timeoutOrElse({ duration: ms, orElse: () => Effect.succeed(false) }))
+
 const ID = /^([A-Za-z0-9_-]+):(\d+)$/
 
 type Frame = { id: string | undefined; event: string | undefined; data: any }
@@ -83,46 +89,77 @@ function parseFrame(block: string): Frame {
   return frame
 }
 
+// The test server starts accepting connections a moment before its request
+// handler is attached (the router is served from a forked fiber); a request in
+// that window gets an empty 200 instead of a route. Wait until the server
+// answers a real route — polled in real time, so TestClock cannot stall it.
+const ready = new Set<number>()
+const awaitReady = (port: number) =>
+  Effect.promise(async () => {
+    if (ready.has(port)) return
+    for (let attempt = 0; attempt < 200; attempt++) {
+      const response = await fetch(`http://127.0.0.1:${port}${GlobalPaths.health}`).catch(() => undefined)
+      const json = response?.headers.get("content-type")?.includes("application/json")
+      await response?.body?.cancel()
+      if (response?.status === 200 && json) {
+        ready.add(port)
+        return
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    throw new Error(`test server on ${port} never became ready`)
+  })
+
 /** Open a raw SSE connection to the in-process server's global stream. */
 const connect = (input: { headers?: Record<string, string>; query?: string } = {}) =>
   Effect.gen(function* () {
     const server = yield* HttpServer.HttpServer
     const address = server.address
     if (address._tag !== "TcpAddress") throw new Error("expected a TCP test server")
+    yield* awaitReady(address.port)
     const frames = yield* Queue.unbounded<Frame>()
-    const request = yield* Effect.callback<http.ClientRequest, Error>((resume) => {
-      const req = http.get(
-        {
-          host: "127.0.0.1",
-          port: address.port,
-          path: GlobalPaths.event + (input.query ?? ""),
-          headers: { accept: "text/event-stream", ...input.headers },
-        },
-        (res) => {
-          let buffer = ""
-          res.setEncoding("utf8")
-          res.on("data", (chunk: string) => {
-            buffer += chunk
-            let end = buffer.indexOf("\n\n")
-            while (end !== -1) {
-              const block = buffer.slice(0, end)
-              buffer = buffer.slice(end + 2)
-              if (block.trim() !== "") Queue.offerUnsafe(frames, parseFrame(block))
-              end = buffer.indexOf("\n\n")
-            }
-          })
-          res.on("error", () => {})
-          resume(Effect.succeed(req))
-        },
-      )
-      req.on("error", (error) => resume(Effect.fail(error)))
-    })
-    yield* Effect.addFinalizer(() => Effect.sync(() => request.destroy()))
+    const seen: string[] = []
+    let ended = ""
+    const controller = new AbortController()
+    const response = yield* Effect.promise(() =>
+      fetch(`http://127.0.0.1:${address.port}${GlobalPaths.event}${input.query ?? ""}`, {
+        headers: { accept: "text/event-stream", ...input.headers },
+        signal: controller.signal,
+      }),
+    )
+    const status = `${response.status} ${response.headers.get("content-type") ?? "-"}`
+    // Read the body in the background, splitting it into SSE frames.
+    void (async () => {
+      const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader()
+      let buffer = ""
+      for (;;) {
+        const chunk = await reader.read()
+        if (chunk.done) return
+        buffer += chunk.value
+        for (let end = buffer.indexOf("\n\n"); end !== -1; end = buffer.indexOf("\n\n")) {
+          const block = buffer.slice(0, end)
+          buffer = buffer.slice(end + 2)
+          if (block.trim() === "") continue
+          const frame = parseFrame(block)
+          seen.push(`${frame.id}=${frame.data?.payload?.type}`)
+          Queue.offerUnsafe(frames, frame)
+        }
+      }
+    })().then(
+      () => (ended ||= `end (${status})`),
+      (error) => (ended ||= `${error?.name ?? "error"} (${status})`),
+    )
+    const abort = () => controller.abort()
+    yield* Effect.addFinalizer(() => Effect.sync(abort))
     const next = Queue.take(frames).pipe(
-      Effect.timeoutOrElse({ duration: "5 seconds", orElse: () => Effect.fail(new Error("timed out waiting for frame")) }),
+      Effect.timeoutOrElse({
+        duration: "4 seconds",
+        orElse: () =>
+          Effect.fail(new Error(`timed out waiting for frame; seen [${seen.join(", ")}], response ${ended || "open"}`)),
+      }),
     )
     const take = (n: number) => Effect.forEach(Array.from({ length: n }), () => next)
-    return { next, take, abort: () => request.destroy() }
+    return { next, take, abort }
   })
 
 const emit = (type: string, properties: Record<string, unknown> = {}) =>
@@ -274,6 +311,9 @@ describe("global event stream — heartbeats (#1776)", () => {
 describe("global event stream — client abort (#1776)", () => {
   it.live("a client that disconnects mid-stream releases its subscription and logs the disconnect", () =>
     Effect.gen(function* () {
+      // earlier tests' connections (destroyed at their end) finish releasing first
+      const settled = () => logged("global event connected").length === logged("global event disconnected").length
+      expect(yield* eventually(settled)).toBe(true)
       const baseline = GlobalEventReplay.subscribers
       const disconnects = logged("global event disconnected").length
       const a = yield* connect()
@@ -285,11 +325,7 @@ describe("global event stream — client abort (#1776)", () => {
       emit("test.unread")
       a.abort()
 
-      const released = yield* Effect.gen(function* () {
-        while (GlobalEventReplay.subscribers !== baseline) yield* Effect.sleep("20 millis")
-        return true
-      }).pipe(Effect.timeoutOrElse({ duration: "3 seconds", orElse: () => Effect.succeed(false) }))
-      expect(released).toBe(true)
+      expect(yield* eventually(() => GlobalEventReplay.subscribers === baseline)).toBe(true)
       const lines = logged("global event disconnected").slice(disconnects)
       expect(lines).toHaveLength(1)
       expect(lines[0].annotations).toMatchObject({ subscribers: baseline })

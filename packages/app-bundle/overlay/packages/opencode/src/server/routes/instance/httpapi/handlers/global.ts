@@ -1,6 +1,6 @@
 import { Config } from "@/config/config"
 import { GlobalBus } from "@/bus/global"
-import { GlobalEventReplay, formatID, type Frame } from "@/bus/global-replay"
+import { GlobalEventReplay, formatID, type Frame, type Subscription } from "@/bus/global-replay"
 import { EffectBridge } from "@/effect/bridge"
 import { EventV2 } from "@opencode-ai/core/event"
 import { Installation } from "@/installation"
@@ -70,6 +70,10 @@ function eventResponse() {
     // Registration is eager and synchronous: a bus event emitted while the
     // response body is starting is queued, never lost.
     const queue = yield* Queue.unbounded<Sse.Event>()
+    // Unregister the listener and drop the undelivered frames with the queue.
+    // Idempotent: it runs at the stream's end and again at the request scope's.
+    const release = (subscription: Subscription) =>
+      Effect.andThen(Effect.sync(() => subscription.close()), Queue.shutdown(queue))
     const subscription = yield* Effect.acquireRelease(
       Effect.sync(() => {
         const subscription = GlobalEventReplay.subscribe(cursor)
@@ -88,7 +92,7 @@ function eventResponse() {
         subscription.start((frame) => Queue.offerUnsafe(queue, frameEvent(frame)))
         return subscription
       }),
-      (subscription) => Effect.andThen(Effect.sync(() => subscription.close()), Queue.shutdown(queue)),
+      release,
     )
     yield* Effect.logInfo("global event connected").pipe(
       Effect.annotateLogs({
@@ -117,17 +121,17 @@ function eventResponse() {
         Stream.interruptWhen(Deferred.await(gone)),
         Stream.pipeThroughChannel(Sse.encode()),
         Stream.encodeText,
+        // Release when the stream ends (client gone, or server shutdown), then
+        // log the disconnect with what remains (read after the release ran).
         Stream.ensuring(
-          // Release at the stream's end, not only at the request scope's: the
-          // listener is unregistered and the undelivered frames are dropped
-          // with the queue before the disconnect is logged.
           Effect.suspend(() => {
-            subscription.close()
-            const queued = Queue.sizeUnsafe(queue)
-            return Queue.shutdown(queue).pipe(
+            const dropped = Queue.sizeUnsafe(queue)
+            return release(subscription).pipe(
               Effect.andThen(
-                Effect.logInfo("global event disconnected").pipe(
-                  Effect.annotateLogs({ subscribers: GlobalEventReplay.subscribers, dropped: queued }),
+                Effect.suspend(() =>
+                  Effect.logInfo("global event disconnected").pipe(
+                    Effect.annotateLogs({ subscribers: GlobalEventReplay.subscribers, dropped }),
+                  ),
                 ),
               ),
             )
