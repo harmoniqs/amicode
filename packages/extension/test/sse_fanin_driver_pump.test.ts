@@ -973,3 +973,74 @@ describe("#1772 AC2 — closing one listener closes ONLY that listener's upstrea
     expect(origins.live("studio")).toBe(0);
   });
 });
+
+/** Poll until `cond` holds (or time out) — for the cadence-driven tests, where
+ *  each connection's own reconcile timer (not a manual call) does the work. */
+async function until(cond: () => boolean, timeoutMs = 2000): Promise<boolean> {
+  const start = Date.now();
+  while (!cond() && Date.now() - start < timeoutMs) await tick(5);
+  return cond();
+}
+
+describe("#1772 AC3 — reconcile updates EVERY live connection's membership", () => {
+  it("driver.reconcile() opens a newly-owned peer's arm on BOTH listeners, and closes it on both when it goes dark", async () => {
+    const ownerMap = new SessionOwnerMap(); // fleet-of-one at connect
+    const origins = fakeOrigins();
+    const driver = twoListenerDriver(origins, ownerMap);
+
+    const resA = mockRes();
+    const resB = mockRes();
+    driver.handle(mockReq("/global/event"), resA);
+    driver.handle(mockReq("/global/event"), resB);
+    await tick();
+    expect(origins.opens("studio")).toBe(0);
+
+    ownerMap.update(STUDIO_OWNED);
+    driver.reconcile();
+    await tick();
+    expect(origins.live("studio")).toBe(2); // one peer arm per listener
+    origins.broadcast("studio", sseFrame("event: message", 'data: {"from":"studio"}', "id: p1"));
+    await tick();
+    expect(resA.text()).toContain('"from":"studio"');
+    expect(resB.text()).toContain('"from":"studio"');
+
+    ownerMap.update([]);
+    driver.reconcile();
+    await tick();
+    expect(origins.live("studio")).toBe(0); // both listeners dropped the dark peer
+    expect(origins.live(LOCAL_NAMESPACE)).toBe(2); // local arms untouched (§D4)
+
+    resA.fireClose();
+    resB.fireClose();
+  });
+
+  it("on its CADENCE (no manual reconcile): both listeners pick up a new owner, then drop it", async () => {
+    const ownerMap = new SessionOwnerMap();
+    const origins = fakeOrigins();
+    const driver = twoListenerDriver(origins, ownerMap, { reconcileMs: 20 });
+
+    const resA = mockRes();
+    const resB = mockRes();
+    driver.handle(mockReq("/global/event"), resA);
+    driver.handle(mockReq("/global/event"), resB);
+    await tick();
+
+    ownerMap.update(STUDIO_OWNED);
+    expect(await until(() => origins.live("studio") === 2)).toBe(true);
+    origins.broadcast("studio", sseFrame("event: message", 'data: {"from":"studio"}', "id: p1"));
+    await tick();
+    expect(resA.text()).toContain('"from":"studio"');
+    expect(resB.text()).toContain('"from":"studio"');
+
+    ownerMap.update([]);
+    expect(await until(() => origins.live("studio") === 0)).toBe(true);
+
+    resA.fireClose();
+    resB.fireClose();
+    // A closed listener's timer is stopped: a later owner change opens nothing.
+    const opensAfterClose = origins.opens("studio");
+    ownerMap.update(STUDIO_OWNED);
+    await tick(80);
+    expect(origins.opens("studio")).toBe(opensAfterClose);
+  });
+});
