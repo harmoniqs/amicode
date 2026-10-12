@@ -4,9 +4,11 @@
  * The Rail session-list archive action (sidebar-items → layout.archiveSession)
  * is a LOCAL archive. #1646: archiving the session you are VIEWING must flip it
  * to the read-only banner IN PLACE (like the chat menu), NOT navigate away — the
- * old bounce meant the read-only mode was never seen. In-place requires a
- * force-sync of the per-session store (the composer's `archived` memo source)
- * and no navigation out of the archived session.
+ * old bounce meant the read-only mode was never seen. In-place requires a forced
+ * per-session refresh (the composer's `archived` memo source) and no navigation
+ * out of the archived session. It uses the INFO-ONLY `resolve(force)` (not
+ * `sync(force)`): the archived flag is metadata, and a forced `sync` also
+ * re-pulled the whole message page + parents (seconds of wasted wire).
  *
  * Source-assertion pattern (mirrors message-timeline-archive.test.ts): the
  * wiring is asserted against the .tsx source; the per-session store BEHAVIOR is
@@ -31,9 +33,11 @@ function archiveSessionBody(src: string): string {
 }
 
 describe("Rail list archive — flip in place, never navigate (#1646)", () => {
-  test("archiveSession force-syncs the per-session store (the composer source)", () => {
+  test("archiveSession refreshes the per-session store (info-only) — the composer source", () => {
     const body = archiveSessionBody(source)
-    expect(body).toContain("session.sync(session.id, { force: true })")
+    expect(body).toContain("session.resolve(session.id, { force: true })")
+    // must NOT use the heavy sync(force), which re-pulls the full message history
+    expect(body).not.toContain("session.sync(session.id, { force: true })")
   })
 
   test("archiveSession does NOT navigate away from the archived session", () => {

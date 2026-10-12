@@ -102,15 +102,21 @@ describe("#1544 session-header control wiring", () => {
     expect(source).toContain('data-action="session-dropdown-delete-confirm"')
   })
 
-  // #1646: the archive handler must force-sync the PER-SESSION store, not only
+  // #1646: the archive handler must refresh the PER-SESSION store, not only
   // reload the list — the composer's archived read-only banner reads the
   // per-session store, so without this the banner lagged (seconds) behind an
-  // owner-routed remote archive. Mirrors the unarchive path's force-sync.
-  test("#1646 archive force-syncs the per-session store so the composer flips immediately", () => {
+  // owner-routed remote archive. It uses the INFO-ONLY `resolve(force)` (not
+  // `sync(force)`): the archived flag is metadata, and a forced `sync` also
+  // re-fetched the whole message page + parents, which made a LOCAL archive of
+  // a warmed session hang for seconds. `resolve` lands the flag without that.
+  test("#1646 archive refreshes the per-session store (info-only) so the composer flips immediately", () => {
     // the archive handler still reloads the list…
     expect(source).toContain("project.loadSessions(session.directory")
-    // …AND force-syncs the per-session store (the composer's `archived` source)
-    expect(source).toContain("session.sync(session.id, { force: true })")
+    // …AND refreshes the per-session store via INFO-ONLY resolve (the composer's `archived` source)
+    expect(source).toContain("session.resolve(session.id, { force: true })")
+    // …and must NOT use the heavy sync(force), which re-pulls the full message
+    // history + parents and was the source of the local-archive lag.
+    expect(source).not.toContain("session.sync(session.id, { force: true })")
   })
 })
 

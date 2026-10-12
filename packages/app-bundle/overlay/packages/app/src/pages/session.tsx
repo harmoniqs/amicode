@@ -2657,7 +2657,10 @@ export default function Page() {
               if ((await sdk().protocol) !== "v1") return
               try {
                 await (sdk().client.session.update as Function)({ sessionID: id, directory: sdk().directory, time: { archived: null } })
-                void sync().session.sync(id, { force: true })
+                // #1646: INFO-ONLY resolve to flip the archived banner off — the
+                // messages are already loaded (you were viewing the archived
+                // session), so a forced sync's message re-fetch is pure waste.
+                void sync().session.resolve(id, { force: true })
               } catch (err: unknown) {
                 showToast({
                   title: language.t("common.requestFailed"),

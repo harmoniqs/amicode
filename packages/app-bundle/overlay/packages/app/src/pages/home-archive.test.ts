@@ -5,7 +5,10 @@
  * LOCAL archive. #1646: archiving the session you are VIEWING must flip its
  * composer to the read-only banner in place. loadSessions refreshes the LIST
  * store, but the composer's `archived` memo reads the PER-SESSION store, which
- * only a force-sync lands — so the handler must force-sync after the reload.
+ * only a forced per-session refresh lands — so the handler must refresh it after
+ * the reload. It uses the INFO-ONLY `resolve(force)` (not `sync(force)`): the
+ * archived flag is metadata, and a forced `sync` also re-pulled the whole
+ * message page + parents (seconds of wasted wire on a warmed session).
  *
  * Source-assertion pattern (mirrors message-timeline-archive.test.ts): the
  * wiring is asserted against the .tsx source; the per-session store BEHAVIOR is
@@ -28,9 +31,11 @@ function archiveSessionBody(src: string): string {
   return src.slice(start, next)
 }
 
-describe("Home flyout archive — force-sync so the viewed composer flips (#1646)", () => {
-  test("archiveSession force-syncs the per-session store after the list reload", () => {
+describe("Home flyout archive — info-only resolve so the viewed composer flips (#1646)", () => {
+  test("archiveSession refreshes the per-session store (info-only) after the list reload", () => {
     const body = archiveSessionBody(source)
-    expect(body).toContain("session.sync(session.id, { force: true })")
+    expect(body).toContain("session.resolve(session.id, { force: true })")
+    // must NOT use the heavy sync(force), which re-pulls the full message history
+    expect(body).not.toContain("session.sync(session.id, { force: true })")
   })
 })

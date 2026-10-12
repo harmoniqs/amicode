@@ -739,10 +739,12 @@ export default function LegacyLayout(props: ParentProps) {
     // old bounce meant the read-only mode was never seen. The splice above
     // touches only the LIST store; the composer's `archived` memo reads the
     // PER-SESSION store (serverSync().session.get(id).time.archived), which only
-    // a force-sync lands (and that forced sync now actually runs — see the
-    // runInflight force bypass in server-session.ts).
+    // a forced per-session refresh lands. INFO-ONLY `resolve` (session.get →
+    // remember), NOT `sync`: the archived flag is metadata, so a forced `sync`
+    // additionally re-pulled the viewed session's full message history + parents
+    // (seconds of wasted wire). `resolve` lands the flag without touching messages.
     void serverSync()
-      .session.sync(session.id, { force: true })
+      .session.resolve(session.id, { force: true })
       .catch(() => {})
   }
 

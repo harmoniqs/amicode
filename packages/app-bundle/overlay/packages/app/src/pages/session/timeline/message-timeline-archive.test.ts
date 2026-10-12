@@ -37,12 +37,15 @@ function archiveSessionBody(src: string): string {
   return src.slice(start, next)
 }
 
-describe("session-header archive menu — stay-in-place + force-sync", () => {
-  test("archiveSession force-syncs the per-session store (the composer + menu source)", () => {
+describe("session-header archive menu — stay-in-place + info-only refresh", () => {
+  test("archiveSession refreshes the per-session store info-only (the composer + menu source)", () => {
     const body = archiveSessionBody(source)
     // The per-session store (sync().session.get(id).time.archived) is what the
-    // composer banner and the menu toggle read; only a force-sync updates it.
-    expect(body).toContain("session.sync(sessionID, { force: true })")
+    // composer banner and the menu toggle read; the INFO-ONLY resolve(force)
+    // updates it without re-pulling the whole message history (the archive-lag fix).
+    expect(body).toContain("session.resolve(sessionID, { force: true })")
+    // …and must NOT use the heavy sync(force), which re-fetches all messages.
+    expect(body).not.toContain("session.sync(sessionID, { force: true })")
   })
 
   test("archiveSession does NOT navigate away from the archived session", () => {

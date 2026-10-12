@@ -1332,13 +1332,15 @@ export function MessageTimeline(props: {
           }),
         )
         notifySessionTabsRemoved({ directory: sdk().directory, sessionIDs: [sessionID] })
-        // #1646: force-sync the PER-SESSION store so the composer's `archived`
+        // #1646: refresh the PER-SESSION store so the composer's `archived`
         // memo and this menu's archived gate flip immediately. The list splice
         // above touches only the list store; the per-session store
         // (sync().session.get(id).time.archived) is what the composer and the
-        // menu read, and only a force-sync (or a lazily-arriving SSE) sets it.
-        // Mirrors the header + unarchive paths, which already force-sync.
-        void sync().session.sync(sessionID, { force: true }).catch(() => {})
+        // menu read, and only a forced refresh (or a lazily-arriving SSE) sets it.
+        // INFO-ONLY `resolve` (session.get → remember), NOT `sync`: the archived
+        // flag is metadata, so a forced `sync` additionally re-pulled the viewed
+        // session's full message history + parents (seconds of wasted wire).
+        void sync().session.resolve(sessionID, { force: true }).catch(() => {})
       })
       .catch((err) => {
         showToast({
@@ -1354,7 +1356,8 @@ export function MessageTimeline(props: {
     // different project); the owner-routed write plane handles remote routing.
     const directory = sync().session.get(sessionID)?.directory ?? sdk().directory
     await (sdk().client.session.update as Function)({ sessionID, directory, time: { archived: null } })
-      .then(() => void sync().session.sync(sessionID, { force: true }))
+      // INFO-ONLY resolve (metadata flip), NOT sync — see the archive path above.
+      .then(() => void sync().session.resolve(sessionID, { force: true }))
       .catch((err: unknown) => {
         showToast({
           title: language.t("common.requestFailed"),

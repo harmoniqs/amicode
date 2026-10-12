@@ -1254,15 +1254,21 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
         if (isRemote) void refetchFleetProjection()
         // Refresh the Archived tab so the just-archived session appears there too.
         void loadArchivedSessions(true)
-        // #1646: force-sync the PER-SESSION store so the composer flips to its
+        // #1646: refresh the PER-SESSION store so the composer flips to its
         // archived read-only banner immediately. loadSessions above refreshes
         // the LIST store, but the composer's `archived` memo reads the
         // per-session store (sync().session.get(id).time.archived) — which the
         // list reload does not touch. Without this the banner appeared only when
         // the change lazily propagated (SSE / next projection cycle), so a
-        // remote (owner-routed) archive left the composer live for seconds. This
-        // mirrors the unarchive path, which already force-syncs (session.tsx).
-        await serverSync().session.sync(session.id, { force: true }).catch(() => {})
+        // remote (owner-routed) archive left the composer live for seconds.
+        // INFO-ONLY `resolve` (session.get → remember), NOT `sync`: the archived
+        // flag is METADATA, so re-fetching the whole message page is pure waste.
+        // A forced `sync` did exactly that — on a LOCAL archive of a warmed/open
+        // session it re-pulled the full history + every parent message (seconds),
+        // which is why local archive lagged while remote (nothing loaded) was
+        // instant. `resolve` lands the flag without touching messages, matching
+        // the composer controller's own convergence (session-composer-region-controller).
+        await serverSync().session.resolve(session.id, { force: true }).catch(() => {})
       } catch (cause) {
         showToast({
           title: language.t("common.requestFailed"),

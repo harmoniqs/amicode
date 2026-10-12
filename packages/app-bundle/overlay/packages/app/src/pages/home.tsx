@@ -451,10 +451,13 @@ function HomeDesign() {
       // #1646: flip the composer of the viewed session to its read-only banner
       // in place. loadSessions refreshes the LIST store; the composer's `archived`
       // memo reads the PER-SESSION store (focusedSync().session.get(id)), which
-      // only a force-sync lands (and that forced sync now actually runs — see the
-      // runInflight force bypass in server-session.ts).
+      // only a forced per-session refresh lands. INFO-ONLY `resolve` (session.get
+      // → remember), NOT `sync`: the archived flag is metadata, so a forced `sync`
+      // additionally re-pulled the viewed session's full message history + parents
+      // (seconds of wasted wire). `resolve` lands the flag without touching
+      // messages, matching the composer controller's own convergence.
       void focusedSync()
-        .session.sync(session.id, { force: true })
+        .session.resolve(session.id, { force: true })
         .catch(() => {})
     } catch (cause) {
       showToast({
