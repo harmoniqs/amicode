@@ -7,7 +7,7 @@
 import { NodeHttpServer } from "@effect/platform-node"
 import { describe, expect } from "bun:test"
 import http from "node:http"
-import { Context, Effect, Layer, Option, Queue } from "effect"
+import { Context, Effect, Fiber, Layer, Option, Queue } from "effect"
 import { HttpRouter, HttpServer } from "effect/unstable/http"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import { Auth } from "../../src/auth"
@@ -144,4 +144,47 @@ describe("global event stream — sequenced ids (#1776)", () => {
       expect(seqs).toEqual([start.seq + 1, start.seq + 2, start.seq + 2, start.seq + 3])
     }),
   )
+})
+
+describe("global event stream — resume from a cursor (#1776)", () => {
+  for (const carrier of ["Last-Event-ID header", "lastEventID query"] as const) {
+    it.live(`replays exactly the frames after a ${carrier} cursor, then continues live`, () =>
+      Effect.gen(function* () {
+        const a = yield* connect()
+        yield* a.next
+        emit("test.one")
+        emit("test.two")
+        emit("test.three")
+        const [one] = yield* a.take(3)
+        const cursor = idOf(one)
+        a.abort()
+
+        emit("test.gap")
+        const resume =
+          carrier === "Last-Event-ID header" ? { headers: { "last-event-id": one.id! } } : { query: `?lastEventID=${encodeURIComponent(one.id!)}` }
+        // events keep arriving while the reconnect is in flight
+        const reconnect = yield* Effect.forkChild(connect(resume))
+        for (let i = 0; i < 20; i++) {
+          emit("test.inflight", { i })
+          yield* Effect.sleep("1 millis")
+        }
+        const b = yield* Fiber.join(reconnect)
+        emit("test.after")
+
+        const connected = yield* b.next
+        expect(connected.data.payload.type).toBe("server.connected")
+        expect(idOf(connected)).toEqual(cursor)
+        const frames = yield* b.take(2 + 1 + 20 + 1)
+        const types = frames.map((f) => f.data.payload.type)
+        expect(types).toEqual(["test.two", "test.three", "test.gap", ...Array(20).fill("test.inflight"), "test.after"])
+        expect(frames.map((f) => idOf(f).seq)).toEqual(Array.from({ length: 24 }, (_, i) => cursor.seq + 1 + i))
+        expect(frames.filter((f) => f.data.payload.type === "test.inflight").map((f) => f.data.payload.properties.i)).toEqual(
+          Array.from({ length: 20 }, (_, i) => i),
+        )
+        // nothing further: no duplicate trails the live frames
+        const extra = yield* b.next.pipe(Effect.timeoutOrElse({ duration: "200 millis", orElse: () => Effect.succeed(undefined) }))
+        expect(extra).toBeUndefined()
+      }),
+    )
+  }
 })

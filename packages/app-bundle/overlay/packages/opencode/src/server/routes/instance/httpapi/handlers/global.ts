@@ -1,6 +1,6 @@
 import { Config } from "@/config/config"
 import { GlobalBus } from "@/bus/global"
-import { GlobalEventFrames, formatID, type Frame } from "@/bus/global-replay"
+import { GlobalEventReplay, formatID, type Frame } from "@/bus/global-replay"
 import { EffectBridge } from "@/effect/bridge"
 import { EventV2 } from "@opencode-ai/core/event"
 import { Installation } from "@/installation"
@@ -8,11 +8,20 @@ import { disposeAllInstancesAndEmitGlobalDisposed } from "@/server/global-lifecy
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
 import { Effect, Queue } from "effect"
 import * as Stream from "effect/Stream"
-import { HttpServerResponse } from "effect/unstable/http"
+import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import * as Sse from "effect/unstable/encoding/Sse"
 import { RootHttpApi } from "../api"
 import { GlobalUpgradeInput } from "../groups/global"
+
+// The resume cursor: the standard `Last-Event-ID` header (what an SSE client
+// sends once it has seen an `id:` line), else the `lastEventID` query
+// parameter clients already send.
+function cursorOf(request: HttpServerRequest.HttpServerRequest) {
+  const header = request.headers["last-event-id"]?.trim()
+  if (header) return header
+  return new URL(request.url, "http://localhost").searchParams.get("lastEventID")?.trim() || undefined
+}
 
 function frameEvent(frame: Pick<Frame, "id" | "data">): Sse.Event {
   return { _tag: "Event", event: "message", id: frame.id, data: frame.data }
@@ -30,13 +39,16 @@ function controlEvent(seq: number, type: string, properties: Record<string, unkn
 
 function eventResponse() {
   return Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest
+    const cursor = cursorOf(request)
     // Registration is eager and synchronous: a bus event emitted while the
     // response body is starting is queued, never lost.
     const queue = yield* Queue.unbounded<Sse.Event>()
     const subscription = yield* Effect.acquireRelease(
       Effect.sync(() => {
-        const subscription = GlobalEventFrames.subscribe()
+        const subscription = GlobalEventReplay.subscribe(cursor)
         Queue.offerUnsafe(queue, controlEvent(subscription.position, "server.connected"))
+        for (const frame of subscription.replay) Queue.offerUnsafe(queue, frameEvent(frame))
         subscription.start((frame) => Queue.offerUnsafe(queue, frameEvent(frame)))
         return subscription
       }),
