@@ -7,7 +7,7 @@
 import { NodeHttpServer } from "@effect/platform-node"
 import { describe, expect } from "bun:test"
 import http from "node:http"
-import { Context, Effect, Fiber, Layer, Option, Queue } from "effect"
+import { Context, Effect, Fiber, Layer, Option, Queue, Scope } from "effect"
 import { HttpRouter, HttpServer } from "effect/unstable/http"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import { Auth } from "../../src/auth"
@@ -184,6 +184,47 @@ describe("global event stream — resume from a cursor (#1776)", () => {
         // nothing further: no duplicate trails the live frames
         const extra = yield* b.next.pipe(Effect.timeoutOrElse({ duration: "200 millis", orElse: () => Effect.succeed(undefined) }))
         expect(extra).toBeUndefined()
+      }),
+    )
+  }
+})
+
+describe("global event stream — unservable cursor resets (#1776)", () => {
+  const unservable: Record<string, () => Effect.Effect<string, Error, HttpServer.HttpServer | Scope.Scope>> = {
+    "a cursor from another epoch": () => Effect.succeed(`x${GlobalBus.epoch}:1`),
+    "a cursor that is not <epoch>:<seq> (a payload id)": () => Effect.succeed("evt_131b06142001C9nKEJ5DvEnx4G"),
+    "a cursor ahead of the stream": () => Effect.succeed(`${GlobalBus.epoch}:${GlobalBus.seq + 1000}`),
+    "a cursor older than the buffer's oldest entry": () =>
+      Effect.gen(function* () {
+        const a = yield* connect()
+        const cursor = (yield* a.next).id!
+        a.abort()
+        // more than the default 32 MiB byte bound: the frames after the cursor are evicted
+        const big = "x".repeat(1024 * 1024)
+        for (let i = 0; i < 33; i++) emit("test.big", { big })
+        return cursor
+      }),
+  }
+  for (const [name, cursorFor] of Object.entries(unservable)) {
+    it.live(`${name} yields a reset frame first, then live frames`, () =>
+      Effect.gen(function* () {
+        emit("test.before")
+        const cursor = yield* cursorFor()
+        const b = yield* connect({ headers: { "last-event-id": cursor } })
+        const current = { epoch: GlobalBus.epoch, seq: GlobalBus.seq }
+
+        const reset = yield* b.next
+        expect(reset.data.payload.type).toBe("server.cursor.unservable")
+        expect(reset.data.payload.properties).toEqual(current)
+        expect(idOf(reset)).toEqual(current)
+        const connected = yield* b.next
+        expect(connected.data.payload.type).toBe("server.connected")
+        expect(idOf(connected)).toEqual(current)
+
+        emit("test.live")
+        const live = yield* b.next
+        expect(live.data.payload.type).toBe("test.live")
+        expect(idOf(live)).toEqual({ epoch: current.epoch, seq: current.seq + 1 })
       }),
     )
   }

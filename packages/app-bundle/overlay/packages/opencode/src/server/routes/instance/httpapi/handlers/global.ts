@@ -47,6 +47,16 @@ function eventResponse() {
     const subscription = yield* Effect.acquireRelease(
       Effect.sync(() => {
         const subscription = GlobalEventReplay.subscribe(cursor)
+        // An unservable cursor is never silent: a reset frame comes first,
+        // carrying the current epoch and sequence, and the client resyncs.
+        if (subscription.reset)
+          Queue.offerUnsafe(
+            queue,
+            controlEvent(subscription.position, "server.cursor.unservable", {
+              epoch: GlobalEventReplay.epoch,
+              seq: subscription.position,
+            }),
+          )
         Queue.offerUnsafe(queue, controlEvent(subscription.position, "server.connected"))
         for (const frame of subscription.replay) Queue.offerUnsafe(queue, frameEvent(frame))
         subscription.start((frame) => Queue.offerUnsafe(queue, frameEvent(frame)))
