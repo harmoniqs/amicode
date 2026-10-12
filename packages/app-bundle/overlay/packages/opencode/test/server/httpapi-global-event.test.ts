@@ -80,12 +80,19 @@ type Frame = { id: string | undefined; event: string | undefined; data: any; raw
 /** Split an SSE id into its epoch and sequence (fails the test if malformed). */
 function idOf(frame: Frame) {
   const match = ID.exec(frame.id ?? "")
-  if (!match) throw new Error(`frame id ${JSON.stringify(frame.id)} is not <epoch>:<seq> (${JSON.stringify(frame.data)})`)
+  if (!match)
+    throw new Error(`frame id ${JSON.stringify(frame.id)} is not <epoch>:<seq> (${JSON.stringify(frame.data)})`)
   return { epoch: match[1], seq: Number(match[2]) }
 }
 
 function parseFrame(block: string): Frame {
-  const frame: Frame = { id: undefined, event: undefined, data: undefined, raw: "", bytes: Buffer.byteLength(block) + 2 }
+  const frame: Frame = {
+    id: undefined,
+    event: undefined,
+    data: undefined,
+    raw: "",
+    bytes: Buffer.byteLength(block) + 2,
+  }
   const data: string[] = []
   for (const line of block.split("\n")) {
     if (line.startsWith("id: ")) frame.id = line.slice(4)
@@ -167,68 +174,82 @@ const quiet = (stream: { next: Effect.Effect<Frame, Error> }, ms = 200) =>
   stream.next.pipe(Effect.timeoutOrElse({ duration: ms, orElse: () => Effect.succeed(undefined) }))
 
 describe("global event stream — sequenced ids (#1776)", () => {
-  it.live("every frame carries an <epoch>:<seq> id shared by all subscribers; a sync copy carries its source's id", () =>
-    Effect.gen(function* () {
-      // sync copies are opt-in (#1778): both subscribers request them
-      const a = yield* connect({ query: "?sync=true" })
-      const b = yield* connect({ query: "?sync=true" })
-      const connectedA = yield* a.next
-      const connectedB = yield* b.next
-      expect(connectedA.data.payload.type).toBe("server.connected")
-      const start = idOf(connectedA)
-      expect(idOf(connectedB)).toEqual(start)
+  it.live(
+    "every frame carries an <epoch>:<seq> id shared by all subscribers; a sync copy carries its source's id",
+    () =>
+      Effect.gen(function* () {
+        // sync copies are opt-in (#1778): both subscribers request them
+        const a = yield* connect({ query: "?sync=true" })
+        const b = yield* connect({ query: "?sync=true" })
+        const connectedA = yield* a.next
+        const connectedB = yield* b.next
+        expect(connectedA.data.payload.type).toBe("server.connected")
+        const start = idOf(connectedA)
+        expect(idOf(connectedB)).toEqual(start)
 
-      emit("test.first")
-      // the event-v2 bridge's twin emission: the durable event, then its sync copy
-      GlobalBus.emit("event", { directory: "/tmp/i1776", payload: { id: "evt_i1776_durable", type: "test.durable", properties: {} } })
-      GlobalBus.emit("event", {
-        directory: "/tmp/i1776",
-        payload: {
-          type: "sync",
-          syncEvent: { id: "evt_i1776_durable", type: "test.durable.1", seq: 1, aggregateID: "agg", data: {} },
-        },
-      })
-      emit("test.last")
+        emit("test.first")
+        // the event-v2 bridge's twin emission: the durable event, then its sync copy
+        GlobalBus.emit("event", {
+          directory: "/tmp/i1776",
+          payload: { id: "evt_i1776_durable", type: "test.durable", properties: {} },
+        })
+        GlobalBus.emit("event", {
+          directory: "/tmp/i1776",
+          payload: {
+            type: "sync",
+            syncEvent: { id: "evt_i1776_durable", type: "test.durable.1", seq: 1, aggregateID: "agg", data: {} },
+          },
+        })
+        emit("test.last")
 
-      const framesA = yield* a.take(4)
-      const framesB = yield* b.take(4)
-      expect(framesA.map((f) => f.data.payload.type)).toEqual(["test.first", "test.durable", "sync", "test.last"])
-      expect(framesA.map((f) => f.id)).toEqual(framesB.map((f) => f.id))
-      const seqs = framesA.map((f) => idOf(f).seq)
-      expect(framesA.every((f) => idOf(f).epoch === start.epoch)).toBe(true)
-      expect(seqs).toEqual([start.seq + 1, start.seq + 2, start.seq + 2, start.seq + 3])
-    }),
+        const framesA = yield* a.take(4)
+        const framesB = yield* b.take(4)
+        expect(framesA.map((f) => f.data.payload.type)).toEqual(["test.first", "test.durable", "sync", "test.last"])
+        expect(framesA.map((f) => f.id)).toEqual(framesB.map((f) => f.id))
+        const seqs = framesA.map((f) => idOf(f).seq)
+        expect(framesA.every((f) => idOf(f).epoch === start.epoch)).toBe(true)
+        expect(seqs).toEqual([start.seq + 1, start.seq + 2, start.seq + 2, start.seq + 3])
+      }),
   )
 })
 
 describe("global event stream — sync copies are opt-in (#1778)", () => {
-  it.live("a default subscriber gets no sync copies and its sequence stays gap-free; an opt-in subscriber gets them all", () =>
-    Effect.gen(function* () {
-      const plain = yield* connect()
-      // the header carrier (what the workspace control plane sends); `?sync=true` is the query twin
-      const synced = yield* connect({ headers: { "x-opencode-sync-copies": "true" } })
-      const start = idOf(yield* plain.next)
-      expect(idOf(yield* synced.next)).toEqual(start)
+  it.live(
+    "a default subscriber gets no sync copies and its sequence stays gap-free; an opt-in subscriber gets them all",
+    () =>
+      Effect.gen(function* () {
+        const plain = yield* connect()
+        // the header carrier (what the workspace control plane sends); `?sync=true` is the query twin
+        const synced = yield* connect({ headers: { "x-opencode-sync-copies": "true" } })
+        const start = idOf(yield* plain.next)
+        expect(idOf(yield* synced.next)).toEqual(start)
 
-      emit("test.first")
-      twin("evt_i1778_optin_a")
-      twin("evt_i1778_optin_b")
-      emit("test.last")
+        emit("test.first")
+        twin("evt_i1778_optin_a")
+        twin("evt_i1778_optin_b")
+        emit("test.last")
 
-      const plainFrames = yield* plain.take(4)
-      expect(typesOf(plainFrames)).toEqual(["test.first", "test.durable", "test.durable", "test.last"])
-      // filtering the copies punches no hole: a copy shares its source's sequence
-      expect(seqsOf(plainFrames)).toEqual([1, 2, 3, 4].map((n) => start.seq + n))
-      expect(yield* quiet(plain)).toBeUndefined()
+        const plainFrames = yield* plain.take(4)
+        expect(typesOf(plainFrames)).toEqual(["test.first", "test.durable", "test.durable", "test.last"])
+        // filtering the copies punches no hole: a copy shares its source's sequence
+        expect(seqsOf(plainFrames)).toEqual([1, 2, 3, 4].map((n) => start.seq + n))
+        expect(yield* quiet(plain)).toBeUndefined()
 
-      const syncedFrames = yield* synced.take(6)
-      expect(typesOf(syncedFrames)).toEqual(["test.first", "test.durable", "sync", "test.durable", "sync", "test.last"])
-      expect(seqsOf(syncedFrames)).toEqual([1, 2, 2, 3, 3, 4].map((n) => start.seq + n))
-      // the frames both subscribers get are the same frames
-      expect(syncedFrames.filter((f) => f.data.payload.type !== "sync").map((f) => f.id)).toEqual(
-        plainFrames.map((f) => f.id),
-      )
-    }),
+        const syncedFrames = yield* synced.take(6)
+        expect(typesOf(syncedFrames)).toEqual([
+          "test.first",
+          "test.durable",
+          "sync",
+          "test.durable",
+          "sync",
+          "test.last",
+        ])
+        expect(seqsOf(syncedFrames)).toEqual([1, 2, 2, 3, 3, 4].map((n) => start.seq + n))
+        // the frames both subscribers get are the same frames
+        expect(syncedFrames.filter((f) => f.data.payload.type !== "sync").map((f) => f.id)).toEqual(
+          plainFrames.map((f) => f.id),
+        )
+      }),
   )
 
   it.live("a resumed connection replays sync copies only when it requests them", () =>
@@ -252,28 +273,37 @@ describe("global event stream — sync copies are opt-in (#1778)", () => {
       expect(yield* quiet(plain)).toBeUndefined()
 
       const syncedFrames = yield* synced.take(6)
-      expect(typesOf(syncedFrames)).toEqual(["test.durable", "sync", "test.between", "test.durable", "sync", "test.live"])
+      expect(typesOf(syncedFrames)).toEqual([
+        "test.durable",
+        "sync",
+        "test.between",
+        "test.durable",
+        "sync",
+        "test.live",
+      ])
       expect(seqsOf(syncedFrames)).toEqual([1, 1, 2, 3, 3, 4].map((n) => base + n))
     }),
   )
 
-  it.live("a sync copy with no framed source keeps its own sequence and reaches every subscriber, so no hole opens", () =>
-    Effect.gen(function* () {
-      const plain = yield* connect()
-      const start = idOf(yield* plain.next)
-      emit("test.before")
-      GlobalBus.emit("event", {
-        directory: "/tmp/i1778",
-        payload: {
-          type: "sync",
-          syncEvent: { id: "evt_i1778_orphan", type: "test.orphan.1", seq: 1, aggregateID: "agg", data: {} },
-        },
-      })
-      emit("test.after")
-      const frames = yield* plain.take(3)
-      expect(typesOf(frames)).toEqual(["test.before", "sync", "test.after"])
-      expect(seqsOf(frames)).toEqual([1, 2, 3].map((n) => start.seq + n))
-    }),
+  it.live(
+    "a sync copy with no framed source keeps its own sequence and reaches every subscriber, so no hole opens",
+    () =>
+      Effect.gen(function* () {
+        const plain = yield* connect()
+        const start = idOf(yield* plain.next)
+        emit("test.before")
+        GlobalBus.emit("event", {
+          directory: "/tmp/i1778",
+          payload: {
+            type: "sync",
+            syncEvent: { id: "evt_i1778_orphan", type: "test.orphan.1", seq: 1, aggregateID: "agg", data: {} },
+          },
+        })
+        emit("test.after")
+        const frames = yield* plain.take(3)
+        expect(typesOf(frames)).toEqual(["test.before", "sync", "test.after"])
+        expect(seqsOf(frames)).toEqual([1, 2, 3].map((n) => start.seq + n))
+      }),
   )
 })
 
@@ -281,7 +311,13 @@ describe("global event stream — sync copies are opt-in (#1778)", () => {
 // full patch text (measured up to 12.3 MB in one event on the Studio).
 const summaryDiffs = () => [
   { file: "src/app.ts", patch: "@@ -1,2 +1,3 @@\n-old\n+new\n+more\n", additions: 2, deletions: 1, status: "modified" },
-  { file: "src/new.ts", patch: `@@ -0,0 +1,400 @@\n${"+line\n".repeat(400)}`, additions: 400, deletions: 0, status: "added" },
+  {
+    file: "src/new.ts",
+    patch: `@@ -0,0 +1,400 @@\n${"+line\n".repeat(400)}`,
+    additions: 400,
+    deletions: 0,
+    status: "added",
+  },
   { file: "src/gone.ts", patch: "@@ -1 +0,0 @@\n-gone\n", additions: 0, deletions: 1, status: "deleted" },
 ]
 const stripped = (diffs: ReturnType<typeof summaryDiffs>) => diffs.map(({ patch: _patch, ...rest }) => rest)
@@ -291,7 +327,11 @@ const summaryTwin = (id: string, type: "message.updated" | "session.updated") =>
   const info =
     type === "message.updated"
       ? { id: "msg_i1778", sessionID: "ses_i1778", role: "user", summary: { title: "Edit", diffs: summaryDiffs() } }
-      : { id: "ses_i1778", title: "Session", summary: { additions: 402, deletions: 2, files: 3, diffs: summaryDiffs() } }
+      : {
+          id: "ses_i1778",
+          title: "Session",
+          summary: { additions: 402, deletions: 2, files: 3, diffs: summaryDiffs() },
+        }
   const properties = { sessionID: "ses_i1778", info }
   const source = { directory: "/tmp/i1778", payload: { id, type, properties } }
   const copy = {
@@ -534,22 +574,46 @@ describe("global event stream — fixture turn byte report (#1778)", () => {
 
       // Emit like the event-v2 bridge (the event, then for a durable one its sync
       // copy) and record the frame #1776's tap would have serialized for each.
-      const publish = (type: string, properties: Record<string, unknown>, options: { durable?: boolean; record?: boolean } = {}) => {
+      const publish = (
+        type: string,
+        properties: Record<string, unknown>,
+        options: { durable?: boolean; record?: boolean } = {},
+      ) => {
         const id = `evt_i1778_fx_${GlobalBus.seq + 1}`
         const event = { ...base, payload: { id, type, properties } }
         GlobalBus.emit("event", event)
         liveEvents++
         const record = options.record !== false
-        if (record) before.push({ type, sync: false, bytes: sseBytes(`${GlobalBus.epoch}:${GlobalBus.seq}`, JSON.stringify(event)) })
+        if (record)
+          before.push({
+            type,
+            sync: false,
+            bytes: sseBytes(`${GlobalBus.epoch}:${GlobalBus.seq}`, JSON.stringify(event)),
+          })
         if (options.durable === false) return
         const copy = {
           ...base,
-          payload: { type: "sync", syncEvent: { id, type: `${type}.1`, seq: before.length, aggregateID: sessionID, data: properties } },
+          payload: {
+            type: "sync",
+            syncEvent: { id, type: `${type}.1`, seq: before.length, aggregateID: sessionID, data: properties },
+          },
         }
         GlobalBus.emit("event", copy)
-        if (record) before.push({ type, sync: true, bytes: sseBytes(`${GlobalBus.epoch}:${GlobalBus.seq}`, JSON.stringify(copy)) })
+        if (record)
+          before.push({
+            type,
+            sync: true,
+            bytes: sseBytes(`${GlobalBus.epoch}:${GlobalBus.seq}`, JSON.stringify(copy)),
+          })
       }
-      const user = { id: "msg_i1778_user", sessionID, role: "user", time: { created: 1 }, agent: "build", model: { providerID: "p", modelID: "m" } }
+      const user = {
+        id: "msg_i1778_user",
+        sessionID,
+        role: "user",
+        time: { created: 1 },
+        agent: "build",
+        model: { providerID: "p", modelID: "m" },
+      }
       const assistant = { id: "msg_i1778_asst", sessionID, role: "assistant", parentID: user.id, time: { created: 2 } }
       const tool = (callID: string, toolName: string, state: Record<string, unknown>) => ({
         sessionID,
@@ -560,12 +624,22 @@ describe("global event stream — fixture turn byte report (#1778)", () => {
       publish("message.updated", { sessionID, info: user })
       publish("message.updated", { sessionID, info: assistant })
       for (let i = 0; i < FIXTURE.deltas; i++)
-        publish("message.part.delta", { sessionID, messageID: assistant.id, partID: "prt_text", field: "text", delta: "Editing the module now. " }, { durable: false })
+        publish(
+          "message.part.delta",
+          { sessionID, messageID: assistant.id, partID: "prt_text", field: "text", delta: "Editing the module now. " },
+          { durable: false },
+        )
 
       // the multi-file edit: each edit tool part runs then completes (its own
       // metadata keeps its patch — other tools' metadata is out of scope)
       const files = Array.from({ length: FIXTURE.files }, (_, i) => `packages/app/src/feature/module-${i}.ts`)
-      const diffs = files.map((file) => ({ file, patch: patchFor(file, FIXTURE.patchBytes), additions: 400, deletions: 12, status: "modified" }))
+      const diffs = files.map((file) => ({
+        file,
+        patch: patchFor(file, FIXTURE.patchBytes),
+        additions: 400,
+        deletions: 12,
+        status: "modified",
+      }))
       for (const [i, diff] of diffs.entries()) {
         const input = { filePath: diff.file, oldString: "a", newString: "b" }
         publish("message.part.updated", tool(`edit_${i}`, "edit", { status: "pending", input, raw: "" }))
@@ -586,7 +660,8 @@ describe("global event stream — fixture turn byte report (#1778)", () => {
       // the chatty shell command: a running update per output chunk BEFORE, the
       // throttled updates AFTER (first at once, <= 1 per 200 ms, final flush)
       const command = { command: "bun run build --verbose" }
-      const running = (output: string) => tool("shell_0", "bash", { status: "running", input: command, metadata: { output }, time: { start: 5 } })
+      const running = (output: string) =>
+        tool("shell_0", "bash", { status: "running", input: command, metadata: { output }, time: { start: 5 } })
       const previews: string[] = []
       let output = ""
       for (let i = 0; i < FIXTURE.chunks; i++) {
@@ -599,11 +674,19 @@ describe("global event stream — fixture turn byte report (#1778)", () => {
       for (const preview of previews) {
         const id = `evt_i1778_fx_shell_${before.length}`
         const data = running(preview)
-        before.push({ type: "shell", sync: false, bytes: frameBytes({ id, type: "message.part.updated", properties: data }) })
+        before.push({
+          type: "shell",
+          sync: false,
+          bytes: frameBytes({ id, type: "message.part.updated", properties: data }),
+        })
         before.push({
           type: "shell",
           sync: true,
-          bytes: frameBytes({ id, type: "sync", syncEvent: { id, type: "message.part.updated.1", seq: 0, aggregateID: sessionID, data } }),
+          bytes: frameBytes({
+            id,
+            type: "sync",
+            syncEvent: { id, type: "message.part.updated.1", seq: 0, aggregateID: sessionID, data },
+          }),
         })
       }
       // AFTER: the same chunks, 10 ms apart, through the shell tool's throttle
@@ -619,11 +702,24 @@ describe("global event stream — fixture turn byte report (#1778)", () => {
         yield* TestClock.adjust(`${FIXTURE.chunkEveryMs} millis`)
       }
       yield* throttle.flush
-      publish("message.part.updated", tool("shell_0", "bash", { status: "completed", input: command, output: previews.at(-1), title: command.command, metadata: { output: previews.at(-1), exit: 0 }, time: { start: 5, end: 6 } }))
+      publish(
+        "message.part.updated",
+        tool("shell_0", "bash", {
+          status: "completed",
+          input: command,
+          output: previews.at(-1),
+          title: command.command,
+          metadata: { output: previews.at(-1), exit: 0 },
+          time: { start: 5, end: 6 },
+        }),
+      )
 
       // the per-turn summary: every changed file with its full patch
       publish("message.updated", { sessionID, info: { ...user, summary: { title: "Edit 88 modules", diffs } } })
-      publish("session.updated", { sessionID, info: { id: sessionID, title: "fixture", summary: { additions: 400 * 88, deletions: 12 * 88, files: 88 } } })
+      publish("session.updated", {
+        sessionID,
+        info: { id: sessionID, title: "fixture", summary: { additions: 400 * 88, deletions: 12 * 88, files: 88 } },
+      })
 
       const frames = yield* plain.take(liveEvents)
       // the wire carries exactly the turn's events — no sync copy, no hole
@@ -637,9 +733,24 @@ describe("global event stream — fixture turn byte report (#1778)", () => {
       const largest = (rows: { bytes: number }[]) => Math.max(...rows.map((row) => row.bytes))
       const summaryAfter = frames.find((f) => f.data.payload.properties?.info?.summary?.diffs)!
       const report = {
-        before: { frames: before.length, totalBytes: total(before), largestFrameBytes: largest(before), syncCopies: before.filter((r) => r.sync).length, shellUpdates: previews.length },
-        after: { frames: after.length, totalBytes: total(after), largestFrameBytes: largest(after), syncCopies: 0, shellUpdates },
-        summaryFrame: { beforeBytes: before.filter((r) => r.type === "message.updated" && !r.sync).at(-1)!.bytes, afterBytes: summaryAfter.bytes },
+        before: {
+          frames: before.length,
+          totalBytes: total(before),
+          largestFrameBytes: largest(before),
+          syncCopies: before.filter((r) => r.sync).length,
+          shellUpdates: previews.length,
+        },
+        after: {
+          frames: after.length,
+          totalBytes: total(after),
+          largestFrameBytes: largest(after),
+          syncCopies: 0,
+          shellUpdates,
+        },
+        summaryFrame: {
+          beforeBytes: before.filter((r) => r.type === "message.updated" && !r.sync).at(-1)!.bytes,
+          afterBytes: summaryAfter.bytes,
+        },
       }
       console.log(`[#1778 fixture-turn byte report] ${JSON.stringify(report)}`)
       console.log(

@@ -90,7 +90,9 @@ describe("per-turn diff view — patch bodies on demand (#1778)", () => {
   })
 
   test("without a source (a provider that cannot fetch) a patch-less diff resolves to no patch", async () => {
-    expect(await createSummaryPatchLoader(undefined).patch({ ...turn, file: "src/app.ts", summary: live })).toBeUndefined()
+    expect(
+      await createSummaryPatchLoader(undefined).patch({ ...turn, file: "src/app.ts", summary: live }),
+    ).toBeUndefined()
   })
 })
 

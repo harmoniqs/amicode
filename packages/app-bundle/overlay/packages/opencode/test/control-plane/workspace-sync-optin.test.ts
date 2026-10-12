@@ -138,7 +138,12 @@ const insertWorkspace = (info: Workspace.Info) =>
 
 const attachSessionToWorkspace = (sessionID: SessionID, workspaceID: WorkspaceV2.ID) =>
   Database.Service.use(({ db }) =>
-    db.update(SessionTable).set({ workspace_id: workspaceID }).where(eq(SessionTable.id, sessionID)).run().pipe(Effect.orDie),
+    db
+      .update(SessionTable)
+      .set({ workspace_id: workspaceID })
+      .where(eq(SessionTable.id, sessionID))
+      .run()
+      .pipe(Effect.orDie),
   )
 
 const sessionSequence = (sessionID: SessionID) =>
@@ -236,12 +241,14 @@ describe("workspace control plane — sync copies are opt-in (#1778)", () => {
               expect(requests.length).toBeGreaterThan(0)
               expect(requests.every((request) => request.syncCopies === "true")).toBe(true)
               // the opt-in rides a header: the event URL keeps its routed form
-              expect(requests.every((request) => request.url.pathname === "/optin/global/event" && !request.url.search)).toBe(
-                true,
-              )
+              expect(
+                requests.every((request) => request.url.pathname === "/optin/global/event" && !request.url.search),
+              ).toBe(true)
               // and the remote's frames are still forwarded onto the local bus
               expect(
-                captured.events.some((event) => event.workspace === info.id && event.payload.type === "session.updated"),
+                captured.events.some(
+                  (event) => event.workspace === info.id && event.payload.type === "session.updated",
+                ),
               ).toBe(true)
               yield* workspace.remove(info.id)
             } finally {
