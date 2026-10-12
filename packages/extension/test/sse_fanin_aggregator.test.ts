@@ -1047,3 +1047,34 @@ describe("#1771 — per-arm traffic counters, pending depth, and the drop/gap ob
     expect(sink.text()).toContain("amicode.sync.gap");
   });
 });
+
+describe("#1771 AC5 — the census observer changes no delivered byte", () => {
+  it("an overflow + gap + reopen sequence writes the identical bytes with and without an observer", () => {
+    function run(observed: boolean): string {
+      const chunks: string[] = [];
+      let blocked = false;
+      const sink = { write: (c: string) => (chunks.push(c), !blocked), flush() {} };
+      const agg = new SseFanInAggregator({
+        sink,
+        bufferBound: 3,
+        ...(observed ? { now: () => 7, observer: { onOverflowDrop() {}, onGap() {} } } : {}),
+      });
+      agg.connect(`local=${LOCAL_EPOCH}:0;studio=${PEER_EPOCH}:0`);
+      agg.setMembership([{ machineId: "studio", reachable: true, token: "tok-studio" }]);
+      const local = fakeEngine({ legacy: true });
+      const studio = fakeEngine({ epoch: PEER_EPOCH });
+      for (const f of [local.connected(), ...local.stored("message.updated", { n: 1 }, { aggregateID: "ses_1" })]) agg.ingest(LOCAL_NAMESPACE, f);
+      blocked = true;
+      for (let i = 0; i < 9; i++) agg.ingest("studio", studio.event("message.part.delta", { i }));
+      agg.ingest(LOCAL_NAMESPACE, local.heartbeat());
+      blocked = false;
+      agg.resume();
+      agg.reopenArm("studio");
+      agg.ingest("studio", studio.heartbeat());
+      return chunks.join("");
+    }
+    const plain = run(false);
+    expect(run(true)).toBe(plain);
+    expect(plain).toContain("amicode.sync.gap"); // the sequence did exercise drop + gap
+  });
+});

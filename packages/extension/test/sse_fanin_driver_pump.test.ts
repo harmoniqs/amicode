@@ -1660,3 +1660,102 @@ describe("#1771 AC3 — each transition logs one line immediately, with its conn
     ok.fireClose();
   });
 });
+
+describe("#1771 AC5 — the census adds no frames to any stream and changes no delivery", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("FLEET-OF-ONE under a live census (cadence ticking, every transition logging): the stream is the engine's frames, byte-identical (#1264)", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const { census, lines } = testCensus();
+    census.start();
+    const localCtls: Ctl[] = [];
+    const driver = twoListenerDriver(fakeOrigins(), new SessionOwnerMap(), {
+      census,
+      openUpstream: () => {
+        const ctl = controllableSource();
+        localCtls.push(ctl);
+        return ctl.source;
+      },
+    });
+    for (const engine of [fakeEngine({ legacy: true }), fakeEngine({ epoch: LOCAL_EPOCH })]) {
+      localCtls.length = 0;
+      const res = mockRes();
+      driver.handle(mockReq("/global/event"), res);
+      const first = [engine.connected(), engine.event("session.status", { status: "busy" }), ...engine.stored("message.part.updated", { text: "ciao" }, { aggregateID: "ses_1" })];
+      for (const f of first) localCtls[0].push(f);
+      await flush();
+      vi.advanceTimersByTime(FANIN_CENSUS_INTERVAL_MS); // a census line mid-stream
+      localCtls[0].end(); // the arm drops …
+      await flush();
+      driver.reconcile(); // … and re-opens (no gap in fleet-of-one)
+      const second = [engine.heartbeat(), engine.event("session.status", { status: "idle" })];
+      for (const f of second) localCtls[1].push(f);
+      await flush();
+      expect(res.text()).toBe([...first, ...second].join(""));
+      res.fireClose();
+    }
+    expect(lines.some((l) => l.startsWith("[fanin] census "))).toBe(true);
+    expect(lines.some((l) => l.includes("arm-closed"))).toBe(true);
+  });
+
+  it("COMPOSITE: the same scripted sequence (overflow, gap, membership change, re-open) is byte-identical with and without a census sink", async () => {
+    async function run(sink: ((l: string) => void) | undefined): Promise<string> {
+      const ownerMap = new SessionOwnerMap();
+      ownerMap.update(STUDIO_OWNED);
+      const origins = fakeOrigins();
+      const driver = twoListenerDriver(origins, ownerMap, sink ? { census: new FanInCensus({ sink, now: () => 0 }) } : {});
+      const local = fakeEngine({ legacy: true }); // an old local engine: id-less
+      const studio = fakeEngine({ epoch: PEER_EPOCH });
+      const res = backpressureRes();
+      driver.handle(mockReq(`/global/event?lastEventID=studio=${studio.idAt(0)}`), res);
+      await flush();
+      for (const f of [local.connected(), ...local.stored("message.updated", { n: 1 }, { aggregateID: "ses_1" }), local.heartbeat()]) {
+        origins.broadcast(LOCAL_NAMESPACE, f);
+      }
+      origins.broadcast("studio", studio.connected());
+      await flush();
+      res.block();
+      for (let i = 0; i < 300; i++) origins.broadcast("studio", studio.event("message.part.delta", { i }));
+      await flush();
+      res.fireDrain();
+      await flush();
+      ownerMap.update([]);
+      driver.reconcile(); // membership change closes the peer arm
+      ownerMap.update(STUDIO_OWNED);
+      driver.reconcile(); // … and it re-opens (a reopen gap)
+      await flush();
+      origins.broadcast("studio", studio.heartbeat());
+      await flush();
+      res.fireClose();
+      return res.text();
+    }
+    const lines: string[] = [];
+    const silent = await run(undefined);
+    const logged = await run((l) => lines.push(l));
+    expect(logged).toBe(silent);
+    expect(lines.length).toBeGreaterThan(5); // the census did see it all …
+    expect(logged).not.toContain("[fanin]"); // … and none of it reached the stream
+    expect(logged).not.toContain("[owner-map]");
+  });
+
+  it("a census sink that throws never breaks delivery", async () => {
+    const census = new FanInCensus({
+      sink: () => {
+        throw new Error("log pipe closed");
+      },
+    });
+    census.start();
+    const origins = fakeOrigins();
+    const driver = twoListenerDriver(origins, new SessionOwnerMap(), { census });
+    const engine = fakeEngine({ epoch: LOCAL_EPOCH });
+    const res = mockRes();
+    expect(() => driver.handle(mockReq("/global/event"), res)).not.toThrow();
+    const f = engine.event("session.status", { status: "busy" });
+    origins.broadcast(LOCAL_NAMESPACE, f);
+    await flush();
+    expect(() => census.emit()).not.toThrow();
+    expect(res.text()).toBe(f);
+    res.fireClose();
+    census.stop();
+  });
+});
