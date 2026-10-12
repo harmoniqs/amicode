@@ -351,11 +351,26 @@ export interface OwnerMapFeedOpts {
 }
 
 /** #1771: one per-peer refresh line: outcome, duration, entry count, and for a
- *  failure its named reason and detail. */
-export function ownerRefreshLine(p: OwnerRefreshPeer): string {
+ *  failure its named reason and detail. #1774: plus what the owner map did with
+ *  a failed peer's entries (`retention=`), so a retained peer reads as retained —
+ *  `entries` stays this refresh's own count. Absent for an answered peer. */
+export function ownerRefreshLine(p: OwnerRefreshPeer, retention?: OwnerRetention): string {
   const reason = p.reason !== undefined ? ` reason=${p.reason}` : "";
   const detail = p.detail !== undefined ? ` detail=${JSON.stringify(p.detail)}` : "";
-  return `[owner-map] refresh peer=${p.machineId} outcome=${p.outcome} duration_ms=${p.durationMs} entries=${p.entries}${reason}${detail}`;
+  return `[owner-map] refresh peer=${p.machineId} outcome=${p.outcome} duration_ms=${p.durationMs} entries=${p.entries}${reason}${detail}${retentionFields(retention)}`;
+}
+
+function retentionFields(r: OwnerRetention | undefined): string {
+  if (r === undefined) return "";
+  switch (r.kind) {
+    case "retained":
+      return ` retention=retained held=${r.held} age_ms=${r.ageMs}`;
+    case "expired":
+    case "dropped":
+      return ` retention=${r.kind} dropped=${r.dropped}`;
+    case "unavailable":
+      return " retention=unavailable";
+  }
 }
 
 /** The default owner-map refresh cadence. */
@@ -381,8 +396,8 @@ export class OwnerMapFeed {
     if (this.stopped) return; // a stop() raced the in-flight build
     // #1774: the per-peer outcomes scope the update — a failed peer keeps its
     // last-good entries for the retention window instead of vanishing.
-    this.opts.ownerMap.update(projection.sessions ?? [], projection.peers);
-    for (const peer of projection.peers ?? []) this.log(ownerRefreshLine(peer));
+    const retention = this.opts.ownerMap.update(projection.sessions ?? [], projection.peers);
+    for (const peer of projection.peers ?? []) this.log(ownerRefreshLine(peer, retention.get(peer.machineId)));
   }
 
   private log(line: string): void {

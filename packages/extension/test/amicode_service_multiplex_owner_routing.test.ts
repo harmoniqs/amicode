@@ -233,6 +233,56 @@ describe("#1771 — each ownership refresh logs a per-peer outcome record", () =
     await expect(feed.refreshOnce()).resolves.toBeUndefined();
     expect(lines).toEqual(['[owner-map] refresh failed error="peer fan-out failed"']);
   });
+
+  it("#1774: a failed peer's line says what the map did with its entries — retained, expired, dropped, still unavailable", async () => {
+    let t = 0;
+    const ownerMap = new SessionOwnerMap({ now: () => t });
+    const lines: string[] = [];
+    let next: { sessions: SessionEntry[]; peers: OwnerRefreshPeer[] } = {
+      sessions: [
+        { id: "ses-s1", amicode_owner: { owner_machine_id: "studio", owner_name: "Studio", is_local: false } },
+        { id: "ses-s2", amicode_owner: { owner_machine_id: "studio", owner_name: "Studio", is_local: false } },
+        { id: "ses-m1", amicode_owner: { owner_machine_id: "mini", owner_name: "Mini", is_local: false } },
+      ],
+      peers: [
+        { machineId: "studio", outcome: "ok", durationMs: 40, entries: 2 },
+        { machineId: "mini", outcome: "ok", durationMs: 30, entries: 1 },
+      ],
+    };
+    const feed = new OwnerMapFeed({ ownerMap, log: (l) => lines.push(l), buildProjection: async () => next });
+    await feed.refreshOnce();
+    expect(lines.splice(0)).toEqual([
+      "[owner-map] refresh peer=studio outcome=ok duration_ms=40 entries=2",
+      "[owner-map] refresh peer=mini outcome=ok duration_ms=30 entries=1",
+    ]);
+
+    t = 15_000;
+    next = {
+      sessions: [],
+      peers: [
+        { machineId: "studio", outcome: "timeout", durationMs: 10_004, entries: 0, reason: "fetch-failed", detail: "The operation was aborted due to timeout" },
+        { machineId: "mini", outcome: "unauthorized", durationMs: 9, entries: 0, reason: "unauthorized" },
+      ],
+    };
+    await feed.refreshOnce();
+    expect(lines.splice(0)).toEqual([
+      '[owner-map] refresh peer=studio outcome=timeout duration_ms=10004 entries=0 reason=fetch-failed detail="The operation was aborted due to timeout" retention=retained held=2 age_ms=15000',
+      "[owner-map] refresh peer=mini outcome=unauthorized duration_ms=9 entries=0 reason=unauthorized retention=dropped dropped=1",
+    ]);
+
+    t = OWNER_RETENTION_MS + 1;
+    next = { sessions: [], peers: [{ machineId: "studio", outcome: "error", durationMs: 12, entries: 0, reason: "fetch-failed", detail: "HTTP 502" }] };
+    await feed.refreshOnce();
+    expect(lines.splice(0)).toEqual([
+      '[owner-map] refresh peer=studio outcome=error duration_ms=12 entries=0 reason=fetch-failed detail="HTTP 502" retention=expired dropped=2',
+    ]);
+
+    t += 5_000;
+    await feed.refreshOnce();
+    expect(lines.splice(0)).toEqual([
+      '[owner-map] refresh peer=studio outcome=error duration_ms=12 entries=0 reason=fetch-failed detail="HTTP 502" retention=unavailable',
+    ]);
+  });
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
