@@ -26,11 +26,14 @@ import {
   SessionOwnerMap,
   SessionMultiplexProxy,
   PENDING_OWNER_TTL_MS,
+  OWNER_RETENTION_MS,
+  OWNER_MAP_REFRESH_MS,
   fanInReachable,
   type SessionEntry,
 } from "../src/amicode_service/session_multiplexer";
+import { createAmicodeService } from "../src/amicode_service";
 import { SseFanInDriver, type FanInUpstreamRequest } from "../src/amicode_service/sse_fanin_driver";
-import type { SseFrameSource } from "../src/amicode_service/sse_fanin_aggregator";
+import { honestSourceComment, type SseFrameSource } from "../src/amicode_service/sse_fanin_aggregator";
 import {
   AmicodeServiceServer,
   fleetMultiplexEnabled,
@@ -334,6 +337,216 @@ describe("#1774 AC1 — a refresh in which one peer times out or errors keeps th
     res.fireClose();
   });
 });
+
+describe("#1774 AC2 — past the retention window the entries expire, the arm closes, and listeners get the named unavailable comment", () => {
+  it(`the default window is ${OWNER_RETENTION_MS} ms since the peer's last GOOD refresh: retained through it, expired past it`, () => {
+    let t = 1_000_000;
+    const m = new SessionOwnerMap({ now: () => t });
+    m.update([ownedBy("ses-s1", "studio")], [peerOk("studio")]);
+    t += 30_000;
+    m.update([], [peerTimeout("studio")]);
+    expect(m.resolveOwner("ses-s1")).toBe("studio");
+    t += 30_000; // exactly the window since the last good refresh
+    m.update([], [peer5xx("studio")]);
+    expect(m.resolveOwner("ses-s1")).toBe("studio");
+    t += 1; // past it
+    m.update([], [peerTimeout("studio")]);
+    expect(m.resolveOwner("ses-s1")).toBeUndefined();
+    expect(m.size).toBe(0);
+    expect(m.isUnavailable("studio")).toBe(true);
+    // still a NAMED owner of the fan-in membership (so the stream says so) …
+    expect(m.ownerMachineIds()).toEqual(["studio"]);
+    // … and never an active arm, whatever its transport says
+    expect(fanInReachable(m, () => true)("studio")).toBe(false);
+  });
+
+  it("the window is configurable per map (retentionMs)", () => {
+    let t = 0;
+    const m = new SessionOwnerMap({ now: () => t, retentionMs: 5_000 });
+    m.update([ownedBy("ses-s1", "studio")], [peerOk("studio")]);
+    t = 5_000;
+    m.update([], [peerTimeout("studio")]);
+    expect(m.resolveOwner("ses-s1")).toBe("studio");
+    t = 5_001;
+    m.update([], [peerTimeout("studio")]);
+    expect(m.resolveOwner("ses-s1")).toBeUndefined();
+  });
+
+  it("expiry closes the peer's arm and the listener receives the named unavailable comment — not silence", async () => {
+    let t = 0;
+    const ownerMap = new SessionOwnerMap({ now: () => t });
+    ownerMap.update([ownedBy("ses-s1", "studio")], [peerOk("studio")]);
+    const origins = armOrigins();
+    const driver = retentionDriver(origins, ownerMap);
+    const res = sseRes();
+    driver.handle(sseReq(), res);
+    await settle();
+    expect(origins.opens("studio")).toBe(1);
+
+    t = OWNER_RETENTION_MS + 1;
+    ownerMap.update([], [peerTimeout("studio")]);
+    driver.reconcile();
+    await settle();
+    expect(origins.closes("studio")).toBe(1);
+    expect(res.text()).toContain(honestSourceComment("studio", "peer-unreachable"));
+    // announced once, not on every reconcile
+    driver.reconcile();
+    await settle();
+    expect(res.text().split("source studio unavailable").length - 1).toBe(1);
+    res.fireClose();
+  });
+
+  it("an UNAUTHORIZED refresh does not retain: the entries drop at once and the peer is named unavailable (Key Decision)", async () => {
+    const ownerMap = new SessionOwnerMap();
+    ownerMap.update([ownedBy("ses-s1", "studio")], [peerOk("studio")]);
+    const origins = armOrigins();
+    const driver = retentionDriver(origins, ownerMap);
+    const res = sseRes();
+    driver.handle(sseReq(), res);
+    await settle();
+
+    ownerMap.update([], [peerUnauthorized("studio")]); // well inside the window
+    expect(ownerMap.resolveOwner("ses-s1")).toBeUndefined();
+    driver.reconcile();
+    await settle();
+    expect(origins.closes("studio")).toBe(1);
+    expect(res.text()).toContain(honestSourceComment("studio", "peer-unreachable"));
+    res.fireClose();
+  });
+
+  it("a trust or credential problem drops like unauthorized; a transport-down peer retains like a timeout", () => {
+    const m = new SessionOwnerMap();
+    for (const reason of ["untrusted", "credential-missing", "identity-conflict"] as const) {
+      m.update([ownedBy("ses-s1", "studio")], [peerOk("studio")]);
+      m.update([], [{ machineId: "studio", outcome: "error", reason }]);
+      expect(m.resolveOwner("ses-s1")).toBeUndefined();
+    }
+    m.update([ownedBy("ses-s1", "studio")], [peerOk("studio")]);
+    m.update([], [{ machineId: "studio", outcome: "error", reason: "no-upstream" }]);
+    expect(m.resolveOwner("ses-s1")).toBe("studio");
+  });
+
+  it("a peer that LEAVES the refreshed set is gone, not retained and not named unavailable", () => {
+    const m = new SessionOwnerMap();
+    m.update([ownedBy("ses-s1", "studio")], [peerOk("studio")]);
+    m.update([], []); // studio is no longer a serving peer
+    expect(m.resolveOwner("ses-s1")).toBeUndefined();
+    expect(m.isUnavailable("studio")).toBe(false);
+    expect(m.ownerMachineIds()).toEqual([]);
+  });
+
+  it("production wiring (observation boot): a peer whose refresh turns unauthorized is announced unavailable on the live /event", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] }); // the feed + reconcile cadences; HTTP stays real
+    let studioDenies = false;
+    const local = await startFleetStub(() => false, []);
+    const studio = await startFleetStub(() => studioDenies, [{ id: "ses-s1" }]);
+    const root = mkdtempSync(join(tmpdir(), "amicode-1774-wire-"));
+    const savedHub = process.env.AMICO_FLEET_HUB_FILE;
+    process.env.AMICO_FLEET_HUB_FILE = join(root, "hub-cred-absent.json");
+    const svc = createAmicodeService({
+      password: "svc-1774",
+      engine: { password: "engine-1774", getUrl: () => local.url },
+      fleet: {
+        hub: { getUrl: () => undefined },
+        observationOnly: true,
+        fleetPeers: {
+          localMachineId: "macbook",
+          getServingPeers: () => [{ machineId: "studio" }],
+          readPeerToken: (id) => (id === "studio" ? { ok: true, credential: { baseUrl: studio.url, token: "tok-studio" } } : { ok: false }),
+          rosterLookup: (id) => ({ name: id }),
+        },
+      },
+    });
+    const origin = (await svc.start()).toString().replace(/\/$/, "");
+    const stream = new AbortController();
+    try {
+      expect(await until(() => studio.listReads() >= 2)).toBe(true); // the boot refresh (active + archived)
+      await settle();
+      const res = await fetch(`${origin}/event`, { headers: { Authorization: serverAuthHeader("engine-1774") }, signal: stream.signal });
+      const text = streamText(res);
+      expect(await until(() => studio.eventOpens() === 1)).toBe(true); // the peer arm is open
+
+      studioDenies = true;
+      const reads = studio.listReads();
+      await vi.advanceTimersByTimeAsync(OWNER_MAP_REFRESH_MS); // the next owner-map refresh
+      expect(await until(() => studio.listReads() >= reads + 2)).toBe(true);
+      await settle();
+      await vi.advanceTimersByTimeAsync(1_000); // the listener's reconcile tick
+      expect(await until(() => text().includes(honestSourceComment("studio", "peer-unreachable")))).toBe(true);
+    } finally {
+      stream.abort();
+      await svc.stop();
+      vi.useRealTimers();
+      await Promise.all([local.stop(), studio.stop()]);
+      if (savedHub === undefined) delete process.env.AMICO_FLEET_HUB_FILE;
+      else process.env.AMICO_FLEET_HUB_FILE = savedHub;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+/** A fleet engine stub: its cross-project session list (401 while `denies()`),
+ *  its health, and a /global/event stream that stays open. */
+async function startFleetStub(denies: () => boolean, sessions: Array<Record<string, unknown>>) {
+  let listReads = 0;
+  let eventOpens = 0;
+  const server = http.createServer((req, res) => {
+    const u = new URL(req.url ?? "/", "http://stub");
+    if (u.pathname === "/experimental/session") {
+      listReads++;
+      if (denies()) return void res.writeHead(401).end("no");
+      res.writeHead(200, { "content-type": "application/json" });
+      return void res.end(JSON.stringify(u.searchParams.get("archived") === "true" ? [] : sessions));
+    }
+    if (u.pathname === "/global/health") {
+      res.writeHead(200, { "content-type": "application/json" });
+      return void res.end(JSON.stringify({ version: "stub-1774" }));
+    }
+    if (u.pathname === "/global/event") {
+      eventOpens++;
+      res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
+      return void res.write(": open\n\n");
+    }
+    res.writeHead(404).end();
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  return {
+    url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
+    listReads: () => listReads,
+    eventOpens: () => eventOpens,
+    stop: () =>
+      new Promise<void>((r) => {
+        server.closeAllConnections();
+        server.close(() => r());
+      }),
+  };
+}
+
+/** Accumulate a streaming response's text in the background. */
+function streamText(res: Response): () => string {
+  let text = "";
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  void (async () => {
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) return;
+        text += decoder.decode(value, { stream: true });
+      }
+    } catch {
+      /* aborted at teardown */
+    }
+  })();
+  return () => text;
+}
+
+/** Poll (real timers) until `cond` holds or the deadline passes. */
+async function until(cond: () => boolean, timeoutMs = 4_000): Promise<boolean> {
+  const start = Date.now();
+  while (!cond() && Date.now() - start < timeoutMs) await new Promise((r) => setTimeout(r, 10));
+  return cond();
+}
 
 // ── a deterministic fan-in harness (the driver + aggregator are used as-is) ───
 interface SseRes extends http.ServerResponse {

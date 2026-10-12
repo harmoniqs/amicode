@@ -40,6 +40,7 @@ import {
   SessionMultiplexProxy,
   SessionOwnerMap,
   OwnerMapFeed,
+  fanInReachable,
   type PeerTransport,
   type MultiplexResolver,
   type SessionEntry,
@@ -1219,14 +1220,18 @@ export function createAmicodeService(
         // `shutdown`) with the server.
         const census = new FanInCensus({ plane: "premium", ...(opts.log ? { sink: opts.log } : {}) });
         census.start();
+        const premiumPeerBaseUrl = (machineId: string): string | undefined => {
+          const r = peers.readPeerToken(machineId);
+          return r.ok ? r.credential.baseUrl : undefined;
+        };
         const driver = new SseFanInDriver({
           ownerMap,
           localMachineId: peers.localMachineId,
           localEventUrl: opts.engine?.getUrl ?? ((): string | undefined => undefined),
-          peerBaseUrl: (machineId) => {
-            const r = peers.readPeerToken(machineId);
-            return r.ok ? r.credential.baseUrl : undefined;
-          },
+          peerBaseUrl: premiumPeerBaseUrl,
+          // #1774: a peer the owner map names unavailable (retention lapsed, or
+          // its refresh was refused) is never an arm — the aggregator announces it.
+          reachable: fanInReachable(ownerMap, (machineId) => premiumPeerBaseUrl(machineId) !== undefined),
           peerToken: (machineId) => {
             const r = peers.readPeerToken(machineId);
             return r.ok ? { ok: true, credential: r.credential } : { ok: false, reason: "absent" };
@@ -1456,15 +1461,19 @@ export function createAmicodeService(
         // #1771: with its census (30 s census + transition lines → the log).
         const observeCensus = new FanInCensus({ plane: "observe", ...(opts.log ? { sink: opts.log } : {}) });
         observeCensus.start();
+        const observePeerBaseUrl = (machineId: string): string | undefined => {
+          if (!fleetPeers.getServingPeers().some((p) => p.machineId === machineId)) return undefined;
+          const r = fleetPeers.readPeerToken(machineId);
+          return r.ok ? r.credential.baseUrl : undefined;
+        };
         const observeDriver = new SseFanInDriver({
           ownerMap,
           localMachineId: fleetPeers.localMachineId,
           localEventUrl: opts.engine?.getUrl ?? ((): string | undefined => undefined),
-          peerBaseUrl: (machineId) => {
-            if (!fleetPeers.getServingPeers().some((p) => p.machineId === machineId)) return undefined;
-            const r = fleetPeers.readPeerToken(machineId);
-            return r.ok ? r.credential.baseUrl : undefined;
-          },
+          peerBaseUrl: observePeerBaseUrl,
+          // #1774: a peer the owner map names unavailable (retention lapsed, or
+          // its refresh was refused) is never an arm — the aggregator announces it.
+          reachable: fanInReachable(ownerMap, (machineId) => observePeerBaseUrl(machineId) !== undefined),
           peerToken: (machineId) => {
             const r = fleetPeers.readPeerToken(machineId);
             return r.ok ? { ok: true, credential: r.credential } : { ok: false, reason: "absent" };

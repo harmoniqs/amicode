@@ -285,9 +285,12 @@ export class SessionOwnerMap {
 
   /** The DISTINCT owner machine_ids currently holding ≥1 owned session (#1511,
    *  §D1) — the fan-in membership's owner set. Order is unspecified; callers
-   *  exclude `local` themselves. */
+   *  exclude `local` themselves. #1774: plus every peer NAMED unavailable (its
+   *  entries expired or were dropped), so the fan-in keeps it as a member and
+   *  announces it unavailable instead of dropping its arm in silence — the
+   *  driver's `fanInReachable` keeps such a member from ever being an arm. */
   ownerMachineIds(): string[] {
-    return [...new Set(this.owners.values())];
+    return [...new Set([...this.owners.values(), ...this.unavailablePeers])];
   }
 
   /** #1774: is this peer NAMED unavailable — its retention window lapsed, or its
