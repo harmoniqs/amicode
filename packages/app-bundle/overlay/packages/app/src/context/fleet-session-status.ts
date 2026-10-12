@@ -175,11 +175,26 @@ export type FleetReseedDeps = {
   now?: () => number
   /** Client timeout (default FLEET_READ_TIMEOUT_MS). */
   timeoutMs?: number
+  /** Injectable timers (fake clocks in tests). */
+  timers?: FleetTimers
+  /** Teardown: an abort cancels the read — nothing applied, no fallback. */
+  signal?: AbortSignal
+}
+
+export type FleetTimers = {
+  setTimeout: (fn: () => void, ms: number) => unknown
+  clearTimeout: (id: unknown) => void
+}
+
+export const defaultFleetTimers: FleetTimers = {
+  setTimeout: (fn, ms) => setTimeout(fn, ms),
+  clearTimeout: (id) => clearTimeout(id as ReturnType<typeof setTimeout>),
 }
 
 export type FleetReseedOutcome =
   | { kind: "applied"; result: Extract<FleetParseResult, { kind: "ok" }> }
   | { kind: "fallback"; cause: FleetFallbackCause }
+  | { kind: "cancelled" }
 
 /** One fleet re-seed: issue the read (timestamped BEFORE the request so the
  *  store's recency guard can refuse a downgrade of a busy mutated after it),
@@ -188,29 +203,46 @@ export type FleetReseedOutcome =
  *  to today's local re-seed. Never throws. */
 export async function runFleetReseed(ids: readonly string[], deps: FleetReseedDeps): Promise<FleetReseedOutcome> {
   const now = deps.now ?? Date.now
+  const timers = deps.timers ?? defaultFleetTimers
+  const timeoutMs = deps.timeoutMs ?? FLEET_READ_TIMEOUT_MS
+  if (deps.signal?.aborted) return { kind: "cancelled" }
   const fetchedAt = now()
   const controller = new AbortController()
-  let timer: ReturnType<typeof setTimeout> | undefined
+  let timer: unknown
+  let onTeardown: (() => void) | undefined
   const timedOut = new Promise<"timeout">((resolve) => {
-    timer = setTimeout(() => {
+    timer = timers.setTimeout(() => {
       controller.abort()
       resolve("timeout")
-    }, deps.timeoutMs ?? FLEET_READ_TIMEOUT_MS)
+    }, timeoutMs)
+  })
+  const cancelled = new Promise<"cancelled">((resolve) => {
+    onTeardown = () => {
+      controller.abort()
+      resolve("cancelled")
+    }
+    deps.signal?.addEventListener("abort", onTeardown, { once: true })
   })
   let parsed: FleetParseResult
   try {
-    const raced = await Promise.race([deps.fetchFleet(ids, controller.signal), timedOut])
+    // Whatever settles first wins; a response arriving after the timeout (or
+    // teardown) lands on an already-settled race and is DISCARDED.
+    const raced = await Promise.race([deps.fetchFleet(ids, controller.signal), timedOut, cancelled])
+    if (raced === "cancelled") return { kind: "cancelled" }
     parsed =
       raced === "timeout"
-        ? { kind: "fallback", cause: "timeout", silent: false, detail: `no answer within ${deps.timeoutMs ?? FLEET_READ_TIMEOUT_MS} ms` }
+        ? { kind: "fallback", cause: "timeout", silent: false, detail: `no answer within ${timeoutMs} ms` }
         : parseFleetStatusResponse(raced.status, raced.body)
   } catch (err) {
+    if (deps.signal?.aborted) return { kind: "cancelled" }
     parsed = controller.signal.aborted
       ? { kind: "fallback", cause: "timeout", silent: false, detail: "aborted at the client timeout" }
       : { kind: "fallback", cause: "network", silent: false, detail: err instanceof Error ? err.message : String(err) }
   } finally {
-    if (timer !== undefined) clearTimeout(timer)
+    timers.clearTimeout(timer)
+    if (onTeardown) deps.signal?.removeEventListener("abort", onTeardown)
   }
+  if (deps.signal?.aborted) return { kind: "cancelled" }
   if (parsed.kind === "ok") {
     deps.reconcile(parsed.statuses, { fetchedAt })
     return { kind: "applied", result: parsed }

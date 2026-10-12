@@ -66,6 +66,7 @@ import {
   runFleetReseed,
   type FleetReseedDeps,
 } from "./fleet-session-status"
+import { createFleetReseedScheduler, viewedSessionIdFromLocation } from "./fleet-reseed-scheduler"
 
 type GlobalStore = {
   ready: boolean
@@ -337,11 +338,29 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
     localReseed,
     diagnostics: fleetDiagnostics,
   }
-  const reconcileFromStatus = async () => {
-    const ids = session.pinnedIds()
-    if (ids.length === 0) return localReseed()
-    await runFleetReseed(ids, fleetReseedDeps)
-  }
+  // #1766 — the re-seed TRIGGERS + 10 s SELF-HEAL: the connected edge and the
+  // sync-gap frame (below), a newly pinned session (debounced), `unknown`
+  // retries for a cold owner map, and a visibility-gated periodic tick — all
+  // single-flight, each read bounded by the client timeout. Nothing pinned →
+  // the edges keep today's local re-seed.
+  const fleetReseed = createFleetReseedScheduler({
+    pinnedIds: () => session.pinnedIds(),
+    viewedId: () =>
+      typeof window === "undefined"
+        ? undefined
+        : viewedSessionIdFromLocation(`${window.location.pathname}${window.location.hash}`),
+    reseed: (ids, signal) => runFleetReseed(ids, { ...fleetReseedDeps, signal }),
+    localReseed,
+    isConnected: () => serverSDK.event.status() === "connected",
+    isVisible: () => typeof document === "undefined" || document.visibilityState !== "hidden",
+    diagnostics: fleetDiagnostics,
+  })
+  const offPinned = session.onPinned((sessionID) => fleetReseed.notePinned(sessionID))
+  fleetReseed.start()
+  onCleanup(() => {
+    offPinned()
+    fleetReseed.stop()
+  })
   // #1264/#1289 (reconnect-storm debounce): the SSE preamble replays
   // `server.connected` to EVERY reconnecting member — over a flaky link a
   // reconnect flurry would re-bootstrap all active directories once per
@@ -610,7 +629,9 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
       // #1637 — reconcile the tri-state status on every reconnect edge / gap
       // frame so a status left stale during an outage self-corrects without a
       // reload (a stale busy AND a stale idle), recency-guarded in the store.
-      if (eventType === "server.connected" || eventType === "amicode.sync.gap") void reconcileFromStatus()
+      // #1766: through the FLEET read (peer sessions included), local fallback.
+      if (eventType === "server.connected") fleetReseed.trigger("connected")
+      if (eventType === "amicode.sync.gap") fleetReseed.trigger("gap")
       applyGlobalEvent({
         event,
         project: globalStore.project,

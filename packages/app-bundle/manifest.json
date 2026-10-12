@@ -165,8 +165,12 @@
     "packages/app/src/context/command.tsx": "388d6cb12b6dc43ecb0827e3fb918370cb9d16d96161a5990dec10fff05af172",
     "packages/app/src/context/directory-sync.test.ts": "c03c7bcd95ac47b3de5e1e9719b6eccdb3569063026fe993b448453c818c7b48",
     "packages/app/src/context/directory-sync.ts": "e53a71fa2b87ad5d73ea0fd8ad8a58fe2d1e06c80e8369d3d89ce21310f0ed7d",
+    "packages/app/src/context/fleet-reseed-scheduler.test.ts": "9548e0265adb09b98ae708665ba1560ed06a63529e816261a19d0b2785fce608",
+    "packages/app/src/context/fleet-reseed-scheduler.ts": "acbbeacb547aca571bf1c7b9f6f6240519932cbe42a3f3cb6f6163ff55c80cc7",
+    "packages/app/src/context/fleet-session-status.e2e-fixture.ts": "74bcf006f7105ef635c5b0ea251fb0ca06aad5dbaa9c817c77e5093df1e08032",
+    "packages/app/src/context/fleet-session-status.e2e.test.ts": "e76af016dacfafaf0124c86470bdeda28a49e5d97d9a1cfa9d855cdfbbc83687",
     "packages/app/src/context/fleet-session-status.test.ts": "4d37bac382d59df115a72b26a09a1c01dbd1417e04eb443563f070dcab55597d",
-    "packages/app/src/context/fleet-session-status.ts": "4aa6973128b5826f2de8072cef1e9cc21af7f1ba4db7d5e47dd03aa8f3014193",
+    "packages/app/src/context/fleet-session-status.ts": "0088413ee2059d2828da97e8f4af98883c09b8d76c1e6078cd5e05b4bdbb7821",
     "packages/app/src/context/language.tsx": "0f7b1cbd33071f293c15b66e3a900dfd07347f9eb93d8cf61df0fac3bc4effc5",
     "packages/app/src/context/layout-side-panel-tabs.test.ts": "297780d590110895baf053bdde81863439dac94a18592287314167db579a89d5",
     "packages/app/src/context/layout-side-panel-tabs.ts": "e8dec07b2b5a5ebe68a76c98d688afa1360a4e31741a10bb49228afb8a7f3777",
@@ -184,7 +188,7 @@
     "packages/app/src/context/server-session-orphan-part.test.ts": "1d635374c0bfff25a01825061aabac7334e5cdaedca2dab9f3d9467ff543caea",
     "packages/app/src/context/server-session.test.ts": "30cd24bb1345376fd1a165d65677dee5c36d586efa7969d3b4844967040fda59",
     "packages/app/src/context/server-session.ts": "d309c8caad0b444d911a2e63be012d9e269b1791ffbfbb55218b0d631fd684fe",
-    "packages/app/src/context/server-sync.tsx": "4a79d6d9068c8630f7bcf2726a7afef846b460930af9d9d4dfff35c4cbdb28dc",
+    "packages/app/src/context/server-sync.tsx": "cdc7057c2188d79c5e586f1be05431cb97880ed3fd6b8f3980268db0fa011e34",
     "packages/app/src/context/server.tsx": "08e978e4b4b3094221a2a0b92e069f39cbedb6d6cf95935881e21cde52265ee2",
     "packages/app/src/context/session-mirror.test.ts": "65e6d6474e4e67f2da194047140c8c8aac04fe0cc9926441468e53fabc48db96",
     "packages/app/src/context/session-mirror.ts": "b98de060f2b06e6f9a48b1f69ed408f12086c626d90c7dd22029a4ee732260e2",
@@ -938,10 +942,10 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-12T13:52:13.118Z",
+  "extracted_at": "2026-10-12T14:02:47.134Z",
   "per_package": {
     "packages/app": {
-      "A": 233,
+      "A": 237,
       "M": 158,
       "D": 0
     },
@@ -987,7 +991,7 @@
     }
   },
   "counts": {
-    "overlay_total": 916,
+    "overlay_total": 920,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1149,6 +1153,10 @@
     "packages/app/src/context/command.tsx": "M",
     "packages/app/src/context/directory-sync.test.ts": "A",
     "packages/app/src/context/directory-sync.ts": "M",
+    "packages/app/src/context/fleet-reseed-scheduler.test.ts": "A",
+    "packages/app/src/context/fleet-reseed-scheduler.ts": "A",
+    "packages/app/src/context/fleet-session-status.e2e-fixture.ts": "A",
+    "packages/app/src/context/fleet-session-status.e2e.test.ts": "A",
     "packages/app/src/context/fleet-session-status.test.ts": "A",
     "packages/app/src/context/fleet-session-status.ts": "A",
     "packages/app/src/context/language.tsx": "M",
