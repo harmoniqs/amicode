@@ -383,6 +383,7 @@ export function createServerSession(
   const seen = new Set<string>()
   const infoSeen = new Set<string>()
   const pinned = new Map<string, number>()
+  const pinListeners = new Set<(sessionID: string) => void>()
   const generations = new Map<string, object>()
   const generation = (sessionID: string) => {
     const current = generations.get(sessionID)
@@ -1968,13 +1969,30 @@ export function createServerSession(
       evict([sessionID])
     },
     pin(sessionID: string) {
-      pinned.set(sessionID, (pinned.get(sessionID) ?? 0) + 1)
+      const count = pinned.get(sessionID) ?? 0
+      pinned.set(sessionID, count + 1)
       touch(sessionID)
+      // #1766: a NEWLY pinned session (0 → 1) — e.g. a tab restored after the
+      // connected edge already fired — triggers the debounced fleet re-seed.
+      if (count === 0) for (const listener of [...pinListeners]) listener(sessionID)
     },
     unpin(sessionID: string) {
       const count = pinned.get(sessionID)
       if (!count || count === 1) pinned.delete(sessionID)
       if (count && count > 1) pinned.set(sessionID, count - 1)
+    },
+    /** #1766: the currently pinned session ids (every open tab's session plus
+     *  the viewed one) — the set the fleet status re-seed names. */
+    pinnedIds(): string[] {
+      return [...pinned.keys()]
+    },
+    /** #1766: observe sessions becoming newly pinned (0 → 1). Returns the
+     *  unsubscribe. */
+    onPinned(listener: (sessionID: string) => void): () => void {
+      pinListeners.add(listener)
+      return () => {
+        pinListeners.delete(listener)
+      }
     },
     apply,
     applyV2,

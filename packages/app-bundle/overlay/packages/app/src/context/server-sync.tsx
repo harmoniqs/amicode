@@ -59,6 +59,13 @@ import type {
 } from "@opencode-ai/client/promise"
 import { toggleMcp } from "./global-sync/mcp"
 import { createServerSession, type ServerSession } from "./server-session"
+import { amicodeGetResponse } from "@/utils/amicode-fetch"
+import {
+  createFleetDiagnostics,
+  fleetSessionStatusRoute,
+  runFleetReseed,
+  type FleetReseedDeps,
+} from "./fleet-session-status"
 
 type GlobalStore = {
   ready: boolean
@@ -306,7 +313,8 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
   // needed to downgrade a stale busy) on every reconnect edge / gap frame. The
   // fetch is timestamped BEFORE the request so the store's recency guard can
   // refuse a downgrade of a busy that was mutated locally after the snapshot.
-  const reconcileFromStatus = async () => {
+  // #1766: this is now the FALLBACK — today's local re-seed, unchanged.
+  const localReseed = async () => {
     const fetchedAt = Date.now()
     try {
       const statuses = (await serverSDK.client.session.status()).data ?? {}
@@ -314,6 +322,25 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
     } catch {
       // A failed reconcile is non-fatal — the next edge retries.
     }
+  }
+  // #1766 — the FLEET re-seed: name the pinned sessions (every open tab's, the
+  // viewed one first) to the service's fleet session-status read, which asks
+  // each session's OWNER for status in that session's exact DIRECTORY, and
+  // apply its tri-state map through the same recency-guarded reconcile. A peer
+  // session's busy re-learned here re-raises the rail's working floor after a
+  // reopen (the fan-in does not replay). Unavailable → localReseed().
+  const fleetDiagnostics = createFleetDiagnostics()
+  const fleetReseedDeps: FleetReseedDeps = {
+    fetchFleet: (ids, signal) => amicodeGetResponse(serverSDK.server, fleetSessionStatusRoute(ids), { signal }),
+    // The read passes the engine's own SessionStatus entries through validated.
+    reconcile: (statuses, opts) => session.reconcileStatuses(statuses as Record<string, SessionStatus>, opts),
+    localReseed,
+    diagnostics: fleetDiagnostics,
+  }
+  const reconcileFromStatus = async () => {
+    const ids = session.pinnedIds()
+    if (ids.length === 0) return localReseed()
+    await runFleetReseed(ids, fleetReseedDeps)
   }
   // #1264/#1289 (reconnect-storm debounce): the SSE preamble replays
   // `server.connected` to EVERY reconnecting member — over a flaky link a
