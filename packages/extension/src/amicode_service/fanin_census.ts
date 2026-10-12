@@ -142,37 +142,37 @@ export class FanInCensus {
   listenerAccepted(conn: CensusConnection): void {
     this.accepted += 1;
     this.live.set(conn.id, conn);
-    this.log(`listener-accepted conn=${conn.id} listeners=${this.live.size}`);
+    this.log("listener-accepted", `conn=${conn.id} listeners=${this.live.size}`);
   }
 
   listenerClosed(connId: string, reason: FanInCloseReason): void {
     if (!this.live.delete(connId)) return;
     this.closed += 1;
     if (reason === "evicted") this.evictions += 1;
-    this.log(`listener-closed conn=${connId} reason=${reason} listeners=${this.live.size}`);
+    this.log("listener-closed", `conn=${connId} reason=${reason} listeners=${this.live.size}`);
   }
 
   listenerRefused(cap: number): void {
     this.refusals += 1;
-    this.log(`listener-refused listeners=${this.live.size} cap=${cap}`);
+    this.log("listener-refused", `listeners=${this.live.size} cap=${cap}`);
   }
 
   armOpened(connId: string, arm: string, opens: number): void {
-    this.log(`arm-opened conn=${connId} arm=${arm} opens=${opens}`);
+    this.log("arm-opened", `conn=${connId} arm=${arm} opens=${opens}`);
   }
 
   armClosed(connId: string, arm: string, reason: FanInCloseReason): void {
-    this.log(`arm-closed conn=${connId} arm=${arm} reason=${reason}`);
+    this.log("arm-closed", `conn=${connId} arm=${arm} reason=${reason}`);
   }
 
   gapEmitted(connId: string, arms: string[], cause: GapCause): void {
-    this.log(`gap-emitted conn=${connId} arm=${arms.join(",")} cause=${cause}`);
+    this.log("gap-emitted", `conn=${connId} arm=${arms.join(",")} cause=${cause}`);
   }
 
   /** The FIRST drop of an overflow episode (the census counts every drop; the
    *  line is per episode — a drop storm never becomes a per-frame log). */
   overflowDrop(connId: string, arm: string, pending: number): void {
-    this.log(`overflow-drop conn=${connId} arm=${arm} pending=${pending}`);
+    this.log("overflow-drop", `conn=${connId} arm=${arm} pending=${pending}`);
   }
 
   // ── the census ────────────────────────────────────────────────────────────
@@ -225,9 +225,9 @@ export class FanInCensus {
     this.write(this.line());
   }
 
-  private log(event: string): void {
-    const [kind, ...rest] = event.split(" ");
-    this.write(`[fanin] ${kind} plane=${this.plane} ${rest.join(" ")}`);
+  /** One transition line: `[fanin] <kind> plane=<plane> <fields>`. */
+  private log(kind: string, fields: string): void {
+    this.write(`[fanin] ${kind} plane=${this.plane} ${fields}`);
   }
 
   private write(line: string): void {
