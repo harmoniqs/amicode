@@ -233,6 +233,7 @@
     "packages/app/src/i18n/uk.ts": "c1f2fb529563fa211e3e322aca0d9417a34909fd056ae80b65c3861b0d6caee4",
     "packages/app/src/i18n/zh.ts": "50755c05ef47e910c3de7c1471f66b7cd21cea93c005480636ec085a11d5e09b",
     "packages/app/src/i18n/zht.ts": "c65962a29d6d772d1333ce85a7b3a6f8f3246fbef634ec148cc6531253bbeae9",
+    "packages/app/src/pages/directory-layout.tsx": "e580e6197408358ddd44eaa76cddd0828e87db255a9068971998f787851369d6",
     "packages/app/src/pages/empty-workspace-landing.tsx": "ac9410f5b223b30e2d82a6d222992fed2226b6afc1213ff0c8305a230cda7cb2",
     "packages/app/src/pages/error.tsx": "db9ba0847cfb205100ad6133cce30c6ea2ce983802af44947e6d2b746c2a6ec5",
     "packages/app/src/pages/hold-debug-badge-gate.test.ts": "661f59e172a5b074a6807896f46c18338faa59b6d9c0912fd824df2dae4a5730",
@@ -265,6 +266,8 @@
     "packages/app/src/utils/amicode-workspace-projects.test.ts": "8b5c32172e2039b3d9c52f2257023263fc846132e7c185e4a63ae014bc2e2bfb",
     "packages/app/src/utils/amicode-workspace-projects.ts": "cbe091c463177375c93cb43676c202bd7bf06baf36fdec779f7d641558ff6bee",
     "packages/app/src/utils/chrome-dropdown.ts": "f8b878c5df4e1afd96b0751c73daaad0a8127411030724cb8f9a5089ebb29eac",
+    "packages/app/src/utils/diffs.test.ts": "38a5b5dbe23014660204fe08e30599dad16c93665eeaf555284915d0de83a569",
+    "packages/app/src/utils/diffs.ts": "313ec1085e24b5b8d2844cf42ea2caa93cda46081a6aa5691de5bce8a6686744",
     "packages/app/src/utils/global-clipboard.test.ts": "18ac0ea486d36eed00597f2718f03bffce70a6e6a8f77c79aefe0795790d8771",
     "packages/app/src/utils/global-clipboard.ts": "b26373289d7402c88e8038575703b11fa5e4ef5a7f50ee05bceb45488022ab26",
     "packages/app/src/utils/pane-bridge.ts": "a8a8a40dc60a367086f3c4e4c561a289fb85d8b2086a8d62c2b66102de652ce4",
@@ -316,7 +319,7 @@
     "packages/llm/src/protocols/bedrock-converse.ts": "834a415fa8ddf9ad1224133f8352d0a926694f19f0954201d182111c171ec03b",
     "packages/llm/test/provider/bedrock-converse.test.ts": "e8e14d60e8502e928f170f8ac5b406c44bf16d2dd34996ddc2fb7b9261decf85",
     "packages/opencode/src/agent/agent.ts": "512372a4c62997e9565266638ada19b9dc0a3685b0c0483fd28fede2abdb5c9b",
-    "packages/opencode/src/bus/global-replay.ts": "3b172a01b322af8282b3451446316834aafae840b9d48e41ef5447986fbaf496",
+    "packages/opencode/src/bus/global-replay.ts": "3ce244c2dd0fd75cc1a9907f65d758833fae5da7165860189ca80fcd73e7ef60",
     "packages/opencode/src/bus/global.ts": "65b3b380936fc34b2c5ef9f3ab419a6c8e6d4cfc696302a266188f26ccdc320a",
     "packages/opencode/src/control-plane/workspace.ts": "cc56fb9a6dc6e0fe88e14237ff8aa29a46ce12971ea69a9d80982e0c58128c13",
     "packages/opencode/src/effect/runner.ts": "b660b5b22df810b16293c23c6d832e5e8dcfb12b9a8a858c875d2c051c855b81",
@@ -395,7 +398,7 @@
     "packages/opencode/test/server/httpapi-compression.test.ts": "5f7603d7018e0b95f1c2f36c01dd297c01770bfcdd91ce29778e03b7d6143f75",
     "packages/opencode/test/server/httpapi-file-write-gate.test.ts": "0c91b7417e615850edfde3f2878207dab6b6624d4cfbb6e6783b2e6d9aa4dff0",
     "packages/opencode/test/server/httpapi-file.test.ts": "d3386129bc81467ecbcc57a3861f53767ee56ac41b4ff6ad58d8b168fb3b3373",
-    "packages/opencode/test/server/httpapi-global-event.test.ts": "3c51b701e9912f359f992df89afb3a436fcedbe003a41a51ca6cdedb88b8e994",
+    "packages/opencode/test/server/httpapi-global-event.test.ts": "4c02060af1d2d9585f41293f2d62560de9df6b85b542c93ed6e2aa4171c145fc",
     "packages/opencode/test/server/httpapi-instance-route-auth.test.ts": "4b73a89d2431c02bc3b665d93f9002914e51eb1add979dc1867efbcbc0c36e25",
     "packages/opencode/test/server/httpapi-provider.test.ts": "9e8b3e085b478e3f99b689ffff600e10c0b4b50b3cabdbd749f88dae19bf5904",
     "packages/opencode/test/server/httpapi-session.test.ts": "eda6fd763ac4c17891cedaa4ccd49597c03e7227fcfdcf0f94a1b4545ba623ed",
@@ -404,6 +407,7 @@
     "packages/opencode/test/server/session-compact-errors.test.ts": "2ae2044d66db1ba41a5e294afedea5271f11d5bf384685a06ea05ac515b16fb2",
     "packages/opencode/test/server/session-diff-missing-patch.test.ts": "70526ca7fb86741843fd167f8f2f9c6f6d7e5e415a20a5448d17d24229bdd65b",
     "packages/opencode/test/server/session-diff-scoped.test.ts": "20ef80b92ad872573b371540575f028be8f1ad3c9f34d72f814b621e14e7a59e",
+    "packages/opencode/test/server/summary-diff-wire.test.ts": "af750d297333225e2ee7342cab59b8e0131294157d742d8d35c62103691dc5d5",
     "packages/opencode/test/server/workspace-routing.test.ts": "2574731ac379c540f450edc15f8750ac5360e8c33b4a0dad7c61e8eb686137bb",
     "packages/opencode/test/session/adversarial-e2e.test.ts": "1b471a69223d040c5d5f4f2ee99c2daa6df56bdf11679b65d902c15bedac3e80",
     "packages/opencode/test/session/business-record.test.ts": "7857094479408bcfd6ea8d9f5b425c6384bcf8490f930674bc1c203e82782d75",
@@ -459,11 +463,14 @@
     "packages/session-ui/src/components/session-review.css": "ec8c5b359dd4b7ff80d7fad8906359678adade9ce62c9d74aedc000b646db341",
     "packages/session-ui/src/components/session-review.tsx": "d2015c9f7419279f08e84523439a0b73e83bd5d06587ad56b85ea53b66ecaee4",
     "packages/session-ui/src/components/session-turn.css": "792915f3373134eadf3cd51e1d4bfa88ec347e6b037b6caf60b639ec5e74fbd8",
-    "packages/session-ui/src/components/session-turn.tsx": "9cbc0d7a35f42e32dad53ace7b3c7d92623fa2d3108edb49e0b7bc868f5c1966",
+    "packages/session-ui/src/components/session-turn.tsx": "42f247b0434a9f52d88d9fb96adff59afe6edeab84dd912b62eb153253b6696f",
+    "packages/session-ui/src/components/summary-patch.test.ts": "560272a942f1cdcaf78ea0cdc6ec25e49e3ddc8eef1c93d4cd6c728294b6ae40",
+    "packages/session-ui/src/components/summary-patch.ts": "ab086ea1bc741e15b94f6e9aedc4d934cac17597f4aa1392b146994020006170",
     "packages/session-ui/src/components/tool-count-label.test.ts": "c62bbe2c662f6740794d25bd7c33fb3b9b46394a1b41d01d6568a8a2ee2b4e75",
     "packages/session-ui/src/components/tool-count-label.tsx": "06c96479710314d443d42d4c29a29b46d58a55ee84a844a5b6865b49a0513340",
     "packages/session-ui/src/components/tool-error-card.tsx": "e27b89836b7c709120ac15fbffd2200038944058ea3506e61e5897ffb3537503",
     "packages/session-ui/src/components/tool-status-title.tsx": "ae4561b58f55985d2294a352802e723b18943ac9a6551d97f1c4a6cc95368c8a",
+    "packages/session-ui/src/context/data.tsx": "7b840b5bf6929445d21da2cbd8e8006316c6950a09d559ea77e8c397e728cd99",
     "packages/session-ui/src/pierre/worker.ts": "7f210f931777956567eaeea15f2f5478befc7874a64a4b685504c59c66503fee",
     "packages/session-ui/src/util/clipboard.ts": "c37ba53914714ed04135e5a254e8ea90186f097d7470fa0873a83de82f3fef2d",
     "packages/ui/src/amicode/amico-presence.css": "b3f345b607e318dcfbefcdc677fe21cc7d387b9946b0f9d625b0a842fe7e31b9",
@@ -949,11 +956,11 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-12T21:54:35.577Z",
+  "extracted_at": "2026-10-12T22:06:29.073Z",
   "per_package": {
     "packages/app": {
       "A": 237,
-      "M": 158,
+      "M": 161,
       "D": 0
     },
     "packages/core": {
@@ -967,7 +974,7 @@
       "D": 0
     },
     "packages/opencode": {
-      "A": 79,
+      "A": 80,
       "M": 92,
       "D": 0
     },
@@ -987,8 +994,8 @@
       "D": 0
     },
     "packages/session-ui": {
-      "A": 42,
-      "M": 31,
+      "A": 44,
+      "M": 32,
       "D": 0
     },
     "packages/ui": {
@@ -998,7 +1005,7 @@
     }
   },
   "counts": {
-    "overlay_total": 927,
+    "overlay_total": 934,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1228,6 +1235,7 @@
     "packages/app/src/i18n/uk.ts": "M",
     "packages/app/src/i18n/zh.ts": "M",
     "packages/app/src/i18n/zht.ts": "M",
+    "packages/app/src/pages/directory-layout.tsx": "M",
     "packages/app/src/pages/empty-workspace-landing.tsx": "A",
     "packages/app/src/pages/error.tsx": "M",
     "packages/app/src/pages/hold-debug-badge-gate.test.ts": "A",
@@ -1260,6 +1268,8 @@
     "packages/app/src/utils/amicode-workspace-projects.test.ts": "A",
     "packages/app/src/utils/amicode-workspace-projects.ts": "A",
     "packages/app/src/utils/chrome-dropdown.ts": "A",
+    "packages/app/src/utils/diffs.test.ts": "M",
+    "packages/app/src/utils/diffs.ts": "M",
     "packages/app/src/utils/global-clipboard.test.ts": "A",
     "packages/app/src/utils/global-clipboard.ts": "A",
     "packages/app/src/utils/pane-bridge.ts": "A",
@@ -1399,6 +1409,7 @@
     "packages/opencode/test/server/session-compact-errors.test.ts": "A",
     "packages/opencode/test/server/session-diff-missing-patch.test.ts": "M",
     "packages/opencode/test/server/session-diff-scoped.test.ts": "A",
+    "packages/opencode/test/server/summary-diff-wire.test.ts": "A",
     "packages/opencode/test/server/workspace-routing.test.ts": "M",
     "packages/opencode/test/session/adversarial-e2e.test.ts": "A",
     "packages/opencode/test/session/business-record.test.ts": "A",
@@ -1455,10 +1466,13 @@
     "packages/session-ui/src/components/session-review.tsx": "M",
     "packages/session-ui/src/components/session-turn.css": "M",
     "packages/session-ui/src/components/session-turn.tsx": "M",
+    "packages/session-ui/src/components/summary-patch.test.ts": "A",
+    "packages/session-ui/src/components/summary-patch.ts": "A",
     "packages/session-ui/src/components/tool-count-label.test.ts": "A",
     "packages/session-ui/src/components/tool-count-label.tsx": "M",
     "packages/session-ui/src/components/tool-error-card.tsx": "M",
     "packages/session-ui/src/components/tool-status-title.tsx": "M",
+    "packages/session-ui/src/context/data.tsx": "M",
     "packages/session-ui/src/pierre/worker.ts": "M",
     "packages/session-ui/src/util/clipboard.ts": "A",
     "packages/ui/src/amicode/amico-presence.css": "A",

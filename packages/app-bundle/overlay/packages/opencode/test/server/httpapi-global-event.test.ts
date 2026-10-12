@@ -12,7 +12,7 @@ import * as TestClock from "effect/testing/TestClock"
 import { HttpRouter, HttpServer } from "effect/unstable/http"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import { Auth } from "../../src/auth"
-import { GlobalBus } from "../../src/bus/global"
+import { GlobalBus, type GlobalEvent } from "../../src/bus/global"
 import { GlobalEventReplay } from "../../src/bus/global-replay"
 import { Config } from "../../src/config/config"
 import { Installation } from "../../src/installation"
@@ -73,7 +73,8 @@ const eventually = (probe: () => boolean, ms = 3_000) =>
 
 const ID = /^([A-Za-z0-9_-]+):(\d+)$/
 
-type Frame = { id: string | undefined; event: string | undefined; data: any }
+/** One SSE frame; `raw` is its `data` exactly as sent, `bytes` the whole frame on the wire. */
+type Frame = { id: string | undefined; event: string | undefined; data: any; raw: string; bytes: number }
 
 /** Split an SSE id into its epoch and sequence (fails the test if malformed). */
 function idOf(frame: Frame) {
@@ -83,14 +84,15 @@ function idOf(frame: Frame) {
 }
 
 function parseFrame(block: string): Frame {
-  const frame: Frame = { id: undefined, event: undefined, data: undefined }
+  const frame: Frame = { id: undefined, event: undefined, data: undefined, raw: "", bytes: Buffer.byteLength(block) + 2 }
   const data: string[] = []
   for (const line of block.split("\n")) {
     if (line.startsWith("id: ")) frame.id = line.slice(4)
     else if (line.startsWith("event: ")) frame.event = line.slice(7)
     else if (line.startsWith("data: ")) data.push(line.slice(6))
   }
-  frame.data = data.length ? JSON.parse(data.join("\n")) : undefined
+  frame.raw = data.join("\n")
+  frame.data = data.length ? JSON.parse(frame.raw) : undefined
   return frame
 }
 
@@ -270,6 +272,92 @@ describe("global event stream — sync copies are opt-in (#1778)", () => {
       const frames = yield* plain.take(3)
       expect(typesOf(frames)).toEqual(["test.before", "sync", "test.after"])
       expect(seqsOf(frames)).toEqual([1, 2, 3].map((n) => start.seq + n))
+    }),
+  )
+})
+
+// A per-turn summary as the engine publishes it: every changed file with its
+// full patch text (measured up to 12.3 MB in one event on the Studio).
+const summaryDiffs = () => [
+  { file: "src/app.ts", patch: "@@ -1,2 +1,3 @@\n-old\n+new\n+more\n", additions: 2, deletions: 1, status: "modified" },
+  { file: "src/new.ts", patch: `@@ -0,0 +1,400 @@\n${"+line\n".repeat(400)}`, additions: 400, deletions: 0, status: "added" },
+  { file: "src/gone.ts", patch: "@@ -1 +0,0 @@\n-gone\n", additions: 0, deletions: 1, status: "deleted" },
+]
+const stripped = (diffs: ReturnType<typeof summaryDiffs>) => diffs.map(({ patch: _patch, ...rest }) => rest)
+
+/** A summary-bearing durable event and its sync copy, as the event-v2 bridge emits them. */
+const summaryTwin = (id: string, type: "message.updated" | "session.updated") => {
+  const info =
+    type === "message.updated"
+      ? { id: "msg_i1778", sessionID: "ses_i1778", role: "user", summary: { title: "Edit", diffs: summaryDiffs() } }
+      : { id: "ses_i1778", title: "Session", summary: { additions: 402, deletions: 2, files: 3, diffs: summaryDiffs() } }
+  const properties = { sessionID: "ses_i1778", info }
+  const source = { directory: "/tmp/i1778", payload: { id, type, properties } }
+  const copy = {
+    directory: "/tmp/i1778",
+    payload: { type: "sync", syncEvent: { id, type: `${type}.1`, seq: 3, aggregateID: "ses_i1778", data: properties } },
+  }
+  return { source, copy }
+}
+
+describe("global event stream — summary diffs carry no patch bodies on the wire (#1778)", () => {
+  for (const type of ["message.updated", "session.updated"] as const) {
+    it.live(`a live ${type} keeps file, status and counts but drops patch bodies; the bus payload keeps them`, () =>
+      Effect.gen(function* () {
+        const plain = yield* connect()
+        const synced = yield* connect({ headers: { "x-opencode-sync-copies": "true" } })
+        yield* plain.next
+        yield* synced.next
+        const seen: GlobalEvent[] = []
+        const listener = (event: GlobalEvent) => seen.push(event)
+        GlobalBus.on("event", listener)
+        yield* Effect.addFinalizer(() => Effect.sync(() => GlobalBus.off("event", listener)))
+
+        const { source, copy } = summaryTwin(`evt_i1778_${type}`, type)
+        GlobalBus.emit("event", source)
+        GlobalBus.emit("event", copy)
+
+        const live = yield* plain.next
+        expect(live.data.payload.type).toBe(type)
+        const info = live.data.payload.properties.info
+        expect(info.summary.diffs).toEqual(stripped(summaryDiffs()))
+        expect(live.raw).not.toContain('"patch"')
+        // everything else in the event is as published
+        expect({ ...info, summary: { ...info.summary, diffs: undefined } }).toEqual({
+          ...source.payload.properties.info,
+          summary: { ...source.payload.properties.info.summary, diffs: undefined },
+        })
+        // the projection is wire-only: in-process subscribers see the full event, untouched
+        expect(seen.find((event) => event.payload.type === type)?.payload.properties.info.summary.diffs).toEqual(
+          summaryDiffs(),
+        )
+
+        // the opt-in subscriber gets the same stripped frame, and a full sync copy
+        // (the replica replays it into its own store, so it keeps the patches)
+        const [same, sync] = yield* synced.take(2)
+        expect(same.raw).toBe(live.raw)
+        expect(same.id).toBe(live.id)
+        expect(sync.data.payload.type).toBe("sync")
+        expect(sync.data.payload.syncEvent.data.info.summary.diffs).toEqual(summaryDiffs())
+      }),
+    )
+  }
+
+  it.live("a replayed summary frame is byte-identical to the live one", () =>
+    Effect.gen(function* () {
+      const a = yield* connect()
+      const cursor = (yield* a.next).id!
+      const { source } = summaryTwin("evt_i1778_replayed", "message.updated")
+      GlobalBus.emit("event", source)
+      const live = yield* a.next
+      a.abort()
+
+      const b = yield* connect({ headers: { "last-event-id": cursor } })
+      yield* b.next
+      const replayed = yield* b.next
+      expect(replayed.id).toBe(live.id)
+      expect(replayed.raw).toBe(live.raw)
+      expect(replayed.raw).not.toContain('"patch"')
     }),
   )
 })
