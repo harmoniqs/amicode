@@ -316,6 +316,8 @@
     "packages/llm/src/protocols/bedrock-converse.ts": "834a415fa8ddf9ad1224133f8352d0a926694f19f0954201d182111c171ec03b",
     "packages/llm/test/provider/bedrock-converse.test.ts": "e8e14d60e8502e928f170f8ac5b406c44bf16d2dd34996ddc2fb7b9261decf85",
     "packages/opencode/src/agent/agent.ts": "512372a4c62997e9565266638ada19b9dc0a3685b0c0483fd28fede2abdb5c9b",
+    "packages/opencode/src/bus/global-replay.ts": "bc5d4e77c2aa8ef0444177e6174af0642428d1bcdf47fc668a4799d57163597e",
+    "packages/opencode/src/bus/global.ts": "65b3b380936fc34b2c5ef9f3ab419a6c8e6d4cfc696302a266188f26ccdc320a",
     "packages/opencode/src/effect/runner.ts": "b660b5b22df810b16293c23c6d832e5e8dcfb12b9a8a858c875d2c051c855b81",
     "packages/opencode/src/mcp/browser.ts": "ecdda42cbd55a97b8d14050aa15c6e6450a1d63b0a641c8c8e5b81e50f957c87",
     "packages/opencode/src/mcp/index.ts": "da45165e6791a5b30c8962c7fd0ea391bb8e1931cc2357c6b90e9fd090cdeb0d",
@@ -390,6 +392,7 @@
     "packages/opencode/test/server/httpapi-compression.test.ts": "5f7603d7018e0b95f1c2f36c01dd297c01770bfcdd91ce29778e03b7d6143f75",
     "packages/opencode/test/server/httpapi-file-write-gate.test.ts": "0c91b7417e615850edfde3f2878207dab6b6624d4cfbb6e6783b2e6d9aa4dff0",
     "packages/opencode/test/server/httpapi-file.test.ts": "d3386129bc81467ecbcc57a3861f53767ee56ac41b4ff6ad58d8b168fb3b3373",
+    "packages/opencode/test/server/httpapi-global-event.test.ts": "eaecf3b6e0a148f48e9a056c1b24184cda8f730aeec84aed2d7b89a50548d637",
     "packages/opencode/test/server/httpapi-instance-route-auth.test.ts": "4b73a89d2431c02bc3b665d93f9002914e51eb1add979dc1867efbcbc0c36e25",
     "packages/opencode/test/server/httpapi-provider.test.ts": "9e8b3e085b478e3f99b689ffff600e10c0b4b50b3cabdbd749f88dae19bf5904",
     "packages/opencode/test/server/httpapi-session.test.ts": "eda6fd763ac4c17891cedaa4ccd49597c03e7227fcfdcf0f94a1b4545ba623ed",
@@ -924,6 +927,7 @@
     "packages/opencode/src/server/routes/instance/httpapi/groups/session.ts": "1421f8c07948b121c7e2005bd9b0fcd6b2c456565ddd1da32d8e6c35d03fac9c",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/experimental.ts": "69ca3dd48d95157fc822e1f76eb42ac873df50f22616b85194619ca658613867",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/file.ts": "10bcb79b117beebee04184fb48c1ad789e782e2f7ae4b0c68603edc00f03aee9",
+    "packages/opencode/src/server/routes/instance/httpapi/handlers/global.ts": "efbbbcebff05007137bbab19486fa6bd4602f84f11f463b4d56dd0da5cb76de7",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/mcp.ts": "7da08d58765cdf2b6ce4648fc70de371402949f5bb7b75696f674d43f2d5365b",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/provider.ts": "8baf16cad0992c5351b61b0c0fb27903bb25b17e1b25fc7c5d77f807c24413a6",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/session.ts": "b37ff4136c4aea85b23083bf441f03e09820e3e4cdd95e4118ca570d8435b94f",
@@ -942,7 +946,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-12T14:32:31.142Z",
+  "extracted_at": "2026-10-12T20:07:24.375Z",
   "per_package": {
     "packages/app": {
       "A": 237,
@@ -960,8 +964,8 @@
       "D": 0
     },
     "packages/opencode": {
-      "A": 75,
-      "M": 89,
+      "A": 77,
+      "M": 91,
       "D": 0
     },
     "packages/schema": {
@@ -991,7 +995,7 @@
     }
   },
   "counts": {
-    "overlay_total": 920,
+    "overlay_total": 924,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1304,6 +1308,8 @@
     "packages/llm/src/protocols/bedrock-converse.ts": "M",
     "packages/llm/test/provider/bedrock-converse.test.ts": "M",
     "packages/opencode/src/agent/agent.ts": "M",
+    "packages/opencode/src/bus/global-replay.ts": "A",
+    "packages/opencode/src/bus/global.ts": "M",
     "packages/opencode/src/effect/runner.ts": "M",
     "packages/opencode/src/mcp/browser.ts": "M",
     "packages/opencode/src/mcp/index.ts": "M",
@@ -1378,6 +1384,7 @@
     "packages/opencode/test/server/httpapi-compression.test.ts": "M",
     "packages/opencode/test/server/httpapi-file-write-gate.test.ts": "A",
     "packages/opencode/test/server/httpapi-file.test.ts": "M",
+    "packages/opencode/test/server/httpapi-global-event.test.ts": "A",
     "packages/opencode/test/server/httpapi-instance-route-auth.test.ts": "M",
     "packages/opencode/test/server/httpapi-provider.test.ts": "M",
     "packages/opencode/test/server/httpapi-session.test.ts": "M",
@@ -1912,6 +1919,7 @@
     "packages/opencode/src/server/routes/instance/httpapi/groups/session.ts": "M",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/experimental.ts": "M",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/file.ts": "M",
+    "packages/opencode/src/server/routes/instance/httpapi/handlers/global.ts": "M",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/mcp.ts": "M",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/provider.ts": "M",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/session.ts": "M",
