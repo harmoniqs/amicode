@@ -1812,6 +1812,57 @@ describe("#1771 AC2 — close reasons are an enumerated set", () => {
     // shutdown() closed nothing itself — B's stream ended only with its socket.
     expect(lines.some((l) => l.includes("reason=evicted"))).toBe(false);
   });
+
+  // #1773 AC3 — a fan-in connection never ends its listener's stream cleanly
+  // except on a graceful service shutdown: every other close reason is an ERROR
+  // close (the listener, or the relay in front of it, sees a transport error).
+  it("#1773 AC3: a listener-closed connection is an ERROR close; a shutdown is the only clean end", async () => {
+    const ownerMap = new SessionOwnerMap();
+    ownerMap.update(STUDIO_OWNED);
+    const driver = twoListenerDriver(fakeOrigins(), ownerMap);
+    const resA = mockRes();
+    const resB = mockRes();
+    driver.handle(mockReq("/global/event"), resA);
+    driver.handle(mockReq("/global/event"), resB);
+    await flush();
+
+    resA.fireClose(); // listener-closed
+    expect(resA.destroyed).toBe(true);
+    expect(resA.destroyError).toBeInstanceOf(Error);
+    expect(resA.destroyError?.message).toContain("listener-closed");
+    expect(resA.ended).toBe(false);
+
+    driver.shutdown();
+    resB.fireClose(); // shutdown
+    expect(resB.ended).toBe(true);
+    expect(resB.destroyed).toBe(false);
+  });
+
+  it("#1773 AC3: the severed listener's error close names its cause (upstream-error) — census and error agree", async () => {
+    const { census, lines } = testCensus();
+    const localCtls: Ctl[] = [];
+    const driver = twoListenerDriver(fakeOrigins(), new SessionOwnerMap(), {
+      census,
+      openUpstream: () => {
+        const ctl = controllableSource();
+        localCtls.push(ctl);
+        return ctl.source;
+      },
+    });
+    const res = mockRes();
+    driver.handle(mockReq("/global/event"), res);
+    localCtls[0].push(fakeEngine({ epoch: LOCAL_EPOCH }).connected());
+    await flush();
+    localCtls[0].end("error");
+    await flush();
+    driver.reconcile();
+    expect(res.destroyError?.message).toContain("upstream-error");
+    expect(lines.at(-1)).toBe("[fanin] listener-closed plane=observe conn=c1 reason=upstream-error listeners=0");
+    // the socket's own close event afterwards changes nothing (closed once, first reason wins)
+    res.fireClose();
+    expect(lines.filter((l) => l.includes("listener-closed")).length).toBe(1);
+    expect(census.snapshot()).toMatchObject({ listeners: 0, closed: 1 });
+  });
 });
 
 describe("#1771 AC3 — each transition logs one line immediately, with its connection and arm", () => {
