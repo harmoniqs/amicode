@@ -105,7 +105,9 @@ export const FANIN_LISTENER_CAP_ERROR = "fan-in listener cap reached";
  *  aggregator's §D2 relay. Never throws — a connection error just ends the
  *  source (the aggregator names the gap; D3 replays it on reconnect). #1771:
  *  the source remembers WHICH ended it — a clean upstream end or an error — for
- *  the census's close reason; both still end it identically. */
+ *  the census's close reason; both still end it identically. #1773: a non-200
+ *  answer (an auth failure, an overloaded peer, a beyond-cap 503) is an ERROR —
+ *  a loss, not a clean end — and its body is never parsed as frames. */
 export function openHttpSseSource(r: FanInUpstreamRequest): SseFrameSource {
   const queue: string[] = [];
   const waiters: Array<(v: string | null) => void> = [];
@@ -130,6 +132,14 @@ export function openHttpSseSource(r: FanInUpstreamRequest): SseFrameSource {
     const headers: Record<string, string> = {};
     if (r.authHeader) headers.authorization = r.authHeader;
     clientReq = http.get(u, { headers }, (res) => {
+      if (res.statusCode !== 200) {
+        // #1773 — not a stream: an upstream ERROR. Discard the body (never read
+        // it as SSE frames) and let the socket go.
+        res.on("error", () => undefined); // a reset mid-drain must not throw
+        res.resume();
+        end("error");
+        return;
+      }
       let buf = "";
       res.setEncoding("utf8");
       res.on("data", (chunk: string) => {

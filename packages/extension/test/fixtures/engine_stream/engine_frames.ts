@@ -248,12 +248,22 @@ export interface EngineSseServer {
  *  frames, or raw chunks) and decides how it ends (`res.end()` = a clean
  *  upstream end; `res.destroy()` = an upstream error). Bound to 127.0.0.1 on an
  *  ephemeral port and dialed at its own address, so no foreign listener can
- *  share it. */
-export function startEngineSseServer(script: (res: http.ServerResponse, req: http.IncomingMessage) => void | Promise<void>): Promise<EngineSseServer> {
+ *  share it. #1773: `opts.status` answers a non-200 instead (an auth failure, an
+ *  overloaded peer) with a JSON content type; the script writes its body. */
+export function startEngineSseServer(
+  script: (res: http.ServerResponse, req: http.IncomingMessage) => void | Promise<void>,
+  opts: { status?: number } = {},
+): Promise<EngineSseServer> {
   const requests: string[] = [];
+  const status = opts.status ?? 200;
   const server = http.createServer((req, res) => {
     requests.push(req.url ?? "/");
-    res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache, no-transform" });
+    res.writeHead(
+      status,
+      status === 200
+        ? { "content-type": "text/event-stream", "cache-control": "no-cache, no-transform" }
+        : { "content-type": "application/json" },
+    );
     res.flushHeaders();
     void script(res, req);
   });

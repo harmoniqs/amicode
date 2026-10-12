@@ -5,7 +5,7 @@
 // reconnection indefinitely.
 import { describe, it, expect, vi, afterEach } from "vitest";
 import * as http from "node:http";
-import { SseFanInDriver } from "../src/amicode_service/sse_fanin_driver";
+import { SseFanInDriver, openHttpSseSource } from "../src/amicode_service/sse_fanin_driver";
 import type { SseFrameSource } from "../src/amicode_service/sse_fanin_aggregator";
 import { LOCAL_NAMESPACE } from "../src/amicode_service/sse_fanin_aggregator";
 import { SessionOwnerMap } from "../src/amicode_service/session_multiplexer";
@@ -1782,6 +1782,103 @@ describe("#1771 AC2 — close reasons are an enumerated set", () => {
       await ends.stop();
       await dies.stop();
     }
+  });
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // #1773 AC4 — the arm reader (openHttpSseSource) reports upstream END and
+  // upstream ERROR as distinct reasons. A non-200 upstream (an auth failure, an
+  // overloaded peer, the beyond-cap 503) is an ERROR, not a clean end — and its
+  // body is never parsed as SSE frames.
+  // ────────────────────────────────────────────────────────────────────────────
+  describe("#1773 AC4 — the arm reader's end-vs-error", () => {
+    /** Drain a source to its end: the frames it yielded, and its endReason. */
+    async function drain(source: SseFrameSource): Promise<{ frames: string[]; reason: string | undefined }> {
+      const frames: string[] = [];
+      for (;;) {
+        const f = await source.next();
+        if (f === null) break;
+        frames.push(f);
+      }
+      return { frames, reason: source.endReason?.() };
+    }
+    const arm = (url: string) => openHttpSseSource({ namespace: "studio", url, path: "/global/event" });
+
+    it("a clean upstream end reads as `end`, after every frame", async () => {
+      const engine = fakeEngine({ epoch: PEER_EPOCH });
+      const sent = [engine.connected(), engine.event("session.status", { s: 1 })];
+      const server = await startEngineSseServer((res) => {
+        for (const f of sent) res.write(f);
+        res.end();
+      });
+      try {
+        expect(await drain(arm(server.url))).toEqual({ frames: sent, reason: "end" });
+      } finally {
+        await server.stop();
+      }
+    });
+
+    it("an upstream that dies mid-stream reads as `error`, after the frames it sent", async () => {
+      const engine = fakeEngine({ legacy: true });
+      const sent = [engine.connected()];
+      const server = await startEngineSseServer((res) => {
+        for (const f of sent) res.write(f);
+        setTimeout(() => res.destroy(), 20);
+      });
+      try {
+        expect(await drain(arm(server.url))).toEqual({ frames: sent, reason: "error" });
+      } finally {
+        await server.stop();
+      }
+    });
+
+    for (const status of [401, 500, 503]) {
+      it(`a ${status} upstream is an \`error\` — never a clean end, and its body is not read as frames`, async () => {
+        const server = await startEngineSseServer(
+          (res) => res.end(`{"ok":false,"error":"refused"}\n\ndata: {"not":"a frame"}\n\n`),
+          { status },
+        );
+        try {
+          expect(await drain(arm(server.url))).toEqual({ frames: [], reason: "error" });
+        } finally {
+          await server.stop();
+        }
+      });
+    }
+
+    it("a refused connection is an `error`", async () => {
+      // port 1 (tcpmux) on loopback: nothing listens there, the dial is refused
+      expect(await drain(arm("http://127.0.0.1:1"))).toEqual({ frames: [], reason: "error" });
+    });
+
+    it("through the driver: a peer answering 401 closes its arm as upstream-error in the census", async () => {
+      const local = await startEngineSseServer((res) => res.write(fakeEngine({ legacy: true }).connected()));
+      const peer = await startEngineSseServer((res) => res.end(`{"ok":false}`), { status: 401 });
+      const lines: string[] = [];
+      const w = lineWaiter(lines);
+      const ownerMap = new SessionOwnerMap();
+      ownerMap.update(STUDIO_OWNED);
+      const driver = new SseFanInDriver({
+        ownerMap,
+        localMachineId: "macbook",
+        localEventUrl: () => local.url,
+        peerBaseUrl: (id) => (id === "studio" ? peer.url : undefined),
+        peerToken: (id) =>
+          id === "studio"
+            ? { ok: true as const, credential: { baseUrl: peer.url, token: "tok-studio" } }
+            : { ok: false as const, reason: "absent" as const },
+        reconcileMs: 999_999,
+        census: new FanInCensus({ plane: "observe", sink: w.sink }),
+      });
+      const res = mockRes();
+      try {
+        driver.handle(mockReq("/global/event"), res);
+        expect(await w.waitFor((l) => l.includes("arm=studio reason="))).toMatch(/reason=upstream-error$/);
+      } finally {
+        res.fireClose();
+        await local.stop();
+        await peer.stop();
+      }
+    });
   });
 
   it("a departing listener's arms close as listener-closed; after shutdown() the teardown's closes are shutdown", async () => {
