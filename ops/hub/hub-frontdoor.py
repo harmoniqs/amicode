@@ -1032,6 +1032,26 @@ def _parse_frames(buf):
     return out, buf
 
 
+# 2026-10-11 (#1757): the upstream dead-man's switch + frame-cadence
+# observability. The merged groups' s2/s3 upstreams wedged: recv() parked
+# forever on a silent-but-open upstream (the preamble leaves settimeout(None))
+# while members streamed that shard's silence, and NOTHING in the frontdoor
+# could tell wedged from quiet. The engine's SSE keepalives are PER-CONNECTION
+# ticks (server routes handlers/event.ts: Stream.tick), not bus events — a
+# dead event binding keeps heartbeating — so upstream liveness = NON-heartbeat
+# frames. An upstream whose group has live members and that delivered no
+# event frames for DEADMAN seconds is wedged: close it, let the existing
+# backoff reconnect re-bind a fresh subscription. Without members it parks
+# silently (no churn, no noise).
+try:
+    UPSTREAM_DEADMAN_S = float(_env("AMICODE_UPSTREAM_DEADMAN_S", "60"))
+except ValueError:
+    UPSTREAM_DEADMAN_S = 60.0
+try:
+    UPSTREAM_CADENCE_S = float(_env("AMICODE_UPSTREAM_CADENCE_S", "30"))
+except ValueError:
+    UPSTREAM_CADENCE_S = 30.0
+
 class Group:
     def __init__(self, path, shard=1, backend=None, merge=None, upstream_path=None):
         self.path = path
@@ -1082,6 +1102,14 @@ class Group:
         return s, buf
     def _drop(self, c):
         with self.lock: self.members.pop(c, None)
+        # #1757: close() on a socket with a concurrent reader blocked in recv
+        # (the per-member waiter thread) does NOT send the FIN on Linux — the
+        # blocked syscall holds the description open, so the "all upstreams
+        # lost / stalled member" closes logged as done were invisible to the
+        # client, and its EventSource stayed parked on a dead stream.
+        # shutdown() tears the socket down immediately and wakes the waiter.
+        try: c.shutdown(socket.SHUT_RDWR)
+        except Exception: pass
         try: c.close()
         except Exception: pass
     def _writer(self, c, q):
@@ -1117,12 +1145,54 @@ class Group:
                 self.live_upstreams += 1
                 n_waiting = len(self.members)
             log(f"[{self.path}/s{shard_id}] upstream live ({n_waiting} waiting members)")
+            # #1757: bounded recv — a silent-but-open upstream must not park
+            # forever. The poll timeout (bounded by the cadence window) wakes
+            # the loop to run the dead-man + cadence checks; socket.timeout is
+            # silence, not death, and never reaches the outer except.
+            s.settimeout(min(5.0, max(0.25, UPSTREAM_CADENCE_S / 4.0)))
+            last_event_t = time.monotonic()   # last NON-heartbeat frame = bus liveness
+            last_report_t = time.monotonic()
+            n_events = n_beats = 0
             try:
                 while True:
-                    chunk = s.recv(65536)
-                    if not chunk: break
-                    reasm += chunk
-                    frames, reasm = _parse_frames(reasm)
+                    try:
+                        chunk = s.recv(65536)
+                    except socket.timeout:
+                        chunk = None
+                    if chunk == b"":
+                        break
+                    now = time.monotonic()
+                    if chunk:
+                        reasm += chunk
+                        frames, reasm = _parse_frames(reasm)
+                        for frame in frames:
+                            if b'"server.heartbeat"' in frame:
+                                n_beats += 1
+                            else:
+                                n_events += 1
+                                last_event_t = now
+                    with self.lock:
+                        n_members = len(self.members)
+                    # the dead-man: no event frames while members wait. Fires
+                    # from BOTH branches — a heartbeats-only stream (dead bus,
+                    # live TCP) never times out recv, so the data path must
+                    # check it too.
+                    if n_members and now - last_event_t >= UPSTREAM_DEADMAN_S:
+                        log(f"[{self.path}/s{shard_id}] upstream silent "
+                            f"{int(now - last_event_t)}s with {n_members} member(s) — recycling (wedged?)")
+                        break
+                    # cadence: frames-per-window per upstream, so a wedged
+                    # upstream (0 event frames — or 0 of anything) is
+                    # distinguishable from a quiet one without a probe run.
+                    # Member-less quiet groups stay silent (no noise).
+                    if now - last_report_t >= UPSTREAM_CADENCE_S:
+                        if n_events or n_members:
+                            log(f"[{self.path}/s{shard_id}] upstream cadence: {n_events} event frames, "
+                                f"{n_beats} heartbeats in {int(now - last_report_t)}s ({n_members} member(s))")
+                        last_report_t = now
+                        n_events = n_beats = 0
+                    if chunk is None:
+                        continue
                     for frame in frames:
                         # #1306: state changed — the snapshot cache must not
                         # outlive the events that changed it. #1724: the body
@@ -1148,10 +1218,12 @@ class Group:
                                 # Stalled member: disconnect it (the app's reconnect
                                 # heals it with a fresh stream) — never block here.
                                 # NOTE: leave() also takes the lock — inline it.
+                                # #1757: the close itself is _drop's (the direct
+                                # close() raced the writer thread's _drop and lost
+                                # the FIN — see _drop).
                                 self.members.pop(m, None)
                                 q.put(None)
-                                try: m.close()
-                                except: pass
+                                self._drop(m)
                                 log(f"[{self.path}/s{shard_id}] member dropped — stalled (queue full)")
                                 continue
                             for frame in frames:
@@ -1176,11 +1248,12 @@ class Group:
             if all_down:
                 # every upstream is gone: close the members (the app's reconnect
                 # heals with fresh streams) — the pre-pool behavior, now scoped to
-                # the whole pool being down.
+                # the whole pool being down. #1757: the close goes through _drop
+                # — a direct close() never sends the FIN past the member's
+                # blocked waiter thread, so the client never noticed.
                 for m in members:
                     self.leave(m)
-                    try: m.close()
-                    except: pass
+                    self._drop(m)
                 log(f"[{self.path}/s{shard_id}] all upstreams lost; closed {len(members)} members")
     def join(self, c, last_event_id=None):
         with self.lock:
