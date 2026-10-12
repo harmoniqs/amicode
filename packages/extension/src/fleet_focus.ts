@@ -186,8 +186,11 @@ export interface FleetFocusHostOptions {
    *  mount). */
   postToOverlay: (msg: FleetFocusDownMessage) => void;
   /** Optional extra change hook — the host uses this to re-push the sidebar
-   *  render so the focused machine highlights. */
+   *  render so the focused machine highlights. Called AFTER the overlay post
+   *  and isolated: a throw is logged, never propagated (#1764). */
   onChange?: (event: FleetFocusEvent) => void;
+  /** Where an isolated onChange failure is logged (the extension output channel). */
+  log?: (line: string) => void;
 }
 
 /** Build the host's single FleetFocusStore, wired so every focus change posts
@@ -198,8 +201,21 @@ export interface FleetFocusHostOptions {
 export function createFleetFocusHost(opts: FleetFocusHostOptions): FleetFocusStore {
   return new FleetFocusStore({
     onChange: (event) => {
+      // #1764: the overlay first — focus for new chats never depends on the
+      // sidebar rendering — then the isolated sidebar re-render hook.
       opts.postToOverlay({ source: "amicode", kind: "fleet-focus", machineId: event.machineId });
-      opts.onChange?.(event);
+      try {
+        opts.onChange?.(event);
+      } catch (e) {
+        opts.log?.(`[fleet] focus sidebar re-render failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
     },
   });
+}
+
+/** #1764 — apply the FLEET section focus control's message to the store. The
+ *  store keeps exactly the roster machine id the control posted (no
+ *  normalization); a local selection stores nothing (home). Never connects. */
+export function applyFocusRequest(store: FleetFocusStore, msg: { machineId: string; isLocal: boolean }): void {
+  store.setFocus(msg.isLocal ? null : { machineId: msg.machineId, name: msg.machineId, isLocal: false });
 }

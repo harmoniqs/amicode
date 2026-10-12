@@ -84,7 +84,7 @@ import {
 import { resolveHubTarget, restartHub } from "./hub_ops";
 import { connectToHubOverRemoteSsh, connectToDeviceOverRemoteSsh, isRemoteSshAvailable } from "./fleet_connect_remote_ssh";
 import { handleConnectToDevice, type ConnectToDeviceMessage, type FleetConnectDeps } from "./fleet_connect_device";
-import { createFleetFocusHost } from "./fleet_focus";
+import { createFleetFocusHost, applyFocusRequest } from "./fleet_focus";
 import { registerAmicodeTerminal } from "./terminal";
 import { amicodeServiceDisposal, startAmicodeService, frameOriginUrl } from "./amicode_service_wiring";
 import { buildFleetPeerProvider } from "./amicode_service/fleet_peer_provider";
@@ -540,8 +540,15 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // chat_bridge to the overlay (the chat panel); W4b (#1453) is the consumer.
   // Focusing a machine NEVER connects/attaches it — it only scopes the working
   // surfaces and pushes focus to the overlay.
+  // #1764 — the FLEET section re-render hook, late-bound once the sidebar
+  // provider exists (it is constructed below, after the focus host).
+  let rerenderFleetSection: (() => void) | undefined;
   const fleetFocusStore = createFleetFocusHost({
     postToOverlay: (m) => { void ChatPanel.peek()?.postMessage(m); },
+    // #1764 — after the overlay post, re-render the FLEET section so the
+    // focused machine shows; isolated inside the focus host.
+    onChange: () => rerenderFleetSection?.(),
+    log: (line) => opencodeChannel.appendLine(line),
   });
   // #1764 — the shared chat-session launcher: open-or-reveal the chat panel and
   // deliver one navigate envelope exactly once (immediately when the panel's app
@@ -627,12 +634,11 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     // machine collapses to home (fleet_focus.setFocus). DISTINCT from connect:
     // it never attaches — it only scopes the working surfaces, and the store's
     // onChange pushes focus to the overlay (chat panel) for W4b (#1453).
-    focusMachine: (msg) => {
-      fleetFocusStore.setFocus(
-        msg.isLocal ? null : { machineId: msg.machineId, name: msg.machineId, isLocal: false },
-      );
-    },
+    focusMachine: (msg) => applyFocusRequest(fleetFocusStore, msg),
+    // #1764 — the focused-machine read: the real focus host, nothing for home.
+    readFocusedMachineId: () => fleetFocusStore.scopedMachineId,
   }));
+  rerenderFleetSection = () => sidebarProvider.rerenderFleetSection();
   ctx.subscriptions.push(
     vscode.window.registerWebviewViewProvider("amicode.workspace", sidebarProvider, {
       webviewOptions: { retainContextWhenHidden: true },

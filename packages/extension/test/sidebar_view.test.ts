@@ -533,6 +533,42 @@ describe("SidebarViewProvider — fleet section host wiring (#1321)", () => {
     });
   });
 
+  // ── #1764 — the focused machine reaches the posted view-model ──
+  describe("focused machine read seam (#1764)", () => {
+    it("stamps readFocusedMachineId onto every posted model, and rerenderFleetSection re-posts it", () => {
+      const { deps } = fleetHarness();
+      let focused: string | undefined = undefined;
+      const provider = new SidebarViewProvider(makeExtensionUri(), undefined, { ...deps, readFocusedMachineId: () => focused });
+      const view = makeWebviewView();
+      resolve(provider, view);
+      expect(lastFleetStatus(view).model.focusedMachineId).toBeUndefined();
+      focused = "mac-01";
+      const before = view.webview.postMessage.mock.calls.length;
+      provider.rerenderFleetSection();
+      expect(view.webview.postMessage.mock.calls.length).toBe(before + 1);
+      expect(lastFleetStatus(view).model.focusedMachineId).toBe("mac-01");
+    });
+
+    it("the focus re-render also refreshes the Add machine routing cache", () => {
+      const { state, deps, launchSession } = fleetHarness();
+      state.localDevice = { machineId: "this-mac", name: "Mac", serveStance: "standalone" };
+      const provider = new SidebarViewProvider(makeExtensionUri(), undefined, deps);
+      const view = makeWebviewView();
+      resolve(provider, view);
+      state.localDevice = { machineId: "this-mac", name: "Mac", serveStance: "server" };
+      provider.rerenderFleetSection();
+      view.webview._simulateMessage({ kind: "add-fleet-machine" });
+      expect(launchSession).toHaveBeenLastCalledWith("/add-fleet-device");
+    });
+
+    it("defaultFleetSectionDeps passes the focused-machine read through, and has no focus write seam", async () => {
+      const mod = await import("../src/sidebar_view");
+      const deps = mod.defaultFleetSectionDeps({ readFocusedMachineId: () => "peer-9" });
+      expect(deps.readFocusedMachineId?.()).toBe("peer-9");
+      expect(Object.keys(deps).filter((k) => /^(write|set)/i.test(k))).toEqual([]);
+    });
+  });
+
   // ── #1764 — Refresh: re-arm the change watcher exactly once, THEN re-read ──
   describe("refresh-fleet (#1764)", () => {
     function fleetPosts(view: any): any[] {
@@ -937,6 +973,20 @@ describe("sidebar webview — fleet section styling (#1321, design-system tokens
   it("styles the type pill via badge tokens (#1359)", () => {
     const css = html();
     expect(css).toMatch(/\.fleet-type-pill[^{]*\{[^}]*var\(--vscode-badge-/);
+  });
+
+  it("the focus control: hidden-but-tabbable glyph, revealed on row hover / keyboard focus, filled + always visible when pressed (#1764)", () => {
+    const css = html();
+    expect(css).toMatch(/\.fleet-focus-btn\s*\{[^}]*opacity:\s*0/);
+    expect(css).not.toMatch(/\.fleet-focus-btn\s*\{[^}]*(display:\s*none|visibility:\s*hidden)/);
+    expect(css).toMatch(/\.fleet-device-row:hover \.fleet-focus-btn/);
+    expect(css).toMatch(/\.fleet-focus-btn:focus-visible\s*\{[^}]*outline:\s*1px solid var\(--vscode-focusBorder/);
+    expect(css).toMatch(/\.fleet-focus-btn\[aria-pressed="true"\]\s*\{[^}]*opacity:\s*1/);
+    expect(css).toMatch(/\.fleet-focus-btn\[aria-pressed="true"\] \.fleet-focus-dot\s*\{[^}]*fill:\s*currentColor/);
+    // token-driven, transparent, and fixed-size (nothing shifts on hover/press)
+    expect(css).toMatch(/\.fleet-focus-btn\s*\{[^}]*background:\s*transparent/);
+    expect(css).toMatch(/\.fleet-focus-btn\s*\{[^}]*width:\s*18px/);
+    expect(css).toMatch(/\.fleet-focus-btn:hover\s*\{[^}]*var\(--vscode-/);
   });
 
   it("Refresh busy spins its glyph, and with reduced motion preferred shows busy without spinning (#1764)", () => {

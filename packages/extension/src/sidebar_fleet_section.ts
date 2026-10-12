@@ -625,9 +625,11 @@ function renderDeviceRow(
   rowEl.setAttribute("data-machine-id", device.machineId);
   rowEl.title = deviceTooltip(device, device.rosterHealth, now);
 
-  // #1451: mark the focused row so the render reflects focus state. Focus is
-  // home (undefined) OR a specific machine — only a named match highlights.
-  const isFocused = focusedMachineId !== undefined && device.machineId === focusedMachineId;
+  // #1451/#1764: mark the focused row. Focus is home (undefined) OR a roster
+  // machine id matched byte-for-byte. At home the local self-row is the focused
+  // row (ADR 0031 §D4: single-select, default this machine); with a machine
+  // focused only that row is; an absent focused machine marks no row.
+  const isFocused = focusedMachineId === undefined ? device.isLocal : device.machineId === focusedMachineId;
   if (isFocused) {
     rowEl.classList.add("fleet-device-row-focused");
     rowEl.setAttribute("data-focused", "true");
@@ -682,6 +684,10 @@ function renderDeviceRow(
   focusBtn.className = "fleet-focus-btn";
   focusBtn.setAttribute("aria-label", `Focus ${device.name}`);
   focusBtn.setAttribute("aria-pressed", isFocused ? "true" : "false");
+  // #1764: a target glyph (ring + centre dot; the dot fills when pressed) and a
+  // tooltip in the domain term only.
+  focusBtn.title = isFocused ? "Focused" : `Focus ${device.name}`;
+  focusBtn.appendChild(createFocusGlyph());
   focusBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     post({
@@ -693,6 +699,36 @@ function renderDeviceRow(
   rowEl.appendChild(focusBtn);
 
   return rowEl;
+}
+
+/** #1764: the 12×12 line-art target glyph for the focus control. CSS fills the
+ *  centre dot on the pressed (focused) row; theme colour via currentColor. */
+function createFocusGlyph(): SVGElement {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("class", "fleet-focus-glyph");
+  svg.setAttribute("width", "12");
+  svg.setAttribute("height", "12");
+  svg.setAttribute("viewBox", "0 0 12 12");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("aria-hidden", "true");
+  const ring = document.createElementNS(ns, "circle");
+  ring.setAttribute("class", "fleet-focus-ring");
+  ring.setAttribute("cx", "6");
+  ring.setAttribute("cy", "6");
+  ring.setAttribute("r", "4.5");
+  ring.setAttribute("stroke", "currentColor");
+  ring.setAttribute("stroke-width", "1.2");
+  svg.appendChild(ring);
+  const dot = document.createElementNS(ns, "circle");
+  dot.setAttribute("class", "fleet-focus-dot");
+  dot.setAttribute("cx", "6");
+  dot.setAttribute("cy", "6");
+  dot.setAttribute("r", "1.75");
+  dot.setAttribute("stroke", "currentColor");
+  dot.setAttribute("stroke-width", "1.2");
+  svg.appendChild(dot);
+  return svg;
 }
 
 /** Map the raw `server_mode` to a user-friendly display role.

@@ -328,3 +328,53 @@ describe("#1451 AC3 — createFleetFocusHost: onChange → fleet-focus down-mess
     expect(postToOverlay).not.toHaveBeenCalled();
   });
 });
+
+// ── #1764 — the overlay is notified FIRST; the sidebar hook is isolated ──────
+describe("#1764 — createFleetFocusHost: overlay first, sidebar hook isolated", () => {
+  it("notifies the overlay before calling the sidebar re-render hook", () => {
+    const order: string[] = [];
+    const store = createFleetFocusHost({
+      postToOverlay: () => order.push("overlay"),
+      onChange: () => order.push("sidebar"),
+    });
+    store.setFocus({ machineId: "mac-studio-01", name: "Mac Studio", isLocal: false });
+    expect(order).toEqual(["overlay", "sidebar"]);
+  });
+
+  it("a sidebar hook that throws never blocks the overlay notification, and is logged", () => {
+    const postToOverlay = vi.fn<[FleetFocusDownMessage], void>();
+    const log = vi.fn();
+    const store = createFleetFocusHost({
+      postToOverlay,
+      onChange: () => { throw new Error("render failed"); },
+      log,
+    });
+    expect(() => store.setFocus({ machineId: "mac-studio-01", name: "Mac Studio", isLocal: false })).not.toThrow();
+    expect(postToOverlay).toHaveBeenCalledWith({ source: "amicode", kind: "fleet-focus", machineId: "mac-studio-01" });
+    expect(store.scopedMachineId).toBe("mac-studio-01");
+    expect(log).toHaveBeenCalledTimes(1);
+    expect(String(log.mock.calls[0][0])).toMatch(/render failed/);
+    // A later change still notifies the overlay.
+    store.setFocus(null);
+    expect(postToOverlay).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ── #1764 — the sidebar focus request → the store, byte-for-byte ────────────
+describe("#1764 — applyFocusRequest maps the focus control's message onto the store", () => {
+  it("stores exactly the posted roster machine id, unnormalized", async () => {
+    const { applyFocusRequest } = await import("../src/fleet_focus");
+    const store = new FleetFocusStore();
+    applyFocusRequest(store, { machineId: "Mac-Studio-01.local ", isLocal: false });
+    expect(store.scopedMachineId).toBe("Mac-Studio-01.local ");
+  });
+
+  it("a local selection stores nothing (home)", async () => {
+    const { applyFocusRequest } = await import("../src/fleet_focus");
+    const store = new FleetFocusStore();
+    applyFocusRequest(store, { machineId: "mac-studio-01", isLocal: false });
+    applyFocusRequest(store, { machineId: "this-mac", isLocal: true });
+    expect(store.isHome).toBe(true);
+    expect(store.scopedMachineId).toBeUndefined();
+  });
+});

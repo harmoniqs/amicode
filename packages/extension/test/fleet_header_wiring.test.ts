@@ -59,3 +59,22 @@ describe("the FLEET header's routed skills ship in the extension's skill library
     expect(ignore.split("\n").map((l) => l.trim())).not.toContain("skills/**");
   });
 });
+
+describe("activation wiring — focus reaches the FLEET section (#1764)", () => {
+  it("the focus host receives its change hook (the sidebar re-render)", () => {
+    const start = extSrc.indexOf("const fleetFocusStore = createFleetFocusHost({");
+    expect(start).toBeGreaterThan(-1);
+    const block = extSrc.slice(start, extSrc.indexOf("\n  });", start));
+    expect(block).toMatch(/onChange: \(\) => rerenderFleetSection\?\.\(\)/);
+    expect(block).toContain("log:");
+    expect(extSrc).toContain("rerenderFleetSection = () => sidebarProvider.rerenderFleetSection();");
+  });
+
+  it("the fleet section's focused-machine read is bound to the real focus host", () => {
+    expect(fleetDepsCall()).toContain("readFocusedMachineId: () => fleetFocusStore.scopedMachineId");
+  });
+
+  it("the focus-machine message goes through applyFocusRequest onto the real focus host", () => {
+    expect(fleetDepsCall()).toContain("focusMachine: (msg) => applyFocusRequest(fleetFocusStore, msg)");
+  });
+});

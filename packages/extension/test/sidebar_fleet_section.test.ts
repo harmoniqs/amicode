@@ -1215,3 +1215,89 @@ describe("createFleetRefreshControl — Refresh busy state (#1764)", () => {
     expect(rerendered.classList.contains("is-busy")).toBe(false);
   });
 });
+
+// ── #1764 — the focus control: glyph, tooltips, focused-row rules ────────────
+describe("renderFleetSection — focus control glyph + focused-row rules (#1764)", () => {
+  const local = { machineId: "this-mac", name: "This Mac", serveStance: "server" };
+  function model(focusedMachineId?: string, roster = [row({ machine_id: "peer-01", name: "Peer One" })]) {
+    return buildFleetSectionModel(input({ roster, localDevice: local, focusedMachineId }));
+  }
+  function render(m: FleetSectionModel, post: (msg: any) => void = () => {}) {
+    const el = document.createElement("div");
+    renderFleetSection(el, m, post);
+    return el;
+  }
+  const focusedRows = (el: HTMLElement) => [...el.querySelectorAll(".fleet-device-row[data-focused='true']")] as HTMLElement[];
+  const btnOf = (el: HTMLElement, id: string) =>
+    el.querySelector(`.fleet-device-row[data-machine-id='${id}'] .fleet-focus-btn`) as HTMLButtonElement;
+
+  it("every row's focus control carries a target glyph and the tooltip 'Focus ‹machine name›'", () => {
+    const el = render(model("peer-01"));
+    const btn = btnOf(el, "this-mac");
+    expect(btn.querySelector("svg.fleet-focus-glyph")).not.toBeNull();
+    expect(btn.querySelector("svg .fleet-focus-ring")).not.toBeNull();
+    expect(btn.querySelector("svg .fleet-focus-dot")).not.toBeNull();
+    expect(btn.title).toBe("Focus This Mac");
+    expect(btn.getAttribute("aria-label")).toBe("Focus This Mac");
+    expect(btn.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("the focused row's control is pressed with the tooltip 'Focused'", () => {
+    const el = render(model("peer-01"));
+    const btn = btnOf(el, "peer-01");
+    expect(btn.getAttribute("aria-pressed")).toBe("true");
+    expect(btn.title).toBe("Focused");
+    expect(btn.getAttribute("aria-label")).toBe("Focus Peer One");
+  });
+
+  it("at home the local self-row is the one focused row", () => {
+    const el = render(model(undefined));
+    const rows = focusedRows(el);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].getAttribute("data-machine-id")).toBe("this-mac");
+    expect(btnOf(el, "this-mac").getAttribute("aria-pressed")).toBe("true");
+    expect(btnOf(el, "peer-01").getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("at home the self-row is focused in the unreachable state too", () => {
+    const m = buildFleetSectionModel(input({ rosterReachable: false, localDevice: local }));
+    const rows = focusedRows(render(m));
+    expect(rows.map((r) => r.getAttribute("data-machine-id"))).toEqual(["this-mac"]);
+  });
+
+  it("with a remote machine focused, only that row is focused", () => {
+    const el = render(model("peer-01"));
+    expect(focusedRows(el).map((r) => r.getAttribute("data-machine-id"))).toEqual(["peer-01"]);
+  });
+
+  it("when the focused machine is absent from the list, no row is focused", () => {
+    const el = render(model("gone-99"));
+    expect(focusedRows(el)).toHaveLength(0);
+    expect(el.querySelectorAll(".fleet-focus-btn[aria-pressed='true']")).toHaveLength(0);
+  });
+
+  it("focus matches byte-for-byte: a case-different id is not the focused row", () => {
+    const el = render(model("PEER-01"));
+    expect(focusedRows(el)).toHaveLength(0);
+  });
+
+  it("round trip: the row's own posted machine id, through the focus store, focuses that same row", async () => {
+    const { FleetFocusStore, applyFocusRequest } = await import("../src/fleet_focus");
+    const store = new FleetFocusStore();
+    const posts: any[] = [];
+    const id = "Peer-01.local";
+    let el = render(model(store.scopedMachineId, [row({ machine_id: id, name: "Peer" })]), (m) => posts.push(m));
+    btnOf(el, id).click();
+    applyFocusRequest(store, posts[0]);
+    expect(store.scopedMachineId).toBe(id);
+    el = render(model(store.scopedMachineId, [row({ machine_id: id, name: "Peer" })]), (m) => posts.push(m));
+    expect(focusedRows(el).map((r) => r.getAttribute("data-machine-id"))).toEqual([id]);
+    // Focusing the local row clears to home — and home focuses the local row.
+    posts.length = 0;
+    btnOf(el, "this-mac").click();
+    applyFocusRequest(store, posts[0]);
+    expect(store.scopedMachineId).toBeUndefined();
+    el = render(model(store.scopedMachineId, [row({ machine_id: id, name: "Peer" })]));
+    expect(focusedRows(el).map((r) => r.getAttribute("data-machine-id"))).toEqual(["this-mac"]);
+  });
+});

@@ -394,6 +394,10 @@ function friendlyHostname(): string | undefined {
   /** #1451 — FOCUS a fleet machine (set the host FleetFocusStore). Distinct
    *  from connectToDevice: never connects/attaches. Optional; honest degrade. */
   focusMachine?: (msg: { machineId: string; isLocal: boolean }) => void;
+  /** #1764 — READ the focused machine: the focus host's scoped machine id, or
+   *  undefined for home. Stamped onto every posted model. A read seam only —
+   *  there is no focus write seam here. Optional; absent ⇒ home. */
+  readFocusedMachineId?: () => string | undefined;
 }
 
 /** The roster read result — rows + whether the read succeeded (false ⇒ host
@@ -445,6 +449,9 @@ export interface DefaultFleetDepsOptions {
   /** #1451 — override the focus-machine handler. Default: undefined (honest
    *  degrade). Production wires the host FleetFocusStore from extension.ts. */
   focusMachine?: (msg: { machineId: string; isLocal: boolean }) => void;
+  /** #1764 — the focused-machine read. Default: undefined (home). Production
+   *  binds it to the real focus host's scoped machine id. */
+  readFocusedMachineId?: () => string | undefined;
 }
 
 /** The proxied route a CLIENT reads the host's authoritative roster from — the
@@ -615,6 +622,7 @@ export function defaultFleetSectionDeps(opts: DefaultFleetDepsOptions = {}): Fle
     },
     connectToDevice: opts.connectToDevice,
     focusMachine: opts.focusMachine,
+    readFocusedMachineId: opts.readFocusedMachineId,
   };
 }
 
@@ -937,6 +945,13 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
+  /** #1764 — re-render the FLEET section (the focus host's change hook): a
+   *  full rebuild from the same reads as every other push, so it also
+   *  refreshes the Add machine routing cache. */
+  rerenderFleetSection(): void {
+    this.pushFleetStatus();
+  }
+
   /** #1764 — the FLEET header's Refresh. Read-only: health comes from each
    *  machine's own heartbeat; this only re-arms the watcher and re-reads. */
   private refreshFleet(): void {
@@ -969,6 +984,7 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
         troubleshootAvailable: true,
         localDevice: deps.readLocalDevice?.() ?? null,
         canonicalServer: deps.readCanonicalServer?.() ?? null,
+        focusedMachineId: deps.readFocusedMachineId?.(),
       });
       this.lastPostedFleetModel = model;
       this.postDown({ kind: "fleet-status", model });
@@ -1600,6 +1616,40 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
       color: var(--vscode-badge-foreground, var(--vscode-foreground));
       background: var(--vscode-badge-background);
     }
+    /* #1764 — the per-row focus control: a target glyph, fixed size so nothing
+       shifts. Hidden by opacity (never display/visibility, so it stays in tab
+       order) and revealed on row hover or keyboard focus; the focused row's is
+       pressed, always visible, with the centre dot filled. */
+    .fleet-focus-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      width: 18px;
+      height: 18px;
+      padding: 0;
+      margin: 0;
+      background: transparent;
+      border: none;
+      border-radius: 4px;
+      color: var(--vscode-icon-foreground, var(--vscode-foreground));
+      cursor: pointer;
+      opacity: 0;
+    }
+    .fleet-device-row:hover .fleet-focus-btn { opacity: 1; }
+    .fleet-focus-btn:hover {
+      opacity: 1;
+      background: var(--vscode-toolbar-hoverBackground, transparent);
+    }
+    .fleet-focus-btn:focus { outline: none; }
+    .fleet-focus-btn:focus-visible {
+      opacity: 1;
+      outline: 1px solid var(--vscode-focusBorder, #007fd4);
+      outline-offset: -1px;
+    }
+    .fleet-focus-btn[aria-pressed="true"] { opacity: 1; }
+    .fleet-focus-btn[aria-pressed="true"] .fleet-focus-dot { fill: currentColor; }
+    .fleet-focus-btn svg { display: block; }
     .fleet-action-bar { display: flex; gap: 6px; margin: 4px 8px; }
     .fleet-action-bar button {
       padding: 2px 10px;
