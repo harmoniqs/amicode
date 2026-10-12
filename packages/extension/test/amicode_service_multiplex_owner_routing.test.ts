@@ -198,6 +198,84 @@ describe("free-tier remote create — pending create-time owner bindings", () =>
   });
 });
 
+// ══════════════════════════════════════════════════════════════════════════════
+// #1766 checkpoint 1 — the owner map ALSO records each session's working
+// directory, from the SAME owner-tagged projection entry it reads the owner from
+// (the entry's own `directory` field — the session record's value, carried
+// verbatim; the owner tag's `directory` is the same value). The fleet
+// session-status read resolves (owner, directory) from here and never invents a
+// directory, so a directory is recorded byte-for-byte and only for owned entries.
+// ══════════════════════════════════════════════════════════════════════════════
+describe("#1766 — SessionOwnerMap records each session's directory from the projection entry", () => {
+  const entry = (id: string, owner: string, directory?: unknown, tagDirectory?: string): SessionEntry => ({
+    id,
+    ...(directory !== undefined ? { directory } : {}),
+    amicode_owner: {
+      owner_machine_id: owner,
+      owner_name: owner,
+      ...(tagDirectory !== undefined ? { directory: tagDirectory } : {}),
+      is_local: false,
+    },
+  });
+
+  it("update() records the entry's own `directory`, verbatim (no normalization), alongside the owner", () => {
+    const m = new SessionOwnerMap();
+    m.update([
+      entry("ses-A", "studio", "/Users/jj/harmoniqs/amicode/"), // trailing slash kept byte-for-byte
+      entry("ses-B", "laptop", "/tmp/dir with spaces/ü"),
+    ]);
+    expect(m.resolveOwner("ses-A")).toBe("studio");
+    expect(m.resolveDirectory("ses-A")).toBe("/Users/jj/harmoniqs/amicode/");
+    expect(m.resolveDirectory("ses-B")).toBe("/tmp/dir with spaces/ü");
+  });
+
+  it("falls back to the owner tag's `directory` when the entry carries no top-level directory", () => {
+    const m = new SessionOwnerMap();
+    m.update([entry("ses-T", "studio", undefined, "/srv/project")]);
+    expect(m.resolveDirectory("ses-T")).toBe("/srv/project");
+  });
+
+  it("an entry with no usable directory (absent, empty, non-string) resolves NO directory — but keeps its owner", () => {
+    const m = new SessionOwnerMap();
+    m.update([entry("ses-none", "studio"), entry("ses-empty", "studio", ""), entry("ses-num", "studio", 42)]);
+    for (const id of ["ses-none", "ses-empty", "ses-num"]) {
+      expect(m.resolveOwner(id)).toBe("studio");
+      expect(m.resolveDirectory(id)).toBeUndefined();
+    }
+  });
+
+  it("an unowned entry records no directory; an unknown id resolves none", () => {
+    const m = new SessionOwnerMap();
+    m.update([{ id: "ses-unowned", directory: "/x" }]);
+    expect(m.resolveOwner("ses-unowned")).toBeUndefined();
+    expect(m.resolveDirectory("ses-unowned")).toBeUndefined();
+    expect(m.resolveDirectory("ses-never-seen")).toBeUndefined();
+  });
+
+  it("the projection is authoritative for directories too: a later update re-records (moved) or drops (gone)", () => {
+    const m = new SessionOwnerMap();
+    m.update([entry("ses-A", "studio", "/old")]);
+    m.update([entry("ses-A", "studio", "/new")]);
+    expect(m.resolveDirectory("ses-A")).toBe("/new");
+    m.update([]);
+    expect(m.resolveDirectory("ses-A")).toBeUndefined();
+  });
+
+  it("a pending create-time binding has an owner but no directory (it never invents one)", () => {
+    const m = new SessionOwnerMap();
+    m.recordPendingOwner("ses-new", "studio");
+    expect(m.resolveOwner("ses-new")).toBe("studio");
+    expect(m.resolveDirectory("ses-new")).toBeUndefined();
+  });
+
+  it("the existing owner-map surface is unchanged (size counts owned entries; ownerMachineIds is the distinct owner set)", () => {
+    const m = new SessionOwnerMap();
+    m.update([entry("a", "studio", "/d1"), entry("b", "studio", "/d2"), entry("c", "laptop")]);
+    expect(m.size).toBe(3);
+    expect(m.ownerMachineIds().sort()).toEqual(["laptop", "studio"]);
+  });
+});
+
 
 describe("#1449 AC2/AC3 — per-session request routing retires the single attachment pointer", () => {
   const PW = "multiplex-owner-1449";

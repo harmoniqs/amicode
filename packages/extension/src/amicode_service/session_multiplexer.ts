@@ -95,6 +95,10 @@ export interface SessionEntry {
  *  the projection does, and expires after a TTL. */
 export class SessionOwnerMap {
   private readonly owners = new Map<string, string>();
+  /** #1766: each OWNED session's working directory (id → directory), recorded
+   *  from the SAME owner-tagged projection entry as its owner. Only non-empty
+   *  string values, stored byte-for-byte (no normalization). */
+  private readonly directories = new Map<string, string>();
   /** Create-time bindings awaiting projection confirmation (id → {owner, at}). */
   private readonly pending = new Map<string, { machineId: string; at: number }>();
   private readonly now: () => number;
@@ -108,9 +112,15 @@ export class SessionOwnerMap {
    *  from the overlay); expired pending bindings are pruned. */
   update(sessions: SessionEntry[]): void {
     this.owners.clear();
+    this.directories.clear();
     for (const s of sessions) {
       if (typeof s.id === "string" && s.amicode_owner?.owner_machine_id) {
         this.owners.set(s.id, s.amicode_owner.owner_machine_id);
+        // #1766: the session record's own `directory` (the cross-project list
+        // carries it verbatim); the owner tag mirrors the same value, so it is
+        // the fallback when an entry carries no top-level field.
+        const directory = typeof s.directory === "string" && s.directory !== "" ? s.directory : s.amicode_owner.directory;
+        if (typeof directory === "string" && directory !== "") this.directories.set(s.id, directory);
       }
     }
     // Prune the pending overlay: drop entries the authoritative projection now
@@ -142,6 +152,15 @@ export class SessionOwnerMap {
       return undefined;
     }
     return p.machineId;
+  }
+
+  /** #1766: the working directory the owner-tagged projection recorded for a
+   *  session, exactly as its record carries it. Undefined when the session is
+   *  unknown, unowned, carries no non-empty directory, or is only a pending
+   *  create-time binding — callers must never substitute a directory of their
+   *  own (the fleet status read queries only directories that came from here). */
+  resolveDirectory(sessionId: string): string | undefined {
+    return this.directories.get(sessionId);
   }
 
   /** The DISTINCT owner machine_ids currently holding ≥1 owned session (#1511,
