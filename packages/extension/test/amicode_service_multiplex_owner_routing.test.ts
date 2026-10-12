@@ -485,6 +485,55 @@ describe("#1774 AC2 — past the retention window the entries expire, the arm cl
   });
 });
 
+describe("#1774 AC3 — a successful refresh replaces the peer's entries authoritatively", () => {
+  it("after a retained failure, the next good refresh drops the sessions that ended and adds the new ones", () => {
+    let t = 0;
+    const m = new SessionOwnerMap({ now: () => t });
+    m.update([ownedBy("ses-ended", "studio"), ownedBy("ses-kept", "studio", "/old")], [peerOk("studio", 2)]);
+    t = 10_000;
+    m.update([], [peerTimeout("studio")]);
+    expect(m.resolveOwner("ses-ended")).toBe("studio"); // retained through the blip
+    t = 20_000;
+    m.update([ownedBy("ses-kept", "studio", "/new"), ownedBy("ses-born", "studio")], [peerOk("studio", 2)]);
+    expect(m.resolveOwner("ses-ended")).toBeUndefined(); // it ended — gone
+    expect(m.resolveOwner("ses-kept")).toBe("studio");
+    expect(m.resolveDirectory("ses-kept")).toBe("/new");
+    expect(m.resolveOwner("ses-born")).toBe("studio");
+    expect(m.size).toBe(2);
+    // and the good refresh restarts the window: a failure 59 s later still retains
+    t = 20_000 + OWNER_RETENTION_MS - 1_000;
+    m.update([], [peerTimeout("studio")]);
+    expect(m.resolveOwner("ses-born")).toBe("studio");
+    expect(m.resolveOwner("ses-ended")).toBeUndefined(); // never resurrected from the stale snapshot
+  });
+
+  it("a good refresh after expiry ends the unavailability: the peer is an ordinary owner again and its arm re-opens", async () => {
+    let t = 0;
+    const ownerMap = new SessionOwnerMap({ now: () => t });
+    ownerMap.update([ownedBy("ses-s1", "studio")], [peerOk("studio")]);
+    const origins = armOrigins();
+    const driver = retentionDriver(origins, ownerMap);
+    const res = sseRes();
+    driver.handle(sseReq(), res);
+    await settle();
+    t = OWNER_RETENTION_MS + 1;
+    ownerMap.update([], [peerTimeout("studio")]);
+    driver.reconcile();
+    await settle();
+    expect(origins.closes("studio")).toBe(1);
+
+    t += 5_000;
+    ownerMap.update([ownedBy("ses-s2", "studio")], [peerOk("studio")]);
+    expect(ownerMap.isUnavailable("studio")).toBe(false);
+    expect(ownerMap.resolveOwner("ses-s2")).toBe("studio");
+    expect(ownerMap.resolveOwner("ses-s1")).toBeUndefined();
+    driver.reconcile();
+    await settle();
+    expect(origins.opens("studio")).toBe(2); // the arm is back
+    res.fireClose();
+  });
+});
+
 /** A fleet engine stub: its cross-project session list (401 while `denies()`),
  *  its health, and a /global/event stream that stays open. */
 async function startFleetStub(denies: () => boolean, sessions: Array<Record<string, unknown>>) {
