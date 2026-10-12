@@ -29,3 +29,40 @@ export function shouldReconnectIdleStream(input: {
 }): boolean {
   return input.status === "connected" && input.now - input.lastFrameAt > input.staleMs
 }
+
+// #1773 — an unexpected NORMAL end of the global stream is a loss. The global
+// stream never ends on purpose except on shutdown, so a clean end the client did
+// not ask for means events were dropped somewhere on the relay chain (a severed
+// fan-in listener, a relay that ended instead of erroring). The loop used to
+// reconnect 250 ms later without refetching anything: the viewed transcript and
+// the entity rail stayed silently behind. Kept even once replay exists (defense
+// in depth).
+
+/** Is this completion of the stream iterator a LOSS (a resync is owed)? Only
+ *  when the client neither aborted the attempt (its watchdog, its error
+ *  handling, a reset — those paths heal on their own) nor stopped the loop (a
+ *  user-initiated stop, a page hide, teardown). */
+export function isUnexpectedStreamEnd(input: { attemptAborted: boolean; stopped: boolean }): boolean {
+  return !input.attemptAborted && !input.stopped
+}
+
+/** The stream loop's end-of-stream resync latch. `ended()` is told every normal
+ *  completion; an unexpected one ARMS a resync, which fires on the reconnected
+ *  stream's FIRST frame (`frame()` returns true exactly once) — after the
+ *  re-subscription is live, so a refetch cannot run ahead of the reconnect and
+ *  miss the events in between. */
+export function createStreamEndResync() {
+  let armed = false
+  return {
+    ended(input: { attemptAborted: boolean; stopped: boolean }): void {
+      if (isUnexpectedStreamEnd(input)) armed = true
+    },
+    /** A frame arrived: true when it is the first since an unexpected end. */
+    frame(): boolean {
+      if (!armed) return false
+      armed = false
+      return true
+    },
+    pending: (): boolean => armed,
+  }
+}
