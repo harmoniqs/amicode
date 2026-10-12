@@ -7,12 +7,13 @@
 import { NodeHttpServer } from "@effect/platform-node"
 import { describe, expect } from "bun:test"
 import http from "node:http"
-import { Clock, Context, Effect, Fiber, Layer, Option, Queue, Scope } from "effect"
+import { Clock, Context, Effect, Fiber, Layer, Logger, Option, Queue, References, Scope } from "effect"
 import * as TestClock from "effect/testing/TestClock"
 import { HttpRouter, HttpServer } from "effect/unstable/http"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import { Auth } from "../../src/auth"
 import { GlobalBus } from "../../src/bus/global"
+import { GlobalEventReplay } from "../../src/bus/global-replay"
 import { Config } from "../../src/config/config"
 import { Installation } from "../../src/installation"
 import { MoveSession } from "@opencode-ai/core/control-plane/move-session"
@@ -42,8 +43,22 @@ const apiLayer = HttpRouter.serve(
   Layer.provide(Layer.mock(MoveSession.Service)({})),
   Layer.provide(Layer.mock(Installation.Service)({})),
   Layer.provide(ServerAuth.Config.configLayer({ password: Option.none(), username: "opencode" })),
+  Layer.provide(
+    Logger.layer([
+      Logger.make<unknown, void>((options) => {
+        logs.push({
+          message: ([] as unknown[]).concat(options.message).join(" "),
+          annotations: { ...options.fiber.getRef(References.CurrentLogAnnotations) },
+        })
+      }),
+    ]),
+  ),
 )
 const it = testEffect(apiLayer)
+
+// The server's own log lines (the stream's connect/disconnect census).
+const logs: { message: string; annotations: Record<string, unknown> }[] = []
+const logged = (message: string) => logs.filter((line) => line.message === message)
 
 const ID = /^([A-Za-z0-9_-]+):(\d+)$/
 
@@ -252,6 +267,36 @@ describe("global event stream — heartbeats (#1776)", () => {
       expect(second.data.payload.type).toBe("server.heartbeat")
       expect(second.data.payload.properties).toEqual({ time: yield* Clock.currentTimeMillis, seq: idOf(after).seq })
       expect(idOf(second)).toEqual(idOf(after))
+    }),
+  )
+})
+
+describe("global event stream — client abort (#1776)", () => {
+  it.live("a client that disconnects mid-stream releases its subscription and logs the disconnect", () =>
+    Effect.gen(function* () {
+      const baseline = GlobalEventReplay.subscribers
+      const disconnects = logged("global event disconnected").length
+      const a = yield* connect()
+      yield* a.next
+      expect(GlobalEventReplay.subscribers).toBe(baseline + 1)
+      expect(logged("global event connected").at(-1)?.annotations).toMatchObject({ subscribers: baseline + 1 })
+
+      emit("test.unread")
+      emit("test.unread")
+      a.abort()
+
+      const released = yield* Effect.gen(function* () {
+        while (GlobalEventReplay.subscribers !== baseline) yield* Effect.sleep("20 millis")
+        return true
+      }).pipe(Effect.timeoutOrElse({ duration: "3 seconds", orElse: () => Effect.succeed(false) }))
+      expect(released).toBe(true)
+      const lines = logged("global event disconnected").slice(disconnects)
+      expect(lines).toHaveLength(1)
+      expect(lines[0].annotations).toMatchObject({ subscribers: baseline })
+
+      // released for good: later events are queued for no one
+      for (let i = 0; i < 100; i++) emit("test.after-abort", { i })
+      expect(GlobalEventReplay.subscribers).toBe(baseline)
     }),
   )
 })

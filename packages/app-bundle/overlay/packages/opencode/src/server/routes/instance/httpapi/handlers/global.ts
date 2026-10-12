@@ -6,11 +6,12 @@ import { EventV2 } from "@opencode-ai/core/event"
 import { Installation } from "@/installation"
 import { disposeAllInstancesAndEmitGlobalDisposed } from "@/server/global-lifecycle"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
-import { Clock, Effect, Queue } from "effect"
+import { Clock, Deferred, Effect, Exit, Queue } from "effect"
 import * as Stream from "effect/Stream"
 import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import * as Sse from "effect/unstable/encoding/Sse"
+import type { Socket } from "node:net"
 import { RootHttpApi } from "../api"
 import { GlobalUpgradeInput } from "../groups/global"
 
@@ -38,10 +39,34 @@ function controlEvent(seq: number, type: string, properties: Record<string, unkn
   })
 }
 
+// The node:http adapter interrupts a request fiber only on the response's
+// "close" event, which Bun's node:http shim (the engine's runtime) never emits
+// when a client aborts a streaming response — it emits the request's
+// "aborted"/"close" and the socket's "close", and writes to the dead socket keep
+// returning true. Without this the stream, its bus subscription and its queue
+// outlive the client forever. Watch the socket itself; the response owns it
+// for the stream's lifetime.
+function clientGone(request: HttpServerRequest.HttpServerRequest) {
+  return Effect.gen(function* () {
+    const gone = yield* Deferred.make<void>()
+    const done = () => Deferred.doneUnsafe(gone, Exit.void)
+    const socket = (request.source as { socket?: Partial<Socket> } | undefined)?.socket
+    if (!socket || typeof socket.once !== "function" || typeof socket.off !== "function") return gone
+    if (socket.destroyed) {
+      done()
+      return gone
+    }
+    socket.once("close", done)
+    yield* Effect.addFinalizer(() => Effect.sync(() => socket.off?.("close", done)))
+    return gone
+  })
+}
+
 function eventResponse() {
   return Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest
     const cursor = cursorOf(request)
+    const gone = yield* clientGone(request)
     // Registration is eager and synchronous: a bus event emitted while the
     // response body is starting is queued, never lost.
     const queue = yield* Queue.unbounded<Sse.Event>()
@@ -63,9 +88,15 @@ function eventResponse() {
         subscription.start((frame) => Queue.offerUnsafe(queue, frameEvent(frame)))
         return subscription
       }),
-      (subscription) => Effect.sync(() => subscription.close()),
+      (subscription) => Effect.andThen(Effect.sync(() => subscription.close()), Queue.shutdown(queue)),
     )
-    yield* Effect.logInfo("global event connected")
+    yield* Effect.logInfo("global event connected").pipe(
+      Effect.annotateLogs({
+        subscribers: GlobalEventReplay.subscribers,
+        resume: subscription.reset ? `reset:${subscription.reset}` : cursor ? "replay" : "live",
+        replayed: subscription.replay.length,
+      }),
+    )
     // The heartbeat enters the connection's own queue, behind every frame up to
     // the current sequence, so a backlogged connection never sees a heartbeat
     // claim a sequence it has not been sent yet (that would read as a hole).
@@ -83,12 +114,23 @@ function eventResponse() {
     return HttpServerResponse.stream(
       Stream.fromQueue(queue).pipe(
         Stream.merge(heartbeat, { haltStrategy: "left" }),
+        Stream.interruptWhen(Deferred.await(gone)),
         Stream.pipeThroughChannel(Sse.encode()),
         Stream.encodeText,
         Stream.ensuring(
+          // Release at the stream's end, not only at the request scope's: the
+          // listener is unregistered and the undelivered frames are dropped
+          // with the queue before the disconnect is logged.
           Effect.suspend(() => {
             subscription.close()
-            return Effect.logInfo("global event disconnected")
+            const queued = Queue.sizeUnsafe(queue)
+            return Queue.shutdown(queue).pipe(
+              Effect.andThen(
+                Effect.logInfo("global event disconnected").pipe(
+                  Effect.annotateLogs({ subscribers: GlobalEventReplay.subscribers, dropped: queued }),
+                ),
+              ),
+            )
           }),
         ),
       ),
