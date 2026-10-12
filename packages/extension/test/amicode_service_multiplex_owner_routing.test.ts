@@ -26,8 +26,14 @@ import {
   SessionOwnerMap,
   SessionMultiplexProxy,
   PENDING_OWNER_TTL_MS,
+  OWNER_RETENTION_MS,
+  OWNER_MAP_REFRESH_MS,
+  fanInReachable,
   type SessionEntry,
 } from "../src/amicode_service/session_multiplexer";
+import { createAmicodeService } from "../src/amicode_service";
+import { SseFanInDriver, type FanInUpstreamRequest } from "../src/amicode_service/sse_fanin_driver";
+import { honestSourceComment, type SseFrameSource } from "../src/amicode_service/sse_fanin_aggregator";
 import {
   AmicodeServiceServer,
   fleetMultiplexEnabled,
@@ -40,7 +46,7 @@ import { EngineProxy } from "../src/amicode_service/engine_proxy";
 import { writeAttachmentPointerFile } from "../src/amicode_service/attachment_pointer";
 import { writeKeeperPointerFile } from "../src/amicode_service/keeper_pointer";
 import { writeHubCredential, readHubCredential } from "../src/amicode_service/hub_credential";
-import { buildOwnerRoutingProjection } from "../src/amicode_service/merged_projection";
+import { buildOwnerRoutingProjection, type OwnerRefreshPeer } from "../src/amicode_service/merged_projection";
 import { serverAuthHeader } from "../src/server_auth";
 
 // ── a marker stub: returns a distinct marker for every request; records paths ──
@@ -227,7 +233,493 @@ describe("#1771 — each ownership refresh logs a per-peer outcome record", () =
     await expect(feed.refreshOnce()).resolves.toBeUndefined();
     expect(lines).toEqual(['[owner-map] refresh failed error="peer fan-out failed"']);
   });
+
+  it("#1774: a failed peer's line says what the map did with its entries — retained, expired, dropped, still unavailable", async () => {
+    let t = 0;
+    const ownerMap = new SessionOwnerMap({ now: () => t });
+    const lines: string[] = [];
+    let next: { sessions: SessionEntry[]; peers: OwnerRefreshPeer[] } = {
+      sessions: [
+        { id: "ses-s1", amicode_owner: { owner_machine_id: "studio", owner_name: "Studio", is_local: false } },
+        { id: "ses-s2", amicode_owner: { owner_machine_id: "studio", owner_name: "Studio", is_local: false } },
+        { id: "ses-m1", amicode_owner: { owner_machine_id: "mini", owner_name: "Mini", is_local: false } },
+      ],
+      peers: [
+        { machineId: "studio", outcome: "ok", durationMs: 40, entries: 2 },
+        { machineId: "mini", outcome: "ok", durationMs: 30, entries: 1 },
+      ],
+    };
+    const feed = new OwnerMapFeed({ ownerMap, log: (l) => lines.push(l), buildProjection: async () => next });
+    await feed.refreshOnce();
+    expect(lines.splice(0)).toEqual([
+      "[owner-map] refresh peer=studio outcome=ok duration_ms=40 entries=2",
+      "[owner-map] refresh peer=mini outcome=ok duration_ms=30 entries=1",
+    ]);
+
+    t = 15_000;
+    next = {
+      sessions: [],
+      peers: [
+        { machineId: "studio", outcome: "timeout", durationMs: 10_004, entries: 0, reason: "fetch-failed", detail: "The operation was aborted due to timeout" },
+        { machineId: "mini", outcome: "unauthorized", durationMs: 9, entries: 0, reason: "unauthorized" },
+      ],
+    };
+    await feed.refreshOnce();
+    expect(lines.splice(0)).toEqual([
+      '[owner-map] refresh peer=studio outcome=timeout duration_ms=10004 entries=0 reason=fetch-failed detail="The operation was aborted due to timeout" retention=retained held=2 age_ms=15000',
+      "[owner-map] refresh peer=mini outcome=unauthorized duration_ms=9 entries=0 reason=unauthorized retention=dropped dropped=1",
+    ]);
+
+    t = OWNER_RETENTION_MS + 1;
+    next = { sessions: [], peers: [{ machineId: "studio", outcome: "error", durationMs: 12, entries: 0, reason: "fetch-failed", detail: "HTTP 502" }] };
+    await feed.refreshOnce();
+    expect(lines.splice(0)).toEqual([
+      '[owner-map] refresh peer=studio outcome=error duration_ms=12 entries=0 reason=fetch-failed detail="HTTP 502" retention=expired dropped=2',
+    ]);
+
+    t += 5_000;
+    await feed.refreshOnce();
+    expect(lines.splice(0)).toEqual([
+      '[owner-map] refresh peer=studio outcome=error duration_ms=12 entries=0 reason=fetch-failed detail="HTTP 502" retention=unavailable',
+    ]);
+  });
 });
+
+// ══════════════════════════════════════════════════════════════════════════════
+// #1774 — the ownership map keeps a peer's sessions across a failed refresh. A
+// failed peer fetch is an EMPTY slice in the projection (the builder never
+// throws), so before this the peer's sessions vanished from the map on one blip:
+// its event arm closed without notice and its sessions routed local (404/empty).
+// Retention is decided PER PEER from #1771's refresh outcome — timeouts, network
+// errors and 5xx retain; an unauthorized answer does not (a credential problem).
+// ══════════════════════════════════════════════════════════════════════════════
+const ownedBy = (id: string, owner: string, directory?: string): SessionEntry => ({
+  id,
+  ...(directory !== undefined ? { directory } : {}),
+  amicode_owner: { owner_machine_id: owner, owner_name: owner, is_local: false },
+});
+const peerOk = (machineId: string, entries = 1): OwnerRefreshPeer => ({ machineId, outcome: "ok", durationMs: 40, entries });
+const peerTimeout = (machineId: string): OwnerRefreshPeer => ({
+  machineId,
+  outcome: "timeout",
+  durationMs: 10_004,
+  entries: 0,
+  reason: "fetch-failed",
+  detail: "The operation was aborted due to timeout",
+});
+const peer5xx = (machineId: string): OwnerRefreshPeer => ({ machineId, outcome: "error", durationMs: 12, entries: 0, reason: "fetch-failed", detail: "HTTP 502" });
+const peerNetErr = (machineId: string): OwnerRefreshPeer => ({ machineId, outcome: "error", durationMs: 3, entries: 0, reason: "fetch-failed", detail: "fetch failed" });
+const peerUnauthorized = (machineId: string): OwnerRefreshPeer => ({ machineId, outcome: "unauthorized", durationMs: 9, entries: 0, reason: "unauthorized" });
+
+describe("#1774 AC1 — a refresh in which one peer times out or errors keeps that peer's previous owner entries", () => {
+  for (const [label, failed] of [
+    ["a timeout", peerTimeout("studio")],
+    ["a 5xx answer", peer5xx("studio")],
+    ["a network error", peerNetErr("studio")],
+  ] as const) {
+    it(`${label}: the peer's sessions still resolve to it (owner + directory); the healthy peer is replaced as usual`, async () => {
+      const ownerMap = new SessionOwnerMap();
+      let next: { sessions: SessionEntry[]; peers: OwnerRefreshPeer[] } = {
+        sessions: [ownedBy("ses-s1", "studio", "/srv/a"), ownedBy("ses-s2", "studio"), ownedBy("ses-m1", "mini")],
+        peers: [peerOk("studio", 2), peerOk("mini")],
+      };
+      const feed = new OwnerMapFeed({ ownerMap, buildProjection: async () => next });
+      await feed.refreshOnce();
+      // studio's fetch fails: its slice is EMPTY in this projection; mini answers.
+      next = { sessions: [ownedBy("ses-m2", "mini")], peers: [failed, peerOk("mini")] };
+      await feed.refreshOnce();
+      expect(ownerMap.resolveOwner("ses-s1")).toBe("studio");
+      expect(ownerMap.resolveOwner("ses-s2")).toBe("studio");
+      expect(ownerMap.resolveDirectory("ses-s1")).toBe("/srv/a");
+      expect(ownerMap.ownerMachineIds().sort()).toEqual(["mini", "studio"]);
+      // the healthy peer's refresh is still authoritative
+      expect(ownerMap.resolveOwner("ses-m1")).toBeUndefined();
+      expect(ownerMap.resolveOwner("ses-m2")).toBe("mini");
+    });
+  }
+
+  it("through the REAL routing projection: a peer whose session list answers 502 keeps its owner entries", async () => {
+    let studioDown = false;
+    const fetchImpl = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.startsWith("http://studio") && studioDown) return new Response("bad gateway", { status: 502 });
+      if (url.endsWith("/global/health")) return new Response(JSON.stringify({ version: "t" }), { status: 200 });
+      if (url.startsWith("http://studio")) return new Response(JSON.stringify(/archived=true/.test(url) ? [] : [{ id: "ses-s1" }]), { status: 200 });
+      return new Response(JSON.stringify([]), { status: 200 }); // local
+    }) as unknown as typeof fetch;
+    const ownerMap = new SessionOwnerMap();
+    const feed = new OwnerMapFeed({
+      ownerMap,
+      buildProjection: async () => {
+        const p = await buildOwnerRoutingProjection({
+          localMachineId: "macbook",
+          local: { getUrl: () => "http://local" },
+          peers: [{ machineId: "studio", getUrl: () => "http://studio", token: "tok" }],
+          rosterLookup: () => undefined,
+          fetchImpl,
+        });
+        return { sessions: p.sessions as SessionEntry[], peers: p.peers };
+      },
+    });
+    await feed.refreshOnce();
+    expect(ownerMap.resolveOwner("ses-s1")).toBe("studio");
+    studioDown = true;
+    await feed.refreshOnce();
+    expect(ownerMap.resolveOwner("ses-s1")).toBe("studio"); // retained, not dropped to local
+  });
+
+  it("its event arm stays OPEN across the failed refresh — no close, no unavailable comment", async () => {
+    const ownerMap = new SessionOwnerMap();
+    ownerMap.update([ownedBy("ses-s1", "studio")], [peerOk("studio")]);
+    const origins = armOrigins();
+    const driver = retentionDriver(origins, ownerMap);
+    const res = sseRes();
+    driver.handle(sseReq(), res);
+    await settle();
+    expect(origins.opens("studio")).toBe(1);
+
+    ownerMap.update([], [peerTimeout("studio")]); // studio's slice is empty this refresh
+    driver.reconcile();
+    await settle();
+    expect(origins.closes("studio")).toBe(0);
+    expect(origins.opens("studio")).toBe(1); // the same arm, never re-opened
+    expect(res.text()).not.toContain("unavailable");
+    res.fireClose();
+  });
+});
+
+describe("#1774 AC2 — past the retention window the entries expire, the arm closes, and listeners get the named unavailable comment", () => {
+  it(`the default window is ${OWNER_RETENTION_MS} ms since the peer's last GOOD refresh: retained through it, expired past it`, () => {
+    let t = 1_000_000;
+    const m = new SessionOwnerMap({ now: () => t });
+    m.update([ownedBy("ses-s1", "studio")], [peerOk("studio")]);
+    t += 30_000;
+    m.update([], [peerTimeout("studio")]);
+    expect(m.resolveOwner("ses-s1")).toBe("studio");
+    t += 30_000; // exactly the window since the last good refresh
+    m.update([], [peer5xx("studio")]);
+    expect(m.resolveOwner("ses-s1")).toBe("studio");
+    t += 1; // past it
+    m.update([], [peerTimeout("studio")]);
+    expect(m.resolveOwner("ses-s1")).toBeUndefined();
+    expect(m.size).toBe(0);
+    expect(m.isUnavailable("studio")).toBe(true);
+    // still a NAMED owner of the fan-in membership (so the stream says so) …
+    expect(m.ownerMachineIds()).toEqual(["studio"]);
+    // … and never an active arm, whatever its transport says
+    expect(fanInReachable(m, () => true)("studio")).toBe(false);
+  });
+
+  it("the window is configurable per map (retentionMs)", () => {
+    let t = 0;
+    const m = new SessionOwnerMap({ now: () => t, retentionMs: 5_000 });
+    m.update([ownedBy("ses-s1", "studio")], [peerOk("studio")]);
+    t = 5_000;
+    m.update([], [peerTimeout("studio")]);
+    expect(m.resolveOwner("ses-s1")).toBe("studio");
+    t = 5_001;
+    m.update([], [peerTimeout("studio")]);
+    expect(m.resolveOwner("ses-s1")).toBeUndefined();
+  });
+
+  it("expiry closes the peer's arm and the listener receives the named unavailable comment — not silence", async () => {
+    let t = 0;
+    const ownerMap = new SessionOwnerMap({ now: () => t });
+    ownerMap.update([ownedBy("ses-s1", "studio")], [peerOk("studio")]);
+    const origins = armOrigins();
+    const driver = retentionDriver(origins, ownerMap);
+    const res = sseRes();
+    driver.handle(sseReq(), res);
+    await settle();
+    expect(origins.opens("studio")).toBe(1);
+
+    t = OWNER_RETENTION_MS + 1;
+    ownerMap.update([], [peerTimeout("studio")]);
+    driver.reconcile();
+    await settle();
+    expect(origins.closes("studio")).toBe(1);
+    expect(res.text()).toContain(honestSourceComment("studio", "peer-unreachable"));
+    // announced once, not on every reconcile
+    driver.reconcile();
+    await settle();
+    expect(res.text().split("source studio unavailable").length - 1).toBe(1);
+    res.fireClose();
+  });
+
+  it("an UNAUTHORIZED refresh does not retain: the entries drop at once and the peer is named unavailable (Key Decision)", async () => {
+    const ownerMap = new SessionOwnerMap();
+    ownerMap.update([ownedBy("ses-s1", "studio")], [peerOk("studio")]);
+    const origins = armOrigins();
+    const driver = retentionDriver(origins, ownerMap);
+    const res = sseRes();
+    driver.handle(sseReq(), res);
+    await settle();
+
+    ownerMap.update([], [peerUnauthorized("studio")]); // well inside the window
+    expect(ownerMap.resolveOwner("ses-s1")).toBeUndefined();
+    driver.reconcile();
+    await settle();
+    expect(origins.closes("studio")).toBe(1);
+    expect(res.text()).toContain(honestSourceComment("studio", "peer-unreachable"));
+    res.fireClose();
+  });
+
+  it("a trust or credential problem drops like unauthorized; a transport-down peer retains like a timeout", () => {
+    const m = new SessionOwnerMap();
+    for (const reason of ["untrusted", "credential-missing", "identity-conflict"] as const) {
+      m.update([ownedBy("ses-s1", "studio")], [peerOk("studio")]);
+      m.update([], [{ machineId: "studio", outcome: "error", reason }]);
+      expect(m.resolveOwner("ses-s1")).toBeUndefined();
+    }
+    m.update([ownedBy("ses-s1", "studio")], [peerOk("studio")]);
+    m.update([], [{ machineId: "studio", outcome: "error", reason: "no-upstream" }]);
+    expect(m.resolveOwner("ses-s1")).toBe("studio");
+  });
+
+  it("a peer that LEAVES the refreshed set is gone, not retained and not named unavailable", () => {
+    const m = new SessionOwnerMap();
+    m.update([ownedBy("ses-s1", "studio")], [peerOk("studio")]);
+    m.update([], []); // studio is no longer a serving peer
+    expect(m.resolveOwner("ses-s1")).toBeUndefined();
+    expect(m.isUnavailable("studio")).toBe(false);
+    expect(m.ownerMachineIds()).toEqual([]);
+  });
+
+  it("production wiring (observation boot): a peer whose refresh turns unauthorized is announced unavailable on the live /event", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] }); // the feed + reconcile cadences; HTTP stays real
+    let studioDenies = false;
+    const local = await startFleetStub(() => false, []);
+    const studio = await startFleetStub(() => studioDenies, [{ id: "ses-s1" }]);
+    const root = mkdtempSync(join(tmpdir(), "amicode-1774-wire-"));
+    const savedHub = process.env.AMICO_FLEET_HUB_FILE;
+    process.env.AMICO_FLEET_HUB_FILE = join(root, "hub-cred-absent.json");
+    const svc = createAmicodeService({
+      password: "svc-1774",
+      engine: { password: "engine-1774", getUrl: () => local.url },
+      fleet: {
+        hub: { getUrl: () => undefined },
+        observationOnly: true,
+        fleetPeers: {
+          localMachineId: "macbook",
+          getServingPeers: () => [{ machineId: "studio" }],
+          readPeerToken: (id) => (id === "studio" ? { ok: true, credential: { baseUrl: studio.url, token: "tok-studio" } } : { ok: false }),
+          rosterLookup: (id) => ({ name: id }),
+        },
+      },
+    });
+    const origin = (await svc.start()).toString().replace(/\/$/, "");
+    const stream = new AbortController();
+    try {
+      expect(await until(() => studio.listReads() >= 2)).toBe(true); // the boot refresh (active + archived)
+      await settle();
+      const res = await fetch(`${origin}/event`, { headers: { Authorization: serverAuthHeader("engine-1774") }, signal: stream.signal });
+      const text = streamText(res);
+      expect(await until(() => studio.eventOpens() === 1)).toBe(true); // the peer arm is open
+
+      studioDenies = true;
+      const reads = studio.listReads();
+      await vi.advanceTimersByTimeAsync(OWNER_MAP_REFRESH_MS); // the next owner-map refresh
+      expect(await until(() => studio.listReads() >= reads + 2)).toBe(true);
+      await settle();
+      await vi.advanceTimersByTimeAsync(1_000); // the listener's reconcile tick
+      expect(await until(() => text().includes(honestSourceComment("studio", "peer-unreachable")))).toBe(true);
+    } finally {
+      stream.abort();
+      await svc.stop();
+      vi.useRealTimers();
+      await Promise.all([local.stop(), studio.stop()]);
+      if (savedHub === undefined) delete process.env.AMICO_FLEET_HUB_FILE;
+      else process.env.AMICO_FLEET_HUB_FILE = savedHub;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("#1774 AC3 — a successful refresh replaces the peer's entries authoritatively", () => {
+  it("after a retained failure, the next good refresh drops the sessions that ended and adds the new ones", () => {
+    let t = 0;
+    const m = new SessionOwnerMap({ now: () => t });
+    m.update([ownedBy("ses-ended", "studio"), ownedBy("ses-kept", "studio", "/old")], [peerOk("studio", 2)]);
+    t = 10_000;
+    m.update([], [peerTimeout("studio")]);
+    expect(m.resolveOwner("ses-ended")).toBe("studio"); // retained through the blip
+    t = 20_000;
+    m.update([ownedBy("ses-kept", "studio", "/new"), ownedBy("ses-born", "studio")], [peerOk("studio", 2)]);
+    expect(m.resolveOwner("ses-ended")).toBeUndefined(); // it ended — gone
+    expect(m.resolveOwner("ses-kept")).toBe("studio");
+    expect(m.resolveDirectory("ses-kept")).toBe("/new");
+    expect(m.resolveOwner("ses-born")).toBe("studio");
+    expect(m.size).toBe(2);
+    // and the good refresh restarts the window: a failure 59 s later still retains
+    t = 20_000 + OWNER_RETENTION_MS - 1_000;
+    m.update([], [peerTimeout("studio")]);
+    expect(m.resolveOwner("ses-born")).toBe("studio");
+    expect(m.resolveOwner("ses-ended")).toBeUndefined(); // never resurrected from the stale snapshot
+  });
+
+  it("a good refresh after expiry ends the unavailability: the peer is an ordinary owner again and its arm re-opens", async () => {
+    let t = 0;
+    const ownerMap = new SessionOwnerMap({ now: () => t });
+    ownerMap.update([ownedBy("ses-s1", "studio")], [peerOk("studio")]);
+    const origins = armOrigins();
+    const driver = retentionDriver(origins, ownerMap);
+    const res = sseRes();
+    driver.handle(sseReq(), res);
+    await settle();
+    t = OWNER_RETENTION_MS + 1;
+    ownerMap.update([], [peerTimeout("studio")]);
+    driver.reconcile();
+    await settle();
+    expect(origins.closes("studio")).toBe(1);
+
+    t += 5_000;
+    ownerMap.update([ownedBy("ses-s2", "studio")], [peerOk("studio")]);
+    expect(ownerMap.isUnavailable("studio")).toBe(false);
+    expect(ownerMap.resolveOwner("ses-s2")).toBe("studio");
+    expect(ownerMap.resolveOwner("ses-s1")).toBeUndefined();
+    driver.reconcile();
+    await settle();
+    expect(origins.opens("studio")).toBe(2); // the arm is back
+    res.fireClose();
+  });
+});
+
+/** A fleet engine stub: its cross-project session list (401 while `denies()`),
+ *  its health, and a /global/event stream that stays open. */
+async function startFleetStub(denies: () => boolean, sessions: Array<Record<string, unknown>>) {
+  let listReads = 0;
+  let eventOpens = 0;
+  const server = http.createServer((req, res) => {
+    const u = new URL(req.url ?? "/", "http://stub");
+    if (u.pathname === "/experimental/session") {
+      listReads++;
+      if (denies()) return void res.writeHead(401).end("no");
+      res.writeHead(200, { "content-type": "application/json" });
+      return void res.end(JSON.stringify(u.searchParams.get("archived") === "true" ? [] : sessions));
+    }
+    if (u.pathname === "/global/health") {
+      res.writeHead(200, { "content-type": "application/json" });
+      return void res.end(JSON.stringify({ version: "stub-1774" }));
+    }
+    if (u.pathname === "/global/event") {
+      eventOpens++;
+      res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
+      return void res.write(": open\n\n");
+    }
+    res.writeHead(404).end();
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  return {
+    url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
+    listReads: () => listReads,
+    eventOpens: () => eventOpens,
+    stop: () =>
+      new Promise<void>((r) => {
+        server.closeAllConnections();
+        server.close(() => r());
+      }),
+  };
+}
+
+/** Accumulate a streaming response's text in the background. */
+function streamText(res: Response): () => string {
+  let text = "";
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  void (async () => {
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) return;
+        text += decoder.decode(value, { stream: true });
+      }
+    } catch {
+      /* aborted at teardown */
+    }
+  })();
+  return () => text;
+}
+
+/** Poll (real timers) until `cond` holds or the deadline passes. */
+async function until(cond: () => boolean, timeoutMs = 4_000): Promise<boolean> {
+  const start = Date.now();
+  while (!cond() && Date.now() - start < timeoutMs) await new Promise((r) => setTimeout(r, 10));
+  return cond();
+}
+
+// ── a deterministic fan-in harness (the driver + aggregator are used as-is) ───
+interface SseRes extends http.ServerResponse {
+  text(): string;
+  fireClose(): void;
+}
+function sseRes(): SseRes {
+  const chunks: string[] = [];
+  const closers: Array<() => void> = [];
+  const res = {
+    headersSent: false,
+    write(c: string) {
+      chunks.push(c);
+      return true;
+    },
+    writeHead() {
+      res.headersSent = true;
+      return res;
+    },
+    flushHeaders() {},
+    on(event: string, cb: () => void) {
+      if (event === "close") closers.push(cb);
+      return res;
+    },
+    end() {},
+    text: () => chunks.join(""),
+    fireClose: () => closers.forEach((cb) => cb()),
+  };
+  return res as unknown as SseRes;
+}
+const sseReq = (): http.IncomingMessage => ({ url: "/global/event", headers: {} }) as unknown as http.IncomingMessage;
+/** Let the arm pumps drain (microtasks + one macrotask tick). */
+const settle = () => new Promise<void>((r) => setTimeout(r, 20));
+
+/** Upstream arms that stay open until closed, counted per namespace. */
+function armOrigins() {
+  const opens = new Map<string, number>();
+  const closes = new Map<string, number>();
+  const bump = (m: Map<string, number>, k: string) => m.set(k, (m.get(k) ?? 0) + 1);
+  const openUpstream = (r: FanInUpstreamRequest): SseFrameSource => {
+    bump(opens, r.namespace);
+    const waiters: Array<(v: string | null) => void> = [];
+    let ended = false;
+    return {
+      next: () => (ended ? Promise.resolve(null) : new Promise((resolve) => waiters.push(resolve))),
+      close: () => {
+        if (ended) return;
+        ended = true;
+        bump(closes, r.namespace);
+        waiters.splice(0).forEach((w) => w(null));
+      },
+    };
+  };
+  return { openUpstream, opens: (ns: string) => opens.get(ns) ?? 0, closes: (ns: string) => closes.get(ns) ?? 0 };
+}
+
+/** The fan-in driver as index.ts wires it: reachability composed over the owner
+ *  map (`fanInReachable`), so a peer the map names unavailable is never an arm. */
+function retentionDriver(origins: ReturnType<typeof armOrigins>, ownerMap: SessionOwnerMap): SseFanInDriver {
+  const peerBaseUrl = (id: string) => (id === "studio" ? "http://studio.invalid" : undefined);
+  return new SseFanInDriver({
+    ownerMap,
+    localMachineId: "macbook",
+    localEventUrl: () => "http://local.invalid",
+    peerBaseUrl,
+    peerToken: (id) =>
+      id === "studio"
+        ? { ok: true as const, credential: { baseUrl: "http://studio.invalid", token: "tok-studio" } }
+        : { ok: false as const, reason: "absent" as const },
+    reachable: fanInReachable(ownerMap, (id) => peerBaseUrl(id) !== undefined),
+    reconcileMs: 999_999,
+    openUpstream: origins.openUpstream,
+  });
+}
 
 // ══════════════════════════════════════════════════════════════════════════════
 // FREE-TIER REMOTE CREATE (feature/free-tier-fleet) — pending create-time owner

@@ -22,17 +22,24 @@ import {
   type ObservationReadRouterOpts,
   type ObservationReadPeerTarget,
 } from "./session_multiplexer";
+import { probeLocalSession } from "./local_session_probe";
 import type { ObservationReadPlane } from "./server";
 
 /** Build the observation-only read plane: a resolver (path→owner peer) plus the
  *  peer-token proxy. `timeoutMs` bounds the headers wait (SSE bodies ride past
- *  it), mirroring the hub/attached proxies. */
+ *  it), mirroring the hub/attached proxies. #1774: `localEngineUrl` (the local
+ *  engine origin, read per request) arms the local-first probe for an
+ *  unknown-owner read; absent → no verdict, the read falls through local. */
 export function createObservationReadPlane(
-  opts: ObservationReadRouterOpts & { timeoutMs?: number },
+  opts: ObservationReadRouterOpts & { timeoutMs?: number; localEngineUrl?: () => string | undefined },
 ): ObservationReadPlane {
   const router = new ObservationReadRouter(opts);
+  const localEngineUrl = opts.localEngineUrl;
   return {
     resolve: (method, pathname) => router.resolve(method, pathname),
+    ...(localEngineUrl
+      ? { probeLocal: (req: http.IncomingMessage, sessionId: string) => probeLocalSession({ localUrl: localEngineUrl(), sessionId, req }) }
+      : {}),
     proxyToPeer(req: http.IncomingMessage, res: http.ServerResponse, target: ObservationReadPeerTarget): boolean {
       // A synthetic per-peer hub credential → HubProxy attaches
       // serverAuthHeader(target.token) === peerAuthHeader(target.token).

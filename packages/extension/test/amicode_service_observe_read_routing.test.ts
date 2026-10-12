@@ -21,7 +21,7 @@ import { join } from "node:path";
 import * as http from "node:http";
 import { AddressInfo } from "node:net";
 
-import { AmicodeServiceServer } from "../src/amicode_service/server";
+import { AmicodeServiceServer, OWNER_UNKNOWN_ERROR, OWNER_UNKNOWN_RETRY_AFTER_S } from "../src/amicode_service/server";
 import { createAmicodeService } from "../src/amicode_service";
 import { EngineProxy } from "../src/amicode_service/engine_proxy";
 import {
@@ -148,10 +148,13 @@ describe("#1537 — ObservationReadRouter resolution order", () => {
     expect(r.resolve("PATCH", "/session/ses-studio")).toBeUndefined();
     expect(r.resolve("DELETE", "/api/session/ses-studio")).toBeUndefined();
   });
-  it("local-owned / unowned / not-a-known-peer → undefined (local)", () => {
+  it("local-owned / not-a-known-peer → undefined (local)", () => {
     expect(r.resolve("GET", "/session/ses-local")).toBeUndefined(); // local-owned
-    expect(r.resolve("GET", "/api/session/ses-unknown")).toBeUndefined(); // unowned
     expect(r.resolve("GET", "/api/session/ses-stranger")).toBeUndefined(); // owner not a known peer
+  });
+  it("#1774: an UNOWNED session (no known owner) → the unknown-owner outcome: the caller tries local first", () => {
+    expect(r.resolve("GET", "/api/session/ses-unknown")).toEqual({ kind: "unknown-owner", sessionId: "ses-unknown" });
+    expect(r.resolve("HEAD", "/session/ses-unknown/message")).toEqual({ kind: "unknown-owner", sessionId: "ses-unknown" });
   });
   it("/amicode/* (own honesty + local surface) → undefined (never proxied)", () => {
     expect(r.resolve("GET", "/amicode/fleet/status")).toBeUndefined();
@@ -280,6 +283,135 @@ describe("#1537 AC5 — a known-but-unreachable owner answers honestly, never lo
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
+// #1774 AC1 — a refresh in which the owner peer timed out keeps its sessions
+// routed to it: the read is proxied to the peer, never to the local engine.
+// ══════════════════════════════════════════════════════════════════════════════
+describe("#1774 AC1 — a peer-owned read keeps routing to the owner across a failed refresh", () => {
+  it("GET for a session whose owner's last refresh timed out → still the PEER; local NOT dialed", async () => {
+    const ownerMap = new SessionOwnerMap();
+    const studioOwned = { id: "ses-studio", amicode_owner: { owner_machine_id: "studio", owner_name: "studio", is_local: false } };
+    ownerMap.update([studioOwned], [{ machineId: "studio", outcome: "ok" }]);
+    ownerMap.update([], [{ machineId: "studio", outcome: "timeout", reason: "fetch-failed" }]); // the slice is empty
+    const server = new AmicodeServiceServer({ password: PW });
+    server.attachEngineProxy(new EngineProxy({ getUrl: () => localStub.url }));
+    server.attachObservationReadPlane(
+      createObservationReadPlane({
+        ownerMap,
+        localMachineId: "macbook",
+        peer: (id) => (id === "studio" ? { getUrl: () => peerStub.url, token: "tok-studio" } : undefined),
+      }),
+    );
+    const origin = (await server.start()).toString().replace(/\/$/, "");
+    const localBefore = localStub.requests.length;
+    const peerBefore = peerStub.requests.length;
+    try {
+      const res = await fetch(`${origin}/api/session/ses-studio`, { headers: authed });
+      expect(res.status).toBe(200);
+      expect(((await res.json()) as { marker: string }).marker).toBe(peerStub.marker);
+      expect(peerStub.requests.length).toBe(peerBefore + 1);
+      expect(localStub.requests.length).toBe(localBefore);
+    } finally {
+      await server.stop();
+    }
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// #1774 AC4 — a session-scoped read for an id with NO known owner is tried on the
+// LOCAL engine first; if the local engine does not have it (its own 404), the
+// answer is a RETRYABLE 503 + Retry-After naming `owner-unknown` — not a 404 and
+// not an empty result (the owner map may simply not have caught up).
+// ══════════════════════════════════════════════════════════════════════════════
+
+/** An engine-like local stub: `GET /session/{id}` (the existence probe the
+ *  service makes) answers 200 for a session it holds and the engine's own 404
+ *  otherwise; every other session path answers a marker for a held session and
+ *  an EMPTY list for a missing one (the "empty result" a miss must not become). */
+function startEngineLikeStub(held: Set<string>): Promise<Stub> {
+  const requests: Stub["requests"] = [];
+  const server = http.createServer((req, res) => {
+    const u = new URL(req.url ?? "/", "http://stub");
+    requests.push({ method: req.method ?? "GET", path: u.pathname, auth: typeof req.headers.authorization === "string" ? req.headers.authorization : undefined });
+    const id = extractSessionIdFromReadPath(u.pathname);
+    res.setHeader("content-type", "application/json");
+    if (id !== undefined && !held.has(id)) {
+      if (/^\/(api\/)?session\/[^/]+$/.test(u.pathname)) return void res.writeHead(404).end(JSON.stringify({ name: "NotFoundError", data: { message: `Session not found: ${id}` } }));
+      return void res.writeHead(200).end("[]");
+    }
+    res.writeHead(200).end(JSON.stringify({ ok: true, marker: "ENGINE-LIKE" }));
+  });
+  return new Promise((resolve) => {
+    server.listen(0, "127.0.0.1", () => {
+      const port = (server.address() as AddressInfo).port;
+      resolve({ url: `http://127.0.0.1:${port}`, marker: "ENGINE-LIKE", requests, stop: () => new Promise((r) => server.close(() => r())) });
+    });
+  });
+}
+
+describe("#1774 AC4 — an unknown-owner read is tried locally; a local miss is a retryable owner-unknown 503", () => {
+  let engine: Stub;
+  beforeAll(async () => {
+    engine = await startEngineLikeStub(new Set(["ses-here"]));
+  });
+  afterAll(async () => {
+    await engine?.stop();
+  });
+  const noPeers = (): PeerTransport | undefined => undefined;
+
+  function boot(): AmicodeServiceServer {
+    const server = new AmicodeServiceServer({ password: PW });
+    server.attachEngineProxy(new EngineProxy({ getUrl: () => engine.url }));
+    server.attachObservationReadPlane(
+      createObservationReadPlane({ ownerMap: new SessionOwnerMap(), localMachineId: "macbook", peer: noPeers, localEngineUrl: () => engine.url }),
+    );
+    return server;
+  }
+
+  for (const path of ["/api/session/ses-ghost", "/session/ses-ghost/message", "/api/session/ses-ghost/message?limit=50"]) {
+    it(`GET ${path} (not on the local engine) → 503 owner-unknown + Retry-After, never the engine's 404 or an empty list`, async () => {
+      const server = boot();
+      const origin = (await server.start()).toString().replace(/\/$/, "");
+      try {
+        const res = await fetch(`${origin}${path}`, { headers: authed });
+        expect(res.status).toBe(503);
+        expect(res.headers.get("retry-after")).toBe(String(OWNER_UNKNOWN_RETRY_AFTER_S));
+        const body = (await res.json()) as { ok: boolean; error: string; reason: string; session_id: string; retry_after_s: number };
+        expect(body).toEqual({ ok: false, error: OWNER_UNKNOWN_ERROR, reason: "owner-unknown", session_id: "ses-ghost", retry_after_s: OWNER_UNKNOWN_RETRY_AFTER_S });
+      } finally {
+        await server.stop();
+      }
+    });
+  }
+
+  it("the local engine is probed with the request's OWN credential and directory scope", async () => {
+    const server = boot();
+    const origin = (await server.start()).toString().replace(/\/$/, "");
+    const before = engine.requests.length;
+    try {
+      await fetch(`${origin}/session/ses-ghost/message?directory=${encodeURIComponent("/srv/proj")}`, { headers: authed });
+      const probe = engine.requests.slice(before);
+      expect(probe).toEqual([{ method: "GET", path: "/session/ses-ghost", auth: authed.Authorization }]);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("an unowned id the LOCAL engine holds → served by the local engine (local first)", async () => {
+    const server = boot();
+    const origin = (await server.start()).toString().replace(/\/$/, "");
+    const before = engine.requests.length;
+    try {
+      const res = await fetch(`${origin}/api/session/ses-here/message`, { headers: authed });
+      expect(res.status).toBe(200);
+      expect(((await res.json()) as { marker: string }).marker).toBe("ENGINE-LIKE");
+      expect(engine.requests.slice(before).map((r) => r.path)).toEqual(["/session/ses-here", "/api/session/ses-here/message"]);
+    } finally {
+      await server.stop();
+    }
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
 // AC6 — production wiring: createAmicodeService on the OBSERVATION-ONLY path
 // wires the seam (a peer-owned read routes to the peer); the armed path stays
 // unchanged (the seam is never attached there).
@@ -349,6 +481,25 @@ describe("#1537 AC6 — production wiring (createAmicodeService observation-only
       expect(localStub.requests.slice(localBefore).some((r) => r.path === "/api/session/ses-studio")).toBe(false);
     } finally {
       await svc.stop();
+    }
+  });
+
+  it("#1774: the observation boot wires the local-first probe — an id no one owns and the local engine lacks → 503 owner-unknown", async () => {
+    const engine = await startEngineLikeStub(new Set());
+    const svc = createAmicodeService({
+      password: PW,
+      engine: { password: "engine-mint", getUrl: () => engine.url },
+      fleet: { hub: { getUrl: () => undefined }, observationOnly: true, fleetPeers: servingPeerProvider() },
+    });
+    const origin = (await svc.start()).toString().replace(/\/$/, "");
+    try {
+      const res = await fetch(`${origin}/api/session/ses-ghost`, { headers: { Authorization: serverAuthHeader("engine-mint") } });
+      expect(res.status).toBe(503);
+      expect(res.headers.get("retry-after")).toBe(String(OWNER_UNKNOWN_RETRY_AFTER_S));
+      expect(((await res.json()) as { reason: string }).reason).toBe("owner-unknown");
+    } finally {
+      await svc.stop();
+      await engine.stop();
     }
   });
 });
