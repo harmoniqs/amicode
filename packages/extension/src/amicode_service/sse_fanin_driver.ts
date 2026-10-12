@@ -380,11 +380,15 @@ class FanInConnection {
   }
 }
 
-/** The `/event` fan-in driver (ADR 0033 §D1). One live connection at a time
- *  (ADR 0027 single-origin: the app opens exactly one `/event`); a second
- *  `handle` tears the prior connection down first. */
+/** The `/event` fan-in driver (ADR 0033 §D1). #1772 — ONE FanInConnection PER
+ *  LISTENER: the single-origin assumption (ADR 0027: the app opens exactly one
+ *  `/event`) no longer holds with multiple windows, Chat Deck panes and split
+ *  panes onto the same hub. Evicting the prior listener made two views re-open
+ *  against each other once per second, indefinitely, silently dropping whatever
+ *  the evicted view would have received. Each listener now owns its aggregator,
+ *  upstream arms and reconcile timer; the driver only tracks the live set. */
 export class SseFanInDriver implements EventFanInDriver {
-  private active?: FanInConnection;
+  private readonly connections = new Set<FanInConnection>();
 
   constructor(private readonly deps: SseFanInDriverDeps) {}
 
@@ -392,20 +396,22 @@ export class SseFanInDriver implements EventFanInDriver {
     // #1565: always accept on the observation path. Zero non-local owners starts
     // in fleet-of-one mode (the aggregator's §D4 byte-identity relay); reconcile
     // opens peer arms as the OwnerMapFeed discovers them.
-    this.active?.close();
     const conn = new FanInConnection(this.deps, req, res);
-    this.active = conn;
+    this.connections.add(conn);
     conn.start();
+    // A departing listener closes ONLY its own connection (and so only its own
+    // upstream arms); every other listener keeps streaming.
     res.on("close", () => {
-      if (this.active === conn) this.active = undefined;
+      this.connections.delete(conn);
       conn.close();
     });
     return true;
   }
 
-  /** Reconcile the live connection's membership NOW (the per-connection timer
-   *  target; also called directly by the arm-lifecycle tests for determinism). */
+  /** Reconcile EVERY live connection's membership NOW (each connection's own
+   *  timer is the cadence; also called directly by the arm-lifecycle tests for
+   *  determinism). */
   reconcile(): void {
-    this.active?.reconcile();
+    for (const conn of this.connections) conn.reconcile();
   }
 }

@@ -482,3 +482,89 @@ describe("#1580 — observation fan-in serves /global/event (v1 global-instance 
     expect(joined).toContain('"from":"studio"');
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════════════
+// #1772 — the observation fan-in serves EVERY listener through the REAL dispatch
+// path. Two concurrent `/global/event` readers (two windows, a Chat Deck pane, a
+// split pane onto the same hub) both stay connected and both receive every
+// frame; a listener beyond the cap is refused with a retryable 503 + Retry-After
+// and no existing listener is closed to make room. The upstream origins are
+// modeled as BROADCAST buses: each arm open is a new subscription, and a frame
+// reaches every OPEN subscription — so an evicted listener visibly misses it.
+// ══════════════════════════════════════════════════════════════════════════════
+interface BroadcastOrigins {
+  openUpstream: (r: { namespace: string }) => SseFrameSource;
+  broadcast(namespace: string, frame: string): void;
+  opens(namespace: string): number;
+  live(namespace: string): number;
+}
+function broadcastOrigins(): BroadcastOrigins {
+  const subs = new Map<string, Set<Ctl>>();
+  const openCount = new Map<string, number>();
+  return {
+    openUpstream(r) {
+      const ctl = controllableSource();
+      const set = subs.get(r.namespace) ?? new Set<Ctl>();
+      subs.set(r.namespace, set);
+      set.add(ctl);
+      openCount.set(r.namespace, (openCount.get(r.namespace) ?? 0) + 1);
+      return {
+        next: () => ctl.source.next(),
+        close: () => {
+          set.delete(ctl);
+          ctl.end();
+        },
+      };
+    },
+    broadcast(namespace, frame) {
+      for (const ctl of subs.get(namespace) ?? []) ctl.push(frame);
+    },
+    opens: (ns) => openCount.get(ns) ?? 0,
+    live: (ns) => subs.get(ns)?.size ?? 0,
+  };
+}
+
+async function until(cond: () => boolean, timeoutMs = 2000): Promise<void> {
+  const start = Date.now();
+  while (!cond() && Date.now() - start < timeoutMs) await new Promise((r) => setTimeout(r, 10));
+}
+
+function observeDriver(origins: BroadcastOrigins, extra: Partial<ConstructorParameters<typeof SseFanInDriver>[0]> = {}): SseFanInDriver {
+  const ownerMap = new SessionOwnerMap();
+  ownerMap.update([{ id: "ses-studio", amicode_owner: { owner_machine_id: "studio", owner_name: "studio", is_local: false } }]);
+  return new SseFanInDriver({
+    ownerMap,
+    localMachineId: "macbook",
+    localEventUrl: () => "http://local.invalid",
+    peerBaseUrl: (id) => (id === "studio" ? "http://studio.invalid" : undefined),
+    peerToken: (id) => (id === "studio" ? { ok: true, credential: { baseUrl: "http://studio.invalid", token: "tok-studio" } } : { ok: false, reason: "absent" }),
+    reconcileMs: 999999,
+    openUpstream: origins.openUpstream,
+    ...extra,
+  });
+}
+
+describe("#1772 — the real dispatch path accepts concurrent global-stream listeners", () => {
+  it("AC1 — two concurrent /global/event readers both receive the local AND the peer frame", async () => {
+    const origins = broadcastOrigins();
+    const svc = new AmicodeServiceServer({ password: PW });
+    svc.attachObservationEventPlane(observeDriver(origins));
+    const origin = (await svc.start()).toString().replace(/\/$/, "");
+    try {
+      const readA = readSseFrames(`${origin}/global/event`, authed, { maxFrames: 2, timeoutMs: 3000 });
+      await until(() => origins.opens("local") >= 1);
+      const readB = readSseFrames(`${origin}/global/event`, authed, { maxFrames: 2, timeoutMs: 3000 });
+      await until(() => origins.opens("local") >= 2);
+      origins.broadcast("local", sseFrame("event: message", 'data: {"from":"macbook"}', "id: l1"));
+      origins.broadcast("studio", sseFrame("event: message", 'data: {"from":"studio"}', "id: p1"));
+      const [a, b] = await Promise.all([readA, readB]);
+      for (const frames of [a, b]) {
+        const joined = frames.join("");
+        expect(joined).toContain('"from":"macbook"');
+        expect(joined).toContain('"from":"studio"');
+      }
+    } finally {
+      await svc.stop();
+    }
+  });
+});

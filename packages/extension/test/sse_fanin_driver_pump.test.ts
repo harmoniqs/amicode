@@ -54,32 +54,63 @@ function controllableSource(): Ctl {
   };
 }
 
-/** A mock ServerResponse that collects writes. */
-function mockRes(): http.ServerResponse & { text(): string; fireClose(): void } {
+/** A mock ServerResponse that collects writes. #1772 — also records whether the
+ *  response was ENDED (an evicted listener is ended by the driver) and the
+ *  status/headers/body of a non-stream answer (the beyond-cap refusal). */
+type MockRes = http.ServerResponse & {
+  text(): string;
+  fireClose(): void;
+  ended: boolean;
+  status?: number;
+  headerMap: Record<string, string>;
+  body: string;
+};
+function mockRes(): MockRes {
   const chunks: string[] = [];
   const closeListeners: Array<() => void> = [];
-  return {
+  const res = {
     headersSent: false,
+    ended: false,
+    status: undefined as number | undefined,
+    headerMap: {} as Record<string, string>,
+    body: "",
     write(chunk: string) {
       chunks.push(chunk);
       return true;
     },
-    writeHead() {
-      return this;
+    writeHead(status: number, headers?: Record<string, string | number>) {
+      res.status = status;
+      for (const [k, v] of Object.entries(headers ?? {})) res.headerMap[k.toLowerCase()] = String(v);
+      res.headersSent = true;
+      return res;
+    },
+    setHeader(k: string, v: string | number) {
+      res.headerMap[k.toLowerCase()] = String(v);
+      return res;
+    },
+    set statusCode(s: number) {
+      res.status = s;
+    },
+    get statusCode(): number {
+      return res.status ?? 200;
     },
     flushHeaders() {},
     on(event: string, cb: (...args: unknown[]) => void) {
       if (event === "close") closeListeners.push(cb as () => void);
-      return this;
+      return res;
     },
-    end() {},
+    end(chunk?: string) {
+      if (typeof chunk === "string") res.body += chunk;
+      res.ended = true;
+    },
     text() {
       return chunks.join("");
     },
     fireClose() {
       for (const cb of closeListeners) cb();
     },
-  } as unknown as http.ServerResponse & { text(): string; fireClose(): void };
+  };
+  return res as unknown as MockRes;
 }
 
 /** #1617 — a mock ServerResponse that models REAL Node backpressure: `write()`
@@ -793,3 +824,100 @@ describe("#1638 — re-open resumes from last-delivered id + composite-mode reco
     res.fireClose()
   })
 })
+
+// ══════════════════════════════════════════════════════════════════════════════
+// #1772 — the fan-in serves EVERY listener. Each global-stream listener gets its
+// own FanInConnection (aggregator + upstream arms + reconcile); a second view
+// (another window, a Chat Deck pane, a split pane) no longer evicts the first.
+// The harness models the upstream origins as BROADCAST buses (the engine's
+// global bus delivers every event to every open subscription), so a listener
+// whose arms were torn down by an eviction visibly stops receiving frames.
+// ══════════════════════════════════════════════════════════════════════════════
+
+/** A fake set of upstream origins: every `openUpstream` call is a NEW
+ *  subscription on its namespace's bus; `broadcast` delivers a frame to every
+ *  OPEN subscription of that namespace. Records every open and every close. */
+interface FakeOrigins {
+  openUpstream: (r: { namespace: string; lastEventId?: string }) => SseFrameSource;
+  broadcast(namespace: string, frame: string): void;
+  opens(namespace: string): number;
+  closes(namespace: string): number;
+  live(namespace: string): number;
+}
+function fakeOrigins(): FakeOrigins {
+  const subs = new Map<string, Set<Ctl>>();
+  const openCount = new Map<string, number>();
+  const closeCount = new Map<string, number>();
+  const bump = (m: Map<string, number>, ns: string) => m.set(ns, (m.get(ns) ?? 0) + 1);
+  return {
+    openUpstream(r) {
+      const ctl = controllableSource();
+      const set = subs.get(r.namespace) ?? new Set<Ctl>();
+      subs.set(r.namespace, set);
+      set.add(ctl);
+      bump(openCount, r.namespace);
+      return {
+        next: () => ctl.source.next(),
+        close: () => {
+          if (set.delete(ctl)) bump(closeCount, r.namespace);
+          ctl.end();
+        },
+      };
+    },
+    broadcast(namespace, frame) {
+      for (const ctl of subs.get(namespace) ?? []) ctl.push(frame);
+    },
+    opens: (ns) => openCount.get(ns) ?? 0,
+    closes: (ns) => closeCount.get(ns) ?? 0,
+    live: (ns) => subs.get(ns)?.size ?? 0,
+  };
+}
+
+const STUDIO_OWNED = [
+  { id: "ses-studio", amicode_owner: { owner_machine_id: "studio", owner_name: "studio", is_local: false } },
+];
+
+function twoListenerDriver(origins: FakeOrigins, ownerMap: SessionOwnerMap, extra: Partial<ConstructorParameters<typeof SseFanInDriver>[0]> = {}): SseFanInDriver {
+  return new SseFanInDriver({
+    ownerMap,
+    localMachineId: "macbook",
+    localEventUrl: () => "http://local.invalid",
+    peerBaseUrl: (id) => (id === "studio" ? "http://studio.invalid" : undefined),
+    peerToken: (id) =>
+      id === "studio"
+        ? { ok: true as const, credential: { baseUrl: "http://studio.invalid", token: "tok-studio" } }
+        : { ok: false as const, reason: "absent" as const },
+    reconcileMs: 999_999,
+    openUpstream: origins.openUpstream,
+    ...extra,
+  });
+}
+
+describe("#1772 AC1 — two concurrent listeners both stay connected and both receive every frame", () => {
+  it("listener A and listener B each receive the local arm's AND the peer arm's frames; neither is ended", async () => {
+    const ownerMap = new SessionOwnerMap();
+    ownerMap.update(STUDIO_OWNED);
+    const origins = fakeOrigins();
+    const driver = twoListenerDriver(origins, ownerMap);
+
+    const resA = mockRes();
+    const resB = mockRes();
+    expect(driver.handle(mockReq("/global/event"), resA)).toBe(true);
+    await tick();
+    expect(driver.handle(mockReq("/global/event"), resB)).toBe(true);
+    await tick();
+
+    origins.broadcast(LOCAL_NAMESPACE, sseFrame("event: message", 'data: {"from":"macbook","n":1}', "id: l1"));
+    origins.broadcast("studio", sseFrame("event: message", 'data: {"from":"studio","n":2}', "id: p1"));
+    await tick();
+
+    for (const res of [resA, resB]) {
+      expect(res.ended).toBe(false); // still connected — no eviction
+      expect(res.text()).toContain('"from":"macbook"');
+      expect(res.text()).toContain('"from":"studio"');
+    }
+
+    resA.fireClose();
+    resB.fireClose();
+  });
+});
