@@ -9,8 +9,8 @@ import { SseFanInDriver } from "../src/amicode_service/sse_fanin_driver";
 import type { SseFrameSource } from "../src/amicode_service/sse_fanin_aggregator";
 import { LOCAL_NAMESPACE } from "../src/amicode_service/sse_fanin_aggregator";
 import { SessionOwnerMap } from "../src/amicode_service/session_multiplexer";
-import { FanInCensus, FANIN_CENSUS_INTERVAL_MS } from "../src/amicode_service/fanin_census";
-import { fakeEngine, LOCAL_EPOCH, PEER_EPOCH } from "./fixtures/engine_stream/engine_frames";
+import { FanInCensus, FANIN_CENSUS_INTERVAL_MS, FANIN_CLOSE_REASONS } from "../src/amicode_service/fanin_census";
+import { fakeEngine, startEngineSseServer, LOCAL_EPOCH, PEER_EPOCH } from "./fixtures/engine_stream/engine_frames";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -1420,5 +1420,157 @@ describe("#1771 AC1 — a fan-in service logs a census line every 30 s", () => {
     expect(studioArm()).toMatchObject({ frames: "300", pending: "0", drops: "43", gaps: "1" });
 
     res.fireClose();
+  });
+});
+
+/** Resolve once the census sink has received a line matching `pred` —
+ *  event-driven (the sink notifies), never a polling sleep. */
+function lineWaiter(lines: string[]): { sink: (l: string) => void; waitFor(pred: (l: string) => boolean): Promise<string> } {
+  const waiters: Array<{ pred: (l: string) => boolean; resolve: (l: string) => void }> = [];
+  return {
+    sink(l: string) {
+      lines.push(l);
+      for (const w of [...waiters]) {
+        if (w.pred(l)) {
+          waiters.splice(waiters.indexOf(w), 1);
+          w.resolve(l);
+        }
+      }
+    },
+    waitFor(pred) {
+      const hit = lines.find(pred);
+      if (hit !== undefined) return Promise.resolve(hit);
+      return new Promise((resolve) => waiters.push({ pred, resolve }));
+    },
+  };
+}
+
+describe("#1771 AC2 — close reasons are an enumerated set", () => {
+  it("the set is exactly: upstream end, upstream error, membership change, listener closed, evicted, shutdown", () => {
+    expect([...FANIN_CLOSE_REASONS]).toEqual([
+      "upstream-end",
+      "upstream-error",
+      "membership-change",
+      "listener-closed",
+      "evicted",
+      "shutdown",
+    ]);
+  });
+
+  it("an arm's closes are counted under their reason: upstream end, upstream error, membership change", async () => {
+    const ownerMap = new SessionOwnerMap();
+    ownerMap.update(STUDIO_OWNED);
+    const { census, lines, censusLines } = testCensus();
+    const localCtls: Ctl[] = [];
+    const failing: Array<(err: Error) => void> = [];
+    const driver = twoListenerDriver(fakeOrigins(), ownerMap, {
+      census,
+      openUpstream: (r) => {
+        if (r.namespace === LOCAL_NAMESPACE) {
+          const ctl = controllableSource();
+          localCtls.push(ctl);
+          return ctl.source;
+        }
+        // the peer's upstream FAILS: next() rejects
+        return {
+          next: () => new Promise<string | null>((_, reject) => failing.push(reject)),
+          close() {},
+        };
+      },
+    });
+    const res = mockRes();
+    driver.handle(mockReq("/global/event"), res);
+    await flush();
+
+    localCtls[0].end(); // the local engine ends the stream cleanly
+    failing.shift()!(new Error("ECONNRESET")); // the peer's stream errors
+    await flush();
+    expect(lines).toContainEqual(expect.stringMatching(/^\[fanin\] arm-closed plane=observe conn=c1 arm=local reason=upstream-end$/));
+    expect(lines).toContainEqual(expect.stringMatching(/^\[fanin\] arm-closed plane=observe conn=c1 arm=studio reason=upstream-error$/));
+
+    driver.reconcile(); // both re-open
+    await flush();
+    ownerMap.update([]); // the peer's sessions end → its arm leaves the membership
+    driver.reconcile();
+    await flush();
+    expect(lines).toContainEqual(expect.stringMatching(/^\[fanin\] arm-closed plane=observe conn=c1 arm=studio reason=membership-change$/));
+
+    census.emit();
+    const arms = parseCensus(censusLines().at(-1)!).arms;
+    expect(arms.find((a) => a.arm === "local")).toMatchObject({ opens: "2", closes: "upstream-end:1" });
+    expect(arms.find((a) => a.arm === "studio")).toMatchObject({ opens: "2", closes: "upstream-error:1,membership-change:1" });
+    expect(parseCensus(censusLines().at(-1)!).head.evictions).toBe("0"); // no eviction path exists (#1772)
+
+    localCtls.forEach((c) => c.end());
+    res.fireClose();
+  });
+
+  it("the REAL upstream reader tells a clean end (upstream-end) from a mid-stream failure (upstream-error)", async () => {
+    const local = fakeEngine({ legacy: true }); // an old engine: id-less frames
+    const peer = fakeEngine({ legacy: true });
+    const ends = await startEngineSseServer((res) => {
+      res.write(local.connected());
+      res.end(); // clean end of stream
+    });
+    const dies = await startEngineSseServer((res) => {
+      res.write(peer.connected());
+      setImmediate(() => res.destroy()); // the link dies mid-stream
+    });
+    const lines: string[] = [];
+    const w = lineWaiter(lines);
+    const ownerMap = new SessionOwnerMap();
+    ownerMap.update(STUDIO_OWNED);
+    const driver = new SseFanInDriver({
+      ownerMap,
+      localMachineId: "macbook",
+      localEventUrl: () => ends.url,
+      peerBaseUrl: (id) => (id === "studio" ? dies.url : undefined),
+      peerToken: (id) =>
+        id === "studio"
+          ? { ok: true as const, credential: { baseUrl: dies.url, token: "tok-studio" } }
+          : { ok: false as const, reason: "absent" as const },
+      reconcileMs: 999_999,
+      census: new FanInCensus({ plane: "observe", sink: w.sink }),
+      // no openUpstream → the production http reader
+    });
+    const res = mockRes();
+    try {
+      driver.handle(mockReq("/global/event"), res);
+      expect(await w.waitFor((l) => l.includes("arm=local reason="))).toMatch(/reason=upstream-end$/);
+      expect(await w.waitFor((l) => l.includes("arm=studio reason="))).toMatch(/reason=upstream-error$/);
+    } finally {
+      res.fireClose();
+      await ends.stop();
+      await dies.stop();
+    }
+  });
+
+  it("a departing listener's arms close as listener-closed; after shutdown() the teardown's closes are shutdown", async () => {
+    const ownerMap = new SessionOwnerMap();
+    ownerMap.update(STUDIO_OWNED);
+    const { census, lines } = testCensus();
+    const driver = twoListenerDriver(fakeOrigins(), ownerMap, { census });
+    const resA = mockRes();
+    const resB = mockRes();
+    driver.handle(mockReq("/global/event"), resA);
+    driver.handle(mockReq("/global/event"), resB);
+    await flush();
+
+    resA.fireClose(); // a view goes away
+    expect(lines.filter((l) => l.includes("conn=c1") && l.includes("reason="))).toEqual([
+      "[fanin] arm-closed plane=observe conn=c1 arm=local reason=listener-closed",
+      "[fanin] arm-closed plane=observe conn=c1 arm=studio reason=listener-closed",
+      "[fanin] listener-closed plane=observe conn=c1 reason=listener-closed listeners=1",
+    ]);
+
+    driver.shutdown(); // the service stops: its socket teardown closes the rest
+    resB.fireClose();
+    expect(lines.filter((l) => l.includes("conn=c2") && l.includes("reason="))).toEqual([
+      "[fanin] arm-closed plane=observe conn=c2 arm=local reason=shutdown",
+      "[fanin] arm-closed plane=observe conn=c2 arm=studio reason=shutdown",
+      "[fanin] listener-closed plane=observe conn=c2 reason=shutdown listeners=0",
+    ]);
+    // shutdown() closed nothing itself — B's stream ended only with its socket.
+    expect(lines.some((l) => l.includes("reason=evicted"))).toBe(false);
   });
 });
