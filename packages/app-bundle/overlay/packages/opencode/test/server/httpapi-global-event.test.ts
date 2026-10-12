@@ -26,6 +26,7 @@ import { globalHandlers } from "../../src/server/routes/instance/httpapi/handler
 import { authorizationLayer } from "../../src/server/routes/instance/httpapi/middleware/authorization"
 import { schemaErrorLayer } from "../../src/server/routes/instance/httpapi/middleware/schema-error"
 import { testEffect } from "../lib/effect"
+import { OUTPUT_THROTTLE_MS, makeOutputThrottle } from "../../src/tool/shell-output-throttle"
 
 const apiLayer = HttpRouter.serve(
   HttpApiBuilder.layer(RootHttpApi).pipe(
@@ -496,6 +497,164 @@ describe("global event stream — client abort (#1776)", () => {
       // released for good: later events are queued for no one
       for (let i = 0; i < 100; i++) emit("test.after-abort", { i })
       expect(GlobalEventReplay.subscribers).toBe(baseline)
+    }),
+  )
+})
+
+// ── #1778 fixture turn: a multi-file edit plus a chatty shell command ──────────
+//
+// The same turn, two ways. BEFORE is what #1776's engine put on every
+// subscriber's wire: each event serialized whole, each durable event followed by
+// its sync copy, one shell preview update per output chunk. AFTER is measured
+// on the live wire of a default subscriber of this engine: no sync copies,
+// summary patch bodies stripped, shell updates through the real throttle
+// (driven by TestClock). Sizes mirror the Studio measurement: one summary of
+// 88 files carrying ~2.6 MB of patch text.
+const FIXTURE = { files: 88, patchBytes: 30_000, chunks: 300, chunkEveryMs: 10, chunkBytes: 160, deltas: 120 }
+const PREVIEW_MAX = 30_000 // the shell tool's MAX_METADATA_LENGTH
+const KB = 1024
+
+// the engine's SSE framing (the encoder omits the default `event: message` line)
+const sseBytes = (id: string, data: string) => Buffer.byteLength(`id: ${id}\ndata: ${data}\n\n`)
+
+const patchFor = (file: string, bytes: number) => {
+  const line = `+  export const value_${file.length} = "${"x".repeat(60)}"\n`
+  return `--- a/${file}\n+++ b/${file}\n@@ -1,0 +1,${Math.ceil(bytes / line.length)} @@\n${line.repeat(Math.ceil(bytes / line.length))}`
+}
+
+describe("global event stream — fixture turn byte report (#1778)", () => {
+  it.effect("a multi-file edit plus a chatty shell command keeps every live frame under 256 KB", () =>
+    Effect.gen(function* () {
+      const plain = yield* connect()
+      yield* plain.next
+      const before: { type: string; bytes: number; sync: boolean }[] = []
+      let liveEvents = 0
+      const base = { directory: "/tmp/i1778-fixture", project: "prj_i1778" }
+      const sessionID = "ses_i1778_fixture"
+
+      // Emit like the event-v2 bridge (the event, then for a durable one its sync
+      // copy) and record the frame #1776's tap would have serialized for each.
+      const publish = (type: string, properties: Record<string, unknown>, options: { durable?: boolean; record?: boolean } = {}) => {
+        const id = `evt_i1778_fx_${GlobalBus.seq + 1}`
+        const event = { ...base, payload: { id, type, properties } }
+        GlobalBus.emit("event", event)
+        liveEvents++
+        const record = options.record !== false
+        if (record) before.push({ type, sync: false, bytes: sseBytes(`${GlobalBus.epoch}:${GlobalBus.seq}`, JSON.stringify(event)) })
+        if (options.durable === false) return
+        const copy = {
+          ...base,
+          payload: { type: "sync", syncEvent: { id, type: `${type}.1`, seq: before.length, aggregateID: sessionID, data: properties } },
+        }
+        GlobalBus.emit("event", copy)
+        if (record) before.push({ type, sync: true, bytes: sseBytes(`${GlobalBus.epoch}:${GlobalBus.seq}`, JSON.stringify(copy)) })
+      }
+      const user = { id: "msg_i1778_user", sessionID, role: "user", time: { created: 1 }, agent: "build", model: { providerID: "p", modelID: "m" } }
+      const assistant = { id: "msg_i1778_asst", sessionID, role: "assistant", parentID: user.id, time: { created: 2 } }
+      const tool = (callID: string, toolName: string, state: Record<string, unknown>) => ({
+        sessionID,
+        part: { id: `prt_${callID}`, sessionID, messageID: assistant.id, type: "tool", callID, tool: toolName, state },
+        time: 3,
+      })
+
+      publish("message.updated", { sessionID, info: user })
+      publish("message.updated", { sessionID, info: assistant })
+      for (let i = 0; i < FIXTURE.deltas; i++)
+        publish("message.part.delta", { sessionID, messageID: assistant.id, partID: "prt_text", field: "text", delta: "Editing the module now. " }, { durable: false })
+
+      // the multi-file edit: each edit tool part runs then completes (its own
+      // metadata keeps its patch — other tools' metadata is out of scope)
+      const files = Array.from({ length: FIXTURE.files }, (_, i) => `packages/app/src/feature/module-${i}.ts`)
+      const diffs = files.map((file) => ({ file, patch: patchFor(file, FIXTURE.patchBytes), additions: 400, deletions: 12, status: "modified" }))
+      for (const [i, diff] of diffs.entries()) {
+        const input = { filePath: diff.file, oldString: "a", newString: "b" }
+        publish("message.part.updated", tool(`edit_${i}`, "edit", { status: "pending", input, raw: "" }))
+        const filediff = { file: diff.file, patch: diff.patch, additions: diff.additions, deletions: diff.deletions }
+        publish(
+          "message.part.updated",
+          tool(`edit_${i}`, "edit", {
+            status: "completed",
+            input,
+            output: "Edit applied successfully.",
+            title: diff.file,
+            metadata: { diff: diff.patch, filediff, diagnostics: {} },
+            time: { start: 3, end: 4 },
+          }),
+        )
+      }
+
+      // the chatty shell command: a running update per output chunk BEFORE, the
+      // throttled updates AFTER (first at once, <= 1 per 200 ms, final flush)
+      const command = { command: "bun run build --verbose" }
+      const running = (output: string) => tool("shell_0", "bash", { status: "running", input: command, metadata: { output }, time: { start: 5 } })
+      const previews: string[] = []
+      let output = ""
+      for (let i = 0; i < FIXTURE.chunks; i++) {
+        output += `[build] step ${String(i).padStart(4, "0")} ${"·".repeat(FIXTURE.chunkBytes - 24)}\n`
+        previews.push(output.length <= PREVIEW_MAX ? output : "...\n\n" + output.slice(-PREVIEW_MAX))
+      }
+      // BEFORE: one running update (and its sync copy) per output chunk
+      const frameBytes = (payload: Record<string, unknown>) =>
+        sseBytes(`${GlobalBus.epoch}:${GlobalBus.seq + 1}`, JSON.stringify({ ...base, payload }))
+      for (const preview of previews) {
+        const id = `evt_i1778_fx_shell_${before.length}`
+        const data = running(preview)
+        before.push({ type: "shell", sync: false, bytes: frameBytes({ id, type: "message.part.updated", properties: data }) })
+        before.push({
+          type: "shell",
+          sync: true,
+          bytes: frameBytes({ id, type: "sync", syncEvent: { id, type: "message.part.updated.1", seq: 0, aggregateID: sessionID, data } }),
+        })
+      }
+      // AFTER: the same chunks, 10 ms apart, through the shell tool's throttle
+      let shellUpdates = 0
+      const throttle = yield* makeOutputThrottle((preview) =>
+        Effect.sync(() => {
+          shellUpdates++
+          publish("message.part.updated", running(preview), { record: false })
+        }),
+      )
+      for (const preview of previews) {
+        yield* throttle.offer(preview)
+        yield* TestClock.adjust(`${FIXTURE.chunkEveryMs} millis`)
+      }
+      yield* throttle.flush
+      publish("message.part.updated", tool("shell_0", "bash", { status: "completed", input: command, output: previews.at(-1), title: command.command, metadata: { output: previews.at(-1), exit: 0 }, time: { start: 5, end: 6 } }))
+
+      // the per-turn summary: every changed file with its full patch
+      publish("message.updated", { sessionID, info: { ...user, summary: { title: "Edit 88 modules", diffs } } })
+      publish("session.updated", { sessionID, info: { id: sessionID, title: "fixture", summary: { additions: 400 * 88, deletions: 12 * 88, files: 88 } } })
+
+      const frames = yield* plain.take(liveEvents)
+      // the wire carries exactly the turn's events — no sync copy, no hole
+      expect(frames.filter((f) => f.data.payload.type === "sync")).toEqual([])
+      expect(seqsOf(frames)).toEqual(frames.map((_, i) => seqsOf(frames)[0] + i))
+      // the BEFORE formula is the wire's own framing
+      for (const frame of frames) expect(sseBytes(frame.id!, frame.raw)).toBe(frame.bytes)
+
+      const after = frames.map((frame) => ({ type: frame.data.payload.type as string, bytes: frame.bytes }))
+      const total = (rows: { bytes: number }[]) => rows.reduce((sum, row) => sum + row.bytes, 0)
+      const largest = (rows: { bytes: number }[]) => Math.max(...rows.map((row) => row.bytes))
+      const summaryAfter = frames.find((f) => f.data.payload.properties?.info?.summary?.diffs)!
+      const report = {
+        before: { frames: before.length, totalBytes: total(before), largestFrameBytes: largest(before), syncCopies: before.filter((r) => r.sync).length, shellUpdates: previews.length },
+        after: { frames: after.length, totalBytes: total(after), largestFrameBytes: largest(after), syncCopies: 0, shellUpdates },
+        summaryFrame: { beforeBytes: before.filter((r) => r.type === "message.updated" && !r.sync).at(-1)!.bytes, afterBytes: summaryAfter.bytes },
+      }
+      console.log(`[#1778 fixture-turn byte report] ${JSON.stringify(report)}`)
+      console.log(
+        `[#1778 fixture-turn byte report] total ${(report.before.totalBytes / KB / KB).toFixed(2)} MiB -> ${(report.after.totalBytes / KB / KB).toFixed(2)} MiB` +
+          ` (${(100 * (1 - report.after.totalBytes / report.before.totalBytes)).toFixed(1)}% cut); largest frame ${(report.before.largestFrameBytes / KB).toFixed(1)} KiB -> ${(report.after.largestFrameBytes / KB).toFixed(1)} KiB;` +
+          ` frames ${report.before.frames} -> ${report.after.frames}; shell updates ${report.before.shellUpdates} -> ${report.after.shellUpdates}`,
+      )
+
+      expect(report.before.largestFrameBytes).toBeGreaterThan(256 * KB) // the fixture is honest: BEFORE breaks the bound
+      expect(report.after.largestFrameBytes).toBeLessThan(256 * KB)
+      expect(report.after.totalBytes).toBeLessThan(report.before.totalBytes)
+      expect(shellUpdates).toBeLessThanOrEqual(1 + (FIXTURE.chunks * FIXTURE.chunkEveryMs) / OUTPUT_THROTTLE_MS + 1)
+      // the final shell output reached the wire before completion
+      const lastRunning = frames.filter((f) => f.data.payload.properties?.part?.state?.status === "running").at(-1)!
+      expect(lastRunning.data.payload.properties.part.state.metadata.output).toBe(previews.at(-1))
     }),
   )
 })
