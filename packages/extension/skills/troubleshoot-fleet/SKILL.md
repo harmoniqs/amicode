@@ -32,7 +32,7 @@ never in what you say:
 |---|---|
 | hub / server / canonical | "home base" — the machine that hosts your work |
 | client / thin client | "a window onto home base" |
-| standalone | "working on its own" |
+| standalone peer | "its own studio, syncing fleet sessions with the other machines" |
 | tunnel | "the steady link between your machines" |
 | guard | (don't mention it — it's plumbing) |
 | verify-attach / roster / health | "whether the link actually works" |
@@ -68,8 +68,11 @@ accidentally test the wrong machine and call a broken link healthy. When you run
 a cross-machine probe, run it inside `ssh` and keep the command you used so you
 can show your work if asked.
 
+- If this is a **peer fleet**, each machine has its own engine and session activity
+  and prompts sync between machines. Test the affected peer's own configured
+  connection; do not assume every machine routes through one home base.
 - If the fleet has a **home base** (a `server`) and you're on it, the other
-  machines reach you through the link — to test *their* side you must `ssh` into
+  machines reach it through the link — to test *their* side you must `ssh` into
   them.
 - The fleet port is almost always **4096**. Read the real one from
   `~/.amico/ops/fleet/fleet.json` (`canonical.port`) before assuming.
@@ -123,7 +126,7 @@ traps, both real in the current build:
 | Boot warning "fleet issue"; guard/settings/link drift | "Your machine's link setup drifted out of sync." | **Fleet — Repair** (re-installs the link + settings from source; idempotent). |
 | Sessions look wrong / a machine seems to have its *own* private history | Likely a silent fork — see **Step 3**. | Detect the fork first; do NOT reload blindly. |
 | Version/pin mismatch on join | "The two machines are on different Amicode builds." | Get both on the same build (**Repo Sync**, then rebuild/reload), then re-join. |
-| "attached server unreachable" / a peer won't load | "The other machine isn't reachable right now over the way it's set to connect." | Check that peer is on and reachable by its set method; re-probe its real endpoint (Step 1). This is an honest "it's off," not a bug. |
+| A peer is missing, unreachable, or its sessions stop syncing | "That machine isn't reachable over the private connection the fleet uses." | Check that peer is on and reachable over its configured connection; for Tailscale follow Step 3, then re-probe its real endpoint. |
 | Approval prompts on every fleet action | "VS Code is asking permission for each fleet file it touches." | It's a one-time settings fix; offer to walk it (allow the external directories in the opencode config), then it stops. |
 
 ## Step 3 — transport & OS-specific failures (the cross-machine gotchas)
@@ -131,19 +134,23 @@ traps, both real in the current build:
 The link is set up differently per machine, so the fix depends on the machine's
 OS and how it connects:
 
-- **SSH link down (the common case).** The steady link is an SSH forward. If it
+- **Peer connection down.** For peer fleets, machines connect directly using their
+  configured transport; there is no single home-base tunnel. If using SSH, confirm
+  the alias still resolves and reaches the peer. If using Tailscale, confirm both
+  machines are online and MagicDNS resolves. Restore that private connection and
+  verify session activity and prompts sync again.
+- **Home-base SSH link down.** The steady link is an SSH forward. If it
   won't stay up: confirm the SSH alias still resolves and reaches the machine
   (`ssh -o BatchMode=yes -o ConnectTimeout=6 <alias> 'echo ok'`), and that home
   base has Remote Login (macOS) / sshd (Linux) on. Re-establish with **Fleet —
   Repair**.
-- **Tailscale link down.** If a machine connects over Tailscale, `tailscale
-  status` must show *both* machines online and MagicDNS must resolve, and home
-  base must be sharing its engine over the tailnet with `tailscale serve` — **not**
-  `tailscale funnel`. This matters for safety, not just reachability: home base
-  trusts the link itself as the boundary, so it must stay on the private tailnet
-  (`serve`) and never be exposed to the public internet (`funnel`) or bound to a
-  public address. If Tailscale is down, the honest move is to fall back to the
-  SSH link.
+- **Tailscale link down.** Tailscale is the recommended way to connect machines
+  across networks without router port-forwarding. Check `tailscale status` on both
+  machines and confirm MagicDNS resolves. If Tailscale is not installed or signed
+  in, send the user to [Tailscale's install guide](https://tailscale.com/kb/1017/install).
+  Keep fleet traffic private: never use `tailscale funnel`, expose a public bind,
+  or ask the user to configure router port-forwarding. SSH is an alternative when
+  it is already reachable and the user prefers it.
 - **Linux / WSL window-onto-home-base machine — the known gap (#1260).** On macOS
   the steady link is a managed background service that auto-reconnects. **On Linux
   and WSL that managed link is not wired yet (#1260)** — the app installs the
@@ -160,11 +167,11 @@ OS and how it connects:
 
 ## Step 4 — silent fork detection (why "reload" is not always safe)
 
-The whole point of a window-onto-home-base machine is that it **never runs its own
-copy of the engine** against a private database — two live writers on one database
-is the corruption case. When a window machine silently spawns its own engine, it
-grows a private history and the two machines quietly diverge. Detect it before you
-tell anyone to reload:
+The fork check applies to a **window onto home base**, which must not spawn its own
+engine. Do not apply this diagnosis to peer studios: each peer is supposed to run
+its own engine, while session activity and prompts sync between machines. When a
+window machine silently spawns its own engine, it can develop a private history.
+Detect that specific failure before telling anyone to reload:
 
 ```bash
 # on the suspect window machine (ssh in if needed), on the fleet port:
@@ -178,16 +185,17 @@ ssh <alias> 'curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:<port>/se
 # 401 on a window machine = an armed LOCAL fork; home base answers 200 (anonymous).
 ```
 
-If you find a fork, the fix is to stop the fork, restore the guard + link
+If you find a fork on a home-base window, the fix is to stop the fork, restore the guard + link
 (**Fleet — Repair**), and — if the forked copy grew real history the user cares
 about — hand off to `/fleet` for the recovery, which knows how to merge a
 stranded database safely. **Never** "just reload" over a fork: you would either
 lose the forked history or keep two writers alive.
 
-Home base itself keeps its shared database at `~/.amico/server/session.db` and
-runs as the `co.harmoniqs.amico-hub` service (a launchd agent on macOS, a
-`systemd --user` unit on Linux). If home base's history looks empty or wrong,
-that is a home-base problem, not a window-machine fork — go to `/fleet`.
+Home base keeps its shared database at `~/.amico/server/session.db` and runs as
+the `co.harmoniqs.amico-hub` service (a launchd agent on macOS, a `systemd --user`
+unit on Linux). Peer machines have their own engines; fleet session activity and
+prompts sync between them. If sessions stop syncing across peers, diagnose peer
+reachability and transport before treating it as a database fork.
 
 ## When to escalate to the internal `/fleet` playbook
 

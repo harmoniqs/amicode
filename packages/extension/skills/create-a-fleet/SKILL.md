@@ -32,7 +32,7 @@ terms live in the commands you run, never in what you say:
 | hub / star / server / canonical | "home base" — the machine that hosts your work |
 | client / thin client | "a window onto home base" |
 | standalone | "works on its own" |
-| peer studios | "two independent studios you hop between" |
+| peer studios | "your own studio on each machine, with sessions and prompts syncing between them" |
 | enroll / join token | "link this machine in" |
 | verify-attach / roster / health | "check the link actually works" |
 | transport (ssh / tailscale) | "how the machines reach each other" |
@@ -72,21 +72,18 @@ Ask it in outcomes, never with "hub" or "peer":
 
 > **"When your machines are apart — one's off, or you've taken the laptop out —
 > what should happen?"**
-> - **"One machine hosts my work; the others are windows into it"** (recommended)
->   → home-base setup. The fully-wired path: your sessions live on home base and
->   follow you to any machine.
-> - **"Each machine should fully work on its own, and I'll hop between them"** →
->   independent studios.
+> - **"Each machine should work on its own, while my fleet sessions stay in sync"** (recommended) → peer studios. Each machine has its own engine, and session activity and prompts sync between machines in near real time. Any one machine can keep working if another is offline.
+> - **"I want one machine to host everything; the others are windows onto it"** → home-base setup. The other machines depend on home base being reachable.
 
-**Default to home base with the always-on machine as home base** (the workstation,
-not the laptop) — it's the coherent, fully-wired experience. Pick "independent
-studios" only when the user explicitly wants each machine usable alone, and then
-give the honest caveat up front: *"You can set that up today and hop between them,
-but running a live chat directly on the other machine's engine is still landing —
-so the smoothest 'both as one' is still home base. Independent anyway, or home
-base?"* Honor their choice; jump to **Peer studios** below for that path.
+Default to peer studios when the user wants multiple machines to work as one fleet
+without a single machine being a point of failure. Explain that each machine runs
+its own engine, while session activity and prompts sync between them in near real
+time. Choose home base when the user specifically wants one shared engine/database
+and accepts that the other machines depend on it. Honor their choice.
 
-The rest of this skill is the home-base (hub/star) build.
+If the user chooses peer studios, skip the home-base provisioning and window-link
+steps below; follow **Peer studios** instead. The remaining numbered steps describe
+the home-base (hub/star) build.
 
 ## Step 2 — discover the machines
 
@@ -160,11 +157,14 @@ On failure, walk **one** step in plain terms and retry — don't recite a pipeli
 
 One machine at a time. While one is paused awaiting a human step, move to the next.
 
-**a. How it connects (transport).** Default **SSH** (the universal floor, works
-everywhere). Choose **Tailscale** only for a machine that roams *and* only after
-verifying both machines are online in `tailscale status`, MagicDNS resolves, and
-home base shares its engine via `tailscale serve` (never `funnel`) — else fall back
-to SSH and say so.
+**a. How it connects (transport).** Recommend **Tailscale** for machines on
+different or changing networks: it creates a private connection without router
+port-forwarding. If Tailscale is not installed or signed in, point the user to
+[Tailscale's install guide](https://tailscale.com/kb/1017/install) and pause that
+machine until setup is complete. Verify both machines are online in `tailscale
+status` and that the peer's MagicDNS name resolves before using it. Use **SSH**
+when the machines are on a trusted reachable network or the user prefers SSH. Never
+ask the user to expose a fleet port publicly or configure router port forwarding.
 
 **b. Confirm.** Show the exact link-in for this one machine; get an explicit yes.
 
@@ -229,34 +229,34 @@ you'll see the same sessions."** Name any machine still paused and the one step
 it's waiting on — nothing is silently dropped. Anything still stuck after its
 guided step is a job for `/troubleshoot-fleet`; hand off and stop.
 
-## Peer studios (the independent-studios path)
+## Peer studios (the recommended path)
 
-The additive topology: every machine runs its **own** engine on its **own**
-database and *advertises* itself; you attach/switch between them. A machine that's
-off doesn't strand the others — there is no single machine whose loss stops the
-fleet. A peer stays "on its own" (never a window onto home base) and never installs
-the never-fork guard.
+Every machine runs its **own** engine on its **own** database and advertises itself.
+Session activity and prompts sync between machines in near real time, so users can
+work from either machine without making one machine the host for all work. If a
+machine is offline, the others keep working. A peer remains standalone (never a
+window onto home base) and does not install the never-fork guard. Do not describe
+peer studios as merely switching between isolated histories.
 
 **What works today — and the honest edges (state it plainly):**
 
 - **Works:** each machine as its own independent, resilient studio; advertising
-  (`serving`); the shared directory of machines (the keeper); the **Attach** control
-  and per-machine transport/credential plumbing; **observing** another machine's
-  sessions (read) works without a grant.
+  (`serving`); the shared directory of machines (the keeper); synced session
+  activity and prompts; the **Attach** control and per-machine transport/credential
+  plumbing.
 - **Sharp edge — observe hands a write-capable credential:** *controlling* another
   machine's session (prompting/archiving it) is wired, but the machine you attach to
   currently accepts the same credential it accepts for *reading* — so granting
   someone "observe" effectively grants write too. A separate control-only credential
   is future work. Scope who you grant to accordingly.
-- **Not yet:** clicking **Attach** does not yet run your *live* session on the other
-  machine's engine (the live re-target is a scoped follow-up). So peer is great for
-  independent + resilient studios today; live shared driving across them is landing.
 - Per-machine removal is `amico fleet revoke <machine_id>` (drops the grant + bars
   re-mint + fans out to serving peers); verify a revoked machine can no longer reach
   the others rather than trusting the exit code.
 
-**No turnkey peer wizard exists yet**, so guide it by hand. To make an existing
-home-base/window pair into independent studios:
+**No turnkey peer wizard exists yet**, so guide it by hand. For a new peer fleet,
+keep each machine standalone, have each advertise `serving`, and point each
+machine's `~/.amico/ops/fleet/keeper.json` at the shared directory host. For an
+existing home-base/window pair:
 
 1. On the **window machine**, run **Amicode: Fleet — Go Standalone** — it now runs
    its own studio and no longer depends on home base.
