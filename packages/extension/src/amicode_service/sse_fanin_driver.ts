@@ -5,8 +5,11 @@
 // #1511 built the synchronous frame-routing CORE (sse_fanin_aggregator.ts) and
 // unit-tested all 7 ACs against a deterministic sink. What was deliberately NOT
 // wired was the driver that opens the REAL upstream SSE connections and pumps
-// their frames onto the ONE downstream `res` the app reads (ADR 0027 single-
-// origin). This module is that driver.
+// their frames onto the downstream `res` the app reads. This module is that
+// driver. #1772: ADR 0027's single-origin assumption (the app opens exactly one
+// `/event`) no longer holds — multiple windows, Chat Deck panes and split panes
+// each open their own — so every listener gets its own connection (aggregator,
+// arms, reconcile) up to a cap; none is ever evicted to make room for another.
 //
 // On the observation path (#1543/#1565), `handle()` ALWAYS accepts (returns
 // true) — zero non-local owners starts in fleet-of-one mode where the
@@ -150,8 +153,9 @@ export function openHttpSseSource(r: FanInUpstreamRequest): SseFrameSource {
   };
 }
 
-/** One live `/event` fan-in connection: the aggregator on this response, the
- *  open upstream sources keyed by namespace, and the reconcile timer. */
+/** One live `/event` fan-in connection — ONE PER LISTENER (#1772): the
+ *  aggregator on this response, the open upstream sources keyed by namespace,
+ *  and this connection's own reconcile timer. Closing it closes only its arms. */
 class FanInConnection {
   private readonly agg: SseFanInAggregator;
   private readonly sources = new Map<string, SseFrameSource>();

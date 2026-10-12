@@ -1166,3 +1166,107 @@ describe("#1772 AC5 — two listeners: one local arm each, kept open — no repe
     }
   });
 });
+
+describe("#1772 invariants — #1264 / #1601 / #1617 hold PER LISTENER", () => {
+  it("#1264 fleet-of-one: each of two listeners receives the local stream byte-identical", async () => {
+    const origins = fakeOrigins();
+    const driver = twoListenerDriver(origins, new SessionOwnerMap());
+    const resA = mockRes();
+    const resB = mockRes();
+    driver.handle(mockReq("/global/event"), resA);
+    driver.handle(mockReq("/global/event"), resB);
+    await tick();
+
+    const F1 = sseFrame("event: message", 'data: {"a":1}', "id: 1");
+    const F2 = sseFrame("event: message", 'data: {"b":2}', "id: 2");
+    origins.broadcast(LOCAL_NAMESPACE, F1);
+    origins.broadcast(LOCAL_NAMESPACE, F2);
+    await tick();
+    expect(resA.text()).toBe(F1 + F2);
+    expect(resB.text()).toBe(F1 + F2);
+
+    resA.fireClose();
+    resB.fireClose();
+  });
+
+  it("#1601 per connection: one listener's dead local arm is re-opened for THAT listener only", async () => {
+    const ownerMap = new SessionOwnerMap();
+    ownerMap.update(STUDIO_OWNED);
+    const localCtls: Ctl[] = [];
+    const driver = twoListenerDriver(fakeOrigins(), ownerMap, {
+      openUpstream: (r) => {
+        const ctl = controllableSource();
+        if (r.namespace === LOCAL_NAMESPACE) localCtls.push(ctl);
+        return ctl.source;
+      },
+    });
+    const resA = mockRes();
+    const resB = mockRes();
+    driver.handle(mockReq("/global/event"), resA); // localCtls[0]
+    driver.handle(mockReq("/global/event"), resB); // localCtls[1]
+    await tick();
+    expect(localCtls.length).toBe(2);
+
+    localCtls[0].end(); // A's local upstream drops
+    await tick();
+    driver.reconcile();
+    await tick();
+    expect(localCtls.length).toBe(3); // exactly one re-open — A's
+
+    localCtls[2].push(sseFrame("event: message", 'data: {"to":"A"}', "id: a1"));
+    localCtls[1].push(sseFrame("event: message", 'data: {"to":"B"}', "id: b1"));
+    await tick();
+    expect(resA.text()).toContain('"to":"A"');
+    expect(resA.text()).not.toContain('"to":"B"');
+    expect(resB.text()).toContain('"to":"B"');
+    expect(resB.text()).not.toContain('"to":"A"');
+
+    localCtls.forEach((c) => c.end());
+    resA.fireClose();
+    resB.fireClose();
+  });
+
+  it("#1617 per connection: a backpressured listener pauses only ITS upstreams and heals on ITS drain", async () => {
+    const ownerMap = new SessionOwnerMap();
+    ownerMap.update(STUDIO_OWNED);
+    const ctls: PausableCtl[] = [];
+    const driver = twoListenerDriver(fakeOrigins(), ownerMap, {
+      openUpstream: () => {
+        const ctl = pausableSource();
+        ctls.push(ctl);
+        return ctl.source;
+      },
+    });
+    const resA = backpressureRes();
+    driver.handle(mockReq("/global/event"), resA); // ctls[0] local, ctls[1] studio
+    await tick();
+    const resB = mockRes();
+    driver.handle(mockReq("/global/event"), resB); // ctls[2] local, ctls[3] studio
+    await tick();
+    const [aLocal, aPeer, bLocal, bPeer] = ctls;
+
+    resA.block();
+    aLocal.push(sseFrame("event: message", 'data: {"n":1}', "id: l1")); // trips A's backpressure
+    await tick();
+    aLocal.push(sseFrame("event: message", 'data: {"n":2}', "id: l2")); // stranded behind it
+    await tick();
+    expect(aLocal.pauseCalls).toBeGreaterThan(0);
+    expect(aPeer.pauseCalls).toBeGreaterThan(0);
+    expect(bLocal.pauseCalls).toBe(0); // B is not throttled by A's slow socket
+    expect(bPeer.pauseCalls).toBe(0);
+
+    bLocal.push(sseFrame("event: message", 'data: {"to":"B"}', "id: b1"));
+    await tick();
+    expect(resB.text()).toContain('"to":"B"'); // B streams on while A is backpressured
+    expect(resA.text()).not.toContain('"n":2');
+
+    resA.fireDrain();
+    await tick();
+    expect(resA.text()).toContain('"n":2');
+    expect(aLocal.resumeCalls).toBeGreaterThan(0);
+
+    ctls.forEach((c) => c.end());
+    resA.fireClose();
+    resB.fireClose();
+  });
+});
