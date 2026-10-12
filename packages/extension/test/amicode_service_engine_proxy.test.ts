@@ -13,6 +13,10 @@ import * as http from "node:http";
 import { AddressInfo } from "node:net";
 import { createAmicodeService } from "../src/amicode_service";
 import { serverAuthHeader } from "../src/server_auth";
+import { EngineProxy } from "../src/amicode_service/engine_proxy";
+import { HubProxy } from "../src/amicode_service/hub_proxy";
+import type { HubCredentialRead } from "../src/amicode_service/hub_credential";
+import { fakeEngine, startEngineSseServer, LOCAL_EPOCH } from "./fixtures/engine_stream/engine_frames";
 
 interface RecordedHit {
   method: string;
@@ -186,4 +190,103 @@ describe("amicode service — engine proxy (transparent passthrough to the spawn
     const last = chunks[chunks.length - 1]!.at;
     expect(last - first, `first@${first}ms last@${last}ms — buffered, not streamed`).toBeGreaterThanOrEqual(180);
   });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// #1773 AC3 — a proxied stream lost AFTER its response headers were sent is an
+// ERROR close, never a clean end. The proxies used to answer an upstream failure
+// mid-stream with `res.end()`, which a listener (or the next relay) reads as
+// "the stream ended normally, nothing was lost". Both the engine proxy and the
+// hub proxy now destroy the downstream with the error, so it sees a transport
+// error. A clean upstream end still passes through as a clean end.
+// ══════════════════════════════════════════════════════════════════════════════
+describe("#1773 AC3 — engine and hub proxies error-close a stream lost after headers", () => {
+  /** Serve `handler` on 127.0.0.1:0 and dial it at its own address. */
+  async function front(handler: (req: http.IncomingMessage, res: http.ServerResponse) => void) {
+    const server = http.createServer(handler);
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    const { port } = server.address() as AddressInfo;
+    return {
+      url: `http://127.0.0.1:${port}`,
+      stop: () =>
+        new Promise<void>((r) => {
+          server.close(() => r());
+          server.closeAllConnections?.();
+        }),
+    };
+  }
+
+  /** Read a whole response: its status, body, and whether it ENDED cleanly or ERRORED. */
+  function read(url: string): Promise<{ status: number; body: string; how: "end" | "error" }> {
+    return new Promise((resolve, reject) => {
+      const req = http.get(url, (res) => {
+        let body = "";
+        res.setEncoding("utf8");
+        res.on("data", (c: string) => (body += c));
+        res.on("end", () => resolve({ status: res.statusCode ?? 0, body, how: "end" }));
+        res.on("error", () => resolve({ status: res.statusCode ?? 0, body, how: "error" }));
+      });
+      req.on("error", reject);
+    });
+  }
+
+  const hubCredential = (): HubCredentialRead => ({
+    ok: true,
+    mint: "hub",
+    credential: { baseUrl: "http://hub.invalid", token: "hub-tok" },
+  });
+
+  const proxies: Array<{ name: string; handler: (upstreamUrl: string) => (req: http.IncomingMessage, res: http.ServerResponse) => void }> = [
+    {
+      name: "engine proxy",
+      handler: (upstreamUrl) => {
+        const proxy = new EngineProxy({ getUrl: () => upstreamUrl });
+        return (req, res) => void proxy.handle(req, res);
+      },
+    },
+    {
+      name: "hub proxy",
+      handler: (upstreamUrl) => {
+        const proxy = new HubProxy({ getUrl: () => upstreamUrl, credential: hubCredential });
+        return (req, res) => void proxy.handle(req, res);
+      },
+    },
+  ];
+
+  for (const { name, handler } of proxies) {
+    it(`${name}: the upstream dies mid-stream → the listener's response ERRORS after the frames it got (no clean end)`, async () => {
+      const engine = fakeEngine({ legacy: true });
+      const sent = [engine.connected(), engine.event("session.status", { sessionID: "ses_1", status: { type: "busy" } })];
+      const upstream = await startEngineSseServer((res) => {
+        for (const f of sent) res.write(f);
+        setTimeout(() => res.destroy(), 20); // the link dies after the headers and two frames
+      });
+      const relay = await front(handler(upstream.url));
+      try {
+        const { status, body, how } = await read(`${relay.url}/global/event`);
+        expect(status).toBe(200); // the headers were already relayed …
+        expect(body).toBe(sent.join("")); // … with every frame the upstream sent …
+        expect(how).toBe("error"); // … so the loss must surface as a transport error
+      } finally {
+        await relay.stop();
+        await upstream.stop();
+      }
+    });
+
+    it(`${name}: a clean upstream end still relays as a clean end (pass-through unchanged)`, async () => {
+      const engine = fakeEngine({ epoch: LOCAL_EPOCH });
+      const sent = [engine.connected(), engine.heartbeat()];
+      const upstream = await startEngineSseServer((res) => {
+        for (const f of sent) res.write(f);
+        res.end();
+      });
+      const relay = await front(handler(upstream.url));
+      try {
+        expect(await read(`${relay.url}/global/event`)).toEqual({ status: 200, body: sent.join(""), how: "end" });
+      } finally {
+        await relay.stop();
+        await upstream.stop();
+      }
+    });
+  }
 });

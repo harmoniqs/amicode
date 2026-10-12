@@ -15,7 +15,7 @@ import { useGlobal } from "./global"
 import { ServerScope } from "@/utils/server-scope"
 import { attachOwnerHeaderIfArmed } from "@/components/remote-create-arm"
 import { parseCursorNamespaces, resolveEventOrigin } from "./sse-origin"
-import { shouldReconnectIdleStream } from "./stream-liveness"
+import { createStreamEndResync, shouldReconnectIdleStream } from "./stream-liveness"
 import { detectServerProtocol, type ServerProtocol } from "@/utils/server-protocol"
 import { createCompatibleApi, type CompatibleApi } from "@/utils/server-compat"
 
@@ -475,6 +475,12 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
   // nominally connected, so the disconnect→connect edge never fires and the rail
   // would otherwise never self-heal a stranded view).
   const [resyncCount, setResyncCount] = createSignal(0)
+  // #1773: an unexpected NORMAL end of the global stream is a loss (the relays
+  // never end a listener cleanly except on shutdown). The loop arms this latch
+  // on such an end; the reconnected stream's first frame advances resyncCount,
+  // so the viewed transcript and the entity rail refetch once the stream is live
+  // again. A user stop, a page hide, or the client's own abort arm nothing.
+  const streamEndResync = createStreamEndResync()
 
   // #1584 client-side liveness watchdog. The v1 event iterator neither throws
   // nor completes when the socket goes silently half-open (sleep/wake, Wi-Fi
@@ -560,6 +566,10 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
             if (!streamGeneration.accepts(active)) return
             streamErrorLogged = false
             lastFrameAt = Date.now()
+            // #1773: the first frame after an unexpected end — the stream is live
+            // again, so force the resync now (the refetch cannot miss the events
+            // between the end and this re-subscription).
+            if (streamEndResync.frame()) setResyncCount((n) => n + 1)
             const legacy = "payload" in event
             if (legacy && event.payload.type === "sync") continue
             const directory = legacy ? (event.directory ?? "global") : (event.location?.directory ?? "global")
@@ -629,6 +639,13 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
             yielded = Date.now()
             await wait(0)
           }
+          // #1773: the iterator COMPLETED — a clean end of the global stream. If
+          // the client neither aborted this attempt nor stopped the loop, it is
+          // an unexpected end: a loss. Arm the resync for the reconnected stream.
+          streamEndResync.ended({
+            attemptAborted: currentAttempt.signal.aborted,
+            stopped: abort.signal.aborted || !started || !streamGeneration.accepts(active),
+          })
         } catch (error) {
           if (streamGeneration.accepts(active) && !isStreamClosed(error, currentAttempt.signal))
             setStreamStatus("disconnected")
