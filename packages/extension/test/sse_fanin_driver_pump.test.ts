@@ -3,12 +3,14 @@
 // pump() method removes it from the internal sources Map so the next
 // reconcile() tick can re-open the arm — not leave a zombie that blocks
 // reconnection indefinitely.
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import * as http from "node:http";
 import { SseFanInDriver } from "../src/amicode_service/sse_fanin_driver";
 import type { SseFrameSource } from "../src/amicode_service/sse_fanin_aggregator";
 import { LOCAL_NAMESPACE } from "../src/amicode_service/sse_fanin_aggregator";
 import { SessionOwnerMap } from "../src/amicode_service/session_multiplexer";
+import { FanInCensus, FANIN_CENSUS_INTERVAL_MS } from "../src/amicode_service/fanin_census";
+import { fakeEngine, LOCAL_EPOCH, PEER_EPOCH } from "./fixtures/engine_stream/engine_frames";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -1268,5 +1270,155 @@ describe("#1772 invariants — #1264 / #1601 / #1617 hold PER LISTENER", () => {
     ctls.forEach((c) => c.end());
     resA.fireClose();
     resB.fireClose();
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// #1771 — the fan-in CENSUS. A wedged, evicted, or flapping arm used to look
+// identical to a quiet one in every log: nothing recorded who subscribed, why an
+// arm re-opened, or what was dropped. Every fan-in service now keeps counters per
+// listener connection and per arm, logs one census line every 30 s, and one line
+// immediately on each transition. The upstream frames below are ENGINE-SHAPED
+// (test/fixtures/engine_stream): id-less or `<epoch>:<seq>` data frames, the
+// plain + sync twin of a stored event, heartbeats.
+// ══════════════════════════════════════════════════════════════════════════════
+
+/** A census wired to a collecting sink and a hand-driven clock. */
+function testCensus(plane = "observe") {
+  const lines: string[] = [];
+  let t = 1_000_000;
+  const census = new FanInCensus({ plane, sink: (l) => lines.push(l), now: () => t });
+  return {
+    census,
+    lines,
+    advance(ms: number) {
+      t += ms;
+    },
+    censusLines: () => lines.filter((l) => l.startsWith("[fanin] census ")),
+  };
+}
+
+/** One `key=value key=value` segment → a record. */
+function kv(segment: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const tok of segment.trim().split(" ")) {
+    const i = tok.indexOf("=");
+    if (i > 0) out[tok.slice(0, i)] = tok.slice(i + 1);
+  }
+  return out;
+}
+
+/** A census line: its service-level head, then one segment per (connection, arm). */
+function parseCensus(line: string): { head: Record<string, string>; arms: Array<Record<string, string>> } {
+  const [head, ...arms] = line.split(" | ");
+  return { head: kv(head), arms: arms.map(kv) };
+}
+
+/** Drain the pumps: every pending microtask runs before the immediate fires —
+ *  no wall-clock sleep. */
+const flush = () => new Promise<void>((r) => setImmediate(r));
+
+const bytesOf = (frames: string[]) => frames.reduce((n, f) => n + Buffer.byteLength(f), 0);
+
+describe("#1771 AC1 — a fan-in service logs a census line every 30 s", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("listeners, accepted/closed since boot, evictions, and per arm: frames, bytes, largest, time since last frame, opens, closes", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const ownerMap = new SessionOwnerMap();
+    ownerMap.update(STUDIO_OWNED);
+    const origins = fakeOrigins();
+    const { census, advance, censusLines } = testCensus();
+    census.start();
+    const driver = twoListenerDriver(origins, ownerMap, { census });
+    const local = fakeEngine({ epoch: LOCAL_EPOCH });
+    const studio = fakeEngine({ epoch: PEER_EPOCH });
+
+    const resA = mockRes();
+    const resB = mockRes();
+    driver.handle(mockReq("/global/event"), resA);
+    driver.handle(mockReq("/global/event"), resB);
+    await flush();
+
+    const localFrames = [
+      local.connected(),
+      local.event("session.status", { sessionID: "ses_1", status: { type: "busy" } }),
+      ...local.stored("message.part.updated", { part: { id: "prt_1", text: "bravo" } }, { aggregateID: "ses_1" }),
+      local.heartbeat(),
+    ];
+    for (const f of localFrames) origins.broadcast(LOCAL_NAMESPACE, f);
+    const studioFrame = studio.event("message.part.updated", { from: "studio" });
+    origins.broadcast("studio", studioFrame);
+    await flush();
+    resA.fireClose(); // listener A departs; B stays
+    await flush();
+    advance(1500);
+
+    expect(censusLines()).toHaveLength(0); // nothing before the first period
+    vi.advanceTimersByTime(FANIN_CENSUS_INTERVAL_MS);
+    expect(censusLines()).toHaveLength(1);
+
+    const { head, arms } = parseCensus(censusLines()[0]);
+    expect(head).toMatchObject({ plane: "observe", listeners: "1", accepted: "2", closed: "1", evictions: "0" });
+    // Only the LIVE listener's arms are listed: B's local arm and B's peer arm.
+    expect(arms.map((a) => a.arm).sort()).toEqual(["local", "studio"]);
+    expect(new Set(arms.map((a) => a.conn)).size).toBe(1);
+    const bLocal = arms.find((a) => a.arm === "local")!;
+    expect(bLocal).toMatchObject({
+      frames: "5",
+      bytes: String(bytesOf(localFrames)),
+      largest: String(Math.max(...localFrames.map((f) => Buffer.byteLength(f)))),
+      since_last_ms: "1500",
+      opens: "1",
+      closes: "-",
+      pending: "0",
+      drops: "0",
+      gaps: "0",
+    });
+    expect(arms.find((a) => a.arm === "studio")).toMatchObject({
+      frames: "1",
+      bytes: String(Buffer.byteLength(studioFrame)),
+      largest: String(Buffer.byteLength(studioFrame)),
+      since_last_ms: "1500",
+      opens: "1",
+      closes: "-",
+    });
+
+    // The cadence repeats every 30 s, and stops with the census.
+    vi.advanceTimersByTime(FANIN_CENSUS_INTERVAL_MS);
+    expect(censusLines()).toHaveLength(2);
+    census.stop();
+    vi.advanceTimersByTime(FANIN_CENSUS_INTERVAL_MS * 3);
+    expect(censusLines()).toHaveLength(2);
+
+    resB.fireClose();
+  });
+
+  it("per arm: pending depth while backpressured, overflow drops, and gaps emitted", async () => {
+    const ownerMap = new SessionOwnerMap();
+    ownerMap.update(STUDIO_OWNED);
+    const origins = fakeOrigins(); // its sources cannot pause → frames keep arriving
+    const { census, censusLines } = testCensus();
+    const driver = twoListenerDriver(origins, ownerMap, { census });
+    const studio = fakeEngine({ epoch: PEER_EPOCH });
+
+    const res = backpressureRes();
+    driver.handle(mockReq("/global/event"), res);
+    await flush();
+    const studioArm = () => parseCensus(censusLines().at(-1)!).arms.find((a) => a.arm === "studio")!;
+
+    res.block();
+    // 1 trip-frame written, 256 buffered (the per-namespace bound), 43 dropped.
+    for (let i = 0; i < 300; i++) origins.broadcast("studio", studio.event("message.part.delta", { i }));
+    await flush();
+    census.emit();
+    expect(studioArm()).toMatchObject({ frames: "300", pending: "256", drops: "43", gaps: "0" });
+
+    res.fireDrain(); // the buffer flushes in order, then ONE overflow gap names the arm
+    await flush();
+    census.emit();
+    expect(studioArm()).toMatchObject({ frames: "300", pending: "0", drops: "43", gaps: "1" });
+
+    res.fireClose();
   });
 });

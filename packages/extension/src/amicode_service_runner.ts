@@ -555,6 +555,8 @@ export async function bootAmicodeServiceRunner(opts: AmicodeServiceRunnerOptions
     engine: { password: unarmed ? undefined : password, getUrl: () => engineUrl },
     shelf: { distRoot: opts.appDistRoot },
     ...(hubFleet ? { fleet: hubFleet } : {}),
+    // #1771: the fan-in census + owner-map refresh outcomes → the runner's log.
+    log,
   });
   const servicePort = opts.servicePort ?? 4095;
   let url: URL;

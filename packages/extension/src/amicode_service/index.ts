@@ -45,6 +45,7 @@ import {
   type SessionEntry,
 } from "./session_multiplexer";
 import { SseFanInDriver } from "./sse_fanin_driver";
+import { FanInCensus } from "./fanin_census";
 import { readFleetSessionStatus, type StatusOwnerLookup } from "./fleet_session_status";
 import { createObservationReadPlane } from "./observation_read_plane";
 import { createObservationWritePlane } from "./observation_write_plane";
@@ -930,6 +931,10 @@ export function createAmicodeService(
      *  credential gate's refresh loop). Absent → the surface renders empty
      *  roles (no cards known) with providers from the stored snapshot. */
     modelRouting?: ModelRoutingDeps;
+    /** #1771: the service's diagnostic log (the hub runner's stdout →
+     *  /tmp/amico-hub.log; the window's Amicode output channel). The fan-in
+     *  census and the owner-map refresh outcomes write here. Absent → silent. */
+    log?: (line: string) => void;
     fleet?: {
       /** Resolved entitlements (injectable for tests); null resolves the
        *  machine's real set. */
@@ -1207,7 +1212,12 @@ export function createAmicodeService(
       let eventFanIn: SseFanInDriver | undefined;
       if (fleetPeers && !isClient) {
         const peers = fleetPeers;
-        eventFanIn = new SseFanInDriver({
+        // #1771: the fan-in census — 30 s census lines + immediate transition
+        // lines to the service log; torn down (and closes attributed to
+        // `shutdown`) with the server.
+        const census = new FanInCensus({ plane: "premium", ...(opts.log ? { sink: opts.log } : {}) });
+        census.start();
+        const driver = new SseFanInDriver({
           ownerMap,
           localMachineId: peers.localMachineId,
           localEventUrl: opts.engine?.getUrl ?? ((): string | undefined => undefined),
@@ -1223,7 +1233,10 @@ export function createAmicodeService(
           // the aggregator so the connect frame carries real focus data (not the
           // named-empty default). Absent → the aggregator's named-empty fallback.
           ...(opts.fleet.focusSnapshot ? { focusSnapshot: opts.fleet.focusSnapshot } : {}),
+          census,
         });
+        server.registerCleanup(() => driver.shutdown());
+        eventFanIn = driver;
       }
       const fleetPlaneObj: import("./server").FleetPlane = {
         getMode,
@@ -1436,22 +1449,26 @@ export function createAmicodeService(
         // — fleet-of-one byte-identity holds only absent a focus provider (D6).
         // Per-peer arms auth AS THEMSELVES with their OWN reader token (decision
         // A); the local arm rides the app's incoming credential.
-        server.attachObservationEventPlane(
-          new SseFanInDriver({
-            ownerMap,
-            localMachineId: fleetPeers.localMachineId,
-            localEventUrl: opts.engine?.getUrl ?? ((): string | undefined => undefined),
-            peerBaseUrl: (machineId) => {
-              if (!fleetPeers.getServingPeers().some((p) => p.machineId === machineId)) return undefined;
-              const r = fleetPeers.readPeerToken(machineId);
-              return r.ok ? r.credential.baseUrl : undefined;
-            },
-            peerToken: (machineId) => {
-              const r = fleetPeers.readPeerToken(machineId);
-              return r.ok ? { ok: true, credential: r.credential } : { ok: false, reason: "absent" };
-            },
-          }),
-        );
+        // #1771: with its census (30 s census + transition lines → the log).
+        const observeCensus = new FanInCensus({ plane: "observe", ...(opts.log ? { sink: opts.log } : {}) });
+        observeCensus.start();
+        const observeDriver = new SseFanInDriver({
+          ownerMap,
+          localMachineId: fleetPeers.localMachineId,
+          localEventUrl: opts.engine?.getUrl ?? ((): string | undefined => undefined),
+          peerBaseUrl: (machineId) => {
+            if (!fleetPeers.getServingPeers().some((p) => p.machineId === machineId)) return undefined;
+            const r = fleetPeers.readPeerToken(machineId);
+            return r.ok ? r.credential.baseUrl : undefined;
+          },
+          peerToken: (machineId) => {
+            const r = fleetPeers.readPeerToken(machineId);
+            return r.ok ? { ok: true, credential: r.credential } : { ok: false, reason: "absent" };
+          },
+          census: observeCensus,
+        });
+        server.registerCleanup(() => observeDriver.shutdown());
+        server.attachObservationEventPlane(observeDriver);
       }
     }
   }
