@@ -189,7 +189,7 @@ export class SessionOwnerMap {
         else fresh.set(owner, [held]);
       }
     }
-    const retention = peers === undefined ? this.replaceAll(fresh) : this.applyPeerOutcomes(fresh, peers);
+    const retention = peers === undefined ? this.forgetPeers() : this.applyPeerOutcomes(fresh, peers);
     // Prune the pending overlay: drop entries the authoritative projection now
     // carries (superseded), and any that have outlived the TTL.
     const cutoff = this.now() - PENDING_OWNER_TTL_MS;
@@ -204,12 +204,11 @@ export class SessionOwnerMap {
     if (e.directory !== undefined) this.directories.set(e.id, e.directory);
   }
 
-  /** No per-peer outcomes: the projection is authoritative for every owner. */
-  private replaceAll(fresh: Map<string, HeldEntry[]>): Map<string, OwnerRetention> {
+  /** No per-peer outcomes: the projection is authoritative for every owner, so
+   *  there is nothing to retain and no one to name unavailable. */
+  private forgetPeers(): Map<string, OwnerRetention> {
     this.lastGood.clear();
     this.unavailablePeers.clear();
-    const at = this.now();
-    for (const [owner, entries] of fresh) this.lastGood.set(owner, { at, entries });
     return new Map();
   }
 
@@ -332,15 +331,18 @@ export function fanInReachable(
  *  Honesty: a projection BUILD failure (a peer fan-out that threw) leaves the
  *  LAST-GOOD map intact — it never clears the map on error, so a transient blip
  *  does not silently reroute owned sessions to local. Only a SUCCESSFUL
- *  projection re-populates the map (clear + repopulate, the SessionOwnerMap.update
- *  contract). */
+ *  projection re-populates the map (the SessionOwnerMap.update contract).
+ *  #1774: the builder itself never throws — a failed PEER is an empty slice plus
+ *  its #1771 outcome in `peers`, which the feed hands to `update` so that peer
+ *  keeps its last-good entries for the retention window. */
 export interface OwnerMapFeedOpts {
   ownerMap: SessionOwnerMap;
   /** Build the fleet-wide projection whose `.sessions` carry the amicode_owner
    *  overlay. Injected so the feed is unit-testable without a real fan-out.
    *  #1771: `peers` (optional) carries each peer's refresh outcome — the feed
    *  logs one line per peer, so a failed peer refresh is visible even though
-   *  neither the builder nor the feed ever throws. */
+   *  neither the builder nor the feed ever throws. #1774: and scopes the map
+   *  update per peer (retention); absent → every owner is replaced. */
   buildProjection: () => Promise<{ sessions: SessionEntry[]; peers?: OwnerRefreshPeer[] }>;
   /** The refresh cadence in ms. Default 5000. */
   intervalMs?: number;
