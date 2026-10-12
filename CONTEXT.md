@@ -187,6 +187,14 @@ _Avoid_: fleet.json (a different, per-machine file), device table, inventory
 The self-reported, human-facing half of a Roster row: the machine's friendly **name** (macOS `scutil` ComputerName / Linux `PRETTY_HOSTNAME` / an explicit `amicode.deviceName` override, else the prettified hostname) and its **device type** (`server | desktop | laptop`, an open set — macOS `system_profiler` model / Linux chassis / an `amicode.deviceType` override, else absent). Derived once by logic shared between the enroll producer and the sidebar self-row so a machine and its peers cannot disagree; absent/undefined values fall back honestly (type → `server_mode`), never fabricated. The Canonical Server self-registers its own device identity keyed by `machine_id = canonical.host`. Refreshed by re-enroll. ADR 0028.
 _Avoid_: hostname (the raw FQDN, not the friendly name), machine_id (the identity key, not the display name)
 
+**Machine**:
+One computer in the Fleet — the unit a Roster row describes and Enroll brings in.
+_Avoid_: device (a Device is a QPU or emulator behind a Connection), node
+
+**Focused machine**:
+The one Machine the window's working surfaces are scoped to, chosen in the FLEET section and defaulting to this machine; a UI selection, never a Roster change.
+_Avoid_: active machine, selected device
+
 **Fleet config**:
 The file at `~/.amico/ops/fleet/fleet.json` that declares this machine's fleet role and the canonical server's coordinates (`host`, `port`, `sshAlias`). No file on disk = standalone. The guard script, extension, and installer all resolve role from this file — never from a hardcoded hostname.
 _Avoid_: fleet.toml, fleet settings (those are VS Code settings, a different thing)
@@ -278,7 +286,7 @@ A sandboxed ES-module card rendered in an iframe within Home. Authored by the ag
 _Avoid_: Card (ambiguous — the UI has many cards), tile (as the concept name — tile is a size class)
 
 **Sidebar**:
-The webview in the VS Code activity bar container, showing project navigation and system status. Contains action buttons (open chat, create project), a session-aware unified project tree (Research Projects with lifecycle metadata expanding into file trees; Dev Projects as plain expandable folders), and a collapsible, **read-only** fleet section — a glanceable device list from the host-owned Roster (one row per machine: name, `server_mode` labeled "role" + capability chips, a `reachable`/`degraded`/`down` health indicator, and `last_report` labeled "last-seen"), this machine's posture badge (Server mode + link-health), and a single **Manage** affordance that opens the Fleet Manager tab (degrading honestly when that tab is absent). The section refreshes on posture-change and shows an honest empty/degraded state when the roster host is down — never a fabricated list (#1321, ADR 0026). The sidebar is navigation chrome — it renders state and navigates, never mutating fleet config or driving session switching. Single-clicking a file opens it as a tab in Preview (the multi-document file workspace in the side panel); double-clicking opens a native VS Code editor tab.
+The webview in the VS Code activity bar container, showing project navigation and system status. Contains action buttons (open chat, create project), a session-aware unified project tree (Research Projects with lifecycle metadata expanding into file trees; Dev Projects as plain expandable folders), and a collapsible fleet section that is **read-only** toward the fleet — a glanceable list of Machines from the host-owned Roster (one row per machine: name, `server_mode` labeled "role" + capability chips, a `reachable`/`degraded`/`down` health indicator, and `last_report` labeled "last-seen"), marking the Focused machine. It offers navigation actions only — connect, focus, Troubleshoot, Add machine, Refresh — and never writes fleet config or Roster rows. The section refreshes on posture-change and shows an honest empty/degraded state when the roster host is down — never a fabricated list (#1321, ADR 0026). The sidebar is navigation chrome — it renders state and navigates, never mutating fleet config or driving session switching. Single-clicking a file opens it as a tab in Preview (the multi-document file workspace in the side panel); double-clicking opens a native VS Code editor tab.
 _Avoid_: Explorer (VS Code's native file explorer is separate), Panel (the in-app dismissible drawer is a different concept)
 
 **Preview**:

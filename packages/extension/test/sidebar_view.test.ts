@@ -1020,6 +1020,38 @@ describe("CONTEXT.md — Sidebar fleet section refinement (#1321)", () => {
   });
 });
 
+describe("CONTEXT.md — FLEET header glossary (#1764)", () => {
+  const context = readFileSync(resolve(__dirname, "..", "..", "..", "CONTEXT.md"), "utf8");
+  const fleetSection = context.slice(context.indexOf("### Fleet & serving"), context.indexOf("### Surfaces"));
+  const entry = (term: string) => {
+    const at = context.indexOf(`**${term}**:`);
+    expect(at, term).toBeGreaterThan(-1);
+    return context.slice(at, context.indexOf("\n\n", at));
+  };
+
+  it("adds Machine under Fleet & serving, avoiding device and node", () => {
+    expect(fleetSection).toContain("**Machine**:");
+    const e = entry("Machine");
+    expect(e).toContain("One computer in the Fleet — the unit a Roster row describes and Enroll brings in.");
+    expect(e).toMatch(/_Avoid_: device \(a Device is a QPU or emulator behind a Connection\), node/);
+  });
+
+  it("adds Focused machine under Fleet & serving, avoiding active machine and selected device", () => {
+    expect(fleetSection).toContain("**Focused machine**:");
+    const e = entry("Focused machine");
+    expect(e).toContain("The one Machine the window's working surfaces are scoped to, chosen in the FLEET section and defaulting to this machine; a UI selection, never a Roster change.");
+    expect(e).toMatch(/_Avoid_: active machine, selected device/);
+  });
+
+  it("the Sidebar entry: navigation actions only, never writing fleet config or Roster rows; no single Manage affordance", () => {
+    const e = entry("Sidebar");
+    expect(e).toMatch(/navigation actions only/);
+    expect(e).toMatch(/connect, focus, Troubleshoot, Add machine, Refresh/);
+    expect(e).toMatch(/never writes fleet config or Roster rows/);
+    expect(e).not.toMatch(/a single \*\*Manage\*\* affordance/);
+  });
+});
+
 // ── Build pipeline ───────────────────────────────────────────────────────────
 
 describe("sidebar build pipeline", () => {

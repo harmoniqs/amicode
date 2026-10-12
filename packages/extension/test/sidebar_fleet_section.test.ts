@@ -465,7 +465,7 @@ describe("renderFleetSection — honest empty / unreachable DOM (AC6)", () => {
     expect(el.querySelectorAll(".fleet-device-row")).toHaveLength(0);
     const notice = el.querySelector(".fleet-standalone");
     expect(notice).not.toBeNull();
-    expect(notice!.textContent).toBe("Current device not registered with a fleet.");
+    expect(notice!.textContent).toBe("This machine isn't in a fleet yet.");
   });
 });
 
@@ -1299,5 +1299,36 @@ describe("renderFleetSection — focus control glyph + focused-row rules (#1764)
     expect(store.scopedMachineId).toBeUndefined();
     el = render(model(store.scopedMachineId, [row({ machine_id: id, name: "Peer" })]));
     expect(focusedRows(el).map((r) => r.getAttribute("data-machine-id"))).toEqual(["this-mac"]);
+  });
+});
+
+// ── #1764 — "machine" in every string the section renders ────────────────────
+describe("renderFleetSection — machine wording (#1764)", () => {
+  it("the empty state reads 'No machines reporting yet'", () => {
+    const el = document.createElement("div");
+    renderFleetSection(el, buildFleetSectionModel(input({ manageAvailable: true, troubleshootAvailable: true })), () => {});
+    expect(el.querySelector(".fleet-empty")!.textContent).toBe("No machines reporting yet");
+  });
+
+  it("no rendered string in any section state says 'device' (text, tooltips, accessible names)", () => {
+    const local = { machineId: "this-mac", name: "This Mac", serveStance: "server" };
+    const models = [
+      buildFleetSectionModel(input({ localDevice: { ...local, serveStance: "standalone" } })),
+      buildFleetSectionModel(input({ manageAvailable: true, troubleshootAvailable: true })),
+      buildFleetSectionModel(input({ rosterReachable: false, localDevice: local, manageAvailable: true, troubleshootAvailable: true })),
+      buildFleetSectionModel(input({ roster: [row({ machine_id: "peer-01", name: "Peer" })], localDevice: local, manageAvailable: true, troubleshootAvailable: true })),
+    ];
+    for (const m of models) {
+      const el = document.createElement("div");
+      renderFleetSection(el, m, () => {});
+      const strings = [el.textContent ?? ""];
+      for (const n of el.querySelectorAll("*")) {
+        for (const a of ["title", "aria-label", "data-tooltip"]) {
+          const v = n.getAttribute(a);
+          if (v) strings.push(v);
+        }
+      }
+      for (const str of strings) expect(str, `state ${m.state}`).not.toMatch(/device/i);
+    }
   });
 });

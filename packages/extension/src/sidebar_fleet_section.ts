@@ -278,7 +278,7 @@ export function buildFleetSectionModel(input: FleetSectionInput): FleetSectionMo
   // No fleet.json at all (serve-stance standalone) ⇒ this machine was never
   // part of a fleet — the peer roster's reachability is irrelevant to that
   // fact, so this collapse takes PRIORITY over the unreachable check below
-  // (#1359: "Current device not registered with a fleet", never a fleet-list
+  // (#1359/#1764: "This machine isn't in a fleet yet.", never a fleet-list
   // UI for a fleet that doesn't exist).
   if (local && local.serveStance === "standalone") {
     return {
@@ -875,7 +875,7 @@ export function renderFleetSection(
     // No action bar either — there's no fleet to manage or troubleshoot.
     const notice = document.createElement("div");
     notice.className = "fleet-standalone fleet-placeholder-text";
-    notice.textContent = "Current device not registered with a fleet.";
+    notice.textContent = "This machine isn't in a fleet yet.";
     container.appendChild(notice);
   } else {
     // Action bar (Manage + Troubleshoot) renders at the TOP, before the
@@ -891,7 +891,7 @@ export function renderFleetSection(
     } else if (model.state === "empty") {
       const empty = document.createElement("div");
       empty.className = "fleet-empty fleet-placeholder-text";
-      empty.textContent = "No devices reporting yet";
+      empty.textContent = "No machines reporting yet";
       container.appendChild(empty);
     }
     if (model.devices.length > 0) {
