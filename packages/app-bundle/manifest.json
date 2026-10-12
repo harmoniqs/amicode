@@ -316,7 +316,7 @@
     "packages/llm/src/protocols/bedrock-converse.ts": "834a415fa8ddf9ad1224133f8352d0a926694f19f0954201d182111c171ec03b",
     "packages/llm/test/provider/bedrock-converse.test.ts": "e8e14d60e8502e928f170f8ac5b406c44bf16d2dd34996ddc2fb7b9261decf85",
     "packages/opencode/src/agent/agent.ts": "512372a4c62997e9565266638ada19b9dc0a3685b0c0483fd28fede2abdb5c9b",
-    "packages/opencode/src/bus/global-replay.ts": "6bd6b68baf46e0570be268bb99989e8b3f041a584720aac0c917be2e887e2bec",
+    "packages/opencode/src/bus/global-replay.ts": "bfbdeb214b6ba36d65afa4fdac1dacfa903bebe0c5d88adccfb19a0fbaea25b9",
     "packages/opencode/src/bus/global.ts": "65b3b380936fc34b2c5ef9f3ab419a6c8e6d4cfc696302a266188f26ccdc320a",
     "packages/opencode/src/effect/runner.ts": "b660b5b22df810b16293c23c6d832e5e8dcfb12b9a8a858c875d2c051c855b81",
     "packages/opencode/src/mcp/browser.ts": "ecdda42cbd55a97b8d14050aa15c6e6450a1d63b0a641c8c8e5b81e50f957c87",
@@ -389,6 +389,7 @@
     "packages/opencode/test/server/amicode-widgets-src.test.ts": "fa95521084f95e0c421e7f7f13bf61de7e6b5cc9f42aa9fade486f5c1b53a65d",
     "packages/opencode/test/server/amicode-widgets.test.ts": "14fc6ccff4e83a5b005a724936e9f0d7ce411fab74109f319e8bc748665f7ab8",
     "packages/opencode/test/server/auth-accept-set.test.ts": "8fe698812ed9a809d21ace1a9751bd3f1976ab1e58ad5bda65dbfff58df8e3bc",
+    "packages/opencode/test/server/global-event-replay.test.ts": "a2ccc81b21eb99cb3eeeecd3973738c5ac3a0ecaba59de0516b6d0ab4fcb726c",
     "packages/opencode/test/server/httpapi-compression.test.ts": "5f7603d7018e0b95f1c2f36c01dd297c01770bfcdd91ce29778e03b7d6143f75",
     "packages/opencode/test/server/httpapi-file-write-gate.test.ts": "0c91b7417e615850edfde3f2878207dab6b6624d4cfbb6e6783b2e6d9aa4dff0",
     "packages/opencode/test/server/httpapi-file.test.ts": "d3386129bc81467ecbcc57a3861f53767ee56ac41b4ff6ad58d8b168fb3b3373",
@@ -946,7 +947,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-12T20:12:31.400Z",
+  "extracted_at": "2026-10-12T20:14:12.948Z",
   "per_package": {
     "packages/app": {
       "A": 237,
@@ -964,7 +965,7 @@
       "D": 0
     },
     "packages/opencode": {
-      "A": 77,
+      "A": 78,
       "M": 91,
       "D": 0
     },
@@ -995,7 +996,7 @@
     }
   },
   "counts": {
-    "overlay_total": 924,
+    "overlay_total": 925,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1381,6 +1382,7 @@
     "packages/opencode/test/server/amicode-widgets-src.test.ts": "A",
     "packages/opencode/test/server/amicode-widgets.test.ts": "A",
     "packages/opencode/test/server/auth-accept-set.test.ts": "A",
+    "packages/opencode/test/server/global-event-replay.test.ts": "A",
     "packages/opencode/test/server/httpapi-compression.test.ts": "M",
     "packages/opencode/test/server/httpapi-file-write-gate.test.ts": "A",
     "packages/opencode/test/server/httpapi-file.test.ts": "M",

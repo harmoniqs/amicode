@@ -14,6 +14,8 @@ export type Frame = {
   readonly data: string
   /** UTF-8 size of `data`, charged against the byte bound. */
   readonly bytes: number
+  /** Push time (ms), checked against the age bound. */
+  readonly time: number
   /** Push order; unlike `seq` it is unique per frame (a sync copy shares its source's seq). */
   readonly ordinal: number
 }
@@ -21,9 +23,30 @@ export type Frame = {
 export type Bounds = {
   /** Retained frame bytes; the oldest frames are evicted past it. */
   readonly maxBytes: number
+  /** Retained frame age in milliseconds; older frames are evicted. */
+  readonly maxAgeMs: number
 }
 
-export const DEFAULT_BOUNDS: Bounds = { maxBytes: 32 * 1024 * 1024 }
+/** About 32 MB and 5 minutes of history: covers link blips and window reloads. */
+export const DEFAULT_BOUNDS: Bounds = { maxBytes: 32 * 1024 * 1024, maxAgeMs: 5 * 60_000 }
+
+export const BOUNDS_ENV = {
+  maxBytes: "OPENCODE_GLOBAL_EVENT_REPLAY_MAX_BYTES",
+  maxAgeMs: "OPENCODE_GLOBAL_EVENT_REPLAY_MAX_AGE_MS",
+} as const
+
+/** The buffer bounds from the environment; an unset or invalid value keeps its default. */
+export function boundsFromEnv(env: Record<string, string | undefined>): Bounds {
+  const read = (key: string, fallback: number) => {
+    const raw = env[key]?.trim()
+    if (!raw || !/^\d+$/.test(raw)) return fallback
+    return Number(raw)
+  }
+  return {
+    maxBytes: read(BOUNDS_ENV.maxBytes, DEFAULT_BOUNDS.maxBytes),
+    maxAgeMs: read(BOUNDS_ENV.maxAgeMs, DEFAULT_BOUNDS.maxAgeMs),
+  }
+}
 
 export function formatID(epoch: string, seq: number) {
   return `${epoch}:${seq}`
@@ -65,13 +88,22 @@ export class ReplayBuffer {
   // emitted before this buffer existed). A cursor below it cannot be served.
   #floor: number
 
-  constructor(
-    readonly epoch: string,
-    readonly bounds: Bounds = DEFAULT_BOUNDS,
-    start = 0,
-  ) {
-    this.#current = start
-    this.#floor = start
+  readonly epoch: string
+  readonly bounds: Bounds
+  readonly #now: () => number
+
+  constructor(input: {
+    epoch: string
+    bounds?: Bounds
+    /** The sequence the buffer starts at (events before it were never recorded). */
+    start?: number
+    now?: () => number
+  }) {
+    this.epoch = input.epoch
+    this.bounds = input.bounds ?? DEFAULT_BOUNDS
+    this.#now = input.now ?? Date.now
+    this.#current = input.start ?? 0
+    this.#floor = this.#current
   }
 
   /** The current sequence: the last one pushed (or skipped). */
@@ -90,6 +122,7 @@ export class ReplayBuffer {
       seq,
       data,
       bytes: Buffer.byteLength(data),
+      time: this.#now(),
       ordinal: ++this.#ordinal,
     }
     this.#current = Math.max(this.#current, seq)
@@ -117,6 +150,7 @@ export class ReplayBuffer {
     const listener = (frame: Frame) => (deliver ? deliver(frame) : pending.push(frame))
     this.#listeners.add(listener)
 
+    this.#evict()
     const watermark = this.#ordinal
     const resolved = this.#resolve(cursor)
     const replay = resolved.reset ? [] : this.#retained().filter((frame) => frame.seq > resolved.position)
@@ -156,9 +190,12 @@ export class ReplayBuffer {
     return this.#frames.slice(this.#head) as Frame[]
   }
 
+  // Oldest-first, until retained bytes and the oldest frame's age are both within bounds.
   #evict() {
-    while (this.#head < this.#frames.length && this.#bytes > this.bounds.maxBytes) {
+    const oldest = this.#now() - this.bounds.maxAgeMs
+    while (this.#head < this.#frames.length) {
       const frame = this.#frames[this.#head]!
+      if (this.#bytes <= this.bounds.maxBytes && frame.time >= oldest) break
       this.#frames[this.#head++] = undefined
       this.#bytes -= frame.bytes
       this.#floor = Math.max(this.#floor, frame.seq)
@@ -170,7 +207,11 @@ export class ReplayBuffer {
   }
 }
 
-export const GlobalEventReplay = new ReplayBuffer(GlobalBus.epoch, DEFAULT_BOUNDS, GlobalBus.seq)
+export const GlobalEventReplay = new ReplayBuffer({
+  epoch: GlobalBus.epoch,
+  bounds: boundsFromEnv(process.env),
+  start: GlobalBus.seq,
+})
 
 GlobalBus.tap((event, seq) => {
   let data: string
