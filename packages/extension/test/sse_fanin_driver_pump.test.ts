@@ -10,7 +10,17 @@ import type { SseFrameSource } from "../src/amicode_service/sse_fanin_aggregator
 import { LOCAL_NAMESPACE } from "../src/amicode_service/sse_fanin_aggregator";
 import { SessionOwnerMap } from "../src/amicode_service/session_multiplexer";
 import { FanInCensus, FANIN_CENSUS_INTERVAL_MS, FANIN_CLOSE_REASONS } from "../src/amicode_service/fanin_census";
-import { fakeEngine, startEngineSseServer, LOCAL_EPOCH, PEER_EPOCH } from "./fixtures/engine_stream/engine_frames";
+import {
+  fakeEngine,
+  startEngineSseServer,
+  writeChunks,
+  largeSummaryFrame,
+  chunkBytes,
+  CHUNK_64K,
+  TEN_MB,
+  LOCAL_EPOCH,
+  PEER_EPOCH,
+} from "./fixtures/engine_stream/engine_frames";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -1757,5 +1767,49 @@ describe("#1771 AC5 — the census adds no frames to any stream and changes no d
     expect(res.text()).toBe(f);
     res.fireClose();
     census.stop();
+  });
+});
+
+describe("#1771 AC6 — a 10 MB engine frame delivered in 64 KB chunks (the #1779 surface)", () => {
+  it("the real reader reassembles it whole; the stream carries it byte-identical; the census counts its bytes and largest frame", async () => {
+    const engine = fakeEngine({ epoch: LOCAL_EPOCH });
+    const connected = engine.connected();
+    const big = largeSummaryFrame({ epoch: LOCAL_EPOCH, seq: 1 });
+    const after = engine.heartbeat();
+    const chunks = chunkBytes(connected + big + after, CHUNK_64K);
+    expect(Buffer.byteLength(big)).toBeGreaterThanOrEqual(TEN_MB);
+    expect(chunks.length).toBeGreaterThan(160);
+    const server = await startEngineSseServer(async (res) => {
+      await writeChunks(res, chunks);
+      res.end();
+    });
+    const lines: string[] = [];
+    const w = lineWaiter(lines);
+    const census = new FanInCensus({ plane: "observe", sink: w.sink, now: () => 0 });
+    const driver = new SseFanInDriver({
+      ownerMap: new SessionOwnerMap(), // fleet-of-one: the verbatim relay
+      localMachineId: "macbook",
+      localEventUrl: () => server.url,
+      peerBaseUrl: () => undefined,
+      peerToken: () => ({ ok: false as const, reason: "absent" as const }),
+      reconcileMs: 999_999,
+      census,
+    });
+    const res = mockRes();
+    try {
+      driver.handle(mockReq("/global/event"), res);
+      await w.waitFor((l) => l.includes("arm=local reason="));
+      expect(res.text()).toBe(connected + big + after); // whole, in order, byte-identical
+      census.emit();
+      const local = parseCensus(lines.at(-1)!).arms.find((a) => a.arm === "local")!;
+      expect(local).toMatchObject({
+        frames: "3",
+        bytes: String(Buffer.byteLength(connected + big + after)),
+        largest: String(Buffer.byteLength(big)),
+      });
+    } finally {
+      res.fireClose();
+      await server.stop();
+    }
   });
 });
