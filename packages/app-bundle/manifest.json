@@ -204,7 +204,7 @@
     "packages/app/src/context/sse-gap-frame.ts": "2f64fde540a305579762c5276721d4bbfbf7c862131aaf4462e8a4e8f32c5960",
     "packages/app/src/context/sse-origin.test.ts": "71cd3aa996a51d7e99236a49cede4769e520e20e53f57c6920fe441f2abb0c7d",
     "packages/app/src/context/sse-origin.ts": "da9a231907dc50d87cf01758177bee0d4a0b0165d8adb5e152db8eca29dfd9f5",
-    "packages/app/src/context/sse-reader.test.ts": "20ab571709f8e945bc655fbe684741c9dcce9f1ef42295fae6fd1d053ad74196",
+    "packages/app/src/context/sse-reader.test.ts": "3536b49e8c1f2b94accaabc0bff5348cc9e99dde93caccd33c5b80ae04f2eef0",
     "packages/app/src/context/stream-cursor.test.ts": "c9715bb28f576cdc00683b0bdc27bdc2a56a6f212969cc090f99b3dc8988e6a7",
     "packages/app/src/context/stream-cursor.ts": "2711f85581cd86bb69b50a441b6a04c532553f61fa5e00cd1b9daa12193d3697",
     "packages/app/src/context/stream-gap.test.ts": "b7203445564f44fd1d966ef684a11cb9b5ec567d9ab54f1b7617726fdf44d3f5",
@@ -963,7 +963,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-13T01:40:27.081Z",
+  "extracted_at": "2026-10-13T01:43:32.128Z",
   "per_package": {
     "packages/app": {
       "A": 240,

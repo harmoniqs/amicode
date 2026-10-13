@@ -15,10 +15,14 @@ const SERVER = { url: "http://127.0.0.1:4096" }
 /** What one parsed frame reports through `onSseEvent` (the app reads `id`). */
 type Frame = { data: unknown; event?: string; id?: string; retry?: number }
 
-/** A fetch that answers the n-th request with the n-th delivery's chunks, one
- *  body read per chunk. A delivery with `fail` errors its body after its chunks
- *  (a dropped link). Every request is recorded. */
-function streamFetch(deliveries: Array<{ chunks: Uint8Array[]; fail?: boolean }>, requests: Request[] = []) {
+/** One response body: its chunks, one body read each. With `failWhen`, the body
+ *  errors (a dropped link) once that promise settles — never earlier, so no
+ *  decoded chunk still queued in the pipe is discarded by the error. */
+type Delivery = { chunks: Uint8Array[]; failWhen?: Promise<unknown> }
+
+/** A fetch that answers the n-th request with the n-th delivery. Every request
+ *  is recorded. */
+function streamFetch(deliveries: Delivery[], requests: Request[] = []) {
   return async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = input instanceof Request ? input : new Request(input, init)
     const delivery = deliveries[Math.min(requests.length, deliveries.length - 1)]
@@ -27,7 +31,7 @@ function streamFetch(deliveries: Array<{ chunks: Uint8Array[]; fail?: boolean }>
     const body = new ReadableStream<Uint8Array>({
       pull(controller) {
         if (next < delivery.chunks.length) controller.enqueue(delivery.chunks[next++])
-        else if (delivery.fail) controller.error(new Error("link dropped"))
+        else if (delivery.failWhen) return delivery.failWhen.then(() => controller.error(new Error("link dropped")))
         else controller.close()
       },
     })
@@ -38,13 +42,17 @@ function streamFetch(deliveries: Array<{ chunks: Uint8Array[]; fail?: boolean }>
 /** Read the global stream to its end: every frame `onSseEvent` reported, and
  *  every event the stream yielded, in order. */
 async function readStream(
-  deliveries: Array<{ chunks: Uint8Array[]; fail?: boolean }>,
+  deliveries: Delivery[],
   requests: Request[] = [],
+  onFrame?: (frame: Frame) => void,
 ): Promise<{ frames: Frame[]; events: unknown[] }> {
   const sdk = createSdkForServer({ server: SERVER, fetch: streamFetch(deliveries, requests) as typeof fetch })
   const frames: Frame[] = []
   const result = await sdk.global.event({
-    onSseEvent: (frame: Frame) => frames.push({ ...frame }),
+    onSseEvent: (frame: Frame) => {
+      frames.push({ ...frame })
+      onFrame?.(frame)
+    },
     sseSleepFn: async () => {},
   })
   const events: unknown[] = []
@@ -197,5 +205,58 @@ describe("#1779 AC2 — the app reader finds frame boundaries split across chunk
       const { events } = await readStream([{ chunks }])
       expect({ cuts: chunks.map((c) => c.length), events }).toEqual({ cuts: chunks.map((c) => c.length), events: [{ n: 1 }, { n: 2 }] })
     }
+  })
+})
+
+describe("#1779 AC3 — the app reader's framing is unchanged: multi-line data, event names, ids, retry fields", () => {
+  // Pinned against the generated reader as it was before #1779, in one chunk and
+  // cut at every byte (the parse of each frame must not depend on where it was cut).
+  const stream = [
+    `: a comment line is ignored\nevent: message.updated\nid: ${EPOCH}:1\ndata: {"a":\ndata: 1}\n\n`, // multi-line data joins with \n
+    `data:no-space\nretry: 5000\n\n`, // a field without a space; a retry sets the delay
+    `data:    padded\nretry: soon\n\n`, // the reader strips all leading whitespace; a bad retry is ignored
+    `: keep-alive\n\n`, // no data: reported, never yielded
+    `id: ${EPOCH}:2\nevent: x\nevent: y\ndata: {"b":2}\n\n`, // last event name wins
+    `data: {"c":3}\n\n`, // no id line: the last id stands (SSE last-event-ID)
+    `\ndata: {"d":4}\n\n`, // a stray blank line before a frame joins that frame (no empty dispatch)
+    `id:\ndata: {"e":5}\n\n`, // an empty id resets it
+    `data: {"lost":true}\n`, // incomplete at the end of the stream: discarded
+  ].join("")
+  const expected: Frame[] = [
+    { data: { a: 1 }, event: "message.updated", id: `${EPOCH}:1`, retry: 3000 },
+    { data: "no-space", event: undefined, id: `${EPOCH}:1`, retry: 5000 },
+    { data: "padded", event: undefined, id: `${EPOCH}:1`, retry: 5000 },
+    { data: undefined, event: undefined, id: `${EPOCH}:1`, retry: 5000 },
+    { data: { b: 2 }, event: "y", id: `${EPOCH}:2`, retry: 5000 },
+    { data: { c: 3 }, event: undefined, id: `${EPOCH}:2`, retry: 5000 },
+    { data: { d: 4 }, event: undefined, id: `${EPOCH}:2`, retry: 5000 },
+    { data: { e: 5 }, event: undefined, id: "", retry: 5000 },
+  ]
+  const yielded = [{ a: 1 }, "no-space", "padded", { b: 2 }, { c: 3 }, { d: 4 }, { e: 5 }]
+
+  test("in one chunk, and cut at every byte: the same frames, fields and events", async () => {
+    for (const chunks of [[bytes(stream)], ...everySplit(stream)]) {
+      const { frames, events } = await readStream([{ chunks }])
+      const cuts = chunks.map((c) => c.length)
+      expect({ cuts, frames }).toEqual({ cuts, frames: expected })
+      expect({ cuts, events }).toEqual({ cuts, events: yielded })
+    }
+  })
+
+  test("ids: after a dropped link the SDK's own retry carries the last id it parsed (the Last-Event-ID header #1777's sseFetch strips)", async () => {
+    const requests: Request[] = []
+    const first = `id: ${EPOCH}:6\ndata: {"n":6}\n\nid: ${EPOCH}:7\ndata: {"n":7}\n\n`
+    let parsedLast!: () => void
+    const dropLink = new Promise<void>((resolve) => (parsedLast = resolve))
+    const { frames, events } = await readStream(
+      [{ chunks: chunkBytes(first, 7), failWhen: dropLink }, { chunks: [bytes(`id: ${EPOCH}:8\ndata: {"n":8}\n\n`)] }],
+      requests,
+      (frame) => frame.id === `${EPOCH}:7` && parsedLast(),
+    )
+    expect(requests).toHaveLength(2)
+    expect(requests[0].headers.get("last-event-id")).toBeNull()
+    expect(requests[1].headers.get("last-event-id")).toBe(`${EPOCH}:7`)
+    expect(frames.map((f) => f.id)).toEqual([`${EPOCH}:6`, `${EPOCH}:7`, `${EPOCH}:8`])
+    expect(events).toEqual([{ n: 6 }, { n: 7 }, { n: 8 }])
   })
 })

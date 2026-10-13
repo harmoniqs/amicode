@@ -9,7 +9,7 @@ import { appendFileSync } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
 import { SseFanInDriver, SseFrameSplitter, openHttpSseSource } from "../src/amicode_service/sse_fanin_driver";
 import type { SseFrameSource } from "../src/amicode_service/sse_fanin_aggregator";
-import { LOCAL_NAMESPACE } from "../src/amicode_service/sse_fanin_aggregator";
+import { LOCAL_NAMESPACE, frameRawId, isDataFrame } from "../src/amicode_service/sse_fanin_aggregator";
 import { SessionOwnerMap } from "../src/amicode_service/session_multiplexer";
 import { FanInCensus, FANIN_CENSUS_INTERVAL_MS, FANIN_CLOSE_REASONS } from "../src/amicode_service/fanin_census";
 import {
@@ -2404,6 +2404,38 @@ describe("#1779 AC2 — the relay reader finds frame boundaries split across chu
       res.fireClose();
       await server.stop();
     }
+  });
+});
+
+describe("#1779 AC3 — the relay reader's framing is unchanged: multi-line data, event names, ids, retry fields — each frame verbatim", () => {
+  // Pinned against the splitter as it was before #1779, whole and cut at every
+  // byte: where a frame was cut never changes which frames come out.
+  const engine = fakeEngine({ epoch: LOCAL_EPOCH });
+  const connected = engine.connected();
+  const [plain, twin] = engine.stored("message.updated", { info: { id: "msg_1" } }, { aggregateID: "ses_1" });
+  const frames = [
+    connected,
+    plain, // a durable event …
+    twin, // … and its sync twin: the same id
+    `: a comment\nevent: message.part.updated\nid: ${localId(2)}\nretry: 5000\ndata: {"a":\ndata: 1}\n\n`, // every field, multi-line data
+    `data:no-space\n\n`,
+    `id:\ndata: {"b":2}\n\n`, // an empty id (it advances nothing)
+    `: keep-alive\n\n`, // comment-only (not a data frame)
+    `\ndata: {"c":3}\n\n`, // a stray blank line joins the frame after it
+    `\n\n`, // … and alone it is an empty frame
+    engine.heartbeat(),
+  ];
+  const stream = frames.join("");
+
+  it("whole and cut at every byte: the same frames, verbatim, with the ids and data the aggregator reads", () => {
+    for (const delivery of [[Buffer.from(stream, "utf8")], ...everySplit(stream)]) {
+      const got = readFrames(delivery);
+      if (got.length !== frames.length || got.some((f, i) => f !== frames[i])) {
+        expect({ cuts: delivery.map((c) => c.length), got }).toEqual({ cuts: delivery.map((c) => c.length), got: frames });
+      }
+    }
+    expect(frames.map(frameRawId)).toEqual([localId(0), localId(1), localId(1), localId(2), undefined, undefined, undefined, undefined, undefined, localId(1)]);
+    expect(frames.map(isDataFrame)).toEqual([true, true, true, true, true, true, false, true, false, true]);
   });
 });
 
