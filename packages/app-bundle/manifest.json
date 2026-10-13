@@ -200,7 +200,7 @@
     "packages/app/src/context/server-sdk.tsx": "bd22cc233ba34c42f0ff7a73047b536d1a7882a6783fbaf98fd3163fde12010c",
     "packages/app/src/context/server-session-child-active.test.ts": "de8c467f67f88b6cce351c1805ec90728cf238eb1ef32f39ffdbbf3de4dcec22",
     "packages/app/src/context/server-session-orphan-part.test.ts": "1d635374c0bfff25a01825061aabac7334e5cdaedca2dab9f3d9467ff543caea",
-    "packages/app/src/context/server-session.test.ts": "b0bd5ef87b81154b938657ffbc335709799b75b0e146178e6e912088eb42d690",
+    "packages/app/src/context/server-session.test.ts": "31b14c85a843eb172899f456566ad7ab7d07a22eaf8b31d29a22e255e95cb96b",
     "packages/app/src/context/server-session.ts": "d309c8caad0b444d911a2e63be012d9e269b1791ffbfbb55218b0d631fd684fe",
     "packages/app/src/context/server-sync.tsx": "cdc7057c2188d79c5e586f1be05431cb97880ed3fd6b8f3980268db0fa011e34",
     "packages/app/src/context/server.tsx": "08e978e4b4b3094221a2a0b92e069f39cbedb6d6cf95935881e21cde52265ee2",
@@ -255,7 +255,7 @@
     "packages/app/src/pages/home-projects.ts": "d55124578dc839b98e2084b488d818e30e4a1abf1ae264499b83e403c2aabca7",
     "packages/app/src/pages/home-session-archive.test.ts": "e8f1126287a3e9daa455efcc378e5d72aebdd092158bf8526f7779669b72e850",
     "packages/app/src/pages/home-session-archive.ts": "1b56c173f37f4a4dfd54088ef5fdb0dbcd3d9b62aeb08de4bfa0ed34f07d7ad5",
-    "packages/app/src/pages/home.tsx": "3e33dca2d17a371daa2f02509eb2730ad94068cf60584c428e22d69056582c05",
+    "packages/app/src/pages/home.tsx": "88ff338bb202dbdbb50b3948d859fc4240547e7a7b059a6f7c1b5b97bfb093c6",
     "packages/app/src/pages/layout-archive.test.ts": "eed98374a2bea6c692d7d13116db9287ee61ff526b90952895bfb0f61afbfb2d",
     "packages/app/src/pages/layout-new.tsx": "ead0e4a46f5ca4e9515760ce40d21d0114243c490795d7794570d6e6977f592e",
     "packages/app/src/pages/layout.tsx": "90306f1691cf22b35627e063ce6401ea0ed2f98e12db022861f403de2d0f2d08",
@@ -765,7 +765,10 @@
     "packages/app/src/pages/layout/helpers.ts": "b9b9bd551833390d9dcb7e2bc56de77abdef770d7d786f732930ed2bb6b8f4d6",
     "packages/app/src/pages/layout/notification-toasts.test.ts": "6a95bd3dccb03be894b5d2adb4bc1f7531a9ec704e4d0eae1eba4ec89bbc9846",
     "packages/app/src/pages/layout/notification-toasts.ts": "11256e25f2bcc20d3520e81aa50b53db2a7f8dea8047b17e99deb1f9f061e43d",
-    "packages/app/src/pages/layout/project-avatar-state.ts": "7aadb235d27dc45799411c724f0fd1282af82d091cbcefb0344deb7c5d0659d4",
+    "packages/app/src/pages/layout/project-avatar-state.ts": "45ca696114049e23f5c5f95745b3f7303a35d847bd186c426618cf88f355865d",
+    "packages/app/src/pages/layout/session-list-chip.test.ts": "ebda802582ebd274e8c7c4c20ca962e8f699fce482202d3af885bd704104bf46",
+    "packages/app/src/pages/layout/session-list-chip.tsx": "38bd9f8950fb71d71c6c49ac191fd68a42d29b891887b87915f0a53f4d339dbb",
+    "packages/app/src/pages/layout/session-list-chip.wiring.test.tsx": "3f19399ea11aabbd6c11624ebc0597301e05cfc033da543c8231a21839880997",
     "packages/app/src/pages/layout/session-tab-avatar.tsx": "89e83e239d513f91b31f16473be531eaf82768cefe637ea5f10d752cea4ef887",
     "packages/app/src/pages/layout/session-tab-status.test.ts": "d6e62365948450c0acda628bc5d03233e5e6ead69649c2d2fb7e20c906007e74",
     "packages/app/src/pages/layout/session-tab-status.tsx": "0960d24e581e5cdd38d1bea5e745039542e5ab5268f5540cf8fa87d84717922b",
@@ -987,10 +990,10 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-13T20:33:10.488Z",
+  "extracted_at": "2026-10-13T20:51:10.374Z",
   "per_package": {
     "packages/app": {
-      "A": 247,
+      "A": 250,
       "M": 159,
       "D": 0
     },
@@ -1036,7 +1039,7 @@
     }
   },
   "counts": {
-    "overlay_total": 965,
+    "overlay_total": 968,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1799,6 +1802,9 @@
     "packages/app/src/pages/layout/notification-toasts.test.ts": "A",
     "packages/app/src/pages/layout/notification-toasts.ts": "A",
     "packages/app/src/pages/layout/project-avatar-state.ts": "M",
+    "packages/app/src/pages/layout/session-list-chip.test.ts": "A",
+    "packages/app/src/pages/layout/session-list-chip.tsx": "A",
+    "packages/app/src/pages/layout/session-list-chip.wiring.test.tsx": "A",
     "packages/app/src/pages/layout/session-tab-avatar.tsx": "M",
     "packages/app/src/pages/layout/session-tab-status.test.ts": "A",
     "packages/app/src/pages/layout/session-tab-status.tsx": "A",
