@@ -16,6 +16,7 @@ import { spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { checkPeerForwards } from "../src/fleet_health";
 
 const REPO = join(__dirname, "..", "..", "..");
 const GUARD = join(REPO, "tools", "fleet", "amico-opencode-fleet-guard");
@@ -761,5 +762,88 @@ describe("#1775 a hand-installed forward for the same peer is replaced — a bac
     expect(readFileSync(other.file, "utf8")).toBe(other.content);
     expect(launchctlCalls().filter((l) => l.includes(other.file))).toEqual([]);
     expect(existsSync(backupDir())).toBe(false);
+  });
+});
+
+// ── #1775: `install.sh --check` is the CLI twin of the peer-forward healthcheck ──
+describe("#1775 --check holds every peer forward agent to the standard (the healthcheck's CLI twin)", () => {
+  const installEnv = (): { path: string } => ({
+    path: `${join(tmp, "fakebin")}:${process.env.PATH ?? ""}`,
+  });
+  const launchAgents = (): string => join(tmp, "Library", "LaunchAgents");
+  const attachStudio = (): void => {
+    fakeAmico({ code: 0, stdout: verbJson("client", { host: "hq", port: 4096, sshAlias: "hq" }) });
+    fakeUname("Darwin");
+    writePeerStore({ "jjs-mac-studio": "http://127.0.0.1:45096" });
+  };
+  const listing = (): string => readdirSync(launchAgents()).map((f) => `${f}:${readFileSync(join(launchAgents(), f), "utf8").length}`).sort().join("\n");
+
+  it("after an install, --check passes end to end and names the peer forward; --check itself never calls launchctl and writes nothing", () => {
+    attachStudio();
+    expect(runScript(INSTALL, [], installEnv()).code).toBe(0);
+    rmSync(join(tmp, "launchctl.argv"), { force: true });
+    const before = listing();
+    const r = runScript(INSTALL, ["--check"], installEnv());
+    expect(r.code, r.out).toBe(0);
+    expect(r.out).toMatch(/ok peer forward co\.harmoniqs\.amico-peer-jjs-mac-studio-forward \(15\/2 \+ TCPKeepAlive, 127\.0\.0\.1:45096 → jjs-mac-studio:4096\)/);
+    expect(r.out).toMatch(/fleet check: all ok/);
+    expect(launchctlCalls()).toEqual([]);
+    expect(backstopCalls()).toEqual([]);
+    expect(listing()).toBe(before);
+  });
+
+  it("an attached peer with no forward agent fails --check with the fix line", () => {
+    attachStudio();
+    expect(runScript(INSTALL, [], installEnv()).code).toBe(0);
+    rmSync(join(launchAgents(), "co.harmoniqs.amico-peer-jjs-mac-studio-forward.plist"));
+    const r = runScript(INSTALL, ["--check"], installEnv());
+    expect(r.code).toBe(1);
+    expect(r.out).toMatch(/FAIL peer forward co\.harmoniqs\.amico-peer-jjs-mac-studio-forward missing at .*\(run: bash tools\/fleet\/install\.sh\)/);
+  });
+
+  it("stale keepalive values fail --check, each value named (the tunnel check's lines)", () => {
+    attachStudio();
+    expect(runScript(INSTALL, [], installEnv()).code).toBe(0);
+    const agent = join(launchAgents(), "co.harmoniqs.amico-peer-jjs-mac-studio-forward.plist");
+    writeFileSync(agent, readFileSync(agent, "utf8").replace("ServerAliveInterval=15", "ServerAliveInterval=30").replace("ServerAliveCountMax=2", "ServerAliveCountMax=3"));
+    const r = runScript(INSTALL, ["--check"], installEnv());
+    expect(r.code).toBe(1);
+    expect(r.out).toMatch(/FAIL peer forward co\.harmoniqs\.amico-peer-jjs-mac-studio-forward ServerAliveInterval 15 missing/);
+    expect(r.out).toMatch(/FAIL peer forward co\.harmoniqs\.amico-peer-jjs-mac-studio-forward ServerAliveCountMax 2 missing/);
+    expect(r.out).not.toMatch(/fleet check: all ok/);
+  });
+
+  it("a hand-installed forward for an attached peer fails --check — Fleet — Repair replaces it, keeping a backup", () => {
+    attachStudio();
+    expect(runScript(INSTALL, [], installEnv()).code).toBe(0);
+    writeFileSync(join(launchAgents(), "co.harmoniqs.amico-studio-forward.plist"), legacyForwardPlist("studio", 45096, "jjs-mac-studio"));
+    rmSync(join(tmp, "launchctl.argv"), { force: true });
+    const r = runScript(INSTALL, ["--check"], installEnv());
+    expect(r.code).toBe(1);
+    expect(r.out).toMatch(/FAIL hand-installed peer forward .*co\.harmoniqs\.amico-studio-forward\.plist for jjs-mac-studio .*replaces it.*backup/);
+    // a check only reports: the legacy agent is neither unloaded nor moved
+    expect(launchctlCalls()).toEqual([]);
+    expect(existsSync(join(launchAgents(), "co.harmoniqs.amico-studio-forward.plist"))).toBe(true);
+  });
+
+  it("the installer and the healthcheck agree: every agent the installer renders passes checkPeerForwards", () => {
+    fakeAmico({ code: 0, stdout: verbJson("server", { host: "hq", port: 4096 }) });
+    fakeUname("Darwin");
+    writePeerStore({ "jjs-mac-studio": "http://127.0.0.1:45096", "lab-box": "http://127.0.0.1:45097" });
+    writeRoster([{ machine_id: "lab-box", sshAlias: "lab" }]);
+    expect(runScript(INSTALL, [], installEnv()).code).toBe(0);
+    const checks = checkPeerForwards({
+      launchAgentsDir: launchAgents(),
+      peerStoreFile: join(tmp, ...PEER_STORE_REL),
+      platform: "darwin",
+      topology: {
+        kind: "ok", role: "server", canonical: { host: "hq", port: 4096 }, mode: "fleet", posture: "ok",
+        freshness: {}, provenanceSource: "fleet.json", projection: { schema_version: 1, contract_version: 1, sections: {} },
+      },
+    });
+    expect(checks.map((c) => [c.name, c.ok])).toEqual([
+      ["Fleet peer forward (jjs-mac-studio)", true],
+      ["Fleet peer forward (lab-box)", true],
+    ]);
   });
 });

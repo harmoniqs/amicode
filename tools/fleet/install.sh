@@ -177,11 +177,10 @@ replace_legacy_forwards() { # <machine_id> <local_port> <alias>
 
 peer_forwards() {
   if [[ "$(uname -s)" != "Darwin" ]]; then return 0; fi
-  if [[ $CHECK -eq 1 ]]; then return 0; fi
-  local targets kind peer_id lport alias label dst tmpf
+  local targets kind peer_id lport alias label dst tmpf f peer_fail=0
   targets="$(peer_forward_targets)" || die "could not read the peer token store at $PEER_STORE (node failed)"
   if [[ -z "$targets" ]]; then return 0; fi
-  if [[ ! -f "$PEER_PLIST_SRC" ]]; then
+  if [[ $CHECK -eq 0 && ! -f "$PEER_PLIST_SRC" ]]; then
     say "note: no peer-forward template at $PEER_PLIST_SRC — skipping peer forwards (git pull?)"
     return 0
   fi
@@ -189,6 +188,31 @@ peer_forwards() {
     if [[ "$kind" == "note" ]]; then say "note: $peer_id"; continue; fi
     label="co.harmoniqs.amico-peer-${peer_id}-forward"
     dst="$LAUNCH_AGENTS_DIR/${label}.plist"
+    if [[ $CHECK -eq 1 ]]; then
+      # The healthcheck's CLI twin (fleet_health.ts checkPeerForwards) — report only.
+      for f in "$LAUNCH_AGENTS_DIR"/co.harmoniqs.amico-*-forward.plist; do
+        if [[ -f "$f" ]] && is_legacy_forward_for "$f" "$lport" "$alias" "$peer_id"; then
+          echo "[fleet] FAIL hand-installed peer forward $f for $peer_id — not managed by the installer (run: bash tools/fleet/install.sh — Fleet — Repair replaces it, keeping a backup)"
+          peer_fail=1
+        fi
+      done
+      if [[ ! -f "$dst" ]]; then
+        echo "[fleet] FAIL peer forward $label missing at $dst (run: bash tools/fleet/install.sh)"
+        peer_fail=1
+        continue
+      fi
+      local before=$peer_fail
+      grep -q "ServerAliveInterval=15" "$dst" || { echo "[fleet] FAIL peer forward $label ServerAliveInterval 15 missing"; peer_fail=1; }
+      grep -q "ServerAliveCountMax=2" "$dst" || { echo "[fleet] FAIL peer forward $label ServerAliveCountMax 2 missing"; peer_fail=1; }
+      grep -q "TCPKeepAlive=yes" "$dst" || { echo "[fleet] FAIL peer forward $label TCPKeepAlive yes missing"; peer_fail=1; }
+      grep -q "ExitOnForwardFailure=yes" "$dst" || { echo "[fleet] FAIL peer forward $label ExitOnForwardFailure yes missing"; peer_fail=1; }
+      grep -qF "127.0.0.1:${lport}:127.0.0.1:${FLEET_PORT}" "$dst" || { echo "[fleet] FAIL peer forward $label LocalForward 127.0.0.1:${lport}:127.0.0.1:${FLEET_PORT} missing"; peer_fail=1; }
+      grep -qF "<string>${alias}</string>" "$dst" || { echo "[fleet] FAIL peer forward $label destination is not ${alias}"; peer_fail=1; }
+      if [[ $peer_fail -eq $before ]]; then
+        say "ok peer forward $label (15/2 + TCPKeepAlive, 127.0.0.1:${lport} → ${alias}:${FLEET_PORT})"
+      fi
+      continue
+    fi
     mkdir -p "$LAUNCH_AGENTS_DIR"
     tmpf="$(mktemp)"
     sed -e "s/PEER_MACHINE_ID/${peer_id}/g" -e "s/PEER_LOCAL_PORT/${lport}/g" -e "s/PEER_REMOTE_PORT/${FLEET_PORT}/g" -e "s/PEER_SSH_ALIAS/${alias}/g" "$PEER_PLIST_SRC" > "$tmpf"
@@ -203,6 +227,7 @@ peer_forwards() {
     fi
     rm -f "$tmpf"
   done <<< "$targets"
+  if [[ $peer_fail -eq 1 ]]; then exit 1; fi
 }
 
 # Standalone: no guard/tunnel/hub — but a standalone PEER still gets its

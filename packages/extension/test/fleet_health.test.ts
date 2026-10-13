@@ -1,5 +1,8 @@
-import { describe, it, expect } from "vitest";
-import { checkFleetGuard, checkFleetSettings, checkFleetTunnel, checkFleetRole, fleetHealthReport, FLEET_GUARD_INSTALL } from "../src/fleet_health";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { checkFleetGuard, checkFleetSettings, checkFleetTunnel, checkFleetRole, checkPeerForwards, fleetHealthReport, FLEET_GUARD_INSTALL } from "../src/fleet_health";
 import type { FleetTopologyState } from "../src/fleet_topology";
 
 const REPO = "/repo/tools/fleet/amico-opencode-fleet-guard";
@@ -311,5 +314,146 @@ describe("fleet_health on linux — the guard backstop is wired cross-platform (
     expect(r).toHaveLength(1);
     expect(r[0].name).toBe("Fleet role");
     expect(r[0].detail).toMatch(/standalone/);
+  });
+});
+
+// ── #1775: every per-peer SSH forward agent is checked the way the hub tunnel is ──
+// One launchd agent per attached peer (co.harmoniqs.amico-peer-<machine_id>-
+// forward), enumerated by label convention from an INJECTED LaunchAgents dir;
+// the attached peers come from the reader peer-token store (loopback base_url
+// = the forward's local end). Missing or stale keepalive values fail with the
+// install.sh fix line — the tunnel check's exact shape.
+describe("#1775 peer forward agents — every per-peer forward is checked like the hub tunnel", () => {
+  const TEMPLATE = readFileSync(join(__dirname, "..", "..", "..", "tools", "fleet", "co.harmoniqs.amico-peer-forward.plist"), "utf8");
+  let root: string;
+  let launchAgentsDir: string;
+  let peerStoreFile: string;
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "fleet-health-peers-"));
+    launchAgentsDir = join(root, "LaunchAgents");
+    mkdirSync(launchAgentsDir, { recursive: true });
+    peerStoreFile = join(root, "fleet-peer-tokens-reader.json");
+  });
+  afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+  /** The agent exactly as the installer renders it from the repo template. */
+  const rendered = (id: string, localPort: number, remotePort = 4096, alias = id): string =>
+    TEMPLATE.replace(/PEER_MACHINE_ID/g, id)
+      .replace(/PEER_LOCAL_PORT/g, String(localPort))
+      .replace(/PEER_REMOTE_PORT/g, String(remotePort))
+      .replace(/PEER_SSH_ALIAS/g, alias);
+  const placeAgent = (file: string, content: string): void => writeFileSync(join(launchAgentsDir, file), content);
+  const managedFile = (id: string): string => `co.harmoniqs.amico-peer-${id}-forward.plist`;
+  const attach = (peers: Record<string, string>): void =>
+    writeFileSync(peerStoreFile, JSON.stringify({ store_version: 1, peers: Object.fromEntries(Object.entries(peers).map(([id, u]) => [id, { base_url: u, token: "t" }])) }));
+  const run = (topology: FleetTopologyState = okServer) =>
+    checkPeerForwards({ launchAgentsDir, peerStoreFile, platform: "darwin", topology });
+
+  it("one check per attached peer: an installer-rendered agent passes with the tunnel's ok shape (15/2 + TCPKeepAlive, the forward)", () => {
+    attach({ "jjs-mac-studio": "http://127.0.0.1:45096" });
+    placeAgent(managedFile("jjs-mac-studio"), rendered("jjs-mac-studio", 45096));
+    const checks = run();
+    expect(checks).toHaveLength(1);
+    expect(checks[0].name).toBe("Fleet peer forward (jjs-mac-studio)");
+    expect(checks[0].ok).toBe(true);
+    expect(checks[0].detail).toMatch(/ServerAlive 15\/2 \+ TCPKeepAlive/);
+    expect(checks[0].detail).toContain("127.0.0.1:45096:127.0.0.1:4096");
+  });
+
+  it("an attached peer with NO forward agent fails, naming the agent, with the install.sh fix line", () => {
+    attach({ "jjs-mac-studio": "http://127.0.0.1:45096" });
+    const [c] = run();
+    expect(c.ok).toBe(false);
+    expect(c.detail).toMatch(/missing/);
+    expect(c.detail).toContain(managedFile("jjs-mac-studio"));
+    expect(c.fix).toMatch(/bash tools\/fleet\/install\.sh/);
+  });
+
+  it("several agents, stale values: each is reported; each stale/missing keepalive value is named; the fix line is the tunnel's", () => {
+    attach({
+      good: "http://127.0.0.1:45001",
+      stale: "http://127.0.0.1:45002",
+      "no-tcp": "http://127.0.0.1:45003",
+      "wrong-port": "http://127.0.0.1:45004",
+    });
+    placeAgent(managedFile("good"), rendered("good", 45001));
+    placeAgent(managedFile("stale"), rendered("stale", 45002).replace("ServerAliveInterval=15", "ServerAliveInterval=30").replace("ServerAliveCountMax=2", "ServerAliveCountMax=3"));
+    placeAgent(managedFile("no-tcp"), rendered("no-tcp", 45003).replace("<string>-o</string>\n\t\t<string>TCPKeepAlive=yes</string>\n", "").replace("<string>-o</string>\n\t\t<string>ExitOnForwardFailure=yes</string>\n", ""));
+    placeAgent(managedFile("wrong-port"), rendered("wrong-port", 45999));
+    const byName = Object.fromEntries(run().map((c) => [c.name, c]));
+    expect(Object.keys(byName).sort()).toEqual([
+      "Fleet peer forward (good)", "Fleet peer forward (no-tcp)", "Fleet peer forward (stale)", "Fleet peer forward (wrong-port)",
+    ]);
+    expect(byName["Fleet peer forward (good)"].ok).toBe(true);
+
+    const stale = byName["Fleet peer forward (stale)"];
+    expect(stale.ok).toBe(false);
+    expect(stale.detail).toMatch(/ServerAliveInterval is 30 \(stale, should be 15\)/);
+    expect(stale.detail).toMatch(/ServerAliveCountMax is 3 \(stale, should be 2\)/);
+    expect(stale.fix).toBe("bash tools/fleet/install.sh  (Fleet — Repair regenerates it: 15/2 + TCPKeepAlive)");
+
+    const noTcp = byName["Fleet peer forward (no-tcp)"];
+    expect(noTcp.ok).toBe(false);
+    expect(noTcp.detail).toMatch(/TCPKeepAlive yes missing/);
+    expect(noTcp.detail).toMatch(/ExitOnForwardFailure yes missing/);
+
+    const wrongPort = byName["Fleet peer forward (wrong-port)"];
+    expect(wrongPort.ok).toBe(false);
+    expect(wrongPort.detail).toMatch(/LocalForward 127\.0\.0\.1:45004:127\.0\.0\.1:4096 missing/);
+  });
+
+  it("a hand-installed legacy forward is enumerated by label convention and its stale 30/3 flagged — the fix names the backup-keeping replace", () => {
+    attach({ "jjs-mac-studio": "http://127.0.0.1:45096" });
+    // The real hand-installed shape: 30/3, no TCPKeepAlive, unbound -L.
+    placeAgent("co.harmoniqs.amico-studio-forward.plist", `<plist><dict><key>Label</key><string>co.harmoniqs.amico-studio-forward</string>
+<key>ProgramArguments</key><array><string>/usr/bin/ssh</string><string>-N</string><string>-L</string><string>45096:127.0.0.1:4096</string>
+<string>-o</string><string>ExitOnForwardFailure=yes</string><string>-o</string><string>ServerAliveInterval=30</string>
+<string>-o</string><string>ServerAliveCountMax=3</string><string>jjs-mac-studio</string></array></dict></plist>`);
+    placeAgent("co.harmoniqs.amico-tunnel.plist", "not a forward agent — the hub tunnel has its own check");
+    const byName = Object.fromEntries(run().map((c) => [c.name, c]));
+    expect(Object.keys(byName).sort()).toEqual([
+      "Fleet peer forward (hand-installed co.harmoniqs.amico-studio-forward)",
+      "Fleet peer forward (jjs-mac-studio)",
+    ]);
+    const legacy = byName["Fleet peer forward (hand-installed co.harmoniqs.amico-studio-forward)"];
+    expect(legacy.ok).toBe(false);
+    expect(legacy.detail).toMatch(/ServerAliveInterval is 30 \(stale, should be 15\)/);
+    expect(legacy.detail).toMatch(/ServerAliveCountMax is 3 \(stale, should be 2\)/);
+    expect(legacy.detail).toMatch(/TCPKeepAlive yes missing/);
+    expect(legacy.fix).toMatch(/bash tools\/fleet\/install\.sh .*replaces it .*backup/);
+    expect(byName["Fleet peer forward (jjs-mac-studio)"].ok).toBe(false); // the managed agent is not there yet
+  });
+
+  it("a peer reached over https (tailscale/direct) needs no forward — no check; no attached peers and no agents → no checks", () => {
+    attach({ far: "https://far.tailnet-1234.ts.net" });
+    expect(run()).toEqual([]);
+  });
+
+  it("skips off darwin — launchd agents only (the supervised linux/WSL link is #1260)", () => {
+    attach({ "jjs-mac-studio": "http://127.0.0.1:45096" });
+    expect(checkPeerForwards({ launchAgentsDir, peerStoreFile, platform: "linux", topology: okServer })).toEqual([]);
+  });
+
+  it("the aggregate report carries the peer forward checks on EVERY role (a peer may be server, standalone, or client); a broken projection still surfaces only the role fail", () => {
+    attach({ "jjs-mac-studio": "http://127.0.0.1:45096" });
+    const base = {
+      repoGuardPath: REPO,
+      configuredBinary: INSTALLED,
+      configuredPort: 4096,
+      plistContent: `ServerAliveInterval=15 ServerAliveCountMax=2 TCPKeepAlive=yes 127.0.0.1:4096:127.0.0.1:4096`,
+      read: () => guardContent,
+      isExecutable: () => true,
+      platform: "darwin",
+      launchAgentsDir,
+      peerStoreFile,
+    };
+    for (const [topology, n] of [[okServer, 2], [okStandalone, 2], [absent, 2], [okClient, 5]] as const) {
+      const r = fleetHealthReport({ ...base, topology });
+      expect(r, `role ${topology.kind}`).toHaveLength(n);
+      const peer = r.find((c) => c.name === "Fleet peer forward (jjs-mac-studio)");
+      expect(peer?.ok).toBe(false);
+      expect(peer?.fix).toMatch(/install\.sh/);
+    }
+    expect(fleetHealthReport({ ...base, topology: broken })).toHaveLength(1);
   });
 });
