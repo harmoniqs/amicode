@@ -1,0 +1,39 @@
+schema_version = "1"
+kind = "control"
+
+[integrator]
+kind = "spline"
+alg = "magnus_adapt4"
+
+[system]
+kind = "template"
+template = "transmon"
+
+[system.global_params]
+omega = 4.0
+delta = 0.2
+
+[goal]
+kind = "unitary"
+gate = "X"
+subsystem_levels = [3]
+
+[trajectory]
+kind = "unitary"
+
+[problem]
+template = "spline_pulse_problem"
+N = 50
+Q = 100.0
+R = 0.01
+du_bound = 10.0
+free_phase = true
+
+[solver]
+backend = "ipopt"
+max_iter = 60
+
+[solver_actuals]
+backend = "ipopt"
+max_iter = 60
+exact_hessian = "false"
