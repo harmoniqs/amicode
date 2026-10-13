@@ -38,8 +38,8 @@ export { LOCAL_NAMESPACE, NS_SEP } from "./sse_composite_cursor";
  *  #1617 — `pause()` / `resume()` are OPTIONAL flow control the driver drives
  *  when the shared downstream backpressures: pausing every live upstream while
  *  the downstream is stalled is what keeps the bounded per-namespace buffers
- *  from overflow-dropping (the overflow is otherwise UNRECOVERABLE — the live
- *  global event route has no replay cursor). A source that cannot pause simply
+ *  from overflow-dropping (an overflow drop is never replayed — the arm stays
+ *  open — so it can only be announced, by the overflow gap). A source that cannot pause simply
  *  omits them; the aggregator falls back to buffer-and-drain (today's behavior
  *  for injected test sources) — additive, no existing caller breaks. */
 export interface SseFrameSource {

@@ -220,9 +220,9 @@ class FanInConnection implements CensusConnection {
       ...(deps.focusSnapshot ? { focusSnapshot: deps.focusSnapshot } : {}),
       // #1617 — re-derive the transparent proxy's backpressure by hand. When the
       // shared downstream `write()` returns false, pause EVERY live upstream so
-      // the bounded per-namespace buffers cannot overflow-drop (the overflow is
-      // otherwise unrecoverable — the live global event route has no replay
-      // cursor). The `drain` edge (wired in start()) resumes them and calls
+      // the bounded per-namespace buffers cannot overflow-drop (an overflow drop
+      // is not replayed — the arm stays open — so it can only be announced, by
+      // the overflow gap). The `drain` edge (wired in start()) resumes them and calls
       // agg.resume() to flush the buffers in order and re-arm `flowing`.
       onBackpressure: () => this.pauseUpstreams(),
       // #1771 — the census clock and its view of drops and gaps.
@@ -361,12 +361,12 @@ class FanInConnection implements CensusConnection {
     // Open a real upstream for each newly-active peer arm.
     for (const machineId of active) {
       if (this.sources.has(machineId)) continue;
-      // #1638 — resume from the aggregator's LIVE last-delivered id for this
-      // namespace (its composite cursor), NOT the stale connect-time id. A
-      // re-open of an arm that already delivered is a NON-INITIAL re-open — the
-      // aggregator emits one composite-mode gap (reopenArm is a no-op for a
-      // never-delivered arm; a peer arm is only active in composite mode, so
-      // its verdict is never `sever`).
+      // #1638 — resume from the aggregator's LIVE resume position for this
+      // namespace, NOT the stale connect-time id. #1777: a re-open of an arm
+      // that delivered engine ids RESUMES there and the peer replays; one with
+      // no ids (an older engine) gets the composite-mode gap instead
+      // (reopenArm is a no-op for a never-delivered arm; a peer arm is only
+      // active in composite mode, so its verdict is never `sever`).
       this.reopenAndTrack(machineId, this.deps.peerBaseUrl(machineId), this.peerAuth(machineId));
     }
     // Close the real upstream for any peer arm no longer active (dark peer, or
