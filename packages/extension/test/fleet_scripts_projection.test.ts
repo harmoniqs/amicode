@@ -661,3 +661,105 @@ describe("#1775 the installer generates one SSH forward agent per attached peer"
     expect(backstopCalls()).toEqual([]);
   });
 });
+
+/** A hand-installed forward in the legacy `co.harmoniqs.amico-<name>-forward`
+ *  shape — byte-for-byte the agent found on a real fleet laptop (stale 30/3,
+ *  unbound `-L <port>:127.0.0.1:<remote>`, BatchMode + accept-new). */
+function legacyForwardPlist(name: string, localPort: number, host: string): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>co.harmoniqs.amico-${name}-forward</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/usr/bin/ssh</string>
+		<string>-N</string>
+		<string>-L</string>
+		<string>${localPort}:127.0.0.1:4096</string>
+		<string>-o</string>
+		<string>ExitOnForwardFailure=yes</string>
+		<string>-o</string>
+		<string>ServerAliveInterval=30</string>
+		<string>-o</string>
+		<string>ServerAliveCountMax=3</string>
+		<string>-o</string>
+		<string>BatchMode=yes</string>
+		<string>-o</string>
+		<string>StrictHostKeyChecking=accept-new</string>
+		<string>${host}</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>StandardOutPath</key>
+	<string>/tmp/amico-${name}-forward.log</string>
+	<key>StandardErrorPath</key>
+	<string>/tmp/amico-${name}-forward.log</string>
+	<key>ThrottleInterval</key>
+	<integer>10</integer>
+</dict>
+</plist>
+`;
+}
+
+describe("#1775 a hand-installed forward for the same peer is replaced — a backup is kept, never a silent delete", () => {
+  const installEnv = (): { path: string } => ({
+    path: `${join(tmp, "fakebin")}:${process.env.PATH ?? ""}`,
+  });
+  const launchAgents = (): string => join(tmp, "Library", "LaunchAgents");
+  const backupDir = (): string => join(tmp, ".amico", "ops", "fleet", "launchagents-backup");
+  const placeLegacy = (name: string, localPort: number, host: string): { file: string; content: string } => {
+    mkdirSync(launchAgents(), { recursive: true });
+    const file = join(launchAgents(), `co.harmoniqs.amico-${name}-forward.plist`);
+    const content = legacyForwardPlist(name, localPort, host);
+    writeFileSync(file, content);
+    return { file, content };
+  };
+
+  it.each([
+    ["it binds the same local port", 45096, "jjs-mac-studio"],
+    ["it targets the same ssh destination", 47001, "jjs-mac-studio"],
+  ])("recognized because %s: unloaded, moved byte-for-byte to the backup dir, and the managed agent takes its place; a re-run makes no second backup", (_why, legacyPort, legacyHost) => {
+    fakeAmico({ code: 0, stdout: verbJson("server", { host: "hq", port: 4096 }) });
+    fakeUname("Darwin");
+    writePeerStore({ "jjs-mac-studio": "http://127.0.0.1:45096" });
+    const legacy = placeLegacy("studio", legacyPort, legacyHost);
+
+    const r = runScript(INSTALL, [], installEnv());
+    expect(r.code, r.out).toBe(0);
+    expect(existsSync(legacy.file)).toBe(false);
+    const backups = readdirSync(backupDir());
+    expect(backups).toHaveLength(1);
+    expect(backups[0].startsWith("co.harmoniqs.amico-studio-forward.plist.")).toBe(true);
+    expect(readFileSync(join(backupDir(), backups[0]), "utf8")).toBe(legacy.content);
+    expect(r.out).toMatch(/replaced hand-installed peer forward .*co\.harmoniqs\.amico-studio-forward\.plist.*backup/);
+
+    // The legacy job is unloaded BEFORE the managed one loads (they bind the same port).
+    const managed = peerForwardPlist("jjs-mac-studio");
+    const calls = launchctlCalls();
+    expect(calls).toContain(`unload ${legacy.file}`);
+    expect(calls.indexOf(`unload ${legacy.file}`)).toBeLessThan(calls.indexOf(`load ${managed}`));
+    expect(readAgent(managed).args).toEqual(standardForward(45096, 4096, "jjs-mac-studio"));
+
+    const again = runScript(INSTALL, [], installEnv());
+    expect(again.code, again.out).toBe(0);
+    expect(readdirSync(backupDir())).toEqual(backups);
+    expect(backstopCalls()).toEqual([]);
+  });
+
+  it("a forward for a DIFFERENT peer (another port, another host) is left exactly as it was — never unloaded, never moved", () => {
+    fakeAmico({ code: 0, stdout: verbJson("server", { host: "hq", port: 4096 }) });
+    fakeUname("Darwin");
+    writePeerStore({ "jjs-mac-studio": "http://127.0.0.1:45096" });
+    const other = placeLegacy("lab", 47000, "lab-box");
+
+    const r = runScript(INSTALL, [], installEnv());
+    expect(r.code, r.out).toBe(0);
+    expect(readFileSync(other.file, "utf8")).toBe(other.content);
+    expect(launchctlCalls().filter((l) => l.includes(other.file))).toEqual([]);
+    expect(existsSync(backupDir())).toBe(false);
+  });
+});

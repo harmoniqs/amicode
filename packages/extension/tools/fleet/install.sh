@@ -144,6 +144,37 @@ peer_forward_targets() {
   ' "$PEER_STORE" "$ROSTER_FILE"
 }
 
+# A hand-installed forward predates the managed convention: any
+# co.harmoniqs.amico-<name>-forward.plist that is NOT a managed
+# co.harmoniqs.amico-peer-*-forward agent. It is "for the same peer" when it
+# binds the peer's local port (it would block the managed agent's -L under
+# ExitOnForwardFailure) or targets the peer's ssh destination.
+PEER_FORWARD_BACKUP_DIR="$HOME/.amico/ops/fleet/launchagents-backup"
+is_legacy_forward_for() { # <plist> <local_port> <alias> <machine_id>
+  local f="$1" lport="$2" alias="$3" peer_id="$4" base
+  base="$(basename "$f")"
+  if [[ "$base" == co.harmoniqs.amico-peer-*-forward.plist ]]; then return 1; fi
+  if grep -qE "<string>((127\.0\.0\.1|localhost):)?${lport}:[^<]*</string>" "$f"; then return 0; fi
+  if grep -qF "<string>${alias}</string>" "$f" || grep -qF "<string>${peer_id}</string>" "$f"; then return 0; fi
+  return 1
+}
+
+# Replace (never silently delete): unload the legacy job, then MOVE its plist
+# to a timestamped backup OUTSIDE LaunchAgents (so launchd never reloads it).
+replace_legacy_forwards() { # <machine_id> <local_port> <alias>
+  local f bk
+  for f in "$LAUNCH_AGENTS_DIR"/co.harmoniqs.amico-*-forward.plist; do
+    if [[ ! -f "$f" ]]; then continue; fi
+    if ! is_legacy_forward_for "$f" "$2" "$3" "$1"; then continue; fi
+    mkdir -p "$PEER_FORWARD_BACKUP_DIR"
+    bk="$PEER_FORWARD_BACKUP_DIR/$(basename "$f").$(date -u +%Y%m%dT%H%M%SZ)"
+    if [[ -e "$bk" ]]; then bk="$bk.$$"; fi
+    "$LAUNCHCTL" unload "$f" 2>/dev/null || true
+    mv "$f" "$bk"
+    say "replaced hand-installed peer forward $f with the managed co.harmoniqs.amico-peer-$1-forward (backup: $bk)"
+  done
+}
+
 peer_forwards() {
   if [[ "$(uname -s)" != "Darwin" ]]; then return 0; fi
   if [[ $CHECK -eq 1 ]]; then return 0; fi
@@ -161,6 +192,7 @@ peer_forwards() {
     mkdir -p "$LAUNCH_AGENTS_DIR"
     tmpf="$(mktemp)"
     sed -e "s/PEER_MACHINE_ID/${peer_id}/g" -e "s/PEER_LOCAL_PORT/${lport}/g" -e "s/PEER_REMOTE_PORT/${FLEET_PORT}/g" -e "s/PEER_SSH_ALIAS/${alias}/g" "$PEER_PLIST_SRC" > "$tmpf"
+    replace_legacy_forwards "$peer_id" "$lport" "$alias"
     if [[ -f "$dst" ]] && cmp -s "$tmpf" "$dst"; then
       say "peer forward $label unchanged — skipping reload"
     else
