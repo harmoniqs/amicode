@@ -251,6 +251,9 @@ export function createInboxAnswerAction(deps: InboxAnswerDeps) {
     submit(input: InboxAnswerInput): Promise<void> {
       const existing = inflight.get(input.requestID)
       if (existing) return existing
+      // The holder breaks the self-reference (the flight's own finally cleans
+      // its slot only while it is still the current flight).
+      const holder: { task?: Promise<void> } = {}
       const task = (async () => {
         emitReplyTelemetry(deps.telemetry, {
           kind: "question-reply-attempt",
@@ -280,10 +283,11 @@ export function createInboxAnswerAction(deps: InboxAnswerDeps) {
             throw error
           }
         } finally {
-          if (inflight.get(input.requestID) === task) inflight.delete(input.requestID)
+          if (inflight.get(input.requestID) === holder.task) inflight.delete(input.requestID)
         }
         deps.settle({ sessionID: input.sessionID, requestID: input.requestID })
       })()
+      holder.task = task
       inflight.set(input.requestID, task)
       return task
     },
