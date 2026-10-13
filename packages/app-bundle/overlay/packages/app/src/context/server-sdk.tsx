@@ -17,7 +17,11 @@ import { createCompatibleApi, type CompatibleApi } from "@/utils/server-compat"
 const isAbortError = (error: unknown) =>
   error !== null && typeof error === "object" && "name" in error && error.name === "AbortError"
 
-const isStreamClosed = (error: unknown, signal?: AbortSignal) => isAbortError(error) || signal?.aborted === true
+/** Whether an ended stream attempt was closed on purpose (our own abort) —
+ *  the reconnect loop's classifier: a closed stream reconnects silently,
+ *  a real failure marks the status and latches the error log. */
+export const isStreamClosed = (error: unknown, signal?: AbortSignal) =>
+  isAbortError(error) || signal?.aborted === true
 export type ServerEvent = Event & { current?: OpenCodeEvent }
 type QueuedServerEvent = { directory: string; payload: ServerEvent }
 /** A minimal fetch call signature. Newer lib types make `typeof fetch` require
@@ -191,6 +195,62 @@ export function applySseError(input: { closed: boolean; disconnect: () => void; 
   return true
 }
 
+// #1751 — the dead-man's switch. The servers the panel streams from heartbeat
+// on a cadence: the frontdoor's merged /api/event pool frames every ~15s (the
+// live evidence behind the issue), and the instance route's own SSE heartbeat
+// ticks even faster (10s), so a healthy stream never goes a few cadences
+// without a frame. An abruptly-dead host (process kill, rolling deploy, network
+// partition) produces no clean close and no error — the reader sits parked
+// inside `for await` and the panel freezes "thinking" (17:22:50: the frontdoor
+// died mid-turn and ZERO reconnect attempts followed for 12 minutes, while a
+// clean-close reconnect worked a minute earlier). The switch converts every
+// abrupt-death mode into a self-heal: 3 missed cadences — one is noise, three
+// in a row is a dead stream. A misfire costs one reconnect, which the
+// lastEventID replay (#1264) makes cheap. Threshold derivation: 3 × 15s = 45s.
+export const HEARTBEAT_CADENCE_MS = 15_000
+export const DEAD_MAN_MISSES = 3
+export const DEFAULT_DEAD_MAN_THRESHOLD_MS = HEARTBEAT_CADENCE_MS * DEAD_MAN_MISSES
+
+/** The threshold seam (#1751): 3 × the heartbeat cadence by default,
+ *  overridable via AMICODE_SSE_DEADMAN_MS (milliseconds). An unusable
+ *  override degrades to the derived default — it can never disable the
+ *  switch. */
+export function deadManThresholdMs(
+  env: { AMICODE_SSE_DEADMAN_MS?: string | undefined } | undefined =
+    typeof globalThis.process !== "undefined"
+      ? (globalThis.process.env as { AMICODE_SSE_DEADMAN_MS?: string | undefined })
+      : undefined,
+): number {
+  const parsed = Number(env?.AMICODE_SSE_DEADMAN_MS)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_DEAD_MAN_THRESHOLD_MS
+}
+
+/** The reader's own liveness clock — the connection owns its liveness. `open`
+ *  arms it once the stream is nominally open; `frame` re-arms it on every
+ *  received frame (never blocks, never busy-waits — it only observes frames
+ *  as they arrive); `close` disarms it when the stream ends for any reason.
+ *  When no frame arrives within the threshold while armed, `onDead` fires
+ *  exactly once per silent window. */
+export function createDeadMansSwitch(onDead: () => void, thresholdMs = deadManThresholdMs()) {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const fire = () => {
+    timer = undefined
+    onDead()
+  }
+  const arm = () => {
+    if (timer !== undefined) clearTimeout(timer)
+    timer = setTimeout(fire, thresholdMs)
+  }
+  return {
+    open: arm,
+    frame: arm,
+    close: () => {
+      if (timer !== undefined) clearTimeout(timer)
+      timer = undefined
+    },
+  }
+}
+
 type ServerEventEmitter = ReturnType<typeof createGlobalEmitter<{ [key: string]: ServerEvent }>>
 type ServerSDKBase = {
   server: ServerConnection.Any
@@ -334,9 +394,11 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
   let generation = 0
   // Amicode webview: connection visibility for the ConnectionBanner. The loop
   // below reconnects silently every RECONNECT_DELAY_MS, so without a signal a
-  // dead server reads as an endless "thinking" wave. (The branch's 15s
-  // heartbeat timer is NOT carried — upstream's bounded SSE heartbeat already
-  // governs liveness; two abort clocks would fight.)
+  // dead server reads as an endless "thinking" wave. Liveness itself rides the
+  // dead-man's switch below (#1751) — the earlier claim here that upstream's
+  // bounded SSE heartbeat "already governs liveness" was disproven live
+  // (17:22:50: an abruptly-dead host sends no clean close, so the reader parks
+  // in for-await and nothing fires; zero reconnects for 12 minutes).
   const [streamStatus, setStreamStatus] = createSignal<"connected" | "disconnected">("disconnected")
 
   const start = () => {
@@ -353,6 +415,14 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
           attempt?.abort()
         }
         abort.signal.addEventListener("abort", onAbort)
+        // #1751 dead-man's switch: the attempt's own liveness clock. Fired
+        // (disconnect + abort) when the armed window lapses with no frame —
+        // the abort ends the parked reader, which brings the loop round for a
+        // reconnect with the lastEventID cursor exactly like a clean close.
+        const deadMan = createDeadMansSwitch(() => {
+          setStreamStatus("disconnected")
+          attempt?.abort()
+        })
         try {
           const kind = await protocol
           const onSseError = (error: unknown) => {
@@ -375,8 +445,10 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
               ? (await eventSdk.global.event({ signal: attempt.signal, onSseError })).stream
               : eventApi.event.subscribe({ signal: attempt.signal })
           setStreamStatus("connected")
+          deadMan.open()
           let yielded = Date.now()
           for await (const event of events) {
+            deadMan.frame()
             streamErrorLogged = false
             const legacy = "payload" in event
             if (legacy && event.payload.type === "sync") continue
@@ -400,6 +472,7 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
             })
           }
         } finally {
+          deadMan.close()
           abort.signal.removeEventListener("abort", onAbort)
           attempt = undefined
         }
