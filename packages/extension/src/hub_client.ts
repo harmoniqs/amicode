@@ -138,6 +138,9 @@ export interface HubClientSessionOptions {
 
 export interface HubClientSession {
   stop(): void
+  /** Fire one probe immediately (the restart command's re-probe — the
+   *  hysteresis state stays with the session, never a second probe loop). */
+  poke(): void
 }
 
 export function startHubClientSession(opts: HubClientSessionOptions): HubClientSession {
@@ -148,7 +151,7 @@ export function startHubClientSession(opts: HubClientSessionOptions): HubClientS
     hubUrl = new URL(opts.hubUrl)
   } catch {
     opts.log(`[hub] client mode REFUSED — ${opts.hubUrl} does not parse as a URL; falling back to base posture`)
-    return { stop() {} }
+    return { stop() {}, poke() {} }
   }
   const headers =
     opts.authHeader !== undefined ? { Authorization: opts.authHeader } : undefined
@@ -185,6 +188,9 @@ export function startHubClientSession(opts: HubClientSessionOptions): HubClientS
   return {
     stop() {
       clearInterval(timer)
+    },
+    poke() {
+      void probe()
     },
   }
 }

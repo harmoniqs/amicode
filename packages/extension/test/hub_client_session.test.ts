@@ -120,4 +120,26 @@ describe("startHubClientSession — armed → no spawn, all resolutions = hub UR
       void dir;
     }
   }, 10_000);
+
+  it("poke() re-probes immediately (the restart command's hysteresis-correct re-attach)", async () => {
+    const hub = await startMockHub();
+    const { lines, log } = sinkLog();
+    const attached: URL[] = [];
+    const session = startHubClientSession({
+      hubUrl: hub.url.toString(),
+      log,
+      pollIntervalMs: 60_000, // the interval never fires — only the poke does
+      poll: new FleetPollHysteresis({ downThreshold: 2 }),
+      onAttach: (url) => attached.push(url),
+      onDetach: () => {},
+    });
+    try {
+      session.poke();
+      await waitFor(() => attached.length > 0, "attach via poke");
+      expect(attached[0].toString()).toBe(hub.url.toString());
+    } finally {
+      session.stop();
+      await hub.stop();
+    }
+  }, 10_000);
 });
