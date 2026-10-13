@@ -2482,3 +2482,118 @@ describe("#1777 AC2 — an upstream reset on any arm is exactly one gap for that
     res.fireClose();
   });
 });
+
+/** Serve a replaying engine's `/global/event` over a REAL socket (127.0.0.1,
+ *  port 0, dialed at its own address): each request subscribes with its
+ *  `?lastEventID=` and writes the subscription's frames as they come. Records
+ *  every byte written per connection; `drop()` destroys the open connections
+ *  (a link loss — the reader sees an error, not a clean end). */
+async function serveReplayingEngine(engine: ReplayingEngine) {
+  const written: string[][] = [];
+  const open = new Set<http.ServerResponse>();
+  const server = http.createServer((req, res) => {
+    const cursor = new URL(req.url ?? "/", "http://engine").searchParams.get("lastEventID") ?? undefined;
+    const sub = engine.subscribe(cursor);
+    const mine: string[] = [];
+    written.push(mine);
+    res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache, no-transform" });
+    res.flushHeaders();
+    open.add(res);
+    res.on("close", () => {
+      open.delete(res);
+      sub.end("error");
+    });
+    void (async () => {
+      for (;;) {
+        const f = await sub.source.next();
+        if (f === null) return;
+        mine.push(f);
+        res.write(f);
+      }
+    })();
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const { port } = server.address() as import("node:net").AddressInfo;
+  return {
+    url: `http://127.0.0.1:${port}`,
+    written,
+    drop: () => {
+      for (const res of open) res.destroy();
+    },
+    stop: () =>
+      new Promise<void>((r) => {
+        server.close(() => r());
+        server.closeAllConnections?.();
+      }),
+  };
+}
+
+describe("#1777 AC3 — fleet-of-one: the listener's stream is byte-identical to the engine's, ids included", () => {
+  it("over REAL sockets, across a link loss and the replayed re-open: every byte the engine wrote, and nothing else", async () => {
+    const engine = replayingEngine({ epoch: LOCAL_EPOCH, now: () => 1_700_000_000_000 });
+    const upstream = await serveReplayingEngine(engine);
+    const lines: string[] = [];
+    const w = lineWaiter(lines);
+    const driver = new SseFanInDriver({
+      ownerMap: new SessionOwnerMap(), // fleet-of-one: the verbatim relay
+      localMachineId: "macbook",
+      localEventUrl: () => upstream.url,
+      peerBaseUrl: () => undefined,
+      peerToken: () => ({ ok: false as const, reason: "absent" as const }),
+      reconcileMs: 999_999,
+      census: new FanInCensus({ plane: "observe", sink: w.sink }),
+    });
+    const front = http.createServer((req, res) => void driver.handle(req, res));
+    await new Promise<void>((r) => front.listen(0, "127.0.0.1", r));
+    const { port } = front.address() as import("node:net").AddressInfo;
+    let body = "";
+    let wake: () => void = () => undefined;
+    // event-driven (each listener chunk wakes it); the deadline only names a regression
+    const until = async (pred: () => boolean, what: string) => {
+      const deadline = Date.now() + 3_000;
+      while (!pred()) {
+        if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}; the listener got:\n${body}`);
+        await new Promise<void>((r) => {
+          wake = r;
+          setTimeout(r, 100);
+        });
+      }
+    };
+    const listener = http.get(`http://127.0.0.1:${port}/global/event`, (res) => {
+      res.setEncoding("utf8");
+      res.on("data", (c: string) => {
+        body += c;
+        wake();
+      });
+      res.on("error", () => undefined);
+    });
+    listener.on("error", () => undefined);
+    const engineBytes = () => upstream.written.flat().join("");
+    try {
+      await until(() => body.includes("server.connected"), "the connected frame");
+      for (const n of [1, 2]) engine.publish(...partEvent(n));
+      engine.heartbeat();
+      await until(() => body === engineBytes() && body.includes("server.heartbeat"), "the first connection's frames");
+
+      upstream.drop(); // the link dies mid-stream
+      await w.waitFor((l) => l.includes("arm=local reason=upstream-error"));
+      for (const n of [3, 4]) engine.publish(...partEvent(n)); // missed while down
+      driver.reconcile(); // resume from the last id the listener has
+      await until(() => upstream.written.length === 2 && body.includes('"n":4'), "the replay");
+      engine.publish(...partEvent(5));
+      await until(() => body.includes('"n":5'), "the live frame after the replay");
+
+      expect(upstream.written).toHaveLength(2);
+      expect(body).toBe(engineBytes()); // byte-identical, ids included, across both connections
+      const ids = [...body.matchAll(/^id: (.*)$/gm)].map((m) => m[1]);
+      expect(ids.every((i) => /^bG9jYWwx:\d+$/.test(i))).toBe(true); // the engine's own bare ids — never a composite
+      expect(body).not.toContain("amicode.sync.gap");
+      expect(body).not.toContain("local=");
+    } finally {
+      listener.destroy();
+      front.closeAllConnections?.();
+      await new Promise<void>((r) => front.close(() => r()));
+      await upstream.stop();
+    }
+  });
+});
