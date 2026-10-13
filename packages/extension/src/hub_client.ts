@@ -1,3 +1,5 @@
+import { FleetPollHysteresis } from "./fleet_poll_hysteresis";
+
 // ============================================================================
 // #1760 P4 — the hub-host client posture. ONE setting, `amicode.hubServerUrl`
 // (string, default ""), arms a cross-platform client mode: the extension
@@ -96,5 +98,94 @@ export function guardReservedHubPort(port: number, label: string, log: (line: st
     `[hub] ${label} = ${port} is in the reserved hub port range ${RESERVED_HUB_PORTS[0]}-${RESERVED_HUB_PORTS[RESERVED_HUB_PORTS.length - 1]} — the hub plane owns it; ignoring the pin and using a free ephemeral port`,
   )
   return 0
+}
+
+// ============================================================================
+// The hub client SESSION — the probe/attach loop activation runs when the
+// posture arms. Mirrors the fleet-client tunnel poll's proven shape
+// (FleetPollHysteresis — one lost probe must not flip the posture) against the
+// configured hub URL, and owns NO spawn surface at all: attach means "the
+// panel's every server resolution points at the hub" (the caller wires the
+// ready-URL → SSE connect → framed app on onAttach), detach means the hub went
+// down through the hysteresis window. vscode-free; every effect is injected.
+// ============================================================================
+
+export interface HubClientSessionOptions {
+  /** The normalized hub URL (readHubClientConfig's armed `url`). */
+  hubUrl: string
+  log(line: string): void
+  /** Fired when the hub answers through attach hysteresis — the caller points
+   *  EVERY server resolution (ready URL, SSE, the framed panel) at `url`. */
+  onAttach(url: URL): void
+  /** Fired when a previously-attached hub goes down through hysteresis. */
+  onDetach(): void
+  /** Optional Authorization header on probes (parity with the fleet client;
+   *  the hub front is anonymous by design, so a stray header is ignored). */
+  authHeader?: string
+  /** The probe path (default "/"). */
+  probePath?: string
+  /** Probe budget: first attach / steady state (ms, default 1500 each — the
+   *  fleet branch's steady budget; the hub is normally same-host). */
+  attachTimeoutMs?: number
+  steadyTimeoutMs?: number
+  /** Poll cadence (ms, default 2000 — the fleet branch's cadence). */
+  pollIntervalMs?: number
+  /** Injectable hysteresis (tests); default = the production tuning. */
+  poll?: FleetPollHysteresis
+  /** Injectable fetch (tests). */
+  fetchImpl?: typeof fetch
+}
+
+export interface HubClientSession {
+  stop(): void
+}
+
+export function startHubClientSession(opts: HubClientSessionOptions): HubClientSession {
+  const poll = opts.poll ?? new FleetPollHysteresis()
+  const fetchImpl = opts.fetchImpl ?? fetch
+  let hubUrl: URL
+  try {
+    hubUrl = new URL(opts.hubUrl)
+  } catch {
+    opts.log(`[hub] client mode REFUSED — ${opts.hubUrl} does not parse as a URL; falling back to base posture`)
+    return { stop() {} }
+  }
+  const headers =
+    opts.authHeader !== undefined ? { Authorization: opts.authHeader } : undefined
+  opts.log(
+    `[hub] client mode — amicode.hubServerUrl = ${hubUrl} — no local spawn (engine, service, runner); the panel resolves ${hubUrl}`,
+  )
+  const probe = async () => {
+    let up = false
+    try {
+      const r = await fetchImpl(`${hubUrl.toString()}${opts.probePath ?? "/"}`, {
+        signal: AbortSignal.timeout(poll.isReady ? (opts.steadyTimeoutMs ?? 1500) : (opts.attachTimeoutMs ?? 1500)),
+        headers,
+      })
+      up = r.ok || (r.status >= 200 && r.status < 400)
+    } catch {
+      up = false // connection refused / timeout — the same hysteresis applies
+    }
+    const d = poll.onProbe(up)
+    if (d.transition === "attach") {
+      opts.log(`[hub] up at ${hubUrl} — panel attached`)
+      opts.onAttach(new URL(hubUrl.toString()))
+    } else if (d.transition === "detach") {
+      opts.log(`[hub] hub down — ${d.failures} consecutive failed probes (threshold ${d.downThreshold}) — panel detached`)
+      opts.onDetach()
+    } else if (!up && d.ready && d.failures === 1) {
+      // A failure streak just started while up — log the hold once (no spam).
+      opts.log(`[hub] probe failed (1/${d.downThreshold}) — holding`)
+    } else if (d.bootProbe && !up) {
+      opts.log(`[hub] waiting for ${hubUrl} — unreachable, will retry`)
+    }
+  }
+  const timer = setInterval(() => void probe(), opts.pollIntervalMs ?? 2000)
+  void probe()
+  return {
+    stop() {
+      clearInterval(timer)
+    },
+  }
 }
 
