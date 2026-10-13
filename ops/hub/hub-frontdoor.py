@@ -1159,7 +1159,18 @@ class Group:
         s.sendall(req)
         buf = b""
         s.settimeout(60)
-        while b"server.connected" not in buf:
+        # 2026-10-13: readiness is ROUTE-APPROPRIATE. The global routes emit
+        # server.connected on connect; the instance routes (/event, /api/event)
+        # do NOT — their first frame is ordinary traffic (e.g. session.updated).
+        # Waiting on server.connected there dead-waits 60s, times out, and
+        # retries forever: silently-dead upstreams, panels stuck thinking with
+        # zero errors (the lane's engine head moved the wire contract; this is
+        # the memo). For instance routes, the first COMPLETE SSE frame is a
+        # valid preamble head — any one head is a valid head.
+        instance_route = self.path.split("?")[0].split("#")[0] in ("/event", "/api/event")
+        while b"server.connected" not in buf and not (
+            instance_route and b"\n\n" in buf and b"data:" in buf
+        ):
             chunk = s.recv(65536)
             if not chunk: raise RuntimeError("upstream closed during preamble")
             buf += chunk
