@@ -77,3 +77,24 @@ export function bootPosture(input: { hubArmed: boolean; fleetClient: boolean; ha
   return input.hasBinary ? "local" : "none"
 }
 
+/** True when the port sits in the hub plane's reserved range (4094-4097).
+ *  Nothing the EXTENSION starts may bind these — the hub (frontdoor +
+ *  runner-backed service + engine) owns them; an extension spawn there races
+ *  the hub's sockets (the erlich 4094 three-bounce pattern). */
+export function isReservedHubPort(port: number): boolean {
+  return (RESERVED_HUB_PORTS as readonly number[]).includes(port)
+}
+
+/** Guard a configured fixed port: a reserved hub port is REFUSED (returns 0 →
+ *  the caller falls back to ephemeral) with a named log line — never a silent
+ *  spawn onto the hub's socket, never a silent settings rewrite. `label` names
+ *  the configured source in the log (e.g. "amicode.opencodePort"). Ports
+ *  outside the range — including 0 (unset) — pass through untouched. */
+export function guardReservedHubPort(port: number, label: string, log: (line: string) => void): number {
+  if (!isReservedHubPort(port)) return port
+  log(
+    `[hub] ${label} = ${port} is in the reserved hub port range ${RESERVED_HUB_PORTS[0]}-${RESERVED_HUB_PORTS[RESERVED_HUB_PORTS.length - 1]} — the hub plane owns it; ignoring the pin and using a free ephemeral port`,
+  )
+  return 0
+}
+

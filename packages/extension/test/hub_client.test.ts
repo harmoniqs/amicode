@@ -6,7 +6,7 @@
 // gate this posture — erlich is a Linux remote-SSH extension host, which is
 // exactly the machine that needs it.
 import { describe, it, expect } from "vitest";
-import { readHubClientConfig, bootPosture } from "../src/hub_client";
+import { readHubClientConfig, bootPosture, guardReservedHubPort, RESERVED_HUB_PORTS } from "../src/hub_client";
 
 describe("readHubClientConfig — the amicode.hubServerUrl setting (#1760 P4)", () => {
   it("arms with the normalized hub URL when set to a valid http(s) URL", () => {
@@ -67,6 +67,29 @@ describe("bootPosture — which client posture activation takes (#1760 P4)", () 
     expect(
       bootPosture({ hubArmed: false, fleetClient: true, hasBinary: false }),
     ).toBe("none");
+  });
+});
+
+describe("guardReservedHubPort — no port collisions ever (#1760 P4 requirement 3)", () => {
+  const sinkLog = () => {
+    const lines: string[] = [];
+    return { lines, log: (l: string) => lines.push(l) };
+  };
+
+  it("refuses every reserved hub port (4094-4097) with a named log line, returning 0 (→ ephemeral)", () => {
+    for (const port of RESERVED_HUB_PORTS) {
+      const { lines, log } = sinkLog();
+      expect(guardReservedHubPort(port, "amicode.opencodePort", log)).toBe(0);
+      expect(lines.join("\n")).toContain(`amicode.opencodePort = ${port}`);
+      expect(lines.join("\n")).toContain("reserved hub");
+    }
+  });
+
+  it("passes any non-reserved port and 0 (unset) straight through — today's behavior untouched", () => {
+    const { lines, log } = sinkLog();
+    expect(guardReservedHubPort(43117, "amicode.opencodePort", log)).toBe(43117);
+    expect(guardReservedHubPort(0, "amicode.opencodePort", log)).toBe(0);
+    expect(lines).toEqual([]);
   });
 });
 

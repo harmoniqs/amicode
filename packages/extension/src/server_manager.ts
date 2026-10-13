@@ -5,6 +5,7 @@ import * as fs from "node:fs";
 import { dirname } from "node:path";
 import { serverAuthHeader } from "./server_auth";
 import { daemonizeSpawn, freePortIfOurs } from "./server_daemonize";
+import { guardReservedHubPort, isReservedHubPort } from "./hub_client";
 
 // ============================================================================
 // ServerManager — spawn `opencode serve`, wait for it to come up, expose
@@ -82,7 +83,16 @@ export class ServerManager {
     if (this.child || this._running) {
       throw new Error("opencode server already running");
     }
-    const port = this.opts.port ?? (await pickFreePort());
+    // #1760 P4: the reserved hub port guard at the spawn choke point. A
+    // configured pin in 4094-4097 is refused (0 → a picked free port) with a
+    // named log line — the extension never owns the hub plane's ports, and an
+    // unguarded spawn there can even health-check against the LIVE hub on
+    // this host and report "ready" while talking to the wrong server (the
+    // erlich 4094 three-bounce pattern). The picked free port is re-checked
+    // too (belt and braces: "no port collisions ever").
+    const port = guardReservedHubPort(this.opts.port ?? 0, "amicode.opencodePort", (l) =>
+      this.opts.channel.appendLine(l),
+    ) || (await pickUnreservedFreePort());
     this._port = port;
     this.opts.channel.appendLine(`[server] spawning opencode serve --port=${port} (cwd=${this.opts.cwd})`);
 
@@ -303,6 +313,15 @@ function pickFreePort(): Promise<number> {
     });
     srv.on("error", reject);
   });
+}
+
+/** #1760 P4: pick free ports until one lands OUTSIDE the reserved hub range —
+ *  the OS's ephemeral picker never hands out 4094-4097 in practice, but "no
+ *  port collisions ever" is a loop, not a hope. */
+async function pickUnreservedFreePort(): Promise<number> {
+  let port = await pickFreePort();
+  while (isReservedHubPort(port)) port = await pickFreePort();
+  return port;
 }
 
 async function waitForHealth(baseUrl: string, timeoutMs: number, authorization?: string): Promise<boolean> {
