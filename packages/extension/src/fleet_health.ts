@@ -20,6 +20,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { homedir } from "node:os";
 import { readFleetTopology, type FleetTopologyState } from "./fleet_topology";
+import { listPeerBaseUrls } from "./amicode_service/fleet_peer_store";
 
 export const FLEET_GUARD_REL = "tools/fleet/amico-opencode-fleet-guard";
 export const FLEET_GUARD_INSTALL = path.join(homedir(), ".local", "bin", "amico-opencode-fleet-guard");
@@ -162,6 +163,155 @@ export function checkFleetTunnel(
   return { name: "Fleet tunnel", ok: true, detail: `ServerAlive 15/2 + TCPKeepAlive, ${port} forward` };
 }
 
+// ── #1775: per-peer SSH forward agents ─────────────────────────────────────────
+// The installer generates one launchd agent per attached peer (tools/fleet/
+// co.harmoniqs.amico-peer-forward.plist); this check enumerates every forward
+// agent in the LaunchAgents dir BY LABEL CONVENTION and holds each to the hub
+// tunnel's keepalive standard. The attached peers come from the reader
+// peer-token store: a loopback base_url's port IS the forward's local end.
+
+/** The managed per-peer forward label — deterministic from the peer's machine id. */
+export function peerForwardLabel(machineId: string): string {
+  return `co.harmoniqs.amico-peer-${machineId}-forward`;
+}
+
+/** Any `co.harmoniqs.amico-<name>-forward` agent file — managed or hand-installed. */
+const FORWARD_AGENT_FILE = /^co\.harmoniqs\.amico-(.+)-forward\.plist$/;
+/** The managed shape inside it: `co.harmoniqs.amico-peer-<machine_id>-forward`. */
+const MANAGED_FORWARD_FILE = /^co\.harmoniqs\.amico-peer-(.+)-forward\.plist$/;
+
+/** A peer's ssh-forwarded local port: only a loopback http base URL with an
+ *  explicit port rides an SSH forward (https = tailscale/direct reach → none). */
+function loopbackForwardPort(baseUrl: string): number | null {
+  let u: URL;
+  try {
+    u = new URL(baseUrl);
+  } catch {
+    return null;
+  }
+  if (u.protocol !== "http:" || (u.hostname !== "127.0.0.1" && u.hostname !== "localhost")) return null;
+  const port = Number(u.port);
+  return Number.isInteger(port) && port >= 1 && port <= 65535 ? port : null;
+}
+
+/** The keepalive standard (fleet_transport sshForwardArgs), value-exact. */
+function forwardKeepaliveIssues(content: string): string[] {
+  const issues: string[] = [];
+  const interval = /ServerAliveInterval=(\d+)/.exec(content)?.[1];
+  if (interval === undefined) issues.push("ServerAliveInterval 15 missing");
+  else if (interval !== "15") issues.push(`ServerAliveInterval is ${interval} (stale, should be 15)`);
+  const count = /ServerAliveCountMax=(\d+)/.exec(content)?.[1];
+  if (count === undefined) issues.push("ServerAliveCountMax 2 missing");
+  else if (count !== "2") issues.push(`ServerAliveCountMax is ${count} (stale, should be 2)`);
+  if (!content.includes("TCPKeepAlive=yes")) issues.push("TCPKeepAlive yes missing");
+  if (!content.includes("ExitOnForwardFailure=yes")) issues.push("ExitOnForwardFailure yes missing");
+  return issues;
+}
+
+const PEER_FORWARD_REGENERATE = "bash tools/fleet/install.sh  (Fleet — Repair regenerates it: 15/2 + TCPKeepAlive)";
+const PEER_FORWARD_REPLACE = "bash tools/fleet/install.sh  (Fleet — Repair replaces it with the managed agent and keeps a backup)";
+
+/** Per-peer forward check: one FleetCheck per attached loopback peer (its
+ *  managed agent present, 15/2 + TCPKeepAlive + ExitOnForwardFailure, the
+ *  `127.0.0.1:<local>:127.0.0.1:<fleet port>` forward) plus one per OTHER
+ *  forward agent found by label convention (a hand-installed legacy agent, or
+ *  a managed agent for a peer no longer attached). darwin only; [] when there
+ *  is nothing to report. */
+export function checkPeerForwards(opts: {
+  launchAgentsDir: string;
+  /** The reader peer-token store (default: fleet_peer_store's resolution). */
+  peerStoreFile?: string;
+  platform?: string;
+  topology?: FleetTopologyState;
+  listDir?: (dir: string) => string[];
+  read?: (p: string) => string;
+}): FleetCheck[] {
+  if ((opts.platform ?? process.platform) !== "darwin") return [];
+  const read = opts.read ?? ((p: string) => fs.readFileSync(p, "utf8"));
+  const listDir = opts.listDir ?? ((d: string) => fs.readdirSync(d));
+  let files: string[] = [];
+  try {
+    files = listDir(opts.launchAgentsDir).filter((f) => FORWARD_AGENT_FILE.test(f)).sort();
+  } catch {
+    files = [];
+  }
+  const attached = listPeerBaseUrls({ storeFile: opts.peerStoreFile })
+    .map((p) => ({ machineId: p.machineId, port: loopbackForwardPort(p.baseUrl) }))
+    .filter((p): p is { machineId: string; port: number } => p.port !== null);
+  const remotePort = fleetPort(opts.topology ?? readFleetTopology());
+
+  const checks: FleetCheck[] = [];
+  const claimed = new Set<string>();
+  for (const peer of attached) {
+    const label = peerForwardLabel(peer.machineId);
+    const file = `${label}.plist`;
+    claimed.add(file);
+    const name = `Fleet peer forward (${peer.machineId})`;
+    const portForward = `127.0.0.1:${peer.port}:127.0.0.1:${remotePort}`;
+    const content = files.includes(file) ? readOrNull(path.join(opts.launchAgentsDir, file), read) : null;
+    if (content == null) {
+      checks.push({
+        name,
+        ok: false,
+        detail: `launchd forward agent missing (${path.join(opts.launchAgentsDir, file)})`,
+        fix: "bash tools/fleet/install.sh  (Fleet — Repair generates it)",
+      });
+      continue;
+    }
+    const issues = forwardKeepaliveIssues(content);
+    if (!content.includes(portForward)) issues.push(`LocalForward ${portForward} missing`);
+    checks.push(
+      issues.length > 0
+        ? { name, ok: false, detail: issues.join("; "), fix: PEER_FORWARD_REGENERATE }
+        : { name, ok: true, detail: `ServerAlive 15/2 + TCPKeepAlive, ${portForward} forward` },
+    );
+  }
+
+  for (const file of files) {
+    if (claimed.has(file)) continue;
+    const content = readOrNull(path.join(opts.launchAgentsDir, file), read) ?? "";
+    const issues = forwardKeepaliveIssues(content);
+    const managed = MANAGED_FORWARD_FILE.exec(file);
+    if (managed !== null) {
+      // A managed agent whose peer is no longer in the token store.
+      const name = `Fleet peer forward (${managed[1]})`;
+      const note = "no attached peer in the token store";
+      checks.push(
+        issues.length > 0
+          ? { name, ok: false, detail: `${issues.join("; ")} (${note})`, fix: PEER_FORWARD_REGENERATE }
+          : { name, ok: true, detail: `ServerAlive 15/2 + TCPKeepAlive (${note})` },
+      );
+      continue;
+    }
+    // A hand-installed `co.harmoniqs.amico-<name>-forward`. It belongs to an
+    // attached peer when it binds that peer's local port or names its machine
+    // id as the ssh destination — the installer replaces exactly those.
+    const label = file.replace(/\.plist$/, "");
+    const name = `Fleet peer forward (hand-installed ${label})`;
+    const owner = attached.find(
+      (p) => new RegExp(`<string>((127\\.0\\.0\\.1|localhost):)?${p.port}:`).test(content) || content.includes(`<string>${p.machineId}</string>`),
+    );
+    if (owner !== undefined) {
+      checks.push({
+        name,
+        ok: false,
+        detail: `hand-installed forward for peer ${owner.machineId}, not managed by the installer${issues.length > 0 ? ` — ${issues.join("; ")}` : ""}`,
+        fix: PEER_FORWARD_REPLACE,
+      });
+    } else if (issues.length > 0) {
+      checks.push({
+        name,
+        ok: false,
+        detail: `${issues.join("; ")} (no attached peer matches it, so the installer leaves it alone)`,
+        fix: `retune it to 15/2 + TCPKeepAlive, or attach its peer and run bash tools/fleet/install.sh  (Fleet — Repair then replaces it and keeps a backup)`,
+      });
+    } else {
+      checks.push({ name, ok: true, detail: "ServerAlive 15/2 + TCPKeepAlive (hand-installed; no attached peer matches it)" });
+    }
+  }
+  return checks;
+}
+
 /** Fleet role check — surfaces the current mode from the projection topology.
  *  Every state renders honestly (#1106): ok → the role + canonical target +
  *  the D1 freshness verdict when present; absent → the base-default
@@ -209,10 +359,13 @@ export function checkFleetRole(
   return { name: "Fleet role", ok: false, detail: `unknown role: ${role}`, fix: "refresh the projection: `amico fleet status --projection`" };
 }
 
-/** Aggregate helper — returns all fleet checks (role + guard + settings + tunnel).
+/** Aggregate helper — returns all fleet checks (role + guard + settings + tunnel
+ *  + per-peer forwards).
  *  When role is standalone (or the projection is absent — the same base
  *  default), guard/settings/tunnel checks are skipped (not relevant); a
- *  broken projection surfaces ONLY the role check's rendered fail. */
+ *  broken projection surfaces ONLY the role check's rendered fail. The
+ *  per-peer forward checks (#1775) run on EVERY role — a peer may be
+ *  standalone, server, or client — whenever a LaunchAgents dir is supplied. */
 export function fleetHealthReport(args: {
   repoGuardPath: string;
   installedGuardPath?: string;
@@ -224,9 +377,24 @@ export function fleetHealthReport(args: {
   platform?: string;
   /** #1106: the projection topology state (injectable; default: readFleetTopology()). */
   topology?: FleetTopologyState;
+  /** #1775: the LaunchAgents dir the per-peer forward agents live in
+   *  (production: ~/Library/LaunchAgents). Absent → no peer forward checks. */
+  launchAgentsDir?: string;
+  /** #1775: the reader peer-token store (default: fleet_peer_store's resolution). */
+  peerStoreFile?: string;
 }): FleetCheck[] {
   const topology = args.topology ?? readFleetTopology();
   const role = topology.kind === "ok" ? topology.role : "standalone";
+  // The agents are read from the injected dir itself — `read` above is the
+  // guard-file injection and never stands in for a plist read.
+  const peerForwards = (): FleetCheck[] =>
+    args.launchAgentsDir === undefined
+      ? []
+      : checkPeerForwards({ launchAgentsDir: args.launchAgentsDir, peerStoreFile: args.peerStoreFile, platform: args.platform, topology });
+
+  if (topology.kind === "broken") {
+    return [checkFleetRole({ topology, platform: args.platform })];
+  }
 
   // Guard/settings/tunnel checks are only relevant for CLIENT machines — they
   // verify the engine-blocking guard, the binary redirect, and the SSH tunnel
@@ -237,6 +405,7 @@ export function fleetHealthReport(args: {
   if (role !== "client" || topology.kind !== "ok") {
     return [
       checkFleetRole({ topology, platform: args.platform }),
+      ...peerForwards(),
     ];
   }
 
@@ -245,5 +414,6 @@ export function fleetHealthReport(args: {
     checkFleetGuard(args.repoGuardPath, args.installedGuardPath, { read: args.read, isExecutable: args.isExecutable, platform: args.platform }),
     checkFleetSettings(args.configuredBinary, args.configuredPort, { platform: args.platform, topology }),
     checkFleetTunnel(args.plistContent, { platform: args.platform, topology }),
+    ...peerForwards(),
   ];
 }

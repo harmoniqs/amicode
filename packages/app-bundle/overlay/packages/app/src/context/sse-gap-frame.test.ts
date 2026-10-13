@@ -60,3 +60,37 @@ describe("#1617 — gap interception is wired at both client seams", () => {
     expect(syncSource).toMatch(/server\.connected"\s*&&\s*Date\.now\(\)\s*-\s*lastConnectedQueueAt/)
   })
 })
+
+// #1773 — an unexpected NORMAL end of the global stream is a gap too (defense in
+// depth: kept even once replay exists). The relay chain now error-closes every
+// loss, but a clean end the client did not ask for still means events may have
+// been dropped. The decision (`createStreamEndResync`, stream-liveness.ts) is
+// unit-tested there; these pins assert the loop actually wires it — falsifiable:
+// deleting either call, or reporting the end without the abort/stop state, reds.
+describe("#1773 — an unexpected end of the global stream advances the forced-resync signal", () => {
+  const sdkSource = readFileSync(join(import.meta.dir, "server-sdk.tsx"), "utf8")
+  const loop = sdkSource.indexOf("for await (const event of events)")
+  const loopCatch = sdkSource.indexOf("} catch (error) {", loop)
+
+  test("the loop's NORMAL completion (the iterator ended without throwing) reports the end", () => {
+    expect(loop).toBeGreaterThan(0)
+    const body = sdkSource.slice(loop, loopCatch)
+    // after the for-await body's last statement and before the catch: the normal-end path
+    const afterLoop = body.slice(body.lastIndexOf("await wait(0)"))
+    expect(afterLoop).toContain("streamEndResync.ended(")
+  })
+
+  test("a user stop / page hide / the client's own abort are NOT a loss: the end carries both states", () => {
+    const body = sdkSource.slice(loop, loopCatch)
+    expect(body).toMatch(/attemptAborted:\s*currentAttempt\.signal\.aborted/)
+    // stopped = the root abort (teardown), the started latch (stop()/pagehide), the generation fence (reset)
+    expect(body).toMatch(/stopped:\s*abort\.signal\.aborted\s*\|\|\s*!started\s*\|\|\s*!streamGeneration\.accepts\(active\)/)
+  })
+
+  test("the reconnected stream's first frame advances the forced-resync signal (the transcript + entity rail refetch)", () => {
+    const body = sdkSource.slice(loop, loopCatch)
+    expect(body).toMatch(/if \(streamEndResync\.frame\(\)\) setResyncCount\(\(n\) => n \+ 1\)/)
+    // the signal the transcript (pages/session.tsx) and the entity rail read
+    expect(sdkSource).toMatch(/resyncCount,\s*\n/)
+  })
+})

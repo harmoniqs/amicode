@@ -41,6 +41,7 @@ import {
 import { SessionOwnerMap } from "../src/amicode_service/session_multiplexer";
 import { peerAuthHeader } from "../src/amicode_service/merged_projection";
 import type { PeerTokenRead } from "../src/amicode_service/fleet_peer_store";
+import { fakeEngine, sequencedEvent, legacyEvent, engineId, engineFrame, controlEvent, LOCAL_EPOCH, PEER_EPOCH } from "./fixtures/engine_stream/engine_frames";
 
 // ── test helpers ──────────────────────────────────────────────────────────────
 
@@ -69,6 +70,23 @@ function frame(...lines: string[]): string {
   return lines.join("\n") + "\n\n";
 }
 
+/** #1771: ENGINE-SHAPED arm frames (test/fixtures/engine_stream) — what each
+ *  arm's upstream `/global/event` actually sends: a sequenced (#1776) bus event
+ *  `id: <epoch>:<seq>` + one `data:` line (no `event:` line), one engine epoch
+ *  per namespace. `frame()` above stays for the pure id-parsing/relay units. */
+const MINI_EPOCH = "bWluaTAx";
+const EPOCH_OF: Record<string, string> = { [LOCAL_NAMESPACE]: LOCAL_EPOCH, studio: PEER_EPOCH, mini: MINI_EPOCH };
+function nsFrame(ns: string, n: number): string {
+  return sequencedEvent(EPOCH_OF[ns], n, { ns, n });
+}
+/** The engine id `nsFrame(ns, n)` carries. */
+const idIn = (ns: string, n: number) => engineId(EPOCH_OF[ns], n);
+/** The seq of an `<epoch>:<seq>` id. */
+const seqOf = (id: string | undefined) => Number(id?.split(":")[1]);
+/** #1777: an engine per-connection control frame (connected / heartbeat / reset) at `id`. */
+const controlFrame = (id: string, type: string, properties: Record<string, unknown> = {}) =>
+  engineFrame(controlEvent(`evt_ctl_${id}`, type, properties), { id });
+
 /** A frame source that yields a fixed list of raw frames, then ends. */
 function fixedSource(frames: string[]): SseFrameSource {
   let i = 0;
@@ -89,19 +107,25 @@ function fixedSource(frames: string[]): SseFrameSource {
 // ══════════════════════════════════════════════════════════════════════════════
 describe("#1511 AC1 (D4) — fleet-of-one byte-identity is the #1264 regression guard", () => {
   it("with zero peers, the aggregate stream is frame-for-frame identical to the local source", () => {
-    const sink = collectingSink();
-    const agg = new SseFanInAggregator({ sink });
-    agg.connect(); // no cursor, no peers, no focus provider → pure passthrough
+    // #1771: the local engine's REAL stream, from an old (id-less) engine and a
+    // #1776 (sequenced) one: connected, an event, the plain + sync twin of a
+    // stored event, a heartbeat.
+    for (const engine of [fakeEngine({ legacy: true }), fakeEngine({ epoch: LOCAL_EPOCH })]) {
+      const sink = collectingSink();
+      const agg = new SseFanInAggregator({ sink });
+      agg.connect(); // no cursor, no peers, no focus provider → pure passthrough
 
-    const f1 = frame("event: message", "data: {\"a\":1}", "id: 1");
-    const f2 = frame("event: message", "data: {\"b\":2}", "id: 2");
-    const f3 = frame("data: {\"c\":3}", "id: 3"); // no event: line — still verbatim
-    agg.ingest(LOCAL_NAMESPACE, f1);
-    agg.ingest(LOCAL_NAMESPACE, f2);
-    agg.ingest(LOCAL_NAMESPACE, f3);
+      const frames = [
+        engine.connected(),
+        engine.event("session.status", { a: 1 }),
+        ...engine.stored("message.part.updated", { b: 2 }, { aggregateID: "ses_1" }),
+        engine.heartbeat(),
+      ];
+      for (const f of frames) agg.ingest(LOCAL_NAMESPACE, f);
 
-    // BYTE-IDENTICAL: no id rewrite, no namespacing, no reordering, no loss.
-    expect(sink.text()).toBe(f1 + f2 + f3);
+      // BYTE-IDENTICAL: no id rewrite, no namespacing, no reordering, no loss.
+      expect(sink.text()).toBe(frames.join(""));
+    }
   });
 
   it("`?lastEventID=local=<id>` AND bare `<id>` both resume the local arm at <id>", () => {
@@ -151,6 +175,22 @@ describe("#1511 AC4 (D3) — composite cursor", () => {
     expect(parseCompositeCursor(undefined).size).toBe(0);
   });
 
+  it("#1777: a bare ENGINE id `<epoch>:<seq>` is the local position (the `:` is not a composite), and a composite of engine ids round-trips", () => {
+    // the cursor a fleet-of-one client resumes with: the engine's id, verbatim
+    expect([...parseCompositeCursor(idIn(LOCAL_NAMESPACE, 12))]).toEqual([[LOCAL_NAMESPACE, idIn(LOCAL_NAMESPACE, 12)]]);
+    // epochs are base64url (`-` and `_` included) — still one bare local id
+    expect([...parseCompositeCursor("a-b_c9Zx:7")]).toEqual([[LOCAL_NAMESPACE, "a-b_c9Zx:7"]]);
+    // the cursor a fanned-in client resumes with: every origin's engine id
+    const composite = `local=${idIn(LOCAL_NAMESPACE, 12)};studio=${idIn("studio", 40)}`;
+    expect(formatCompositeCursor(parseCompositeCursor(composite))).toBe(composite);
+    const agg = new SseFanInAggregator({ sink: collectingSink() });
+    const resume = agg.connect(composite);
+    expect(resume.get(LOCAL_NAMESPACE)).toBe(idIn(LOCAL_NAMESPACE, 12));
+    expect(resume.get("studio")).toBe(idIn("studio", 40));
+    // and it is where each arm resumes from until the arm delivers
+    expect(agg.cursorFor("studio")).toBe(idIn("studio", 40));
+  });
+
   it("connect() re-subscribes each upstream with ITS OWN resume id", () => {
     const sink = collectingSink();
     const agg = new SseFanInAggregator({ sink });
@@ -166,14 +206,18 @@ describe("#1511 AC4 (D3) — composite cursor", () => {
     agg.connect();
     agg.setMembership([{ machineId: "studio", reachable: true, token: "tok-studio" }]);
     // studio advances to 9
-    agg.ingest("studio", frame("event: message", "data: {}", "id: 9"));
-    expect(parseCompositeCursor(agg.cursor()).get("studio")).toBe("9");
-    // an id-less studio frame (heartbeat/comment) must NOT move the cursor
-    agg.ingest("studio", frame(": keep-alive comment"));
-    expect(parseCompositeCursor(agg.cursor()).get("studio")).toBe("9");
+    agg.ingest("studio", nsFrame("studio", 9));
+    expect(parseCompositeCursor(agg.cursor()).get("studio")).toBe(idIn("studio", 9));
+    // an id-less studio frame must NOT move the cursor: an old engine's
+    // heartbeat and event (#1771 — the id-less frames production sees), or a comment
+    const old = fakeEngine({ legacy: true });
+    for (const f of [old.heartbeat(), old.event("session.status", { s: 1 }), frame(": keep-alive comment")]) {
+      agg.ingest("studio", f);
+      expect(parseCompositeCursor(agg.cursor()).get("studio")).toBe(idIn("studio", 9));
+    }
     // and neither does a frame with an empty id value
     agg.ingest("studio", frame("data: {}", "id:"));
-    expect(parseCompositeCursor(agg.cursor()).get("studio")).toBe("9");
+    expect(parseCompositeCursor(agg.cursor()).get("studio")).toBe(idIn("studio", 9));
   });
 });
 
@@ -204,14 +248,11 @@ describe("#1511 AC3 (D2) — namespaced relay + res adapter", () => {
 
   it("pipeToResponse writes well-formed namespaced SSE bytes and flushes per frame", async () => {
     const sink = collectingSink();
-    const src = fixedSource([
-      frame("event: message", "data: {\"a\":1}", "id: 1"),
-      frame("event: message", "data: {\"b\":2}", "id: 2"),
-    ]);
+    const src = fixedSource([nsFrame("studio", 1), nsFrame("studio", 2)]);
     await pipeToResponse(src, sink, { namespace: "studio" });
     const text = sink.text();
-    expect(text).toContain(`id: studio${NS_SEP}1`);
-    expect(text).toContain(`id: studio${NS_SEP}2`);
+    expect(text).toContain(`id: studio${NS_SEP}${idIn("studio", 1)}`);
+    expect(text).toContain(`id: studio${NS_SEP}${idIn("studio", 2)}`);
     // every frame ends with the SSE blank-line delimiter
     expect(text.endsWith("\n\n")).toBe(true);
     // one flush per frame (no head-of-line buffering)
@@ -378,9 +419,9 @@ describe("#1511 AC6 (A) — focus-on-connect snapshot", () => {
     expect(sink.text()).toContain("\"focusedMachineId\":\"studio\"");
 
     // a following local event frame comes AFTER the focus seed
-    agg.ingest(LOCAL_NAMESPACE, frame("data: {}", "id: 1"));
+    agg.ingest(LOCAL_NAMESPACE, nsFrame(LOCAL_NAMESPACE, 1));
     const idx = sink.text().indexOf("amicode.fleet.focus");
-    const evtIdx = sink.text().indexOf("id: 1");
+    const evtIdx = sink.text().indexOf(`id: ${idIn(LOCAL_NAMESPACE, 1)}`);
     expect(idx).toBeGreaterThanOrEqual(0);
     expect(evtIdx).toBeGreaterThan(idx);
   });
@@ -479,9 +520,6 @@ describe("#1511 AC7 (B) — per-namespace back-pressure", () => {
     };
   }
 
-  function nsFrame(ns: string, n: number): string {
-    return frame("event: message", `data: {"ns":"${ns}","n":${n}}`, `id: ${n}`);
-  }
 
   it("one overflowing peer drops in ISOLATION; the other namespaces and local keep flowing", () => {
     const sink = controllableSink();
@@ -522,11 +560,11 @@ describe("#1511 AC7 (B) — per-namespace back-pressure", () => {
 
     // studio's cursor sits at the last DELIVERED id, never a dropped one —
     // so a reconnect with this composite replays the gap losslessly (D3 × B).
-    const studioCursor = Number(parseCompositeCursor(agg.cursor()).get("studio"));
+    const studioCursor = seqOf(parseCompositeCursor(agg.cursor()).get("studio"));
     expect(studioCursor).toBeLessThan(5);
     // mini + local cursors reflect full delivery
-    expect(parseCompositeCursor(agg.cursor()).get("mini")).toBe("2");
-    expect(parseCompositeCursor(agg.cursor()).get("local")).toBe("1");
+    expect(parseCompositeCursor(agg.cursor()).get("mini")).toBe(idIn("mini", 2));
+    expect(parseCompositeCursor(agg.cursor()).get("local")).toBe(idIn(LOCAL_NAMESPACE, 1));
   });
 
   it("steady state (downstream flowing) never buffers — frames deliver directly", () => {
@@ -572,9 +610,6 @@ describe("#1617 — backpressure re-arm + gap signal", () => {
       },
     };
   }
-  function nsFrame(ns: string, n: number): string {
-    return frame("event: message", `data: {"ns":"${ns}","n":${n}}`, `id: ${n}`);
-  }
 
   it("the WEDGE (no overflow): one trip-frame strands one frame behind it; resume() delivers BOTH in order", () => {
     const sink = controllableSink();
@@ -596,7 +631,7 @@ describe("#1617 — backpressure re-arm + gap signal", () => {
     // order preserved: frame 1 before frame 2
     expect(sink.text().indexOf('"n":1')).toBeLessThan(sink.text().indexOf('"n":2'));
     // cursor advanced past both delivered frames
-    expect(parseCompositeCursor(agg.cursor()).get("studio")).toBe("2");
+    expect(parseCompositeCursor(agg.cursor()).get("studio")).toBe(idIn("studio", 2));
   });
 
   it("onBackpressure fires exactly when a write() returns false (the driver's upstream-pause hook)", () => {
@@ -689,8 +724,8 @@ describe("#1617 — backpressure re-arm + gap signal", () => {
     const agg = new SseFanInAggregator({ sink });
     agg.connect(); // zero peers → the §D4 verbatim branch
 
-    const f1 = frame("event: message", 'data: {"big":"tool-output"}', "id: 7");
-    const f2 = frame("event: session.status", 'data: {"status":"idle"}', "id: 8"); // the rail-clearing frame
+    const f1 = sequencedEvent(LOCAL_EPOCH, 7, { big: "tool-output" });
+    const f2 = sequencedEvent(LOCAL_EPOCH, 8, { status: "idle" }, "session.status"); // the rail-clearing frame
 
     sink.block(); // the socket fills on the NEXT write
     agg.ingest(LOCAL_NAMESPACE, f1); // trip-frame: written, write()→false
@@ -707,7 +742,7 @@ describe("#1617 — backpressure re-arm + gap signal", () => {
     // composite id, no namespacing, no gap frame (no overflow occurred).
     expect(sink.text()).toBe(f1 + f2);
     expect(sink.text()).not.toContain("local\u001f"); // no NS_SEP namespacing
-    expect(sink.text()).not.toContain("local=8"); // no composite-cursor id rewrite
+    expect(sink.text()).not.toContain(`local=${idIn(LOCAL_NAMESPACE, 8)}`); // no composite-cursor id rewrite
     expect(sink.text()).not.toContain("amicode.sync.gap");
   });
 
@@ -715,8 +750,8 @@ describe("#1617 — backpressure re-arm + gap signal", () => {
     const sink = controllableSink();
     const agg = new SseFanInAggregator({ sink });
     agg.connect();
-    const f1 = frame("event: message", 'data: {"a":1}', "id: 1");
-    const f2 = frame("data: {\"c\":3}", "id: 3"); // no event: line
+    // an old engine's id-less stream: the plain + sync twin of a stored event
+    const [f1, f2] = fakeEngine({ legacy: true }).stored("message.updated", { a: 1 }, { aggregateID: "ses_1" });
     agg.ingest(LOCAL_NAMESPACE, f1);
     agg.ingest(LOCAL_NAMESPACE, f2);
     expect(sink.text()).toBe(f1 + f2); // untouched fast path
@@ -732,9 +767,6 @@ describe("#1617 — backpressure re-arm + gap signal", () => {
 // the verbatim stream would break #1264, so NO gap is emitted there.
 // ══════════════════════════════════════════════════════════════════════════════
 describe("#1638 — per-namespace cursor accessor (cursorFor)", () => {
-  function nsFrame(ns: string, n: number): string {
-    return frame("event: message", `data: {"ns":"${ns}","n":${n}}`, `id: ${n}`);
-  }
 
   it("cursorFor(ns) returns the live last-DELIVERED id for that namespace, advancing per delivered frame", () => {
     const sink = collectingSink();
@@ -746,18 +778,18 @@ describe("#1638 — per-namespace cursor accessor (cursorFor)", () => {
     expect(agg.cursorFor("studio")).toBeUndefined();
 
     agg.ingest("studio", nsFrame("studio", 1));
-    expect(agg.cursorFor("studio")).toBe("1"); // advanced to the delivered id
+    expect(agg.cursorFor("studio")).toBe(idIn("studio", 1)); // advanced to the delivered id
 
     agg.ingest("studio", nsFrame("studio", 2));
-    expect(agg.cursorFor("studio")).toBe("2"); // advanced again
+    expect(agg.cursorFor("studio")).toBe(idIn("studio", 2)); // advanced again
   });
 
   it("cursorFor tracks the LOCAL namespace on the verbatim (fleet-of-one) path too", () => {
     const sink = collectingSink();
     const agg = new SseFanInAggregator({ sink });
     agg.connect(); // zero peers → verbatim
-    agg.ingest(LOCAL_NAMESPACE, nsFrame("local", 5));
-    expect(agg.cursorFor(LOCAL_NAMESPACE)).toBe("5");
+    agg.ingest(LOCAL_NAMESPACE, nsFrame(LOCAL_NAMESPACE, 5));
+    expect(agg.cursorFor(LOCAL_NAMESPACE)).toBe(idIn(LOCAL_NAMESPACE, 5));
   });
 
   it("an id-less frame does NOT advance cursorFor (matches the composite-cursor invariant)", () => {
@@ -766,22 +798,22 @@ describe("#1638 — per-namespace cursor accessor (cursorFor)", () => {
     agg.connect();
     agg.setMembership([{ machineId: "studio", reachable: true, token: "tok-studio" }]);
     agg.ingest("studio", nsFrame("studio", 1));
-    agg.ingest("studio", frame(": heartbeat")); // id-less
-    expect(agg.cursorFor("studio")).toBe("1"); // unchanged by the id-less frame
+    agg.ingest("studio", fakeEngine({ legacy: true }).heartbeat()); // id-less (an old engine's heartbeat)
+    expect(agg.cursorFor("studio")).toBe(idIn("studio", 1)); // unchanged by the id-less frame
   });
 });
 
 describe("#1638 — composite-mode reopenArm emits exactly one id-less gap; fleet-of-one emits none", () => {
-  function nsFrame(ns: string, n: number): string {
-    return frame("event: message", `data: {"ns":"${ns}","n":${n}}`, `id: ${n}`);
-  }
 
+  // #1777: the gap is now the FALLBACK for an upstream with no ids to resume
+  // from (an engine older than #1776) — a sequenced arm resumes instead (see the
+  // #1777 suite below) — so these frames come from a legacy (id-less) engine.
   it("COMPOSITE MODE: a non-initial re-open emits EXACTLY ONE id-less amicode.sync.gap naming that namespace", () => {
     const sink = collectingSink();
     const agg = new SseFanInAggregator({ sink });
     agg.connect();
     agg.setMembership([{ machineId: "studio", reachable: true, token: "tok-studio" }]);
-    agg.ingest("studio", nsFrame("studio", 1));
+    agg.ingest("studio", legacyEvent({ ns: "studio", n: 1 }));
 
     agg.reopenArm("studio"); // the #1601 re-open path (arm dropped, reconcile re-opens)
 
@@ -802,7 +834,7 @@ describe("#1638 — composite-mode reopenArm emits exactly one id-less gap; flee
     const sink = collectingSink();
     const agg = new SseFanInAggregator({ sink });
     agg.connect(); // zero peers → verbatim, no focus provider
-    const f1 = frame("event: message", 'data: {"a":1}', "id: 1");
+    const f1 = nsFrame(LOCAL_NAMESPACE, 1);
     agg.ingest(LOCAL_NAMESPACE, f1);
 
     agg.reopenArm(LOCAL_NAMESPACE); // the common #1601 local re-open in solo mode
@@ -821,6 +853,84 @@ describe("#1638 — composite-mode reopenArm emits exactly one id-less gap; flee
     // Not calling reopenArm — the first openArm at start() must NOT gap.
     agg.ingest("studio", nsFrame("studio", 1));
     expect(sink.text()).not.toContain("amicode.sync.gap");
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// #1773 AC1 — "delivered" means ANY data frame, not only an id'd one. The re-open
+// gap used to fire only for arms that had delivered a frame carrying an SSE id —
+// which a peer running an older engine never sends — so a re-opened arm never
+// announced its gap. Engine-shaped fixtures in BOTH modes: legacy (id-less) and
+// sequenced (#1776, `id: <epoch>:<seq>`).
+// ══════════════════════════════════════════════════════════════════════════════
+describe("#1773 AC1 — a re-open of an arm that delivered ANY data frame emits exactly one gap (composite mode)", () => {
+  const gapFrames = (text: string) => text.split("\n\n").filter((f) => f.includes("amicode.sync.gap"));
+  const gapOf = (f: string) => JSON.parse(f.split("\n").find((l) => l.startsWith("data:"))!.slice(5).trim());
+
+  // #1777: in BOTH modes "delivered" still means any data frame — but only the
+  // legacy (id-less) arm gaps: the sequenced arm has engine ids to resume from,
+  // so its re-open RESUMES (the upstream replays) and writes nothing at all.
+  for (const mode of ["legacy", "sequenced"] as const) {
+    it(`${mode} engine: a non-initial re-open ${mode === "legacy" ? "emits exactly one id-less gap naming that namespace" : "resumes — no gap"}, and never advances a cursor`, () => {
+      const sink = collectingSink();
+      const agg = new SseFanInAggregator({ sink });
+      agg.connect(`local=${LOCAL_EPOCH}:3`);
+      agg.setMembership([{ machineId: "studio", reachable: true, token: "tok-studio" }]);
+      const studio = mode === "legacy" ? fakeEngine({ legacy: true }) : fakeEngine({ epoch: PEER_EPOCH });
+
+      // the initial open: no gap
+      expect(agg.reopenArm("studio")).toBe("open");
+      // the arm delivers the engine's real stream: connected, an event, a stored
+      // event's plain + sync twin, a heartbeat
+      for (const f of [
+        studio.connected(),
+        studio.event("session.status", { sessionID: "ses_1", status: { type: "busy" } }),
+        ...studio.stored("message.part.updated", { part: { id: "prt_1" } }, { aggregateID: "ses_1" }),
+        studio.heartbeat(),
+      ])
+        agg.ingest("studio", f);
+      const cursorBefore = agg.cursor();
+      expect(sink.text()).not.toContain("amicode.sync.gap");
+
+      // the arm drops and the driver re-opens it
+      if (mode === "sequenced") {
+        const before = sink.text();
+        expect(agg.reopenArm("studio")).toBe("resume");
+        expect(agg.cursorFor("studio")).toBe(studio.idAt(studio.seq)); // … from the last delivered engine id
+        expect(sink.text()).toBe(before); // nothing written
+        expect(agg.cursor()).toBe(cursorBefore);
+        return;
+      }
+      expect(agg.reopenArm("studio")).toBe("gap");
+
+      const gaps = gapFrames(sink.text());
+      expect(gaps).toHaveLength(1);
+      expect(gapOf(gaps[0])).toEqual({ type: "amicode.sync.gap", namespaces: ["studio"] });
+      expect(gaps[0].split("\n").some((l) => l.startsWith("id:"))).toBe(false); // id-less
+      expect(agg.cursor()).toBe(cursorBefore); // a gap signal never advances a cursor
+    });
+  }
+
+  it("an arm that delivered only a comment frame (no data line) has not delivered — its re-open is still an initial open", () => {
+    const sink = collectingSink();
+    const agg = new SseFanInAggregator({ sink });
+    agg.connect();
+    agg.setMembership([{ machineId: "studio", reachable: true, token: "tok-studio" }]);
+    agg.ingest("studio", frame(": keep-alive"));
+    expect(agg.reopenArm("studio")).toBe("open");
+    expect(sink.text()).not.toContain("amicode.sync.gap");
+  });
+
+  it("the LOCAL arm (legacy engine) in composite mode gaps on re-open too, naming `local`", () => {
+    const sink = collectingSink();
+    const agg = new SseFanInAggregator({ sink });
+    agg.connect();
+    agg.setMembership([{ machineId: "studio", reachable: true, token: "tok-studio" }]);
+    agg.ingest(LOCAL_NAMESPACE, fakeEngine({ legacy: true }).connected());
+    expect(agg.reopenArm(LOCAL_NAMESPACE)).toBe("gap");
+    const gaps = gapFrames(sink.text());
+    expect(gaps).toHaveLength(1);
+    expect(gapOf(gaps[0]).namespaces).toEqual([LOCAL_NAMESPACE]);
   });
 });
 
@@ -848,9 +958,6 @@ describe("#1638 — resume() no-op WHEN ALREADY FLOWING (not when the sink is fu
       },
     };
   }
-  function nsFrame(ns: string, n: number): string {
-    return frame("event: message", `data: {"ns":"${ns}","n":${n}}`, `id: ${n}`);
-  }
 
   it("resume() while ALREADY FLOWING is a no-op: it does not re-flush or duplicate already-delivered frames", () => {
     const sink = controllableSink();
@@ -871,8 +978,8 @@ describe("#1638 — resume() no-op WHEN ALREADY FLOWING (not when the sink is fu
     const sink = controllableSink();
     const agg = new SseFanInAggregator({ sink });
     agg.connect(); // fleet-of-one verbatim path
-    const f1 = frame("event: message", 'data: {"big":"tool-output"}', "id: 7");
-    const f2 = frame("event: session.status", 'data: {"status":"idle"}', "id: 8"); // the rail-clearing idle frame
+    const f1 = sequencedEvent(LOCAL_EPOCH, 7, { big: "tool-output" });
+    const f2 = sequencedEvent(LOCAL_EPOCH, 8, { status: "idle" }, "session.status"); // the rail-clearing idle frame
     sink.block();
     agg.ingest(LOCAL_NAMESPACE, f1); // trip-frame, flowing→false
     agg.ingest(LOCAL_NAMESPACE, f2); // stranded in the verbatim buffer
@@ -905,9 +1012,6 @@ describe("#1638 — control/gap/focus writes are return-checked and drain in tru
       },
     };
   }
-  function nsFrame(ns: string, n: number): string {
-    return frame("event: message", `data: {"ns":"${ns}","n":${n}}`, `id: ${n}`);
-  }
 
   it("a control frame (gap) written DURING backpressure emerges AFTER the data frames that preceded it", () => {
     const sink = controllableSink();
@@ -916,8 +1020,9 @@ describe("#1638 — control/gap/focus writes are return-checked and drain in tru
     agg.setMembership([{ machineId: "studio", reachable: true, token: "tok-studio" }]);
 
     sink.block();
-    agg.ingest("studio", nsFrame("studio", 1)); // trip-frame: written, flowing→false
-    agg.ingest("studio", nsFrame("studio", 2)); // buffered behind the trip-frame
+    // #1777: an id-less (legacy) peer, so the re-open below takes the gap fallback
+    agg.ingest("studio", legacyEvent({ ns: "studio", n: 1 })); // trip-frame: written, flowing→false
+    agg.ingest("studio", legacyEvent({ ns: "studio", n: 2 })); // buffered behind the trip-frame
     // a control frame arrives mid-backpressure — it MUST NOT jump ahead of the
     // buffered data frame, nor be swallowed into the full sink.
     agg.reopenArm("studio"); // emits a gap through the return-checked helper
@@ -941,5 +1046,242 @@ describe("#1638 — control/gap/focus writes are return-checked and drain in tru
     expect(n2Idx).toBeGreaterThanOrEqual(0);
     expect(gapIdx).toBeGreaterThanOrEqual(0);
     expect(n2Idx).toBeLessThan(gapIdx); // control frame AFTER the preceding data frame
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// #1771 — the aggregator's census counters (per arm, per connection) and its
+// transition observer. Observation only: the frames on the sink are unchanged.
+// ══════════════════════════════════════════════════════════════════════════════
+describe("#1771 — per-arm traffic counters, pending depth, and the drop/gap observer", () => {
+  function blockableSink() {
+    const chunks: string[] = [];
+    let blocked = false;
+    return {
+      write(chunk: string): boolean {
+        chunks.push(chunk);
+        return !blocked;
+      },
+      flush() {},
+      block() {
+        blocked = true;
+      },
+      unblock() {
+        blocked = false;
+      },
+      text: () => chunks.join(""),
+    };
+  }
+
+  it("counts every ingested frame per arm — frames, UTF-8 bytes, largest, last-frame time — whether delivered or buffered", () => {
+    let t = 500;
+    const sink = blockableSink();
+    const agg = new SseFanInAggregator({ sink, now: () => t });
+    agg.connect();
+    agg.setMembership([{ machineId: "studio", reachable: true, token: "tok-studio" }]);
+    const local = fakeEngine({ epoch: LOCAL_EPOCH });
+    const studio = fakeEngine({ legacy: true }); // an old peer engine: id-less frames
+    const localFrames = [local.connected(), ...local.stored("message.part.updated", { text: "résumé" }, { aggregateID: "ses_1" })];
+    for (const f of localFrames) agg.ingest(LOCAL_NAMESPACE, f);
+    t = 900;
+    sink.block();
+    const studioFrames = [studio.event("session.status", { status: "busy" }), studio.heartbeat()];
+    for (const f of studioFrames) agg.ingest("studio", f); // the 1st trips backpressure, the 2nd buffers
+
+    expect(agg.traffic(LOCAL_NAMESPACE)).toEqual({
+      frames: 3,
+      bytes: localFrames.reduce((n, f) => n + Buffer.byteLength(f), 0),
+      largestFrame: Math.max(...localFrames.map((f) => Buffer.byteLength(f))),
+      lastFrameAt: 500,
+      drops: 0,
+      gaps: 0,
+    });
+    expect(agg.traffic("studio")).toMatchObject({ frames: 2, lastFrameAt: 900, drops: 0 });
+    expect(agg.pendingDepth("studio")).toBe(1);
+    expect(agg.pendingDepth(LOCAL_NAMESPACE)).toBe(0);
+    expect(agg.traffic("mini")).toEqual({ frames: 0, bytes: 0, largestFrame: 0, drops: 0, gaps: 0 }); // never ingested
+  });
+
+  it("the observer sees the FIRST drop of an overflow episode, then the gap that ends it; drops stay cumulative", () => {
+    const sink = blockableSink();
+    const drops: Array<[string, number]> = [];
+    const gaps: Array<[string[], string]> = [];
+    const agg = new SseFanInAggregator({
+      sink,
+      bufferBound: 2,
+      observer: { onOverflowDrop: (ns, pending) => drops.push([ns, pending]), onGap: (nss, cause) => gaps.push([nss, cause]) },
+    });
+    agg.connect();
+    agg.setMembership([{ machineId: "studio", reachable: true, token: "tok-studio" }]);
+    sink.block();
+    for (let n = 1; n <= 6; n++) agg.ingest("studio", sequencedEvent(PEER_EPOCH, n, { n })); // 1 written, 2 buffered, 3 dropped
+    expect(drops).toEqual([["studio", 2]]); // one episode → one callback
+    expect(agg.traffic("studio").drops).toBe(3);
+
+    sink.unblock();
+    agg.resume();
+    expect(gaps).toEqual([[["studio"], "overflow"]]);
+    expect(agg.traffic("studio")).toMatchObject({ drops: 3, gaps: 1 });
+    expect(agg.pendingDepth("studio")).toBe(0);
+
+    // a NEW episode after the gap is a new first drop
+    sink.block();
+    for (let n = 7; n <= 10; n++) agg.ingest("studio", sequencedEvent(PEER_EPOCH, n, { n }));
+    expect(drops).toHaveLength(2);
+
+    // #1777: a sequenced arm's re-open resumes (no gap); an upstream that then
+    // answers WITHOUT ids cannot have replayed — that is the reopen gap
+    expect(agg.reopenArm("studio")).toBe("resume");
+    sink.unblock();
+    agg.resume();
+    agg.ingest("studio", legacyEvent({ n: 11 }));
+    expect(gaps.at(-1)).toEqual([["studio"], "reopen"]);
+  });
+
+  it("a throwing observer never breaks delivery", () => {
+    const sink = collectingSink();
+    const agg = new SseFanInAggregator({
+      sink,
+      observer: {
+        onGap: () => {
+          throw new Error("broken census");
+        },
+      },
+    });
+    agg.connect();
+    agg.setMembership([{ machineId: "studio", reachable: true, token: "tok-studio" }]);
+    const f = legacyEvent({ n: 1 }); // #1777: an id-less peer — its re-open gaps
+    agg.ingest("studio", f);
+    expect(() => agg.reopenArm("studio")).not.toThrow();
+    expect(sink.text()).toContain("amicode.sync.gap");
+  });
+});
+
+describe("#1771 AC5 — the census observer changes no delivered byte", () => {
+  it("an overflow + gap + reopen sequence writes the identical bytes with and without an observer", () => {
+    function run(observed: boolean): string {
+      const chunks: string[] = [];
+      let blocked = false;
+      const sink = { write: (c: string) => (chunks.push(c), !blocked), flush() {} };
+      const agg = new SseFanInAggregator({
+        sink,
+        bufferBound: 3,
+        ...(observed ? { now: () => 7, observer: { onOverflowDrop() {}, onGap() {} } } : {}),
+      });
+      agg.connect(`local=${LOCAL_EPOCH}:0;studio=${PEER_EPOCH}:0`);
+      agg.setMembership([{ machineId: "studio", reachable: true, token: "tok-studio" }]);
+      const local = fakeEngine({ legacy: true });
+      const studio = fakeEngine({ epoch: PEER_EPOCH });
+      for (const f of [local.connected(), ...local.stored("message.updated", { n: 1 }, { aggregateID: "ses_1" })]) agg.ingest(LOCAL_NAMESPACE, f);
+      blocked = true;
+      for (let i = 0; i < 9; i++) agg.ingest("studio", studio.event("message.part.delta", { i }));
+      agg.ingest(LOCAL_NAMESPACE, local.heartbeat());
+      blocked = false;
+      agg.resume();
+      agg.reopenArm("studio");
+      agg.ingest("studio", studio.heartbeat());
+      return chunks.join("");
+    }
+    const plain = run(false);
+    expect(run(true)).toBe(plain);
+    expect(plain).toContain("amicode.sync.gap"); // the sequence did exercise drop + gap
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// #1777 — LOSSLESS RESUME in the aggregator core. An arm that delivered engine
+// ids (#1776 `<epoch>:<seq>`) RESUMES on re-open: `cursorFor` is where its
+// replay starts, nothing is written, and the upstream's first answer decides —
+// its `server.connected` confirms the replay; an id-less answer means it could
+// not resume (the #1773 fallback announces the loss).
+// ══════════════════════════════════════════════════════════════════════════════
+describe("#1777 AC1 — the aggregator resumes a sequenced arm from its last id", () => {
+  function blockableSink() {
+    const chunks: string[] = [];
+    let blocked = false;
+    return {
+      write(chunk: string): boolean {
+        chunks.push(chunk);
+        return !blocked;
+      },
+      flush() {},
+      block() {
+        blocked = true;
+      },
+      unblock() {
+        blocked = false;
+      },
+      text: () => chunks.join(""),
+    };
+  }
+
+  it("a re-open while frames still queue behind backpressure resumes AFTER them — the replay never re-sends one", () => {
+    const sink = blockableSink();
+    const agg = new SseFanInAggregator({ sink });
+    agg.connect();
+    agg.setMembership([{ machineId: "studio", reachable: true, token: "tok-studio" }]);
+    sink.block();
+    for (const n of [1, 2, 3]) agg.ingest("studio", nsFrame("studio", n)); // 1 written (trips), 2 + 3 queued
+    expect(agg.pendingDepth("studio")).toBe(2);
+    expect(agg.cursorFor("studio")).toBe(idIn("studio", 3)); // queued = on its way to the listener
+    expect(agg.reopenArm("studio")).toBe("resume");
+    sink.unblock();
+    agg.resume();
+    // the resumed upstream answers from 3: connected at 3, then 4 — each frame exactly once
+    agg.ingest("studio", controlFrame(idIn("studio", 3), "server.connected"));
+    agg.ingest("studio", nsFrame("studio", 4));
+    const ns = [...sink.text().matchAll(/"n":(\d+)/g)].map((m) => Number(m[1]));
+    expect(ns).toEqual([1, 2, 3, 4]);
+    expect(sink.text()).not.toContain("amicode.sync.gap");
+    expect(sink.text()).not.toContain("server.connected"); // the upstream's handshake is not forwarded
+  });
+
+  it("an overflow-dropped frame never advances the resume point (that stretch is the overflow gap's)", () => {
+    const sink = blockableSink();
+    const agg = new SseFanInAggregator({ sink, bufferBound: 1 });
+    agg.connect();
+    agg.setMembership([{ machineId: "studio", reachable: true, token: "tok-studio" }]);
+    sink.block();
+    for (const n of [1, 2, 3, 4]) agg.ingest("studio", nsFrame("studio", n)); // 1 written, 2 queued, 3 + 4 dropped
+    expect(agg.dropped("studio")).toBe(2);
+    expect(agg.cursorFor("studio")).toBe(idIn("studio", 2));
+  });
+
+  it("composite: a resumed arm whose upstream answers WITHOUT ids (it cannot replay) gets one reopen gap, then its frames", () => {
+    const gaps: Array<[string[], string]> = [];
+    const sink = collectingSink();
+    const agg = new SseFanInAggregator({ sink, observer: { onGap: (nss, cause) => gaps.push([nss, cause]) } });
+    agg.connect();
+    agg.setMembership([{ machineId: "studio", reachable: true, token: "tok-studio" }]);
+    agg.ingest("studio", nsFrame("studio", 1));
+    expect(agg.reopenArm("studio")).toBe("resume");
+    expect(sink.text()).not.toContain("amicode.sync.gap");
+    expect(agg.ingest("studio", fakeEngine({ legacy: true }).connected())).toBe("ok");
+    expect(gaps).toEqual([[["studio"], "reopen"]]);
+    const text = sink.text();
+    expect(text.indexOf("amicode.sync.gap")).toBeLessThan(text.indexOf("server.connected")); // gap first, then the frame
+  });
+
+  it("fleet-of-one: the same id-less answer severs (ingest says so, nothing is written — #1264)", () => {
+    const sink = collectingSink();
+    const agg = new SseFanInAggregator({ sink });
+    agg.connect();
+    const f1 = nsFrame(LOCAL_NAMESPACE, 1);
+    agg.ingest(LOCAL_NAMESPACE, f1);
+    expect(agg.reopenArm(LOCAL_NAMESPACE)).toBe("resume");
+    expect(agg.ingest(LOCAL_NAMESPACE, fakeEngine({ legacy: true }).connected())).toBe("sever");
+    expect(sink.text()).toBe(f1);
+  });
+
+  it("an arm with only id-less frames keeps the #1773 fallback (gap in composite, sever in fleet-of-one)", () => {
+    const composite = new SseFanInAggregator({ sink: collectingSink() });
+    composite.connect();
+    composite.setMembership([{ machineId: "studio", reachable: true, token: "tok-studio" }]);
+    composite.ingest("studio", legacyEvent({ n: 1 }));
+    expect(composite.reopenArm("studio")).toBe("gap");
+    const solo = new SseFanInAggregator({ sink: collectingSink() });
+    solo.connect();
+    solo.ingest(LOCAL_NAMESPACE, legacyEvent({ n: 1 }));
+    expect(solo.reopenArm(LOCAL_NAMESPACE)).toBe("sever");
   });
 });

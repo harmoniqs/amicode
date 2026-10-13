@@ -40,6 +40,7 @@ import {
   type ObservationWriteRouterOpts,
   type ObservationWritePeerTarget,
 } from "./session_multiplexer";
+import { probeLocalSession } from "./local_session_probe";
 import type { ObservationWritePlane } from "./server";
 
 /** Does the owning peer host a project whose worktree equals `dir`? Probes the
@@ -69,14 +70,20 @@ async function peerHasProjectWorktree(peerUrl: string, token: string, dir: strin
  *  ignored) that AUTHORIZES through the pure write gate, plus the peer proxy
  *  presenting the credential the owner accepts (the peer reader token).
  *  `timeoutMs` bounds the headers wait (SSE bodies ride past it), mirroring the
- *  read plane / hub / attached proxies. */
+ *  read plane / hub / attached proxies. #1774: `localEngineUrl` (the local
+ *  engine origin, read per request) arms the local-first probe for an
+ *  unknown-owner write; absent → no verdict, the write falls through local. */
 export function createObservationWritePlane(
-  opts: ObservationWriteRouterOpts & { timeoutMs?: number },
+  opts: ObservationWriteRouterOpts & { timeoutMs?: number; localEngineUrl?: () => string | undefined },
 ): ObservationWritePlane {
   const router = new ObservationWriteRouter(opts);
+  const localEngineUrl = opts.localEngineUrl;
   return {
     resolve: (method, pathname) => router.resolve(method, pathname),
     resolveCreate: (method, pathname, headers) => router.resolveCreate(method, pathname, headers),
+    ...(localEngineUrl
+      ? { probeLocal: (req: http.IncomingMessage, sessionId: string) => probeLocalSession({ localUrl: localEngineUrl(), sessionId, req }) }
+      : {}),
     proxyToPeer(req: http.IncomingMessage, res: http.ServerResponse, target: ObservationWritePeerTarget): boolean {
       // A synthetic per-peer hub credential → HubProxy attaches
       // serverAuthHeader(target.token) === peerAuthHeader(target.token). The

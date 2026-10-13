@@ -98,6 +98,26 @@ export interface FleetProjectionOptions {
   archived?: boolean;
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
+  /** #1771: the clock timing each source's fetch (the owner-map refresh's
+   *  per-peer duration). Default Date.now. */
+  now?: () => number;
+}
+
+/** #1771: one peer's ownership-refresh outcome — what the OwnerMapFeed logs.
+ *  `timeout` is the fetch guard firing (AbortSignal.timeout); `unauthorized` a
+ *  401; every other absence (fetch failure, no upstream, missing credential,
+ *  untrusted) is `error`, with its named `reason`. */
+export type OwnerRefreshOutcome = "ok" | "timeout" | "error" | "unauthorized";
+
+export interface OwnerRefreshPeer {
+  machineId: string;
+  outcome: OwnerRefreshOutcome;
+  /** The peer's fetch duration (ms; the slower of its active/archived reads). */
+  durationMs: number;
+  /** The peer-owned sessions this refresh put in the routing union. */
+  entries: number;
+  reason?: SourceAbsenceReason;
+  detail?: string;
 }
 
 /** The fleet-wide projection result — N sources, machine-keyed. */
@@ -213,19 +233,27 @@ async function fetchSessions(
    *  Peers/hub keep the old behavior (false): no credential ⇒ do not fire an
    *  unauthenticated cross-machine request. */
   allowUnauthenticated = false,
-): Promise<{ record: SourceFetchRecord; entries: Record<string, unknown>[] }> {
+  /** #1771: the clock timing this fetch. */
+  now: () => number = Date.now,
+): Promise<SourceFetch> {
+  const started = now();
+  const done = (r: { record: SourceFetchRecord; entries: Record<string, unknown>[] }, timedOut = false): SourceFetch => ({
+    ...r,
+    durationMs: Math.max(0, now() - started),
+    timedOut,
+  });
   const base: SourceFetchRecord = { source: tag, present: false };
   const origin = opts.getUrl();
-  if (!origin) return { record: { ...base, reason: "no-upstream" }, entries: [] };
+  if (!origin) return done({ record: { ...base, reason: "no-upstream" }, entries: [] });
   if (!authHeader && !allowUnauthenticated) {
-    return {
+    return done({
       record: {
         ...base,
         reason: tag === "hub" ? "credential-missing" : "credential-missing",
         detail: tag === "hub" ? "hub credential absent/malformed/incomplete" : "engine mint not armed",
       },
       entries: [],
-    };
+    });
   }
   // Send Authorization only when we actually hold one — the open loopback
   // engine is queried bare (allowUnauthenticated with no password).
@@ -235,13 +263,13 @@ async function fetchSessions(
       headers: authHeaders,
       signal: AbortSignal.timeout(timeoutMs),
     });
-    if (res.status === 401) return { record: { ...base, reason: "unauthorized" }, entries: [] };
+    if (res.status === 401) return done({ record: { ...base, reason: "unauthorized" }, entries: [] });
     if (!res.ok) {
-      return { record: { ...base, reason: "fetch-failed", detail: `HTTP ${res.status}` }, entries: [] };
+      return done({ record: { ...base, reason: "fetch-failed", detail: `HTTP ${res.status}` }, entries: [] });
     }
     const parsed: unknown = await res.json();
     if (!Array.isArray(parsed)) {
-      return { record: { ...base, reason: "fetch-failed", detail: "session list is not an array" }, entries: [] };
+      return done({ record: { ...base, reason: "fetch-failed", detail: "session list is not an array" }, entries: [] });
     }
     const entries = parsed.filter(
       (e): e is Record<string, unknown> => typeof e === "object" && e !== null && !Array.isArray(e),
@@ -272,13 +300,29 @@ async function fetchSessions(
       /* the stamp fails open to null — the record stays honest via the field */
     }
     const record: SourceFetchRecord = { source: tag, present: true, count: entries.length, max, sum, version };
-    return { record, entries };
+    return done({ record, entries });
   } catch (e) {
-    return {
-      record: { ...base, reason: "fetch-failed", detail: e instanceof Error ? e.message : String(e) },
-      entries: [],
-    };
+    // #1771: the fetch guard firing is a TIMEOUT (the record keeps its named
+    // `fetch-failed` reason; only the refresh outcome distinguishes it).
+    const timedOut = (e as { name?: unknown } | null)?.name === "TimeoutError";
+    return done(
+      {
+        record: { ...base, reason: "fetch-failed", detail: e instanceof Error ? e.message : String(e) },
+        entries: [],
+      },
+      timedOut,
+    );
   }
+}
+
+/** One source fetch: the NAMED record + entries, plus (#1771) how long it took
+ *  and whether the fetch guard timed it out. Internal — the served projection
+ *  carries only the record. */
+interface SourceFetch {
+  record: SourceFetchRecord;
+  entries: Record<string, unknown>[];
+  durationMs: number;
+  timedOut: boolean;
 }
 
 /** Merge both stores into ONE provenance-tagged list. The hub wins conflicts
@@ -419,8 +463,15 @@ function mergeNSources(
  *  Never throws: every peer failure is a NAMED record inside an otherwise-valid
  *  projection — the read path degrades by naming, not by vanishing. */
 export async function buildFleetProjection(opts: FleetProjectionOptions): Promise<FleetProjection> {
+  return (await fleetFanOut(opts)).projection;
+}
+
+/** The fan-out behind buildFleetProjection, also returning each PEER's raw
+ *  fetch (#1771: its duration + timeout flag) in `opts.peers` order. */
+async function fleetFanOut(opts: FleetProjectionOptions): Promise<{ projection: FleetProjection; peerFetches: SourceFetch[] }> {
   const fetchImpl = opts.fetchImpl ?? fetch;
   const timeoutMs = opts.timeoutMs ?? 10_000;
+  const now = opts.now ?? Date.now;
   const localAuth = opts.local.password !== undefined ? serverAuthHeader(opts.local.password) : undefined;
 
   // Fan out: local + all peers in parallel.
@@ -436,8 +487,8 @@ export async function buildFleetProjection(opts: FleetProjectionOptions): Promis
   const fleetEndpoint = opts.archived
     ? "/experimental/session?archived=true&limit=10000"
     : "/experimental/session?limit=10000";
-  const localPromise = fetchSessions(opts.localMachineId, opts.local, localAuth, fetchImpl, timeoutMs, fleetEndpoint, true);
-  const peerPromises = opts.peers.map((peer) => {
+  const localPromise = fetchSessions(opts.localMachineId, opts.local, localAuth, fetchImpl, timeoutMs, fleetEndpoint, true, now);
+  const peerPromises = opts.peers.map((peer): Promise<SourceFetch> => {
     // #1481 (AC1): TRUST gates Observe. An untrusted peer (no Observe grant) is
     // never contacted — it resolves to a NAMED `untrusted` record with zero
     // entries, so no session metadata can leak. Trust is checked BEFORE the
@@ -446,10 +497,12 @@ export async function buildFleetProjection(opts: FleetProjectionOptions): Promis
       return Promise.resolve({
         record: { source: peer.machineId, present: false, reason: "untrusted" as const } satisfies SourceFetchRecord,
         entries: [] as Record<string, unknown>[],
+        durationMs: 0,
+        timedOut: false,
       });
     }
     const auth = peer.token !== undefined ? peerAuthHeader(peer.token) : undefined;
-    return fetchSessions(peer.machineId, { getUrl: peer.getUrl }, auth, fetchImpl, timeoutMs, fleetEndpoint);
+    return fetchSessions(peer.machineId, { getUrl: peer.getUrl }, auth, fetchImpl, timeoutMs, fleetEndpoint, false, now);
   });
 
   const [localResult, ...peerResults] = await Promise.all([localPromise, ...peerPromises]);
@@ -496,7 +549,18 @@ export async function buildFleetProjection(opts: FleetProjectionOptions): Promis
   const allRecords = [localResult.record, ...peerResults.map((r) => r.record)];
   const currency = deriveCurrency(allRecords);
 
-  return { ok: true, mode: "fleet", sessions, sources, currency: { ...currency, derived_over: "fetched" } };
+  return {
+    projection: { ok: true, mode: "fleet", sessions, sources, currency: { ...currency, derived_over: "fetched" } },
+    peerFetches: peerResults,
+  };
+}
+
+/** #1771: classify one peer fetch as a refresh outcome. */
+function refreshOutcomeOf(f: SourceFetch): OwnerRefreshOutcome {
+  if (f.record.present) return "ok";
+  if (f.timedOut) return "timeout";
+  if (f.record.reason === "unauthorized") return "unauthorized";
+  return "error";
 }
 
 /** #1647 (S2): the OWNER-ROUTING session set — active AND archived unioned.
@@ -505,18 +569,41 @@ export async function buildFleetProjection(opts: FleetProjectionOptions): Promis
  *  ARCHIVED session (unarchive / delete of an archived row) has no owner entry
  *  and misroutes to the LOCAL engine (the #1382 silent-local failure). This
  *  runs BOTH variants and unions by id so every peer-owned session — active or
- *  archived — is routable. Owner tags are carried through unchanged. */
+ *  archived — is routable. Owner tags are carried through unchanged.
+ *  #1771: also returns each PEER's refresh outcome (`peers`, in `opts.peers`
+ *  order) — the first non-ok of its two reads, the slower read's duration, and
+ *  the peer-owned entries this union carries — which the OwnerMapFeed logs. */
 export async function buildOwnerRoutingProjection(
   opts: Omit<FleetProjectionOptions, "archived">,
-): Promise<{ sessions: FleetProjection["sessions"] }> {
+): Promise<{ sessions: FleetProjection["sessions"]; peers: OwnerRefreshPeer[] }> {
   const [active, archived] = await Promise.all([
-    buildFleetProjection({ ...opts, archived: false }),
-    buildFleetProjection({ ...opts, archived: true }),
+    fleetFanOut({ ...opts, archived: false }),
+    fleetFanOut({ ...opts, archived: true }),
   ]);
   const byId = new Map<string, FleetProjection["sessions"][number]>();
-  for (const s of [...active.sessions, ...archived.sessions]) {
+  for (const s of [...active.projection.sessions, ...archived.projection.sessions]) {
     const id = typeof s.id === "string" ? s.id : undefined;
     if (id && !byId.has(id)) byId.set(id, s);
   }
-  return { sessions: [...byId.values()] };
+  const sessions = [...byId.values()];
+  const owned = new Map<string, number>();
+  for (const s of sessions) {
+    const owner = s.amicode_owner?.owner_machine_id;
+    if (owner !== undefined) owned.set(owner, (owned.get(owner) ?? 0) + 1);
+  }
+  const peers = opts.peers.map((peer, i): OwnerRefreshPeer => {
+    const a = active.peerFetches[i];
+    const b = archived.peerFetches[i];
+    const worst = refreshOutcomeOf(a) !== "ok" ? a : b;
+    const outcome = refreshOutcomeOf(worst);
+    return {
+      machineId: peer.machineId,
+      outcome,
+      durationMs: Math.max(a.durationMs, b.durationMs),
+      entries: owned.get(peer.machineId) ?? 0,
+      ...(outcome !== "ok" && worst.record.reason !== undefined ? { reason: worst.record.reason } : {}),
+      ...(outcome !== "ok" && worst.record.detail !== undefined ? { detail: worst.record.detail } : {}),
+    };
+  });
+  return { sessions, peers };
 }

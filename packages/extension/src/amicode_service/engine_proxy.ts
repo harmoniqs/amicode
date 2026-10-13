@@ -25,6 +25,19 @@ export interface EngineProxyOptions {
  *  (Authorization included) rides unchanged. */
 const HOP_BY_HOP = ["host", "connection"] as const;
 
+/** #1773 — an upstream lost AFTER the response headers went out: ERROR-close
+ *  the downstream (destroy it with the error) so the listener — or the next
+ *  relay — sees a transport error. A clean `end()` here read as "the stream
+ *  ended normally, nothing was lost" and the client reconnected without a
+ *  resync. Never throws. */
+function errorClose(res: http.ServerResponse, err: unknown): void {
+  try {
+    res.destroy(err instanceof Error ? err : new Error(`engine upstream failed: ${String(err)}`));
+  } catch {
+    /* already gone */
+  }
+}
+
 export class EngineProxy {
   constructor(private readonly opts: EngineProxyOptions) {}
 
@@ -46,13 +59,8 @@ export class EngineProxy {
       const upstream = http.request(target, { method: req.method, headers }, (up) => {
         res.writeHead(up.statusCode ?? 502, up.headers);
         up.pipe(res);
-        up.on("error", () => {
-          try {
-            res.end();
-          } catch {
-            /* already gone */
-          }
-        });
+        // #1773: the engine's stream died mid-body — an error close, not an end.
+        up.on("error", (err) => errorClose(res, err));
       });
       // #1261 (AC5): exactly-once reattach — a client disconnect (a reloaded
       // window closing its stream) tears down the engine upstream so a reload
@@ -64,14 +72,14 @@ export class EngineProxy {
       });
       upstream.on("error", (err) => {
         // The engine went away mid-flight (restart gap, crash): honest 502
-        // JSON when headers aren't sent yet, else just close the stream.
+        // JSON when headers aren't sent yet, else (#1773) an error close.
+        if (res.headersSent) {
+          errorClose(res, err);
+          return;
+        }
         try {
-          if (!res.headersSent) {
-            res.writeHead(502, { "content-type": "application/json" });
-            res.end(JSON.stringify({ ok: false, error: `engine upstream failed: ${err}` }));
-          } else {
-            res.end();
-          }
+          res.writeHead(502, { "content-type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: `engine upstream failed: ${err}` }));
         } catch {
           /* response already torn down — never throw into the server */
         }
@@ -80,14 +88,14 @@ export class EngineProxy {
       // (file uploads) pass through with no service-side memory cost.
       req.pipe(upstream);
       return true;
-    } catch {
+    } catch (err) {
+      if (res.headersSent) {
+        errorClose(res, err);
+        return true;
+      }
       try {
-        if (!res.headersSent) {
-          res.writeHead(502, { "content-type": "application/json" });
-          res.end(JSON.stringify({ ok: false, error: "engine upstream unavailable" }));
-        } else {
-          res.end();
-        }
+        res.writeHead(502, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: false, error: "engine upstream unavailable" }));
       } catch {
         /* never throw into the server */
       }
