@@ -134,7 +134,7 @@
     "packages/app/src/components/prompt-input-v2.tsx": "a37d61cd44e630100758c3de3dbf8cf7e0d4d0e85dc54e6bb7bf38290ece4468",
     "packages/app/src/components/prompt-input.tsx": "c127f81e2c0de4bdbc21a349473df39c623d8d7e2df8df0c03ea60bbef101a25",
     "packages/app/src/components/prompt-project-selector.tsx": "0157c954b938bce2b5aca9a82f4a72338e361f4c9027e55a7fd5a14a1654d294",
-    "packages/app/src/components/question-inbox.tsx": "9fca0c7474de56198ba6bfb12aeddc30e1526fdde1911839189062df12e1cd22",
+    "packages/app/src/components/question-inbox.tsx": "5ce03a30b7110092ddffccf3bf38e6c1b1a79624f378c819be7019725c96478a",
     "packages/app/src/components/remote-create-arm.test.ts": "388132209e16b6f00d79ac7c700f8c2bfb5f80343eee34cee73451b32842d3f2",
     "packages/app/src/components/remote-create-arm.ts": "49cb5f89f041ee5d555a348ec5bbbd9709d448752987c491f63376b02522db36",
     "packages/app/src/components/remote-create-header.test.ts": "bfe81618f1ecf13a5e55e19242ce286ef40ab9eb95dae9a64fed03e46d7b1954",
@@ -987,7 +987,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-13T20:31:28.693Z",
+  "extracted_at": "2026-10-13T20:33:10.488Z",
   "per_package": {
     "packages/app": {
       "A": 247,

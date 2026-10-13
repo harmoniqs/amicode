@@ -121,7 +121,7 @@ function InboxEntryCard(props: { entry: InboxEntry; disabled: boolean }) {
                     type="button"
                     data-slot="question-inbox-option"
                     data-picked={draft.answers[index()]?.includes(option.label) ? "true" : undefined}
-                    class="rounded-[var(--radius-md)] border border-border-weak-base px-2 py-1 text-left text-12-regular text-text-base transition-colors hover:border-border-strong-base"
+                    class="cursor-pointer rounded-[var(--radius-md)] border border-border-weak-base px-2 py-1 text-left text-12-regular text-text-base transition-colors hover:border-border-strong-base focus-visible:border-border-focus-base focus-visible:outline-none"
                     classList={{
                       "border-border-strong-base bg-[var(--accent-fill-soft)]":
                         draft.answers[index()]?.includes(option.label) === true,
@@ -154,7 +154,7 @@ function InboxEntryCard(props: { entry: InboxEntry; disabled: boolean }) {
         <button
           type="button"
           data-slot="question-inbox-submit"
-          class="rounded-[var(--radius-md)] bg-[var(--accent)] px-3 py-1 text-12-600 text-[var(--accent-ink)] transition-opacity disabled:opacity-60 disabled:cursor-default"
+          class="cursor-pointer rounded-[var(--radius-md)] bg-[var(--accent)] px-3 py-1 text-12-medium text-[var(--accent-ink)] transition-opacity hover:opacity-90 focus-visible:outline focus-visible:outline-1 focus-visible:outline-border-focus-base disabled:cursor-default disabled:opacity-60"
           disabled={props.disabled || !ready()}
           onClick={submit}
         >
