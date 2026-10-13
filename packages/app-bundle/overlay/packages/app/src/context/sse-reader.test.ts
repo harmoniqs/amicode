@@ -150,3 +150,52 @@ describe("#1779 AC1 — the app reader splits a 10 MB frame in 64 KB chunks with
     120_000,
   )
 })
+
+/** Every way to cut `text`'s bytes into two chunks, and one byte at a time. */
+function everySplit(text: string): Uint8Array[][] {
+  const all = bytes(text)
+  const deliveries: Uint8Array[][] = []
+  for (let k = 1; k < all.length; k++) deliveries.push([all.subarray(0, k), all.subarray(k)])
+  deliveries.push(Array.from({ length: all.length }, (_, i) => all.subarray(i, i + 1)))
+  return deliveries
+}
+
+describe("#1779 AC2 — the app reader finds frame boundaries split across chunks, CRLF line endings included", () => {
+  const stream = [
+    `id: ${EPOCH}:0\ndata: {"payload":{"type":"server.connected"}}\n\n`, // LF, the engine's framing
+    `id: ${EPOCH}:1\r\ndata: {"n":1,"text":"résumé → done"}\r\n\r\n`, // CRLF, non-ASCII
+    `data: first line\r\ndata: second line\r\n\r\n`, // CRLF, multi-line data
+    `event: ping\rdata: {"n":3}\r\r`, // CR line endings
+    `data: {"n":4}\n\n`,
+  ].join("")
+  const expected: Frame[] = [
+    { data: { payload: { type: "server.connected" } }, event: undefined, id: `${EPOCH}:0`, retry: 3000 },
+    { data: { n: 1, text: "résumé → done" }, event: undefined, id: `${EPOCH}:1`, retry: 3000 },
+    { data: "first line\nsecond line", event: undefined, id: `${EPOCH}:1`, retry: 3000 },
+    { data: { n: 3 }, event: "ping", id: `${EPOCH}:1`, retry: 3000 },
+    { data: { n: 4 }, event: undefined, id: `${EPOCH}:1`, retry: 3000 },
+  ]
+
+  test("in one chunk: each frame once, with its id", async () => {
+    const { frames, events } = await readStream([{ chunks: [bytes(stream)] }])
+    expect(frames).toEqual(expected)
+    expect(events).toEqual(expected.map((f) => f.data))
+  })
+
+  test("cut at EVERY byte — a delimiter, a CRLF, a code point split between two chunks — and byte by byte: the same frames, no extra, none merged", async () => {
+    for (const chunks of everySplit(stream)) {
+      const { frames, events } = await readStream([{ chunks }])
+      const cuts = chunks.map((c) => c.length)
+      expect({ cuts, frames }).toEqual({ cuts, frames: expected })
+      expect({ cuts, events }).toEqual({ cuts, events: expected.map((f) => f.data) })
+    }
+  })
+
+  test("a stream that ENDS on a CR line ending still delivers its last frame (a held \\r is a line end at the end)", async () => {
+    const crOnly = `data: {"n":1}\r\rdata: {"n":2}\r\r`
+    for (const chunks of [[bytes(crOnly)], ...everySplit(crOnly)]) {
+      const { events } = await readStream([{ chunks }])
+      expect({ cuts: chunks.map((c) => c.length), events }).toEqual({ cuts: chunks.map((c) => c.length), events: [{ n: 1 }, { n: 2 }] })
+    }
+  })
+})

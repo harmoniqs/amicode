@@ -140,9 +140,19 @@ export const createSseClient = <TData = unknown>({
         // 64 KB chunks, on the webview's main thread. Now only the NEW text is
         // normalized and searched; a "\n\n" split across two chunks is caught by
         // a one-character carry; the partial frame is held as pieces and joined
-        // once, when it completes. Frames come out exactly as before.
+        // once, when it completes. A "\r" ending a chunk waits for the next one
+        // (it may be the first half of a CRLF — normalizing it alone made a CRLF
+        // split across chunks end its frame early). Frames come out as before.
         let pending: Array<string> = []
         let pendingLast = ""
+        let heldCR = false
+        // Normalize line endings: CRLF -> LF, then CR -> LF
+        const normalize = (value: string, final: boolean): string => {
+          let text = heldCR ? "\r" + value : value
+          heldCR = !final && text.endsWith("\r")
+          if (heldCR) text = text.slice(0, -1)
+          return text.includes("\r") ? text.replace(/\r\n/g, "\n").replace(/\r/g, "\n") : text
+        }
         const splitFrames = (text: string): Array<string> => {
           const frames: Array<string> = []
           if (!text) return frames
@@ -182,9 +192,8 @@ export const createSseClient = <TData = unknown>({
         try {
           while (true) {
             const { done, value } = await reader.read()
-            if (done) break
-            // Normalize line endings: CRLF -> LF, then CR -> LF
-            const chunks = splitFrames(value.replace(/\r\n/g, "\n").replace(/\r/g, "\n"))
+            // at the end of the stream, a held "\r" ends its line after all
+            const chunks = splitFrames(normalize(done ? "" : value, done))
 
             for (const chunk of chunks) {
               const lines = chunk.split("\n")
@@ -240,6 +249,7 @@ export const createSseClient = <TData = unknown>({
                 yield data as any
               }
             }
+            if (done) break
           }
         } finally {
           signal.removeEventListener("abort", abortHandler)
