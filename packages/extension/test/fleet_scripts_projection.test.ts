@@ -148,10 +148,54 @@ function fakeFrozenBinary(): void {
   chmodSync(join(dir, "opencode"), 0o755);
 }
 
+/** #1775: NO run in this file may reach the real OS service manager — the
+ *  installer writes launch agents and (re)loads them, and a real `launchctl
+ *  load` of a fabricated plist would start a real ssh agent on the test host.
+ *  Every run gets TWO recording stubs:
+ *   - the SEAM: `$AMICO_FLEET_LAUNCHCTL` → `<tmp>/stubs/launchctl` (OFF the
+ *     PATH), appending one argv line per call to `<tmp>/launchctl.argv`;
+ *   - the BACKSTOP: a `launchctl` + `systemctl` FIRST on the child PATH that
+ *     append to `<tmp>/launchctl-path.argv` — reached only if the installer
+ *     ever bypasses its seam (a test asserts it never does).
+ *  `launchctl getenv <VAR>` prints `<tmp>/stubs/getenv-<VAR>` when present. */
+function writeLoaderStubs(): void {
+  const stubs = join(tmp, "stubs");
+  const bin = join(tmp, "fakebin");
+  mkdirSync(stubs, { recursive: true });
+  mkdirSync(bin, { recursive: true });
+  const recorder = (log: string): string => [
+    "#!/usr/bin/env bash",
+    `printf '%s\\n' "$*" >> "${log}"`,
+    `if [[ "\${1:-}" == "getenv" && -f "${stubs}/getenv-\${2:-}" ]]; then cat "${stubs}/getenv-\${2:-}"; fi`,
+    "exit 0",
+    "",
+  ].join("\n");
+  writeFileSync(join(stubs, "launchctl"), recorder(join(tmp, "launchctl.argv")));
+  chmodSync(join(stubs, "launchctl"), 0o755);
+  for (const name of ["launchctl", "systemctl"]) {
+    writeFileSync(join(bin, name), recorder(join(tmp, "launchctl-path.argv")));
+    chmodSync(join(bin, name), 0o755);
+  }
+}
+
+/** The seam stub's recorded argv lines (empty when it was never called). */
+function launchctlCalls(): string[] {
+  const log = join(tmp, "launchctl.argv");
+  return existsSync(log) ? readFileSync(log, "utf8").split("\n").filter((l) => l !== "") : [];
+}
+
+/** Calls that bypassed the seam and hit the PATH backstop (must stay empty). */
+function backstopCalls(): string[] {
+  const log = join(tmp, "launchctl-path.argv");
+  return existsSync(log) ? readFileSync(log, "utf8").split("\n").filter((l) => l !== "") : [];
+}
+
 function runScript(script: string, args: string[], opts: { path?: string } = {}): { code: number; out: string } {
+  writeLoaderStubs();
   const env: Record<string, string> = {
     HOME: tmp,
     PATH: opts.path ?? `${join(tmp, "fakebin")}:/usr/bin:/bin`,
+    AMICO_FLEET_LAUNCHCTL: join(tmp, "stubs", "launchctl"),
   };
   // The guard/installer must never find the REAL machine's amico or node-installed fleet state.
   delete env.AMICISSIMO_ROOT;
@@ -373,6 +417,11 @@ describe("the installer writes the platform-correct settings path (#1261 AC4)", 
     const r = runScript(INSTALL, [], installEnv());
     expect(r.code).toBe(0);
     expect(existsSync(join(tmp, "Library", "Application Support", "Code", "User", "settings.json"))).toBe(true);
+    // #1775: the tunnel (re)load went through the launchctl SEAM — never the
+    // PATH's launchctl (on a real host that would start a real ssh agent).
+    const tunnel = join(tmp, "Library", "LaunchAgents", "co.harmoniqs.amico-tunnel.plist");
+    expect(launchctlCalls()).toContain(`load ${tunnel}`);
+    expect(backstopCalls()).toEqual([]);
   });
 
   it("--check on LINUX catches settings drift (the check twin runs cross-platform, never 'skipped (not darwin)')", () => {

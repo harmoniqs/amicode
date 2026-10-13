@@ -17,8 +17,13 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 GUARD_SRC="$REPO_ROOT/tools/fleet/amico-opencode-fleet-guard"
 GUARD_DST="$HOME/.local/bin/amico-opencode-fleet-guard"
+# #1775: the machine-scoped launchd seams — the LaunchAgents dir and the
+# launchctl binary. Both default to today's behavior; tests point them at a
+# temp dir and a recording stub so no run ever touches the real service manager.
+LAUNCH_AGENTS_DIR="${AMICO_FLEET_LAUNCH_AGENTS_DIR:-$HOME/Library/LaunchAgents}"
+LAUNCHCTL="${AMICO_FLEET_LAUNCHCTL:-launchctl}"
 PLIST_SRC="$REPO_ROOT/tools/fleet/co.harmoniqs.amico-tunnel.plist"
-PLIST_DST="$HOME/Library/LaunchAgents/co.harmoniqs.amico-tunnel.plist"
+PLIST_DST="$LAUNCH_AGENTS_DIR/co.harmoniqs.amico-tunnel.plist"
 SETTINGS="$HOME/Library/Application Support/Code/User/settings.json"
 CHECK=0
 if [[ "${1:-}" == "--check" ]]; then CHECK=1; fi
@@ -208,7 +213,7 @@ if [[ "$ROLE" != "client" ]]; then
     # A stale tunnel from a previous client enrollment must not linger on a
     # server: unload + remove it if present (idempotent, best-effort).
     if [[ "$(uname -s)" == "Darwin" && -f "$PLIST_DST" ]]; then
-      launchctl unload "$PLIST_DST" 2>/dev/null || true
+      "$LAUNCHCTL" unload "$PLIST_DST" 2>/dev/null || true
       rm -f "$PLIST_DST"
       say "removed stale tunnel plist $PLIST_DST (role is $ROLE, not client)"
     fi
@@ -238,8 +243,8 @@ elif [[ "$(uname -s)" == "Darwin" ]]; then
       else
         cp "$_plist_tmp" "$PLIST_DST"
         # reload
-        launchctl unload "$PLIST_DST" 2>/dev/null || true
-        launchctl load "$PLIST_DST" 2>/dev/null || launchctl bootstrap "gui/$(id -u)" "$PLIST_DST" 2>/dev/null || true
+        "$LAUNCHCTL" unload "$PLIST_DST" 2>/dev/null || true
+        "$LAUNCHCTL" load "$PLIST_DST" 2>/dev/null || "$LAUNCHCTL" bootstrap "gui/$(id -u)" "$PLIST_DST" 2>/dev/null || true
         say "installed tunnel $PLIST_DST and (re)loaded (alias ${SSH_ALIAS}, port ${FLEET_PORT})"
       fi
       rm -f "$_plist_tmp"
@@ -274,7 +279,7 @@ if [[ "$ROLE" == "server" ]]; then
   HUB_RUNNER="$HUB_EXT_ROOT/bin/dist/amicode-service-runner.mjs"
   HUB_APP_DIST="$HUB_EXT_ROOT/dist/app"   # AMICODE_APP_DIST — the built app shelf the runner serves
   HUB_NODE="$(command -v node || true)"
-  HUB_PLIST_DST="$HOME/Library/LaunchAgents/${HUB_LABEL}.plist"
+  HUB_PLIST_DST="$LAUNCH_AGENTS_DIR/${HUB_LABEL}.plist"
   HUB_UNIT_DST="$HOME/.config/systemd/user/amico-hub.service"
 
   if [[ $CHECK -eq 1 ]]; then
@@ -356,8 +361,8 @@ if [[ "$ROLE" == "server" ]]; then
 </dict>
 </plist>
 PLIST
-      launchctl unload "$HUB_PLIST_DST" 2>/dev/null || true
-      launchctl load "$HUB_PLIST_DST" 2>/dev/null || launchctl bootstrap "gui/$(id -u)" "$HUB_PLIST_DST" 2>/dev/null || true
+      "$LAUNCHCTL" unload "$HUB_PLIST_DST" 2>/dev/null || true
+      "$LAUNCHCTL" load "$HUB_PLIST_DST" 2>/dev/null || "$LAUNCHCTL" bootstrap "gui/$(id -u)" "$HUB_PLIST_DST" 2>/dev/null || true
       say "installed hub service $HUB_PLIST_DST and (re)loaded (RunAtLoad+KeepAlive, port ${FLEET_PORT}, runs the #955 runner)"
     else
       mkdir -p "$(dirname "$HUB_UNIT_DST")" "$(dirname "$HUB_DB")"
