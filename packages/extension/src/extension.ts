@@ -125,6 +125,13 @@ import { HostFileClient } from "./fleet_host_fs/host_file_client";
 import { AmicoHostFileSystemProvider } from "./fleet_host_fs/provider";
 import { mountAmicoHostFs } from "./fleet_host_fs/mount";
 import { type CapabilityLabel } from "./fleet_host_fs/mount_policy";
+import {
+  readHubClientConfig,
+  bootPosture,
+  startHubClientSession,
+  guardReservedHubPort,
+  type HubClientSession,
+} from "./hub_client";
 import { stopServer } from "./stop_server";
 import { quitAmicode } from "./quit_command";
 import { pushEngineState, pushFleetRole } from "./engine_state_push";
@@ -156,6 +163,10 @@ let fleetClientPoll: ReturnType<typeof setInterval> | undefined;
 /** Fleet heartbeat producer (#1375) — periodically POSTs this machine's roster
  *  row with a fresh last_report so peers see it as reachable. */
 let fleetHeartbeat: FleetHeartbeat | undefined;
+/** #1760 P4: the hub client session — set when amicode.hubServerUrl armed the
+ * hub-host client posture (spawn NOTHING; every server resolution = the hub
+ * URL). Undefined = the base posture. */
+let hubSession: HubClientSession | undefined;
 
 const DEVICE_POLL_MS = 2500; // mirror the RunsManager cadence
 
@@ -1132,12 +1143,98 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   });
   ctx.subscriptions.push({ dispose: () => unregisterBugReport() });
 
+  // #1760 P4 — the hub-host client posture: amicode.hubServerUrl armed →
+  // spawn NOTHING and ride the hub (ALL platforms; the darwin-only fleet
+  // guard does NOT gate this — erlich is a Linux remote-SSH host and is
+  // exactly the machine that needs the posture). The explicit setting
+  // outranks the inferred guard (bootPosture). An invalid value fails to the
+  // base posture with the named reason, never silently.
+  const hubClient = readHubClientConfig(
+    vscode.workspace.getConfiguration("amicode").get<string>("hubServerUrl", ""),
+  );
+  if (!hubClient.armed && hubClient.reason !== "no amicode.hubServerUrl configured") {
+    opencodeChannel.appendLine(`[hub] ${hubClient.reason} — base posture (spawn locally)`);
+  }
+
   // Fleet client: guard would `exit 1` on this host (role=client in the
   // projection topology) — don't spawn and storm "opencode failed to start
   // within 30s". Ride the tunnel instead; "Go Standalone" switches to local
   // mode permanently. (#338; the projection read is #1106.)
   const fleetClient = isFleetClientGuard(binary, (line) => opencodeChannel.appendLine(line));
-  if (binary !== undefined && fleetClient) {
+  const posture = bootPosture({
+    hubArmed: hubClient.armed,
+    fleetClient,
+    hasBinary: binary !== undefined,
+  });
+  if (posture === "hub-client") {
+    opencodeChannel.appendLine(`[hub] ${hubClient.reason}: ${hubClient.url}`);
+    // Distiller still arms on the hub client (uses the vendored binary
+    // directly, headless — never a server spawn; same as the fleet client).
+    const clientBinary = (() => {
+      try {
+        return resolveOpencodeBinary(ctx.extensionPath, "").path;
+      } catch {
+        return undefined;
+      }
+    })();
+    if (opencodeProject.vaultDir && clientBinary) {
+      try {
+        distillerSetup = {
+          binary: clientBinary,
+          distillerMdPath: path.resolve(ctx.extensionPath, "DISTILLER.md"),
+          vaultDir: opencodeProject.vaultDir,
+          opsDir: amicodeOpsDir(),
+          problemsRoot: path.join(os.homedir(), ".amico", "problems"),
+          runsRoot,
+          model: vscode.workspace.getConfiguration("amicode").get<string>("distillerModel", "opencode/big-pickle"),
+        };
+        initDistillerTransport(distillerSetup);
+        opencodeChannel.appendLine(`[boot] distiller armed (hub client, vault: ${opencodeProject.vaultDir})`);
+      } catch (e) {
+        opencodeChannel.appendLine(`[boot] distiller transport failed: ${e}`);
+        distillerSetup = undefined;
+      }
+    }
+    sseClient = new OpencodeEventClient({
+      channel: opencodeChannel,
+      statusBar,
+      authorization: serverAuthHeaders.Authorization,
+    });
+    ctx.subscriptions.push(sseClient);
+    // The hub session: probe the hub, attach through hysteresis. ONE server,
+    // no split — attach points EVERY resolution at the hub URL: the panel
+    // frames the hub (frameUrl() has no amicodeService, so it resolves the
+    // ready URL = the hub; the framed app derives its whole server registry
+    // from the document origin, so the registry IS { hub }), the SSE event
+    // stream connects to the hub, and the question dock + replies live behind
+    // the framed app's single server. No onboarding gate here (the hub owns
+    // the provider config; the local gate would read stale local state).
+    hubSession = startHubClientSession({
+      hubUrl: hubClient.url,
+      log: (line) => opencodeChannel.appendLine(line),
+      authHeader: serverAuthHeaders.Authorization,
+      onAttach: (url) => {
+        opencodeReadyUrl = url;
+        statusBar?.setServerReady(true);
+        sseClient?.connect(url);
+        if (vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true)) {
+          ChatPanel.openOrReveal(ctx, frameUrl() ?? url, serverAuthToken(serverPassword), opencodeProject.projectDir);
+        }
+        void fetchProviderSignal(url.toString(), { headers: serverAuthHeaders }).then((sig) => {
+          opencodeChannel.appendLine(
+            sig.ok
+              ? `[hub] LLM provider: configured (${sig.provider})`
+              : `[hub] LLM provider: ${sig.reason} → ${sig.fix}`,
+          );
+        });
+      },
+      onDetach: () => {
+        opencodeReadyUrl = undefined;
+        statusBar?.setServerReady(false);
+      },
+    });
+    ctx.subscriptions.push({ dispose: () => { hubSession?.stop(); hubSession = undefined; } });
+  } else if (posture === "fleet-client") {
     const topology = readFleetTopology();
     const fleetPort = topology.kind === "ok" ? (topology.canonical?.port ?? 4096) : 4096;
     opencodeChannel.appendLine(`[fleet] client mode — guard ${binary} would refuse on ${os.hostname()} — riding tunnel 127.0.0.1:${fleetPort}`);
@@ -1329,7 +1426,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       },
     );
     for (const d of hostFsMount.disposables) ctx.subscriptions.push(d);
-  } else if (binary !== undefined) {
+    // (posture "local" implies hasBinary by bootPosture's contract; the
+    // explicit re-check also keeps TS's `binary` narrowing for the branch body)
+  } else if (posture === "local" && binary !== undefined) {
     // The amico CLI is argv-only (β.1) — no AMICO_* env propagation (S37), with ONE
     // recorded exception: AMICO_PYTHON (Pasqal python provisioning) rides the
     // server child env for the FORK's validator spawn — server plumbing, not
@@ -1346,10 +1445,20 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     // auth.json. The spawn env carries only PATH (so the amico CLI resolves), the
     // amico instructions/permission config, and the per-boot server password
     // that arms the fork's route auth (#163).
-    const configuredPort = vscode.workspace.getConfiguration("amicode").get<number>("opencodePort", 0);
+    // #1760 P4: the reserved hub port guard — a pin in 4094-4097 (the hub
+    // plane's ports) is refused with a named line and falls back to ephemeral.
+    const configuredPort = guardReservedHubPort(
+      vscode.workspace.getConfiguration("amicode").get<number>("opencodePort", 0),
+      "amicode.opencodePort",
+      (line) => opencodeChannel.appendLine(line),
+    );
     if (configuredPort > 0) {
       opencodeChannel.appendLine(`[boot] amicode.opencodePort = ${configuredPort} (static)`);
     }
+    // The service rides enginePort+1 for the stable-origin rule — guarded too
+    // (a 4093 pin would otherwise put the service ON the reserved 4094).
+    const configuredServicePort =
+      configuredPort > 0 ? guardReservedHubPort(configuredPort + 1, "amicode.opencodePort + 1 (the service port)", (l) => opencodeChannel.appendLine(l)) || undefined : undefined;
 
     // #1145 (ADR 0020): adopt-or-spawn decision — read the handshake and run
     // the four-check gate BEFORE creating a ServerManager. On adopt, reuse the
@@ -1837,7 +1946,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       // stays stable across window reloads — preserving localStorage (settings,
       // titlebar positions, developer tool paths). Falls back to ephemeral if
       // the derived port is busy.
-      port: configuredPort > 0 ? configuredPort + 1 : undefined,
+      port: configuredServicePort,
       // #1410 (ADR 0030 §D3): boot-time attachment recovery. When a prior
       // attachment pointer was found on disk, pass the recovered transport's
       // getUrl so the fleet plane's D3 resolver routes to the attached device.
@@ -2189,7 +2298,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           resolveFleetActivation({ config: readFleetActivationConfig(vscode.workspace.getConfiguration("amicode")) }),
         // #1260: the pluggable transport provider selector (default ssh).
         fleetTransport: readFleetTransportOption(vscode.workspace.getConfiguration("amicode")),
-        port: configuredPort > 0 ? configuredPort + 1 : undefined,
+        port: configuredServicePort,
         // #1447 (W2): this machine's stable id — flips the fleet-sessions route
         // to the machine-keyed N-peer projection (undefined → legacy 2-source).
         localMachineId: resolveLocalMachineId(),
@@ -2288,7 +2397,12 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       if (c === "Reload window") void vscode.commands.executeCommand("workbench.action.reloadWindow");
       return;
     }
-    const port = vscode.workspace.getConfiguration("amicode").get<number>("opencodePort", 0);
+    // #1760 P4: same reserved-hub-port guard on the respawn's own port read.
+    const port = guardReservedHubPort(
+      vscode.workspace.getConfiguration("amicode").get<number>("opencodePort", 0),
+      "amicode.opencodePort",
+      (line) => opencodeChannel.appendLine(line),
+    );
     const project2 = prepareOpencodeProject({
       agentsSrc: path.resolve(ctx.extensionPath, "AGENTS.md"),
       templateSrc: path.resolve(
@@ -2677,6 +2791,21 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   refreshFleetStatus();
 
   const runFleetGoStandalone = async (): Promise<void> => {
+    // #1760 P4: hub client → standalone means CLEARING the posture setting
+    // first (the setting is the explicit record — the local spawn below must
+    // never run while it still names a hub), stopping the hub poll, then the
+    // existing standalone flow (fresh local server, ephemeral port) proceeds.
+    const hubCfgNow = vscode.workspace.getConfiguration("amicode");
+    if (readHubClientConfig(hubCfgNow.get<string>("hubServerUrl", "")).armed) {
+      try {
+        await hubCfgNow.update("hubServerUrl", "", vscode.ConfigurationTarget.Global);
+      } catch (e) {
+        opencodeChannel.appendLine(`[hub] Go Standalone: clearing amicode.hubServerUrl failed: ${(e as Error).message}`);
+      }
+      hubSession?.stop();
+      hubSession = undefined;
+      opencodeChannel.appendLine(`[hub] Go Standalone — amicode.hubServerUrl cleared, spawning a local server`);
+    }
     const topology = readFleetTopology();
     if (topology.kind === "ok" && topology.role === "standalone") {
       void vscode.window.showInformationMessage("Amicode: already in standalone mode (local server).");
@@ -3375,6 +3504,18 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       // the bridge allowlist already permits it, so the server restart here
       // clears the "Something went wrong" state instead of being a no-op.
       opencodeChannel.appendLine(`[boot] restart requested`);
+      // #1760 P4: hub client — NOTHING local to restart (no spawn ever ran);
+      // poke the hub session's probe (hysteresis-correct re-attach). Live
+      // setting read: a mid-session disarm falls through to the local path
+      // honestly instead of poking a session that no longer exists.
+      if (
+        readHubClientConfig(vscode.workspace.getConfiguration("amicode").get<string>("hubServerUrl", "")).armed
+      ) {
+        opencodeChannel.appendLine(`[hub] restart requested — hub client mode: re-probing the hub`);
+        hubSession?.poke();
+        return;
+      }
+
 
       // #1598/#1354: the restart must be FLEET-AWARE, or "toggle on" re-creates
       // the two-engine split. Decide the path from this window's role:
@@ -3585,6 +3726,10 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
 }
 
 export function deactivate(): void {
+  if (hubSession) {
+    hubSession.stop();
+    hubSession = undefined;
+  }
   if (fleetClientPoll) {
     clearInterval(fleetClientPoll);
     fleetClientPoll = undefined;

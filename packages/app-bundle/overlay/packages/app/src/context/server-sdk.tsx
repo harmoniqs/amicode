@@ -12,6 +12,7 @@ import { usePlatform } from "./platform"
 import { ServerConnection, useServer } from "./server"
 import { createRefCountMap } from "@/utils/refcount"
 import { useGlobal } from "./global"
+import { postClientLog } from "@/amicode/client-telemetry"
 import { ServerScope } from "@/utils/server-scope"
 import { attachOwnerHeaderIfArmed } from "@/components/remote-create-arm"
 import { parseCursorNamespaces, resolveEventOrigin } from "./sse-origin"
@@ -347,6 +348,18 @@ export function createDeadMansSwitch(onDead: () => void, thresholdMs = deadManTh
     },
   }
 }
+/** #1760 P4 (4b) — the telemetry-visible assert: the global SDK event
+ *  stream's URL, posted to the serving origin's #1748 client log
+ *  (`/__amicode_client_log`) so the hub-host client posture is provable in
+ *  production, not just in tests — the headless probe greps the hub's
+ *  client-errors.log for this line and asserts it equals the hub URL (the
+ *  live failure it kills: a panel whose global stream pointed at a private
+ *  bus, invisible until this line existed). The channel is fire-and-forget
+ *  (postClientLog's contract), so a non-amicode serving origin 404s it
+ *  silently — harmless everywhere, decisive on the hub. */
+export function postEventStreamUrlAssert(url: string, post: (body: string) => void = postClientLog) {
+  post(`{"assert":"global-sdk-event-url","url":${JSON.stringify(url)}}`)
+}
 
 /** Compose the outgoing request headers for the owner-header PRODUCER seam.
  *
@@ -582,6 +595,11 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
   const start = () => {
     if (started) return run
     started = true
+    // #1760 P4 (4b): ship the assert BEFORE the first attempt — the stream's
+    // URL is the fact the probe verifies, and it must reach the log even if
+    // the stream itself never connects (a dead door is exactly when the line
+    // matters most).
+    postEventStreamUrlAssert(server.http.url)
     const active = streamGeneration.current()
     const previous = run
     const current = (async () => {

@@ -14,6 +14,7 @@ import {
   composeArmedRequestHeaders,
   createGlobalStreamResetCoordinator,
   globalStreamResetRequired,
+  postEventStreamUrlAssert,
   resumeStreamAfterPageShow,
 } from "./server-sdk"
 import { armRemoteCreate, attachOwnerHeaderIfArmed, disarmRemoteCreate } from "@/components/remote-create-arm"
@@ -310,6 +311,38 @@ describe("dead-man wiring in the reader loop (#1751)", () => {
     const body = source.slice(onDead, onDead + 200)
     expect(body).toContain('setStreamStatus("disconnected")')
     expect(body).toContain("attempt?.abort()")
+// #1760 P4 (4b) — the telemetry-visible assert: the global SDK event stream's
+// URL must be PROVABLE in production (the headless probe greps the hub's
+// client-errors.log for this line and asserts it equals the hub URL when the
+// hub-host client posture is armed — "stuck thinking while the engine runs
+// fine" was a panel pointed at a private bus, and nothing in production could
+// prove it).
+describe("postEventStreamUrlAssert — the global event stream URL rides the #1748 channel", () => {
+  test("posts a greppable JSON line naming the stream's URL", () => {
+    const bodies: string[] = []
+    postEventStreamUrlAssert("http://127.0.0.1:4097", (b) => bodies.push(b))
+    expect(bodies.length).toBe(1)
+    expect(JSON.parse(bodies[0])).toEqual({ assert: "global-sdk-event-url", url: "http://127.0.0.1:4097" })
+  })
+
+  test("the DEFAULT channel is the serving-origin client log (root-relative /__amicode_client_log POST, fire-and-forget)", () => {
+    const originalFetch = globalThis.fetch
+    const recorded: Array<{ url: string; method: string; body: string }> = []
+    // eslint-disable-next-line require-await
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      recorded.push({ url: String(input), method: String(init?.method ?? "GET"), body: String(init?.body ?? "") })
+      return new Response(null, { status: 204 })
+    }) as typeof fetch
+    try {
+      postEventStreamUrlAssert("http://127.0.0.1:4097")
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+    expect(recorded.length).toBe(1)
+    expect(recorded[0].url).toBe("/__amicode_client_log")
+    expect(recorded[0].method).toBe("POST")
+    expect(recorded[0].body).toContain("global-sdk-event-url")
+    expect(recorded[0].body).toContain("http://127.0.0.1:4097")
   })
 })
 
