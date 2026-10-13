@@ -40,20 +40,21 @@ function streamFetch(deliveries: Delivery[], requests: Request[] = []) {
 }
 
 /** Read the global stream to its end: every frame `onSseEvent` reported, and
- *  every event the stream yielded, in order. */
+ *  every event the stream yielded, in order. `retryDelayMs` sets the SDK's
+ *  reconnect delay (its default is 3000 ms, reported as each frame's `retry`). */
 async function readStream(
   deliveries: Delivery[],
   requests: Request[] = [],
-  onFrame?: (frame: Frame) => void,
+  opts: { onFrame?: (frame: Frame) => void; retryDelayMs?: number } = {},
 ): Promise<{ frames: Frame[]; events: unknown[] }> {
   const sdk = createSdkForServer({ server: SERVER, fetch: streamFetch(deliveries, requests) as typeof fetch })
   const frames: Frame[] = []
   const result = await sdk.global.event({
     onSseEvent: (frame: Frame) => {
       frames.push({ ...frame })
-      onFrame?.(frame)
+      opts.onFrame?.(frame)
     },
-    sseSleepFn: async () => {},
+    ...(opts.retryDelayMs !== undefined ? { sseDefaultRetryDelay: opts.retryDelayMs } : {}),
   })
   const events: unknown[] = []
   for await (const event of result.stream) events.push(event)
@@ -251,7 +252,7 @@ describe("#1779 AC3 — the app reader's framing is unchanged: multi-line data, 
     const { frames, events } = await readStream(
       [{ chunks: chunkBytes(first, 7), failWhen: dropLink }, { chunks: [bytes(`id: ${EPOCH}:8\ndata: {"n":8}\n\n`)] }],
       requests,
-      (frame) => frame.id === `${EPOCH}:7` && parsedLast(),
+      { onFrame: (frame) => frame.id === `${EPOCH}:7` && parsedLast(), retryDelayMs: 0 },
     )
     expect(requests).toHaveLength(2)
     expect(requests[0].headers.get("last-event-id")).toBeNull()
