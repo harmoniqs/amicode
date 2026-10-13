@@ -5,9 +5,11 @@
 // reconnection indefinitely.
 import { describe, it, expect, vi, afterEach } from "vitest";
 import * as http from "node:http";
-import { SseFanInDriver, openHttpSseSource } from "../src/amicode_service/sse_fanin_driver";
+import { appendFileSync } from "node:fs";
+import { StringDecoder } from "node:string_decoder";
+import { SseFanInDriver, SseFrameSplitter, openHttpSseSource } from "../src/amicode_service/sse_fanin_driver";
 import type { SseFrameSource } from "../src/amicode_service/sse_fanin_aggregator";
-import { LOCAL_NAMESPACE } from "../src/amicode_service/sse_fanin_aggregator";
+import { LOCAL_NAMESPACE, frameRawId, isDataFrame } from "../src/amicode_service/sse_fanin_aggregator";
 import { SessionOwnerMap } from "../src/amicode_service/session_multiplexer";
 import { FanInCensus, FANIN_CENSUS_INTERVAL_MS, FANIN_CLOSE_REASONS } from "../src/amicode_service/fanin_census";
 import {
@@ -2242,6 +2244,198 @@ describe("#1771 AC6 — a 10 MB engine frame delivered in 64 KB chunks (the #177
       res.fireClose();
       await server.stop();
     }
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// #1779 — LINEAR-TIME FRAME SPLITTING in the relay's upstream reader. The reader
+// (`openHttpSseSource`) decodes each network chunk (`res.setEncoding("utf8")`, a
+// StringDecoder: a code point split across chunks is held back, never mangled)
+// and hands the text to its frame splitter. `readFrames` is that data path minus
+// the socket, so a test can choose the chunk boundaries exactly — the network
+// cannot deliver a 10 MB frame in ONE chunk, which is the baseline AC1 compares to.
+// ══════════════════════════════════════════════════════════════════════════════
+
+/** The relay reader's data path: decode each byte chunk as `setEncoding("utf8")`
+ *  does, split the text into whole frames. */
+function readFrames(chunks: Buffer[]): string[] {
+  const decoder = new StringDecoder("utf8");
+  const splitter = new SseFrameSplitter();
+  const frames: string[] = [];
+  for (const chunk of chunks) {
+    const text = decoder.write(chunk);
+    if (text !== "") frames.push(...splitter.push(text));
+  }
+  return frames;
+}
+
+const median = (xs: number[]): number => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)];
+const elapsedMs = (fn: () => unknown): number => {
+  const t0 = performance.now();
+  fn();
+  return performance.now() - t0;
+};
+
+/** #1779 AC1's assertion, made robust: a warm-up, then INTERLEAVED trials (both
+ *  deliveries see the same machine noise), the median of each, and a generous
+ *  factor. A quadratic splitter misses it by an order of magnitude. `SPLIT_RATIO_LOG`
+ *  (a file path) records each run's ratio for a flake report. */
+function splitTimeRatio(read: (chunks: Buffer[]) => unknown, whole: Buffer[], chunked: Buffer[]): { ratio: number; wholeMs: number; chunkedMs: number } {
+  for (let i = 0; i < 2; i++) {
+    read(whole);
+    read(chunked);
+  }
+  const one: number[] = [];
+  const many: number[] = [];
+  for (let i = 0; i < 7; i++) {
+    one.push(elapsedMs(() => read(whole)));
+    many.push(elapsedMs(() => read(chunked)));
+  }
+  const wholeMs = median(one);
+  const chunkedMs = median(many);
+  return { ratio: chunkedMs / wholeMs, wholeMs, chunkedMs };
+}
+const SPLIT_RATIO_FACTOR = 3;
+
+describe("#1779 AC1 — the relay reader splits a 10 MB frame in 64 KB chunks within a small constant factor of one chunk", () => {
+  it("chunked ÷ single-chunk split time (medians) stays ≤ 3×, and both yield the one frame byte-identical", () => {
+    const big = largeSummaryFrame({ epoch: LOCAL_EPOCH, seq: 1 });
+    const whole = [Buffer.from(big, "utf8")];
+    const chunked = chunkBytes(big, CHUNK_64K);
+    expect(Buffer.byteLength(big)).toBeGreaterThanOrEqual(TEN_MB);
+    expect(chunked.length).toBeGreaterThan(160);
+    for (const delivery of [whole, chunked]) {
+      const frames = readFrames(delivery);
+      expect(frames).toHaveLength(1);
+      expect(frames[0] === big).toBe(true); // byte-identical (#1264); no 10 MB diff on failure
+    }
+    const { ratio, wholeMs, chunkedMs } = splitTimeRatio(readFrames, whole, chunked);
+    if (process.env.SPLIT_RATIO_LOG) appendFileSync(process.env.SPLIT_RATIO_LOG, `relay ${ratio.toFixed(3)} ${wholeMs.toFixed(2)} ${chunkedMs.toFixed(2)}\n`);
+    expect(ratio, `chunked ${chunkedMs.toFixed(1)} ms vs whole ${wholeMs.toFixed(1)} ms`).toBeLessThanOrEqual(SPLIT_RATIO_FACTOR);
+  }, 60_000);
+});
+
+/** Every way to cut `text`'s bytes into two chunks, and one byte at a time. */
+function everySplit(text: string): Buffer[][] {
+  const all = Buffer.from(text, "utf8");
+  const deliveries: Buffer[][] = [];
+  for (let k = 1; k < all.length; k++) deliveries.push([all.subarray(0, k), all.subarray(k)]);
+  deliveries.push(Array.from({ length: all.length }, (_, i) => all.subarray(i, i + 1)));
+  return deliveries;
+}
+
+/** CRLF framing (SSE allows it; a non-engine upstream or a proxy may use it). */
+const crlf = (frame: string): string => frame.replace(/\n/g, "\r\n");
+
+describe("#1779 AC2 — the relay reader finds frame boundaries split across chunks, LF and CRLF alike, and relays each frame verbatim", () => {
+  const engine = fakeEngine({ epoch: LOCAL_EPOCH });
+  const frames = [
+    engine.connected(), // LF, the engine's own framing
+    crlf(engine.event("message.part.updated", { part: { id: "prt_1", text: "résumé → done" } })), // CRLF, non-ASCII
+    `event: message\nid: ${localId(2)}\r\ndata: {"n":2}\n\r\n`, // CRLF blank line after LF lines
+    `: keep-alive\r\n\n`, // LF blank line after a CRLF line
+    crlf(engine.heartbeat()),
+    engine.event("session.status", { status: "idle" }),
+  ];
+  const stream = frames.join("");
+
+  it("cut at EVERY byte (the delimiter, a CRLF, a code point split between two chunks), and byte by byte: the same frames, verbatim", () => {
+    expect(readFrames([Buffer.from(stream, "utf8")])).toEqual(frames);
+    for (const delivery of everySplit(stream)) {
+      const got = readFrames(delivery);
+      if (got.length !== frames.length || got.some((f, i) => f !== frames[i])) {
+        expect({ cuts: delivery.map((c) => c.length), got }).toEqual({ cuts: delivery.map((c) => c.length), got: frames });
+      }
+    }
+  });
+
+  it("through the real reader and a fleet-of-one driver: a CRLF stream whose delimiters straddle network chunks reaches the listener byte-identical (#1264)", async () => {
+    const all = Buffer.from(stream, "utf8");
+    const startOf = (i: number): number => frames.slice(0, i).join("").length;
+    const byteAt = (charIndex: number): number => Buffer.byteLength(stream.slice(0, charIndex));
+    const cuts = [
+      byteAt(startOf(1) + frames[1].indexOf("\r\n") + 1), // a CRLF line ending: "\r" | "\n"
+      byteAt(startOf(1) + frames[1].indexOf("é")) + 1, // inside a code point
+      byteAt(startOf(2) - 1), // the CRLF delimiter: "\r\n\r" | "\n"
+      byteAt(startOf(3) - 2), // "\n" | "\r\n" (LF line, CRLF blank line)
+      byteAt(startOf(5) - 2), // the CRLF delimiter: "\r\n" | "\r\n"
+    ].sort((a, b) => a - b);
+    const chunks: Buffer[] = [];
+    let at = 0;
+    for (const end of cuts) {
+      chunks.push(all.subarray(at, end));
+      at = end;
+    }
+    chunks.push(all.subarray(at));
+    expect(Buffer.concat(chunks).equals(all)).toBe(true);
+    const server = await startEngineSseServer(async (res) => {
+      for (const c of chunks) {
+        res.write(c);
+        await new Promise((r) => setImmediate(r)); // separate network reads (best effort; the cut-everywhere test above is exact)
+      }
+      res.end();
+    });
+    const lines: string[] = [];
+    const w = lineWaiter(lines);
+    const census = new FanInCensus({ plane: "observe", sink: w.sink, now: () => 0 });
+    const driver = new SseFanInDriver({
+      ownerMap: new SessionOwnerMap(), // fleet-of-one: the verbatim relay
+      localMachineId: "macbook",
+      localEventUrl: () => server.url,
+      peerBaseUrl: () => undefined,
+      peerToken: () => ({ ok: false as const, reason: "absent" as const }),
+      reconcileMs: 999_999,
+      census,
+    });
+    const res = mockRes();
+    try {
+      driver.handle(mockReq("/global/event"), res);
+      await w.waitFor((l) => l.includes("arm=local reason="));
+      expect(res.text()).toBe(stream);
+      // … and frame by frame: the census saw exactly these frames (a reader
+      // blind to CRLF would have merged them — the bytes alone cannot tell)
+      census.emit();
+      const local = parseCensus(lines.at(-1)!).arms.find((a) => a.arm === "local")!;
+      expect(local).toMatchObject({
+        frames: String(frames.length),
+        largest: String(Math.max(...frames.map((f) => Buffer.byteLength(f)))),
+      });
+    } finally {
+      res.fireClose();
+      await server.stop();
+    }
+  });
+});
+
+describe("#1779 AC3 — the relay reader's framing is unchanged: multi-line data, event names, ids, retry fields — each frame verbatim", () => {
+  // Pinned against the splitter as it was before #1779, whole and cut at every
+  // byte: where a frame was cut never changes which frames come out.
+  const engine = fakeEngine({ epoch: LOCAL_EPOCH });
+  const connected = engine.connected();
+  const [plain, twin] = engine.stored("message.updated", { info: { id: "msg_1" } }, { aggregateID: "ses_1" });
+  const frames = [
+    connected,
+    plain, // a durable event …
+    twin, // … and its sync twin: the same id
+    `: a comment\nevent: message.part.updated\nid: ${localId(2)}\nretry: 5000\ndata: {"a":\ndata: 1}\n\n`, // every field, multi-line data
+    `data:no-space\n\n`,
+    `id:\ndata: {"b":2}\n\n`, // an empty id (it advances nothing)
+    `: keep-alive\n\n`, // comment-only (not a data frame)
+    `\ndata: {"c":3}\n\n`, // a stray blank line joins the frame after it
+    `\n\n`, // … and alone it is an empty frame
+    engine.heartbeat(),
+  ];
+  const stream = frames.join("");
+
+  it("whole and cut at every byte: the same frames, verbatim, with the ids and data the aggregator reads", () => {
+    for (const delivery of [[Buffer.from(stream, "utf8")], ...everySplit(stream)]) {
+      const got = readFrames(delivery);
+      if (got.length !== frames.length || got.some((f, i) => f !== frames[i])) {
+        expect({ cuts: delivery.map((c) => c.length), got }).toEqual({ cuts: delivery.map((c) => c.length), got: frames });
+      }
+    }
+    expect(frames.map(frameRawId)).toEqual([localId(0), localId(1), localId(1), localId(2), undefined, undefined, undefined, undefined, undefined, localId(1)]);
+    expect(frames.map(isDataFrame)).toEqual([true, true, true, true, true, true, false, true, false, true]);
   });
 });
 
