@@ -2315,6 +2315,98 @@ describe("#1779 AC1 — the relay reader splits a 10 MB frame in 64 KB chunks wi
   }, 60_000);
 });
 
+/** Every way to cut `text`'s bytes into two chunks, and one byte at a time. */
+function everySplit(text: string): Buffer[][] {
+  const all = Buffer.from(text, "utf8");
+  const deliveries: Buffer[][] = [];
+  for (let k = 1; k < all.length; k++) deliveries.push([all.subarray(0, k), all.subarray(k)]);
+  deliveries.push(Array.from({ length: all.length }, (_, i) => all.subarray(i, i + 1)));
+  return deliveries;
+}
+
+/** CRLF framing (SSE allows it; a non-engine upstream or a proxy may use it). */
+const crlf = (frame: string): string => frame.replace(/\n/g, "\r\n");
+
+describe("#1779 AC2 — the relay reader finds frame boundaries split across chunks, LF and CRLF alike, and relays each frame verbatim", () => {
+  const engine = fakeEngine({ epoch: LOCAL_EPOCH });
+  const frames = [
+    engine.connected(), // LF, the engine's own framing
+    crlf(engine.event("message.part.updated", { part: { id: "prt_1", text: "résumé → done" } })), // CRLF, non-ASCII
+    `event: message\nid: ${localId(2)}\r\ndata: {"n":2}\n\r\n`, // CRLF blank line after LF lines
+    `: keep-alive\r\n\n`, // LF blank line after a CRLF line
+    crlf(engine.heartbeat()),
+    engine.event("session.status", { status: "idle" }),
+  ];
+  const stream = frames.join("");
+
+  it("cut at EVERY byte (the delimiter, a CRLF, a code point split between two chunks), and byte by byte: the same frames, verbatim", () => {
+    expect(readFrames([Buffer.from(stream, "utf8")])).toEqual(frames);
+    for (const delivery of everySplit(stream)) {
+      const got = readFrames(delivery);
+      if (got.length !== frames.length || got.some((f, i) => f !== frames[i])) {
+        expect({ cuts: delivery.map((c) => c.length), got }).toEqual({ cuts: delivery.map((c) => c.length), got: frames });
+      }
+    }
+  });
+
+  it("through the real reader and a fleet-of-one driver: a CRLF stream whose delimiters straddle network chunks reaches the listener byte-identical (#1264)", async () => {
+    const all = Buffer.from(stream, "utf8");
+    const startOf = (i: number): number => frames.slice(0, i).join("").length;
+    const byteAt = (charIndex: number): number => Buffer.byteLength(stream.slice(0, charIndex));
+    const cuts = [
+      byteAt(startOf(1) + frames[1].indexOf("\r\n") + 1), // a CRLF line ending: "\r" | "\n"
+      byteAt(startOf(1) + frames[1].indexOf("é")) + 1, // inside a code point
+      byteAt(startOf(2) - 1), // the CRLF delimiter: "\r\n\r" | "\n"
+      byteAt(startOf(3) - 2), // "\n" | "\r\n" (LF line, CRLF blank line)
+      byteAt(startOf(5) - 2), // the CRLF delimiter: "\r\n" | "\r\n"
+    ].sort((a, b) => a - b);
+    const chunks: Buffer[] = [];
+    let at = 0;
+    for (const end of cuts) {
+      chunks.push(all.subarray(at, end));
+      at = end;
+    }
+    chunks.push(all.subarray(at));
+    expect(Buffer.concat(chunks).equals(all)).toBe(true);
+    const server = await startEngineSseServer(async (res) => {
+      for (const c of chunks) {
+        res.write(c);
+        await new Promise((r) => setImmediate(r)); // separate network reads (best effort; the cut-everywhere test above is exact)
+      }
+      res.end();
+    });
+    const lines: string[] = [];
+    const w = lineWaiter(lines);
+    const census = new FanInCensus({ plane: "observe", sink: w.sink, now: () => 0 });
+    const driver = new SseFanInDriver({
+      ownerMap: new SessionOwnerMap(), // fleet-of-one: the verbatim relay
+      localMachineId: "macbook",
+      localEventUrl: () => server.url,
+      peerBaseUrl: () => undefined,
+      peerToken: () => ({ ok: false as const, reason: "absent" as const }),
+      reconcileMs: 999_999,
+      census,
+    });
+    const res = mockRes();
+    try {
+      driver.handle(mockReq("/global/event"), res);
+      await w.waitFor((l) => l.includes("arm=local reason="));
+      expect(res.text()).toBe(stream);
+      // … and frame by frame: the census saw exactly these frames (a reader
+      // blind to CRLF would have merged them — the bytes alone cannot tell)
+      census.emit();
+      const local = parseCensus(lines.at(-1)!).arms.find((a) => a.arm === "local")!;
+      expect(local).toMatchObject({
+        frames: String(frames.length),
+        largest: String(Math.max(...frames.map((f) => Buffer.byteLength(f)))),
+      });
+    } finally {
+      res.fireClose();
+      await server.stop();
+    }
+  });
+});
+
 // ══════════════════════════════════════════════════════════════════════════════
 // #1777 — LOSSLESS RESUME. The engine (#1776) sequences and replays its global
 // stream; the fan-in now uses it. A re-opened arm resumes from its last delivered
