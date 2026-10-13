@@ -10,6 +10,8 @@
 # branch (stated + the grant pointer), IDENTICAL to a CLI-absent machine;
 # other non-zero exits die honestly — never a silent raw-file fallthrough.
 # Installs/updates the fleet guard + tunnel on this host and fixes machine-scoped settings.
+# #1775: also generates one SSH forward agent per attached peer (replacing a
+# hand-installed one with a backup) and retires the session-wide multiplex-flag agent.
 # Usage:
 #   bash tools/fleet/install.sh          # install/repair (writes files, reloads launchd)
 #   bash tools/fleet/install.sh --check   # check only (no writes), exit 1 on drift
