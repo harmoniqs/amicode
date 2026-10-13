@@ -10,6 +10,8 @@
 # branch (stated + the grant pointer), IDENTICAL to a CLI-absent machine;
 # other non-zero exits die honestly — never a silent raw-file fallthrough.
 # Installs/updates the fleet guard + tunnel on this host and fixes machine-scoped settings.
+# #1775: also generates one SSH forward agent per attached peer (replacing a
+# hand-installed one with a backup) and retires the session-wide multiplex-flag agent.
 # Usage:
 #   bash tools/fleet/install.sh          # install/repair (writes files, reloads launchd)
 #   bash tools/fleet/install.sh --check   # check only (no writes), exit 1 on drift
@@ -17,8 +19,13 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 GUARD_SRC="$REPO_ROOT/tools/fleet/amico-opencode-fleet-guard"
 GUARD_DST="$HOME/.local/bin/amico-opencode-fleet-guard"
+# #1775: the machine-scoped launchd seams — the LaunchAgents dir and the
+# launchctl binary. Both default to today's behavior; tests point them at a
+# temp dir and a recording stub so no run ever touches the real service manager.
+LAUNCH_AGENTS_DIR="${AMICO_FLEET_LAUNCH_AGENTS_DIR:-$HOME/Library/LaunchAgents}"
+LAUNCHCTL="${AMICO_FLEET_LAUNCHCTL:-launchctl}"
 PLIST_SRC="$REPO_ROOT/tools/fleet/co.harmoniqs.amico-tunnel.plist"
-PLIST_DST="$HOME/Library/LaunchAgents/co.harmoniqs.amico-tunnel.plist"
+PLIST_DST="$LAUNCH_AGENTS_DIR/co.harmoniqs.amico-tunnel.plist"
 SETTINGS="$HOME/Library/Application Support/Code/User/settings.json"
 CHECK=0
 if [[ "${1:-}" == "--check" ]]; then CHECK=1; fi
@@ -89,13 +96,181 @@ PORT_PARSED="$(printf '%s\n' "$PARSED" | sed -n 2p)"
 SSH_ALIAS="$(printf '%s\n' "$PARSED" | sed -n 3p)"
 if [[ "$PORT_PARSED" =~ ^[0-9]+$ ]]; then FLEET_PORT="$PORT_PARSED"; fi
 
-# Standalone: nothing to install — the guard/tunnel are irrelevant.
+# --- per-peer SSH forwards (#1775) ---
+# One launchd agent per attached PEER (peer studios, ADR 0027 / ADR 0032): the
+# SSH `-L` forward this machine uses to reach that peer's hub. Generated from
+# the repo template with the fleet transport's standard options (15 s
+# keepalive, 2 misses, TCPKeepAlive, ExitOnForwardFailure — sshForwardArgs),
+# never hand-installed. Role-agnostic: a peer may be standalone, server, or
+# client — the signal is the reader peer-token store (fleet_peer_store.ts),
+# whose loopback base_url IS the forward's local end. Darwin only (the
+# supervised linux/WSL link is #1260).
+#   label        co.harmoniqs.amico-peer-<machine_id>-forward
+#   local port   the store's base_url port (http://127.0.0.1:<port>)
+#   remote port  the fleet's canonical hub port ($FLEET_PORT)
+#   destination  the peer's roster sshAlias, else its machine id
+PEER_PLIST_SRC="$REPO_ROOT/tools/fleet/co.harmoniqs.amico-peer-forward.plist"
+PEER_STORE="${AMICO_FLEET_PEER_TOKEN_FILE:-$HOME/.amico/fleet-peer-tokens-reader.json}"
+ROSTER_FILE="${AMICO_FLEET_ROSTER_FILE:-$HOME/.amico/ops/fleet/roster.json}"
+
+# One line per peer: `forward<TAB>id<TAB>local_port<TAB>alias`, or
+# `note<TAB>message` for a peer that rides no ssh forward. Never prints a token.
+peer_forward_targets() {
+  node -e '
+    const fs = require("fs");
+    const doc = (p) => { try { const j = JSON.parse(fs.readFileSync(p, "utf8")); return j && typeof j === "object" && !Array.isArray(j) ? j : {}; } catch (e) { return {}; } };
+    const store = doc(process.argv[1]);
+    const peers = store.peers && typeof store.peers === "object" && !Array.isArray(store.peers) ? store.peers : {};
+    const roster = doc(process.argv[2]);
+    const rows = Array.isArray(roster.rows) ? roster.rows : [];
+    const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+    const SAFE_ALIAS = /^[A-Za-z0-9][A-Za-z0-9._@-]*$/;
+    const out = [];
+    for (const id of Object.keys(peers).sort()) {
+      const e = peers[id];
+      const raw = e && typeof e === "object" && typeof e.base_url === "string" ? e.base_url.trim() : "";
+      if (!SAFE_ID.test(id)) { out.push(["note", "peer id " + JSON.stringify(id) + " is not a safe launchd label fragment — no SSH forward generated"]); continue; }
+      let u = null;
+      try { u = new URL(raw); } catch (_) { u = null; }
+      const loopback = u !== null && u.protocol === "http:" && (u.hostname === "127.0.0.1" || u.hostname === "localhost");
+      const port = u !== null ? Number(u.port) : NaN;
+      if (!loopback || !Number.isInteger(port) || port < 1 || port > 65535) {
+        out.push(["note", "peer " + id + " is reached at " + (raw || "(no base_url)") + " — no SSH forward (only a loopback http://127.0.0.1:<port> base URL rides one)"]);
+        continue;
+      }
+      const row = rows.find((r) => r && r.machine_id === id);
+      const rowAlias = row && typeof row.sshAlias === "string" ? row.sshAlias.trim() : "";
+      out.push(["forward", id, String(port), SAFE_ALIAS.test(rowAlias) ? rowAlias : id]);
+    }
+    process.stdout.write(out.map((f) => f.join("\t")).join("\n"));
+  ' "$PEER_STORE" "$ROSTER_FILE"
+}
+
+# A hand-installed forward predates the managed convention: any
+# co.harmoniqs.amico-<name>-forward.plist that is NOT a managed
+# co.harmoniqs.amico-peer-*-forward agent. It is "for the same peer" when it
+# binds the peer's local port (it would block the managed agent's -L under
+# ExitOnForwardFailure) or targets the peer's ssh destination.
+PEER_FORWARD_BACKUP_DIR="$HOME/.amico/ops/fleet/launchagents-backup"
+is_legacy_forward_for() { # <plist> <local_port> <alias> <machine_id>
+  local f="$1" lport="$2" alias="$3" peer_id="$4" base
+  base="$(basename "$f")"
+  if [[ "$base" == co.harmoniqs.amico-peer-*-forward.plist ]]; then return 1; fi
+  if grep -qE "<string>((127\.0\.0\.1|localhost):)?${lport}:[^<]*</string>" "$f"; then return 0; fi
+  if grep -qF "<string>${alias}</string>" "$f" || grep -qF "<string>${peer_id}</string>" "$f"; then return 0; fi
+  return 1
+}
+
+# Replace (never silently delete): unload the legacy job, then MOVE its plist
+# to a timestamped backup OUTSIDE LaunchAgents (so launchd never reloads it).
+replace_legacy_forwards() { # <machine_id> <local_port> <alias>
+  local f bk
+  for f in "$LAUNCH_AGENTS_DIR"/co.harmoniqs.amico-*-forward.plist; do
+    if [[ ! -f "$f" ]]; then continue; fi
+    if ! is_legacy_forward_for "$f" "$2" "$3" "$1"; then continue; fi
+    mkdir -p "$PEER_FORWARD_BACKUP_DIR"
+    bk="$PEER_FORWARD_BACKUP_DIR/$(basename "$f").$(date -u +%Y%m%dT%H%M%SZ)"
+    if [[ -e "$bk" ]]; then bk="$bk.$$"; fi
+    "$LAUNCHCTL" unload "$f" 2>/dev/null || true
+    mv "$f" "$bk"
+    say "replaced hand-installed peer forward $f with the managed co.harmoniqs.amico-peer-$1-forward (backup: $bk)"
+  done
+}
+
+peer_forwards() {
+  if [[ "$(uname -s)" != "Darwin" ]]; then return 0; fi
+  local targets kind peer_id lport alias label dst tmpf f peer_fail=0
+  targets="$(peer_forward_targets)" || die "could not read the peer token store at $PEER_STORE (node failed)"
+  if [[ -z "$targets" ]]; then return 0; fi
+  if [[ $CHECK -eq 0 && ! -f "$PEER_PLIST_SRC" ]]; then
+    say "note: no peer-forward template at $PEER_PLIST_SRC — skipping peer forwards (git pull?)"
+    return 0
+  fi
+  while IFS=$'\t' read -r kind peer_id lport alias; do
+    if [[ "$kind" == "note" ]]; then say "note: $peer_id"; continue; fi
+    label="co.harmoniqs.amico-peer-${peer_id}-forward"
+    dst="$LAUNCH_AGENTS_DIR/${label}.plist"
+    if [[ $CHECK -eq 1 ]]; then
+      # The healthcheck's CLI twin (fleet_health.ts checkPeerForwards) — report only.
+      for f in "$LAUNCH_AGENTS_DIR"/co.harmoniqs.amico-*-forward.plist; do
+        if [[ -f "$f" ]] && is_legacy_forward_for "$f" "$lport" "$alias" "$peer_id"; then
+          echo "[fleet] FAIL hand-installed peer forward $f for $peer_id — not managed by the installer (run: bash tools/fleet/install.sh — Fleet — Repair replaces it, keeping a backup)"
+          peer_fail=1
+        fi
+      done
+      if [[ ! -f "$dst" ]]; then
+        echo "[fleet] FAIL peer forward $label missing at $dst (run: bash tools/fleet/install.sh)"
+        peer_fail=1
+        continue
+      fi
+      local before=$peer_fail
+      grep -q "ServerAliveInterval=15" "$dst" || { echo "[fleet] FAIL peer forward $label ServerAliveInterval 15 missing"; peer_fail=1; }
+      grep -q "ServerAliveCountMax=2" "$dst" || { echo "[fleet] FAIL peer forward $label ServerAliveCountMax 2 missing"; peer_fail=1; }
+      grep -q "TCPKeepAlive=yes" "$dst" || { echo "[fleet] FAIL peer forward $label TCPKeepAlive yes missing"; peer_fail=1; }
+      grep -q "ExitOnForwardFailure=yes" "$dst" || { echo "[fleet] FAIL peer forward $label ExitOnForwardFailure yes missing"; peer_fail=1; }
+      grep -qF "127.0.0.1:${lport}:127.0.0.1:${FLEET_PORT}" "$dst" || { echo "[fleet] FAIL peer forward $label LocalForward 127.0.0.1:${lport}:127.0.0.1:${FLEET_PORT} missing"; peer_fail=1; }
+      grep -qF "<string>${alias}</string>" "$dst" || { echo "[fleet] FAIL peer forward $label destination is not ${alias}"; peer_fail=1; }
+      if [[ $peer_fail -eq $before ]]; then
+        say "ok peer forward $label (15/2 + TCPKeepAlive, 127.0.0.1:${lport} → ${alias}:${FLEET_PORT})"
+      fi
+      continue
+    fi
+    mkdir -p "$LAUNCH_AGENTS_DIR"
+    tmpf="$(mktemp)"
+    sed -e "s/PEER_MACHINE_ID/${peer_id}/g" -e "s/PEER_LOCAL_PORT/${lport}/g" -e "s/PEER_REMOTE_PORT/${FLEET_PORT}/g" -e "s/PEER_SSH_ALIAS/${alias}/g" "$PEER_PLIST_SRC" > "$tmpf"
+    replace_legacy_forwards "$peer_id" "$lport" "$alias"
+    if [[ -f "$dst" ]] && cmp -s "$tmpf" "$dst"; then
+      say "peer forward $label unchanged — skipping reload"
+    else
+      cp "$tmpf" "$dst"
+      "$LAUNCHCTL" unload "$dst" 2>/dev/null || true
+      "$LAUNCHCTL" load "$dst" 2>/dev/null || "$LAUNCHCTL" bootstrap "gui/$(id -u)" "$dst" 2>/dev/null || true
+      say "installed peer forward $dst and (re)loaded (127.0.0.1:${lport} → ${alias}:${FLEET_PORT}, 15/2 + TCPKeepAlive)"
+    fi
+    rm -f "$tmpf"
+  done <<< "$targets"
+  if [[ $peer_fail -eq 1 ]]; then exit 1; fi
+}
+
+# --- the session-wide multiplex-flag agent (#1775) ---
+# co.harmoniqs.amico-fleet-flag ran `launchctl setenv AMICO_FLEET_MULTIPLEX 1`
+# at login, leaking the flag into EVERY GUI process — and the flag already
+# defaults ON (#1448, fleetMultiplexEnabled), so fleet behavior is unchanged
+# without it. Retire it: unload + remove the agent, and unset the variable when
+# it carries the agent's leaked value (a deliberate `0` opt-out is left alone).
+FLAG_PLIST="$LAUNCH_AGENTS_DIR/co.harmoniqs.amico-fleet-flag.plist"
+retire_flag_agent() {
+  if [[ "$(uname -s)" != "Darwin" ]]; then return 0; fi
+  if [[ $CHECK -eq 1 ]]; then
+    if [[ -f "$FLAG_PLIST" ]]; then
+      echo "[fleet] FAIL session-wide multiplex-flag agent present at $FLAG_PLIST (it leaks AMICO_FLEET_MULTIPLEX=1 into every GUI process; the flag already defaults on — run: bash tools/fleet/install.sh)"
+      exit 1
+    fi
+    return 0
+  fi
+  local session
+  if [[ -f "$FLAG_PLIST" ]]; then
+    "$LAUNCHCTL" unload "$FLAG_PLIST" 2>/dev/null || true
+    rm -f "$FLAG_PLIST"
+    say "removed the session-wide multiplex-flag agent $FLAG_PLIST (AMICO_FLEET_MULTIPLEX already defaults on — #1448)"
+  fi
+  session="$("$LAUNCHCTL" getenv AMICO_FLEET_MULTIPLEX 2>/dev/null || true)"
+  if [[ "$session" == "1" ]]; then
+    "$LAUNCHCTL" unsetenv AMICO_FLEET_MULTIPLEX 2>/dev/null || true
+    say "unset the session-wide AMICO_FLEET_MULTIPLEX (the multiplexer defaults on without it)"
+  fi
+}
+
+# Standalone: no guard/tunnel/hub — but a standalone PEER still gets its
+# per-peer forwards (#1775: peers stay standalone, ADR 0027).
 if [[ "$ROLE" == "standalone" ]]; then
   if [[ $CHECK -eq 1 ]]; then
     say "standalone (no fleet.json or role=standalone) — fleet checks skipped"
   else
-    say "standalone mode — nothing to install (use 'Amicode: Fleet — Enroll' to join a fleet)"
+    say "standalone mode — nothing to install for the fleet stance (use 'Amicode: Fleet — Enroll' to join a fleet)"
   fi
+  retire_flag_agent
+  peer_forwards
   exit 0
 fi
 
@@ -208,7 +383,7 @@ if [[ "$ROLE" != "client" ]]; then
     # A stale tunnel from a previous client enrollment must not linger on a
     # server: unload + remove it if present (idempotent, best-effort).
     if [[ "$(uname -s)" == "Darwin" && -f "$PLIST_DST" ]]; then
-      launchctl unload "$PLIST_DST" 2>/dev/null || true
+      "$LAUNCHCTL" unload "$PLIST_DST" 2>/dev/null || true
       rm -f "$PLIST_DST"
       say "removed stale tunnel plist $PLIST_DST (role is $ROLE, not client)"
     fi
@@ -238,14 +413,18 @@ elif [[ "$(uname -s)" == "Darwin" ]]; then
       else
         cp "$_plist_tmp" "$PLIST_DST"
         # reload
-        launchctl unload "$PLIST_DST" 2>/dev/null || true
-        launchctl load "$PLIST_DST" 2>/dev/null || launchctl bootstrap "gui/$(id -u)" "$PLIST_DST" 2>/dev/null || true
+        "$LAUNCHCTL" unload "$PLIST_DST" 2>/dev/null || true
+        "$LAUNCHCTL" load "$PLIST_DST" 2>/dev/null || "$LAUNCHCTL" bootstrap "gui/$(id -u)" "$PLIST_DST" 2>/dev/null || true
         say "installed tunnel $PLIST_DST and (re)loaded (alias ${SSH_ALIAS}, port ${FLEET_PORT})"
       fi
       rm -f "$_plist_tmp"
     fi
   fi
 fi
+
+# --- per-peer SSH forwards + the retired flag agent (every role — #1775) ---
+retire_flag_agent
+peer_forwards
 
 # --- canonical hub service (SERVER role only — reboot-survival, #1258) ---
 # The canonical hub must survive a REBOOT with NO editor ever opened. Today the
@@ -274,7 +453,7 @@ if [[ "$ROLE" == "server" ]]; then
   HUB_RUNNER="$HUB_EXT_ROOT/bin/dist/amicode-service-runner.mjs"
   HUB_APP_DIST="$HUB_EXT_ROOT/dist/app"   # AMICODE_APP_DIST — the built app shelf the runner serves
   HUB_NODE="$(command -v node || true)"
-  HUB_PLIST_DST="$HOME/Library/LaunchAgents/${HUB_LABEL}.plist"
+  HUB_PLIST_DST="$LAUNCH_AGENTS_DIR/${HUB_LABEL}.plist"
   HUB_UNIT_DST="$HOME/.config/systemd/user/amico-hub.service"
 
   if [[ $CHECK -eq 1 ]]; then
@@ -356,8 +535,8 @@ if [[ "$ROLE" == "server" ]]; then
 </dict>
 </plist>
 PLIST
-      launchctl unload "$HUB_PLIST_DST" 2>/dev/null || true
-      launchctl load "$HUB_PLIST_DST" 2>/dev/null || launchctl bootstrap "gui/$(id -u)" "$HUB_PLIST_DST" 2>/dev/null || true
+      "$LAUNCHCTL" unload "$HUB_PLIST_DST" 2>/dev/null || true
+      "$LAUNCHCTL" load "$HUB_PLIST_DST" 2>/dev/null || "$LAUNCHCTL" bootstrap "gui/$(id -u)" "$HUB_PLIST_DST" 2>/dev/null || true
       say "installed hub service $HUB_PLIST_DST and (re)loaded (RunAtLoad+KeepAlive, port ${FLEET_PORT}, runs the #955 runner)"
     else
       mkdir -p "$(dirname "$HUB_UNIT_DST")" "$(dirname "$HUB_DB")"

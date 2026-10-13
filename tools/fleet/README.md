@@ -131,6 +131,26 @@ between them in near real time. Users can work with fleet sessions from either m
 making one peer the sole host. The Attach control selects a peer; it does not merge the peers'
 local databases into one shared database.
 
+### Per-peer SSH forwards (#1775)
+
+When a peer is reached over SSH, this machine holds a loopback forward to that peer's hub. The
+installer (and `Fleet — Repair`) generates it — never hand-install one:
+
+| | |
+|---|---|
+| Template | `co.harmoniqs.amico-peer-forward.plist` — the tunnel's standard options: `ServerAliveInterval 15 / CountMax 2 / TCPKeepAlive yes / ExitOnForwardFailure yes` (+ `BatchMode yes`) |
+| Label | `co.harmoniqs.amico-peer-<machine_id>-forward` — one agent per peer |
+| Local port | the port of the peer's `base_url` in the reader peer-token store (`~/.amico/fleet-peer-tokens-reader.json`, `http://127.0.0.1:<port>`) |
+| Remote port / host | the fleet's canonical hub port, on the peer's roster `sshAlias` (else its machine id) |
+
+A peer reached over https (Tailscale / direct) gets no SSH forward. A hand-installed
+`co.harmoniqs.amico-<name>-forward` agent for the same peer (same local port or ssh host) is
+unloaded and moved to `~/.amico/ops/fleet/launchagents-backup/` — replaced, never silently
+deleted. The healthcheck and `install.sh --check` report every forward agent and flag
+missing or stale keepalives. The installer also retires the old `co.harmoniqs.amico-fleet-flag`
+agent (it set `AMICO_FLEET_MULTIPLEX=1` session-wide; the flag defaults on). Darwin only —
+the supervised Linux/WSL link is #1260.
+
 ### Making two hub machines into peers (no single point of failure)
 
 There is **no `amico fleet` peer subcommand and no Command Palette wizard** yet — peer entry
