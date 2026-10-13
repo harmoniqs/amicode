@@ -5,7 +5,9 @@
 // reconnection indefinitely.
 import { describe, it, expect, vi, afterEach } from "vitest";
 import * as http from "node:http";
-import { SseFanInDriver, openHttpSseSource } from "../src/amicode_service/sse_fanin_driver";
+import { appendFileSync } from "node:fs";
+import { StringDecoder } from "node:string_decoder";
+import { SseFanInDriver, SseFrameSplitter, openHttpSseSource } from "../src/amicode_service/sse_fanin_driver";
 import type { SseFrameSource } from "../src/amicode_service/sse_fanin_aggregator";
 import { LOCAL_NAMESPACE } from "../src/amicode_service/sse_fanin_aggregator";
 import { SessionOwnerMap } from "../src/amicode_service/session_multiplexer";
@@ -2243,6 +2245,74 @@ describe("#1771 AC6 — a 10 MB engine frame delivered in 64 KB chunks (the #177
       await server.stop();
     }
   });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// #1779 — LINEAR-TIME FRAME SPLITTING in the relay's upstream reader. The reader
+// (`openHttpSseSource`) decodes each network chunk (`res.setEncoding("utf8")`, a
+// StringDecoder: a code point split across chunks is held back, never mangled)
+// and hands the text to its frame splitter. `readFrames` is that data path minus
+// the socket, so a test can choose the chunk boundaries exactly — the network
+// cannot deliver a 10 MB frame in ONE chunk, which is the baseline AC1 compares to.
+// ══════════════════════════════════════════════════════════════════════════════
+
+/** The relay reader's data path: decode each byte chunk as `setEncoding("utf8")`
+ *  does, split the text into whole frames. */
+function readFrames(chunks: Buffer[]): string[] {
+  const decoder = new StringDecoder("utf8");
+  const splitter = new SseFrameSplitter();
+  const frames: string[] = [];
+  for (const chunk of chunks) {
+    const text = decoder.write(chunk);
+    if (text !== "") frames.push(...splitter.push(text));
+  }
+  return frames;
+}
+
+const median = (xs: number[]): number => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)];
+const elapsedMs = (fn: () => unknown): number => {
+  const t0 = performance.now();
+  fn();
+  return performance.now() - t0;
+};
+
+/** #1779 AC1's assertion, made robust: a warm-up, then INTERLEAVED trials (both
+ *  deliveries see the same machine noise), the median of each, and a generous
+ *  factor. A quadratic splitter misses it by an order of magnitude. `SPLIT_RATIO_LOG`
+ *  (a file path) records each run's ratio for a flake report. */
+function splitTimeRatio(read: (chunks: Buffer[]) => unknown, whole: Buffer[], chunked: Buffer[]): { ratio: number; wholeMs: number; chunkedMs: number } {
+  for (let i = 0; i < 2; i++) {
+    read(whole);
+    read(chunked);
+  }
+  const one: number[] = [];
+  const many: number[] = [];
+  for (let i = 0; i < 7; i++) {
+    one.push(elapsedMs(() => read(whole)));
+    many.push(elapsedMs(() => read(chunked)));
+  }
+  const wholeMs = median(one);
+  const chunkedMs = median(many);
+  return { ratio: chunkedMs / wholeMs, wholeMs, chunkedMs };
+}
+const SPLIT_RATIO_FACTOR = 3;
+
+describe("#1779 AC1 — the relay reader splits a 10 MB frame in 64 KB chunks within a small constant factor of one chunk", () => {
+  it("chunked ÷ single-chunk split time (medians) stays ≤ 3×, and both yield the one frame byte-identical", () => {
+    const big = largeSummaryFrame({ epoch: LOCAL_EPOCH, seq: 1 });
+    const whole = [Buffer.from(big, "utf8")];
+    const chunked = chunkBytes(big, CHUNK_64K);
+    expect(Buffer.byteLength(big)).toBeGreaterThanOrEqual(TEN_MB);
+    expect(chunked.length).toBeGreaterThan(160);
+    for (const delivery of [whole, chunked]) {
+      const frames = readFrames(delivery);
+      expect(frames).toHaveLength(1);
+      expect(frames[0] === big).toBe(true); // byte-identical (#1264); no 10 MB diff on failure
+    }
+    const { ratio, wholeMs, chunkedMs } = splitTimeRatio(readFrames, whole, chunked);
+    if (process.env.SPLIT_RATIO_LOG) appendFileSync(process.env.SPLIT_RATIO_LOG, `relay ${ratio.toFixed(3)} ${wholeMs.toFixed(2)} ${chunkedMs.toFixed(2)}\n`);
+    expect(ratio, `chunked ${chunkedMs.toFixed(1)} ms vs whole ${wholeMs.toFixed(1)} ms`).toBeLessThanOrEqual(SPLIT_RATIO_FACTOR);
+  }, 60_000);
 });
 
 // ══════════════════════════════════════════════════════════════════════════════

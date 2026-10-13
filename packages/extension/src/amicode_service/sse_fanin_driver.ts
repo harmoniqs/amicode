@@ -99,6 +99,49 @@ export const FANIN_LISTENER_CAP_RETRY_AFTER_S = 5;
 /** #1772 — the named error on a beyond-cap refusal. */
 export const FANIN_LISTENER_CAP_ERROR = "fan-in listener cap reached";
 
+/** The relay reader's frame splitter: decoded upstream text in, WHOLE frames out
+ *  (delimiter-inclusive, verbatim). #1779: LINEAR in the text received. The old
+ *  reader appended every chunk to the whole partial buffer and searched it from
+ *  the start, so a multi-MB frame arriving in 64 KB chunks cost quadratic time.
+ *  Now only the NEW chunk is scanned; a delimiter split across two chunks is
+ *  caught by looking back one character into the partial frame, which is held
+ *  as pieces and joined ONCE, when it completes. */
+export class SseFrameSplitter {
+  /** The partial frame, as received (never re-copied while it grows). */
+  private parts: string[] = [];
+  /** The partial frame's last character — the lookback for a split delimiter. */
+  private tail = "";
+
+  /** Feed one decoded chunk; returns the frames it completed, in order. */
+  push(chunk: string): string[] {
+    const frames: string[] = [];
+    if (chunk === "") return frames;
+    const tail = this.tail;
+    let start = 0; // where the partial frame resumes in this chunk
+    let from = 0;
+    let lf: number;
+    while ((lf = chunk.indexOf("\n", from)) !== -1) {
+      from = lf + 1;
+      // the line feed ends a blank line iff the character before it — in this
+      // chunk, or the partial frame's tail when it is the chunk's first — is one too
+      const prev = lf > start ? chunk.charCodeAt(lf - 1) : lf === 0 ? tail.charCodeAt(0) : NaN;
+      if (prev !== LF_CODE) continue;
+      this.parts.push(chunk.slice(start, from));
+      frames.push(this.parts.length === 1 ? this.parts[0] : this.parts.join("")); // whole frame, delimiter-inclusive
+      this.parts = [];
+      start = from;
+    }
+    if (start < chunk.length) {
+      this.parts.push(start === 0 ? chunk : chunk.slice(start));
+      this.tail = chunk.charAt(chunk.length - 1);
+    } else {
+      this.tail = ""; // a frame ended exactly at the chunk's end
+    }
+    return frames;
+  }
+}
+const LF_CODE = 10;
+
 /** The production upstream reader: a frame-preserving http SSE source. Splits the
  *  byte stream on the SSE blank-line delimiter into WHOLE frames (delimiter-
  *  inclusive) so `event:`/`data:`/`retry:`/`id:` lines survive intact for the
@@ -140,16 +183,11 @@ export function openHttpSseSource(r: FanInUpstreamRequest): SseFrameSource {
         end("error");
         return;
       }
-      let buf = "";
+      const splitter = new SseFrameSplitter();
       res.setEncoding("utf8");
       res.on("data", (chunk: string) => {
         if (ended) return;
-        buf += chunk;
-        let idx: number;
-        while ((idx = buf.indexOf("\n\n")) >= 0) {
-          pushFrame(buf.slice(0, idx + 2)); // whole frame, delimiter-inclusive
-          buf = buf.slice(idx + 2);
-        }
+        for (const frame of splitter.push(chunk)) pushFrame(frame);
       });
       res.on("end", () => end("end"));
       res.on("error", () => end("error"));
