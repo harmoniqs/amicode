@@ -311,6 +311,9 @@ describe("dead-man wiring in the reader loop (#1751)", () => {
     const body = source.slice(onDead, onDead + 200)
     expect(body).toContain('setStreamStatus("disconnected")')
     expect(body).toContain("attempt?.abort()")
+  })
+})
+
 // #1760 P4 (4b) — the telemetry-visible assert: the global SDK event stream's
 // URL must be PROVABLE in production (the headless probe greps the hub's
 // client-errors.log for this line and asserts it equals the hub URL when the
