@@ -328,6 +328,11 @@
           "default": 0,
           "description": "Fleet client poll tuning (#1202): after a standalone offer, no new offer within this many minutes — the cooldown survives a recovery, so a flapping tunnel cannot extract repeated popups. 0 = the default (15 minutes)."
         },
+        "amicode.hubServerUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Hub-host client posture (#1760 P4): when set to a valid http(s) URL, this machine's extension spawns NOTHING (no local opencode engine, no amicode service) and the entire panel — server resolution, global event stream, session views, question dock, replies — points at this hub URL (one server, no split). On the hub host itself use http://127.0.0.1:4097. Works on all platforms including Linux remote-SSH hosts. Empty = today's behavior (spawn locally)."
+        },
         "amicode.opencodePort": {
           "type": "number",
           "default": 43117,
