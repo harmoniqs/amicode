@@ -2337,3 +2337,148 @@ describe("#1777 AC1 — a peer arm that drops and re-opens within the replay win
     });
   }
 });
+
+const RESTARTED_EPOCH = "c3R1ZGlvMg"; // the peer's engine after a restart: a new process epoch
+
+describe("#1777 AC2 — an upstream reset on any arm is exactly one gap for that namespace downstream", () => {
+  const gapsOf = (text: string) => sseFrames(text).filter((f) => f.type === "amicode.sync.gap").map((f) => f.data!.namespaces);
+
+  it("composite: a peer engine that restarted answers the resume with a reset → one gap naming it; the reset frame itself is not forwarded; the arm re-bases in the new epoch", async () => {
+    const ownerMap = new SessionOwnerMap();
+    ownerMap.update(STUDIO_OWNED);
+    const local = replayingEngine({ epoch: LOCAL_EPOCH });
+    const studio = replayingEngine({ epoch: PEER_EPOCH });
+    const engines: { local: ReplayingEngine; studio: ReplayingEngine } = { local, studio };
+    const { census, lines } = testCensus();
+    const driver = replayDriver(engines, ownerMap, { census });
+    const res = mockRes();
+    driver.handle(mockReq("/global/event"), res);
+    await flush();
+    for (const n of [1, 2]) studio.publish(...partEvent(n));
+    await flush();
+    studio.subscriptions[0].end("error"); // the link drops — and the peer's engine restarts
+    await flush();
+    const restarted = replayingEngine({ epoch: RESTARTED_EPOCH });
+    engines.studio = restarted;
+    restarted.publish(...partEvent(3)); // lost with the old process's buffer: unrecoverable
+    driver.reconcile();
+    await flush();
+
+    expect(restarted.subscriptions[0]).toMatchObject({ cursor: studio.idAt(2), reset: true });
+    expect(gapsOf(res.text())).toEqual([["studio"]]); // exactly one gap, naming the peer
+    expect(sseFrames(res.text()).some((f) => f.type === "server.cursor.unservable")).toBe(false);
+    expect(lines).toContain("[fanin] gap-emitted plane=observe conn=c1 arm=studio cause=reset");
+    expect(res.destroyed).toBe(false);
+
+    // re-based: the next frames carry the new epoch, and a later drop resumes in it
+    restarted.publish(...partEvent(4));
+    await flush();
+    expect(parseCompositeCursor(sseFrames(res.text()).at(-1)!.id).get("studio")).toBe(restarted.idAt(2));
+    restarted.subscriptions[0].end();
+    await flush();
+    driver.reconcile();
+    await flush();
+    expect(restarted.subscriptions[1]).toMatchObject({ cursor: restarted.idAt(2), reset: false });
+    expect(gapsOf(res.text())).toHaveLength(1); // still one
+    res.fireClose();
+  });
+
+  it("composite: a drop longer than the replay window (the cursor was evicted) → one gap naming the peer", async () => {
+    const ownerMap = new SessionOwnerMap();
+    ownerMap.update(STUDIO_OWNED);
+    const local = replayingEngine({ epoch: LOCAL_EPOCH });
+    const studio = replayingEngine({ epoch: PEER_EPOCH });
+    const driver = replayDriver({ local, studio }, ownerMap);
+    const res = mockRes();
+    driver.handle(mockReq("/global/event"), res);
+    await flush();
+    studio.publish(...partEvent(1));
+    await flush();
+    studio.subscriptions[0].end("error");
+    await flush();
+    for (const n of [2, 3, 4]) studio.publish(...partEvent(n));
+    studio.evictThrough(3); // the window moved past the cursor (seq 1)
+    driver.reconcile();
+    await flush();
+    expect(studio.subscriptions[1].reset).toBe(true);
+    expect(gapsOf(res.text())).toEqual([["studio"]]);
+    res.fireClose();
+  });
+
+  it("composite: the LOCAL arm's reset (the local engine restarted) is one gap naming `local`", async () => {
+    const ownerMap = new SessionOwnerMap();
+    ownerMap.update(STUDIO_OWNED);
+    const engines: { local: ReplayingEngine; studio: ReplayingEngine } = {
+      local: replayingEngine({ epoch: LOCAL_EPOCH }),
+      studio: replayingEngine({ epoch: PEER_EPOCH }),
+    };
+    const driver = replayDriver(engines, ownerMap);
+    const res = mockRes();
+    driver.handle(mockReq("/global/event"), res);
+    await flush();
+    engines.local.publish(...partEvent(1));
+    await flush();
+    engines.local.subscriptions[0].end();
+    await flush();
+    engines.local = replayingEngine({ epoch: "bG9jYWwy" });
+    driver.reconcile();
+    await flush();
+    expect(gapsOf(res.text())).toEqual([[LOCAL_NAMESPACE]]);
+    res.fireClose();
+  });
+
+  it("composite: a listener reconnecting with a cursor its peer can no longer serve gets one gap for that peer — and a replay for the servable one", async () => {
+    const ownerMap = new SessionOwnerMap();
+    ownerMap.update(STUDIO_OWNED);
+    const local = replayingEngine({ epoch: LOCAL_EPOCH });
+    const studio = replayingEngine({ epoch: PEER_EPOCH });
+    for (const n of [1, 2]) local.publish(...partEvent(n));
+    const driver = replayDriver({ local, studio }, ownerMap);
+    const res = mockRes();
+    // a cursor from before the peer's restart: `studio` names a dead epoch
+    driver.handle(mockReq(`/global/event?lastEventID=local=${local.idAt(1)};studio=${RESTARTED_EPOCH}:9`), res);
+    await flush();
+    expect(local.subscriptions[0]).toMatchObject({ cursor: local.idAt(1), reset: false });
+    expect(studio.subscriptions[0]).toMatchObject({ cursor: `${RESTARTED_EPOCH}:9`, reset: true });
+    expect(gapsOf(res.text())).toEqual([["studio"]]);
+    // the local replay arrived: frame 2 (the one after the cursor)
+    expect(sseFrames(res.text()).filter((f) => f.type === "message.part.updated").map((f) => f.data!.payload.properties.n)).toEqual([2]);
+    res.fireClose();
+  });
+
+  it("fleet-of-one: the engine's reset frame passes VERBATIM (it is the engine's own signal — #1264: nothing synthetic), and the listener lives", async () => {
+    const engines: { local: ReplayingEngine } = { local: replayingEngine({ epoch: LOCAL_EPOCH }) };
+    const sent: string[] = [];
+    const driver = replayDriver(engines as { local: ReplayingEngine }, new SessionOwnerMap(), {
+      openUpstream: (r) => {
+        const sub = engines.local.subscribe(r.lastEventId);
+        const next = sub.source.next;
+        sub.source.next = async () => {
+          const f = await next();
+          if (f !== null) sent.push(f);
+          return f;
+        };
+        return sub.source;
+      },
+    });
+    const res = mockRes();
+    driver.handle(mockReq(`/global/event?lastEventID=${LOCAL_EPOCH}:4`), res); // stale: the engine is at 0
+    await flush();
+    engines.local.publish(...partEvent(1));
+    await flush();
+    engines.local.subscriptions[0].end(); // mid-stream: the local engine restarts
+    await flush();
+    engines.local = replayingEngine({ epoch: "bG9jYWwy" });
+    driver.reconcile(); // resume → the new process resets
+    await flush();
+    engines.local.publish(...partEvent(2));
+    await flush();
+
+    expect(res.text()).toBe(sent.join("")); // byte-identical to what the engine sent, ids included
+    const types = sseFrames(res.text()).map((f) => f.type);
+    expect(types.filter((t) => t === "server.cursor.unservable")).toHaveLength(2); // the stale connect cursor, then the restart
+    expect(types).not.toContain("amicode.sync.gap");
+    expect(res.destroyed).toBe(false);
+    res.fireClose();
+  });
+});
