@@ -8,6 +8,7 @@ import { OpenApi } from "effect/unstable/httpapi"
 import { createServer } from "node:http"
 import { MDNS } from "./mdns"
 import * as AmicodeConnections from "./amicode/connections"
+import * as SelfShutdown from "./amicode/self-shutdown"
 import { HttpApiApp } from "./routes/instance/httpapi/server"
 import { disposeMiddleware } from "./routes/instance/httpapi/lifecycle"
 import { WebSocketTracker } from "./routes/instance/httpapi/websocket-tracker"
@@ -211,6 +212,27 @@ function serverLayer(opts: { port: number; hostname: string }) {
   const server = createServer()
   const serverRef = { closeStarted: false, forceStop: false }
   const close = server.close.bind(server)
+
+  // #1596 (ADR 0020): track SSE event-stream connections and in-flight turns
+  // at the HTTP level for the self-shutdown idle predicate. The /event route is
+  // a long-lived SSE response — fleet clients hold these, so the engine must
+  // stay up while subscribers exist. In-flight turns show as POST /session/*/message
+  // requests that haven't completed yet.
+  server.on("request", (req, res) => {
+    const url = req.url ?? ""
+    if (url.startsWith("/event")) {
+      SelfShutdown.notifySseConnect()
+      res.on("close", () => SelfShutdown.notifySseDisconnect())
+    }
+    // Track in-flight agent turns: POST to the prompt/command/shell paths.
+    // The response end signals the turn's HTTP request completed; the session
+    // may continue processing asynchronously, but the HTTP-level tracking is
+    // a conservative approximation.
+    if (req.method === "POST" && /\/session\/[^/]+\/(message|command|shell)$/.test(url)) {
+      SelfShutdown.notifyTurnStart()
+      res.on("close", () => SelfShutdown.notifyTurnEnd())
+    }
+  })
   // Keep shutdown owned by NodeHttpServer, but honor listener.stop(true) by
   // force-closing active HTTP sockets when its finalizer calls server.close().
   // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- Node's overloads don't preserve a monkey-patched method assignment.

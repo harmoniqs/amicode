@@ -3,6 +3,7 @@ import {
   classifyGate,
   PROTOCOL_VERSION,
   type GateInputs,
+  type HandshakeRecord,
 } from "./server_handshake";
 import { serverAuthHeader } from "./server_auth";
 
@@ -44,6 +45,11 @@ export interface AdoptOrSpawnDeps {
   /** Free an orphaned port (kill the opencode server holding it). Returns
    *  whether the port was actually freed. Never called for a foreign holder. */
   reclaimPort?: (port: number) => Promise<boolean>;
+  // ── Reboot-race guard (#1576) — only used on the NO-handshake path ──
+  /** On a role=server machine, the hub may still be starting (~30s health-wait).
+   *  When set, the no-handshake path polls for the handshake to appear on a
+   *  bounded budget (ms) before falling back to cold-spawn. */
+  hubPollBudgetMs?: number;
   /** Optional log sink for adoption diagnostics. */
   log?: (line: string) => void;
 }
@@ -67,6 +73,9 @@ export interface AdoptOrSpawnResult {
   /** Present on "cold-spawned" — true when an orphaned port was reclaimed
    *  before the cold-spawn (#1178). */
   reclaimed?: boolean;
+  /** #1576: present on "adopted" when the handshake carried a dbPath — the
+   *  canonical DB the hub engine opened (AC2: runtime readback). */
+  adoptedDbPath?: string;
 }
 
 /**
@@ -81,12 +90,31 @@ export async function adoptOrSpawn(
   // Step 1: read the handshake
   const hs = readHandshake(handshakePath);
 
-  // No handshake or invalid → cold-spawn (fresh install) — but first check the
-  // configured port for an ORPHANED survivor (#1178): a server we spawned that
-  // outlived its handshake. Without this, the cold-spawn ServeErrors on the
-  // occupied port forever (the stuck state). We reclaim ours; we never touch a
-  // foreign holder.
+  // No handshake or invalid → cold-spawn (fresh install) — but first check for
+  // a reboot-race (#1576) or an ORPHANED survivor (#1178).
   if (hs.status === "absent" || hs.status === "invalid") {
+    // ── Reboot-race guard (#1576): on a role=server machine, the hub may still
+    //    be starting (~30s health-wait). Poll for the handshake to appear on a
+    //    bounded budget before any cold-spawn fallback — never spawn a rival and
+    //    reinstate the split.
+    if (deps.hubPollBudgetMs) {
+      deps.log?.(`[adopt] reboot-race: handshake ${hs.status}, polling for hub handshake (budget ${deps.hubPollBudgetMs}ms)`);
+      const deadline = Date.now() + deps.hubPollBudgetMs;
+      const POLL_INTERVAL = 250; // ms
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, POLL_INTERVAL));
+        const retry = readHandshake(handshakePath);
+        if (retry.status === "ok") {
+          deps.log?.(`[adopt] reboot-race: hub handshake appeared — proceeding to adopt`);
+          // Handshake appeared — fall through to the adoption flow below
+          return adoptFromRecord(retry.record, deps);
+        }
+      }
+      deps.log?.(`[adopt] reboot-race: budget expired, no hub handshake — falling through to cold-spawn`);
+    }
+
+    // Check the configured port for an ORPHANED survivor (#1178): a server we
+    // spawned that outlived its handshake.
     if (deps.configuredPort !== undefined && deps.probePort) {
       const probe = await deps.probePort(deps.configuredPort);
       if (probe.occupied) {
@@ -123,7 +151,16 @@ export async function adoptOrSpawn(
 
   const record = hs.record;
 
-  // Step 2: run the four live checks (with one retry for transient failures).
+  return adoptFromRecord(record, deps);
+}
+
+/** Run the four-check gate against a handshake record and return the adoption
+ *  verdict. Extracted so both the normal path and the reboot-race poll path
+ *  (#1576) share the same decision logic. */
+async function adoptFromRecord(
+  record: HandshakeRecord,
+  deps: AdoptOrSpawnDeps,
+): Promise<AdoptOrSpawnResult> {
   // A window reload can leave the server briefly unreachable while it flushes
   // dying connections; retrying once after a short wait covers that gap.
   const runChecks = async () => {
@@ -174,6 +211,8 @@ export async function adoptOrSpawn(
           binaryHash: record.binaryHash,
           configHash: record.configHash,
         },
+        // #1576: surface the canonical DB path when the handshake carries it
+        ...(record.dbPath ? { adoptedDbPath: record.dbPath } : {}),
       };
 
     case "stale":
@@ -206,6 +245,248 @@ export async function adoptOrSpawn(
           `The process was not killed. Choose a different port or stop the other process.`,
       };
   }
+}
+
+// ============================================================================
+// Engine-toggle restart decision (#1598, #1354)
+//
+// The status-cluster engine toggle sends amicode.restartServer on "on". The
+// restart must be FLEET-AWARE, or it re-creates the two-engine split:
+//
+//   - fleet client       → the engine is remote (over the tunnel); there is no
+//                          local engine to kill. Re-probe the tunnel.
+//   - riding unarmed hub  → this window ADOPTED the launchd hub's shared engine.
+//                          stop()+start() would kill the shared hub AND cold-
+//                          spawn a rival on the editor port — the exact split
+//                          the owner-guard fixes. Instead reclaim + re-adopt:
+//                          kill the hub engine (launchd respawns it fresh),
+//                          drop the handshake, and re-adopt the new hub.
+//   - window owns engine  → the simple case: stop() then start() a fresh one.
+// ============================================================================
+
+export type EngineRestartPlan = "reprobe-tunnel" | "reclaim-and-readopt" | "stop-and-respawn";
+
+/** Decide how the engine toggle should restart, given this window's role.
+ *  Pure — the handler branches on the returned plan. `isFleetClient` wins over
+ *  everything (a client has no local engine); a server window riding the
+ *  unarmed hub must re-adopt rather than spawn a rival; otherwise the window
+ *  owns its engine and does a plain stop→start. */
+export function planEngineRestart(state: {
+  isFleetClient: boolean;
+  ridingUnarmedHub: boolean;
+}): EngineRestartPlan {
+  if (state.isFleetClient) return "reprobe-tunnel";
+  if (state.ridingUnarmedHub) return "reclaim-and-readopt";
+  return "stop-and-respawn";
+}
+
+// ============================================================================
+// One-engine-per-serving-machine activation decision (#1576)
+//
+// A role=server editor window must RIDE the launchd hub engine (FLEET_PORT-3,
+// unarmed) instead of spawning its OWN ext-engine on FLEET_PORT-2 — the #1354
+// port allocation this reverses. The prior owner-guard/ELECTRON fixes were
+// band-aids around a still-active "two engines by design" decision; this is the
+// activation branch that makes ONE engine the truth on a server.
+//
+// Two invariants are load-bearing and returned as explicit fields, not buried
+// in the caller's branching:
+//   • runStraySweep is NEVER true on a fleet server. The machine-wide sweep
+//     (#1592) is what SIGTERM-churned the hub — on a server the hub owns engine
+//     lifecycle (its own PID-file, #1578), so the editor must never reap.
+//   • writeHandshake is NEVER true on a fleet server. The single un-namespaced
+//     handshake belongs to the hub; a window write is the clobber that points a
+//     reload at a peer window's engine instead of the hub.
+//
+// The three modes:
+//   own-engine     — standalone (non-fleet-server): spawn + sweep + handshake,
+//                    today's behavior, byte-for-byte unchanged.
+//   ride-hub       — fleet server + hub reachable: adopt the hub, spawn NOTHING.
+//   local-fallback — fleet server + hub unreachable (after the poll budget):
+//                    spawn a local engine + surface an honest banner so the
+//                    daily driver is never engine-less; still never sweeps or
+//                    clobbers, and yields back to the hub when it returns.
+// ============================================================================
+
+export type ServerActivationMode = "own-engine" | "ride-hub" | "local-fallback";
+
+export interface ServerActivationPlan {
+  mode: ServerActivationMode;
+  /** Cold-spawn a local engine? Only ride-hub adopts the hub instead. */
+  spawnLocalEngine: boolean;
+  /** Run the machine-wide stray-engine sweep? ONLY on a standalone machine —
+   *  never on a fleet server (the hub owns engine lifecycle). */
+  runStraySweep: boolean;
+  /** Write the adoption handshake? ONLY on a standalone machine — never on a
+   *  fleet server, where the hub's record is authoritative. */
+  writeHandshake: boolean;
+  /** DELETE the adoption handshake (the keepalive's server-gone path)? ONLY on a
+   *  standalone machine — never on a fleet server (#1607 Slice 2). The hub owns
+   *  the handshake lifecycle (launchd respawns + rewrites); a window deleting it
+   *  strands the next reload. The read-side twin of writeHandshake. */
+  mayDeleteHandshake: boolean;
+  /** Surface the honest "hub down — running a local engine" banner
+   *  (local-fallback only). */
+  hubDownBanner: boolean;
+}
+
+/** Decide how a window activates its engine, given whether this is a fleet
+ *  server machine and whether the hub engine is reachable. Pure — the caller
+ *  reads the fields to wire spawn/sweep/handshake. `isServerMachine` is the
+ *  projection's role=server; `hubReachable` is the adopt gate's verdict against
+ *  the hub engine AFTER the poll budget (#1576 hubPollBudgetMs). */
+export function planServerActivation(state: {
+  isServerMachine: boolean;
+  hubReachable: boolean;
+}): ServerActivationPlan {
+  // Standalone (or any non-fleet-server) machine: today's behavior — own the
+  // engine, sweep strays, write the handshake. Unchanged.
+  if (!state.isServerMachine) {
+    return {
+      mode: "own-engine",
+      spawnLocalEngine: true,
+      runStraySweep: true,
+      writeHandshake: true,
+      mayDeleteHandshake: true,
+      hubDownBanner: false,
+    };
+  }
+  // Fleet server with a reachable hub: RIDE it. Spawn nothing (retire the
+  // ext-engine), never sweep, never write the handshake.
+  if (state.hubReachable) {
+    return {
+      mode: "ride-hub",
+      spawnLocalEngine: false,
+      runStraySweep: false,
+      writeHandshake: false,
+      mayDeleteHandshake: false,
+      hubDownBanner: false,
+    };
+  }
+  // Fleet server, hub genuinely unreachable: pragmatic fallback — spawn a local
+  // engine so the editor is never engine-less, with an honest banner. STILL
+  // never sweep (a returning hub must not be reaped) and never clobber the
+  // shared handshake (the local engine yields to the hub when it returns).
+  return {
+    mode: "local-fallback",
+    spawnLocalEngine: true,
+    runStraySweep: false,
+    writeHandshake: false,
+    mayDeleteHandshake: false,
+    hubDownBanner: true,
+  };
+}
+
+/** On a fleet server, "reached the hub" means we adopted an engine AND it was
+ *  the UNARMED hub (#1607). Adopting an ARMED peer engine — the failure a
+ *  clobbered handshake produces, where the record points {port, armed} at a
+ *  PEER window's engine — is NOT riding the hub, so it must map to hubReachable
+ *  = false (→ local-fallback), never a silent ride-hub of a peer. This is the
+ *  honest signal to feed planServerActivation's `hubReachable`; the bare
+ *  `adopted` boolean conflates the two. */
+export function adoptedTheHub(state: { adopted: boolean; adoptedUnarmed: boolean }): boolean {
+  return state.adopted && state.adoptedUnarmed;
+}
+
+// ============================================================================
+// Deterministic hub probe (#1607 Slice 1)
+//
+// Instead of trusting the (deletable / clobberable / stale-pid) handshake for
+// hub identity, a server probes the hub engine's port directly — derived from
+// the shared HUB_ENGINE_PORT_OFFSET — and confirms the occupant is the UNARMED
+// hub. The hub engine is passwordless (the SSH tunnel is its auth boundary), so
+// an ANONYMOUS GET distinguishes it: 200 = unarmed hub; 401/403 = an ARMED peer
+// (NOT the hub); no response = down. This makes ride-hub survive a hub crash +
+// respawn (stale pid) and a deleted/absent handshake.
+// ============================================================================
+
+export type HubProbe = "unarmed" | "armed" | "down";
+
+/** Classify a hub-engine probe result. Pure — the fetch wrapper feeds it. */
+export function classifyHubProbe(r: { reached: boolean; status?: number }): HubProbe {
+  if (!r.reached) return "down";
+  // An armed engine 401/403s an anonymous request; the unarmed hub answers.
+  if (r.status === 401 || r.status === 403) return "armed";
+  return "unarmed";
+}
+
+/** Probe 127.0.0.1:<port> anonymously and classify it as the unarmed hub, an
+ *  armed peer, or down. Never throws. */
+export async function probeUnarmedHub(port: number): Promise<HubProbe> {
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 3000);
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/`, { signal: ctrl.signal });
+      return classifyHubProbe({ reached: true, status: res.status });
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch {
+    return classifyHubProbe({ reached: false });
+  }
+}
+
+/** Ride the deterministically-probed hub iff this is a server AND the probe
+ *  found the UNARMED hub. Pure. An armed/down probe falls through to the
+ *  handshake-based adopt-or-spawn (poll / fallback). */
+export function shouldRideDeterministicHub(state: { isServerMachine: boolean; hubProbe: HubProbe }): boolean {
+  return state.isServerMachine && state.hubProbe === "unarmed";
+}
+
+// ============================================================================
+// Live yield-back on hub-return (#1607 Slice 3)
+//
+// When a server is in local-fallback (hub genuinely down, running its own engine
+// on FLEET_PORT-2), a returning hub must be picked up WITHOUT a manual reload and
+// WITHOUT breaking an in-flight turn. This pure trigger decides the action from
+// the current activation mode, a fresh hub probe, and the fallback engine's
+// drained state (in-flight turns + SSE subscribers — the same quiescence test as
+// shouldSelfExit). A SILENT live hot-swap is explicitly OUT OF SCOPE (AC3):
+// switching engine/store/password under a live turn drops it, invalidates auth,
+// and re-opens the two-writer window. So:
+//   • "switch-quiesced" — hub back AND fallback drained: safe to tear down the
+//                          local engine, adopt the hub, and clear the banner.
+//   • "prompt"          — hub back BUT fallback busy: an actionable "hub is back —
+//                          switch" prompt; the user picks the moment. Never silent.
+//   • "stay"            — hub not back (probe ≠ unarmed), or not in local-fallback
+//                          (ride-hub / own-engine have no fallback engine to yield).
+//
+// Invariants, asserted as fields by the caller's tests:
+//   • NEVER "switch-quiesced" while busy — a busy fallback is always "prompt".
+//   • Fires only in "local-fallback"; every other mode → "stay".
+// ============================================================================
+
+export type HubYieldAction = "stay" | "switch-quiesced" | "prompt";
+
+export interface HubYieldPlan {
+  action: HubYieldAction;
+  /** Clear the honest "hub down — local engine" banner? Only on a quiesced
+   *  switch (the prompt path clears it once the user accepts, not here). */
+  clearHubDownBanner: boolean;
+}
+
+/** Decide whether/how a local-fallback server yields back to a returning hub.
+ *  Pure — the caller wires the teardown+adopt (switch-quiesced) or the
+ *  notification (prompt). `hubProbe` is a fresh deterministic probe of the hub
+ *  engine port; drained state mirrors shouldSelfExit's quiescence inputs. */
+export function planHubYieldBack(state: {
+  mode: ServerActivationMode;
+  hubProbe: HubProbe;
+  inFlightTurns: number;
+  activeEventStreamSubscribers: number;
+}): HubYieldPlan {
+  // Only a local-fallback window has a fallback engine to yield; ride-hub is
+  // already on the hub, own-engine has no hub to return to.
+  if (state.mode !== "local-fallback") return { action: "stay", clearHubDownBanner: false };
+  // The hub must genuinely be back — an armed peer or a down port is not the hub.
+  if (state.hubProbe !== "unarmed") return { action: "stay", clearHubDownBanner: false };
+  // Hub is back. If the fallback engine is drained, switch quiesced; if a turn
+  // is in flight or a client is streaming, defer to a user-prompted switch —
+  // never drop a live turn (AC3).
+  const busy = state.inFlightTurns > 0 || state.activeEventStreamSubscribers > 0;
+  if (busy) return { action: "prompt", clearHubDownBanner: false };
+  return { action: "switch-quiesced", clearHubDownBanner: true };
 }
 
 // ============================================================================
@@ -270,11 +551,14 @@ export async function challengePassword(port: number, password: string): Promise
 
 /** Build the production deps for adoptOrSpawn.
  *  When `configuredPort` is given, the reclaim seam (#1178) is wired so the
- *  no-handshake path can recover an orphaned port instead of ServeError-looping. */
+ *  no-handshake path can recover an orphaned port instead of ServeError-looping.
+ *  When `hubPollBudgetMs` is given (#1576), the no-handshake path polls for the
+ *  hub's handshake before falling back to cold-spawn — the reboot-race guard. */
 export function buildLiveDeps(
   coldSpawn: () => Promise<{ port: number; pid: number; password: string }>,
   configuredPort?: number,
   log?: (line: string) => void,
+  hubPollBudgetMs?: number,
 ): AdoptOrSpawnDeps {
   return {
     healthCheck: probeHealth,
@@ -285,6 +569,7 @@ export function buildLiveDeps(
     configuredPort,
     probePort: configuredPort !== undefined ? probePortOccupant : undefined,
     reclaimPort: configuredPort !== undefined ? reclaimOrphanPort : undefined,
+    hubPollBudgetMs,
     log,
   };
 }
@@ -319,6 +604,151 @@ export async function probePortOccupant(
   const pid = pidHoldingPort(port);
   if (pid === undefined) return { occupied: false, isOurServer: false };
   return { occupied: true, isOurServer: isOpencodeServer(pid), pid };
+}
+
+// ============================================================================
+// Machine-wide stray-engine sweep (#1592)
+//
+// The adopt-or-spawn guard (#1145) and its orphan-reclaim (#1178) only ever
+// probe the CONFIGURED port. An engine on any OTHER port — a stale install, a
+// second workspace whose window died — is invisible to them, so it is neither
+// adopted nor reaped and squats forever (with its MCP child tree). This sweep
+// closes that gap: after adopt-or-spawn resolves, enumerate EVERY `opencode
+// serve` on the machine and reap the ones that are neither the engine we kept
+// nor still serving a live client. Every I/O boundary is an injected seam.
+// ============================================================================
+
+export interface StrayEngine {
+  pid: number;
+  port: number;
+}
+
+export interface SweepStrayEnginesDeps {
+  /** The engine PID to preserve — the one we adopted or cold-spawned. When
+   *  undefined (no handshake yet), only the live-client check protects an
+   *  engine from being reaped. */
+  keepPid: number | undefined;
+  /** The launchd hub engine's PID (from hub-engine.pid), when this machine has
+   *  one. A HARD protection: the hub is NEVER reaped, independent of keepPid or
+   *  the live-client check — so a future call site that bypasses the never-sweep
+   *  guard (#1576) or passes a wrong keepPid cannot SIGTERM the hub and
+   *  reintroduce the churn (#1607 Slice 4). Undefined on a standalone machine,
+   *  where behavior is unchanged. */
+  hubEnginePid?: number | undefined;
+  /** Enumerate all `opencode serve` engines on the machine. */
+  listOpencodeEngines: () => Promise<StrayEngine[]>;
+  /** Does this engine's port still have an external client connected? A live
+   *  second workspace's engine must never be reaped. */
+  hasLiveClient: (port: number) => Promise<boolean>;
+  /** SIGTERM→SIGKILL the engine; returns whether it was confirmed dead. */
+  killEngine: (pid: number) => Promise<boolean>;
+  log?: (line: string) => void;
+}
+
+export interface SweepResult {
+  /** PIDs reaped (kill confirmed). */
+  reaped: number[];
+  /** PIDs preserved — the kept engine or engines with a live client. */
+  kept: number[];
+  /** PIDs we tried to reap but could not confirm dead. */
+  failed: number[];
+}
+
+/** Reap every `opencode serve` on the machine that is neither the engine we
+ *  kept (keepPid) nor still serving a live client. Pure decision logic over
+ *  injected seams — safe to unit-test without touching real processes. */
+export async function sweepStrayEngines(
+  deps: SweepStrayEnginesDeps,
+): Promise<SweepResult> {
+  const result: SweepResult = { reaped: [], kept: [], failed: [] };
+  const engines = await deps.listOpencodeEngines();
+  for (const { pid, port } of engines) {
+    // #1607 Slice 4: HARD hub protection — the launchd hub engine is never
+    // reaped, independent of keepPid or the live-client check. This makes "zero
+    // SIGTERMs to the hub PID" structural, so a call site that bypasses the
+    // never-sweep guard (or passes a wrong keepPid) still cannot reap the hub.
+    if (deps.hubEnginePid !== undefined && pid === deps.hubEnginePid) {
+      deps.log?.(`[sweep] engine PID ${pid} on port ${port} is the fleet hub — never reaped [#1607]`);
+      result.kept.push(pid);
+      continue;
+    }
+    if (deps.keepPid !== undefined && pid === deps.keepPid) {
+      result.kept.push(pid);
+      continue;
+    }
+    if (await deps.hasLiveClient(port)) {
+      deps.log?.(`[sweep] engine PID ${pid} on port ${port} has a live client — keeping`);
+      result.kept.push(pid);
+      continue;
+    }
+    deps.log?.(`[sweep] reaping stray engine PID ${pid} on port ${port} (no client, not the adopted engine)`);
+    const killed = await deps.killEngine(pid);
+    if (killed) result.reaped.push(pid);
+    else result.failed.push(pid);
+  }
+  return result;
+}
+
+/** Production seam: enumerate all `opencode serve` engines and their ports via
+ *  `lsof`/`ps`. Best-effort — returns [] on any failure. */
+export async function listOpencodeEngines(): Promise<StrayEngine[]> {
+  try {
+    const { execSync } = require("node:child_process") as typeof import("node:child_process");
+    // Ports held LISTEN by an opencode process, with their PIDs.
+    const out = execSync(`lsof -nP -iTCP -sTCP:LISTEN`, { timeout: 5000 }).toString();
+    const engines: StrayEngine[] = [];
+    const seen = new Set<number>();
+    for (const line of out.split("\n")) {
+      if (!/opencode/i.test(line)) continue;
+      const cols = line.trim().split(/\s+/);
+      const pid = parseInt(cols[1] ?? "", 10);
+      const nameCol = cols[cols.length - 1] ?? "";
+      const portMatch = nameCol.match(/:(\d+)$/);
+      if (!Number.isInteger(pid) || !portMatch) continue;
+      if (!isOpencodeServer(pid)) continue; // confirm it is `opencode serve`
+      if (seen.has(pid)) continue;
+      seen.add(pid);
+      engines.push({ pid, port: parseInt(portMatch[1], 10) });
+    }
+    return engines;
+  } catch {
+    return [];
+  }
+}
+
+/** Production seam: does the port have an ESTABLISHED connection from a PID
+ *  OTHER than the engine itself (i.e. a real external client)? */
+export async function hasLiveClient(port: number): Promise<boolean> {
+  try {
+    const { execSync } = require("node:child_process") as typeof import("node:child_process");
+    const enginePid = pidHoldingPort(port);
+    const out = execSync(`lsof -nP -iTCP:${port} -sTCP:ESTABLISHED`, { timeout: 5000 }).toString();
+    for (const line of out.split("\n").slice(1)) {
+      const cols = line.trim().split(/\s+/);
+      const pid = parseInt(cols[1] ?? "", 10);
+      if (!Number.isInteger(pid)) continue;
+      if (enginePid !== undefined && pid === enginePid) continue; // the engine's own loopback
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/** Production reclaim: SIGTERM then SIGKILL an engine by PID; verify dead.
+ *  The killEngine seam for sweepStrayEngines — reaps by PID (any port). */
+export async function reclaimEnginePid(pid: number): Promise<boolean> {
+  const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+  if (!isPidAlive(pid)) return true;
+  try { process.kill(pid, "SIGTERM"); } catch { /* re-probe decides */ }
+  for (let i = 0; i < 6; i++) {
+    if (!isPidAlive(pid)) return true;
+    await sleep(250);
+  }
+  try { process.kill(pid, "SIGKILL"); } catch { /* re-probe decides */ }
+  await sleep(500);
+  return !isPidAlive(pid);
 }
 
 /** Production reclaim: SIGTERM then SIGKILL the port holder; verify freed.
@@ -425,17 +855,30 @@ export interface AuditAdoptedEngineDeps {
  *  config, and surface the (non-blocking) stale notice when they diverge.
  *  Returns the comparison, or undefined when there is nothing to compare (no
  *  recorded hashes). Adopt-then-notice, never a hard gate — the survivor's
- *  in-flight turns are preserved; the user chooses whether to restart. */
+ *  in-flight turns are preserved; the user chooses whether to restart.
+ *
+ *  #1579: unarmed (hub) engines have no OPENCODE_CONFIG_CONTENT — their
+ *  configHash is always empty. Comparing it against the extension's config
+ *  hash is meaningless and would fire the "Restart Engine" popup on every
+ *  adoption. When `unarmed` is true, only the binaryHash is compared. */
 export async function auditAdoptedEngine(
   adoptedHashes: { binaryHash: string; configHash: string } | undefined,
   onDisk: { binaryPath: string; configContent: string },
   deps: AuditAdoptedEngineDeps,
+  unarmed?: boolean,
 ): Promise<StaleEngineResult | undefined> {
   if (!adoptedHashes) return undefined;
   const onDiskHashes = {
     binaryHash: await deps.hashFile(onDisk.binaryPath).catch(() => ""),
     configHash: deps.hashString(onDisk.configContent),
   };
+  // Hub engines: compare binary only — configHash is structurally empty.
+  if (unarmed) {
+    const binaryChanged = adoptedHashes.binaryHash !== "" && adoptedHashes.binaryHash !== onDiskHashes.binaryHash;
+    const result: StaleEngineResult = { stale: binaryChanged, binaryChanged, configChanged: false };
+    surfaceStaleNotice(result, deps.notify);
+    return result;
+  }
   const result = detectStaleEngine(adoptedHashes, onDiskHashes);
   surfaceStaleNotice(result, deps.notify);
   return result;
@@ -462,6 +905,70 @@ export async function restartAdoptedEngine(deps: RestartAdoptedEngineDeps): Prom
   deps.log?.(`[stale-engine] restart requested — reclaiming adopted server on port ${deps.port}`);
   const freed = await deps.reclaimPort(deps.port).catch(() => false);
   deps.log?.(`[stale-engine] port ${deps.port} freed=${freed} — deleting handshake + reloading window`);
+  deps.deleteHandshake();
+  await deps.reloadWindow();
+}
+
+// ============================================================================
+// Seamless engine toggle-ON for a hub window (#1615, follow-up to #1608)
+//
+// The reclaim-and-readopt plan used to end in a full window reload
+// (restartAdoptedEngine). For the TOGGLE-ON path we can do better: after
+// reclaiming the hub port (launchd respawns a fresh hub engine), poll that port
+// until the new engine answers, then reattach the SSE stream and push `on` — no
+// reload. If the respawned hub does not answer within the poll budget we fall
+// back to the proven reload path, so the toggle is never left stuck.
+//
+// This is DELIBERATELY separate from restartAdoptedEngine: the stale-engine
+// notice path swaps to a NEW build and a fresh window is legitimately wanted
+// there, so it keeps reloading. Only the toggle re-adopts in place.
+// ============================================================================
+
+export type ReadoptMode = "in-place-readopt" | "reload-readopt";
+
+/** Decide whether the toggle-on re-adopt can complete in place. Pure: in-place
+ *  when the respawned hub answered within the poll budget, else a safe reload. */
+export function planReadoptMode(state: { hubAnswered: boolean }): ReadoptMode {
+  return state.hubAnswered ? "in-place-readopt" : "reload-readopt";
+}
+
+export interface ReadoptHubInPlaceDeps {
+  /** Hub engine port to reclaim + re-adopt. */
+  port: number;
+  /** SIGTERM→SIGKILL the port holder so launchd respawns a fresh hub. */
+  reclaimPort: (port: number) => Promise<boolean>;
+  /** Poll the hub port with a bounded budget; resolves to the ready URL when the
+   *  respawned hub answers, or undefined on timeout. */
+  pollHub: (port: number) => Promise<string | undefined>;
+  /** Reattach the live SSE client to the fresh ready URL (in-place success). */
+  reattachSse: (url: string) => void;
+  /** Push the app-facing engine-state (`on` on success). */
+  pushEngineState: (state: "on" | "booting" | "off" | "stopping") => void;
+  /** Drop the handshake before the fallback reload (mirrors restartAdoptedEngine). */
+  deleteHandshake: () => void;
+  /** Fallback: reload the window so its adopt-or-spawn gate re-adopts. */
+  reloadWindow: () => void | Promise<void>;
+  log?: (line: string) => void;
+}
+
+/** Re-adopt the launchd-respawned hub IN PLACE for the toggle-on path (#1615).
+ *  Order: reclaim (frees the port so launchd respawns) → poll the fresh hub →
+ *  on answer, reattach SSE + push `on` (no reload); on timeout, delete the
+ *  handshake + reload (the old safe path). Reclaim ALWAYS precedes the poll,
+ *  and the two outcomes (reattach / reload) are mutually exclusive. */
+export async function readoptHubInPlace(deps: ReadoptHubInPlaceDeps): Promise<void> {
+  deps.log?.(`[boot] toggle-on: reclaiming hub engine on port ${deps.port} for in-place re-adopt`);
+  const freed = await deps.reclaimPort(deps.port).catch(() => false);
+  deps.log?.(`[boot] port ${deps.port} freed=${freed} — polling for the respawned hub`);
+  const readyUrl = await deps.pollHub(deps.port).catch(() => undefined);
+  const mode = planReadoptMode({ hubAnswered: readyUrl !== undefined });
+  if (mode === "in-place-readopt" && readyUrl !== undefined) {
+    deps.log?.(`[boot] hub back at ${readyUrl} — reattaching SSE in place (no reload)`);
+    deps.reattachSse(readyUrl);
+    deps.pushEngineState("on");
+    return;
+  }
+  deps.log?.(`[boot] respawned hub did not answer within budget — deleting handshake + reloading`);
   deps.deleteHandshake();
   await deps.reloadWindow();
 }

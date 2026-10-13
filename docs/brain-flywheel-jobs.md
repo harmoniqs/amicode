@@ -1,4 +1,4 @@
-# Brain flywheel jobs — the curation motions on cadence (slices 6 + 8, #1685 / #1687)
+# Brain flywheel jobs — the curation motions on cadence (slices 6, 8 + 9, #1685 / #1687 / #1688)
 
 The dream cycle's manual invocations — `/dream promote`, `/dream prune`,
 `/dream synthesize` (and the `/dream` orchestration that wrapped them) — are
@@ -12,7 +12,7 @@ The verbs (all dry-run by default, `--apply` writes):
 
 | job | verb | cadence | what it does |
 |---|---|---|---|
-| `promote` | `amico claims promote` | weekly | scope-team live claims → ONE PR-body bundle per vault, 10-cap, **proposes only** |
+| `promote` | `amico claims promote` | weekly | scope-team live claims → ONE PR-body bundle per vault, 10-cap, **proposes only**; `--tier public` (#1688) targets the kind: public mount — the brain's outbound face |
 | `prune` | `amico claims prune` | weekly | schema-check (the claims lint) + unambiguous hygiene fixes; drift flagged for a human |
 | `synthesize` | `amico claims synthesize` | weekly | cross-claim tag clusters → hopper proposals, **never strategy** |
 | `brain-health` | `amico brain-health` | monthly | the five KPI families over pass receipts + claim state → the dated brief; **measures, never acts** (#1687) |
@@ -48,6 +48,44 @@ no git, no `gh`, no network — it **proposes**; auto-merge is structurally
 impossible. Only after a merge does anything change downstream (the
 merged-PR writeback of promotion stamps is a later, human-anchored step —
 the dream-promote Step 1 semantics).
+
+## promote --tier public — the brain's outbound face (slice 9, #1688)
+
+`amico claims promote --tier public [--to <mount>] [--vault <root>] ...`
+
+The same weekly job, the same bundle machinery, the outer destination: the
+pool is `scope: public` live claims, and the destination is the mount of
+kind `public` — resolved by the mount-stack conventions (the
+`.amico-vault.toml` marker, `kind = "public"`, read precedence's last
+position), **verified, never guessed**: `--to` overrides and is itself
+marker-verified (a non-public `--to` is refused); no public mount and no
+`--to` → refused. There is no second promotion path — one job id, two tiers.
+
+**The two-note visibility split is checked at promotion time** (#1688's AC): a
+claim is **refused by name** — never silently dropped, never stamped, back in
+the pool next run — when either taint class fires:
+
+- an evidence pointer resolving into **private-mechanism content** (a
+  `visibility: local` note; absent visibility is the vault default local);
+- a `mechanism:` **wikilink to a local note** carried in the claim's own
+  note (the public-safe half's pointer to its private mechanism).
+
+Chat / paper / meeting-note pointers are substrate provenance ids — opaque,
+content-free — they pass: one substrate, provenance intact on every copy.
+The check is mechanical (pointers + links); the author owns the statement's
+text.
+
+The public bundle carries a third artifact: `INDEX.md`, the public vault's
+claims index, **generated from the bundle's claims** — the public tier is
+generated, never hand-authored; hand-edits are regenerated away by the next
+bundle. The copies' provenance footers carry `promoted_from` **and**
+`promoted_to` — the both-ways stamps; the source claim's own `promoted_to`
+writeback remains the merged-PR-driven human step.
+
+Live seam, honestly: no `kind: public` mount and no `scope: public` claims
+exist on this machine yet — the test fixtures construct both (the committed
+public-registry + public-mount fixtures), and the first real run lands when
+the org stands up a public mount and authors public-safe claims into it.
 
 ## prune — hygiene diffs + flagged drift
 

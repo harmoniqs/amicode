@@ -66,19 +66,30 @@ const layer = Layer.effect(
       // ── shared-store plumbing (#1760 P2) ──────────────────────────────────
       // Lazy runner creation is the ghost-visibility-at-creation seam: the
       // coordinator claims the session in the shared store the moment this
-      // instance adopts it, not just when it turns busy. Idle drops the claim.
+      // instance adopts it, not just when it turns busy. The claim is
+      // owner-scoped (this process's owner_id), so it can never touch another
+      // instance's registration. onIdle releases it — correctly so even when
+      // the idle is dropped by the #1636 guard, because this runner is done
+      // with the session regardless of whether the event publishes.
       const runtime = RuntimeState.getGlobal()
       if (runtime) {
         const directory = yield* pendingDirectory
         yield* RuntimeState.bestEffort(runtime.register({ sessionID, directory }))
       }
+      // #1636 — draw a fresh per-turn generation for THIS runner and thread it
+      // through both its busy (turn start) and idle (turn end). The generation
+      // counter lives in the SessionStatus service (persistent across turns), not
+      // in the runner (deleted every turn). Stamping the same generation on this
+      // turn's busy and idle lets SessionStatus.set drop a completing turn's late
+      // idle once a newer turn's busy has advanced the generation.
+      const generation = yield* status.nextGeneration(sessionID)
       const next = Runner.make<SessionV1.WithParts>(data.scope, {
         onIdle: Effect.gen(function* () {
           data.runners.delete(sessionID)
           if (runtime) yield* RuntimeState.bestEffort(runtime.unregister({ sessionID }))
-          yield* status.set(sessionID, { type: "idle" })
+          yield* status.set(sessionID, { type: "idle" }, { generation })
         }),
-        onBusy: status.set(sessionID, { type: "busy" }),
+        onBusy: status.set(sessionID, { type: "busy" }, { generation }),
         onInterrupt,
       })
       data.runners.set(sessionID, next)
@@ -96,7 +107,9 @@ const layer = Layer.effect(
       const data = yield* InstanceState.get(state)
       const existing = data.runners.get(sessionID)
       if (!existing) {
-        yield* status.set(sessionID, { type: "idle" })
+        // #1636 — reconcile idle: publish only if not currently busy from a live
+        // turn, so a bare cancel with no runner never supersedes a newer generation.
+        yield* status.set(sessionID, { type: "idle" }, { reconcile: true })
         return
       }
       yield* existing.cancel

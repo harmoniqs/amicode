@@ -36,6 +36,7 @@ import {
   detectPatterns,
   hopperSlug,
   renderHopperNote,
+  renderPublicIndex,
 } from "../src/curation.js";
 import { loadRegistryClaims, type RegistryClaim } from "../src/claims.js";
 import { validateClaim } from "@amicode/schema";
@@ -307,5 +308,143 @@ describe("curation core — fixture hygiene", () => {
   it("the curation fixture loads as a valid claims registry (7 claims, 0 skipped)", () => {
     expect(claims).toHaveLength(7);
     expect(loadRegistryClaims(REGISTRY).skipped).toEqual([]);
+  });
+});
+
+// ── the public tier (amicode #1688, brain flywheel slice 9) ─────────────────────
+//
+// The brain's outbound face: the SAME promote machinery (one bundle, the cap,
+// the state stamp, PROPOSES-only) with the public destination — the pool is
+// scope-public claims, the target is the kind: public mount, the two-note
+// visibility split is checked at promotion time (the verb's check, claims.ts),
+// and the bundle gains the public vault's INDEX.md render. Fixtures: the
+// committed public-registry (the public-safe claim + the two taint decoys +
+// the cross-tier decoy).
+
+const PUBLIC_REGISTRY = join(HERE, "fixtures", "claims", "public-registry");
+const publicClaims = loadRegistryClaims(PUBLIC_REGISTRY).claims;
+
+describe("curation core — the public tier plan (planPromotion { tier: public }, #1688)", () => {
+  it("the public pool is exactly the scope-public live claims, deterministically sorted; cross-tier claims are named, never silent", () => {
+    const plan = planPromotion(publicClaims, readPromoteState(join(tmpdir(), "x.json")), { tier: "public" });
+    expect(plan.selected).toEqual([
+      "best_practice_public_safe.md",
+      "insight_local_evidence.md",
+      "insight_mechanism_link.md",
+    ]);
+    expect(plan.eligible).toEqual(plan.selected);
+    expect(plan.excluded.some((e) => e.includes("insight_team_scope.md") && e.includes("team"))).toBe(true);
+  });
+
+  it("the state stamp and the cap apply identically (the same machinery — no second promotion path)", () => {
+    const state = stampPromoted(readPromoteState(join(tmpdir(), "x.json")), ["best_practice_public_safe.md"], {
+      bundle: "promote-20261001-060000",
+      proposed_at: "2026-10-01T06:00:00.000Z",
+    });
+    const plan = planPromotion(publicClaims, state, { tier: "public" });
+    expect(plan.selected).toEqual(["insight_local_evidence.md", "insight_mechanism_link.md"]);
+  });
+
+  it("the 10-cap holds on the public tier: overflow carries, never drops", () => {
+    const many = Array.from({ length: 12 }, (_, i) => syntheticClaim(`synthetic_${String(i).padStart(2, "0")}.md`, { scope: "public" }));
+    const plan = planPromotion(many, readPromoteState(join(tmpdir(), "x.json")), { tier: "public" });
+    expect(plan.selected).toHaveLength(10);
+    expect(plan.overflow).toEqual(["synthetic_10.md", "synthetic_11.md"]);
+  });
+
+  it("a terminal scope-public claim is named excluded — terminal knowledge never crosses any tier", () => {
+    const terminal = { file: "insight_refuted_public.md", claim: { ...syntheticClaim("x", { scope: "public" }).claim, status: "refuted" } };
+    const plan = planPromotion([...publicClaims, terminal], readPromoteState(join(tmpdir(), "x.json")), { tier: "public" });
+    expect(plan.selected).not.toContain("insight_refuted_public.md");
+    expect(plan.excluded.some((e) => e.includes("insight_refuted_public.md") && e.includes("refuted"))).toBe(true);
+  });
+
+  it("the team tier keeps its pool: a scope-public claim stays excluded BY NAME, now pointing at the public tier's own run", () => {
+    const plan = planPromotion(claims, readPromoteState(join(tmpdir(), "x.json")));
+    expect(plan.selected).not.toContain("insight_public_scope.md");
+    expect(plan.excluded.some((e) => e.includes("insight_public_scope.md") && e.includes("public"))).toBe(true);
+  });
+
+  it("fixture hygiene: the public-registry loads as a valid claims registry (4 claims, 0 skipped)", () => {
+    expect(publicClaims).toHaveLength(4);
+    expect(loadRegistryClaims(PUBLIC_REGISTRY).skipped).toEqual([]);
+  });
+});
+
+describe("curation core — renderPublicIndex (the public vault's index render, generated from claims)", () => {
+  it("is a generated view: provenance header, one row per claim, link + statement + type per row", () => {
+    const safe = publicClaims.filter((c) => c.file === "best_practice_public_safe.md");
+    const text = renderPublicIndex(safe, { sourceVault: "vault-aaron", bundleId: "promote-20261002-120000", now: NOON() });
+    expect(text).toContain("generated view");
+    expect(text).toContain("never hand-authored");
+    expect(text).toContain("#1688");
+    expect(text).toContain("[best_practice_public_safe.md](best_practice_public_safe.md)");
+    expect(text).toContain("Cubic-spline pulse parameterization with bending regularization");
+    expect(text).toContain("best-practice");
+  });
+
+  it("deterministic: same claims + same clock → identical bytes", () => {
+    const safe = publicClaims.filter((c) => c.file === "best_practice_public_safe.md");
+    const once = renderPublicIndex(safe, { sourceVault: "vault-aaron", bundleId: "promote-20261002-120000", now: NOON() });
+    const again = renderPublicIndex(safe, { sourceVault: "vault-aaron", bundleId: "promote-20261002-120000", now: NOON() });
+    expect(once).toBe(again);
+  });
+});
+
+describe("curation core — the public bundle's PR body + copies (#1688)", () => {
+  const SAFE_ENTRY = publicClaims.filter((c) => c.file === "best_practice_public_safe.md");
+  const REFUSALS = [
+    "insight_local_evidence.md: memory-card/fluxonium_private_params.md: evidence resolves into private-mechanism content",
+    'insight_mechanism_link.md: mechanism link to a local note "[[fluxonium-private-params]]"',
+  ];
+
+  it("the body targets the public mount, carries the refusals BY NAME, and the INDEX.md step", () => {
+    const plan = planPromotion(SAFE_ENTRY, readPromoteState(join(tmpdir(), "x.json")), { tier: "public" });
+    const body = renderPrBody(plan, SAFE_ENTRY, {
+      sourceVault: "vault-aaron",
+      bundleId: "promote-20261002-120000",
+      now: NOON(),
+      tier: "public",
+      destination: "vault-public",
+      targetPath: "/tmp/opencode/fixture-root/vault-public",
+      refusals: REFUSALS,
+    });
+    expect(body).toContain("promote: vault-aaron → vault-public (1 claims, 2026-10-02)");
+    expect(body).toContain("`scope: public`");
+    expect(body).toContain("Refused by the two-note check");
+    expect(body).toContain("insight_local_evidence.md");
+    expect(body).toContain("insight_mechanism_link.md");
+    expect(body).toContain("INDEX.md");
+    expect(body).toContain("/tmp/opencode/fixture-root/vault-public");
+    // never auto-merged: the same trust boundary on the outer face
+    expect(body).toContain("never opens a PR");
+    expect(body).toMatch(/human/i);
+  });
+
+  it("the public copy's provenance carries promoted_from AND promoted_to (both-ways stamps)", () => {
+    const raw = readFileSync(join(PUBLIC_REGISTRY, "best_practice_public_safe.md"), "utf8");
+    const copy = renderPromotionCopy(raw, {
+      file: "best_practice_public_safe.md",
+      sourceVault: "vault-aaron",
+      bundleId: "promote-20261002-120000",
+      now: NOON(),
+      targetVault: "vault-public",
+    });
+    expect(copy.startsWith(raw)).toBe(true);
+    expect(copy).toContain("promoted_from: vault-aaron");
+    expect(copy).toContain("promoted_to: vault-public");
+    expect(copy).toContain("promote-20261002-120000");
+  });
+
+  it("the team copy keeps both-ways stamps with the team destination default", () => {
+    const raw = readFileSync(join(REGISTRY, "insight_two_qubit_harder.md"), "utf8");
+    const copy = renderPromotionCopy(raw, {
+      file: "insight_two_qubit_harder.md",
+      sourceVault: "vault-aaron",
+      bundleId: "promote-20261002-120000",
+      now: NOON(),
+    });
+    expect(copy).toContain("promoted_from: vault-aaron");
+    expect(copy).toContain("promoted_to: armonissima");
   });
 });

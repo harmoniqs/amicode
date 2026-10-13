@@ -69,6 +69,20 @@ Chat-only. Selecting an item inside a Panel acts in the Chat rather than navigat
 away from it.
 _Avoid_: Modal, page, route, flyout
 
+**Work Column**:
+The session's supporting column beside the **Chat** — a strip of tabs over the work a
+session produces: the files it changed, the file tabs a researcher opens, and named
+surfaces (Context, Pulse Inspector, Preview). Most tabs are scoped to the session's own
+content. **Home** and **Fleet Manager** are its two **global exceptions** — window-wide
+concerns surfaced as Work Column tabs rather than session content: Home is the
+resume/overview surface, and Fleet Manager consolidates fleet management (the device
+roster and capability chips, this machine's Server mode / transport / Go-Standalone /
+Repair, the durable hub service on a server, and fleet versions — absorbing the retired
+Fleet & Versions panel). Every tab closes and reorders alike; the two exceptions aside, a
+tab tracks something the session itself did.
+_Avoid_: side panel (as the whole), review pane (that is one tab), Fleet & Versions panel
+(retired — absorbed into the Fleet Manager tab)
+
 **Account zone**:
 The cluster at the foot of the **Rail** for identity and configuration, distinct from
 the navigation surfaces above it. Holds the researcher profile (About You), backend

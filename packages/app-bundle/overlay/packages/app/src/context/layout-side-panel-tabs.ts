@@ -1,6 +1,6 @@
 import { SESSION_PREVIEW_TAB } from "./layout-tabs"
 
-export const SIDE_PANEL_TAB_IDS = ["home", "review", "context", "pulseInspector", SESSION_PREVIEW_TAB] as const
+export const SIDE_PANEL_TAB_IDS = ["home", "review", "context", "pulseInspector", "fleetManager", SESSION_PREVIEW_TAB] as const
 
 export type SidePanelTabID = (typeof SIDE_PANEL_TAB_IDS)[number]
 

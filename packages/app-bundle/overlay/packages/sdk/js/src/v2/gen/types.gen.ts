@@ -1518,6 +1518,7 @@ export type GlobalEvent = {
         properties: {
           sessionID: string
           status: SessionStatus
+          seq: number
         }
       }
     | {
@@ -2849,6 +2850,7 @@ export type SessionStatus2 = {
   data: {
     sessionID: string
     status: SessionStatus
+    seq: number
   }
 }
 
@@ -6984,6 +6986,7 @@ export type EventSessionStatus = {
   properties: {
     sessionID: string
     status: SessionStatus
+    seq: number
   }
 }
 
@@ -8149,6 +8152,10 @@ export type FileWriteErrors = {
    * Bad request
    */
   400: BadRequestError
+  /**
+   * ForbiddenError
+   */
+  403: ForbiddenError
 }
 
 export type FileWriteError = FileWriteErrors[keyof FileWriteErrors]

@@ -27,31 +27,19 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { homedir } from "node:os";
+import { writeFleetConfig, type FleetConfig } from "@amicode/schema";
+
+// The FleetConfig shape + the atomic writeFleetConfig writer were HOISTED to
+// @amicode/schema (amicode#1319) so `amico fleet enroll` (in @amicode/amico-run,
+// which cannot import this extension) writes the SAME role+canonical record.
+// Re-exported here so every existing caller/test (goStandalone, migration, the
+// fleet_fallback suite) is byte-for-byte unchanged.
+export { writeFleetConfig, type FleetConfig } from "@amicode/schema";
 
 export const FLEET_DIR = path.join(homedir(), ".amico", "ops", "fleet");
 export const FLEET_CONFIG_PATH = path.join(FLEET_DIR, "fleet.json");
 // Legacy path — migrated to fleet.json on read
 const LEGACY_FALLBACK_PATH = path.join(FLEET_DIR, "fallback.json");
-
-export interface FleetConfig {
-  role: "standalone" | "server" | "client";
-  canonical?: {
-    host?: string;
-    port?: number;
-    sshAlias?: string;
-  };
-  /** Previous settings (for re-enrollment if the user wants to rejoin later). */
-  previousBinary?: string;
-  previousPort?: number;
-}
-
-/** Write fleet config atomically (tmp + rename). */
-export function writeFleetConfig(config: FleetConfig, p: string = FLEET_CONFIG_PATH): void {
-  fs.mkdirSync(path.dirname(p), { recursive: true });
-  const tmp = `${p}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(config, null, 2) + "\n");
-  fs.renameSync(tmp, p);
-}
 
 /** Go Standalone: write role=standalone to fleet.json. Preserves previous settings for
  *  potential re-enrollment. Removes legacy fallback.json if present. Paths

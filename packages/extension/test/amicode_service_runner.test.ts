@@ -13,10 +13,10 @@
 //  - FAIL-LOUD (always on): a missing engine binary, a shelf without an app
 //    dist, and an engine that never becomes healthy each fail with a NAMED
 //    reason (never a silent half-boot) and tear the spawned child down.
-import { spawn } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, writeFileSync, readdirSync, readFileSync } from "node:fs";
+import { spawn, execSync } from "node:child_process";
+import { chmodSync, copyFileSync, existsSync, mkdtempSync, writeFileSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, dirname } from "node:path";
+import { join, dirname, isAbsolute, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 import { createServer } from "node:net";
@@ -24,16 +24,43 @@ import {
   AmicodeServiceRunnerError,
   bootAmicodeServiceRunner,
   type AmicodeServiceRunnerBoot,
+  cleanupStalePid,
+  writePidFile,
+  removePidFile,
+  isProcessAlive,
+  isOpencodeProcess,
+  resolveShippedSkillsDir,
 } from "../src/amicode_service_runner";
 import { APP_SHELF_NEEDS_SETUP_MARKER } from "../src/amicode_service/app_shelf";
 import { serverAuthHeader, serverAuthToken } from "../src/server_auth";
+import {
+  readHandshake,
+  classifyGate,
+  UNARMED_PASSWORD,
+  PROTOCOL_VERSION,
+} from "../src/server_handshake";
 
 const PKG_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const ENGINE_BIN = join(PKG_ROOT, "vendor", "opencode", `${process.platform}-${process.arch}`, "opencode");
 const APP_DIST = join(PKG_ROOT, "dist", "app");
-
 const engineAvailable = existsSync(ENGINE_BIN);
 const distAvailable = existsSync(join(APP_DIST, "index.html"));
+
+/** Poll a predicate until it holds or the timeout elapses (returns its final
+ *  value). The PID-safety tests spawn a real process and then assert
+ *  `ps -o comm=` sees it as "opencode"; right after `spawn()` there is an
+ *  exec→ps visibility window that widens under full-suite CPU contention (a
+ *  flake that only surfaced in the parallel suite, never in isolation). Polling
+ *  closes that window without weakening the assertion — the sanity check still
+ *  requires the process to become alive AND recognized, just not instantly. */
+async function waitUntil(pred: () => boolean, timeoutMs = 3_000, stepMs = 25): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (pred()) return true;
+    await new Promise((r) => setTimeout(r, stepMs));
+  }
+  return pred();
+}
 
 describe.skipIf(!engineAvailable || !distAvailable)(
   "amicode service runner (live: vendored engine + built dist)",
@@ -194,9 +221,12 @@ describe("amicode service runner spawn posture (headless, fake engine — no ven
 
   /** A stand-in engine binary (the shebang-node fake-engine idiom): answers
    *  the health probe with 200 and — when FAKE_ENGINE_DUMP is set in its env
-   *  (rides the runner's engineEnv passthrough) — records whether
-   *  OPENCODE_SERVER_PASSWORD was present at spawn. argv: [node, script,
-   *  "serve", "--port", <port>]. */
+   *  (rides the runner's engineEnv passthrough) — records, AS THE CHILD SEES
+   *  THEM, whether OPENCODE_SERVER_PASSWORD was present at spawn, the raw
+   *  OPENCODE_DISABLE_EXTERNAL_SKILLS value (#1581 AC2 — env-only), and the
+   *  raw OPENCODE_CONFIG_CONTENT string (#1581 AC1 — the machine skill root
+   *  rides `skills.paths` in this JSON). argv: [node, script, "serve",
+   *  "--port", <port>]. */
   function writeFakeEngine(dir: string): string {
     const bin = join(dir, "fake-engine");
     writeFileSync(
@@ -206,7 +236,11 @@ const { createServer } = require("node:http");
 const { writeFileSync } = require("node:fs");
 const port = Number(process.argv[4] ?? 0);
 if (process.env.FAKE_ENGINE_DUMP)
-  writeFileSync(process.env.FAKE_ENGINE_DUMP, JSON.stringify({ armed: "OPENCODE_SERVER_PASSWORD" in process.env }));
+  writeFileSync(process.env.FAKE_ENGINE_DUMP, JSON.stringify({
+    armed: "OPENCODE_SERVER_PASSWORD" in process.env,
+    suppress: process.env.OPENCODE_DISABLE_EXTERNAL_SKILLS,
+    config: process.env.OPENCODE_CONFIG_CONTENT,
+  }));
 createServer((_req, res) => {
   res.writeHead(200, { "content-type": "text/plain" });
   res.end("fake engine up");
@@ -293,6 +327,188 @@ createServer((_req, res) => {
     expect(typeof boot.enginePassword).toBe("string");
     expect((boot.enginePassword ?? "").length).toBeGreaterThan(0);
   }, 30_000);
+
+  // #1581 Layer 1 (machine-stable, on the hub spawn): the launchd-provisioned
+  // hub engine must receive the two vars the pre-#1576 spawn path
+  // (server_auth.buildServerSpawnEnv) injected but the runner dropped —
+  // OPENCODE_DISABLE_EXTERNAL_SKILLS (AC2, env-only: a RuntimeFlags boot read,
+  // absent from the Config schema) and an OPENCODE_CONFIG_CONTENT whose
+  // `skills.paths` carries the machine skill root (AC1-machine: the skill
+  // catalog mount, so a session's registry is not the bare ~/.claude/skills
+  // global pack). Asserted AS THE CHILD SEES THEM (env dump), not inferred.
+  it("#1581: the hub engine child carries external-skill suppression + a machine skill root in OPENCODE_CONFIG_CONTENT", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "amicode-runner-hubcfg-"));
+    const dump = join(dir, "env-dump.json");
+    const machineSkillRoot = join(mkdtempSync(join(tmpdir(), "amicode-machine-skills-")), "skills");
+    const boot = await bootAmicodeServiceRunner({
+      engineBin: writeFakeEngine(dir),
+      appDistRoot: writeStubShelf(mkdtempSync(join(tmpdir(), "amicode-runner-hubcfg-shelf-"))),
+      engineUnarmed: true,
+      machineSkillRoot,
+      engineEnv: { FAKE_ENGINE_DUMP: dump },
+      healthTimeoutMs: 10_000,
+      servicePort: 0,
+      enginePort: 0,
+      log: () => undefined,
+    });
+    boots.push(boot);
+
+    const dumped = JSON.parse(readFileSync(dump, "utf8")) as { suppress?: string; config?: string };
+
+    // AC2: external-skill suppression is in effect on the adopted engine.
+    expect(dumped.suppress).toBe("true");
+
+    // AC1-machine (anti-fake-green): parse the config the child actually
+    // received and assert the machine skill root is an ACTUAL entry in
+    // skills.paths — not merely that the var is present/non-empty.
+    expect(typeof dumped.config).toBe("string");
+    const parsed = JSON.parse(dumped.config as string) as { skills?: { paths?: string[] } };
+    expect(Array.isArray(parsed.skills?.paths)).toBe(true);
+    expect(parsed.skills?.paths).toContain(machineSkillRoot);
+  }, 30_000);
+
+  // #1581 Layer 1 (self-sufficient default): on the live fleet the installer/
+  // plist does NOT set AMICODE_MACHINE_SKILL_ROOT, so WITHOUT a default the hub
+  // would ship suppression + an EMPTY skill root — the adopted engine would get
+  // zero usable skills, strictly worse than pre-#1576. The runner must default
+  // the machine skill root to the SHIPPED library skills dir
+  // (packages/extension/skills) — resolved relative to the runner MODULE (holds
+  // for the installed VSIX; the hub cwd is a throwaway temp dir), so
+  // director-core/autodev/implement-issue always ship alongside suppression.
+  it("#1581: with NO machine-skill-root override, the hub engine defaults skills.paths to the SHIPPED library skills dir (director-core resolvable)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "amicode-runner-hubcfg-default-"));
+    const dump = join(dir, "env-dump.json");
+    const boot = await bootAmicodeServiceRunner({
+      engineBin: writeFakeEngine(dir),
+      appDistRoot: writeStubShelf(mkdtempSync(join(tmpdir(), "amicode-runner-hubcfg-default-shelf-"))),
+      engineUnarmed: true,
+      // NO machineSkillRoot — exercise the self-sufficient default.
+      engineEnv: { FAKE_ENGINE_DUMP: dump },
+      healthTimeoutMs: 10_000,
+      servicePort: 0,
+      enginePort: 0,
+      log: () => undefined,
+    });
+    boots.push(boot);
+
+    const dumped = JSON.parse(readFileSync(dump, "utf8")) as { suppress?: string; config?: string };
+
+    // Suppression is unconditional — stays true even without an override.
+    expect(dumped.suppress).toBe("true");
+
+    // The default resolved to the shipped library skills dir — asserted AS THE
+    // CHILD SEES IT (env dump), against the runner's OWN resolver (no drift).
+    const shipped = resolveShippedSkillsDir();
+    expect(shipped).toBeDefined();
+    expect(typeof dumped.config).toBe("string");
+    const parsed = JSON.parse(dumped.config as string) as { skills?: { paths?: string[] } };
+    expect(parsed.skills?.paths).toContain(shipped);
+
+    // Anti-fake-green: the resolved dir is REALLY packages/extension/skills AND
+    // it actually holds the workflow catalog — not merely a non-empty string.
+    expect((shipped as string).replace(/\\/g, "/")).toMatch(/packages\/extension\/skills$/);
+    expect(existsSync(join(shipped as string, "director-core"))).toBe(true);
+  }, 30_000);
+
+  // #1581 Layer 2 (option f — the FULL machine-stable config on the hub spawn):
+  // L1 only put a machine-stable SUBSET (skills.paths=[machineRoot]) on the hub
+  // env. The adopted launchd hub still ran WITHOUT the amico instruction merge,
+  // the external_directory permission grants, the amicode MCP tool surface, and
+  // the plan-first default_agent — every session on the adopted engine lost them
+  // (the #1581 regression, only partially closed by L1). L2 extends the hub
+  // env's OPENCODE_CONFIG_CONTENT to the FULL machine-stable config that
+  // buildOpencodeConfigContent emits, MINUS the genuinely per-workspace inputs
+  // (project/environment/workspace skills — deferred to L3).
+  //
+  // Asserted AS THE CHILD SEES IT (env dump → JSON.parse twice: the dump is
+  // JSON, and OPENCODE_CONFIG_CONTENT inside it is itself a JSON string).
+  // ANTI-FAKE-GREEN: assert on ACTUAL path strings / values inside the parsed
+  // config, never mere key presence.
+  it("#1581 L2: the hub engine child's OPENCODE_CONFIG_CONTENT is the FULL machine-stable config (instructions + external_directory grants + mcp.amicode + default_agent), not just skills.paths", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "amicode-runner-hubcfg-full-"));
+    const dump = join(dir, "env-dump.json");
+    const boot = await bootAmicodeServiceRunner({
+      engineBin: writeFakeEngine(dir),
+      appDistRoot: writeStubShelf(mkdtempSync(join(tmpdir(), "amicode-runner-hubcfg-full-shelf-"))),
+      engineUnarmed: true,
+      // NO machineSkillRoot override — exercise the self-sufficient default,
+      // the shape the live launchd hub actually runs.
+      engineEnv: { FAKE_ENGINE_DUMP: dump },
+      healthTimeoutMs: 10_000,
+      servicePort: 0,
+      enginePort: 0,
+      log: () => undefined,
+    });
+    boots.push(boot);
+
+    const dumped = JSON.parse(readFileSync(dump, "utf8")) as { suppress?: string; config?: string };
+
+    // AC2 stays intact: suppression is unconditional.
+    expect(dumped.suppress).toBe("true");
+
+    // The config the child received parses (JSON string → object).
+    expect(typeof dumped.config).toBe("string");
+    const cfg = JSON.parse(dumped.config as string) as {
+      instructions?: string[];
+      default_agent?: string;
+      skills?: { paths?: string[] };
+      mcp?: { amicode?: { type?: string; enabled?: boolean; command?: string[] } };
+      permission?: { external_directory?: Record<string, string>; bash?: string; edit?: string };
+    };
+
+    // AC3 — the amico instruction merge is present: instructions is a non-empty
+    // array carrying a REAL merged AGENTS.md path (an absolute path that exists
+    // on disk, produced idempotently at spawn — never a per-workspace repo file).
+    expect(Array.isArray(cfg.instructions)).toBe(true);
+    expect((cfg.instructions ?? []).length).toBeGreaterThan(0);
+    const agentsPath = (cfg.instructions ?? [])[0];
+    expect(typeof agentsPath).toBe("string");
+    expect(agentsPath.startsWith("/")).toBe(true); // absolute
+    expect(existsSync(agentsPath)).toBe(true); // the merged AGENTS.md was written
+    // The merged AGENTS.md is a real, non-empty instruction file.
+    expect(readFileSync(agentsPath, "utf8").length).toBeGreaterThan(0);
+
+    // AC3 — the permission merge is present: external_directory is a path-scoped
+    // object with the load-bearing grants (>=6 keys), and bash/edit are allowed.
+    const ed = cfg.permission?.external_directory ?? {};
+    expect(typeof ed).toBe("object");
+    expect(Object.keys(ed).length).toBeGreaterThanOrEqual(6);
+    // Anti-fake-green: assert on ACTUAL grant VALUES + a concrete scratch grant
+    // string, not just the count.
+    expect(ed["/tmp/amicode-work/**"]).toBe("allow");
+    expect(Object.values(ed).every((v) => v === "allow")).toBe(true);
+    expect(cfg.permission?.bash).toBe("allow");
+    expect(cfg.permission?.edit).toBe("allow");
+
+    // AC1 — the amicode MCP tool surface is present (a local stdio spawn of the
+    // bundled server, enabled), so a session's tools are the amicode pack.
+    expect(cfg.mcp?.amicode?.type).toBe("local");
+    expect(cfg.mcp?.amicode?.enabled).toBe(true);
+    expect(Array.isArray(cfg.mcp?.amicode?.command)).toBe(true);
+    // The runner bundle lives in bin/dist/ and generates this same config. Two
+    // things must hold for the engine (which may run under a GUI-launched host
+    // with NO login-shell $PATH) to actually spawn the MCP server:
+    //   (1) command[0] is a node executable resolved to an ABSOLUTE path
+    //       (process.execPath), or the bare "node" fallback — never a token
+    //       only a login shell would find; and
+    //   (2) command[1] (the bundle path) is NOT the doubled bin/bin/dist that a
+    //       naive ../bin/dist join produced from the runner's own bin/dist dir.
+    const mcpCmd = cfg.mcp?.amicode?.command ?? [];
+    expect(mcpCmd[0] === "node" || (isAbsolute(mcpCmd[0]) && basename(mcpCmd[0]).startsWith("node"))).toBe(true);
+    expect(mcpCmd[1]).toContain(join("bin", "dist", "mcp-amico.mjs"));
+    expect(mcpCmd[1]).not.toContain(join("bin", "bin"));
+
+    // Plan-first posture: default_agent is "plan" (the product default for every
+    // session — lost on the adopted hub before L2).
+    expect(cfg.default_agent).toBe("plan");
+
+    // AC1 (machine skills) still holds: skills.paths is non-empty and carries the
+    // shipped library skills dir (director-core resolvable).
+    const shipped = resolveShippedSkillsDir();
+    expect(Array.isArray(cfg.skills?.paths)).toBe(true);
+    expect((cfg.skills?.paths ?? []).length).toBeGreaterThan(0);
+    expect(cfg.skills?.paths).toContain(shipped);
+  }, 30_000);
 });
 
 describe("amicode service runner (fail-loud, headless — no engine needed)", () => {
@@ -353,4 +569,338 @@ describe("amicode service runner (fail-loud, headless — no engine needed)", ()
       expect(child.killed || child.exitCode !== null || child.signalCode !== null).toBe(true);
     }
   });
+});
+
+// ── PID-file lifecycle (#1578) ──────────────────────────────────────────────
+
+describe("amicode service runner PID-file lifecycle (headless, fake engine — no vendored engine needed)", () => {
+  const boots: AmicodeServiceRunnerBoot[] = [];
+  afterAll(async () => {
+    for (const b of boots.splice(0)) await b.shutdown().catch(() => undefined);
+  });
+
+  function writeFakeEngine(dir: string): string {
+    const bin = join(dir, "fake-engine");
+    writeFileSync(
+      bin,
+      `#!/usr/bin/env node
+const { createServer } = require("node:http");
+const port = Number(process.argv[4] ?? 0);
+createServer((_req, res) => {
+  res.writeHead(200, { "content-type": "text/plain" });
+  res.end("fake engine up");
+}).listen(port, "127.0.0.1");
+`,
+    );
+    chmodSync(bin, 0o755);
+    return bin;
+  }
+
+  function writeStubShelf(dir: string): string {
+    writeFileSync(join(dir, "index.html"), "<!doctype html><title>stub shelf</title>");
+    return dir;
+  }
+
+  it("AC1: on boot, writes a PID file containing the engine child's PID", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "amicode-runner-pid-write-"));
+    const pidFile = join(dir, "hub-engine.pid");
+    const boot = await bootAmicodeServiceRunner({
+      engineBin: writeFakeEngine(dir),
+      appDistRoot: writeStubShelf(mkdtempSync(join(tmpdir(), "amicode-runner-pid-shelf-"))),
+      pidFile,
+      healthTimeoutMs: 10_000,
+      servicePort: 0,
+      enginePort: 0,
+      log: () => undefined,
+    });
+    boots.push(boot);
+
+    // The PID file must exist and contain the engine's PID as a trimmed string.
+    expect(existsSync(pidFile)).toBe(true);
+    const content = readFileSync(pidFile, "utf8").trim();
+    expect(content).toBe(String(boot.engine.pid));
+  }, 30_000);
+
+  it("AC4: a stale PID file (dead process) does not block boot", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "amicode-runner-pid-stale-"));
+    const pidFile = join(dir, "hub-engine.pid");
+    // Write a PID that almost certainly doesn't exist.
+    writeFileSync(pidFile, "999999\n");
+
+    const boot = await bootAmicodeServiceRunner({
+      engineBin: writeFakeEngine(dir),
+      appDistRoot: writeStubShelf(mkdtempSync(join(tmpdir(), "amicode-runner-pid-stale-shelf-"))),
+      pidFile,
+      healthTimeoutMs: 10_000,
+      servicePort: 0,
+      enginePort: 0,
+      log: () => undefined,
+    });
+    boots.push(boot);
+
+    // Boot succeeded despite the stale PID file; the file now has the new PID.
+    const content = readFileSync(pidFile, "utf8").trim();
+    expect(content).toBe(String(boot.engine.pid));
+  }, 30_000);
+
+  it("AC3: on shutdown, the runner removes the PID file", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "amicode-runner-pid-remove-"));
+    const pidFile = join(dir, "hub-engine.pid");
+    const boot = await bootAmicodeServiceRunner({
+      engineBin: writeFakeEngine(dir),
+      appDistRoot: writeStubShelf(mkdtempSync(join(tmpdir(), "amicode-runner-pid-remove-shelf-"))),
+      pidFile,
+      healthTimeoutMs: 10_000,
+      servicePort: 0,
+      enginePort: 0,
+      log: () => undefined,
+    });
+    // Do NOT push into boots — we shutdown ourselves.
+    expect(existsSync(pidFile)).toBe(true);
+    await boot.shutdown();
+    expect(existsSync(pidFile)).toBe(false);
+  }, 30_000);
+
+  it("AC5: a PID file pointing at a non-opencode process is NOT killed (safety check)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "amicode-runner-pid-safety-"));
+    const pidFile = join(dir, "hub-engine.pid");
+
+    // Spawn a `sleep` process — NOT named opencode.
+    const sleeper = spawn("sleep", ["300"]);
+    writeFileSync(pidFile, `${sleeper.pid}\n`);
+
+    const boot = await bootAmicodeServiceRunner({
+      engineBin: writeFakeEngine(dir),
+      appDistRoot: writeStubShelf(mkdtempSync(join(tmpdir(), "amicode-runner-pid-safety-shelf-"))),
+      pidFile,
+      healthTimeoutMs: 10_000,
+      servicePort: 0,
+      enginePort: 0,
+      log: () => undefined,
+    });
+    boots.push(boot);
+
+    // The `sleep` process must still be alive — it was NOT an opencode process.
+    expect(isProcessAlive(sleeper.pid!)).toBe(true);
+    sleeper.kill("SIGTERM");
+  }, 30_000);
+
+  it("AC2: on boot, if a PID file exists with a live opencode process, the runner kills it before spawning", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "amicode-runner-pid-kill-stale-"));
+    const pidFile = join(dir, "hub-engine.pid");
+
+    // Spawn a process whose `ps -o comm=` shows "opencode": copy a real
+    // binary (sleep) to a temp dir named "opencode". On macOS, `comm` is the
+    // basename of the executable — so this trick gives us an "opencode" pid.
+    const fakeOpencode = join(dir, "opencode");
+    copyFileSync("/bin/sleep", fakeOpencode);
+    chmodSync(fakeOpencode, 0o755);
+    const stale = spawn(fakeOpencode, ["300"]);
+    writeFileSync(pidFile, `${stale.pid}\n`);
+
+    // Sanity: the stale process IS alive and IS recognized as opencode.
+    // Poll (not assert-instantly): `spawn()` returns before the child has
+    // finished exec'ing into "opencode", so `ps -o comm=` can transiently miss
+    // it under full-suite CPU contention (the flake this closes).
+    expect(await waitUntil(() => isProcessAlive(stale.pid!))).toBe(true);
+    expect(await waitUntil(() => isOpencodeProcess(stale.pid!))).toBe(true);
+
+    // Boot the runner with that PID file — it should kill the stale process.
+    const boot = await bootAmicodeServiceRunner({
+      engineBin: writeFakeEngine(mkdtempSync(join(tmpdir(), "amicode-runner-pid-kill2-"))),
+      appDistRoot: writeStubShelf(mkdtempSync(join(tmpdir(), "amicode-runner-pid-kill2-shelf-"))),
+      pidFile,
+      healthTimeoutMs: 10_000,
+      servicePort: 0,
+      enginePort: 0,
+      log: () => undefined,
+    });
+    boots.push(boot);
+
+    // The stale "opencode" process should be dead now. Poll for death rather
+    // than a fixed 200ms sleep — SIGTERM→reap can exceed that under contention.
+    expect(await waitUntil(() => !isProcessAlive(stale.pid!))).toBe(true);
+
+    // The PID file now has the new engine's PID.
+    const content = readFileSync(pidFile, "utf8").trim();
+    expect(content).toBe(String(boot.engine.pid));
+  }, 30_000);
+});
+
+// ── PID-file helpers (unit tests) ───────────────────────────────────────────
+
+describe("PID-file helpers (unit, #1578)", () => {
+  it("writePidFile creates intermediate directories and writes PID as a string", () => {
+    const dir = mkdtempSync(join(tmpdir(), "amicode-pid-helper-write-"));
+    const pidFile = join(dir, "nested", "deep", "hub-engine.pid");
+    writePidFile(pidFile, 42);
+    expect(readFileSync(pidFile, "utf8").trim()).toBe("42");
+  });
+
+  it("removePidFile removes the file and is silent when the file is already gone", () => {
+    const dir = mkdtempSync(join(tmpdir(), "amicode-pid-helper-remove-"));
+    const pidFile = join(dir, "hub-engine.pid");
+    writeFileSync(pidFile, "123\n");
+    removePidFile(pidFile, () => undefined);
+    expect(existsSync(pidFile)).toBe(false);
+    // Calling again must not throw.
+    removePidFile(pidFile, () => undefined);
+  });
+
+  it("isProcessAlive returns true for this process and false for a dead PID", () => {
+    expect(isProcessAlive(process.pid)).toBe(true);
+    expect(isProcessAlive(999999)).toBe(false);
+  });
+
+  it("isOpencodeProcess returns false for a sleep process", () => {
+    const sleeper = spawn("sleep", ["300"]);
+    try {
+      expect(isOpencodeProcess(sleeper.pid!)).toBe(false);
+    } finally {
+      sleeper.kill("SIGTERM");
+    }
+  });
+
+  it("cleanupStalePid is a no-op when the PID file does not exist", async () => {
+    const pidFile = join(tmpdir(), "amicode-no-such-pid-file-" + Date.now() + ".pid");
+    // Must not throw.
+    await cleanupStalePid(pidFile, () => undefined);
+  });
+
+  it("cleanupStalePid skips a dead PID gracefully", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "amicode-pid-cleanup-dead-"));
+    const pidFile = join(dir, "hub-engine.pid");
+    writeFileSync(pidFile, "999999\n");
+    await cleanupStalePid(pidFile, () => undefined);
+    // File still exists (we don't delete it in cleanup — boot overwrites it).
+  });
+});
+
+// ── Handshake lifecycle (#1579) ─────────────────────────────────────────────
+
+describe("amicode service runner handshake lifecycle (headless, fake engine — no vendored engine needed)", () => {
+  const boots: AmicodeServiceRunnerBoot[] = [];
+  afterAll(async () => {
+    for (const b of boots.splice(0)) await b.shutdown().catch(() => undefined);
+  });
+
+  function writeFakeEngine(dir: string): string {
+    const bin = join(dir, "fake-engine");
+    writeFileSync(
+      bin,
+      `#!/usr/bin/env node
+const { createServer } = require("node:http");
+const port = Number(process.argv[4] ?? 0);
+createServer((_req, res) => {
+  res.writeHead(200, { "content-type": "text/plain" });
+  res.end("fake engine up");
+}).listen(port, "127.0.0.1");
+`,
+    );
+    chmodSync(bin, 0o755);
+    return bin;
+  }
+
+  function writeStubShelf(dir: string): string {
+    writeFileSync(join(dir, "index.html"), "<!doctype html><title>stub shelf</title>");
+    return dir;
+  }
+
+  it("AC1: on boot, the handshake file exists and contains port, password (UNARMED_PASSWORD), and dbPath", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "amicode-runner-handshake-write-"));
+    const hsPath = join(dir, "handshake.json");
+    const dbPath = "/tmp/fake-db.db";
+    const boot = await bootAmicodeServiceRunner({
+      engineBin: writeFakeEngine(dir),
+      appDistRoot: writeStubShelf(mkdtempSync(join(tmpdir(), "amicode-runner-hs-shelf-"))),
+      handshakePath: hsPath,
+      engineEnv: { OPENCODE_DB: dbPath },
+      healthTimeoutMs: 10_000,
+      servicePort: 0,
+      enginePort: 0,
+      log: () => undefined,
+    });
+    boots.push(boot);
+
+    // The handshake file must exist and be readable.
+    expect(existsSync(hsPath)).toBe(true);
+    const result = readHandshake(hsPath);
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") throw new Error("unreachable");
+
+    // The record must carry the right fields.
+    expect(result.record.port).toBeGreaterThan(0);
+    expect(result.record.password).toBe(UNARMED_PASSWORD);
+    expect(result.record.dbPath).toBe(dbPath);
+    expect(result.record.pid).toBe(boot.engine.pid);
+    expect(result.record.protocolVersion).toBe(PROTOCOL_VERSION);
+  }, 30_000);
+
+  it("AC2: classifyGate returns 'adoptable' when reading the hub-written handshake with a healthy engine", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "amicode-runner-handshake-gate-"));
+    const hsPath = join(dir, "handshake.json");
+    const boot = await bootAmicodeServiceRunner({
+      engineBin: writeFakeEngine(dir),
+      appDistRoot: writeStubShelf(mkdtempSync(join(tmpdir(), "amicode-runner-hs-gate-shelf-"))),
+      handshakePath: hsPath,
+      healthTimeoutMs: 10_000,
+      servicePort: 0,
+      enginePort: 0,
+      log: () => undefined,
+    });
+    boots.push(boot);
+
+    // Read back the handshake the runner wrote.
+    const result = readHandshake(hsPath);
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") throw new Error("unreachable");
+
+    // The round-trip: the hub handshake + a healthy engine = adoptable.
+    // The hub engine is unarmed, so password challenge is vacuously true;
+    // hashes match (empty = empty).
+    const verdict = classifyGate({
+      healthy: true,
+      pidAlive: true,
+      passwordChallengePass: true, // unarmed = vacuously true
+      protocolCompatible: result.record.protocolVersion === PROTOCOL_VERSION,
+    });
+    expect(verdict).toBe("adoptable");
+  }, 30_000);
+
+  it("AC3: on shutdown, the handshake file is removed", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "amicode-runner-handshake-remove-"));
+    const hsPath = join(dir, "handshake.json");
+    const boot = await bootAmicodeServiceRunner({
+      engineBin: writeFakeEngine(dir),
+      appDistRoot: writeStubShelf(mkdtempSync(join(tmpdir(), "amicode-runner-hs-remove-shelf-"))),
+      handshakePath: hsPath,
+      healthTimeoutMs: 10_000,
+      servicePort: 0,
+      enginePort: 0,
+      log: () => undefined,
+    });
+    // Do NOT push into boots — we shutdown ourselves.
+    expect(existsSync(hsPath)).toBe(true);
+    await boot.shutdown();
+    expect(existsSync(hsPath)).toBe(false);
+  }, 30_000);
+
+  it("AC5: when handshakePath is undefined, no handshake file is created (backward compat)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "amicode-runner-handshake-none-"));
+    // Boot WITHOUT handshakePath — the default path should NOT be written.
+    const boot = await bootAmicodeServiceRunner({
+      engineBin: writeFakeEngine(dir),
+      appDistRoot: writeStubShelf(mkdtempSync(join(tmpdir(), "amicode-runner-hs-none-shelf-"))),
+      // handshakePath deliberately omitted
+      healthTimeoutMs: 10_000,
+      servicePort: 0,
+      enginePort: 0,
+      log: () => undefined,
+    });
+    boots.push(boot);
+
+    // No handshake file should exist anywhere in the temp dir.
+    const files = readdirSync(dir);
+    expect(files.some((f) => f.includes("handshake"))).toBe(false);
+  }, 30_000);
 });

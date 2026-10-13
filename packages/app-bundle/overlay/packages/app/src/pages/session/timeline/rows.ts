@@ -46,6 +46,12 @@ export namespace Timeline {
     // the streaming prose tail has at least one settled chunk (computed by the
     // timeline from the delta-accumulated text, which rows cannot see)
     tailProseSettled = false,
+    // #1649 — the FLOORED working state (session_working: status busy OR a part
+    // is streaming OR the turn/execution floor OR a non-idle descendant). Drives
+    // the rail's live dot so a foreground subagent (whose parent emits nothing
+    // and can be stray-idled by a reconcile) keeps the rail live. `status` stays
+    // the RAW leaf for tail-streaming and the retry row, which want the true edge.
+    working = false,
   ) {
     const turns: { user: UserMessage; assistants: AssistantMessage[] }[] = []
     const turnByUserID = new Map<string, (typeof turns)[number]>()
@@ -99,6 +105,7 @@ export namespace Timeline {
           turn.user.id === activeMessageID,
           inlineComments,
           tailProseSettled,
+          working,
         ),
       ),
     }
@@ -115,6 +122,7 @@ export namespace Timeline {
     // v2 renders comments inside the user message attachments row instead of a strip row
     inlineComments: boolean,
     tailProseSettled = false,
+    working = false,
   ) {
     const rows: TimelineRow.TimelineRow[] = []
 
@@ -206,7 +214,12 @@ export namespace Timeline {
       (acc, item, index) => (item.type === "interrupted" ? acc : index),
       -1,
     )
-    const turnIsRunning = isActive && status === "busy" && !error
+    // #1649 — the rail's live dot follows the FLOORED working state, not the raw
+    // busy leaf: a foreground subagent blocks the parent turn (no parts, no
+    // execution bracket) and a reconcile can stray-idle the parent leaf, which
+    // would settle the dot. `working` (session_working) holds through the child
+    // run via the ancestor floor. `error` still forces it settled.
+    const turnIsRunning = isActive && working && !error
     // The rail label names steps whose content doesn't already open with its
     // own title. Group rows announce themselves ("Explored", "Worked in
     // shell", "Edited files") and tool cards wear their chips. Prose needs no

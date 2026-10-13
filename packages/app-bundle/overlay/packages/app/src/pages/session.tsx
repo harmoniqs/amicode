@@ -37,7 +37,7 @@ import { Button } from "@opencode-ai/ui/button"
 import { showToast } from "@/utils/toast"
 import { base64Encode, checksum } from "@opencode-ai/core/util/encode"
 import { useLocation, useNavigate, useParams, useSearchParams } from "@solidjs/router"
-import { NewSessionView, SessionHeader } from "@/components/session"
+import { NewSessionView, SessionHeader, SessionComposerControlScrim } from "@/components/session"
 import { ContextWarningBanner } from "@/components/session/context-warning-banner"
 import { ErrorPage } from "@/pages/error"
 import { CommentsProvider, useComments } from "@/context/comments"
@@ -759,7 +759,15 @@ export default function Page() {
   const activeTab = tabState.activeTab
   const activeFileTab = tabState.activeFileTab
   const revertMessageID = createMemo(() => info()?.revert?.messageID)
-  const timeline = createTimelineModel({ sessionID: () => params.id, revertMessageID })
+  const timeline = createTimelineModel({
+    sessionID: () => params.id,
+    revertMessageID,
+    // #1646 (transcript self-heal) — the same global SSE liveness signals
+    // message-timeline.tsx feeds the entity rail, so the transcript heals on a
+    // reconnect edge / fan-in-wedge resync while staying on this session.
+    streamConnected: () => serverSDK().event.status() === "connected",
+    forceResync: () => serverSDK().event.resyncCount(),
+  })
   const historyLoading = timeline.history.loading
   const historyMore = timeline.history.more
   const lastUserMessage = timeline.lastUserMessage
@@ -1315,7 +1323,7 @@ export default function Page() {
   let scroller: HTMLDivElement | undefined
   let content: HTMLDivElement | undefined
   let revealMessage = (_id: string) => {}
-  let scrollToEnd = () => {}
+  let scrollToEnd = (_opts?: { smooth?: boolean }) => {}
   let scrollMark = 0
   let messageMark = 0
 
@@ -1905,7 +1913,11 @@ export default function Page() {
       (id, previous) => {
         if (!id || !previous || id === previous) return
         if (location.hash || store.messageId || ui.pendingMessage) return
-        autoScroll.resume()
+        // amicode: clear the flag only — resume() would scrollToBottom on
+        // the OLD session's element (still mounted) and markAuto its position,
+        // leaving a stale 1500ms mark that could swallow a real user scroll
+        // on the NEW session if the positions happen to be within 2px.
+        autoScroll.clearUserScrolled()
       },
     ),
   )
@@ -1944,7 +1956,11 @@ export default function Page() {
 
   const resumeScroll = () => {
     setStore("messageId", undefined)
-    autoScroll.resume()
+    // amicode: decouple "re-engage auto-follow" from "scroll now" — clear the
+    // flag without triggering createAutoScroll's own instant scrollToBottom,
+    // then let the virtualizer's scrollToEnd() handle positioning cleanly
+    // (no dual-scroll fight, no animation chasing unmeasured items).
+    autoScroll.clearUserScrolled()
     scrollToEnd()
     clearMessageHash()
 
@@ -2388,7 +2404,7 @@ export default function Page() {
 
         dockHeight = next
 
-        if (stick) scrollToEnd()
+        if (stick) scrollToEnd({ smooth: true })
 
         if (el) scheduleScrollState(el)
         fill()
@@ -2411,7 +2427,7 @@ export default function Page() {
     autoScroll: {
       pause: autoScroll.pause,
       forceScrollToBottom: () => {
-        autoScroll.resume()
+        autoScroll.clearUserScrolled()
         scrollToEnd()
       },
     },
@@ -2641,7 +2657,10 @@ export default function Page() {
               if ((await sdk().protocol) !== "v1") return
               try {
                 await (sdk().client.session.update as Function)({ sessionID: id, directory: sdk().directory, time: { archived: null } })
-                void sync().session.sync(id, { force: true })
+                // #1646: INFO-ONLY resolve to flip the archived banner off — the
+                // messages are already loaded (you were viewing the archived
+                // session), so a forced sync's message re-fetch is pure waste.
+                void sync().session.resolve(id, { force: true })
               } catch (err: unknown) {
                 showToast({
                   title: language.t("common.requestFailed"),
@@ -2660,6 +2679,7 @@ export default function Page() {
             <SessionComposerRegion
               controller={controller}
               promptInput={
+                <SessionComposerControlScrim>
                 <Show
                   when={newSessionDesign()}
                   fallback={
@@ -2717,6 +2737,7 @@ export default function Page() {
                     return <PromptInputV2Composer controller={controller} borderUnderlay />
                   }}
                 </Show>
+                </SessionComposerControlScrim>
               }
             />
           )

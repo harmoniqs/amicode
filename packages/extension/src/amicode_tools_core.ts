@@ -2011,6 +2011,14 @@ export const AMICODE_TOOLS: Record<string, AmicodeToolDef> = {
             "(validated as a git worktree of this project); null (default) inherits the parent " +
             "directory. Requires the experimental worktrees feature to be enabled.",
         },
+        placement: {
+          type: ["string", "null"],
+          description:
+            'Optional placement target for the child session — the H2 compute-federation ' +
+            '"where" dimension (ADR-0027 §7 seam 4). null/omitted (default) resolves to ' +
+            '"local". INERT in H1: threaded and defaulted but never routed on — a future H2 ' +
+            "executor reads it to place work on a peer.",
+        },
       },
       async execute(
         a: {
@@ -2023,6 +2031,7 @@ export const AMICODE_TOOLS: Record<string, AmicodeToolDef> = {
           force?: boolean | null;
           command?: string | null;
           workspace?: string | null;
+          placement?: string | null;
         },
         ctx: AmicodeToolContext,
       ) {

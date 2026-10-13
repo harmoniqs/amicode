@@ -100,6 +100,89 @@ describe("sidebar bridge — handleSidebarMessage dispatches new-project with sl
   });
 });
 
+describe("sidebar bridge — handleSidebarMessage dispatches focus-machine (#1451)", () => {
+  it("routes a focus-machine up-message to the focusMachine handler, never to connect-to-device", async () => {
+    const { handleSidebarMessage } = await import("../src/sidebar_bridge");
+    const focusMachine = vi.fn();
+    const connectToDevice = vi.fn();
+    const handlers = {
+      openChat: vi.fn(),
+      newProject: vi.fn(),
+      addExisting: vi.fn(),
+      newEnvironment: vi.fn(),
+      addExistingEnvironment: vi.fn(),
+      getRoots: vi.fn(() => []),
+      getChildren: vi.fn(async () => []),
+      openFile: vi.fn(),
+      fileOp: vi.fn(async () => ({ ok: true })),
+      postMessage: vi.fn(),
+      setSectionOrder: vi.fn(),
+      reorderRoot: vi.fn(),
+      connectToDevice,
+      focusMachine,
+    };
+
+    handleSidebarMessage(
+      { kind: "focus-machine", machineId: "mac-studio-01", isLocal: false } as any,
+      handlers as any,
+    );
+    expect(focusMachine).toHaveBeenCalledTimes(1);
+    expect(focusMachine).toHaveBeenCalledWith({
+      kind: "focus-machine",
+      machineId: "mac-studio-01",
+      isLocal: false,
+    });
+    // Focus and connect are INDEPENDENT (AC2): a focus-machine dispatch never
+    // fires the connect-to-device handler.
+    expect(connectToDevice).not.toHaveBeenCalled();
+  });
+
+  it("routes connect-to-device to connectToDevice, never to focusMachine (the other direction)", async () => {
+    const { handleSidebarMessage } = await import("../src/sidebar_bridge");
+    const focusMachine = vi.fn();
+    const connectToDevice = vi.fn();
+    handleSidebarMessage(
+      { kind: "connect-to-device", machineId: "mac-studio-01", deviceName: "Mac Studio", isLocal: false } as any,
+      { connectToDevice, focusMachine } as any,
+    );
+    expect(connectToDevice).toHaveBeenCalledTimes(1);
+    expect(focusMachine).not.toHaveBeenCalled();
+  });
+});
+
+describe("sidebar bridge — FLEET header actions (#1764)", () => {
+  it("routes add-fleet-machine (no payload) to the addFleetMachine handler only", async () => {
+    const { handleSidebarMessage } = await import("../src/sidebar_bridge");
+    const addFleetMachine = vi.fn();
+    const refreshFleet = vi.fn();
+    const troubleshootFleet = vi.fn();
+    handleSidebarMessage({ kind: "add-fleet-machine" } as any, { addFleetMachine, refreshFleet, troubleshootFleet } as any);
+    expect(addFleetMachine).toHaveBeenCalledTimes(1);
+    expect(addFleetMachine).toHaveBeenCalledWith();
+    expect(refreshFleet).not.toHaveBeenCalled();
+    expect(troubleshootFleet).not.toHaveBeenCalled();
+  });
+
+  it("routes refresh-fleet (no payload) to the refreshFleet handler only", async () => {
+    const { handleSidebarMessage } = await import("../src/sidebar_bridge");
+    const addFleetMachine = vi.fn();
+    const refreshFleet = vi.fn();
+    handleSidebarMessage({ kind: "refresh-fleet" } as any, { addFleetMachine, refreshFleet } as any);
+    expect(refreshFleet).toHaveBeenCalledTimes(1);
+    expect(addFleetMachine).not.toHaveBeenCalled();
+  });
+
+  it("tolerates a missing refreshFleet handler", async () => {
+    const { handleSidebarMessage } = await import("../src/sidebar_bridge");
+    expect(() => handleSidebarMessage({ kind: "refresh-fleet" } as any, {} as any)).not.toThrow();
+  });
+
+  it("tolerates a missing addFleetMachine handler", async () => {
+    const { handleSidebarMessage } = await import("../src/sidebar_bridge");
+    expect(() => handleSidebarMessage({ kind: "add-fleet-machine" } as any, {} as any)).not.toThrow();
+  });
+});
+
 // ── Section-label actions: New Project / Add Existing on Research + Development ──
 
 describe("section header actions (Research / Development label bars)", () => {
@@ -109,10 +192,41 @@ describe("section header actions (Research / Development label bars)", () => {
     expect(webviewSrc).toContain('btn.className = "section-action"');
   });
 
-  it("Research and Development each get their own actions; Fleet gets none", () => {
+  it("Research, Development, and Fleet each get their own actions", () => {
     expect(webviewSrc).toMatch(/renderSectionHeader\("Research", "research", researchSectionActions\(\)\)/);
     expect(webviewSrc).toMatch(/renderSectionHeader\("Development", "dev", devSectionActions\(\)\)/);
-    expect(webviewSrc).toMatch(/renderSectionHeader\("Fleet", "fleet"\)/);
+    expect(webviewSrc).toMatch(/renderSectionHeader\("Fleet", "fleet"\);\s*mountSectionActions\(section\.querySelector\("\.tree-section-label"\) as HTMLElement, fleetSectionActions\(\)\)/);
+  });
+
+  it("Fleet's header actions: Add machine to fleet (+) posts add-fleet-machine with no payload", () => {
+    const start = webviewSrc.indexOf("function fleetSectionActions");
+    expect(start).toBeGreaterThan(-1);
+    const block = webviewSrc.slice(start, webviewSrc.indexOf("// ── Development create menu"));
+    expect(block).toContain('label: "Add machine to fleet"');
+    expect(block).toContain("icon: createPlusIconEl()");
+    expect(block).toContain('vscode.postMessage({ kind: "add-fleet-machine" })');
+  });
+
+  it("Fleet's header actions: Add machine to fleet THEN Refresh fleet (↻), Refresh driven by the busy control", () => {
+    const start = webviewSrc.indexOf("function fleetSectionActions");
+    const block = webviewSrc.slice(start, webviewSrc.indexOf("// ── Development create menu"));
+    const add = block.indexOf('label: "Add machine to fleet"');
+    const refresh = block.indexOf("label: FLEET_REFRESH_LABEL");
+    expect(add).toBeGreaterThan(-1);
+    expect(refresh).toBeGreaterThan(add);
+    expect(block).toContain("icon: createRefreshIconEl()");
+    expect(block).toContain("onMount: (btn) => fleetRefresh.bind(btn)");
+    expect(block).toContain("onClick: () => fleetRefresh.click()");
+    expect(webviewSrc).toMatch(/function createRefreshIconEl\(\): HTMLElement/);
+    // the header renderer lets an action bind its rendered button.
+    expect(webviewSrc).toContain("action.onMount?.(btn)");
+  });
+
+  it("any fleet section update clears the Refresh busy state", () => {
+    const start = webviewSrc.indexOf('case "fleet-status": {');
+    expect(start).toBeGreaterThan(-1);
+    const block = webviewSrc.slice(start, webviewSrc.indexOf("break;", start));
+    expect(block).toContain("fleetRefresh.sectionUpdated()");
   });
 
   it("research actions post new-project and add-existing and are named for assistive tech", () => {

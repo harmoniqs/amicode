@@ -2,6 +2,7 @@ import { createRoot, createSignal, getOwner, onCleanup, runWithOwner, type Owner
 import { createStore, type SetStoreFunction, type Store } from "solid-js/store"
 import { Persist, persisted } from "@/utils/persist"
 import type { VcsInfo } from "@opencode-ai/sdk/v2/client"
+import { sessionWorkingFromStore } from "../session-working"
 import {
   DIR_IDLE_TTL_MS,
   MAX_DIR_STORES,
@@ -229,9 +230,12 @@ export function createChildStoreManager(input: {
             session: [],
             sessionTotal: 0,
             session_status: {},
+            session_turn_active: {},
             session_working(id: string) {
-              const type = this.session_status[id]?.type
-              return (type ?? "idle") !== "idle"
+              // #1637 — honor the SAME turn-active floor as the server-session
+              // store: working when the turn flag is up (no-part turns / stray
+              // idle) OR the status is not idle.
+              return sessionWorkingFromStore(this.session_status[id], this.session_turn_active?.[id] ?? false)
             },
             session_diff: {},
             todo: {},

@@ -12,6 +12,10 @@ export function createTimelineProjection(input: {
   sessionMessages: Accessor<SessionMessageInfo[]>
   parts: (messageID: string) => Part[]
   status: Accessor<SessionStatus>
+  /** #1649 — the FLOORED working state (session_working) for the viewed session.
+   *  Drives the rail's live dot; `status` stays the raw leaf for tail-streaming
+   *  and the retry row. Optional: defaults to status-busy when absent. */
+  working?: Accessor<boolean>
   showReasoningSummaries: Accessor<boolean>
   inlineComments: Accessor<boolean>
   /** the streaming prose tail has at least one settled chunk — computed by the
@@ -42,6 +46,9 @@ export function createTimelineProjection(input: {
       input.inlineComments(),
       input.userMessages(),
       input.tailProseSettled?.() ?? false,
+      // #1649 — reactive read: default to the raw busy edge when no floor is
+      // supplied, so behavior is unchanged for callers that don't pass `working`.
+      input.working?.() ?? input.status().type === "busy",
     ),
   )
   const activeMessageID = createMemo(() => projection().activeMessageID)

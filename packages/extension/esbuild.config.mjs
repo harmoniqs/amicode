@@ -129,6 +129,23 @@ const targets = [
     sourcemap: true,
     minify: false,
     logLevel: "info",
+    // #1581 L2: the runner's skill-resolution path (resolvePackageSkills →
+    // scores/package_skills.ts) transitively pulls in `yaml`, whose CJS build
+    // does `require("process")`. Under `format:"esm"` esbuild replaces bare
+    // `require` with a stub that THROWS ("Dynamic require of … not supported"),
+    // which bricked the launchd hub on boot. Recreate a real `require` via
+    // createRequire, plus the CJS `__dirname`/`__filename` globals some bundled
+    // deps reference — the complete esbuild ESM↔CJS interop shim.
+    banner: {
+      js: [
+        "import { createRequire as __amicodeCreateRequire } from 'node:module';",
+        "import { fileURLToPath as __amicodeFileURLToPath } from 'node:url';",
+        "import { dirname as __amicodeDirname } from 'node:path';",
+        "const require = __amicodeCreateRequire(import.meta.url);",
+        "const __filename = __amicodeFileURLToPath(import.meta.url);",
+        "const __dirname = __amicodeDirname(__filename);",
+      ].join(" "),
+    },
   },
   // Sidebar webview bundle — workspace panel (#673)
   {

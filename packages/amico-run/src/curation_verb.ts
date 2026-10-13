@@ -35,7 +35,7 @@
 // and the receipt journal — never the substrate.
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import { loadRegistryClaims, lintClaimsRegistry } from "./claims.js";
+import { loadRegistryClaims, lintClaimsRegistry, checkPublicSafety, type RegistryClaim } from "./claims.js";
 import { rewriteClaimNote } from "./lifecycle.js";
 import {
   PROMOTE_JOB,
@@ -48,13 +48,14 @@ import {
   promoteBundleId,
   renderPrBody,
   renderPromotionCopy,
+  renderPublicIndex,
   planPrune,
   renderPruneDiff,
   detectPatterns,
   hopperSlug,
   renderHopperNote,
 } from "./curation.js";
-import { personalMount, resolveMountStack, type Mount } from "./mounts.js";
+import { personalMount, resolveMountStack, readVaultMarker, type Mount } from "./mounts.js";
 import { deniedBy, discoverDenyList, loadDenyList, loadRegistry } from "./notturno_registry.js";
 import { appendSection, renderPass } from "./notturno_passes.js";
 import { amicodeOpsDir } from "./session_retention.js";
@@ -62,6 +63,7 @@ import type { VerbResult } from "./verbs.js";
 
 const USAGE = [
   "amico claims promote [--registry <dir>] [--state <p>] [--out <bundles dir>] [--from <vault>]",
+  "                     [--tier <team|public>] [--to <mount>] [--vault <root>]",
   "                     [--apply] [--jobs <notturno.toml>] [--dashboards <dir|file>] [--deny-list <p>]",
   "amico claims prune [--registry <dir>] [--vault <root>] [--db <chat.db>]",
   "                   [--apply] [--jobs <notturno.toml>] [--dashboards <dir|file>] [--deny-list <p>]",
@@ -71,7 +73,11 @@ const USAGE = [
   "  promote — the weekly proposal bundle: scope-team live claims → ONE PR body +",
   "  copies per vault, capped at 10 (overflow carries). PROPOSES ONLY — a human",
   "  merges; the verb never opens a PR. Dry-run by default; --apply writes the",
-  "  bundle + the promote state stamp + the pass receipt.",
+  "  bundle + the promote state stamp + the pass receipt. --tier public (#1688)",
+  "  targets the kind: public mount with the SAME machinery: the pool is",
+  "  scope-public claims, the two-note visibility split is checked at promotion",
+  "  time (private-mechanism evidence / mechanism links refuse BY NAME), and the",
+  "  bundle adds INDEX.md, the public vault's generated claims index.",
   "  prune — the weekly schema-check + hygiene pass (the retired /dream prune:",
   "  the dream-prune semantics on the claim layer). The claims lint's findings are",
   "  DRIFT (flagged, exit 1); only unambiguous frontmatter fixes are applied.",
@@ -234,11 +240,34 @@ function jobReceipt(opts: {
 }
 
 // ── claims promote — AC 1 (one PR per vault, the 10-cap, never auto-merged) ────
+// The public tier (#1688, slice 9) rides this SAME machinery — no second
+// promotion path: `--tier public` swaps the pool to scope-public claims and
+// the destination to the kind: public mount (resolved by the mount-stack
+// conventions, marker-verified, never guessed — `--to` overrides and is
+// itself marker-verified), CHECKS the two-note visibility split at promotion
+// time (checkPublicSafety — every ELIGIBLE claim before the cap, so a
+// refusal never burns a bundle slot; refusals are named, unstamped, in the
+// pool until a human fixes the split), and adds the bundle's third artifact:
+// INDEX.md, the public vault's index generated from the bundle's claims.
 
 export function promoteSub(rest: string[], env: NodeJS.ProcessEnv, now: () => Date): VerbResult {
   const startedAt = Date.now();
-  const { flags, apply, error } = parseArgs(rest, ["--registry", "--state", "--out", "--from", "--jobs", "--dashboards", "--deny-list"]);
+  const { flags, apply, error } = parseArgs(rest, [
+    "--registry",
+    "--state",
+    "--out",
+    "--from",
+    "--jobs",
+    "--dashboards",
+    "--deny-list",
+    "--tier",
+    "--to",
+    "--vault",
+  ]);
   if (error !== undefined) return fail(error);
+  const tier = flags.get("--tier") ?? "team";
+  if (tier !== "team" && tier !== "public")
+    return fail(`--tier must be "team" or "public" (the promotion ladder's two bundle destinations), got "${tier}"`);
   const gated = jobsGate(flags, env, "promote");
   if ("error" in gated) return gated.error;
   const reg = claimsRegistry(flags, env, "promote");
@@ -247,60 +276,143 @@ export function promoteSub(rest: string[], env: NodeJS.ProcessEnv, now: () => Da
   const sourceVault = flags.get("--from") ?? (m !== undefined ? basename(m.path) : "personal-vault");
   const statePath = flags.get("--state") ?? join(amicodeOpsDir(env), "promote-state.json");
   const bundlesDir = flags.get("--out") ?? join(reg.dir, "promotions");
+  const vaultRoot = flags.get("--vault") ?? m?.path;
+
+  // the public tier's destination mount — resolved by the mount-stack
+  // conventions (the .amico-vault.toml marker, kind = "public"), never a
+  // guess: --to is marker-verified; absent --to, the stack's kind: public
+  // mount; neither exists → refuse.
+  let target: { name: string; path: string } | undefined;
+  if (tier === "public") {
+    const explicit = flags.get("--to");
+    if (explicit !== undefined) {
+      const marker = readVaultMarker(explicit);
+      if (marker.kind !== "public")
+        return fail(
+          `--to must be a public-kind mount (.amico-vault.toml kind = "public") — ${explicit} carries kind ${JSON.stringify(marker.kind) ?? "no marker"}; the target mount is verified by the marker convention, never guessed`,
+        );
+      target = { name: marker.name ?? basename(explicit), path: explicit };
+    } else {
+      const pub = resolveMountStack(env.AMICO_VAULTS_ROOT, env.AMICO_MOUNTS_TOML).mounts.find((mm) => mm.kind === "public");
+      if (pub === undefined)
+        return fail(
+          "claims promote --tier public: no public-kind mount resolved in the stack — pass --to <mount> explicitly (the public tier's destination is never a guess)",
+        );
+      target = { name: pub.name, path: pub.path };
+    }
+  }
 
   const { claims, skipped } = loadRegistryClaims(reg.dir);
-  const plan = planPromotion(claims, readPromoteState(statePath));
+  const byFile = new Map(claims.map((c) => [c.file, c]));
+  const raws = new Map(claims.map((c) => [c.file, readFileSync(join(reg.dir, c.file), "utf8")]));
+  let plan = planPromotion(claims, readPromoteState(statePath), { tier });
+  // AC 2 (#1688) — the two-note visibility split, CHECKED at promotion time:
+  // every ELIGIBLE claim is adjudicated BEFORE the cap (a refusal never burns
+  // a bundle slot); a refused claim is named, NOT stamped, and stays in the
+  // pool until a human fixes the split.
+  const refused: { file: string; refusals: string[] }[] = [];
+  if (tier === "public") {
+    const safe: RegistryClaim[] = [];
+    for (const file of plan.eligible) {
+      const entry = byFile.get(file)!;
+      const check = checkPublicSafety(raws.get(file)!, entry.claim, { vaultRoot });
+      if (check.ok) safe.push(entry);
+      else refused.push({ file, refusals: check.refusals });
+    }
+    plan = planPromotion(safe, readPromoteState(statePath), { tier });
+  }
   const bundleId = promoteBundleId(now());
   const bundleDir = join(bundlesDir, bundleId);
-  const prBody = renderPrBody(plan, claims, { sourceVault, bundleId, now: now() });
+  const prBody = renderPrBody(plan, claims, {
+    sourceVault,
+    bundleId,
+    now: now(),
+    tier,
+    destination: target?.name,
+    targetPath: target?.path,
+    refusals: refused.map((r) => `${r.file}: ${r.refusals.join("; ")}`),
+  });
+  const index =
+    tier === "public"
+      ? renderPublicIndex(
+          plan.selected.flatMap((f) => {
+            const entry = byFile.get(f);
+            return entry === undefined ? [] : [entry];
+          }),
+          { sourceVault, bundleId, now: now() },
+        )
+      : undefined;
 
   const base = {
     verb: "claims",
     ok: true,
     subcommand: "promote",
     dry_run: !apply,
+    tier,
     registry: reg.dir,
     state_path: statePath,
     from: sourceVault,
+    target,
     bundle: bundleDir,
     selected: plan.selected,
     overflow_carried: plan.overflow,
     excluded: plan.excluded,
+    refused,
     skipped_claims: skipped,
     // the trust boundary, stated in every result: this verb proposes only
     proposes_only: true,
     auto_merge: false,
   };
 
-  if (!apply) return { json: { ...base, would_write: bundleDir, pr_body: prBody }, code: 0 };
+  if (!apply) {
+    return {
+      json: { ...base, would_write: bundleDir, pr_body: prBody, ...(index !== undefined ? { index } : {}) },
+      code: 0,
+    };
+  }
 
   if (plan.selected.length === 0) {
-    // nothing eligible: an honest no-op run (all proposed, none tagged team)
+    // nothing eligible: an honest no-op run (all proposed, none at the tier's
+    // scope — the public tier names its refused claims too: they stay in the pool)
     const receipt = jobReceipt({
       sub: "promote",
       jobId: PROMOTE_JOB,
       jobs: gated.jobs,
       dashboards: gated.dashboards,
       actions: 0,
-      outcome: `promote: 0 claims proposed (every scope-team live claim is already proposed, or none exist), overflow ${plan.overflow.length} carried`,
+      outcome:
+        tier === "public"
+          ? `promote: 0 claims proposed to the public tier (every public-safe scope-public live claim is already proposed, or none exist), ${refused.length} refused by the two-note check (named, in the pool), overflow ${plan.overflow.length} carried`
+          : `promote: 0 claims proposed (every scope-team live claim is already proposed, or none exist), overflow ${plan.overflow.length} carried`,
       artifacts: [],
       durationMs: Date.now() - startedAt,
       now: now(),
     });
     if ("error" in receipt) return receipt.error;
-    return { json: { ...base, note: "nothing eligible — every scope-team live claim is already proposed (or none exist)", receipt: receipt.receipt }, code: 0 };
+    return {
+      json: {
+        ...base,
+        note:
+          tier === "public"
+            ? `nothing eligible to propose — every public-safe scope-public live claim is already proposed (or none exist); ${refused.length} refused by the two-note check stay in the pool`
+            : "nothing eligible — every scope-team live claim is already proposed (or none exist)",
+        receipt: receipt.receipt,
+      },
+      code: 0,
+    };
   }
 
   if (existsSync(bundleDir))
     return fail(`promotion bundle ${bundleDir} already exists — never clobbered (it is the audit artifact a human reviews)`);
   mkdirSync(bundleDir, { recursive: true });
   writeFileSync(join(bundleDir, "PR-BODY.md"), prBody);
+  if (index !== undefined) writeFileSync(join(bundleDir, "INDEX.md"), index);
   const copies: string[] = [];
   for (const file of plan.selected) {
     const path = join(bundleDir, file);
     writeFileSync(
       path,
-      renderPromotionCopy(readFileSync(join(reg.dir, file), "utf8"), { file, sourceVault, bundleId, now: now() }),
+      renderPromotionCopy(raws.get(file)!, { file, sourceVault, bundleId, now: now(), targetVault: target?.name }),
     );
     copies.push(path);
   }
@@ -312,13 +424,29 @@ export function promoteSub(rest: string[], env: NodeJS.ProcessEnv, now: () => Da
     jobs: gated.jobs,
     dashboards: gated.dashboards,
     actions: plan.selected.length,
-    outcome: `promote: ${plan.selected.length} claims proposed (bundle ${bundleId}), overflow ${plan.overflow.length} carried, excluded ${plan.excluded.length} — PROPOSES only, a human merges`,
-    artifacts: [join(bundleDir, "PR-BODY.md")],
+    outcome:
+      tier === "public"
+        ? `promote: ${plan.selected.length} claims proposed to the public tier (bundle ${bundleId}), ${refused.length} refused by the two-note check (named, in the pool), overflow ${plan.overflow.length} carried, excluded ${plan.excluded.length} — PROPOSES only, a human merges`
+        : `promote: ${plan.selected.length} claims proposed (bundle ${bundleId}), overflow ${plan.overflow.length} carried, excluded ${plan.excluded.length} — PROPOSES only, a human merges`,
+    artifacts: index !== undefined ? [join(bundleDir, "PR-BODY.md"), join(bundleDir, "INDEX.md")] : [join(bundleDir, "PR-BODY.md")],
     durationMs: Date.now() - startedAt,
     now: now(),
   });
   if ("error" in receipt) return receipt.error;
-  return { json: { ...base, wrote: { bundle: bundleDir, pr_body: join(bundleDir, "PR-BODY.md"), copies, state: statePath }, receipt: receipt.receipt }, code: 0 };
+  return {
+    json: {
+      ...base,
+      wrote: {
+        bundle: bundleDir,
+        pr_body: join(bundleDir, "PR-BODY.md"),
+        ...(index !== undefined ? { index: join(bundleDir, "INDEX.md") } : {}),
+        copies,
+        state: statePath,
+      },
+      receipt: receipt.receipt,
+    },
+    code: 0,
+  };
 }
 
 // ── claims prune — AC 2 (hygiene diffs + flagged drift, unambiguous fixes only) ─
