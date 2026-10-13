@@ -183,7 +183,7 @@
     "packages/app/src/context/models.tsx": "8904525767b36ed5ba93e85a0fddb9bf737a8d066dfff084380ce1a67182f535",
     "packages/app/src/context/platform.tsx": "edd9b1773feb5c084b922a57b6914f6a473eed558b44f9de0eeb1c4d4e2b49da",
     "packages/app/src/context/server-sdk.test.ts": "833920190c25089a5c3ed9849a62b021d2e0e2e4fb76196af8ddc9e6aa9817ba",
-    "packages/app/src/context/server-sdk.tsx": "c1d26fbeaa37549ce17b348ea2fa61f424e730caa4518146542c23123a1c1390",
+    "packages/app/src/context/server-sdk.tsx": "bfa88452f7d42ffd0453425995af5294bfc34dade76cee3fbd627bb96051725a",
     "packages/app/src/context/server-session-child-active.test.ts": "de8c467f67f88b6cce351c1805ec90728cf238eb1ef32f39ffdbbf3de4dcec22",
     "packages/app/src/context/server-session-orphan-part.test.ts": "1d635374c0bfff25a01825061aabac7334e5cdaedca2dab9f3d9467ff543caea",
     "packages/app/src/context/server-session.test.ts": "30cd24bb1345376fd1a165d65677dee5c36d586efa7969d3b4844967040fda59",
@@ -204,6 +204,8 @@
     "packages/app/src/context/sse-gap-frame.ts": "2f64fde540a305579762c5276721d4bbfbf7c862131aaf4462e8a4e8f32c5960",
     "packages/app/src/context/sse-origin.test.ts": "71cd3aa996a51d7e99236a49cede4769e520e20e53f57c6920fe441f2abb0c7d",
     "packages/app/src/context/sse-origin.ts": "da9a231907dc50d87cf01758177bee0d4a0b0165d8adb5e152db8eca29dfd9f5",
+    "packages/app/src/context/stream-cursor.test.ts": "c9715bb28f576cdc00683b0bdc27bdc2a56a6f212969cc090f99b3dc8988e6a7",
+    "packages/app/src/context/stream-cursor.ts": "2711f85581cd86bb69b50a441b6a04c532553f61fa5e00cd1b9daa12193d3697",
     "packages/app/src/context/stream-gap.test.ts": "b7203445564f44fd1d966ef684a11cb9b5ec567d9ab54f1b7617726fdf44d3f5",
     "packages/app/src/context/stream-gap.ts": "2fd8eba30a6112cebf38e33c9418ab2b7d9c9d466f76729d828d5ab52d56c5ec",
     "packages/app/src/context/stream-liveness.test.ts": "2759eb2233f8ff6ced02957f971e756fe525575b2c8aefcbd7749470dec960f2",
@@ -959,10 +961,10 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-12T23:44:37.584Z",
+  "extracted_at": "2026-10-13T00:39:30.584Z",
   "per_package": {
     "packages/app": {
-      "A": 237,
+      "A": 239,
       "M": 161,
       "D": 0
     },
@@ -1008,7 +1010,7 @@
     }
   },
   "counts": {
-    "overlay_total": 937,
+    "overlay_total": 939,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1209,6 +1211,8 @@
     "packages/app/src/context/sse-gap-frame.ts": "A",
     "packages/app/src/context/sse-origin.test.ts": "A",
     "packages/app/src/context/sse-origin.ts": "A",
+    "packages/app/src/context/stream-cursor.test.ts": "A",
+    "packages/app/src/context/stream-cursor.ts": "A",
     "packages/app/src/context/stream-gap.test.ts": "A",
     "packages/app/src/context/stream-gap.ts": "A",
     "packages/app/src/context/stream-liveness.test.ts": "A",

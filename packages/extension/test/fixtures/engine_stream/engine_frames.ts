@@ -179,6 +179,141 @@ export function fakeEngine(
   };
 }
 
+// ── #1777: an engine that REPLAYS (the #1776 subscribe contract) ────────────
+
+/** One subscription to a replaying engine's `/global/event`: the arm source the
+ *  fan-in pumps, plus the test's handle to end it (a link drop, an engine exit). */
+export interface EngineSubscription {
+  /** The cursor this subscription asked for (`undefined` = live only). */
+  readonly cursor: string | undefined;
+  /** Whether the engine answered the cursor with a reset. */
+  readonly reset: boolean;
+  source: {
+    next(): Promise<string | null>;
+    close(): void;
+    endReason(): "end" | "error" | undefined;
+  };
+  /** End the subscription: `"end"` = a clean upstream end, `"error"` = a failure. */
+  end(why?: "end" | "error"): void;
+}
+
+export interface ReplayingEngine {
+  /** The process epoch. */
+  readonly epoch: string;
+  /** The current sequence (the last bus event's), 0 before any. */
+  readonly seq: number;
+  /** The SSE id this engine stamps for `seq`. */
+  idAt(seq: number): string;
+  /** Emit one bus event: framed ONCE (`id: <epoch>:<seq>`), retained for replay,
+   *  and delivered to every open subscription. Returns the frame. */
+  publish(type: string, properties: Record<string, unknown>): string;
+  /** A heartbeat on every open subscription (`{time, seq}`, the CURRENT seq). */
+  heartbeat(): void;
+  /** Subscribe like `GET /global/event[?lastEventID=…]`: a servable cursor gets
+   *  `server.connected` AT the cursor, then every retained frame after it, then
+   *  live frames; an unservable one (wrong epoch, evicted, ahead, malformed) gets
+   *  the `server.cursor.unservable` reset frame first, then `server.connected` at
+   *  the current seq, then live. No cursor = `server.connected` + live. */
+  subscribe(cursor?: string): EngineSubscription;
+  /** Drop retained frames at or below `seq` (the replay window moved past them). */
+  evictThrough(seq: number): void;
+  /** Every subscription opened so far, in order. */
+  readonly subscriptions: readonly EngineSubscription[];
+  /** The subscriptions still open. */
+  live(): EngineSubscription[];
+}
+
+/** A #1776 engine with a replay buffer, in-process: the fan-in suites drive a
+ *  re-open against it and see exactly what a real engine would send. */
+export function replayingEngine(opts: { epoch: string; now?: () => number; directory?: string }): ReplayingEngine {
+  const epoch = opts.epoch;
+  const now = opts.now ?? (() => 0);
+  const directory = opts.directory ?? ENGINE_DIRECTORY;
+  let seq = 0;
+  let floor = 0; // the highest seq no longer retained
+  let evt = 0;
+  const retained: Array<{ seq: number; frame: string }> = [];
+  const subscriptions: Array<EngineSubscription & { push(frame: string): void; open: boolean }> = [];
+  const nextPayloadId = (): string => `evt_${epoch}_${String(++evt).padStart(6, "0")}`;
+  const control = (at: number, type: string, properties: Record<string, unknown> = {}): string =>
+    engineFrame(controlEvent(nextPayloadId(), type, properties), { id: engineId(epoch, at) });
+
+  const open = (cursor: string | undefined) => {
+    const queue: string[] = [];
+    const waiters: Array<(v: string | null) => void> = [];
+    let ended = false;
+    let reason: "end" | "error" | undefined;
+    const end = (why: "end" | "error" = "end"): void => {
+      if (ended) return;
+      ended = true;
+      reason = why;
+      sub.open = false;
+      let w: ((v: string | null) => void) | undefined;
+      while ((w = waiters.shift())) w(null);
+    };
+    const push = (frame: string): void => {
+      if (ended) return;
+      const w = waiters.shift();
+      if (w) w(frame);
+      else queue.push(frame);
+    };
+    const parsed = cursor === undefined ? undefined : /^([A-Za-z0-9_-]+):(\d+)$/.exec(cursor.trim());
+    const servable =
+      cursor === undefined ||
+      (parsed !== null && parsed !== undefined && parsed[1] === epoch && Number(parsed[2]) <= seq && Number(parsed[2]) >= floor);
+    const position = cursor !== undefined && servable && parsed ? Number(parsed[2]) : seq;
+    const sub = {
+      cursor,
+      reset: !servable,
+      open: true,
+      push,
+      end,
+      source: {
+        next(): Promise<string | null> {
+          const f = queue.shift();
+          if (f !== undefined) return Promise.resolve(f);
+          if (ended) return Promise.resolve(null);
+          return new Promise<string | null>((resolve) => waiters.push(resolve));
+        },
+        close: () => end("end"),
+        endReason: () => reason,
+      },
+    };
+    if (!servable) push(control(seq, "server.cursor.unservable", { epoch, seq }));
+    push(control(position, "server.connected"));
+    if (servable) for (const r of retained) if (r.seq > position) push(r.frame);
+    subscriptions.push(sub);
+    return sub;
+  };
+
+  return {
+    epoch,
+    get seq() {
+      return seq;
+    },
+    idAt: (s) => engineId(epoch, s),
+    publish(type, properties) {
+      const s = ++seq;
+      const frame = engineFrame(busEvent({ id: nextPayloadId(), type, properties, directory }), { id: engineId(epoch, s) });
+      retained.push({ seq: s, frame });
+      for (const sub of subscriptions) if (sub.open) sub.push(frame);
+      return frame;
+    },
+    heartbeat() {
+      for (const sub of subscriptions) if (sub.open) sub.push(control(seq, "server.heartbeat", { time: now(), seq }));
+    },
+    subscribe: (cursor) => open(cursor),
+    evictThrough(s) {
+      while (retained.length > 0 && retained[0].seq <= s) retained.shift();
+      floor = Math.max(floor, s);
+    },
+    get subscriptions() {
+      return subscriptions;
+    },
+    live: () => subscriptions.filter((s) => s.open),
+  };
+}
+
 /** A one-off sequenced bus-event frame at an explicit `seq` — for suites that
  *  script many namespaces' positions directly. `properties` ride verbatim. */
 export function sequencedEvent(epoch: string, seq: number, properties: Record<string, unknown>, type = "message.part.updated"): string {
