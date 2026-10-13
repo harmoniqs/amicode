@@ -767,7 +767,7 @@
     "packages/app/src/pages/layout/notification-toasts.ts": "11256e25f2bcc20d3520e81aa50b53db2a7f8dea8047b17e99deb1f9f061e43d",
     "packages/app/src/pages/layout/project-avatar-state.ts": "45ca696114049e23f5c5f95745b3f7303a35d847bd186c426618cf88f355865d",
     "packages/app/src/pages/layout/session-list-chip.test.ts": "ebda802582ebd274e8c7c4c20ca962e8f699fce482202d3af885bd704104bf46",
-    "packages/app/src/pages/layout/session-list-chip.tsx": "38bd9f8950fb71d71c6c49ac191fd68a42d29b891887b87915f0a53f4d339dbb",
+    "packages/app/src/pages/layout/session-list-chip.tsx": "62373670362fd78e944753b2839820411b5c67dea369dec6a39c5d03df827b16",
     "packages/app/src/pages/layout/session-list-chip.wiring.test.tsx": "3f19399ea11aabbd6c11624ebc0597301e05cfc033da543c8231a21839880997",
     "packages/app/src/pages/layout/session-tab-avatar.tsx": "89e83e239d513f91b31f16473be531eaf82768cefe637ea5f10d752cea4ef887",
     "packages/app/src/pages/layout/session-tab-status.test.ts": "d6e62365948450c0acda628bc5d03233e5e6ead69649c2d2fb7e20c906007e74",
@@ -990,7 +990,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-13T20:51:10.374Z",
+  "extracted_at": "2026-10-13T20:52:48.628Z",
   "per_package": {
     "packages/app": {
       "A": 250,

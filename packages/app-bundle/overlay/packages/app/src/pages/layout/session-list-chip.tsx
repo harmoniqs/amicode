@@ -89,7 +89,6 @@ export function SessionListStatusChip(props: { chip: SessionListChip | undefined
             data-slot="session-list-chip"
             data-kind={chip.kind}
             class="shrink-0 inline-flex items-center gap-1 rounded-sm px-1 py-0.5 text-[10px] leading-none text-v2-text-text-faint bg-v2-background-bg-layer-02"
-            role="status"
             title={label}
           >
             <span aria-hidden="true" class="block size-1.5 rounded-full" style={{ background: CHIP_TONE[chip.kind] }} />
