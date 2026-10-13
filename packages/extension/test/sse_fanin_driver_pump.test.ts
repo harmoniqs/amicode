@@ -2597,3 +2597,43 @@ describe("#1777 AC3 — fleet-of-one: the listener's stream is byte-identical to
     }
   });
 });
+
+describe("#1777 AC4 — a reconnecting listener resumes with the SSE id it last saw (composite when fanned in)", () => {
+  it("the last composite id a fanned-in listener saw resumes EVERY arm from its own engine id — each engine replays, no gap", async () => {
+    const ownerMap = new SessionOwnerMap();
+    ownerMap.update(STUDIO_OWNED);
+    const local = replayingEngine({ epoch: LOCAL_EPOCH });
+    const studio = replayingEngine({ epoch: PEER_EPOCH });
+    const driver = replayDriver({ local, studio }, ownerMap);
+    const first = mockRes();
+    driver.handle(mockReq("/global/event"), first);
+    await flush();
+    local.publish(...partEvent(1));
+    studio.publish(...partEvent(2));
+    local.publish(...partEvent(3));
+    await flush();
+    const lastSeen = sseFrames(first.text()).at(-1)!.id!; // the client's cursor
+    expect(lastSeen).toBe(`local=${local.idAt(2)};studio=${studio.idAt(1)}`);
+    first.fireClose(); // the view reloads / its socket drops
+
+    studio.publish(...partEvent(4)); // both origins move on while it is away
+    local.publish(...partEvent(5));
+    const again = mockRes();
+    driver.handle(mockReq(`/global/event?lastEventID=${encodeURIComponent(lastSeen)}`), again);
+    await flush();
+
+    expect(local.subscriptions.at(-1)).toMatchObject({ cursor: local.idAt(2), reset: false });
+    expect(studio.subscriptions.at(-1)).toMatchObject({ cursor: studio.idAt(1), reset: false });
+    const frames = sseFrames(again.text());
+    expect(frames.filter((f) => f.type === "message.part.updated").map((f) => f.data!.payload.properties.n).sort()).toEqual([4, 5]);
+    expect(frames.some((f) => f.type === "amicode.sync.gap")).toBe(false);
+    // every frame's id carries both origins' positions, ending at the newest
+    expect(parseCompositeCursor(frames.at(-1)!.id)).toEqual(
+      new Map([
+        [LOCAL_NAMESPACE, local.idAt(3)],
+        ["studio", studio.idAt(2)],
+      ]),
+    );
+    again.fireClose();
+  });
+});

@@ -175,6 +175,22 @@ describe("#1511 AC4 (D3) — composite cursor", () => {
     expect(parseCompositeCursor(undefined).size).toBe(0);
   });
 
+  it("#1777: a bare ENGINE id `<epoch>:<seq>` is the local position (the `:` is not a composite), and a composite of engine ids round-trips", () => {
+    // the cursor a fleet-of-one client resumes with: the engine's id, verbatim
+    expect([...parseCompositeCursor(idIn(LOCAL_NAMESPACE, 12))]).toEqual([[LOCAL_NAMESPACE, idIn(LOCAL_NAMESPACE, 12)]]);
+    // epochs are base64url (`-` and `_` included) — still one bare local id
+    expect([...parseCompositeCursor("a-b_c9Zx:7")]).toEqual([[LOCAL_NAMESPACE, "a-b_c9Zx:7"]]);
+    // the cursor a fanned-in client resumes with: every origin's engine id
+    const composite = `local=${idIn(LOCAL_NAMESPACE, 12)};studio=${idIn("studio", 40)}`;
+    expect(formatCompositeCursor(parseCompositeCursor(composite))).toBe(composite);
+    const agg = new SseFanInAggregator({ sink: collectingSink() });
+    const resume = agg.connect(composite);
+    expect(resume.get(LOCAL_NAMESPACE)).toBe(idIn(LOCAL_NAMESPACE, 12));
+    expect(resume.get("studio")).toBe(idIn("studio", 40));
+    // and it is where each arm resumes from until the arm delivers
+    expect(agg.cursorFor("studio")).toBe(idIn("studio", 40));
+  });
+
   it("connect() re-subscribes each upstream with ITS OWN resume id", () => {
     const sink = collectingSink();
     const agg = new SseFanInAggregator({ sink });
