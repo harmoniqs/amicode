@@ -36,6 +36,7 @@ import {
 import { resolveLabTomlPath, checkLabToml } from "./lab_config";
 import { computeSetupState, writeSetupStateFile } from "./setup_state";
 import { OpencodeEventClient } from "./sse_client";
+import { FollowedSessionWatcher } from "./followed_session_watcher";
 import { RunsManager } from "./runs_manager";
 import { stageDemoRun } from "./demo_replay";
 import { writeStopFile, stopPlan, forceStop, runLogMtime } from "./run_controls";
@@ -151,6 +152,11 @@ let serverManager: ServerManager | undefined;
 let amicodeService: { url: string; authHeader: string } | undefined;
 let statusBar: StatusBarManager | undefined;
 let sseClient: OpencodeEventClient | undefined;
+/** #1788 (S3): the passive-notification watcher — observes the sseClient's
+ *  parsed events (no new connection) and raises VS Code notifications on
+ *  followed sessions. Created once per activation, before any posture branch
+ *  can construct the sseClient it rides on. */
+let followedSessionWatcher: FollowedSessionWatcher | undefined;
 let runsManager: RunsManager | undefined;
 let opencodeReadyUrl: URL | undefined;
 /** Set once the binary + vault are known; the watcher's onRunFinished closure
@@ -1143,6 +1149,20 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   });
   ctx.subscriptions.push({ dispose: () => unregisterBugReport() });
 
+  // #1788 (S3): passive notifications. The watcher rides the ONE sseClient
+  // stream every posture below opens (its observe-only onEvent sink) — no new
+  // connection. Follow = a session this client has opened or pinned (a live
+  // chat tab), derived live from ChatPanel; the follow management surface is
+  // future work, not this slice.
+  followedSessionWatcher = new FollowedSessionWatcher({
+    followedSessions: () => ChatPanel.followedSessionIds(),
+    isSessionFocused: (sessionID) => ChatPanel.focusedSessionId() === sessionID,
+    showInformationMessage: (m, ...items) => vscode.window.showInformationMessage(m, ...items) as Promise<string | undefined>,
+    onFocusSession: (sessionID) => ChatPanel.revealSession(sessionID),
+    log: (line) => opencodeChannel.appendLine(line),
+  });
+  ctx.subscriptions.push(followedSessionWatcher);
+
   // #1760 P4 — the hub-host client posture: amicode.hubServerUrl armed →
   // spawn NOTHING and ride the hub (ALL platforms; the darwin-only fleet
   // guard does NOT gate this — erlich is a Linux remote-SSH host and is
@@ -1199,6 +1219,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       channel: opencodeChannel,
       statusBar,
       authorization: serverAuthHeaders.Authorization,
+      // #1788 (S3): the watcher observes this stream — never a new connection.
+      onEvent: (e) => followedSessionWatcher?.observe(e),
     });
     ctx.subscriptions.push(sseClient);
     // The hub session: probe the hub, attach through hysteresis. ONE server,
@@ -1269,6 +1291,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       channel: opencodeChannel,
       statusBar,
       authorization: serverAuthHeaders.Authorization,
+      // #1788 (S3): the watcher observes this stream — never a new connection.
+      onEvent: (e) => followedSessionWatcher?.observe(e),
     });
     ctx.subscriptions.push(sseClient);
     // Poll the tunnel — when the canonical server is reachable the forward answers 200.
@@ -2198,6 +2222,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       channel: opencodeChannel,
       statusBar,
       authorization: serverAuthHeaders.Authorization,
+      // #1788 (S3): the watcher observes this stream — never a new connection.
+      onEvent: (e) => followedSessionWatcher?.observe(e),
     });
     ctx.subscriptions.push(sseClient);
 
@@ -2237,6 +2263,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         channel: opencodeChannel,
         statusBar,
         authorization: serverAuthHeaders.Authorization,
+        // #1788 (S3): the watcher observes this stream — never a new connection.
+        onEvent: (e) => followedSessionWatcher?.observe(e),
       });
       ctx.subscriptions.push(sseClient);
 
