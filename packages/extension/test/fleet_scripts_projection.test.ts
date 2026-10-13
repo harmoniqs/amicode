@@ -13,7 +13,7 @@
 // failure, cache untouched.
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -530,11 +530,134 @@ describe.skipIf(!existsSync(HUB_RUNNER_BUNDLE))("#1258 the installer provisions 
 
 // ── both copies ship byte-identical (the VSIX's packaged copy is the installer users run) ──
 describe("the packaged fleet scripts stay in sync with the repo copies", () => {
-  it("guard + installer: packages/extension/tools/fleet copies are byte-identical", () => {
-    for (const f of ["amico-opencode-fleet-guard", "install.sh"]) {
+  it("guard + installer + launchd templates: packages/extension/tools/fleet copies are byte-identical", () => {
+    for (const f of ["amico-opencode-fleet-guard", "install.sh", "co.harmoniqs.amico-tunnel.plist", "co.harmoniqs.amico-peer-forward.plist"]) {
       const pkg = join(REPO, "packages", "extension", "tools", "fleet", f);
       expect(existsSync(pkg)).toBe(true);
       expect(readFileSync(pkg, "utf8")).toBe(readFileSync(join(REPO, "tools", "fleet", f), "utf8"));
     }
+  });
+});
+
+// ── #1775: installer-managed per-peer SSH forwards ─────────────────────────────
+// The SSH forward a machine uses to reach a PEER's hub was a hand-installed
+// launch agent with stale 30/3 keepalives. The installer now generates one
+// agent per attached peer — label from the peer's machine id, local port from
+// the peer token store's loopback base URL, remote port = the fleet's canonical
+// hub port, ssh destination = the peer's roster sshAlias (else its machine id).
+// Every run is hermetic: temp HOME, the launchctl seam stub, the PATH backstop.
+const PEER_STORE_REL = [".amico", "fleet-peer-tokens-reader.json"];
+const peerForwardPlist = (id: string): string => join(tmp, "Library", "LaunchAgents", `co.harmoniqs.amico-peer-${id}-forward.plist`);
+
+/** The reader peer-token store (#1438) — { store_version, peers: { id: { base_url, token } } }. */
+function writePeerStore(peers: Record<string, string>): void {
+  mkdirSync(join(tmp, ".amico"), { recursive: true });
+  const doc = { store_version: 1, peers: Object.fromEntries(Object.entries(peers).map(([id, baseUrl]) => [id, { base_url: baseUrl, token: `tok-${id}` }])) };
+  writeFileSync(join(tmp, ...PEER_STORE_REL), JSON.stringify(doc, null, 2));
+}
+
+/** The fleet roster cache — the peer's sshAlias lives on its row. */
+function writeRoster(rows: Array<{ machine_id: string; sshAlias: string }>): void {
+  const dir = join(tmp, ".amico", "ops", "fleet");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "roster.json"), JSON.stringify({ schema_version: 1, rows: rows.map((r) => ({ ...r, transport: "ssh", server_mode: "server" })) }, null, 2));
+}
+
+/** A launchd plist's Label + ProgramArguments, read straight from the XML. */
+function readAgent(file: string): { label: string; args: string[] } {
+  const xml = readFileSync(file, "utf8");
+  const label = /<key>Label<\/key>\s*<string>([^<]*)<\/string>/.exec(xml)?.[1] ?? "";
+  const array = /<key>ProgramArguments<\/key>\s*<array>([\s\S]*?)<\/array>/.exec(xml)?.[1] ?? "";
+  const args = [...array.matchAll(/<string>([^<]*)<\/string>/g)].map((m) => m[1]);
+  return { label, args };
+}
+
+/** The standard forward argv (fleet_transport's options) for one peer. */
+const standardForward = (localPort: number, remotePort: number, alias: string): string[] => [
+  "/usr/bin/ssh", "-N",
+  "-o", "ExitOnForwardFailure=yes",
+  "-o", "ServerAliveInterval=15",
+  "-o", "ServerAliveCountMax=2",
+  "-o", "TCPKeepAlive=yes",
+  "-o", "BatchMode=yes",
+  "-L", `127.0.0.1:${localPort}:127.0.0.1:${remotePort}`,
+  alias,
+];
+
+describe("#1775 the installer generates one SSH forward agent per attached peer", () => {
+  const installEnv = (): { path: string } => ({
+    path: `${join(tmp, "fakebin")}:${process.env.PATH ?? ""}`,
+  });
+  const verbFor = (role: string): string =>
+    role === "standalone" ? verbJson() : verbJson(role, { host: "hq", port: 4096, sshAlias: "hq" });
+
+  it.each(["server", "client", "standalone"])(
+    "a %s attached to a peer gets that peer's forward agent — 15 s keepalive, 2 misses, TCPKeepAlive, ExitOnForwardFailure, the store's local port; a re-run is idempotent",
+    (role) => {
+      fakeAmico({ code: 0, stdout: verbFor(role) });
+      fakeUname("Darwin");
+      writePeerStore({ "jjs-mac-studio": "http://127.0.0.1:45096" });
+      writeRoster([{ machine_id: "jjs-mac-studio", sshAlias: "studio-ssh" }]);
+
+      const r = runScript(INSTALL, [], installEnv());
+      expect(r.code, r.out).toBe(0);
+      const plist = peerForwardPlist("jjs-mac-studio");
+      expect(existsSync(plist), r.out).toBe(true);
+      const agent = readAgent(plist);
+      expect(agent.label).toBe("co.harmoniqs.amico-peer-jjs-mac-studio-forward");
+      expect(agent.args).toEqual(standardForward(45096, 4096, "studio-ssh"));
+      expect(readFileSync(plist, "utf8")).toMatch(/<key>KeepAlive<\/key>\s*<true\/>/);
+      expect(launchctlCalls()).toContain(`load ${plist}`);
+
+      // Re-run: byte-identical agent, no reload, still exactly one forward agent.
+      const first = readFileSync(plist, "utf8");
+      rmSync(join(tmp, "launchctl.argv"), { force: true });
+      const again = runScript(INSTALL, [], installEnv());
+      expect(again.code, again.out).toBe(0);
+      expect(readFileSync(plist, "utf8")).toBe(first);
+      expect(launchctlCalls().filter((l) => l.includes(plist))).toEqual([]);
+      expect(again.out).toMatch(/peer forward co\.harmoniqs\.amico-peer-jjs-mac-studio-forward unchanged/);
+      expect(readdirSync(join(tmp, "Library", "LaunchAgents")).filter((f) => f.endsWith("-forward.plist"))).toEqual([
+        "co.harmoniqs.amico-peer-jjs-mac-studio-forward.plist",
+      ]);
+      expect(backstopCalls()).toEqual([]);
+    },
+  );
+
+  it("the ssh destination falls back to the peer's machine id when the roster has no row for it", () => {
+    fakeAmico({ code: 0, stdout: verbFor("server") });
+    fakeUname("Darwin");
+    writePeerStore({ "jjs-mac-studio": "http://127.0.0.1:45096" });
+    const r = runScript(INSTALL, [], installEnv());
+    expect(r.code, r.out).toBe(0);
+    expect(readAgent(peerForwardPlist("jjs-mac-studio")).args).toEqual(standardForward(45096, 4096, "jjs-mac-studio"));
+  });
+
+  it("one agent per peer: each loopback peer gets its own label + port; a peer reached over https (tailscale/direct) gets no ssh forward", () => {
+    fakeAmico({ code: 0, stdout: verbFor("server") });
+    fakeUname("Darwin");
+    writePeerStore({
+      "jjs-mac-studio": "http://127.0.0.1:45096",
+      "lab-box": "http://127.0.0.1:45097",
+      "far-node": "https://far-node.tailnet-1234.ts.net",
+    });
+    writeRoster([{ machine_id: "lab-box", sshAlias: "lab" }]);
+    const r = runScript(INSTALL, [], installEnv());
+    expect(r.code, r.out).toBe(0);
+    expect(readAgent(peerForwardPlist("jjs-mac-studio")).args).toEqual(standardForward(45096, 4096, "jjs-mac-studio"));
+    expect(readAgent(peerForwardPlist("lab-box")).args).toEqual(standardForward(45097, 4096, "lab"));
+    expect(existsSync(peerForwardPlist("far-node"))).toBe(false);
+    expect(r.out).toMatch(/far-node.*no SSH forward/);
+  });
+
+  it("Fleet — Repair runs the PACKAGED installer copy — it generates the same agent from the packaged template", () => {
+    fakeAmico({ code: 0, stdout: verbFor("server") });
+    fakeUname("Darwin");
+    writePeerStore({ "jjs-mac-studio": "http://127.0.0.1:45096" });
+    const packaged = join(REPO, "packages", "extension", "tools", "fleet", "install.sh");
+    const r = runScript(packaged, [], installEnv());
+    expect(r.code, r.out).toBe(0);
+    expect(readAgent(peerForwardPlist("jjs-mac-studio")).args).toEqual(standardForward(45096, 4096, "jjs-mac-studio"));
+    expect(backstopCalls()).toEqual([]);
   });
 });

@@ -94,13 +94,94 @@ PORT_PARSED="$(printf '%s\n' "$PARSED" | sed -n 2p)"
 SSH_ALIAS="$(printf '%s\n' "$PARSED" | sed -n 3p)"
 if [[ "$PORT_PARSED" =~ ^[0-9]+$ ]]; then FLEET_PORT="$PORT_PARSED"; fi
 
-# Standalone: nothing to install — the guard/tunnel are irrelevant.
+# --- per-peer SSH forwards (#1775) ---
+# One launchd agent per attached PEER (peer studios, ADR 0027 / ADR 0032): the
+# SSH `-L` forward this machine uses to reach that peer's hub. Generated from
+# the repo template with the fleet transport's standard options (15 s
+# keepalive, 2 misses, TCPKeepAlive, ExitOnForwardFailure — sshForwardArgs),
+# never hand-installed. Role-agnostic: a peer may be standalone, server, or
+# client — the signal is the reader peer-token store (fleet_peer_store.ts),
+# whose loopback base_url IS the forward's local end. Darwin only (the
+# supervised linux/WSL link is #1260).
+#   label        co.harmoniqs.amico-peer-<machine_id>-forward
+#   local port   the store's base_url port (http://127.0.0.1:<port>)
+#   remote port  the fleet's canonical hub port ($FLEET_PORT)
+#   destination  the peer's roster sshAlias, else its machine id
+PEER_PLIST_SRC="$REPO_ROOT/tools/fleet/co.harmoniqs.amico-peer-forward.plist"
+PEER_STORE="${AMICO_FLEET_PEER_TOKEN_FILE:-$HOME/.amico/fleet-peer-tokens-reader.json}"
+ROSTER_FILE="${AMICO_FLEET_ROSTER_FILE:-$HOME/.amico/ops/fleet/roster.json}"
+
+# One line per peer: `forward<TAB>id<TAB>local_port<TAB>alias`, or
+# `note<TAB>message` for a peer that rides no ssh forward. Never prints a token.
+peer_forward_targets() {
+  node -e '
+    const fs = require("fs");
+    const doc = (p) => { try { const j = JSON.parse(fs.readFileSync(p, "utf8")); return j && typeof j === "object" && !Array.isArray(j) ? j : {}; } catch (e) { return {}; } };
+    const store = doc(process.argv[1]);
+    const peers = store.peers && typeof store.peers === "object" && !Array.isArray(store.peers) ? store.peers : {};
+    const roster = doc(process.argv[2]);
+    const rows = Array.isArray(roster.rows) ? roster.rows : [];
+    const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+    const SAFE_ALIAS = /^[A-Za-z0-9][A-Za-z0-9._@-]*$/;
+    const out = [];
+    for (const id of Object.keys(peers).sort()) {
+      const e = peers[id];
+      const raw = e && typeof e === "object" && typeof e.base_url === "string" ? e.base_url.trim() : "";
+      if (!SAFE_ID.test(id)) { out.push(["note", "peer id " + JSON.stringify(id) + " is not a safe launchd label fragment — no SSH forward generated"]); continue; }
+      let u = null;
+      try { u = new URL(raw); } catch (_) { u = null; }
+      const loopback = u !== null && u.protocol === "http:" && (u.hostname === "127.0.0.1" || u.hostname === "localhost");
+      const port = u !== null ? Number(u.port) : NaN;
+      if (!loopback || !Number.isInteger(port) || port < 1 || port > 65535) {
+        out.push(["note", "peer " + id + " is reached at " + (raw || "(no base_url)") + " — no SSH forward (only a loopback http://127.0.0.1:<port> base URL rides one)"]);
+        continue;
+      }
+      const row = rows.find((r) => r && r.machine_id === id);
+      const rowAlias = row && typeof row.sshAlias === "string" ? row.sshAlias.trim() : "";
+      out.push(["forward", id, String(port), SAFE_ALIAS.test(rowAlias) ? rowAlias : id]);
+    }
+    process.stdout.write(out.map((f) => f.join("\t")).join("\n"));
+  ' "$PEER_STORE" "$ROSTER_FILE"
+}
+
+peer_forwards() {
+  if [[ "$(uname -s)" != "Darwin" ]]; then return 0; fi
+  if [[ $CHECK -eq 1 ]]; then return 0; fi
+  local targets kind peer_id lport alias label dst tmpf
+  targets="$(peer_forward_targets)" || die "could not read the peer token store at $PEER_STORE (node failed)"
+  if [[ -z "$targets" ]]; then return 0; fi
+  if [[ ! -f "$PEER_PLIST_SRC" ]]; then
+    say "note: no peer-forward template at $PEER_PLIST_SRC — skipping peer forwards (git pull?)"
+    return 0
+  fi
+  while IFS=$'\t' read -r kind peer_id lport alias; do
+    if [[ "$kind" == "note" ]]; then say "note: $peer_id"; continue; fi
+    label="co.harmoniqs.amico-peer-${peer_id}-forward"
+    dst="$LAUNCH_AGENTS_DIR/${label}.plist"
+    mkdir -p "$LAUNCH_AGENTS_DIR"
+    tmpf="$(mktemp)"
+    sed -e "s/PEER_MACHINE_ID/${peer_id}/g" -e "s/PEER_LOCAL_PORT/${lport}/g" -e "s/PEER_REMOTE_PORT/${FLEET_PORT}/g" -e "s/PEER_SSH_ALIAS/${alias}/g" "$PEER_PLIST_SRC" > "$tmpf"
+    if [[ -f "$dst" ]] && cmp -s "$tmpf" "$dst"; then
+      say "peer forward $label unchanged — skipping reload"
+    else
+      cp "$tmpf" "$dst"
+      "$LAUNCHCTL" unload "$dst" 2>/dev/null || true
+      "$LAUNCHCTL" load "$dst" 2>/dev/null || "$LAUNCHCTL" bootstrap "gui/$(id -u)" "$dst" 2>/dev/null || true
+      say "installed peer forward $dst and (re)loaded (127.0.0.1:${lport} → ${alias}:${FLEET_PORT}, 15/2 + TCPKeepAlive)"
+    fi
+    rm -f "$tmpf"
+  done <<< "$targets"
+}
+
+# Standalone: no guard/tunnel/hub — but a standalone PEER still gets its
+# per-peer forwards (#1775: peers stay standalone, ADR 0027).
 if [[ "$ROLE" == "standalone" ]]; then
   if [[ $CHECK -eq 1 ]]; then
     say "standalone (no fleet.json or role=standalone) — fleet checks skipped"
   else
-    say "standalone mode — nothing to install (use 'Amicode: Fleet — Enroll' to join a fleet)"
+    say "standalone mode — nothing to install for the fleet stance (use 'Amicode: Fleet — Enroll' to join a fleet)"
   fi
+  peer_forwards
   exit 0
 fi
 
@@ -251,6 +332,9 @@ elif [[ "$(uname -s)" == "Darwin" ]]; then
     fi
   fi
 fi
+
+# --- per-peer SSH forwards (every role — #1775; see peer_forwards above) ---
+peer_forwards
 
 # --- canonical hub service (SERVER role only — reboot-survival, #1258) ---
 # The canonical hub must survive a REBOOT with NO editor ever opened. Today the
