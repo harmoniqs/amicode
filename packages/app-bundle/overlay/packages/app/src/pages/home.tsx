@@ -94,7 +94,8 @@ import { Mark } from "@opencode-ai/ui/logo"
 import { AmicodeFooter } from "@opencode-ai/ui/amicode-footer"
 import { useTheme } from "@opencode-ai/ui/theme/context"
 import { SessionTabStatusDot, sessionTabStatus } from "@/pages/layout/session-tab-status"
-import { useSessionTabAvatarState } from "@/pages/layout/project-avatar-state"
+import { SessionListStatusChip } from "@/pages/layout/session-list-chip"
+import { useSessionTabAvatarState, useSessionListChipState } from "@/pages/layout/project-avatar-state"
 
 const HOME_SESSION_LIMIT = 64
 const HOME_ROW_LAYOUT =
@@ -2136,6 +2137,15 @@ function HomeSessionRow(props: {
     () => props.record.session.directory,
     () => props.record.session.id,
   )
+  // amicode#1787 (S1): the live status chip — running / waiting on question /
+  // idle <age> — derived off the shared store rows; omitted (no evidence)
+  // renders no chip. Age refreshes with every store re-derivation (the same
+  // render-time relative-time posture as session-new-view's toRelative()).
+  const chip = useSessionListChipState(
+    () => props.server,
+    () => props.record.session.id,
+    () => props.record.session.time.updated,
+  )
 
   return (
     <div class="group/session relative flex h-7 min-w-0 items-center rounded-sm">
@@ -2163,6 +2173,7 @@ function HomeSessionRow(props: {
             {props.record.projectName}
           </span>
         </Show>
+        <SessionListStatusChip chip={chip()} />
       </button>
       <Show when={props.archiveSession}>
         <div
