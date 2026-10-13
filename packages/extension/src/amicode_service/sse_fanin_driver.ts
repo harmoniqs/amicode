@@ -395,17 +395,21 @@ class FanInConnection implements CensusConnection {
     }
   }
 
-  /** #1638 — re-open an arm from the aggregator's LIVE last-delivered cursor (not
-   *  the stale connect-time id) and, on a NON-INITIAL re-open, force a client
-   *  refetch via the aggregator's composite-mode gap. `agg.reopenArm` is a no-op
-   *  for an arm that has never delivered (an initial open), so it is safe to call
-   *  at every reconcile-time open. Falls back to the connect-time resume id when
-   *  the arm has delivered nothing yet.
+  /** #1638 — re-open an arm from the aggregator's LIVE resume position (not the
+   *  stale connect-time id). `agg.reopenArm` is a no-op for an arm that has
+   *  never delivered (an initial open), so it is safe to call at every
+   *  reconcile-time open. Falls back to the connect-time resume id when the arm
+   *  has delivered nothing yet.
    *
-   *  #1773 — in fleet-of-one the verdict for an arm that delivered is `sever`: a
-   *  synthetic gap frame may not enter the verbatim stream (#1264), so instead of
-   *  re-opening silently (losing the stretch unannounced) the listener is ended
-   *  with a transport error, named after the loss that caused it. */
+   *  #1777 — an arm that delivered engine ids RESUMES: it re-opens from its last
+   *  delivered id and the upstream replays the stretch it missed — no gap, no
+   *  sever. An upstream reset is announced as the upstream answers.
+   *
+   *  #1773 — the fallback for an upstream without ids: in composite mode one gap;
+   *  in fleet-of-one the verdict is `sever` (a synthetic gap frame may not enter
+   *  the verbatim stream, #1264), so instead of re-opening silently (losing the
+   *  stretch unannounced) the listener is ended with a transport error, named
+   *  after the loss that caused it. */
   private reopenAndTrack(namespace: string, url: string | undefined, authHeader: string | undefined): void {
     if (this.sources.has(namespace)) return;
     if (this.agg.reopenArm(namespace) === "sever") {
@@ -461,7 +465,14 @@ class FanInConnection implements CensusConnection {
         break;
       }
       if (frame === null || this.closed) break;
-      this.agg.ingest(namespace, frame);
+      // #1777 — a fleet-of-one arm resumed from its cursor whose upstream
+      // answered without ids (an engine that cannot replay) lost the stretch
+      // since the drop; the verbatim stream may carry no gap frame, so the
+      // listener is severed under the loss that caused the re-open (#1773).
+      if (this.agg.ingest(namespace, frame) === "sever") {
+        this.close(this.lastClose.get(namespace) ?? "upstream-end");
+        return;
+      }
     }
     // #1771 — the upstream's OWN end (not one this connection caused): name it.
     if (!this.closed && !this.closedByUs.has(source)) {

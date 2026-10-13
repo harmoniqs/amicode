@@ -16,13 +16,17 @@ import {
   writeChunks,
   largeSummaryFrame,
   sequencedEvent,
+  legacyEvent,
   engineId,
   chunkBytes,
   CHUNK_64K,
   TEN_MB,
   LOCAL_EPOCH,
   PEER_EPOCH,
+  replayingEngine,
+  type ReplayingEngine,
 } from "./fixtures/engine_stream/engine_frames";
+import { parseCompositeCursor } from "../src/amicode_service/sse_composite_cursor";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -719,8 +723,10 @@ describe("#1638 — re-open resumes from last-delivered id + composite-mode reco
 
   // #1773 AC1: in BOTH engine modes — an older peer engine sends no `id:` lines,
   // and its re-open must gap all the same ("delivered" = any data frame).
+  // #1777: the sequenced peer has engine ids to resume from, so its re-open
+  // RESUMES from the last delivered id instead — no gap (the replay covers it).
   for (const mode of ["sequenced", "legacy"] as const)
-  it(`COMPOSITE MODE (${mode} peer engine): re-opening a dropped peer arm emits exactly one amicode.sync.gap naming it`, async () => {
+  it(`COMPOSITE MODE (${mode} peer engine): re-opening a dropped peer arm ${mode === "legacy" ? "emits exactly one amicode.sync.gap naming it" : "resumes from its last delivered id, with no gap"}`, async () => {
     const ownerMap = new SessionOwnerMap()
     ownerMap.update([
       { id: "ses-studio", amicode_owner: { owner_machine_id: "studio", owner_name: "studio", is_local: false } },
@@ -731,6 +737,7 @@ describe("#1638 — re-open resumes from last-delivered id + composite-mode reco
 
     const localCtl = controllableSource()
     const peerCtls: Ctl[] = []
+    const peerOpens: Array<string | undefined> = []
 
     const driver = new SseFanInDriver({
       ownerMap,
@@ -744,6 +751,7 @@ describe("#1638 — re-open resumes from last-delivered id + composite-mode reco
       reconcileMs: 999_999,
       openUpstream: (r) => {
         if (r.namespace === LOCAL_NAMESPACE) return localCtl.source
+        peerOpens.push(r.lastEventId)
         const ctl = controllableSource()
         peerCtls.push(ctl)
         return ctl.source
@@ -761,18 +769,24 @@ describe("#1638 — re-open resumes from last-delivered id + composite-mode reco
     const beforeGap = (res.text().match(/amicode\.sync\.gap/g) ?? []).length
     expect(beforeGap).toBe(0) // initial open emitted no gap
 
-    // drop the peer arm, then reconcile re-opens it → exactly one gap
+    // drop the peer arm, then reconcile re-opens it
     peerCtls[0].end()
     await tick()
     driver.reconcile()
     await tick()
 
     const gapMatches = res.text().match(/event: amicode\.sync\.gap/g) ?? []
-    expect(gapMatches.length).toBe(1)
-    const gapFrame = res.text().split("\n\n").find((f) => f.includes("amicode.sync.gap"))!
-    const dataLine = gapFrame.split("\n").find((l) => l.startsWith("data:"))!
-    const parsed = JSON.parse(dataLine.slice("data:".length).trim())
-    expect(parsed.namespaces).toContain("studio")
+    if (mode === "sequenced") {
+      expect(peerOpens).toEqual([undefined, studio.idAt(1)]) // resumed from the last delivered id
+      expect(gapMatches.length).toBe(0)
+    } else {
+      expect(peerOpens).toEqual([undefined, undefined]) // nothing to resume from
+      expect(gapMatches.length).toBe(1)
+      const gapFrame = res.text().split("\n\n").find((f) => f.includes("amicode.sync.gap"))!
+      const dataLine = gapFrame.split("\n").find((l) => l.startsWith("data:"))!
+      const parsed = JSON.parse(dataLine.slice("data:".length).trim())
+      expect(parsed.namespaces).toContain("studio")
+    }
 
     localCtl.end()
     peerCtls.forEach((c) => c.end())
@@ -783,10 +797,12 @@ describe("#1638 — re-open resumes from last-delivered id + composite-mode reco
   // re-open loses the stretch between the arm's end and its re-subscription with
   // nothing to announce it. The #1264 guards stay: no synthetic frame, and the
   // stream is byte-identical to what the local source delivered while connected.
+  // #1777: the sever is the fallback for a local engine WITHOUT ids (older than
+  // #1776) — a sequenced one resumes instead (the #1777 suite) — so L1 is legacy.
   it("FLEET-OF-ONE (zero peers): a re-opened LOCAL arm emits NO gap, stays byte-identical (#1264), and severs the listener (#1773)", async () => {
     const ownerMap = new SessionOwnerMap() // no owners → fleet-of-one
 
-    const L1 = localEvt(1, { from: "macbook", n: 1 })
+    const L1 = legacyEvent({ from: "macbook", n: 1 })
 
     const localCtls: Ctl[] = []
 
@@ -830,7 +846,7 @@ describe("#1638 — re-open resumes from last-delivered id + composite-mode reco
     res.fireClose()
   })
 
-  it("fleet-of-one cursor bookkeeping: a never-delivered arm re-opens from the connect cursor; a severed listener's reconnect resumes from the last-delivered id", async () => {
+  it("fleet-of-one cursor bookkeeping: a never-delivered arm re-opens from the connect cursor; a delivered one resumes from its last-delivered id, and so does a reconnecting listener", async () => {
     const ownerMap = new SessionOwnerMap()
 
     const L1 = localEvt(1, { from: "macbook", n: 1 })
@@ -868,24 +884,27 @@ describe("#1638 — re-open resumes from last-delivered id + composite-mode reco
     expect(opened[1].lastEventId).toBe(localId(0))
     expect(res.destroyed).toBe(false)
 
-    // the re-opened arm delivers, then drops → the listener is severed
+    // #1777: the re-opened arm delivers, then drops → it RESUMES from the last
+    // delivered id (the engine replays the stretch) — the listener is not severed
     localCtls[1].push(L1)
     await tick()
     localCtls[1].end()
     await tick()
     driver.reconcile()
     await tick()
-    expect(res.destroyed).toBe(true)
-    expect(opened).toHaveLength(2)
+    expect(res.destroyed).toBe(false)
+    expect(opened).toHaveLength(3)
+    expect(opened[2].lastEventId).toBe(localId(1)) // last-delivered, not the stale connect id
 
     // the client's cursor is the last SSE id it saw on the verbatim stream …
     const lastSeen = [...res.text().matchAll(/^id: (.*)$/gm)].at(-1)?.[1]
     expect(lastSeen).toBe(localId(1))
     // … and its reconnect resumes the local arm from exactly that id
+    res.fireClose()
     const again = mockRes()
     driver.handle(mockReq(`/event?lastEventID=${lastSeen}`), again)
     await tick()
-    expect(opened[2].lastEventId).toBe(localId(1)) // last-delivered, not the stale connect id
+    expect(opened[3].lastEventId).toBe(localId(1))
 
     localCtls.forEach((c) => c.end())
     again.fireClose()
@@ -901,14 +920,23 @@ describe("#1638 — re-open resumes from last-delivered id + composite-mode reco
 // fixtures in both modes (legacy id-less, sequenced).
 // ══════════════════════════════════════════════════════════════════════════════
 describe("#1773 AC2 — fleet-of-one: a re-opened local arm severs the listener with a transport error", () => {
+  // #1777: the sever is the fallback for a local engine without ids (legacy); a
+  // sequenced engine's arm RESUMES from its last delivered id instead — the
+  // replay announces nothing because nothing was lost, and the listener lives.
   for (const mode of ["legacy", "sequenced"] as const) {
     for (const why of ["end", "error"] as const) {
-      it(`${mode} engine, upstream ${why}: no synthetic frame, byte-identical while connected, then an error close named ${why === "end" ? "upstream-end" : "upstream-error"}`, async () => {
+      const title =
+        mode === "legacy"
+          ? `${mode} engine, upstream ${why}: no synthetic frame, byte-identical while connected, then an error close named ${why === "end" ? "upstream-end" : "upstream-error"}`
+          : `${mode} engine, upstream ${why}: no synthetic frame, and the arm resumes from its last id — no sever`
+      it(title, async () => {
         const { census, lines } = testCensus()
         const localCtls: Ctl[] = []
+        const opened: Array<string | undefined> = []
         const driver = twoListenerDriver(fakeOrigins(), new SessionOwnerMap(), {
           census,
-          openUpstream: () => {
+          openUpstream: (r) => {
+            opened.push(r.lastEventId)
             const ctl = controllableSource()
             localCtls.push(ctl)
             return ctl.source
@@ -930,18 +958,26 @@ describe("#1773 AC2 — fleet-of-one: a re-opened local arm severs the listener 
         localCtls[0].end(why) // the local upstream is lost …
         await flush()
         expect(res.destroyed).toBe(false) // … nothing is decided until the re-open
-        driver.reconcile() // the re-open: sever, never re-open silently
+        driver.reconcile() // the re-open: resume, or sever — never re-open silently
         await flush()
 
         expect(res.text()).toBe(frames.join("")) // no synthetic frame was injected
+        const reason = why === "end" ? "upstream-end" : "upstream-error"
+        expect(lines).toContain(`[fanin] arm-closed plane=observe conn=c1 arm=local reason=${reason}`)
+        if (mode === "sequenced") {
+          expect(res.destroyed).toBe(false)
+          expect(opened).toEqual([undefined, engine.idAt(engine.seq)])
+          expect(lines.at(-1)).toBe("[fanin] arm-opened plane=observe conn=c1 arm=local opens=2")
+          expect(census.snapshot()).toMatchObject({ listeners: 1, accepted: 1, closed: 0 })
+          res.fireClose()
+          return
+        }
         expect(res.destroyed).toBe(true)
         expect(res.destroyError).toBeInstanceOf(Error)
         expect(res.ended).toBe(false) // an error close, never a clean end
         expect(localCtls).toHaveLength(1) // the severed listener re-opened nothing
 
         // the census names the listener's close by its cause (#1771's set)
-        const reason = why === "end" ? "upstream-end" : "upstream-error"
-        expect(lines).toContain(`[fanin] arm-closed plane=observe conn=c1 arm=local reason=${reason}`)
         expect(lines).toContain(`[fanin] listener-closed plane=observe conn=c1 reason=${reason} listeners=0`)
         expect(census.snapshot()).toMatchObject({ listeners: 0, accepted: 1, closed: 1, evictions: 0 })
       })
@@ -1948,7 +1984,7 @@ describe("#1771 AC2 — close reasons are an enumerated set", () => {
     });
     const res = mockRes();
     driver.handle(mockReq("/global/event"), res);
-    localCtls[0].push(fakeEngine({ epoch: LOCAL_EPOCH }).connected());
+    localCtls[0].push(fakeEngine({ legacy: true }).connected()); // #1777: an id-less engine — the sever fallback
     await flush();
     localCtls[0].end("error");
     await flush();
@@ -1979,7 +2015,10 @@ describe("#1771 AC3 — each transition logs one line immediately, with its conn
     res.fireClose();
   });
 
-  it("frames are never logged; an arm that drops and re-opens logs closed → gap emitted → opened", async () => {
+  // #1777: an id-less (legacy) arm's re-open logs its gap; a sequenced arm's
+  // re-open RESUMES — closed → opened, and no gap line at all.
+  for (const mode of ["legacy", "sequenced"] as const)
+  it(`frames are never logged; ${mode === "legacy" ? "an id-less arm that drops and re-opens logs closed → gap emitted → opened" : "a sequenced arm that drops and re-opens logs closed → opened (resumed, no gap)"}`, async () => {
     const ownerMap = new SessionOwnerMap();
     ownerMap.update(STUDIO_OWNED);
     const { census, lines } = testCensus();
@@ -1992,7 +2031,7 @@ describe("#1771 AC3 — each transition logs one line immediately, with its conn
         return ctl.source;
       },
     });
-    const studio = fakeEngine({ epoch: PEER_EPOCH });
+    const studio = mode === "legacy" ? fakeEngine({ legacy: true }) : fakeEngine({ epoch: PEER_EPOCH });
     const res = mockRes();
     driver.handle(mockReq("/global/event"), res);
     const before = lines.length;
@@ -2006,7 +2045,7 @@ describe("#1771 AC3 — each transition logs one line immediately, with its conn
     driver.reconcile();
     expect(lines.slice(before)).toEqual([
       "[fanin] arm-closed plane=observe conn=c1 arm=studio reason=upstream-end",
-      "[fanin] gap-emitted plane=observe conn=c1 arm=studio cause=reopen",
+      ...(mode === "legacy" ? ["[fanin] gap-emitted plane=observe conn=c1 arm=studio cause=reopen"] : []),
       "[fanin] arm-opened plane=observe conn=c1 arm=studio opens=2",
     ]);
     peerCtls.forEach((c) => c.end());
@@ -2074,13 +2113,23 @@ describe("#1771 AC5 — the census adds no frames to any stream and changes no d
       vi.advanceTimersByTime(FANIN_CENSUS_INTERVAL_MS); // a census line mid-stream
       localCtls[0].end(); // the arm drops …
       await flush();
-      driver.reconcile(); // … and the re-open severs the listener (#1773 — no gap frame in fleet-of-one)
+      driver.reconcile(); // … and the re-open severs the listener (#1773 — no gap frame in fleet-of-one) or, #1777, resumes it
+      const second = [engine.heartbeat(), engine.event("session.status", { status: "idle" })];
+      if (engine.epoch !== undefined) {
+        // a sequenced engine: the arm resumed beneath the SAME listener — still
+        // the engine's frames, byte for byte
+        expect(res.destroyed).toBe(false);
+        for (const f of second) localCtls[1].push(f);
+        await flush();
+        expect(res.text()).toBe(first.join("") + second.join(""));
+        res.fireClose();
+        continue;
+      }
       expect(res.text()).toBe(first.join(""));
       expect(res.destroyed).toBe(true);
       // the client reconnects; the stream resumes on the new listener
       const again = mockRes();
       driver.handle(mockReq("/global/event"), again);
-      const second = [engine.heartbeat(), engine.event("session.status", { status: "idle" })];
       for (const f of second) localCtls[1].push(f);
       await flush();
       expect(again.text()).toBe(second.join(""));
@@ -2194,4 +2243,97 @@ describe("#1771 AC6 — a 10 MB engine frame delivered in 64 KB chunks (the #177
       await server.stop();
     }
   });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// #1777 — LOSSLESS RESUME. The engine (#1776) sequences and replays its global
+// stream; the fan-in now uses it. A re-opened arm resumes from its last delivered
+// engine id, so the upstream REPLAYS what the listener missed — no gap, no resync.
+// Only what the replay cannot serve is announced (an upstream reset → one gap;
+// an old id-less engine → the #1773 gap / sever fallback). The upstream here is
+// a REPLAYING engine (test/fixtures/engine_stream): it answers a cursor the way
+// the #1776 route does — `server.connected` at the cursor, then the replay — or
+// with the `server.cursor.unservable` reset first.
+// ══════════════════════════════════════════════════════════════════════════════
+
+/** The downstream stream as a client parses it: per frame, its `id:` and JSON data. */
+function sseFrames(text: string): Array<{ id?: string; data?: Record<string, any>; type?: string }> {
+  const out: Array<{ id?: string; data?: Record<string, any>; type?: string }> = [];
+  for (const block of text.split("\n\n")) {
+    if (block.trim() === "") continue;
+    const id = /^id: (.*)$/m.exec(block)?.[1];
+    const dataLine = block.split("\n").find((l) => l.startsWith("data:"));
+    const data = dataLine ? (JSON.parse(dataLine.slice(5).trim()) as Record<string, any>) : undefined;
+    const type: string | undefined = data ? (data.payload?.type ?? data.type) : undefined;
+    out.push({ ...(id !== undefined ? { id } : {}), ...(data ? { data } : {}), ...(type ? { type } : {}) });
+  }
+  return out;
+}
+
+/** A driver whose arms subscribe to in-process replaying engines. */
+function replayDriver(
+  engines: { local: ReplayingEngine; studio?: ReplayingEngine },
+  ownerMap: SessionOwnerMap,
+  extra: Partial<ConstructorParameters<typeof SseFanInDriver>[0]> = {},
+): SseFanInDriver {
+  return new SseFanInDriver({
+    ownerMap,
+    localMachineId: "macbook",
+    localEventUrl: () => "http://local.invalid",
+    peerBaseUrl: (id) => (id === "studio" ? "http://studio.invalid" : undefined),
+    peerToken: (id) =>
+      id === "studio"
+        ? { ok: true as const, credential: { baseUrl: "http://studio.invalid", token: "tok-studio" } }
+        : { ok: false as const, reason: "absent" as const },
+    reconcileMs: 999_999,
+    openUpstream: (r) => (r.namespace === LOCAL_NAMESPACE ? engines.local : engines.studio!).subscribe(r.lastEventId).source,
+    ...extra,
+  });
+}
+
+const partEvent = (n: number) => ["message.part.updated", { part: { id: `prt_${n}`, text: `line ${n}` }, n }] as const;
+
+describe("#1777 AC1 — a peer arm that drops and re-opens within the replay window resumes: every missed frame, no gap, no resync", () => {
+  for (const why of ["end", "error"] as const) {
+    it(`upstream ${why}: the re-open resumes from the last delivered id and the viewer gets every frame exactly once, in order`, async () => {
+      const ownerMap = new SessionOwnerMap();
+      ownerMap.update(STUDIO_OWNED);
+      const local = replayingEngine({ epoch: LOCAL_EPOCH });
+      const studio = replayingEngine({ epoch: PEER_EPOCH });
+      const { census, lines } = testCensus();
+      const driver = replayDriver({ local, studio }, ownerMap, { census });
+      const res = mockRes();
+      driver.handle(mockReq("/global/event"), res);
+      await flush();
+
+      for (const n of [1, 2, 3]) studio.publish(...partEvent(n)); // mid-turn
+      await flush();
+      studio.subscriptions[0].end(why); // the peer link drops …
+      await flush();
+      for (const n of [4, 5, 6]) studio.publish(...partEvent(n)); // … while the turn goes on
+      driver.reconcile(); // the re-open
+      await flush();
+      for (const n of [7, 8]) studio.publish(...partEvent(n));
+      await flush();
+
+      // the re-open asked for the last delivered id, and the engine could serve it
+      expect(studio.subscriptions).toHaveLength(2);
+      expect(studio.subscriptions[1].cursor).toBe(studio.idAt(3));
+      expect(studio.subscriptions[1].reset).toBe(false);
+
+      const frames = sseFrames(res.text());
+      // every frame the peer published, exactly once, in order
+      expect(frames.filter((f) => f.type === "message.part.updated").map((f) => f.data!.payload.properties.n)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+      // no gap signal …
+      expect(frames.some((f) => f.type === "amicode.sync.gap")).toBe(false);
+      expect(lines.some((l) => l.includes("gap-emitted"))).toBe(false);
+      // … and no resync cue: the resumed arm's own handshake is not an event of
+      // the listener's stream (only the two initial arms' connected frames show)
+      expect(frames.filter((f) => f.type === "server.connected")).toHaveLength(2);
+      // the listener stays connected, and its cursor carries the peer's position
+      expect(res.destroyed).toBe(false);
+      expect(parseCompositeCursor(frames.at(-1)!.id).get("studio")).toBe(studio.idAt(8));
+      res.fireClose();
+    });
+  }
 });

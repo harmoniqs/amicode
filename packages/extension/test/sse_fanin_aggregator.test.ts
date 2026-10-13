@@ -41,7 +41,7 @@ import {
 import { SessionOwnerMap } from "../src/amicode_service/session_multiplexer";
 import { peerAuthHeader } from "../src/amicode_service/merged_projection";
 import type { PeerTokenRead } from "../src/amicode_service/fleet_peer_store";
-import { fakeEngine, sequencedEvent, engineId, LOCAL_EPOCH, PEER_EPOCH } from "./fixtures/engine_stream/engine_frames";
+import { fakeEngine, sequencedEvent, legacyEvent, engineId, engineFrame, controlEvent, LOCAL_EPOCH, PEER_EPOCH } from "./fixtures/engine_stream/engine_frames";
 
 // ── test helpers ──────────────────────────────────────────────────────────────
 
@@ -83,6 +83,9 @@ function nsFrame(ns: string, n: number): string {
 const idIn = (ns: string, n: number) => engineId(EPOCH_OF[ns], n);
 /** The seq of an `<epoch>:<seq>` id. */
 const seqOf = (id: string | undefined) => Number(id?.split(":")[1]);
+/** #1777: an engine per-connection control frame (connected / heartbeat / reset) at `id`. */
+const controlFrame = (id: string, type: string, properties: Record<string, unknown> = {}) =>
+  engineFrame(controlEvent(`evt_ctl_${id}`, type, properties), { id });
 
 /** A frame source that yields a fixed list of raw frames, then ends. */
 function fixedSource(frames: string[]): SseFrameSource {
@@ -786,12 +789,15 @@ describe("#1638 — per-namespace cursor accessor (cursorFor)", () => {
 
 describe("#1638 — composite-mode reopenArm emits exactly one id-less gap; fleet-of-one emits none", () => {
 
+  // #1777: the gap is now the FALLBACK for an upstream with no ids to resume
+  // from (an engine older than #1776) — a sequenced arm resumes instead (see the
+  // #1777 suite below) — so these frames come from a legacy (id-less) engine.
   it("COMPOSITE MODE: a non-initial re-open emits EXACTLY ONE id-less amicode.sync.gap naming that namespace", () => {
     const sink = collectingSink();
     const agg = new SseFanInAggregator({ sink });
     agg.connect();
     agg.setMembership([{ machineId: "studio", reachable: true, token: "tok-studio" }]);
-    agg.ingest("studio", nsFrame("studio", 1));
+    agg.ingest("studio", legacyEvent({ ns: "studio", n: 1 }));
 
     agg.reopenArm("studio"); // the #1601 re-open path (arm dropped, reconcile re-opens)
 
@@ -845,8 +851,11 @@ describe("#1773 AC1 — a re-open of an arm that delivered ANY data frame emits 
   const gapFrames = (text: string) => text.split("\n\n").filter((f) => f.includes("amicode.sync.gap"));
   const gapOf = (f: string) => JSON.parse(f.split("\n").find((l) => l.startsWith("data:"))!.slice(5).trim());
 
+  // #1777: in BOTH modes "delivered" still means any data frame — but only the
+  // legacy (id-less) arm gaps: the sequenced arm has engine ids to resume from,
+  // so its re-open RESUMES (the upstream replays) and writes nothing at all.
   for (const mode of ["legacy", "sequenced"] as const) {
-    it(`${mode} engine: a non-initial re-open emits exactly one id-less gap naming that namespace, and never advances a cursor`, () => {
+    it(`${mode} engine: a non-initial re-open ${mode === "legacy" ? "emits exactly one id-less gap naming that namespace" : "resumes — no gap"}, and never advances a cursor`, () => {
       const sink = collectingSink();
       const agg = new SseFanInAggregator({ sink });
       agg.connect(`local=${LOCAL_EPOCH}:3`);
@@ -868,6 +877,14 @@ describe("#1773 AC1 — a re-open of an arm that delivered ANY data frame emits 
       expect(sink.text()).not.toContain("amicode.sync.gap");
 
       // the arm drops and the driver re-opens it
+      if (mode === "sequenced") {
+        const before = sink.text();
+        expect(agg.reopenArm("studio")).toBe("resume");
+        expect(agg.cursorFor("studio")).toBe(studio.idAt(studio.seq)); // … from the last delivered engine id
+        expect(sink.text()).toBe(before); // nothing written
+        expect(agg.cursor()).toBe(cursorBefore);
+        return;
+      }
       expect(agg.reopenArm("studio")).toBe("gap");
 
       const gaps = gapFrames(sink.text());
@@ -987,8 +1004,9 @@ describe("#1638 — control/gap/focus writes are return-checked and drain in tru
     agg.setMembership([{ machineId: "studio", reachable: true, token: "tok-studio" }]);
 
     sink.block();
-    agg.ingest("studio", nsFrame("studio", 1)); // trip-frame: written, flowing→false
-    agg.ingest("studio", nsFrame("studio", 2)); // buffered behind the trip-frame
+    // #1777: an id-less (legacy) peer, so the re-open below takes the gap fallback
+    agg.ingest("studio", legacyEvent({ ns: "studio", n: 1 })); // trip-frame: written, flowing→false
+    agg.ingest("studio", legacyEvent({ ns: "studio", n: 2 })); // buffered behind the trip-frame
     // a control frame arrives mid-backpressure — it MUST NOT jump ahead of the
     // buffered data frame, nor be swallowed into the full sink.
     agg.reopenArm("studio"); // emits a gap through the return-checked helper
@@ -1095,7 +1113,12 @@ describe("#1771 — per-arm traffic counters, pending depth, and the drop/gap ob
     for (let n = 7; n <= 10; n++) agg.ingest("studio", sequencedEvent(PEER_EPOCH, n, { n }));
     expect(drops).toHaveLength(2);
 
-    agg.reopenArm("studio"); // composite mode, already delivered → a reopen gap
+    // #1777: a sequenced arm's re-open resumes (no gap); an upstream that then
+    // answers WITHOUT ids cannot have replayed — that is the reopen gap
+    expect(agg.reopenArm("studio")).toBe("resume");
+    sink.unblock();
+    agg.resume();
+    agg.ingest("studio", legacyEvent({ n: 11 }));
     expect(gaps.at(-1)).toEqual([["studio"], "reopen"]);
   });
 
@@ -1111,7 +1134,7 @@ describe("#1771 — per-arm traffic counters, pending depth, and the drop/gap ob
     });
     agg.connect();
     agg.setMembership([{ machineId: "studio", reachable: true, token: "tok-studio" }]);
-    const f = sequencedEvent(PEER_EPOCH, 1, { n: 1 });
+    const f = legacyEvent({ n: 1 }); // #1777: an id-less peer — its re-open gaps
     agg.ingest("studio", f);
     expect(() => agg.reopenArm("studio")).not.toThrow();
     expect(sink.text()).toContain("amicode.sync.gap");
@@ -1146,5 +1169,103 @@ describe("#1771 AC5 — the census observer changes no delivered byte", () => {
     const plain = run(false);
     expect(run(true)).toBe(plain);
     expect(plain).toContain("amicode.sync.gap"); // the sequence did exercise drop + gap
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// #1777 — LOSSLESS RESUME in the aggregator core. An arm that delivered engine
+// ids (#1776 `<epoch>:<seq>`) RESUMES on re-open: `cursorFor` is where its
+// replay starts, nothing is written, and the upstream's first answer decides —
+// its `server.connected` confirms the replay; an id-less answer means it could
+// not resume (the #1773 fallback announces the loss).
+// ══════════════════════════════════════════════════════════════════════════════
+describe("#1777 AC1 — the aggregator resumes a sequenced arm from its last id", () => {
+  function blockableSink() {
+    const chunks: string[] = [];
+    let blocked = false;
+    return {
+      write(chunk: string): boolean {
+        chunks.push(chunk);
+        return !blocked;
+      },
+      flush() {},
+      block() {
+        blocked = true;
+      },
+      unblock() {
+        blocked = false;
+      },
+      text: () => chunks.join(""),
+    };
+  }
+
+  it("a re-open while frames still queue behind backpressure resumes AFTER them — the replay never re-sends one", () => {
+    const sink = blockableSink();
+    const agg = new SseFanInAggregator({ sink });
+    agg.connect();
+    agg.setMembership([{ machineId: "studio", reachable: true, token: "tok-studio" }]);
+    sink.block();
+    for (const n of [1, 2, 3]) agg.ingest("studio", nsFrame("studio", n)); // 1 written (trips), 2 + 3 queued
+    expect(agg.pendingDepth("studio")).toBe(2);
+    expect(agg.cursorFor("studio")).toBe(idIn("studio", 3)); // queued = on its way to the listener
+    expect(agg.reopenArm("studio")).toBe("resume");
+    sink.unblock();
+    agg.resume();
+    // the resumed upstream answers from 3: connected at 3, then 4 — each frame exactly once
+    agg.ingest("studio", controlFrame(idIn("studio", 3), "server.connected"));
+    agg.ingest("studio", nsFrame("studio", 4));
+    const ns = [...sink.text().matchAll(/"n":(\d+)/g)].map((m) => Number(m[1]));
+    expect(ns).toEqual([1, 2, 3, 4]);
+    expect(sink.text()).not.toContain("amicode.sync.gap");
+    expect(sink.text()).not.toContain("server.connected"); // the upstream's handshake is not forwarded
+  });
+
+  it("an overflow-dropped frame never advances the resume point (that stretch is the overflow gap's)", () => {
+    const sink = blockableSink();
+    const agg = new SseFanInAggregator({ sink, bufferBound: 1 });
+    agg.connect();
+    agg.setMembership([{ machineId: "studio", reachable: true, token: "tok-studio" }]);
+    sink.block();
+    for (const n of [1, 2, 3, 4]) agg.ingest("studio", nsFrame("studio", n)); // 1 written, 2 queued, 3 + 4 dropped
+    expect(agg.dropped("studio")).toBe(2);
+    expect(agg.cursorFor("studio")).toBe(idIn("studio", 2));
+  });
+
+  it("composite: a resumed arm whose upstream answers WITHOUT ids (it cannot replay) gets one reopen gap, then its frames", () => {
+    const gaps: Array<[string[], string]> = [];
+    const sink = collectingSink();
+    const agg = new SseFanInAggregator({ sink, observer: { onGap: (nss, cause) => gaps.push([nss, cause]) } });
+    agg.connect();
+    agg.setMembership([{ machineId: "studio", reachable: true, token: "tok-studio" }]);
+    agg.ingest("studio", nsFrame("studio", 1));
+    expect(agg.reopenArm("studio")).toBe("resume");
+    expect(sink.text()).not.toContain("amicode.sync.gap");
+    expect(agg.ingest("studio", fakeEngine({ legacy: true }).connected())).toBe("ok");
+    expect(gaps).toEqual([[["studio"], "reopen"]]);
+    const text = sink.text();
+    expect(text.indexOf("amicode.sync.gap")).toBeLessThan(text.indexOf("server.connected")); // gap first, then the frame
+  });
+
+  it("fleet-of-one: the same id-less answer severs (ingest says so, nothing is written — #1264)", () => {
+    const sink = collectingSink();
+    const agg = new SseFanInAggregator({ sink });
+    agg.connect();
+    const f1 = nsFrame(LOCAL_NAMESPACE, 1);
+    agg.ingest(LOCAL_NAMESPACE, f1);
+    expect(agg.reopenArm(LOCAL_NAMESPACE)).toBe("resume");
+    expect(agg.ingest(LOCAL_NAMESPACE, fakeEngine({ legacy: true }).connected())).toBe("sever");
+    expect(sink.text()).toBe(f1);
+  });
+
+  it("an arm with only id-less frames keeps the #1773 fallback (gap in composite, sever in fleet-of-one)", () => {
+    const composite = new SseFanInAggregator({ sink: collectingSink() });
+    composite.connect();
+    composite.setMembership([{ machineId: "studio", reachable: true, token: "tok-studio" }]);
+    composite.ingest("studio", legacyEvent({ n: 1 }));
+    expect(composite.reopenArm("studio")).toBe("gap");
+    const solo = new SseFanInAggregator({ sink: collectingSink() });
+    solo.connect();
+    solo.ingest(LOCAL_NAMESPACE, legacyEvent({ n: 1 }));
+    expect(solo.reopenArm(LOCAL_NAMESPACE)).toBe("sever");
   });
 });
