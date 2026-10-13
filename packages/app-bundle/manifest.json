@@ -204,6 +204,7 @@
     "packages/app/src/context/sse-gap-frame.ts": "2f64fde540a305579762c5276721d4bbfbf7c862131aaf4462e8a4e8f32c5960",
     "packages/app/src/context/sse-origin.test.ts": "71cd3aa996a51d7e99236a49cede4769e520e20e53f57c6920fe441f2abb0c7d",
     "packages/app/src/context/sse-origin.ts": "da9a231907dc50d87cf01758177bee0d4a0b0165d8adb5e152db8eca29dfd9f5",
+    "packages/app/src/context/sse-reader.test.ts": "a6151ded71f97e911a84be946f43e5c20495512a4ff79361d7e5673d457dd0ca",
     "packages/app/src/context/stream-cursor.test.ts": "c9715bb28f576cdc00683b0bdc27bdc2a56a6f212969cc090f99b3dc8988e6a7",
     "packages/app/src/context/stream-cursor.ts": "2711f85581cd86bb69b50a441b6a04c532553f61fa5e00cd1b9daa12193d3697",
     "packages/app/src/context/stream-gap.test.ts": "b7203445564f44fd1d966ef684a11cb9b5ec567d9ab54f1b7617726fdf44d3f5",
@@ -935,6 +936,7 @@
     "packages/session-ui/src/v2/components/prompt-input/attachments.ts": "ff66078f2edc9a67a4df0d7dfd76a49be5eab27ac332b303f3412721ef7268ea",
     "packages/session-ui/src/v2/components/prompt-input/index.tsx": "194b1c6d0c99000579df78b47c7ff72fe34f62a92ecd21b2a9377133d6d27bb9",
     "packages/opencode/src/server/routes/instance/httpapi/server.ts": "a94becd6a5224fb5fc2778c1091733eca334b308253234948bcdcafdc709b021",
+    "packages/sdk/js/src/v2/gen/core/serverSentEvents.gen.ts": "7509e74c8ccd756bbe60598f38754775a62c36e82d8f5f59464fb18a49be4688",
     "packages/opencode/src/server/routes/instance/httpapi/groups/experimental.ts": "944a0aee215a917e867fd9482f3c2bd40f49082bd3174c8a7d967ca40e34ec15",
     "packages/opencode/src/server/routes/instance/httpapi/groups/file.ts": "a96fdc55ddb95ca7c481c86f67e37ed88d4cf2a190a482765ab55ce4409f3a59",
     "packages/opencode/src/server/routes/instance/httpapi/groups/mcp.ts": "048efa7b74d43c4ad4a75d0f8421c808760c8c0dcd593f0051a87044e40487d6",
@@ -961,10 +963,10 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-13T00:39:30.584Z",
+  "extracted_at": "2026-10-13T01:35:20.070Z",
   "per_package": {
     "packages/app": {
-      "A": 239,
+      "A": 240,
       "M": 161,
       "D": 0
     },
@@ -990,7 +992,7 @@
     },
     "packages/sdk": {
       "A": 0,
-      "M": 3,
+      "M": 4,
       "D": 0
     },
     "packages/server": {
@@ -1010,7 +1012,7 @@
     }
   },
   "counts": {
-    "overlay_total": 939,
+    "overlay_total": 941,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1211,6 +1213,7 @@
     "packages/app/src/context/sse-gap-frame.ts": "A",
     "packages/app/src/context/sse-origin.test.ts": "A",
     "packages/app/src/context/sse-origin.ts": "A",
+    "packages/app/src/context/sse-reader.test.ts": "A",
     "packages/app/src/context/stream-cursor.test.ts": "A",
     "packages/app/src/context/stream-cursor.ts": "A",
     "packages/app/src/context/stream-gap.test.ts": "A",
@@ -1942,6 +1945,7 @@
     "packages/session-ui/src/v2/components/prompt-input/attachments.ts": "M",
     "packages/session-ui/src/v2/components/prompt-input/index.tsx": "M",
     "packages/opencode/src/server/routes/instance/httpapi/server.ts": "M",
+    "packages/sdk/js/src/v2/gen/core/serverSentEvents.gen.ts": "M",
     "packages/opencode/src/server/routes/instance/httpapi/groups/experimental.ts": "M",
     "packages/opencode/src/server/routes/instance/httpapi/groups/file.ts": "M",
     "packages/opencode/src/server/routes/instance/httpapi/groups/mcp.ts": "M",
