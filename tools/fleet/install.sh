@@ -230,6 +230,35 @@ peer_forwards() {
   if [[ $peer_fail -eq 1 ]]; then exit 1; fi
 }
 
+# --- the session-wide multiplex-flag agent (#1775) ---
+# co.harmoniqs.amico-fleet-flag ran `launchctl setenv AMICO_FLEET_MULTIPLEX 1`
+# at login, leaking the flag into EVERY GUI process — and the flag already
+# defaults ON (#1448, fleetMultiplexEnabled), so fleet behavior is unchanged
+# without it. Retire it: unload + remove the agent, and unset the variable when
+# it carries the agent's leaked value (a deliberate `0` opt-out is left alone).
+FLAG_PLIST="$LAUNCH_AGENTS_DIR/co.harmoniqs.amico-fleet-flag.plist"
+retire_flag_agent() {
+  if [[ "$(uname -s)" != "Darwin" ]]; then return 0; fi
+  if [[ $CHECK -eq 1 ]]; then
+    if [[ -f "$FLAG_PLIST" ]]; then
+      echo "[fleet] FAIL session-wide multiplex-flag agent present at $FLAG_PLIST (it leaks AMICO_FLEET_MULTIPLEX=1 into every GUI process; the flag already defaults on — run: bash tools/fleet/install.sh)"
+      exit 1
+    fi
+    return 0
+  fi
+  local session
+  if [[ -f "$FLAG_PLIST" ]]; then
+    "$LAUNCHCTL" unload "$FLAG_PLIST" 2>/dev/null || true
+    rm -f "$FLAG_PLIST"
+    say "removed the session-wide multiplex-flag agent $FLAG_PLIST (AMICO_FLEET_MULTIPLEX already defaults on — #1448)"
+  fi
+  session="$("$LAUNCHCTL" getenv AMICO_FLEET_MULTIPLEX 2>/dev/null || true)"
+  if [[ "$session" == "1" ]]; then
+    "$LAUNCHCTL" unsetenv AMICO_FLEET_MULTIPLEX 2>/dev/null || true
+    say "unset the session-wide AMICO_FLEET_MULTIPLEX (the multiplexer defaults on without it)"
+  fi
+}
+
 # Standalone: no guard/tunnel/hub — but a standalone PEER still gets its
 # per-peer forwards (#1775: peers stay standalone, ADR 0027).
 if [[ "$ROLE" == "standalone" ]]; then
@@ -238,6 +267,7 @@ if [[ "$ROLE" == "standalone" ]]; then
   else
     say "standalone mode — nothing to install for the fleet stance (use 'Amicode: Fleet — Enroll' to join a fleet)"
   fi
+  retire_flag_agent
   peer_forwards
   exit 0
 fi
@@ -390,7 +420,8 @@ elif [[ "$(uname -s)" == "Darwin" ]]; then
   fi
 fi
 
-# --- per-peer SSH forwards (every role — #1775; see peer_forwards above) ---
+# --- per-peer SSH forwards + the retired flag agent (every role — #1775) ---
+retire_flag_agent
 peer_forwards
 
 # --- canonical hub service (SERVER role only — reboot-survival, #1258) ---

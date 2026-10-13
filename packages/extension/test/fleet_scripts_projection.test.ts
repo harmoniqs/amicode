@@ -17,6 +17,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync, r
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { checkPeerForwards } from "../src/fleet_health";
+import { FLEET_MULTIPLEX_FLAG, fleetMultiplexEnabled } from "../src/amicode_service/server";
 
 const REPO = join(__dirname, "..", "..", "..");
 const GUARD = join(REPO, "tools", "fleet", "amico-opencode-fleet-guard");
@@ -845,5 +846,97 @@ describe("#1775 --check holds every peer forward agent to the standard (the heal
       ["Fleet peer forward (jjs-mac-studio)", true],
       ["Fleet peer forward (lab-box)", true],
     ]);
+  });
+});
+
+// ── #1775: the stray session-wide multiplex-flag agent is retired ──────────────
+// `co.harmoniqs.amico-fleet-flag` ran `launchctl setenv AMICO_FLEET_MULTIPLEX 1`
+// at login, leaking the flag into every GUI process — though the flag already
+// defaults ON (#1448). The installer unloads + removes it and unsets the
+// variable; asserted on the STUB's argv, never the real launchctl.
+const FLAG_AGENT = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>co.harmoniqs.amico-fleet-flag</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/launchctl</string>
+        <string>setenv</string>
+        <string>AMICO_FLEET_MULTIPLEX</string>
+        <string>1</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+</dict>
+</plist>
+`;
+
+describe("#1775 the installer retires the session-wide multiplex-flag agent", () => {
+  const installEnv = (): { path: string } => ({
+    path: `${join(tmp, "fakebin")}:${process.env.PATH ?? ""}`,
+  });
+  const flagPlist = (): string => join(tmp, "Library", "LaunchAgents", "co.harmoniqs.amico-fleet-flag.plist");
+  const placeFlagAgent = (): void => {
+    mkdirSync(join(tmp, "Library", "LaunchAgents"), { recursive: true });
+    writeFileSync(flagPlist(), FLAG_AGENT);
+  };
+  /** What the stubbed `launchctl getenv AMICO_FLEET_MULTIPLEX` prints (the session value). */
+  const sessionFlag = (value: string | null): void => {
+    mkdirSync(join(tmp, "stubs"), { recursive: true });
+    const f = join(tmp, "stubs", "getenv-AMICO_FLEET_MULTIPLEX");
+    if (value === null) rmSync(f, { force: true });
+    else writeFileSync(f, `${value}\n`);
+  };
+  const verbFor = (role: string): string =>
+    role === "standalone" ? verbJson() : verbJson(role, { host: "hq", port: 4096, sshAlias: "hq" });
+
+  it.each(["server", "client", "standalone"])("on a %s: the flag agent is unloaded + removed and the variable unset; a re-run is a no-op; the flag still defaults ON", (role) => {
+    fakeAmico({ code: 0, stdout: verbFor(role) });
+    fakeUname("Darwin");
+    placeFlagAgent();
+    sessionFlag("1");
+
+    const r = runScript(INSTALL, [], installEnv());
+    expect(r.code, r.out).toBe(0);
+    expect(existsSync(flagPlist())).toBe(false);
+    expect(launchctlCalls()).toContain(`unload ${flagPlist()}`);
+    expect(launchctlCalls()).toContain("unsetenv AMICO_FLEET_MULTIPLEX");
+    expect(r.out).toMatch(/removed the session-wide multiplex-flag agent/);
+    expect(backstopCalls()).toEqual([]);
+
+    // Fleet behavior is unchanged: with the variable gone the multiplexer is ON by default.
+    delete process.env[FLEET_MULTIPLEX_FLAG];
+    expect(fleetMultiplexEnabled()).toBe(true);
+
+    // Re-run after the unset: nothing left to retire — no unload, no unsetenv.
+    sessionFlag(null);
+    rmSync(join(tmp, "launchctl.argv"), { force: true });
+    const again = runScript(INSTALL, [], installEnv());
+    expect(again.code, again.out).toBe(0);
+    expect(launchctlCalls().filter((l) => l.includes("fleet-flag") || l.startsWith("unsetenv"))).toEqual([]);
+  });
+
+  it("a deliberate session opt-out (AMICO_FLEET_MULTIPLEX=0, no flag agent) is left alone — only the agent's leaked value is unset", () => {
+    fakeAmico({ code: 0, stdout: verbFor("server") });
+    fakeUname("Darwin");
+    sessionFlag("0");
+    const r = runScript(INSTALL, [], installEnv());
+    expect(r.code, r.out).toBe(0);
+    expect(launchctlCalls().filter((l) => l.startsWith("unsetenv"))).toEqual([]);
+  });
+
+  it("--check fails on a present flag agent with the fix line — and never calls launchctl", () => {
+    fakeAmico({ code: 0, stdout: verbFor("client") });
+    fakeUname("Darwin");
+    expect(runScript(INSTALL, [], installEnv()).code).toBe(0);
+    placeFlagAgent();
+    rmSync(join(tmp, "launchctl.argv"), { force: true });
+    const r = runScript(INSTALL, ["--check"], installEnv());
+    expect(r.code).toBe(1);
+    expect(r.out).toMatch(/FAIL session-wide multiplex-flag agent present at .*co\.harmoniqs\.amico-fleet-flag\.plist.*run: bash tools\/fleet\/install\.sh/);
+    expect(existsSync(flagPlist())).toBe(true);
+    expect(launchctlCalls()).toEqual([]);
   });
 });
