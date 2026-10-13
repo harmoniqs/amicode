@@ -19,6 +19,7 @@
 // honestly as stale after the stale window and clear by TTL — an
 // unreachable owner never wedges the inbox.
 import type { QuestionRequest } from "@opencode-ai/sdk/v2/client"
+import { createEffect, createRoot, createSignal } from "solid-js"
 
 /** No liveness evidence for this long → the entry reads honestly as stale
  *  (the engine row TTL is 15s; the reconcile cadence is 10s, so a live row's
@@ -287,4 +288,136 @@ export function createInboxAnswerAction(deps: InboxAnswerDeps) {
       return task
     },
   }
+}
+
+// ── the per-window inbox controller (module singleton) ──────────────────────
+// One inbox per window (the vault-panel pattern): the layout that owns the
+// active server's provider scope initializes it with narrow deps over the
+// shared store + SDK; the titlebar badge and the panel both read
+// `questionInbox()`. Uninitialized reads degrade to an empty inbox so chrome
+// rendered outside an init scope (a titlebar before the layout mounts) stays
+// silent instead of throwing.
+
+export type QuestionInboxDeps = {
+  /** The shared store's question map (a reactive read — the effect tracks it). */
+  question: () => InboxQuestionMap
+  /** The shared store's session-info map (reactive; may be undefined). */
+  info: () => InboxInfo | undefined
+  /** Remove cleared rows from the shared store (idempotent). */
+  removeQuestion: (clears: readonly InboxClear[]) => void
+  /** Is the row still in the shared store? */
+  isLive: (sessionID: string, requestID: string) => boolean
+  /** The engine's /question list for one directory (the shared rows seam). */
+  listQuestions: (directory: string) => Promise<readonly QuestionRequest[]>
+  /** The reply request, scoped to the requesting session's directory. */
+  reply: (input: InboxAnswerInput) => Promise<unknown>
+  telemetry?: (body: string) => void
+  /** Only read while this says true (the live event stream is connected). */
+  connected?: () => boolean
+  /** Test seam for the reconcile cadence. */
+  reconcileMs?: number
+}
+
+export type QuestionInboxHandle = {
+  entries: () => readonly InboxEntry[]
+  opened: () => boolean
+  open: () => void
+  close: () => void
+  toggle: () => void
+  submit: ReturnType<typeof createInboxAnswerAction>["submit"]
+  pending: (requestID: string) => boolean
+  dispose: () => void
+}
+
+let handle: QuestionInboxHandle | undefined
+
+export function questionInbox(): QuestionInboxHandle {
+  return (
+    handle ?? {
+      entries: () => [],
+      opened: () => false,
+      open: () => {},
+      close: () => {},
+      toggle: () => {},
+      // Unreachable in practice: the panel only renders submit controls for
+      // listed entries, and an uninitialized inbox lists none.
+      submit: () => Promise.resolve(),
+      pending: () => false,
+      dispose: () => {},
+    }
+  )
+}
+
+export function initQuestionInbox(deps: QuestionInboxDeps): QuestionInboxHandle {
+  handle?.dispose()
+  const state = createInboxState()
+  const [entries, setEntries] = createSignal<readonly InboxEntry[]>([])
+  const [opened, setOpened] = createSignal(false)
+  const answer = createInboxAnswerAction({
+    reply: deps.reply,
+    hasQuestion: deps.isLive,
+    settle: (input) => deps.removeQuestion([{ sessionID: input.sessionID, id: input.requestID }]),
+    telemetry: deps.telemetry,
+  })
+  const collect = () =>
+    setEntries(collectQuestionInbox({ question: deps.question(), info: deps.info(), state, now: Date.now() }))
+  // Freshness: one read per involved directory per cadence. A read only runs
+  // while the event stream is connected (offline reads are pointless — their
+  // failure would be honest absence, but the retry storm buys nothing).
+  const reconcile = async () => {
+    if (deps.connected?.() === false) return
+    const directories = new Set(entries().flatMap((entry) => (entry.directory ? [entry.directory] : [])))
+    for (const directory of directories) {
+      const out = await runInboxRead({
+        directory,
+        read: () => deps.listQuestions(directory),
+        question: deps.question(),
+        info: deps.info(),
+        state,
+        now: () => Date.now(),
+      })
+      // An absence the read proves dead removes the dead store row — the
+      // same settle the engine's replied/rejected events drive.
+      if (out.cleared.length > 0) deps.removeQuestion(out.cleared)
+      collect()
+    }
+  }
+  const cleanup = createRoot((disposeRoot) => {
+    // In the browser this effect tracks the shared store's question + info
+    // maps — every ask, settle, and session-info warm lands there and
+    // re-derives the inbox instantly. Under the app test runner solid
+    // resolves to the non-reactive server build, where this is inert and
+    // the cadence collect below is what drives the same derivation.
+    createEffect(() => {
+      deps.question()
+      deps.info()
+      collect()
+    })
+    const timer = setInterval(
+      () => {
+        collect() // the staleness read re-evaluates on the clock
+        void reconcile()
+      },
+      deps.reconcileMs ?? INBOX_RECONCILE_MS,
+    )
+    return () => {
+      clearInterval(timer)
+      disposeRoot()
+    }
+  })
+  const inbox: QuestionInboxHandle = {
+    entries: () => entries(),
+    opened: () => opened(),
+    open: () => setOpened(true),
+    close: () => setOpened(false),
+    toggle: () => setOpened((x) => !x),
+    submit: answer.submit,
+    pending: answer.pending,
+    dispose() {
+      if (handle === inbox) handle = undefined
+      cleanup()
+    },
+  }
+  handle = inbox
+  return inbox
 }

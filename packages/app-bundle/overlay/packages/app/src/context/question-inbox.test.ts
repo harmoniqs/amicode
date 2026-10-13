@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { OpencodeClient, QuestionRequest, Session } from "@opencode-ai/sdk/v2/client"
+import { createStore, produce } from "solid-js/store"
 import { createServerSession } from "./server-session"
 import {
   INBOX_STALE_MS,
@@ -8,6 +9,8 @@ import {
   collectQuestionInbox,
   createInboxAnswerAction,
   createInboxState,
+  initQuestionInbox,
+  questionInbox,
   runInboxRead,
   type InboxClear,
 } from "./question-inbox"
@@ -568,5 +571,88 @@ describe("applyInboxClears", () => {
     applyInboxClears(question, clears)
     expect(question.ses_a?.map((row) => row.id)).toEqual(["que_2"])
     expect(question.ses_b).toBeUndefined()
+  })
+})
+
+// ── the per-window controller (the badge + panel's live state) ──────────────
+
+describe("#1786 — the inbox controller", () => {
+  const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
+
+  test("uninitialized reads degrade to an empty inbox", () => {
+    expect(questionInbox().entries()).toEqual([])
+    expect(questionInbox().opened()).toBe(false)
+    expect(questionInbox().pending("que_x")).toBe(false)
+  })
+
+  test("derives entries from the live store and settles when the store does", async () => {
+    const [question, setQuestion] = createStore<Record<string, QuestionRequest[]>>({})
+    const inbox = initQuestionInbox({
+      question: () => question,
+      info: () => undefined,
+      removeQuestion: (clears) => setQuestion(produce((draft) => applyInboxClears(draft, clears))),
+      isLive: (sessionID, requestID) => (question[sessionID] ?? []).some((row) => row.id === requestID),
+      listQuestions: async () => [],
+      reply: async () => {},
+      reconcileMs: 5,
+    })
+
+    setQuestion("ses_a", [questionRequest("que_c", "ses_a")])
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(inbox.entries().map((entry) => entry.id)).toEqual(["que_c"])
+
+    // Settled anywhere (the replied event, a reconcile clear) — the store row
+    // leaves and the inbox entry follows within one derivation pass.
+    setQuestion("ses_a", [])
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(inbox.entries().length).toBe(0)
+    inbox.dispose()
+  })
+
+  test("the reconcile cadence reads each involved directory and applies the clears it proves", async () => {
+    const [question, setQuestion] = createStore<Record<string, QuestionRequest[]>>({})
+    const readDirectories: string[] = []
+    let reads = 0
+    const inbox = initQuestionInbox({
+      question: () => question,
+      info: () => ({ ses_a: sessionInfo("ses_a", "/work/proj") }),
+      removeQuestion: (clears) => setQuestion(produce((draft) => applyInboxClears(draft, clears))),
+      isLive: (sessionID, requestID) => (question[sessionID] ?? []).some((row) => row.id === requestID),
+      listQuestions: async (directory) => {
+        readDirectories.push(directory)
+        reads++
+        // The first read proves the row alive; the owner dies before the next.
+        return reads === 1 ? [questionRequest("que_dead", "ses_a")] : []
+      },
+      reply: async () => {},
+      connected: () => true,
+      reconcileMs: 10,
+    })
+
+    setQuestion("ses_a", [questionRequest("que_dead", "ses_a")])
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(inbox.entries().length).toBe(1)
+
+    await new Promise((resolve) => setTimeout(resolve, 60))
+    expect(readDirectories).toContain("/work/proj")
+    expect(question.ses_a).toBeUndefined()
+    expect(inbox.entries().length).toBe(0)
+    inbox.dispose()
+  })
+
+  test("disposal resets the singleton to the empty inbox", async () => {
+    const [question] = createStore<Record<string, QuestionRequest[]>>({})
+    const inbox = initQuestionInbox({
+      question: () => question,
+      info: () => undefined,
+      removeQuestion: () => {},
+      isLive: () => false,
+      listQuestions: async () => [],
+      reply: async () => {},
+      reconcileMs: 60_000,
+    })
+    inbox.dispose()
+    expect(questionInbox().entries()).toEqual([])
+    expect(questionInbox().opened()).toBe(false)
   })
 })
