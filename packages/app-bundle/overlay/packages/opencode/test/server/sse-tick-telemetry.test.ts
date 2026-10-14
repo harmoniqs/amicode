@@ -5,7 +5,7 @@
 // flow at cadence while healthy, the both-ends timestamp delta stays inside one
 // cadence window, and the per-tick overhead stays negligible.
 import { describe, expect, test } from "bun:test"
-import { Effect, Fiber, Layer, ManagedRuntime, Queue, Stream } from "effect"
+import { Cause, Effect, Exit, Fiber, Layer, ManagedRuntime, Queue, Stream } from "effect"
 import { defaultTickTelemetryConfig, makeSseTickTelemetry } from "../../src/server/shared/sse-tick-telemetry"
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -76,7 +76,9 @@ describe("sse tick telemetry", () => {
         Stream.tap(() =>
           Effect.gen(function* () {
             telemetry.noteTick("/event", "conn-tree", { queueDepth: 0, fiberId: yield* Effect.fiberId })
-            if (wedged) yield* Effect.async<void>(() => {})
+            // Effect.never never completes — the tick fiber parks mid-tree.
+            // No defect, no interrupt: a stall.
+            if (wedged) yield* Effect.never
           }),
         ),
         Stream.runDrain,
@@ -92,8 +94,15 @@ describe("sse tick telemetry", () => {
     wedged = true
     await sleep(300)
 
+    // The fiber is parked, not dead: interrupting it and awaiting its exit
+    // yields an interrupt-only failure. (If the wedge had crashed the fiber —
+    // a defect — the exit would carry the defect instead, and the stall test
+    // would prove nothing.)
     await Effect.runPromise(Fiber.interrupt(fiber))
     telemetry.stop()
+    const exit = await Effect.runPromise(Fiber.await(fiber))
+    if (!Exit.isFailure(exit)) throw new Error("expected the parked fiber to interrupt with a failure exit")
+    expect(Cause.hasInterruptsOnly(exit.cause)).toBe(true)
 
     // The raw-timer watchdog observed the in-tree stall and named the death —
     // an Effect-tree watchdog would be wedged with the tree and observe nothing.
