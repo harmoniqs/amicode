@@ -1113,6 +1113,25 @@ try:
 except ValueError:
     UPSTREAM_CADENCE_S = 30.0
 
+def _fin_close(sock):
+    """2026-10-14 (#1798 rung-1, frontdoor half): half-close THEN close.
+
+    A bare close() on a socket whose peer (or our own reader thread) still
+    holds it can leave the TCP half-open on Linux — the engine keeps a
+    writeable-looking corpse, its fan-out write blocks, and every SSE route
+    on that engine stalls while HTTP stays 2ms-healthy. shutdown(SHUT_WR)
+    forces the FIN out before the fd drops, so the peer sees EOF now.
+    Applied at every member/upstream teardown site."""
+    try:
+        sock.shutdown(socket.SHUT_WR)
+    except Exception:
+        pass
+    try:
+        sock.close()
+    except Exception:
+        pass
+
+
 class Group:
     def __init__(self, path, shard=1, backend=None, merge=None, upstream_path=None):
         self.path = path
@@ -1187,11 +1206,9 @@ class Group:
         # blocked syscall holds the description open, so the "all upstreams
         # lost / stalled member" closes logged as done were invisible to the
         # client, and its EventSource stayed parked on a dead stream.
-        # shutdown() tears the socket down immediately and wakes the waiter.
-        try: c.shutdown(socket.SHUT_RDWR)
-        except Exception: pass
-        try: c.close()
-        except Exception: pass
+        # #1757/#1798: shutdown() tears the socket down immediately, wakes the
+        # waiter, and forces the FIN — the peer never keeps a writeable corpse.
+        _fin_close(c)
     def _writer(self, c, q):
         """Per-member outbound writer — the ONLY thread that sends on the
         member socket (ordering = queue order). Exits on the first send
@@ -1313,8 +1330,7 @@ class Group:
                                 else:
                                     q.put(frame)
             except Exception: pass
-            try: s.close()
-            except: pass
+            _fin_close(s)
             with self.lock:
                 self.live_upstreams -= 1
                 was_preamble = s is self.upstream
