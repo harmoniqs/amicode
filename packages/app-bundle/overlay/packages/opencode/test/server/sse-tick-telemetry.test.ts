@@ -206,4 +206,30 @@ describe("sse tick telemetry", () => {
     expect(cadenceMs).toBe(10_000)
     expect(watchdogIntervalMs + cadenceMs).toBeLessThanOrEqual(30_000)
   })
+
+  test("telemetry overhead per tick stays under 5ms", () => {
+    // AC: telemetry_overhead_ms_per_tick <= 5 — the instrumentation must not
+    // be the next stall. Time the full synchronous tick path (registry update
+    // + line assembly + sink write) over 200 ticks.
+    const lines: Array<string> = []
+    const telemetry = makeSseTickTelemetry({
+      ...fastConfig,
+      cadenceMs: 60_000,
+      watchdogIntervalMs: 120_000,
+      probeIntervalMs: 60_000,
+      sink: (line) => lines.push(line),
+    })
+    telemetry.registerConnection("/event", "conn-overhead")
+    const durations: Array<number> = []
+    for (let i = 0; i < 200; i++) {
+      const start = performance.now()
+      telemetry.noteTick("/event", "conn-overhead", { queueDepth: i, fiberId: 3 })
+      durations.push(performance.now() - start)
+    }
+    telemetry.stop()
+    const worst = Math.max(...durations)
+    const mean = durations.reduce((sum, d) => sum + d, 0) / durations.length
+    expect(worst).toBeLessThanOrEqual(5)
+    expect(mean).toBeLessThanOrEqual(5)
+  })
 })
