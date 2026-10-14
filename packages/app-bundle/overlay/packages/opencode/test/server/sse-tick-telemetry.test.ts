@@ -6,7 +6,7 @@
 // cadence window, and the per-tick overhead stays negligible.
 import { describe, expect, test } from "bun:test"
 import { Effect, Fiber, Layer, ManagedRuntime, Queue, Stream } from "effect"
-import { makeSseTickTelemetry } from "../../src/server/shared/sse-tick-telemetry"
+import { defaultTickTelemetryConfig, makeSseTickTelemetry } from "../../src/server/shared/sse-tick-telemetry"
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -154,5 +154,56 @@ describe("sse tick telemetry", () => {
     const firedAt = Number(stallLine?.match(/ts_ms=(\d+)/)?.[1])
     const engineLastTick = firedAt - sinceLast
     expect(Math.abs(engineLastTick + fastConfig.cadenceMs - firedAt)).toBeLessThanOrEqual(30_000 / 250)
+  })
+
+  test("healthy tick source logs SSE-TICK lines at cadence — never a false SELF-STALL", async () => {
+    const lines: Array<string> = []
+    const telemetry = makeSseTickTelemetry({ ...fastConfig, sink: (line) => lines.push(line) })
+    telemetry.registerConnection("/event", "conn-healthy")
+
+    const fiber = Effect.runFork(
+      Stream.tick(fastConfig.cadenceMs).pipe(
+        Stream.tap(() =>
+          Effect.sync(() => telemetry.noteTick("/event", "conn-healthy", { queueDepth: 0, fiberId: 7 })),
+        ),
+        Stream.runDrain,
+      ),
+    )
+    // Five cadence windows: the AC bound is >= 1 tick line per 30s (three
+    // cadence windows) per live connection-carrying route while healthy.
+    await sleep(5 * fastConfig.cadenceMs)
+    await Effect.runPromise(Fiber.interrupt(fiber))
+    telemetry.stop()
+
+    const tickLines = lines.filter((line) => line.startsWith("SSE-TICK"))
+    expect(tickLines.length).toBeGreaterThanOrEqual(4)
+    expect(lines.some((line) => line.startsWith("SELF-STALL"))).toBe(false)
+
+    // Full discriminator payload rides every line: route, connection, cadence,
+    // queue depth (hypothesis 1), fiber identity, event-loop lag (hypothesis 2),
+    // RSS (hypothesis 3, alongside #1717), and the epoch timestamp.
+    const fields = tickLines[0].match(
+      /^SSE-TICK route=(\/event) conn=(conn-healthy) cadence_ms=(40) queue_depth=(0) fiber=(7) lag_ms=(\d+) rss_bytes=(\d+) ts_ms=(\d+)$/,
+    )
+    expect(fields).not.toBeNull()
+    // lag_ms reads ~0 while the event loop is healthy — the discriminator is
+    // the spike AT stall (cycle 6 pins the probe's response to a blocked loop).
+    expect(Number(fields?.[6])).toBeGreaterThanOrEqual(0)
+    expect(Number(fields?.[7])).toBeGreaterThan(0)
+    expect(Number(fields?.[8])).toBeGreaterThan(0)
+
+    const snapshot = telemetry.snapshot()
+    expect(snapshot.connections).toBe(1)
+    expect(snapshot.lastTickAt).toBeGreaterThan(0)
+  })
+
+  test("the production config keeps the both-ends agreement inside one 30s window", () => {
+    // Structural guarantee: the watchdog fires at most
+    // watchdogIntervalMs + cadenceMs after the engine's last tick — 25s at the
+    // production config, inside the 30s window the frontdoor cadence telemetry
+    // (#1748/#1758) uses to declare the first missed heartbeat.
+    const { cadenceMs, watchdogIntervalMs } = defaultTickTelemetryConfig
+    expect(cadenceMs).toBe(10_000)
+    expect(watchdogIntervalMs + cadenceMs).toBeLessThanOrEqual(30_000)
   })
 })

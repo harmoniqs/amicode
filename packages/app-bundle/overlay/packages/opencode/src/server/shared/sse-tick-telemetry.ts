@@ -48,8 +48,9 @@ export interface TickTelemetryConfig {
 // member-bearing upstreams); the watchdog checks every 15s, so the worst-case
 // since-last-tick at the first SELF-STALL fire is watchdogIntervalMs + cadenceMs
 // = 25s — inside the 30s both-ends agreement window of the #1748/#1758 cadence
-// telemetry (both_ends_timestamp_delta_s <= 30).
-const PROD_TICK_TELEMETRY_CONFIG: TickTelemetryConfig = {
+// telemetry (both_ends_timestamp_delta_s <= 30). Exported so the harness can
+// pin that guarantee structurally.
+export const defaultTickTelemetryConfig: TickTelemetryConfig = {
   cadenceMs: 10_000,
   watchdogIntervalMs: 15_000,
   probeIntervalMs: 1_000,
@@ -180,7 +181,7 @@ export function makeSseTickTelemetry(config: TickTelemetryConfig): SseTickTeleme
 
 // Process-wide singleton. Timers start lazily on the first registered SSE
 // connection, so processes that never serve SSE (CLI, TUI) pay nothing.
-export let sseTickTelemetry: SseTickTelemetry = makeSseTickTelemetry(PROD_TICK_TELEMETRY_CONFIG)
+export let sseTickTelemetry: SseTickTelemetry = makeSseTickTelemetry(defaultTickTelemetryConfig)
 
 /** Test seam: swap the singleton (fast cadence + captured sink) for the route's. */
 export function setSseTickTelemetry(next: SseTickTelemetry) {
@@ -189,7 +190,7 @@ export function setSseTickTelemetry(next: SseTickTelemetry) {
 
 /** Test seam: restore the production singleton. */
 export function resetSseTickTelemetry() {
-  sseTickTelemetry = makeSseTickTelemetry(PROD_TICK_TELEMETRY_CONFIG)
+  sseTickTelemetry = makeSseTickTelemetry(defaultTickTelemetryConfig)
 }
 
 export * as SseTickTelemetry from "./sse-tick-telemetry"
