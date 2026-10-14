@@ -59,4 +59,47 @@ describe("sse tick telemetry", () => {
     const tickLines = lines.filter((line) => line.startsWith("SSE-TICK"))
     expect(tickLines.length).toBe(1)
   })
+
+  test("SELF-STALL fires under a simulated Effect-tree stall — the watchdog is outside the fiber tree", async () => {
+    const lines: Array<string> = []
+    const telemetry = makeSseTickTelemetry({ ...fastConfig, sink: (line) => lines.push(line) })
+    telemetry.registerConnection("/event", "conn-tree")
+
+    // The tick source is a real Effect fiber tree: Stream.tick on the live
+    // clock, driving noteTick. After warm ticks the per-tick effect parks on a
+    // never-resolving async — the tick fiber is stalled mid-tree, the
+    // #775-family wedge shape (fiber tree makes no progress on the tick
+    // source while the JS event loop stays healthy).
+    let wedged = false
+    const fiber = Effect.runFork(
+      Stream.tick(fastConfig.cadenceMs).pipe(
+        Stream.tap(() =>
+          Effect.gen(function* () {
+            telemetry.noteTick("/event", "conn-tree", { queueDepth: 0, fiberId: yield* Effect.fiberId })
+            if (wedged) yield* Effect.async<void>(() => {})
+          }),
+        ),
+        Stream.runDrain,
+      ),
+    )
+
+    await sleep(150)
+    const healthyTicks = lines.filter((line) => line.startsWith("SSE-TICK")).length
+    expect(healthyTicks).toBeGreaterThanOrEqual(2)
+    expect(lines.some((line) => line.startsWith("SELF-STALL"))).toBe(false)
+
+    // Stall the fiber tree's tick source in-tree.
+    wedged = true
+    await sleep(300)
+
+    await Effect.runPromise(Fiber.interrupt(fiber))
+    telemetry.stop()
+
+    // The raw-timer watchdog observed the in-tree stall and named the death —
+    // an Effect-tree watchdog would be wedged with the tree and observe nothing.
+    const stalls = lines.filter((line) => line.startsWith("SELF-STALL"))
+    expect(stalls.length).toBeGreaterThanOrEqual(1)
+    expect(stalls[0]).toContain("seen=0")
+    expect(stalls[0]).toContain("route=/event")
+  })
 })
