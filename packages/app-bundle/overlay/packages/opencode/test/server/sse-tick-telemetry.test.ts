@@ -232,4 +232,33 @@ describe("sse tick telemetry", () => {
     expect(worst).toBeLessThanOrEqual(5)
     expect(mean).toBeLessThanOrEqual(5)
   })
+
+  test("the event-loop lag probe reports a blocked event loop on the tick line", async () => {
+    // Hypothesis-2 discriminator: Effect scheduler starvation shows up as
+    // event-loop lag (the #775 wedge ran the runLoop at 100% CPU). The probe
+    // is a raw Bun timer measuring its own drift — block the loop, and the
+    // next tick line must carry the lag.
+    const lines: Array<string> = []
+    const telemetry = makeSseTickTelemetry({
+      ...fastConfig,
+      cadenceMs: 40,
+      watchdogIntervalMs: 60_000,
+      probeIntervalMs: 50,
+      sink: (line) => lines.push(line),
+    })
+    telemetry.registerConnection("/event", "conn-lag")
+
+    // Block the event loop for ~200ms (a synchronous spin, no timers can fire).
+    const blockedUntil = performance.now() + 200
+    while (performance.now() < blockedUntil) {}
+    // Let the starved probe timer fire and sample the drift before reading it.
+    await sleep(20)
+
+    telemetry.noteTick("/event", "conn-lag", { queueDepth: 0, fiberId: 1 })
+    telemetry.stop()
+
+    const lagMs = telemetry.eventLoopLagMs()
+    expect(lagMs).toBeGreaterThanOrEqual(150)
+    expect(lines[lines.length - 1]).toContain(`lag_ms=${Math.round(lagMs)}`)
+  })
 })
