@@ -58,9 +58,26 @@ export const defaultTickTelemetryConfig: TickTelemetryConfig = {
 
 export interface SseTickTelemetry {
   readonly cadenceMs: number
+  /**
+   * Watchdog check interval — also the ceiling the fan-out write stall bound
+   * derives from (#1798 phase C): a stalled subscriber must be dropped well
+   * before the watchdog could declare the tick source silent, so the engine
+   * heals itself instead of naming its own death.
+   */
+  readonly watchdogIntervalMs: number
   registerConnection(route: string, connId: string): void
   unregisterConnection(connId: string): void
   noteTick(route: string, connId: string, state: { queueDepth: number; fiberId: number }): void
+  /**
+   * #1798 phase C: name a dropped connection in telemetry and unregister it.
+   * Called by the bounded fan-out write path when a subscriber's write stalls
+   * past the stall bound — an explicit drop line beats a silent eviction.
+   */
+  noteDrop(
+    route: string,
+    connId: string,
+    state: { reason: string; eventQueueDepth: number; writeQueueDepth: number },
+  ): void
   /** Last event-loop drift sample, in ms. */
   eventLoopLagMs(): number
   rssBytes(): number
@@ -139,6 +156,7 @@ export function makeSseTickTelemetry(config: TickTelemetryConfig): SseTickTeleme
 
   return {
     cadenceMs,
+    watchdogIntervalMs,
     registerConnection(route, connId) {
       start()
       connections.set(connId, { route, registeredAt: now(), lastTickAt: undefined, queueDepth: -1, fiberId: -1 })
@@ -159,6 +177,18 @@ export function makeSseTickTelemetry(config: TickTelemetryConfig): SseTickTeleme
       sink(
         `SSE-TICK route=${route} conn=${connId} cadence_ms=${cadenceMs} ` +
           `queue_depth=${state.queueDepth} fiber=${state.fiberId} ` +
+          `lag_ms=${Math.round(lagMs)} rss_bytes=${rssBytes()} ts_ms=${t}`,
+      )
+    },
+    noteDrop(route, connId, state) {
+      const t = now()
+      const connection = connections.get(connId)
+      const sinceLastTickMs = connection?.lastTickAt === undefined ? -1 : t - connection.lastTickAt
+      connections.delete(connId)
+      sink(
+        `SSE-DROP route=${route} conn=${connId} reason=${state.reason} ` +
+          `since_last_tick_ms=${Math.round(sinceLastTickMs)} ` +
+          `event_queue_depth=${state.eventQueueDepth} write_queue_depth=${state.writeQueueDepth} ` +
           `lag_ms=${Math.round(lagMs)} rss_bytes=${rssBytes()} ts_ms=${t}`,
       )
     },

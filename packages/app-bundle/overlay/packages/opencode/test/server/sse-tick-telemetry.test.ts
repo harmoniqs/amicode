@@ -206,6 +206,31 @@ describe("sse tick telemetry", () => {
     expect(snapshot.lastTickAt).toBeGreaterThan(0)
   })
 
+  test("noteDrop names the dropped connection, unregisters it, and leaves the watchdog silent", async () => {
+    // #1798 phase C: the drop path hooks this registry so a dropped corpse
+    // shows in the telemetry — an explicit drop line beats a silent eviction,
+    // and a dropped connection is gone from the registry, so it can never
+    // trip the process-wide SELF-STALL watchdog.
+    const lines: Array<string> = []
+    const telemetry = makeSseTickTelemetry({ ...fastConfig, sink: (line) => lines.push(line) })
+    telemetry.registerConnection("/event", "conn-corpse")
+    telemetry.noteTick("/event", "conn-corpse", { queueDepth: 3, fiberId: 11 })
+    telemetry.noteDrop("/event", "conn-corpse", { reason: "stalled_write", eventQueueDepth: 12, writeQueueDepth: 64 })
+
+    const drops = lines.filter((line) => line.startsWith("SSE-DROP"))
+    expect(drops.length).toBe(1)
+    expect(drops[0]).toMatch(
+      /^SSE-DROP route=\/event conn=conn-corpse reason=stalled_write since_last_tick_ms=\d+ event_queue_depth=12 write_queue_depth=64 lag_ms=\d+ rss_bytes=\d+ ts_ms=\d+$/,
+    )
+
+    // The registry forgot the corpse — a full watchdog window with zero live
+    // connections must not produce a SELF-STALL.
+    expect(telemetry.snapshot().connections).toBe(0)
+    await sleep(3 * fastConfig.watchdogIntervalMs)
+    telemetry.stop()
+    expect(lines.some((line) => line.startsWith("SELF-STALL"))).toBe(false)
+  })
+
   test("the production config keeps the both-ends agreement inside one 30s window", () => {
     // Structural guarantee: the watchdog fires at most
     // watchdogIntervalMs + cadenceMs after the engine's last tick — 25s at the
