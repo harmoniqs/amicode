@@ -1113,6 +1113,28 @@ try:
 except ValueError:
     UPSTREAM_CADENCE_S = 30.0
 
+# 2026-10-14 (#1798, the #1757 hazard fixed at the source): a bare close()
+# on a socket with a concurrent reader parked in recv (or a writer parked in
+# sendall) does NOT send the FIN on Linux — the in-flight syscall holds the
+# file description open, so the FIN waits for a syscall that never returns
+# and the PEER NEVER SEES EOF: the connection stays half-alive, the peer's
+# writes keep "succeeding" into the void until its buffers fill and its
+# fan-out wedges. That corpse class is the #1798 propagation (the engine's
+# SSE routes stall fleet-wide behind one corpse upstream; 19,391 recycles in
+# the observed window) — and the engine-side half cannot fix it at the wire
+# (BUN's node:http res.destroy sends nothing), so THIS shutdown is the only
+# FIN the engine will ever see. shutdown() acts on the file description
+# directly: FIN goes out immediately, the parked syscall wakes, close()
+# reclaims the fd. Every lifecycle close that can race a concurrent user of
+# the socket goes through here — the member drop (_drop), the dead-man
+# recycler's upstream kill (upstream_loop teardown), and the per-member
+# waiter teardown in handle().
+def _fin_close(s):
+    try: s.shutdown(socket.SHUT_RDWR)
+    except Exception: pass
+    try: s.close()
+    except Exception: pass
+
 class Group:
     def __init__(self, path, shard=1, backend=None, merge=None, upstream_path=None):
         self.path = path
@@ -1182,16 +1204,17 @@ class Group:
         return s, buf
     def _drop(self, c):
         with self.lock: self.members.pop(c, None)
-        # #1757: close() on a socket with a concurrent reader blocked in recv
-        # (the per-member waiter thread) does NOT send the FIN on Linux — the
-        # blocked syscall holds the description open, so the "all upstreams
-        # lost / stalled member" closes logged as done were invisible to the
-        # client, and its EventSource stayed parked on a dead stream.
-        # shutdown() tears the socket down immediately and wakes the waiter.
-        try: c.shutdown(socket.SHUT_RDWR)
-        except Exception: pass
-        try: c.close()
-        except Exception: pass
+        # #1757, FIXED: close() on a socket with a concurrent reader blocked
+        # in recv (the per-member waiter thread) does NOT send the FIN on
+        # Linux — the blocked syscall holds the description open, so the
+        # "all upstreams lost / stalled member" closes logged as done were
+        # invisible to the client, and its EventSource stayed parked on a
+        # dead stream. #1798 moved the shutdown-then-close into _fin_close
+        # and extended it to the dead-man recycler's upstream kill and the
+        # waiter teardown: the frontdoor never leaves a half-alive socket a
+        # peer keeps writing into (the engine cannot recover it — BUN's
+        # node:http sends no wire FIN).
+        _fin_close(c)
     def _writer(self, c, q):
         """Per-member outbound writer — the ONLY thread that sends on the
         member socket (ordering = queue order). Exits on the first send
@@ -1313,8 +1336,13 @@ class Group:
                                 else:
                                     q.put(frame)
             except Exception: pass
-            try: s.close()
-            except: pass
+            # #1798: the recycler's kill must FIN the engine. A bare close()
+            # here is FIN-less whenever any syscall still holds the socket
+            # (see _fin_close) — and a FIN-less kill leaves a corpse the
+            # engine keeps writing into until its fan-out wedges. BUN's
+            # node:http cannot send the wire FIN itself, so this shutdown
+            # is the engine's only EOF signal.
+            _fin_close(s)
             with self.lock:
                 self.live_upstreams -= 1
                 was_preamble = s is self.upstream
@@ -1884,8 +1912,11 @@ def handle(c, addr, cid):
                         if not d: break
                     except Exception: break
                 g.leave(c)
-                try: c.close()
-                except: pass
+                # #1798: the teardown close must FIN. The writer thread may
+                # be parked in sendall on this socket, and a bare close()
+                # defers the FIN behind it (see _fin_close) — shutdown
+                # delivers the FIN and wakes the writer so the fd reclaims.
+                _fin_close(c)
             threading.Thread(target=waiter, daemon=True).start()
         elif parts[0] == "GET" and path.startswith("/assets/"):
             # 2026-10-04: .js assets must flow through the fetch-patch-cache path

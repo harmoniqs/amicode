@@ -217,6 +217,16 @@ class ShardHandler(BaseHTTPRequestHandler):
                 self.server.wedge_sse_once.discard(wedged)
                 self.wfile.write(('data: {"type":"server.connected","shard":%d}\n\n' % self.shard).encode())
                 self.wfile.flush()
+                # #1798 frontdoor half: the dead-man recycler kills this
+                # silent upstream; probe for the FRONTDOOR's FIN — the engine
+                # side must SEE the EOF (a FIN-less kill leaves a corpse the
+                # engine keeps writing into — the heartbeat-stall factory).
+                try:
+                    self.connection.settimeout(30)
+                    if self.connection.recv(1) == b"":
+                        self.server.wedge_eof_seen = True
+                except Exception:
+                    pass
                 time.sleep(120)
                 return
             self.wfile.write(('data: {"type":"server.connected","shard":%d}\n\n' % self.shard).encode())
@@ -1110,6 +1120,183 @@ class TestUpstreamDeadman(RouterTest):
         logtext = self.fd_log(fd)
         self.assertNotIn("recycling", logtext)
         self.assertNotIn("upstream cadence", logtext)
+
+    def test_recycled_upstream_fin_reaches_engine(self):
+        """#1798 frontdoor half, end-to-end: the dead-man recycler's kill
+        must deliver EOF to the ENGINE side of the upstream. A FIN-less kill
+        leaves a corpse socket the engine keeps writing into until its SSE
+        fan-out wedges (the fleet-wide heartbeat-stall propagation) — and
+        the engine cannot send or recover the FIN itself, so the frontdoor's
+        close path is the contract."""
+        fd = self.start_pool_with_wedge(
+            ("/event",), extra_env={"AMICODE_UPSTREAM_DEADMAN_S": "2",
+                                    "AMICODE_UPSTREAM_CADENCE_S": "1"})
+        self.drip_events(0)   # shard 1 stays provably alive; s2 wedges
+        sock = self.sse_join(fd, "/event?directory=" + POOLDIR)   # member waits -> deadman arms
+        deadline = time.time() + 10
+        while time.time() < deadline \
+                and not getattr(self.shards[1].httpd, "wedge_eof_seen", False):
+            time.sleep(0.2)
+        sock.close()
+        self.assertTrue(getattr(self.shards[1].httpd, "wedge_eof_seen", False),
+                        "the recycled upstream's FIN must reach the engine side (no corpse socket)")
+
+    def test_member_teardown_normal_drain_keeps_group_healthy(self):
+        """#1798 AC4: the FIN is additive, not a semantic change — a member
+        closing its stream NORMALLY (client EOF -> waiter teardown) must
+        leave the group serving every OTHER member and the frontdoor
+        healthy. The waiter teardown now shutdown-then-closes (a writer
+        parked in sendall must be woken, the FIN guaranteed); a clean
+        close must be indistinguishable from before."""
+        fd = self.start_pool()
+        a = self.sse_join(fd, "/event?directory=" + POOLDIR)
+        b = self.sse_join(fd, "/event?directory=" + POOLDIR)
+        time.sleep(0.6)   # preamble + join for both members
+        a.close()        # the normal client-side close (FIN reaches the frontdoor)
+        b.settimeout(2)
+        body = b""
+        deadline = time.time() + 3
+        while time.time() < deadline:
+            try:
+                d = b.recv(65536)
+            except socket.timeout:
+                continue
+            if not d:
+                break
+            body += d
+        b.close()
+        self.assertGreaterEqual(body.count(b"server.heartbeat"), 2,
+                                "the surviving member kept receiving across the teardown")
+        # and the frontdoor itself is unharmed by the teardown
+        st, _, _ = http_request(fd.port, "/global/health")
+        self.assertEqual(st, 200)
+
+
+# --- #1798 frontdoor half: the lifecycle closes must send FIN ----------------------
+
+_FIN_CLOSE_RUNNER = r'''
+import importlib.util, socket, sys, threading, time
+
+frontdoor = sys.argv[1]
+spec = importlib.util.spec_from_file_location("fd_under_test", frontdoor)
+mod = importlib.util.module_from_spec(spec)
+# the frontdoor boots its servers + accept loop at import; run that in a
+# daemon thread so the module namespace fills while this thread continues.
+threading.Thread(target=spec.loader.exec_module, args=(mod,), daemon=True).start()
+deadline = time.time() + 15
+while not hasattr(mod, "_fin_close"):
+    if time.time() > deadline:
+        print("frontdoor module never defined _fin_close", file=sys.stderr)
+        sys.exit(3)
+    time.sleep(0.05)
+
+# the exact #1757 condition: an engine-facing socket with a concurrent
+# reader parked in recv on the closing (frontdoor) side.
+l = socket.socket()
+l.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+l.bind(("127.0.0.1", 0))
+l.listen(1)
+a = socket.create_connection(l.getsockname(), timeout=5)   # frontdoor side
+b, _ = l.accept()                                          # engine side
+l.close()
+b.settimeout(6)
+
+def parked():
+    try:
+        a.recv(4096)
+    except Exception:
+        pass
+
+threading.Thread(target=parked, daemon=True).start()
+time.sleep(0.5)   # the reader must actually be inside recv()
+
+mod._fin_close(a)   # the fixed close path
+try:
+    d = b.recv(4096)
+except socket.timeout:
+    print("NO-FIN: engine side still open after the close (corpse)")
+    sys.exit(1)
+sys.exit(0 if d == b"" else 2)   # the engine must see EOF
+'''
+
+
+class TestFrontdoorFinClose(RouterTest):
+    """#1798 frontdoor half — the frontdoor is the load-bearing FIN source.
+
+    The #1757 comment in hub-frontdoor.py records the hazard: a bare close()
+    on a socket with a concurrent reader parked in recv does NOT send the FIN
+    on Linux — the parked syscall holds the file description open, so the
+    peer never sees EOF. When the frontdoor kills an upstream that way, the
+    engine keeps writing into the corpse socket until its shared SSE fan-out
+    wedges — the fleet-wide heartbeat-stall propagation (19,391 FIN-less
+    recycles in one observed window). The engine-side peer slice proved BUN's
+    node:http layer cannot send a wire FIN at all, so the frontdoor's
+    shutdown is the only FIN the engine will ever see: every frontdoor
+    lifecycle close that can race a concurrent socket user goes through
+    _fin_close — shutdown(SHUT_RDWR), then close — FIN out immediately,
+    parked syscall woken, corpse class dead at the source.
+    """
+
+    def start_module_runner(self):
+        """Import the real frontdoor in a subprocess WITHOUT its production
+        footprint: the module pins its port, routing table, session map, and
+        log to the test tmpdir (a dead backend — the boot-time upstream
+        dials just retry in the background), so the runner can call the
+        module's own close path against a raw socket pair."""
+        tbl = os.path.join(self.tmpdir, "fin-routing.json")
+        with open(tbl, "w") as f:
+            json.dump(routing_table([(1, free_port())]), f)
+        env = dict(os.environ)
+        env.update({
+            "AMICODE_ROUTING_TABLE": tbl,
+            "AMICODE_SESSION_MAP": os.path.join(self.tmpdir, "fin-sessions.json"),
+            "AMICODE_FRONTDOOR_PORT": str(free_port_pair()),
+            "AMICODE_FRONTDOOR_LOG": os.path.join(self.tmpdir, "fin-frontdoor.log"),
+        })
+        return subprocess.run([sys.executable, "-c", _FIN_CLOSE_RUNNER, FRONTDOOR],
+                              env=env, capture_output=True, text=True, timeout=60)
+
+    def test_fin_close_delivers_eof_past_blocked_reader(self):
+        """AC1: closing an upstream socket through the fixed close path
+        delivers FIN/EOF to the peer even while a concurrent reader thread
+        is blocked in recv on the closing side — the exact #1757 condition.
+        The bare-close control beside this proves the corpse is real under
+        plain close() (the recycler's pre-#1798 kill)."""
+        r = self.start_module_runner()
+        self.assertEqual(r.returncode, 0,
+                         "no FIN/EOF past the blocked reader: %r / %r" % (r.stdout, r.stderr))
+
+    def test_bare_close_corpse_control(self):
+        """The red side of the pair, pinned: a BARE close() behind a reader
+        parked in recv leaves the peer without FIN — the corpse class the
+        #1757 comment records and #1798's fix targets. If this control ever
+        fails, the platform no longer exhibits the hazard (or the harness is
+        broken) — either way the suite must say so, never silently trust
+        the fix."""
+        l = socket.socket()
+        l.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        l.bind(("127.0.0.1", 0))
+        l.listen(1)
+        a = socket.create_connection(l.getsockname(), timeout=5)
+        b, _ = l.accept()
+        l.close()
+        b.settimeout(3)
+        parked = threading.Event()
+
+        def reader():
+            parked.set()
+            try:
+                a.recv(4096)
+            except Exception:
+                pass
+
+        threading.Thread(target=reader, daemon=True).start()
+        parked.wait(2)
+        time.sleep(0.5)   # the reader must actually be inside recv()
+        a.close()        # the pre-#1798 close: plain close()
+        with self.assertRaises(socket.timeout):
+            b.recv(4096)   # no EOF — the corpse
+        b.close()
 
 
 class TestDeltaCoalescing(unittest.TestCase):
