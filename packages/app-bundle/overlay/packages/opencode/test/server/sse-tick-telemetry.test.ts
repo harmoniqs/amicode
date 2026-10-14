@@ -5,7 +5,7 @@
 // flow at cadence while healthy, the both-ends timestamp delta stays inside one
 // cadence window, and the per-tick overhead stays negligible.
 import { describe, expect, test } from "bun:test"
-import { Effect, Fiber, Queue, Stream } from "effect"
+import { Effect, Fiber, Layer, ManagedRuntime, Queue, Stream } from "effect"
 import { makeSseTickTelemetry } from "../../src/server/shared/sse-tick-telemetry"
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -101,5 +101,58 @@ describe("sse tick telemetry", () => {
     expect(stalls.length).toBeGreaterThanOrEqual(1)
     expect(stalls[0]).toContain("seen=0")
     expect(stalls[0]).toContain("route=/event")
+  })
+
+  test("SELF-STALL still fires after the Effect runtime driving the ticks dies entirely", async () => {
+    const lines: Array<string> = []
+    const telemetry = makeSseTickTelemetry({ ...fastConfig, sink: (line) => lines.push(line) })
+    telemetry.registerConnection("/event", "conn-runtime")
+
+    // The tick source runs on its own ManagedRuntime. Disposing the runtime
+    // kills every fiber in that tree at once — the harshest "tree makes no
+    // progress" case. A watchdog living inside the runtime would die with it;
+    // the raw Bun-timer watchdog must keep observing.
+    const runtime = ManagedRuntime.make(Layer.effectDiscard(Effect.void))
+    const fiber = runtime.runFork(
+      Stream.tick(fastConfig.cadenceMs).pipe(
+        Stream.tap(() =>
+          Effect.sync(() =>
+            telemetry.noteTick("/event", "conn-runtime", { queueDepth: 0, fiberId: 0 }),
+          ),
+        ),
+        Stream.runDrain,
+      ),
+    )
+
+    await sleep(150)
+    expect(lines.filter((line) => line.startsWith("SSE-TICK")).length).toBeGreaterThanOrEqual(2)
+
+    // Tree death: dispose the runtime (interrupts the tick fiber and releases
+    // every fiber in it), leaving the connection registered and silent.
+    await Effect.runPromise(Fiber.interrupt(fiber))
+    await runtime.dispose()
+    const silencedAt = Date.now()
+    expect(lines.some((line) => line.startsWith("SELF-STALL"))).toBe(false)
+
+    await sleep(250)
+
+    telemetry.stop()
+    const stalls = lines.filter((line) => line.startsWith("SELF-STALL"))
+    expect(stalls.length).toBeGreaterThanOrEqual(1)
+    expect(stalls[0]).toContain("seen=0")
+    const stallLine = stalls.find((line) => Number(line.match(/ts_ms=(\d+)/)?.[1]) >= silencedAt)
+    expect(stallLine).toBeDefined()
+    // Both ends agree on the onset: the engine's SELF-STALL fires no later
+    // than one frontdoor declaration window (30s, scaled 250:1) after its last
+    // tick, and the silence it names is at least one cadence deep.
+    const sinceLast = Number(stallLine?.match(/since_last_tick_ms=(\d+)/)?.[1])
+    expect(sinceLast).toBeGreaterThanOrEqual(fastConfig.cadenceMs)
+    expect(sinceLast).toBeLessThanOrEqual(30_000 / 250)
+    // The frontdoor's first missed heartbeat (#1748/#1758 cadence telemetry,
+    // simulated here as last tick + one cadence window) and the engine's last
+    // tick timestamp the same onset within one cadence window.
+    const firedAt = Number(stallLine?.match(/ts_ms=(\d+)/)?.[1])
+    const engineLastTick = firedAt - sinceLast
+    expect(Math.abs(engineLastTick + fastConfig.cadenceMs - firedAt)).toBeLessThanOrEqual(30_000 / 250)
   })
 })
