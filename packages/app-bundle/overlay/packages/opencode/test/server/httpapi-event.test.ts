@@ -1,6 +1,7 @@
 import { afterEach, describe, expect } from "bun:test"
 import { Effect, Layer, Queue, Schema, Stream } from "effect"
 import { EventPaths } from "../../src/server/routes/instance/httpapi/groups/event"
+import { makeSseTickTelemetry, resetSseTickTelemetry, setSseTickTelemetry } from "../../src/server/shared/sse-tick-telemetry"
 import { resetDatabase } from "../fixture/db"
 import { disposeAllInstances, TestInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
@@ -97,6 +98,90 @@ describe("event HttpApi", () => {
         const created = yield* requestInDirectory("/session", directory, { method: "POST" })
         expect(created.status).toBe(200)
         expect(yield* readEvent(reader)).toMatchObject({ type: "session.created" })
+      }),
+    { git: true, config: { formatter: false, lsp: false } },
+  )
+})
+
+describe("event heartbeat tick telemetry (#1798 phase A)", () => {
+  afterEach(() => {
+    resetSseTickTelemetry()
+  })
+
+  it.instance(
+    "the /event route heartbeats at the telemetry cadence and logs an SSE-TICK line per tick",
+    () =>
+      Effect.gen(function* () {
+        const lines: Array<string> = []
+        const telemetry = makeSseTickTelemetry({
+          cadenceMs: 100,
+          watchdogIntervalMs: 2_000,
+          probeIntervalMs: 500,
+          sink: (line) => lines.push(line),
+        })
+        setSseTickTelemetry(telemetry)
+
+        const { directory } = yield* TestInstance
+        const { response, reader } = yield* openEventStream(directory)
+        expect(response.status).toBe(200)
+        expect(yield* readEvent(reader)).toMatchObject({ type: "server.connected", properties: {} })
+
+        // The heartbeat cadence follows the telemetry singleton — at the fast
+        // test cadence the next frame on the wire IS the heartbeat.
+        const heartbeat = yield* readEvent(reader)
+        expect(heartbeat.type).toBe("server.heartbeat")
+
+        // Every live connection-carrying route logs its tick line: route,
+        // connection, cadence, the emitting fiber's identity, queue depth,
+        // event-loop lag, and RSS (the #1798 discriminator payload).
+        const tickLines = lines.filter((line) => line.startsWith("SSE-TICK"))
+        expect(tickLines.length).toBeGreaterThanOrEqual(1)
+        expect(tickLines[0]).toMatch(
+          /^SSE-TICK route=\/event conn=\S+ cadence_ms=100 queue_depth=0 fiber=\d+ lag_ms=\d+ rss_bytes=\d+ ts_ms=\d+$/,
+        )
+        expect(telemetry.snapshot().connections).toBe(1)
+      }),
+    { git: true, config: { formatter: false, lsp: false } },
+  )
+
+  it.instance(
+    "unregisters the connection when the stream closes — an empty registry never SELF-STALLs",
+    () =>
+      Effect.gen(function* () {
+        const lines: Array<string> = []
+        const telemetry = makeSseTickTelemetry({
+          cadenceMs: 100,
+          watchdogIntervalMs: 250,
+          probeIntervalMs: 500,
+          sink: (line) => lines.push(line),
+        })
+        setSseTickTelemetry(telemetry)
+
+        const { directory } = yield* TestInstance
+        // Inner scope: closing it abandons the response, which ends the
+        // server-side stream and runs the finalizer that unregisters.
+        yield* Effect.gen(function* () {
+          const { reader } = yield* openEventStream(directory)
+          expect(yield* readEvent(reader)).toMatchObject({ type: "server.connected", properties: {} })
+          expect(telemetry.snapshot().connections).toBe(1)
+        }).pipe(Effect.scoped)
+
+        // The finalizer is async — poll until the registry drains.
+        yield* Effect.forEach(
+          [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19],
+          () =>
+            Effect.gen(function* () {
+              if (telemetry.snapshot().connections > 0) yield* Effect.sleep("100 millis")
+            }),
+          { discard: true },
+        )
+        expect(telemetry.snapshot().connections).toBe(0)
+
+        // With zero live connections the watchdog has nothing to declare
+        // silent — no SELF-STALL line may fire over several windows.
+        yield* Effect.sleep("600 millis")
+        const stalls = lines.filter((line) => line.startsWith("SELF-STALL"))
+        expect(stalls.length).toBe(0)
       }),
     { git: true, config: { formatter: false, lsp: false } },
   )

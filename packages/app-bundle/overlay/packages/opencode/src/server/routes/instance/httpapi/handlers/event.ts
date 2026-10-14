@@ -1,13 +1,14 @@
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { InstanceState } from "@/effect/instance-state"
 import { GlobalBus } from "@/bus/global"
+import { sseTickTelemetry } from "@/server/shared/sse-tick-telemetry"
 import { EventV2 } from "@opencode-ai/core/event"
 import { Effect, Queue } from "effect"
 import * as Stream from "effect/Stream"
 import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import * as Sse from "effect/unstable/encoding/Sse"
-import { EventApi } from "../groups/event"
+import { EventApi, EventPaths } from "../groups/event"
 
 type SsePayload = { id: string; type: string; properties: unknown }
 
@@ -120,9 +121,28 @@ function eventResponse(events: EventV2.Interface) {
       Stream.merge(disposed, { haltStrategy: "left" }),
       Stream.takeUntil((event) => event.type === "server.instance.disposed"),
     )
-    const heartbeat = Stream.tick("10 seconds").pipe(
+    // #1798 phase A: this connection's tick telemetry identity. The registry
+    // is eager (like the listener above) and the stream finalizer unregisters;
+    // the heartbeat cadence is single-sourced from the telemetry singleton —
+    // the contract in sse-tick-telemetry.ts is the one place both must agree.
+    const connId = eventID()
+    sseTickTelemetry.registerConnection(EventPaths.event, connId)
+    const heartbeat = Stream.tick(sseTickTelemetry.cadenceMs).pipe(
       Stream.drop(1),
       Stream.map(() => ({ id: eventID(), type: "server.heartbeat", properties: {} })),
+      // One telemetry line per heartbeat: the emitting fiber's identity and
+      // the emitter's queue depth ride every tick (queue depth at stall onset
+      // discriminates the blocked-shared-emit-loop hypothesis), alongside the
+      // watchdog's lag and RSS samples.
+      Stream.tap(() =>
+        Effect.gen(function* () {
+          const fiberId = yield* Effect.fiberId
+          sseTickTelemetry.noteTick(EventPaths.event, connId, {
+            queueDepth: Queue.sizeUnsafe(queue),
+            fiberId,
+          })
+        }),
+      ),
     )
 
     const replay = new Array<SsePayload>()
@@ -167,7 +187,12 @@ function eventResponse(events: EventV2.Interface) {
         Stream.map(eventData),
         Stream.pipeThroughChannel(Sse.encode()),
         Stream.encodeText,
-        Stream.ensuring(Effect.logInfo("event disconnected")),
+        Stream.ensuring(
+          Effect.gen(function* () {
+            yield* Effect.logInfo("event disconnected")
+            yield* Effect.sync(() => sseTickTelemetry.unregisterConnection(connId))
+          }),
+        ),
       ),
       {
         contentType: "text/event-stream",
