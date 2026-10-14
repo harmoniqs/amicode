@@ -59,10 +59,10 @@
     "test": "vitest run --passWithNoTests"
   },
   "devDependencies": {
-    "@types/node": "^26.1.2",
-    "@types/vscode": "^1.95.0",
-    "esbuild": "^0.28.1",
-    "typescript": "^5.6.0",
-    "vitest": "^2.1.0"
+    "@types/node": "^26.6.5",
+    "@types/vscode": "^1.140.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.3"
   }
 }
