@@ -927,7 +927,7 @@ def app_dist_serve(c, path):
             log("app-dist missing index.html (%s) - 503" % e)
             return False
         _serve_bytes(c, body, "text/html; charset=utf-8",
-                     extra_headers=("Cache-Control: no-cache\r\n"
+                     extra_headers=("Cache-Control: no-store\r\n"
                                     + ("X-UI-Build: %s\r\n" % rec["commit"] if rec else "")))
         return True
     if path.startswith("/assets/"):
