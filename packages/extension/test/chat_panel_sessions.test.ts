@@ -177,4 +177,70 @@ describe("ChatPanel — side-by-side sessions (multi-instance registry)", () => 
     expect(source.match(/d\.kind === "session-context"/g)?.length).toBeGreaterThanOrEqual(2);
     expect(source.match(/d\.kind === "assessed-diff-invalidate"/g)?.length).toBeGreaterThanOrEqual(2);
   });
+
+  // ── #1788 (S3): the host's follow set, derived from live panel state ──────
+  // Follow = a session this client has opened or pinned — a live chat tab
+  // showing it. These accessors are what the followed-session watcher reads.
+
+  function openPanels(n: number) {
+    const cap = capturePanels();
+    restore = cap.restore;
+    created = cap.created;
+    args = cap.args;
+    ChatPanel.openOrReveal(fakeCtx(), BASE);
+    for (let i = 1; i < n; i++) ChatPanel.openNew(fakeCtx(), DRAFT);
+    return cap;
+  }
+
+  it("#1788 — followedSessionIds is every LIVE tab's settled session (drafts and closed routes follow nothing)", () => {
+    openPanels(3);
+    const [p0, p1, p2] = created as unknown as Array<{
+      webview: { _simulateMessage(msg: unknown): void };
+    }>;
+    p0.webview._simulateMessage({ source: "amicode", kind: "session-context", sessionID: "ses_a" });
+    p1.webview._simulateMessage({ source: "amicode", kind: "session-context", sessionID: "ses_b" });
+    // A draft route (the third tab) holds no session and follows nothing.
+    p2.webview._simulateMessage({ source: "amicode", kind: "session-context", draft: true });
+
+    expect(new Set(ChatPanel.followedSessionIds())).toEqual(new Set(["ses_a", "ses_b"]));
+
+    // Closing a tab drops its session from the follow set (derived live).
+    p1.dispose();
+    expect(new Set(ChatPanel.followedSessionIds())).toEqual(new Set(["ses_a"]));
+  });
+
+  it("#1788 — focusedSessionId is the FOCUSED panel's session; an unfocused window reports none", () => {
+    openPanels(2);
+    const [p0, p1] = created as unknown as Array<{
+      webview: { _simulateMessage(msg: unknown): void };
+      _simulateViewState(active: boolean, visible: boolean): void;
+    }>;
+    p0.webview._simulateMessage({ source: "amicode", kind: "session-context", sessionID: "ses_a" });
+    p1.webview._simulateMessage({ source: "amicode", kind: "session-context", sessionID: "ses_b" });
+    p0._simulateViewState(true, true);
+
+    expect(ChatPanel.focusedSessionId()).toBe("ses_a");
+
+    // The user focuses a text editor: no chat panel is the active editor, so
+    // the window reports no focused session ("you're already there" lifts).
+    p0._simulateViewState(false, true);
+    expect(ChatPanel.focusedSessionId()).toBeUndefined();
+  });
+
+  it("#1788 — revealSession reveals the live tab showing that session (the notification click action)", () => {
+    openPanels(2);
+    const [p0, p1] = created as unknown as Array<{
+      webview: { _simulateMessage(msg: unknown): void };
+      revealCount: number;
+    }>;
+    p0.webview._simulateMessage({ source: "amicode", kind: "session-context", sessionID: "ses_a" });
+    p1.webview._simulateMessage({ source: "amicode", kind: "session-context", sessionID: "ses_b" });
+
+    expect(ChatPanel.revealSession("ses_b")).toBe(true);
+    expect(p1.revealCount).toBe(1);
+    expect(p0.revealCount).toBe(0);
+
+    // A session no tab shows (unfollowed by construction) cannot be revealed.
+    expect(ChatPanel.revealSession("ses_nowhere")).toBe(false);
+  });
 });

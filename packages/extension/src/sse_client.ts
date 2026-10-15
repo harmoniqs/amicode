@@ -19,6 +19,9 @@ import { SseLivenessTracker, type SseState } from "./sse_liveness";
 // dead SSE doesn't break the demo.
 // ============================================================================
 
+/** One parsed stream event (the `data:` payload of an SSE frame). */
+export type OpencodeStreamEvent = { type?: string; properties?: Record<string, unknown> };
+
 export interface SseClientOptions {
   channel: vscode.OutputChannel;
   statusBar?: StatusBarManager;
@@ -29,6 +32,12 @@ export interface SseClientOptions {
   /** Liveness states (L1, #638): fired on every transition. The status bar
    *  is driven automatically from this; this hook is for any other sink. */
   onSseState?: (from: SseState, to: SseState) => void;
+  /** #1788 (S3): observe-only event sink — every PARSED event reaches it
+   *  immediately, before the built-in routing. A passive consumer (the
+   *  followed-session watcher): it must never mutate the stream, its cursor
+   *  handling, or this connection. A throwing observer is CONTAINED here —
+   *  logged, never propagated into the stream loop. */
+  onEvent?: (event: OpencodeStreamEvent) => void;
 }
 
 export class OpencodeEventClient implements vscode.Disposable {
@@ -197,7 +206,16 @@ export class OpencodeEventClient implements vscode.Disposable {
     this.dispatch(event);
   }
 
-  private dispatch(event: { type?: string; properties?: Record<string, unknown> }): void {
+  private dispatch(event: OpencodeStreamEvent): void {
+    // #1788 (S3): the observe-only sink first. Contained: a broken observer
+    // must never take the shared stream's own routing down with it.
+    if (this.opts.onEvent) {
+      try {
+        this.opts.onEvent(event);
+      } catch (err) {
+        this.opts.channel.appendLine(`[sse] event observer error: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
     const type = event.type ?? "";
     const props = event.properties ?? {};
     // Light routing: only the events we currently care about. We don't

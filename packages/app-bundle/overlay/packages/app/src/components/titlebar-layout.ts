@@ -1,4 +1,4 @@
-export const TITLEBAR_CONTROL_IDS = ["sessions", "status", "side-panel", "profile", "settings"] as const
+export const TITLEBAR_CONTROL_IDS = ["sessions", "status", "side-panel", "inbox", "profile", "settings"] as const
 
 export type TitlebarControlId = (typeof TITLEBAR_CONTROL_IDS)[number]
 
@@ -9,7 +9,7 @@ export interface TitlebarLayout {
 
 export const defaultTitlebarLayout: TitlebarLayout = {
   left: [],
-  right: ["sessions", "status", "side-panel", "profile", "settings"],
+  right: ["sessions", "status", "side-panel", "inbox", "profile", "settings"],
 }
 
 export function validateTitlebarLayout(value: unknown): TitlebarLayout {
