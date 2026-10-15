@@ -6,6 +6,8 @@
 // behavior, unchanged. Pure helpers so the view contract is testable without
 // a DOM (the solver-toggle decision-helper split).
 import { createSignal } from "solid-js"
+import type { ServerConnection } from "@/context/server"
+import { amicodeGet } from "@/utils/amicode-fetch"
 
 export interface HarnessOptionView {
   id: string
@@ -77,4 +79,39 @@ export function adoptHarnessState(state: HarnessViewState | undefined): void {
  *  registry is published (control hidden). */
 export function liveHarnessState(): HarnessViewState | undefined {
   return harnessState()
+}
+
+/** The placement-correct ask for the engine's harness route (#1799).
+ *  /amicode/harness is an INSTANCE route — the composer's only instance-scoped
+ *  amicode ask — so it carries ?directory= like every other instance-scoped
+ *  fetch the app makes (/agent, /provider, /command…): the key the hub
+ *  frontdoor routes instance requests by. The bare route is placeable only in
+ *  the local posture (the panel origin's extension proxy forwards to its
+ *  bound engine); at the hub origin a directory-less instance ask lands on
+ *  the default backend, which answers 200 text/html with the SPA index — the
+ *  control never rendered (#1799). A missing directory keeps the bare ask
+ *  (the local posture's original behavior). */
+export function harnessRoute(directory: string): string {
+  return directory ? `/amicode/harness?directory=${encodeURIComponent(directory)}` : "/amicode/harness"
+}
+
+/** Refresh the composer's harness state from the engine — the body both mount
+ *  effects call. Sequenced: the state is a module singleton and the two mount
+ *  effects (server-change + stream-connect) can have asks in flight at once;
+ *  only the LATEST ask's answer may adopt, or a stale response clobbers a
+ *  fresh one (observed live: during a hub member switch one answer arrived
+ *  the SPA index while the other carried the registry). */
+let harnessRefreshSeq = 0
+export async function refreshHarnessState(
+  server: { current: ServerConnection.Any | undefined },
+  directory: string,
+): Promise<void> {
+  const seq = ++harnessRefreshSeq
+  try {
+    const state = parseHarnessState(await amicodeGet(server.current, harnessRoute(directory)))
+    if (seq === harnessRefreshSeq) adoptHarnessState(state)
+  } catch {
+    // No answer (no extension yet, route absent) → the control stays hidden.
+    if (seq === harnessRefreshSeq) adoptHarnessState(undefined)
+  }
 }

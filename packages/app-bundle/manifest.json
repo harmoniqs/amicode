@@ -694,9 +694,10 @@
     "packages/app/src/components/prompt-input/clipboard-bridge.test.ts": "15f76dca1a25d024128718e4099220b79ca029263410aab55502cf9caf9b2914",
     "packages/app/src/components/prompt-input/clipboard-bridge.ts": "4b5a1edf59d4c85268d6ff72aa9f9d66f82d4fdb887121fb978c09caf4c5be65",
     "packages/app/src/components/prompt-input/context-items.tsx": "027b02e394ccd14849052bf3fcacdae1e090c71d164fa8955addfe3f7abf1758",
-    "packages/app/src/components/prompt-input/harness-control.tsx": "3711e0b3ca5d0b041e956e67c41594609faf134edc3ede803f09ff8b574667cc",
+    "packages/app/src/components/prompt-input/harness-control.test.tsx": "859cdacbc71988e8ae2b02840bb98a9b7442b63d6f88c0671648bddccfc4e6fb",
+    "packages/app/src/components/prompt-input/harness-control.tsx": "6f3825cb6b312e6b1d85b7af0da99976cbb15082822a92e869f956f5ec2e91fd",
     "packages/app/src/components/prompt-input/harness.test.ts": "35739529b06829dd9fa169209c54ae668e0fc06d6968b00cfce638a221ce1361",
-    "packages/app/src/components/prompt-input/harness.ts": "8ae6a783c18a906383061cb1254101015f025080b39be3786c27be9bcd0ba9d1",
+    "packages/app/src/components/prompt-input/harness.ts": "2a9406b14da9de68a172e61b6ddb4e49442a90f770b1b88669761f2ec201f9ab",
     "packages/app/src/components/prompt-input/image-attachments.tsx": "aa451ed6aa61a68ba0e8dacd8c45137f84c62566797a5242b75a89487ef0e9bf",
     "packages/app/src/components/prompt-input/placeholder.test.ts": "d3cee5e2c758faf5fda626e270adad81129622bbc2bf2c335c2bffe1544165c3",
     "packages/app/src/components/prompt-input/placeholder.ts": "6b2af23a0588e7970cd0dd059fc60c3671c907a76ba3db660483a932f1dce79d",
@@ -984,10 +985,10 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-13T15:58:01.063Z",
+  "extracted_at": "2026-10-14T21:01:06.170Z",
   "per_package": {
     "packages/app": {
-      "A": 244,
+      "A": 245,
       "M": 159,
       "D": 0
     },
@@ -1033,7 +1034,7 @@
     }
   },
   "counts": {
-    "overlay_total": 962,
+    "overlay_total": 963,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1724,6 +1725,7 @@
     "packages/app/src/components/prompt-input/clipboard-bridge.test.ts": "A",
     "packages/app/src/components/prompt-input/clipboard-bridge.ts": "A",
     "packages/app/src/components/prompt-input/context-items.tsx": "M",
+    "packages/app/src/components/prompt-input/harness-control.test.tsx": "A",
     "packages/app/src/components/prompt-input/harness-control.tsx": "A",
     "packages/app/src/components/prompt-input/harness.test.ts": "A",
     "packages/app/src/components/prompt-input/harness.ts": "A",

@@ -5,9 +5,10 @@ import { Icon as IconV2 } from "@opencode-ai/ui/v2/icon"
 import { TooltipV2 } from "@opencode-ai/ui/v2/tooltip-v2"
 import { useServer } from "@/context/server"
 import { useServerSDK } from "@/context/server-sdk"
-import { amicodeGet, amicodePost } from "@/utils/amicode-fetch"
+import { useSDK } from "@/context/sdk"
+import { amicodePost } from "@/utils/amicode-fetch"
 import { showToast } from "@/utils/toast"
-import { adoptHarnessState, liveHarnessState, parseHarnessState } from "@/components/prompt-input/harness"
+import { liveHarnessState, refreshHarnessState, harnessRoute } from "@/components/prompt-input/harness"
 import { beginHarnessSwitch } from "@/components/harness-switch-banner"
 
 // amicode#1549 — the harness switcher in the chat box. A fourth composer
@@ -18,31 +19,36 @@ import { beginHarnessSwitch } from "@/components/harness-switch-banner"
 // An unresolvable or unentitled harness renders disabled WITH its reason —
 // never selectable-then-failing. No published registry (stock opencode, or
 // the extension not yet booted) renders nothing at all.
+//
+// amicode#1799 — /amicode/harness is an INSTANCE route, so both the mount-path
+// GET and the switch POST carry the placement directory (harnessRoute) — the
+// key every other instance-scoped fetch the composer makes rides. The bare
+// ask only ever worked in the local posture (the panel origin's extension
+// proxy forwards to its bound engine); at the hub origin it landed on the
+// default backend and was answered with the SPA index, so the control never
+// rendered. The fetch/parse/adopt body lives in harness.ts (testable without
+// a DOM); this component is the wiring.
 
 /** The palette's disclosure, carried verbatim to the point of switching. */
 const DISCLOSURE = "Sessions are harness-local — switching harnesses switches session history."
 
-async function refreshHarnessState(server: ReturnType<typeof useServer>): Promise<void> {
-  try {
-    adoptHarnessState(parseHarnessState(await amicodeGet(server.current, "/amicode/harness")))
-  } catch {
-    // No answer (no extension yet, route absent) → the control stays hidden.
-    adoptHarnessState(undefined)
-  }
-}
-
 export function HarnessComposerControl() {
   const server = useServer()
   const sdk = useServerSDK()
+  // The instance placement directory — the per-directory SDK context the
+  // composer already lives under (the same source the agent/model fetches
+  // ride), so the harness ask routes exactly like every other composer fetch.
+  const dirSdk = useSDK()
+  const directory = () => dirSdk().directory
 
   // Refetch on server change and on every (re)connect — a harness switch
   // restarts the server, so the post-restart reconnect is when the new
   // current lands here.
   createEffect(() => {
-    if (server.current) void refreshHarnessState(server)
+    if (server.current) void refreshHarnessState(server, directory())
   })
   createEffect(() => {
-    if (sdk().event.status() === "connected") void refreshHarnessState(server)
+    if (sdk().event.status() === "connected") void refreshHarnessState(server, directory())
   })
 
   const onPick = async (id: string) => {
@@ -51,7 +57,7 @@ export function HarnessComposerControl() {
     const conn = server.current
     if (!conn) return
     try {
-      const res = (await amicodePost(conn, "/amicode/harness", { harness: id })) as {
+      const res = (await amicodePost(conn, harnessRoute(directory()), { harness: id })) as {
         ok?: unknown
         noop?: unknown
         harness?: unknown
