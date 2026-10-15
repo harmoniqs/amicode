@@ -1,13 +1,15 @@
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { InstanceState } from "@/effect/instance-state"
 import { GlobalBus } from "@/bus/global"
+import { sseTickTelemetry } from "@/server/shared/sse-tick-telemetry"
 import { EventV2 } from "@opencode-ai/core/event"
+import { NodeHttpServerRequest } from "@effect/platform-node"
 import { Effect, Queue } from "effect"
 import * as Stream from "effect/Stream"
 import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import * as Sse from "effect/unstable/encoding/Sse"
-import { EventApi } from "../groups/event"
+import { EventApi, EventPaths } from "../groups/event"
 
 type SsePayload = { id: string; type: string; properties: unknown }
 
@@ -23,6 +25,30 @@ type SsePayload = { id: string; type: string; properties: unknown }
 // emit a `state.resync` sentinel instead — clients should refetch fully.
 const RING_CAPACITY = 8192
 const RING_BYTE_BUDGET = 48 * 1024 * 1024
+
+// ── #1798 phase C: the bounded fan-out write path ─────────────────────────────
+//
+// The platform's response writer parks FOREVER on a FIN-less corpse:
+// nodeResponse.write() returns false once the socket buffer is full, and the
+// fiber then waits for a `drain` event the corpse never produces (the
+// frontdoor recycler kills its upstreams with close() while they are blocked
+// in recv — no FIN, the frontdoor's own #1757 comment). Unbounded, that park
+// wedges the connection's whole recurring emission: Stream.tick and the bus
+// fan-out back up behind the write, heartbeats die while HTTP stays healthy,
+// the frontdoor's dead-man recycler kills MORE upstreams, and the loop
+// propagates fleet-wide. Bound it instead: emission hands every chunk to a
+// small bounded per-connection queue with an offer timeout. When the offer
+// times out, the subscriber is a corpse — drop it (registry unregister + one
+// SSE-DROP telemetry line + engine-side socket close) and keep emitting to
+// every other subscriber. A dead subscriber wedges NOTHING.
+const WRITE_QUEUE_CAPACITY = 64
+// The writer's end-of-stream sentinel handed through the write queue: a
+// zero-length chunk is never a real SSE frame.
+const END_OF_STREAM = new Uint8Array(0)
+
+class WriteStallError {
+  readonly _tag = "WriteStallError"
+}
 
 interface RingEntry extends SsePayload {
   readonly directory: string | undefined
@@ -120,9 +146,28 @@ function eventResponse(events: EventV2.Interface) {
       Stream.merge(disposed, { haltStrategy: "left" }),
       Stream.takeUntil((event) => event.type === "server.instance.disposed"),
     )
-    const heartbeat = Stream.tick("10 seconds").pipe(
+    // #1798 phase A: this connection's tick telemetry identity. The registry
+    // is eager (like the listener above) and the stream finalizer unregisters;
+    // the heartbeat cadence is single-sourced from the telemetry singleton —
+    // the contract in sse-tick-telemetry.ts is the one place both must agree.
+    const connId = eventID()
+    sseTickTelemetry.registerConnection(EventPaths.event, connId)
+    const heartbeat = Stream.tick(sseTickTelemetry.cadenceMs).pipe(
       Stream.drop(1),
       Stream.map(() => ({ id: eventID(), type: "server.heartbeat", properties: {} })),
+      // One telemetry line per heartbeat: the emitting fiber's identity and
+      // the emitter's queue depth ride every tick (queue depth at stall onset
+      // discriminates the blocked-shared-emit-loop hypothesis), alongside the
+      // watchdog's lag and RSS samples.
+      Stream.tap(() =>
+        Effect.gen(function* () {
+          const fiberId = yield* Effect.fiberId
+          sseTickTelemetry.noteTick(EventPaths.event, connId, {
+            queueDepth: Queue.sizeUnsafe(queue),
+            fiberId,
+          })
+        }),
+      ),
     )
 
     const replay = new Array<SsePayload>()
@@ -161,13 +206,95 @@ function eventResponse(events: EventV2.Interface) {
     ]
 
     yield* Effect.logInfo("event connected")
-    return HttpServerResponse.stream(
-      Stream.fromArray(preamble).pipe(
+    // #1798 phase C: emit through a bounded, non-blocking write path instead
+    // of handing the merged stream to the platform writer (which parks
+    // forever on a full corpse socket — see the WRITE_QUEUE_CAPACITY block
+    // above). This connection's writer fiber encodes every frame and hands
+    // each chunk to a small bounded queue; the response body is just that
+    // queue, so backpressure from a dead socket can only ever fill 64 chunks
+    // before the offer bound trips and the corpse is dropped.
+    const serverRequest = yield* HttpServerRequest.HttpServerRequest
+    const scope = yield* Effect.scope
+    const writeQueue = yield* Queue.bounded<Uint8Array>(WRITE_QUEUE_CAPACITY)
+    // Half a watchdog window: a stalled subscriber is dropped before its
+    // silence could ever be declared a process-wide tick stall — the engine
+    // heals itself instead of naming its own death.
+    const writeStallMs = Math.max(1, Math.floor(sseTickTelemetry.watchdogIntervalMs / 2))
+    let streamEnded = false
+    let dropped = false
+    const dropConnection = () =>
+      Effect.uninterruptible(
+        Effect.gen(function* () {
+          if (dropped) return
+          dropped = true
+          // The drop line beats the eviction: the registry forgets the corpse
+          // and the telemetry names it, with the depths that show the write
+          // path parked (events kept piling in, the write queue pinned full).
+          sseTickTelemetry.noteDrop(EventPaths.event, connId, {
+            reason: "stalled_write",
+            eventQueueDepth: Queue.sizeUnsafe(queue),
+            writeQueueDepth: Queue.sizeUnsafe(writeQueue),
+          })
+          yield* Queue.shutdown(writeQueue)
+          // Tear the connection down on our side: destroy the response and
+          // the socket it rides, which interrupts the parked platform writer
+          // through the response 'close' handler. (Bun runtime gap, measured
+          // 2026-10-14: none of res.destroy / socket.destroy /
+          // socket.resetAndDestroy actually send a FIN or RST to the peer —
+          // the wire-level close is the frontdoor slice's end of the
+          // contract; the engine-side teardown is what unwedges the fiber and
+          // frees the connection bookkeeping.)
+          yield* Effect.sync(() => {
+            const rawResponse = NodeHttpServerRequest.toServerResponse(serverRequest)
+            // Only the platform-node server carries the raw response; other
+            // platforms skip the socket close (the interrupt-only exit still
+            // unwedges the fiber).
+            if (typeof rawResponse?.destroy === "function") rawResponse.destroy()
+            const socket = rawResponse?.socket
+            if (typeof socket?.destroy === "function") socket.destroy()
+          })
+        }),
+      )
+    const offerBounded = (chunk: Uint8Array) =>
+      Queue.offer(writeQueue, chunk).pipe(
+        Effect.timeoutOrElse({
+          duration: writeStallMs,
+          orElse: () => dropConnection().pipe(Effect.andThen(Effect.fail(new WriteStallError()))),
+        }),
+      )
+    yield* Stream.fromArray(preamble)
+      .pipe(
         Stream.concat(live.pipe(Stream.merge(heartbeat, { haltStrategy: "left" }))),
         Stream.map(eventData),
         Stream.pipeThroughChannel(Sse.encode()),
         Stream.encodeText,
-        Stream.ensuring(Effect.logInfo("event disconnected")),
+        Stream.runForEach(offerBounded),
+        Effect.flatMap(() => {
+          // Normal end (instance disposed): hand the sentinel through so the
+          // response drains every buffered chunk and FINs cleanly.
+          streamEnded = true
+          return offerBounded(END_OF_STREAM)
+        }),
+        Effect.catchTag("WriteStallError", () => Effect.void),
+        Effect.ensuring(
+          Effect.sync(() => {
+            // Interrupt (client hangup) or unexpected failure: end the body
+            // stream rather than leaving a parked consumer. The drop path has
+            // already shut the queue down itself.
+            if (!streamEnded && !dropped) Queue.shutdown(writeQueue)
+          }),
+        ),
+        Effect.forkIn(scope),
+      )
+    return HttpServerResponse.stream(
+      Stream.fromQueue(writeQueue).pipe(
+        Stream.takeUntil((chunk) => chunk.length === 0),
+        Stream.ensuring(
+          Effect.gen(function* () {
+            yield* Effect.logInfo("event disconnected")
+            yield* Effect.sync(() => sseTickTelemetry.unregisterConnection(connId))
+          }),
+        ),
       ),
       {
         contentType: "text/event-stream",
