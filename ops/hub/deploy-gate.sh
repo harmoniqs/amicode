@@ -12,6 +12,14 @@
 #   ops/hub/deploy-gate.sh                     # frontdoor + jev suites, syntax, configs
 #   ops/hub/deploy-gate.sh --scope engine      # + materialize drift + engine typecheck/test lanes
 #   ops/hub/deploy-gate.sh --staged-binary B   # + boot B isolated: routes, SSE ids, lists
+#   ops/hub/deploy-gate.sh --panel-gate        # + the panel render gate (#1804): dead-widgets-zero
+#
+# THE PANEL GATE (#1804, 2026-10-15): after any dist swap, the headless probe
+# boots the REAL panel through the frontdoor and asserts the composer renders,
+# zero stuck loading states past the settle window, no per-URL poll loop above
+# 1 req/s, and every 4xx/5xx carries a documented honest-absence reason. The
+# standing constraint is an ACCEPTANCE CRITERION: no surface ships in the
+# user's panel without live data. Dead-widgets-zero or the dist does not ship.
 #   AMICODE_GATE_QUICK=1 skips the engine test lane (typecheck still runs).
 #
 # Exit 0 = deployable. Anything else = STOP — no stage, no swap, no restart.
@@ -20,11 +28,15 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$HERE/../.." && pwd)"
 SCOPE="all"
 STAGED_BIN=""
+PANEL_GATE="${AMICODE_PANEL_GATE:-0}"
+PANEL_HOST="${AMICODE_PANEL_HOST:-macbook}"
+PANEL_HARNESS="${AMICODE_PANEL_HARNESS:-/tmp/opencode/panel-probe}"
 QUICK="${AMICODE_GATE_QUICK:-0}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --scope) SCOPE="${2:?}"; shift 2 ;;
     --staged-binary) STAGED_BIN="${2:?}"; shift 2 ;;
+    --panel-gate) PANEL_GATE=1; shift ;;
     *) echo "usage: deploy-gate.sh [--scope frontdoor|engine|all] [--staged-binary <path>]"; exit 2 ;;
   esac
 done
@@ -130,6 +142,22 @@ if [ -n "$STAGED_BIN" ]; then
   echo "gate-approved sha recorded: $(sha256sum "$STAGED_BIN" | cut -c1-16)…"
 fi
 
+# ── the panel render gate (#1804) ────────────────────────────────────────────
+# Acceptance is what the panel RENDERS, not what the tree contains. The module
+# is repo-owned; each run ships the current copy to the harness so no machine-
+# owned gate code can drift from the discipline.
+if [ "$PANEL_GATE" = "1" ]; then
+  panel_probe() {
+    local mod="$HERE/panel-gate.mjs"
+    [ -f "$mod" ] || { echo "PANEL-GATE: module missing ($mod)"; return 1; }
+    scp -q -o BatchMode=yes -o ConnectTimeout=8 "$mod" "$PANEL_HOST:$PANEL_HARNESS/panel-gate.mjs" || {
+      echo "PANEL-GATE: cannot ship the module to $PANEL_HOST:$PANEL_HARNESS"; return 1; }
+    ssh -o BatchMode=yes -o ConnectTimeout=8 "$PANEL_HOST" \
+      "cd '$PANEL_HARNESS' && /opt/homebrew/bin/node panel-gate.mjs"
+  }
+  run_check "panel render gate (composer + zero dead widgets + poll caps + documented absences)" panel_probe
+fi
+
 # ── verdict ─────────────────────────────────────────────────────────────────
 if [ "$FAILED" != "0" ]; then
   echo "==============================================================="
@@ -138,6 +166,6 @@ if [ "$FAILED" != "0" ]; then
   exit 1
 fi
 echo "==============================================================="
-echo "GATE GREEN — deployable (scope: $SCOPE${STAGED_BIN:+, staged smoke ok})"
+echo "GATE GREEN — deployable (scope: $SCOPE${STAGED_BIN:+, staged smoke ok}${PANEL_GATE:+, panel gate ok})"
 echo "==============================================================="
 exit 0
