@@ -593,6 +593,7 @@ def backend_get(target, timeout=60, shard=None):
     b = _shard_backend(shard) if (SHARDED and shard is not None) else BACKEND
     try:
         s = socket.create_connection(b, timeout=8)
+        _arm_tcp_keepalive(s)   # #1810: corpse detection on engine-facing dials
         s.settimeout(timeout)
         # #1760 P1: every engine-facing GET carries the gateway stamp.
         s.sendall(("GET " + target + f" HTTP/1.1\r\nHost: 127.0.0.1:{b[1]}\r\nConnection: close\r\n"
@@ -1135,6 +1136,71 @@ def _fin_close(s):
     try: s.close()
     except Exception: pass
 
+# --- #1810: kernel-level corpse detection (SO_KEEPALIVE + TCP_USER_TIMEOUT) -----
+# The #1798 corpse class (half-dead sockets blocking fan-out writes) is
+# detected today by application-level dead-men on a 60s cadence (the #1757
+# dead-man above, the engine's bounded fan-out writer). The state of the art
+# kills it at layer 4: aggressive keepalives (idle 30s, interval 5s, count 3
+# -> the OS reaps a FIN-less corpse in <=45s) plus TCP_USER_TIMEOUT (~30s --
+# a write to a socket whose data cannot drain ERRORS instead of blocking).
+# Armed on every engine-facing dial (upstream_loop's connect helper,
+# backend_get, the passthrough proxy socket) and every ACCEPTED member
+# socket (the fleet clients' SSE streams -- the real network path where a
+# dead tunnel leaves a FIN-less corpse the fan-out writer would block on).
+def _env_int_knob(key, default, minimum):
+    """Env-tunable knob; an invalid (or out-of-floor) value keeps the default."""
+    try:
+        v = int(float(_os.environ.get(key, "")))
+    except (TypeError, ValueError):
+        return default
+    return v if v >= minimum else default
+
+TCP_KEEPIDLE_S = _env_int_knob("AMICODE_TCP_KEEPIDLE_S", 30, 1)
+TCP_KEEPINTVL_S = _env_int_knob("AMICODE_TCP_KEEPINTVL_S", 5, 1)
+TCP_KEEPCNT = _env_int_knob("AMICODE_TCP_KEEPCNT", 3, 1)
+TCP_USER_TIMEOUT_MS = _env_int_knob("AMICODE_TCP_USER_TIMEOUT_MS", 30000, 1)
+
+# Linux exposes the TCP_* keepalive knobs and TCP_USER_TIMEOUT; platforms
+# without a knob degrade per-knob (keepalives stay armed where possible).
+SO_KEEPALIVE_OPT = getattr(socket, "SO_KEEPALIVE")
+TCP_KEEPIDLE_OPT = getattr(socket, "TCP_KEEPIDLE", None)   # darwin: TCP_KEEPALIVE
+TCP_KEEPINTVL_OPT = getattr(socket, "TCP_KEEPINTVL", None)
+TCP_KEEPCNT_OPT = getattr(socket, "TCP_KEEPCNT", None)
+TCP_USER_TIMEOUT_OPT = getattr(socket, "TCP_USER_TIMEOUT", None)
+
+def _arm_tcp_keepalive(s):
+    """#1810: arm kernel-level corpse detection on ONE socket. SO_KEEPALIVE
+    never degrades silently: if the arm itself fails the line is LOUD (a
+    silently-skipped keepalive would read as corpse detection where none
+    exists -- the #1757 loudness doctrine). Missing per-socket knobs degrade
+    per-knob; a missing TCP_USER_TIMEOUT is the portable degrade to
+    keepalives-only. Env-tuned, briefed defaults: idle 30s / intvl 5s / cnt 3
+    / user timeout 30s."""
+    try:
+        s.setsockopt(socket.SOL_SOCKET, SO_KEEPALIVE_OPT, 1)
+    except Exception as e:
+        log(f"TCP-KEEPALIVE FAILED to arm SO_KEEPALIVE on {s.getsockname()}: {e} "
+            "-- corpse detection DEGRADED on this socket")
+        return
+    for opt, val in ((TCP_KEEPIDLE_OPT, TCP_KEEPIDLE_S),
+                     (TCP_KEEPINTVL_OPT, TCP_KEEPINTVL_S),
+                     (TCP_KEEPCNT_OPT, TCP_KEEPCNT)):
+        if opt is None:
+            continue
+        try:
+            s.setsockopt(socket.IPPROTO_TCP, opt, val)
+        except Exception:
+            pass   # per-knob degrade: keepalives stay armed, system defaults
+    if TCP_USER_TIMEOUT_OPT is not None:
+        try:
+            s.setsockopt(socket.IPPROTO_TCP, TCP_USER_TIMEOUT_OPT, TCP_USER_TIMEOUT_MS)
+        except Exception:
+            pass   # portable degrade: keepalives only, never a crash
+
+log("tcp-keepalive armed at boot: idle_s=%d intvl_s=%d cnt=%d user_timeout_ms=%d "
+    "(platform=%s)" % (TCP_KEEPIDLE_S, TCP_KEEPINTVL_S, TCP_KEEPCNT,
+                       TCP_USER_TIMEOUT_MS, _os.uname().sysname))
+
 class Group:
     def __init__(self, path, shard=1, backend=None, merge=None, upstream_path=None):
         self.path = path
@@ -1178,6 +1244,7 @@ class Group:
                + (f"{GW_HEADER_NAME}: {GW_SECRET}\r\n" if GW_SECRET else "")
                + "\r\n").encode()
         s = socket.create_connection(addr)
+        _arm_tcp_keepalive(s)   # #1810: corpse detection on the SSE upstream dial
         s.sendall(req)
         buf = b""
         s.settimeout(60)
@@ -1564,6 +1631,9 @@ def passthrough_capture(c, first_chunk, key=None, force_close=False, shard=None,
             # where dials SUCCEED and retries pile, a different failure mode).
             _shed_503(c)
             return
+        # #1810: the passthrough proxy socket is long-lived while the request
+        # streams -- arm it like every other engine-facing dial.
+        _arm_tcp_keepalive(u)
         # #1310: create_connection(timeout=8) LEAVES an 8s recv timeout on the
         # socket — any backend response slower than 8s was KILLED mid-stream
         # (the +3.1s-to-8s wire fetches, the connection-death retry patterns
@@ -2184,6 +2254,11 @@ def accept_loop(sock):
     global cid
     while True:
         c, a = sock.accept()
+        # #1810: every ACCEPTED client/member socket carries the kernel
+        # liveness options too -- the fleet clients' SSE member streams are
+        # the real network path where a dead tunnel leaves a FIN-less corpse
+        # the fan-out writer would block on ("every SSE socket", per title).
+        _arm_tcp_keepalive(c)
         with cid_lock:
             cid += 1
             n = cid

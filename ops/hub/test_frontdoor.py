@@ -19,6 +19,7 @@ Set AMICODE_TEST_KEEPDIR=1 to keep temp dirs for debugging.
 """
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -1297,6 +1298,224 @@ class TestFrontdoorFinClose(RouterTest):
         with self.assertRaises(socket.timeout):
             b.recv(4096)   # no EOF — the corpse
         b.close()
+
+
+# --- #1810: kernel-level corpse detection on the SSE sockets -----------------------
+#
+# The #1798 corpse class is detected today by application-level dead-man
+# switches on a 60-second cadence. The state of the art kills it at layer 4:
+# aggressive TCP keepalives (idle 30s, interval 5s, count 3) + TCP_USER_TIMEOUT
+# (~30s) make the OS reap a corpse socket before any application writer can
+# block on it. The frontdoor's engine-facing dials (upstream_loop's connect
+# helper, backend_get, the passthrough proxy socket) and its ACCEPTED member
+# sockets (the fleet clients' SSE streams — the real network path where a
+# dead tunnel leaves a FIN-less corpse the fan-out writer blocks on) all get
+# the same options. Every test here reads the options BACK from the kernel
+# (getsockopt on the armed socket, or the kernel's own per-socket keepalive
+# timer via ss) — never trusting that the setter ran.
+
+_KEEPALIVE_RUNNER = r'''
+import importlib.util, socket, sys, threading, time
+
+frontdoor = sys.argv[1]
+mode = sys.argv[2]
+spec = importlib.util.spec_from_file_location("fd_under_test", frontdoor)
+mod = importlib.util.module_from_spec(spec)
+# the frontdoor boots its servers + accept loop at import; run that in a
+# daemon thread so the module namespace fills while this thread continues.
+threading.Thread(target=spec.loader.exec_module, args=(mod,), daemon=True).start()
+deadline = time.time() + 15
+while not hasattr(mod, "_arm_tcp_keepalive"):
+    if time.time() > deadline:
+        print("frontdoor module never defined _arm_tcp_keepalive", file=sys.stderr)
+        sys.exit(3)
+    time.sleep(0.05)
+
+print("KNOBS idle_s=%s intvl_s=%s cnt=%s user_timeout_ms=%s"
+      % (mod.TCP_KEEPIDLE_S, mod.TCP_KEEPINTVL_S, mod.TCP_KEEPCNT, mod.TCP_USER_TIMEOUT_MS))
+
+# a real TCP pair; arm the client (frontdoor-side) socket and read the options
+# BACK from the kernel on the SAME socket — the assert-at-setup rule.
+l = socket.socket()
+l.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+l.bind(("127.0.0.1", 0))
+l.listen(1)
+a = socket.create_connection(l.getsockname(), timeout=5)
+b, _ = l.accept()
+l.close()
+
+if mode == "no_user_timeout":
+    mod.TCP_USER_TIMEOUT_OPT = 999      # unsupported optname -> ENOPROTOOPT
+if mode == "keepalive_loud":
+    mod.SO_KEEPALIVE_OPT = 999          # SO_KEEPALIVE itself unreachable
+
+mod._arm_tcp_keepalive(a)
+time.sleep(0.2)
+print("READBACK SO_KEEPALIVE=%d TCP_KEEPIDLE=%d TCP_KEEPINTVL=%d TCP_KEEPCNT=%d TCP_USER_TIMEOUT=%d" % (
+    a.getsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE),
+    a.getsockopt(socket.IPPROTO_TCP, getattr(socket, "TCP_KEEPIDLE", 4)),
+    a.getsockopt(socket.IPPROTO_TCP, getattr(socket, "TCP_KEEPINTVL", 5)),
+    a.getsockopt(socket.IPPROTO_TCP, getattr(socket, "TCP_KEEPCNT", 6)),
+    a.getsockopt(socket.IPPROTO_TCP, getattr(socket, "TCP_USER_TIMEOUT", 18))))
+if mode == "keepalive_loud":
+    # the never-silent contract: a failed SO_KEEPALIVE arm must be LOUD in the
+    # frontdoor's own log (pinned via AMICODE_FRONTDOOR_LOG) — never a silent
+    # full skip.
+    time.sleep(0.5)
+    try:
+        with open(mod.LOG.name) as f:
+            body = f.read()
+    except Exception as e:
+        print("LOGREAD_FAILED %s" % e)
+        sys.exit(4)
+    print("LOUD=%d" % int("TCP-KEEPALIVE" in body))
+a.close(); b.close()
+sys.exit(0)
+'''
+
+
+def ss_keepalive_timers(filter_expr):
+    """Kernel read-back for live sockets: every ESTABLISHED socket matching the
+    ss filter, with its timer token ('keepalive,29.8sec,0' style) — ss -o
+    renders the socket's ACTIVE kernel timer, which for a keepalive-armed
+    idle TCP socket is the keepalive countdown (its KEEPIDLE value, vs the
+    ~119min system default). Returns [] when no socket matches."""
+    out = subprocess.run(["ss", "-tnoi", "state", "established"] + filter_expr,
+                         capture_output=True, text=True).stdout
+    timers = []
+    for ln in out.splitlines():
+        stripped = ln.strip()
+        i = stripped.find("timer:(keepalive,")
+        if i >= 0:
+            j = stripped.find(")", i)
+            timers.append(stripped[i + len("timer:("):j])
+    return timers
+
+
+def keepalive_idle_seconds(timer):
+    """'keepalive,29sec,0' -> 29.0 seconds (the timer token's idle countdown)."""
+    m = re.search(r"([\d.]+)(ms|sec|min)", timer)
+    if m is None:
+        return None
+    return float(m.group(1)) * {"ms": 0.001, "sec": 1.0, "min": 60.0}[m.group(2)]
+
+
+class TestUpstreamKeepalive(RouterTest):
+    """#1810 frontdoor half: SO_KEEPALIVE + TCP_USER_TIMEOUT on the
+    engine-facing upstream dials and the accepted member sockets, env-tunable,
+    portable, and proven by reading the options back from the kernel."""
+
+    READBACK_RE = re.compile(
+        r"READBACK SO_KEEPALIVE=(\d+) TCP_KEEPIDLE=(\d+) TCP_KEEPINTVL=(\d+) "
+        r"TCP_KEEPCNT=(\d+) TCP_USER_TIMEOUT=(\d+)")
+
+    def run_module(self, mode="plain", extra_env=None):
+        """Import the real frontdoor module in a subprocess pinned to the test
+        tmpdir (dead backend, ephemeral port — the _FIN_CLOSE_RUNNER pattern)
+        and call its own arm helper against a raw socket pair."""
+        tbl = os.path.join(self.tmpdir, "ka-routing.json")
+        with open(tbl, "w") as f:
+            json.dump(routing_table([(1, free_port())]), f)
+        env = dict(os.environ)
+        env.update({
+            "AMICODE_ROUTING_TABLE": tbl,
+            "AMICODE_SESSION_MAP": os.path.join(self.tmpdir, "ka-sessions.json"),
+            "AMICODE_FRONTDOOR_PORT": str(free_port_pair()),
+            "AMICODE_FRONTDOOR_LOG": os.path.join(self.tmpdir, "ka-frontdoor.log"),
+        })
+        env.update(extra_env or {})
+        return subprocess.run([sys.executable, "-c", _KEEPALIVE_RUNNER, FRONTDOOR, mode],
+                              env=env, capture_output=True, text=True, timeout=60)
+
+    def readback(self, r):
+        m = self.READBACK_RE.search(r.stdout)
+        self.assertIsNotNone(m, "runner produced no read-back: %r / %r" % (r.stdout, r.stderr))
+        return [int(x) for x in m.groups()]
+
+    def sse_join(self, fd, target):
+        s = socket.create_connection(("127.0.0.1", fd.port), timeout=10)
+        s.sendall((f"GET {target} HTTP/1.1\r\nHost: x\r\nAccept: text/event-stream\r\n\r\n").encode())
+        return s
+
+    def test_arm_reads_back_the_briefed_defaults_on_a_real_socket(self):
+        """AC2/AC3: the arm helper sets SO_KEEPALIVE(idle 30s, intvl 5s, cnt 3)
+        + TCP_USER_TIMEOUT(30s) — proven by reading the options back from the
+        kernel on the same real socket, with the briefed defaults."""
+        r = self.run_module()
+        self.assertEqual(r.returncode, 0, "arm runner failed: %r / %r" % (r.stdout, r.stderr))
+        self.assertEqual(self.readback(r), [1, 30, 5, 3, 30000])
+        self.assertIn("KNOBS idle_s=30 intvl_s=5 cnt=3 user_timeout_ms=30000", r.stdout)
+
+    def test_knobs_env_tuned_invalid_keeps_default(self):
+        """AC3: AMICODE_TCP_* knobs tune the options; an INVALID value keeps
+        the briefed default (never crashes, never skips the arm)."""
+        r = self.run_module(extra_env={
+            "AMICODE_TCP_KEEPIDLE_S": "12", "AMICODE_TCP_KEEPINTVL_S": "4",
+            "AMICODE_TCP_KEEPCNT": "9", "AMICODE_TCP_USER_TIMEOUT_MS": "45000"})
+        self.assertEqual(r.returncode, 0, "tuned arm runner failed: %r / %r" % (r.stdout, r.stderr))
+        self.assertEqual(self.readback(r), [1, 12, 4, 9, 45000])
+        r2 = self.run_module(extra_env={
+            "AMICODE_TCP_KEEPIDLE_S": "abc", "AMICODE_TCP_KEEPINTVL_S": "-3",
+            "AMICODE_TCP_KEEPCNT": "x9", "AMICODE_TCP_USER_TIMEOUT_MS": "0"})
+        self.assertEqual(r2.returncode, 0, "invalid-env arm runner failed: %r / %r"
+                         % (r2.stdout, r2.stderr))
+        self.assertEqual(self.readback(r2), [1, 30, 5, 3, 30000],
+                         "invalid knob values must keep the briefed defaults")
+
+    def test_platform_without_user_timeout_degrades_to_keepalives_only(self):
+        """AC4: a platform without the TCP_USER_TIMEOUT knob (forced here with
+        an unsupported optname -> ENOPROTOOPT) degrades to keepalives ONLY:
+        no crash, and the keepalive family (idle/interval/count) still lands."""
+        r = self.run_module(mode="no_user_timeout")
+        self.assertEqual(r.returncode, 0, "degraded arm must not crash: %r / %r"
+                         % (r.stdout, r.stderr))
+        self.assertEqual(self.readback(r), [1, 30, 5, 3, 0],
+                         "keepalives must stay armed where the user-timeout knob is missing")
+
+    def test_keepalive_arm_failure_is_loud_never_a_silent_skip(self):
+        """AC4: SO_KEEPALIVE itself failing can never be silent — the arm must
+        write a loud TCP-KEEPALIVE line to the frontdoor's log (the #1757
+        loudness doctrine; a silent full skip would read as corpse detection
+        where none exists)."""
+        r = self.run_module(mode="keepalive_loud")
+        self.assertEqual(r.returncode, 0, "loud-arm runner failed: %r / %r" % (r.stdout, r.stderr))
+        self.assertIn("LOUD=1", r.stdout,
+                      "a failed SO_KEEPALIVE arm must log loudly (runner: %r)" % r.stdout)
+
+    def test_live_frontdoor_upstream_and_member_sockets_carry_kernel_keepalive(self):
+        """AC2 end-to-end through the REAL frontdoor subprocess: every
+        established frontdoor->shard socket (the merged-group upstreams) and
+        the accepted member socket carry SO_KEEPALIVE with the TUNED idle —
+        read back from the kernel's own per-socket keepalive timer (ss), not
+        from the setter."""
+        fd = self.start_pool()
+        member = self.sse_join(fd, "/event?directory=" + POOLDIR)
+        member.settimeout(2)
+        try:
+            member.recv(65536)   # preamble + join: the upstreams are live
+        except socket.timeout:
+            pass
+        time.sleep(0.3)
+        for sh in self.shards:
+            timers = ss_keepalive_timers(["( dport = :%d )" % sh.port])
+            self.assertTrue(timers, "no established frontdoor->shard%d socket found for ss"
+                            % sh.shard_id)
+            for t in timers:
+                idle = keepalive_idle_seconds(t)
+                self.assertIsNotNone(idle, "unparseable keepalive timer: %r" % t)
+                self.assertLess(idle, 120.0,
+                                "keepalive idle must be the TUNED 30s, not the 7200s system "
+                                "default (timer=%r)" % t)
+        # the accepted member socket (the fleet client's SSE stream): the
+        # frontdoor-side accepted socket carries the same armed options.
+        mtimers = ss_keepalive_timers(["( sport = :%d and dport = :%d )"
+                                       % (fd.port, member.getsockname()[1])])
+        self.assertTrue(mtimers, "no established member socket found for ss")
+        for t in mtimers:
+            idle = keepalive_idle_seconds(t)
+            self.assertIsNotNone(idle, "unparseable keepalive timer: %r" % t)
+            self.assertLess(idle, 120.0, "member socket keepalive idle must be tuned (timer=%r)" % t)
+        member.close()
 
 
 class TestDeltaCoalescing(unittest.TestCase):
