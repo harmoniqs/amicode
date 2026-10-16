@@ -526,3 +526,82 @@ sys.exit(1)
     45_000,
   )
 })
+
+// ── #1808: the production stall drill ────────────────────────────────────────
+//
+// The mute-sink postmortem (the third #1798 occurrence, 2026-10-16 03:27):
+// Phase A's lines were perfect under the injected sink and invisible in
+// production, so the drill must wedge the tick source through the SAME env
+// override ops uses against a real boot — never through the injectable test
+// sink — and assert the watchdog names the stall through whatever sink the
+// production singleton carries. This suite rides the fast singleton for
+// cadence only; the real-process proof (engine binary → runner forward →
+// scratch log) is the gate's end-to-end half.
+describe("self-stall drill (#1808 — wedged tick source, production wiring)", () => {
+  afterEach(() => {
+    // bun shares one process across test files — the drill env must not leak.
+    delete process.env.AMICODE_SSE_TICK_STALL
+    resetSseTickTelemetry()
+  })
+
+  it.instance(
+    "AMICODE_SSE_TICK_STALL=1 wedges the tick source: no SSE-TICK, no heartbeat on the wire, the watchdog SELF-STALLs",
+    () =>
+      Effect.gen(function* () {
+        const lines: Array<string> = []
+        const telemetry = makeSseTickTelemetry({
+          cadenceMs: 100,
+          watchdogIntervalMs: 300,
+          probeIntervalMs: 500,
+          sink: (line) => lines.push(line),
+        })
+        setSseTickTelemetry(telemetry)
+        process.env.AMICODE_SSE_TICK_STALL = "1"
+
+        const { directory } = yield* TestInstance
+        // Inner scope: the drill's connection lives only as long as the
+        // assertions need it live, and its finalizer unregisters against the
+        // fast singleton INSIDE the test — bun shares one process across
+        // files, so a leaked registration or raw timer must not outlive it.
+        yield* Effect.gen(function* () {
+          const { response, reader } = yield* openEventStream(directory)
+          expect(response.status).toBe(200)
+          expect(yield* readEvent(reader)).toMatchObject({ type: "server.connected", properties: {} })
+
+          // The wedge parks the heartbeat tap BEFORE its first noteTick: no
+          // heartbeat frame ever reaches the wire — the silent-recycle shape
+          // (connection open, frontdoor cadence telemetry sees zero ticks).
+          const frame = yield* Queue.take(reader).pipe(
+            Effect.as("frame" as const),
+            Effect.timeoutOrElse({ duration: "250 millis", orElse: () => Effect.succeed("silent" as const) }),
+          )
+          expect(frame).toBe("silent")
+
+          // The out-of-tree watchdog names the stall while the tap fiber
+          // sits parked and the connection stays registered: a full check
+          // window with zero ticks from the live connection.
+          yield* Effect.sleep("700 millis")
+          const stalls = lines.filter((line) => line.startsWith("SELF-STALL"))
+          expect(stalls.length).toBeGreaterThanOrEqual(1)
+          expect(stalls[0]).toContain("seen=0")
+          expect(stalls[0]).toContain("route=/event")
+          expect(lines.some((line) => line.startsWith("SSE-TICK"))).toBe(false)
+        }).pipe(Effect.scoped)
+
+        // The finalizer is async — poll until the registry drains, then stop
+        // the drill telemetry's raw timers (watchdog + probe) for good.
+        yield* Effect.forEach(
+          [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19],
+          () =>
+            Effect.gen(function* () {
+              if (telemetry.snapshot().connections > 0) yield* Effect.sleep("100 millis")
+            }),
+          { discard: true },
+        )
+        expect(telemetry.snapshot().connections).toBe(0)
+        telemetry.stop()
+      }),
+    { git: true, config: { formatter: false, lsp: false } },
+    10_000,
+  )
+})

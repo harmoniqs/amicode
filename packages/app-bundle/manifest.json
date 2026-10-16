@@ -417,7 +417,7 @@
     "packages/opencode/test/server/gateway-secret.test.ts": "8d38ec187098be99f698c5e795b867a0e2fe5e2ef2aa3a9e2c03a8b0147d4473",
     "packages/opencode/test/server/httpapi-compression.test.ts": "5f7603d7018e0b95f1c2f36c01dd297c01770bfcdd91ce29778e03b7d6143f75",
     "packages/opencode/test/server/httpapi-event-replay.test.ts": "c94c13dbfb4ca5d5e9b80f4c1a17955d1530a8bf9141b9a83a810ee56743269f",
-    "packages/opencode/test/server/httpapi-event.test.ts": "36263284302434461c4c6cf3e6652e094f4a02782acbe5de26c489748fe4cb50",
+    "packages/opencode/test/server/httpapi-event.test.ts": "274619e3489c253b1693f4f0d42309f767fcce2074a0da406f8f9cfd27afb042",
     "packages/opencode/test/server/httpapi-file-write-gate.test.ts": "0c91b7417e615850edfde3f2878207dab6b6624d4cfbb6e6783b2e6d9aa4dff0",
     "packages/opencode/test/server/httpapi-file.test.ts": "d3386129bc81467ecbcc57a3861f53767ee56ac41b4ff6ad58d8b168fb3b3373",
     "packages/opencode/test/server/httpapi-instance-route-auth.test.ts": "4b73a89d2431c02bc3b665d93f9002914e51eb1add979dc1867efbcbc0c36e25",
@@ -970,7 +970,7 @@
     "packages/opencode/src/server/routes/instance/httpapi/groups/mcp.ts": "048efa7b74d43c4ad4a75d0f8421c808760c8c0dcd593f0051a87044e40487d6",
     "packages/opencode/src/server/routes/instance/httpapi/groups/provider.ts": "34c6f1ab1a085d1b047c220bbff32a36032dc5e924784e9272cda166cf0ec84b",
     "packages/opencode/src/server/routes/instance/httpapi/groups/session.ts": "1421f8c07948b121c7e2005bd9b0fcd6b2c456565ddd1da32d8e6c35d03fac9c",
-    "packages/opencode/src/server/routes/instance/httpapi/handlers/event.ts": "5824d237bedb868d97ca24f68da6b137b7c2d84e42111d7c17637619ce87c866",
+    "packages/opencode/src/server/routes/instance/httpapi/handlers/event.ts": "35a218c1e40081fc970ba88a6b19b56ded9d21efd6d74928342ebbb26343a7bd",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/experimental.ts": "69ca3dd48d95157fc822e1f76eb42ac873df50f22616b85194619ca658613867",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/file.ts": "10bcb79b117beebee04184fb48c1ad789e782e2f7ae4b0c68603edc00f03aee9",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/mcp.ts": "7da08d58765cdf2b6ce4648fc70de371402949f5bb7b75696f674d43f2d5365b",
@@ -993,7 +993,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-15T07:32:24.625Z",
+  "extracted_at": "2026-10-16T08:14:25.680Z",
   "per_package": {
     "packages/app": {
       "A": 251,
