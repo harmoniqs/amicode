@@ -1723,6 +1723,51 @@ def serve_question_list(c, first, raw):
         pass
     c.close()
 
+def serve_session_status(c, first, raw):
+    """2026-10-15: GET /session/status is MERGED across the pool. The engines'
+    status route reads their process-local coordinator memory — a session
+    running on another shard is invisible to whichever single engine the
+    frontdoor picks, so the panel read the whole fleet as idle while children
+    demonstrably stepped (the runtime_busy store rows were fresh; the read
+    side never moved to the store). The union of all members' memories IS the
+    fleet truth: every session runs on some engine, and that engine knows it.
+    A dead/slow member contributes nothing (the session-list deadline rule)."""
+    try:
+        target = first.split(b"\r\n", 1)[0].split(b" ")[1].decode("utf-8", "replace")
+    except Exception:
+        target = raw
+    d = _directory_of(raw)
+    pool = TABLE["pools"].get(d) if d else None
+    if not pool or len(pool) < 2:
+        passthrough_capture(c, first, key=None, shard=TABLE["default_shard"])
+        return
+    results = [None] * len(pool)
+    threads = []
+    deadline = float(_env("AMICODE_MERGE_DEADLINE", "5"))
+    def fetch(i, shard):
+        try:
+            results[i] = backend_get(target, timeout=deadline, shard=shard)
+        except Exception:
+            results[i] = None
+    for i, shard in enumerate(pool):
+        t = threading.Thread(target=fetch, args=(i, shard), daemon=True)
+        t.start(); threads.append(t)
+    merged = {}
+    for t in threads:
+        t.join(deadline + 1.0)
+    for b in results:
+        if not b:
+            continue
+        try:
+            body = b.split(b"\r\n\r\n", 1)[1] if b"\r\n\r\n" in b else b
+            data = _json0.loads(body)
+            if isinstance(data, dict):
+                merged.update(data)
+        except Exception:
+            continue
+    _serve_bytes(c, _json0.dumps(merged).encode(), "application/json")
+
+
 def serve_session_list(c, first, raw):
     """#1717 phase 1: GET /session across the pool. A pooled directory merges
     every member (threads, 8s dial timeout each -- a dead member contributes
@@ -1853,6 +1898,9 @@ def handle(c, addr, cid):
         raw = parts[1] if len(parts) > 1 else "/"
         if parts[0] == "GET" and raw.split("?")[0] in ("/question", "/permission") and SHARDED:
             serve_question_list(c, first, raw)
+            return
+        if parts[0] == "GET" and raw.split("?")[0] == "/session/status" and SHARDED:
+            serve_session_status(c, first, raw)
             return
         if parts[0] == "GET" and raw.split("?")[0] == "/session":
             import re
