@@ -1,6 +1,7 @@
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { InstanceState } from "@/effect/instance-state"
 import { GlobalBus } from "@/bus/global"
+import { armSseSocketKeepalive } from "@/server/shared/tcp-keepalive"
 import { sseTickTelemetry } from "@/server/shared/sse-tick-telemetry"
 import { EventV2 } from "@opencode-ai/core/event"
 import { NodeHttpServerRequest } from "@effect/platform-node"
@@ -224,6 +225,13 @@ function eventResponse(events: EventV2.Interface) {
     // queue, so backpressure from a dead socket can only ever fill 64 chunks
     // before the offer bound trips and the corpse is dropped.
     const serverRequest = yield* HttpServerRequest.HttpServerRequest
+    // #1810: kernel-level corpse detection — arm the subscriber socket at SSE
+    // connection setup (SO_KEEPALIVE idle 30s / intvl 5s / cnt 3 +
+    // TCP_USER_TIMEOUT ~30s, env-tunable). Under this runtime the http-layer
+    // socket is bun's fd-less shim: the arm degrades LOUDLY (once per
+    // process) and never breaks the connection — the module's header records
+    // the measured boundary.
+    armSseSocketKeepalive(NodeHttpServerRequest.toServerResponse(serverRequest)?.socket, EventPaths.event)
     const scope = yield* Effect.scope
     const writeQueue = yield* Queue.bounded<Uint8Array>(WRITE_QUEUE_CAPACITY)
     // Half a watchdog window: a stalled subscriber is dropped before its
