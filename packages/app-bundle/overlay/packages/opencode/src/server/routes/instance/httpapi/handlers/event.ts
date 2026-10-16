@@ -152,6 +152,14 @@ function eventResponse(events: EventV2.Interface) {
     // the contract in sse-tick-telemetry.ts is the one place both must agree.
     const connId = eventID()
     sseTickTelemetry.registerConnection(EventPaths.event, connId)
+    // #1808 stall drill: AMICODE_SSE_TICK_STALL=1 parks the heartbeat tap
+    // mid-fiber BEFORE its first noteTick (Effect.never — the #1798
+    // blocked-shared-emit-loop shape), so the out-of-tree SELF-STALL watchdog
+    // can be rehearsed against the PRODUCTION wiring: the connection stays
+    // registered, the wire goes heartbeat-silent, and the watchdog's line
+    // must ride the production sink (engine stdout → the runner's forward →
+    // the shard log). Ops drill only — never set on a live shard.
+    const tickStallDrill = process.env.AMICODE_SSE_TICK_STALL === "1"
     const heartbeat = Stream.tick(sseTickTelemetry.cadenceMs).pipe(
       Stream.drop(1),
       Stream.map(() => ({ id: eventID(), type: "server.heartbeat", properties: {} })),
@@ -160,13 +168,15 @@ function eventResponse(events: EventV2.Interface) {
       // discriminates the blocked-shared-emit-loop hypothesis), alongside the
       // watchdog's lag and RSS samples.
       Stream.tap(() =>
-        Effect.gen(function* () {
-          const fiberId = yield* Effect.fiberId
-          sseTickTelemetry.noteTick(EventPaths.event, connId, {
-            queueDepth: Queue.sizeUnsafe(queue),
-            fiberId,
-          })
-        }),
+        tickStallDrill
+          ? Effect.never
+          : Effect.gen(function* () {
+              const fiberId = yield* Effect.fiberId
+              sseTickTelemetry.noteTick(EventPaths.event, connId, {
+                queueDepth: Queue.sizeUnsafe(queue),
+                fiberId,
+              })
+            }),
       ),
     )
 
