@@ -843,8 +843,8 @@
     "packages/opencode/src/server/amicode/widget-runtime.ts": "a5fe95eba46df87c4b4c54bc07bb91587b73e88eb90db889bc87358ece4b3f27",
     "packages/opencode/src/server/amicode/widgets.ts": "d15481086c41b365c28937f002bfcdeb8c2a9f68066413da695fbac8b7acdb61",
     "packages/opencode/src/server/shared/public-ui.ts": "a843b4e84673d9a5e34f36eb7cffbb499850f7588154c23061fc8a81cd1369ef",
-    "packages/opencode/src/server/shared/sse-tick-telemetry.ts": "66ec419c2c32584c1f546b63fe93dbd7f7061d45be3dd37e9a261aa129027ec2",
-    "packages/opencode/src/server/shared/tcp-keepalive.ts": "bd038aa2ef9786a82de97990c9fcea3d2f9315e269e9b9a9e20713cce67db724",
+    "packages/opencode/src/server/shared/sse-tick-telemetry.ts": "0e2a1a31e2d94c9715e0c0974464a8cf83acbb90b0c778bbea51e258934dee2c",
+    "packages/opencode/src/server/shared/tcp-keepalive.ts": "070925f9a9eb0b12a1daefd19adb24a509c13ab4198ec20b7cadb2d610c7b702",
     "packages/opencode/src/server/shared/ui.ts": "c66ef686ee090f442ee69b6a5f3c985ff005dc135b8265eaf5955f83ecfb86ea",
     "packages/opencode/src/server/shared/workspace-routing.ts": "3704b6cf218fc165ce9c1cdad0ee42fc9cf604976e4a552478200f85db80876a",
     "packages/opencode/src/session/llm/request.ts": "d6fdcac11a92ef9fa18efce69791900f30c66e54e94a1647ea70136e8825e7e6",
@@ -996,7 +996,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-16T09:13:23.958Z",
+  "extracted_at": "2026-10-16T10:26:35.906Z",
   "per_package": {
     "packages/app": {
       "A": 251,

@@ -38,7 +38,10 @@ export interface TickTelemetryConfig {
   readonly watchdogIntervalMs: number
   /** Event-loop drift probe interval. */
   readonly probeIntervalMs: number
-  /** Line sink. Default: console.log — engine stdout, which journald captures. */
+  /** Line sink. Default: console.error — engine stderr. Stdout is the CLI's
+   * DATA channel (opencode run --format json owns it with a JSON contract —
+   * diagnostics polluted it and the deploy gate caught the parse failures);
+   * stderr still reaches journald/unit logs and the runner forwards it. */
   readonly sink?: (line: string) => void
   /** Clock for tests. Default: Date.now. */
   readonly now?: () => number
@@ -89,7 +92,7 @@ export interface SseTickTelemetry {
 export function makeSseTickTelemetry(config: TickTelemetryConfig): SseTickTelemetry {
   const cadenceMs = Math.max(1, config.cadenceMs)
   const watchdogIntervalMs = Math.max(config.watchdogIntervalMs, cadenceMs)
-  const sink = config.sink ?? ((line: string) => console.log(line))
+  const sink = config.sink ?? ((line: string) => console.error(line))
   const now = config.now ?? (() => Date.now())
 
   interface Connection {

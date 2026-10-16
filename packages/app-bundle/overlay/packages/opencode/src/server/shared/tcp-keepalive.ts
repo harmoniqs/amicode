@@ -141,7 +141,7 @@ export interface ArmReport {
   shimFallback: boolean
 }
 
-let keepaliveSink: (line: string) => void = (line) => console.log(line)
+let keepaliveSink: (line: string) => void = (line) => console.error(line)
 
 /** Test seam: capture the telemetry lines. */
 export function setTcpKeepaliveSink(next: (line: string) => void) {
@@ -150,7 +150,7 @@ export function setTcpKeepaliveSink(next: (line: string) => void) {
 
 /** Test seam: restore the production sink. */
 export function resetTcpKeepaliveSink() {
-  keepaliveSink = (line) => console.log(line)
+  keepaliveSink = (line) => console.error(line)
 }
 
 // The runtime gap is a process-level property, not per-connection news: the
