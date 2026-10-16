@@ -44,9 +44,12 @@ fi
 #     fixture path (#1229 family).
 #   - patched dependencies: the fresh-materialize lockfile resolves @ai-sdk/*
 #     versions that drift from the patch expectations (the lockfile-drift class).
-#   - skill ×6 / provider-stream / tool.write: the shared-process #1239
-#     cross-test-load family (pass in isolation).
-KNOWN_ENV_FAILURES="bounded fan-out writes|#1798 phase C.*corpse|Instruction.system|patched dependencies|skill registration|provider stream errors|tool.write.*file permissions"
+#   - skill discovery family x6 + amicode-release-workflow: the skill-discovery
+#     tests read this host's real home dirs (the live fleet skills shadow the
+#     fixtures); the release-workflow test reads .github/workflows which the
+#     materialized tree does not carry. provider-stream / tool.write: the
+#     shared-process #1239 cross-test-load family (pass in isolation).
+KNOWN_ENV_FAILURES="bounded fan-out writes|#1798 phase C.*corpse|Instruction.system|patched dependencies|skill > discovers|properly resolves directories that skills|amicode-release-workflow|provider stream errors|tool.write.*file permissions"
 
 TMP_OUT="$(mktemp)"
 trap 'rm -f "$TMP_OUT"' EXIT
