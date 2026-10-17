@@ -1916,5 +1916,434 @@ class TestGatewaySecret(RouterTest):
         self.assertIn("401", logtext)
 
 
+# --- #1803 P1b: source-side sequencing — the frontdoor flips to a passthrough ------
+#
+# P1a (#1806, merged) moved the sequence to the SOURCE: the engine stamps
+# every frame `<epoch>:<seq>` on the SSE id line, a shared replay buffer
+# serves cursor resumption (Last-Event-ID header or ?lastEventID query), and
+# an unservable cursor gets an explicit reset frame. P1b retires the
+# frontdoor's own #1264 ring (HISTORY_MAX 512 / REPLAY_CAP 64 / the
+# reassembly-keyed replay): the frontdoor forwards ids verbatim, forwards
+# the member's cursor to the engine dials, and the ENGINE serves reconnects.
+#
+# The fake here is a faithful mini replay contract (the shapes
+# global-replay.ts + handlers/event.ts put on the wire), so the passthrough
+# tests pin the frontdoor's mechanics without a real engine — the E2E
+# (ops/hub/test_frontdoor_e2e.py) runs the lossless-resume acceptance
+# against real engines through the real frontdoor.
+
+def seq_frame(epoch, seq, evtype, props="{}"):
+    """One engine-shaped wire frame: the id line (position) + the payload."""
+    props_b = props.encode() if isinstance(props, str) else props
+    return (b"id: " + epoch.encode() + b":" + str(seq).encode()
+            + b'\ndata: {"id":"evt_f%d","type":"%s","properties":%s}\n\n'
+            % (seq, evtype.encode(), props_b))
+
+
+class SeqShardHandler(BaseHTTPRequestHandler):
+    """The engine's P1a wire contract, minimal: every frame (control frames
+    included) carries `id: <epoch>:<seq>` with the connection's current
+    position; a dial without a cursor connects at the current position; a
+    dial with Last-Event-ID replays the frames after it then goes live; any
+    cursor the shard cannot serve (foreign epoch, unparseable, ahead) gets
+    the explicit reset frame instead — never silence, never invention."""
+
+    protocol_version = "HTTP/1.0"
+
+    def log_message(self, *args):
+        pass
+
+    @property
+    def shard(self):
+        return self.server.shard_id
+
+    def _json(self, obj, status=200):
+        body = json.dumps(obj).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("X-Backend-Shard", str(self.shard))
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        path = self.path.split("?")[0]
+        try:
+            self.server.counts[path] = self.server.counts.get(path, 0) + 1
+        except Exception:
+            pass
+        if path in ("/event", "/api/event", "/global/event"):
+            return self._sse()
+        self._json({"shard": self.shard, "path": self.path})
+
+    def _frame(self, seq, evtype, props="{}"):
+        return seq_frame(self.server.seq_epoch, seq, evtype, props)
+
+    def _sse(self):
+        srv = self.server
+        epoch = srv.seq_epoch
+        leid = self.headers.get("Last-Event-ID")
+        with srv.seq_lock:
+            srv.seq_dials.append({"path": self.path, "leid": leid})
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("X-Backend-Shard", str(self.shard))
+        self.end_headers()
+        # resolve the cursor (the engine's #resolve shapes; control frames
+        # carry the connection's position, never a sequence of their own)
+        with srv.seq_lock:
+            cur = srv.seq_n
+            pos = cur
+            reset = None
+            if leid is not None:
+                m = re.fullmatch(r"%s:(\d+)" % re.escape(epoch), leid)
+                if m is None:
+                    reset = "epoch"      # foreign/unparseable — the fake keeps no legacy resolution
+                elif int(m.group(1)) > cur:
+                    reset = "ahead"
+                else:
+                    pos = int(m.group(1))
+        try:
+            self.wfile.write(self._frame(pos, "server.connected"))
+            if reset is not None:
+                self.wfile.write(self._frame(pos, "state.resync",
+                                             json.dumps({"reason": reset})))
+            with srv.seq_lock:
+                start = next((i for i, (s, _) in enumerate(srv.seq_log) if s > pos), len(srv.seq_log))
+                for _, f in srv.seq_log[start:]:
+                    self.wfile.write(f)
+                sent = len(srv.seq_log)
+            self.wfile.flush()
+            while True:
+                time.sleep(0.5)
+                with srv.seq_lock:
+                    batch = srv.seq_log[sent:]
+                    sent = len(srv.seq_log)
+                    cur = srv.seq_n
+                for _, f in batch:
+                    self.wfile.write(f)
+                # the engine's heartbeat: carries the CURRENT position
+                self.wfile.write(self._frame(cur, "server.heartbeat"))
+                self.wfile.flush()
+        except Exception:
+            pass
+
+
+class SeqShard:
+    """A shard backend speaking the P1a sequencing contract (see the handler
+    above). emit() appends one event frame to the shard's bus log; every SSE
+    connection replays per its cursor and then streams the log live."""
+
+    def __init__(self, shard_id):
+        self.shard_id = shard_id
+        self.httpd = _ThreadingHTTP(("127.0.0.1", 0), SeqShardHandler)
+        self.httpd.shard_id = shard_id
+        self.httpd.seq_epoch = "e%d" % shard_id
+        self.httpd.seq_lock = threading.Lock()
+        self.httpd.seq_n = 0
+        self.httpd.seq_log = []      # [(seq, frame_bytes)] — the "replay buffer"
+        self.httpd.seq_dials = []    # every SSE dial's {"path","leid"} record
+        self.httpd.counts = {}
+        self.port = self.httpd.server_address[1]
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+
+    def emit(self, evtype="test.frame", props="{}"):
+        """Emit one event frame on this shard's bus (seq advances)."""
+        with self.httpd.seq_lock:
+            self.httpd.seq_n += 1
+            n = self.httpd.seq_n
+            h = seq_frame(self.httpd.seq_epoch, n, evtype, props)
+            self.httpd.seq_log.append((n, h))
+            return h
+
+    def dials(self, path):
+        """Every SSE dial this shard saw for a path, newest last."""
+        with self.httpd.seq_lock:
+            return [d for d in self.httpd.seq_dials if d["path"].split("?")[0] == path]
+
+    def stop(self):
+        try:
+            self.httpd.shutdown()
+            self.httpd.server_close()
+        except Exception:
+            pass
+
+
+class TestSourceSideSequencing(RouterTest):
+    """#1803 P1b: the frontdoor is a dumb pipe between the engine's sequencing
+    and the member — ids verbatim, cursors forwarded, replay server-side, the
+    ring retired. Every test uses the seq shards (the P1a wire contract)."""
+
+    def start_seq_shard(self, shard_id):
+        sh = SeqShard(shard_id)
+        self.shards.append(sh)
+        return sh
+
+    def start_seq_pool(self, n=2, extra_env=None):
+        """A frontdoor sharded over n seq shards, all pooling POOLDIR."""
+        shards = [self.start_seq_shard(i) for i in range(1, n + 1)]
+        fd = self.start_frontdoor(
+            routing_table([(sh.shard_id, sh.port) for sh in shards]),
+            extra_env=extra_env)
+        return fd, shards
+
+    def sse_connect(self, fd, target, cursor_header=None):
+        """A member SSE socket; optionally sends the standard Last-Event-ID
+        header (what a native EventSource reconnect sends)."""
+        s = socket.create_connection(("127.0.0.1", fd.port), timeout=10)
+        req = (f"GET {target} HTTP/1.1\r\nHost: x\r\nAccept: text/event-stream\r\n")
+        if cursor_header is not None:
+            req += f"Last-Event-ID: {cursor_header}\r\n"
+        s.sendall((req + "\r\n").encode())
+        return s
+
+    def sse_join(self, fd, target):
+        """A plain member SSE socket against the legacy-fixture shards."""
+        s = socket.create_connection(("127.0.0.1", fd.port), timeout=10)
+        s.sendall((f"GET {target} HTTP/1.1\r\nHost: x\r\nAccept: text/event-stream\r\n\r\n").encode())
+        return s
+
+    def read_sse(self, s, want, timeout=8):
+        """Read member bytes until `want` (bytes) has been seen (or timeout)."""
+        s.settimeout(0.5)
+        buf = b""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if want is not None and want in buf:
+                break
+            try:
+                d = s.recv(65536)
+            except socket.timeout:
+                continue
+            if not d:
+                break
+            buf += d
+        return buf
+
+    def ids_on_wire(self, buf):
+        """Every SSE id value the member received, in arrival order."""
+        return re.findall(rb"^id: (.+)$", buf, re.M)
+
+    def test_resume_cursor_reaches_engine_and_serves_gap(self):
+        """AC2 + the crux of the flip: a member reconnecting with its last id
+        must get the GAP from the engine through the frontdoor — the frontdoor
+        forwards the cursor on the upstream dial and never replays from any
+        ring of its own (an unknown-to-history cursor gets exactly the
+        engine's answer, dupes never)."""
+        fd, shards = self.start_seq_pool()
+        m = self.sse_connect(fd, "/event?directory=" + POOLDIR)
+        self.read_sse(m, b"server.connected")   # joined: the stream is live
+        # frames 1..3 flow while the member is live
+        for _ in range(3):
+            shards[0].emit()
+        self.read_sse(m, b'"evt_f3"')
+        m.close()
+        # frames 4..6 land while the member is away (the gap)
+        gap = [shards[0].emit() for _ in range(3)]
+        # reconnect with the member's last id (the engine's vocabulary)
+        m2 = self.sse_connect(fd, "/event?directory=" + POOLDIR,
+                              cursor_header="e1:3")
+        body = self.read_sse(m2, gap[-1])
+        m2.close()
+        # the cursor reached the ENGINE dials (the shared upstreams at boot
+        # dialed cursor-less; a resume dial carrying e1:3 is the flip)
+        leids = [d["leid"] for d in shards[0].dials("/event")]
+        self.assertIn("e1:3", leids, "the member's Last-Event-ID must reach the engine")
+        # the gap came through, exactly (each frame once, in order)
+        for i, f in enumerate(gap):
+            self.assertEqual(body.count(f), 1, "gap frame %d must arrive exactly once" % (i + 4))
+        # and no dupes of the pre-kill frames (the ring's over-delivery is gone)
+        for seq, f in shards[0].httpd.seq_log[:3]:
+            self.assertNotIn(f, body, "pre-cursor frame %d must not replay" % seq)
+
+    def test_id_lines_pass_through_verbatim(self):
+        """AC1: the engine's exact id strings ride the wire end to end — the
+        member's bytes contain the engine's frames byte-exact, and every id
+        on the member's wire is one the engine emitted (no re-stamping)."""
+        fd, shards = self.start_seq_pool()
+        m = self.sse_connect(fd, "/event?directory=" + POOLDIR)
+        self.read_sse(m, b"server.connected")   # joined: the stream is live
+        frames = [shards[0].emit() for _ in range(3)]
+        body = self.read_sse(m, frames[-1])
+        m.close()
+        for f in frames:
+            self.assertIn(f, body, "the engine's frame must pass through byte-exact")
+        for idv in self.ids_on_wire(body):
+            self.assertRegex(idv, rb"^e[12]:\d+$",
+                             "every id on the member wire is an engine id (no re-stamping)")
+
+    def test_unknown_cursor_gets_engine_reset_never_ring_replay(self):
+        """AC3's behavioral half: a cursor the engine cannot serve is the
+        ENGINE's to answer — the frontdoor must forward it and pass the
+        reset back verbatim, never invent a replay from retained history."""
+        fd, shards = self.start_seq_pool()
+        m = self.sse_connect(fd, "/event?directory=" + POOLDIR)
+        self.read_sse(m, b"server.connected")
+        shards[0].emit()
+        shards[0].emit()
+        self.read_sse(m, b'"evt_f2"')
+        m.close()
+        m2 = self.sse_connect(fd, "/event?directory=" + POOLDIR,
+                              cursor_header="evt_not_known_to_anyone")
+        body = self.read_sse(m2, b"state.resync")
+        m2.close()
+        self.assertIn(b"state.resync", body, "the engine's explicit reset must reach the member")
+        self.assertNotIn(b'"type":"test.frame"', body,
+                         "no frontdoor-invented replay: the ring's frames must not ride the resume")
+
+    def test_lasteventid_query_carrier_reaches_engine(self):
+        """AC2, the panel's carrier: ?lastEventID=<id> forwards to the engine
+        dial too (the frontdoor never terminates either vocabulary)."""
+        fd, shards = self.start_seq_pool()
+        m = self.sse_connect(fd, "/event?directory=" + POOLDIR)
+        self.read_sse(m, b"server.connected")
+        for _ in range(2):
+            shards[0].emit()
+        self.read_sse(m, b'"evt_f2"')
+        m.close()
+        gap = [shards[0].emit() for _ in range(2)]
+        m2 = self.sse_connect(fd, "/event?directory=" + POOLDIR + "&lastEventID=e1:2")
+        body = self.read_sse(m2, gap[-1])
+        m2.close()
+        leids = [d["leid"] for d in shards[0].dials("/event")]
+        self.assertIn("e1:2", leids, "the query cursor must reach the engine dial")
+        for f in gap:
+            self.assertEqual(body.count(f), 1, "the query-cursor gap must arrive exactly once")
+
+    def test_resumed_member_migrates_back_to_shared_fanout(self):
+        """The steady state stays the merged fan-out: a resumed member rides
+        its cursor-carrying dials only until they have delivered exactly
+        what the shared upstreams already fanned (positions equal on every
+        upstream), then migrates to the shared fan-out — the engine keeps
+        ONE live subscription per shard per group in the steady state."""
+        fd, shards = self.start_seq_pool()
+        m = self.sse_connect(fd, "/event?directory=" + POOLDIR)
+        self.read_sse(m, b"server.connected")
+        for _ in range(2):
+            shards[0].emit()
+        self.read_sse(m, b'"evt_f2"')
+        m.close()
+        gap = [shards[0].emit() for _ in range(3)]
+        m2 = self.sse_connect(fd, "/event?directory=" + POOLDIR,
+                              cursor_header="e1:2")
+        body = self.read_sse(m2, gap[-1])
+        # wait for the migration (both upstreams converged) — then the
+        # resumed member is a shared member like any other
+        deadline = time.time() + 8
+        migrated = False
+        while time.time() < deadline:
+            with open(os.path.join(fd.tmpdir, "frontdoor.log")) as f:
+                if "migrated to shared fan-out" in f.read():
+                    migrated = True
+                    break
+            time.sleep(0.2)
+        self.assertTrue(migrated, "the resumed member must migrate to the shared fan-out")
+        # post-migration frames reach the member through the SHARED upstream,
+        # and no new resume dials appear (the dials are retired)
+        dials_before = len(shards[0].dials("/event"))
+        after = shards[0].emit()
+        body += self.read_sse(m2, after)
+        m2.close()
+        self.assertEqual(body.count(after), 1, "post-migration frames keep flowing")
+        time.sleep(1.5)
+        self.assertEqual(len(shards[0].dials("/event")), dials_before,
+                         "no new resume dials after migration (the shared upstream serves)")
+
+    def test_ring_machinery_retired_passthrough_kept(self):
+        """AC3, the code half: the #1264 ring is GONE at the module surface —
+        HISTORY_MAX / REPLAY_CAP / the history ring — while the passthrough's
+        load-bearing pieces stay: the SPLIT-byte-stream frame reassembly
+        (_parse_frames), the payload-id reader (_frame_id, now only the
+        snapshot's lastEventID scalar), and the fan-out's bounded-queue
+        discipline. Asserted against the real module (the _FIN_CLOSE_RUNNER
+        import pattern)."""
+        tbl = os.path.join(self.tmpdir, "seq-retire-routing.json")
+        with open(tbl, "w") as f:
+            json.dump(routing_table([(1, free_port())]), f)
+        env = dict(os.environ)
+        env.update({
+            "AMICODE_ROUTING_TABLE": tbl,
+            "AMICODE_SESSION_MAP": os.path.join(self.tmpdir, "seq-retire-sessions.json"),
+            "AMICODE_FRONTDOOR_PORT": str(free_port_pair()),
+            "AMICODE_FRONTDOOR_LOG": os.path.join(self.tmpdir, "seq-retire.log"),
+        })
+        r = subprocess.run(
+            [sys.executable, "-c",
+             "import importlib.util, sys, threading\n"
+             "spec = importlib.util.spec_from_file_location('fd', sys.argv[1])\n"
+             "mod = importlib.util.module_from_spec(spec)\n"
+             "threading.Thread(target=spec.loader.exec_module, args=(mod,), daemon=True).start()\n"
+             "import time\n"
+             "t0 = time.time()\n"
+             "while not hasattr(mod, '_parse_frames'):\n"
+             "    if time.time() - t0 > 15: sys.exit(3)\n"
+             "    time.sleep(0.05)\n"
+             "for gone in ('HISTORY_MAX', 'REPLAY_CAP'):\n"
+             "    if hasattr(mod, gone): print('STILL_PRESENT ' + gone)\n"
+             "print('PARSE_FRAMES', hasattr(mod, '_parse_frames'))\n"
+             "print('FRAME_ID', hasattr(mod, '_frame_id'))\n"
+             "buf = mod._parse_frames(b'HTTP/1.1 200 OK\\r\\n\\r\\nid: a:1\\ndata: {}\\n\\nXX')\n"
+             "print('FRAMES_LEN', len(buf[0]), 'REMAINDER', buf[1])\n"
+             "g = next(iter(mod.GROUPS.values()))\n"
+             "print('NO_HISTORY', not hasattr(g, 'history'))\n"
+             "print('POS', hasattr(g, 'pos') and hasattr(g, 'last_eid') and hasattr(g, 'resumes'))\n"
+             "time.sleep(0.2)\n"
+             "sys.exit(0)\n",
+             FRONTDOOR], env=env, capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, "module runner failed: %r / %r" % (r.stdout, r.stderr))
+        self.assertNotIn("STILL_PRESENT", r.stdout,
+                         "the ring constants must be retired: %r" % r.stdout)
+        self.assertIn("PARSE_FRAMES True", r.stdout, "frame reassembly stays")
+        self.assertIn("FRAME_ID True", r.stdout, "the snapshot's id reader stays")
+        self.assertIn("FRAMES_LEN 2", r.stdout, "reassembly splits complete frames")
+        self.assertIn("REMAINDER b'XX'", r.stdout, "the partial tail is kept for completion")
+        self.assertIn("NO_HISTORY True", r.stdout, "the group carries no history ring")
+        self.assertIn("POS True", r.stdout, "the passthrough position bookkeeping exists")
+
+    def test_stalled_member_drop_does_not_wedge_the_group(self):
+        """The stall-drop path must not hold the group lock while closing:
+        a member whose queue fills is dropped and FINed, and every OTHER
+        member keeps receiving (the group lock must come back)."""
+        fd = self.start_pool()
+        slow = self.sse_join(fd, "/event?directory=" + POOLDIR)   # never reads
+        fast = self.sse_join(fd, "/event?directory=" + POOLDIR)
+        time.sleep(0.6)
+        # non-coalescible frames (distinct part ids) flood the slow member's
+        # queue past MEMBER_QUEUE_MAX_ITEMS
+        flood = [b'data: {"id":"evt_s%d","type":"test.frame","properties":'
+                 b'{"partID":"p%d"}}\n\n' % (i, i) for i in range(200)]
+        self.shards[0].httpd.sse_inject.extend(flood)
+        slow.settimeout(0.5)
+        dropped = False
+        deadline = time.time() + 8
+        while time.time() < deadline:
+            try:
+                if slow.recv(1) == b"":
+                    dropped = True
+                    break
+            except socket.timeout:
+                continue
+            except OSError:
+                dropped = True
+                break
+        self.assertTrue(dropped, "the stalled member must be dropped (FIN)")
+        # the group lock must be FREE: the surviving member keeps receiving
+        fast.settimeout(3)
+        heartbeats = b""
+        try:
+            while time.time() < deadline + 3:
+                d = fast.recv(65536)
+                if not d:
+                    break
+                heartbeats += d
+                if heartbeats.count(b"server.heartbeat") >= 2:
+                    break
+        except (socket.timeout, OSError):
+            pass
+        fast.close()
+        self.assertGreaterEqual(heartbeats.count(b"server.heartbeat"), 2,
+                                "the surviving member must keep receiving (no wedged lock)")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

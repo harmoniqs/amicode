@@ -768,18 +768,21 @@ def build_snapshot(top):
     for t in ths: t.join()
     last_eid = None
     try:
-        # slice 1c: the /global/event history lives in the MERGED group's
-        # shared ring in sharded mode (the union is the stream of record).
-        # #1724: GET the group, not just .get() — creating it starts the
-        # upstream loops whose frames dirty-mark message pages, so the
-        # snapshot is event-driven even with no tab holding the stream.
+        # slice 1c: the stream of record is the MERGED group's live fan-out
+        # in sharded mode (the union of every pool member). #1724: GET the
+        # group, not just .get() — creating it starts the upstream loops
+        # whose frames dirty-mark message pages, so the snapshot is
+        # event-driven even with no tab holding the stream.
+        # #1803 P1b: the last payload id fanned (a scalar — the ring that
+        # used to hold it is retired; the engine's replay serves the gap it
+        # seeds, not the frontdoor).
         if SHARDED:
             g = _get_merged_group("/global/event", POOL_DEFAULT_DIR)
         else:
             g = _get_group(1, "/global/event")
         if g:
             with g.lock:
-                if g.history: last_eid = g.history[-1][0]
+                last_eid = g.last_eid
     except Exception: pass
     snap = {"snapshot": 1, "ts": time.time(),
             "health": _json.loads(health), "sessions": sessions, "messages": messages,
@@ -953,13 +956,12 @@ MEMBER_QUEUE_MAX_ITEMS = 64   # ≈4MB at 64KB chunks; beyond this the member is
 # 2026-10-08: the delta flood. An active turn emits thousands of
 # message.part.delta frames; a tab over the tunnel reads slower than the
 # model writes, the 64-frame member queue fills, and the member is DROPPED
-# — the tab reconnects, replays a 512-frame ring that covers seconds of a
-# hot turn, then floods again: live activity never renders while the
-# thinker runs (only the post-turn reload shows anything — the reported
-# "session activity is not being displayed"). Consecutive deltas for the
-# SAME part now coalesce in the member queue: lossless text (the panel
-# appends delta strings), tiny queue. The history ring keeps original
-# per-event frames, so reconnect replay stays exact.
+# — the tab reconnects, and the ENGINE's replay buffer (#1806 P1a) serves
+# the gap through the resume path (#1803 P1b), so live activity renders
+# while the thinker runs. Consecutive deltas for the SAME part now
+# coalesce in the member queue: lossless text (the panel appends delta
+# strings), tiny queue. The merged frame keeps prev's id, so the member's
+# applied-id sequence stays coherent.
 DELTA_MERGE_MAX_BYTES = 262144
 
 def _delta_part_key(frame):
@@ -990,8 +992,8 @@ def _frame_data(frame):
 
 def _merge_delta_frames(prev, nxt):
     """Two same-part delta frames -> one frame with concatenated delta text
-    (keeping prev's event id, so ring replay and dedupe stay coherent), or
-    None when not mergeable. Wire-shape tolerant: frames may or may not
+    (keeping prev's id, so the member's applied-id sequence stays coherent),
+    or None when not mergeable. Wire-shape tolerant: frames may or may not
     carry id: lines."""
     try:
         ep = _frame_data(prev)
@@ -1062,14 +1064,20 @@ class MemberQueue:
     def qsize(self):
         return len(self._items)
 
-# --- #1264 lossless SSE reconnect: the frontdoor reassembles upstream
-# bytes into complete SSE frames, keeps a bounded ring of them keyed by
-# the event id in the payload, and replays the gap after a client's
-# lastEventID on reconnect. A tunnel blip no longer drops events.
-HISTORY_MAX = 512
-REPLAY_CAP = 64   # unknown-id replay: bounded slice, never the full ring
+# --- #1803 P1b: source-side sequencing — the frontdoor is a passthrough ----------
+# The #1264 ring retired: HISTORY_MAX 512 / REPLAY_CAP 64 / the reassembly-
+# keyed replay are gone. P1a (#1806) put the sequence at the SOURCE — the
+# engine stamps every frame `<epoch>:<seq>` on the SSE id line and its
+# shared replay buffer serves cursor resumption — so the frontdoor now
+# forwards the member's cursor (Last-Event-ID header or ?lastEventID query)
+# on its upstream dials and forwards the engine's id lines back VERBATIM.
+# Cursor semantics live server-side; the frontdoor never terminates them,
+# never re-stamps ids, and never invents a replay of its own.
 
 def _frame_id(frame):
+    """The frame's payload id (the `evt_` vocabulary the client tracks and
+    sends back as ?lastEventID). The #1264 ring keyed its history on this;
+    its one surviving duty post-P1b is the snapshot's lastEventID scalar."""
     i = frame.find(b'"id":"')
     if i < 0: return None
     j = frame.find(b'"', i + 6)
@@ -1080,7 +1088,8 @@ def _parse_frames(buf):
     emits LF-LF framing (verified on the wire: 0x0a0a, not CRLFCRLF);
     accept either so a framing change can't silently kill the fan-out.
     Returns (frames, remainder) — frames keep their separators
-    byte-exact."""
+    byte-exact. (#1264's SPLIT-byte-stream handling, kept: the fan-out and
+    the resume path forward only COMPLETE frames, byte-for-byte.)"""
     out = []
     while True:
         i = buf.find(b"\n\n")
@@ -1092,6 +1101,19 @@ def _parse_frames(buf):
         out.append(buf[:end])
         buf = buf[end:]
     return out, buf
+
+def _sse_pos(frame):
+    """The frame's `<epoch>:<seq>` position off its SSE id line (None when
+    the upstream emits no id lines — a pre-P1a engine, whose members then
+    simply never migrate off the resume dials)."""
+    for ln in frame.split(b"\n"):
+        if ln.startswith(b"id:"):
+            v = ln[3:].strip()
+            if b":" in v:
+                epoch, _, seq = v.rpartition(b":")
+                if seq.isdigit() and epoch:
+                    return (epoch.decode("ascii", "replace"), int(seq))
+    return None
 
 
 # 2026-10-11 (#1757): the upstream dead-man's switch + frame-cadence
@@ -1228,19 +1250,38 @@ class Group:
         self.members = {}    # member socket -> outbound queue.Queue
         self.preamble = b""
         self.upstream = None
-        self.history = []   # [(event_id, frame_bytes)] — bounded ring
+        # #1803 P1b: no history ring. What survives is position bookkeeping
+        # for the cursor passthrough: `pos` is each shared upstream's last
+        # observed <epoch>:<seq> (the resume dials converge onto it — see
+        # _resume_loop), `upstream_live` is per-shard liveness, and
+        # `last_eid` is the last payload id the group fanned (the snapshot's
+        # lastEventID seed, #1306 — a scalar, never a replay buffer).
+        self.pos = {}
+        self.upstream_live = {}
+        self.last_eid = None
+        # member socket -> resume state while a cursor-carrying member rides
+        # its own upstream dials (cleared on migration to the shared fan-out)
+        self.resumes = {}
+        # the upstream set a resume member dials: the pool for merged groups,
+        # the single (owning-shard) backend otherwise
+        self.sources = list(merge.items()) if merge else [(shard, self.backend)]
         if merge:
             for _sid, _addr in merge.items():
                 threading.Thread(target=self.upstream_loop, args=(_sid, _addr), daemon=True).start()
         else:
             threading.Thread(target=self.upstream_loop, args=(shard, self.backend), daemon=True).start()
-    def build_preamble(self, addr):
+    def build_preamble(self, addr, cursor=None):
         # #1760 P1: the SSE upstream dial carries the gateway stamp. A 401
         # (secret mismatch / half-rolled fleet) must fail FAST and loud — the
         # #1757 lesson: waiting on server.connected that never arrives is
         # silent silence; the status line is in the first bytes.
+        # #1803 P1b: a resume dial carries the member's cursor on the
+        # standard Last-Event-ID header — the ENGINE's replay buffer serves
+        # the gap (both carriers resolve identically server-side; the frontdoor
+        # never interprets the value).
         req = (f"GET {self.upstream_path} HTTP/1.1\r\nHost: 127.0.0.1:{addr[1]}\r\n"
                "Accept: text/event-stream\r\n"
+               + (f"Last-Event-ID: {cursor}\r\n" if cursor is not None else "")
                + (f"{GW_HEADER_NAME}: {GW_SECRET}\r\n" if GW_SECRET else "")
                + "\r\n").encode()
         s = socket.create_connection(addr)
@@ -1270,7 +1311,11 @@ class Group:
         s.settimeout(None)
         return s, buf
     def _drop(self, c):
-        with self.lock: self.members.pop(c, None)
+        with self.lock:
+            self.members.pop(c, None)
+            st = self.resumes.pop(c, None)
+        if st is not None:
+            self._cancel_resume(st)
         # #1757, FIXED: close() on a socket with a concurrent reader blocked
         # in recv (the per-member waiter thread) does NOT send the FIN on
         # Linux — the blocked syscall holds the description open, so the
@@ -1282,6 +1327,12 @@ class Group:
         # peer keeps writing into (the engine cannot recover it — BUN's
         # node:http sends no wire FIN).
         _fin_close(c)
+    def _cancel_resume(self, st):
+        """Tear a resume state down: stop the dial threads, FIN their
+        sockets. Called with NO lock held."""
+        st["cancel"].set()
+        for s in list(st["socks"]):
+            _fin_close(s)
     def _writer(self, c, q):
         """Per-member outbound writer — the ONLY thread that sends on the
         member socket (ordering = queue order). Exits on the first send
@@ -1307,11 +1358,22 @@ class Group:
             reasm = b""
             frames, reasm = _parse_frames(pre)
             with self.lock:
+                self.upstream_live[shard_id] = True
+                # #1803 P1b: track what this upstream has observed (the
+                # preamble window included) — the resume dials' migration
+                # target. Frames in the preamble window are NOT fanned to
+                # existing members (pre-P1b behavior, unchanged).
+                for frame in frames:
+                    p = _sse_pos(frame)
+                    if p is not None:
+                        self.pos[shard_id] = p
+                    eid = _frame_id(frame)
+                    if eid is not None:
+                        self.last_eid = eid
                 if self.upstream is None:
                     # first live upstream: the preamble provider for joins
                     self.upstream = s
                     self.preamble = pre
-                    self.history = []   # history spans the (new) live stream
                 self.live_upstreams += 1
                 n_waiting = len(self.members)
             log(f"[{self.path}/s{shard_id}] upstream live ({n_waiting} waiting members)")
@@ -1377,24 +1439,30 @@ class Group:
                             note_question_frame(frame, shard_id)
                         except Exception: pass
                     with self.lock:
+                        # #1803 P1b: observe positions (and keep the
+                        # snapshot's lastEventID scalar fresh) under the same
+                        # lock as the fan, so a resume member's migration
+                        # check sees exactly what has been fanned.
                         for frame in frames:
+                            p = _sse_pos(frame)
+                            if p is not None:
+                                self.pos[shard_id] = p
                             eid = _frame_id(frame)
                             if eid is not None:
-                                self.history.append((eid, frame))
-                                if len(self.history) > HISTORY_MAX:
-                                    del self.history[: len(self.history) - HISTORY_MAX]
+                                self.last_eid = eid
+                        stalled = []
                         for m, q in list(self.members.items()):
                             if q.qsize() >= MEMBER_QUEUE_MAX_ITEMS:
                                 # Stalled member: disconnect it (the app's reconnect
                                 # heals it with a fresh stream) — never block here.
-                                # NOTE: leave() also takes the lock — inline it.
-                                # #1757: the close itself is _drop's (the direct
+                                # #1757: the close goes through _drop, and the
+                                # socket close happens OUTSIDE this lock (a bare
                                 # close() raced the writer thread's _drop and lost
-                                # the FIN — see _drop).
+                                # the FIN; and closing under the group lock wedged
+                                # the whole fan-out — the stall-drop deadlock).
                                 self.members.pop(m, None)
+                                stalled.append((m, self.resumes.pop(m, None)))
                                 q.put(None)
-                                self._drop(m)
-                                log(f"[{self.path}/s{shard_id}] member dropped — stalled (queue full)")
                                 continue
                             for frame in frames:
                                 dkey = _delta_part_key(frame)
@@ -1402,6 +1470,11 @@ class Group:
                                     q.put_coalescing(frame, dkey)
                                 else:
                                     q.put(frame)
+                    for m, st in stalled:
+                        if st is not None:
+                            st["cancel"].set()
+                        self._drop(m)
+                        log(f"[{self.path}/s{shard_id}] member dropped — stalled (queue full)")
             except Exception: pass
             # #1798: the recycler's kill must FIN the engine. A bare close()
             # here is FIN-less whenever any syscall still holds the socket
@@ -1412,6 +1485,7 @@ class Group:
             _fin_close(s)
             with self.lock:
                 self.live_upstreams -= 1
+                self.upstream_live[shard_id] = False
                 was_preamble = s is self.upstream
                 if was_preamble:
                     self.upstream = None
@@ -1431,6 +1505,26 @@ class Group:
                     self._drop(m)
                 log(f"[{self.path}/s{shard_id}] all upstreams lost; closed {len(members)} members")
     def join(self, c, last_event_id=None):
+        if last_event_id is not None:
+            # #1803 P1b: a cursor-carrying reconnect rides the RESUME path —
+            # the frontdoor dials the upstreams WITH the member's cursor
+            # (Last-Event-ID header, verbatim) and the ENGINE serves the gap
+            # from its replay buffer. No ring, no frontdoor replay, no
+            # cursor interpretation: an unservable cursor is the engine's to
+            # answer (the explicit reset frame comes back through here).
+            st = {"q": MemberQueue(), "head_given": False, "rpos": {},
+                  "cancel": threading.Event(), "socks": set()}
+            with self.lock:
+                if c in self.members or c in self.resumes:
+                    return
+                self.resumes[c] = st
+            threading.Thread(target=self._writer, args=(c, st["q"]), daemon=True).start()
+            log(f"[{self.path}] member resuming after {last_event_id[:32]} "
+                f"({len(self.sources)} upstream dial(s))")
+            for sid, addr in self.sources:
+                threading.Thread(target=self._resume_loop,
+                                 args=(c, sid, addr, last_event_id), daemon=True).start()
+            return
         with self.lock:
             if c in self.members: return
             q = MemberQueue()
@@ -1453,45 +1547,140 @@ class Group:
                     for frame in pre_frames:
                         if q.qsize() < MEMBER_QUEUE_MAX_ITEMS:
                             q.put(frame)
-                    if last_event_id is None:
-                        return
-                    # #1264 replay connect: the gap after the cursor.
-                    if self.history:
-                        index = None
-                        for i, (eid, _) in enumerate(self.history):
-                            if eid == last_event_id:
-                                index = i
-                                break
-                        if index is not None:
-                            # #1307: cap gap-replays TOO. A fresh document
-                            # inherits its predecessor's cursor (sessionStorage)
-                            # — with a running session that gap was ~7 minutes
-                            # = 512 frames. The full-gap replay flooded the
-                            # client, the reader choked, and it reconnected
-                            # with the SAME cursor → a permanent 512-frame
-                            # flood loop (~8s of churn every few seconds, the
-                            # noise floor under every switch). The reducers are
-                            # idempotent and the snapshot seeds state — the
-                            # most recent frames suffice, and the cursor
-                            # advances out of the loop.
-                            replay = self.history[max(index + 1, len(self.history) - REPLAY_CAP):]
-                        else:
-                            # Unknown id (evicted / restart): the most
-                            # recent REPLAY_CAP frames — the full 512-frame
-                            # ring flooded the member queue and fed the
-                            # storm; the reducers are idempotent and
-                            # reconcile, so a bounded over-delivery heals.
-                            replay = self.history[-REPLAY_CAP:]
-                        for _, frame in replay:
-                            if q.qsize() < MEMBER_QUEUE_MAX_ITEMS:
-                                q.put(frame)
-                        if replay:
-                            log(f"[{self.path}] replayed {len(replay)} frames after {last_event_id[:24]}{' (unknown id, capped)' if index is None else ''}")
                     return
             time.sleep(0.3)
 
+    def _resume_loop(self, c, shard_id, addr, cursor):
+        """#1803 P1b: one cursor-carrying dial for one resuming member.
+        Serves the engine's resumed stream (replay gap + live) to the
+        member's queue, byte-verbatim, until the dial's observed position
+        EQUALS the shared upstream's on every source — then the member
+        migrates to the shared fan-out (atomic under the group lock) and the
+        resume dials retire, so the steady state keeps one engine
+        subscription per shard per group. The engine's `<epoch>:<seq>` ids
+        make the convergence exact: at equal positions the member holds
+        every frame the group fanned and receives only later frames from the
+        fan-out — no loss, no dupes, mechanically checkable."""
+        with self.lock:
+            st = self.resumes.get(c)
+        if st is None:
+            return
+        cur_cursor = cursor
+        backoff = 0.5
+        while not st["cancel"].is_set():
+            try:
+                s, pre = self.build_preamble(addr, cursor=cur_cursor)
+            except Exception as e:
+                if st["cancel"].is_set():
+                    return
+                log(f"[{self.path}/s{shard_id}] resume dial down ({e}); retry in {backoff}s")
+                time.sleep(backoff)
+                backoff = min(backoff * 2, 5)
+                continue
+            backoff = 0.5
+            st["socks"].add(s)
+            reasm = b""
+            frames, reasm = _parse_frames(pre)
+            stalled = False
+            with self.lock:
+                live = self.resumes.get(c) is st and not st["cancel"].is_set()
+                if live:
+                    for frame in frames:
+                        if frame.startswith(b"HTTP/"):
+                            # the first dial's response head becomes the
+                            # member's response head (any one head is a valid
+                            # head, the merged-group rule); the others' heads
+                            # are swallowed
+                            if not st["head_given"]:
+                                st["head_given"] = True
+                                st["q"].put(frame)
+                            continue
+                        p = _sse_pos(frame)
+                        if p is not None:
+                            st["rpos"][shard_id] = p
+                        if st["q"].qsize() < MEMBER_QUEUE_MAX_ITEMS:
+                            st["q"].put(frame)
+            if not live:
+                break
+            # bounded recv (the #1757 rule: a silent-but-open upstream must
+            # not park forever) — the member's own client watchdog heals a
+            # wedged resume dial by reconnecting with its cursor
+            s.settimeout(min(5.0, max(0.25, UPSTREAM_CADENCE_S / 4.0)))
+            try:
+                while not st["cancel"].is_set():
+                    try:
+                        chunk = s.recv(65536)
+                    except socket.timeout:
+                        chunk = None
+                    if chunk == b"":
+                        break
+                    if chunk is None:
+                        continue
+                    reasm += chunk
+                    frames, reasm = _parse_frames(reasm)
+                    if not frames:
+                        continue
+                    with self.lock:
+                        if self.resumes.get(c) is not st or st["cancel"].is_set():
+                            break
+                        stalled = st["q"].qsize() >= MEMBER_QUEUE_MAX_ITEMS
+                        if not stalled:
+                            for frame in frames:
+                                if frame.startswith(b"HTTP/"):
+                                    continue
+                                p = _sse_pos(frame)
+                                if p is not None:
+                                    st["rpos"][shard_id] = p
+                                dkey = _delta_part_key(frame)
+                                if dkey is not None:
+                                    st["q"].put_coalescing(frame, dkey)
+                                else:
+                                    st["q"].put(frame)
+                            # the migration: every source converged on the
+                            # shared fan-out's exact positions, all shared
+                            # upstreams live. Atomic with the fan under this
+                            # lock — the member joins `members` and the
+                            # dials stop queueing in one critical section.
+                            if st["head_given"] and len(st["rpos"]) == len(self.sources):
+                                converged = True
+                                for sid in st["rpos"]:
+                                    if not self.upstream_live.get(sid) \
+                                            or self.pos.get(sid) != st["rpos"][sid]:
+                                        converged = False
+                                        break
+                                if converged:
+                                    self.members[c] = st["q"]
+                                    self.resumes.pop(c, None)
+                                    st["cancel"].set()
+                                    log(f"[{self.path}] resumed member migrated to "
+                                        f"shared fan-out ({len(self.sources)} upstream(s) converged)")
+                                    break
+                    if stalled:
+                        break
+            except Exception:
+                pass
+            st["socks"].discard(s)
+            _fin_close(s)
+            if stalled:
+                self._drop(c)
+                log(f"[{self.path}/s{shard_id}] resume member dropped — stalled (queue full)")
+                return
+            if st["cancel"].is_set() or self.resumes.get(c) is not st:
+                return
+            # the dial died (link blip, engine recycle): re-dial from the
+            # member's CURRENT position on this shard — the engine's replay
+            # serves whatever came after it, so the re-dial never re-delivers
+            # what the member already holds
+            p = st["rpos"].get(shard_id)
+            cur_cursor = "%s:%d" % p if p is not None else cursor
+
     def leave(self, c):
-        with self.lock: q = self.members.pop(c, None)
+        with self.lock:
+            q = self.members.pop(c, None)
+            st = self.resumes.pop(c, None)
+        if st is not None:
+            self._cancel_resume(st)
+            st["q"].put(None)
         if q is not None:
             q.put(None)
 
@@ -2022,6 +2211,19 @@ def handle(c, addr, cid):
                         last_eid = _up.unquote(kv[len("lastEventID="):]) or None
             except Exception:
                 last_eid = None
+            # #1803 P1b: the standard SSE carrier — a native EventSource
+            # reconnect sends the last id line it saw as the Last-Event-ID
+            # HEADER (the panel sends the ?lastEventID query instead; when
+            # both are present the query wins, matching the engine's
+            # instance-route precedence). Either way the cursor forwards to
+            # the engine dials verbatim — the frontdoor never terminates it.
+            if last_eid is None:
+                for ln in first.split(b"\r\n"):
+                    if ln.lower().startswith(b"last-event-id:"):
+                        v = ln.split(b":", 1)[1].strip()
+                        if v:
+                            last_eid = v.decode("utf-8", "replace")
+                        break
             g.join(c, last_eid)
             def waiter():
                 while True:
