@@ -252,12 +252,24 @@ describe("H3 staging fixture — zero fleet surfaces without the entitlement (by
     expect(gated).toEqual(base);
   });
 
-  it("with no entitlement, the fleet paths answer the base no-route shape (the fleet mode does not exist)", async () => {
-    const res = await fetch(`${gatedOrigin}/amicode/fleet/sessions`, {
+  it("with no entitlement, the app-called fleet route answers the #1812 documented absence and status keeps the base no-route shape (the fleet mode does not exist)", async () => {
+    // #1812: sessions is app-called, so a fleetless boot answers the
+    // documented {ok:false, reason:"no-fleet-peers"} 404 (the app's silent
+    // fallback — the panel render gate refuses the generic no-route 404 it
+    // used to serve). NO real fleet data may leak: the absence is not a
+    // staged projection.
+    const sessions = await fetch(`${gatedOrigin}/amicode/fleet/sessions`, {
       headers: { Authorization: `Basic ${engineToken}` },
     });
-    expect(res.status).toBe(404);
-    expect(await res.json()).toEqual({ ok: false, error: "no route: GET /amicode/fleet/sessions" });
+    expect(sessions.status).toBe(404);
+    expect(await sessions.json()).toEqual({ ok: false, reason: "no-fleet-peers" });
+    // /amicode/fleet/status is NOT app-called — it keeps the #391 base
+    // no-route 404, so the staging gate lighting NOTHING stays observable.
+    const status = await fetch(`${gatedOrigin}/amicode/fleet/status`, {
+      headers: { Authorization: `Basic ${engineToken}` },
+    });
+    expect(status.status).toBe(404);
+    expect(await status.json()).toEqual({ ok: false, error: "no route: GET /amicode/fleet/status" });
   });
 });
 
@@ -2306,10 +2318,16 @@ describe("#1524 observation-only base peer-studio — routes mount without hub-a
       const obsCap = await cap(obsO);
       // H3: the observation-only-with-no-peers boot is byte-identical to base.
       expect(obsCap).toEqual(baseCap);
-      // and explicitly: the fleet routes 404 with the base no-route shape.
+      // and explicitly (#1812): the app-called sessions route 404s with the
+      // DOCUMENTED no-fleet absence (the app's silent fallback — both boots
+      // answer it identically, which is why the byte-identity above holds);
+      // status — not app-called — keeps the base no-route shape.
       const s = obsCap.find((x) => x.p === "/amicode/fleet/sessions")!;
       expect(s.status).toBe(404);
-      expect(JSON.parse(s.body)).toEqual({ ok: false, error: "no route: GET /amicode/fleet/sessions" });
+      expect(JSON.parse(s.body)).toEqual({ ok: false, reason: "no-fleet-peers" });
+      const st = obsCap.find((x) => x.p === "/amicode/fleet/status")!;
+      expect(st.status).toBe(404);
+      expect(JSON.parse(st.body)).toEqual({ ok: false, error: "no route: GET /amicode/fleet/status" });
     } finally {
       await base.stop();
       await obs.stop();
