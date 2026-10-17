@@ -23,35 +23,29 @@ afterEach(() => {
   delete process.env.AMICODE_WIDGETS_DIR
 })
 
-const BUILTIN_ORDER = ["jump-back-in"]
-
 describe("loadRegistry", () => {
-  test("lists built-ins in default order with stable hashes", () => {
+  test("ships no built-in widgets (#1818: the jump-back-in tile's feed was removed)", () => {
     userDir()
     const { widgets, warnings } = loadRegistry()
-    expect(widgets.map((w) => w.manifest.id)).toEqual(BUILTIN_ORDER)
-    expect(widgets.every((w) => w.builtin && !w.overridden)).toBe(true)
+    expect(widgets).toEqual([])
+    expect(widgets.every((w) => !w.builtin)).toBe(true)
     expect(warnings).toEqual([])
-    const again = loadRegistry()
-    expect(again.widgets.map((w) => w.hash)).toEqual(widgets.map((w) => w.hash))
   })
 
-  test("user widget appears; same-id user widget wins with overridden flag", () => {
+  test("a user widget appears in the registry", () => {
     const root = userDir()
     mkdirSync(path.join(root, "my-widget"))
     writeFileSync(path.join(root, "my-widget", "manifest.toml"), 'id = "my-widget"\nname = "Mine"')
     writeFileSync(path.join(root, "my-widget", "widget.js"), "export default { mount() {} }")
-    mkdirSync(path.join(root, "jump-back-in"))
-    writeFileSync(path.join(root, "jump-back-in", "manifest.toml"), 'id = "jump-back-in"\nname = "My jump"')
-    writeFileSync(path.join(root, "jump-back-in", "widget.js"), "export default { mount() {} }")
 
-    const { widgets } = loadRegistry()
+    const { widgets, warnings } = loadRegistry()
     const mine = widgets.find((w) => w.manifest.id === "my-widget")!
     expect(mine.builtin).toBe(false)
     expect(mine.path).toContain("my-widget")
-    const bank = widgets.find((w) => w.manifest.id === "jump-back-in")!
-    expect(bank.overridden).toBe(true)
-    expect(bank.manifest.name).toBe("My jump")
+    expect(warnings).toEqual([])
+    // hashes are stable across loads
+    const again = loadRegistry()
+    expect(again.widgets.map((w) => w.hash)).toEqual(widgets.map((w) => w.hash))
   })
 
   test("bad user manifest → warning, widget skipped", () => {
@@ -68,12 +62,13 @@ describe("loadRegistry", () => {
 describe("widget routes", () => {
   test("widgetsResponse carries manifests + hash; widgetCodeResponse serves code", () => {
     userDir()
+    authorWidget({ id: "recent-runs", name: "Recent Runs", size: "hero", height: 220, js: "export default { mount() {} }" })
     const list = JSON.parse(widgetsResponse())
     expect(list.ok).toBe(true)
-    expect(list.widgets).toHaveLength(BUILTIN_ORDER.length)
+    expect(list.widgets).toHaveLength(1)
     expect(list.widgets[0].hash).toMatch(/^[0-9a-f]{16}$/)
 
-    const code = JSON.parse(widgetCodeResponse("jump-back-in"))
+    const code = JSON.parse(widgetCodeResponse("recent-runs"))
     expect(code.ok).toBe(true)
     expect(code.code).toContain("mount")
     expect(code.hash).toBe(list.widgets[0].hash)
@@ -86,19 +81,28 @@ describe("widget routes", () => {
     expect(JSON.parse(widgetCodeResponse("nope-widget")).ok).toBe(false)
   })
 
-  test("fork copies a built-in, rewrites id, appends origin; forked widget is valid in registry", () => {
+  test("fork copies a user widget, rewrites id, appends origin; forked widget is valid in registry", () => {
     const root = userDir()
-    const r = JSON.parse(forkWidgetResponse(JSON.stringify({ id: "jump-back-in", new_id: "my-jump", session: "s1" })))
+    authorWidget({
+      id: "source-widget",
+      name: "Source",
+      size: "tile",
+      height: 120,
+      js: "export default { mount() {} }",
+    })
+    const r = JSON.parse(
+      forkWidgetResponse(JSON.stringify({ id: "source-widget", new_id: "my-fork", session: "s1" })),
+    )
     expect(r.ok).toBe(true)
-    expect(r.id).toBe("my-jump")
-    expect(existsSync(path.join(root, "my-jump", "widget.js"))).toBe(true)
-    const manifest = readFileSync(path.join(root, "my-jump", "manifest.toml"), "utf8")
-    expect(manifest).toContain('id = "my-jump"')
+    expect(r.id).toBe("my-fork")
+    expect(existsSync(path.join(root, "my-fork", "widget.js"))).toBe(true)
+    const manifest = readFileSync(path.join(root, "my-fork", "manifest.toml"), "utf8")
+    expect(manifest).toContain('id = "my-fork"')
     expect(manifest).toContain("[origin]")
     expect(manifest).toContain('session = "s1"')
 
     const { widgets, warnings } = loadRegistry()
-    const forked = widgets.find((w) => w.manifest.id === "my-jump")!
+    const forked = widgets.find((w) => w.manifest.id === "my-fork")!
     expect(forked.builtin).toBe(false)
     expect(forked.manifest.origin?.session).toBe("s1")
     expect(warnings).toEqual([])
@@ -106,8 +110,17 @@ describe("widget routes", () => {
 
   test("fork errors: unknown source, existing target, bad body", () => {
     userDir()
+    authorWidget({
+      id: "source-widget",
+      name: "Source",
+      size: "tile",
+      height: 120,
+      js: "export default { mount() {} }",
+    })
     expect(JSON.parse(forkWidgetResponse(JSON.stringify({ id: "ghost" }))).ok).toBe(false)
-    expect(JSON.parse(forkWidgetResponse(JSON.stringify({ id: "jump-back-in", new_id: "jump-back-in" }))).ok).toBe(false)
+    expect(JSON.parse(forkWidgetResponse(JSON.stringify({ id: "source-widget", new_id: "source-widget" }))).ok).toBe(
+      false,
+    )
     expect(JSON.parse(forkWidgetResponse("not json")).ok).toBe(false)
   })
 
@@ -153,16 +166,6 @@ describe("authorWidget (Stage 2 chat authoring)", () => {
     if (!first.ok || !second.ok) return
     expect(second.hash).not.toBe(first.hash)
     expect(readFileSync(path.join(dir!, "records", "widget.js"), "utf8")).toContain("bye")
-  })
-
-  test("a user id overriding a builtin wins in the registry", () => {
-    userDir()
-    authorWidget({ id: "jump-back-in", name: "My Jump", size: "tile", height: 120, js: validJs })
-    const { widgets } = loadRegistry()
-    const w = widgets.find((x) => x.manifest.id === "jump-back-in")
-    expect(w?.builtin).toBe(false)
-    expect(w?.overridden).toBe(true)
-    expect(w?.manifest.name).toBe("My Jump")
   })
 
   test("names with quotes/punctuation round-trip through the manifest", () => {

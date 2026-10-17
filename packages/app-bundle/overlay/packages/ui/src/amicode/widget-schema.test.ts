@@ -96,11 +96,17 @@ describe("allowFetch", () => {
     expect(allowFetch("/amicode/dashboard")).toBe(true)
   })
   test("prefix rides and foreign paths rejected", () => {
-    expect(allowFetch("/amicode/problem-x")).toBe(false)
-    expect(allowFetch("/amicode/problemx?slug=s")).toBe(false)
+    expect(allowFetch("/amicode/profile-x")).toBe(false)
+    expect(allowFetch("/amicode/profilex?slug=s")).toBe(false)
     expect(allowFetch("/session")).toBe(false)
     expect(allowFetch("http://evil.example/amicode/profile")).toBe(false)
     expect(allowFetch(42)).toBe(false)
+  })
+  test("#1818: the deprecated research routes left the allowlist with their surfaces", () => {
+    expect(allowFetch("/amicode/problems")).toBe(false)
+    expect(allowFetch("/amicode/problem")).toBe(false)
+    expect(allowFetch("/amicode/problem?slug=s")).toBe(false)
+    expect(allowFetch("/amicode/run-status")).toBe(false)
   })
 })
 

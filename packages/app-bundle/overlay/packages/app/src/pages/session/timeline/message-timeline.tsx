@@ -18,15 +18,12 @@ import { useNavigate, useParams } from "@solidjs/router"
 import { useMutation } from "@tanstack/solid-query"
 import { createVirtualizer, defaultRangeExtractor, elementScroll, type VirtualItem } from "@tanstack/solid-virtual"
 import { Accordion } from "@opencode-ai/ui/accordion"
-import { AmicodeEntityRail } from "@opencode-ai/ui/amicode-entity-rail"
+import { registerAmicodeAskBridge } from "@opencode-ai/ui/amicode-ask-bridge"
+import { registerAmicodeApprovalBridge } from "@opencode-ai/ui/amicode-approval-bridge"
+import { registerAmicodeUiBridge } from "@opencode-ai/ui/amicode-ui-bridge"
+import { hasUserReplyAfter } from "@opencode-ai/ui/amicode-ask"
 import { DEFAULT_DOT_CENTRE, ThoughtRail, ThoughtRailLabel, THOUGHT_RAIL_INSET, shouldRenderRail, dotCentreForGroup } from "./thought-rail"
 import { formatElapsed, formatTokens, turnTokens } from "@opencode-ai/ui/amicode-thinking"
-import {
-  AmicodeEntityView,
-  entityLabel,
-  parseProblemResponse,
-  parseRunStatusResponse,
-} from "@opencode-ai/ui/amicode-entity-view"
 import { parseDashboardResponse, type DashboardState } from "@opencode-ai/ui/amicode-widget-grid"
 import { Button } from "@opencode-ai/ui/button"
 import { Card } from "@opencode-ai/ui/card"
@@ -84,14 +81,11 @@ import { useSessionKey } from "@/pages/session/session-layout"
 import { useServerSDK } from "@/context/server-sdk"
 import { usePlatform } from "@/context/platform"
 import { useServer } from "@/context/server"
-import { usePrompt } from "@/context/prompt"
 import { useSettings } from "@/context/settings"
 import { useTabs } from "@/context/tabs"
 import { amicodeGet, amicodePost } from "@/utils/amicode-fetch"
 import { fleetSessionsFromResponse, resolveHeaderProvenance } from "./session-header-provenance"
 import { findSessionOwnerInProjection, findSessionControlInProjection, writeAffordanceEnabled } from "@/components/session/session-fleet-peers"
-import { draftPrompt } from "@/utils/start-prompt"
-import { inAmicode, postAmicode } from "@/pages/session/use-amicode-commands"
 import { writeClipboardViaBridge } from "@/components/prompt-input/clipboard-bridge"
 import { legacySessionHref, requireServerKey, sessionHref } from "@/utils/session-route"
 import { useSDK } from "@/context/sdk"
@@ -338,28 +332,18 @@ export function MessageTimeline(props: {
   const command = useCommand()
   const { params, sessionKey } = useSessionKey()
 
-  // ── amicode: problem-UI wiring (ported from the pre-merge message-timeline;
-  // the mounts died with that file — see AMICODE-PATCHES.md "Upstream sync
-  // 2026-08-01"). The app owns transport (per-active-server Basic auth via
-  // amicodeGet) + the ring-2 entity dialog; the rail owns its own polling.
-  // Dialog resources are gated on the open signal, cleared on close.
+  // ── amicode: transcript bridges (the L2 amicode_* surfaces' transport).
+  // #1818: the deprecated entity surfaces (the problem-header rail chips, the
+  // entity-view dialog, and their /amicode/problem + /amicode/run-status reads)
+  // are REMOVED. What the timeline still hosts, headless:
+  //   • the ask bridge (the compat amicode_ask card submits its answer),
+  //   • the approval bridge (the LIVE harness control — the approval card
+  //     mints warrants through the ledger; its state derives from /amicode/
+  //     warrants rows, never from optimistic local state, so a press
+  //     round-trips through the ledger before it reads as granted),
+  //   • the ui bridge's LIVE transport: run-series fetch (the in-transcript
+  //     RunWindow) + the widget host (the in-chat widget preview).
   const server = useServer()
-  const prompt = usePrompt()
-  const [entityViewOpen, setEntityViewOpen] = createSignal(false)
-  const [problemRaw, { refetch: refetchProblem }] = createResource(
-    () => (entityViewOpen() ? 1 : undefined),
-    () => amicodeGet(server.current, "/amicode/problem"),
-  )
-  const problemView = createMemo(() => {
-    if (problemRaw.error) return parseProblemResponse({ ok: false, error: language.t("amicode.fetchFailed") })
-    const raw = problemRaw.latest
-    return raw === undefined ? undefined : parseProblemResponse(raw)
-  })
-  // Capability warrants (spec-20260727-164748 §9.5). Fetched unconditionally rather
-  // than gated on a dialog: the approval card lives IN the transcript, so it needs
-  // its state on first paint. Cheap — one ledger read, and the card's state derives
-  // from these rows rather than from optimistic local state, so a press round-trips
-  // through the ledger before it reads as granted.
   const [warrantsRaw, { refetch: refetchWarrants }] = createResource(() =>
     amicodeGet(server.current, "/amicode/warrants").catch(() => undefined),
   )
@@ -375,20 +359,12 @@ export function MessageTimeline(props: {
         bounds: (typeof row.bounds === "object" && row.bounds !== null ? row.bounds : {}) as Record<string, never>,
         expires_at: row.expires_at,
         issued_by: typeof row.issued_by === "string" ? row.issued_by : "unknown",
-        // Omitted when the server did not send it, so the rail chip drops the count
+        // Omitted when the server did not send it, so the card omits the count
         // rather than rendering a wrong "0 of N".
         ...(typeof row.solves_used === "number" ? { solves_used: row.solves_used } : {}),
       }]
     })
   })
-  // Run verdict data for the entity view: /amicode/run-status is fetched
-  // whenever a dialog opens (cheap, server-cached ~1s); only the Run dialog
-  // reads it. Same endpoint the rail's run chip polls.
-  const [runStatusRaw] = createResource(
-    () => (entityViewOpen() ? 1 : undefined),
-    () => amicodeGet(server.current, "/amicode/run-status"),
-  )
-  const entityRunStatus = createMemo(() => parseRunStatusResponse(runStatusRaw.latest))
   // #1452 (W4a): fleet-wide session provenance. Fetch the merged fleet-sessions
   // projection (W2 #1447) and resolve THIS session's amicode_owner overlay: a
   // remote-owned session renders a monitor icon + owner-name tooltip left of the
@@ -398,33 +374,79 @@ export function MessageTimeline(props: {
     () => server.current,
     () => amicodeGet(server.current, "/amicode/fleet/sessions").catch(() => undefined),
   )
-  const openEntityView = (kind: string, seq?: number) => {
-    setEntityViewOpen(true)
-    dialog.show(
-      () => (
-        <Dialog title={`AMICO · ${entityLabel(kind)}`} fit>
-          {/* fit-to-content goes near-fullscreen on run entities (long paths +
-              history) — cap the panel and let it scroll internally instead */}
-          <div style={{ width: "100%", "max-height": "68vh", "overflow-y": "auto" }}>
-            <AmicodeEntityView
-              view={problemView()}
-              kind={kind}
-              runStatus={entityRunStatus()}
-              anchorSeq={seq}
-              onDraftPrompt={(text) => {
-                dialog.close()
-                draftPrompt(prompt, text)
-              }}
-              onRetry={() => void refetchProblem()}
-              retryLabel={language.t("amicode.retry")}
-              editLabel={language.t("amicode.editInChat")}
-            />
-          </div>
-        </Dialog>
+  // The ask card submits the chosen option as the user's next chat message; the
+  // staleness guard needs the live message list to disable a superseded card.
+  const askDispose = registerAmicodeAskBridge({
+    send: (text) => {
+      const id = sessionID()
+      if (!id) return
+      // #1206: pass the session's current agent so an amicode_ask answer doesn't
+      // silently flip the session to the global default (plan).
+      void sdk().client.session.promptAsync({ sessionID: id, agent: info()?.agent, parts: [{ type: "text", text }] })
+    },
+    hasUserReplyAfter: (messageID) => hasUserReplyAfter(sessionMessages(), messageID),
+  })
+  onCleanup(askDispose)
+  // The approval bridge: presses POST /amicode/approve (the ledger), never the
+  // chat — an approval delivered as a chat message would leave the only
+  // provenance as "the agent says the user approved".
+  const approvalDispose = registerAmicodeApprovalBridge({
+    approve: (request) => {
+      void amicodePost(server.current, "/amicode/approve", {
+        plan_hash: request.plan_hash,
+        bounds: request.bounds,
+      })
+        // Refetch so the card flips to "granted" from the LEDGER rather than
+        // from optimistic local state — same discipline as deriving state from
+        // the durable log in the first place.
+        .then(() => void refetchWarrants())
+        .catch(() => void refetchWarrants())
+    },
+    warrants: () => warrants() ?? [],
+  })
+  onCleanup(approvalDispose)
+  // The widget host: the in-chat preview (amicode_author_widget) reuses the home
+  // grid's frame kernel; server context is resolved live per call. pin = GET
+  // current dashboard, append this widget if absent, POST the full state back
+  // (applySave treats the body as the whole state, so a partial POST would wipe
+  // other tiles).
+  const uiBridgeDispose = registerAmicodeUiBridge({
+    fetchRunSeries: (run, lab) =>
+      amicodeGet(
+        server.current,
+        `/amicode/run-series?run=${encodeURIComponent(run)}${lab ? `&lab=${encodeURIComponent(lab)}` : ""}`,
       ),
-      () => setEntityViewOpen(false),
-    )
-  }
+    widgetHost: {
+      frameSrc: (id, hash) => {
+        const url = server.current?.http.url
+        return url
+          ? new URL(
+              `/amicode/widget-frame?id=${encodeURIComponent(id)}&h=${encodeURIComponent(hash)}`,
+              url,
+            ).toString()
+          : ""
+      },
+      callbacks: {
+        fetch: (path) => amicodeGet(server.current, path),
+        action: async () => ({ ok: true }),
+        prompt: (text) => {
+          const id = sessionID()
+          // #1206: pass the session's current agent so a widget prompt doesn't
+          // silently flip the session to the global default (plan).
+          if (id) void sdk().client.session.promptAsync({ sessionID: id, agent: info()?.agent, parts: [{ type: "text", text }] })
+        },
+        open: () => {},
+      },
+      pin: async (id) => {
+        const raw = await amicodeGet(server.current, "/amicode/dashboard")
+        const state: DashboardState = parseDashboardResponse(raw) ?? { version: 1, widget: [] }
+        if (!state.widget.some((e) => e.id === id))
+          state.widget = [...state.widget, { key: id, id, hidden: false, config: {} }]
+        return amicodePost(server.current, "/amicode/dashboard", state)
+      },
+    },
+  })
+  onCleanup(uiBridgeDispose)
 
   const ownerSessionKey = sessionKey()
   const cached = timelineCache.get(ownerSessionKey)
@@ -2615,92 +2637,11 @@ export function MessageTimeline(props: {
                 )}
               </Show>
             </div>
-            {/* amicode: problem-header rail (renders only when the session has
-                amicode_* parts) + ask/ui bridges — ported from the pre-merge
-                message-timeline (AMICODE-PATCHES.md "Upstream sync 2026-08-01") */}
-            <AmicodeEntityRail
-              messages={sessionMessages()}
-              partsFor={getMsgParts}
-              fetchProblem={() => amicodeGet(server.current, "/amicode/problem")}
-              fetchRunStatus={() => amicodeGet(server.current, "/amicode/run-status")}
-              fetchRunSeries={(run, lab) =>
-                amicodeGet(
-                  server.current,
-                  `/amicode/run-series?run=${encodeURIComponent(run)}${lab ? `&lab=${encodeURIComponent(lab)}` : ""}`,
-                )
-              }
-              widgetHost={{
-                // Stage 2: the in-chat widget preview reuses the home grid's
-                // frame kernel; server context is resolved live per call.
-                frameSrc: (id, hash) => {
-                  const url = server.current?.http.url
-                  return url
-                    ? new URL(
-                        `/amicode/widget-frame?id=${encodeURIComponent(id)}&h=${encodeURIComponent(hash)}`,
-                        url,
-                      ).toString()
-                    : ""
-                },
-                callbacks: {
-                  fetch: (path) => amicodeGet(server.current, path),
-                  action: async () => ({ ok: true }),
-                  prompt: (text) => {
-                    const id = sessionID()
-                    // #1206: pass the session's current agent so a widget prompt
-                    // doesn't silently flip the session to the global default (plan).
-                    if (id) void sdk().client.session.promptAsync({ sessionID: id, agent: info()?.agent, parts: [{ type: "text", text }] })
-                  },
-                  open: () => {},
-                },
-                // pin = GET current dashboard, append this widget if absent, POST
-                // the full state back (applySave treats the body as the whole
-                // state, so a partial POST would wipe other tiles).
-                pin: async (id) => {
-                  const raw = await amicodeGet(server.current, "/amicode/dashboard")
-                  const state: DashboardState = parseDashboardResponse(raw) ?? { version: 1, widget: [] }
-                  if (!state.widget.some((e) => e.id === id))
-                    state.widget = [...state.widget, { key: id, id, hidden: false, config: {} }]
-                  return amicodePost(server.current, "/amicode/dashboard", state)
-                },
-              }}
-              onOpenEntity={openEntityView}
-              onDraftPrompt={(text) => draftPrompt(prompt, text)}
-              editLabel={language.t("amicode.editInChat")}
-              onInspectRun={inAmicode() ? () => postAmicode("amicode.openInspector") : undefined}
-              retryLabel={language.t("amicode.retry")}
-              unavailableLabel={language.t("amicode.unavailable")}
-              onAsk={(text) => {
-                const id = sessionID()
-                if (!id) return
-                // #1206: the amicode_ask answer is a new user message — pass the
-                // session's current agent so it doesn't silently flip to plan.
-                void sdk().client.session.promptAsync({ sessionID: id, agent: info()?.agent, parts: [{ type: "text", text }] })
-              }}
-              // Warrant transport (spec-20260727-164748 §9.5). NOT routed through
-              // onAsk on purpose: an approval delivered as a chat message would be
-              // read by the agent, which would then write the ledger row, leaving
-              // the only provenance as "the agent says the user approved".
-              warrants={() => warrants() ?? []}
-              onApprove={(request) => {
-                void amicodePost(server.current, "/amicode/approve", {
-                  plan_hash: request.plan_hash,
-                  bounds: request.bounds,
-                })
-                  // Refetch so the card flips to "granted" from the LEDGER rather
-                  // than from optimistic local state — same discipline as deriving
-                  // state from the durable log in the first place.
-                  .then(() => void refetchWarrants())
-                  .catch(() => void refetchWarrants())
-              }}
-              // #1585: the rail self-heals /amicode/problem on the stream's
-              // disconnect→connect edge, driven by the app's live SSE status.
-              streamConnected={() => serverSDK().event.status() === "connected"}
-              // #1617: a WEDGE (fan-in flowing stuck false) keeps the socket
-              // nominally connected, so the edge above never fires. The gap-frame
-              // resync counter bumps on the fan-in overflow signal; the rail
-              // refetches on its advance so a wedged view heals without a reload.
-              forceResync={() => serverSDK().event.resyncCount()}
-            />
+            {/* amicode#1818: the entity rail (problem-header chips for the
+                deprecated system/formulation/run/pulse/device surfaces) was
+                removed. Its LIVE transports — the ask, approval, and ui
+                bridges — are registered headless at the top of this component,
+                so the transcript's amicode_* parts render exactly as before. */}
             {/* amicode#271: bubble inside the header — naturally below the
                 title row + chip rail */}
             <Show when={activeBubble()}>

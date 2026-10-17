@@ -28,9 +28,10 @@ export const AMICODE_STARTERS: readonly { label: string; prompt: string }[] = [
     label: "Help me with a coding task",
     prompt: "I have a coding task — let's get started",
   },
-  // NOTE(spec B): the static "Resume my pulse design" chip was replaced by the
-  // conditional resumeName-driven chip below — Resume renders only when a
-  // problem workspace actually exists (no empty chrome).
+  // NOTE(spec B → #1818): the conditional "Resume <problem>" chip was removed
+  // with the deprecated problem-resume readout (its /amicode/problems feed is
+  // gone); the static "Warm-start from a previous result" chip below covers
+  // the resume intent without the deprecated feed.
   {
     label: "Warm-start from a previous result",
     prompt: "warm-start a new experiment from my previous results",
@@ -57,12 +58,9 @@ export type StarterChip = { label: string; prompt: string; dataSlot?: string }
 
 export function AmicodeStarterChips(props: {
   onStart: (prompt: string) => void
-  // Dynamic chip set, ranked by the caller from the problem history
-  // (Resume → Warm-start → Retry → static pad). Falls back to AMICODE_STARTERS
-  // + the legacy resumeName/onResume pair when `chips` is not given.
+  // Dynamic chip set, ranked by the caller. Falls back to AMICODE_STARTERS
+  // when `chips` is not given.
   chips?: StarterChip[]
-  resumeName?: string
-  onResume?: () => void
 }) {
   // The chips' OWN wrapping row (Kate: separate container from the folder
   // picker) — centered, quiet pills. Class-based styling so hover works.
@@ -76,25 +74,18 @@ export function AmicodeStarterChips(props: {
       <Show
         when={props.chips}
         fallback={
-          <>
-            <For each={AMICODE_STARTERS}>
-              {(starter) => (
-                <button
-                  type="button"
-                  data-slot="amicode-gs-starter"
-                  class={pill}
-                  onClick={() => props.onStart(starter.prompt)}
-                >
-                  {starter.label}
-                </button>
-              )}
-            </For>
-            <Show when={props.resumeName && props.onResume}>
-              <button type="button" data-slot="amicode-gs-resume" class={pill} onClick={() => props.onResume?.()}>
-                Resume {props.resumeName}
+          <For each={AMICODE_STARTERS}>
+            {(starter) => (
+              <button
+                type="button"
+                data-slot="amicode-gs-starter"
+                class={pill}
+                onClick={() => props.onStart(starter.prompt)}
+              >
+                {starter.label}
               </button>
-            </Show>
-          </>
+            )}
+          </For>
         }
       >
         {(chips) => (
@@ -118,9 +109,6 @@ export function AmicodeStarterChips(props: {
 
 export function AmicodeGettingStarted(props: {
   onStart: (prompt: string) => void
-  // spec B: Resume verb — set only when a problem workspace exists (no empty chrome)
-  resumeName?: string
-  onResume?: () => void
   // amicode: the compact new-session layout hides the how-it-works steps (tagline
   // + chips only). Defaults on so the classic NewSessionView is unchanged.
   showSteps?: boolean
@@ -197,25 +185,6 @@ export function AmicodeGettingStarted(props: {
             </button>
           )}
         </For>
-        {props.resumeName && props.onResume && (
-          <button
-            type="button"
-            data-slot="amicode-gs-resume"
-            onClick={() => props.onResume?.()}
-            style={{
-              border: "1px solid var(--v2-icon-icon-accent)",
-              "border-radius": "var(--radius-md)",
-              background: "var(--v2-background-bg-layer-02)",
-              color: "var(--v2-text-text-base)",
-              padding: "4px 12px",
-              "font-size": "12px",
-              "line-height": "16px",
-              cursor: "pointer",
-            }}
-          >
-            Resume “{props.resumeName}”
-          </button>
-        )}
       </div>
     </div>
   )
