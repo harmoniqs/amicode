@@ -245,8 +245,9 @@ describe("mode cards — frontmatter (boot-check fields)", () => {
 // the mode binding — spec-gate mechanics, roles, probe/experiment boundary);
 // the cards now name both, and this floor pins the pairing.
 const MODE_SKILL: Record<CardName, string> = {
-  // the dev mode's protocol skill (its id keeps the pre-rename mode name)
-  "develop.md": "autodev",
+  // the dev mode's protocol skill — the merged develop skill (one skill per
+  // mode, mirroring research; the former autodev id read-resolves to it)
+  "develop.md": "develop",
   // the research mode's protocol skill (ex-autoresearch; old id read-resolves)
   "research.md": "research",
 };
