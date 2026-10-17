@@ -425,12 +425,18 @@ export function registerModelRoutingRoutes(
 }
 
 // ── #391: the fleet routes — STAGED SURFACES ────────────────────────────────
-// Registered ONLY by the entitlement-staged path below (createAmicodeService's
-// fleet option → stageFleetDataPlane). A boot without a staged fleet plane
-// never mounts these: /amicode/fleet/* answers the base no-route 404, which
-// is exactly the H3 byte-identity assertion. The routes are new fleet-class
-// surfaces (ADR-0004 d.3's "data-plane routing" class) declared by the
-// overlay manifest the staging gate validated.
+// The FLEET-DATA handlers are registered ONLY by the entitlement-staged path
+// below (createAmicodeService's fleet option → stageFleetDataPlane /
+// baseStudioActivates). The routes the APP calls (sessions, grants,
+// creation-target, peer-home-base) are ADDITIONALLY pre-mounted with the
+// #1812 no-topology absence in createAmicodeService BEFORE this block, so a
+// boot that never stages answers the documented {ok:false,
+// reason:"no-fleet-peers"} 404 (the app's silent fallback — the panel render
+// gate refuses the generic no-route 404 they used to serve) while a staged
+// boot re-adds the same keys here with the REAL handlers (server.add is
+// last-wins) — the fleet-data paths are untouched. The routes are new
+// fleet-class surfaces (ADR-0004 d.3's "data-plane routing" class) declared
+// by the overlay manifest the staging gate validated.
 
 export interface FleetRouteDeps {
   /** The late-bound routing mode (data-driven per request). */
@@ -1039,6 +1045,23 @@ export function createAmicodeService(
   // observation-only base peer). Left undefined where no fleet-peer provider /
   // owner map exists → the route answers its not-served 404.
   let fleetSessionStatusDeps: FleetSessionStatusRouteDeps | undefined;
+  // #1812: the app-called fleet routes' no-topology absence. #1768's
+  // discipline (session-status) extended: a machine without a fleet topology
+  // (the unarmed hub — hub_fleet_wiring resolves no server/standalone id, an
+  // unentitled staging refusal, a fleet-of-one observer) must answer the
+  // DOCUMENTED 404 {ok:false, reason:"no-fleet-peers"} — the body
+  // session-status serves, the app's silent-fallback signal — never the
+  // generic no-route 404 the panel render gate refuses. Registered FIRST so
+  // whichever boot branch stages below re-adds the same route keys with the
+  // REAL handlers (server.add is last-wins): the fleet-data paths are
+  // untouched, and a staged/topology-bearing boot is byte-identical. Only the
+  // routes the app calls (sessions + grants + creation-target +
+  // peer-home-base); /amicode/fleet/status — not app-called — keeps the #391
+  // base no-route 404, preserving the H3 discipline where it still holds.
+  const noFleetPeersBody = JSON.stringify({ ok: false, reason: "no-fleet-peers" });
+  for (const path of ["/amicode/fleet/sessions", "/amicode/fleet/grants", "/amicode/fleet/creation-target", "/amicode/fleet/peer-home-base"]) {
+    server.add("GET", path, () => ({ status: 404, body: noFleetPeersBody }));
+  }
   // #391: the fleet plane stages ONLY through the resolver's dispatch. No
   // entitlement → this block never arms anything → zero fleet surfaces,
   // byte-identical.
