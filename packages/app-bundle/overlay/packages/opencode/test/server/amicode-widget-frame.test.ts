@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { WIDGET_CSP, buildFrameHtml, embedCode, widgetFrameHtml } from "../../src/server/amicode/widget-frame-html"
@@ -36,10 +36,14 @@ describe("buildFrameHtml", () => {
 })
 
 describe("widgetFrameHtml", () => {
-  test("serves a frame for a builtin; bad/unknown ids get inert documents", () => {
+  test("serves a frame for a registered widget; bad/unknown ids get inert documents", () => {
     dir = mkdtempSync(path.join(tmpdir(), "amc-frame-"))
     process.env.AMICODE_WIDGETS_DIR = dir
-    const ok = widgetFrameHtml("jump-back-in")
+    // #1818: no built-ins ship — seed a user widget as the frame fixture.
+    mkdirSync(path.join(dir, "my-widget"), { recursive: true })
+    writeFileSync(path.join(dir, "my-widget", "manifest.toml"), 'id = "my-widget"\nname = "Mine"')
+    writeFileSync(path.join(dir, "my-widget", "widget.js"), "export default { mount() {} }")
+    const ok = widgetFrameHtml("my-widget")
     expect(ok.ok).toBe(true)
     expect(ok.html).toContain("__amcWidgetCode")
     expect(widgetFrameHtml("../etc").ok).toBe(false)

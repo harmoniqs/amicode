@@ -1,6 +1,6 @@
 import type { Message, UserMessage } from "@opencode-ai/sdk/v2"
 import { createEffect, createMemo, createResource, onCleanup, untrack, type Accessor } from "solid-js"
-import { shouldRefetchOnReconnect, shouldRefetchOnResync } from "@opencode-ai/ui/amicode-entity-view"
+import { shouldRefetchOnReconnect, shouldRefetchOnResync } from "@opencode-ai/ui/amicode-refetch-edge"
 import { useServerSync } from "@/context/server-sync"
 import { useSync } from "@/context/sync"
 import { same } from "@/utils/same"
@@ -76,7 +76,8 @@ export function createTimelineModel(input: {
   // replay, and neither reconcileFromStatus (status only) nor the reconnect
   // bootstrap (list/status/global) reloads the viewed session's messages — so
   // the rail froze until a manual reload re-ran the resource above. Mirror the
-  // entity rail's two self-heal effects (entity-rail.tsx): a forced
+  // entity rail's two self-heal effects (the rail itself was removed in
+  // #1818; the EDGE PREDICATES live on in ui/amicode/refetch-edge.ts): a forced
   // session.sync on the disconnect→connect rising edge AND on any resync-token
   // advance (the wedge case, where status stays "connected"). `prev` is a plain
   // closure `let` — each effect tracks ONLY its signal, never the store or the
