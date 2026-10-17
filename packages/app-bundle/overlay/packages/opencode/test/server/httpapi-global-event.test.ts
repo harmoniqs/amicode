@@ -4,8 +4,8 @@
 // carry time + seq, a client abort releases its subscription, and the lane's
 // bounded-write + tick-telemetry machinery covers the route (SSE-TICK lines
 // flow, a stalled write drops, never SELF-STALLs). Sync copies are opt-in per
-// subscription (#1778's subscription flag rides with the port; main's
-// patch-body wire cuts are P3 and stay out).
+// subscription (#1778's subscription flag rides with the port; the patch-body
+// wire cut is #1814 P3, ported from main's 06eac851 below).
 //
 // Lane adaptation vs main's suite: a cursor that is not `<epoch>:<seq>` (the
 // lane's client tracks payload ids) resolves against retained frames instead
@@ -311,6 +311,219 @@ describe("global event stream — sync copies are opt-in (#1778 subscription fla
         expect(typesOf(frames)).toEqual(["test.before", "sync", "test.after"])
         expect(seqsOf(frames)).toEqual([1, 2, 3].map((n) => start.seq + n))
       }),
+  )
+})
+
+// ── #1778/#1814: summary diffs carry no patch bodies on the wire ────────────────
+//
+// A per-turn summary as the engine publishes it: every changed file with its
+// full patch text (measured up to 12.3 MB in one event on the Studio; the live
+// flood baseline is 1,800 frames/30s during a tool-heavy turn). On the wire
+// each diff keeps its file, status and counts and drops its patch body; the
+// surfaces that render a patch fetch the stored message on demand.
+const summaryDiffs = () => [
+  { file: "src/app.ts", patch: "@@ -1,2 +1,3 @@\n-old\n+new\n+more\n", additions: 2, deletions: 1, status: "modified" },
+  { file: "src/new.ts", patch: `@@ -0,0 +1,400 @@\n${"+line\n".repeat(400)}`, additions: 400, deletions: 0, status: "added" },
+  { file: "src/gone.ts", patch: "@@ -1 +0,0 @@\n-gone\n", additions: 0, deletions: 1, status: "deleted" },
+]
+const stripped = (diffs: ReturnType<typeof summaryDiffs>) => diffs.map(({ patch: _patch, ...rest }) => rest)
+
+/** A summary-bearing durable event and its sync copy, as the event-v2 bridge emits them. */
+const summaryTwin = (id: string, type: "message.updated" | "session.updated") => {
+  const info =
+    type === "message.updated"
+      ? { id: "msg_i1778", sessionID: "ses_i1778", role: "user", summary: { title: "Edit", diffs: summaryDiffs() } }
+      : { id: "ses_i1778", title: "Session", summary: { additions: 402, deletions: 2, files: 3, diffs: summaryDiffs() } }
+  const properties = { sessionID: "ses_i1778", info }
+  const source = { directory: "/tmp/i1778", payload: { id, type, properties } }
+  const copy = {
+    directory: "/tmp/i1778",
+    payload: { type: "sync", syncEvent: { id, type: `${type}.1`, seq: 3, aggregateID: "ses_i1778", data: properties } },
+  }
+  return { source, copy }
+}
+
+describe("global event stream — summary diffs carry no patch bodies on the wire (#1778, #1814 P3)", () => {
+  for (const type of ["message.updated", "session.updated"] as const) {
+    it.live(`a live ${type} keeps file, status and counts but drops patch bodies; the bus payload keeps them`, () =>
+      Effect.gen(function* () {
+        const plain = yield* connect()
+        const synced = yield* connect({ headers: { "x-opencode-sync-copies": "true" } })
+        yield* plain.next
+        yield* synced.next
+        const seen: GlobalEvent[] = []
+        const listener = (event: GlobalEvent) => seen.push(event)
+        GlobalBus.on("event", listener)
+        yield* Effect.addFinalizer(() => Effect.sync(() => GlobalBus.off("event", listener)))
+
+        const { source, copy } = summaryTwin(`evt_i1778_${type}`, type)
+        GlobalBus.emit("event", source)
+        GlobalBus.emit("event", copy)
+
+        const live = yield* plain.next
+        expect(live.data.payload.type).toBe(type)
+        const info = live.data.payload.properties.info
+        expect(info.summary.diffs).toEqual(stripped(summaryDiffs()))
+        expect(live.raw).not.toContain('"patch"')
+        // everything else in the event is as published
+        expect({ ...info, summary: { ...info.summary, diffs: undefined } }).toEqual({
+          ...source.payload.properties.info,
+          summary: { ...source.payload.properties.info.summary, diffs: undefined },
+        })
+        // the projection is wire-only: in-process subscribers see the full event, untouched
+        expect(seen.find((event) => event.payload.type === type)?.payload.properties.info.summary.diffs).toEqual(
+          summaryDiffs(),
+        )
+
+        // the opt-in subscriber gets the same stripped frame, and a full sync copy
+        // (the replica replays it into its own store, so it keeps the patches)
+        const [same, sync] = yield* synced.take(2)
+        expect(same.raw).toBe(live.raw)
+        expect(same.id).toBe(live.id)
+        expect(sync.data.payload.type).toBe("sync")
+        expect(sync.data.payload.syncEvent.data.info.summary.diffs).toEqual(summaryDiffs())
+      }),
+    )
+  }
+
+  it.live("a replayed summary frame is byte-identical to the live one", () =>
+    Effect.gen(function* () {
+      const a = yield* connect()
+      const cursor = (yield* a.next).id!
+      const { source } = summaryTwin("evt_i1778_replayed", "message.updated")
+      GlobalBus.emit("event", source)
+      const live = yield* a.next
+      a.abort()
+
+      const b = yield* connect({ headers: { "last-event-id": cursor } })
+      yield* b.next
+      const replayed = yield* b.next
+      expect(replayed.id).toBe(live.id)
+      expect(replayed.raw).toBe(live.raw)
+      expect(replayed.raw).not.toContain('"patch"')
+    }),
+  )
+})
+
+// ── #1814 P3: the flood byte report — a file-heavy turn on the global wire ─────
+//
+// The live flood measured 1,800 frames/30s (~60fps) during running turns, the
+// biggest bodies being per-turn summaries carrying every file's full patch
+// text. This report measures what one such turn costs every subscriber BEFORE
+// the wire cut (each event serialized whole — the pre-port framing formula)
+// and AFTER (the wire as this engine serves it). The ceiling is #1803's P3
+// per-frame bound (256 KB). Scope: the patch-body cut only — main's shell-
+// output throttling and its combined fixture turn ride 06eac851's neighbors
+// (6fdcbb77/72525732) and stay follow-up slices.
+const FLOOD = { edits: 20, summaryFiles: 88, patchBytes: 30_000 }
+const FLOOD_CEILING = 256 * 1024
+const KB = 1024
+
+// the engine's SSE framing (the encoder omits the default `event: message` line)
+const sseBytes = (id: string, data: string) => Buffer.byteLength(`id: ${id}\ndata: ${data}\n\n`)
+
+const patchFor = (file: string, bytes: number) => {
+  const line = `+  export const value_${file.length} = "${"x".repeat(60)}"\n`
+  return `--- a/${file}\n+++ b/${file}\n@@ -1,0 +1,${Math.ceil(bytes / line.length)} @@\n${line.repeat(Math.ceil(bytes / line.length))}`
+}
+
+describe("global event stream — file-heavy turn flood byte report (#1814 P3)", () => {
+  it.live("a file-heavy turn's biggest summary frames drop under the 256 KB ceiling", () =>
+    Effect.gen(function* () {
+      const a = yield* connect()
+      yield* a.next
+      const sessionID = "ses_i1814_flood"
+      const before: number[] = []
+      const emitted: { event: GlobalEvent }[] = []
+
+      // Emit like the event-v2 bridge: each durable event through the bus, and
+      // record the pre-port wire formula (the whole event serialized) for it.
+      const publish = (event: GlobalEvent) => {
+        GlobalBus.emit("event", event)
+        emitted.push({ event })
+        before.push(sseBytes(`${GlobalBus.epoch}:${GlobalBus.seq}`, JSON.stringify(event)))
+      }
+
+      // the turn: a stream of edit-tool completions, then the per-turn summary
+      // carrying every changed file with its full patch text.
+      for (let i = 0; i < FLOOD.edits; i++) {
+        const file = `packages/app/src/feature/module-${i}.ts`
+        publish({
+          directory: "/tmp/i1814",
+          payload: {
+            id: `evt_i1814_edit_${i}`,
+            type: "message.part.updated",
+            properties: {
+              sessionID,
+              part: { id: `prt_i1814_${i}`, sessionID, messageID: "msg_i1814_asst", type: "tool", callID: `edit_${i}`, tool: "edit", state: { status: "completed", title: file } },
+              time: i,
+            },
+          },
+        })
+      }
+      const diffs = Array.from({ length: FLOOD.summaryFiles }, (_, i) => ({
+        file: `packages/app/src/feature/module-${i}.ts`,
+        patch: patchFor(`packages/app/src/feature/module-${i}.ts`, FLOOD.patchBytes),
+        additions: 400,
+        deletions: 12,
+        status: "modified",
+      }))
+      publish({
+        directory: "/tmp/i1814",
+        payload: {
+          id: "evt_i1814_summary",
+          type: "message.updated",
+          properties: { sessionID, info: { id: "msg_i1814_user", sessionID, role: "user", summary: { title: "Edit 88 modules", diffs } } },
+        },
+      })
+      publish({
+        directory: "/tmp/i1814",
+        payload: {
+          id: "evt_i1814_session",
+          type: "session.updated",
+          properties: { sessionID, info: { id: sessionID, title: "flood", summary: { additions: 400 * 88, deletions: 12 * 88, files: 88, diffs } } },
+        },
+      })
+
+      const frames = yield* a.take(emitted.length)
+      // the wire carries exactly the turn's events — no sync copy, no hole
+      expect(frames.filter((f) => f.data.payload.type === "sync")).toEqual([])
+      // the BEFORE formula is the wire's own framing
+      for (const frame of frames) expect(sseBytes(frame.id!, frame.raw)).toBe(frame.bytes)
+
+      const total = (sizes: number[]) => sizes.reduce((sum, n) => sum + n, 0)
+      const largest = (sizes: number[]) => Math.max(...sizes)
+      const after = frames.map((frame) => frame.bytes)
+      const summaryFrames = frames.filter((f) => f.data.payload.type !== "message.part.updated")
+      const report = {
+        before: { frames: before.length, totalBytes: total(before), largestFrameBytes: largest(before) },
+        after: { frames: after.length, totalBytes: total(after), largestFrameBytes: largest(after) },
+        summaryFrames: {
+          beforeBytes: total(before.slice(-summaryFrames.length)),
+          afterBytes: total(summaryFrames.map((frame) => frame.bytes)),
+        },
+      }
+      console.log(`[#1814 flood byte report] ${JSON.stringify(report)}`)
+      console.log(
+        `[#1814 flood byte report] total ${(report.before.totalBytes / KB / KB).toFixed(2)} MiB -> ${(report.after.totalBytes / KB / KB).toFixed(2)} MiB` +
+          ` (${(100 * (1 - report.after.totalBytes / report.before.totalBytes)).toFixed(1)}% cut); largest frame ${(report.before.largestFrameBytes / KB).toFixed(1)} KiB -> ${(report.after.largestFrameBytes / KB).toFixed(1)} KiB;` +
+          ` summary frames ${report.summaryFrames.beforeBytes} -> ${report.summaryFrames.afterBytes} bytes`,
+      )
+
+      // the fixture is honest: BEFORE breaks the ceiling
+      expect(report.before.largestFrameBytes).toBeGreaterThan(FLOOD_CEILING)
+      // AFTER: every frame on the wire is under the measured ceiling
+      expect(report.after.largestFrameBytes).toBeLessThan(FLOOD_CEILING)
+      // and the stream measurably shrank
+      expect(report.after.totalBytes).toBeLessThan(report.before.totalBytes)
+      // the wire keeps each summary's file list — patch-less, not vanished
+      for (const frame of summaryFrames) {
+        const wireDiffs = frame.data.payload.properties.info.summary.diffs
+        expect(wireDiffs).toHaveLength(FLOOD.summaryFiles)
+        expect(wireDiffs.every((diff: any) => diff.file && diff.additions !== undefined && diff.status !== undefined)).toBe(true)
+        expect(frame.raw).not.toContain('"patch"')
+      }
+    }),
   )
 })
 
