@@ -16,8 +16,10 @@
 //    payload ids (#1264), and wire compatibility requires its cursors to keep
 //    being served — resolved when the retained history covers them, reset as
 //    evicted when it does not;
-//  - main's patch-body wire cut (#1778's wireEvent, 06eac851) is P3 and is
-//    deliberately NOT ported — the serialized frame is the whole event.
+//  - #1814 P3 ports main's patch-body wire cut (#1778's wireEvent, 06eac851):
+//    the serialized frame and the instance route's payload view both strip
+//    summary-diff patch bodies (`wirePayload` below), while the `event` the
+//    buffer keeps — what in-process subscribers and storage see — is whole.
 import { GlobalBus, type GlobalEvent } from "./global"
 
 export type Frame = {
@@ -257,6 +259,48 @@ export const GlobalEventReplay = new ReplayBuffer({
   start: GlobalBus.seq,
 })
 
+/**
+ * The wire form of an event payload (#1778, #1814 P3). A per-turn summary
+ * (`info.summary.diffs` of a message or session) carries the full patch text
+ * of every changed file — measured up to 12.3 MB in one event. On the wire each
+ * diff keeps its file, status and counts and drops its patch body; the surfaces
+ * that render a patch fetch the stored message on demand. Only the wire forms
+ * change: the event object (what in-process subscribers and storage see) is
+ * never mutated, and a sync copy is sent whole — its subscriber replays it into
+ * a store of its own, which must keep the full record.
+ */
+export function wirePayload<T extends { type?: string; properties?: any }>(payload: T): T {
+  if (!payload || typeof payload !== "object" || payload.type === "sync") return payload
+  const info = payload.properties?.info
+  const diffs = info?.summary?.diffs
+  if (!Array.isArray(diffs) || !diffs.some((diff) => diff && typeof diff === "object" && "patch" in diff)) return payload
+  return {
+    ...payload,
+    properties: {
+      ...payload.properties,
+      info: {
+        ...info,
+        summary: {
+          ...info.summary,
+          diffs: diffs.map((diff) => {
+            if (!diff || typeof diff !== "object" || !("patch" in diff)) return diff
+            const { patch: _patch, ...rest } = diff
+            return rest
+          }),
+        },
+      },
+    },
+  }
+}
+
+/** The wire form of a global event: `wirePayload` over its payload. */
+export function wireEvent(event: GlobalEvent): GlobalEvent {
+  const payload = event.payload
+  if (!payload || typeof payload !== "object" || payload.type === "sync") return event
+  const next = wirePayload(payload)
+  return next === payload ? event : { ...event, payload: next }
+}
+
 GlobalBus.tap((event, seq) => {
   // A sync copy whose sequence was already handed out mirrors its source. One
   // that consumed a fresh sequence (no source framed nearby) is a frame of its
@@ -265,7 +309,7 @@ GlobalBus.tap((event, seq) => {
   let data: string
   try {
     // serialized once: every subscriber, live or replayed, gets this same frame
-    data = JSON.stringify(event)
+    data = JSON.stringify(wireEvent(event))
   } catch (error) {
     // An unserializable event cannot be framed; its sequence becomes a hole the
     // client detects (heartbeats carry the current sequence), never a dead stream.

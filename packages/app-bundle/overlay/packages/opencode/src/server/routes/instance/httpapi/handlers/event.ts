@@ -1,5 +1,5 @@
 import { InstanceState } from "@/effect/instance-state"
-import { GlobalEventReplay, formatID, type Frame } from "@/bus/global-replay"
+import { GlobalEventReplay, formatID, wirePayload, type Frame } from "@/bus/global-replay"
 import { sseTickTelemetry } from "@/server/shared/sse-tick-telemetry"
 import { armSseSocketKeepalive } from "@/server/shared/tcp-keepalive"
 import { NodeHttpServerRequest } from "@effect/platform-node"
@@ -87,7 +87,11 @@ function eventResponse() {
       return true
     }
     const payloadOf = (frame: Frame): SsePayload => {
-      const payload = frame.event.payload as SsePayload
+      // #1814 P3 (main's #1778 wire cut, lane-adapted): this route serializes
+      // its payload view from the frame's live `event`, so the patch-body strip
+      // must be applied HERE too — the shared buffer's serialized `data` covers
+      // only the global route. In-process subscribers keep the whole event.
+      const payload = wirePayload(frame.event.payload) as SsePayload
       return { id: payload.id, type: payload.type, properties: payload.properties }
     }
     // The shared replay buffer is the connection's live source: one buffer per
