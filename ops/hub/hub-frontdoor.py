@@ -1400,6 +1400,15 @@ class Group:
                         for frame in frames:
                             if b'"server.heartbeat"' in frame:
                                 n_beats += 1
+                                # 2026-10-18: heartbeats are ALSO bus liveness. The
+                                # dead-man previously only tracked event frames, so
+                                # an idle shard (0 events, 3 heartbeats per 30s)
+                                # was recycled every 60s despite perfect health —
+                                # the "reattachment shaking" on every idle shard.
+                                # A heartbeat on the wire means the engine's SSE
+                                # emission path is alive; the dead-man should be
+                                # disarmed by ANY frame, not just "real" events.
+                                last_event_t = now
                             else:
                                 n_events += 1
                                 last_event_t = now
