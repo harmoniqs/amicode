@@ -1240,7 +1240,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         statusBar?.setServerReady(true);
         sseClient?.connect(url);
         if (vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true)) {
-          ChatPanel.openOrReveal(ctx, frameUrl() ?? url, serverAuthToken(serverPassword), opencodeProject.projectDir);
+          ChatPanel.openOrReveal(ctx, `${frameUrl() ?? url}${(frameUrl() ?? url).includes("?") ? "&" : "?"}_b=${Date.now()}`, serverAuthToken(serverPassword), opencodeProject.projectDir);
         }
         void fetchProviderSignal(url.toString(), { headers: serverAuthHeaders }).then((sig) => {
           opencodeChannel.appendLine(
