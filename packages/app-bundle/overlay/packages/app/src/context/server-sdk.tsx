@@ -651,6 +651,13 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
               : eventApi.event.subscribe({ signal: currentAttempt.signal })
           if (!streamGeneration.accepts(active)) return
           setStreamStatus("connected")
+          // 2026-10-18: bump the resync signal on EVERY connection (re)establishment.
+          // Session views tracking forceResync re-render when this changes. Without
+          // it, a normal disconnect→reconnect cycle leaves older views' reactive
+          // bindings stale (the newest view re-renders because its graph was just
+          // created; the older ones never get the edge). One bump per connect = one
+          // re-render pass across all views, batched by the burst-aware flush.
+          setResyncCount((n) => n + 1)
           deadMan.open()
           lastFrameAt = Date.now()
           let yielded = Date.now()
