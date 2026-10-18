@@ -2175,6 +2175,14 @@ def handle(c, addr, cid):
                 serve_session_list(c, first, raw)
                 return
             key = None   # directory-scoped responses must NEVER be shared across clients
+        # 2026-10-18: stub the main-merge's fleet session-status pollers.
+        # The free-tier-fleet surfaces (#1766/#1768) poll these every ~4s;
+        # the hub doesn't serve them, so the 404s re-render the panel on
+        # every cycle (the 4-second "screen spazzing"). Empty success shapes
+        # stop the flicker; real data arrives with #1803's reconciliation.
+        if parts[0] == "GET" and path in ("/amicode/fleet/sessions", "/amicode/fleet/session-status"):
+            _serve_bytes(c, b'{"ok":true,"sessions":[]}', "application/json")
+            return
         if path in ("/event", "/api/event", "/global/event"):
             # #1717 slice 1c: the client-facing event streams are MERGED across
             # the pool -- the wire /event is directory-scoped and session-less
