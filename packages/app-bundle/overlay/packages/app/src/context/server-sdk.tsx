@@ -505,6 +505,11 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
   const FLUSH_FRAME_MS = 16
   const STREAM_YIELD_MS = 8
   const RECONNECT_DELAY_MS = 250
+  // 2026-10-18: burst-aware flush. A reconnect replay delivers the whole gap
+  // as a burst; 16ms flushes fire BETWEEN frames producing many re-renders
+  // (the visible reattachment shaking). When the queue is deep (>4 items),
+  // widen the flush to 80ms so the burst lands in ONE flush = one re-render.
+  const BURST_FLUSH_FRAME_MS = 80
 
   let queue: Queued[] = []
   let buffer: Queued[] = []
@@ -533,8 +538,9 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
 
   const schedule = () => {
     if (timer) return
+    const frameMs = queue.length > 4 ? BURST_FLUSH_FRAME_MS : FLUSH_FRAME_MS
     const elapsed = Date.now() - last
-    timer = setTimeout(flush, Math.max(0, FLUSH_FRAME_MS - elapsed))
+    timer = setTimeout(flush, Math.max(0, frameMs - elapsed))
   }
 
   let streamErrorLogged = false
