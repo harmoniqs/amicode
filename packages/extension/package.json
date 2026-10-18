@@ -2,7 +2,7 @@
   "name": "amicode",
   "displayName": "Amicode",
   "description": "Open autonomous research in VS Code \u2014 vaults, fleet, and live solves for quantum control and physical intelligence.",
-  "version": "0.3.7",
+  "version": "0.3.8-lane.1",
   "publisher": "harmoniqs",
   "license": "Apache-2.0",
   "icon": "media/icon.png",
@@ -282,23 +282,27 @@
         "amicode.appBundleDir": {
           "type": "string",
           "default": "",
-          "description": "Path to a built app-bundle dist (dev override). The amicode service serves it as the app UI on its origin. Empty = the packaged dist (dist/app inside the extension, staged by `pnpm --filter amicode run build:app`). When neither exists the service serves an honest needs-setup placeholder — the /amicode/* API surface is unaffected."
+          "description": "Path to a built app-bundle dist (dev override). The amicode service serves it as the app UI on its origin. Empty = the packaged dist (dist/app inside the extension, staged by `pnpm --filter amicode run build:app`). When neither exists the service serves an honest needs-setup placeholder \u2014 the /amicode/* API surface is unaffected."
         },
         "amicode.fleetHubUrl": {
           "type": "string",
           "default": "",
-          "description": "Fleet activation (beta): the hub's base URL over the fleet tunnel (e.g. http://127.0.0.1:4096). Env override: AMICODE_FLEET_HUB_URL. Fleet mode arms ONLY when BOTH this and amicode.fleetTunnelAlias are set AND the amicissimo entitlement stages — absent config means a byte-identical base."
+          "description": "Fleet activation (beta): the hub's base URL over the fleet tunnel (e.g. http://127.0.0.1:4096). Env override: AMICODE_FLEET_HUB_URL. Fleet mode arms ONLY when BOTH this and amicode.fleetTunnelAlias are set AND the amicissimo entitlement stages \u2014 absent config means a byte-identical base."
         },
         "amicode.fleetTransport": {
           "type": "string",
-          "enum": ["ssh", "tailscale", "direct"],
+          "enum": [
+            "ssh",
+            "tailscale",
+            "direct"
+          ],
           "default": "ssh",
-          "description": "Fleet transport provider (#1260): the client↔host data-plane pipe. `ssh` (default) is the current launchd/systemd `-L` forward — zero new dependency. `tailscale` (opt-in) has the host run `tailscale serve` fronting its loopback service and the client resolve the host's MagicDNS origin — WireGuard roaming/NAT/low-latency with no TCP-over-TCP, and the loopback bind-guard stays intact (the app still binds localhost). `direct` (opt-in) targets a supplied URL for a host already reachable on a VPN/LAN — the operator arranges reachability out-of-band, with a health probe and no tunnel-manager lifecycle; the host still binds loopback behind its own edge. A disabled or unknown provider yields the honest hub-down posture, NEVER a silent fallback to another provider. Unset/`ssh` reproduces today's behavior."
+          "description": "Fleet transport provider (#1260): the client\u2194host data-plane pipe. `ssh` (default) is the current launchd/systemd `-L` forward \u2014 zero new dependency. `tailscale` (opt-in) has the host run `tailscale serve` fronting its loopback service and the client resolve the host's MagicDNS origin \u2014 WireGuard roaming/NAT/low-latency with no TCP-over-TCP, and the loopback bind-guard stays intact (the app still binds localhost). `direct` (opt-in) targets a supplied URL for a host already reachable on a VPN/LAN \u2014 the operator arranges reachability out-of-band, with a health probe and no tunnel-manager lifecycle; the host still binds loopback behind its own edge. A disabled or unknown provider yields the honest hub-down posture, NEVER a silent fallback to another provider. Unset/`ssh` reproduces today's behavior."
         },
         "amicode.fleetTunnelAlias": {
           "type": "string",
           "default": "",
-          "description": "Fleet activation (beta): the fleet tunnel's ssh alias — the installed tunnel config must carry it stamped (never the FLEET_SSH_ALIAS placeholder). Env override: AMICODE_FLEET_TUNNEL_ALIAS."
+          "description": "Fleet activation (beta): the fleet tunnel's ssh alias \u2014 the installed tunnel config must carry it stamped (never the FLEET_SSH_ALIAS placeholder). Env override: AMICODE_FLEET_TUNNEL_ALIAS."
         },
         "amicode.fleetTunnelConfigPath": {
           "type": "string",
@@ -328,37 +332,37 @@
         "amicode.fleetRecoveryConsecutiveHealthy": {
           "type": "number",
           "default": 0,
-          "description": "Fleet posture tuning (D6): consecutive healthy responses required to re-enter fleet mode (hysteresis — flapping cannot flap the posture). 0 = the default (3)."
+          "description": "Fleet posture tuning (D6): consecutive healthy responses required to re-enter fleet mode (hysteresis \u2014 flapping cannot flap the posture). 0 = the default (3)."
         },
         "amicode.fleetProbeTimeoutMs": {
           "type": "number",
           "default": 0,
-          "description": "Fleet client (#777): the FIRST-attach probe budget in ms. On a ~750ms-RTT link every tunnel request runs ~2.5s (GET / measured 1.6-2.9s) against the old fixed 1500ms, so a healthy hub was unattachable — the probe itself timed out before the attach could fire. Once attached the steady-state probe stays at 1500ms (SSE liveness covers the up-state). 0 = the old fixed 1500ms."
+          "description": "Fleet client (#777): the FIRST-attach probe budget in ms. On a ~750ms-RTT link every tunnel request runs ~2.5s (GET / measured 1.6-2.9s) against the old fixed 1500ms, so a healthy hub was unattachable \u2014 the probe itself timed out before the attach could fire. Once attached the steady-state probe stays at 1500ms (SSE liveness covers the up-state). 0 = the old fixed 1500ms."
         },
         "amicode.fleetProbePath": {
           "type": "string",
           "default": "/",
-          "description": "Fleet client (#777): the path probed for tunnel health. Default / (the SPA index — the heaviest page the engine serves). On degraded links a cheap engine route (e.g. /session, measured 2x faster) halves the probe cost."
+          "description": "Fleet client (#777): the path probed for tunnel health. Default / (the SPA index \u2014 the heaviest page the engine serves). On degraded links a cheap engine route (e.g. /session, measured 2x faster) halves the probe cost."
         },
         "amicode.fleetTunnelDownConsecutiveFailures": {
           "type": "number",
           "default": 0,
-          "description": "Fleet client poll tuning (#1202): consecutive failed tunnel probes (1.5s timeout each, 2s poll) required before fleetReady flips off and the status bar drops. Hysteresis — a single lost probe must never flip the status bar. 0 = the default (15, ≈30s)."
+          "description": "Fleet client poll tuning (#1202): consecutive failed tunnel probes (1.5s timeout each, 2s poll) required before fleetReady flips off and the status bar drops. Hysteresis \u2014 a single lost probe must never flip the status bar. 0 = the default (15, \u224830s)."
         },
         "amicode.fleetStandaloneOfferConsecutiveFailures": {
           "type": "number",
           "default": 0,
-          "description": "Fleet client poll tuning (#1202): consecutive failed tunnel probes required before the 'Go Standalone?' popup fires — a SUSTAINED outage, once per outage. 0 = the default (150, ≈5 minutes)."
+          "description": "Fleet client poll tuning (#1202): consecutive failed tunnel probes required before the 'Go Standalone?' popup fires \u2014 a SUSTAINED outage, once per outage. 0 = the default (150, \u22485 minutes)."
         },
         "amicode.fleetStandaloneOfferCooldownMinutes": {
           "type": "number",
           "default": 0,
-          "description": "Fleet client poll tuning (#1202): after a standalone offer, no new offer within this many minutes — the cooldown survives a recovery, so a flapping tunnel cannot extract repeated popups. 0 = the default (15 minutes)."
+          "description": "Fleet client poll tuning (#1202): after a standalone offer, no new offer within this many minutes \u2014 the cooldown survives a recovery, so a flapping tunnel cannot extract repeated popups. 0 = the default (15 minutes)."
         },
         "amicode.hubServerUrl": {
           "type": "string",
           "default": "",
-          "description": "Hub-host client posture (#1760 P4): when set to a valid http(s) URL, this machine's extension spawns NOTHING (no local opencode engine, no amicode service) and the entire panel — server resolution, global event stream, session views, question dock, replies — points at this hub URL (one server, no split). On the hub host itself use http://127.0.0.1:4097. Works on all platforms including Linux remote-SSH hosts. Empty = today's behavior (spawn locally)."
+          "description": "Hub-host client posture (#1760 P4): when set to a valid http(s) URL, this machine's extension spawns NOTHING (no local opencode engine, no amicode service) and the entire panel \u2014 server resolution, global event stream, session views, question dock, replies \u2014 points at this hub URL (one server, no split). On the hub host itself use http://127.0.0.1:4097. Works on all platforms including Linux remote-SSH hosts. Empty = today's behavior (spawn locally)."
         },
         "amicode.opencodePort": {
           "type": "number",
@@ -519,11 +523,10 @@
     "test": "vitest run --passWithNoTests --exclude '**/slow/**'",
     "test:slow": "vitest run test/slow",
     "test:smoke": "node test/boot_smoke.mjs",
-  "lint:skills": "node scripts/lint-skills.mjs --known scripts/lint-skills-known.txt",
- "smoke:fleet": "node scripts/fleet_beta_smoke.mjs",
+    "lint:skills": "node scripts/lint-skills.mjs --known scripts/lint-skills-known.txt",
+    "smoke:fleet": "node scripts/fleet_beta_smoke.mjs",
     "fetch:opencode": "node scripts/fetch_opencode.mjs",
     "build:binary": "node scripts/build_binary.mjs",
-
     "build:exemplars": "node scripts/build_exemplars.mjs",
     "build:app": "node scripts/build_app_bundle.mjs",
     "healthcheck": "node scripts/healthcheck.mjs",
