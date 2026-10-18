@@ -774,7 +774,9 @@ export default function Page() {
   createEffect(() => {
     const count = serverSDK().event.resyncCount()
     if (count === 0) return
-    sync().session.syncAllOnResync()
+    untrack(() => {
+      try { sync().session.syncAllOnResync() } catch {}
+    })
   })
   // #1785 S1: the session view pulls its messages on FIRST MOUNT. A session
   // in a background tab after a reload never has its messages loaded (the
@@ -784,7 +786,9 @@ export default function Page() {
   createEffect(() => {
     const sid = params.id
     if (!sid) return
-    void sync().session.sync(sid, { force: true }).catch(() => {})
+    untrack(() => {
+      void sync().session.sync(sid, { force: true }).catch(() => {})
+    })
   })
   const historyLoading = timeline.history.loading
   const historyMore = timeline.history.more
