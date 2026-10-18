@@ -202,12 +202,16 @@ export function startHubClientSession(opts: HubClientSessionOptions): HubClientS
   const probe = async () => {
     let up = false
     try {
-      const r = await fetchImpl(`${hubUrl.toString()}${opts.probePath ?? "/"}`, {
+      const r = await fetchImpl(`${hubUrl.toString().replace(/\/+$/, "")}${opts.probePath ?? "/"}`, {
         signal: AbortSignal.timeout(poll.isReady ? (opts.steadyTimeoutMs ?? 1500) : (opts.attachTimeoutMs ?? 1500)),
         headers,
       })
       up = r.ok || (r.status >= 200 && r.status < 400)
-    } catch {
+    } catch (err) {
+      // 2026-10-18: diagnostic — the probe's failures were swallowed by design
+      // (hysteresis handles flapping), but 'unreachable' with a healthy hub
+      // and an ESTABLISHED TCP connection needs the error named to be fixed.
+      opts.log(`[hub] probe error: ${err instanceof Error ? err.name + ": " + err.message : String(err)}`)
       up = false // connection refused / timeout — the same hysteresis applies
     }
     const d = poll.onProbe(up)
