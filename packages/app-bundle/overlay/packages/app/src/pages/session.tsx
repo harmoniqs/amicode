@@ -776,6 +776,16 @@ export default function Page() {
     if (count === 0) return
     sync().session.syncAllOnResync()
   })
+  // #1785 S1: the session view pulls its messages on FIRST MOUNT. A session
+  // in a background tab after a reload never has its messages loaded (the
+  // view was never active, no dirty-marking fires, syncAllOnResync skips it
+  // because data.message[sid] is empty). This mount-time pull ensures every
+  // view that renders has its data, regardless of tab order or lifecycle.
+  createEffect(() => {
+    const sid = params.id
+    if (!sid) return
+    void sync().session.sync(sid, { force: true }).catch(() => {})
+  })
   const historyLoading = timeline.history.loading
   const historyMore = timeline.history.more
   const lastUserMessage = timeline.lastUserMessage
