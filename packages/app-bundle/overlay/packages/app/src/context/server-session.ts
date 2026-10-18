@@ -1858,6 +1858,23 @@ export function createServerSession(
       },
     },
     sync,
+    // #1785 S1: sync ALL sessions on a reconnect edge. The per-view
+    // forceSyncViewed() only refreshes the ACTIVE tab; background tabs for
+    // running sessions go stale after a reconnect because nothing syncs
+    // them. syncAllOnResync() re-pulls every session that has messages
+    // loaded (i.e., every session with an open view), so all tabs are
+    // current when the user switches to them.
+    syncAllOnResync: () => {
+      for (const sid of Object.keys(data.message)) {
+        if (!sid || !(data.message[sid]?.length > 0)) continue
+        void runInflight(inflight, sid, async () => {
+          await Promise.all([
+            resolve(sid).catch(() => {}),
+            loadMessages(sid, meta.limit[sid] ?? 20).catch(() => {}),
+          ])
+        }, { force: true })
+      }
+    },
     prefetch,
     shouldPrefetch(sessionID: string, limit: number) {
       if (data.message[sessionID] === undefined) return true

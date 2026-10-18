@@ -768,6 +768,14 @@ export default function Page() {
     streamConnected: () => serverSDK().event.status() === "connected",
     forceResync: () => serverSDK().event.resyncCount(),
   })
+  // #1785 S1: on every resync edge, sync ALL loaded sessions (not just the
+  // viewed one). Background tabs for running sessions go stale after a
+  // reconnect because forceSyncViewed() only refreshes the active tab.
+  createEffect(() => {
+    const count = serverSDK().event.resyncCount()
+    if (count === 0) return
+    sync().session.syncAllOnResync()
+  })
   const historyLoading = timeline.history.loading
   const historyMore = timeline.history.more
   const lastUserMessage = timeline.lastUserMessage
