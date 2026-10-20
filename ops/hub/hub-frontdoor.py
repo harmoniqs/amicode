@@ -1803,6 +1803,10 @@ def refresh_index():
         try: index_refresh.release()
         except Exception: pass
 
+# 2026-10-20: case-insensitive connection header for the phantom-socket fix.
+_re0 = _re1.compile(rb"Connection: keep-alive", _re1.IGNORECASE)
+
+
 def passthrough_capture(c, first_chunk, key=None, force_close=False, shard=None, pin_create=None):
     """Passthrough; capture small fast 200 GET responses for the cache.
     #1717 phase 1: dials the ROUTED shard (default when unrouted); admits to
@@ -1855,6 +1859,20 @@ def passthrough_capture(c, first_chunk, key=None, force_close=False, shard=None,
                     if sniff and not _sniffed[0]:
                         _sniffed[0] = True
                         try:
+                            # 2026-10-20 (phantom-socket fix): the runner answers
+                            # keep-alive and this pipe relays its headers verbatim
+                            # while the backend socket stays open — a browser
+                            # honors the keep-alive and REUSES the client socket,
+                            # and the reuse rides this pipe straight into the
+                            # runner, bypassing the frontdoor's dispatch (the
+                            # panel's /attach got the runner's SPA HTML instead
+                            # of the merged JSON while curl always hit the
+                            # dispatch — the reconcile was silently dead in
+                            # real browsers). Rewrite the connection header on
+                            # the first relayed response chunk: every request
+                            # then arrives on a fresh socket.
+                            if len(d) > 12 and d[:5] == b"HTTP/":
+                                d = _re0.sub(b"Connection: close", d, count=1)
                             # #1760 P1: an engine 401 crossing a passthrough dial
                             # is a secret mismatch — name it server-side too
                             # (#1757: the client sees the 401; the log must show
