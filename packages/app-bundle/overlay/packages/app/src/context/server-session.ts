@@ -1399,6 +1399,36 @@ export function createServerSession(
     //   if (info) remember({ ...info, time: { ...info.time, archived: event.created, updated: event.created } })
     //   evict([sessionID])
     // }
+    // 2026-10-20 (the animation root cause): the engine's V1 wire publishes
+    // busy/idle as `session.status` frames — {properties: {sessionID, status,
+    // seq}} — and NOT session.execution.* (verified on the wire: a full test
+    // turn emits session.status x4, zero execution frames). The apply() only
+    // handled session.execution.*, so busy transitions from events NEVER
+    // landed — the dot lit only via the one-shot boot seed, the attach
+    // reconcile, or the transient message.part.delta floor (flickering
+    // between bursts — the "hit or miss" animation). The #1636/#1637 seq
+    // guard below was built for exactly this event and never had a consumer.
+    if (event.type === "session.status") {
+      const props = event.properties as { status?: SessionStatus; seq?: number }
+      if (props.status) {
+        const seq = props.seq
+        let stale = false
+        if (typeof seq === "number") {
+          const last = lastStatusSeq.get(sessionID) ?? 0
+          if (seq <= last) stale = true
+          else lastStatusSeq.set(sessionID, seq)
+        }
+        if (!stale) {
+          stampStatusMutation(sessionID)
+          setData("session_status", sessionID, reconcile(props.status))
+          if (props.status.type === "idle") cancelReconcileTimer(sessionID)
+          // #1649 — the ancestor floor: a parent blocked on a foreground
+          // subagent re-derives its child-active count from session_status,
+          // so the parent's rail follows child status edges reactively.
+          scheduleChildActiveDerivation?.(sessionID)
+        }
+      }
+    }
     if (event.type === "session.execution.started") setData("session_status", sessionID, { type: "busy" })
     if (
       event.type === "session.execution.succeeded" ||
