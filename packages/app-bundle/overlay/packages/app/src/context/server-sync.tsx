@@ -821,19 +821,46 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
   // project list resolving — and attaches every project's worktree (plus
   // sandboxes). Tracked reads: the effect re-runs on count bumps AND on
   // project-list changes; the attach body itself is untracked.
+  // The directory source: project worktrees UNION the directories of every
+  // session the store has cached info for. The projects query is the ideal
+  // source but has proven non-deterministic across webview boots (observed
+  // 2026-10-20: a webview boot that never issued /project); session info
+  // accumulates from any session list/view load, so the union converges on
+  // every panel regardless of which query raced which.
+  const knownAttachDirs = (): string[] => {
+    const dirs = new Set<string>()
+    for (const project of globalStore.project ?? []) {
+      if (project?.worktree) dirs.add(project.worktree)
+      for (const sandbox of project.sandboxes ?? []) if (sandbox) dirs.add(sandbox)
+    }
+    for (const info of Object.values(session.data.info)) {
+      if (info?.directory) dirs.add(info.directory)
+    }
+    return [...dirs]
+  }
   createEffect(() => {
     const count = serverSDK.event.resyncCount()
     const projects = globalStore.project ?? []
     if (count === 0) return
-    const dirs: string[] = []
-    for (const project of projects) {
-      if (project?.worktree) dirs.push(project.worktree)
-      for (const sandbox of project.sandboxes ?? []) if (sandbox) dirs.push(sandbox)
-    }
+    const dirs = untrack(() => knownAttachDirs())
     untrack(() => {
       for (const directory of dirs) void attachDirectory(directory)
     })
   })
+  // 2026-10-20 (deterministic convergence): the reactive edges (stream bump,
+  // project list, session info arriving) have each been observed to lose
+  // races across real webview boots. A 15s poll makes busy-state truth
+  // converge REGARDLESS of which reactive path fired: whatever the boot
+  // ordering, within one poll tick of the store knowing a directory, its
+  // merged snapshot is reconciled. Cheap (one request per directory per
+  // tick, inflight-deduped), and the scoped downgrade keeps cross-directory
+  // attaches from fighting each other.
+  const attachPoll = setInterval(() => {
+    if (serverSDK.event.status() !== "connected") return
+    const dirs = untrack(() => knownAttachDirs())
+    for (const directory of dirs) void attachDirectory(directory)
+  }, 15000)
+  onCleanup(() => clearInterval(attachPoll))
 
   onMount(() => {
     if (typeof requestAnimationFrame === "function") {
