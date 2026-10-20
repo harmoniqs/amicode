@@ -458,7 +458,6 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
   })
 
   async function loadSessions(directory: string, options?: { limit?: number }) {
-    registerAttachDir(directory)
     const key = directoryKey(directory)
     const pending = sessionLoads.get(key)
     if (pending) {
@@ -757,7 +756,6 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
   // 1,2,3 across reconnects but no component effect ever observes it). The
   // sync context outlives view churn — its onMount starts the very stream
   // that bumps the signal — so the attach consumer lives here.
-  const attachDirs = new Set<string>()
   const attachInflight = new Set<string>()
   const attachDirectory = async (directory: string) => {
     const conn = serverSDK.server
@@ -796,18 +794,26 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
       attachInflight.delete(directory)
     }
   }
-  const registerAttachDir = (directory: string) => {
-    if (attachDirs.has(directory)) return
-    attachDirs.add(directory)
-    // A directory discovered AFTER the first connect (stream already up)
-    // attaches immediately — the resync edge may be minutes away on a quiet
-    // wire, and the boot-time attach must not depend on reconnect churn.
-    if (untrack(() => serverSDK.event.resyncCount()) > 0) void attachDirectory(directory)
-  }
+  // 2026-10-20 (boot-race fix): the directory source is the PROJECT LIST,
+  // not loadSessions registration. The VS Code panel iframe boots at the
+  // bare origin — no directory route — so loadSessions never runs at boot
+  // (verified in the frontdoor log: no /session?directory=...&roots=true for
+  // webview boots) and a registry fed by it stays empty forever: bump-time
+  // attach had no dirs, register-time never came. The projects query
+  // (/project) runs on EVERY boot regardless of route, so the effect below
+  // fires when EITHER edge arrives last — the first stream connect, or the
+  // project list resolving — and attaches every project's worktree (plus
+  // sandboxes). Tracked reads: the effect re-runs on count bumps AND on
+  // project-list changes; the attach body itself is untracked.
   createEffect(() => {
     const count = serverSDK.event.resyncCount()
+    const projects = globalStore.project ?? []
     if (count === 0) return
-    const dirs = untrack(() => [...attachDirs])
+    const dirs: string[] = []
+    for (const project of projects) {
+      if (project?.worktree) dirs.push(project.worktree)
+      for (const sandbox of project.sandboxes ?? []) if (sandbox) dirs.push(sandbox)
+    }
     untrack(() => {
       for (const directory of dirs) void attachDirectory(directory)
     })
