@@ -58,8 +58,6 @@ import { SplitFrame } from "@/components/split-frame"
 import { WorkbenchBridge } from "@/components/pane-bridge"
 import { useDirectoryPicker } from "@/components/directory-picker"
 import { ServerConnection, useServer } from "@/context/server"
-import { amicodeGetResponse } from "@/utils/amicode-fetch"
-import type { SessionStatus } from "@opencode-ai/sdk/v2/client"
 import { useLanguage, type Locale } from "@/context/language"
 import { pathKey } from "@/utils/path-key"
 import {
@@ -1578,61 +1576,6 @@ export default function LegacyLayout(props: ParentProps) {
       { defer: true },
     ),
   )
-
-  // #1760/#1785 attach protocol: on every stream (re)connect, pull the hub's
-  // one-wire snapshot (/attach — merged busy map + session list) per visible
-  // directory and reconcile busy state from STATE, not transitions. A
-  // fresh/reconnecting client never witnessed the busy transitions of
-  // sessions that started while it was away, and the boot seed
-  // (activeSessionsQuery) runs once with staleTime:Infinity and never
-  // re-runs — the "output streams but the busy chip never lights" class.
-  // The snapshot IS the truth; reconcileStatuses applies it recency-guarded
-  // (live transitions win). Locally-busy sessions ABSENT from the snapshot
-  // are downgraded to idle the same way (an idle transition swallowed by a
-  // gap heals here). The session list re-pull makes sessions spawned during
-  // the gap appear immediately. All reads untracked — store writes must not
-  // re-trigger this effect (the #1785 infinite-loop lesson).
-  const attachDirectory = async (directory: string) => {
-    const conn = server.current
-    if (!conn) return
-    const fetchedAt = Date.now()
-    try {
-      const { status, body } = await amicodeGetResponse(
-        conn,
-        `/attach?directory=${encodeURIComponent(directory)}`,
-      )
-      if (status !== 200 || !body || typeof body !== "object") return
-      const snap = body as { busy?: Record<string, unknown> }
-      if (!snap.busy || typeof snap.busy !== "object") return
-      // The engines' status maps carry BUSY sessions only — absent = idle.
-      // Compose the full map: snapshot busy + idle downgrades for locally-busy
-      // sessions the snapshot no longer knows, all recency-guarded inside
-      // reconcileStatuses (a live busy transition newer than this fetch
-      // refuses the downgrade).
-      const localBusy = untrack(() => {
-        const all = serverSync().session.data.session_status
-        return Object.entries(all).filter(([, st]) => st && st.type !== "idle")
-      })
-      const statuses: Record<string, { type: string }> = {}
-      for (const [sid, st] of Object.entries(snap.busy)) {
-        if (st && typeof st === "object" && "type" in st) statuses[sid] = st as { type: string }
-      }
-      for (const [sid] of localBusy) if (!statuses[sid]) statuses[sid] = { type: "idle" }
-      serverSync().session.reconcileStatuses(statuses as Record<string, SessionStatus>, { fetchedAt })
-      void serverSync().project.loadSessions(directory).catch(() => {})
-    } catch {
-      // A failed attach is non-fatal: the next resync edge retries.
-    }
-  }
-
-  createEffect(() => {
-    const count = serverSDK().event.resyncCount()
-    if (count === 0) return
-    const dirs = untrack(() => visibleSessionDirs())
-    untrack(() => {
-      for (const directory of dirs) void attachDirectory(directory)
-    })
-  })
 
   function handleDragStart(event: unknown) {
     const id = getDraggableId(event)

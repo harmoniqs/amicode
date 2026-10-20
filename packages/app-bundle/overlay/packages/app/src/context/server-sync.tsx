@@ -8,7 +8,7 @@ import type {
 } from "@opencode-ai/sdk/v2/client"
 import { showToast } from "@/utils/toast"
 import { getFilename } from "@opencode-ai/core/util/path"
-import { type Accessor, batch, createMemo, getOwner, onCleanup, onMount, untrack } from "solid-js"
+import { type Accessor, batch, createEffect, createMemo, getOwner, onCleanup, onMount, untrack } from "solid-js"
 import { createStore, produce, reconcile } from "solid-js/store"
 import { useLanguage } from "@/context/language"
 import type { InitError } from "../pages/error"
@@ -458,6 +458,7 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
   })
 
   async function loadSessions(directory: string, options?: { limit?: number }) {
+    registerAttachDir(directory)
     const key = directoryKey(directory)
     const pending = sessionLoads.get(key)
     if (pending) {
@@ -737,6 +738,79 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
     for (const directory of Object.keys(children.children)) {
       children.disposeDirectory(directoryKey(directory))
     }
+  })
+
+  // #1760/#1785 attach protocol — SYNC-LAYER placement (2026-10-20). On every
+  // stream (re)connect, pull the hub's one-wire snapshot (/attach?directory= —
+  // merged busy map + session list) per known directory and reconcile busy
+  // state from STATE, not transitions. A fresh/reconnecting client never
+  // witnessed the busy transitions of sessions that started while it was
+  // away, and the boot seed (activeSessionsQuery) runs once with
+  // staleTime:Infinity — the "output streams but the busy chip never lights"
+  // class. Locally-busy sessions ABSENT from the snapshot downgrade to idle
+  // (an idle transition swallowed by a gap heals); reconcileStatuses applies
+  // everything recency-guarded so live transitions win.
+  // WHY HERE and not a component: the view-level resync effects
+  // (session.tsx, layout) are DISPOSED with a transient first-mount owner
+  // right after their initial run (diagnosed 2026-10-20 via onCleanup
+  // telemetry: "EFFECT DISPOSED (count was 0)" — the resync signal bumps
+  // 1,2,3 across reconnects but no component effect ever observes it). The
+  // sync context outlives view churn — its onMount starts the very stream
+  // that bumps the signal — so the attach consumer lives here.
+  const attachDirs = new Set<string>()
+  const attachInflight = new Set<string>()
+  const attachDirectory = async (directory: string) => {
+    const conn = serverSDK.server
+    if (!conn) return
+    if (attachInflight.has(directory)) return
+    attachInflight.add(directory)
+    const fetchedAt = Date.now()
+    try {
+      const { status, body } = await amicodeGetResponse(
+        conn,
+        `/attach?directory=${encodeURIComponent(directory)}`,
+      )
+      if (status !== 200 || !body || typeof body !== "object") return
+      const snap = body as { busy?: Record<string, unknown> }
+      if (!snap.busy || typeof snap.busy !== "object") return
+      // The engines' status maps carry BUSY sessions only — absent = idle.
+      // Compose the full map: snapshot busy + idle downgrades for locally-busy
+      // sessions the snapshot no longer knows (recency-guarded inside
+      // reconcileStatuses — a busy transition newer than this fetch refuses
+      // the downgrade).
+      const localBusy = untrack(() => {
+        const all = session.data.session_status
+        return Object.entries(all).filter(([, st]) => st && st.type !== "idle")
+      })
+      const statuses: Record<string, { type: string }> = {}
+      for (const [sid, st] of Object.entries(snap.busy)) {
+        if (st && typeof st === "object" && "type" in st) statuses[sid] = st as { type: string }
+      }
+      for (const [sid] of localBusy) if (!statuses[sid]) statuses[sid] = { type: "idle" }
+      session.reconcileStatuses(statuses as Record<string, SessionStatus>, { fetchedAt })
+      // Sessions spawned during the gap appear immediately.
+      void loadSessions(directory).catch(() => {})
+    } catch {
+      // A failed attach is non-fatal: the next resync edge retries.
+    } finally {
+      attachInflight.delete(directory)
+    }
+  }
+  const registerAttachDir = (directory: string) => {
+    if (attachDirs.has(directory)) return
+    attachDirs.add(directory)
+    // A directory discovered AFTER the first connect (stream already up)
+    // attaches immediately — the resync edge may be minutes away on a quiet
+    // wire, and the boot-time attach must not depend on reconnect churn.
+    if (untrack(() => serverSDK.event.resyncCount()) > 0) void attachDirectory(directory)
+  }
+  createEffect(() => {
+    const count = serverSDK.event.resyncCount()
+    if (count === 0) return
+    const dirs = untrack(() => [...attachDirs])
+    untrack(() => {
+      for (const directory of dirs) void attachDirectory(directory)
+    })
   })
 
   onMount(() => {
