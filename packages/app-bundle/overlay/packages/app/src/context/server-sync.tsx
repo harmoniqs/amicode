@@ -784,7 +784,23 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
       for (const [sid, st] of Object.entries(snap.busy)) {
         if (st && typeof st === "object" && "type" in st) statuses[sid] = st as { type: string }
       }
-      for (const [sid] of localBusy) if (!statuses[sid]) statuses[sid] = { type: "idle" }
+      // SCOPE (2026-10-20 flaky-animation fix): each attach carries only ITS
+      // directory's sessions — absent-from-snapshot means idle ONLY within
+      // that directory. A panel attaches EVERY project concurrently (the
+      // boot fans out one attach per project worktree); an unscoped
+      // downgrade let the emptiest directory's attach (a worktree, "/")
+      // mark the whole fleet's busy sessions idle, and whichever attach
+      // landed LAST won. Animation then lit only when the right
+      // directory's attach happened to be final — random per reload. Only
+      // sessions whose cached info places them in THIS directory may be
+      // downgraded; unknown-directory sessions are left alone (safe: the
+      // recency guard inside reconcileStatuses still refuses downgrades
+      // newer than the fetch).
+      for (const [sid] of localBusy) {
+        const sessionDirectory = untrack(() => session.data.info[sid]?.directory)
+        if (sessionDirectory !== directory) continue
+        if (!statuses[sid]) statuses[sid] = { type: "idle" }
+      }
       session.reconcileStatuses(statuses as Record<string, SessionStatus>, { fetchedAt })
       // Sessions spawned during the gap appear immediately.
       void loadSessions(directory).catch(() => {})
