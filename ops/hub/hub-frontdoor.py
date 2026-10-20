@@ -2036,6 +2036,68 @@ def serve_session_status(c, first, raw):
     _serve_bytes(c, _json0.dumps(merged).encode(), "application/json")
 
 
+def serve_attach(c, first, raw):
+    """2026-10-20 (#1760 attach protocol): GET /attach?directory= — the
+    one-wire snapshot for fresh/reconnecting panel clients. A client that
+    re-attaches after a reload / wifi gap reconstructs state from THIS
+    (state-based truth), not from event transitions it never witnessed —
+    the missing-busy-icon class. Merges across the pool in ONE request:
+      busy     — union of every shard's /session/status (absent = idle)
+      sessions — union of every shard's /session list (reuse the merge)
+      ts       — merge completion time; the client's recency guard compares
+                 it against local status mutations (stamped client-side
+                 BEFORE the fetch, so only the server-side one rides here).
+    Pooled/absent directories passthrough to the default shard (a single
+    engine answers both sub-requests; the panel resolves its own posture)."""
+    try:
+        target = first.split(b"\r\n", 1)[0].split(b" ")[1].decode("utf-8", "replace")
+    except Exception:
+        target = raw
+    d = _directory_of(raw)
+    pool = TABLE["pools"].get(d) if d else None
+    if not pool or len(pool) < 2:
+        passthrough_capture(c, first, key=None, shard=TABLE["default_shard"])
+        return
+    status_target = "/session/status?directory=" + (d if d else "")
+    results = [None] * len(pool)
+    threads = []
+    deadline = float(_env("AMICODE_MERGE_DEADLINE", "5"))
+    def fetch(i, shard):
+        try:
+            results[i] = backend_get(status_target, timeout=deadline, shard=shard)
+        except Exception:
+            results[i] = None
+    for i, shard in enumerate(pool):
+        t = threading.Thread(target=fetch, args=(i, shard), daemon=True)
+        t.start(); threads.append(t)
+    busy = {}
+    for t in threads:
+        t.join(deadline + 1.0)
+    for b in results:
+        if not b:
+            continue
+        try:
+            body = b.split(b"\r\n\r\n", 1)[1] if b"\r\n\r\n" in b else b
+            data = _json0.loads(body)
+            if isinstance(data, dict):
+                busy.update(data)
+        except Exception:
+            continue
+    session_bytes = _merged_session_list()
+    sessions = []
+    if session_bytes:
+        try:
+            parsed = _json0.loads(session_bytes)
+            if isinstance(parsed, list):
+                sessions = parsed
+            elif isinstance(parsed, dict):
+                sessions = parsed.get("sessions") or parsed.get("data") or []
+        except Exception:
+            pass
+    snap = {"ts": time.time(), "busy": busy, "sessions": sessions}
+    _serve_bytes(c, _json0.dumps(snap).encode(), "application/json")
+
+
 def serve_session_list(c, first, raw):
     """#1717 phase 1: GET /session across the pool. A pooled directory merges
     every member (threads, 8s dial timeout each -- a dead member contributes
@@ -2166,6 +2228,9 @@ def handle(c, addr, cid):
         raw = parts[1] if len(parts) > 1 else "/"
         if parts[0] == "GET" and raw.split("?")[0] in ("/question", "/permission") and SHARDED:
             serve_question_list(c, first, raw)
+            return
+        if parts[0] == "GET" and path == "/attach":
+            serve_attach(c, first, raw)
             return
         if parts[0] == "GET" and raw.split("?")[0] == "/session/status" and SHARDED:
             serve_session_status(c, first, raw)
