@@ -4,7 +4,7 @@ description: Autonomously implement a GitHub issue-DAG end-to-end — walks one 
 agents: [orchestrator]
 surface: public
 source: amicode
-revision: 2
+revision: 3
 ---
 
 # Develop an Issue-DAG
@@ -87,14 +87,22 @@ Worktree removal after a successful merge is **best-effort**: the parent session
 The walk dispatches **the Engineer** — a role, not an engine feature. The role's contract: one TDD-ready slice per dispatch, caller-provided worktree branch, `implement-issue --orchestrated` semantics, no PR/merge/board writes (the walk owns lifecycle), a structured step-7 return, and an explicit `EXHAUSTED:` report if the agent hits its step limit — an open loop, never an outcome. Bindings, one per engine:
 
 - **Claude Code** — the native agent (the engineer role's definition, engine-side).
-- **opencode (Amicode)** — the `implementer` subagent card, staged with the Amicode project at `.opencode/agents/implementer.md`; same contract.
+- **opencode (Amicode)** — the `implementer` subagent card, staged with the Amicode project at its dot-opencode/agents/implementer.md; same contract.
 
 Engine-specific bindings stay engine-side; this skill names the role. A session with no binding for the Engineer runs the sequential sub-mode.
+
+### Cast deaths (the empty return)
+
+A cast that returns **empty** — state `completed`, zero output: no commits, no structured return — is a **cast death**, not an outcome. The empty return carries no information, including about the brief: verify from the worktree artifacts (commits, status, file mtimes), record the death in the ledger with that evidence, and recast the same brief. Three observed instances in one campaign all succeeded first-try on the recast — the brief was not the cause (finding F33).
 
 ## Terminal state per unit
 
 - **AFK** parent → the ready PR auto-merges (gated on CI where the repo has it); the parent issue closes on merge → the board's "Item closed" workflow moves its card to **Done** (never set manually).
 - **HITL** parent → the ready PR requests review and stops (no merge) → set the parent's board card to **In Review** as the final step, then verify it held and re-set if the board's async "PR linked → In Progress" workflow clobbered it (see `write-an-issue` 7e).
+
+### Standing directives (AFK mandates)
+
+A standing directive recorded in the ledger (the user's words + date — "do it all", "keep going for a while") is the explicit approval for the arc's issue filings AND its merge ladder, within the scope the directive names; every filing and every merge under it is reported in the loop record and the session summary. The mandate does not extend past its named scope: outward-publishing acts (releases, registration, visibility flips) always need the word. Worked example: the Favo campaign merged twelve standard-tier issues under two AFK mandates while holding its General-registry trigger parked for the user's explicit word (finding F34).
 
 ## When NOT to use
 
