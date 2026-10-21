@@ -10,6 +10,7 @@ import { readLocalEntitlements } from "./scores/entitlements";
 import { ChatPanel } from "./chat_panel";
 import { createChatSessionLauncher } from "./chat_session_launcher";
 import { DeckPanel } from "./deck_panel";
+import type { LinkResolutionContext } from "./link_resolution";
 import { SidebarViewProvider, createNewProject, createNewEnvironment, defaultFleetSectionDeps } from "./sidebar_view";
 import { FleetHeartbeat, resolveTailscaleDnsName, pushRowToPeer } from "./fleet_heartbeat";
 import { StatusBarManager } from "./status_bar";
@@ -1186,6 +1187,27 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     fleetClient,
     hasBinary: binary !== undefined,
   });
+  // #1826: posture-aware chat link resolution. The bridge reads this context
+  // per message: on the hub-client posture a click re-resolves through the
+  // hub's resolve-file route (placed like the #1801 harness ask — the open
+  // workspace folder is the ?directory= key the hub frontdoor routes instance
+  // requests by; missing keeps the bare ask); the ssh alias feeds the
+  // vscode-remote affordance (the topology projection is the alias's source
+  // of record, re-read per click so a refresh lands — a fresh non-fleet
+  // laptop gets the honest no-ssh-alias).
+  const linkResolutionContext = (): LinkResolutionContext => {
+    const topology = readFleetTopology();
+    return {
+      posture,
+      ...(posture === "hub-client" ? { hubUrl: hubClient.url } : {}),
+      ...(topology.kind === "ok" && topology.canonical ? { sshAlias: topology.canonical.sshAlias } : {}),
+      ...(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
+        ? { directory: vscode.workspace.workspaceFolders[0].uri.fsPath }
+        : {}),
+    };
+  };
+  ChatPanel.onLinkResolutionContext(linkResolutionContext);
+  DeckPanel.onLinkResolutionContext(linkResolutionContext);
   if (posture === "hub-client") {
     opencodeChannel.appendLine(`[hub] ${hubClient.reason}: ${hubClient.url}`);
     // Distiller still arms on the hub client (uses the vendored binary

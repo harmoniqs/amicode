@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import { randomBytes } from "node:crypto";
 import { handleAmicodeBridgeMessage } from "./chat_bridge";
+import type { LinkResolutionContext } from "./link_resolution";
 import { registerInspectorPoster } from "./inspector_bridge";
 import { tabIconPath, themeKindToScheme } from "./chat_panel";
 import { getBugReport } from "./bug_report";
@@ -17,7 +18,14 @@ import { getBugReport } from "./bug_report";
 
 export class DeckPanel {
   private static current?: DeckPanel;
+  private static linkResolutionContextCallback?: () => LinkResolutionContext | undefined;
   private readonly disposables: vscode.Disposable[] = [];
+
+  /** #1826: same posture-aware link resolution context as ChatPanel — deck
+   *  panes render the same app (file links included). Wired at activation. */
+  static onLinkResolutionContext(cb: (() => LinkResolutionContext | undefined) | undefined): void {
+    DeckPanel.linkResolutionContextCallback = cb;
+  }
 
   private constructor(
     private readonly ctx: vscode.ExtensionContext,
@@ -52,6 +60,7 @@ export class DeckPanel {
           visible: () => this.panel.visible,
           postToWebview: (m) => void this.panel.webview.postMessage(m),
           ...(serverAuth ? { server: { url: serverUrl, authorization: serverAuth } } : {}),
+          linkResolution: DeckPanel.linkResolutionContextCallback?.(),
           // Bug-session lifecycle (#250) — deck panes never carry the
           // amicode_bug_report boot param, so no dock lives here; wired for
           // uniformity (the manager drops unknown ids anyway).

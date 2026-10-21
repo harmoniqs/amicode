@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import { randomBytes } from "node:crypto";
 import { handleAmicodeBridgeMessage } from "./chat_bridge";
+import type { LinkResolutionContext } from "./link_resolution";
 import { registerInspectorPoster } from "./inspector_bridge";
 import { getBugReport } from "./bug_report";
 import { FileWatcherBridge } from "./file_watcher_bridge";
@@ -63,6 +64,7 @@ export class ChatPanel implements LaunchTarget {
    *  the handler shows the ADR 0034 D4 native modal and mints the grant. */
   private static onFleetEnableControlCallback?: (req: { ownerMachineId: string; sessionID: string }) => void;
   private static previewVisibleChildrenCallback?: (root: string, relativeDirectory: string) => Promise<Array<{ name: string; kind: "file" | "directory"; absolute: string; relative: string }>>;
+  private static linkResolutionContextCallback?: () => LinkResolutionContext | undefined;
   /** The `amicode_bug_report=1` boot-param gate (amicode#250 AC5): set from the
    *  staged skill set after every session prep; the composer button renders
    *  only when the report-a-bug skill is there to answer it. */
@@ -118,6 +120,13 @@ export class ChatPanel implements LaunchTarget {
 
   static onPreviewVisibleChildren(cb: ((root: string, relativeDirectory: string) => Promise<Array<{ name: string; kind: "file" | "directory"; absolute: string; relative: string }>>) | undefined): void {
     ChatPanel.previewVisibleChildrenCallback = cb;
+  }
+
+  /** #1826: the activation hands the bridge the posture-aware link resolution
+   *  context (boot posture, hub origin, ssh alias, ?directory= placement) —
+   *  read per message so a posture change is picked up by the next click. */
+  static onLinkResolutionContext(cb: (() => LinkResolutionContext | undefined) | undefined): void {
+    ChatPanel.linkResolutionContextCallback = cb;
   }
 
   private constructor(
@@ -240,6 +249,7 @@ export class ChatPanel implements LaunchTarget {
           // #1551: the enable-control act → the host's modal + self-owned mint.
           onFleetEnableControl: ChatPanel.onFleetEnableControlCallback,
           previewVisibleChildren: ChatPanel.previewVisibleChildrenCallback,
+          linkResolution: ChatPanel.linkResolutionContextCallback?.(),
           explorerIconTheme: resolveExplorerIconTheme,
         });
         if (!handled) console.log("[amicode/chat] webview msg:", msg);
