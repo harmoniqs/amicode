@@ -197,7 +197,7 @@
     "packages/app/src/context/question-inbox.test.ts": "d4e2c666194fe6463d1a1da1901f2aef3b6a17eec00394a2b020d7ce698d4c92",
     "packages/app/src/context/question-inbox.ts": "f42a2490670e44578f88d626bc0db0a0205fa2b5ec7cd719ba0544915f3a6179",
     "packages/app/src/context/server-sdk.test.ts": "aa3815ee62cb933fd30895be924ed2074aef7fb90bcbf6cb39ad1dce687e04d8",
-    "packages/app/src/context/server-sdk.tsx": "7e1f656c92005832d34af94921d6723469089b1f8f05041d557f506258a1ff46",
+    "packages/app/src/context/server-sdk.tsx": "5056b168d2ba0445beca4c6d07f2e43b6f46b4aefd5802b16d530ce544f26569",
     "packages/app/src/context/server-session-child-active.test.ts": "de8c467f67f88b6cce351c1805ec90728cf238eb1ef32f39ffdbbf3de4dcec22",
     "packages/app/src/context/server-session-orphan-part.test.ts": "1d635374c0bfff25a01825061aabac7334e5cdaedca2dab9f3d9467ff543caea",
     "packages/app/src/context/server-session.test.ts": "31b14c85a843eb172899f456566ad7ab7d07a22eaf8b31d29a22e255e95cb96b",
@@ -1010,7 +1010,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-21T12:49:59.279Z",
+  "extracted_at": "2026-10-21T17:55:52.656Z",
   "per_package": {
     "packages/app": {
       "A": 254,

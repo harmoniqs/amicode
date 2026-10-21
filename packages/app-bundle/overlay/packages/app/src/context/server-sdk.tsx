@@ -885,7 +885,18 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
     })
     makeEventListener(window, "online", () => {
       if (!started || abort.signal.aborted) return
-      if (streamStatus() === "connected") forceReconnect()
+      // 2026-10-21: only force-reconnect a STALE connected stream. A flapping
+      // network interface fires "online" every few seconds (wifi on the edge),
+      // and the unconditional reconnect shot every healthy stream on each flap
+      // — the 0.0s death loop: connect → flap → abort → reconnect → flap → ...
+      // The stream never stabilized and the composer refused every send during
+      // the perpetual gap. A healthy stream (fresh frames) now survives flaps;
+      // a genuinely dead socket goes stale and the watchdog reconnects it.
+      if (
+        streamStatus() === "connected" &&
+        Date.now() - lastFrameAt > WAKE_STALE_MS
+      )
+        forceReconnect()
     })
   })
 
