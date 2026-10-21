@@ -345,28 +345,6 @@ _Avoid_: Offload (as the decision name), auto-routing
 The predicted size/cost of a solve (sizeClass, time) computed at solve-assembly time. Informs the Routing confirm; suggests, never decides.
 _Avoid_: Classifier
 
-### Prompt context
-
-**Block**:
-A generated, TTL-stamped section of a session's system context — one data source, one generator, a size budget, and a freshness contract. The prompt is a dashboard of Blocks, never a hand-maintained document: each Block carries its generator stamp (tamper-evident, the mode-registry pattern) and is composed per prompt build. Never silent: a Block that is missing, stale, or failing renders its own place as a Named outcome.
-_Avoid_: prompt section, context block (the AGENTS.md sections are documents, not Blocks)
-
-**Block registry**:
-The single declarative list of every Block — name, generator, TTL, size budget, named-outcome rule, renderer bindings (the per-prompt plugin transform first; a V2 SystemContext source as the second renderer). Block truth lives here, not in prose; adding context to the prompt means adding a Block, not editing a template.
-_Avoid_: prompt template, context config
-
-**Named outcome**:
-The one-line, machine-checkable record a surface emits when it cannot deliver its content — the reason class plus the relevant timestamp or path (e.g. `overnight: not-found (payload absent since <ts>)`). The alternative to silent degradation everywhere freshness matters: a missing surface must be visible as missing, never simply absent.
-_Avoid_: error line, fallback text (a Named outcome names the failure class; it is not content)
-
-**Context route**:
-A read-only `/amicode/context/*` HTTP route exposing a Block's full-fidelity source — the details a size-budgeted prompt Block can only point to. Sessions fetch them through the read-only `amico.context` seam; widgets through `amico.fetch`. The prompt carries digests + pointers; depth is one fetch away.
-_Avoid_: API endpoint (as a concept name), data route
-
-**Link resolution**:
-The posture-aware order a client follows when a chat file link is clicked: vault-root local first (the synced mounts — the local preference is exactly as wide as the sync guarantee), the session's server next (click-time re-resolution, then Preview through the hub — the default on hub-client), and the remote editor explicitly (a deliberate second action, never the default click). Failure at every layer renders a Named outcome naming the failure class.
-_Avoid_: link rewriting, file mapping (mechanisms, not the concept)
-
 **Link resolution**:
 The posture-aware order a client follows when a chat file link is clicked: vault-root local first (the synced mounts — the local preference is exactly as wide as the sync guarantee), the session's server next (click-time re-resolution, then Preview through the hub — the default on hub-client), and the remote editor explicitly (a deliberate second action, never the default click). Failure at every layer renders a Named outcome naming the failure class.
 _Avoid_: link rewriting, file mapping (mechanisms, not the concept)
