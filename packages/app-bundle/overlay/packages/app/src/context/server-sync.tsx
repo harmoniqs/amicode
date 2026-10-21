@@ -8,7 +8,7 @@ import type {
 } from "@opencode-ai/sdk/v2/client"
 import { showToast } from "@/utils/toast"
 import { getFilename } from "@opencode-ai/core/util/path"
-import { type Accessor, batch, createMemo, getOwner, onCleanup, onMount, untrack } from "solid-js"
+import { type Accessor, batch, createEffect, createMemo, getOwner, onCleanup, onMount, untrack } from "solid-js"
 import { createStore, produce, reconcile } from "solid-js/store"
 import { useLanguage } from "@/context/language"
 import type { InitError } from "../pages/error"
@@ -738,6 +738,129 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
       children.disposeDirectory(directoryKey(directory))
     }
   })
+
+  // #1760/#1785 attach protocol — SYNC-LAYER placement (2026-10-20). On every
+  // stream (re)connect, pull the hub's one-wire snapshot (/attach?directory= —
+  // merged busy map + session list) per known directory and reconcile busy
+  // state from STATE, not transitions. A fresh/reconnecting client never
+  // witnessed the busy transitions of sessions that started while it was
+  // away, and the boot seed (activeSessionsQuery) runs once with
+  // staleTime:Infinity — the "output streams but the busy chip never lights"
+  // class. Locally-busy sessions ABSENT from the snapshot downgrade to idle
+  // (an idle transition swallowed by a gap heals); reconcileStatuses applies
+  // everything recency-guarded so live transitions win.
+  // WHY HERE and not a component: the view-level resync effects
+  // (session.tsx, layout) are DISPOSED with a transient first-mount owner
+  // right after their initial run (diagnosed 2026-10-20 via onCleanup
+  // telemetry: "EFFECT DISPOSED (count was 0)" — the resync signal bumps
+  // 1,2,3 across reconnects but no component effect ever observes it). The
+  // sync context outlives view churn — its onMount starts the very stream
+  // that bumps the signal — so the attach consumer lives here.
+  const attachInflight = new Set<string>()
+  const attachDirectory = async (directory: string) => {
+    const conn = serverSDK.server
+    if (!conn) return
+    if (attachInflight.has(directory)) return
+    attachInflight.add(directory)
+    const fetchedAt = Date.now()
+    try {
+      const { status, body } = await amicodeGetResponse(
+        conn,
+        `/attach?directory=${encodeURIComponent(directory)}`,
+      )
+      if (status !== 200 || !body || typeof body !== "object") return
+      const snap = body as { busy?: Record<string, unknown> }
+      if (!snap.busy || typeof snap.busy !== "object") return
+      // The engines' status maps carry BUSY sessions only — absent = idle.
+      // Compose the full map: snapshot busy + idle downgrades for locally-busy
+      // sessions the snapshot no longer knows (recency-guarded inside
+      // reconcileStatuses — a busy transition newer than this fetch refuses
+      // the downgrade).
+      const localBusy = untrack(() => {
+        const all = session.data.session_status
+        return Object.entries(all).filter(([, st]) => st && st.type !== "idle")
+      })
+      const statuses: Record<string, { type: string }> = {}
+      for (const [sid, st] of Object.entries(snap.busy)) {
+        if (st && typeof st === "object" && "type" in st) statuses[sid] = st as { type: string }
+      }
+      // SCOPE (2026-10-20 flaky-animation fix): each attach carries only ITS
+      // directory's sessions — absent-from-snapshot means idle ONLY within
+      // that directory. A panel attaches EVERY project concurrently (the
+      // boot fans out one attach per project worktree); an unscoped
+      // downgrade let the emptiest directory's attach (a worktree, "/")
+      // mark the whole fleet's busy sessions idle, and whichever attach
+      // landed LAST won. Animation then lit only when the right
+      // directory's attach happened to be final — random per reload. Only
+      // sessions whose cached info places them in THIS directory may be
+      // downgraded; unknown-directory sessions are left alone (safe: the
+      // recency guard inside reconcileStatuses still refuses downgrades
+      // newer than the fetch).
+      for (const [sid] of localBusy) {
+        const sessionDirectory = untrack(() => session.data.info[sid]?.directory)
+        if (sessionDirectory !== directory) continue
+        if (!statuses[sid]) statuses[sid] = { type: "idle" }
+      }
+      session.reconcileStatuses(statuses as Record<string, SessionStatus>, { fetchedAt })
+      // Sessions spawned during the gap appear immediately.
+      void loadSessions(directory).catch(() => {})
+    } catch {
+      // A failed attach is non-fatal: the next resync edge retries.
+    } finally {
+      attachInflight.delete(directory)
+    }
+  }
+  // 2026-10-20 (boot-race fix): the directory source is the PROJECT LIST,
+  // not loadSessions registration. The VS Code panel iframe boots at the
+  // bare origin — no directory route — so loadSessions never runs at boot
+  // (verified in the frontdoor log: no /session?directory=...&roots=true for
+  // webview boots) and a registry fed by it stays empty forever: bump-time
+  // attach had no dirs, register-time never came. The projects query
+  // (/project) runs on EVERY boot regardless of route, so the effect below
+  // fires when EITHER edge arrives last — the first stream connect, or the
+  // project list resolving — and attaches every project's worktree (plus
+  // sandboxes). Tracked reads: the effect re-runs on count bumps AND on
+  // project-list changes; the attach body itself is untracked.
+  // The directory source: project worktrees UNION the directories of every
+  // session the store has cached info for. The projects query is the ideal
+  // source but has proven non-deterministic across webview boots (observed
+  // 2026-10-20: a webview boot that never issued /project); session info
+  // accumulates from any session list/view load, so the union converges on
+  // every panel regardless of which query raced which.
+  const knownAttachDirs = (): string[] => {
+    const dirs = new Set<string>()
+    for (const project of globalStore.project ?? []) {
+      if (project?.worktree) dirs.add(project.worktree)
+      for (const sandbox of project.sandboxes ?? []) if (sandbox) dirs.add(sandbox)
+    }
+    for (const info of Object.values(session.data.info)) {
+      if (info?.directory) dirs.add(info.directory)
+    }
+    return [...dirs]
+  }
+  createEffect(() => {
+    const count = serverSDK.event.resyncCount()
+    const projects = globalStore.project ?? []
+    if (count === 0) return
+    const dirs = untrack(() => knownAttachDirs())
+    untrack(() => {
+      for (const directory of dirs) void attachDirectory(directory)
+    })
+  })
+  // 2026-10-20 (deterministic convergence): the reactive edges (stream bump,
+  // project list, session info arriving) have each been observed to lose
+  // races across real webview boots. A 15s poll makes busy-state truth
+  // converge REGARDLESS of which reactive path fired: whatever the boot
+  // ordering, within one poll tick of the store knowing a directory, its
+  // merged snapshot is reconciled. Cheap (one request per directory per
+  // tick, inflight-deduped), and the scoped downgrade keeps cross-directory
+  // attaches from fighting each other.
+  const attachPoll = setInterval(() => {
+    if (serverSDK.event.status() !== "connected") return
+    const dirs = untrack(() => knownAttachDirs())
+    for (const directory of dirs) void attachDirectory(directory)
+  }, 15000)
+  onCleanup(() => clearInterval(attachPoll))
 
   onMount(() => {
     if (typeof requestAnimationFrame === "function") {

@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createMemo, onCleanup, onMount } from "solid-js"
 import { createStore, reconcile } from "solid-js/store"
-import { fetchAmicodeRunSeries, openAmicodeEntity } from "./ui-bridge"
+import { fetchAmicodeRunSeries } from "./ui-bridge"
 import { heroPaths, objectivePath } from "./run-plot"
 import {
   type RunSeries,
@@ -18,9 +18,11 @@ export { parseRunSeriesResponse, type RunSeries, type RunSeriesView } from "./ru
 // plot (the pulse IS the artifact); convergence shrinks to a header sparkline
 // next to the F chip; the log tail streams human solver lines only (AMICODE_*
 // protocol dumps filtered). Data from GET /amicode/run-series via the ui
-// bridge; polls while solving; click opens the full Run entity. Transport lives
-// in the app (rail registers fetchRunSeries) so this stays self-contained but
-// context-free — no-op until the rail is mounted, exactly like the entity view.
+// bridge; polls while solving. Transport lives in the app (the session
+// timeline registers fetchRunSeries) so this stays self-contained but
+// context-free — no-op until the host is mounted. #1818: the click-through to
+// the entity view is gone with the deprecated entity surfaces; the window is
+// the live record of the run itself.
 
 const POLL_MS = 2500
 const PLOT_W = 100
@@ -144,7 +146,6 @@ export function RunWindow(props: { run: string; lab?: string }) {
     <div
       data-component="amicode-run-window"
       data-run={props.run}
-      onClick={() => openAmicodeEntity("run")}
       style={{
         display: "flex",
         "flex-direction": "column",
@@ -153,7 +154,6 @@ export function RunWindow(props: { run: string; lab?: string }) {
         padding: "8px 12px",
         "font-size": "12px",
         "line-height": "16px",
-        cursor: "pointer",
       }}
     >
       {/* header: Run · status · iter · metric · spark · elapsed. No Amico mark:

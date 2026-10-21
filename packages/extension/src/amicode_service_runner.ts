@@ -134,6 +134,15 @@ export interface AmicodeServiceRunnerOptions {
    *  ships without a real catalog; only a truly unresolvable shipped dir leaves
    *  skills.paths omitted (suppression still applies). */
   machineSkillRoot?: string;
+  /** #1808: where the engine child's stdout/stderr chunks are forwarded AS
+   * THEY ARRIVE. Default: the runner's own stdout/stderr — the systemd unit
+   * appends those to the shard log, and the engine's telemetry lines
+   * (SSE-TICK / SSE-DROP / the SELF-STALL watchdog) ride its stdout. Before
+   * #1808 the pipes were consumed into the private engineLog buffer and only
+   * surfaced on boot failure — every Phase A line was mute in production while
+   * its wire heartbeats demonstrably flowed. The buffer is kept regardless
+   * (health-failure diagnostics); forwarding is fire-and-forget. */
+  engineOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
   /** Log sink (the structural-interface convention — vscode-free). */
   log?: (line: string) => void;
 }
@@ -466,9 +475,22 @@ export async function bootAmicodeServiceRunner(opts: AmicodeServiceRunnerOptions
     env: engineEnv,
     stdio: ["ignore", "pipe", "pipe"],
   });
+  // #1808: the engine's stdout is a telemetry surface, not a private buffer.
+  // Forward every chunk to the runner's own stdio (which the systemd unit
+  // appends to the shard log) as it arrives — SSE-TICK / SSE-DROP / SELF-STALL
+  // lines must be greppable on a LIVE engine, not only in a failed boot's
+  // post-mortem. The engineLog buffer stays: it is the boot-failure diagnostic.
+  const forwardEngineOutput =
+    opts.engineOutput ?? ((chunk: string, stream: "stdout" | "stderr") => (stream === "stderr" ? process.stderr : process.stdout).write(chunk));
   let engineLog = "";
-  engine.stdout?.on("data", (d: Buffer) => (engineLog += d));
-  engine.stderr?.on("data", (d: Buffer) => (engineLog += d));
+  engine.stdout?.on("data", (d: Buffer) => {
+    engineLog += d;
+    forwardEngineOutput(d.toString(), "stdout");
+  });
+  engine.stderr?.on("data", (d: Buffer) => {
+    engineLog += d;
+    forwardEngineOutput(d.toString(), "stderr");
+  });
 
   // ── PID-file write (#1578): record the engine child's PID ───────────────
   if (opts.pidFile && engine.pid !== undefined) {

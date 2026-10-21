@@ -185,13 +185,15 @@ const layer = Layer.effect(
       url: URL | string,
       headers: HeadersInit | undefined,
     ) {
-      // Sync copies are opt-in per subscription (#1778, amicode overlay): this
-      // loop replays them into the local store, so it asks for them.
-      const request = new Headers(headers)
-      request.set("x-opencode-sync-copies", "true")
+      // Sync copies are opt-in per global-stream subscription (#1778, #1806
+      // P1a): this loop is the subscriber that replays them (events.replay
+      // below is the whole point of the connection), so it must ask for them
+      // — the header the ported engine reads.
+      const syncHeaders = new Headers(headers)
+      syncHeaders.set("x-opencode-sync-copies", "true")
       const response = yield* http.execute(
         HttpClientRequest.get(route(url, "/global/event"), {
-          headers: request,
+          headers: syncHeaders,
           accept: "text/event-stream",
         }),
       )

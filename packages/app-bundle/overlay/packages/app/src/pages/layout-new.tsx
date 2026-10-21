@@ -1,11 +1,17 @@
-import { createEffect, Suspense, type ParentProps } from "solid-js"
-import { createStore } from "solid-js/store"
+import { createEffect, onCleanup, Suspense, type ParentProps } from "solid-js"
+import { createStore, produce } from "solid-js/store"
 import { TabsInfoPopup } from "@/components/help-button"
 import { Titlebar, type TitlebarUpdate } from "@/components/titlebar"
 import { SolverSwitchBanner } from "@/components/solver-switch-banner"
+import { HarnessSwitchBanner } from "@/components/harness-switch-banner"
 import { installEngineStateListener } from "@/components/engine-state-signal"
 import { VaultPanel } from "@/components/vault-panel"
+import { QuestionInboxPanel } from "@/components/question-inbox"
 import { usePlatform } from "@/context/platform"
+import { postClientLog } from "@/amicode/client-telemetry"
+import { useServerSDK } from "@/context/server-sdk"
+import { useServerSync } from "@/context/server-sync"
+import { applyInboxClears, initQuestionInbox } from "@/context/question-inbox"
 import { setV2Toast, ToastRegion } from "@/utils/toast"
 import { useNotificationToasts } from "./layout/notification-toasts"
 import { useWorktreeAutoRename } from "./layout/worktree-auto-rename"
@@ -24,6 +30,43 @@ export default function NewLayout(props: ParentProps) {
   // while the popover is closed. The narration banner was removed; the toggle's
   // own dot/lock is the whole story now.
   installEngineStateListener()
+
+  // amicode#1786 (S2): the question inbox's per-window controller — this layout
+  // owns the active server's provider scope, so it wires the controller to the
+  // shared ServerSession store + the hub SDK and tears it down on server
+  // switches. The titlebar badge (the same tree) and the panel below both read
+  // the module singleton.
+  const serverSync = useServerSync()
+  const serverSDK = useServerSDK()
+  const inbox = initQuestionInbox({
+    question: () => serverSync().session.data.question,
+    info: () => serverSync().session.data.info,
+    // The same settle the replied/rejected events drive: a row the reconcile
+    // read proved dead leaves the shared store (idempotent against events).
+    removeQuestion: (clears) => serverSync().session.set(produce((draft) => applyInboxClears(draft.question, clears))),
+    isLive: (sessionID, requestID) =>
+      (serverSync().session.data.question[sessionID] ?? []).some((row) => row.id === requestID),
+    // The engine's /question list — the shared pending rows seam, read the
+    // same dual-protocol way bootstrapDirectory reads it.
+    listQuestions: async (directory) => {
+      const sdk = serverSDK()
+      if ((await sdk.protocol) === "v1")
+        return (await sdk.createClient({ directory, throwOnError: true }).question.list()).data ?? []
+      return (await sdk.api.question.request.list({ location: { directory } })).data
+    },
+    // The probe-verified reply path, scoped to the REQUESTING session's
+    // directory exactly like the dock's reply (amicode#117/#249).
+    reply: (input) =>
+      serverSDK().api.question.reply({
+        sessionID: input.sessionID,
+        requestID: input.requestID,
+        location: { directory: input.directory },
+        answers: input.answers,
+      }),
+    telemetry: postClientLog,
+    connected: () => serverSDK().event.status() === "connected",
+  })
+  onCleanup(() => inbox.dispose())
 
   const update: TitlebarUpdate = {
     version: () => {
@@ -59,10 +102,17 @@ export default function NewLayout(props: ParentProps) {
           into layout.tsx's LegacyLayout branch, which newLayoutDesigns never
           reaches (VaultPanel was invisible here). */}
       <VaultPanel />
+      {/* amicode#1786 (S2): the question inbox's global host — the same
+          one-host-per-window pattern as the vault drawer. */}
+      <QuestionInboxPanel />
       {/* opencode#78 follow-up: a solver switch restarts the opencode server
           under the webview. Speaks only for switches the app requested — unlike
           the removed ConnectionBanner, silence is still the default. */}
       <SolverSwitchBanner />
+      {/* amicode#1549: a harness switch restarts the server under the webview
+          too — the composer's harness control narrates through the gap. Same
+          discipline: speaks only for switches the app requested. */}
+      <HarnessSwitchBanner />
       {/* DebugBar removed with the fork's debug-bar deletion (kept during the
           upstream merge) — the debugTools toggle state stays for the titlebar's
           channel indicator. */}

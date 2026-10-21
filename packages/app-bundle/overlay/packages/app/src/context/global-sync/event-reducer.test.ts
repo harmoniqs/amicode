@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test"
 import type { Message, Part, PermissionRequest, Project, QuestionRequest, Session } from "@opencode-ai/sdk/v2/client"
-import { createStore } from "solid-js/store"
+import type { OpencodeClient } from "@opencode-ai/sdk/v2/client"
+import { createStore, type SetStoreFunction } from "solid-js/store"
 import type { State } from "./types"
+import { createServerSession } from "../server-session"
 import { applyDirectoryEvent, applyGlobalEvent, cleanupDroppedSessionCaches } from "./event-reducer"
 
 const rootSession = (input: { id: string; parentID?: string; archived?: number }) =>
@@ -761,3 +763,74 @@ describe("applyDirectoryEvent", () => {
   })
 })
 
+// #1753: the live question/permission card seam. The root dispatch
+// (server-sync.tsx's event listener) feeds EVERY event to the shared
+// ServerSession store first (session.apply — the store the composer reads via
+// directory-sync's sessionFields proxy), THEN hands it to
+// applyDirectoryEvent with sessionContent: false, which drops per-session
+// content from the DIRECTORY-LIST store. The flag is protective by design:
+// the list store is the sidebar/home session list, not a content cache —
+// per-session content lives in the shared session store (upstream's
+// e55a91ea "use shared server data" end-state removed the flag by deleting
+// the list store's content maps entirely; the overlay already routes card
+// reads through the shared store). These pins hold BOTH halves: live events
+// reach the card-rendering state, and the list store stays content-free.
+describe("live question/permission card dispatch (sessionContent: false seam)", () => {
+  const dispatch = (input: { event: { type: string; properties?: unknown }; store: State; setStore: SetStoreFunction<State> }) => {
+    // The shared session store — exactly what server-sync.tsx:553 does
+    // (session.apply(event)) BEFORE the gated directory dispatch at :627.
+    const session = createServerSession({ session: { get: async () => ({ data: undefined }) } } as unknown as OpencodeClient)
+    session.apply(input.event)
+    // The gated directory-list dispatch — exactly what server-sync.tsx:618-638 does.
+    applyDirectoryEvent({
+      event: input.event,
+      store: input.store,
+      setStore: input.setStore,
+      push() {},
+      directory: "/tmp",
+      sessionContent: false,
+      loadLsp() {},
+    })
+    return session
+  }
+
+  test("a live question.asked reaches the card-rendering state while the directory-list store stays clean", () => {
+    const [store, setStore] = createStore(baseState())
+    const session = dispatch({
+      event: { type: "question.asked", properties: questionRequest("q_live", "ses_1") },
+      store,
+      setStore,
+    })
+
+    // The card-rendering state (the composer reads sync().data.question, which
+    // directory-sync proxies to serverSync.session.data.question).
+    expect(session.data.question.ses_1?.map((x) => x.id)).toEqual(["q_live"])
+    // The directory-list store — protected by the sessionContent gate.
+    expect(store.question.ses_1).toBeUndefined()
+  })
+
+  test("a live permission.asked reaches the card-rendering state while the directory-list store stays clean", () => {
+    const [store, setStore] = createStore(baseState())
+    const session = dispatch({
+      event: { type: "permission.asked", properties: permissionRequest("per_live", "ses_1") },
+      store,
+      setStore,
+    })
+
+    expect(session.data.permission.ses_1?.map((x) => x.id)).toEqual(["per_live"])
+    expect(store.permission.ses_1).toBeUndefined()
+  })
+
+  test("without the gate the directory-list reducer still tracks the lifecycles (the ungated path stays intact)", () => {
+    const [store, setStore] = createStore(baseState())
+    applyDirectoryEvent({
+      event: { type: "question.asked", properties: questionRequest("q_ungated", "ses_1") },
+      store,
+      setStore,
+      push() {},
+      directory: "/tmp",
+      loadLsp() {},
+    })
+    expect(store.question.ses_1?.map((x) => x.id)).toEqual(["q_ungated"])
+  })
+})

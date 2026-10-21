@@ -2,10 +2,14 @@ import { Config } from "@/config/config"
 import { GlobalBus } from "@/bus/global"
 import { GlobalEventReplay, formatID, type Frame, type Subscription } from "@/bus/global-replay"
 import { EffectBridge } from "@/effect/bridge"
+import { armSseSocketKeepalive } from "@/server/shared/tcp-keepalive"
+import { NodeHttpServerRequest } from "@effect/platform-node"
 import { EventV2 } from "@opencode-ai/core/event"
 import { Installation } from "@/installation"
 import { disposeAllInstancesAndEmitGlobalDisposed } from "@/server/global-lifecycle"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
+import { sseTickTelemetry } from "@/server/shared/sse-tick-telemetry"
+import { makeBoundedSseWriter } from "@/server/shared/sse-bounded-writer"
 import { Clock, Deferred, Effect, Exit, Queue } from "effect"
 import * as Stream from "effect/Stream"
 import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
@@ -13,7 +17,7 @@ import { HttpApiBuilder } from "effect/unstable/httpapi"
 import * as Sse from "effect/unstable/encoding/Sse"
 import type { Socket } from "node:net"
 import { RootHttpApi } from "../api"
-import { GlobalUpgradeInput } from "../groups/global"
+import { GlobalPaths, GlobalUpgradeInput } from "../groups/global"
 
 // The resume cursor: the standard `Last-Event-ID` header (what an SSE client
 // sends once it has seen an `id:` line), else the `lastEventID` query
@@ -77,16 +81,16 @@ function clientGone(request: HttpServerRequest.HttpServerRequest) {
 function eventResponse() {
   return Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest
+    // #1810: kernel-level corpse detection — arm the subscriber socket at SSE
+    // connection setup (loopback hops get the loud-degrade posture; see tcp-keepalive).
+    armSseSocketKeepalive(NodeHttpServerRequest.toServerResponse(request)?.socket, "/global/event")
     const cursor = cursorOf(request)
     const sync = syncRequested(request)
     const gone = yield* clientGone(request)
     // Registration is eager and synchronous: a bus event emitted while the
     // response body is starting is queued, never lost.
     const queue = yield* Queue.unbounded<Sse.Event>()
-    // Unregister the listener and drop the undelivered frames with the queue.
-    // Idempotent: it runs at the stream's end and again at the request scope's.
-    const release = (subscription: Subscription) =>
-      Effect.andThen(Effect.sync(() => subscription.close()), Queue.shutdown(queue))
+    const release = (subscription: Subscription) => Effect.sync(() => subscription.close())
     const subscription = yield* Effect.acquireRelease(
       Effect.sync(() => {
         const subscription = GlobalEventReplay.subscribe(cursor, { sync })
@@ -107,6 +111,11 @@ function eventResponse() {
       }),
       release,
     )
+    // #1798/#1804: the connection's tick telemetry identity, single-sourced
+    // cadence, and registry entry — the same contract the instance /event
+    // route carries, so the watchdog covers every live SSE connection.
+    const connId = EventV2.ID.create()
+    sseTickTelemetry.registerConnection(GlobalPaths.event, connId)
     yield* Effect.logInfo("global event connected").pipe(
       Effect.annotateLogs({
         subscribers: GlobalEventReplay.subscribers,
@@ -118,49 +127,42 @@ function eventResponse() {
     // The heartbeat enters the connection's own queue, behind every frame up to
     // the current sequence, so a backlogged connection never sees a heartbeat
     // claim a sequence it has not been sent yet (that would read as a hole).
-    const heartbeat = Stream.tick("10 seconds").pipe(
+    const heartbeat = Stream.tick(sseTickTelemetry.cadenceMs).pipe(
       Stream.drop(1),
-      Stream.mapEffect(() =>
-        Effect.map(Clock.currentTimeMillis, (time) => {
-          const seq = GlobalEventReplay.current
-          Queue.offerUnsafe(queue, controlEvent(seq, "server.heartbeat", { time, seq }))
+      Stream.mapEffect(() => Effect.map(Clock.currentTimeMillis, (time) => {
+        const seq = GlobalEventReplay.current
+        console.log("[hb] tick fired, offering beat");
+        Queue.offerUnsafe(queue, controlEvent(seq, "server.heartbeat", { time, seq }))
+      })),
+      Stream.tap(() =>
+        Effect.gen(function* () {
+          const fiberId = yield* Effect.fiberId
+          sseTickTelemetry.noteTick(GlobalPaths.event, connId, {
+            queueDepth: Queue.sizeUnsafe(queue),
+            fiberId,
+          })
         }),
       ),
       Stream.drain,
     )
 
-    return HttpServerResponse.stream(
-      Stream.fromQueue(queue).pipe(
-        Stream.merge(heartbeat, { haltStrategy: "left" }),
-        Stream.interruptWhen(Deferred.await(gone)),
-        Stream.pipeThroughChannel(Sse.encode()),
-        Stream.encodeText,
-        // Release when the stream ends (client gone, or server shutdown), then
-        // log the disconnect with what remains (read after the release ran).
-        Stream.ensuring(
-          Effect.suspend(() => {
-            const dropped = Queue.sizeUnsafe(queue)
-            return release(subscription).pipe(
-              Effect.andThen(
-                Effect.suspend(() =>
-                  Effect.logInfo("global event disconnected").pipe(
-                    Effect.annotateLogs({ subscribers: GlobalEventReplay.subscribers, dropped }),
-                  ),
-                ),
-              ),
-            )
-          }),
-        ),
-      ),
-      {
-        contentType: "text/event-stream",
-        headers: {
-          "Cache-Control": "no-cache, no-transform",
-          "X-Accel-Buffering": "no",
-          "X-Content-Type-Options": "nosniff",
-        },
-      },
-    )
+    const scope = yield* Effect.scope
+    return yield* makeBoundedSseWriter({
+      serverRequest: request,
+      route: GlobalPaths.event,
+      connId,
+      source: Stream.fromQueue(queue).pipe(Stream.merge(heartbeat, { haltStrategy: "left" })),
+      haltWhen: gone,
+      eventQueueDepth: () => Queue.sizeUnsafe(queue),
+      onEnded: Effect.gen(function* () {
+        yield* release(subscription)
+        yield* Effect.sync(() => sseTickTelemetry.unregisterConnection(connId))
+        yield* Effect.logInfo("global event disconnected").pipe(
+          Effect.annotateLogs({ subscribers: GlobalEventReplay.subscribers, dropped: Queue.sizeUnsafe(queue) }),
+        )
+      }),
+      scope,
+    })
   })
 }
 

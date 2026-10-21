@@ -1,8 +1,10 @@
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { InstanceState } from "@/effect/instance-state"
+import { InstanceRef } from "@/effect/instance-ref"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { Runner } from "@/effect/runner"
 import { BackgroundJob } from "@/background/job"
+import { RuntimeState } from "@opencode-ai/core/runtime-state"
 import { Effect, Latch, Layer, Scope, Context } from "effect"
 import { Session } from "./session"
 import { SessionID } from "./schema"
@@ -25,6 +27,11 @@ export interface Interface {
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/SessionRunState") {}
+
+const pendingDirectory = Effect.gen(function* () {
+  const ctx = yield* InstanceRef
+  return ctx ? ctx.directory : null
+})
 
 const layer = Layer.effect(
   Service,
@@ -56,6 +63,19 @@ const layer = Layer.effect(
       const data = yield* InstanceState.get(state)
       const existing = data.runners.get(sessionID)
       if (existing) return existing
+      // ── shared-store plumbing (#1760 P2) ──────────────────────────────────
+      // Lazy runner creation is the ghost-visibility-at-creation seam: the
+      // coordinator claims the session in the shared store the moment this
+      // instance adopts it, not just when it turns busy. The claim is
+      // owner-scoped (this process's owner_id), so it can never touch another
+      // instance's registration. onIdle releases it — correctly so even when
+      // the idle is dropped by the #1636 guard, because this runner is done
+      // with the session regardless of whether the event publishes.
+      const runtime = RuntimeState.getGlobal()
+      if (runtime) {
+        const directory = yield* pendingDirectory
+        yield* RuntimeState.bestEffort(runtime.register({ sessionID, directory }))
+      }
       // #1636 — draw a fresh per-turn generation for THIS runner and thread it
       // through both its busy (turn start) and idle (turn end). The generation
       // counter lives in the SessionStatus service (persistent across turns), not
@@ -66,6 +86,7 @@ const layer = Layer.effect(
       const next = Runner.make<SessionV1.WithParts>(data.scope, {
         onIdle: Effect.gen(function* () {
           data.runners.delete(sessionID)
+          if (runtime) yield* RuntimeState.bestEffort(runtime.unregister({ sessionID }))
           yield* status.set(sessionID, { type: "idle" }, { generation })
         }),
         onBusy: status.set(sessionID, { type: "busy" }, { generation }),
@@ -117,7 +138,7 @@ const layer = Layer.effect(
   }),
 )
 
-const cancelBackgroundJobs = Effect.fn("SessionRunState.cancelBackgroundJobs")(function* (
+const cancelBackgroundJobs = Effect.fnUntraced(function* (
   background: BackgroundJob.Interface,
   sessionID: SessionID,
 ) {

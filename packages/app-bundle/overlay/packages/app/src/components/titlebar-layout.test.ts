@@ -18,10 +18,10 @@ import {
 } from "./titlebar-layout"
 
 describe("titlebar layout", () => {
-  test("the default layout places all five controls on the right in canonical order", () => {
+  test("the default layout places all six controls on the right in canonical order", () => {
     expect(defaultTitlebarLayout).toEqual({
       left: [],
-      right: ["sessions", "status", "side-panel", "profile", "settings"],
+      right: ["sessions", "status", "side-panel", "inbox", "profile", "settings"],
     } satisfies TitlebarLayout)
     expect([...defaultTitlebarLayout.left, ...defaultTitlebarLayout.right].sort()).toEqual(
       [...TITLEBAR_CONTROL_IDS].sort(),
@@ -31,7 +31,7 @@ describe("titlebar layout", () => {
   test("a valid layout with all controls on the right passes through", () => {
     const input = {
       left: [],
-      right: ["sessions", "status", "side-panel", "profile", "settings"],
+      right: ["sessions", "status", "side-panel", "inbox", "profile", "settings"],
     } satisfies TitlebarLayout
     expect(validateTitlebarLayout(input)).toEqual(input)
   })
@@ -39,7 +39,7 @@ describe("titlebar layout", () => {
   test("a valid layout split across left and right passes through", () => {
     const input = {
       left: ["profile", "settings"],
-      right: ["sessions", "status", "side-panel"],
+      right: ["sessions", "status", "side-panel", "inbox"],
     } satisfies TitlebarLayout
     expect(validateTitlebarLayout(input)).toEqual(input)
   })
@@ -61,16 +61,18 @@ describe("titlebar layout", () => {
     expect(
       validateTitlebarLayout({
         left: ["sessions"],
-        right: ["sessions", "status", "side-panel", "profile", "settings"],
+        right: ["sessions", "status", "side-panel", "inbox", "profile", "settings"],
       }),
     ).toEqual(defaultTitlebarLayout)
   })
 
   test("missing IDs fall back to the default layout", () => {
     expect(
+      // also the migration: a pre-#1786 persisted layout (five controls, no
+      // inbox) falls back to the new default and gains the inbox badge.
       validateTitlebarLayout({
         left: [],
-        right: ["sessions", "status", "side-panel", "profile"],
+        right: ["sessions", "status", "side-panel", "profile", "settings"],
       }),
     ).toEqual(defaultTitlebarLayout)
   })
@@ -79,14 +81,14 @@ describe("titlebar layout", () => {
     expect(
       validateTitlebarLayout({
         left: ["unknown-button"],
-        right: ["sessions", "status", "side-panel", "profile", "settings"],
+        right: ["sessions", "status", "side-panel", "inbox", "profile", "settings"],
       }),
     ).toEqual(defaultTitlebarLayout)
   })
 
   test("a valid layout with all controls on the left passes through", () => {
     const input = {
-      left: ["sessions", "status", "side-panel", "profile", "settings"],
+      left: ["sessions", "status", "side-panel", "inbox", "profile", "settings"],
       right: [],
     } satisfies TitlebarLayout
     expect(validateTitlebarLayout(input)).toEqual(input)
@@ -96,6 +98,7 @@ describe("titlebar layout", () => {
     expect(mountPointId("sessions")).toBe("opencode-titlebar-sessions")
     expect(mountPointId("status")).toBe("opencode-titlebar-status")
     expect(mountPointId("side-panel")).toBe("opencode-titlebar-side-panel")
+    expect(mountPointId("inbox")).toBe("opencode-titlebar-inbox")
     expect(mountPointId("profile")).toBe("opencode-titlebar-profile")
     expect(mountPointId("settings")).toBe("opencode-titlebar-settings")
   })
@@ -104,6 +107,7 @@ describe("titlebar layout", () => {
     expect(isSessionScoped("sessions")).toBe(true)
     expect(isSessionScoped("status")).toBe(true)
     expect(isSessionScoped("side-panel")).toBe(true)
+    expect(isSessionScoped("inbox")).toBe(false)
     expect(isSessionScoped("profile")).toBe(false)
     expect(isSessionScoped("settings")).toBe(false)
   })
@@ -112,21 +116,21 @@ describe("titlebar layout", () => {
   // The fleet studio slice (session-header provenance, machine picker, Preview
   // remote edit) adds NO controls to the titlebar. The session-header provenance
   // icon + caret live in the data-session-title sticky header, not the titlebar.
-  test("fleet studio adds no titlebar controls — TITLEBAR_CONTROL_IDS is exactly the canonical five (#1442 AC3)", () => {
-    // The canonical set is exactly these five, in this order
-    expect(TITLEBAR_CONTROL_IDS).toEqual(["sessions", "status", "side-panel", "profile", "settings"])
-    // No fleet/machine/provenance control was added
+  test("the canonical control set is exactly the six — still no fleet/machine/provenance controls (#1442 AC3, #1786)", () => {
+    // #1786 adds the question-inbox badge as a canonical control; the #1442
+    // fleet-studio contract holds: no machine/fleet/provenance control.
+    expect(TITLEBAR_CONTROL_IDS).toEqual(["sessions", "status", "side-panel", "inbox", "profile", "settings"])
     const ids = [...TITLEBAR_CONTROL_IDS]
     expect(ids).not.toContain("machine")
     expect(ids).not.toContain("fleet")
     expect(ids).not.toContain("provenance")
-    expect(ids.length).toBe(5)
+    expect(ids.length).toBe(6)
   })
 
-  test("fleet studio does not change the default layout (#1442 AC3)", () => {
+  test("the default layout carries every canonical control including the inbox (#1442 AC3 union, #1786)", () => {
     expect(defaultTitlebarLayout).toEqual({
       left: [],
-      right: ["sessions", "status", "side-panel", "profile", "settings"],
+      right: ["sessions", "status", "side-panel", "inbox", "profile", "settings"],
     })
     // The union of left + right is exactly TITLEBAR_CONTROL_IDS (no new entries)
     const all = [...defaultTitlebarLayout.left, ...defaultTitlebarLayout.right]

@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test"
+import { produce } from "solid-js/store"
 import type { OpencodeClient, Part, Session, SessionStatus } from "@opencode-ai/sdk/v2/client"
 import { createServerSession, runInflight } from "./server-session"
+import { applyInboxClears } from "./question-inbox"
+import { deriveSessionListChip } from "@/pages/layout/session-list-chip"
 
 const sessionInfo = (id: string, parentID?: string) =>
   ({
@@ -153,6 +156,61 @@ describe("ServerSession live file-edit route", () => {
     session.apply(workerEdit)
     expect(session.data.diff_version.worker).toBe(1)
   })
+})
+
+
+// 2026-10-10: the live question card never rendered even with the V1-shape
+// normalizer deployed — this pins the REDUCER: a question.asked event in the
+// V1 wire shape (payload in `properties`) must land in the question store.
+test("question.asked (V1 wire shape) lands in the question store", () => {
+  const session = createServerSession({ session: { get: async () => ({ data: undefined }) } } as unknown as OpencodeClient)
+  session.apply({ type: "session.created", properties: { info: sessionInfo("root") } })
+  session.apply({
+    type: "question.asked",
+    properties: {
+      id: "que_test1",
+      sessionID: sessionInfo("root").id,
+      questions: [{ header: "h", question: "live?", options: [{ label: "a", description: "d" }] }],
+    },
+  })
+  const stored = session.data.question[sessionInfo("root").id]
+  expect(stored?.length).toBe(1)
+  expect(stored?.[0]?.id).toBe("que_test1")
+  expect(stored?.[0]?.questions?.[0]?.header).toBe("h")
+  session.apply({
+    type: "question.replied",
+    properties: { sessionID: sessionInfo("root").id, requestID: "que_test1" },
+  })
+  expect(session.data.question[sessionInfo("root").id]?.length ?? 0).toBe(0)
+})
+
+// #1753: the permission card rides the SAME live dispatch seam as the question
+// card (session.apply → the shared session store the composer reads via
+// directory-sync's sessionFields proxy). This pins the permission analog of
+// the 2026-10-10 question pin above: a permission.asked event in the V1 wire
+// shape must land in the permission store — the card-rendering state — and
+// leave it again on permission.replied.
+test("permission.asked (V1 wire shape) lands in the permission store", () => {
+  const session = createServerSession({ session: { get: async () => ({ data: undefined }) } } as unknown as OpencodeClient)
+  session.apply({ type: "session.created", properties: { info: sessionInfo("root") } })
+  session.apply({
+    type: "permission.asked",
+    properties: {
+      id: "per_test1",
+      sessionID: sessionInfo("root").id,
+      permission: "edit",
+      patterns: ["src/**"],
+    },
+  })
+  const stored = session.data.permission[sessionInfo("root").id]
+  expect(stored?.length).toBe(1)
+  expect(stored?.[0]?.id).toBe("per_test1")
+  expect(stored?.[0]?.permission).toBe("edit")
+  session.apply({
+    type: "permission.replied",
+    properties: { sessionID: sessionInfo("root").id, requestID: "per_test1" },
+  })
+  expect(session.data.permission[sessionInfo("root").id]?.length ?? 0).toBe(0)
 })
 
 // #1646: the composer's archived read-only banner reads the PER-SESSION store
@@ -594,5 +652,93 @@ describe("#1766 — pinnedIds / onPinned", () => {
     off()
     session.pin("c")
     expect(seen).toEqual(["a", "b", "a"])
+  })
+})
+
+// ── amicode#1787 (S1) — the session list chip over the SHARED rows ──────────
+// The list rows' status chips are a RENDER over this store: they derive from
+// session_working / session_status (the busy rows, already floored by
+// #1617/#1637) and the question map (the same rows the S2 inbox lists). The
+// #1768 rhyme, adapted to this data plane: tri-state busy/idle/omitted,
+// recency-guarded reconcile, honest absence — an unreachable owner's omission
+// never resets a chip to idle; the row self-corrects on an explicit frame.
+describe("amicode#1787 — the session list chip derives live off the event flow", () => {
+  const chipFor = (session: ReturnType<typeof createSession>, id: string, lastActivityAt?: number) =>
+    deriveSessionListChip({ source: session.data, sessionID: id, lastActivityAt, now: 1_000_000 })
+
+  test("a turn's events walk the chip omitted → running → waiting on question → idle", () => {
+    const session = createSession()
+    // Before any evidence: OMITTED — the row renders no chip, never a lying idle.
+    expect(chipFor(session, "c1")).toBeUndefined()
+    // The execution bracket (every turn shape) raises the chip.
+    session.apply({ type: "session.execution.started", properties: { sessionID: "c1" } })
+    expect(chipFor(session, "c1")).toEqual({ kind: "running", retry: false })
+    // A pending question is the actionable state — the same rows the inbox lists.
+    session.apply({
+      type: "question.asked",
+      properties: { id: "q1", sessionID: "c1", questions: [] },
+    })
+    expect(chipFor(session, "c1")).toEqual({ kind: "waiting-on-question" })
+    // The reply settles the question; the turn is still bracketed → running.
+    session.apply({ type: "question.replied", properties: { sessionID: "c1", requestID: "q1" } })
+    expect(chipFor(session, "c1")).toEqual({ kind: "running", retry: false })
+    // The terminal closes the turn with an explicit idle frame → idle with age.
+    session.apply({ type: "session.execution.succeeded", properties: { sessionID: "c1" } })
+    expect(chipFor(session, "c1", 1_000_000 - 40 * 60_000)).toEqual({ kind: "idle", ageMs: 40 * 60_000 })
+  })
+})
+
+// ── amicode#1787 — the #1768 reconcile rhyme, at the chip ──────────────────
+// The same tri-state shapes the fleet session-status re-seed tests use, driven
+// through the chip's derivation: an omission (unreachable owner) keeps the
+// current chip, an explicit frame settles it, recency guards a live busy.
+describe("amicode#1787 — reconcile semantics at the chip (busy/idle/omitted)", () => {
+  const chipFor = (session: ReturnType<typeof createSession>, id: string) =>
+    deriveSessionListChip({ source: session.data, sessionID: id, now: 1_000_000 })
+
+  test("a session OMITTED from the reconcile keeps its chip (unreachable owner never resets to idle)", () => {
+    const session = createSession()
+    session.apply({ type: "session.status", properties: { sessionID: "o1", status: { type: "busy" } } })
+    // The reconcile covers only other sessions — o1's owner is unreachable, so
+    // the read omits it. Absence changes nothing: the chip stays running.
+    session.reconcileStatuses({ elsewhere: { type: "idle" } }, { fetchedAt: Date.now() + 1000 })
+    expect(chipFor(session, "o1")).toEqual({ kind: "running", retry: false })
+  })
+
+  test("an explicit busy from the reconcile settles a stale idle chip", () => {
+    const session = createSession()
+    session.apply({ type: "session.status", properties: { sessionID: "o2", status: { type: "idle" } } })
+    expect(chipFor(session, "o2")).toEqual({ kind: "idle", ageMs: undefined })
+    session.reconcileStatuses({ o2: { type: "busy" } }, { fetchedAt: Date.now() + 1000 })
+    expect(chipFor(session, "o2")).toEqual({ kind: "running", retry: false })
+  })
+
+  test("an out-of-order (older) idle reconcile never blanks a live running chip", () => {
+    const session = createSession()
+    session.apply({ type: "session.status", properties: { sessionID: "o3", status: { type: "busy" } } })
+    session.reconcileStatuses({ o3: { type: "idle" } }, { fetchedAt: Date.now() - 10_000 })
+    expect(chipFor(session, "o3")).toEqual({ kind: "running", retry: false })
+  })
+
+  test("a FRESH explicit idle settles the running chip — the owner returned (or the shared busy row TTL'd out)", () => {
+    const session = createSession()
+    session.apply({ type: "session.status", properties: { sessionID: "o4", status: { type: "busy" } } })
+    session.reconcileStatuses({ o4: { type: "idle" } }, { fetchedAt: Date.now() + 1000 })
+    expect(chipFor(session, "o4")).toEqual({ kind: "idle", ageMs: undefined })
+  })
+
+  test("a dead question row TTLs out through the S2 inbox's own clear path and the chip stops waiting", () => {
+    const session = createSession()
+    session.apply({
+      type: "question.asked",
+      properties: { id: "q1", sessionID: "o5", questions: [] },
+    })
+    expect(chipFor(session, "o5")).toEqual({ kind: "waiting-on-question" })
+    // The owner is unreachable; its shared row TTL'd out and the inbox's
+    // reconcile read proved the row dead — the same settle the layout wires
+    // (removeQuestion → produce + applyInboxClears). The chip follows: it can
+    // never wedge "waiting on question" for a row that no longer exists.
+    session.set(produce((draft) => applyInboxClears(draft.question, [{ sessionID: "o5", id: "q1" }])))
+    expect(chipFor(session, "o5")).toBeUndefined() // back to honest omission
   })
 })

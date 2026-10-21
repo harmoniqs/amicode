@@ -5,19 +5,9 @@ import { parseAskInput } from "./ask"
 import { AmicodeAskCard } from "./ask-card"
 import { parseApprovalInput } from "./approval"
 import { AmicodeApprovalCard } from "./approval-card"
-import { parseDiffSentinel, receiptParts, INLINE_KINDS } from "./receipt"
-import { receiptIsCurrent } from "./receipt-currency"
+import { parseDiffSentinel, receiptParts } from "./receipt"
 import { systemReceiptPieces, formulationReceiptPieces } from "./facets"
 import { compositeChip, chipText } from "./problem"
-import {
-  openAmicodeEntity,
-  amicodeProblemView,
-  amicodeRunStatus,
-  amicodeDraftPrompt,
-  amicodeRefetchProblem,
-  amicodeEntityLabels,
-} from "./ui-bridge"
-import { AmicodeEntityView } from "./entity-view"
 import { RunWindow } from "./run-window"
 import { parseWidgetSentinel } from "./widget-preview"
 import { WidgetPreviewCard } from "./widget-preview-card"
@@ -44,16 +34,15 @@ function runRefFromOutput(output: unknown): { run: string; lab?: string } | unde
 // parts (parsed from the AMICODE_DIFF sentinel — spec B), falling back to the
 // legacy status chip when no sentinel parses (old sessions keep rendering);
 // amicode_ask still renders the interactive question card. The raw tool return
-// is agent-directed text and is deliberately NOT rendered — durable state
-// lives in the problem rail (./entity-rail.tsx). Receipt click opens the
-// entity view through the ui-bridge (no-op until the rail registers it).
-//
-// The card carries four states, differentiated in FORM, not just words: the
-// H-mark is the spinner while working (running), settles under a green check
-// when done with no diff, becomes a structured diff receipt when there is one,
-// and turns its rail red on failure. It is a real <button> when it can open the
-// entity (keyboard-reachable, focus ring) and a plain <div> otherwise. Styling
-// lives in ./amicode.css; data-slot hooks are preserved for the e2e suite.
+// is agent-directed text and is deliberately NOT rendered — the durable record
+// is the receipt itself. The card carries four states, differentiated in FORM,
+// not just words: the H-mark is the spinner while working (running), settles
+// under a green check when done with no diff, becomes a structured diff
+// receipt when there is one, and turns its rail red on failure. It is a plain
+// <div> — the entity views it used to open were removed with the deprecated
+// research surfaces (#1818), so there is nothing to click through to.
+// Styling lives in ./amicode.css; data-slot hooks are preserved for the e2e
+// suite.
 
 type DiffPiece = { key: string; from?: string; to?: string }
 
@@ -66,14 +55,6 @@ function Chip(props: { tool: string; status?: string; output?: string; count?: n
     const sentinel = parseDiffSentinel(props.output)
     return sentinel ? { sentinel, receipt: receiptParts(sentinel) } : undefined
   })
-  // Clickable ONLY when an entity view exists for the kind. A receipt carrying a
-  // sentinel for a kind entity-view.tsx has no case for (e.g. `recommend`, which
-  // emits a sentinel purely so its chip names the param) would otherwise open an
-  // empty dialog. Diff detail and openability are separate properties.
-  const clickable = () => {
-    const entity = parts()?.sentinel.entity
-    return entity !== undefined && INLINE_KINDS.has(entity)
-  }
   const diffPieces = createMemo<DiffPiece[]>(
     () =>
       parts()?.receipt.changes.map((change) =>
@@ -107,11 +88,6 @@ function Chip(props: { tool: string; status?: string; output?: string; count?: n
   })
   const state = () =>
     errored() ? "error" : running() ? "running" : parts() ? "receipt" : props.status === "completed" ? "done" : "idle"
-  const openLabel = () => `Open ${parts()?.receipt.label ?? stage()} details`
-  const open = () => {
-    const active = parts()
-    if (active) openAmicodeEntity(active.sentinel.entity, active.sentinel.seq)
-  }
 
   // Signature / body / trail are shared by the clickable (<button>) and inert
   // (<div>) shells. Split so the shell can be a real button only when there is
@@ -206,7 +182,7 @@ function Chip(props: { tool: string; status?: string; output?: string; count?: n
   // margin-left: 12px, so an empty one still pays for that gap — which is what
   // dropping the Livedot exposed: a running card had nothing left to show but
   // kept the space, leaving 20px on the right against the 8px on the left.
-  const hasTrail = () => state() === "done" || clickable()
+  const hasTrail = () => state() === "done"
   const Trail = () => (
     <Show when={hasTrail()}>
       <span class="amc-trail">
@@ -221,38 +197,15 @@ function Chip(props: { tool: string; status?: string; output?: string; count?: n
             />
           </svg>
         </Show>
-        <Show when={clickable()}>
-          <span class="amc-chev" aria-hidden="true">
-            ›
-          </span>
-        </Show>
       </span>
     </Show>
   )
 
   return (
-    <Show
-      when={clickable()}
-      fallback={
-        <div data-component="amicode-card" data-tool={props.tool} data-state={state()} data-clickable="false">
-          <Body />
-          <Trail />
-        </div>
-      }
-    >
-      <button
-        type="button"
-        data-component="amicode-card"
-        data-tool={props.tool}
-        data-state={state()}
-        data-clickable="true"
-        aria-label={openLabel()}
-        onClick={open}
-      >
-        <Body />
-        <Trail />
-      </button>
-    </Show>
+    <div data-component="amicode-card" data-tool={props.tool} data-state={state()} data-clickable="false">
+      <Body />
+      <Trail />
+    </div>
   )
 }
 
@@ -337,37 +290,10 @@ export function AmicoSkillChip(props: { kind: string; name?: string; status?: st
   )
 }
 
-// In-transcript entity view (Kate 2026-07-24): the receipt renders the full
-// verdict-first entity view inline — no click, no modal. Data comes from the
-// rail via the ui bridge (undefined until the rail mounts, exactly like the run
-// window). A run with a live run_dir still prefers the richer RunWindow (matched
-// earlier in the Switch), so a run only reaches the inline path as its verdict
-// when there's no live window.
-//
-// AMENDED (spec-20260727-164748 §9.4): kind membership is necessary but NO LONGER
-// SUFFICIENT. The inline view reads the LIVE problem view, so when every receipt
-// of a kind took this path, N updates painted N identical copies of the present —
-// and because the transcript fetches the globally-active problem with no ?slug=,
-// switching problems mid-chat retroactively rewrote earlier receipts. Only the
-// CURRENT receipt for the ACTIVE problem may render live (./receipt-currency.ts);
-// the rest fall through to the Chip, which renders from their own captured diff.
-function InlineEntityView(props: { kind: string; seq?: number }) {
-  const labels = createMemo(() => amicodeEntityLabels())
-  return (
-    <div data-component="amicode-entity-inline" data-amicode-entity-current={props.kind}>
-      <AmicodeEntityView
-        view={amicodeProblemView()}
-        kind={props.kind}
-        runStatus={amicodeRunStatus()}
-        anchorSeq={props.seq}
-        onDraftPrompt={(text) => amicodeDraftPrompt(text)}
-        onRetry={() => amicodeRefetchProblem()}
-        retryLabel={labels().retry}
-        editLabel={labels().edit}
-      />
-    </div>
-  )
-}
+// In-transcript entity view (#1818 note): the inline entity view that used to
+// render here (fed live from the entity rail's problem view) was removed with
+// the deprecated research surfaces — every entity receipt now renders through
+// the Chip above, from its own captured diff.
 
 export function AmicodeToolCard(props: {
   tool: string
@@ -394,27 +320,6 @@ export function AmicodeToolCard(props: {
   const authored = createMemo(() =>
     props.tool === "amicode_author_widget" ? parseWidgetSentinel(props.output) : undefined,
   )
-  // Any entity receipt surfaces its full view inline. We gate only on having a
-  // problem view (the rail is mounted) — NOT on seq or on entities[kind]: a
-  // record+update lands as two events but one receipt, and the view can lag a
-  // beat, so tighter gates hid the view entirely. The entity view renders
-  // whatever the live view holds for that kind. Runs with a live run_dir never
-  // reach here (RunWindow matches first); other runs show their verdict.
-  const inlineEntity = createMemo(() => {
-    if (props.status !== "completed") return undefined
-    const sentinel = parseDiffSentinel(props.output)
-    if (!sentinel || !INLINE_KINDS.has(sentinel.entity)) return undefined
-    const view = amicodeProblemView()
-    if (!view) return undefined
-    // §9.4: superseded receipts, and receipts captured against a different
-    // problem, render from their captured diff via the Chip instead of the live
-    // view. Deliberately permissive when currency is ambiguous (a kind with no
-    // events yet stays live) — the original note here warns that tighter gates
-    // hid the view entirely.
-    if (!receiptIsCurrent({ problem: sentinel.problem, entity: sentinel.entity, seq: sentinel.seq }, view))
-      return undefined
-    return { kind: sentinel.entity, seq: sentinel.seq }
-  })
 
   return (
     <Switch fallback={<Chip tool={props.tool} status={props.status} output={props.output} count={props.count} />}>
@@ -424,7 +329,6 @@ export function AmicodeToolCard(props: {
       <Match when={approval()}>{(req) => <AmicodeApprovalCard request={req()} />}</Match>
       <Match when={runRef()}>{(ref) => <RunWindow run={ref().run} lab={ref().lab} />}</Match>
       <Match when={authored()}>{(preview) => <WidgetPreviewCard preview={preview()} />}</Match>
-      <Match when={inlineEntity()}>{(e) => <InlineEntityView kind={e().kind} seq={e().seq} />}</Match>
     </Switch>
   )
 }

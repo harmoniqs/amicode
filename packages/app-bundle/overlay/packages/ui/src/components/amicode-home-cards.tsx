@@ -8,5 +8,4 @@ export {
   type ProfileView,
   type ProfileYou,
   type ProfileStats,
-  type HomeLiveRun,
 } from "../amicode/home-cards"
