@@ -87,7 +87,7 @@ Worktree removal after a successful merge is **best-effort**: the parent session
 The walk dispatches **the Engineer** — a role, not an engine feature. The role's contract: one TDD-ready slice per dispatch, caller-provided worktree branch, `implement-issue --orchestrated` semantics, no PR/merge/board writes (the walk owns lifecycle), a structured step-7 return, and an explicit `EXHAUSTED:` report if the agent hits its step limit — an open loop, never an outcome. Bindings, one per engine:
 
 - **Claude Code** — the native agent (the engineer role's definition, engine-side).
-- **opencode (Amicode)** — the `implementer` subagent card, staged with the Amicode project at `.opencode/agents/implementer.md`; same contract.
+- **opencode (Amicode)** — the `implementer` subagent card, staged with the Amicode project at its dot-opencode/agents/implementer.md; same contract.
 
 Engine-specific bindings stay engine-side; this skill names the role. A session with no binding for the Engineer runs the sequential sub-mode.
 
