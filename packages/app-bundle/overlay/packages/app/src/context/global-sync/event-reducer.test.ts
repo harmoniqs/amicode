@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { Message, Part, PermissionRequest, Project, QuestionRequest, Session } from "@opencode-ai/sdk/v2/client"
 import type { OpencodeClient } from "@opencode-ai/sdk/v2/client"
-import { createStore } from "solid-js/store"
+import { createStore, type SetStoreFunction } from "solid-js/store"
 import type { State } from "./types"
 import { createServerSession } from "../server-session"
 import { applyDirectoryEvent, applyGlobalEvent, cleanupDroppedSessionCaches } from "./event-reducer"
@@ -776,7 +776,7 @@ describe("applyDirectoryEvent", () => {
 // reads through the shared store). These pins hold BOTH halves: live events
 // reach the card-rendering state, and the list store stays content-free.
 describe("live question/permission card dispatch (sessionContent: false seam)", () => {
-  const dispatch = (input: { event: { type: string; properties?: unknown }; store: State; setStore: ReturnType<typeof createStore>[1] }) => {
+  const dispatch = (input: { event: { type: string; properties?: unknown }; store: State; setStore: SetStoreFunction<State> }) => {
     // The shared session store — exactly what server-sync.tsx:553 does
     // (session.apply(event)) BEFORE the gated directory dispatch at :627.
     const session = createServerSession({ session: { get: async () => ({ data: undefined }) } } as unknown as OpencodeClient)

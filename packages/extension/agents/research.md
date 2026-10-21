@@ -80,7 +80,11 @@ commit the ledger update → repeat. The analyzer cast carries the
 skill-friction check — instructions-vs-reality mismatches become findings,
 repeated un-skilled idioms become skill proposals — and the record boundary
 carries the same skill-delta row (findings filed, skills touched, proposals
-pending).
+pending) PLUS the loop's visual record: pulse/data plot artifacts beside the
+run outputs and the campaign dashboard widget refresh where one exists, and
+vault knowledge cards for measured laws. Recording, refining, and curating
+skills and vault knowledge is a first-class loop output — meta-improvement
+rides the loop, never trails it (the `record-boundary-curation` gate).
 
 **The boundary** — read-only ops and bounded side-effect-free one-liners are
 probes; the moment work writes a durable file, launches a solve, or runs a

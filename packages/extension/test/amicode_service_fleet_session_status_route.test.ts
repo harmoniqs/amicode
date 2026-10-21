@@ -11,7 +11,7 @@
 //   - served: it reads the LIVE owner map of whichever boot branch built one
 //     (observation-only base peer AND the premium staged plane), fanning out to
 //     the owner in the session's exact directory with the owner's own credential.
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -310,6 +310,41 @@ describe("#1766 — GET /amicode/fleet/session-status (route-level)", () => {
       expect(localStatusReads.every((r) => r.auth === serverAuthHeader(ENGINE_PW))).toBe(true);
     } finally {
       await svc.stop();
+    }
+  });
+
+  // ── #1771: both boot branches log the owner-map refresh + the fan-in census ──
+  it.each([
+    { name: "observation-only base peer", premium: false, plane: "observe" },
+    { name: "premium staged plane", premium: true, plane: "premium" },
+  ])("#1771 $name: the service log gets each refresh's per-peer outcome and the fan-in census", async ({ premium, plane }) => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const lines: string[] = [];
+    let notify: (() => void) | undefined;
+    const svc = createAmicodeService({
+      password: "service-own-mint",
+      engine: engine(),
+      fleet: {
+        hub: { getUrl: () => undefined },
+        fleetPeers: servingPeerProvider(),
+        ...(premium ? { entitlements: ["amicissimo"], overlaySource } : { observationOnly: true }),
+      },
+      log: (l) => {
+        lines.push(l);
+        notify?.();
+      },
+    });
+    try {
+      // the feed's immediate refresh reaches the peer: ONE line for the peer
+      const isPeerLine = (l: string) => l.startsWith(`[owner-map] refresh peer=${PEER_ID} `);
+      if (!lines.some(isPeerLine)) await new Promise<void>((r) => (notify = () => lines.some(isPeerLine) && r()));
+      expect(lines.find(isPeerLine)).toMatch(new RegExp(`^\\[owner-map\\] refresh peer=${PEER_ID} outcome=ok duration_ms=\\d+ entries=1$`));
+      expect(lines.some((l) => l.includes(`peer=${LOCAL_ID} `))).toBe(false); // the local engine is not a peer
+      vi.advanceTimersByTime(30_000);
+      expect(lines.filter((l) => l.startsWith(`[fanin] census plane=${plane} listeners=0 `))).toHaveLength(1);
+    } finally {
+      await svc.stop();
+      vi.useRealTimers();
     }
   });
 

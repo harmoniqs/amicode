@@ -63,6 +63,18 @@ const DROPPED_HEADERS = ["host", "connection", "authorization"] as const;
  *  `?ticket=`/`?cursor=` query all ride through verbatim. */
 const UPGRADE_DROPPED_HEADERS = ["host", "authorization"] as const;
 
+/** #1773 — the hub stream was lost AFTER the response headers went out:
+ *  ERROR-close the downstream (destroy it with the error) so the listener — or
+ *  the next relay — sees a transport error. A clean `end()` here read as "the
+ *  stream ended normally, nothing was lost". Never throws. */
+function errorClose(res: http.ServerResponse, err: unknown): void {
+  try {
+    res.destroy(err instanceof Error ? err : new Error(`hub upstream failed: ${String(err)}`));
+  } catch {
+    /* already gone */
+  }
+}
+
 export class HubProxy {
   constructor(private readonly opts: HubProxyOptions) {}
 
@@ -104,13 +116,13 @@ export class HubProxy {
     } else {
       const cred = this.opts.credential();
       if (!cred.ok) {
+        if (res.headersSent) {
+          errorClose(res, new Error(`hub-credential-missing (${cred.reason})`));
+          return true;
+        }
         try {
-          if (!res.headersSent) {
-            res.writeHead(503, { "content-type": "application/json" });
-            res.end(JSON.stringify({ ok: false, error: "hub-credential-missing", reason: cred.reason }));
-          } else {
-            res.end();
-          }
+          res.writeHead(503, { "content-type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: "hub-credential-missing", reason: cred.reason }));
         } catch {
           /* never throw into the server */
         }
@@ -200,13 +212,9 @@ export class HubProxy {
         } else {
           up.pipe(res);
         }
-        up.on("error", () => {
-          try {
-            res.end();
-          } catch {
-            /* already gone */
-          }
-        });
+        // #1773: the hub's stream died mid-body — an error close, not an end
+        // (covers the resume-filtered per-session path and the verbatim pipe).
+        up.on("error", (err) => errorClose(res, err));
       });
       // #1261 (AC5): exactly-once reattach. When the CLIENT disconnects (a
       // reloaded window closing its stream), tear down the host upstream so a
@@ -228,27 +236,27 @@ export class HubProxy {
             detail: err instanceof Error ? err.message : String(err),
           });
         }
+        if (res.headersSent) {
+          errorClose(res, err); // #1773: lost after headers → an error close
+          return;
+        }
         try {
-          if (!res.headersSent) {
-            res.writeHead(502, { "content-type": "application/json" });
-            res.end(JSON.stringify({ ok: false, error: `hub upstream failed: ${err}` }));
-          } else {
-            res.end();
-          }
+          res.writeHead(502, { "content-type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: `hub upstream failed: ${err}` }));
         } catch {
           /* response already torn down — never throw into the server */
         }
       });
       req.pipe(upstream);
       return true;
-    } catch {
+    } catch (err) {
+      if (res.headersSent) {
+        errorClose(res, err);
+        return true;
+      }
       try {
-        if (!res.headersSent) {
-          res.writeHead(502, { "content-type": "application/json" });
-          res.end(JSON.stringify({ ok: false, error: "hub upstream unavailable" }));
-        } else {
-          res.end();
-        }
+        res.writeHead(502, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: false, error: "hub upstream unavailable" }));
       } catch {
         /* never throw into the server */
       }

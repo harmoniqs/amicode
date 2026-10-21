@@ -34,6 +34,8 @@ import type {
   ObservationWriteResolution,
   ObservationWritePeerTarget,
 } from "./session_multiplexer";
+import { OWNER_MAP_REFRESH_MS } from "./session_multiplexer";
+import type { LocalSessionPresence } from "./local_session_probe";
 import type { EventFanInDriver } from "./sse_fanin_driver";
 import { BOUND_NONCE_HEADER, BOUND_IDENTITY_HEADER } from "./fleet_bootstrap_headers";
 
@@ -183,6 +185,9 @@ export interface ObservationReadPlane {
    *  true when it owns the response; false when no upstream is bound (→ the
    *  caller answers a named 503, never local). */
   proxyToPeer(req: http.IncomingMessage, res: http.ServerResponse, target: ObservationReadPeerTarget): boolean;
+  /** #1774: does the LOCAL engine hold this session? Consulted for an
+   *  unknown-owner request (local first). Absent → no verdict (fall through). */
+  probeLocal?(req: http.IncomingMessage, sessionId: string): Promise<LocalSessionPresence>;
 }
 
 /** #1542 (Fleet Studio B2b, WRITE seam): the OBSERVATION-ONLY per-session
@@ -224,6 +229,9 @@ export interface ObservationWritePlane {
     res: http.ServerResponse,
     target: ObservationWritePeerTarget,
   ): Promise<boolean>;
+  /** #1774: does the LOCAL engine hold this session? Consulted for an
+   *  unknown-owner write (local first). Absent → no verdict (fall through). */
+  probeLocal?(req: http.IncomingMessage, sessionId: string): Promise<LocalSessionPresence>;
 }
 
 /** #1261 (AC6): a client's own named hub-down state — distinct from the base
@@ -240,6 +248,28 @@ export const FLEET_PEER_UNREACHABLE_ERROR = "attached server unreachable";
 export const FLEET_PEER_UNREACHABLE_POINTER =
   "the attached server is unreachable — check the peer's tunnel / service, " +
   "or detach to work locally";
+
+/** #1774: the NAMED retryable answer for a session-scoped request whose id has
+ *  no known owner and that the LOCAL engine does not hold — the owner map may
+ *  simply not have caught up (a just-created session, a peer whose entries
+ *  expired), so it is a 503 with a Retry-After of one owner-map refresh, never a
+ *  404 or an empty result. */
+export const OWNER_UNKNOWN_ERROR = "session owner unknown";
+export const OWNER_UNKNOWN_RETRY_AFTER_S = Math.ceil(OWNER_MAP_REFRESH_MS / 1000);
+
+function ownerUnknown(sessionId: string): AmicodeHandlerResult {
+  return {
+    status: 503,
+    headers: { "Retry-After": String(OWNER_UNKNOWN_RETRY_AFTER_S) },
+    body: JSON.stringify({
+      ok: false,
+      error: OWNER_UNKNOWN_ERROR,
+      reason: "owner-unknown",
+      session_id: sessionId,
+      retry_after_s: OWNER_UNKNOWN_RETRY_AFTER_S,
+    }),
+  };
+}
 
 /** #1448 (W1a): the session-multiplexer feature-flag env var. Default ON. */
 export const FLEET_MULTIPLEX_FLAG = "AMICO_FLEET_MULTIPLEX";
@@ -586,7 +616,9 @@ export class AmicodeServiceServer {
         return;
       }
       // #1519 (W1c, ADR 0033 §D1): the SSE fan-in interception for the app's
-      // ONE global /event stream (ADR 0027 single-origin). AHEAD of every
+      // global /event stream. #1772: one fan-in connection PER LISTENER (windows,
+      // Chat Deck panes, split panes) — a second view no longer evicts the first;
+      // beyond the driver's cap a listener gets a retryable 503. AHEAD of every
       // downstream path (the fleet hub block, the engine proxy) so a machine
       // that owns peer sessions fans their events IN onto this one response.
       // A SINGLE flag-gated expression: with the flag OFF (default) the `&&`
@@ -826,7 +858,15 @@ export class AmicodeServiceServer {
         // peer-unreachable 503, NEVER the local engine (the #1382 invariant).
         if (this.observeRead) {
           const decision = this.observeRead.resolve(req.method ?? "GET", url.pathname);
-          if (decision) {
+          if (decision?.kind === "unknown-owner") {
+            // #1774: no known owner → the LOCAL engine first; only its own 404
+            // is "not here" → the retryable owner-unknown 503. Otherwise the read
+            // falls through to the engine proxy below, byte-identical.
+            if ((await this.observeRead.probeLocal?.(req, decision.sessionId)) === "absent") {
+              send(ownerUnknown(decision.sessionId));
+              return;
+            }
+          } else if (decision) {
             if (decision.kind === "peer") {
               if (this.observeRead.proxyToPeer(req, res, decision)) return;
             }
@@ -864,7 +904,16 @@ export class AmicodeServiceServer {
           // pathed write streams (proxyToPeer).
           const createDecision = this.observeWrite.resolveCreate(req.method ?? "GET", url.pathname, req.headers);
           const decision = createDecision ?? this.observeWrite.resolve(req.method ?? "GET", url.pathname);
-          if (decision) {
+          if (decision?.kind === "unknown-owner") {
+            // #1774: no known owner → the LOCAL engine first (an existence probe,
+            // never the write itself); only its own 404 is "not here" → the
+            // retryable owner-unknown 503, and the write runs nowhere. Otherwise
+            // it falls through to the engine proxy below, byte-identical.
+            if ((await this.observeWrite.probeLocal?.(req, decision.sessionId)) === "absent") {
+              send(ownerUnknown(decision.sessionId));
+              return;
+            }
+          } else if (decision) {
             if (decision.kind === "peer") {
               const handled = createDecision
                 ? await this.observeWrite.proxyCreateToPeer(req, res, decision)

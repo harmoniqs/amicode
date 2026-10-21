@@ -43,7 +43,7 @@
     },
     "packages/extension": {
       "name": "amicode",
-      "version": "0.3.7",
+      "version": "0.3.8-lane.1",
       "dependencies": {
         "@modelcontextprotocol/sdk": "^1.30.0",
         "yaml": "^2.9.1",

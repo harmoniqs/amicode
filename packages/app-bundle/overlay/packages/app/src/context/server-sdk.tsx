@@ -15,8 +15,8 @@ import { useGlobal } from "./global"
 import { postClientLog } from "@/amicode/client-telemetry"
 import { ServerScope } from "@/utils/server-scope"
 import { attachOwnerHeaderIfArmed } from "@/components/remote-create-arm"
-import { parseCursorNamespaces, resolveEventOrigin } from "./sse-origin"
-import { shouldReconnectIdleStream } from "./stream-liveness"
+import { createStreamEndResync, shouldReconnectIdleStream } from "./stream-liveness"
+import { applyStreamCursor, createStreamCursor } from "./stream-cursor"
 import { detectServerProtocol, type ServerProtocol } from "@/utils/server-protocol"
 import { createCompatibleApi, type CompatibleApi } from "@/utils/server-compat"
 
@@ -28,7 +28,14 @@ const isAbortError = (error: unknown) =>
  *  a real failure marks the status and latches the error log. */
 export const isStreamClosed = (error: unknown, signal?: AbortSignal) =>
   isAbortError(error) || signal?.aborted === true
-export type ServerEvent = Event & { current?: OpenCodeEvent; origin?: string }
+export type ServerEvent = Event & { current?: WireEvent; origin?: string }
+/** A frame off the instance /event stream in EITHER wire generation: the V2
+ *  shape (payload in `data` — the vendored client's declared type) or the V1
+ *  shape (payload in `properties` — the workspace SDK's `Event`, which is
+ *  what the engine's V1 bus and the hub fan-in actually publish, and the only
+ *  shape that carries `session.status`'s `seq`). Both shapes ride the same
+ *  stream; read the payload by field presence, never by protocol guess. */
+export type WireEvent = OpenCodeEvent | Event
 type QueuedServerEvent = { directory: string; payload: ServerEvent }
 /** A minimal fetch call signature. Newer lib types make `typeof fetch` require
  *  a `preconnect` member our plain wrappers don't implement (lib drift);
@@ -39,8 +46,10 @@ type CurrentDelta = Extract<
   { type: "session.text.delta" | "session.reasoning.delta" | "session.tool.input.delta" | "session.compaction.delta" }
 >
 
-export function adaptServerEvent(event: OpenCodeEvent): ServerEvent {
-  if (event.type === "permission.v2.asked") {
+// The named V2 types are adapted only in their V2 shape (payload in `data`);
+// a V1-shaped frame of the same name falls through to the default case raw.
+export function adaptServerEvent(event: WireEvent): ServerEvent {
+  if (event.type === "permission.v2.asked" && "data" in event) {
     return {
       id: event.id,
       type: "permission.asked",
@@ -59,13 +68,13 @@ export function adaptServerEvent(event: OpenCodeEvent): ServerEvent {
       current: event,
     } as ServerEvent
   }
-  if (event.type === "permission.v2.replied")
+  if (event.type === "permission.v2.replied" && "data" in event)
     return { id: event.id, type: "permission.replied", properties: event.data, current: event } as ServerEvent
-  if (event.type === "question.v2.asked")
+  if (event.type === "question.v2.asked" && "data" in event)
     return { id: event.id, type: "question.asked", properties: event.data, current: event } as ServerEvent
-  if (event.type === "question.v2.replied")
+  if (event.type === "question.v2.replied" && "data" in event)
     return { id: event.id, type: "question.replied", properties: event.data, current: event } as ServerEvent
-  if (event.type === "question.v2.rejected")
+  if (event.type === "question.v2.rejected" && "data" in event)
     return { id: event.id, type: "question.rejected", properties: event.data, current: event } as ServerEvent
   // 2026-10-08: the instance /event route emits the V1 wire shape — the
   // payload rides `properties`, not `data` (the V2 shape the named cases
@@ -73,7 +82,12 @@ export function adaptServerEvent(event: OpenCodeEvent): ServerEvent {
   // live V1 event reached the reducers with properties: undefined — live
   // question.asked cards never rendered; every card the panel ever showed
   // came from the /question list fetch on session open or reload.
-  return { id: event.id, type: event.type, properties: event.data ?? event.properties, current: event } as ServerEvent
+  return {
+    id: event.id,
+    type: event.type,
+    properties: "data" in event ? event.data : event.properties,
+    current: event,
+  } as ServerEvent
 }
 
 const coalescedKey = (event: QueuedServerEvent) => {
@@ -158,7 +172,7 @@ export function coalesceServerEvents(events: QueuedServerEvent[]) {
   return output
 }
 
-function currentDelta(event: OpenCodeEvent | undefined): CurrentDelta | undefined {
+function currentDelta(event: WireEvent | undefined): CurrentDelta | undefined {
   if (
     event?.type === "session.text.delta" ||
     event?.type === "session.reasoning.delta" ||
@@ -436,55 +450,43 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
     }
   })()
 
-  // #1264 lossless reconnect: the frontdoor buffers recent events and
-  // replays the gap when the stream is re-opened with ?lastEventID=<id>.
-  // Track the last payload id seen (the server ids every event; id-less
-  // events just don't advance the cursor — replay may over-deliver, which
-  // the reconcile-based reducers tolerate by design).
+  // #1264 lossless reconnect: the engine (#1776) sequences its global stream
+  // and replays the gap when the stream is re-opened with ?lastEventID=<id>.
+  // #1777: the cursor is the SSE `id:` of the last applied frame — the engine's
+  // `<epoch>:<seq>`, or the fan-in's composite of every origin's position —
+  // never the JSON payload id (the engine rejects that as malformed, so every
+  // reconnect used to be a reset). It also checks contiguity per origin: a
+  // hole, an engine reset, or an unannounced restart forces a resync, and a
+  // replayed frame already applied is dropped (stream-cursor.ts).
   // #1264: the cursor must survive RELOADS — module state died with every
   // document, so a drop right after a reload reconnected cursor-less and
   // the gap's events were lost (the harness caught it: the sse-gap flow
   // failed only in the post-reload context). sessionStorage is per-tab,
   // cheap, and exactly the lifetime the cursor wants.
   const CURSOR_KEY = "amicode.sse.lastEventID"
-  let lastEventID: string | undefined
+  let storedCursor: string | undefined
   try {
-    lastEventID = sessionStorage.getItem(CURSOR_KEY) ?? undefined
+    storedCursor = sessionStorage.getItem(CURSOR_KEY) ?? undefined
   } catch {
     /* private mode etc. — degrade to module state */
   }
-  const trackEventID = (payload: unknown) => {
-    const id = (payload as { id?: unknown } | undefined)?.id
-    if (typeof id === "string" && id) {
-      lastEventID = id
-      try {
-        sessionStorage.setItem(CURSOR_KEY, id)
-      } catch {
-        /* best-effort */
-      }
+  const cursor = createStreamCursor(storedCursor)
+  const persistCursor = () => {
+    const current = cursor.current()
+    if (current === undefined || current === storedCursor) return
+    storedCursor = current
+    try {
+      sessionStorage.setItem(CURSOR_KEY, current)
+    } catch {
+      /* best-effort */
     }
   }
-  // #1539: track the parsed composite cursor to detect event origin (local vs
-  // remote peer). Initialized from the persisted cursor so the first event
-  // after reconnect diffs correctly.
-  let previousParsedCursor = parseCursorNamespaces(lastEventID)
   const sseFetch: FetchLike = (input, init) => {
     const base = eventFetch ?? globalThis.fetch
-    try {
-      if (lastEventID) {
-        const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url
-        const u = new URL(url, server.http.url)
-        if (u.pathname === "/event" || u.pathname === "/global/event") {
-          u.searchParams.set("lastEventID", lastEventID)
-          const modified = u.toString()
-          if (typeof input === "string" || input instanceof URL) return base(modified, init)
-          return base(new Request(modified, input), init)
-        }
-      }
-    } catch {
-      /* fall through unmodified */
-    }
-    return base(input as Parameters<typeof fetch>[0], init as Parameters<typeof fetch>[1])
+    // #1777: the ONE carrier is `?lastEventID=` (the SDK's own Last-Event-ID
+    // header is stripped so two cursors can never disagree).
+    const applied = applyStreamCursor(input, init, server.http.url, cursor.current())
+    return base(applied.input as Parameters<typeof fetch>[0], applied.init as Parameters<typeof fetch>[1])
   }
   const eventApi = createApiForServer({ server: server.http, fetch: sseFetch as typeof fetch })
   const eventSdk = createSdkForServer({
@@ -562,6 +564,28 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
   // nominally connected, so the disconnect→connect edge never fires and the rail
   // would otherwise never self-heal a stranded view).
   const [resyncCount, setResyncCount] = createSignal(0)
+  // #1617 / #1777: a FULL resync of the viewed state — the forced-resync signal
+  // (the transcript and the entity rail refetch, #1646) plus a synthetic GLOBAL
+  // `amicode.sync.gap` event, on which server-sync refetches the bootstrap
+  // unconditionally (past the #1289 `server.connected` debounce, which keys on
+  // a different type). Driven by a relay's gap frame, and by the cursor's
+  // verdicts: an engine reset, a sequence hole, an unannounced restart.
+  const forceResync = (namespaces: string[]) => {
+    setResyncCount((n) => n + 1)
+    if (
+      enqueueServerEvent(queue, {
+        directory: "global",
+        payload: { type: SYNC_GAP_TYPE, properties: { namespaces } } as unknown as ServerEvent,
+      })
+    )
+      schedule()
+  }
+  // #1773: an unexpected NORMAL end of the global stream is a loss (the relays
+  // never end a listener cleanly except on shutdown). The loop arms this latch
+  // on such an end; the reconnected stream's first frame advances resyncCount,
+  // so the viewed transcript and the entity rail refetch once the stream is live
+  // again. A user stop, a page hide, or the client's own abort arm nothing.
+  const streamEndResync = createStreamEndResync()
 
   // #1584 client-side liveness watchdog. The v1 event iterator neither throws
   // nor completes when the socket goes silently half-open (sleep/wake, Wi-Fi
@@ -645,9 +669,21 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
               error,
             })
           }
+          // #1777: the SSE id of the frame about to be yielded. The SDK reader
+          // calls onSseEvent with each parsed frame right before it yields that
+          // frame's data, so this is the id of the event the loop reads next.
+          let frameSseId: string | undefined
           const events =
             kind === "v1"
-              ? (await eventSdk.global.event({ signal: currentAttempt.signal, onSseError })).stream
+              ? (
+                  await eventSdk.global.event({
+                    signal: currentAttempt.signal,
+                    onSseError,
+                    onSseEvent: (frame: { id?: string }) => {
+                      frameSseId = frame.id
+                    },
+                  })
+                ).stream
               : eventApi.event.subscribe({ signal: currentAttempt.signal })
           if (!streamGeneration.accepts(active)) return
           setStreamStatus("connected")
@@ -669,8 +705,11 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
             deadMan.frame()
             streamErrorLogged = false
             lastFrameAt = Date.now()
+            // #1773: the first frame after an unexpected end — the stream is live
+            // again, so force the resync now (the refetch cannot miss the events
+            // between the end and this re-subscription).
+            if (streamEndResync.frame()) setResyncCount((n) => n + 1)
             const legacy = "payload" in event
-            if (legacy && event.payload.type === "sync") continue
             const directory = legacy ? (event.directory ?? "global") : (event.location?.directory ?? "global")
             const payload = legacy ? (event.payload as Event) : adaptServerEvent(event)
             // #1522 (ADR 0033 decision A): the SSE fan-in aggregator emits
@@ -711,26 +750,31 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
                 ? (payload as Record<string, unknown>)
                 : ((payload as { properties?: Record<string, unknown> }).properties ?? {})
               const gap = parseSyncGapFrame({ type: SYNC_GAP_TYPE, ...gapData })
+              // #1777: the named origins resync, so their next positions are new
+              // baselines (not a second "hole" against the lost stretch).
+              cursor.gap(gap?.namespaces ?? [])
               // Bump the forced-resync signal so the entity rail self-heals even
               // though the socket never crossed a disconnect→connect edge.
-              setResyncCount((n) => n + 1)
-              if (enqueueServerEvent(queue, {
-                directory: "global",
-                payload: { type: SYNC_GAP_TYPE, properties: { namespaces: gap?.namespaces ?? [] } } as unknown as ServerEvent,
-              }))
-                schedule()
+              forceResync(gap?.namespaces ?? [])
               continue
             }
-            trackEventID(legacy ? event.payload : (event as { id?: string }))
-            // #1539: resolve origin from the composite cursor diff. Fleet-of-one
-            // (bare scalar id) returns undefined immediately — zero overhead.
-            const sseId: string | undefined = legacy
-              ? (event.payload as { id?: string }).id
-              : (event as { id?: string }).id
-            const resolved = resolveEventOrigin(sseId, previousParsedCursor)
-            previousParsedCursor = resolved.cursor
-            const taggedPayload: ServerEvent = resolved.origin !== undefined
-              ? { ...payload, origin: resolved.origin }
+            // #1777: the cursor and the contiguity check, on the frame's SSE id
+            // (v1; the v2 stream at /api/event carries no resume cursor). A hole,
+            // a reset or an unannounced engine restart owes a full resync; a
+            // replayed frame already applied is dropped, never applied twice.
+            const verdict = cursor.frame({
+              id: kind === "v1" ? frameSseId : undefined,
+              type: legacy ? event.payload.type : payload.type,
+            })
+            if (verdict.resync) forceResync(verdict.resync.namespaces)
+            if (!verdict.apply) continue
+            persistCursor()
+            // a sync copy still moves the cursor (it holds a seq), but is no event
+            if (legacy && event.payload.type === "sync") continue
+            // #1539: the origin is the composite cursor's moving namespace.
+            // Fleet-of-one (a bare engine id) is always local.
+            const taggedPayload: ServerEvent = verdict.origin !== undefined
+              ? { ...payload, origin: verdict.origin }
               : payload
             if (enqueueServerEvent(queue, { directory, payload: taggedPayload })) schedule()
 
@@ -738,6 +782,13 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
             yielded = Date.now()
             await wait(0)
           }
+          // #1773: the iterator COMPLETED — a clean end of the global stream. If
+          // the client neither aborted this attempt nor stopped the loop, it is
+          // an unexpected end: a loss. Arm the resync for the reconnected stream.
+          streamEndResync.ended({
+            attemptAborted: currentAttempt.signal.aborted,
+            stopped: abort.signal.aborted || !started || !streamGeneration.accepts(active),
+          })
         } catch (error) {
           if (streamGeneration.accepts(active) && !isStreamClosed(error, currentAttempt.signal))
             setStreamStatus("disconnected")
@@ -768,8 +819,8 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
   }
 
   const clearGlobalStreamCursor = () => {
-    lastEventID = undefined
-    previousParsedCursor = {}
+    cursor.clear()
+    storedCursor = undefined
     try {
       sessionStorage.removeItem(CURSOR_KEY)
     } catch {

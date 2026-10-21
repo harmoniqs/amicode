@@ -13,9 +13,11 @@
 // failure, cache untouched.
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { checkPeerForwards } from "../src/fleet_health";
+import { FLEET_MULTIPLEX_FLAG, fleetMultiplexEnabled } from "../src/amicode_service/server";
 
 const REPO = join(__dirname, "..", "..", "..");
 const GUARD = join(REPO, "tools", "fleet", "amico-opencode-fleet-guard");
@@ -148,10 +150,54 @@ function fakeFrozenBinary(): void {
   chmodSync(join(dir, "opencode"), 0o755);
 }
 
+/** #1775: NO run in this file may reach the real OS service manager — the
+ *  installer writes launch agents and (re)loads them, and a real `launchctl
+ *  load` of a fabricated plist would start a real ssh agent on the test host.
+ *  Every run gets TWO recording stubs:
+ *   - the SEAM: `$AMICO_FLEET_LAUNCHCTL` → `<tmp>/stubs/launchctl` (OFF the
+ *     PATH), appending one argv line per call to `<tmp>/launchctl.argv`;
+ *   - the BACKSTOP: a `launchctl` + `systemctl` FIRST on the child PATH that
+ *     append to `<tmp>/launchctl-path.argv` — reached only if the installer
+ *     ever bypasses its seam (a test asserts it never does).
+ *  `launchctl getenv <VAR>` prints `<tmp>/stubs/getenv-<VAR>` when present. */
+function writeLoaderStubs(): void {
+  const stubs = join(tmp, "stubs");
+  const bin = join(tmp, "fakebin");
+  mkdirSync(stubs, { recursive: true });
+  mkdirSync(bin, { recursive: true });
+  const recorder = (log: string): string => [
+    "#!/usr/bin/env bash",
+    `printf '%s\\n' "$*" >> "${log}"`,
+    `if [[ "\${1:-}" == "getenv" && -f "${stubs}/getenv-\${2:-}" ]]; then cat "${stubs}/getenv-\${2:-}"; fi`,
+    "exit 0",
+    "",
+  ].join("\n");
+  writeFileSync(join(stubs, "launchctl"), recorder(join(tmp, "launchctl.argv")));
+  chmodSync(join(stubs, "launchctl"), 0o755);
+  for (const name of ["launchctl", "systemctl"]) {
+    writeFileSync(join(bin, name), recorder(join(tmp, "launchctl-path.argv")));
+    chmodSync(join(bin, name), 0o755);
+  }
+}
+
+/** The seam stub's recorded argv lines (empty when it was never called). */
+function launchctlCalls(): string[] {
+  const log = join(tmp, "launchctl.argv");
+  return existsSync(log) ? readFileSync(log, "utf8").split("\n").filter((l) => l !== "") : [];
+}
+
+/** Calls that bypassed the seam and hit the PATH backstop (must stay empty). */
+function backstopCalls(): string[] {
+  const log = join(tmp, "launchctl-path.argv");
+  return existsSync(log) ? readFileSync(log, "utf8").split("\n").filter((l) => l !== "") : [];
+}
+
 function runScript(script: string, args: string[], opts: { path?: string } = {}): { code: number; out: string } {
+  writeLoaderStubs();
   const env: Record<string, string> = {
     HOME: tmp,
     PATH: opts.path ?? `${join(tmp, "fakebin")}:/usr/bin:/bin`,
+    AMICO_FLEET_LAUNCHCTL: join(tmp, "stubs", "launchctl"),
   };
   // The guard/installer must never find the REAL machine's amico or node-installed fleet state.
   delete env.AMICISSIMO_ROOT;
@@ -373,6 +419,11 @@ describe("the installer writes the platform-correct settings path (#1261 AC4)", 
     const r = runScript(INSTALL, [], installEnv());
     expect(r.code).toBe(0);
     expect(existsSync(join(tmp, "Library", "Application Support", "Code", "User", "settings.json"))).toBe(true);
+    // #1775: the tunnel (re)load went through the launchctl SEAM — never the
+    // PATH's launchctl (on a real host that would start a real ssh agent).
+    const tunnel = join(tmp, "Library", "LaunchAgents", "co.harmoniqs.amico-tunnel.plist");
+    expect(launchctlCalls()).toContain(`load ${tunnel}`);
+    expect(backstopCalls()).toEqual([]);
   });
 
   it("--check on LINUX catches settings drift (the check twin runs cross-platform, never 'skipped (not darwin)')", () => {
@@ -481,11 +532,411 @@ describe.skipIf(!existsSync(HUB_RUNNER_BUNDLE))("#1258 the installer provisions 
 
 // ── both copies ship byte-identical (the VSIX's packaged copy is the installer users run) ──
 describe("the packaged fleet scripts stay in sync with the repo copies", () => {
-  it("guard + installer: packages/extension/tools/fleet copies are byte-identical", () => {
-    for (const f of ["amico-opencode-fleet-guard", "install.sh"]) {
+  it("guard + installer + launchd templates: packages/extension/tools/fleet copies are byte-identical", () => {
+    for (const f of ["amico-opencode-fleet-guard", "install.sh", "co.harmoniqs.amico-tunnel.plist", "co.harmoniqs.amico-peer-forward.plist"]) {
       const pkg = join(REPO, "packages", "extension", "tools", "fleet", f);
       expect(existsSync(pkg)).toBe(true);
       expect(readFileSync(pkg, "utf8")).toBe(readFileSync(join(REPO, "tools", "fleet", f), "utf8"));
     }
+  });
+});
+
+// ── #1775: installer-managed per-peer SSH forwards ─────────────────────────────
+// The SSH forward a machine uses to reach a PEER's hub was a hand-installed
+// launch agent with stale 30/3 keepalives. The installer now generates one
+// agent per attached peer — label from the peer's machine id, local port from
+// the peer token store's loopback base URL, remote port = the fleet's canonical
+// hub port, ssh destination = the peer's roster sshAlias (else its machine id).
+// Every run is hermetic: temp HOME, the launchctl seam stub, the PATH backstop.
+const PEER_STORE_REL = [".amico", "fleet-peer-tokens-reader.json"];
+const peerForwardPlist = (id: string): string => join(tmp, "Library", "LaunchAgents", `co.harmoniqs.amico-peer-${id}-forward.plist`);
+
+/** The reader peer-token store (#1438) — { store_version, peers: { id: { base_url, token } } }. */
+function writePeerStore(peers: Record<string, string>): void {
+  mkdirSync(join(tmp, ".amico"), { recursive: true });
+  const doc = { store_version: 1, peers: Object.fromEntries(Object.entries(peers).map(([id, baseUrl]) => [id, { base_url: baseUrl, token: `tok-${id}` }])) };
+  writeFileSync(join(tmp, ...PEER_STORE_REL), JSON.stringify(doc, null, 2));
+}
+
+/** The fleet roster cache — the peer's sshAlias lives on its row. */
+function writeRoster(rows: Array<{ machine_id: string; sshAlias: string }>): void {
+  const dir = join(tmp, ".amico", "ops", "fleet");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "roster.json"), JSON.stringify({ schema_version: 1, rows: rows.map((r) => ({ ...r, transport: "ssh", server_mode: "server" })) }, null, 2));
+}
+
+/** A launchd plist's Label + ProgramArguments, read straight from the XML. */
+function readAgent(file: string): { label: string; args: string[] } {
+  const xml = readFileSync(file, "utf8");
+  const label = /<key>Label<\/key>\s*<string>([^<]*)<\/string>/.exec(xml)?.[1] ?? "";
+  const array = /<key>ProgramArguments<\/key>\s*<array>([\s\S]*?)<\/array>/.exec(xml)?.[1] ?? "";
+  const args = [...array.matchAll(/<string>([^<]*)<\/string>/g)].map((m) => m[1]);
+  return { label, args };
+}
+
+/** The standard forward argv (fleet_transport's options) for one peer. */
+const standardForward = (localPort: number, remotePort: number, alias: string): string[] => [
+  "/usr/bin/ssh", "-N",
+  "-o", "ExitOnForwardFailure=yes",
+  "-o", "ServerAliveInterval=15",
+  "-o", "ServerAliveCountMax=2",
+  "-o", "TCPKeepAlive=yes",
+  "-o", "BatchMode=yes",
+  "-L", `127.0.0.1:${localPort}:127.0.0.1:${remotePort}`,
+  alias,
+];
+
+describe("#1775 the installer generates one SSH forward agent per attached peer", () => {
+  const installEnv = (): { path: string } => ({
+    path: `${join(tmp, "fakebin")}:${process.env.PATH ?? ""}`,
+  });
+  const verbFor = (role: string): string =>
+    role === "standalone" ? verbJson() : verbJson(role, { host: "hq", port: 4096, sshAlias: "hq" });
+
+  it.each(["server", "client", "standalone"])(
+    "a %s attached to a peer gets that peer's forward agent — 15 s keepalive, 2 misses, TCPKeepAlive, ExitOnForwardFailure, the store's local port; a re-run is idempotent",
+    (role) => {
+      fakeAmico({ code: 0, stdout: verbFor(role) });
+      fakeUname("Darwin");
+      writePeerStore({ "jjs-mac-studio": "http://127.0.0.1:45096" });
+      writeRoster([{ machine_id: "jjs-mac-studio", sshAlias: "studio-ssh" }]);
+
+      const r = runScript(INSTALL, [], installEnv());
+      expect(r.code, r.out).toBe(0);
+      const plist = peerForwardPlist("jjs-mac-studio");
+      expect(existsSync(plist), r.out).toBe(true);
+      const agent = readAgent(plist);
+      expect(agent.label).toBe("co.harmoniqs.amico-peer-jjs-mac-studio-forward");
+      expect(agent.args).toEqual(standardForward(45096, 4096, "studio-ssh"));
+      expect(readFileSync(plist, "utf8")).toMatch(/<key>KeepAlive<\/key>\s*<true\/>/);
+      expect(launchctlCalls()).toContain(`load ${plist}`);
+
+      // Re-run: byte-identical agent, no reload, still exactly one forward agent.
+      const first = readFileSync(plist, "utf8");
+      rmSync(join(tmp, "launchctl.argv"), { force: true });
+      const again = runScript(INSTALL, [], installEnv());
+      expect(again.code, again.out).toBe(0);
+      expect(readFileSync(plist, "utf8")).toBe(first);
+      expect(launchctlCalls().filter((l) => l.includes(plist))).toEqual([]);
+      expect(again.out).toMatch(/peer forward co\.harmoniqs\.amico-peer-jjs-mac-studio-forward unchanged/);
+      expect(readdirSync(join(tmp, "Library", "LaunchAgents")).filter((f) => f.endsWith("-forward.plist"))).toEqual([
+        "co.harmoniqs.amico-peer-jjs-mac-studio-forward.plist",
+      ]);
+      expect(backstopCalls()).toEqual([]);
+    },
+  );
+
+  it("the ssh destination falls back to the peer's machine id when the roster has no row for it", () => {
+    fakeAmico({ code: 0, stdout: verbFor("server") });
+    fakeUname("Darwin");
+    writePeerStore({ "jjs-mac-studio": "http://127.0.0.1:45096" });
+    const r = runScript(INSTALL, [], installEnv());
+    expect(r.code, r.out).toBe(0);
+    expect(readAgent(peerForwardPlist("jjs-mac-studio")).args).toEqual(standardForward(45096, 4096, "jjs-mac-studio"));
+  });
+
+  it("one agent per peer: each loopback peer gets its own label + port; a peer reached over https (tailscale/direct) gets no ssh forward", () => {
+    fakeAmico({ code: 0, stdout: verbFor("server") });
+    fakeUname("Darwin");
+    writePeerStore({
+      "jjs-mac-studio": "http://127.0.0.1:45096",
+      "lab-box": "http://127.0.0.1:45097",
+      "far-node": "https://far-node.tailnet-1234.ts.net",
+    });
+    writeRoster([{ machine_id: "lab-box", sshAlias: "lab" }]);
+    const r = runScript(INSTALL, [], installEnv());
+    expect(r.code, r.out).toBe(0);
+    expect(readAgent(peerForwardPlist("jjs-mac-studio")).args).toEqual(standardForward(45096, 4096, "jjs-mac-studio"));
+    expect(readAgent(peerForwardPlist("lab-box")).args).toEqual(standardForward(45097, 4096, "lab"));
+    expect(existsSync(peerForwardPlist("far-node"))).toBe(false);
+    expect(r.out).toMatch(/far-node.*no SSH forward/);
+  });
+
+  it("Fleet — Repair runs the PACKAGED installer copy — it generates the same agent from the packaged template", () => {
+    fakeAmico({ code: 0, stdout: verbFor("server") });
+    fakeUname("Darwin");
+    writePeerStore({ "jjs-mac-studio": "http://127.0.0.1:45096" });
+    const packaged = join(REPO, "packages", "extension", "tools", "fleet", "install.sh");
+    const r = runScript(packaged, [], installEnv());
+    expect(r.code, r.out).toBe(0);
+    expect(readAgent(peerForwardPlist("jjs-mac-studio")).args).toEqual(standardForward(45096, 4096, "jjs-mac-studio"));
+    expect(backstopCalls()).toEqual([]);
+  });
+});
+
+/** A hand-installed forward in the legacy `co.harmoniqs.amico-<name>-forward`
+ *  shape — byte-for-byte the agent found on a real fleet laptop (stale 30/3,
+ *  unbound `-L <port>:127.0.0.1:<remote>`, BatchMode + accept-new). */
+function legacyForwardPlist(name: string, localPort: number, host: string): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>co.harmoniqs.amico-${name}-forward</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/usr/bin/ssh</string>
+		<string>-N</string>
+		<string>-L</string>
+		<string>${localPort}:127.0.0.1:4096</string>
+		<string>-o</string>
+		<string>ExitOnForwardFailure=yes</string>
+		<string>-o</string>
+		<string>ServerAliveInterval=30</string>
+		<string>-o</string>
+		<string>ServerAliveCountMax=3</string>
+		<string>-o</string>
+		<string>BatchMode=yes</string>
+		<string>-o</string>
+		<string>StrictHostKeyChecking=accept-new</string>
+		<string>${host}</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>StandardOutPath</key>
+	<string>/tmp/amico-${name}-forward.log</string>
+	<key>StandardErrorPath</key>
+	<string>/tmp/amico-${name}-forward.log</string>
+	<key>ThrottleInterval</key>
+	<integer>10</integer>
+</dict>
+</plist>
+`;
+}
+
+describe("#1775 a hand-installed forward for the same peer is replaced — a backup is kept, never a silent delete", () => {
+  const installEnv = (): { path: string } => ({
+    path: `${join(tmp, "fakebin")}:${process.env.PATH ?? ""}`,
+  });
+  const launchAgents = (): string => join(tmp, "Library", "LaunchAgents");
+  const backupDir = (): string => join(tmp, ".amico", "ops", "fleet", "launchagents-backup");
+  const placeLegacy = (name: string, localPort: number, host: string): { file: string; content: string } => {
+    mkdirSync(launchAgents(), { recursive: true });
+    const file = join(launchAgents(), `co.harmoniqs.amico-${name}-forward.plist`);
+    const content = legacyForwardPlist(name, localPort, host);
+    writeFileSync(file, content);
+    return { file, content };
+  };
+
+  it.each([
+    ["it binds the same local port", 45096, "jjs-mac-studio"],
+    ["it targets the same ssh destination", 47001, "jjs-mac-studio"],
+  ])("recognized because %s: unloaded, moved byte-for-byte to the backup dir, and the managed agent takes its place; a re-run makes no second backup", (_why, legacyPort, legacyHost) => {
+    fakeAmico({ code: 0, stdout: verbJson("server", { host: "hq", port: 4096 }) });
+    fakeUname("Darwin");
+    writePeerStore({ "jjs-mac-studio": "http://127.0.0.1:45096" });
+    const legacy = placeLegacy("studio", legacyPort, legacyHost);
+
+    const r = runScript(INSTALL, [], installEnv());
+    expect(r.code, r.out).toBe(0);
+    expect(existsSync(legacy.file)).toBe(false);
+    const backups = readdirSync(backupDir());
+    expect(backups).toHaveLength(1);
+    expect(backups[0].startsWith("co.harmoniqs.amico-studio-forward.plist.")).toBe(true);
+    expect(readFileSync(join(backupDir(), backups[0]), "utf8")).toBe(legacy.content);
+    expect(r.out).toMatch(/replaced hand-installed peer forward .*co\.harmoniqs\.amico-studio-forward\.plist.*backup/);
+
+    // The legacy job is unloaded BEFORE the managed one loads (they bind the same port).
+    const managed = peerForwardPlist("jjs-mac-studio");
+    const calls = launchctlCalls();
+    expect(calls).toContain(`unload ${legacy.file}`);
+    expect(calls.indexOf(`unload ${legacy.file}`)).toBeLessThan(calls.indexOf(`load ${managed}`));
+    expect(readAgent(managed).args).toEqual(standardForward(45096, 4096, "jjs-mac-studio"));
+
+    const again = runScript(INSTALL, [], installEnv());
+    expect(again.code, again.out).toBe(0);
+    expect(readdirSync(backupDir())).toEqual(backups);
+    expect(backstopCalls()).toEqual([]);
+  });
+
+  it("a forward for a DIFFERENT peer (another port, another host) is left exactly as it was — never unloaded, never moved", () => {
+    fakeAmico({ code: 0, stdout: verbJson("server", { host: "hq", port: 4096 }) });
+    fakeUname("Darwin");
+    writePeerStore({ "jjs-mac-studio": "http://127.0.0.1:45096" });
+    const other = placeLegacy("lab", 47000, "lab-box");
+
+    const r = runScript(INSTALL, [], installEnv());
+    expect(r.code, r.out).toBe(0);
+    expect(readFileSync(other.file, "utf8")).toBe(other.content);
+    expect(launchctlCalls().filter((l) => l.includes(other.file))).toEqual([]);
+    expect(existsSync(backupDir())).toBe(false);
+  });
+});
+
+// ── #1775: `install.sh --check` is the CLI twin of the peer-forward healthcheck ──
+describe("#1775 --check holds every peer forward agent to the standard (the healthcheck's CLI twin)", () => {
+  const installEnv = (): { path: string } => ({
+    path: `${join(tmp, "fakebin")}:${process.env.PATH ?? ""}`,
+  });
+  const launchAgents = (): string => join(tmp, "Library", "LaunchAgents");
+  const attachStudio = (): void => {
+    fakeAmico({ code: 0, stdout: verbJson("client", { host: "hq", port: 4096, sshAlias: "hq" }) });
+    fakeUname("Darwin");
+    writePeerStore({ "jjs-mac-studio": "http://127.0.0.1:45096" });
+  };
+  const listing = (): string => readdirSync(launchAgents()).map((f) => `${f}:${readFileSync(join(launchAgents(), f), "utf8").length}`).sort().join("\n");
+
+  it("after an install, --check passes end to end and names the peer forward; --check itself never calls launchctl and writes nothing", () => {
+    attachStudio();
+    expect(runScript(INSTALL, [], installEnv()).code).toBe(0);
+    rmSync(join(tmp, "launchctl.argv"), { force: true });
+    const before = listing();
+    const r = runScript(INSTALL, ["--check"], installEnv());
+    expect(r.code, r.out).toBe(0);
+    expect(r.out).toMatch(/ok peer forward co\.harmoniqs\.amico-peer-jjs-mac-studio-forward \(15\/2 \+ TCPKeepAlive, 127\.0\.0\.1:45096 → jjs-mac-studio:4096\)/);
+    expect(r.out).toMatch(/fleet check: all ok/);
+    expect(launchctlCalls()).toEqual([]);
+    expect(backstopCalls()).toEqual([]);
+    expect(listing()).toBe(before);
+  });
+
+  it("an attached peer with no forward agent fails --check with the fix line", () => {
+    attachStudio();
+    expect(runScript(INSTALL, [], installEnv()).code).toBe(0);
+    rmSync(join(launchAgents(), "co.harmoniqs.amico-peer-jjs-mac-studio-forward.plist"));
+    const r = runScript(INSTALL, ["--check"], installEnv());
+    expect(r.code).toBe(1);
+    expect(r.out).toMatch(/FAIL peer forward co\.harmoniqs\.amico-peer-jjs-mac-studio-forward missing at .*\(run: bash tools\/fleet\/install\.sh\)/);
+  });
+
+  it("stale keepalive values fail --check, each value named (the tunnel check's lines)", () => {
+    attachStudio();
+    expect(runScript(INSTALL, [], installEnv()).code).toBe(0);
+    const agent = join(launchAgents(), "co.harmoniqs.amico-peer-jjs-mac-studio-forward.plist");
+    writeFileSync(agent, readFileSync(agent, "utf8").replace("ServerAliveInterval=15", "ServerAliveInterval=30").replace("ServerAliveCountMax=2", "ServerAliveCountMax=3"));
+    const r = runScript(INSTALL, ["--check"], installEnv());
+    expect(r.code).toBe(1);
+    expect(r.out).toMatch(/FAIL peer forward co\.harmoniqs\.amico-peer-jjs-mac-studio-forward ServerAliveInterval 15 missing/);
+    expect(r.out).toMatch(/FAIL peer forward co\.harmoniqs\.amico-peer-jjs-mac-studio-forward ServerAliveCountMax 2 missing/);
+    expect(r.out).not.toMatch(/fleet check: all ok/);
+  });
+
+  it("a hand-installed forward for an attached peer fails --check — Fleet — Repair replaces it, keeping a backup", () => {
+    attachStudio();
+    expect(runScript(INSTALL, [], installEnv()).code).toBe(0);
+    writeFileSync(join(launchAgents(), "co.harmoniqs.amico-studio-forward.plist"), legacyForwardPlist("studio", 45096, "jjs-mac-studio"));
+    rmSync(join(tmp, "launchctl.argv"), { force: true });
+    const r = runScript(INSTALL, ["--check"], installEnv());
+    expect(r.code).toBe(1);
+    expect(r.out).toMatch(/FAIL hand-installed peer forward .*co\.harmoniqs\.amico-studio-forward\.plist for jjs-mac-studio .*replaces it.*backup/);
+    // a check only reports: the legacy agent is neither unloaded nor moved
+    expect(launchctlCalls()).toEqual([]);
+    expect(existsSync(join(launchAgents(), "co.harmoniqs.amico-studio-forward.plist"))).toBe(true);
+  });
+
+  it("the installer and the healthcheck agree: every agent the installer renders passes checkPeerForwards", () => {
+    fakeAmico({ code: 0, stdout: verbJson("server", { host: "hq", port: 4096 }) });
+    fakeUname("Darwin");
+    writePeerStore({ "jjs-mac-studio": "http://127.0.0.1:45096", "lab-box": "http://127.0.0.1:45097" });
+    writeRoster([{ machine_id: "lab-box", sshAlias: "lab" }]);
+    expect(runScript(INSTALL, [], installEnv()).code).toBe(0);
+    const checks = checkPeerForwards({
+      launchAgentsDir: launchAgents(),
+      peerStoreFile: join(tmp, ...PEER_STORE_REL),
+      platform: "darwin",
+      topology: {
+        kind: "ok", role: "server", canonical: { host: "hq", port: 4096 }, mode: "fleet", posture: "ok",
+        freshness: {}, provenanceSource: "fleet.json", projection: { schema_version: 1, contract_version: 1, sections: {} },
+      },
+    });
+    expect(checks.map((c) => [c.name, c.ok])).toEqual([
+      ["Fleet peer forward (jjs-mac-studio)", true],
+      ["Fleet peer forward (lab-box)", true],
+    ]);
+  });
+});
+
+// ── #1775: the stray session-wide multiplex-flag agent is retired ──────────────
+// `co.harmoniqs.amico-fleet-flag` ran `launchctl setenv AMICO_FLEET_MULTIPLEX 1`
+// at login, leaking the flag into every GUI process — though the flag already
+// defaults ON (#1448). The installer unloads + removes it and unsets the
+// variable; asserted on the STUB's argv, never the real launchctl.
+const FLAG_AGENT = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>co.harmoniqs.amico-fleet-flag</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/launchctl</string>
+        <string>setenv</string>
+        <string>AMICO_FLEET_MULTIPLEX</string>
+        <string>1</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+</dict>
+</plist>
+`;
+
+describe("#1775 the installer retires the session-wide multiplex-flag agent", () => {
+  const installEnv = (): { path: string } => ({
+    path: `${join(tmp, "fakebin")}:${process.env.PATH ?? ""}`,
+  });
+  const flagPlist = (): string => join(tmp, "Library", "LaunchAgents", "co.harmoniqs.amico-fleet-flag.plist");
+  const placeFlagAgent = (): void => {
+    mkdirSync(join(tmp, "Library", "LaunchAgents"), { recursive: true });
+    writeFileSync(flagPlist(), FLAG_AGENT);
+  };
+  /** What the stubbed `launchctl getenv AMICO_FLEET_MULTIPLEX` prints (the session value). */
+  const sessionFlag = (value: string | null): void => {
+    mkdirSync(join(tmp, "stubs"), { recursive: true });
+    const f = join(tmp, "stubs", "getenv-AMICO_FLEET_MULTIPLEX");
+    if (value === null) rmSync(f, { force: true });
+    else writeFileSync(f, `${value}\n`);
+  };
+  const verbFor = (role: string): string =>
+    role === "standalone" ? verbJson() : verbJson(role, { host: "hq", port: 4096, sshAlias: "hq" });
+
+  it.each(["server", "client", "standalone"])("on a %s: the flag agent is unloaded + removed and the variable unset; a re-run is a no-op; the flag still defaults ON", (role) => {
+    fakeAmico({ code: 0, stdout: verbFor(role) });
+    fakeUname("Darwin");
+    placeFlagAgent();
+    sessionFlag("1");
+
+    const r = runScript(INSTALL, [], installEnv());
+    expect(r.code, r.out).toBe(0);
+    expect(existsSync(flagPlist())).toBe(false);
+    expect(launchctlCalls()).toContain(`unload ${flagPlist()}`);
+    expect(launchctlCalls()).toContain("unsetenv AMICO_FLEET_MULTIPLEX");
+    expect(r.out).toMatch(/removed the session-wide multiplex-flag agent/);
+    expect(backstopCalls()).toEqual([]);
+
+    // Fleet behavior is unchanged: with the variable gone the multiplexer is ON by default.
+    delete process.env[FLEET_MULTIPLEX_FLAG];
+    expect(fleetMultiplexEnabled()).toBe(true);
+
+    // Re-run after the unset: nothing left to retire — no unload, no unsetenv.
+    sessionFlag(null);
+    rmSync(join(tmp, "launchctl.argv"), { force: true });
+    const again = runScript(INSTALL, [], installEnv());
+    expect(again.code, again.out).toBe(0);
+    expect(launchctlCalls().filter((l) => l.includes("fleet-flag") || l.startsWith("unsetenv"))).toEqual([]);
+  });
+
+  it("a deliberate session opt-out (AMICO_FLEET_MULTIPLEX=0, no flag agent) is left alone — only the agent's leaked value is unset", () => {
+    fakeAmico({ code: 0, stdout: verbFor("server") });
+    fakeUname("Darwin");
+    sessionFlag("0");
+    const r = runScript(INSTALL, [], installEnv());
+    expect(r.code, r.out).toBe(0);
+    expect(launchctlCalls().filter((l) => l.startsWith("unsetenv"))).toEqual([]);
+  });
+
+  it("--check fails on a present flag agent with the fix line — and never calls launchctl", () => {
+    fakeAmico({ code: 0, stdout: verbFor("client") });
+    fakeUname("Darwin");
+    expect(runScript(INSTALL, [], installEnv()).code).toBe(0);
+    placeFlagAgent();
+    rmSync(join(tmp, "launchctl.argv"), { force: true });
+    const r = runScript(INSTALL, ["--check"], installEnv());
+    expect(r.code).toBe(1);
+    expect(r.out).toMatch(/FAIL session-wide multiplex-flag agent present at .*co\.harmoniqs\.amico-fleet-flag\.plist.*run: bash tools\/fleet\/install\.sh/);
+    expect(existsSync(flagPlist())).toBe(true);
+    expect(launchctlCalls()).toEqual([]);
   });
 });

@@ -1,6 +1,6 @@
 import { Binary } from "@opencode-ai/core/util/binary"
 import { retry } from "@opencode-ai/core/util/retry"
-import type { OpenCodeEvent, SessionApi, SessionMessageInfo } from "@opencode-ai/client/promise"
+import type { SessionApi, SessionMessageInfo } from "@opencode-ai/client/promise"
 import type {
   Message,
   OpencodeClient,
@@ -12,6 +12,7 @@ import type {
   Todo,
 } from "@opencode-ai/sdk/v2/client"
 import type { FileDiffInfo } from "@opencode-ai/client/promise"
+import type { WireEvent } from "./server-sdk"
 import { batch } from "solid-js"
 import { createStore, produce, reconcile } from "solid-js/store"
 import { message as cleanMessage } from "@/utils/diffs"
@@ -1372,7 +1373,45 @@ export function createServerSession(
       .catch(() => {})
   }
 
-  const applyV2 = (event: OpenCodeEvent) => {
+  const applyV2 = (event: WireEvent) => {
+    // 2026-10-20 (the animation root cause): the engine's V1 wire publishes
+    // busy/idle as `session.status` frames — {properties: {sessionID, status,
+    // seq}} — and NOT session.execution.* (verified on the wire: a full test
+    // turn emits session.status x4, zero execution frames). The apply() only
+    // handled session.execution.*, so busy transitions from events NEVER
+    // landed — the dot lit only via the one-shot boot seed, the attach
+    // reconcile, or the transient message.part.delta floor (flickering
+    // between bursts — the "hit or miss" animation). The #1636/#1637 seq
+    // guard below was built for exactly this event and never had a consumer.
+    // This block runs BEFORE the data guard: the V1 shape carries the payload
+    // in `properties` (the SDK's EventSessionStatus — the only shape that
+    // carries `seq`), the V2 shape in `data`; the guard would bail the V1
+    // frame out before this handler ever saw it.
+    if (event.type === "session.status") {
+      const props: { sessionID: string; status?: SessionStatus; seq?: number } =
+        "properties" in event ? event.properties : event.data
+      if (props.status) {
+        const sessionID = props.sessionID
+        const seq = props.seq
+        let stale = false
+        if (typeof seq === "number") {
+          const last = lastStatusSeq.get(sessionID) ?? 0
+          if (seq <= last) stale = true
+          else lastStatusSeq.set(sessionID, seq)
+        }
+        if (!stale) {
+          stampStatusMutation(sessionID)
+          setData("session_status", sessionID, reconcile(props.status))
+          if (props.status.type === "idle") cancelReconcileTimer(sessionID)
+          // #1649 — the ancestor floor: a parent blocked on a foreground
+          // subagent re-derives its child-active count from session_status,
+          // so the parent's rail follows child status edges reactively —
+          // the setData("session_status") above IS the floor's trigger
+          // (the explicit scheduler this slot once referenced was never
+          // defined anywhere; removed as provably-dead in the consolidation).
+        }
+      }
+    }
     if (!("data" in event) || !("sessionID" in event.data) || typeof event.data.sessionID !== "string") return
     const sessionID = event.data.sessionID
     const reduction = v2.reduce(data.session_message[sessionID] ?? [], event)
@@ -1399,36 +1438,6 @@ export function createServerSession(
     //   if (info) remember({ ...info, time: { ...info.time, archived: event.created, updated: event.created } })
     //   evict([sessionID])
     // }
-    // 2026-10-20 (the animation root cause): the engine's V1 wire publishes
-    // busy/idle as `session.status` frames — {properties: {sessionID, status,
-    // seq}} — and NOT session.execution.* (verified on the wire: a full test
-    // turn emits session.status x4, zero execution frames). The apply() only
-    // handled session.execution.*, so busy transitions from events NEVER
-    // landed — the dot lit only via the one-shot boot seed, the attach
-    // reconcile, or the transient message.part.delta floor (flickering
-    // between bursts — the "hit or miss" animation). The #1636/#1637 seq
-    // guard below was built for exactly this event and never had a consumer.
-    if (event.type === "session.status") {
-      const props = event.properties as { status?: SessionStatus; seq?: number }
-      if (props.status) {
-        const seq = props.seq
-        let stale = false
-        if (typeof seq === "number") {
-          const last = lastStatusSeq.get(sessionID) ?? 0
-          if (seq <= last) stale = true
-          else lastStatusSeq.set(sessionID, seq)
-        }
-        if (!stale) {
-          stampStatusMutation(sessionID)
-          setData("session_status", sessionID, reconcile(props.status))
-          if (props.status.type === "idle") cancelReconcileTimer(sessionID)
-          // #1649 — the ancestor floor: a parent blocked on a foreground
-          // subagent re-derives its child-active count from session_status,
-          // so the parent's rail follows child status edges reactively.
-          scheduleChildActiveDerivation?.(sessionID)
-        }
-      }
-    }
     if (event.type === "session.execution.started") setData("session_status", sessionID, { type: "busy" })
     if (
       event.type === "session.execution.succeeded" ||

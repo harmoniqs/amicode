@@ -78,6 +78,23 @@ export function hasPeerToken(machineId: string, deps: PeerStoreDeps = {}): boole
   return readPeerToken(machineId, deps).ok;
 }
 
+/** Every target this machine is attached to, with its base_url — NEVER the
+ *  token (#1775: the per-peer SSH forward is keyed on the machine id and its
+ *  local port is the loopback base_url's port). Sorted by machine id; an entry
+ *  without a string base_url is skipped (absent/corrupt store → []). */
+export function listPeerBaseUrls(deps: PeerStoreDeps = {}): Array<{ machineId: string; baseUrl: string }> {
+  const peers = readKeyedCollection(peerTokenStorePath(deps), COLLECTION);
+  const out: Array<{ machineId: string; baseUrl: string }> = [];
+  for (const machineId of Object.keys(peers).sort()) {
+    const e = peers[machineId];
+    if (typeof e !== "object" || e === null || Array.isArray(e)) continue;
+    const baseUrl = (e as Record<string, unknown>).base_url;
+    if (typeof baseUrl !== "string" || baseUrl.trim() === "") continue;
+    out.push({ machineId, baseUrl: baseUrl.trim() });
+  }
+  return out;
+}
+
 /** Remove the entire reader peer-store file; absent is a no-op. */
 export function clearAllPeerTokens(deps: PeerStoreDeps = {}): void {
   clearKeyedStoreFile(peerTokenStorePath(deps));

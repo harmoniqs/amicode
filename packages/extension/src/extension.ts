@@ -2697,6 +2697,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
             configuredBinary: vscode.workspace.getConfiguration("amicode").get<string>("opencodeBinary", ""),
             configuredPort: vscode.workspace.getConfiguration("amicode").get<number>("opencodePort", 0),
             plistContent,
+            // #1775: every per-peer SSH forward agent, enumerated by label convention.
+            launchAgentsDir: path.join(os.homedir(), "Library", "LaunchAgents"),
           });
           for (const c of fleetChecks) {
             results.push({ name: c.name, ok: c.ok, detail: c.ok ? c.detail : `${c.detail} → ${c.fix ?? ""}`.trim() });
@@ -3113,6 +3115,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         configuredBinary: vscode.workspace.getConfiguration("amicode").get<string>("opencodeBinary", ""),
         configuredPort: vscode.workspace.getConfiguration("amicode").get<number>("opencodePort", 0),
         plistContent,
+        // #1775: per-peer forward agents (checkPeerForwards self-skips off darwin).
+        launchAgentsDir: path.join(os.homedir(), "Library", "LaunchAgents"),
       });
       const failed = checks.filter((c) => !c.ok);
       if (failed.length === 0) return;

@@ -1,21 +1,24 @@
 // workflow_skills_public.test.ts — the public workflow skill surface (#807,
-// spec-20260905-063000 D2): the five dev-workflow skills + the `autodev`
-// mode-protocol skill live as in-repo canonical copies under
-// packages/extension/skills/ with `surface: public`. This file pins:
+// spec-20260905-063000 D2; merged per #1732, spec-20261008-054129 D1): the
+// five dev-workflow skills live as in-repo canonical copies under
+// packages/extension/skills/ with `surface: public` — and the develop mode's
+// protocol skill is MERGED into `develop` (one skill per mode, mirroring
+// `research`; the former `autodev` id read-resolves to it). The merge
+// supersedes the three-mode rename's id-retention clause: the split shape
+// this file previously pinned (protocol `autodev` + walk `develop`
+// cross-deferring) is replaced by the single-skill shape. This file pins:
 //
-//   - the `autodev` skill's structure, mirroring `research` (#858 renamed
-//     the mode autodev→develop, autoresearch→research; the mode-protocol
-//     skill keeps its id — the workflow skill `develop` owns that id — and
-//     the read-resolve alias covers the old mode id everywhere)
-//     (entry
-//     points, loop bound to the dev pack's phases/gates, ledger discipline,
-//     honest degradation naming what is missing, handoff section with the
-//     mid-session switch's pending status stated honestly (F14 replaced the
-//     dangling "PENDING-D5" marker with plain text) — parameterized on D5
-//     state per the spec: the assertion flips when slice 5 lands);
-//   - `develop` cross-references `autodev` and defers to it as the mode
-//     binding;
-//   - the #809 content lens, mechanically: none of the six skills carries a
+//   - the merged `develop` skill's PROTOCOL half: entry points, the loop
+//     bound to the dev pack's phases/gates, ledger discipline, handoffs
+//     (with the mid-session switch's pending status stated honestly —
+//     parameterized on D5 state per the spec: the assertion flips when
+//     slice 5 lands), and honest degradation naming what is missing;
+//   - the merged `develop` skill's WALK half: the top-session-only invariant
+//     with its preflight abort, branch/PR topology, merge strategy, and the
+//     engine-neutral role binding;
+//   - the read-resolve note (the merged skill names its former id) and
+//     self-containment (no external protocol skill to defer to);
+//   - the #809 content lens, mechanically: none of the five skills carries a
 //     blocklisted proprietary string (the naming fixture of record) or an
 //     internal-machine path shape (the per-line usage-vs-internals boundary
 //     test's regression guard — the pass itself is recorded in the PR notes).
@@ -31,35 +34,30 @@ const EXT = join(HERE, "..");
 const SKILLS = join(EXT, "skills");
 const MODES = join(EXT, "modes");
 
-const SIX = [
+const FIVE = [
   "director-core",
   "develop",
   "implement-issue",
   "write-an-issue",
   "break-into-subissues",
-  "autodev",
 ] as const;
 
 const skillText = (name: string): string =>
   readFileSync(join(SKILLS, name, "SKILL.md"), "utf8");
 
-// ── the autodev skill: the develop mode's protocol, mirroring research (D2,
-//    renamed per spec-20260907-011500 D1) ──────────────────────────────────
-// The MODE is `develop` (#858); the mode-protocol skill's id stays `autodev`
-// (the workflow skill `develop` owns that id — the read-resolve alias covers
-// the old mode id at every reference surface). The mirror skill renames
-// cleanly: `autoresearch` → `research`.
+// ── the merged develop skill: the develop mode's protocol AND issue-DAG walk
+//    in one skill, mirroring research (#1732, spec D1) ──────────────────────
 
-describe("the autodev mode-protocol skill of the develop mode (#807, D2 — mirrors research)", () => {
-  const autodev = skillText("autodev");
+describe("the merged develop skill — the mode protocol half (#1732, mirrors research)", () => {
+  const develop = skillText("develop");
   const research = skillText("research");
 
-  it("carries the three entry points (the agent card, the skill itself, kickoff-prompt lines)", () => {
-    expect(autodev).toMatch(/## Develop|entry points/i);
-    expect(autodev).toMatch(/Entry points/i);
-    // mirroring research's entry-point shape: card, skill, kickoff lines
-    expect(autodev).toMatch(/agent card/i);
-    expect(autodev).toMatch(/kickoff/i);
+  it("carries the entry points (the agent card, the /develop invocation, the skill itself, kickoff-prompt lines)", () => {
+    expect(develop).toMatch(/## Develop|entry points/i);
+    expect(develop).toMatch(/Entry points/i);
+    expect(develop).toMatch(/agent card/i);
+    expect(develop).toMatch(/kickoff/i);
+    expect(develop).toContain("/develop"); // the walk's invocation surface
     expect(research).toMatch(/Entry points/i); // the mirror's shape — guard against drifting the mirror
   });
 
@@ -67,33 +65,35 @@ describe("the autodev mode-protocol skill of the develop mode (#807, D2 — mirr
     const pack = readFileSync(join(MODES, "develop", "pack.toml"), "utf8");
     for (const phase of ["decompose", "implement", "integrate"]) {
       expect(pack, `the shipped pack carries the ${phase} phase`).toMatch(new RegExp(`^name = "${phase}"`, "m"));
-      expect(autodev, `the skill binds the ${phase} phase`).toContain(phase);
+      expect(develop, `the skill binds the ${phase} phase`).toContain(phase);
     }
     for (const gate of ["dev-gate", "blocked-by-clearance", "tdd-red-green", "draft-pr-lifecycle", "review"]) {
       expect(pack, `the shipped pack carries the ${gate} gate`).toContain(gate);
-      expect(autodev, `the skill binds the ${gate} gate`).toContain(gate);
+      expect(develop, `the skill binds the ${gate} gate`).toContain(gate);
     }
-    // and the mode's manifest declares the skill among its protocol skills
+    // the mode's manifest declares the merged skill among its protocol skills
+    // — and no longer declares the absorbed id
     const manifest = readFileSync(join(MODES, "develop", "mode.toml"), "utf8");
-    expect(manifest).toMatch(/"autodev"/);
+    expect(manifest).toMatch(/"develop"/);
+    expect(manifest).not.toMatch(/"autodev"/);
   });
 
   it("carries ledger discipline anchored on the ledger discovery rule the cards carry", () => {
-    expect(autodev).toMatch(/## The ledger/);
-    expect(autodev).toContain("sessions/session-<YYYYMMDD>-<slug>.md"); // the rule's path convention
-    expect(autodev).toMatch(/re-read.*ledger.*disk|disk.*ledger/i); // re-read-first discipline
-    expect(autodev).toContain("director-core"); // the canonical rule's owner
+    expect(develop).toMatch(/## The ledger/);
+    expect(develop).toContain("sessions/session-<YYYYMMDD>-<slug>.md"); // the rule's path convention
+    expect(develop).toMatch(/re-read.*ledger.*disk|disk.*ledger/i); // re-read-first discipline
+    expect(develop).toContain("director-core"); // the canonical rule's owner
   });
 
   it("documents the handoff procedure BOTH directions, seeds named (D6: schema in D1, procedure here)", () => {
-    expect(autodev).toMatch(/## Handoffs/);
-    expect(autodev).toContain("issue"); // receives the issue seed (issue-seed schema)
-    expect(autodev).toContain("hypothesis"); // emits the hypothesis seed
+    expect(develop).toMatch(/## Handoffs/);
+    expect(develop).toContain("issue"); // receives the issue seed (issue-seed schema)
+    expect(develop).toContain("hypothesis"); // emits the hypothesis seed
     // the pack's handoff target is research — the skill's emit matches it
     const pack = readFileSync(join(MODES, "develop", "pack.toml"), "utf8");
     expect(pack).toMatch(/hypothesis_seed/);
     expect(pack).toMatch(/target = "research"/);
-    expect(autodev).toMatch(/research/);
+    expect(develop).toMatch(/research/);
   });
 
   it("the handoff section states the mid-session switch's pending status honestly — parameterized: the assertion flips when slice 5 lands", () => {
@@ -104,7 +104,7 @@ describe("the autodev mode-protocol skill of the develop mode (#807, D2 — mirr
     // text leaves the skill (a revision bump), and this assertion then
     // DEMANDS its absence — the parameterized flip, never a deleted test.
     const D5_MID_SESSION_SWITCH_LANDED = false;
-    const handoff = autodev.slice(autodev.indexOf("## Handoffs"));
+    const handoff = develop.slice(develop.indexOf("## Handoffs"));
     const pendingHonest = /not yet specified/.test(handoff);
     expect(pendingHonest).toBe(!D5_MID_SESSION_SWITCH_LANDED);
     // the safe path is named while pending (spawn/open on the seed), and the
@@ -114,8 +114,8 @@ describe("the autodev mode-protocol skill of the develop mode (#807, D2 — mirr
   });
 
   it("carries honest degradation text naming what is missing on a BUILD-with-missing-pieces (H3: degraded_staging_is_honest, the skill half)", () => {
-    expect(autodev).toMatch(/## Honest degradation/);
-    const section = autodev.slice(autodev.indexOf("## Honest degradation"));
+    expect(develop).toMatch(/## Honest degradation/);
+    const section = develop.slice(develop.indexOf("## Honest degradation"));
     // names the ABSENT SKILL COPIES case: zero dev skills staged + say so
     expect(section).toMatch(/Absent skill copies|skill index/i);
     for (const name of ["director-core", "develop", "implement-issue", "write-an-issue", "break-into-subissues"]) {
@@ -130,12 +130,39 @@ describe("the autodev mode-protocol skill of the develop mode (#807, D2 — mirr
   });
 });
 
-describe("develop cross-references autodev and defers to it as the mode binding (#807, D2)", () => {
-  it("develop names autodev as the mode binding and points posture questions at it", () => {
-    const develop = skillText("develop");
-    expect(develop).toMatch(/Mode binding/i);
-    expect(develop).toMatch(/defer.*autodev|autodev.*defer/i);
-    expect(develop).toContain("**autodev**");
+describe("the merged develop skill — the issue-DAG walk half (#1732)", () => {
+  const develop = skillText("develop");
+
+  it("carries the top-session-only invariant with its preflight abort (the walk never runs as a dispatched subagent)", () => {
+    expect(develop).toMatch(/TOP-SESSION-ONLY/);
+    expect(develop).toMatch(/Top-session-only invariant/);
+    expect(develop).toMatch(/subagent-of-subagent/);
+    // the preflight abort is spelled out, not implied
+    expect(develop).toMatch(/abort immediately/);
+  });
+
+  it("carries the branch/PR topology and the merge strategy (the walk's lifecycle mechanics)", () => {
+    expect(develop).toMatch(/## The issue-DAG walk/);
+    expect(develop).toMatch(/Branch \/ PR topology/);
+    expect(develop).toContain("amico/issue-<n>-<slug>"); // one integration branch + one PR per unit
+    expect(develop).toMatch(/no stacking/); // cross-unit blocked-by discipline
+    expect(develop).toMatch(/Merge strategy/);
+    expect(develop).toMatch(/DAG-topological order/); // leaves before dependents
+    expect(develop).toMatch(/never force-merge/);
+  });
+
+  it("names the Engineer role engine-neutrally and the EXHAUSTED report as an open loop, never an outcome", () => {
+    expect(develop).toMatch(/Role binding \(engine-neutral\)/);
+    expect(develop).toContain("implement-issue"); // the leaf the walk dispatches
+    expect(develop).toMatch(/EXHAUSTED/);
+    expect(develop).toMatch(/open loop/);
+  });
+
+  it("is self-contained for the mode — the read-resolve note names the former id, and no external protocol deferral remains", () => {
+    // the merged skill names its former id (forward-only read-resolve)
+    expect(develop).toMatch(/former `autodev`|ex-autodev/);
+    // …and no longer defers the mode protocol to a separate skill
+    expect(develop).not.toMatch(/defer.*autodev|autodev.*defer/i);
   });
 });
 
@@ -158,8 +185,8 @@ describe("content lens — the public workflow skills carry no proprietary or in
     expect(BANNED_NAMES.length).toBeGreaterThanOrEqual(2);
   });
 
-  it("none of the six public skills carries a blocklisted proprietary string or banned name", () => {
-    for (const name of SIX) {
+  it("none of the five public skills carries a blocklisted proprietary string or banned name", () => {
+    for (const name of FIVE) {
       const text = skillText(name).toLowerCase();
       for (const s of [...PROPRIETARY_STRINGS, ...BANNED_NAMES]) {
         expect(
@@ -170,7 +197,7 @@ describe("content lens — the public workflow skills carry no proprietary or in
     }
   });
 
-  it("none of the six carries an internal-machine path shape (mount paths, fleet hosts, private repo paths)", () => {
+  it("none of the five carries an internal-machine path shape (mount paths, fleet hosts, private repo paths)", () => {
     const INTERNAL_PATH_SHAPES = [
       "/home/", // absolute home paths (fleet hosts, user trees)
       "/users/", // macOS-style absolute home paths (the fleet's other half)
@@ -180,7 +207,7 @@ describe("content lens — the public workflow skills carry no proprietary or in
       "armonissima", // the private team mount's name
       "repos/amico", // the private amico repo layout
     ];
-    for (const name of SIX) {
+    for (const name of FIVE) {
       const text = skillText(name).toLowerCase();
       for (const shape of INTERNAL_PATH_SHAPES) {
         expect(
@@ -197,7 +224,7 @@ describe("content lens — the public workflow skills carry no proprietary or in
       /migrating per (issue|amico)#\d+/i, // internal roadmap pointers
       /in-flight (migration|redesign)/i,
     ];
-    for (const name of SIX) {
+    for (const name of FIVE) {
       const text = skillText(name);
       for (const re of RECIPE_SHAPES) {
         expect(re.test(text), `${name} must not carry recipe/roadmap prose (${re})`).toBe(false);

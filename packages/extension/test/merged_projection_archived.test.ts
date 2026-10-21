@@ -128,3 +128,86 @@ describe("#1647 S2 — buildOwnerRoutingProjection unions active + archived for 
     expect(arch.amicode_control).toEqual({ controlState: "interactive", reason: null, eligibility: "none" });
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════════════
+// #1771 — the owner-routing projection reports EACH PEER's refresh outcome (the
+// OwnerMapFeed logs it). Never throws: every failure is a classified record.
+// The served projection shape is unchanged — this rides only the routing union.
+// ══════════════════════════════════════════════════════════════════════════════
+describe("#1771 — buildOwnerRoutingProjection classifies each peer's refresh", () => {
+  const json = (v: unknown, status = 200) => new Response(JSON.stringify(v), { status });
+
+  it("ok / unauthorized / timeout / error — with each peer's entry count (active ∪ archived)", async () => {
+    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/global/health")) return json({ version: "t" });
+      if (url.startsWith("http://ok")) return json(/archived=true/.test(url) ? [{ id: "ses-ok-arch" }] : [{ id: "ses-ok-1" }]);
+      if (url.startsWith("http://denied")) return new Response("no", { status: 401 });
+      if (url.startsWith("http://broken")) return new Response("bad gateway", { status: 502 });
+      if (url.startsWith("http://slow")) {
+        // a peer that never answers: the projection's own AbortSignal.timeout fires
+        return new Promise<Response>((_, reject) => init?.signal?.addEventListener("abort", () => reject(init.signal!.reason)));
+      }
+      return json([]); // local
+    }) as unknown as typeof fetch;
+    const p = await buildOwnerRoutingProjection({
+      localMachineId: "local-mac",
+      local: { getUrl: () => "http://local" },
+      peers: [
+        { machineId: "ok", getUrl: () => "http://ok", token: "t" },
+        { machineId: "denied", getUrl: () => "http://denied", token: "t" },
+        { machineId: "slow", getUrl: () => "http://slow", token: "t" },
+        { machineId: "broken", getUrl: () => "http://broken", token: "t" },
+        { machineId: "gone", getUrl: () => undefined, token: "t" },
+      ],
+      rosterLookup: () => undefined,
+      fetchImpl,
+      timeoutMs: 1,
+    });
+    const summary = p.peers.map(({ machineId, outcome, entries, reason, detail }) => ({ machineId, outcome, entries, reason, detail }));
+    expect(summary).toEqual([
+      { machineId: "ok", outcome: "ok", entries: 2, reason: undefined, detail: undefined },
+      { machineId: "denied", outcome: "unauthorized", entries: 0, reason: "unauthorized", detail: undefined },
+      { machineId: "slow", outcome: "timeout", entries: 0, reason: "fetch-failed", detail: expect.stringContaining("timeout") },
+      { machineId: "broken", outcome: "error", entries: 0, reason: "fetch-failed", detail: "HTTP 502" },
+      { machineId: "gone", outcome: "error", entries: 0, reason: "no-upstream", detail: undefined },
+    ]);
+    // the routing union itself is unchanged: only the healthy peer's sessions land
+    expect(p.sessions.map((s) => s.id).sort()).toEqual(["ses-ok-1", "ses-ok-arch"]);
+  });
+
+  it("each peer's duration is measured on the injected clock", async () => {
+    let t = 1_000;
+    const held: Array<() => void> = [];
+    // plain promise-backed responses: every read is a microtask, nothing waits
+    // on a stream or a timer
+    const fake = (v: unknown) => ({ ok: true, status: 200, json: async () => v }) as unknown as Response;
+    const fetchImpl = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/global/health")) return fake({ version: "t" });
+      if (url.startsWith("http://slowish")) return new Promise<Response>((resolve) => held.push(() => resolve(fake([{ id: "ses-s" }]))));
+      return fake([]);
+    }) as unknown as typeof fetch;
+    const pending = buildOwnerRoutingProjection({
+      localMachineId: "local-mac",
+      local: { getUrl: () => "http://local" },
+      peers: [
+        { machineId: "quick", getUrl: () => "http://quick", token: "t" },
+        { machineId: "slowish", getUrl: () => "http://slowish", token: "t" },
+      ],
+      rosterLookup: () => undefined,
+      fetchImpl,
+      now: () => t,
+    });
+    // Every fetch but the held ones resolves at once, so one macrotask turn
+    // drains them all (microtasks only) — the quick peer is done, the slow
+    // peer's two reads (active + archived) are in flight.
+    await new Promise<void>((r) => setImmediate(r));
+    expect(held).toHaveLength(2);
+    t = 2_500; // 1.5 s pass while the slow peer answers
+    held.forEach((release) => release());
+    const p = await pending;
+    expect(p.peers.find((r) => r.machineId === "quick")).toMatchObject({ outcome: "ok", durationMs: 0, entries: 0 });
+    expect(p.peers.find((r) => r.machineId === "slowish")).toMatchObject({ outcome: "ok", durationMs: 1_500, entries: 1 });
+  });
+});
