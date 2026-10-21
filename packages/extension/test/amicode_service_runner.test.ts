@@ -511,6 +511,72 @@ createServer((_req, res) => {
   }, 30_000);
 });
 
+// ── #1808: the engine child's output is a telemetry surface, not a private buffer ──
+//
+// The mute-sink root cause: the runner spawned the engine with piped stdio and
+// buffered both pipes into a private string surfaced only on boot failure — so
+// the engine's SSE-TICK / SSE-DROP / SELF-STALL lines (console.log → engine
+// stdout) never reached the runner's stdout, which is what the systemd unit
+// appends to the shard log. The runner must FORWARD every chunk as it arrives.
+describe("engine output forwarding (#1808 — the production telemetry sink)", () => {
+  const boots: AmicodeServiceRunnerBoot[] = [];
+  afterAll(async () => {
+    for (const b of boots.splice(0)) await b.shutdown().catch(() => undefined);
+  });
+
+  /** A fake engine that prints telemetry-shaped lines on BOTH pipes after it
+   * starts listening — the child-side half of the forwarding contract. */
+  function writeTelemetryEngine(dir: string): string {
+    const bin = join(dir, "fake-engine");
+    writeFileSync(
+      bin,
+      `#!/usr/bin/env node
+const { createServer } = require("node:http");
+const port = Number(process.argv[4] ?? 0);
+createServer((_req, res) => {
+  res.writeHead(200, { "content-type": "text/plain" });
+  res.end("fake engine up");
+}).listen(port, "127.0.0.1", () => {
+  console.log("SSE-TICK route=/event conn=drill cadence_ms=10000 queue_depth=0 fiber=7 lag_ms=0 rss_bytes=42 ts_ms=123");
+  console.error("SELF-STALL ticks_expected=1 seen=0 conns=1 route=/event since_last_tick_ms=120 last_queue_depth=0 lag_ms=0 rss_bytes=42 ts_ms=124");
+});
+`,
+    );
+    chmodSync(bin, 0o755);
+    return bin;
+  }
+
+  function writeStubShelf(dir: string): string {
+    writeFileSync(join(dir, "index.html"), "<!doctype html><title>stub shelf</title>");
+    return dir;
+  }
+
+  it("forwards the engine child's stdout AND stderr chunks to the runner's output surface as they arrive", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "amicode-runner-tick-fwd-"));
+    const forwarded: Array<{ chunk: string; stream: string }> = [];
+    const boot = await bootAmicodeServiceRunner({
+      engineBin: writeTelemetryEngine(dir),
+      appDistRoot: writeStubShelf(mkdtempSync(join(tmpdir(), "amicode-runner-tick-shelf-"))),
+      engineUnarmed: true,
+      healthTimeoutMs: 10_000,
+      servicePort: 0,
+      enginePort: 0,
+      log: () => undefined,
+      engineOutput: (chunk, stream) => forwarded.push({ chunk, stream }),
+    });
+    boots.push(boot);
+
+    // Chunk boundaries may split lines — join per stream and wait for both.
+    const joined = (stream: string) =>
+      forwarded.filter((f) => f.stream === stream).map((f) => f.chunk).join("");
+    expect(
+      await waitUntil(() => joined("stdout").includes("SSE-TICK route=/event") && joined("stderr").includes("SELF-STALL")),
+    ).toBe(true);
+    expect(joined("stdout")).toContain("cadence_ms=10000");
+    expect(joined("stderr")).toContain("seen=0");
+  }, 30_000);
+});
+
 describe("amicode service runner (fail-loud, headless — no engine needed)", () => {
   it("a missing engine binary fails with the named reason BEFORE spawning anything", async () => {
     const err = await bootAmicodeServiceRunner({

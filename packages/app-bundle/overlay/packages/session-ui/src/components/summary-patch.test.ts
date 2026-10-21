@@ -29,7 +29,7 @@ function recordingSource(answer: () => Promise<typeof stored | undefined> = asyn
   return { calls, source }
 }
 
-describe("per-turn diff view — patch bodies on demand (#1778)", () => {
+describe("per-turn diff view — patch bodies on demand (#1778, #1814 P3)", () => {
   test("a live summary's file list and counts need no fetch; only a patch-less diff needs one", () => {
     const { calls, source } = recordingSource()
     createSummaryPatchLoader(source)
@@ -90,13 +90,11 @@ describe("per-turn diff view — patch bodies on demand (#1778)", () => {
   })
 
   test("without a source (a provider that cannot fetch) a patch-less diff resolves to no patch", async () => {
-    expect(
-      await createSummaryPatchLoader(undefined).patch({ ...turn, file: "src/app.ts", summary: live }),
-    ).toBeUndefined()
+    expect(await createSummaryPatchLoader(undefined).patch({ ...turn, file: "src/app.ts", summary: live })).toBeUndefined()
   })
 })
 
-describe("per-turn diff view — wiring (#1778)", () => {
+describe("per-turn diff view — wiring (#1778, #1814 P3)", () => {
   const turnSource = readFileSync(resolve(__dirname, "session-turn.tsx"), "utf8")
   const dataSource = readFileSync(resolve(__dirname, "../context/data.tsx"), "utf8")
 

@@ -1399,6 +1399,38 @@ export function createServerSession(
     //   if (info) remember({ ...info, time: { ...info.time, archived: event.created, updated: event.created } })
     //   evict([sessionID])
     // }
+    // 2026-10-20 (the animation root cause): the engine's V1 wire publishes
+    // busy/idle as `session.status` frames — {properties: {sessionID, status,
+    // seq}} — and NOT session.execution.* (verified on the wire: a full test
+    // turn emits session.status x4, zero execution frames). The apply() only
+    // handled session.execution.*, so busy transitions from events NEVER
+    // landed — the dot lit only via the one-shot boot seed, the attach
+    // reconcile, or the transient message.part.delta floor (flickering
+    // between bursts — the "hit or miss" animation). The #1636/#1637 seq
+    // guard below was built for exactly this event and never had a consumer.
+    if (event.type === "session.status") {
+      const props = event.properties as { status?: SessionStatus; seq?: number }
+      if (props.status) {
+        const seq = props.seq
+        let stale = false
+        if (typeof seq === "number") {
+          const last = lastStatusSeq.get(sessionID) ?? 0
+          if (seq <= last) stale = true
+          else lastStatusSeq.set(sessionID, seq)
+        }
+        if (!stale) {
+          stampStatusMutation(sessionID)
+          setData("session_status", sessionID, reconcile(props.status))
+          if (props.status.type === "idle") cancelReconcileTimer(sessionID)
+          // #1649 — the ancestor floor: a parent blocked on a foreground
+          // subagent re-derives its child-active count from session_status,
+          // so the parent's rail follows child status edges reactively —
+          // the setData("session_status") above IS the floor's trigger
+          // (the explicit scheduler this slot once referenced was never
+          // defined anywhere; removed as provably-dead in the consolidation).
+        }
+      }
+    }
     if (event.type === "session.execution.started") setData("session_status", sessionID, { type: "busy" })
     if (
       event.type === "session.execution.succeeded" ||
@@ -1858,6 +1890,23 @@ export function createServerSession(
       },
     },
     sync,
+    // #1785 S1: sync ALL sessions on a reconnect edge. The per-view
+    // forceSyncViewed() only refreshes the ACTIVE tab; background tabs for
+    // running sessions go stale after a reconnect because nothing syncs
+    // them. syncAllOnResync() re-pulls every session that has messages
+    // loaded (i.e., every session with an open view), so all tabs are
+    // current when the user switches to them.
+    syncAllOnResync: () => {
+      for (const sid of Object.keys(data.message)) {
+        if (!sid || !(data.message[sid]?.length > 0)) continue
+        void runInflight(inflight, sid, async () => {
+          await Promise.all([
+            resolve(sid).catch(() => {}),
+            loadMessages(sid, meta.limit[sid] ?? 20).catch(() => {}),
+          ])
+        }, { force: true })
+      }
+    },
     prefetch,
     shouldPrefetch(sessionID: string, limit: number) {
       if (data.message[sessionID] === undefined) return true

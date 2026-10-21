@@ -370,6 +370,36 @@ export class ChatPanel implements LaunchTarget {
     return ChatPanel.current;
   }
 
+  /** #1788 (S3): the host's follow set — the session ids every LIVE chat tab
+   *  is showing (a live tab IS a session this client has opened or pinned; a
+   *  draft or closed route follows nothing). The followed-session watcher
+   *  reads this live at each stream arrival. */
+  static followedSessionIds(): ReadonlySet<string> {
+    const ids = new Set<string>();
+    for (const panel of ChatPanel.live) if (panel.sessionID) ids.add(panel.sessionID);
+    return ids;
+  }
+
+  /** #1788 (S3): the session the FOCUSED panel shows, when the focused panel
+   *  is showing one — "you're already there"; arrivals for it are observed
+   *  but never notified. Undefined when no chat tab is the active editor. */
+  static focusedSessionId(): string | undefined {
+    const panel = ChatPanel.lastFocused;
+    return panel?.panel.active && panel.sessionID ? panel.sessionID : undefined;
+  }
+
+  /** #1788 (S3): reveal the live chat tab showing this session (a
+   *  notification's activation action). True when a tab was found and
+   *  revealed; a session no tab shows cannot be revealed. */
+  static revealSession(sessionID: string): boolean {
+    for (const panel of ChatPanel.live) {
+      if (panel.sessionID !== sessionID) continue;
+      panel.panel.reveal();
+      return true;
+    }
+    return false;
+  }
+
   /** Snapshot the last focused panel's currently settled session for one host operation. */
   static lastFocusedMutationContext(): MutationTrackingContext | undefined {
     const panel = ChatPanel.lastFocused;

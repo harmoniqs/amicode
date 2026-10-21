@@ -42,23 +42,11 @@ const pathFor = (template: string, params: Record<string, string>) =>
   Object.entries(params).reduce((result, [key, value]) => result.replace(`:${key}`, value), template)
 
 const diffs = [
-  {
-    file: "src/main.ts",
-    patch: "@@ -1 +1,2 @@\n-a\n+b\n+c\n",
-    additions: 2,
-    deletions: 1,
-    status: "modified" as const,
-  },
-  {
-    file: "src/new.ts",
-    patch: `@@ -0,0 +1,300 @@\n${"+x\n".repeat(300)}`,
-    additions: 300,
-    deletions: 0,
-    status: "added" as const,
-  },
+  { file: "src/main.ts", patch: "@@ -1 +1,2 @@\n-a\n+b\n+c\n", additions: 2, deletions: 1, status: "modified" as const },
+  { file: "src/new.ts", patch: `@@ -0,0 +1,300 @@\n${"+x\n".repeat(300)}`, additions: 300, deletions: 0, status: "added" as const },
 ]
 
-describe("summary diffs — wire-only projection (#1778)", () => {
+describe("summary diffs — wire-only projection (#1778, #1814 P3)", () => {
   it.instance(
     "the live frame drops patch bodies; the stored message and the sync copy keep them",
     () =>

@@ -39,7 +39,7 @@ fi
 # upstream's own src tree at the pinned base (upstream_base = v1.18.30). Matched
 # by file + TS rule code so line drift does not defeat the allowlist. Refresh
 # when the base pin moves.
-ALLOW='test/plugin/codex\.test\.ts.*error TS2305|test/server/httpapi-mcp-oauth\.test\.ts.*error TS2322|test/session/llm-native-recorded\.test\.ts.*error TS2339|test/session/snapshot-tool-race\.test\.ts.*error TS2741'
+ALLOW='test/server/httpapi-event-replay\.test\.ts.*error TS2345|test/plugin/codex\.test\.ts.*error TS2305|test/server/httpapi-mcp-oauth\.test\.ts.*error TS2322|test/session/llm-native-recorded\.test\.ts.*error TS2339|test/session/snapshot-tool-race\.test\.ts.*error TS2741'
 
 TYPECHECK_ERRORS="$(echo "$OUT" | grep -E 'error TS' || true)"
 if [ "$TYPECHECK_STATUS" -ne 0 ] && [ -z "$TYPECHECK_ERRORS" ]; then

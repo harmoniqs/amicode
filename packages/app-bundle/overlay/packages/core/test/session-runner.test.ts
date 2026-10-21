@@ -291,6 +291,9 @@ const it = testEffect(
 )
 const sessionID = SessionV2.ID.make("ses_runner_test")
 const otherSessionID = SessionV2.ID.make("ses_runner_other")
+// #1739: a dedicated session so a wedged stream under test can never join
+// another test's drain through the run coordinator.
+const hangSessionID = SessionV2.ID.make("ses_runner_hang")
 
 const compactInput = { sessionID } satisfies Parameters<SessionV2.Interface["compact"]>[0]
 void compactInput
@@ -2574,6 +2577,82 @@ describe("SessionRunnerLLM", () => {
       yield* session.resume(sessionID)
       expect(requests).toHaveLength(2)
     }),
+  )
+
+  it.live("fails a hung provider stream with a transport error, unwinds the turn, and frees the busy registration", () =>
+    Effect.gen(function* () {
+      yield* setup
+      yield* insertSession(hangSessionID)
+      const session = yield* SessionV2.Service
+      const execution = yield* SessionExecution.Service
+      requests.length = 0
+      process.env.AMICODE_STREAM_IDLE_TIMEOUT_MS = "150"
+      yield* session.prompt({
+        sessionID: hangSessionID,
+        prompt: Prompt.make({ text: "Hang mid-stream" }),
+        resume: false,
+      })
+      // the transport died without FIN, error, or end: chunks arrive, then silence forever
+      responseStream = Stream.concat(
+        Stream.fromIterable([
+          LLMEvent.stepStart({ index: 0 }),
+          LLMEvent.textStart({ id: "text-hang" }),
+          LLMEvent.textDelta({ id: "text-hang", text: "Partial" }),
+        ]),
+        Stream.never,
+      )
+
+      const run = yield* session.resume(hangSessionID).pipe(Effect.forkChild)
+      yield* Effect.sleep(50)
+      // the busy registration is held exactly while the stream read is parked
+      expect(Array.from(yield* execution.active)).toContain(hangSessionID)
+
+      const failure = yield* Fiber.join(run).pipe(Effect.flip)
+      expect(failure).toBeInstanceOf(LLMError)
+      expect(failure instanceof LLMError && failure.reason).toBeInstanceOf(TransportReason)
+      expect(failure instanceof LLMError && failure.reason.message).toContain("idle")
+      expect(Array.from(yield* execution.active)).not.toContain(hangSessionID)
+      expect(yield* session.context(hangSessionID)).toMatchObject([
+        { type: "user", text: "Hang mid-stream" },
+        {
+          type: "assistant",
+          finish: "error",
+          error: { type: "unknown", message: expect.stringContaining("idle") },
+          content: [{ type: "text", id: "text-hang", text: "Partial" }],
+        },
+      ])
+
+      // the failure is an ordinary transport error: a re-prompt resumes through the durable machinery
+      responseStream = undefined
+      response = fragmentFixture("text", "text-after-hang", ["Recovered"]).completeEvents
+      yield* session.prompt({ sessionID: hangSessionID, prompt: Prompt.make({ text: "Recover" }) })
+      yield* session.resume(hangSessionID)
+      expect(requests).toHaveLength(2)
+    }).pipe(Effect.ensuring(Effect.sync(() => delete process.env.AMICODE_STREAM_IDLE_TIMEOUT_MS))),
+  )
+
+  it.live("runs one provider stream call per turn while chunks keep arriving within the idle ceiling", () =>
+    Effect.gen(function* () {
+      yield* setup
+      const session = yield* SessionV2.Service
+      requests.length = 0
+      process.env.AMICODE_STREAM_IDLE_TIMEOUT_MS = "300"
+      yield* session.prompt({ sessionID, prompt: Prompt.make({ text: "Think slowly" }), resume: false })
+      const fixture = fragmentFixture("text", "text-slow", ["Think ", "slowly ", "friend"])
+      // gaps between chunks (60ms) far under the 300ms ceiling: reset-on-read must
+      // never trip while the stream is alive, however slow the generation
+      responseStream = Stream.fromIterable(fixture.completeEvents).pipe(
+        Stream.mapEffect((event) => Effect.sleep(60).pipe(Effect.as(event))),
+      )
+
+      yield* session.resume(sessionID)
+
+      expect(requests).toHaveLength(1)
+      expect(yield* session.context(sessionID)).toMatchObject([
+        { type: "user", text: "Think slowly" },
+        { type: "assistant", finish: "stop", content: [fixture.expectedContent] },
+      ])
+    }).pipe(Effect.ensuring(Effect.sync(() => delete process.env.AMICODE_STREAM_IDLE_TIMEOUT_MS))),
   )
 
   it.effect("durably settles local tool failures before continuing", () =>

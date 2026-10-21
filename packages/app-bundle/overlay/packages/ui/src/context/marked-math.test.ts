@@ -18,6 +18,25 @@ test("renders tight and loose-inner single-$ math", async () => {
   expect(await parse("set $\\delta/2\\pi = 0.1$ MHz")).toContain('class="katex"')
 })
 
+test("renders digit-led single-$ inline math", async () => {
+  // opencode#375 — the open-side digit guard rejected any math starting with
+  // a digit, the standard physics reporting shape ($3.53\times10^{-5}$)
+  expect(await parse("nice determinism check ($3.53\\times10^{-5}$ — free)")).toContain('class="katex"')
+  expect(await parse("floor through the mock seam ($3.1\\times10^{-3}$, T1-dominated)")).toContain(
+    'class="katex"',
+  )
+  expect(await parse("infidelity $10^{-5}$ at best")).toContain('class="katex"')
+  expect(await parse("$0.99$-style fidelity")).toContain('class="katex"')
+})
+
+test("keeps tight digit-pair currency literal under the close-side guard", async () => {
+  // Pandoc rule: the closing $ must not be followed by a digit — the first $
+  // in "$30-and-$50" closes against "3", so the pair stays literal
+  const html = await parse("prices: $30-and-$50 pairs")
+  expect(html).not.toContain('class="katex"')
+  expect(html).toContain("$30-and-$50")
+})
+
 test("keeps currency and env-var dollars literal", async () => {
   const prices = await parse("costs $5 and $10 total")
   expect(prices).not.toContain('class="katex"')
@@ -66,6 +85,10 @@ test("renderMathInText renders single-$ inline and spares prose dollars", () => 
   expect(prices).not.toContain('class="katex"')
   expect(prices).toContain("$5")
   expect(prices).toContain("$10")
+
+  // opencode#375 — digit-led math through the global replace, tight pairs still literal
+  expect(renderMathInText("check ($3.53\\times10^{-5}$ — free)")).toContain('class="katex"')
+  expect(renderMathInText("prices: $30-and-$50 pairs")).not.toContain('class="katex"')
 
   expect(renderMathInText("$$\n\\hat H\n$$")).toContain("katex-display")
   expect(renderMathInText("inline \\(\\Omega_x\\) math")).toContain('class="katex"')

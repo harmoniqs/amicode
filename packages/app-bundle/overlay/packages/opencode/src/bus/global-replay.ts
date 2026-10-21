@@ -1,9 +1,25 @@
-// The global event stream's replay buffer (#1776). One tap on the global bus
-// serializes each event once, at emit, into a frame stamped with its
-// `<epoch>:<seq>` id; the buffer keeps recent frames (one buffer shared by
-// every subscriber, bounded by bytes) and fans each frame out to the live
-// subscriptions. A connection that resumes from a servable cursor gets the
-// frames after it, then live frames; any other cursor gets an explicit reset.
+// The global event stream's replay buffer (#1776, ported onto the lane for
+// #1806 P1a). One tap on the global bus serializes each event once, at emit,
+// into a frame stamped with its `<epoch>:<seq>` id; the buffer keeps recent
+// frames (one buffer shared by every subscriber, bounded by bytes and age) and
+// fans each frame out to the live subscriptions. A connection that resumes
+// from a servable cursor gets the frames after it, then live frames; any other
+// cursor gets an explicit reset.
+//
+// Lane adaptations vs main (#1806):
+//  - a frame keeps a reference to the emitted event (`event`): this engine
+//    serves TWO wire shapes off the one buffer (the global route serializes
+//    `data` verbatim; the instance /event route projects the payload view from
+//    the live object), so subscribers never re-parse the wire serialization;
+//  - a cursor that is not `<epoch>:<seq>` resolves against retained frames by
+//    payload id instead of resetting outright: the lane's client tracks
+//    payload ids (#1264), and wire compatibility requires its cursors to keep
+//    being served — resolved when the retained history covers them, reset as
+//    evicted when it does not;
+//  - #1814 P3 ports main's patch-body wire cut (#1778's wireEvent, 06eac851):
+//    the serialized frame and the instance route's payload view both strip
+//    summary-diff patch bodies (`wirePayload` below), while the `event` the
+//    buffer keeps — what in-process subscribers and storage see — is whole.
 import { GlobalBus, type GlobalEvent } from "./global"
 
 export type Frame = {
@@ -12,6 +28,8 @@ export type Frame = {
   readonly seq: number
   /** The serialized global event — the SSE `data`. */
   readonly data: string
+  /** The emitted event itself — the buffer's in-process view (see header). */
+  readonly event: GlobalEvent
   /** UTF-8 size of `data`, charged against the byte bound. */
   readonly bytes: number
   /** Push time (ms), checked against the age bound. */
@@ -122,11 +140,12 @@ export class ReplayBuffer {
     return this.#listeners.size
   }
 
-  push(seq: number, data: string, options: { syncCopy?: boolean } = {}): Frame {
+  push(seq: number, event: GlobalEvent, data: string, options: { syncCopy?: boolean } = {}): Frame {
     const frame: Frame = {
       id: formatID(this.epoch, seq),
       seq,
       data,
+      event,
       bytes: Buffer.byteLength(data),
       time: this.#now(),
       ordinal: ++this.#ordinal,
@@ -189,16 +208,28 @@ export class ReplayBuffer {
   #resolve(cursor: string | undefined): { position: number; reset: ResetReason | undefined } {
     if (cursor === undefined) return { position: this.#current, reset: undefined }
     const parsed = parseCursor(cursor)
-    if (!parsed) return { position: this.#current, reset: "malformed" }
-    const reset: ResetReason | undefined =
-      parsed.epoch !== this.epoch
-        ? "epoch"
-        : parsed.seq > this.#current
-          ? "ahead"
-          : parsed.seq < this.#floor
-            ? "evicted"
-            : undefined
-    return reset ? { position: this.#current, reset } : { position: parsed.seq, reset: undefined }
+    if (parsed) {
+      const reset: ResetReason | undefined =
+        parsed.epoch !== this.epoch
+          ? "epoch"
+          : parsed.seq > this.#current
+            ? "ahead"
+            : parsed.seq < this.#floor
+              ? "evicted"
+              : undefined
+      return reset ? { position: this.#current, reset } : { position: parsed.seq, reset: undefined }
+    }
+    // Legacy vocabulary (the lane's client sends the last payload id it
+    // applied, #1264): resolve to the newest retained frame at or behind the
+    // cursor and serve the frames after it; a cursor no retained frame covers
+    // predates retention and resets.
+    let resolved: Frame | undefined
+    for (const frame of this.#retained()) {
+      const id = frame.event.payload?.id
+      if (typeof id === "string" && id <= cursor) resolved = frame
+    }
+    if (resolved) return { position: resolved.seq, reset: undefined }
+    return { position: this.#current, reset: "evicted" }
   }
 
   #retained(): Frame[] {
@@ -229,41 +260,45 @@ export const GlobalEventReplay = new ReplayBuffer({
 })
 
 /**
- * The wire form of a global event (#1778). A per-turn summary (`info.summary.
- * diffs` of a message or session) carries the full patch text of every changed
- * file — measured up to 12.3 MB in one event. On the wire each diff keeps its
- * file, status and counts and drops its patch body; the surfaces that render a
- * patch fetch the stored message on demand. Only the serialized frame changes:
- * the event object (what in-process subscribers and storage see) is never
- * mutated, and a sync copy is sent whole — its subscriber replays it into a
- * store of its own, which must keep the full record.
+ * The wire form of an event payload (#1778, #1814 P3). A per-turn summary
+ * (`info.summary.diffs` of a message or session) carries the full patch text
+ * of every changed file — measured up to 12.3 MB in one event. On the wire each
+ * diff keeps its file, status and counts and drops its patch body; the surfaces
+ * that render a patch fetch the stored message on demand. Only the wire forms
+ * change: the event object (what in-process subscribers and storage see) is
+ * never mutated, and a sync copy is sent whole — its subscriber replays it into
+ * a store of its own, which must keep the full record.
  */
-export function wireEvent(event: GlobalEvent): GlobalEvent {
-  const payload = event.payload
-  if (!payload || typeof payload !== "object" || payload.type === "sync") return event
+export function wirePayload<T extends { type?: string; properties?: any }>(payload: T): T {
+  if (!payload || typeof payload !== "object" || payload.type === "sync") return payload
   const info = payload.properties?.info
   const diffs = info?.summary?.diffs
-  if (!Array.isArray(diffs) || !diffs.some((diff) => diff && typeof diff === "object" && "patch" in diff)) return event
+  if (!Array.isArray(diffs) || !diffs.some((diff) => diff && typeof diff === "object" && "patch" in diff)) return payload
   return {
-    ...event,
-    payload: {
-      ...payload,
-      properties: {
-        ...payload.properties,
-        info: {
-          ...info,
-          summary: {
-            ...info.summary,
-            diffs: diffs.map((diff) => {
-              if (!diff || typeof diff !== "object" || !("patch" in diff)) return diff
-              const { patch: _patch, ...rest } = diff
-              return rest
-            }),
-          },
+    ...payload,
+    properties: {
+      ...payload.properties,
+      info: {
+        ...info,
+        summary: {
+          ...info.summary,
+          diffs: diffs.map((diff) => {
+            if (!diff || typeof diff !== "object" || !("patch" in diff)) return diff
+            const { patch: _patch, ...rest } = diff
+            return rest
+          }),
         },
       },
     },
   }
+}
+
+/** The wire form of a global event: `wirePayload` over its payload. */
+export function wireEvent(event: GlobalEvent): GlobalEvent {
+  const payload = event.payload
+  if (!payload || typeof payload !== "object" || payload.type === "sync") return event
+  const next = wirePayload(payload)
+  return next === payload ? event : { ...event, payload: next }
 }
 
 GlobalBus.tap((event, seq) => {
@@ -282,5 +317,5 @@ GlobalBus.tap((event, seq) => {
     GlobalEventReplay.skip(seq)
     return
   }
-  GlobalEventReplay.push(seq, data, { syncCopy })
+  GlobalEventReplay.push(seq, event, data, { syncCopy })
 })

@@ -16,7 +16,7 @@ import {
   untrack,
 } from "solid-js"
 import { makeEventListener } from "@solid-primitives/event-listener"
-import { createStore, produce, reconcile } from "solid-js/store"
+import { createStore, produce } from "solid-js/store"
 import { useQuery } from "@tanstack/solid-query"
 import { Button } from "@opencode-ai/ui/button"
 import { Logo } from "@opencode-ai/ui/logo"
@@ -74,7 +74,7 @@ import { createAmicodeConnectionsState } from "@/components/status-popover-body"
 import { COMPANY_COMPUTE_ID } from "@opencode-ai/ui/amicode-connections-tab"
 import { GlobalConnectionsPopover } from "@/components/status-popover"
 import { parseRunCardsResponse } from "@opencode-ai/ui/amicode-run-card"
-import { AmicodeHomeCards, parseProfileResponse, type HomeLiveRun } from "@opencode-ai/ui/amicode-home-cards"
+import { AmicodeHomeCards, parseProfileResponse } from "@opencode-ai/ui/amicode-home-cards"
 import {
   WidgetGrid,
   parseWidgetsResponse,
@@ -87,14 +87,12 @@ import {
   type Density,
   type WidgetHostCallbacks,
 } from "@opencode-ai/ui/amicode-widget-grid"
-import { parseRunSeriesResponse } from "@opencode-ai/ui/amicode-run-window"
-import { parseProblemsResponse } from "@opencode-ai/ui/amicode-problem-switcher"
-import { parseProblemResponse } from "@opencode-ai/ui/amicode-entity-view"
 import { Mark } from "@opencode-ai/ui/logo"
 import { AmicodeFooter } from "@opencode-ai/ui/amicode-footer"
 import { useTheme } from "@opencode-ai/ui/theme/context"
 import { SessionTabStatusDot, sessionTabStatus } from "@/pages/layout/session-tab-status"
-import { useSessionTabAvatarState } from "@/pages/layout/project-avatar-state"
+import { SessionListStatusChip } from "@/pages/layout/session-list-chip"
+import { useSessionTabAvatarState, useSessionListChipState } from "@/pages/layout/project-avatar-state"
 
 const HOME_SESSION_LIMIT = 64
 const HOME_ROW_LAYOUT =
@@ -517,6 +515,11 @@ function HomeDesign() {
   // amicode: home-card data. All read from the focused server's /amicode/* raw
   // routes (~/.amico). Each degrades to undefined on failure so a card simply
   // doesn't render (no empty chrome) rather than erroring the whole page.
+  // #1818: the deprecated research readouts (the "Jump back in" problem-resume
+  // chip and the live-run card, fed by the retired research readout,
+  // problem-entity, and run read routes) were removed — home no longer fetches
+  // ANY problem-entity route; the live research readouts are the widget grid
+  // and the Run Inspector.
   const [profileRaw, { refetch: refetchProfile }] = createResource(
     () => state.selection.server,
     () => amicodeGet(focusedServer(), "/amicode/profile").catch(() => undefined),
@@ -525,40 +528,7 @@ function HomeDesign() {
     const raw = profileRaw()
     return raw === undefined ? undefined : parseProfileResponse(raw)
   })
-  const [problemsRaw] = createResource(
-    () => state.selection.server,
-    () => amicodeGet(focusedServer(), "/amicode/problems").catch(() => undefined),
-  )
-  const resumeProblem = createMemo(() => {
-    const raw = problemsRaw()
-    if (raw === undefined) return undefined
-    const view = parseProblemsResponse(raw)
-    if (!view.ok) return undefined
-    const open = view.problems.filter((p) => p.status !== "archived")
-    if (open.length === 0) return undefined
-    return [...open].sort((a, b) => (b.recorded ?? "").localeCompare(a.recorded ?? ""))[0]
-  })
-  const [resumeDetailRaw] = createResource(
-    () => resumeProblem()?.slug,
-    (slug) => amicodeGet(focusedServer(), `/amicode/problem?slug=${encodeURIComponent(slug)}`).catch(() => undefined),
-  )
-  const resumeMeta = createMemo(() => {
-    const raw = resumeDetailRaw()
-    if (raw === undefined) return undefined
-    const view = parseProblemResponse(raw) as { ok: boolean; entities?: Record<string, any> }
-    if (!view.ok || !view.entities) return undefined
-    const parts = [
-      view.entities.system?.platform,
-      view.entities.formulation?.target,
-      view.entities.formulation?.objective,
-    ].filter((v): v is string => typeof v === "string" && v.trim() !== "")
-    return parts.length > 0 ? parts.join(" · ") : undefined
-  })
 
-  // amicode (spec C): "Now solving" — light live readout of the active problem's
-  // in-flight run. Polls run-status + run-series only while a run is solving; the
-  // interval self-terminates once status leaves "solving". All failures collapse
-  // to undefined so the card simply doesn't render.
   // amicode: run gallery (shareable solve cards) — fetched on open, newest first.
   const [galleryOpen, setGalleryOpen] = createSignal(false)
   const [runCardsRaw] = createResource(
@@ -575,85 +545,6 @@ function HomeDesign() {
   const saveCardPng = (filename: string, dataUrl: string) => {
     window.parent.postMessage({ source: "amicode", kind: "save-file", filename, dataUrl }, "*")
   }
-
-  // Store-based fetch with reconcile for run-status polling
-  const [runStatusStore, setRunStatusStore] = createStore<{ raw: unknown | undefined }>({ raw: undefined })
-  const refetchRunStatus = async () => {
-    try {
-      const data = await amicodeGet(focusedServer(), "/amicode/run-status")
-      setRunStatusStore(reconcile({ raw: data }))
-    } catch {
-      // keep existing data on error
-    }
-  }
-  const runStatusRaw = () => runStatusStore.raw
-  const solvingRun = createMemo(() => {
-    const raw = runStatusRaw()
-    if (typeof raw !== "object" || raw === null) return undefined
-    const view = raw as { ok?: boolean; runs?: any[] }
-    if (view.ok !== true || !Array.isArray(view.runs)) return undefined
-    const solving = view.runs.find((r) => r && typeof r.run_id === "string" && r.status === "solving")
-    if (!solving) return undefined
-    return {
-      runId: solving.run_id as string,
-      iteration: typeof solving.iteration === "number" ? solving.iteration : null,
-      fidelity: typeof solving.fidelity === "number" ? solving.fidelity : null,
-    }
-  })
-  const solvingRunId = createMemo(() => solvingRun()?.runId)
-  // Store-based fetch with reconcile for granular updates — prevents flicker
-  // when polling every 2.5s (createResource replaces the whole object)
-  const [runSeriesStore, setRunSeriesStore] = createStore<{ raw: unknown | undefined }>({ raw: undefined })
-  const refetchRunSeries = async () => {
-    const runId = solvingRunId()
-    if (!runId) return
-    try {
-      const data = await amicodeGet(focusedServer(), `/amicode/run-series?run=${encodeURIComponent(runId)}`)
-      setRunSeriesStore(reconcile({ raw: data }))
-    } catch {
-      // keep existing data on error
-    }
-  }
-  const runSeriesRaw = () => runSeriesStore.raw
-  const liveRun = createMemo<HomeLiveRun | undefined>(() => {
-    const solving = solvingRun()
-    if (!solving) return undefined
-    const raw = runSeriesRaw()
-    const view = raw === undefined ? undefined : parseRunSeriesResponse(raw)
-    const run = view?.ok ? view.run : undefined
-    // convergence curve = log10 of the objective (spans orders of magnitude)
-    const series = run ? run.series.map((p) => Math.log10(Math.max(p.f, 1e-12))) : []
-    // Only show F once it's a valid fidelity (final, or 1 - f with f < 1). Early
-    // in a solve the objective f ≫ 1, so leave F blank rather than misleading.
-    const derivedF = run?.fidelity ?? (run && run.lastF !== null && run.lastF < 1 ? 1 - run.lastF : null)
-    return {
-      name: resumeProblem()?.name,
-      iteration: run?.iteration ?? solving.iteration,
-      fidelity: derivedF,
-      series,
-      // pulse-first sparkline: the tile shows the artifact once a snapshot streams
-      pulse: run?.pulse?.values,
-      drives: run?.pulseMeta?.drives,
-    }
-  })
-  // Initial fetch on mount, then poll every 2.5s while solving
-  onMount(() => {
-    void refetchRunStatus()
-    void refetchRunSeries()
-  })
-  createEffect(() => {
-    // Standing slow poll while Home is mounted (a solve STARTED from chat must
-    // surface here without a remount), tightening to 2.5s while one is live.
-    const live = Boolean(solvingRunId())
-    const timer = setInterval(
-      () => {
-        void refetchRunStatus()
-        if (live) void refetchRunSeries()
-      },
-      live ? 2500 : 5000,
-    )
-    onCleanup(() => clearInterval(timer))
-  })
 
   // Shared by the About-You card and the onboarding wizard: identity fields
   // ride query params on the raw POST route; refetch renders the saved state.
@@ -783,9 +674,12 @@ function HomeDesign() {
     onCleanup(() => cancelAnimationFrame(id))
   })
 
+  // #1818: widget context carries ONLY live, host-derivable state — library.
+  // The deprecated resume/liveRun entries (fed by the retired /amicode/
+  // problems + run-status reads) are gone; a widget that wants problem or run
+  // data fetches it through amico.fetch (the /amicode/* allowlist still serves
+  // those routes server-side).
   const widgetContext = createMemo(() => ({
-    resume: resumeProblem()?.name ? { name: resumeProblem()!.name, meta: resumeMeta() } : undefined,
-    liveRun: liveRun(),
     library: libraryView(),
   }))
 
@@ -795,11 +689,6 @@ function HomeDesign() {
       const p = (payload ?? {}) as Record<string, unknown>
       const str = (k: string) => (typeof p[k] === "string" ? (p[k] as string) : "")
       switch (verb) {
-        case "resume-session": {
-          const name = resumeProblem()?.name
-          if (name) startWithPrompt(`Open the problem "${name}" and continue where we left off`)
-          return { ok: true }
-        }
         case "save-profile": {
           await saveProfileFields({
             name: str("name") || undefined,
@@ -834,11 +723,10 @@ function HomeDesign() {
       }
     },
     prompt: startWithPrompt,
-    open: (entity) => {
-      if (entity === "run") {
-        const name = resumeProblem()?.name
-        if (name) startWithPrompt(`Open the problem "${name}" and show me the running solve`)
-      }
+    open: () => {
+      // #1818: the entity-view open path is gone with the deprecated research
+      // surfaces; widgets that call amico.open() get an acknowledged no-op,
+      // same as the session view's widget host.
     },
   }
 
@@ -1421,19 +1309,7 @@ function HomeDesign() {
                 onUploadPaper={uploadPaper}
                 onEditProfile={() => startWithPrompt("update my profile — my name, affiliation, and what I work on")}
                 onSaveProfile={saveProfileFields}
-                resumeName={resumeProblem()?.name}
-                resumeMeta={resumeMeta()}
-                onResume={() => {
-                  const name = resumeProblem()?.name
-                  if (name) startWithPrompt(`Open the problem "${name}" and continue where we left off`)
-                }}
-                onWarmStart={() => startWithPrompt("warm-start a new solve from my pulse bank")}
                 onOpenGallery={() => setGalleryOpen(true)}
-                liveRun={liveRun()}
-                onOpenLiveRun={() => {
-                  const name = resumeProblem()?.name
-                  if (name) startWithPrompt(`Open the problem "${name}" and show me the running solve`)
-                }}
               />
             }
           >
@@ -2136,6 +2012,15 @@ function HomeSessionRow(props: {
     () => props.record.session.directory,
     () => props.record.session.id,
   )
+  // amicode#1787 (S1): the live status chip — running / waiting on question /
+  // idle <age> — derived off the shared store rows; omitted (no evidence)
+  // renders no chip. Age refreshes with every store re-derivation (the same
+  // render-time relative-time posture as session-new-view's toRelative()).
+  const chip = useSessionListChipState(
+    () => props.server,
+    () => props.record.session.id,
+    () => props.record.session.time.updated,
+  )
 
   return (
     <div class="group/session relative flex h-7 min-w-0 items-center rounded-sm">
@@ -2163,6 +2048,7 @@ function HomeSessionRow(props: {
             {props.record.projectName}
           </span>
         </Show>
+        <SessionListStatusChip chip={chip()} />
       </button>
       <Show when={props.archiveSession}>
         <div

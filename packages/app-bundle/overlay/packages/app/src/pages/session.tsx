@@ -768,6 +768,28 @@ export default function Page() {
     streamConnected: () => serverSDK().event.status() === "connected",
     forceResync: () => serverSDK().event.resyncCount(),
   })
+  // #1785 S1: on every resync edge, sync ALL loaded sessions (not just the
+  // viewed one). Background tabs for running sessions go stale after a
+  // reconnect because forceSyncViewed() only refreshes the active tab.
+  createEffect(() => {
+    const count = serverSDK().event.resyncCount()
+    if (count === 0) return
+    untrack(() => {
+      try { sync().session.syncAllOnResync() } catch {}
+    })
+  })
+  // #1785 S1: the session view pulls its messages on FIRST MOUNT. A session
+  // in a background tab after a reload never has its messages loaded (the
+  // view was never active, no dirty-marking fires, syncAllOnResync skips it
+  // because data.message[sid] is empty). This mount-time pull ensures every
+  // view that renders has its data, regardless of tab order or lifecycle.
+  createEffect(() => {
+    const sid = params.id
+    if (!sid) return
+    untrack(() => {
+      void sync().session.sync(sid, { force: true }).catch(() => {})
+    })
+  })
   const historyLoading = timeline.history.loading
   const historyMore = timeline.history.more
   const lastUserMessage = timeline.lastUserMessage

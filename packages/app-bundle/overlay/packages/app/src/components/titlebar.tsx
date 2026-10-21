@@ -36,6 +36,7 @@ import { tabHref, useTabs, type Tab } from "@/context/tabs"
 import type { PromptSession } from "@/context/prompt"
 import { normalizeSessionInfo } from "@/utils/session"
 import { channelBadgeText } from "./titlebar-channel"
+import { QuestionInboxBadge } from "@/components/question-inbox"
 import { type TitlebarControlId, type TitlebarLayout, mountPointId, isSessionScoped, defaultTitlebarLayout, reorderWithinSlot, moveToSlot, controlSlotLabel, reconcileDropOnEmptySlot, reconcileDragEnd } from "./titlebar-layout"
 import "./titlebar.css"
 
@@ -767,6 +768,14 @@ function TitlebarControlSlot(props: {
             <ProfilePopoverTrigger />
           </TooltipV2>
         </span>
+      </Match>
+      <Match when={id === "inbox"}>
+        {/* #1786 (S2): the question inbox badge — every pending question
+            reachable from this client's shared store, session-less. The
+            controller is initialized by the layout that owns the server
+            provider scope; outside it, the badge degrades to an inert empty
+            inbox. */}
+        <QuestionInboxBadge />
       </Match>
       <Match when={id === "settings"}>
         <Show when={props.state.update.visible}>

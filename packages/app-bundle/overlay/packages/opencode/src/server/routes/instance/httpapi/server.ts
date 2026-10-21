@@ -4,6 +4,7 @@ import { HttpClient, HttpMiddleware, HttpRouter, HttpServer, HttpServerResponse 
 import * as Socket from "effect/unstable/socket/Socket"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import * as Observability from "@opencode-ai/core/observability"
+import { RuntimeState } from "@opencode-ai/core/runtime-state"
 import { Account } from "@/account/account"
 import { Agent } from "@/agent/agent"
 import { Auth } from "@/auth"
@@ -80,6 +81,7 @@ import * as AmicodeWidgetFrame from "@/server/amicode/widget-frame-html"
 import * as AmicodeLibrary from "@/server/amicode/library"
 import * as AmicodeProfile from "@/server/amicode/profile"
 import * as AmicodeConnections from "@/server/amicode/connections"
+import * as AmicodeHarness from "@/server/amicode/harness"
 import * as AmicodeProject from "@/server/amicode/project"
 import * as SelfShutdown from "@/server/amicode/self-shutdown"
 import { ServerAuth } from "@/server/auth"
@@ -92,6 +94,7 @@ import {
   ptyConnectAuthorizationLayer,
   serverAuthorizationLayer,
 } from "./middleware/authorization"
+import { GatewaySecret, gatewaySecretLayer } from "./middleware/gateway-secret"
 import { EventApi } from "./groups/event"
 import { PtyConnectApi } from "./groups/pty"
 import { eventHandlers } from "./handlers/event"
@@ -152,6 +155,11 @@ const httpApiAuthLayer = authorizationLayer.pipe(Layer.provide(ServerAuth.Config
 const ptyConnectHttpApiAuthLayer = ptyConnectAuthorizationLayer.pipe(Layer.provide(ServerAuth.Config.layer))
 const serverHttpApiAuthLayer = serverAuthorizationLayer.pipe(Layer.provide(ServerAuth.Config.layer))
 const workspaceRoutingLive = workspaceRoutingLayer.pipe(Layer.provide(Socket.layerWebSocketConstructorGlobal))
+// amicode #1760 P1: the one-door layer — when AMICODE_ENGINE_SHARED_SECRET is
+// set, every route (this whole merged router) requires the gateway header.
+// Global, like cors: provided to the merged route layers so it wraps typed
+// API routes, raw /amicode/* routes, and the SPA fallback alike.
+const gatewaySecretGlobal = gatewaySecretLayer.pipe(Layer.provide(GatewaySecret.Config.layer))
 const rootApiRoutes = HttpApiBuilder.layer(RootHttpApi).pipe(
   Layer.provide([controlHandlers, controlPlaneHandlers, globalHandlers]),
   Layer.provide(schemaErrorLayer),
@@ -518,6 +526,23 @@ const amicodeConnectionsRoute = HttpRouter.use((router) =>
         })
       }),
     )
+    // amicode#1549: the harness switcher — the composer control's write path.
+    // Same trio shape as solver-mode: POST writes {harness, status:"switching"}
+    // to the ops dir; the amicode extension's watcher performs the real switch
+    // (registry gate → setting persist → server restart) and settles ready.
+    yield* router.add("GET", "/amicode/harness", () =>
+      Effect.sync(() =>
+        HttpServerResponse.text(AmicodeHarness.harnessStateResponse(), { contentType: "application/json" }),
+      ),
+    )
+    yield* router.add("POST", "/amicode/harness", (request) =>
+      Effect.gen(function* () {
+        const body = yield* Effect.orDie(request.text)
+        return HttpServerResponse.text(AmicodeHarness.harnessResponse(body), {
+          contentType: "application/json",
+        })
+      }),
+    )
   }),
 ).pipe(Layer.provide(authOnlyRouterLayer))
 
@@ -567,6 +592,7 @@ const app = LayerNode.group([
   Npm.node,
   FSUtil.node,
   Database.node,
+  RuntimeState.node,
   Auth.node,
   Account.node,
   Config.node,
@@ -647,6 +673,7 @@ export function createRoutes(
       corsVaryFix,
       fenceLayer,
       cors(corsOptions),
+      gatewaySecretGlobal,
       AppNodeBuilderV1.build(MoveSession.node, [[LocationServiceMap.node, locationServiceMapV2]]),
       HttpServer.layerServices,
     ]),

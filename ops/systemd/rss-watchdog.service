@@ -1,0 +1,6 @@
+[Unit]
+Description=Amicode fleet watchdog — server RSS check (single sample)
+
+[Service]
+Type=oneshot
+ExecStart=%h/.amico/server/fleet-watchdog/rss-watchdog.sh

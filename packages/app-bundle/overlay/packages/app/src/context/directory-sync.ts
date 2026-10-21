@@ -78,6 +78,10 @@ export const createDirSyncContext = (
       if (match.found) return serverSync.data.project[match.index]
     },
     session: {
+      // #1785 S1: delegate syncAllOnResync to the underlying serverSync
+      syncAllOnResync() {
+        return serverSync.session.syncAllOnResync()
+      },
       remember(session: Session) {
         serverSync.session.remember(session)
         index(session.id)

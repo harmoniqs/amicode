@@ -12,6 +12,7 @@ import { usePlatform } from "./platform"
 import { ServerConnection, useServer } from "./server"
 import { createRefCountMap } from "@/utils/refcount"
 import { useGlobal } from "./global"
+import { postClientLog } from "@/amicode/client-telemetry"
 import { ServerScope } from "@/utils/server-scope"
 import { attachOwnerHeaderIfArmed } from "@/components/remote-create-arm"
 import { createStreamEndResync, shouldReconnectIdleStream } from "./stream-liveness"
@@ -22,7 +23,11 @@ import { createCompatibleApi, type CompatibleApi } from "@/utils/server-compat"
 const isAbortError = (error: unknown) =>
   error !== null && typeof error === "object" && "name" in error && error.name === "AbortError"
 
-const isStreamClosed = (error: unknown, signal?: AbortSignal) => isAbortError(error) || signal?.aborted === true
+/** Whether an ended stream attempt was closed on purpose (our own abort) —
+ *  the reconnect loop's classifier: a closed stream reconnects silently,
+ *  a real failure marks the status and latches the error log. */
+export const isStreamClosed = (error: unknown, signal?: AbortSignal) =>
+  isAbortError(error) || signal?.aborted === true
 export type ServerEvent = Event & { current?: OpenCodeEvent; origin?: string }
 type QueuedServerEvent = { directory: string; payload: ServerEvent }
 /** A minimal fetch call signature. Newer lib types make `typeof fetch` require
@@ -62,7 +67,13 @@ export function adaptServerEvent(event: OpenCodeEvent): ServerEvent {
     return { id: event.id, type: "question.replied", properties: event.data, current: event } as ServerEvent
   if (event.type === "question.v2.rejected")
     return { id: event.id, type: "question.rejected", properties: event.data, current: event } as ServerEvent
-  return { id: event.id, type: event.type, properties: event.data, current: event } as ServerEvent
+  // 2026-10-08: the instance /event route emits the V1 wire shape — the
+  // payload rides `properties`, not `data` (the V2 shape the named cases
+  // above normalize). The default case mapped `event.data` blindly, so every
+  // live V1 event reached the reducers with properties: undefined — live
+  // question.asked cards never rendered; every card the panel ever showed
+  // came from the /question list fetch on session open or reload.
+  return { id: event.id, type: event.type, properties: event.data ?? event.properties, current: event } as ServerEvent
 }
 
 const coalescedKey = (event: QueuedServerEvent) => {
@@ -282,6 +293,74 @@ export function applySseError(input: { closed: boolean; disconnect: () => void; 
   return true
 }
 
+// #1751 — the dead-man's switch. The servers the panel streams from heartbeat
+// on a cadence: the frontdoor's merged /api/event pool frames every ~15s (the
+// live evidence behind the issue), and the instance route's own SSE heartbeat
+// ticks even faster (10s), so a healthy stream never goes a few cadences
+// without a frame. An abruptly-dead host (process kill, rolling deploy, network
+// partition) produces no clean close and no error — the reader sits parked
+// inside `for await` and the panel freezes "thinking" (17:22:50: the frontdoor
+// died mid-turn and ZERO reconnect attempts followed for 12 minutes, while a
+// clean-close reconnect worked a minute earlier). The switch converts every
+// abrupt-death mode into a self-heal: 3 missed cadences — one is noise, three
+// in a row is a dead stream. A misfire costs one reconnect, which the
+// lastEventID replay (#1264) makes cheap. Threshold derivation: 3 × 15s = 45s.
+export const HEARTBEAT_CADENCE_MS = 15_000
+export const DEAD_MAN_MISSES = 3
+export const DEFAULT_DEAD_MAN_THRESHOLD_MS = HEARTBEAT_CADENCE_MS * DEAD_MAN_MISSES
+
+/** The threshold seam (#1751): 3 × the heartbeat cadence by default,
+ *  overridable via AMICODE_SSE_DEADMAN_MS (milliseconds). An unusable
+ *  override degrades to the derived default — it can never disable the
+ *  switch. */
+export function deadManThresholdMs(
+  env: { AMICODE_SSE_DEADMAN_MS?: string | undefined } | undefined =
+    typeof globalThis.process !== "undefined"
+      ? (globalThis.process.env as { AMICODE_SSE_DEADMAN_MS?: string | undefined })
+      : undefined,
+): number {
+  const parsed = Number(env?.AMICODE_SSE_DEADMAN_MS)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_DEAD_MAN_THRESHOLD_MS
+}
+
+/** The reader's own liveness clock — the connection owns its liveness. `open`
+ *  arms it once the stream is nominally open; `frame` re-arms it on every
+ *  received frame (never blocks, never busy-waits — it only observes frames
+ *  as they arrive); `close` disarms it when the stream ends for any reason.
+ *  When no frame arrives within the threshold while armed, `onDead` fires
+ *  exactly once per silent window. */
+export function createDeadMansSwitch(onDead: () => void, thresholdMs = deadManThresholdMs()) {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const fire = () => {
+    timer = undefined
+    onDead()
+  }
+  const arm = () => {
+    if (timer !== undefined) clearTimeout(timer)
+    timer = setTimeout(fire, thresholdMs)
+  }
+  return {
+    open: arm,
+    frame: arm,
+    close: () => {
+      if (timer !== undefined) clearTimeout(timer)
+      timer = undefined
+    },
+  }
+}
+/** #1760 P4 (4b) — the telemetry-visible assert: the global SDK event
+ *  stream's URL, posted to the serving origin's #1748 client log
+ *  (`/__amicode_client_log`) so the hub-host client posture is provable in
+ *  production, not just in tests — the headless probe greps the hub's
+ *  client-errors.log for this line and asserts it equals the hub URL (the
+ *  live failure it kills: a panel whose global stream pointed at a private
+ *  bus, invisible until this line existed). The channel is fire-and-forget
+ *  (postClientLog's contract), so a non-amicode serving origin 404s it
+ *  silently — harmless everywhere, decisive on the hub. */
+export function postEventStreamUrlAssert(url: string, post: (body: string) => void = postClientLog) {
+  post(`{"assert":"global-sdk-event-url","url":${JSON.stringify(url)}}`)
+}
+
 /** Compose the outgoing request headers for the owner-header PRODUCER seam.
  *
  * The bug this fixes (#1643 follow-up): createOpencodeClient applies the Basic
@@ -414,6 +493,11 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
   const FLUSH_FRAME_MS = 16
   const STREAM_YIELD_MS = 8
   const RECONNECT_DELAY_MS = 250
+  // 2026-10-18: burst-aware flush. A reconnect replay delivers the whole gap
+  // as a burst; 16ms flushes fire BETWEEN frames producing many re-renders
+  // (the visible reattachment shaking). When the queue is deep (>4 items),
+  // widen the flush to 80ms so the burst lands in ONE flush = one re-render.
+  const BURST_FLUSH_FRAME_MS = 80
 
   let queue: Queued[] = []
   let buffer: Queued[] = []
@@ -442,8 +526,9 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
 
   const schedule = () => {
     if (timer) return
+    const frameMs = queue.length > 4 ? BURST_FLUSH_FRAME_MS : FLUSH_FRAME_MS
     const elapsed = Date.now() - last
-    timer = setTimeout(flush, Math.max(0, FLUSH_FRAME_MS - elapsed))
+    timer = setTimeout(flush, Math.max(0, frameMs - elapsed))
   }
 
   let streamErrorLogged = false
@@ -453,9 +538,11 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
   let started = false
   // Amicode webview: connection visibility for the ConnectionBanner. The loop
   // below reconnects silently every RECONNECT_DELAY_MS, so without a signal a
-  // dead server reads as an endless "thinking" wave. (The branch's 15s
-  // heartbeat timer is NOT carried — upstream's bounded SSE heartbeat already
-  // governs liveness; two abort clocks would fight.)
+  // dead server reads as an endless "thinking" wave. Liveness itself rides the
+  // dead-man's switch below (#1751) — the earlier claim here that upstream's
+  // bounded SSE heartbeat "already governs liveness" was disproven live
+  // (17:22:50: an abruptly-dead host sends no clean close, so the reader parks
+  // in for-await and nothing fires; zero reconnects for 12 minutes).
   const [streamStatus, setStreamStatus] = createSignal<"connected" | "disconnected">("disconnected")
 
   // #1617: bumped each time a `amicode.sync.gap` frame is intercepted below. The
@@ -524,6 +611,11 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
   const start = () => {
     if (started) return run
     started = true
+    // #1760 P4 (4b): ship the assert BEFORE the first attempt — the stream's
+    // URL is the fact the probe verifies, and it must reach the log even if
+    // the stream itself never connects (a dead door is exactly when the line
+    // matters most).
+    postEventStreamUrlAssert(server.http.url)
     const active = streamGeneration.current()
     const previous = run
     const current = (async () => {
@@ -536,6 +628,14 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
           currentAttempt.abort()
         }
         abort.signal.addEventListener("abort", onAbort)
+        // #1751 dead-man's switch: the attempt's own liveness clock. Fired
+        // (disconnect + abort) when the armed window lapses with no frame —
+        // the abort ends the parked reader, which brings the loop round for a
+        // reconnect with the lastEventID cursor exactly like a clean close.
+        const deadMan = createDeadMansSwitch(() => {
+          setStreamStatus("disconnected")
+          attempt?.abort()
+        })
         try {
           const kind = await protocol
           if (!streamGeneration.accepts(active)) return
@@ -573,6 +673,14 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
               : eventApi.event.subscribe({ signal: currentAttempt.signal })
           if (!streamGeneration.accepts(active)) return
           setStreamStatus("connected")
+          // 2026-10-18: bump the resync signal on EVERY connection (re)establishment.
+          // Session views tracking forceResync re-render when this changes. Without
+          // it, a normal disconnect→reconnect cycle leaves older views' reactive
+          // bindings stale (the newest view re-renders because its graph was just
+          // created; the older ones never get the edge). One bump per connect = one
+          // re-render pass across all views, batched by the burst-aware flush.
+          setResyncCount((n) => n + 1)
+          deadMan.open()
           lastFrameAt = Date.now()
           let yielded = Date.now()
           for await (const event of events) {
@@ -580,6 +688,7 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
             // reset invalidates first, so it cannot restore a stale cursor or
             // mutate the new effective stream's session state.
             if (!streamGeneration.accepts(active)) return
+            deadMan.frame()
             streamErrorLogged = false
             lastFrameAt = Date.now()
             // #1773: the first frame after an unexpected end — the stream is live
@@ -678,6 +787,7 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
             })
           }
         } finally {
+          deadMan.close()
           abort.signal.removeEventListener("abort", onAbort)
           if (attempt === currentAttempt) attempt = undefined
         }

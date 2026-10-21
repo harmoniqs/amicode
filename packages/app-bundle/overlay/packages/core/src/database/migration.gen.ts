@@ -46,5 +46,6 @@ export const migrations = (
     import("./migration/20260913205004_session-lineage"),
     import("./migration/20260913212936_session-receipt-storage"),
     import("./migration/20260913221452_session-receipt-budget-reservation"),
+    import("./migration/20261011215119_runtime_state"),
   ])
 ).map((module) => module.default) satisfies DatabaseMigration.Migration[]
