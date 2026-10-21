@@ -13,6 +13,7 @@ import { hashDirectoryTree, shouldSkipBinaryBuild } from "./server_handshake";
 import { readCachedOverlayHash, writeCachedOverlayHash } from "./rebuild/overlay_cache";
 import type { ExplorerIconTheme } from "./explorer_icon_theme";
 import { resolveLatexTarget } from "./latex_compile";
+import { resolveChatFileLink, type LinkResolutionContext } from "./link_resolution";
 import { HARMONIQS_MODEL_ID, HARMONIQS_PROVIDER_ID, testConnection, writeOnboardingConfig } from "./onboarding_panel";
 import {
   readSkillProviders,
@@ -210,6 +211,11 @@ export interface BridgeIo {
   previewVisibleChildren?: (root: string, relativeDirectory: string) => Promise<Array<{ name: string; kind: "file" | "directory"; absolute: string; relative: string }>>;
   /** Returns the currently-selected Explorer file icon theme as opaque assets. */
   explorerIconTheme?: () => ExplorerIconTheme;
+  /** #1826: the posture-aware link resolution context (boot posture, hub
+   *  origin, ssh alias, ?directory= placement) — wired at activation where
+   *  the #1784 posture is decided. Undefined keeps the pre-#1826 local-stat
+   *  behavior (panels constructed before the wiring lands). */
+  linkResolution?: LinkResolutionContext;
 }
 
 const isAmicode = (msg: unknown): msg is { source: "amicode"; kind: string; tab?: string } =>
@@ -426,8 +432,13 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
 
   // File bridge (chat links to vault notes, run artifacts): the framed app
   // renders LLM output and can't open local files — the extension opens them
-  // for it. file:// URLs only; the resolved path must be absolute,
-  // bounded, and exist on disk. Posix path semantics (the fleet is mac/linux).
+  // for it. file:// URLs only; the resolved path must be absolute, bounded,
+  // and exist on disk. Posix path semantics (the fleet is mac/linux).
+  // #1826: when the host supplies the posture context, resolution is
+  // posture-aware (vault-root local opens; the hub-client default re-resolves
+  // through the hub's resolve-file route at click time and Previews via the
+  // hub SDK — the client stat routes but never blocks). Without the context
+  // the pre-#1826 local-stat gate stands (every spawned-server posture).
   if (
     msg.kind === "open-file" &&
     typeof (msg as { url?: unknown }).url === "string" &&
@@ -439,14 +450,34 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     } catch {
       return true;
     }
-    if (!path.isAbsolute(fsPath) || fsPath.length > 4096 || !fs.existsSync(fsPath)) return true;
-    // Route to the Preview companion tab (#935) — the session page's
-    // preview-file listener (from #934) sets previewFile, opens the side
-    // panel, and switches to the Preview tab.
-    io.postToWebview({
-      source: "amicode",
-      kind: "preview-file",
-      path: fsPath,
+    if (!path.isAbsolute(fsPath) || fsPath.length > 4096) return true;
+    const linkResolution = io.linkResolution;
+    if (!linkResolution) {
+      if (!fs.existsSync(fsPath)) return true;
+      // Route to the Preview companion tab (#935) — the session page's
+      // preview-file listener (from #934) sets previewFile, opens the side
+      // panel, and switches to the Preview tab.
+      io.postToWebview({
+        source: "amicode",
+        kind: "preview-file",
+        path: fsPath,
+      });
+      return true;
+    }
+    // #1826: one function owns the resolution order; the outcome is Preview
+    // (hub-resolved path fetched via the hub-bound SDK) or a named-outcome
+    // toast — never a silent no-op.
+    void resolveChatFileLink(fsPath, linkResolution).then((resolution) => {
+      if (resolution.action === "preview") {
+        io.postToWebview({
+          source: "amicode",
+          kind: "preview-file",
+          path: resolution.path,
+        });
+      } else if (resolution.action === "failed") {
+        vscode.window.showErrorMessage(`Amicode: link not opened — ${resolution.reason} (${resolution.detail})`);
+      }
+      // "silent": the non-hub posture's unchanged refusal.
     });
     return true;
   }

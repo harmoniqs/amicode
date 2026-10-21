@@ -144,49 +144,52 @@ export interface HubClientSession {
   poke(): void
 }
 
+/** 2026-10-18: the probe deliberately does NOT use globalThis.fetch. The
+ *  VS Code extension host patches it (proxy support), and on this client the
+ *  patched fetch fails loopback URLs with no proxy configured — while curl,
+ *  the browser, and a bare node fetch all succeed (the "stuck booting"
+ *  cycle: posture armed, hub healthy, probe 'unreachable' forever). The
+ *  raw node:http request is host-proof: nothing in the ext host patches it.
+ *  #1826: shared with the posture-aware link resolver — its hub resolve asks
+ *  are loopback tunnel URLs too (amicode.hubServerUrl convention). */
+export function hostProofFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  return new Promise<Response>((resolve, reject) => {
+    const url = new URL(String(input))
+    const req = nodeHttp.request(
+      {
+        host: url.hostname,
+        port: Number(url.port || (url.protocol === "https:" ? 443 : 80)),
+        path: url.pathname + url.search,
+        method: (init?.method as string) || "GET",
+        headers: (init?.headers as Record<string, string>) ?? undefined,
+      },
+      (res) => {
+        const chunks: Buffer[] = []
+        res.on("data", (c: Buffer) => chunks.push(c))
+        res.on("end", () =>
+          resolve(
+            new Response(Buffer.concat(chunks), {
+              status: res.statusCode ?? 0,
+              headers: (res.headers as unknown) as Record<string, string>,
+            }),
+          ),
+        )
+      },
+    )
+    req.on("error", reject)
+    const signal = init?.signal as AbortSignal | undefined
+    if (signal) {
+      const arm = () => { try { req.destroy(new Error("probe timeout")) } catch {} }
+      if (signal.aborted) arm()
+      else signal.addEventListener("abort", arm, { once: true })
+    }
+    req.end()
+  })
+}
+
 export function startHubClientSession(opts: HubClientSessionOptions): HubClientSession {
   const poll = opts.poll ?? new FleetPollHysteresis()
-  // 2026-10-18: the probe deliberately does NOT use globalThis.fetch. The
-  // VS Code extension host patches it (proxy support), and on this client the
-  // patched fetch fails loopback URLs with no proxy configured — while curl,
-  // the browser, and a bare node fetch all succeed (the "stuck booting"
-  // cycle: posture armed, hub healthy, probe 'unreachable' forever). The
-  // raw node:http request is host-proof: nothing in the ext host patches it.
-  const fetchImpl =
-    opts.fetchImpl ??
-    ((input: RequestInfo | URL, init?: RequestInit) =>
-      new Promise<Response>((resolve, reject) => {
-        const url = new URL(String(input))
-        const req = nodeHttp.request(
-          {
-            host: url.hostname,
-            port: Number(url.port || (url.protocol === "https:" ? 443 : 80)),
-            path: url.pathname + url.search,
-            method: (init?.method as string) || "GET",
-            headers: (init?.headers as Record<string, string>) ?? undefined,
-          },
-          (res) => {
-            const chunks: Buffer[] = []
-            res.on("data", (c: Buffer) => chunks.push(c))
-            res.on("end", () =>
-              resolve(
-                new Response(Buffer.concat(chunks), {
-                  status: res.statusCode ?? 0,
-                  headers: (res.headers as unknown) as Record<string, string>,
-                }),
-              ),
-            )
-          },
-        )
-        req.on("error", reject)
-        const signal = init?.signal as AbortSignal | undefined
-        if (signal) {
-          const arm = () => { try { req.destroy(new Error("probe timeout")) } catch {} }
-          if (signal.aborted) arm()
-          else signal.addEventListener("abort", arm, { once: true })
-        }
-        req.end()
-      }))
+  const fetchImpl = opts.fetchImpl ?? hostProofFetch
   let hubUrl: URL
   try {
     hubUrl = new URL(opts.hubUrl)

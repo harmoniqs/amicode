@@ -4,9 +4,20 @@
 export const FileType = { Unknown: 0, File: 1, Directory: 2, SymbolicLink: 64 };
 const colorThemeCbs: Array<(theme: { kind: number }) => void> = [];
 export const window = {
-  showInformationMessage: () => Promise.resolve(undefined),
-  showErrorMessage: () => Promise.resolve(undefined),
-  showWarningMessage: () => Promise.resolve(undefined),
+  // Recorded toast surface (#1826): named-outcome message tests assert on it.
+  messages: [] as string[],
+  showInformationMessage: (m: string) => {
+    window.messages.push(m);
+    return Promise.resolve(undefined);
+  },
+  showErrorMessage: (m: string) => {
+    window.messages.push(m);
+    return Promise.resolve(undefined);
+  },
+  showWarningMessage: (m: string) => {
+    window.messages.push(m);
+    return Promise.resolve(undefined);
+  },
   showInputBox: () => Promise.resolve(undefined),
   showSaveDialog: () => Promise.resolve(undefined),
   showOpenDialog: () => Promise.resolve(undefined),
@@ -89,6 +100,9 @@ export const window = {
 const registeredCommands = new Map<string, (...a: unknown[]) => unknown>();
 export const commands = {
   executed: [] as string[],
+  // Args per executed command, parallel to `executed` (#1826: URI-shape tests
+  // assert on the vscode-remote URI passed to vscode.open).
+  executedArgs: [] as unknown[][],
   registerCommand: (id: string, fn: (...a: unknown[]) => unknown) => {
     registeredCommands.set(id, fn);
     return {
@@ -99,6 +113,7 @@ export const commands = {
   },
   executeCommand: (id: string, ...a: unknown[]) => {
     commands.executed.push(id);
+    commands.executedArgs.push(a);
     return Promise.resolve(registeredCommands.get(id)?.(...a));
   },
 };
