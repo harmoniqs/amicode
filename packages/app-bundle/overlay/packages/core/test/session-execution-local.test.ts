@@ -1,10 +1,13 @@
-import { describe, expect } from "bun:test"
-import { Effect, Layer, LayerMap } from "effect"
+import { afterAll, describe, expect } from "bun:test"
+import { DateTime, Effect, Layer } from "effect"
+import { SessionRunnerLLM } from "@opencode-ai/core/session/runner/llm"
+import { buildLocationServiceMap } from "@opencode-ai/core/location-services"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { Database } from "@opencode-ai/core/database/database"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { LocationServiceMap } from "@opencode-ai/core/location-service-map"
 import { Location } from "@opencode-ai/core/location"
+import { Project } from "@opencode-ai/core/project"
 import { RuntimeState } from "@opencode-ai/core/runtime-state"
 import { SessionExecution } from "@opencode-ai/core/session/execution"
 import { SessionExecutionLocal } from "@opencode-ai/core/session/execution/local"
@@ -13,15 +16,19 @@ import { SessionSchema } from "@opencode-ai/core/session/schema"
 import { SessionStore } from "@opencode-ai/core/session/store"
 import { AbsolutePath } from "@opencode-ai/core/schema"
 import { testEffect } from "./lib/effect"
+import { tmpdir } from "./fixture/tmpdir"
 
-const location = Location.Ref.make({ directory: AbsolutePath.make("/drain") })
+const tmp = await tmpdir()
+afterAll(() => tmp[Symbol.asyncDispose]())
+
+const location = Location.Ref.make({ directory: AbsolutePath.make(tmp.path) })
 
 const session: SessionSchema.Info = {
   id: SessionSchema.ID.create(),
-  projectID: "global",
+  projectID: Project.ID.global,
   cost: 0,
   tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
-  time: { created: new Date(0), updated: new Date(0) },
+  time: { created: DateTime.makeUnsafe(0), updated: DateTime.makeUnsafe(0) },
   title: "drain hook",
   location,
 }
@@ -29,7 +36,8 @@ const session: SessionSchema.Info = {
 /** Observations captured inside the stubbed runner's drain. */
 const observed: { busy: Array<{ directory: string | null }> }[] = []
 
-// The per-location layer the drain runs against: a stubbed SessionRunner.
+// The per-location layer the drain runs against: the full location service
+// group with the SessionRunner stubbed in via the node-replacement seam.
 const runner = Layer.succeed(
   SessionRunner.Service,
   SessionRunner.Service.of({
@@ -53,9 +61,7 @@ const store = Layer.succeed(
   }),
 )
 
-const locations = Layer.unwrap(
-  Effect.map(LayerMap.make(() => runner), (map) => Layer.succeed(LocationServiceMap.Service, map)),
-)
+const locations = buildLocationServiceMap([[SessionRunnerLLM.node, runner]])
 
 const it = testEffect(
   Layer.mergeAll(
@@ -80,7 +86,7 @@ describe("SessionExecutionLocal shared runtime state (#1760 P2)", () => {
       // directory) while the drain was running…
       expect(observed).toHaveLength(1)
       expect(observed[0].busy).toHaveLength(1)
-      expect(observed[0].busy[0].directory).toBe("/drain")
+      expect(observed[0].busy[0].directory).toBe(tmp.path)
 
       // …and the release dropped it once the drain finished.
       expect((yield* runtime.busyLive(session.id)).length).toBe(0)

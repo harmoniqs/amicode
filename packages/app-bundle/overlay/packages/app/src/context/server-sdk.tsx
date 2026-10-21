@@ -28,7 +28,14 @@ const isAbortError = (error: unknown) =>
  *  a real failure marks the status and latches the error log. */
 export const isStreamClosed = (error: unknown, signal?: AbortSignal) =>
   isAbortError(error) || signal?.aborted === true
-export type ServerEvent = Event & { current?: OpenCodeEvent; origin?: string }
+export type ServerEvent = Event & { current?: WireEvent; origin?: string }
+/** A frame off the instance /event stream in EITHER wire generation: the V2
+ *  shape (payload in `data` — the vendored client's declared type) or the V1
+ *  shape (payload in `properties` — the workspace SDK's `Event`, which is
+ *  what the engine's V1 bus and the hub fan-in actually publish, and the only
+ *  shape that carries `session.status`'s `seq`). Both shapes ride the same
+ *  stream; read the payload by field presence, never by protocol guess. */
+export type WireEvent = OpenCodeEvent | Event
 type QueuedServerEvent = { directory: string; payload: ServerEvent }
 /** A minimal fetch call signature. Newer lib types make `typeof fetch` require
  *  a `preconnect` member our plain wrappers don't implement (lib drift);
@@ -39,8 +46,10 @@ type CurrentDelta = Extract<
   { type: "session.text.delta" | "session.reasoning.delta" | "session.tool.input.delta" | "session.compaction.delta" }
 >
 
-export function adaptServerEvent(event: OpenCodeEvent): ServerEvent {
-  if (event.type === "permission.v2.asked") {
+// The named V2 types are adapted only in their V2 shape (payload in `data`);
+// a V1-shaped frame of the same name falls through to the default case raw.
+export function adaptServerEvent(event: WireEvent): ServerEvent {
+  if (event.type === "permission.v2.asked" && "data" in event) {
     return {
       id: event.id,
       type: "permission.asked",
@@ -59,13 +68,13 @@ export function adaptServerEvent(event: OpenCodeEvent): ServerEvent {
       current: event,
     } as ServerEvent
   }
-  if (event.type === "permission.v2.replied")
+  if (event.type === "permission.v2.replied" && "data" in event)
     return { id: event.id, type: "permission.replied", properties: event.data, current: event } as ServerEvent
-  if (event.type === "question.v2.asked")
+  if (event.type === "question.v2.asked" && "data" in event)
     return { id: event.id, type: "question.asked", properties: event.data, current: event } as ServerEvent
-  if (event.type === "question.v2.replied")
+  if (event.type === "question.v2.replied" && "data" in event)
     return { id: event.id, type: "question.replied", properties: event.data, current: event } as ServerEvent
-  if (event.type === "question.v2.rejected")
+  if (event.type === "question.v2.rejected" && "data" in event)
     return { id: event.id, type: "question.rejected", properties: event.data, current: event } as ServerEvent
   // 2026-10-08: the instance /event route emits the V1 wire shape — the
   // payload rides `properties`, not `data` (the V2 shape the named cases
@@ -73,7 +82,12 @@ export function adaptServerEvent(event: OpenCodeEvent): ServerEvent {
   // live V1 event reached the reducers with properties: undefined — live
   // question.asked cards never rendered; every card the panel ever showed
   // came from the /question list fetch on session open or reload.
-  return { id: event.id, type: event.type, properties: event.data ?? event.properties, current: event } as ServerEvent
+  return {
+    id: event.id,
+    type: event.type,
+    properties: "data" in event ? event.data : event.properties,
+    current: event,
+  } as ServerEvent
 }
 
 const coalescedKey = (event: QueuedServerEvent) => {
@@ -158,7 +172,7 @@ export function coalesceServerEvents(events: QueuedServerEvent[]) {
   return output
 }
 
-function currentDelta(event: OpenCodeEvent | undefined): CurrentDelta | undefined {
+function currentDelta(event: WireEvent | undefined): CurrentDelta | undefined {
   if (
     event?.type === "session.text.delta" ||
     event?.type === "session.reasoning.delta" ||

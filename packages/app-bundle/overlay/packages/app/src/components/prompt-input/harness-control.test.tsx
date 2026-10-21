@@ -52,17 +52,24 @@ const registryJson = () =>
   new Response(JSON.stringify(READY_MENU), { status: 200, headers: { "content-type": "application/json" } })
 const spaIndexHtml = () => new Response(SPA_INDEX, { status: 200, headers: { "content-type": "text/html" } })
 
+// The DOM lib's `typeof fetch` now requires a `preconnect` member (lib drift):
+// a bare async wrapper is not assignable, and casting it papered over the
+// gap. Compose the mock with the real fetch's preconnect — the mock then IS a
+// fetch, no cast (the server-protocol.test.ts idiom).
+const mockFetch = (run: (input: RequestInfo | URL) => Promise<Response>): typeof fetch =>
+  Object.assign(run, { preconnect: globalThis.fetch.preconnect })
+
 /** The hub frontdoor's placement semantics for the harness route, as observed
  *  live (#1799): a directory-carrying ask is placed to the directory's member
  *  engine and answered with the registry JSON; a directory-less ask lands on
  *  the default backend and is answered with the SPA index document. */
 const hubFrontdoor = (recorded: string[]) =>
-  (async (input: RequestInfo | URL) => {
+  mockFetch(async (input: RequestInfo | URL) => {
     const url = new URL(String(input))
     recorded.push(url.pathname + url.search)
     if (url.pathname !== "/amicode/harness") throw new Error(`unexpected probe route: ${url.pathname}`)
     return url.searchParams.has("directory") ? registryJson() : spaIndexHtml()
-  }) as typeof fetch
+  })
 
 describe("#1799 harnessRoute — the placement-correct ask", () => {
   test("carries the instance placement directory, the key every other instance-scoped composer fetch rides", () => {
@@ -120,20 +127,21 @@ describe("#1799 the mount-path refresh in the local posture — unchanged", () =
 
   test("the service origin forwards the ask to the bound engine (query preserved) — the control mounts", async () => {
     const recorded: string[] = []
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
+    globalThis.fetch = mockFetch(async (input: RequestInfo | URL) => {
       const url = new URL(String(input))
       recorded.push(url.pathname + url.search)
       if (url.pathname !== "/amicode/harness") throw new Error(`unexpected probe route: ${url.pathname}`)
       return registryJson()
-    }) as typeof fetch
+    })
     await refreshHarnessState({ current: { type: "http", http: { url: "http://127.0.0.1:4095" } } as ServerConnection.Any }, DIRECTORY)
     expect(liveHarnessState()?.harness).toBe("opencode")
     expect(recorded).toHaveLength(1)
   })
 
   test("route absent → stays hidden (the stock-engine degradation contract)", async () => {
-    globalThis.fetch = (async () =>
-      new Response(JSON.stringify({ ok: false, error: "no route" }), { status: 404 })) as typeof fetch
+    globalThis.fetch = mockFetch(
+      async () => new Response(JSON.stringify({ ok: false, error: "no route" }), { status: 404 }),
+    )
     await refreshHarnessState({ current: HUB_CONN }, DIRECTORY)
     expect(liveHarnessState()).toBeUndefined()
   })
@@ -153,7 +161,7 @@ describe("#1799 the refresh sequence — only the LATEST ask adopts", () => {
     // SPA index while the other carried the registry — last-writer-wins on
     // the module singleton made renders racy. Only the latest ask may adopt.
     const gates: Array<(response: Response) => void> = []
-    globalThis.fetch = (async () => new Promise<Response>((resolve) => gates.push(resolve))) as typeof fetch
+    globalThis.fetch = mockFetch(async () => new Promise<Response>((resolve) => gates.push(resolve)))
     const first = refreshHarnessState({ current: HUB_CONN }, DIRECTORY)
     const second = refreshHarnessState({ current: HUB_CONN }, DIRECTORY)
     gates[1]?.(registryJson())
