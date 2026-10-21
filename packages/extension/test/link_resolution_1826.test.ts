@@ -213,3 +213,34 @@ describe("resolver posture awareness (#1826)", () => {
     fs.rmSync(local, { force: true });
   });
 });
+
+// The remote affordance (#1826, layer 3): an explicit second action on the
+// link posts open-remote-file; the bridge constructs the vscode-remote URI
+// with the existing Remote-SSH builder. A missing alias is its own named
+// outcome — a fresh non-fleet laptop gets no-ssh-alias, honestly.
+describe("the remote affordance — vscode-remote explicit (#1826)", () => {
+  it("posts a correctly-formed vscode-remote://ssh-remote+<alias>/<path> URI to vscode.open", async () => {
+    const host = io({ posture: "hub-client" as const, sshAlias: "erlich" });
+    expect(handleAmicodeBridgeMessage(
+      { source: "amicode", kind: "open-remote-file", url: "file:///home/aaron/harmoniqs/opencode/AGENTS.md" },
+      host,
+    )).toBe(true);
+    await flush();
+    expect(commands_.executed).toContain("vscode.open");
+    const uri = commands_.executedArgs[commands_.executed.indexOf("vscode.open")][0] as { toString(): string };
+    expect(uri.toString()).toBe("vscode-remote://ssh-remote+erlich/home/aaron/harmoniqs/opencode/AGENTS.md");
+    expect(uri.toString()).toMatch(/^vscode-remote:\/\/ssh-remote\+[^/]+\//);
+  });
+
+  it("a missing alias renders the no-ssh-alias named outcome — never a crash", async () => {
+    const host = io({ posture: "hub-client" as const });
+    expect(handleAmicodeBridgeMessage(
+      { source: "amicode", kind: "open-remote-file", url: "file:///home/aaron/notes/x.md" },
+      host,
+    )).toBe(true);
+    await flush();
+    expect(commands_.executed).not.toContain("vscode.open");
+    expect(window_.messages).toHaveLength(1);
+    expect(window_.messages[0]).toContain("no-ssh-alias");
+  });
+});

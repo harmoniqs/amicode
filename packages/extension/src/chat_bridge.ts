@@ -14,6 +14,7 @@ import { readCachedOverlayHash, writeCachedOverlayHash } from "./rebuild/overlay
 import type { ExplorerIconTheme } from "./explorer_icon_theme";
 import { resolveLatexTarget } from "./latex_compile";
 import { resolveChatFileLink, type LinkResolutionContext } from "./link_resolution";
+import { resolveRemoteSshTarget } from "./fleet_connect_remote_ssh";
 import { HARMONIQS_MODEL_ID, HARMONIQS_PROVIDER_ID, testConnection, writeOnboardingConfig } from "./onboarding_panel";
 import {
   readSkillProviders,
@@ -479,6 +480,33 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
       }
       // "silent": the non-hub posture's unchanged refusal.
     });
+    return true;
+  }
+
+  // #1826 layer 3 — the remote affordance: the app's explicit second action
+  // on a hub-resolved link (chevron/modifier). The bridge constructs the
+  // vscode-remote URI with the Remote-SSH builder that already exists
+  // (fleet_connect_remote_ssh.ts) and opens it in a Remote-SSH window; a
+  // missing alias is its own named outcome (no-ssh-alias) — a fresh
+  // non-fleet laptop gets it honestly, never a crash.
+  if (
+    msg.kind === "open-remote-file" &&
+    typeof (msg as { url?: unknown }).url === "string" &&
+    /^file:\/\//i.test((msg as unknown as { url: string }).url)
+  ) {
+    let fsPath: string;
+    try {
+      fsPath = decodeURIComponent(new URL((msg as unknown as { url: string }).url).pathname);
+    } catch {
+      return true;
+    }
+    if (!path.isAbsolute(fsPath) || fsPath.length > 4096) return true;
+    const resolution = resolveRemoteSshTarget(io.linkResolution?.sshAlias, fsPath);
+    if (resolution.ok) {
+      void vscode.commands.executeCommand("vscode.open", vscode.Uri.parse(resolution.uri));
+    } else {
+      vscode.window.showErrorMessage(`Amicode: link not opened — ${resolution.reason} (${resolution.detail})`);
+    }
     return true;
   }
 
