@@ -255,7 +255,7 @@ the profile when one is recorded), ask exactly ONE question —
 the options from what the live state actually shows:
 
 - **Resume the active problem** — ONLY when the stack state shows one; name it and where it stands (system ✓ / formulation ✓ / mid-solve).
-- **Resume your research campaign** — ONLY when a session ledger exists under the personal vault's `sessions/`; the autoresearch director re-reads the latest ledger and continues the loop.
+- **Resume your research campaign** — ONLY when a session ledger exists under the personal vault's `sessions/`; the research director re-reads the latest ledger and continues the loop.
 - **Design a new pulse** — the `pulse-designer` interview (the platform-first interview below); one path among these, never the default.
 - **Fleet & studio ops** — ONLY when fleet state is present; status digest, sync rituals, healthcheck.
 - **Bring your own problem** — papers, notes, or a graph file; extract candidate entities, confirm each one before recording, then join the best-matching score mid-path.
@@ -712,7 +712,7 @@ contract your script must emit.
   - Use as physics reference — inline the constants; authored scripts stay self-contained (no `include` of demo-repo files).
 - **atoms** (platform reference) — Neutral-atom Rydberg qubit physics, Hamiltonian, register geometry, and Piccolo setup. Use when working on Rydberg atom optimization scripts, gate or analog.
   - Use as physics reference — inline the constants; authored scripts stay self-contained (no `include` of demo-repo files).
-- **autoresearch** (platform reference) — The director's loop protocol for autonomous research sessions — session-ledger discipline, the hypothesizer/experimenter/analyzer trio, deliberate spec gates, checkout registry, and compaction-any-time safety. Use when starting, running, or resuming an autoresearch loop.
+- **research** (platform reference) — The research mode's director loop protocol — session-ledger discipline, the hypothesizer/experimenter/analyzer trio, deliberate spec gates, checkout registry, and compaction-any-time safety. Use when starting, running, or resuming a research loop. (The mode and this skill renamed from `autoresearch` per the three-mode surface; old ids read-resolve to `research`.)
   - Use as physics reference — inline the constants; authored scripts stay self-contained (no `include` of demo-repo files).
 - **bosonic** (platform reference) — Bosonic / cavity-QED physics, displaced-frame Hamiltonian, and Piccolo setup. Use when working on bosonic optimization scripts.
   - Use as physics reference — inline the constants; authored scripts stay self-contained (no `include` of demo-repo files).
@@ -732,9 +732,9 @@ contract your script must emit.
   - Use as physics reference — inline the constants; authored scripts stay self-contained (no `include` of demo-repo files).
 - **demo** (platform reference) — Guidance for building and running quantum optimization demos (gate synthesis, sensing, custom objectives). Use when creating a new demo or adding gates/scripts to an existing one.
   - Use as physics reference — inline the constants; authored scripts stay self-contained (no `include` of demo-repo files).
-- **develop** (platform reference) — Autonomously implement a GitHub issue-DAG end-to-end — walks one or more issues (with their sub-issues) as a dependency graph, dispatching implement-issue per slice. Use when the user wants to AFK-implement issues from the board.
+- **develop** (platform reference) — The develop mode in one skill — the director loop protocol bound to the dev gate pack (decompose → implement → integrate), session-ledger discipline, the implementer cast, the issue-DAG walk (branch/PR topology, parallel dispatch, merge strategy), cross-mode handoff seeds, and honest degradation. Use when starting, running, or resuming a develop-mode issue-DAG campaign, or to AFK-implement issues from the board. (One skill per mode, mirroring `research`; the former `autodev` mode-protocol skill is merged in — old references read-resolve here.)
   - Use as physics reference — inline the constants; authored scripts stay self-contained (no `include` of demo-repo files).
-- **director-core** (platform reference) — The canonical director-core protocol — the one loop every autonomous campaign runs (plan → dispatch through gates → analyze → record), the session-ledger discovery rule both mode cards quote verbatim, the four core clauses (ledger discipline, cast pattern, compaction honesty, anti-gaming), and the copilot/autoresearch/autodev posture model. Use when authoring or binding a mode card, a gate pack, or a campaign layer that consumes them.
+- **director-core** (platform reference) — The canonical director-core protocol — the one loop every autonomous campaign runs (plan → dispatch through gates → analyze → record), the session-ledger discovery rule both mode cards quote verbatim, the four core clauses (ledger discipline, cast pattern, compaction honesty, anti-gaming), and the copilot/research/develop posture model (modes renamed from autoresearch/autodev — old ids read-resolve). Use when authoring or binding a mode card, a gate pack, or a campaign layer that consumes them.
   - Use as physics reference — inline the constants; authored scripts stay self-contained (no `include` of demo-repo files).
 - **dream-reflect** (platform reference) — Generate structured retrospectives from Claude session transcripts. Use when running a dream cycle or reviewing past sessions.
   - Use as physics reference — inline the constants; authored scripts stay self-contained (no `include` of demo-repo files).
