@@ -121,6 +121,18 @@ TABLE = _load_table()
 _CURSOR_LOOP = {}
 _PENDING_GAP = set()
 _JOIN_T0 = {}
+# The frontdoor's own SSE response head for resumed members — identity
+# encoded: the resume path de-chunks the engine's body and re-emits parsed
+# frames plus its own (gap, synthetic heartbeat), all on a stream the
+# frontdoor fully owns. Never relay a chunked head onto an edited body.
+_MEMBER_SSE_HEAD = (
+    b"HTTP/1.1 200 OK\r\n"
+    b"Content-Type: text/event-stream\r\n"
+    b"Cache-Control: no-cache, no-transform\r\n"
+    b"X-Accel-Buffering: no\r\n"
+    b"Connection: close\r\n"
+    b"\r\n"
+)
 SHARDED = TABLE is not None and len(TABLE["backends"]) > 1
 BACKEND = TABLE["backends"][TABLE["default_shard"]] if TABLE else DEFAULT_BACKEND
 
@@ -1564,6 +1576,43 @@ class Group:
                     return
             time.sleep(0.3)
 
+    @staticmethod
+    def _dechunk(buf, state):
+        """2026-10-21: strip chunked-transfer framing from a backend body.
+        The resume path re-emits parsed SSE frames and injects its own
+        (gap, synthetic heartbeat) — raw byte edits inside a chunked body
+        corrupt the encoding (chrome: ERR_INVALID_CHUNKED_ENCODING, the
+        instant-death loop). De-chunking makes the member's stream a clean
+        identity-encoded SSE body the frontdoor fully owns. `state` carries
+        the partial chunk header across reads."""
+        out = b""
+        while True:
+            if state["mode"] == "size":
+                i = buf.find(b"\r\n")
+                if i < 0: break
+                try: n = int(buf[:i].split(b";")[0].strip(), 16)
+                except ValueError: break
+                buf = buf[i+2:]
+                if n == 0:
+                    state["mode"] = "done"
+                    j = buf.find(b"\r\n")
+                    buf = buf[j+2:] if j >= 0 else b""
+                    continue
+                state["size"] = n
+                state["mode"] = "data"
+            if state["mode"] == "data":
+                take = min(state["size"], len(buf))
+                out += buf[:take]
+                buf = buf[take:]
+                state["size"] -= take
+                if state["size"] == 0:
+                    state["mode"] = "size"
+                    if buf.startswith(b"\r\n"): buf = buf[2:]
+                    continue
+                break
+            if state["mode"] == "done": break
+        return out, buf
+
     def _resume_loop(self, c, shard_id, addr, cursor):
         """#1803 P1b: one cursor-carrying dial for one resuming member.
         Serves the engine's resumed stream (replay gap + live) to the
@@ -1594,7 +1643,20 @@ class Group:
             backoff = 0.5
             st["socks"].add(s)
             reasm = b""
-            frames, reasm = _parse_frames(pre)
+            # 2026-10-21 (chunk-ownership fix): the dial's head is replaced by
+            # the frontdoor's own identity-encoded SSE head — the member's
+            # stream is OURS, not the engine's chunked body relayed raw.
+            # Byte-level edits (gap frames, synthetic heartbeats, swallowed
+            # frames) are only valid on a stream we fully own.
+            _head, _, _body = pre.partition(b"\r\n\r\n")
+            _dcst = {"mode": "size", "size": 0}
+            _clean, _rest = self._dechunk(_body, _dcst)
+            reasm += _clean
+            frames, reasm = _parse_frames(reasm)
+            with self.lock:
+                if self.resumes.get(c) is st and not st["head_given"]:
+                    st["head_given"] = True
+                    st["q"].put(_MEMBER_SSE_HEAD)
             # 2026-10-21 (cursor-unservable filter): when the engine cannot
             # serve a resume cursor (stale — beyond replay retention, or a
             # payload-id vocabulary the replay can't resolve) it emits
@@ -1613,13 +1675,12 @@ class Group:
                 if live:
                     for frame in frames:
                         if frame.startswith(b"HTTP/"):
-                            # the first dial's response head becomes the
-                            # member's response head (any one head is a valid
-                            # head, the merged-group rule); the others' heads
-                            # are swallowed
+                            # the member's head is the FRONTDOOR's own SSE
+                            # response (identity-encoded) — the engine dial's
+                            # head is swallowed. Our stream, our encoding.
                             if not st["head_given"]:
                                 st["head_given"] = True
-                                st["q"].put(frame)
+                                st["q"].put(_MEMBER_SSE_HEAD)
                             continue
                         p = _sse_pos(frame)
                         if p is not None:
@@ -1632,17 +1693,40 @@ class Group:
             # not park forever) — the member's own client watchdog heals a
             # wedged resume dial by reconnecting with its cursor
             s.settimeout(min(5.0, max(0.25, UPSTREAM_CADENCE_S / 4.0)))
+            # 2026-10-21 (synthetic resume heartbeats): the engine's SSE
+            # heartbeat emitter does not run for resumed (replayed)
+            # connections — a resumed stream is SILENT until real events
+            # flow. The panel's staleness watchdogs (30s) and wake handlers
+            # (visibilitychange/online, frequent in a VS Code webview) then
+            # force-reconnect the "stale" stream — reconnect resumes with
+            # the cursor — silence again — the perpetual loop behind the
+            # "connection dropped" send refusals. Synthesize a heartbeat on
+            # every second recv timeout (~10s) so the panel's liveness
+            # clocks stay armed; real events still drive convergence and
+            # migration to the shared fan-out.
+            _hb_ticks = 0
             try:
                 while not st["cancel"].is_set():
                     try:
                         chunk = s.recv(65536)
                     except socket.timeout:
                         chunk = None
+                        _hb_ticks += 1
+                        if _hb_ticks % 2 == 0:
+                            _hb = (b"data: {\"payload\":{\"id\":\"evt_hb"
+                                   + str(int(time.time() * 1000)).encode()
+                                   + b"\",\"type\":\"server.heartbeat\",\"properties\":{}}}\n\n")
+                            with self.lock:
+                                if self.resumes.get(c) is st and st["q"].qsize() < MEMBER_QUEUE_MAX_ITEMS:
+                                    st["q"].put(_hb)
+                        continue
                     if chunk == b"":
                         break
                     if chunk is None:
                         continue
-                    reasm += chunk
+                    _hb_ticks = 0
+                    _dc_out, _rest = self._dechunk(chunk, _dcst)
+                    reasm += _dc_out
                     frames, reasm = _parse_frames(reasm)
                     if b"server.cursor.unservable" in reasm or any(b"server.cursor.unservable" in f for f in frames):
                         frames = [f for f in frames if b"server.cursor.unservable" not in f]
