@@ -120,6 +120,7 @@ TABLE = _load_table()
 # 2026-10-21: resume-loop breaker state (see the event-route handler).
 _CURSOR_LOOP = {}
 _PENDING_GAP = set()
+_JOIN_T0 = {}
 SHARDED = TABLE is not None and len(TABLE["backends"]) > 1
 BACKEND = TABLE["backends"][TABLE["default_shard"]] if TABLE else DEFAULT_BACKEND
 
@@ -1594,6 +1595,18 @@ class Group:
             st["socks"].add(s)
             reasm = b""
             frames, reasm = _parse_frames(pre)
+            # 2026-10-21 (cursor-unservable filter): when the engine cannot
+            # serve a resume cursor (stale — beyond replay retention, or a
+            # payload-id vocabulary the replay can't resolve) it emits
+            # server.cursor.unservable BEFORE server.connected. The panel's
+            # stream acceptance expects server.connected first and rejects the
+            # connection instantly — every reconnect repeats the dance: the
+            # stream never stabilizes, the composer refuses sends during the
+            # perpetual gap ("connection dropped"). Swallow the frame and emit
+            # the panel's OWN resync signal (amicode.sync.gap — #1617's
+            # contract) instead: the stream is accepted, the client resyncs
+            # its views, and the attach protocol rehydrates state.
+            frames = [f for f in frames if b"server.cursor.unservable" not in f]
             stalled = False
             with self.lock:
                 live = self.resumes.get(c) is st and not st["cancel"].is_set()
@@ -1631,6 +1644,9 @@ class Group:
                         continue
                     reasm += chunk
                     frames, reasm = _parse_frames(reasm)
+                    if b"server.cursor.unservable" in reasm or any(b"server.cursor.unservable" in f for f in frames):
+                        frames = [f for f in frames if b"server.cursor.unservable" not in f]
+                        reasm = b""
                     if not frames:
                         continue
                     with self.lock:
@@ -2349,6 +2365,7 @@ def handle(c, addr, cid):
                         f"{last_eid[:28]} (3 reconnects in 30s) — fresh join + sync gap")
                     last_eid = None
                     _PENDING_GAP.add(id(c))
+            _JOIN_T0[id(c)] = time.monotonic()
             g.join(c, last_eid)
             # the loop breaker's gap: after the join, deliver the id-less
             # amicode.sync.gap frame through the member's own queue (the
@@ -2368,7 +2385,11 @@ def handle(c, addr, cid):
                     try:
                         d = c.recv(1)
                         if not d: break
-                    except Exception: break
+                    except Exception as _e:
+                        log(f"[{path}] member waiter exit: {_e.__class__.__name__}")
+                        break
+                age = time.monotonic() - _JOIN_T0.get(id(c), 0)
+                log(f"[{path}] member socket closed after {age:.1f}s (client-side FIN/error)")
                 g.leave(c)
                 # #1798: the teardown close must FIN. The writer thread may
                 # be parked in sendall on this socket, and a bare close()
