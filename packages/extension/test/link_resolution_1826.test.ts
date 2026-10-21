@@ -75,6 +75,19 @@ describe("posture-aware link resolution — hub-client (#1826)", () => {
     expect(window_.messages).toHaveLength(0);
   });
 
+  it("a hub-resolved PDF path opens in Preview the same way (hub read → preview-file posted)", async () => {
+    const { fetch } = hubResolveFound("/home/aaron/harmoniqs/opencode/runs/plot-1826.pdf");
+    const host = io(hubClientContext(fetch));
+    expect(handleAmicodeBridgeMessage(
+      { source: "amicode", kind: "open-file", url: "file:///home/aaron/harmoniqs/opencode/runs/plot-1826.pdf" },
+      host,
+    )).toBe(true);
+    await flush();
+    const previewMsg = host.posted.find((m) => (m as { kind?: string }).kind === "preview-file");
+    expect(previewMsg).toBeDefined();
+    expect((previewMsg as { path: string }).path).toBe("/home/aaron/harmoniqs/opencode/runs/plot-1826.pdf");
+  });
+
   it("a containment miss refuses — no preview, a named not-found-on-hub toast, never a silent no-op", async () => {
     const urls: string[] = [];
     const fetch = (async (input: RequestInfo | URL) => {

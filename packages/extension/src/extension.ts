@@ -1193,18 +1193,19 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // workspace folder is the ?directory= key the hub frontdoor routes instance
   // requests by; missing keeps the bare ask); the ssh alias feeds the
   // vscode-remote affordance (the topology projection is the alias's source
-  // of record — a fresh non-fleet laptop gets the honest no-ssh-alias).
-  const topologyForLinks = readFleetTopology();
-  const linkResolutionContext = (): LinkResolutionContext => ({
-    posture,
-    ...(posture === "hub-client" ? { hubUrl: hubClient.url } : {}),
-    ...(topologyForLinks.kind === "ok" && topologyForLinks.canonical
-      ? { sshAlias: topologyForLinks.canonical.sshAlias }
-      : {}),
-    ...(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
-      ? { directory: vscode.workspace.workspaceFolders[0].uri.fsPath }
-      : {}),
-  });
+  // of record, re-read per click so a refresh lands — a fresh non-fleet
+  // laptop gets the honest no-ssh-alias).
+  const linkResolutionContext = (): LinkResolutionContext => {
+    const topology = readFleetTopology();
+    return {
+      posture,
+      ...(posture === "hub-client" ? { hubUrl: hubClient.url } : {}),
+      ...(topology.kind === "ok" && topology.canonical ? { sshAlias: topology.canonical.sshAlias } : {}),
+      ...(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
+        ? { directory: vscode.workspace.workspaceFolders[0].uri.fsPath }
+        : {}),
+    };
+  };
   ChatPanel.onLinkResolutionContext(linkResolutionContext);
   DeckPanel.onLinkResolutionContext(linkResolutionContext);
   if (posture === "hub-client") {
