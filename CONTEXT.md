@@ -362,3 +362,7 @@ _Avoid_: error line, fallback text (a Named outcome names the failure class; it 
 **Context route**:
 A read-only `/amicode/context/*` HTTP route exposing a Block's full-fidelity source — the details a size-budgeted prompt Block can only point to. Sessions fetch them through the read-only `amico.context` seam; widgets through `amico.fetch`. The prompt carries digests + pointers; depth is one fetch away.
 _Avoid_: API endpoint (as a concept name), data route
+
+**Link resolution**:
+The posture-aware order a client follows when a chat file link is clicked: vault-root local first (the synced mounts — the local preference is exactly as wide as the sync guarantee), the session's server next (click-time re-resolution, then Preview through the hub — the default on hub-client), and the remote editor explicitly (a deliberate second action, never the default click). Failure at every layer renders a Named outcome naming the failure class.
+_Avoid_: link rewriting, file mapping (mechanisms, not the concept)
