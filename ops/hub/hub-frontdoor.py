@@ -116,6 +116,10 @@ def _load_table():
         return None
 
 TABLE = _load_table()
+
+# 2026-10-21: resume-loop breaker state (see the event-route handler).
+_CURSOR_LOOP = {}
+_PENDING_GAP = set()
 SHARDED = TABLE is not None and len(TABLE["backends"]) > 1
 BACKEND = TABLE["backends"][TABLE["default_shard"]] if TABLE else DEFAULT_BACKEND
 
@@ -2324,7 +2328,41 @@ def handle(c, addr, cid):
                         if v:
                             last_eid = v.decode("utf-8", "replace")
                         break
+            # 2026-10-21 (resume-loop breaker): a client that reconnects 3+
+            # times within 30s carrying the SAME cursor is looping — its
+            # cursor is stale (beyond the engine's replay, or in the wrong
+            # vocabulary), so every resume lands at the same broken state
+            # and the panel's stream never recovers (the composer then
+            # honestly refuses sends during the gap: "connection dropped").
+            # On the third strike the cursor is dropped: fresh join + an
+            # id-less amicode.sync.gap frame (#1617's contract — the client
+            # resyncs its views). The panel's own attach/reconcile protocol
+            # rehydrates busy state and lists, so a dropped cursor is safe.
+            if last_eid:
+                now = time.monotonic()
+                lst = _CURSOR_LOOP.setdefault(last_eid, [])
+                lst[:] = [t for t in lst if now - t < 30.0]
+                lst.append(now)
+                if len(lst) >= 3:
+                    _CURSOR_LOOP.pop(last_eid, None)
+                    log(f"[{path}] resume-loop breaker: dropping stale cursor "
+                        f"{last_eid[:28]} (3 reconnects in 30s) — fresh join + sync gap")
+                    last_eid = None
+                    _PENDING_GAP.add(id(c))
             g.join(c, last_eid)
+            # the loop breaker's gap: after the join, deliver the id-less
+            # amicode.sync.gap frame through the member's own queue (the
+            # writer thread is the only socket writer — ordering preserved).
+            if id(c) in _PENDING_GAP:
+                _PENDING_GAP.discard(id(c))
+                gap = (b"data: {\"type\":\"amicode.sync.gap\",\"properties\":{}}\n\n")
+                try:
+                    with g.lock:
+                        q = g.members.get(c) or (g.resumes.get(c) or {}).get("q")
+                    if q is not None:
+                        q.put(gap)
+                except Exception:
+                    pass
             def waiter():
                 while True:
                     try:
