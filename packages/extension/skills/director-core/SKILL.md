@@ -107,6 +107,13 @@ The ledger is the campaign's database: nine fixed sections, in order —
 before casting any subagent; immediately before any manual compaction; at
 pause or handoff. The director is the sole ledger writer.
 
+**The session todo list is a derived view of the ledger, never a second
+record.** At every loop boundary the director REWRITES the session's todo
+list to mirror ledger §3 (active work) and §5 (next queue) — items whose
+loops closed are cleared, not carried into the next loop's face. A todo
+list that disagrees with §3 is lying about what is active: treat a stale
+todo list as a lying §3 and rewrite it at the boundary.
+
 ### 2 — Cast pattern
 
 Work is cast to subagents, one role per cast, roles drawn from the pack.

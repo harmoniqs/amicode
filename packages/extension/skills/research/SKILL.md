@@ -154,6 +154,8 @@ reference the in-flight casts? Append the audit row to §9.
    queue. Close every advisory (fixed / waived-with-reason / obsolete) and record closures.
    The update also carries the campaign's **skill delta** row — findings filed, skills
    touched, proposals pending — so the loop's own improvement is part of its record.
+   Rewrite the session todo list to mirror §3 and §5 — the derived-view rule in
+   `director-core`: current loop only; a stale todo list is a lying §3.
 8. **Repeat.** Compact only at a boundary, and only when the user is present to choose it —
    the protocol does not otherwise try to time compaction (see below).
 
