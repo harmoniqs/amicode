@@ -487,12 +487,12 @@
     "packages/session-ui/src/components/build-trace.ts": "153e3182c3a37e4aca9c88bf0e2052b0ff4ec117a60d74d2c81567ab91180066",
     "packages/session-ui/src/components/group-parts.test.ts": "a31ce19009e1d62e75e83b682190a4613da0eed334420409ed73a9e21834ae84",
     "packages/session-ui/src/components/line-comment-styles.ts": "2077836c13bd3c3f1c39c67722119e448a2dfa123377f94bfd3676634e955d00",
-    "packages/session-ui/src/components/markdown-file-refs.test.ts": "e2b1bed33629d3ab53c521f33266814088ea4122b6e64d6ab294eacc4cf15070",
+    "packages/session-ui/src/components/markdown-file-refs.test.ts": "fc8e793bceb8ffad84baf1bcf3901863c7c770ca199fbe518fd1a8a9af5ced2a",
     "packages/session-ui/src/components/markdown-file-refs.ts": "b75bddeb565dc0163635fab8f84bdd26723742f9f82d06b6fd5991777b311032",
     "packages/session-ui/src/components/markdown-stream.test.ts": "b73b1a15ffa2cfea5358b2d6313ce17d26a5a11302b0e3b7d823cde0c98cbc83",
     "packages/session-ui/src/components/markdown-stream.ts": "50e38abd5d4ff919564655799678be10463dec58502fc5487c1c97a9a8db5399",
     "packages/session-ui/src/components/markdown.css": "24e7c19218620386647656a5d27e116cdeca911f1916c5d5b8609edca11ff165",
-    "packages/session-ui/src/components/markdown.tsx": "89e132e62d20c873311c9781d0ca4d7cd1a7ff882d99f19c8696aafaf4a8f298",
+    "packages/session-ui/src/components/markdown.tsx": "7a63e8eea8c0e6205ce4bb579de870fc05e1234ab2c7d49ac9b4a7ea1bd36285",
     "packages/session-ui/src/components/message-part-css.test.ts": "ffab7d2c94e8d40ca35e4a8d4383cc6efd805b133764176b70046fba874a5f06",
     "packages/session-ui/src/components/message-part-groups.ts": "37be069bf46e926fcde83d3744ee706911ff002e6b532e279290d841aeee96da",
     "packages/session-ui/src/components/message-part-skill.test.ts": "453bdcb25e4df91ad1004635b8766070a60421355adf18ee53f43cd2fa7d0486",
@@ -1010,7 +1010,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-21T17:55:52.656Z",
+  "extracted_at": "2026-10-22T10:48:47.701Z",
   "per_package": {
     "packages/app": {
       "A": 254,

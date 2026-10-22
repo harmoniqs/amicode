@@ -339,7 +339,9 @@ function decorate(root: HTMLDivElement, labels: CopyLabels) {
   // This must run unconditionally, not just in new-layout mode
   markExternalLinks(root)
   markCodeLinks(root)
-  if (!document.body.hasAttribute("data-new-layout")) return
+  // #1839: the inline-code pill tagging is the data layer for file-reference
+  // linkification (markFileLinks consumes data-inline-code-kind) — a core
+  // capability, not a layout preference. Runs unconditionally.
   markInlineCode(root)
 }
 
@@ -595,9 +597,12 @@ export function Markdown(
         copied: i18n.t("ui.message.copied"),
       }))
     if (!linkCleanup) linkCleanup = setupExternalLinks(container)
-    // File-reference linkification rides the same new-layout gate as the
-    // inline-code pill tagging (decorate) whose data attributes it consumes.
-    if (document.body.hasAttribute("data-new-layout")) markFileLinks(container)
+    if (!linkCleanup) linkCleanup = setupExternalLinks(container)
+    // #1839: file-reference linkification is core, not a layout preference —
+    // runs unconditionally (the pills it consumes are tagged unconditionally
+    // in decorate). The live report: with data-new-layout off, every file
+    // link in chat was silently inert.
+    markFileLinks(container)
   })
 
   onCleanup(() => {
