@@ -196,8 +196,8 @@
     "packages/app/src/context/platform.tsx": "edd9b1773feb5c084b922a57b6914f6a473eed558b44f9de0eeb1c4d4e2b49da",
     "packages/app/src/context/question-inbox.test.ts": "d4e2c666194fe6463d1a1da1901f2aef3b6a17eec00394a2b020d7ce698d4c92",
     "packages/app/src/context/question-inbox.ts": "f42a2490670e44578f88d626bc0db0a0205fa2b5ec7cd719ba0544915f3a6179",
-    "packages/app/src/context/server-sdk.test.ts": "aa3815ee62cb933fd30895be924ed2074aef7fb90bcbf6cb39ad1dce687e04d8",
-    "packages/app/src/context/server-sdk.tsx": "5056b168d2ba0445beca4c6d07f2e43b6f46b4aefd5802b16d530ce544f26569",
+    "packages/app/src/context/server-sdk.test.ts": "c8c4a04846c2e5c0e3e91596f104f76994c92b116a755908fcbce2655a8a0234",
+    "packages/app/src/context/server-sdk.tsx": "9dc721c54074a323fb879aedf76cf29c1888088ab6b9b0c68aae683ca4f563f1",
     "packages/app/src/context/server-session-child-active.test.ts": "de8c467f67f88b6cce351c1805ec90728cf238eb1ef32f39ffdbbf3de4dcec22",
     "packages/app/src/context/server-session-orphan-part.test.ts": "1d635374c0bfff25a01825061aabac7334e5cdaedca2dab9f3d9467ff543caea",
     "packages/app/src/context/server-session.test.ts": "31b14c85a843eb172899f456566ad7ab7d07a22eaf8b31d29a22e255e95cb96b",
@@ -503,7 +503,7 @@
     "packages/session-ui/src/components/message-part-user.ts": "1f2c8cb4efff5274863a133f369a7397cac804678e953740f356ae03b71d475c",
     "packages/session-ui/src/components/message-part.css": "ae592deb33739738f6a7fc6a3460b7146803bdd05cbbf46f1cfd2c5cec421392",
     "packages/session-ui/src/components/message-part.test.ts": "7c66430837fa3d2607657e57e35720ae68dc5e84662e12826713a938301eeb7b",
-    "packages/session-ui/src/components/message-part.tsx": "dda5104168d8b841c5f96bb27737d49375b19f68e64f1f6a7c9e7776ae332164",
+    "packages/session-ui/src/components/message-part.tsx": "298ed64a50b0417c45b81d05f7ba32d9f8fdf3ac8a24ea7806a89964e1f684b5",
     "packages/session-ui/src/components/session-retry.tsx": "2cb1513d73275a269894f601e8c1d29bc790b14927134fe36177f2b371888721",
     "packages/session-ui/src/components/session-review.css": "ec8c5b359dd4b7ff80d7fad8906359678adade9ce62c9d74aedc000b646db341",
     "packages/session-ui/src/components/session-review.test.ts": "41515bba238b4e60ce3d80e206013e9b43e3b0d0a51be45796028dbae47c99ae",
@@ -1011,7 +1011,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-22T12:38:18.375Z",
+  "extracted_at": "2026-10-22T13:11:47.632Z",
   "per_package": {
     "packages/app": {
       "A": 254,
