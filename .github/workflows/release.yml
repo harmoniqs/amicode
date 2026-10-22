@@ -27,6 +27,7 @@ jobs:
       - uses: actions/setup-node@v7
         with: { node-version: 20, cache: pnpm }
       - uses: oven-sh/setup-bun@v2
+        with: { bun-version: 1.4.2 }
       - run: pnpm install --frozen-lockfile
       - name: Build native binary (linux-x64)
         run: node packages/extension/scripts/build_binary.mjs
@@ -55,6 +56,7 @@ jobs:
       - uses: actions/setup-node@v7
         with: { node-version: 20, cache: pnpm }
       - uses: oven-sh/setup-bun@v2
+        with: { bun-version: 1.4.2 }
       - name: Resolve tag and publish gate
         id: meta
         run: |

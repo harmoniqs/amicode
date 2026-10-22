@@ -15,6 +15,7 @@ jobs:
       - uses: actions/setup-node@v7
         with: { node-version: 20, cache: pnpm }
       - uses: oven-sh/setup-bun@v2
+        with: { bun-version: 1.4.2 }
       - run: pnpm install --frozen-lockfile
       - name: Build native binary (linux-x64)
         run: node packages/extension/scripts/build_binary.mjs
@@ -227,6 +228,7 @@ jobs:
       - uses: actions/setup-node@v7
         with: { node-version: 20, cache: pnpm }
       - uses: oven-sh/setup-bun@v2
+        with: { bun-version: 1.4.2 }
       - run: pnpm install --frozen-lockfile
       # Download pre-built binaries (#1096)
       - name: Download built binaries
@@ -342,6 +344,7 @@ jobs:
       - uses: actions/setup-node@v7
         with: { node-version: 20, cache: pnpm }
       - uses: oven-sh/setup-bun@v2
+        with: { bun-version: 1.4.2 }
       - run: pnpm install --frozen-lockfile
       - name: Materialize the full engine tree (canonical base + overlay)
         run: pnpm --filter @amicode/app-bundle run materialize
