@@ -506,7 +506,8 @@
     "packages/session-ui/src/components/message-part.tsx": "dda5104168d8b841c5f96bb27737d49375b19f68e64f1f6a7c9e7776ae332164",
     "packages/session-ui/src/components/session-retry.tsx": "2cb1513d73275a269894f601e8c1d29bc790b14927134fe36177f2b371888721",
     "packages/session-ui/src/components/session-review.css": "ec8c5b359dd4b7ff80d7fad8906359678adade9ce62c9d74aedc000b646db341",
-    "packages/session-ui/src/components/session-review.tsx": "d2015c9f7419279f08e84523439a0b73e83bd5d06587ad56b85ea53b66ecaee4",
+    "packages/session-ui/src/components/session-review.test.ts": "41515bba238b4e60ce3d80e206013e9b43e3b0d0a51be45796028dbae47c99ae",
+    "packages/session-ui/src/components/session-review.tsx": "8ba032e842c663d1f24bfee513a9da801d257b1390149f0a380ef3cdcc025849",
     "packages/session-ui/src/components/session-turn.css": "792915f3373134eadf3cd51e1d4bfa88ec347e6b037b6caf60b639ec5e74fbd8",
     "packages/session-ui/src/components/session-turn.tsx": "42f247b0434a9f52d88d9fb96adff59afe6edeab84dd912b62eb153253b6696f",
     "packages/session-ui/src/components/summary-patch.test.ts": "84f2b5e5671b991130ce221ed605b214511491c883c683c9099173a4890e5d96",
@@ -1010,7 +1011,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-22T10:48:47.701Z",
+  "extracted_at": "2026-10-22T12:38:18.375Z",
   "per_package": {
     "packages/app": {
       "A": 254,
@@ -1048,7 +1049,7 @@
       "D": 0
     },
     "packages/session-ui": {
-      "A": 44,
+      "A": 45,
       "M": 32,
       "D": 0
     },
@@ -1059,7 +1060,7 @@
     }
   },
   "counts": {
-    "overlay_total": 988,
+    "overlay_total": 989,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1562,6 +1563,7 @@
     "packages/session-ui/src/components/message-part.tsx": "M",
     "packages/session-ui/src/components/session-retry.tsx": "M",
     "packages/session-ui/src/components/session-review.css": "M",
+    "packages/session-ui/src/components/session-review.test.ts": "A",
     "packages/session-ui/src/components/session-review.tsx": "M",
     "packages/session-ui/src/components/session-turn.css": "M",
     "packages/session-ui/src/components/session-turn.tsx": "M",
