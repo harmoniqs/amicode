@@ -48,6 +48,28 @@ type CurrentDelta = Extract<
 
 // The named V2 types are adapted only in their V2 shape (payload in `data`);
 // a V1-shaped frame of the same name falls through to the default case raw.
+export function parseSseFrame(raw: string): Record<string, unknown> | undefined {
+  try {
+    const value: unknown = JSON.parse(raw)
+    if (value !== null && typeof value === "object" && !Array.isArray(value)) return value as Record<string, unknown>
+    return undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** #1843: the legacy fan-in wrapper — {directory, payload} frames (the
+ *  frontdoor's merged-group wire shape, and what parsed string frames are). */
+function isLegacyWireFrame(value: unknown): value is { directory?: string; payload: Record<string, unknown> } {
+  return !!value && typeof value === "object" && "payload" in value && typeof value.payload === "object"
+}
+
+/** #1843: either wire vocabulary (V1 `properties` frames or V2 `data` frames
+ *  — the WireEvent union). Anything else is an unknown shape, skipped. */
+function isWireEvent(value: unknown): value is WireEvent {
+  return !!value && typeof value === "object" && "type" in value
+}
+
 export function adaptServerEvent(event: WireEvent): ServerEvent {
   if (event.type === "permission.v2.asked" && "data" in event) {
     return {
@@ -709,9 +731,20 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
             // again, so force the resync now (the refetch cannot miss the events
             // between the end and this re-subscription).
             if (streamEndResync.frame()) setResyncCount((n) => n + 1)
-            const legacy = "payload" in event
-            const directory = legacy ? (event.directory ?? "global") : (event.location?.directory ?? "global")
-            const payload = legacy ? (event.payload as Event) : adaptServerEvent(event)
+            // #1843: the webview fetch path's SDK reader yields raw SSE `data:`
+            // lines as STRINGS (the platform path yields parsed objects) — a
+            // string frame hit `"payload" in event` as a TypeError and killed
+            // the whole stream loop, every frame, all day (the recurring
+            // "[global-sdk] event stream failed"). Parse strings before the
+            // discrimination; a malformed line skips (named, never kills).
+            const parsed = typeof event === "string" ? parseSseFrame(event) : event
+            if (parsed === undefined) continue
+            const legacy = isLegacyWireFrame(parsed)
+            if (!legacy && !isWireEvent(parsed)) continue
+            const directory = legacy
+              ? parsed.directory ?? "global"
+              : (parsed as { location?: { directory?: string } }).location?.directory ?? "global"
+            const payload = legacy ? (parsed.payload as unknown as Event) : adaptServerEvent(parsed)
             // #1522 (ADR 0033 decision A): the SSE fan-in aggregator emits
             // `amicode.fleet.focus` as the first frame on (re)connect. Intercept
             // it here and dispatch to the existing picker focus latch via
@@ -764,13 +797,13 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
             // replayed frame already applied is dropped, never applied twice.
             const verdict = cursor.frame({
               id: kind === "v1" ? frameSseId : undefined,
-              type: legacy ? event.payload.type : payload.type,
+              type: payload.type,
             })
             if (verdict.resync) forceResync(verdict.resync.namespaces)
             if (!verdict.apply) continue
             persistCursor()
             // a sync copy still moves the cursor (it holds a seq), but is no event
-            if (legacy && event.payload.type === "sync") continue
+            if (legacy && parsed.payload.type === "sync") continue
             // #1539: the origin is the composite cursor's moving namespace.
             // Fleet-of-one (a bare engine id) is always local.
             const taggedPayload: ServerEvent = verdict.origin !== undefined

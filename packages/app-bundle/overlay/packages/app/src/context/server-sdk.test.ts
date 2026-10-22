@@ -16,6 +16,7 @@ import {
   globalStreamResetRequired,
   postEventStreamUrlAssert,
   resumeStreamAfterPageShow,
+  parseSseFrame,
 } from "./server-sdk"
 import { armRemoteCreate, attachOwnerHeaderIfArmed, disarmRemoteCreate } from "@/components/remote-create-arm"
 import type { OpenCodeEvent } from "@opencode-ai/client/promise"
@@ -724,3 +725,27 @@ describe("composeArmedRequestHeaders (remote-create Authorization preservation)"
   })
 })
 
+
+// #1843 — the webview fetch path's SDK reader yields raw SSE `data:` lines as
+// strings (the platform path yields parsed objects); a string frame hit
+// `"payload" in event` as a TypeError and killed the whole global event stream
+// loop, every frame (the live recurring "[global-sdk] event stream failed").
+describe("parseSseFrame (#1843)", () => {
+  test("a JSON object line parses to the record", () => {
+    expect(parseSseFrame('{"directory":"/home/aaron/x","payload":{"type":"message.updated"}}')).toEqual({
+      directory: "/home/aaron/x",
+      payload: { type: "message.updated" },
+    })
+  })
+
+  test("malformed lines and non-objects skip (undefined), never throw", () => {
+    expect(parseSseFrame("not json")).toBeUndefined()
+    expect(parseSseFrame("[1,2]")).toBeUndefined()
+    expect(parseSseFrame("null")).toBeUndefined()
+    expect(parseSseFrame("42")).toBeUndefined()
+  })
+
+  test("empty string skips", () => {
+    expect(parseSseFrame("")).toBeUndefined()
+  })
+})

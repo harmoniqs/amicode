@@ -2713,7 +2713,23 @@ ToolRegistry.register({
           defer={props.deferContent !== false}
           trigger={
             <div data-component="edit-trigger">
-              <div data-slot="message-part-title-area">
+              <div
+                data-slot="message-part-title-area"
+                data-clickable={path() ? "true" : undefined}
+                title={path()}
+                onClick={(event) => {
+                  // #1843: the whole title area opens the file, not just the
+                  // filename glyph — the live report clicked the row (the
+                  // directory span sits between the filename and the edge) and
+                  // got nothing. Only the button behavior changes: prevent +
+                  // stopPropagation so the tool body's expand/collapse doesn't
+                  // fire alongside, exactly like the filename button.
+                  if (!path() || pending()) return
+                  event.preventDefault()
+                  event.stopPropagation()
+                  openFileInEditor(path())
+                }}
+              >
                 <div data-slot="message-part-title">
                   <span data-slot="message-part-title-text">
                     <span data-pending={pending() ? "true" : "false"}>{i18n.t("ui.messagePart.title.edit")}</span>
