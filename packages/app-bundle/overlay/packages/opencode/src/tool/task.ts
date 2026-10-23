@@ -78,6 +78,17 @@ function renderOutput(input: {
   ].join("\n")
 }
 
+export function subagentFailure(sessionID: SessionID, error: { name: string; data?: unknown }, partial: string) {
+  const data = error.data as { message?: unknown } | undefined
+  const detail = typeof data?.message === "string" && data.message ? `${error.name}: ${data.message}` : error.name
+  return [
+    `The subagent stopped before finishing (${detail}).`,
+    `Its work so far is preserved in session ${sessionID}.`,
+    `To continue it, call the task tool again with task_id="${sessionID}" and a prompt such as "continue where you left off" — do not start a new task for the same work.`,
+    ...(partial ? ["", "Last output before it stopped:", partial] : []),
+  ].join("\n")
+}
+
 export const TaskTool = Tool.define(
   id,
   Effect.gen(function* () {
@@ -211,7 +222,17 @@ export const TaskTool = Tool.define(
           agent: next.name,
           parts,
         })
-        return result.parts.findLast((item) => item.type === "text")?.text ?? ""
+        const text = result.parts.findLast((item) => item.type === "text")?.text ?? ""
+        // #1849: a child whose final turn errored (a provider 429 that outlived
+        // its retries, an auth failure, ...) used to come back as an EMPTY
+        // success — the parent saw "completed" with no result and started a
+        // fresh subagent, discarding all the child's work. Report it as a
+        // failure that names the resumable session instead.
+        const error = result.info.role === "assistant" ? result.info.error : undefined
+        if (error && error.name !== "MessageAbortedError") {
+          return yield* Effect.fail(new Error(subagentFailure(nextSession.id, error, text)))
+        }
+        return text
       })
 
       const inject = Effect.fn("TaskTool.injectBackgroundResult")(function* (
