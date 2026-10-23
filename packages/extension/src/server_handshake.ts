@@ -75,11 +75,11 @@ export function writeHandshake(record: HandshakeRecord, filePath?: string): void
  *  password is meaningless. The sentinel tells the adoption gate that the
  *  "password challenge" for this server is vacuously true — the health check IS
  *  the ownership proof for an unarmed engine behind the SSH tunnel. */
-export const UNARMED_PASSWORD = "__hub_unarmed__";
+export const UNARMED_SENTINEL = "__hub_unarmed__";
 
 /** True when the handshake record was written by an unarmed hub engine. */
 export function isUnarmedHandshake(record: HandshakeRecord): boolean {
-  return record.password === UNARMED_PASSWORD;
+  return record.password === UNARMED_SENTINEL;
 }
 
 /** Default PID-liveness probe (signal 0 = existence check, no signal sent).
@@ -106,7 +106,7 @@ export interface WriteHubHandshakeOpts {
 }
 
 /** Write the hub engine's handshake record after it passes its health check.
- *  The hub is unarmed, so the password field carries the UNARMED_PASSWORD
+ *  The hub is unarmed, so the password field carries the UNARMED_SENTINEL
  *  sentinel. The adoption gate verifies reachability-only for unarmed engines
  *  (the SSH tunnel is the auth boundary). Generates startedAt and stamps
  *  PROTOCOL_VERSION automatically. */
@@ -116,7 +116,7 @@ export function writeHubHandshake(opts: WriteHubHandshakeOpts): void {
       port: opts.port,
       pid: opts.pid,
       startedAt: new Date().toISOString(),
-      password: UNARMED_PASSWORD,
+      password: UNARMED_SENTINEL,
       binaryHash: opts.binaryHash,
       configHash: opts.configHash,
       protocolVersion: PROTOCOL_VERSION,

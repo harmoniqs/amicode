@@ -117,7 +117,7 @@ import { buildDeviceStatus, nextActions, capabilityHint, type DriveLine } from "
 import { SchusterJobServer } from "./qick_client";
 import { adoptOrSpawn, buildLiveDeps, isPidAlive, reclaimOrphanPort, auditAdoptedEngine, restartAdoptedEngine, readoptHubInPlace, sweepStrayEngines, listOpencodeEngines, hasLiveClient, reclaimEnginePid, planEngineRestart, planServerActivation, adoptedTheHub, probeUnarmedHub, shouldRideDeterministicHub, planHubYieldBack } from "./server_lifecycle";
 import { hubEnginePortFor } from "./amicode_service/fleet_hub_service";
-import { handshakePath, readHandshake, deleteHandshake, serverLogPath, coldSpawnHandshakeHook, hashFile, hashString, UNARMED_PASSWORD, isUnarmedHandshake } from "./server_handshake";
+import { handshakePath, readHandshake, deleteHandshake, serverLogPath, coldSpawnHandshakeHook, hashFile, hashString, UNARMED_SENTINEL, isUnarmedHandshake } from "./server_handshake";
 import { startKeepalive, stopKeepalive, readGraceSeconds, pingKeepalive } from "./server_keepalive";
 import { FleetPollHysteresis } from "./fleet_poll_hysteresis";
 import { FleetPostureStateWriter } from "./fleet_posture_state";
@@ -1553,7 +1553,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         adoptedPort = hubEnginePort;
         adoptedPid = hubPid;
         adoptedUnarmed = true;
-        serverPassword = UNARMED_PASSWORD;
+        serverPassword = UNARMED_SENTINEL;
         serverAuthHeaders.Authorization = serverAuthHeader(serverPassword);
         opencodeReadyUrl = new URL(`http://127.0.0.1:${hubEnginePort}`);
         opencodeChannel.appendLine(
@@ -1577,7 +1577,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         adoptedPort = lifecycleResult.port;
         adoptedPid = lifecycleResult.pid;
         adoptedHashes = lifecycleResult.adoptedHashes;
-        adoptedUnarmed = lifecycleResult.password === UNARMED_PASSWORD;
+        adoptedUnarmed = lifecycleResult.password === UNARMED_SENTINEL;
         // Replace the minted password with the recorded one — the surviving
         // server was spawned with it, so every auth surface must carry it.
         serverPassword = lifecycleResult.password;
