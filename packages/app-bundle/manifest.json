@@ -356,7 +356,7 @@
     "packages/opencode/src/project/instance-store.ts": "c22d3e2499e63dd8d9395d58189df75444d306774df833e746f22e327edcf2ab",
     "packages/opencode/src/provider/auth.ts": "b0ab1322c1039e27176bf9e3500603eae27506065ac141a69710220f3361f6b8",
     "packages/opencode/src/provider/error.ts": "7f3c8210c775e2ce98140bf015dc97e61192912af062c75e18ecb09ee2736a0f",
-    "packages/opencode/src/provider/provider.ts": "435a2838291d2aa32de4d1ecab1778b443f9ec9b3b5ed409b94d3b2de0142853",
+    "packages/opencode/src/provider/provider.ts": "b89bc0ca0a12ea0cfaf5c956a4b731a0397d4c407e787a16cdd66fb7f54ee476",
     "packages/opencode/src/provider/transform.ts": "70c7492d4a23a30ebc340a5605702b1602960f4b412e18557534e02962c137b8",
     "packages/opencode/src/question/index.ts": "8317348c2ca27dd9e4f7d18fdc126a4d355c20495c1b86668430ad477a68e9b3",
     "packages/opencode/src/server/auth.ts": "a054aff2ea06a303a99f326275332a68089c58916356a26d66af44f048f597cc",
@@ -405,7 +405,7 @@
     "packages/opencode/test/project/worktree-rename.test.ts": "3ec168c9f8595249b75832895a251483ec1f3641ce44ad0bd5a664b5bbd6dad1",
     "packages/opencode/test/provider/combine-abort-signals.test.ts": "0a997303e717184e3e237e4b978b64a34ab8022724c47245b25f32e90738d205",
     "packages/opencode/test/provider/harmoniqs-tools.test.ts": "0c626daa51c312eb81dd854509a2e1944712ee9620a36eb4db66078ab80d6b82",
-    "packages/opencode/test/provider/provider.test.ts": "5b2cbed8994d3bbc968a72d01459460c1de72b6117a0795c2bc6a10abbf02926",
+    "packages/opencode/test/provider/provider.test.ts": "37ed7d4dbf68da214a96cb66dacda71c6e82498382fcd28c3272ec4d33462b20",
     "packages/opencode/test/provider/transform.test.ts": "ecf9dd1bdec36c2126f3140d43125728c06211b9771d47619ff65f7453ff37fd",
     "packages/opencode/test/question/question-store.test.ts": "9186b84cb1b390f47e8e8c30b6e2448ebe5096335aee38fe4c12c897d27d2150",
     "packages/opencode/test/server/amicode-connections-routes.test.ts": "de8ddeaabe23e20a0dc33eef6c70232ba20cca0301cbea08fe9fd751a07d6649",
@@ -1011,7 +1011,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-22T13:11:47.632Z",
+  "extracted_at": "2026-10-23T12:21:18.499Z",
   "per_package": {
     "packages/app": {
       "A": 254,

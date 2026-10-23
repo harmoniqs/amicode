@@ -1291,6 +1291,7 @@ interface State {
   sdk: Map<string, BundledSDK>
   modelLoaders: Record<string, CustomModelLoader>
   varsLoaders: Record<string, CustomVarsLoader>
+  authStamp: string | undefined
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Provider") {}
@@ -1476,8 +1477,24 @@ const layer = Layer.effect(
     const modelsDevSvc = yield* ModelsDev.Service
     const runtimeFlags = yield* RuntimeFlags.Service
 
+    // #1848: the stored-credential fingerprint the provider state was built
+    // from. auth.json is shared by every engine process on the host (the
+    // fleet's shards), but the provider state is cached per instance per
+    // process — a connect landing on one shard left the others serving the
+    // pre-connect provider list until restart. Every state read compares the
+    // on-disk fingerprint and rebuilds on drift, so an auth write from ANY
+    // process (or the CLI) reaches every engine without an instance dispose
+    // (which would cancel the instance's running sessions).
+    const authStamp = auth.all().pipe(
+      Effect.map((all) =>
+        Hash.fast(JSON.stringify(Object.keys(all).sort().map((key) => [key, all[key]]))),
+      ),
+      Effect.orElseSucceed(() => undefined),
+    )
+
     const state = yield* InstanceState.make<State>(() =>
       Effect.gen(function* () {
+        const builtFrom = yield* authStamp
         const bridge = yield* EffectBridge.make()
         const cfg = yield* config.get()
         const modelsDev = yield* modelsDevSvc.get()
@@ -1804,11 +1821,25 @@ const layer = Layer.effect(
           sdk,
           modelLoaders,
           varsLoaders,
+          authStamp: builtFrom,
         }
       }),
     )
 
-    const list = Effect.fn("Provider.list")(() => InstanceState.use(state, (s) => s.providers))
+    // #1848: the state, rebuilt first when stored credentials changed on disk
+    // since it was built. An unreadable auth file never forces a rebuild.
+    const current = Effect.fn("Provider.current")(function* () {
+      const s = yield* InstanceState.get(state)
+      const stamp = yield* authStamp
+      if (stamp === undefined || stamp === s.authStamp) return s
+      yield* Effect.logInfo("stored credentials changed on disk; rebuilding provider state")
+      yield* InstanceState.invalidate(state)
+      return yield* InstanceState.get(state)
+    })
+
+    const list = Effect.fn("Provider.list")(function* () {
+      return (yield* current()).providers
+    })
 
     async function resolveSDK(model: Model, s: State, envs: Record<string, string | undefined>) {
       try {
@@ -1958,12 +1989,12 @@ const layer = Layer.effect(
       }
     }
 
-    const getProvider = Effect.fn("Provider.getProvider")((providerID: ProviderV2.ID) =>
-      InstanceState.use(state, (s) => s.providers[providerID]),
-    )
+    const getProvider = Effect.fn("Provider.getProvider")(function* (providerID: ProviderV2.ID) {
+      return (yield* current()).providers[providerID]
+    })
 
     const getModel = Effect.fn("Provider.getModel")(function* (providerID: ProviderV2.ID, modelID: ModelV2.ID) {
-      const s = yield* InstanceState.get(state)
+      const s = yield* current()
       const provider = s.providers[providerID]
       if (!provider) {
         const catalogProvider = s.catalog[providerID]
@@ -1987,7 +2018,7 @@ const layer = Layer.effect(
     })
 
     const getLanguage = Effect.fn("Provider.getLanguage")(function* (model: Model) {
-      const s = yield* InstanceState.get(state)
+      const s = yield* current()
       const envs = yield* env.all()
       const key = `${model.providerID}/${model.id}`
       if (s.models.has(key)) return s.models.get(key)!
@@ -2018,7 +2049,7 @@ const layer = Layer.effect(
     })
 
     const closest = Effect.fn("Provider.closest")(function* (providerID: ProviderV2.ID, query: string[]) {
-      const s = yield* InstanceState.get(state)
+      const s = yield* current()
       const provider = s.providers[providerID]
       if (!provider) return undefined
       for (const item of query) {
@@ -2039,7 +2070,7 @@ const layer = Layer.effect(
         )
       }
 
-      const s = yield* InstanceState.get(state)
+      const s = yield* current()
       const provider = s.providers[providerID]
       if (!provider) return undefined
 
@@ -2100,7 +2131,7 @@ const layer = Layer.effect(
 
     const defaultModel = Effect.fn("Provider.defaultModel")(function* () {
       const cfg = yield* config.get()
-      const s = yield* InstanceState.get(state)
+      const s = yield* current()
 
       if (cfg.model) {
         const parsed = parseModel(cfg.model)
