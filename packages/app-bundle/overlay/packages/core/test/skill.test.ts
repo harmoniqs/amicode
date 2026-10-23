@@ -66,6 +66,18 @@ const publish = (file: string, event: "add" | "change" | "unlink") =>
     Effect.asVoid,
   )
 
+// Bounded poll until the debounced invalidation flush is observable in list().
+const pollNames = (skills: SkillV2.Interface, expected: readonly string[]) =>
+  Effect.gen(function* () {
+    const deadline = Date.now() + 5_000
+    let names = (yield* skills.list()).map((skill) => skill.name)
+    while (JSON.stringify(names) !== JSON.stringify(expected) && Date.now() < deadline) {
+      yield* Effect.sleep("50 millis")
+      names = (yield* skills.list()).map((skill) => skill.name)
+    }
+    return names
+  })
+
 const withTmp = <A, E, R>(use: (tmp: { path: string }) => Effect.Effect<A, E, R>) =>
   Effect.acquireRelease(Effect.promise(() => tmpdir()), (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]())).pipe(
     Effect.flatMap(use),
@@ -93,9 +105,14 @@ describe("SkillV2 cache", () => {
 
         yield* rewrite(root, "my-skill", "new description", "new body")
         yield* publish(path.join(root, "my-skill", "SKILL.md"), "change")
-        yield* Effect.sleep("200 millis")
 
-        const after = skillsOf(yield* skills.list())
+        // Bounded poll: the debounced flush lands shortly after the publish.
+        const deadline = Date.now() + 5_000
+        let after = skillsOf(yield* skills.list())
+        while (after["my-skill"]?.description !== "new description" && Date.now() < deadline) {
+          yield* Effect.sleep("50 millis")
+          after = skillsOf(yield* skills.list())
+        }
         expect(after["my-skill"]?.description).toBe("new description")
         expect(after["my-skill"]?.content).toContain("new body")
       }),
@@ -133,13 +150,13 @@ describe("SkillV2 cache", () => {
 
         yield* skillFile(root, "added-skill", "added later", "added body")
         yield* publish(path.join(root, "added-skill", "SKILL.md"), "add")
-        yield* Effect.sleep("200 millis")
-        expect((yield* skills.list()).map((skill) => skill.name)).toEqual(["added-skill", "my-skill"])
+        const added = yield* pollNames(skills, ["added-skill", "my-skill"])
+        expect(added).toEqual(["added-skill", "my-skill"])
 
         yield* Effect.promise(() => fs.rm(path.join(root, "added-skill"), { recursive: true, force: true }))
         yield* publish(path.join(root, "added-skill", "SKILL.md"), "unlink")
-        yield* Effect.sleep("200 millis")
-        expect((yield* skills.list()).map((skill) => skill.name)).toEqual(["my-skill"])
+        const removed = yield* pollNames(skills, ["my-skill"])
+        expect(removed).toEqual(["my-skill"])
       }),
     ),
   )
@@ -205,10 +222,16 @@ describe("SkillV2 invalidation consumer", () => {
           yield* publish(file, "change")
           yield* publish(file, "change")
           yield* publish(path.join(root, "other-skill", "SKILL.md"), "change")
-          yield* Effect.sleep("200 millis")
-          expect((yield* skills.list()).length).toBe(2)
 
-          // One burst → one debounced flush → one re-glob of the source.
+          // One burst → one debounced flush → one re-glob of the source. The
+          // reload is lazy, so the poll must drive list() itself.
+          const deadline = Date.now() + 5_000
+          let listed = yield* skills.list()
+          while (globs.count < 2 && Date.now() < deadline) {
+            yield* Effect.sleep("50 millis")
+            listed = yield* skills.list()
+          }
+          expect(listed.length).toBe(2)
           expect(globs.count).toBe(2)
         }),
       ).pipe(Effect.provide(layer), Effect.scoped)
@@ -325,9 +348,18 @@ describe("SkillGuidance epoch delivery", () => {
 
         yield* rewrite(root, "my-skill", "new description", "new body")
         yield* publish(path.join(root, "my-skill", "SKILL.md"), "change")
-        yield* Effect.sleep("200 millis")
 
-        const result = yield* SystemContext.reconcile(yield* guidance.load(selection), initialized.snapshot)
+        // Bounded poll: reconcile is safe to retry while the debounced flush
+        // has not landed yet (it reads Unchanged until the skills change).
+        const deadline = Date.now() + 5_000
+        let result: SystemContext.ReconcileResult = yield* SystemContext.reconcile(
+          yield* guidance.load(selection),
+          initialized.snapshot,
+        )
+        while (result._tag !== "Updated" && Date.now() < deadline) {
+          yield* Effect.sleep("50 millis")
+          result = yield* SystemContext.reconcile(yield* guidance.load(selection), initialized.snapshot)
+        }
         expect(result).toMatchObject({ _tag: "Updated" })
         if (result._tag === "Updated") {
           expect(result.text).toContain("The available skills have changed")
@@ -386,9 +418,16 @@ describe("SkillGuidance epoch delivery", () => {
 
         yield* rewrite(root, "my-skill", "new description", "new body")
         yield* publish(path.join(root, "my-skill", "SKILL.md"), "change")
-        yield* Effect.sleep("200 millis")
 
-        const second = yield* SessionContextEpoch.prepare(db, events, context, sessionID)
+        // Bounded poll: prepare is safe to retry while the debounced flush has
+        // not landed (it reads Unchanged and publishes nothing).
+        const prepareDeadline = Date.now() + 5_000
+        let second = yield* SessionContextEpoch.prepare(db, events, context, sessionID)
+        while (updates.length === 0 && Date.now() < prepareDeadline) {
+          yield* Effect.sleep("50 millis")
+          second = yield* SessionContextEpoch.prepare(db, events, context, sessionID)
+        }
+
         // The baseline is not rewritten — the change arrives as a separate
         // chronological ContextUpdated event, exactly as a session sees it.
         expect(second.baseline).toBe(first.baseline)

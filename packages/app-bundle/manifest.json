@@ -51,7 +51,7 @@
     "packages/core/test/session-prompt.test.ts": "2af05be037473266c7b38721abbf7f865a4dfe35c9e779282cb7f697ba0a2adc",
     "packages/core/test/session-runner-recorded.test.ts": "962301989a4a315379819bc3d4600d56c3e646b1a9390d02d01556578fc66adc",
     "packages/core/test/session-runner.test.ts": "4cf0d4e3989a32b0c693473d4f94bf787bd964e79b312a7ee0032305503edb20",
-    "packages/core/test/skill.test.ts": "10b7f352750c496d24dcff66804fbe127d2f6aa9456edd647d5406231e9b0a61",
+    "packages/core/test/skill.test.ts": "341bfbdc9b6a18b32f8370d0f13381bcec0c54ecf336465fe3b6b48b55fcfaad",
     "packages/core/test/tool-question.test.ts": "4df41393f15104a1d3a9c3d06e30cef515108490b41fcf4d9a7d9399fd4ed945",
     "packages/core/test/tool-skill.test.ts": "84bb1900c7e44d03d1a1e3397e069b4df1251fb6a0c77e6384106e20f9aecfc9",
     "packages/llm/src/cache-policy.ts": "04c1fb5d3d061cfa95d04e54df0a1c2cdaafac921224242446eaa2968bff7857",
@@ -1016,7 +1016,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-23T11:53:43.831Z",
+  "extracted_at": "2026-10-23T12:02:51.857Z",
   "per_package": {
     "packages/app": {
       "A": 254,
