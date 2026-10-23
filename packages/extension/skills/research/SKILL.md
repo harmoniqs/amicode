@@ -232,6 +232,16 @@ invariants; impossibility checks on noise denominators; FD sanity gates on deriv
 quantities; raw artifacts are the evidence, prose is not. Promotion of any result to
 catalog/status is human-only, always.
 
+**Every measured axis carries its own wiring gate** (2026-10, three measured instances:
+loop-3 playback-unwired, loop-6 detuning-axis-unwired, loop-10's S2-objective probe) — an
+unwired axis returns 0s (or a unit-slip returns ~0.5) and banks a wrong verdict with every
+other gate green. A spec whose axis lacks a positive wiring check (loader reproduction,
+monotonicity, a closed-form anchor cell) is an incomplete spec; critics reject on this
+class. Bonus idiom: a symmetric ±σ telegraph arm's MEAN equals the closed-form single-node
+cost exactly — a free wiring validator for detuning axes. Analyzer findings are verified by
+the director before being applied (2026-10, a factually-wrong receipts finding was caught);
+a critic's arithmetic is never trusted over the test file's machine-pinned literals.
+
 ## Failure modes to watch
 
 - **The thin brief** — a subagent with a fresh context and a vague brief rediscovers
@@ -242,3 +252,12 @@ catalog/status is human-only, always.
   that's an open loop in §5, never an outcome in §2.
 - **Summary drift** — after each compaction, the audit in §9 is the check that the summary
   still points HERE rather than becoming a competing source of truth.
+- **The silent no-op edit** — programmatic edits that report success but never matched
+  (six measured instances, 2026-10): every edit asserts its pattern and grep-verifies the
+  critical line; before `git add -A`, inspect status and account for every path (silent
+  subagent failures leave partial state that a blind add commits); after multi-edit
+  confusion, rewrite clean and let git arbitrate.
+- **Unattended runs** — plain `nohup` backgrounds die at tool-call exit in sandboxed
+  harnesses; `setsid` survives (measured both ways). Chain unattended cells through a
+  driver script; commit the state to the ledger BEFORE the night starts so any compaction
+  is safe.
