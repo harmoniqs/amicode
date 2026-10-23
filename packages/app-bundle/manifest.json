@@ -1013,7 +1013,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-23T13:24:06.506Z",
+  "extracted_at": "2026-10-23T13:24:11.640Z",
   "per_package": {
     "packages/app": {
       "A": 254,
