@@ -117,7 +117,7 @@ export interface AmicodeServiceRunnerOptions {
    *  writes the handshake record after the engine is healthy AND the service is
    *  up, and removes it on shutdown (BEFORE killing the engine — order matters:
    *  the extension must not read a handshake for a dying engine). The handshake
-   *  carries the UNARMED_PASSWORD sentinel (the hub engine is unarmed, so the
+   *  carries the UNARMED_SENTINEL sentinel (the hub engine is unarmed, so the
    *  password challenge is vacuously true). Default: undefined (no handshake —
    *  backward compatible, same pattern as pidFile). */
   handshakePath?: string;

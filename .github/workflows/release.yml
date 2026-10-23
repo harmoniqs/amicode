@@ -138,7 +138,7 @@ jobs:
         run: |
           FAILED=0
           for V in packages/extension/amicode-linux-x64.vsix packages/extension/amicode-linux-arm64.vsix packages/extension/amicode-darwin-arm64.vsix packages/extension/amicode-win32-x64.vsix packages/extension/amicode-win32-arm64.vsix packages/extension/amicode-darwin-x64.vsix; do
-            OUTPUT=$(npx --yes @vscode/vsce publish --packagePath "$V" 2>&1) && { echo "$OUTPUT"; continue; }
+            OUTPUT=$(npx --yes --package @vscode/vsce vsce publish --packagePath "$V" 2>&1) && { echo "$OUTPUT"; continue; }
             echo "$OUTPUT"
             echo "$OUTPUT" | grep -q "already exists" || FAILED=1
           done
