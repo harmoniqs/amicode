@@ -43,6 +43,7 @@
     "packages/core/src/question.ts": "11da591147ec49834ab9c1babea2dddbdcd3181d9bd7da0980eede5b87459411",
     "packages/core/src/runtime-state.ts": "3ef37e03f51b777f3c96ae12a3c855ef5e8a9f3342f697d70935e48bb7cdceaa",
     "packages/core/src/session.ts": "c4147b433b07f62439054ac3367c4780d203a08f9fa0fcd691e1be653e4794b6",
+    "packages/core/src/skill.ts": "72356ecd567ab4c90b4f3b7d54710d78d6cd577401c3a0154b0270487a1f54cb",
     "packages/core/test/database-migration.test.ts": "e5ffa9b36028a8bf31ae7d3eac7fe34fb0566a609325c8dc29e59021d5ee0b1a",
     "packages/core/test/location-mutation.test.ts": "2c4c8faa220cc8fabfe12d57bd74ec8dd8aac8485d0ecafd2761cdee1806d6b0",
     "packages/core/test/runtime-state.test.ts": "e532a5aa2d91a9b8bb8ca3b78a5d29644e5d43532c9de133d96e464729e28986",
@@ -50,7 +51,9 @@
     "packages/core/test/session-prompt.test.ts": "2af05be037473266c7b38721abbf7f865a4dfe35c9e779282cb7f697ba0a2adc",
     "packages/core/test/session-runner-recorded.test.ts": "962301989a4a315379819bc3d4600d56c3e646b1a9390d02d01556578fc66adc",
     "packages/core/test/session-runner.test.ts": "4cf0d4e3989a32b0c693473d4f94bf787bd964e79b312a7ee0032305503edb20",
+    "packages/core/test/skill.test.ts": "10b7f352750c496d24dcff66804fbe127d2f6aa9456edd647d5406231e9b0a61",
     "packages/core/test/tool-question.test.ts": "4df41393f15104a1d3a9c3d06e30cef515108490b41fcf4d9a7d9399fd4ed945",
+    "packages/core/test/tool-skill.test.ts": "84bb1900c7e44d03d1a1e3397e069b4df1251fb6a0c77e6384106e20f9aecfc9",
     "packages/llm/src/cache-policy.ts": "04c1fb5d3d061cfa95d04e54df0a1c2cdaafac921224242446eaa2968bff7857",
     "packages/llm/test/cache-policy.test.ts": "e921095c4301440c786105063439e49b2fedbaf6d46f30457e0a96388d268f4b",
     "packages/opencode/script/build.ts": "876e7d569aa71ce060c1d4b24c96e9bf13245cbf4ca743828d645560a95aa641",
@@ -332,6 +335,7 @@
     "packages/core/src/tool/grep.ts": "db323a91b27727abcee372bf5403f322458ce456c9b581d4f905ab241bea6dd6",
     "packages/core/src/tool/question.ts": "9b32d02d3d8e18adaeb86a2b344fff0a21fff1955fcacf91b4c79f93c93fd28f",
     "packages/core/src/tool/read.ts": "ceb37f787cc78a9973dec7c0f8c5fd647baeac979619741d0ff15167e13c6f29",
+    "packages/core/src/tool/skill.ts": "0845481fd45c3a40200a5e9ebeea4c5b8c1356c6400f9f79bb040c52380fe4a5",
     "packages/core/src/tool/webfetch.ts": "904846f51dbee2579a36c4856efbfe1442d4ce6a31d6a280cc387c390fd22bef",
     "packages/core/src/tool/websearch.ts": "bd0502eeb9d6deeea975a21a592040b5b48abd6f2613e39dd6cfbd1a959c950a",
     "packages/core/src/tool/write.ts": "4759d89e4b6cd5fa7d7de4ba091d2bf859d830cb15038828a15751c80fd9b0ec",
@@ -382,6 +386,7 @@
     "packages/opencode/src/session/system.ts": "b8708f3e63386e08041368e6dfa887f250bc6a7543ca396bb8b838041e8aeb19",
     "packages/opencode/src/session/turn-output.ts": "889624ca54a8149d35f200c7efa732771dfca36984e8a322a9781b1a25434762",
     "packages/opencode/src/session/user-mutation.ts": "8f8cebe1370a8a54361c546fb6777ee4fbdd47d0dec1ef870305ce5dbe232208",
+    "packages/opencode/src/skill/index.ts": "418b2baadddfa780e2f6964a3dc6f8907ecf63f86e076c175797e24a1b200981",
     "packages/opencode/src/snapshot/index.ts": "4d76a78c48597bda2379e2c3396f4a53828b21c6ce03e1975d2911150822c6de",
     "packages/opencode/src/tool/apply_patch.ts": "37535a783d115ac2032def7a28cce56e304f4e7c75d3ecac05b9a37054ae5b4f",
     "packages/opencode/src/tool/edit.ts": "38aa4ce0751ff99bbb0807bcda52f8b9a1d32b6e342df4cc2aedab1f03d342b1",
@@ -1011,7 +1016,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-22T13:11:47.632Z",
+  "extracted_at": "2026-10-23T11:53:20.281Z",
   "per_package": {
     "packages/app": {
       "A": 254,
@@ -1020,7 +1025,7 @@
     },
     "packages/core": {
       "A": 18,
-      "M": 47,
+      "M": 51,
       "D": 0
     },
     "packages/llm": {
@@ -1030,7 +1035,7 @@
     },
     "packages/opencode": {
       "A": 98,
-      "M": 98,
+      "M": 99,
       "D": 0
     },
     "packages/schema": {
@@ -1060,7 +1065,7 @@
     }
   },
   "counts": {
-    "overlay_total": 989,
+    "overlay_total": 994,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1100,6 +1105,7 @@
     "packages/core/src/question.ts": "M",
     "packages/core/src/runtime-state.ts": "A",
     "packages/core/src/session.ts": "M",
+    "packages/core/src/skill.ts": "M",
     "packages/core/test/database-migration.test.ts": "M",
     "packages/core/test/location-mutation.test.ts": "M",
     "packages/core/test/runtime-state.test.ts": "A",
@@ -1107,7 +1113,9 @@
     "packages/core/test/session-prompt.test.ts": "M",
     "packages/core/test/session-runner-recorded.test.ts": "M",
     "packages/core/test/session-runner.test.ts": "M",
+    "packages/core/test/skill.test.ts": "M",
     "packages/core/test/tool-question.test.ts": "M",
+    "packages/core/test/tool-skill.test.ts": "M",
     "packages/llm/src/cache-policy.ts": "M",
     "packages/llm/test/cache-policy.test.ts": "M",
     "packages/opencode/script/build.ts": "M",
@@ -1389,6 +1397,7 @@
     "packages/core/src/tool/grep.ts": "M",
     "packages/core/src/tool/question.ts": "M",
     "packages/core/src/tool/read.ts": "M",
+    "packages/core/src/tool/skill.ts": "M",
     "packages/core/src/tool/webfetch.ts": "M",
     "packages/core/src/tool/websearch.ts": "M",
     "packages/core/src/tool/write.ts": "M",
@@ -1439,6 +1448,7 @@
     "packages/opencode/src/session/system.ts": "M",
     "packages/opencode/src/session/turn-output.ts": "A",
     "packages/opencode/src/session/user-mutation.ts": "A",
+    "packages/opencode/src/skill/index.ts": "M",
     "packages/opencode/src/snapshot/index.ts": "M",
     "packages/opencode/src/tool/apply_patch.ts": "M",
     "packages/opencode/src/tool/edit.ts": "M",
