@@ -36,7 +36,7 @@ import { serverAuthHeader, serverAuthToken } from "../src/server_auth";
 import {
   readHandshake,
   classifyGate,
-  UNARMED_PASSWORD,
+  UNARMED_SENTINEL,
   PROTOCOL_VERSION,
 } from "../src/server_handshake";
 
@@ -872,7 +872,7 @@ createServer((_req, res) => {
     return dir;
   }
 
-  it("AC1: on boot, the handshake file exists and contains port, password (UNARMED_PASSWORD), and dbPath", async () => {
+  it("AC1: on boot, the handshake file exists and contains port, password (UNARMED_SENTINEL), and dbPath", async () => {
     const dir = mkdtempSync(join(tmpdir(), "amicode-runner-handshake-write-"));
     const hsPath = join(dir, "handshake.json");
     const dbPath = "/tmp/fake-db.db";
@@ -896,7 +896,7 @@ createServer((_req, res) => {
 
     // The record must carry the right fields.
     expect(result.record.port).toBeGreaterThan(0);
-    expect(result.record.password).toBe(UNARMED_PASSWORD);
+    expect(result.record.password).toBe(UNARMED_SENTINEL);
     expect(result.record.dbPath).toBe(dbPath);
     expect(result.record.pid).toBe(boot.engine.pid);
     expect(result.record.protocolVersion).toBe(PROTOCOL_VERSION);

@@ -10,7 +10,7 @@ import {
   adoptOrSpawn,
   buildLiveDeps,
 } from "../src/server_lifecycle";
-import { coldSpawnHandshakeHook, readHandshake, writeHandshake, writeHubHandshake, UNARMED_PASSWORD, PROTOCOL_VERSION } from "../src/server_handshake";
+import { coldSpawnHandshakeHook, readHandshake, writeHandshake, writeHubHandshake, UNARMED_SENTINEL, PROTOCOL_VERSION } from "../src/server_handshake";
 import { serverAuthHeader } from "../src/server_auth";
 import { windowModeFromRemoteName } from "../src/fleet_window_mode_state";
 import { divertToFleetRelay, type FleetTopologyState } from "../src/fleet_topology";
@@ -291,7 +291,7 @@ async function startUnarmedHub(): Promise<{ port: number; close: () => Promise<v
   return { port, close: () => new Promise<void>((resolve) => server.close(() => resolve())) };
 }
 
-/** Sentinel password for the unarmed hub engine — matches UNARMED_PASSWORD
+/** Sentinel password for the unarmed hub engine — matches UNARMED_SENTINEL
  *  from server_handshake.ts (imported above). */
 
 /** Plant a hub-style handshake (unarmed sentinel password, current protocol). */
@@ -306,7 +306,7 @@ function plantHubHandshake(
       port,
       pid: overrides.pid ?? process.pid,
       startedAt: new Date().toISOString(),
-      password: UNARMED_PASSWORD,
+      password: UNARMED_SENTINEL,
       binaryHash: "hub-bin",
       configHash: "hub-cfg",
       protocolVersion: overrides.protocolVersion,
@@ -410,7 +410,7 @@ describe("#1576 hub engine adoption — editor adopts the hub, no rival engine",
     if (hs.status !== "ok") return;
     expect(hs.record.port).toBe(12345);
     expect(hs.record.pid).toBe(999);
-    expect(hs.record.password).toBe(UNARMED_PASSWORD);
+    expect(hs.record.password).toBe(UNARMED_SENTINEL);
     expect(hs.record.protocolVersion).toBe(PROTOCOL_VERSION);
     expect(hs.record.dbPath).toBe(DB);
   });
