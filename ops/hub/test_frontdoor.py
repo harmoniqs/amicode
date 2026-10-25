@@ -2345,5 +2345,52 @@ class TestSourceSideSequencing(RouterTest):
                                 "the surviving member must keep receiving (no wedged lock)")
 
 
+
+class TestResumeDechunk(unittest.TestCase):
+    """The resume path de-chunks the engine's chunked SSE body across
+    arbitrary read boundaries (83cd8afc follow-up). Group._dechunk is pulled
+    from the module source by AST — importing the module starts a server."""
+
+    @classmethod
+    def setUpClass(cls):
+        import ast, textwrap
+        src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "hub-frontdoor.py")).read()
+        for node in ast.walk(ast.parse(src)):
+            if isinstance(node, ast.FunctionDef) and node.name == "_dechunk" and node.args.args and node.args.args[0].arg == "buf":
+                ns = {}
+                exec(textwrap.dedent(ast.get_source_segment(src, node)), ns)
+                cls.dechunk = staticmethod(ns["_dechunk"])
+                return
+        raise AssertionError("Group._dechunk not found")
+
+    @staticmethod
+    def chunked(*payloads):
+        return b"".join(b"%x\r\n%s\r\n" % (len(p), p) for p in payloads)
+
+    def feed(self, wire, cut):
+        st = {"mode": "size", "size": 0}
+        out, pend = b"", b""
+        for i in range(0, len(wire), cut):
+            o, pend = self.dechunk(pend + wire[i:i + cut], st)
+            out += o
+        return out, pend
+
+    def test_every_read_boundary_yields_the_exact_body(self):
+        frames = [b"id: 1\ndata: {\"a\":1}\n\n", b"id: 2\ndata: " + b"x" * 300 + b"\n\n", b": hb\n\n"]
+        wire = self.chunked(*frames)
+        for cut in range(1, len(wire) + 1):
+            out, _ = self.feed(wire, cut)
+            self.assertEqual(out, b"".join(frames), "read size %d" % cut)
+
+    def test_a_split_size_line_is_carried_not_dropped(self):
+        wire = self.chunked(b"data: one\n\n", b"data: two\n\n")
+        cut = wire.index(b"\r\n", 5) + 3  # inside the second chunk's size line
+        st = {"mode": "size", "size": 0}
+        a, pend = self.dechunk(wire[:cut], st)
+        self.assertEqual(a, b"data: one\n\n")
+        self.assertTrue(pend, "the partial size line must come back as the pending tail")
+        b, _ = self.dechunk(pend + wire[cut:], st)
+        self.assertEqual(b, b"data: two\n\n")
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
