@@ -202,8 +202,8 @@
     "packages/app/src/context/server-sdk.tsx": "9dc721c54074a323fb879aedf76cf29c1888088ab6b9b0c68aae683ca4f563f1",
     "packages/app/src/context/server-session-child-active.test.ts": "de8c467f67f88b6cce351c1805ec90728cf238eb1ef32f39ffdbbf3de4dcec22",
     "packages/app/src/context/server-session-orphan-part.test.ts": "1d635374c0bfff25a01825061aabac7334e5cdaedca2dab9f3d9467ff543caea",
-    "packages/app/src/context/server-session.test.ts": "31b14c85a843eb172899f456566ad7ab7d07a22eaf8b31d29a22e255e95cb96b",
-    "packages/app/src/context/server-session.ts": "9fbb312e7183ca0f1266ee13b59fb8545a64a8e9539645790c8969e7bdf4053b",
+    "packages/app/src/context/server-session.test.ts": "b332098635885211bccaec0d7da8ca6b60696b04bd3f89ba3fcd97cd4c881856",
+    "packages/app/src/context/server-session.ts": "ad486fc5d36f93f5f53d51b70fdf191a3008b67f2b280dfc58b64e6d8d20982d",
     "packages/app/src/context/server-sync.tsx": "55ac830560ddd947b5d58a9c496a4e94ffc63fd7241c74ba9b843aea724b74ce",
     "packages/app/src/context/server.tsx": "08e978e4b4b3094221a2a0b92e069f39cbedb6d6cf95935881e21cde52265ee2",
     "packages/app/src/context/session-mirror.test.ts": "65e6d6474e4e67f2da194047140c8c8aac04fe0cc9926441468e53fabc48db96",
@@ -1016,7 +1016,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-25T13:26:45.953Z",
+  "extracted_at": "2026-10-25T13:30:07.394Z",
   "per_package": {
     "packages/app": {
       "A": 254,
