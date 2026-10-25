@@ -32,6 +32,8 @@ import type { PreviewViewState } from "@opencode-ai/session-ui/v2/preview-view-s
 import { PdfCanvasView } from "./pdf-canvas-view"
 import { toAbsolutePath, shouldApplyWatcherRead } from "./preview-file-helpers"
 import { validateHumanWritePath } from "./preview-human-write-gate"
+import { splitFrontmatter } from "./preview-frontmatter"
+import { FrontmatterCard } from "./preview-frontmatter-card"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -813,7 +815,17 @@ export function PreviewFileView(props: {
                   class="p-4 origin-top-left [&_.katex-display]:overflow-x-auto [&_.katex-display]:overflow-y-hidden [&_.katex-display]:max-w-full [&_.katex]:text-[0.9em]"
                   style={{ transform: `scale(${props.zoom() / 100})`, width: `${10000 / props.zoom()}%` }}
                 >
-                  <Markdown text={preprocessMarkdown(fileContent())} class="text-12-regular" />
+                  {(() => {
+                    // front matter renders as a properties card, not as a
+                    // rule + a giant setext heading (marked has no YAML support)
+                    const split = createMemo(() => splitFrontmatter(fileContent()))
+                    return (
+                      <>
+                        <Show when={split().frontmatter}>{(fm) => <FrontmatterCard frontmatter={fm()} />}</Show>
+                        <Markdown text={preprocessMarkdown(split().body)} class="text-12-regular" />
+                      </>
+                    )
+                  })()}
                 </div>
               </Show>
             </Match>
