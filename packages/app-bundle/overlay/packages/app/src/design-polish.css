@@ -392,22 +392,47 @@ body[data-new-layout]
    still at full opacity (the global reset would otherwise spin an infinite
    0.01ms loop, which flickers). */
 /* The dot stays fully coloured (fading to 35% read as grey/black half the
-   time); the motion is a same-colour halo ring expanding off the dot. */
+   time); the motion is a same-colour ring expanding off the dot. The ring is a
+   ::after that inherits the dot's background, animated with plain transform +
+   opacity only (a color-mix(var()) box-shadow keyframe was emptied by the CSS
+   minifier, so the dot never moved). */
 .amc-activity-pulse {
-  animation: amc-activity-pulse 1.4s ease-out infinite;
+  position: relative;
 }
-@keyframes amc-activity-pulse {
+.amc-activity-pulse::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: inherit;
+  pointer-events: none;
+  animation: amc-activity-ring 1.4s ease-out infinite;
+}
+@keyframes amc-activity-ring {
   0% {
-    box-shadow: 0 0 0 0 color-mix(in srgb, var(--amc-pulse-color, var(--activity-running)) 60%, transparent);
+    transform: scale(1);
+    opacity: 0.7;
   }
-  75%,
+  80%,
   100% {
-    box-shadow: 0 0 0 4px color-mix(in srgb, var(--amc-pulse-color, var(--activity-running)) 0%, transparent);
+    transform: scale(2.6);
+    opacity: 0;
+  }
+}
+/* the neutral-ink breathe (solver switch) */
+@keyframes amc-activity-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .amc-activity-pulse {
+  .amc-activity-pulse::after {
     animation: none !important;
+    display: none;
   }
 }
 
@@ -725,8 +750,7 @@ span[data-component="tag"][data-variant="accent"] {
   height: 6px;
   border-radius: var(--radius-full);
   background: currentColor;
-  --amc-pulse-color: currentColor;
-  animation: amc-activity-pulse 1.4s ease-out infinite;
+  animation: amc-activity-pulse 1.2s ease-in-out infinite;
 }
 [data-component="amicode-solver-switch"][data-phase="ready"] > i {
   animation: none;
