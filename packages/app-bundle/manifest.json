@@ -25,7 +25,7 @@
     "packages/app/public/oc-theme-preload.js": "27227e802b3494e7c545da903e679efdb30ccc754cd4eb5cdf08005a40d560b6",
     "packages/app/src/app-desktop-commands.test.ts": "1d2057f238dc14e4407ff5c4e53afe091784790bc0fd0dbfde0eacd91e2bd968",
     "packages/app/src/app.tsx": "6fe2c1136330b0b76beb10b15c0ca9df2c62877c98ba3eb4cb91844125916a82",
-    "packages/app/src/design-polish.css": "eadd8df5263f6f9a85355e8752502004044ea2d95253ddbf09e5a0965451ef38",
+    "packages/app/src/design-polish.css": "c828aef1f068607de6d9bb057682c8be60ca0b0d7e844b33980ebee90ffe8eca",
     "packages/app/src/desktop-menu.ts": "350e0e9f2e4294bfe1b1f357b3cd2ea0908b14d20ca1e79fda2305db1958fb24",
     "packages/app/src/entry.tsx": "f35e1017f4c9d478d254b2a38043e5750064b6bef25169c3e07ae9f72ff1049c",
     "packages/app/src/index.css": "2c11df3dcebb381358e06626094b5dda3c35688ad7940d643b2cbb6cff1ea9e9",
@@ -1024,7 +1024,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-25T14:54:33.760Z",
+  "extracted_at": "2026-10-25T15:04:53.975Z",
   "per_package": {
     "packages/app": {
       "A": 254,

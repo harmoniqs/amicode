@@ -356,14 +356,16 @@ body[data-new-layout]
 :root,
 [data-color-scheme="light"] {
   --activity-idle: var(--v2-icon-icon-muted);
-  --activity-running: var(--v2-state-border-info);
+  /* a bright, saturated blue: the theme's border-info (#3250df) is deep enough
+     to read as black at dot size on white */
+  --activity-running: #0a84ff;
   --activity-attention: #d97706;
   --activity-success: var(--v2-state-border-success);
   --activity-error: var(--v2-state-border-danger);
 }
 [data-color-scheme="dark"] {
   --activity-idle: var(--v2-icon-icon-muted);
-  --activity-running: var(--v2-state-fg-info);
+  --activity-running: #4da3ff;
   --activity-attention: #fbbf24;
   --activity-success: var(--v2-state-fg-success);
   --activity-error: var(--v2-state-fg-danger);
@@ -371,7 +373,7 @@ body[data-new-layout]
 @media (prefers-color-scheme: dark) {
   :root:not([data-color-scheme="light"]) {
     --activity-idle: var(--v2-icon-icon-muted);
-    --activity-running: var(--v2-state-fg-info);
+    --activity-running: #4da3ff;
     --activity-attention: #fbbf24;
     --activity-success: var(--v2-state-fg-success);
     --activity-error: var(--v2-state-fg-danger);
@@ -389,16 +391,18 @@ body[data-new-layout]
    breathes with this — no per-surface keyframes. Under reduced motion it holds
    still at full opacity (the global reset would otherwise spin an infinite
    0.01ms loop, which flickers). */
+/* The dot stays fully coloured (fading to 35% read as grey/black half the
+   time); the motion is a same-colour halo ring expanding off the dot. */
 .amc-activity-pulse {
-  animation: amc-activity-pulse 1.2s ease-in-out infinite;
+  animation: amc-activity-pulse 1.4s ease-out infinite;
 }
 @keyframes amc-activity-pulse {
-  0%,
-  100% {
-    opacity: 0.35;
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--amc-pulse-color, var(--activity-running)) 60%, transparent);
   }
-  50% {
-    opacity: 1;
+  75%,
+  100% {
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--amc-pulse-color, var(--activity-running)) 0%, transparent);
   }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -721,7 +725,8 @@ span[data-component="tag"][data-variant="accent"] {
   height: 6px;
   border-radius: var(--radius-full);
   background: currentColor;
-  animation: amc-activity-pulse 1.2s ease-in-out infinite;
+  --amc-pulse-color: currentColor;
+  animation: amc-activity-pulse 1.4s ease-out infinite;
 }
 [data-component="amicode-solver-switch"][data-phase="ready"] > i {
   animation: none;
