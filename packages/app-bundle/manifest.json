@@ -450,6 +450,7 @@
     "packages/opencode/test/server/session-diff-missing-patch.test.ts": "70526ca7fb86741843fd167f8f2f9c6f6d7e5e415a20a5448d17d24229bdd65b",
     "packages/opencode/test/server/session-diff-scoped.test.ts": "20ef80b92ad872573b371540575f028be8f1ad3c9f34d72f814b621e14e7a59e",
     "packages/opencode/test/server/sse-tick-telemetry.test.ts": "95738379df27d2da236f968a3d197cf27bcce17e8ec8ce1d288d4d2c1184d8ee",
+    "packages/opencode/test/server/stdout-channel.test.ts": "812080bb29d09008dacf29741e8f6f06b4ac9fe4623e6992a046313597c3dd1c",
     "packages/opencode/test/server/summary-diff-wire.test.ts": "080236ce0a7985195a8f385ae65311d63dc18826439a9729c7c87ce4f55efd55",
     "packages/opencode/test/server/tcp-keepalive.test.ts": "e5c26de10fe44fd6485e0f75f667b2662f69896135f014b0b86772a6ca48fff5",
     "packages/opencode/test/server/workspace-routing.test.ts": "2574731ac379c540f450edc15f8750ac5360e8c33b4a0dad7c61e8eb686137bb",
@@ -994,7 +995,7 @@
     "packages/opencode/src/server/routes/instance/httpapi/handlers/event.ts": "88c7bae32fa01ab213e95cb4e4891fd3ccb961782e80a416e321c5daf90fb487",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/experimental.ts": "69ca3dd48d95157fc822e1f76eb42ac873df50f22616b85194619ca658613867",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/file.ts": "10bcb79b117beebee04184fb48c1ad789e782e2f7ae4b0c68603edc00f03aee9",
-    "packages/opencode/src/server/routes/instance/httpapi/handlers/global.ts": "a31e4d0abe4f76e667167c5017aca5559b53938db63bdc1d656a154e1aaf5fea",
+    "packages/opencode/src/server/routes/instance/httpapi/handlers/global.ts": "040554475b6ba22ad666dfeaca2576658854c46cd18efe3b2d68959f9eaaed80",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/mcp.ts": "7da08d58765cdf2b6ce4648fc70de371402949f5bb7b75696f674d43f2d5365b",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/provider.ts": "8baf16cad0992c5351b61b0c0fb27903bb25b17e1b25fc7c5d77f807c24413a6",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/session.ts": "b37ff4136c4aea85b23083bf441f03e09820e3e4cdd95e4118ca570d8435b94f",
@@ -1015,7 +1016,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-25T13:23:01.971Z",
+  "extracted_at": "2026-10-25T13:26:45.953Z",
   "per_package": {
     "packages/app": {
       "A": 254,
@@ -1033,7 +1034,7 @@
       "D": 0
     },
     "packages/opencode": {
-      "A": 98,
+      "A": 99,
       "M": 100,
       "D": 0
     },
@@ -1064,7 +1065,7 @@
     }
   },
   "counts": {
-    "overlay_total": 993,
+    "overlay_total": 994,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1511,6 +1512,7 @@
     "packages/opencode/test/server/session-diff-missing-patch.test.ts": "M",
     "packages/opencode/test/server/session-diff-scoped.test.ts": "A",
     "packages/opencode/test/server/sse-tick-telemetry.test.ts": "A",
+    "packages/opencode/test/server/stdout-channel.test.ts": "A",
     "packages/opencode/test/server/summary-diff-wire.test.ts": "A",
     "packages/opencode/test/server/tcp-keepalive.test.ts": "A",
     "packages/opencode/test/server/workspace-routing.test.ts": "M",
