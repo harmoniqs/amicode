@@ -2,6 +2,8 @@ import { For, Show, createEffect, createMemo, onCleanup, onMount } from "solid-j
 import { createStore, reconcile } from "solid-js/store"
 import { fetchAmicodeRunSeries } from "./ui-bridge"
 import { heroPaths, objectivePath } from "./run-plot"
+import { runActivity } from "./activity"
+import { ActivityDot } from "./activity-dot"
 import {
   type RunSeries,
   type RunSeriesView,
@@ -29,14 +31,6 @@ const PLOT_W = 100
 const PLOT_H = 34
 const SPARK_W = 40
 const SPARK_H = 14
-
-function statusColor(status: string): string {
-  if (status === "finished") return "var(--v2-state-fg-success)"
-  if (status === "failed" || status === "aborted") return "var(--v2-state-fg-danger)"
-  if (status === "stalled") return "var(--v2-state-fg-warning)" // wedged (OOM?) — not blue: must not read as live
-  if (status === "stopped") return "var(--v2-text-text-muted)" // deliberate user stop — calm, not alarming, not live
-  return "var(--v2-text-text-accent)" // solving
-}
 
 function Plot(props: { d: string[] | undefined }) {
   return (
@@ -173,7 +167,20 @@ export function RunWindow(props: { run: string; lab?: string }) {
         >
           {(r) => (
             <>
-              <span style={{ "font-weight": "600", color: statusColor(r().status), "flex-shrink": "0" }}>
+              {/* the dot carries the activity colour (blue solving, amber stalled,
+                  grey aborted/stopped); the word stays neutral ink so small
+                  status text keeps body contrast in both schemes */}
+              <span
+                style={{
+                  display: "inline-flex",
+                  "align-items": "center",
+                  gap: "4px",
+                  "font-weight": "600",
+                  color: "var(--v2-text-text-base)",
+                  "flex-shrink": "0",
+                }}
+              >
+                <ActivityDot activity={runActivity(r().status)} label={`Run ${r().status}`} />
                 {r().status}
               </span>
               <Show when={r().iteration !== null}>

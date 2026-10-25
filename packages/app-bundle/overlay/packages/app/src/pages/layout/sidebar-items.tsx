@@ -7,16 +7,16 @@ import { IconButton } from "@opencode-ai/ui/icon-button"
 import { Tooltip } from "@opencode-ai/ui/tooltip"
 import { getFilename } from "@opencode-ai/core/util/path"
 import { A, useParams } from "@solidjs/router"
-import { type Accessor, createMemo, For, type JSX, Match, Show, Switch } from "solid-js"
+import { type Accessor, createMemo, For, type JSX, Show } from "solid-js"
 import { useServerSync } from "@/context/server-sync"
 import { useLanguage } from "@/context/language"
 import { getAvatarColors, type LocalProject, useLayout } from "@/context/layout"
 import { useNotification } from "@/context/notification"
 import { usePermission } from "@/context/permission"
-import { messageAgentColor } from "@/utils/agent"
 import { sessionTitle } from "@/utils/session-title"
 import { sessionPermissionRequest } from "../session/composer/session-request-tree"
 import { childSessionOnPath, getProjectAvatarSource, hasProjectPermissions } from "./helpers"
+import { SESSION_TAB_TONE, StatusDot, sessionTabStatus } from "./session-tab-status"
 
 export const ProjectIcon = (props: {
   project: LocalProject
@@ -41,6 +41,17 @@ export const ProjectIcon = (props: {
     }),
   )
   const notify = createMemo(() => props.notify && (hasPermissions() || unseenCount() > 0))
+  const notifyTone = createMemo(
+    () =>
+      SESSION_TAB_TONE[
+        sessionTabStatus({
+          loading: false,
+          needsAttention: hasPermissions(),
+          hasError: hasError(),
+          unread: unseenCount() > 0,
+        })
+      ],
+  )
   const name = createMemo(() => props.project.name || getFilename(props.project.worktree))
 
   return (
@@ -56,16 +67,20 @@ export const ProjectIcon = (props: {
       </div>
       <Show when={notify()}>
         <div
-          classList={{
-            "absolute top-px right-px size-1.5 rounded-full z-10": true,
-            "bg-surface-warning-strong": hasPermissions(),
-            "bg-icon-critical-base": !hasPermissions() && hasError(),
-            "bg-text-interactive-base": !hasPermissions() && !hasError(),
-          }}
+          role="img"
+          aria-label={notifyTone().label}
+          title={notifyTone().label}
+          class="absolute top-px right-px size-1.5 rounded-full z-10"
+          style={{ background: notifyTone().color }}
         />
       </Show>
       <Show when={props.working}>
-        <div class="absolute bottom-px right-px size-3 rounded-full bg-background-base z-10 flex items-center justify-center">
+        <div
+          role="img"
+          aria-label={SESSION_TAB_TONE.running.label}
+          class="absolute bottom-px right-px size-3 rounded-full bg-background-base z-10 flex items-center justify-center"
+          style={{ color: "var(--activity-running)" }}
+        >
           <AmicoSpinner class="size-[9px]" />
         </div>
       </Show>
@@ -94,7 +109,6 @@ const SessionRow = (props: {
   slug: string
   mobile?: boolean
   dense?: boolean
-  tint: Accessor<string | undefined>
   isWorking: Accessor<boolean>
   hasPermissions: Accessor<boolean>
   hasError: Accessor<boolean>
@@ -105,6 +119,16 @@ const SessionRow = (props: {
   warmFocus: () => void
 }): JSX.Element => {
   const title = () => sessionTitle(props.session.title)
+  // Same derivation + precedence as the tab strip: error > attention > running > unread.
+  const status = createMemo(() =>
+    sessionTabStatus({
+      loading: props.isWorking(),
+      needsAttention: props.hasPermissions(),
+      hasError: props.hasError(),
+      unread: props.unseenCount() > 0,
+    }),
+  )
+  const tone = () => SESSION_TAB_TONE[status()]
 
   return (
     <A
@@ -117,25 +141,24 @@ const SessionRow = (props: {
         props.clearHoverProjectSoon()
       }}
     >
-      <Show when={props.isWorking() || props.hasPermissions() || props.hasError() || props.unseenCount() > 0}>
-        <div
-          class="shrink-0 size-6 flex items-center justify-center"
-          style={{ color: props.tint() ?? "var(--icon-interactive-base)" }}
-        >
-          <Switch>
-            <Match when={props.isWorking()}>
+      <Show when={status() !== "idle"}>
+        <div class="shrink-0 size-6 flex items-center justify-center">
+          <Show
+            when={status() === "running"}
+            fallback={<StatusDot color={tone().color} label={tone().label} status={status()} />}
+          >
+            {/* Status context: the working spinner takes the running colour, not
+                the agent identity tint (which includes diff red/green). */}
+            <span
+              role="img"
+              aria-label={tone().label}
+              title={tone().label}
+              class="inline-flex"
+              style={{ color: "var(--activity-running)" }}
+            >
               <AmicoSpinner class="size-[15px]" />
-            </Match>
-            <Match when={props.hasPermissions()}>
-              <div class="size-1.5 rounded-full bg-surface-warning-strong" />
-            </Match>
-            <Match when={props.hasError()}>
-              <div class="size-1.5 rounded-full bg-text-diff-delete-base" />
-            </Match>
-            <Match when={props.unseenCount() > 0}>
-              <div class="size-1.5 rounded-full bg-text-interactive-base" />
-            </Match>
-          </Switch>
+            </span>
+          </Show>
         </div>
       </Show>
       <span class="text-14-regular text-text-strong min-w-0 flex-1 truncate">{title()}</span>
@@ -168,9 +191,6 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
     return serverSync().session.data.session_working(props.session.id)
   })
 
-  const tint = createMemo(() =>
-    messageAgentColor(serverSync().session.data.message[props.session.id], sessionStore.agent),
-  )
   const tooltip = createMemo(() => props.showTooltip ?? (props.mobile || !props.sidebarExpanded()))
   const currentChild = createMemo(() => {
     if (!props.showChild) return
@@ -203,7 +223,6 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
       slug={props.slug}
       mobile={props.mobile}
       dense={props.dense}
-      tint={tint}
       isWorking={isWorking}
       hasPermissions={hasPermissions}
       hasError={hasError}

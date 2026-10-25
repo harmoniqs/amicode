@@ -101,7 +101,9 @@ const WorkspaceHeader = (props: {
   <div class="flex items-center gap-1 min-w-0 flex-1">
     <div class="flex items-center justify-center shrink-0 size-6">
       <Show when={props.busy()} fallback={<Icon name="branch" size="small" />}>
-        <AmicoSpinner class="size-[15px]" />
+        <span role="img" aria-label="Working" class="inline-flex" style={{ color: "var(--activity-running)" }}>
+          <AmicoSpinner class="size-[15px]" />
+        </span>
       </Show>
     </div>
     <span class="text-14-medium text-text-base shrink-0">
