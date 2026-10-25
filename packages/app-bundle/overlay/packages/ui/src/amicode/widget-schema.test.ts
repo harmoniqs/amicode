@@ -27,6 +27,17 @@ describe("parseWidgetsResponse", () => {
     expect("junk" in widgets[0].config).toBe(false)
     expect("bad" in widgets[0].config).toBe(false)
   })
+  test("sticky rides the wire; absent or malformed → false (#1856)", () => {
+    const widgets = parseWidgetsResponse({
+      ok: true,
+      widgets: [
+        { id: "live", name: "Live", sticky: true },
+        { id: "plain", name: "Plain" },
+        { id: "odd", name: "Odd", sticky: "true" },
+      ],
+    })
+    expect(widgets.map((w) => w.sticky)).toEqual([true, false, false])
+  })
   test("garbage → empty", () => {
     expect(parseWidgetsResponse(undefined)).toEqual([])
     expect(parseWidgetsResponse({ ok: false })).toEqual([])

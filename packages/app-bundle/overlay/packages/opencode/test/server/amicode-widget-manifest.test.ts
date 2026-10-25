@@ -75,6 +75,14 @@ describe("parseManifest", () => {
     expect(m.bridge).toBe(2)
   })
 
+  test("sticky = true parses; absent or malformed defaults to false (never rejects) (#1856)", () => {
+    expect(parsed('id = "a"\nname = "A"\nsticky = true', "a").sticky).toBe(true)
+    expect(parsed('id = "a"\nname = "A"\nsticky = false', "a").sticky).toBe(false)
+    expect(parsed('id = "a"\nname = "A"', "a").sticky).toBe(false)
+    expect(parsed('id = "a"\nname = "A"\nsticky = "yes"', "a").sticky).toBe(false)
+    expect(parsed('id = "a"\nname = "A"\nsticky = 1', "a").sticky).toBe(false)
+  })
+
   test("select without options rejected; unknown field type rejected", () => {
     expect(parseManifest('id = "a"\nname = "A"\n[config.x]\ntype = "select"\ndefault = "p"', "a").ok).toBe(false)
     expect(parseManifest('id = "a"\nname = "A"\n[config.x]\ntype = "wat"', "a").ok).toBe(false)

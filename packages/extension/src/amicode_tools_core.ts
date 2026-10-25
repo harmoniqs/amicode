@@ -563,6 +563,12 @@ export const AMICODE_TOOLS: Record<string, AmicodeToolDef> = {
           type: "number",
           description: "resting pixel height (40..2000); the frame grows to content",
         },
+        sticky: {
+          type: ["boolean", "null"],
+          description:
+            "optional; true = when the card scrolls out of view on home, dock it at the top as a slim ~64px strip " +
+            "(the widget receives density 'tight' while docked). Use for live/streaming widgets. Null for not sticky.",
+        },
         description: {
           type: ["string", "null"],
           description: "one-line description of the widget. Null for none.",
@@ -577,6 +583,7 @@ export const AMICODE_TOOLS: Record<string, AmicodeToolDef> = {
         name: string;
         size: string;
         height: number;
+        sticky?: boolean | null;
         description?: string | null;
         js: string;
       }) {
@@ -588,6 +595,7 @@ export const AMICODE_TOOLS: Record<string, AmicodeToolDef> = {
           name: a.name,
           size: a.size,
           height: a.height,
+          sticky: a.sticky ?? undefined,
           description: a.description ?? undefined,
           js: a.js,
         });

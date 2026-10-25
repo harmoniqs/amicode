@@ -11,6 +11,7 @@ import { WidgetFrame, type WidgetHostCallbacks } from "./widget-frame"
 import { WidgetConfigForm } from "./widget-config-form"
 import { formModel, type DashboardEntry, type DashboardState, type WidgetInfo } from "./widget-schema"
 import type { Density } from "./widget-tokens"
+import { DOCK_STRIP_HEIGHT, dockDensity, dockedKey, slotAboveRoot } from "./widget-dock"
 
 // AMICODE (widget kernel): the dashboard — replaces the hardcoded
 // AmicodeHomeCards strip. Renders the state's visible entries as sandboxed
@@ -28,6 +29,11 @@ import type { Density } from "./widget-tokens"
 // every save (props.onSave → app POST, merged echo fed back) remounts each
 // widget iframe. Move and Add are SEPARATE modes (Kate): Move never shows the
 // tray, Add never makes cards draggable; a per-mode banner orients + Done exits.
+// Sticky docking (#1856, `dock` surfaces only — the home dashboard): a
+// `sticky = true` widget whose slot scrolls out above the scroll root docks as
+// a slim strip at the top. The decision is pure (widget-dock.ts); docking
+// RESTYLES the same framewrap in place (position: fixed) — the iframe never
+// changes DOM parent, so it never reloads and the widget keeps its state.
 
 type Bucket = "hero" | "tile"
 
@@ -43,6 +49,8 @@ export function WidgetGrid(props: {
   /** hands off to the chat with a prefilled "create a widget" prompt —
    *  authoring is a conversation (amicode_author_widget), not a form */
   onNewWidget?: () => void
+  /** #1856: dock sticky widgets as a strip when scrolled out of view (home only) */
+  dock?: boolean
 }) {
   // Grid mode (Kate 2026-07-15: SEPARATE surfaces) — "move" is drag-only
   // (scrim + ring + sortables, no tray); "add" is the tray only (cards stay
@@ -55,6 +63,8 @@ export function WidgetGrid(props: {
   // per-card ⋯ menu (customize rethink, Kate 2026-07-15): at most one open,
   // keyed by entry. Editing is initiated FROM a card, not a standing button.
   const [menuOpen, setMenuOpen] = createSignal<string | undefined>(undefined)
+  // entry key → its slot has scrolled out above the scroll root (sticky cells only)
+  const [outOfView, setOutOfView] = createSignal<Record<string, boolean>>({})
 
   const infoFor = (id: string) => props.widgets.find((w) => w.id === id)
   const bucketOf = (id: string): Bucket => (infoFor(id)?.size === "hero" ? "hero" : "tile")
@@ -62,6 +72,19 @@ export function WidgetGrid(props: {
   const hidden = createMemo(() => props.dashboard.widget.filter((e) => e.hidden))
   const heroes = createMemo(() => visible().filter((e) => bucketOf(e.id) === "hero"))
   const tiles = createMemo(() => visible().filter((e) => bucketOf(e.id) === "tile"))
+  const docked = createMemo(() =>
+    dockedKey({
+      enabled: props.dock === true,
+      mode: mode(),
+      entries: props.dashboard.widget.map((e) => ({
+        key: e.key,
+        sticky: infoFor(e.id)?.sticky === true,
+        hidden: e.hidden,
+        empty: empties()[e.key] === true,
+        outOfView: outOfView()[e.key] === true,
+      })),
+    }),
+  )
 
   const save = (mutate: (entries: DashboardEntry[]) => DashboardEntry[]) => {
     // spread first: reserved top-level keys (views, scope — spec T3.6) survive
@@ -290,13 +313,64 @@ export function WidgetGrid(props: {
     // so emptiness is never inferred from height — it's an explicit signal).
     const collapsed = createMemo(() => !moving() && (!info() || empty()))
 
+    // #1856 docking — the cell is the SLOT (observed, and it holds its height
+    // while docked so nothing below jumps); the framewrap is what docks.
+    let slot: HTMLDivElement | undefined
+    const isDocked = createMemo(() => docked() === p.entry.key)
+    // memo'd boolean: a registry refetch (new info object) must not reconnect
+    // the observer — that would flicker a docked strip out and back in
+    const sticky = createMemo(() => info()?.sticky === true)
+    const [dockBox, setDockBox] = createSignal<{ top: number; left: number; width: number; slot: number }>()
+    createEffect(() => {
+      if (props.dock !== true || !sticky() || !slot) return
+      const el = slot
+      const key = p.entry.key
+      const io = new IntersectionObserver(
+        (records) => {
+          const last = records[records.length - 1]
+          if (last) setOutOfView((prev) => ({ ...prev, [key]: slotAboveRoot(last) }))
+        },
+        { root: scrollRoot(el) },
+      )
+      io.observe(el)
+      onCleanup(() => {
+        io.disconnect()
+        setOutOfView((prev) => ({ ...prev, [key]: false }))
+      })
+    })
+    createEffect(() => {
+      if (!isDocked() || !slot) {
+        setDockBox(undefined)
+        return
+      }
+      const el = slot
+      const measure = () => {
+        const root = scrollRoot(el)
+        const grid = (el.closest(".amc-wg-grid") ?? el).getBoundingClientRect()
+        setDockBox({
+          top: root ? root.getBoundingClientRect().top : 0,
+          left: grid.left,
+          width: grid.width,
+          slot: el.getBoundingClientRect().height,
+        })
+      }
+      measure()
+      window.addEventListener("resize", measure)
+      onCleanup(() => window.removeEventListener("resize", measure))
+    })
+
     return (
       <div
+        ref={slot}
         data-component="amicode-widget-cell"
         data-widget={p.entry.id}
         data-span={bucketOf(p.entry.id)}
         data-editing={moving() ? "true" : "false"}
-        style={{ display: collapsed() ? "none" : undefined }}
+        style={{
+          display: collapsed() ? "none" : undefined,
+          // placeholder: the slot keeps its height while the frame is docked
+          "min-height": dockBox() ? `${dockBox()!.slot}px` : undefined,
+        }}
       >
         <Show
           when={info()}
@@ -338,14 +412,30 @@ export function WidgetGrid(props: {
               </Show>
 
               <Show when={!asPlaceholder()}>
-                <div class="amc-wg-framewrap">
+                {/* docking restyles THIS element in place — never re-parent or
+                    re-render the frame (an iframe that changes parent reloads) */}
+                <div
+                  class="amc-wg-framewrap"
+                  data-docked={dockBox() ? "true" : undefined}
+                  style={
+                    dockBox()
+                      ? {
+                          position: "fixed",
+                          top: `calc(${dockBox()!.top}px + var(--space-2, 8px))`,
+                          left: `${dockBox()!.left}px`,
+                          width: `${dockBox()!.width}px`,
+                          height: `${DOCK_STRIP_HEIGHT}px`,
+                        }
+                      : undefined
+                  }
+                >
                   <WidgetFrame
                     widget={w()}
                     frameSrc={props.frameSrcs[w().id]}
                     config={p.entry.config}
                     context={props.context}
                     tokens={props.tokens}
-                    density={props.density}
+                    density={dockDensity(props.density, isDocked())}
                     callbacks={props.callbacks}
                     fill
                     onEmpty={(e) => setEmpties((prev) => ({ ...prev, [p.entry.key]: e }))}
@@ -544,4 +634,14 @@ export function WidgetGrid(props: {
       </Show>
     </div>
   )
+}
+
+/** Nearest scrolling ancestor — the IntersectionObserver root for docking and
+ *  the top edge the docked strip sits under. null → the viewport. */
+function scrollRoot(el: Element): Element | null {
+  for (let n = el.parentElement; n; n = n.parentElement) {
+    const overflow = getComputedStyle(n).overflowY
+    if (overflow === "auto" || overflow === "scroll") return n
+  }
+  return null
 }
