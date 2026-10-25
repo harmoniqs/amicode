@@ -1416,30 +1416,33 @@ export function ContextToolGroup(props: {
               const running = createMemo(
                 () => partAccessor().state.status === "pending" || partAccessor().state.status === "running",
               )
+              // a read names one file — make it openable from the row
+              const readPath = createMemo(() => {
+                const part = partAccessor()
+                const filePath = (part.state.input as Record<string, unknown> | undefined)?.filePath
+                return part.tool === "read" && typeof filePath === "string" && filePath ? filePath : undefined
+              })
               return (
-                <div data-slot="context-tool-group-item">
-                  <div data-component="tool-trigger">
-                    <div data-slot="basic-tool-tool-trigger-content">
-                      <div data-slot="basic-tool-tool-info">
-                        <div data-slot="basic-tool-tool-info-structured">
-                          <div data-slot="basic-tool-tool-info-main">
-                            <span data-slot="basic-tool-tool-title">
-                              <span data-pending={running() ? "true" : "false"}>{trigger().title}</span>
-                            </span>
-                            <Show when={!running() && trigger().subtitle}>
-                              <span data-slot="basic-tool-tool-subtitle">{trigger().subtitle}</span>
-                            </Show>
-                            <Show when={!running() && trigger().args?.length}>
-                              <For each={trigger().args}>
-                                {(arg) => <span data-slot="basic-tool-tool-arg">{arg}</span>}
-                              </For>
-                            </Show>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
+                <GroupMemberRow part={partAccessor()} onSizeChange={props.onSizeChange}>
+                  <span data-slot="basic-tool-tool-title">
+                    <span data-pending={running() ? "true" : "false"}>{trigger().title}</span>
+                  </span>
+                  <Show when={!running() && trigger().subtitle}>
+                    <Show
+                      when={readPath()}
+                      fallback={<span data-slot="basic-tool-tool-subtitle">{trigger().subtitle}</span>}
+                    >
+                      {(path) => (
+                        <span data-slot="basic-tool-tool-subtitle">
+                          <OpenableFilename filename={trigger().subtitle ?? ""} path={path()} />
+                        </span>
+                      )}
+                    </Show>
+                  </Show>
+                  <Show when={!running() && trigger().args?.length}>
+                    <For each={trigger().args}>{(arg) => <span data-slot="basic-tool-tool-arg">{arg}</span>}</For>
+                  </Show>
+                </GroupMemberRow>
               )
             }}
           </Index>
@@ -1447,6 +1450,68 @@ export function ContextToolGroup(props: {
       </Collapsible.Content>
     </Collapsible>
   )
+}
+
+// AMICODE (inline group rework): every member of a collapsed group — Explored,
+// Worked in shell, Edited files — is its own expandable row. The collapsed row
+// carries the useful handle (the full command, an openable filename); clicking
+// the row opens the member's REAL tool card inline (output, diff, copy), the
+// same component a lone call renders as. Before, members were dead text: the
+// command was elided at 72 chars with no way to read the rest, and filenames
+// could not be clicked.
+function GroupMemberRow(props: { part: ToolPart; onSizeChange?: () => void; children: JSX.Element }) {
+  const [open, setOpen] = createSignal(false)
+  const toggle = () => {
+    setOpen((value) => !value)
+    props.onSizeChange?.()
+  }
+  const ToolCard = () => {
+    const Card = PART_MAPPING["tool"]
+    if (!Card) return null
+    return <Card part={props.part} message={undefined as unknown as MessagePartProps["message"]} defaultOpen />
+  }
+  return (
+    <div data-slot="context-tool-group-item" data-expandable="true" data-open={open() ? "true" : "false"}>
+      <div
+        data-component="tool-trigger"
+        data-slot="group-member-trigger"
+        role="button"
+        tabIndex={0}
+        aria-expanded={open()}
+        onClick={(event) => {
+          // a filename button inside the row opens the file, not the card
+          if ((event.target as Element | null)?.closest?.("[data-clickable]")) return
+          toggle()
+        }}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter" && event.key !== " ") return
+          event.preventDefault()
+          toggle()
+        }}
+      >
+        <div data-slot="basic-tool-tool-trigger-content">
+          <div data-slot="basic-tool-tool-info">
+            <div data-slot="basic-tool-tool-info-structured">
+              <div data-slot="basic-tool-tool-info-main">{props.children}</div>
+            </div>
+          </div>
+          <span data-slot="group-member-chevron" aria-hidden="true" />
+        </div>
+      </div>
+      <Show when={open()}>
+        <div data-slot="group-member-detail">
+          <ToolCard />
+        </div>
+      </Show>
+    </div>
+  )
+}
+
+/** The full command for a shell member (never clamped — the row wraps it). */
+function shellFullCommand(part: ToolPart): string {
+  const input = (part.state.input ?? {}) as Record<string, unknown>
+  const command = typeof input.command === "string" ? input.command.trim() : ""
+  return command || shellCommandText(part)
 }
 
 // AMICODE (spec B): consecutive bash commands collapse into one row so a long
@@ -1505,32 +1570,22 @@ export function ShellToolGroup(props: { parts: ToolPart[]; busy?: boolean; onSiz
         <div data-component="context-tool-group-list">
           <Index each={props.parts}>
             {(partAccessor) => {
-              const cmd = createMemo(() => shellCommandText(partAccessor()))
+              const cmd = createMemo(() => shellFullCommand(partAccessor()))
               const running = createMemo(
                 () => partAccessor().state.status === "pending" || partAccessor().state.status === "running",
               )
               const errored = createMemo(() => partAccessor().state.status === "error")
               return (
-                <div data-slot="context-tool-group-item">
-                  <div data-component="tool-trigger">
-                    <div data-slot="basic-tool-tool-trigger-content">
-                      <div data-slot="basic-tool-tool-info">
-                        <div data-slot="basic-tool-tool-info-structured">
-                          <div data-slot="basic-tool-tool-info-main">
-                            <span data-slot="basic-tool-tool-title" class="font-mono">
-                              <span data-pending={running() ? "true" : "false"}>{cmd()}</span>
-                            </span>
-                            <Show when={errored()}>
-                              <span data-slot="basic-tool-tool-subtitle" style={{ color: "var(--v2-state-fg-danger)" }}>
-                                failed
-                              </span>
-                            </Show>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
+                <GroupMemberRow part={partAccessor()} onSizeChange={props.onSizeChange}>
+                  <span data-slot="group-shell-command" class="font-mono" title={cmd()}>
+                    <span data-pending={running() ? "true" : "false"}>{cmd()}</span>
+                  </span>
+                  <Show when={errored()}>
+                    <span data-slot="basic-tool-tool-subtitle" style={{ color: "var(--v2-state-fg-danger)" }}>
+                      failed
+                    </span>
+                  </Show>
+                </GroupMemberRow>
               )
             }}
           </Index>
@@ -1548,6 +1603,7 @@ export function ShellToolGroup(props: { parts: ToolPart[]; busy?: boolean; onSiz
 // @opencode-ai/ui/amicode-edit-row (pure, tested): a pending part without a
 // filePath can never fill the row with prose.
 export function EditToolGroup(props: { parts: ToolPart[]; busy?: boolean; onSizeChange?: () => void }) {
+  const data = useData()
   const [open, setOpen] = createSignal(false)
   const pending = createMemo(
     () =>
@@ -1617,33 +1673,38 @@ export function EditToolGroup(props: { parts: ToolPart[]; busy?: boolean; onSize
           <Index each={props.parts}>
             {(partAccessor) => {
               const label = createMemo(() => editRowLabel(partAccessor()))
+              const filePath = createMemo(() => editRowFilePath(partAccessor()))
+              const dir = createMemo(() => {
+                const path = filePath()
+                return path ? relativizeProjectPath(_getDirectory(path), data.directory) : ""
+              })
               const diff = createMemo(() => editRowDiff(partAccessor()))
               const running = createMemo(
                 () => partAccessor().state.status === "pending" || partAccessor().state.status === "running",
               )
               const errored = createMemo(() => partAccessor().state.status === "error")
               return (
-                <div data-slot="context-tool-group-item">
-                  <div data-component="tool-trigger">
-                    <div data-slot="basic-tool-tool-trigger-content">
-                      <div data-slot="basic-tool-tool-info">
-                        <div data-slot="basic-tool-tool-info-structured">
-                          <div data-slot="basic-tool-tool-info-main">
-                            <span data-slot="basic-tool-tool-title" class="font-mono">
-                              <span data-pending={running() ? "true" : "false"}>{label()}</span>
-                            </span>
-                            <Show when={!running() && diff()}>{(d) => <DiffChanges changes={d()} />}</Show>
-                            <Show when={errored()}>
-                              <span data-slot="basic-tool-tool-subtitle" style={{ color: "var(--v2-state-fg-danger)" }}>
-                                failed
-                              </span>
-                            </Show>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
+                <GroupMemberRow part={partAccessor()} onSizeChange={props.onSizeChange}>
+                  <span data-slot="basic-tool-tool-title" class="font-mono">
+                    <Show
+                      when={!running() && filePath()}
+                      fallback={<span data-pending={running() ? "true" : "false"}>{label()}</span>}
+                    >
+                      {(path) => <OpenableFilename filename={label()} path={path()} />}
+                    </Show>
+                  </span>
+                  <Show when={dir()}>
+                    <span data-slot="group-member-dir" title={filePath()}>
+                      {dir()}
+                    </span>
+                  </Show>
+                  <Show when={!running() && diff()}>{(d) => <DiffChanges changes={d()} />}</Show>
+                  <Show when={errored()}>
+                    <span data-slot="basic-tool-tool-subtitle" style={{ color: "var(--v2-state-fg-danger)" }}>
+                      failed
+                    </span>
+                  </Show>
+                </GroupMemberRow>
               )
             }}
           </Index>
