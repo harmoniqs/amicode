@@ -454,7 +454,15 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     if (!path.isAbsolute(fsPath) || fsPath.length > 4096) return true;
     const linkResolution = io.linkResolution;
     if (!linkResolution) {
-      if (!fs.existsSync(fsPath)) return true;
+      // #1845: never a silent no-op — without the posture context a path
+      // that isn't on this disk names itself (on a hub-backed panel the path
+      // lives on the hub, which is the clue that the context never wired).
+      if (!fs.existsSync(fsPath)) {
+        vscode.window.showWarningMessage(
+          `Amicode: link not opened — ${fsPath} is not on this machine (no link-resolution context for this panel; reload the window if it is a hub session)`,
+        );
+        return true;
+      }
       // Route to the Preview companion tab (#935) — the session page's
       // preview-file listener (from #934) sets previewFile, opens the side
       // panel, and switches to the Preview tab.
@@ -477,8 +485,14 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
         });
       } else if (resolution.action === "failed") {
         vscode.window.showErrorMessage(`Amicode: link not opened — ${resolution.reason} (${resolution.detail})`);
+      } else {
+        // #1845: the non-hub postures' refusal (stale path) is named too.
+        vscode.window.showWarningMessage(
+          `Amicode: link not opened — ${fsPath} is not on this machine (posture: ${linkResolution.posture})`,
+        );
       }
-      // "silent": the non-hub posture's unchanged refusal.
+    }, (err: unknown) => {
+      vscode.window.showErrorMessage(`Amicode: link not opened — ${err instanceof Error ? err.message : String(err)}`);
     });
     return true;
   }

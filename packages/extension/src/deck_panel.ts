@@ -60,7 +60,7 @@ export class DeckPanel {
           visible: () => this.panel.visible,
           postToWebview: (m) => void this.panel.webview.postMessage(m),
           ...(serverAuth ? { server: { url: serverUrl, authorization: serverAuth } } : {}),
-          linkResolution: DeckPanel.linkResolutionContextCallback?.(),
+          linkResolution: (() => { try { return DeckPanel.linkResolutionContextCallback?.(); } catch (err) { console.error("[amicode] link-resolution context failed", err); return undefined; } })(),
           // Bug-session lifecycle (#250) — deck panes never carry the
           // amicode_bug_report boot param, so no dock lives here; wired for
           // uniformity (the manager drops unknown ids anyway).

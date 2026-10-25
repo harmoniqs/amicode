@@ -249,7 +249,7 @@ export class ChatPanel implements LaunchTarget {
           // #1551: the enable-control act → the host's modal + self-owned mint.
           onFleetEnableControl: ChatPanel.onFleetEnableControlCallback,
           previewVisibleChildren: ChatPanel.previewVisibleChildrenCallback,
-          linkResolution: ChatPanel.linkResolutionContextCallback?.(),
+          linkResolution: (() => { try { return ChatPanel.linkResolutionContextCallback?.(); } catch (err) { console.error("[amicode] link-resolution context failed", err); return undefined; } })(),
           explorerIconTheme: resolveExplorerIconTheme,
         });
         if (!handled) console.log("[amicode/chat] webview msg:", msg);
