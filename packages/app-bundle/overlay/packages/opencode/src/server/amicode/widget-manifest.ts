@@ -20,6 +20,9 @@ export interface WidgetManifest {
   description: string
   size: "hero" | "tile"
   height: number
+  /** #1856: opt-in docking — when the card scrolls out of view on the home
+   *  dashboard the host docks it as a slim strip. Absent/malformed → false. */
+  sticky: boolean
   config: Record<string, ConfigField>
   origin: { session?: string; date?: string } | null
 }
@@ -149,6 +152,7 @@ export function parseManifest(tomlSrc: string, dirname: string): ManifestResult 
       description: typeof v.description === "string" ? v.description : "",
       size,
       height,
+      sticky: v.sticky === true,
       config,
       origin,
     },

@@ -1323,6 +1323,7 @@ function HomeDesign() {
                 context={widgetContext()}
                 callbacks={widgetCallbacks}
                 onSave={saveDashboard}
+                dock
                 onNewWidget={() =>
                   // Authoring is a conversation: hand off to a fresh chat with the
                   // composer prefilled (not auto-sent — the user completes the

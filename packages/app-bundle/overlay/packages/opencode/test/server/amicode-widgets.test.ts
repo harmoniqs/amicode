@@ -184,6 +184,30 @@ describe("authorWidget (Stage 2 chat authoring)", () => {
     expect(widgets.find((x) => x.manifest.id === "coverage-map")?.manifest.name).toBe('Coverage "Map" (β)')
   })
 
+  test("sticky: true writes the manifest flag; it reaches the registry and the widget wire (#1856)", () => {
+    userDir()
+    const r = authorWidget({ id: "live-solve", name: "Live solve", size: "hero", height: 220, sticky: true, js: validJs })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.sticky).toBe(true)
+    expect(readFileSync(path.join(dir!, "live-solve", "manifest.toml"), "utf8")).toContain("sticky = true")
+    expect(loadRegistry().widgets.find((x) => x.manifest.id === "live-solve")?.manifest.sticky).toBe(true)
+    expect(JSON.parse(widgetsResponse()).widgets[0].sticky).toBe(true)
+  })
+
+  test("sticky omitted (or non-boolean) writes no flag and the widget is non-sticky (#1856)", () => {
+    userDir()
+    const plain = authorWidget({ id: "plain", name: "Plain", size: "tile", height: 120, js: validJs })
+    const odd = authorWidget({ id: "odd", name: "Odd", size: "tile", height: 120, sticky: "yes", js: validJs })
+    expect(plain.ok && odd.ok).toBe(true)
+    if (!plain.ok || !odd.ok) return
+    expect(plain.sticky).toBe(false)
+    expect(odd.sticky).toBe(false)
+    expect(readFileSync(path.join(dir!, "plain", "manifest.toml"), "utf8")).not.toContain("sticky")
+    expect(readFileSync(path.join(dir!, "odd", "manifest.toml"), "utf8")).not.toContain("sticky")
+    expect(JSON.parse(widgetsResponse()).widgets.every((w: { sticky: boolean }) => w.sticky === false)).toBe(true)
+  })
+
   test("rejects bad input without writing", () => {
     userDir()
     expect(authorWidget({ id: "Bad_Id", name: "x", size: "tile", height: 100, js: validJs }).ok).toBe(false)
