@@ -52,12 +52,10 @@ function MockRail(props: { state: PresenceState }) {
       >
         <AmicoMark running={live()} />
         <span class="amc-wordmark">AMICO</span>
-        <span class="amc-livedot" style={{ width: "6px", height: "6px", "border-radius": "50%" }} />
         <span style={{ color: "var(--v2-text-text-muted)", "font-size": "12px" }}>x-gate-transmon-warm ▾</span>
         <For each={ENTITIES(props.state)}>
           {(e) => (
             <span class="amc-entity" data-status={e.status}>
-              <span class="amc-entity-dot" />
               {e.name}{e.val ? ` ${e.val}` : " —"}
             </span>
           )}

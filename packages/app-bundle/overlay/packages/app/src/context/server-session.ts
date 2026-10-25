@@ -343,6 +343,16 @@ export function createServerSession(
     turnActive.delete(sessionID)
     clearTurnFloorTimer(sessionID)
   }
+  // #1754: a pending question/permission blocks its turn, so an AUTHORITATIVE
+  // turn end (the server's idle status, a terminal execution frame, or
+  // session.error) means every card still up for that session belongs to a
+  // dead turn — the engine has forgotten the request and any reply would
+  // toast "request not found". Retire them. Only server frames call this —
+  // never the local turn-floor timeout (a slow human answer is still live).
+  const retirePending = (sessionID: string) => {
+    if (data.question[sessionID]?.length) setData("question", sessionID, [])
+    if (data.permission[sessionID]?.length) setData("permission", sessionID, [])
+  }
   const markTurnActive = (sessionID: string, timeoutMs = TURN_FLOOR_TIMEOUT_MS) => {
     turnActive.add(sessionID)
     clearTurnFloorTimer(sessionID)
@@ -1402,7 +1412,10 @@ export function createServerSession(
         if (!stale) {
           stampStatusMutation(sessionID)
           setData("session_status", sessionID, reconcile(props.status))
-          if (props.status.type === "idle") cancelReconcileTimer(sessionID)
+          if (props.status.type === "idle") {
+            cancelReconcileTimer(sessionID)
+            retirePending(sessionID)
+          }
           // #1649 — the ancestor floor: a parent blocked on a foreground
           // subagent re-derives its child-active count from session_status,
           // so the parent's rail follows child status edges reactively —
@@ -1445,6 +1458,7 @@ export function createServerSession(
       event.type === "session.execution.interrupted"
     ) {
       cancelReconcileTimer(sessionID)
+      retirePending(sessionID)
       setData("session_status", sessionID, { type: "idle" })
     }
     if (event.type === "session.retry.scheduled")
@@ -1534,7 +1548,10 @@ export function createServerSession(
         // (The mid-turn floor is held by an active part stream / a fresh execution
         // bracket — a lone idle frame does not race those; it settles a turn that
         // has otherwise gone quiet.)
-        if ((props.status?.type ?? "idle") === "idle") clearTurnActive(props.sessionID)
+        if ((props.status?.type ?? "idle") === "idle") {
+          clearTurnActive(props.sessionID)
+          retirePending(props.sessionID)
+        }
         stampStatusMutation(props.sessionID)
         setData("session_status", props.sessionID, reconcile(props.status))
         // #1649 — if this session is a spawned child, propagate its new
@@ -1562,6 +1579,7 @@ export function createServerSession(
         if (!id) return
         cancelReconcileTimer(id)
         clearTurnActive(id)
+        retirePending(id)
         stampStatusMutation(id)
         setData("session_status", id, { type: "idle" })
         // #1649 — a child turn's terminal lowers its ancestor floor.
@@ -1578,6 +1596,7 @@ export function createServerSession(
         const id = props?.sessionID ?? eventID
         if (!id) return
         clearTurnActive(id)
+        retirePending(id)
         if ((data.session_status[id]?.type ?? "idle") !== "idle") setData("session_status", id, { type: "idle" })
         // #1649 — a child error settles it idle; lower its ancestor floor.
         refreshChildActive(id)

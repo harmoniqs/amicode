@@ -1606,10 +1606,17 @@ class Group:
                 buf = buf[take:]
                 state["size"] -= take
                 if state["size"] == 0:
-                    state["mode"] = "size"
-                    if buf.startswith(b"\r\n"): buf = buf[2:]
+                    # the CRLF closing a chunk can straddle reads: consume it
+                    # in its own state, never as an (empty → unparseable)
+                    # size line — that wedged the stream for good
+                    state["mode"] = "crlf"
                     continue
                 break
+            if state["mode"] == "crlf":
+                if len(buf) < 2: break
+                if buf.startswith(b"\r\n"): buf = buf[2:]
+                state["mode"] = "size"
+                continue
             if state["mode"] == "done": break
         return out, buf
 
@@ -1649,8 +1656,18 @@ class Group:
             # Byte-level edits (gap frames, synthetic heartbeats, swallowed
             # frames) are only valid on a stream we fully own.
             _head, _, _body = pre.partition(b"\r\n\r\n")
-            _dcst = {"mode": "size", "size": 0}
-            _clean, _rest = self._dechunk(_body, _dcst)
+            # de-chunk ONLY a chunked body (an identity-encoded engine body —
+            # HTTP/1.0, or a future non-chunked transport — parses as-is; the
+            # unconditional de-chunk dropped every frame of such a body). The
+            # unconsumed tail (a chunk-size line split across reads) carries
+            # into the next read instead of being discarded.
+            _dcst = {"mode": "size", "size": 0,
+                     "chunked": b"transfer-encoding: chunked" in _head.lower()}
+            _pend = b""
+            if _dcst["chunked"]:
+                _clean, _pend = self._dechunk(_body, _dcst)
+            else:
+                _clean = _body
             reasm += _clean
             frames, reasm = _parse_frames(reasm)
             with self.lock:
@@ -1725,7 +1742,10 @@ class Group:
                     if chunk is None:
                         continue
                     _hb_ticks = 0
-                    _dc_out, _rest = self._dechunk(chunk, _dcst)
+                    if _dcst["chunked"]:
+                        _dc_out, _pend = self._dechunk(_pend + chunk, _dcst)
+                    else:
+                        _dc_out = chunk
                     reasm += _dc_out
                     frames, reasm = _parse_frames(reasm)
                     if b"server.cursor.unservable" in reasm or any(b"server.cursor.unservable" in f for f in frames):

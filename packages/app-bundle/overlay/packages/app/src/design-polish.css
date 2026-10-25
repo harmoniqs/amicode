@@ -335,29 +335,104 @@ body[data-new-layout]
   inset: 0;
 }
 
-/* ── session status dots ──
-   Four states: green (done, unread), grey (done, seen), yellow (running),
-   red (error). Colour is never the only signal: each dot carries
-   role="img" + aria-label. */
+/* ── activity vocabulary ──
+   One semantic set for every status surface (session dots, run status, health
+   dots, banners). Canonical associations:
+     running   = blue   (in progress)
+     attention = amber  (waiting on you: permission, question, auth, expired,
+                         drift, stalled)
+     success   = green  (done-unread, healthy, finished)
+     error     = red    (failed)
+     idle      = grey   (done-seen, aborted, stopped)
+   YELLOW NEVER ENCODES A STATE — it is brand and selection only (see the
+   accent tokens below). Amico presence (thought-rail, lane, wave, mark) is
+   brand, not status, and keeps the accent.
+   Each role aliases the theme's v2 state tokens so light and dark move
+   together: a solid dot takes the state's BORDER shade on light and its FG
+   shade on dark (the dark border shades are too deep to read as a dot). Amber
+   has its own clean value: the theme's warning edges read as the retired gold.
+   `-soft` is the matching quiet fill for badges / banners. Colour is never the
+   only signal — every dot carries an aria-label or sits beside text. */
 :root,
 [data-color-scheme="light"] {
-  --status-idle: #a1a1aa; /* grey — done and seen */
-  --status-running: #ca8a04; /* yellow-600 — working */
-  --status-done: #16a34a; /* green-600 — done, unread */
-  --status-error: #dc2626; /* red-600 */
+  --activity-idle: var(--v2-icon-icon-muted);
+  /* a bright, saturated blue: the theme's border-info (#3250df) is deep enough
+     to read as black at dot size on white */
+  --activity-running: #0a84ff;
+  --activity-attention: #d97706;
+  --activity-success: var(--v2-state-border-success);
+  --activity-error: var(--v2-state-border-danger);
 }
 [data-color-scheme="dark"] {
-  --status-idle: #71717a; /* grey */
-  --status-running: #eab308; /* yellow-500 */
-  --status-done: #4ade80; /* green-400 */
-  --status-error: #ef4444; /* red-500 */
+  --activity-idle: var(--v2-icon-icon-muted);
+  --activity-running: #4da3ff;
+  --activity-attention: #fbbf24;
+  --activity-success: var(--v2-state-fg-success);
+  --activity-error: var(--v2-state-fg-danger);
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-color-scheme="light"]) {
-    --status-idle: #71717a;
-    --status-running: #eab308;
-    --status-done: #4ade80;
-    --status-error: #ef4444;
+    --activity-idle: var(--v2-icon-icon-muted);
+    --activity-running: #4da3ff;
+    --activity-attention: #fbbf24;
+    --activity-success: var(--v2-state-fg-success);
+    --activity-error: var(--v2-state-fg-danger);
+  }
+}
+:root {
+  --activity-idle-soft: color-mix(in srgb, var(--activity-idle) 14%, transparent);
+  --activity-running-soft: var(--v2-state-bg-info);
+  --activity-attention-soft: color-mix(in srgb, var(--activity-attention) 14%, transparent);
+  --activity-success-soft: var(--v2-state-bg-success);
+  --activity-error-soft: var(--v2-state-bg-danger);
+}
+
+/* The one running / pending pulse. Every activity dot that is "in progress"
+   breathes with this — no per-surface keyframes. Under reduced motion it holds
+   still at full opacity (the global reset would otherwise spin an infinite
+   0.01ms loop, which flickers). */
+/* The dot stays fully coloured (fading to 35% read as grey/black half the
+   time); the motion is a same-colour ring expanding off the dot. The ring is a
+   ::after that inherits the dot's background, animated with plain transform +
+   opacity only (a color-mix(var()) box-shadow keyframe was emptied by the CSS
+   minifier, so the dot never moved). */
+.amc-activity-pulse {
+  position: relative;
+}
+.amc-activity-pulse::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: inherit;
+  pointer-events: none;
+  animation: amc-activity-ring 1.4s ease-out infinite;
+}
+@keyframes amc-activity-ring {
+  0% {
+    transform: scale(1);
+    opacity: 0.7;
+  }
+  80%,
+  100% {
+    transform: scale(2.6);
+    opacity: 0;
+  }
+}
+/* the neutral-ink breathe (solver switch) */
+@keyframes amc-activity-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .amc-activity-pulse::after {
+    animation: none !important;
+    display: none;
   }
 }
 
@@ -675,19 +750,14 @@ span[data-component="tag"][data-variant="accent"] {
   height: 6px;
   border-radius: var(--radius-full);
   background: currentColor;
-  animation: amc-solver-switch-pulse 1.2s ease-in-out infinite;
+  animation: amc-activity-pulse 1.2s ease-in-out infinite;
 }
 [data-component="amicode-solver-switch"][data-phase="ready"] > i {
   animation: none;
 }
-/* the global prefers-reduced-motion reset above collapses this duration. */
-@keyframes amc-solver-switch-pulse {
-  0%,
-  100% {
-    opacity: 0.35;
-  }
-  50% {
-    opacity: 1;
+@media (prefers-reduced-motion: reduce) {
+  [data-component="amicode-solver-switch"] > i {
+    animation: none;
   }
 }
 

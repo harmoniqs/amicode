@@ -28,6 +28,12 @@ describe("buildFrameHtml", () => {
     expect(doc).toContain("__amcWidgetCode")
   })
 
+  test("accent defaults to the current brand yellow, never the retired #FFF676", () => {
+    expect(doc).toContain("--amc-accent: #FFE614;")
+    expect(doc).toContain("--amc-accent-fill: #FFE614;")
+    expect(doc.toUpperCase()).not.toContain("#FFF676")
+  })
+
   test("</script> in widget code cannot break out", () => {
     const hostile = buildFrameHtml('var x = "</script><script>alert(1)"')
     expect(hostile).not.toContain('alert(1)"</script>')

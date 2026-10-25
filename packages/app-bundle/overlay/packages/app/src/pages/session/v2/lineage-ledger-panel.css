@@ -20,7 +20,7 @@
 
 [data-component="lineage-ledger"] [data-slot="lineage-ledger-capability"][data-mode="legacy"],
 [data-component="lineage-ledger"] [data-slot="lineage-ledger-capability"][data-mode="partial"] {
-  border-color: var(--v2-border-border-warning);
+  border-color: var(--activity-attention);
 }
 
 [data-component="lineage-ledger"] [data-slot="lineage-ledger-filter"] {
@@ -99,7 +99,7 @@
   flex-direction: column;
   gap: var(--space-1, 4px);
   padding: var(--space-2, 8px);
-  border: 1px solid var(--v2-border-border-warning);
+  border: 1px solid var(--activity-attention);
   border-radius: var(--radius-lg, 12px);
 }
 

@@ -742,3 +742,50 @@ describe("amicode#1787 — reconcile semantics at the chip (busy/idle/omitted)",
     expect(chipFor(session, "o5")).toBeUndefined() // back to honest omission
   })
 })
+
+// #1754: a dead turn's cards retire. A pending question/permission blocks its
+// turn, so an authoritative turn end (idle status, session.error) means the
+// engine forgot the request — a card left up only ever toasts "not found".
+describe("stale question/permission cards retire with their turn (#1754)", () => {
+  const ask = (session: ReturnType<typeof createSession>, sid: string) => {
+    session.apply({ type: "session.created", properties: { info: sessionInfo(sid) } })
+    session.apply({ type: "session.status", properties: { sessionID: sid, status: { type: "busy" } } })
+    session.apply({
+      type: "question.asked",
+      properties: { id: "que_dead", sessionID: sid, questions: [{ header: "h", question: "q?", options: [] }] },
+    })
+    session.apply({
+      type: "permission.asked",
+      properties: { id: "per_dead", sessionID: sid, permission: "edit", patterns: ["**"] },
+    })
+  }
+
+  test("a still-busy turn keeps its cards (retry included)", () => {
+    const session = createSession()
+    ask(session, "s_live")
+    session.apply({
+      type: "session.status",
+      properties: { sessionID: "s_live", status: { type: "retry", attempt: 1, message: "429", next: 0 } },
+    })
+    expect(session.data.question.s_live?.length).toBe(1)
+    expect(session.data.permission.s_live?.length).toBe(1)
+  })
+
+  test("an idle status retires the turn's question and permission cards", () => {
+    const session = createSession()
+    ask(session, "s_idle")
+    session.apply({ type: "session.status", properties: { sessionID: "s_idle", status: { type: "idle" } } })
+    expect(session.data.question.s_idle?.length ?? 0).toBe(0)
+    expect(session.data.permission.s_idle?.length ?? 0).toBe(0)
+  })
+
+  test("session.error retires them too, and other sessions keep theirs", () => {
+    const session = createSession()
+    ask(session, "s_err")
+    ask(session, "s_other")
+    session.apply({ type: "session.error", properties: { sessionID: "s_err", error: { name: "UnknownError" } } })
+    expect(session.data.question.s_err?.length ?? 0).toBe(0)
+    expect(session.data.permission.s_err?.length ?? 0).toBe(0)
+    expect(session.data.question.s_other?.length).toBe(1)
+  })
+})

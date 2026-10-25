@@ -1365,29 +1365,57 @@
   background: var(--v2-background-bg-layer-02);
   color: var(--v2-text-text-muted);
 }
-/* verdict tones (shared across run status + device/calibration pills) */
-[data-component="amicode-run-view"] .amc-run-status[data-tone="ok"],
-[data-component="amicode-device-view"] .amc-vpill[data-tone="ok"],
-[data-component="amicode-calibration-view"] .amc-vpill[data-tone="ok"] {
-  background: var(--v2-state-bg-success);
-  color: var(--v2-state-fg-success);
-}
-[data-component="amicode-run-view"] .amc-run-status[data-tone="warn"],
-[data-component="amicode-device-view"] .amc-vpill[data-tone="warn"],
-[data-component="amicode-calibration-view"] .amc-vpill[data-tone="warn"] {
-  background: var(--v2-state-bg-warning);
-  color: var(--v2-state-fg-warning);
-}
-[data-component="amicode-run-view"] .amc-run-status[data-tone="critical"],
-[data-component="amicode-device-view"] .amc-vpill[data-tone="critical"] {
-  background: var(--v2-state-bg-danger);
-  color: var(--v2-state-fg-danger);
-}
-[data-component="amicode-run-view"] .amc-run-status[data-tone="active"] {
-  /* solving/in-flight → the PR#52 accent state fill (yellow warmth + neutral
-     ink), never a yellow foreground on a light surface. */
-  background: var(--accent-fill-soft);
+/* verdict activity (shared across run status + device/calibration pills) —
+   the activity vocabulary (design-polish.css --activity-*): a soft fill, a
+   leading dot in the solid role colour, and neutral ink so 10px caps keep
+   body contrast in both schemes. Running breathes with the shared pulse. */
+[data-component="amicode-run-view"] .amc-run-status[data-activity],
+[data-component="amicode-device-view"] .amc-vpill[data-activity],
+[data-component="amicode-calibration-view"] .amc-vpill[data-activity] {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   color: var(--v2-text-text-base);
+}
+[data-component="amicode-run-view"] .amc-run-status[data-activity]::before,
+[data-component="amicode-device-view"] .amc-vpill[data-activity]::before,
+[data-component="amicode-calibration-view"] .amc-vpill[data-activity]::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--activity-dot);
+}
+[data-component="amicode-run-view"] .amc-run-status[data-activity="running"]::before {
+  animation: amc-activity-pulse 1.2s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-component="amicode-run-view"] .amc-run-status[data-activity="running"]::before {
+    animation: none;
+  }
+}
+[data-activity="idle"] { --activity-dot: var(--activity-idle); }
+[data-activity="running"] { --activity-dot: var(--activity-running); }
+[data-activity="attention"] { --activity-dot: var(--activity-attention); }
+[data-activity="success"] { --activity-dot: var(--activity-success); }
+[data-activity="error"] { --activity-dot: var(--activity-error); }
+[data-component="amicode-run-view"] .amc-run-status[data-activity="running"],
+[data-component="amicode-device-view"] .amc-vpill[data-activity="running"] {
+  background: var(--activity-running-soft);
+}
+[data-component="amicode-run-view"] .amc-run-status[data-activity="attention"],
+[data-component="amicode-device-view"] .amc-vpill[data-activity="attention"],
+[data-component="amicode-calibration-view"] .amc-vpill[data-activity="attention"] {
+  background: var(--activity-attention-soft);
+}
+[data-component="amicode-run-view"] .amc-run-status[data-activity="success"],
+[data-component="amicode-device-view"] .amc-vpill[data-activity="success"],
+[data-component="amicode-calibration-view"] .amc-vpill[data-activity="success"] {
+  background: var(--activity-success-soft);
+}
+[data-component="amicode-run-view"] .amc-run-status[data-activity="error"],
+[data-component="amicode-device-view"] .amc-vpill[data-activity="error"] {
+  background: var(--activity-error-soft);
 }
 
 /* Device + Calibration shared pills / meta / key-value rows */
@@ -1488,30 +1516,27 @@
   font-weight: 500;
   font-family: var(--font-mono, monospace);
 }
-.devtools-rebuild-status--building { color: var(--text-warning-base, #ee9d2b); }
-.devtools-rebuild-status--done { color: var(--text-on-success-base, #2dba26); }
-.devtools-rebuild-status--failed { color: var(--text-danger-base, #e5484d); }
+/* activity vocabulary: running blue, success green, error red. Status text
+   takes the v2 state FG shade (text-safe in both schemes); the dot takes the
+   solid --activity-* role. Running breathes with the shared pulse. */
+.devtools-rebuild-status--running { color: var(--v2-state-fg-info); }
+.devtools-rebuild-status--success { color: var(--v2-state-fg-success); }
+.devtools-rebuild-status--error { color: var(--v2-state-fg-danger); }
 
 .devtools-status-dot {
   display: inline-block;
   width: 8px;
   height: 8px;
-  border-radius: 50%;
+  border-radius: var(--radius-full);
 }
-.devtools-status-dot--orange {
-  background: var(--surface-warning-strong, #ee9d2b);
-  animation: devtools-pulse 1.2s ease-in-out infinite;
+.devtools-status-dot--running {
+  background: var(--activity-running);
 }
-.devtools-status-dot--green {
-  background: var(--surface-success-strong, #12c905);
+.devtools-status-dot--success {
+  background: var(--activity-success);
 }
-.devtools-status-dot--red {
-  background: var(--surface-danger-strong, #e5484d);
-}
-
-@keyframes devtools-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
+.devtools-status-dot--error {
+  background: var(--activity-error);
 }
 
  .devtools-rebuild-row {
@@ -1525,8 +1550,8 @@
   margin: 8px 0 4px;
   padding: 10px 12px;
   border-radius: 6px;
-  background: color-mix(in srgb, var(--surface-danger-strong, #e5484d) 8%, transparent);
-  border: 1px solid color-mix(in srgb, var(--surface-danger-strong, #e5484d) 20%, transparent);
+  background: var(--activity-error-soft);
+  border: 1px solid color-mix(in srgb, var(--activity-error) 20%, transparent);
 }
 .devtools-error-message {
   display: flex;
@@ -1534,7 +1559,7 @@
   gap: 6px;
   font-size: 13px;
   font-weight: 600;
-  color: var(--text-danger-base, #e5484d);
+  color: var(--v2-state-fg-danger);
   line-height: 1.4;
 }
 .devtools-error-message .devtools-status-dot {
@@ -1546,7 +1571,7 @@
   padding-left: 22px;
   font-size: 12px;
   line-height: 1.6;
-  color: var(--text-secondary-base, #8b8b8b);
+  color: var(--v2-text-text-muted);
   list-style: decimal;
 }
 .devtools-error-fix-steps li {
@@ -1558,21 +1583,21 @@
   border: none;
   background: none;
   font-size: 11px;
-  color: var(--text-secondary-base, #8b8b8b);
+  color: var(--v2-text-text-muted);
   cursor: pointer;
   font-family: inherit;
 }
 .devtools-error-detail-toggle:hover {
-  color: var(--text-primary-base, #ededed);
+  color: var(--v2-text-text-base);
 }
 .devtools-error-detail {
   margin-top: 4px;
   padding: 8px;
   border-radius: 4px;
-  background: var(--surface-secondary-base, rgba(0,0,0,0.15));
+  background: var(--v2-background-bg-layer-02);
   font-size: 11px;
   line-height: 1.5;
-  color: var(--text-secondary-base, #8b8b8b);
+  color: var(--v2-text-text-muted);
   font-family: var(--font-mono, monospace);
   overflow-x: auto;
   max-height: 200px;

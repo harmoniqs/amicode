@@ -131,7 +131,6 @@ function eventResponse() {
       Stream.drop(1),
       Stream.mapEffect(() => Effect.map(Clock.currentTimeMillis, (time) => {
         const seq = GlobalEventReplay.current
-        console.log("[hb] tick fired, offering beat");
         Queue.offerUnsafe(queue, controlEvent(seq, "server.heartbeat", { time, seq }))
       })),
       Stream.tap(() =>

@@ -257,3 +257,25 @@ describe("the remote affordance — vscode-remote explicit (#1826)", () => {
     expect(window_.messages[0]).toContain("no-ssh-alias");
   });
 });
+
+// #1845: the open-file handler never dies silently — the last two silent
+// branches (no posture context; the non-hub posture's stale-path refusal)
+// each name themselves with a toast.
+describe("no silent link clicks (#1845)", () => {
+  const missing = "/home/aaron/harmoniqs/definitely-not-on-this-disk-1845/notes.md";
+
+  it("without a link-resolution context, a path absent locally toasts instead of doing nothing", () => {
+    const host = io();
+    handleAmicodeBridgeMessage({ source: "amicode", kind: "open-file", url: `file://${missing}` }, host);
+    expect(host.posted).toEqual([]);
+    expect(window_.messages.some((m) => m.includes("link not opened") && m.includes(missing))).toBe(true);
+  });
+
+  it("a non-hub posture's stale path toasts instead of the old silent refusal", async () => {
+    const host = io({ posture: "fleet-client" });
+    handleAmicodeBridgeMessage({ source: "amicode", kind: "open-file", url: `file://${missing}` }, host);
+    await flush();
+    expect(host.posted).toEqual([]);
+    expect(window_.messages.some((m) => m.includes("link not opened") && m.includes("fleet-client"))).toBe(true);
+  });
+});
