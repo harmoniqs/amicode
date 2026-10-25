@@ -5,6 +5,7 @@ import {
   cachedFileRef,
   clearFileRefCache,
   fileRefResolver,
+  fileRefResolverVersion,
   fileRefUrl,
   registerFileRefResolver,
   resolveFileRefCached,
@@ -90,5 +91,28 @@ describe("file-ref wiring is not layout-gated (#1839)", () => {
   test("markFileLinks runs unconditionally in the render effect", () => {
     expect(source).toContain("markFileLinks(container)")
     expect(source).not.toContain('data-new-layout")) markFileLinks')
+  })
+})
+
+// #1845: shells remount on the /<dir>/session → /server/…/session redirect;
+// the outgoing shell's cleanup ran after the incoming shell registered and
+// wiped the live resolver, so chat file links never linkified.
+describe("registration handles (#1845)", () => {
+  test("a stale unregister does not clear the newer registration", () => {
+    const a = async () => "/a"
+    const b = async () => "/b"
+    const unregisterA = registerFileRefResolver(a)
+    registerFileRefResolver(b)
+    unregisterA()
+    expect(fileRefResolver()).toBe(b)
+  })
+
+  test("the current registration's unregister clears it and bumps the version", () => {
+    const before = fileRefResolverVersion()
+    const unregister = registerFileRefResolver(async () => "/x")
+    expect(fileRefResolverVersion()).toBe(before + 1)
+    unregister()
+    expect(fileRefResolver()).toBeUndefined()
+    expect(fileRefResolverVersion()).toBe(before + 2)
   })
 })

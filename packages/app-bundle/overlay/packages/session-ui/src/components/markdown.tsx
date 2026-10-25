@@ -33,7 +33,7 @@ import { markdownBlockKey, type MarkdownToken } from "./markdown-worker-protocol
 import { shouldResetCodeTokens, type RenderedCodeState } from "./markdown-code-state"
 import { getCachedMarkdown, sanitizeMarkdown, touchCachedMarkdown, type MarkdownCacheEntry } from "./markdown-cache"
 import { inlineCodeKind } from "./markdown-inline-code-kind"
-import { cachedFileRef, fileRefResolver, fileRefUrl, resolveFileRefCached } from "./markdown-file-refs"
+import { cachedFileRef, fileRefResolver, fileRefResolverVersion, fileRefUrl, resolveFileRefCached } from "./markdown-file-refs"
 
 type RenderedBlock =
   | (MarkdownCacheEntry & { key: string; mode: Exclude<Block["mode"], "code"> })
@@ -603,6 +603,14 @@ export function Markdown(
     // in decorate). The live report: with data-new-layout off, every file
     // link in chat was silently inert.
     markFileLinks(container)
+  })
+
+  // #1845: a resolver registered after this message rendered re-linkifies it
+  // (the effect above only re-runs on content changes).
+  createEffect(() => {
+    fileRefResolverVersion()
+    const container = root()
+    if (container) markFileLinks(container)
   })
 
   onCleanup(() => {

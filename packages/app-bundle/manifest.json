@@ -108,7 +108,7 @@
     "packages/app/src/components/amicode-default-model.test.ts": "941750d074706bd5f4e433c9737b19ebc0ac0f9ba9cd1faaa599a24b22126e05",
     "packages/app/src/components/amicode-default-model.tsx": "16a2de1feb12e07416fe5fbb25879391f912ee0909b553c868c1b531f2ed1f2d",
     "packages/app/src/components/amicode-defaults-capsule.tsx": "94dc081bc47abb7e50566fcd8e9e53124f9d7632d61f93eff4f1627e0c2efb2d",
-    "packages/app/src/components/amicode-file-ref-bridge.tsx": "11c17d7fdb29d16530e188b13ee8af728f37d9adfbb518084106ce50cc0c527a",
+    "packages/app/src/components/amicode-file-ref-bridge.tsx": "bd5c295080ccd80fe89208008c02db209ba301e431f61bc4432d3c8f2a72401f",
     "packages/app/src/components/connection-banner.tsx": "82194291181165ed7b1b1b3a6801a1bdcd2c2b7cdd733c28486bd69f86477a24",
     "packages/app/src/components/dialog-command-palette-v2.css": "85984957adaf15efcc0828310f3a0b438cedaaba776a9fec2eddb3ad83487fa2",
     "packages/app/src/components/dialog-command-palette-v2.tsx": "e12da3e5e9e503089dd9139b20e04f6b566cf74fa445f23a2e193f5883f7c5f3",
@@ -492,12 +492,12 @@
     "packages/session-ui/src/components/build-trace.ts": "153e3182c3a37e4aca9c88bf0e2052b0ff4ec117a60d74d2c81567ab91180066",
     "packages/session-ui/src/components/group-parts.test.ts": "a31ce19009e1d62e75e83b682190a4613da0eed334420409ed73a9e21834ae84",
     "packages/session-ui/src/components/line-comment-styles.ts": "2077836c13bd3c3f1c39c67722119e448a2dfa123377f94bfd3676634e955d00",
-    "packages/session-ui/src/components/markdown-file-refs.test.ts": "fc8e793bceb8ffad84baf1bcf3901863c7c770ca199fbe518fd1a8a9af5ced2a",
-    "packages/session-ui/src/components/markdown-file-refs.ts": "b75bddeb565dc0163635fab8f84bdd26723742f9f82d06b6fd5991777b311032",
+    "packages/session-ui/src/components/markdown-file-refs.test.ts": "2172d17a0ee5e49636c8bd323f4fb797a7f41e469d0098864b82d374f0c10144",
+    "packages/session-ui/src/components/markdown-file-refs.ts": "417417f3660fe18f04a13ca4765b155b5479d7ce41b3638a57ba1abaa5830054",
     "packages/session-ui/src/components/markdown-stream.test.ts": "b73b1a15ffa2cfea5358b2d6313ce17d26a5a11302b0e3b7d823cde0c98cbc83",
     "packages/session-ui/src/components/markdown-stream.ts": "50e38abd5d4ff919564655799678be10463dec58502fc5487c1c97a9a8db5399",
     "packages/session-ui/src/components/markdown.css": "24e7c19218620386647656a5d27e116cdeca911f1916c5d5b8609edca11ff165",
-    "packages/session-ui/src/components/markdown.tsx": "7a63e8eea8c0e6205ce4bb579de870fc05e1234ab2c7d49ac9b4a7ea1bd36285",
+    "packages/session-ui/src/components/markdown.tsx": "00a2248ca301e39eb5f2a9b78abfe9d11068ea5daa970516e1f8700c44878c48",
     "packages/session-ui/src/components/message-part-css.test.ts": "ffab7d2c94e8d40ca35e4a8d4383cc6efd805b133764176b70046fba874a5f06",
     "packages/session-ui/src/components/message-part-groups.ts": "37be069bf46e926fcde83d3744ee706911ff002e6b532e279290d841aeee96da",
     "packages/session-ui/src/components/message-part-skill.test.ts": "453bdcb25e4df91ad1004635b8766070a60421355adf18ee53f43cd2fa7d0486",
@@ -1026,7 +1026,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-25T17:19:38.167Z",
+  "extracted_at": "2026-10-25T18:29:01.171Z",
   "per_package": {
     "packages/app": {
       "A": 254,
