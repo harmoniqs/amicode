@@ -39,6 +39,8 @@ export function listMcpTools(): McpToolDescriptor[] {
 export async function callMcpTool(name: string, argv: string[]): Promise<unknown> {
   const verb = SPINE_VERBS.find((v) => `amico_${v.name}` === name);
   if (!verb) throw new Error(`unknown tool ${name}`);
+  if (argv[0] !== undefined && verb.cliOnlySubcommands?.includes(argv[0]))
+    return { verb: verb.name, subcommand: argv[0], ok: false, error: `\`amico ${verb.name} ${argv[0]}\` is CLI-only — not exposed through MCP` };
   const result = await verb.run(argv);
   return result.json;
 }
