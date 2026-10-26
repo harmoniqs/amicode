@@ -12,6 +12,7 @@ against a file that lived nowhere. This import fixes that.
 | `client-log-freshness.sh` | `~/.amico/server/client-log-freshness.sh` | #1745: mechanical freshness check on the panel telemetry log — age of the newest heartbeat, loudly reported (exit 0 fresh / 1 stale, never-heartbeat, or missing) |
 | `amicode-server.sh` | `~/.amico/server/amicode-server.sh` | systemd wrapper: binary resolution, skill staging, env, spawns the service runner (M3 cutover, #955) |
 | `engine-gateway-secret.sh` | `~/.amico/server/engine-gateway-secret.sh` | #1760 P1: generates/serves the one-door shared secret (`~/.amico/server/engine-gateway-secret.env`, mode 600) |
+| `deploy-dist.sh` | run in place from a lane worktree (not copied) | #1906 A13b: the app-dist deploy — lane-tip/dirty refusals, release dirs, atomic `dist-app` symlink flip, `dist-deploys.jsonl` provenance, keep-N prune, `--rollback` |
 | `fleet-watchdog/rss-watchdog.sh` | `~/.amico/server/fleet-watchdog/rss-watchdog.sh` | 5-min RSS trajectory + corroboration probe + wedge capture + restart authority |
 | `fleet-watchdog/cdp-stack.mjs` | `~/.amico/server/fleet-watchdog/cdp-stack.mjs` | CDP all-threads JS stack capture for wedge postmortems (connects to the engine's BUN_INSPECT port) |
 
@@ -76,6 +77,52 @@ Rollback: the hub keeps `*.bak-*` copies beside every live script it has ever
 hot-fixed; the pre-Phase-1 single-shard posture is shard 1's legacy unit —
 disabling the pool = stop `…@2` / `…@3`, point the frontdoor's route table
 back at shard 1 for everything (single-entry table), restart the frontdoor.
+
+## The app-dist deploy (`deploy-dist.sh`, amicode #1906 / A13b)
+
+The app dist (`~/.amico/server/service/dist-app`, the frontdoor's `APP_DIST`
+and the runner's `AMICODE_APP_DIST`) ships ONLY via `ops/hub/deploy-dist.sh`,
+run from a lane worktree on the hub. It replaces the hand
+`build_app_bundle.mjs` + `cp`/`mv` swap; it needs no restart.
+
+```bash
+ops/hub/deploy-dist.sh --worktree <lane worktree> --dry-run   # checks only
+ops/hub/deploy-dist.sh --worktree <lane worktree>             # build + flip + record
+ops/hub/deploy-dist.sh --rollback                             # flip to the previous release
+```
+
+- **Refuses** a dirty worktree, a HEAD that is not the tip of an
+  `origin/lane/*` or `origin/main` branch, and a build whose `deploy.json`
+  says `dirty: true` (or carries an override nobody asked for). The first two
+  are waivable only by `--override "<reason>"`, which is recorded and counted.
+- **Builds** via `build_app_bundle.mjs` with `AMICODE_DEPLOY_BASELINE=<lane>`,
+  so an honest lane deploy needs no `AMICODE_DEPLOY_OVERRIDE`.
+- **Releases** land in `dist-releases/<UTC-ts>-<sha8>/` (deploy.json kept);
+  `dist-app` is a relative symlink, flipped by `ln -s` to a temp name and then
+  `mv -T`. That is one `rename(2)`, so there is no 503 window. The first run
+  migrates a real `dist-app` directory with `renameat2(RENAME_EXCHANGE)`, and
+  the legacy directory becomes `dist-releases/<mtime>-<sha8>-migrated`.
+  `dist-releases.previous` names the rollback target. `--keep 3` prunes the
+  rest, but never the current or the previous release.
+- **Provenance** is one JSON line per deploy or rollback in
+  `dist-deploys.jsonl`: `{ts, built_at, action, lane_branch, head_sha,
+  bundle{name,sha256}, release_dir, override_reason, operator, dirty,
+  previous_release}`. To count override deploys from it, run
+  `amico census --deploy-record ~/.amico/server/service/dist-deploys.jsonl`.
+- **Readers follow the symlink** because every one of them opens the path per
+  request: the frontdoor (`open(APP_DIST/…)`), the runner's shelf, and
+  `amicode-server.sh`'s `[ -d dist-app ]`. None of them realpaths or caches
+  the target.
+- **Caveat:** `index.html` and its hashed assets are separate requests. A
+  client that fetches the old index just before a flip asks for old asset
+  names afterwards. The frontdoor answers a dead `.js` with its reload heal
+  (#1723), the same as after any deploy.
+
+Gate: `python3 ops/hub/test_deploy_dist.py`, which runs on Linux (the hub,
+from a `/tmp` copy). It uses a temp service dir and a fake build
+(`DEPLOY_DIST_BUILD_CMD`), and covers the refusals, the migration, the
+`test -e` reader loop, a real-frontdoor request loop (no 503), the
+provenance fields, pruning, rollback, and shellcheck when it is installed.
 
 ## The frontdoor router (slice 1b)
 
