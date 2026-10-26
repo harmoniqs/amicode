@@ -31,13 +31,14 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
+let seq = 0;
 function manifest(total: unknown = 1002): string {
-  const p = join(dir, "manifest.json");
+  const p = join(dir, `manifest-${seq++}.json`);
   writeFileSync(p, JSON.stringify({ counts: { overlay_total: total } }));
   return p;
 }
 function deployRecord(body: unknown): string {
-  const p = join(dir, "deploy.json");
+  const p = join(dir, `deploy-${seq++}.json`);
   writeFileSync(p, typeof body === "string" ? body : JSON.stringify(body));
   return p;
 }
