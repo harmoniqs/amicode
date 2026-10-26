@@ -366,12 +366,13 @@
     "packages/opencode/src/session/business-record.ts": "d82db061055d0dd26ad95b34bff688ce23fd06a8fb9248dd335c6726c6ff0f5e",
     "packages/opencode/src/session/compaction.ts": "101ce3aba83206a31e80fd7e00ed7ec7bbea8180c7b5bda5a848a319addc2013",
     "packages/opencode/src/session/evidence.ts": "f1b11aa0dcfb345f074e408ab95986ea9d932249e82d6f2cc6594d8d4ab65a1e",
+    "packages/opencode/src/session/exhausted-receipt.ts": "4a7d17d2fde0d18ebcb34f34c2210abb53eb69a2c6c59a24891c760cdfb34829",
     "packages/opencode/src/session/external-diff.ts": "2e1955ac23f5a50f572d61152a14cc994aee9573c59d6bd261a060513b4140b2",
     "packages/opencode/src/session/instruction.ts": "19640d02c96b8ec764edd49b0ce74879432fd2d2cbb4d2ad0076caa200dd4797",
     "packages/opencode/src/session/lineage.ts": "fce706aacb78004f9ce04783da9341e56a9dffc94fb54ca2b7b488d5efaeeafa",
     "packages/opencode/src/session/message-v2.ts": "3b308ef7feb697fbcfd20f416e6d9a5bb73a2a2a41c4ff77aee771788d0c6d19",
     "packages/opencode/src/session/mutation.ts": "31f29e8865be9dd62eb8148d240811f2344db4c440be2739dc113764749d3e88",
-    "packages/opencode/src/session/prompt.ts": "2ea50e8e53f05365b1fa8927f121eb607cb5cb6cf89f50195fb44b257b332c8f",
+    "packages/opencode/src/session/prompt.ts": "777cfd5f58a697d6bed77f1255d787b27360f198b436eacec17288d157a61bcd",
     "packages/opencode/src/session/prose-guard.ts": "dd6f8dfdc41b9cad3406ac586db9a60f7ee0a040b41550d6c55da2d040dc7c13",
     "packages/opencode/src/session/receipt-privacy.ts": "92ba8a92d4ddc0d18249efa5efdf600a32ebc0453d605b8c747cd4bcbd6d19a9",
     "packages/opencode/src/session/receipt.ts": "06fd30326424112b8dacd756e4bba5424b3a7a2d10318464a5670aeabb0c4808",
@@ -392,7 +393,7 @@
     "packages/opencode/src/tool/registry.ts": "0097ab8a7904559d0354d165245caff6bf0e887c99ce267be77fa4ee4b66ec3c",
     "packages/opencode/src/tool/shell-output-throttle.ts": "00933a5c28bf4f3026541b1ca226678778177146b5b0b56bb5f189d837be9067",
     "packages/opencode/src/tool/shell.ts": "09808bb3865574853d162bfd7e1492a618c230828b95ec3989e9e0afa4acb97c",
-    "packages/opencode/src/tool/task.ts": "96a41e9ad58a77dca4df1445f562943a0b3a1fdfc1441bb51d66f9117a1afc94",
+    "packages/opencode/src/tool/task.ts": "af2a0aeea1faf30b14c16a40238798fbbed17a23cb7631066f4b989ded9b2e64",
     "packages/opencode/src/tool/truncate.ts": "92c59d83c4a660116d6ecc48e900aeb16bde93962bfae9f520193fda18273379",
     "packages/opencode/src/tool/widget-author.ts": "c75e0a4452fb89ea0761a5f967743c74b52a94ce8c0e5c567f4ca7fa448b5042",
     "packages/opencode/src/tool/widget-author.txt": "a2572913debbbbd2d4a644dcdf4576accbc7efdcc8217c0fc9f5a011e7a15ec4",
@@ -456,12 +457,13 @@
     "packages/opencode/test/server/workspace-routing.test.ts": "2574731ac379c540f450edc15f8750ac5360e8c33b4a0dad7c61e8eb686137bb",
     "packages/opencode/test/session/adversarial-e2e.test.ts": "1b471a69223d040c5d5f4f2ee99c2daa6df56bdf11679b65d902c15bedac3e80",
     "packages/opencode/test/session/business-record.test.ts": "7857094479408bcfd6ea8d9f5b425c6384bcf8490f930674bc1c203e82782d75",
+    "packages/opencode/test/session/exhausted-receipt.test.ts": "e7aa9b4f7521a69050d4b922439b0ffa7c63f420061b3301b09f0dc6c74754d0",
     "packages/opencode/test/session/instruction.test.ts": "06e1b371a08c7d07ed7688b997eb43ca9957ccd07936f601797d7f04a2bf0ab7",
     "packages/opencode/test/session/llm-native-recorded.test.ts": "7139b58569af0172862af521e8f8d7a78132f40f06dcceb4baf8ca3a2f07d3bd",
     "packages/opencode/test/session/message-v2.test.ts": "90fbd916cea08ddb1de066dccf2677490b547afc5805aa36e55683b28fbb079f",
     "packages/opencode/test/session/mutation.test.ts": "ccb82b6858ac097d2af09a94497d05f6a0ff843b928a69e763fdb510905a10cd",
     "packages/opencode/test/session/processor-effect.test.ts": "51ebe1cb9b7b0e1d249472367491a1306b5add24ca8b04d5dc15b2b2fa1f1b56",
-    "packages/opencode/test/session/prompt.test.ts": "e3d0748edb833640ef284857ae725e4b974843480d4128f56239e3fd1e6d481f",
+    "packages/opencode/test/session/prompt.test.ts": "298c4d59c276bd3be14a9fb66dcd38f243ae8e9278be3bed0a4f1aac37d7e442",
     "packages/opencode/test/session/prose-guard.test.ts": "7239a758cbf27df4c3879fa9ee0374964559c1461773c2f5a85196f64632e6c4",
     "packages/opencode/test/session/receipt-privacy.test.ts": "6c8777edc280a061fec1a4d16e2504aec18bdf9cd6dd2cedc7a09ef8fc6c2ca0",
     "packages/opencode/test/session/retry.test.ts": "8136de9fed8d493c9703098b5f701674681ecf8a3f823268c039b819753d00e2",
@@ -477,7 +479,7 @@
     "packages/opencode/test/tool/question.test.ts": "75760ba6ed98f2fdfd75945c3b492342dfe91026f99cde86db19cf52444260c2",
     "packages/opencode/test/tool/registry-schema.test.ts": "053cb9732299ea6554db007bad873d8d61cd3769aa9514d66c70c3bf0d405b90",
     "packages/opencode/test/tool/shell-output-throttle.test.ts": "9fed6f4ea8f7c62941280ab4f973848ea4184274830a153fbea83aae2c028576",
-    "packages/opencode/test/tool/task.test.ts": "db9e368fadf22ab0dd216b096834f97176a56126ee5d113f1ba2e772a72fce09",
+    "packages/opencode/test/tool/task.test.ts": "e01a71a22d92417f5fc1e9b515b15e7cd7efb1cbcf5185317a133de893b55640",
     "packages/opencode/test/tool/truncation.test.ts": "582ef7199b3f294b1c1588fadda8a1c0ea43ca9af0424a97f48747ade1654ad1",
     "packages/opencode/test/tool/write.test.ts": "820d36fde2314abbd939ce43ca5bcc4cfa0139d12a4c669716249060d9a955ff",
     "packages/schema/src/v1/question.ts": "3ba37742dbd5ef322b7edb42fea0dacf43a1322747dfe997af909bf564bffd35",
@@ -1029,7 +1031,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-25T22:23:34.046Z",
+  "extracted_at": "2026-10-26T18:34:42.306Z",
   "per_package": {
     "packages/app": {
       "A": 257,
@@ -1047,7 +1049,7 @@
       "D": 0
     },
     "packages/opencode": {
-      "A": 99,
+      "A": 101,
       "M": 100,
       "D": 0
     },
@@ -1078,7 +1080,7 @@
     }
   },
   "counts": {
-    "overlay_total": 1007,
+    "overlay_total": 1009,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1441,6 +1443,7 @@
     "packages/opencode/src/session/business-record.ts": "A",
     "packages/opencode/src/session/compaction.ts": "M",
     "packages/opencode/src/session/evidence.ts": "A",
+    "packages/opencode/src/session/exhausted-receipt.ts": "A",
     "packages/opencode/src/session/external-diff.ts": "A",
     "packages/opencode/src/session/instruction.ts": "M",
     "packages/opencode/src/session/lineage.ts": "A",
@@ -1531,6 +1534,7 @@
     "packages/opencode/test/server/workspace-routing.test.ts": "M",
     "packages/opencode/test/session/adversarial-e2e.test.ts": "A",
     "packages/opencode/test/session/business-record.test.ts": "A",
+    "packages/opencode/test/session/exhausted-receipt.test.ts": "A",
     "packages/opencode/test/session/instruction.test.ts": "M",
     "packages/opencode/test/session/llm-native-recorded.test.ts": "M",
     "packages/opencode/test/session/message-v2.test.ts": "M",

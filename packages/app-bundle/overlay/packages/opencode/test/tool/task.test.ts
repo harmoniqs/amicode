@@ -17,6 +17,7 @@ import { SessionRunState } from "@/session/run-state"
 import { SessionStatus } from "@/session/status"
 
 import { TaskTool, type TaskPromptOps } from "../../src/tool/task"
+import { ExhaustedReceipt } from "../../src/session/exhausted-receipt"
 import { Truncate } from "@/tool/truncate"
 import { ToolRegistry } from "@/tool/registry"
 import { RuntimeFlags } from "@/effect/runtime-flags"
@@ -267,6 +268,61 @@ describe("tool.task", () => {
       expect(text).toContain("Too Many Requests")
       expect(text).toContain(`task_id="${kids[0]!.id}"`)
       expect(text).toContain("partial analysis")
+    }),
+  )
+
+  // #1905: the step-limit turn itself errored — the failure still carries the
+  // engine-emitted receipt (with last_error) alongside the resumable task_id.
+  it.instance("execute attaches the EXHAUSTED receipt to an errored step-limited child", () =>
+    Effect.gen(function* () {
+      const { chat, assistant } = yield* seed()
+      const tool = yield* TaskTool
+      const def = yield* tool.init()
+      const promptOps: TaskPromptOps = {
+        ...stubOps(),
+        prompt: (input) =>
+          Effect.sync(() => {
+            const out = reply(input, "")
+            ExhaustedReceipt.mark(out.info.id, 3)
+            return {
+              ...out,
+              info: {
+                ...out.info,
+                finish: undefined,
+                error: new SessionV1.APIError({ message: "Overloaded", isRetryable: true }).toObject(),
+              } as SessionV1.WithParts["info"],
+            }
+          }),
+      }
+
+      const exit = yield* Effect.exit(
+        def.execute(
+          { description: "analyze artifacts", prompt: "analyze", subagent_type: "general" },
+          {
+            sessionID: chat.id,
+            messageID: assistant.id,
+            agent: "build",
+            abort: new AbortController().signal,
+            extra: { promptOps },
+            messages: [],
+            metadata: () => Effect.void,
+            ask: () => Effect.void,
+          },
+        ),
+      )
+
+      expect(Exit.isFailure(exit)).toBe(true)
+      const sessions = yield* Session.Service
+      const kids = yield* sessions.children(chat.id)
+      const text = Exit.isFailure(exit) ? String(Cause.squash(exit.cause)) : ""
+      expect(text).toContain(`task_id="${kids[0]!.id}"`)
+      expect(ExhaustedReceipt.parse(text)).toEqual({
+        exhausted: true,
+        steps: 3,
+        files_touched: [],
+        last_error: "APIError: Overloaded",
+        task_id: kids[0]!.id,
+      })
     }),
   )
 
