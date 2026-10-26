@@ -105,6 +105,31 @@ solve!(ptp; max_iter = 5, tol = 1e-3, γ = 0.8, min_nominal_fidelity = 0.8)
   QCP's system; pass `device_model = ...` to plan against something predictive
   (e.g. a parametric-Hamiltonian sysid model) instead.
 
+### The QP-ILC step: which representation to use
+
+`QPILCStrategy` (the QP inner step) is the production choice for correlator/population readouts. How to
+shape its step was measured head-to-head in a research campaign (2026-10, transmon + Rydberg fixtures):
+
+- **Use the readout-null-space penalty, not a hand-labelled basis.** When the readout has far fewer
+  independent rows than the pulse has DOF, the unrestricted step spends most of its norm in directions
+  the measurement cannot see (often saturating the trust box), and that content costs true fidelity.
+  `QPILCStrategy(; robust_mode = true, robust_lambda_mode = :relative, robust_lambda = 100)` penalizes
+  exactly that (λ_eff = 100·σ_max(Gw)², recomputed per step; since `robust_mode` defaults `robust_rtol`
+  to 1e-8 the projector ignores round-off modes). It matched a hand-built K=4 restricted basis and beat
+  the unrestricted step at both fixtures, with no labels and within the drive bounds.
+- **Don't shrink the box instead.** A smaller trust box removes visible and invisible motion in
+  proportion. It helped at one fixture and did nothing at the other.
+- **If you do project onto a basis** (`project_step` above, or your own), **clamp the projected step to
+  the production box afterwards**. A raw projection discards the QP's pull back inside the drive bounds,
+  so it produces out-of-bound pulses whenever the pulse sits at a bound (measured: on every accepted
+  step).
+- **Only correct drift that persists.** If the drift is redrawn independently each round, no step
+  representation beats leaving the pulse alone when the correction is scored on the next round. Under
+  persistent drift every representation recovers most of the drift-induced infidelity, minus a fixed
+  per-step cost.
+- **Check before trusting a full-QP run:** compare the step norm with the trust-box diagonal. A step at
+  the diagonal is spending its norm in the null space.
+
 ### Calibration: learnable device parameters
 
 `ILCStrategy(mode; kwargs...)` adds parameter calibration on top of plain ILC.
@@ -165,16 +190,8 @@ c     = capture(sub, direction)                           # fraction of the dire
   residual direction?" — a low value says the residual has components your
   channel set doesn't span.
 
-> **Environment pairing requirement.** The encoded-decay kernels this family
-> consumes (the conjugation-frames / encoded-decay-rate kernels, imported from
-> Piccolissimo as `conjugation_frames` and companions) are present only when
-> your Piccolissimo environment is paired with the conjugation-kernels branch
-> (`wip/414-conjugation-kernels`, pre-paired by your delivery contact) rather
-> than the mainline checkout. Cross-check, flagged not reconciled: the
-> `piccolissimo-dev` card's stated ground-truth checkout
-> (`feat/429-exponential-extraction`, v0.4.0) does **not** carry these kernels —
-> they are outside that card's module tree — so the pairing branch is a
-> delivery-side pairing distinct from that ground truth. If the pairing is
-> wrong, `using Intonatissimo` fails at
-> load with a missing-name error — re-pair the environment; the calls above do
-> not change.
+> **Environment note (re-verified 2026-10-26).** The encoded-decay kernels this family consumes
+> (`conjugation_frames` and companions, imported from Piccolissimo) are on **Piccolissimo main**
+> since its PR #422 (merged 2026-09-05). The old `wip/414-conjugation-kernels` branch pairing is no
+> longer needed. If `using Intonatissimo` fails with a missing-name error, your Piccolissimo
+> predates that merge: update it. The calls above do not change.
