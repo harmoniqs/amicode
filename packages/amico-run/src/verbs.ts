@@ -49,6 +49,8 @@ export interface Verb {
   generalizes: string; // the real module/plugin tool whose body lands in a later slice
   slice: string; // which spine slice implements the real body
   stub?: boolean; // true while the body is still a B1 seam (help renders "[stub → slice]")
+  /** Subcommands the MCP facade refuses: reachable from the CLI only (callMcpTool checks argv[0]). */
+  cliOnlySubcommands?: readonly string[];
   run: (args: string[]) => VerbResult | Promise<VerbResult>;
 }
 
@@ -186,11 +188,15 @@ const fleet: Verb = {
 // listMcpTools() maps this registry. That does not weaken D-2 — the point of the CLI-verb
 // design is that the critic is not a subagent the REVIEWED agent spawns, so no agent ever
 // holds `task`. An agent invoking the verb is the intended path.
+//
+// EXCEPT `spec slices` (v2.1 A0a): it files issues and edges across repos — a public write — so
+// in v2.1 it is CLI-only. `cliOnlySubcommands` makes callMcpTool refuse it before it runs.
 const spec: Verb = {
   name: "spec",
   summary: "adversarially review a Spec (mechanical lenses + judgment critics) / validate its frontmatter",
   generalizes: "the brainstorming skill's own reviewer subagent (which it now calls instead of carrying)",
   slice: "deliberation front half (D1)",
+  cliOnlySubcommands: ["slices"],
   run: (args) => specVerb(args),
 };
 
