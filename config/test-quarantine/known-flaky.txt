@@ -1,0 +1,9 @@
+# known-flaky — tests that may pass or fail in CI (A13c, spec-20261026-101500-rd-system-v2-1, #1907).
+#
+# Gated by scripts/test_quarantine_gate.mjs. One entry per line:
+#   <suite>::<file>::<describe > ... > test title> | issue:#N | ttl:YYYY-MM-DD
+# - every entry carries a real issue ref and a ttl; after the ttl date (UTC)
+#   the entry fails CI — fix the test or re-justify with a new ttl;
+# - additions need human code-owner approval (A10) and are counted in census-lite.
+#
+# Empty: no quarantined flakes in the gated suites today.
