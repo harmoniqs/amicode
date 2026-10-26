@@ -79,6 +79,14 @@ _Avoid_: cron, scheduler (as concept names), night shift
 The role that leads any autonomous loop — one canonical protocol (ledger discipline, dispatch through gates, analyze, record) that every campaign runs under, whichever mode it is bound to. Research and development differ in their gate packs, never in their director.
 _Avoid_: conductor (standing decision)
 
+**Critic pass**:
+A fresh-context LLM judgment dispatch (critic, reviewer, analyzer): one lens per pass, a code-enforced verdict vocabulary, a receipt in the dispatching record. Blind to implementer reasoning. The brief carries the diff, spec, tests, and CI output, never the PR body, commit messages, review threads, or transcript, and no critic runs on the implementer's session or model instance (spec-20261026-101500 A10). It is the substrate for spec-review critics, merge-gate critic panels, and architecture passes. Its lens set has a mechanical floor derived from the diff's paths and classes. Renamed from "Jev pass" by spec-20261026-101500 A1. The v2 D16 and Notturno v1 D3 "Jev passes" read as critic passes.
+_Avoid_: Jev pass (the retired name: a critic pass is an LLM, never Jev), reviewer call, check (a critic pass is receipted judgment, not a mechanical check)
+
+**Jev**:
+TypeSafe's calibrated System One model, and only that. It chooses or scores among declared options, and it routes, orders, prioritizes, and pre-labels. It never generates text. It never sits in a verdict, gate, merge, promotion, or summary-fidelity path, and a Jev answer is never a label. In critic lens routing it may add lenses above the mechanical floor or reorder them, but never remove one. Every Jev seam fails open to its deterministic behavior (spec-20261026-101500 A1).
+_Avoid_: Jev pass (renamed to Critic pass), Jev review, "Jev" as a name for any LLM dispatch
+
 **Research**:
 The research mode (renamed from `autoresearch` — the three-mode surface, spec-20260907-011500; old ids read-resolve for one release cycle, never migrated in place): hypothesis queue → deliberate spec → experiment → gates → analyzer — the shipped, name-frozen autonomous mode, binding the research gate pack over the director core.
 _Avoid_: autoresearch (the pre-rename id — an alias at read time, not a name)
