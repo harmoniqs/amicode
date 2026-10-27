@@ -1055,6 +1055,113 @@ it.instance(
   10_000,
 )
 
+// #1905 (A13a): the receipt is engine-emitted — the parent parses it out of the
+// task result; it never depends on the child's prose.
+const EXHAUSTED_RECEIPT = /<exhausted_receipt>\n```json\n([\s\S]*?)\n```\n<\/exhausted_receipt>/
+
+const exhaustedTaskTool = Effect.fn("test.exhaustedTaskTool")(function* (sessionID: SessionID) {
+  const msgs = yield* MessageV2.filterCompactedEffect(sessionID)
+  return msgs
+    .filter((item) => item.info.role === "assistant" && item.info.agent === "build")
+    .flatMap((item) => item.parts)
+    .find(
+      (part): part is CompletedToolPart =>
+        part.type === "tool" && part.tool === "task" && part.state.status === "completed",
+    )
+})
+
+it.instance(
+  "subagent that hits its step limit returns an engine-emitted EXHAUSTED receipt to the parent",
+  () =>
+    Effect.gen(function* () {
+      const { dir, llm } = yield* useServerConfig((url) => ({
+        ...providerCfg(url),
+        agent: {
+          worker: { description: "Worker", mode: "subagent", steps: 5, permission: { todowrite: "allow" } },
+        },
+      }))
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      const chat = yield* sessions.create({
+        title: "Pinned",
+        permission: [{ permission: "*", pattern: "*", action: "allow" }],
+      })
+      const a = path.join(dir, "a.txt")
+      const b = path.join(dir, "b.txt")
+      const todos = [
+        { content: "write a", status: "completed", priority: "high" },
+        { content: "write b", status: "in_progress", priority: "high" },
+      ]
+      // parent → task; child: 4 tool steps, then the forced text-only last step; parent → done
+      yield* llm.tool("task", { description: "write files", prompt: "write a and b", subagent_type: "worker" })
+      yield* llm.tool("write", { filePath: a, content: "one" })
+      yield* llm.tool("todowrite", { todos })
+      yield* llm.tool("write", { filePath: b, content: "two" })
+      yield* llm.tool("write", { filePath: a, content: "three" })
+      yield* llm.text("Maximum steps reached; a and b written.")
+      yield* llm.text("done")
+      yield* user(chat.id, "hello")
+
+      yield* prompt.loop({ sessionID: chat.id })
+      expect(yield* llm.calls).toBe(7)
+
+      const kids = yield* sessions.children(chat.id)
+      expect(kids).toHaveLength(1)
+      const child = kids[0]!
+      const tool = yield* exhaustedTaskTool(chat.id)
+      expect(tool).toBeDefined()
+      if (!tool) return
+
+      const match = tool.state.output.match(EXHAUSTED_RECEIPT)
+      expect(match).not.toBeNull()
+      const receipt = JSON.parse(match![1]!)
+      expect(receipt).toEqual({
+        exhausted: true,
+        steps: 5,
+        files_touched: [a, b],
+        last_todo: todos,
+        task_id: child.id,
+      })
+      expect(tool.state.metadata?.exhausted_receipt).toEqual(receipt)
+      // the child's own prose still reaches the parent alongside the receipt
+      expect(tool.state.output).toContain("Maximum steps reached; a and b written.")
+    }),
+  15_000,
+)
+
+it.instance(
+  "subagent that finishes before its step limit returns no EXHAUSTED receipt",
+  () =>
+    Effect.gen(function* () {
+      const { dir, llm } = yield* useServerConfig((url) => ({
+        ...providerCfg(url),
+        agent: { worker: { description: "Worker", mode: "subagent", steps: 5 } },
+      }))
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      const chat = yield* sessions.create({
+        title: "Pinned",
+        permission: [{ permission: "*", pattern: "*", action: "allow" }],
+      })
+      yield* llm.tool("task", { description: "write file", prompt: "write a", subagent_type: "worker" })
+      yield* llm.tool("write", { filePath: path.join(dir, "a.txt"), content: "one" })
+      yield* llm.text("wrote a")
+      yield* llm.text("done")
+      yield* user(chat.id, "hello")
+
+      yield* prompt.loop({ sessionID: chat.id })
+      expect(yield* llm.calls).toBe(4)
+
+      const tool = yield* exhaustedTaskTool(chat.id)
+      expect(tool).toBeDefined()
+      if (!tool) return
+      expect(tool.state.output).toContain("wrote a")
+      expect(tool.state.output).not.toContain("exhausted_receipt")
+      expect(tool.state.metadata?.exhausted_receipt).toBeUndefined()
+    }),
+  15_000,
+)
+
 it.instance(
   "loop sets status to busy then idle",
   () =>

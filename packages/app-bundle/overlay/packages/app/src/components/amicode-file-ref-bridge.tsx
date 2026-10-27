@@ -14,8 +14,11 @@ import { pickVaultServer } from "@/components/vault-browser-model"
 export function AmicodeFileRefBridge() {
   const server = useServer()
   const global = useGlobal()
+  let unregister: (() => void) | undefined
   onMount(() => {
-    registerFileRefResolver(async (text) => {
+    // #1845: keep the unregister handle — it clears only THIS registration,
+    // so a remounting shell's late cleanup can't wipe its successor's resolver.
+    unregister = registerFileRefResolver(async (text) => {
       const conn = pickVaultServer({
         current: server.current,
         list: server.list,
@@ -28,6 +31,6 @@ export function AmicodeFileRefBridge() {
       return raw?.ok === true && raw.found === true && typeof raw.path === "string" ? raw.path : null
     })
   })
-  onCleanup(() => registerFileRefResolver(undefined))
+  onCleanup(() => unregister?.())
   return null
 }

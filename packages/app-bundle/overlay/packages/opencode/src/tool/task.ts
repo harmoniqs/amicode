@@ -6,6 +6,7 @@ import { BackgroundJob } from "@/background/job"
 import { Session } from "@/session/session"
 import { SessionID, MessageID } from "../session/schema"
 import { MessageV2 } from "../session/message-v2"
+import { ExhaustedReceipt } from "../session/exhausted-receipt"
 import { Agent } from "../agent/agent"
 import { deriveSubagentSessionPermission } from "../agent/subagent-permissions"
 import type { SessionPrompt } from "../session/prompt"
@@ -209,7 +210,9 @@ export const TaskTool = Tool.define(
       const ops = ctx.extra?.promptOps as TaskPromptOps
       if (!ops) return yield* Effect.fail(new Error("TaskTool requires promptOps in ctx.extra"))
 
+      let receipt: ExhaustedReceipt.Receipt | undefined
       const runTask = Effect.fn("TaskTool.runTask")(function* () {
+        receipt = undefined
         const parts = yield* ops.resolvePromptParts(params.prompt)
         const result = yield* ops.prompt({
           messageID: MessageID.ascending(),
@@ -223,6 +226,21 @@ export const TaskTool = Tool.define(
           parts,
         })
         const text = result.parts.findLast((item) => item.type === "text")?.text ?? ""
+        // #1905 (A13a): the step limit forced the child's final turn — attach the
+        // engine-emitted receipt (files touched, last todo, last error) so the
+        // parent never has to trust the child's prose about where it stopped.
+        const steps = ExhaustedReceipt.take(result.info.id)
+        if (steps !== undefined) {
+          const messages = yield* MessageV2.stream(nextSession.id).pipe(Effect.provideService(Database.Service, database))
+          const history = messages.reverse()
+          receipt = ExhaustedReceipt.build({
+            taskID: nextSession.id,
+            steps,
+            // the returned turn is authoritative even if its final write raced the read
+            messages: [...history.filter((msg) => msg.info.id !== result.info.id), result],
+          })
+        }
+        const body = receipt ? [text, ExhaustedReceipt.render(receipt)].filter(Boolean).join("\n\n") : text
         // #1849: a child whose final turn errored (a provider 429 that outlived
         // its retries, an auth failure, ...) used to come back as an EMPTY
         // success — the parent saw "completed" with no result and started a
@@ -230,9 +248,9 @@ export const TaskTool = Tool.define(
         // failure that names the resumable session instead.
         const error = result.info.role === "assistant" ? result.info.error : undefined
         if (error && error.name !== "MessageAbortedError") {
-          return yield* Effect.fail(new Error(subagentFailure(nextSession.id, error, text)))
+          return yield* Effect.fail(new Error(subagentFailure(nextSession.id, error, body)))
         }
-        return text
+        return body
       })
 
       const inject = Effect.fn("TaskTool.injectBackgroundResult")(function* (
@@ -351,8 +369,17 @@ export const TaskTool = Tool.define(
             if (result?.status === "cancelled") return yield* Effect.fail(new Error("Task cancelled"))
             return {
               title: params.description,
-              metadata,
-              output: renderOutput({ sessionID: nextSession.id, state: "completed", text: result?.output ?? "" }),
+              metadata: receipt ? { ...metadata, exhausted_receipt: receipt } : metadata,
+              output: renderOutput({
+                sessionID: nextSession.id,
+                state: "completed",
+                ...(receipt
+                  ? {
+                      summary: `Subagent stopped at its step limit (${receipt.steps} steps). To continue it, call the task tool again with task_id="${nextSession.id}".`,
+                    }
+                  : {}),
+                text: result?.output ?? "",
+              }),
             }
           }),
         (_, exit) =>

@@ -683,6 +683,93 @@
     min-width: 0;
     padding: 0;
   }
+
+  /* inline group rework: each member row expands into its real tool card */
+  [data-slot="group-member-trigger"] {
+    cursor: pointer;
+    border-radius: var(--radius-sm, 4px);
+    padding: 2px 4px;
+    margin-left: -4px;
+
+    &:hover {
+      background: var(--v2-background-bg-layer-02, rgba(127, 127, 127, 0.08));
+    }
+
+    &:focus-visible {
+      outline: 1px solid var(--v2-border-border-focus, currentColor);
+      outline-offset: 1px;
+    }
+
+    [data-slot="basic-tool-tool-trigger-content"] {
+      display: flex;
+      align-items: flex-start;
+      gap: 6px;
+    }
+
+    [data-slot="basic-tool-tool-info"] {
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+
+    [data-slot="basic-tool-tool-info-main"] {
+      flex-wrap: wrap;
+      row-gap: 2px;
+    }
+  }
+
+  [data-slot="group-member-chevron"] {
+    flex: none;
+    width: 6px;
+    height: 6px;
+    margin-top: 7px;
+    border-right: 1.5px solid var(--icon-weaker);
+    border-bottom: 1.5px solid var(--icon-weaker);
+    transform: rotate(-45deg);
+    transition: transform 120ms ease;
+    opacity: 0;
+  }
+
+  [data-slot="context-tool-group-item"]:hover [data-slot="group-member-chevron"],
+  [data-slot="context-tool-group-item"][data-open="true"] [data-slot="group-member-chevron"] {
+    opacity: 1;
+  }
+
+  [data-slot="context-tool-group-item"][data-open="true"] [data-slot="group-member-chevron"] {
+    transform: rotate(45deg);
+  }
+
+  /* the full command, wrapped — never elided to one line */
+  [data-slot="group-shell-command"] {
+    min-width: 0;
+    font-size: 13px;
+    color: var(--v2-text-text-base, inherit);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    overflow: hidden;
+  }
+
+  [data-slot="context-tool-group-item"][data-open="true"] [data-slot="group-shell-command"] {
+    -webkit-line-clamp: unset;
+    display: block;
+  }
+
+  [data-slot="group-member-dir"] {
+    min-width: 0;
+    font-size: 12px;
+    color: var(--v2-text-text-faint, inherit);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  [data-slot="group-member-detail"] {
+    margin: 4px 0 6px 8px;
+    padding-left: 8px;
+    border-left: 1px solid var(--v2-border-border-weak, rgba(127, 127, 127, 0.25));
+  }
 }
 
 [data-component="diagnostics"] {

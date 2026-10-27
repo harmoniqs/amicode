@@ -29,6 +29,7 @@ import { buildRecentSessionsBlock } from "./session_recap";
 import { buildOpenThreadsBlock, readThreadNoulMap } from "./open_threads";
 import { buildSetupStateSection } from "./setup_state";
 import { applyHarmoniqsHeaders } from "./harmoniqs_transport";
+import { applySessionEnv } from "./session_env";
 
 console.error("[amicode-context] loaded — stack-state + session-recap + mode-block injection plugin");
 
@@ -120,6 +121,14 @@ export const AmicodeContext = async (input: unknown) => {
       output: { headers: Record<string, string> },
     ): Promise<void> => {
       applyHarmoniqsHeaders(input, output);
+    },
+    // #1928 (A15): every bash-tool env carries AMICO_SESSION_ID (the engine
+    // exposes the session id to tool children only through this hook).
+    "shell.env": async (
+      input: { cwd?: string; sessionID?: string; callID?: string },
+      output: { env: Record<string, string> },
+    ): Promise<void> => {
+      applySessionEnv(input, output);
     },
   };
 };

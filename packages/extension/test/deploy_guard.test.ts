@@ -392,6 +392,23 @@ describe("#1196 the default-branch baseline resolution", () => {
       resolveDefaultBranch({ remoteShowOutput: unresolvedRemote, symbolicRefOutput: "" }),
     ).toEqual({ branch: "main", source: "fallback" })
   })
+
+  test("#1906 an explicit baseline (AMICODE_DEPLOY_BASELINE — deploy-dist.sh's lane) wins over every probe", () => {
+    // deploy-dist.sh verifies HEAD is the tip of origin/lane/<x> itself, then
+    // hands the lane to the guard so a lane deploy needs no override.
+    expect(
+      resolveDefaultBranch({
+        explicit: "lane/0.3.10",
+        remoteShowOutput: "  HEAD branch: main\n",
+        symbolicRefOutput: "origin/main",
+      }),
+    ).toEqual({ branch: "lane/0.3.10", source: "explicit" })
+    // tolerant of an origin/ prefix and whitespace; blank means "not set"
+    expect(resolveDefaultBranch({ explicit: " origin/lane/0.3.10 ", remoteShowOutput: "", symbolicRefOutput: "" }))
+      .toEqual({ branch: "lane/0.3.10", source: "explicit" })
+    expect(resolveDefaultBranch({ explicit: "  ", remoteShowOutput: "  HEAD branch: dev\n", symbolicRefOutput: "" }))
+      .toEqual({ branch: "dev", source: "remote-show" })
+  })
 })
 
 describe("#992 the deploy manifest", () => {

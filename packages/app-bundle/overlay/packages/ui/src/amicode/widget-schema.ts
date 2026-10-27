@@ -18,6 +18,8 @@ export interface WidgetInfo {
   description: string
   size: "hero" | "tile"
   height: number
+  /** #1856: dock as a compact strip when the card scrolls out of view (home only) */
+  sticky: boolean
   config: Record<string, ConfigFieldWire>
   builtin: boolean
   overridden: boolean
@@ -74,6 +76,7 @@ export function parseWidgetsResponse(raw: unknown): WidgetInfo[] {
       description: typeof w.description === "string" ? w.description : "",
       size: w.size === "hero" ? "hero" : "tile",
       height: typeof w.height === "number" && w.height > 0 ? w.height : 96,
+      sticky: w.sticky === true,
       config: parseConfigSchema(w.config),
       builtin: w.builtin === true,
       overridden: w.overridden === true,

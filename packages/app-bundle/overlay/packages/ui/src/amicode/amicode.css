@@ -1007,6 +1007,18 @@
 .amc-wg-grid [data-component="amicode-widget-cell"] { height: 100%; display: flex; flex-direction: column; }
 .amc-wg-grid [data-component="amicode-widget-cell"] .amc-wg-framewrap { flex: 1 1 auto; min-height: 0; }
 
+/* #1856 docked sticky strip — host chrome around the SAME frame, restyled in
+   place (widget-grid sets position/top/left/width/height inline from measured
+   geometry). The widget draws its own 1px card edge, so the host adds only the
+   card radius, the raised elevation, and the card ground behind the frame. No
+   overflow clip: the ⋯ menu drops below the strip. */
+.amc-wg-grid [data-component="amicode-widget-cell"] .amc-wg-framewrap[data-docked="true"] {
+  z-index: 20;
+  border-radius: var(--radius-lg);
+  background: var(--v2-background-bg-layer-01);
+  box-shadow: var(--v2-elevation-raised);
+}
+
 /* tray candidates preview at board scale in the same unit rhythm; the
    overlay button is the whole card's single click target */
 .amc-wg-traycard { position: relative; }

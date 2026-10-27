@@ -848,3 +848,139 @@ span[data-component="tag"][data-variant="accent"] {
     animation: none;
   }
 }
+
+/* ── Preview: markdown front matter as a properties card ── */
+[data-component="preview-frontmatter"] {
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  border: 1px solid var(--v2-border-border-weak, rgba(127, 127, 127, 0.2));
+  border-radius: var(--radius-md, 6px);
+  background: var(--v2-background-bg-layer-01, transparent);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--v2-text-text-base, inherit);
+}
+[data-component="preview-frontmatter"] [data-slot="fm-header"] {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+}
+[data-component="preview-frontmatter"] [data-slot="fm-header-item"] {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+}
+[data-component="preview-frontmatter"] [data-slot="fm-header-item"][data-key="type"] [data-slot="fm-header-value"] {
+  font-weight: 600;
+  text-transform: capitalize;
+}
+[data-component="preview-frontmatter"] [data-slot="fm-header-value"] {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+[data-component="preview-frontmatter"] [data-slot="fm-header-key"],
+[data-component="preview-frontmatter"] [data-slot="fm-muted"],
+[data-component="preview-frontmatter"] dt {
+  color: var(--v2-text-text-faint, inherit);
+}
+[data-component="preview-frontmatter"] [data-slot="fm-status-dot"] {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  flex: none;
+}
+[data-component="preview-frontmatter"] [data-slot="fm-tags"] {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 8px;
+}
+[data-component="preview-frontmatter"] [data-slot="fm-tag"] {
+  padding: 0 7px;
+  border-radius: 999px;
+  background: var(--v2-background-bg-layer-02, rgba(127, 127, 127, 0.1));
+  color: var(--v2-text-text-weak, inherit);
+  font-size: 11px;
+  line-height: 18px;
+}
+[data-component="preview-frontmatter"] [data-slot="fm-toggle"] {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--v2-text-text-weak, inherit);
+  font: inherit;
+  cursor: pointer;
+}
+[data-component="preview-frontmatter"] [data-slot="fm-toggle"]:hover {
+  color: var(--v2-text-text-base, inherit);
+}
+[data-component="preview-frontmatter"] [data-slot="fm-chevron"] {
+  width: 5px;
+  height: 5px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 120ms ease;
+}
+[data-component="preview-frontmatter"] [data-slot="fm-chevron"][data-open="true"] {
+  transform: rotate(45deg);
+}
+[data-component="preview-frontmatter"] [data-slot="fm-grid"] {
+  display: grid;
+  grid-template-columns: minmax(80px, max-content) minmax(0, 1fr);
+  gap: 3px 14px;
+  margin: 8px 0 0;
+}
+[data-component="preview-frontmatter"] dt {
+  text-transform: capitalize;
+  white-space: nowrap;
+}
+[data-component="preview-frontmatter"] dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+[data-component="preview-frontmatter"] [data-slot="fm-list"] {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+}
+[data-component="preview-frontmatter"] [data-slot="fm-link"] {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--activity-running);
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+[data-component="preview-frontmatter"] [data-slot="fm-link"]:hover {
+  text-decoration: underline;
+}
+[data-component="preview-frontmatter"] [data-slot="fm-link"][data-missing="true"] {
+  color: var(--v2-text-text-faint, inherit);
+  text-decoration: line-through;
+}
+[data-component="preview-frontmatter"] .font-mono {
+  font-family: var(--font-family-mono, ui-monospace, monospace);
+  font-size: 11px;
+}
+[data-component="preview-frontmatter"] [data-slot="fm-raw"] summary {
+  cursor: pointer;
+  color: var(--v2-text-text-weak, inherit);
+}
+[data-component="preview-frontmatter"] [data-slot="fm-raw"] pre {
+  margin: 6px 0 0;
+  white-space: pre-wrap;
+  font-family: var(--font-family-mono, ui-monospace, monospace);
+  font-size: 11px;
+}
