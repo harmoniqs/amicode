@@ -1044,6 +1044,35 @@ function resolveShippedTemplateSrc(): string {
   return candidates[0];
 }
 
+/** The MACHINE-scoped skill set: library (public + entitled, per-root surface
+ *  admission) + entitlement-gated package skills — NO per-workspace roots
+ *  (project / environment / custom / workspace need workspaceFolders, L3).
+ *  The one resolver behind both the hub's machine-stable config and the
+ *  native user-skill staging (#1949 §1), so the two can never disagree on
+ *  which surfaces/entitlements admit a skill. Throws on resolution failure;
+ *  callers own the never-dead-end catch. */
+export function resolveMachineSkillEntries(opts: {
+  scoresRoot?: string;
+  entitlementsDir?: string;
+  skillRoots?: string[];
+  skillLibraryRoots?: LibraryRootSpec[];
+} = {}): { entries: SkillIndexEntry[]; provenance: SkillProvenanceRecord[] } {
+  const scoresRoot = opts.scoresRoot ?? DEFAULT_SCORES_ROOT;
+  const entsDir = opts.entitlementsDir ?? path.join(os.homedir(), ".amico", "amicode");
+  const ents = readLocalEntitlements(entsDir).entitlements;
+  const allow = packageAllowlist(entitlementsTablePath(scoresRoot), ents);
+  const library = resolveLibrarySkillsWithProvenance(opts.skillLibraryRoots ?? DEFAULT_LIBRARY_ROOTS, ents);
+  // machine-scoped only: the resolved library + entitlement-gated package
+  // skills go in the `shipped` slot; the per-workspace slots (project /
+  // environment / custom / workspace) are EMPTY — they need workspaceFolders
+  // (L3). Same 5-arg mergeSkillEntries shape prepareOpencodeProject uses.
+  const shippedEntries: SkillIndexEntry[] = [
+    ...library.entries,
+    ...resolvePackageSkills(allow, opts.skillRoots ?? DEFAULT_SKILL_ROOTS),
+  ];
+  return { entries: mergeSkillEntries([], [], [], [], shippedEntries), provenance: library.provenance };
+}
+
 /** Build the FULL machine-stable OPENCODE_CONFIG_CONTENT (stringified) for the
  *  hub spawn. Resolves ONLY user/machine-scoped inputs (entitlements, library +
  *  entitled/package skills, the amico AGENTS.md instruction merge, ~/.amico
@@ -1091,19 +1120,7 @@ export function buildMachineStableConfig(opts: MachineStableConfigOptions = {}):
     let skillEntries: SkillIndexEntry[] = [];
     let finalContent = filled;
     try {
-      const entsDir = opts.entitlementsDir ?? path.join(os.homedir(), ".amico", "amicode");
-      const ents = readLocalEntitlements(entsDir).entitlements;
-      const allow = packageAllowlist(entitlementsTablePath(scoresRoot), ents);
-      const library = resolveLibrarySkillsWithProvenance(opts.skillLibraryRoots ?? DEFAULT_LIBRARY_ROOTS, ents);
-      // machine-scoped only: the resolved library + entitlement-gated package
-      // skills go in the `shipped` slot; the per-workspace slots (project /
-      // environment / custom / workspace) are EMPTY — they need workspaceFolders
-      // (L3). Same 5-arg mergeSkillEntries shape prepareOpencodeProject uses.
-      const shippedEntries: SkillIndexEntry[] = [
-        ...library.entries,
-        ...resolvePackageSkills(allow, opts.skillRoots ?? DEFAULT_SKILL_ROOTS),
-      ];
-      skillEntries = mergeSkillEntries([], [], [], [], shippedEntries);
+      skillEntries = resolveMachineSkillEntries({ ...opts, scoresRoot }).entries;
       const section = buildSkillIndexSection(skillEntries);
       if (section) finalContent = finalContent + "\n\n" + section;
     } catch (e) {
