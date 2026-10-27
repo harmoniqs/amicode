@@ -177,6 +177,12 @@ passes, **promote** it → clean `v0.0.3` → Marketplace. The first promotion o
 bump (alphas never hit the Marketplace, so the version is still free); re-promoting an
 already-published base does.
 
+**After a CLI-changing release, refresh the pinned CLI on every machine** (#1949): the `amico`
+shims run the pinned dist (`~/.amico/server/cli/`), not the checkout, so a CLI change has not
+shipped on a machine until its pin is refreshed. From that machine's freshly built checkout:
+`bash ops/install-cli-pin.sh --dist packages/amico-run/dist` (then `amico doctor` → `pinned_cli`
+reports the new sha). See `ops/README.md` § The pinned CLI root.
+
 ## Known sharp edges
 
 - `test:slow` without `AMICO_TEST_JULIA_PROJECT` silently skips the Julia gates.
