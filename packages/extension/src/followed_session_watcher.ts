@@ -18,9 +18,13 @@ export interface FollowedSessionWatcherDeps {
   /** The follow set — session ids this client has opened or pinned, derived
    *  live at each arrival (a chat tab showing the session IS the follow). */
   followedSessions: () => ReadonlySet<string>;
-  /** True when a panel showing this session is the FOCUSED panel — "you're
-   *  already there"; the arrival is observed but never notified. */
-  isSessionFocused: (sessionID: string) => boolean;
+  /** True when a VISIBLE live panel shows this session — "you're already
+   *  there"; the arrival is observed but never notified. #1948: visibility,
+   *  not focus — a panel on screen while focus sits in another editor group,
+   *  the terminal, or a sidebar is still being watched. The watcher also asks
+   *  this of every cached ANCESTOR of the arriving session, so a subagent's
+   *  question under a visible parent is equally silent. */
+  isSessionVisible: (sessionID: string) => boolean;
   /** vscode.window.showInformationMessage — injected for testability. */
   showInformationMessage: (message: string, ...items: string[]) => Thenable<string | undefined>;
   /** Fired when the user activates a notification's action — the wiring
@@ -65,6 +69,12 @@ export class FollowedSessionWatcher {
   private readonly statusSeq = new Map<string, number>();
   /** sessionID → title, learned from the stream's session.created/updated. */
   private readonly titles = new Map<string, string>();
+  /** #1948: sessionID → parentID, learned from the same session.created/
+   *  updated frames (Session.Info carries parentID; question.asked does NOT —
+   *  its payload is id/sessionID/questions/tool only). A session whose
+   *  creation the stream never showed has no cached parent, so suppression
+   *  falls back to the direct match. */
+  private readonly parents = new Map<string, string>();
   private disposed = false;
 
   constructor(private readonly deps: FollowedSessionWatcherDeps) {}
@@ -83,9 +93,13 @@ export class FollowedSessionWatcher {
         return;
       case "session.created":
       case "session.updated": {
-        // Title learning only — the notification needs the session's name.
-        if (isRecord(props.info) && typeof props.info.id === "string" && typeof props.info.title === "string") {
-          this.titles.set(props.info.id, props.info.title);
+        // Title + parent learning only — the notification needs the session's
+        // name, and the suppression needs its ancestry (#1948).
+        if (isRecord(props.info) && typeof props.info.id === "string") {
+          if (typeof props.info.title === "string") this.titles.set(props.info.id, props.info.title);
+          if (typeof props.info.parentID === "string" && props.info.parentID !== "") {
+            this.parents.set(props.info.id, props.info.parentID);
+          }
         }
         return;
       }
@@ -100,6 +114,18 @@ export class FollowedSessionWatcher {
     this.busySince.clear();
     this.statusSeq.clear();
     this.titles.clear();
+    this.parents.clear();
+  }
+
+  /** #1948: "you're already there" — the session itself, or any cached
+   *  ancestor of it, is shown by a visible panel. Cycle-safe. */
+  private isViewed(sessionID: string): boolean {
+    const seen = new Set<string>();
+    for (let id: string | undefined = sessionID; id !== undefined && !seen.has(id); id = this.parents.get(id)) {
+      seen.add(id);
+      if (this.deps.isSessionVisible(id)) return true;
+    }
+    return false;
   }
 
   /** The turn bracket: a busy frame starts it, an idle frame ends it. The
@@ -130,7 +156,7 @@ export class FollowedSessionWatcher {
     const turnMs = (this.deps.now ?? Date.now)() - startedAt;
     if (turnMs < (this.deps.minTurnMs ?? FINISHED_MIN_TURN_MS)) return;
     if (!this.deps.followedSessions().has(sessionID)) return;
-    if (this.deps.isSessionFocused(sessionID)) return;
+    if (this.isViewed(sessionID)) return;
     this.deps.log?.(`[notify] turn finished on followed session ${sessionID}`);
     this.raise(sessionID, "finished its turn");
   }
@@ -142,7 +168,7 @@ export class FollowedSessionWatcher {
     if (this.seenQuestions.has(requestID)) return; // replayed — never re-notify
     this.seenQuestions.add(requestID);
     if (!this.deps.followedSessions().has(sessionID)) return;
-    if (this.deps.isSessionFocused(sessionID)) return; // you're already there
+    if (this.isViewed(sessionID)) return; // you're already there (#1948)
     const header =
       Array.isArray(props.questions) && isRecord(props.questions[0]) && typeof props.questions[0].header === "string"
         ? props.questions[0].header

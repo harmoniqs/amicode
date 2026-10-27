@@ -152,7 +152,7 @@ describe("OpencodeEventClient — the #1788 observe-only event hook", () => {
     const showInformationMessage = vi.fn().mockResolvedValue(undefined);
     const watcher = new FollowedSessionWatcher({
       followedSessions: () => new Set(["ses_hub_1"]),
-      isSessionFocused: () => false,
+      isSessionVisible: () => false,
       showInformationMessage,
       onFocusSession: vi.fn(),
       now: () => 0,

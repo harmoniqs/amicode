@@ -398,6 +398,17 @@ export class ChatPanel implements LaunchTarget {
     return panel?.panel.active && panel.sessionID ? panel.sessionID : undefined;
   }
 
+  /** #1948: the sessions every VISIBLE live panel shows — the "you're already
+   *  there" set the followed-session watcher suppresses on. Visibility, not
+   *  `active`: a tab on screen while focus is in another editor group, the
+   *  terminal, or a sidebar view is still being watched, and every visible
+   *  panel counts (not just the last focused one). */
+  static visibleSessionIds(): ReadonlySet<string> {
+    const ids = new Set<string>();
+    for (const panel of ChatPanel.live) if (panel.panel.visible && panel.sessionID) ids.add(panel.sessionID);
+    return ids;
+  }
+
   /** #1788 (S3): reveal the live chat tab showing this session (a
    *  notification's activation action). True when a tab was found and
    *  revealed; a session no tab shows cannot be revealed. */
