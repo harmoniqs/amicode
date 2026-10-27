@@ -13,4 +13,5 @@ packages/extension/bin/
 
 # personal local dev config — machine-specific, not for the container
 opencode.json
-ops/hub/__pycache__/
+# python bytecode, anywhere (#1943)
+__pycache__/
