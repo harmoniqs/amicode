@@ -359,6 +359,27 @@ export function resolveLibrarySkillsWithProvenance(
  *  it. */
 export const SKILL_DEPLOY_RECEIPT_NAME = ".deploy-receipt.json";
 
+/** The native user-skill dir's ownership receipt (#1949 §1). The native dir
+ *  (<opencode config>/skills/) is SHARED with user-authored skills, so the
+ *  extension manages ONLY the dir names this receipt lists — a distinct,
+ *  amicode-prefixed dotfile so it can never collide with a user's file. */
+export const NATIVE_SKILLS_RECEIPT_NAME = ".amicode-skills-receipt.json";
+
+/** The skill dir names the extension owns in a native skills dir (from its
+ *  receipt). Missing/unreadable/malformed receipt → [] (own nothing: the safe
+ *  default — never adopt, never delete, a dir we cannot prove is ours). */
+export function readNativeSkillsOwned(dir: string): string[] {
+  try {
+    const r = JSON.parse(fs.readFileSync(path.join(dir, NATIVE_SKILLS_RECEIPT_NAME), "utf8")) as { owned?: unknown };
+    if (!Array.isArray(r.owned)) return [];
+    // a receipt entry is a bare dir name — anything path-like is ignored, so a
+    // tampered receipt can never steer a delete outside the native dir
+    return r.owned.filter((n): n is string => typeof n === "string" && n !== "" && !n.includes("/") && !n.includes("\\") && n !== "." && n !== "..");
+  } catch {
+    return [];
+  }
+}
+
 /** Stage the resolved (guarded) skill set as opencode-native skills for this
  *  session: copy each skill's WHOLE dir to `<stageRoot>/<name>/` so opencode's
  *  loader — pointed HERE via config `skills.paths` (an absolute dir) — registers

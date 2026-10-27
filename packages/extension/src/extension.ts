@@ -61,6 +61,7 @@ import { getWorkspaceProjects, type WorkspaceProjectDeps } from "./workspace_pro
 import { detectProjectType } from "./project/detect";
 import { stagePasqalConnector } from "./pasqal_assets";
 import { stageModCards, opencodeGlobalConfigRoot } from "./mode_cards";
+import { stageNativeUserSkills } from "./native_skills";
 import { stageModeBundles, parseRosterDocument, fleetRosterCachePath, type RosterRow } from "@amicode/schema";
 import { needsProvision, pasqalVenvDir, provisionPasqalPython } from "./pasqal_python";
 import { createLocalPersonalVault, sanitizeVaultName, suggestVaultName } from "./substrate/vault_setup";
@@ -1018,6 +1019,20 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   opencodeChannel.appendLine(`[boot] opencode project dir: ${opencodeProject.projectDir}`);
   opencodeChannel.appendLine(`[boot] AGENTS.md: ${opencodeProject.agentsPath}`);
   opencodeChannel.appendLine(`[boot] template: ${opencodeProject.templatePath}`);
+  // #1949 §1: stage the machine-scoped skill set (public + entitled library,
+  // entitlement-gated package skills — the same admission as the session
+  // staging) into opencode's NATIVE user skill dir, so a plain terminal
+  // `opencode` resolves director-core / develop / implement-issue / tdd too.
+  // Receipt-owned dirs only; user-authored skills are never touched; never
+  // blocks activation.
+  try {
+    const native = stageNativeUserSkills({ skillRoots: cfgArr("skillRoots"), skillLibraryRoots: cfgLibraryRoots() });
+    const skippedNote = native.skippedUserOwned.length > 0 ? `; user-owned, left alone: ${native.skippedUserOwned.join(", ")}` : "";
+    const removedNote = native.removed.length > 0 ? `; removed stale: ${native.removed.join(", ")}` : "";
+    opencodeChannel.appendLine(`[skills] native skills staged: ${native.dir} (${native.staged.length})${skippedNote}${removedNote}`);
+  } catch (e) {
+    opencodeChannel.appendLine(`[skills] native skill staging failed: ${(e as Error).message}`);
+  }
   // amicode#250 AC5: the composer bug button gates on the staged skill set —
   // re-pinned after EVERY session prep (boot, solver switch, vault respawn).
   ChatPanel.setBugReportAvailable(bugReportSkillStaged(opencodeProject.skillPaths));
