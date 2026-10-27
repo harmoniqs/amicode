@@ -36,6 +36,10 @@ function usage(): string {
       "cloud submit <s.jl> | status | mirror | abort | run",
       "thin cloud solve client — submit→poll→mirror without the launch path (#460)",
     ],
+    [
+      "census [--brief] [--prd <o/r#n>] [--window-days <n>] […]",
+      "census-lite: framework slices, movement + 72h stall tripwire, bypass, deploys, PR depth, overlay (#1902)",
+    ],
     ["slack login", "Slack OAuth PKCE login — browser flow, writes ~/.amico/slack.json (#1156)"],
     ["gh whoami [--offline]", "effective GitHub identity — person login, or agent App slug + principal; never a token (#1928)"],
     ["gh agent-env [--sh] [--helper <p>]", "agent-launcher env: AMICO_GH_IDENTITY=agent + scrubbed git credential config (#1928)"],
@@ -146,6 +150,18 @@ export async function main(argv: string[]): Promise<number> {
       const { json, code } = await cloudVerb(rest);
       console.log(JSON.stringify(json));
       return code;
+    }
+
+    // ── census-lite (rd-system v2.1 A0b, #1902): a read-only, GitHub-derived census
+    // of the framework tier with per-source coverage and the 72h stall tripwire.
+    // `--brief` prints the morning-brief markdown instead of JSON. CLI-only like
+    // `cloud` (not a SPINE_VERBS entry, so no MCP tool is auto-published). ──
+    case "census": {
+      const { censusVerb } = await import("./census_verb.js");
+      const r = await censusVerb(rest);
+      if (r.brief !== undefined) process.stdout.write(r.brief);
+      else console.log(JSON.stringify(r.json));
+      return r.code;
     }
 
     // ── Slack OAuth PKCE login (#1156): `amico slack login` starts a

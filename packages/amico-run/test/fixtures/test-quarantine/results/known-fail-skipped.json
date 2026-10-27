@@ -1,0 +1,15 @@
+{
+  "numTotalTests": 3,
+  "success": false,
+  "testResults": [
+    { "name": "/ROOT/test/a.test.ts", "status": "passed", "message": "",
+      "assertionResults": [
+        { "ancestorTitles": ["math"], "title": "is broken", "fullName": "math is broken", "status": "skipped", "failureMessages": [] },
+        { "ancestorTitles": ["math"], "title": "adds", "fullName": "math adds", "status": "passed", "failureMessages": [] }
+      ] },
+    { "name": "/ROOT/test/b.test.ts", "status": "passed", "message": "",
+      "assertionResults": [
+        { "ancestorTitles": ["net"], "title": "sometimes", "fullName": "net sometimes", "status": "passed", "failureMessages": [] }
+      ] }
+  ]
+}

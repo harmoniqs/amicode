@@ -1,0 +1,11 @@
+# known-fail — tests that MUST fail in CI (A13c, spec-20261026-101500-rd-system-v2-1, #1907).
+#
+# Gated by scripts/test_quarantine_gate.mjs. One entry per line:
+#   <suite>::<file>::<describe > ... > test title> | issue:#N
+# - every entry carries a real issue ref (`issue:#N`; placeholders are rejected);
+# - a listed test that PASSES fails CI — remove the entry in the fixing PR;
+# - a listed test that is skipped or absent fails CI — the list must not rot;
+# - additions need human code-owner approval (A10) and are counted in census-lite.
+# <suite> is the unscoped package name (amico-run); <file> is package-relative.
+#
+# Empty: the gated suites have no CI-failing tests today.
