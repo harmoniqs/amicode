@@ -37,6 +37,12 @@ function usage(): string {
       "thin cloud solve client — submit→poll→mirror without the launch path (#460)",
     ],
     ["slack login", "Slack OAuth PKCE login — browser flow, writes ~/.amico/slack.json (#1156)"],
+    ["gh whoami [--offline]", "effective GitHub identity — person login, or agent App slug + principal; never a token (#1928)"],
+    ["gh agent-env [--sh] [--helper <p>]", "agent-launcher env: AMICO_GH_IDENTITY=agent + scrubbed git credential config (#1928)"],
+    [
+      "review post-check --repo <o/r> --sha <sha> --name reviewer-pass|charter-class --verdict <f>",
+      "reviewer-App check-run — dispatcher only, refuses in sessions / under agent identity (#1928)",
+    ],
     ...SPINE_VERBS.map(
       (v) => [`${v.name} …`, v.stub ? `${v.summary} [stub → ${v.slice}]` : v.summary] as [string, string],
     ),
@@ -149,6 +155,23 @@ export async function main(argv: string[]): Promise<number> {
     case "slack": {
       const { slackVerb } = await import("./slack_verb.js");
       return (await slackVerb(rest)).code;
+    }
+
+    // ── A15 identity surfaces (#1928): `gh whoami` reports the effective
+    // identity; `review post-check` is the dispatcher's reviewer-App posting.
+    // Same {json, code} shape as the spine verbs; NOT MCP tools. ──
+    case "gh": {
+      const { ghVerb } = await import("./gh_verb.js");
+      const { json, code, text } = await ghVerb(rest);
+      if (text !== undefined) process.stdout.write(text); // `agent-env --sh`: eval-able, not JSON
+      else console.log(JSON.stringify(json));
+      return code;
+    }
+    case "review": {
+      const { reviewVerb } = await import("./review_verb.js");
+      const { json, code } = await reviewVerb(rest);
+      console.log(JSON.stringify(json));
+      return code;
     }
 
     case "mcp-serve":
