@@ -4,7 +4,7 @@ description: The develop mode in one skill — the director loop protocol bound 
 agents: [implementer, orchestrator]
 surface: public
 source: amicode
-revision: 3
+revision: 4
 ---
 
 # Develop — the director's protocol & issue-DAG walk
@@ -151,6 +151,7 @@ Examples:
 
 - **One integration branch + one PR per top-level argument** (`amico/issue-<n>-<slug>`), cut from the default branch. N issues → N PRs. Multi-issue input is an AFK throughput convenience, not a bundling instruction — coupling between units lives in the DAG (`Blocked by`), never on a shared branch.
 - A unit's slices merge into its integration branch; the **parent draft PR** opens at the first frontier commit (`Closes #<parent>`, advancing the parent's board card to **In Progress**) and is marked ready when the unit's DAG completes green.
+- **Campaign PRDs: the unit is the tier/wave per repo.** When a parent is a **campaign PRD** — it has `amico-spec-slices` children, or its slices span more than one repo — the parent is NOT a deliverable unit: no parent integration branch, no parent draft PR (one branch cannot span repos, and a weeks-long campaign needs continuous charter merges). Walk it one tier/wave per repo; each slice is a **unit of one** (its own branch and PR — the no-per-slice-PR rule does not apply), merged onto the release train (`lane/<version>`) when it needs a live test, else onto `main`. The parent PRD stays open as the campaign's tracker. The integration-branch rule above stays for ordinary feature parents.
 - **Cross-unit** `Blocked by` is honored globally: a unit blocked by another only starts once the blocker's code is on the default branch (its PR merged), then branches from the updated default — no stacking. A cross-unit-blocked parent sits in **Blocked** until then, clearing the same way (→ Ready on the blocker's merge, → In Progress at its first frontier commit).
 
 ### Parallel dispatch & shared worktrees

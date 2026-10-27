@@ -96,6 +96,12 @@ record; this prose is the binding, never a second spec.
   suite includes the skills-integrity lint when present on the branch, and
   merged work that changed a package API surface is grep-checked against
   skill references — hits become ledger findings.
+- **Campaign PRDs** — when a parent is a **campaign PRD** (it has
+  `amico-spec-slices` children, or spans more than one repo), the unit is
+  **the tier/wave per repo**, not the parent: no parent integration branch.
+  Each slice is a unit of one (its own branch and PR), merged onto the release
+  train (`lane/<version>`) when it needs a live test, else onto `main`. The
+  integration-branch rule above stays for ordinary feature parents.
 
 **Dispatch discipline** — the implementer (the `implementer` subagent card) is
 your only writer role: fresh context per slice, one issue per cast, worktree-
