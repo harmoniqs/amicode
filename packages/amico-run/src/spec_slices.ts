@@ -13,6 +13,10 @@
 // spec id) and — when a PRD is given — the PRD's sub-issue list, which is strongly consistent
 // where search is eventually consistent (a quick re-run would otherwise duplicate).
 //
+// ADOPTION (#1949 §5): a row whose step text's first issue reference is `(#N)`, a leading `#N`,
+// `repo#N` or `owner/repo#N` adopts that existing issue instead of filing one — the marker is
+// appended to its body (once), and it is linked and wired like a filed row. See parseAdoption.
+//
 // GITHUB rides `gh api` through an injected layer (`SlicesGh`) over an injected runner
 // (`GhApiRunner`) — the handoff_verb exec-seam precedent. The real runner spawns `gh` from
 // PATH, which in an agent session is the amico-gh shim (gh_shim.ts), so writes go out under
@@ -52,10 +56,41 @@ export interface SliceStep extends CompiledStep {
   tier: number;
   title: string;
   repo: string;
+  /** Set when the step text's first issue reference names an existing issue to ADOPT
+   *  (`parseAdoption`): the row files no new issue, it marks and links that one. */
+  adopts?: IssueAddr;
 }
 
 const EXPECTED_HEADER = ["#", "tier", "step", "repo", "task_type", "after"];
 const NONE = new Set(["—", "–", "-", ""]);
+
+// ── adoption (#1949 §5) ──────────────────────────────────────────────────────
+// A row whose step text's FIRST issue reference is one of these ADOPTS that issue:
+//   `(#N)`            — exactly a parenthesized number; the issue is in the row's repo
+//   `#N` leading      — the step text BEGINS with it (the step names the issue); row's repo
+//   `repo#N`          — harmoniqs/<repo>#N (no space before `#`)
+//   `owner/repo#N`    — verbatim
+// Any other first reference — a bare mid-text `#N`, `(#N more words)`, a spaced `repo #N` —
+// is prose about context, and the row files a new issue as before. Only the FIRST reference is
+// consulted, so a non-adopting first reference blocks a later adopting one. References inside
+// `code spans` are ignored.
+const ISSUE_REF_RE = /(?<![\w./#-])(?:([A-Za-z0-9_.-]+)\/)?([A-Za-z0-9_.-]+)?#(\d+)(?!\w)/g;
+
+export function parseAdoption(stepText: string, rowRepo: string): IssueAddr | undefined {
+  const text = stepText.trim();
+  const scan = text.replace(/`[^`]*`/g, (m) => " ".repeat(m.length));
+  ISSUE_REF_RE.lastIndex = 0;
+  const m = ISSUE_REF_RE.exec(scan);
+  if (!m) return undefined;
+  const [whole, owner, repo, num] = m;
+  const number = Number(num);
+  if (owner && repo) return { repo: `${owner}/${repo}`, number };
+  if (repo) return { repo: `${SLICES_ORG}/${repo}`, number };
+  const end = m.index + whole.length;
+  const parenthesized = scan[m.index - 1] === "(" && scan[end] === ")";
+  if (parenthesized || m.index === 0) return { repo: `${SLICES_ORG}/${rowRepo}`, number };
+  return undefined;
+}
 
 /** Split a markdown table line on UNESCAPED pipes, dropping the outer empties. */
 function cells(line: string): string[] {
@@ -124,6 +159,7 @@ export function parsePlanTable(markdown: string): SliceStep[] {
       for (const n of needs)
         if (!/^\d+$/.test(n)) throw new PlanTableError("bad-row", `${where}: after must be row numbers or —, got "${afterRaw}"`);
     }
+    const adopts = parseAdoption(title, repo);
     steps.push({
       id: String(row),
       model: "",
@@ -133,6 +169,7 @@ export function parsePlanTable(markdown: string): SliceStep[] {
       tier: Number(tierRaw),
       title,
       repo,
+      ...(adopts ? { adopts } : {}),
     });
   }
   if (steps.length === 0) throw new PlanTableError("missing-table", "the Plan table has no rows");
@@ -184,6 +221,25 @@ export function parseProvenance(body: string | undefined): { spec_id: string; ro
   return m ? { spec_id: m[1], row: Number(m[2]), design_hash: m[3] } : undefined;
 }
 
+/** Does `body` carry THIS spec's marker for THIS row (any design hash)? An adopted issue may
+ *  carry other specs' markers too, so every marker is checked, not just the first. */
+export function hasProvenance(body: string | undefined, specId: string, row: number): boolean {
+  const all = new RegExp(MARKER_RE.source, "g");
+  for (const m of (body ?? "").matchAll(all)) if (m[1] === specId && Number(m[2]) === row) return true;
+  return false;
+}
+
+/** The adopted issue's body with the provenance line + marker appended; the original is kept verbatim. */
+export function adoptedBody(body: string, step: SliceStep, specId: string, designHash: string): string {
+  return [
+    body.replace(/\s+$/, ""),
+    "",
+    `Provenance: adopted by \`amico spec slices\` as \`${specId}\` row ${step.row} (tier ${step.tier}), design hash \`${designHash}\`.`,
+    provenanceMarker(specId, step.row, designHash),
+    "",
+  ].join("\n");
+}
+
 export function issueBody(step: SliceStep, specId: string, designHash: string, prd?: IssueAddr): string {
   const after = step.needs?.length ? step.needs.map((n) => `row ${n}`).join(", ") : "none";
   return [
@@ -208,12 +264,17 @@ export interface IssueAddr {
 export interface GhIssue extends IssueAddr {
   id: number; // the numeric REST id — what sub_issue_id / issue_id take, NOT the number
   body?: string;
+  state?: "open" | "closed";
 }
 
 export interface SlicesGh {
   /** Issues in `repo` whose body may carry this spec's marker (the caller re-checks the marker). */
   findFiled(repo: string, specId: string): GhIssue[];
   createIssue(repo: string, title: string, body: string): GhIssue;
+  /** One issue by address (adoption reads the body and state before it writes). */
+  getIssue(addr: IssueAddr): GhIssue;
+  /** Replace an issue's body (adoption appends the provenance marker, nothing else). */
+  editIssueBody(addr: IssueAddr, body: string): void;
   listSubIssues(parent: IssueAddr): GhIssue[];
   addSubIssue(parent: IssueAddr, childId: number): void;
   listBlockedBy(issue: IssueAddr): GhIssue[];
@@ -258,6 +319,13 @@ export function ghApiSlices(runner: GhApiRunner = defaultGhApiRunner): SlicesGh 
       const r = call(["-X", "POST", `repos/${repo}/issues`, "-f", `title=${title}`, "-f", `body=${body}`]) as RawIssue;
       return { id: r.id, number: r.number, repo, body: r.body ?? body };
     },
+    getIssue(a) {
+      const r = call([`repos/${a.repo}/issues/${a.number}`]) as RawIssue & { state?: string };
+      return { id: r.id, number: r.number, repo: a.repo, body: r.body ?? "", state: r.state === "closed" ? "closed" : "open" };
+    },
+    editIssueBody(a, body) {
+      call(["-X", "PATCH", `repos/${a.repo}/issues/${a.number}`, "-f", `body=${body}`]);
+    },
     listSubIssues: (p) => list(`repos/${p.repo}/issues/${p.number}/sub_issues`),
     addSubIssue(p, childId) {
       call(["-X", "POST", `repos/${p.repo}/issues/${p.number}/sub_issues`, "-F", `sub_issue_id=${childId}`]);
@@ -278,6 +346,8 @@ export interface SlicesPlanRow {
   title: string;
   task_type: string;
   after: number[];
+  /** `owner/repo#n` when the row adopts an existing issue instead of filing one. */
+  adopts?: string;
 }
 export interface SlicesEdge {
   row: number; // blocked
@@ -292,14 +362,19 @@ export function planView(steps: SliceStep[]): { rows: SlicesPlanRow[]; edges: Sl
     title: s.title,
     task_type: s.task_type,
     after: (s.needs ?? []).map(Number),
+    ...(s.adopts ? { adopts: `${s.adopts.repo}#${s.adopts.number}` } : {}),
   }));
   const edges = rows.flatMap((r) => r.after.map((b) => ({ row: r.row, blocked_by: b })));
   return { rows, edges, repos: [...new Set(rows.map((r) => r.repo))] };
 }
 
 export interface SlicesRowReport extends SlicesPlanRow {
-  status: "created" | "existing";
+  status: "created" | "existing" | "adopted";
   issue?: IssueAddr;
+  /** The adopted issue's state — a closed issue is still adopted (see fileSlices). */
+  state?: "open" | "closed";
+  /** An issue previously FILED for this row (before it adopted) — reported, never touched. */
+  superseded?: IssueAddr;
 }
 export interface SlicesReport {
   rows: SlicesRowReport[];
@@ -307,6 +382,12 @@ export interface SlicesReport {
   created_issues: number;
   created_edges: number;
   created_sub_issues: number;
+  adopted_issues: number;
+  edited_bodies: number;
+}
+
+export function emptySlicesReport(): SlicesReport {
+  return { rows: [], edges: [], created_issues: 0, created_edges: 0, created_sub_issues: 0, adopted_issues: 0, edited_bodies: 0 };
 }
 
 export interface FileSlicesOptions {
@@ -327,7 +408,7 @@ export function fileSlices(steps: SliceStep[], opts: FileSlicesOptions): SlicesR
   for (const s of steps)
     for (const n of s.needs ?? []) if (!ids.has(n)) throw new PlanTableError("dangling-after", `row ${s.row}: after names row ${n}, which is not being filed`);
 
-  const report: SlicesReport = opts.progress ?? { rows: [], edges: [], created_issues: 0, created_edges: 0, created_sub_issues: 0 };
+  const report: SlicesReport = opts.progress ?? emptySlicesReport();
 
   // Existing issues, by row: the PRD's sub-issues (consistent) ∪ each repo's search (eventual).
   // Keyed on (row, repo): if a row's repo changes between revisions, the old issue is left alone
@@ -342,10 +423,31 @@ export function fileSlices(steps: SliceStep[], opts: FileSlicesOptions): SlicesR
   prdChildren.forEach(consider);
   for (const repo of view.repos) gh.findFiled(repo, specId).forEach(consider);
 
+  // ADOPTION (#1949 §5): a row whose step text names an existing issue (`parseAdoption`) files
+  // nothing — the named issue IS the slice. Its body gains the provenance marker unless this
+  // spec+row marker is already there (any hash — idempotent), and it is linked and wired like a
+  // filed one. A CLOSED adopted issue is still adopted, marked, linked and wired: the plan's DAG
+  // stays whole, and a closed blocker is a satisfied edge. An issue FILED for the row before it
+  // adopted is reported as `superseded` and left alone (closing a public issue is a human call).
   const byRow = new Map<number, GhIssue>();
   for (const [k, s] of steps.entries()) {
     const r = view.rows[k];
-    let issue = existing.get(`${s.row}@${r.repo}`);
+    const prior = existing.get(`${s.row}@${r.repo}`);
+    if (s.adopts) {
+      const issue = gh.getIssue(s.adopts);
+      if (!hasProvenance(issue.body, specId, s.row)) {
+        const body = adoptedBody(issue.body ?? "", s, specId, designHash);
+        gh.editIssueBody(s.adopts, body);
+        issue.body = body;
+        report.edited_bodies++;
+      }
+      report.adopted_issues++;
+      byRow.set(s.row, issue);
+      const superseded = prior && prior.id !== issue.id ? { superseded: { repo: prior.repo, number: prior.number } } : {};
+      report.rows.push({ ...r, status: "adopted", issue: { repo: issue.repo, number: issue.number }, state: issue.state ?? "open", ...superseded });
+      continue;
+    }
+    let issue = prior;
     let status: "created" | "existing" = "existing";
     if (!issue) {
       issue = gh.createIssue(r.repo, s.title, issueBody(s, specId, designHash, prd));
