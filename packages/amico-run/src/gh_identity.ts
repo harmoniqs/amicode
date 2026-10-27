@@ -27,9 +27,12 @@
 // on_behalf_of = the human's gh login, captured ONCE (the real gh, run as
 // person: `gh api user --jq .login`) and cached at <apps>/principal.json.
 // campaign = $AMICO_CAMPAIGN (ledger slug). session = $AMICO_SESSION_ID: the
-// engine does NOT export its session id to the bash tool env today (it only
-// sets OPENCODE=1 / OPENCODE_PID; the session id is reachable solely through
-// the `shell.env` plugin hook), so a launcher or plugin must set it.
+// engine does NOT put its session id in process.env (it sets OPENCODE=1 /
+// OPENCODE_PID only); it hands it to tool children solely through the
+// `shell.env` plugin hook, which the amicode_context plugin answers with
+// AMICO_SESSION_ID (packages/extension/opencode-plugin/session_env.ts). A
+// process launched outside an engine session (a cron / dispatcher) has none
+// unless its launcher sets one → session: null.
 //
 // SECURITY: token bytes never appear in a record (only an 8-hex sha256
 // prefix), a log, an error, or argv. Honest limit: agents still run as the
