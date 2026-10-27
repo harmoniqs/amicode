@@ -38,6 +38,7 @@ function usage(): string {
     ],
     ["slack login", "Slack OAuth PKCE login — browser flow, writes ~/.amico/slack.json (#1156)"],
     ["gh whoami [--offline]", "effective GitHub identity — person login, or agent App slug + principal; never a token (#1928)"],
+    ["gh agent-env [--sh] [--helper <p>]", "agent-launcher env: AMICO_GH_IDENTITY=agent + scrubbed git credential config (#1928)"],
     [
       "review post-check --repo <o/r> --sha <sha> --name reviewer-pass|charter-class --verdict <f>",
       "reviewer-App check-run — dispatcher only, refuses in sessions / under agent identity (#1928)",
@@ -161,8 +162,9 @@ export async function main(argv: string[]): Promise<number> {
     // Same {json, code} shape as the spine verbs; NOT MCP tools. ──
     case "gh": {
       const { ghVerb } = await import("./gh_verb.js");
-      const { json, code } = await ghVerb(rest);
-      console.log(JSON.stringify(json));
+      const { json, code, text } = await ghVerb(rest);
+      if (text !== undefined) process.stdout.write(text); // `agent-env --sh`: eval-able, not JSON
+      else console.log(JSON.stringify(json));
       return code;
     }
     case "review": {

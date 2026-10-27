@@ -10,16 +10,63 @@
 //       minted, so whoami writes no mint record). `--offline` skips the live
 //       check (verified:false, slug from the config). A principal without
 //       on_behalf_of means every agent write would be refused → exit 1.
-import { readFileSync } from "node:fs";
-import { mintAppJwt, MINT_TIMEOUT_MS, type FetchImpl } from "./github_app.js";
-import { agentPrincipal, captureHumanLogin, readAgentConfig, resolveGhIdentity, type IdentityDeps } from "./gh_identity.js";
+//
+// `amico gh agent-env [--sh] [--helper <path>]` — the env an AFK / night /
+// subagent LAUNCHER adds to put a process on the agent identity:
+// AMICO_GH_IDENTITY=agent plus GIT_CONFIG_* that RESET every inherited
+// github.com credential helper (the human's osxkeychain / `gh auth
+// git-credential`) and register amico-git-credential. JSON by default;
+// `--sh` prints single-quoted `export` lines for `eval "$(amico gh agent-env --sh)"`.
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { launcherDirFor, mintAppJwt, MINT_TIMEOUT_MS, type FetchImpl } from "./github_app.js";
+import { agentPrincipal, captureHumanLogin, readAgentConfig, resolveGhIdentity, withAgentGitConfig, type IdentityDeps } from "./gh_identity.js";
 import { ConfigError } from "./types.js";
 import type { VerbResult } from "./verbs.js";
 
-const USAGE = "amico gh whoami [--offline]  — the effective GitHub identity (person login, or agent App slug + principal); never prints a token";
+const USAGE =
+  "amico gh whoami [--offline]  — the effective GitHub identity (person login, or agent App slug + principal); never prints a token  |  " +
+  "amico gh agent-env [--sh] [--helper <path>]  — the agent-launcher env (identity + scrubbed git credential config)";
 
 export interface GhVerbCtx extends IdentityDeps {
   env?: NodeJS.ProcessEnv;
+}
+
+/** VerbResult plus an optional raw-text rendering the router prints verbatim. */
+export interface GhVerbResult extends VerbResult {
+  text?: string;
+}
+
+/** The credential helper command beside this bundle: the checkout launcher
+ *  when present, else the sibling bundle (the pinned-CLI layout has no
+ *  launcher dir beside ~/.amico/server/cli). */
+export function defaultCredentialHelper(bundleUrl: string = import.meta.url): string {
+  const launcher = join(launcherDirFor(bundleUrl) ?? "", "amico-git-credential");
+  if (existsSync(launcher)) return launcher;
+  try {
+    return join(dirname(fileURLToPath(bundleUrl)), "amico-git-credential.js");
+  } catch {
+    return launcher;
+  }
+}
+
+const shQuote = (v: string) => `'${v.replace(/'/g, `'\\''`)}'`;
+
+function agentEnv(rest: string[], env: NodeJS.ProcessEnv, bundleUrl: string | undefined): GhVerbResult {
+  let helper: string | undefined;
+  let sh = false;
+  for (let i = 0; i < rest.length; i++) {
+    if (rest[i] === "--sh") sh = true;
+    else if (rest[i] === "--helper" && rest[i + 1] !== undefined) helper = rest[++i];
+    else return { json: { error: `unexpected argument ${JSON.stringify(rest[i])}`, usage: USAGE }, code: 64 };
+  }
+  const out = withAgentGitConfig(env, helper ?? defaultCredentialHelper(bundleUrl));
+  if (!sh) return { json: { env: out }, code: 0 };
+  const text = Object.entries(out)
+    .map(([k, v]) => `export ${k}=${shQuote(v)}\n`)
+    .join("");
+  return { json: { env: out }, code: 0, text };
 }
 
 /** GET /app with the App JWT → the App's slug (undefined on any failure). */
@@ -43,10 +90,11 @@ async function liveAppSlug(appId: string, pem: string, fetchImpl: FetchImpl, now
   }
 }
 
-export async function ghVerb(argv: string[], ctx: GhVerbCtx = {}): Promise<VerbResult> {
+export async function ghVerb(argv: string[], ctx: GhVerbCtx = {}): Promise<GhVerbResult> {
   const env = ctx.env ?? process.env;
   const [sub, ...rest] = argv;
   if (sub === "--help" || sub === "-h") return { json: { usage: USAGE }, code: 0 };
+  if (sub === "agent-env") return agentEnv(rest, env, ctx.bundleUrl);
   if (sub !== "whoami") return { json: { error: `unknown gh subcommand ${JSON.stringify(sub ?? "")}`, usage: USAGE }, code: 64 };
   const offline = rest.includes("--offline");
   try {

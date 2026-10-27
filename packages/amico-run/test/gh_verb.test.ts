@@ -48,6 +48,32 @@ describe("gh whoami (in-process)", () => {
     expect(r.json).toMatchObject({ app: { slug: "test-amico-agent", verified: false } });
     expect(fake.calls).toHaveLength(0);
   });
+  it("agent-env → the launcher env: AMICO_GH_IDENTITY=agent + git config that resets inherited github.com helpers and registers ours", async () => {
+    const r = await ghVerb(["agent-env", "--helper", "/b/amico-git-credential"], { env: { GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "core.x", GIT_CONFIG_VALUE_0: "y" } });
+    expect(r.code).toBe(0);
+    expect(r.json).toEqual({
+      env: {
+        AMICO_GH_IDENTITY: "agent",
+        GIT_CONFIG_KEY_0: "core.x",
+        GIT_CONFIG_VALUE_0: "y",
+        GIT_CONFIG_KEY_1: "credential.https://github.com.helper",
+        GIT_CONFIG_VALUE_1: "",
+        GIT_CONFIG_KEY_2: "credential.https://github.com.helper",
+        GIT_CONFIG_VALUE_2: '!"/b/amico-git-credential"',
+        GIT_CONFIG_COUNT: "3",
+      },
+    });
+    // --sh: eval-able export lines, single-quoted
+    const sh = await ghVerb(["agent-env", "--sh", "--helper", "/b/it's"], { env: {} });
+    expect(sh.text).toContain("export AMICO_GH_IDENTITY='agent'\n");
+    expect(sh.text).toContain(`export GIT_CONFIG_VALUE_1='!"/b/it'\\''s"'\n`);
+    const out = spawnSync("sh", ["-c", `${sh.text}\nprintf %s "$GIT_CONFIG_VALUE_1|$AMICO_GH_IDENTITY|$GIT_CONFIG_COUNT"`], { encoding: "utf8", env: {} });
+    expect(out.stdout).toBe(`!"/b/it's"|agent|2`);
+  });
+  it("agent-env default helper = the amico-git-credential launcher beside this bundle", async () => {
+    const r = await ghVerb(["agent-env"], { env: {} });
+    expect((r.json as { env: Record<string, string> }).env.GIT_CONFIG_VALUE_1).toBe(`!"${join(ROOT, "launcher", "amico-git-credential")}"`);
+  });
   it("unknown subcommand → 64", async () => {
     expect((await ghVerb(["pr"], { env: {} })).code).toBe(64);
   });
@@ -73,6 +99,12 @@ describe("bundles: dist/amico.js routes + dist/gh.js lanes", () => {
     expect(r.status).toBe(0);
     expect(JSON.parse(r.stdout)).toEqual({ identity: "person", login: "planted-human" });
     expect((r.stdout + r.stderr).includes(PLANTED_HUMAN_TOKEN)).toBe(false);
+  });
+  it("`amico gh agent-env --sh` prints raw export lines (not JSON) for launcher eval", () => {
+    const r = spawnSync("node", [join(ROOT, "dist", "amico.js"), "gh", "agent-env", "--sh", "--helper", "/b/h"], { encoding: "utf8", env: cleanEnv({}) });
+    expect(r.status).toBe(0);
+    expect(r.stdout.startsWith("export ")).toBe(true);
+    expect(r.stdout).toContain("export AMICO_GH_IDENTITY='agent'\n");
   });
   it("`amico review post-check` routes and refuses inside an engine session", () => {
     const sb = sandbox();
