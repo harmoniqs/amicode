@@ -158,7 +158,7 @@ Examples:
 
 When a frontier has independent slices (non-overlapping `Touches:`/files, no `Blocked by` between them), dispatch them concurrently, capped by `AMICO_MAX_PARALLEL` (default 2; lower to 1 for Julia-heavy work). A slice that started in **Blocked** (an open `Blocked by` at creation) flips to **Ready** the instant its last blocker's PR merges — then to In Progress when actually dispatched (a parked-but-unblocked slice must not sit in stale Blocked). On dispatch, each slice's sub-issue card moves to **In Progress**; on its merge into the integration branch, closing the sub-issue lets the board's "Item closed" workflow move it to Done.
 
-Worktrees are the isolation unit, created via `amicode_session` with `workspace: "create"` — **never** via direct `git worktree add`. Each worktree gets its `opencode/<slug>` branch. The checkout registry is the project-wide claim registry: re-read it before casting any implementer; claim the row; release it when work lands. First-writer-wins; races are possible and visible — a visible conflict beats a silent double-ownership every time.
+Worktrees are the isolation unit, created via `amicode_session` with `workspace: "create"` — **never** via direct `git worktree add` while that tool is present (where it is absent, see the lifecycle-tools fallback under [Honest degradation](#honest-degradation-what-is-missing-on-this-machine)). Each worktree gets its `opencode/<slug>` branch. The checkout registry is the project-wide claim registry: re-read it before casting any implementer; claim the row; release it when work lands. First-writer-wins; races are possible and visible — a visible conflict beats a silent double-ownership every time.
 
 ### Merge strategy
 
@@ -170,7 +170,7 @@ The parent session merges worktree branches into the integration branch in **dep
 
 ### Worktree cleanup
 
-Worktree removal after a successful merge is **best-effort**: the parent session attempts to remove the worktree directory after merging its branch. Residual worktrees (from crashes, interrupted sessions, or failed cleanups) are handled by the lifecycle tool `amicode_workspace` — never manually `rm -rf` a worktree directory or call `git worktree remove` directly.
+Worktree removal after a successful merge is **best-effort**: the parent session attempts to remove the worktree directory after merging its branch. Residual worktrees (from crashes, interrupted sessions, or failed cleanups) are handled by the lifecycle tool `amicode_workspace` — never manually `rm -rf` a worktree directory or call `git worktree remove` directly (the one exception is the director-managed fallback when the lifecycle tools are absent — see [Honest degradation](#honest-degradation-what-is-missing-on-this-machine)).
 
 ### Role binding (engine-neutral)
 
@@ -250,6 +250,12 @@ is present:
   (`modes/develop/` missing or incomplete), the phase/gate summary above is
   the only copy you have; name the gap, and record it for the doctor to
   surface.
+- **Absent lifecycle tools** — if `amicode_session` / `amicode_workspace`
+  are absent in this engine binding, say so and fall back explicitly to
+  director-managed `git worktree add` / `git worktree remove`: each worktree
+  is recorded in the ledger (§3 and §6: path, branch, slice) when added, and
+  removed after its branch merges. This is the only sanctioned direct
+  worktree use; never `rm -rf` a worktree directory.
 - **Absent dispatch surface** — with no dispatchable implementer binding,
   the walk collapses to sequential in-session slices (the walk's fallback
   sub-mode); that is a degraded but correct mode, never a silent one.
