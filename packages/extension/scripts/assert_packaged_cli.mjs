@@ -124,6 +124,8 @@ export const PROBES = {
   gh: [
     {
       check: "config-class rejection on malformed credential file",
+      // #1928: App identity is opt-in per call; the probe drives the agent lane.
+      env: { AMICO_GH_IDENTITY: "agent" },
       args: () => ["pr", "list"],
       setup: (home) => {
         mkdirSync(join(home, ".amico"), { recursive: true });
@@ -143,6 +145,8 @@ export const PROBES = {
   "amico-git-credential": [
     {
       check: "protocol-clean fallthrough traces the config lane",
+      // #1928: App identity is opt-in per call; the probe drives the agent lane.
+      env: { AMICO_GH_IDENTITY: "agent" },
       args: () => [],
       input: "protocol=https\nhost=github.com\n\n",
       setup: (home) => {
@@ -215,7 +219,7 @@ export async function runGate({ binDir = DEFAULT_BIN_DIR, binMapPath = DEFAULT_B
     }
     for (const probe of probes) {
       probe.setup?.(scratchHome);
-      const r = await execCapture(launcher, probe.args(missingScript), env, probe.input);
+      const r = await execCapture(launcher, probe.args(missingScript), { ...env, ...(probe.env ?? {}) }, probe.input);
       if (r.spawnError) {
         push(bin.name, probe.check, `launcher did not run: ${r.spawnError}`);
         continue;
