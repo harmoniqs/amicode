@@ -48,10 +48,19 @@ function setup() {
   const cacheFile = join(root, "tok.json");
   // The stub dir leads PATH but the real PATH follows: the stub's own `node`
   // invocation (and libuv's child-binary lookup) must still resolve.
+  // #1928: identity is chosen by AMICO_GH_IDENTITY, not by file presence —
+  // "" pins the person default regardless of the developer's env; the apps
+  // dir (principal cache, mint records) lives in the sandbox, prefilled with
+  // a captured on_behalf_of so the agent lane can bind its principal.
+  const appsDir = join(root, "github-apps");
+  mkdirSync(appsDir, { recursive: true });
+  writeFileSync(join(appsDir, "principal.json"), JSON.stringify({ on_behalf_of: "test-human", captured_at: new Date().toISOString(), source: "gh api user" }));
   const baseEnv = {
     PATH: `${binDir}:${process.env.PATH ?? ""}`,
     AMICO_GITHUB_FILE: configFile,
     AMICO_GITHUB_TOKEN_FILE: cacheFile,
+    AMICO_GITHUB_APPS_DIR: appsDir,
+    AMICO_GH_IDENTITY: "",
   };
   return { root, binDir, pemFile, configFile, cacheFile, baseEnv };
 }
@@ -67,34 +76,45 @@ describe("gh shim (bundle)", () => {
     expect(r.code).toBe(7);
   });
 
-  it("configured + fresh cached token → child env carries GH_TOKEN, argv verbatim", () => {
+  it("configured but AMICO_GH_IDENTITY unset (person, the default) → transparent passthrough, NO GH_TOKEN (#1928)", () => {
     const { pemFile, configFile, cacheFile, baseEnv } = setup();
     writeFileSync(configFile, JSON.stringify({ app_id: "1", installation_id: "2", pem_path: pemFile }));
     writeFileSync(cacheFile, JSON.stringify({ token: "ghs_test_bundle", expiresAt: new Date(Date.now() + 3600_000).toISOString() }));
     const r = runShim(["issue", "list"], baseEnv);
     const out = stubOut(r);
     expect(out.argv).toEqual(["issue", "list"]);
+    expect(out.ghToken).toBeNull();
+    expect(r.code).toBe(7);
+  });
+
+  it("configured + agent identity + fresh cached token → child env carries GH_TOKEN, argv verbatim", () => {
+    const { pemFile, configFile, cacheFile, baseEnv } = setup();
+    writeFileSync(configFile, JSON.stringify({ app_id: "1", installation_id: "2", pem_path: pemFile }));
+    writeFileSync(cacheFile, JSON.stringify({ token: "ghs_test_bundle", expiresAt: new Date(Date.now() + 3600_000).toISOString() }));
+    const r = runShim(["issue", "list"], { ...baseEnv, AMICO_GH_IDENTITY: "agent" });
+    const out = stubOut(r);
+    expect(out.argv).toEqual(["issue", "list"]);
     expect(out.ghToken).toBe("ghs_test_bundle");
     expect(r.code).toBe(7);
   });
 
-  it("configured but garbage PEM → exit 64, one token-free stderr line", () => {
+  it("configured + agent identity but garbage PEM → exit 64, one token-free stderr line", () => {
     const { root, configFile, baseEnv } = setup();
     const badPem = join(root, "bad.pem");
     writeFileSync(badPem, "-----BEGIN RSA PRIVATE KEY-----\ngarbage\n-----END RSA PRIVATE KEY-----\n");
     writeFileSync(configFile, JSON.stringify({ app_id: "1", installation_id: "2", pem_path: badPem }));
     // No cache file → mint path → PEM parse fails before any network.
-    const r = runShim(["pr", "list"], baseEnv);
+    const r = runShim(["pr", "list"], { ...baseEnv, AMICO_GH_IDENTITY: "agent" });
     expect(r.code).toBe(64);
     expect(r.stderr).toMatch(/PEM/);
     expect(r.stderr).not.toContain("ghs_");
     expect(r.stdout).toBe("");
   });
 
-  it("configured + malformed config JSON → exit 64, actionable stderr", () => {
+  it("configured + agent identity + malformed config JSON → exit 64, actionable stderr", () => {
     const { configFile, baseEnv } = setup();
     writeFileSync(configFile, "{nope");
-    const r = runShim(["pr", "list"], baseEnv);
+    const r = runShim(["pr", "list"], { ...baseEnv, AMICO_GH_IDENTITY: "agent" });
     expect(r.code).toBe(64);
     expect(r.stderr).toMatch(/malformed/);
   });
@@ -133,6 +153,8 @@ describe("gh shim (bundle)", () => {
       PATH: `${join(ROOT, "launcher")}:${nodeDir}`,
       AMICO_GITHUB_FILE: join(root, "github.json"),
       AMICO_GITHUB_TOKEN_FILE: join(root, "tok.json"),
+      AMICO_GITHUB_APPS_DIR: join(root, "github-apps"),
+      AMICO_GH_IDENTITY: "",
     });
     expect(r.code).toBe(127);
     expect(r.stderr).toMatch(/not found/i);

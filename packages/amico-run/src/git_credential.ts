@@ -10,8 +10,15 @@
 // which is exactly what we do when unconfigured, when the remote is not
 // https github.com, or when minting fails (a credential helper must never
 // BLOCK auth; a stderr note is the honest trace, stdout stays protocol-clean).
+//
+// #1928 (A15): only the AGENT identity ($AMICO_GH_IDENTITY=agent) answers —
+// person (the default) is silence, whatever config exists, so git falls
+// through to the human's own helpers. The agent answer is the agent App token,
+// principal-bound at mint (gh_identity.ts); an agent launcher pairs this with
+// withAgentGitConfig(), which RESETS inherited github.com helpers so a refused
+// mint never falls back to the human's credential.
 import { existsSync } from "node:fs";
-import { ensureInstallationToken, githubAppConfigFile } from "./github_app.js";
+import { agentConfigFile, ensureAgentToken, resolveGhIdentity, type IdentityDeps } from "./gh_identity.js";
 import { ConfigError } from "./types.js";
 
 /** Parse the helper request: protocol + host are all we route on. */
@@ -30,14 +37,16 @@ export async function credentialMain(
   input: string,
   env: NodeJS.ProcessEnv = process.env,
   operation: string | undefined = "get",
+  deps: IdentityDeps = {},
 ): Promise<{ stdout: string; code: number }> {
   // git calls store/erase too; only `get` may produce credentials.
   if (operation !== "get") return { stdout: "", code: 0 };
   const req = parseCredentialRequest(input);
   if (req.protocol !== "https" || req.host !== "github.com") return { stdout: "", code: 0 };
-  if (!existsSync(githubAppConfigFile(env))) return { stdout: "", code: 0 };
   try {
-    const { token } = await ensureInstallationToken({ env });
+    if (resolveGhIdentity(env) === "person") return { stdout: "", code: 0 };
+    if (!existsSync(agentConfigFile(env))) return { stdout: "", code: 0 }; // unconfigured: no opinion
+    const { token } = await ensureAgentToken({ ...deps, env });
     // The token's stdout carriage IS the protocol contract — nothing else may print.
     return { stdout: `username=x-access-token\npassword=${token}\n`, code: 0 };
   } catch (e) {
