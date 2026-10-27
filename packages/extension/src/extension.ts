@@ -1157,7 +1157,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // future work, not this slice.
   followedSessionWatcher = new FollowedSessionWatcher({
     followedSessions: () => ChatPanel.followedSessionIds(),
-    isSessionFocused: (sessionID) => ChatPanel.focusedSessionId() === sessionID,
+    // #1948: any VISIBLE panel on the session (or, via the watcher's parent
+    // cache, on an ancestor of it) suppresses — not just the active one.
+    isSessionVisible: (sessionID) => ChatPanel.visibleSessionIds().has(sessionID),
     showInformationMessage: (m, ...items) => vscode.window.showInformationMessage(m, ...items) as Promise<string | undefined>,
     onFocusSession: (sessionID) => ChatPanel.revealSession(sessionID),
     log: (line) => opencodeChannel.appendLine(line),

@@ -227,6 +227,32 @@ describe("ChatPanel — side-by-side sessions (multi-instance registry)", () => 
     expect(ChatPanel.focusedSessionId()).toBeUndefined();
   });
 
+  it("#1948 — visibleSessionIds is every VISIBLE live panel's session, active or not (focus in another group/terminal still counts)", () => {
+    openPanels(3);
+    const [p0, p1, p2] = created as unknown as Array<{
+      webview: { _simulateMessage(msg: unknown): void };
+      _simulateViewState(active: boolean, visible: boolean): void;
+      dispose(): void;
+    }>;
+    p0.webview._simulateMessage({ source: "amicode", kind: "session-context", sessionID: "ses_a" });
+    p1.webview._simulateMessage({ source: "amicode", kind: "session-context", sessionID: "ses_b" });
+    p2.webview._simulateMessage({ source: "amicode", kind: "session-context", sessionID: "ses_c" });
+    p0._simulateViewState(true, true); // active + visible
+    p1._simulateViewState(false, true); // visible in another group, focus elsewhere
+    p2._simulateViewState(false, false); // background tab
+
+    expect(new Set(ChatPanel.visibleSessionIds())).toEqual(new Set(["ses_a", "ses_b"]));
+
+    // Focus moves to the terminal: p0 is no longer active but still on screen.
+    p0._simulateViewState(false, true);
+    expect(new Set(ChatPanel.visibleSessionIds())).toEqual(new Set(["ses_a", "ses_b"]));
+
+    // A draft route shows no session; a disposed tab shows nothing.
+    p1.webview._simulateMessage({ source: "amicode", kind: "session-context", draft: true });
+    p0.dispose();
+    expect(new Set(ChatPanel.visibleSessionIds())).toEqual(new Set());
+  });
+
   it("#1788 — revealSession reveals the live tab showing that session (the notification click action)", () => {
     openPanels(2);
     const [p0, p1] = created as unknown as Array<{

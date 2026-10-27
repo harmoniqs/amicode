@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { ServerScope } from "@/utils/server-scope"
 import { Worktree } from "@/utils/worktree"
-import { handleWorktreeLifecycleEvent } from "./notification-toasts"
+import { handleWorktreeLifecycleEvent, isViewingSessionOrAncestor } from "./notification-toasts"
 
 const directory = (name: string) => `/tmp/opencode-worktree-lifecycle-${name}-${crypto.randomUUID()}`
 const legacyLayout = readFileSync(join(import.meta.dir, "..", "layout.tsx"), "utf8")
@@ -95,5 +95,48 @@ describe("worktree lifecycle notifications", () => {
     expect(newLayout).toContain("useNotificationToasts()")
     expect(notificationToasts).toContain("serverSDK().event.listen")
     expect(notificationToasts).toContain("handleWorktreeLifecycleEvent(event")
+  })
+})
+
+describe("#1948 — no toast for a session you are already viewing", () => {
+  const parents = (links: Record<string, string>) => (id: string) => links[id]
+
+  test("a question in the viewed session is suppressed", () => {
+    expect(isViewingSessionOrAncestor({ viewedSessionID: "ses_a", sessionID: "ses_a", parentOf: parents({}) })).toBe(true)
+  })
+
+  test("a question from a subagent (child or grandchild) of the viewed session is suppressed", () => {
+    const parentOf = parents({ ses_child: "ses_a", ses_grandchild: "ses_child" })
+    expect(isViewingSessionOrAncestor({ viewedSessionID: "ses_a", sessionID: "ses_child", parentOf })).toBe(true)
+    expect(isViewingSessionOrAncestor({ viewedSessionID: "ses_a", sessionID: "ses_grandchild", parentOf })).toBe(true)
+  })
+
+  test("a question from an unrelated session still toasts", () => {
+    const parentOf = parents({ ses_child: "ses_a" })
+    expect(isViewingSessionOrAncestor({ viewedSessionID: "ses_a", sessionID: "ses_other", parentOf })).toBe(false)
+    // the viewed session's own parent asking is NOT suppressed (ancestry runs upward from the asker only)
+    expect(isViewingSessionOrAncestor({ viewedSessionID: "ses_child", sessionID: "ses_a", parentOf })).toBe(false)
+  })
+
+  test("no viewed session (home / new-session route) never suppresses", () => {
+    expect(isViewingSessionOrAncestor({ viewedSessionID: undefined, sessionID: "ses_a", parentOf: parents({}) })).toBe(false)
+  })
+
+  test("a parent-link cycle never hangs the walk", () => {
+    const parentOf = parents({ ses_x: "ses_y", ses_y: "ses_x" })
+    expect(isViewingSessionOrAncestor({ viewedSessionID: "ses_a", sessionID: "ses_x", parentOf })).toBe(false)
+  })
+
+  test("the hook suppresses on session identity alone — the directory strings may differ (hub route vs event dir)", () => {
+    // Session ids are globally unique: the suppression must not gate on
+    // pathKey(directory) === pathKey(currentDir()).
+    expect(notificationToasts).not.toContain("pathKey(directory) === pathKey(currentDir())")
+    expect(notificationToasts).toContain("isViewingSessionOrAncestor({")
+    expect(notificationToasts).toContain("viewedSessionID: params.id")
+    // parentID is learned from the stream's session.created/updated so a child
+    // absent from the (bootstrap: false) store still resolves its ancestry.
+    expect(notificationToasts).toContain('"session.created"')
+    // platform.notify keeps its own focus guard and still runs before the toast check.
+    expect(notificationToasts.indexOf("platform.notify(")).toBeLessThan(notificationToasts.indexOf("isViewingSessionOrAncestor({"))
   })
 })
