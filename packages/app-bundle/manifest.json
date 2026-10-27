@@ -800,8 +800,8 @@
     "packages/app/src/pages/home/legacy-home.tsx": "43c48bfadf63c56660c8ae4dce15ef2526e87aca36b375f863510dd76e64000e",
     "packages/app/src/pages/layout/helpers.test.ts": "3a77cfe018ce2867cccded2c726f556e53a9895a77baa944a4878714b9b2b59e",
     "packages/app/src/pages/layout/helpers.ts": "b9b9bd551833390d9dcb7e2bc56de77abdef770d7d786f732930ed2bb6b8f4d6",
-    "packages/app/src/pages/layout/notification-toasts.test.ts": "6a95bd3dccb03be894b5d2adb4bc1f7531a9ec704e4d0eae1eba4ec89bbc9846",
-    "packages/app/src/pages/layout/notification-toasts.ts": "11256e25f2bcc20d3520e81aa50b53db2a7f8dea8047b17e99deb1f9f061e43d",
+    "packages/app/src/pages/layout/notification-toasts.test.ts": "b0fd654ff36d53c69cde039f9ee813763756376f08eedaca2fabd5ce63749af7",
+    "packages/app/src/pages/layout/notification-toasts.ts": "110dcef6f667dee7d51a4cb71fc2ef5c52d70dc2d5ccf7e36bf8d0da68dd7c93",
     "packages/app/src/pages/layout/project-avatar-state.ts": "45ca696114049e23f5c5f95745b3f7303a35d847bd186c426618cf88f355865d",
     "packages/app/src/pages/layout/session-list-chip.test.ts": "ebda802582ebd274e8c7c4c20ca962e8f699fce482202d3af885bd704104bf46",
     "packages/app/src/pages/layout/session-list-chip.tsx": "62373670362fd78e944753b2839820411b5c67dea369dec6a39c5d03df827b16",
@@ -1031,7 +1031,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-26T18:34:42.306Z",
+  "extracted_at": "2026-10-27T16:49:20.256Z",
   "per_package": {
     "packages/app": {
       "A": 257,
