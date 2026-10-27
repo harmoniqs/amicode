@@ -214,7 +214,7 @@ export function githubAppConfigFile(env: NodeJS.ProcessEnv = process.env): strin
  *  behavior is byte-identical to pre-#399 when unconfigured. ssh remotes are
  *  untouched: the helper only serves the https URL space, and commit
  *  authorship never reads transport credentials. */
-/** #1928: any agent App config — mirrors amico-run gh_identity.ts
+/** #1928: any agent App config — mirrors packages/amico-run/src/gh_identity.ts
  *  agentConfigFile: an explicit $AMICO_GITHUB_FILE is authoritative; else
  *  <apps>/agent.json ($AMICO_GITHUB_APPS_DIR or ~/.amico/github-apps), else
  *  the #399 ~/.amico/github.json alias. The helper itself only ANSWERS under
