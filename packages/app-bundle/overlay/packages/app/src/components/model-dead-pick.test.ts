@@ -107,6 +107,33 @@ describe("classifyTurnError — what a real failure demotes", () => {
     expect(classifyTurnError(apiError(500, "Internal error: access denied to upstream cache"))).toBeNull()
   })
 
+  test("billing (402 Payment Required, quota … billing) → unavailable; a plain 429 does not demote (#1996)", () => {
+    const payment = classifyTurnError(apiError(402, "Payment Required: please check your current payment status."))
+    expect(payment?.status).toBe("unavailable")
+    expect(payment?.reason).toMatch(/^billing: payment required/)
+    const quota = classifyTurnError(
+      apiError(
+        429,
+        "You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits.",
+      ),
+    )
+    expect(quota?.status).toBe("unavailable")
+    expect(quota?.reason).toMatch(/^billing:/)
+    expect(classifyTurnError(apiError(429, "Rate limit exceeded"))).toBeNull()
+    expect(
+      classifyTurnError(
+        apiError(
+          503,
+          "This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.",
+        ),
+      ),
+    ).toBeNull()
+  })
+
+  test("a max_output_tokens floor rejection is a request-shape error, not a dead model (#1996)", () => {
+    expect(classifyTurnError(apiError(400, "`max_output_tokens` The number must be `>= 16`."))).toBeNull()
+  })
+
   test("non-reachability errors do NOT demote", () => {
     expect(classifyTurnError({ name: "MessageAbortedError", data: { message: "aborted" } })).toBeNull()
     expect(classifyTurnError({ name: "ContextOverflowError", data: { message: "prompt is too long" } })).toBeNull()

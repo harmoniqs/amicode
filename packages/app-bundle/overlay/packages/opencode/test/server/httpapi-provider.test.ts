@@ -550,6 +550,28 @@ const probeUpstream = Bun.serve({
           "ValidationException",
         )
       }
+      // #1996: live hub messages (2026-10-28), verbatim.
+      case "probe-floor-meta": {
+        const max = Number(body.max_tokens ?? body.max_completion_tokens)
+        if (max >= 16) return probeOk(model)
+        return openAiError(400, "`max_output_tokens` The number must be `>= 16`.", "invalid_request_error")
+      }
+      case "probe-payment":
+        return openAiError(402, "Payment Required: please check your current payment status.", "payment_required")
+      case "probe-quota-billing":
+        return openAiError(
+          429,
+          "You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits.",
+          "RESOURCE_EXHAUSTED",
+        )
+      case "probe-rate-limit":
+        return openAiError(429, "Rate limit exceeded", "rate_limit_exceeded")
+      case "probe-high-demand":
+        return openAiError(
+          503,
+          "This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.",
+          "UNAVAILABLE",
+        )
       default:
         return openAiError(500, "unexpected", "InternalServerException")
     }
@@ -593,6 +615,11 @@ const probeOptions = {
             "probe-floor-wrapped",
             "probe-floor-throttled",
             "probe-floor-stuck",
+            "probe-floor-meta",
+            "probe-payment",
+            "probe-quota-billing",
+            "probe-rate-limit",
+            "probe-high-demand",
           ].map((id) => [
             id,
             probeModel(id),
@@ -699,6 +726,50 @@ describe("provider probe HttpApi (#1984)", () => {
       expect(byModel["probe-floor-stuck"].status).toBe("error")
       expect(byModel["probe-floor-stuck"].reason).toMatch(/max_output_tokens/)
       expect(byModel["probe-floor-stuck"].reason).toMatch(/64/)
+    }),
+    probeOptions,
+    30000,
+  )
+
+  it.instance(
+    "Meta's max_output_tokens floor retries at 16; billing is unavailable; a plain 429 stays rate-limited (#1996)",
+    Effect.gen(function* () {
+      probeSeen.length = 0
+      const directory = (yield* TestInstance).directory
+      const response = yield* request("/provider/probe", {
+        method: "POST",
+        headers: { "x-opencode-directory": directory, "content-type": "application/json" },
+        body: JSON.stringify({
+          providerID: "probe-fake",
+          modelIDs: ["probe-floor-meta", "probe-payment", "probe-quota-billing", "probe-rate-limit", "probe-high-demand"],
+        }),
+      })
+      expect(response.status).toBe(200)
+      const body = JSON.parse(yield* response.text)
+      type ProbeRow = { model: string; status: string; reason: string | null }
+      const byModel: Record<string, ProbeRow> = Object.fromEntries(
+        (body.results as ProbeRow[]).map((r) => [r.model, r]),
+      )
+      const sent = (model: string) => probeSeen.filter((seen) => seen.model === model).map((seen) => seen.maxTokens)
+
+      // meta: "`max_output_tokens` The number must be `>= 16`." → one retry at 16 → ok
+      expect(sent("probe-floor-meta")).toEqual([1, 16])
+      expect(byModel["probe-floor-meta"]).toMatchObject({ status: "ok", reason: null })
+
+      // baseten: HTTP 402 Payment Required → unavailable, billing reason; never retried
+      expect(byModel["probe-payment"].status).toBe("unavailable")
+      expect(byModel["probe-payment"].reason).toMatch(/^billing: payment required/)
+      expect(sent("probe-payment")).toEqual([1])
+
+      // google: "exceeded your current quota … billing" (429) is billing, not a transient rate limit
+      expect(byModel["probe-quota-billing"].status).toBe("unavailable")
+      expect(byModel["probe-quota-billing"].reason).toMatch(/^billing:/)
+
+      // a plain 429 stays rate-limited
+      expect(byModel["probe-rate-limit"].status).toBe("rate-limited")
+
+      // google 503 high demand: transient, stays error
+      expect(byModel["probe-high-demand"].status).toBe("error")
     }),
     probeOptions,
     30000,
