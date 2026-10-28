@@ -2,6 +2,7 @@ import * as http from "node:http";
 import * as vscode from "vscode";
 import type { StatusBarManager } from "./status_bar";
 import { SseLivenessTracker, type SseState } from "./sse_liveness";
+import { SseFrameSplitter } from "./amicode_service/sse_fanin_driver";
 
 // ============================================================================
 // OpencodeEventClient — Channel 1 of the bidirectional plumbing.
@@ -43,7 +44,11 @@ export interface SseClientOptions {
 export class OpencodeEventClient implements vscode.Disposable {
   private req?: http.ClientRequest;
   private res?: http.IncomingMessage;
-  private buf = "";
+  /** #1790: linear-time frame splitter — scans only the new chunk, carrying a
+   *  two-character lookback for a boundary split across chunks.  Handles both
+   *  LF (`\n\n`) and CRLF (`\r\n\r\n`) frame endings.  Replaces the quadratic
+   *  `buf += chunk; buf.indexOf("\n\n")` pattern the client shipped with. */
+  private splitter = new SseFrameSplitter();
   private url?: URL;
   private reconnectTimer?: NodeJS.Timeout;
   private disposed = false;
@@ -144,6 +149,9 @@ export class OpencodeEventClient implements vscode.Disposable {
         }
         this.opts.channel.appendLine(`[sse] connected`);
         this.liveness?.noteConnected();
+        // #1790: reset the splitter on each new connection so a partial frame
+        // from a previous connection never bleeds into the next one.
+        this.splitter = new SseFrameSplitter();
         res.setEncoding("utf8");
         res.on("data", (chunk: string) => this.onChunk(chunk));
         res.on("end", () => {
@@ -180,19 +188,20 @@ export class OpencodeEventClient implements vscode.Disposable {
     // ANY bytes = the stream is speaking (events or comment-only pings —
     // the liveness signal the old client discarded, #638)
     this.liveness?.noteFrame();
-    this.buf += chunk;
-    // SSE events terminate on a blank line (\n\n).
-    let sep: number;
-    while ((sep = this.buf.indexOf("\n\n")) >= 0) {
-      const block = this.buf.slice(0, sep);
-      this.buf = this.buf.slice(sep + 2);
-      this.handleBlock(block);
+    // #1790: linear-time frame splitting — SseFrameSplitter scans only the new
+    // chunk, carrying a two-character lookback for a boundary (`\n\n` or
+    // `\r\n\r\n`) split across chunks.  Each whole frame is forwarded to
+    // handleBlock verbatim (delimiter included), so `\r\n` line endings inside
+    // the frame reach handleBlock intact; handleBlock splits on /\r?\n/.
+    for (const frame of this.splitter.push(chunk)) {
+      // strip the trailing blank-line delimiter before passing to handleBlock
+      this.handleBlock(frame.replace(/\r?\n\r?\n$/, ""));
     }
   }
 
   private handleBlock(block: string): void {
     const dataLines: string[] = [];
-    for (const line of block.split("\n")) {
+    for (const line of block.split(/\r?\n/)) {
       if (line.startsWith("data:")) dataLines.push(line.slice(5).trimStart());
     }
     if (dataLines.length === 0) return;
