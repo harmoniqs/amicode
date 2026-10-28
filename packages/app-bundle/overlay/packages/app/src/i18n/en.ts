@@ -145,6 +145,11 @@ export const dict = {
   "dialog.model.reachability.reason.rateLimited": "Rate limited — may be slow to respond",
   "dialog.model.reachability.reason.unchecked": "Not checked yet",
   "dialog.model.reachability.reason.error": "Probe failed",
+  // amicode#1989 (#1979 S6): the composer's dead-pick warning.
+  "composer.model.deadPick.warning": "{{model}} is unavailable: {{reason}}",
+  "composer.model.deadPick.switch": "Switch to {{model}}",
+  "composer.model.deadPick.noAlternative": "No working model found — pick another model",
+  "composer.model.deadPick.reason.unknown": "it failed a real request",
 
   "dialog.model.unpaid.freeModels.title": "Free models provided by Amicode",
   "dialog.model.unpaid.addMore.title": "Add more models from popular providers",
