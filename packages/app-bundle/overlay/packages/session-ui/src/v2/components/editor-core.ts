@@ -19,9 +19,10 @@ import {
   drawSelection,
   highlightActiveLine,
   highlightSpecialChars,
+  type KeyBinding,
 } from "@codemirror/view"
 import { history, defaultKeymap, historyKeymap } from "@codemirror/commands"
-import { search, searchKeymap, highlightSelectionMatches } from "@codemirror/search"
+import { search, searchKeymap, highlightSelectionMatches, gotoLine } from "@codemirror/search"
 import { type LanguageSupport, bracketMatching } from "@codemirror/language"
 import {
   HighlightStyle,
@@ -296,6 +297,28 @@ export function editableExtensions(opts: {
   return exts
 }
 
+/**
+ * Return the flat array of KeyBinding objects that baseExtensions wires into
+ * its keymap. Exported so tests can assert specific bindings (e.g. Mod-l →
+ * gotoLine, #1515) without coupling to CM6 extension internals.
+ *
+ * Includes:
+ * - defaultKeymap, historyKeymap, searchKeymap (the CM6 standard set)
+ * - { key: "Mod-l", run: gotoLine } — Cmd+L go-to-line shortcut (#1515)
+ */
+export function keymapBindings(_opts: {
+  theme: Extension
+  language?: LanguageSupport | null
+  lang?: string
+}): KeyBinding[] {
+  return [
+    ...defaultKeymap,
+    ...historyKeymap,
+    ...searchKeymap,
+    { key: "Mod-l", run: gotoLine },
+  ]
+}
+
 export function baseExtensions(opts: {
   theme: Extension
   language?: LanguageSupport | null
@@ -308,7 +331,7 @@ export function baseExtensions(opts: {
     highlightSpecialChars(),
     drawSelection(),
     bracketMatching(),
-    keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap]),
+    keymap.of(keymapBindings(opts)),
     search(),
     highlightSelectionMatches(),
     EditorView.lineWrapping,
