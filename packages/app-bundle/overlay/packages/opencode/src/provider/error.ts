@@ -218,6 +218,26 @@ export type ProbeClassification = {
 
 const UNAVAILABLE =
   /not available for this account|aws[- ]marketplace|marketplace (subscription|agreement)|model access is denied|access to (this|the) model is not|not subscribed/i
+// #1996: an account / billing state, not a transient rate limit — HTTP 402
+// (baseten "Payment Required: please check your current payment status.") and
+// "exceeded your current quota … billing" (Google / OpenAI insufficient_quota,
+// served as 429). Checked with UNAVAILABLE, so ahead of the 429 rate-limit rule.
+// A plain 429 (no billing wording) stays rate-limited.
+const BILLING_PAYMENT = /payment required|check your (current )?payment status/i
+const BILLING_QUOTA = /exceeded your current quota[^\n]*billing|insufficient[_ ]quota/i
+export const PROBE_BILLING_PAYMENT_REASON = "billing: payment required"
+export const PROBE_BILLING_QUOTA_REASON = "billing: quota exhausted"
+
+function billingReason(status: number | undefined, text: string) {
+  if (status === 402 || BILLING_PAYMENT.test(text)) return PROBE_BILLING_PAYMENT_REASON
+  if (BILLING_QUOTA.test(text)) return PROBE_BILLING_QUOTA_REASON
+  return undefined
+}
+
+function billingClassification(reason: string, message: string): ProbeClassification {
+  return { status: "unavailable", message: `${reason}: ${message}` }
+}
+
 const RATE_LIMITED = /throttl|too many requests|rate[- ]?limit|quota exceeded|tokens per (minute|day)/i
 const INVALID =
   /validationexception|inference profile|on-demand throughput|invalid model|model identifier is invalid|model[_ ]not[_ ]found|unknown model|no such model|does not exist|is not supported|resourcenotfoundexception/i
@@ -226,12 +246,20 @@ const DENIED = /accessdenied|access denied|not authorized|unauthorized|unrecogni
 // #1994: OpenAI-style models (e.g. on Bedrock) reject the one-token probe with
 // "Invalid 'max_output_tokens': integer below minimum value. Expected a value
 // >= 16 ..." — sometimes wrapped in "The model returned the following errors:"
-// with a ValidationException type. That is a request-shape problem, not a dead
-// model: the probe retries at the floor, and the matcher runs before INVALID so
-// it can never classify as `invalid`.
-const TOKEN_FLOOR =
-  /max[_ ]?(output|completion)?[_ ]?tokens'?"?\s*:?\s*(integer )?(is )?below (the )?minimum|below minimum value[^\n]*max[_ ]?(output|completion)?[_ ]?tokens/i
-const TOKEN_FLOOR_VALUE = /expected a value\s*>=?\s*(\d+)/i
+// with a ValidationException type. #1996: Meta words it "`max_output_tokens`
+// The number must be `>= 16`." So the matcher is the general shape — a token
+// parameter (max_output_tokens / max_tokens / max_completion_tokens /
+// maxOutputTokens) near a `>= N`, "minimum (value)? (is)? N" or "below minimum".
+// That is a request-shape problem, not a dead model: the probe retries at the
+// floor, and the matcher runs before INVALID so it can never classify as `invalid`.
+const TOKEN_PARAM = String.raw`max[_ ]?(?:output|completion|new)?[_ ]?tokens`
+const TOKEN_BOUND = String.raw`(?:below (?:the )?minimum|>=\s*\x60?\s*\d+|minimum (?:value )?(?:is )?\d+|at least \d+|greater than or equal to \d+)`
+const TOKEN_FLOOR = new RegExp(
+  String.raw`${TOKEN_PARAM}[^\n]{0,80}?${TOKEN_BOUND}|below minimum value[^\n]*${TOKEN_PARAM}`,
+  "i",
+)
+const TOKEN_FLOOR_VALUE =
+  /(?:>=|minimum (?:value )?(?:is )?|at least |greater than or equal to )\s*`?\s*(\d+)/i
 export const PROBE_TOKEN_FLOOR_DEFAULT = 16
 export const PROBE_TOKEN_FLOOR_CAP = 64
 
@@ -272,6 +300,8 @@ export function classifyProbeError(input: { providerID: ProviderV2.ID; error: un
     const errorType = headerValue(error.responseHeaders, "x-amzn-errortype") ?? ""
     const haystack = [parsed.message, errorType, error.responseBody ?? ""].join("\n")
     if (UNAVAILABLE.test(haystack)) return { status: "unavailable", message: parsed.message }
+    const billing = billingReason(status, haystack)
+    if (billing) return billingClassification(billing, parsed.message)
     if (status === 429 || RATE_LIMITED.test(haystack)) return { status: "rate-limited", message: parsed.message }
     if (TOKEN_FLOOR.test(haystack)) return tokenFloorClassification(parsed.message)
     if (status === 404 || INVALID.test(haystack)) return { status: "invalid", message: parsed.message }
@@ -285,6 +315,8 @@ export function classifyProbeError(input: { providerID: ProviderV2.ID; error: un
       return { status: "invalid", message: error.message }
     const text = `${error.name}: ${error.message}`
     if (UNAVAILABLE.test(text)) return { status: "unavailable", message: error.message }
+    const billing = billingReason(undefined, text)
+    if (billing) return billingClassification(billing, error.message)
     if (RATE_LIMITED.test(text)) return { status: "rate-limited", message: error.message }
     if (TOKEN_FLOOR.test(text)) return tokenFloorClassification(error.message)
     if (DENIED.test(text)) return { status: "denied", message: error.message }

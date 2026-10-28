@@ -54,6 +54,12 @@ export type DeadPickWarning = {
 // lockstep so a real failure and a probe name the same class.
 const UNAVAILABLE =
   /not available for this account|aws[- ]marketplace|marketplace (subscription|agreement)|model access is denied|access to (this|the) model is not|not subscribed/i
+// #1996: billing is an account state, not a transient rate limit — HTTP 402
+// Payment Required and "exceeded your current quota … billing" (served as 429)
+// demote as unavailable. Checked ahead of the 429 / rate-limit no-demote rule;
+// a plain 429 still never demotes.
+const BILLING_PAYMENT = /payment required|check your (current )?payment status/i
+const BILLING_QUOTA = /exceeded your current quota[^\n]*billing|insufficient[_ ]quota/i
 const RATE_LIMITED = /throttl|too many requests|rate[- ]?limit|quota exceeded|tokens per (minute|day)/i
 const INVALID =
   /validationexception|inference profile|on-demand throughput|invalid model|model identifier is invalid|model[_ ]not[_ ]found|unknown model|no such model|does not exist|is not supported|resourcenotfoundexception|ProviderModelNotFoundError|AI_NoSuchModelError/i
@@ -92,10 +98,14 @@ export function classifyTurnError(error: unknown): { status: DemoteStatus; reaso
   if (error.name === "ProviderAuthError") return { status: "denied", reason: clip(message || "authentication failed") }
 
   const status = typeof data.statusCode === "number" ? data.statusCode : undefined
-  if (status !== undefined && (status === 408 || status === 429 || status >= 500)) return null
   const haystack = [error.name, message, header(data.responseHeaders, "x-amzn-errortype"), str(data.responseBody)].join(
     "\n",
   )
+  if (status === 402 || BILLING_PAYMENT.test(haystack))
+    return { status: "unavailable", reason: clip(`billing: payment required: ${message || error.name}`) }
+  if (BILLING_QUOTA.test(haystack))
+    return { status: "unavailable", reason: clip(`billing: quota exhausted: ${message || error.name}`) }
+  if (status !== undefined && (status === 408 || status === 429 || status >= 500)) return null
   if (TRANSIENT.test(haystack) || RATE_LIMITED.test(haystack)) return null
   const reason = clip(message || error.name)
   if (UNAVAILABLE.test(haystack)) return { status: "unavailable", reason }

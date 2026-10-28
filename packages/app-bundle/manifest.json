@@ -137,8 +137,8 @@
     "packages/app/src/components/harness-switch.ts": "b4cb2b2241d71c477be71285fe6041d4b0d604a26d74c30dc5239694211a1f90",
     "packages/app/src/components/help-button.tsx": "780d533f776a784660cfed072a131198bc6fcc8e8fe332e8e1a220d516c9684e",
     "packages/app/src/components/model-dead-pick-warning.tsx": "51a3b761437e7cf0d33d49cf06ffa7be20c59cbdfb073637a5d7945e67840c14",
-    "packages/app/src/components/model-dead-pick.test.ts": "b4bd51255fffc12ca92ebeb21893e2d1ee329cc5845c0dfe0a79cb1c82419013",
-    "packages/app/src/components/model-dead-pick.ts": "eaa584e8072b59a9a6f0b4056c202ffeff4d96c8a0270d962b3d004e2d79f143",
+    "packages/app/src/components/model-dead-pick.test.ts": "109cc9c5c89b645e8a085e28142aa3b6da77bcdb7e690b3af3bcbad7b41c99f4",
+    "packages/app/src/components/model-dead-pick.ts": "a85d9f039d0f9de66e3e59bdaba5f8b39b620a3a4d396ac845b8b89f024b5bca",
     "packages/app/src/components/model-row-meta.test.ts": "51c5e8b9c4ef3f8e2616e63c8cbc16ae055dedc5fec7c24280ed28a3712938ad",
     "packages/app/src/components/model-row-meta.ts": "7870b265f4ca9b08505ae6f1b0afb66ca002fe05f67c3b8194417a45f0b170cd",
     "packages/app/src/components/model-tooltip.tsx": "c402abe9674806c9dd308589d7acb96dfd9c400299e650a94fcc44a165e920e2",
@@ -372,7 +372,7 @@
     "packages/opencode/src/project/instance-context.ts": "65a35792e50e96a50ea14cd9f928045c0e2fc15eb49506f5bbceee38c4af1457",
     "packages/opencode/src/project/instance-store.ts": "c22d3e2499e63dd8d9395d58189df75444d306774df833e746f22e327edcf2ab",
     "packages/opencode/src/provider/auth.ts": "b0ab1322c1039e27176bf9e3500603eae27506065ac141a69710220f3361f6b8",
-    "packages/opencode/src/provider/error.ts": "eef84e43f4d0f2779e53a5570498d08d2f339fdc01c24c12046b9107dacef516",
+    "packages/opencode/src/provider/error.ts": "871df37ff31d180e99e9dfc49bfac773f8adb5f9929bba9f1a3053f572723620",
     "packages/opencode/src/provider/probe.ts": "6f5b7f3a201a67b66c387411f4c893c7e91ca74a70fdcf7b220f1a2ff511adc7",
     "packages/opencode/src/provider/provider.ts": "b89bc0ca0a12ea0cfaf5c956a4b731a0397d4c407e787a16cdd66fb7f54ee476",
     "packages/opencode/src/provider/transform.ts": "70c7492d4a23a30ebc340a5605702b1602960f4b412e18557534e02962c137b8",
@@ -458,7 +458,7 @@
     "packages/opencode/test/server/httpapi-file.test.ts": "d3386129bc81467ecbcc57a3861f53767ee56ac41b4ff6ad58d8b168fb3b3373",
     "packages/opencode/test/server/httpapi-global-event.test.ts": "8a78dc59edf48eb3cf6d1c09448f7dfe5ceb138e1bd6125949ebc88976c903f0",
     "packages/opencode/test/server/httpapi-instance-route-auth.test.ts": "4b73a89d2431c02bc3b665d93f9002914e51eb1add979dc1867efbcbc0c36e25",
-    "packages/opencode/test/server/httpapi-provider.test.ts": "a047ee63f5a1000738a33afc4fee6c19c994ffe6ba12e124e34b83762e11ac47",
+    "packages/opencode/test/server/httpapi-provider.test.ts": "0bfaf897433a68de3707c8ca731af5b4e3470589d094c07fc6c5177f9939d1af",
     "packages/opencode/test/server/httpapi-session.test.ts": "eda6fd763ac4c17891cedaa4ccd49597c03e7227fcfdcf0f94a1b4545ba623ed",
     "packages/opencode/test/server/httpapi-ui.test.ts": "d029e959cfd9347fff4cf17c5686dd125b0bd3a41afb3408a23b31418f12e3b0",
     "packages/opencode/test/server/pasqal-secret.test.ts": "54be8c666160dad22cd37bbf041f5bd40aec120271818f3c56c94107d987b9fb",
@@ -1047,7 +1047,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-28T19:44:51.785Z",
+  "extracted_at": "2026-10-28T20:11:30.060Z",
   "per_package": {
     "packages/app": {
       "A": 270,
