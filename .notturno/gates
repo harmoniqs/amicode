@@ -1,0 +1,205 @@
+#!/usr/bin/env bash
+# .notturno/gates — the night runner's pre-push gate for amicode (#1980).
+#
+# harmoniqs/amicissimo automation/notturno/runner/night-run.sh runs this
+# (cwd = repo root, inside a Modal sandbox with NO vault and NO fleet) after
+# the headless implementer commits; a non-zero exit reports `gates-red`
+# instead of opening a red PR. The runner surfaces the LAST lines of the log,
+# so the final line is always a one-line summary.
+#
+# It runs the cheap, deterministic, environment-independent subset of CI
+# (.github/workflows/ci.yml):
+#   drift      node packages/app-bundle/scripts/drift_gate.mjs   (app-bundle-gate)
+#   typecheck  pnpm -r run typecheck                             (fast)
+#   vitest     the vitest suites of the packages the diff touched (fast), vs
+#              the merge-base with the base branch. amico-run goes through the
+#              same test-quarantine gate CI uses (#1907/#1939); every suite
+#              runs with CI's `--exclude '**/slow/**'`, plus the real-SSH
+#              loopback suites below (fleet-dependent; they self-skip without
+#              an sshd and mutate ~/.ssh/authorized_keys when one exists).
+#              Vault-dependent tests self-skip on their own existsSync/env
+#              guards, exactly as in CI. A `pnpm -r run build` precedes the
+#              suites, as in CI (several suites read built bundles).
+# NOT here (need the vendored engine binary / bun materialization / Julia /
+# PyPI): build-binary, engine-tests, vsix-gate, boot-smoke, schema-roundtrip.
+#
+# Usage:  ./.notturno/gates            run the gates
+#         ./.notturno/gates --plan     print base, merge-base, selected packages; run nothing
+# Env:
+#   NOTTURNO_BASE          base branch (e.g. lane/0.3.11 or origin/lane/0.3.11).
+#                          Unset/unresolvable → the nearest of origin/lane/* and
+#                          origin/main (fewest commits from merge-base to HEAD).
+#                          No base at all → every package's suite runs.
+#   NOTTURNO_GATES_STEPS   comma list subset of drift,typecheck,vitest (default all)
+set -uo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT" || { echo "[notturno-gates] RESULT: RED — cannot cd to repo root $ROOT"; exit 2; }
+
+say() { echo "[notturno-gates] $*"; }
+
+# Fleet-dependent suites (real loopback SSH), excluded by basename glob.
+ENV_DEPENDENT_EXCLUDES="**/fleet_peer_e2e.test.ts **/amicode_service_attachment_transport.test.ts **/amicode_service_attach_switch_latency.test.ts"
+
+PLAN=0
+for a in "$@"; do
+  case "$a" in
+    --plan) PLAN=1 ;;
+    -h|--help) sed -n '2,36p' "$0"; exit 0 ;;
+    *) echo "[notturno-gates] RESULT: RED — unknown argument: $a"; exit 2 ;;
+  esac
+done
+
+STEPS="${NOTTURNO_GATES_STEPS:-drift,typecheck,vitest}"
+for s in ${STEPS//,/ }; do
+  case "$s" in
+    drift|typecheck|vitest) ;;
+    *) echo "[notturno-gates] RESULT: RED — unknown step '$s' in NOTTURNO_GATES_STEPS (known: drift,typecheck,vitest)"; exit 2 ;;
+  esac
+done
+want() { case ",$STEPS," in *",$1,"*) return 0 ;; *) return 1 ;; esac; }
+
+# ── base + merge-base ────────────────────────────────────────────────────────
+is_commit() { git rev-parse --verify -q "$1^{commit}" >/dev/null 2>&1; }
+
+resolve_base() {
+  local b="${NOTTURNO_BASE:-}" c
+  if [ -n "$b" ]; then
+    # prefer the remote-tracking ref for a bare branch name (a local branch may be stale);
+    # HEAD-relative refs are taken as given (origin/HEAD would silently mean main)
+    case "$b" in HEAD|HEAD~*|HEAD^*|@*) set -- "$b" ;; *) set -- "origin/${b#origin/}" "$b" ;; esac
+    for c in "$@"; do
+      if is_commit "$c"; then echo "$c"; return 0; fi
+    done
+    say "warn: NOTTURNO_BASE='$b' does not resolve — falling back to origin/lane/* | origin/main" >&2
+  fi
+  local best="" best_n="" mb n
+  for c in $(git for-each-ref --sort=-version:refname --format='%(refname:short)' 'refs/remotes/origin/lane/' 2>/dev/null) origin/main; do
+    is_commit "$c" || continue
+    mb="$(git merge-base "$c" HEAD 2>/dev/null)" || continue
+    n="$(git rev-list --count "$mb..HEAD" 2>/dev/null)" || continue
+    if [ -z "$best_n" ] || [ "$n" -lt "$best_n" ]; then best="$c"; best_n="$n"; fi
+  done
+  [ -n "$best" ] && echo "$best"
+  return 0
+}
+
+BASE="$(resolve_base)"
+MB=""
+[ -n "$BASE" ] && MB="$(git merge-base "$BASE" HEAD 2>/dev/null || true)"
+
+# packages with a vitest `test` script
+all_test_pkgs() {
+  local d
+  for d in packages/*/; do
+    d="${d%/}"
+    [ -f "$d/package.json" ] || continue
+    node -e 'const s=(require(process.argv[1]).scripts||{}).test||"";process.exit(/\bvitest\b/.test(s)?0:1)' "$ROOT/$d/package.json" 2>/dev/null \
+      && echo "${d#packages/}"
+  done
+}
+
+touched_pkgs() {
+  local f
+  {
+    git diff --name-only "$MB" -- 2>/dev/null
+    git ls-files --others --exclude-standard 2>/dev/null
+  } | while IFS= read -r f; do
+    case "$f" in
+      packages/*/*) f="${f#packages/}"; echo "${f%%/*}" ;;
+      # repo-root scripts + the quarantine lists + this gate are tested in amico-run
+      scripts/*|config/test-quarantine/*|.notturno/*) echo "amico-run" ;;
+      # workspace-wide inputs: every suite
+      package.json|pnpm-lock.yaml|pnpm-workspace.yaml) echo "__ALL__" ;;
+    esac
+  done
+}
+
+ALL_PKGS="$(all_test_pkgs | sort -u | tr '\n' ' ')"
+if [ -z "$MB" ]; then
+  SELECTED="$ALL_PKGS"
+  SEL_WHY="no base resolved — every package"
+else
+  T="$(touched_pkgs | sort -u | tr '\n' ' ')"
+  case " $T " in
+    *" __ALL__ "*) SELECTED="$ALL_PKGS"; SEL_WHY="workspace manifest touched — every package" ;;
+    *)
+      SELECTED=""
+      for p in $T; do case " $ALL_PKGS " in *" $p "*) SELECTED="$SELECTED $p" ;; esac; done
+      SEL_WHY="packages the diff touched"
+      ;;
+  esac
+fi
+SELECTED="$(echo $SELECTED)" # trim / squeeze
+
+say "repo: $ROOT  head: $(git rev-parse --short HEAD 2>/dev/null || echo '?')"
+MB_SHORT="(none)"
+[ -n "$MB" ] && MB_SHORT="$(git rev-parse --short "$MB")"
+say "base: ${BASE:-(none)}  merge-base: $MB_SHORT"
+say "steps: $STEPS"
+echo "vitest packages: ${SELECTED:-(none)}"
+say "($SEL_WHY)"
+[ "$PLAN" -eq 1 ] && exit 0
+
+# ── run ──────────────────────────────────────────────────────────────────────
+PASSED=""
+FAILED=""
+HINTS=""
+T0=$SECONDS
+step() { # step <name> <hint-on-failure> <cmd...>
+  local name="$1" hint="$2" t=$SECONDS rc
+  shift 2
+  say "── $name: $*"
+  "$@"
+  rc=$?
+  if [ "$rc" -eq 0 ]; then
+    PASSED="$PASSED $name"
+    say "── $name: ok ($((SECONDS - t))s)"
+  else
+    FAILED="$FAILED $name"
+    [ -n "$hint" ] && HINTS="$HINTS $hint;"
+    say "── $name: FAIL exit $rc ($((SECONDS - t))s)"
+  fi
+}
+
+run_amico_run_suite() {
+  local out vexit excl=() g
+  out="${TMPDIR:-/tmp}/notturno-amico-run-$$.json"
+  for g in $ENV_DEPENDENT_EXCLUDES; do excl+=(--exclude "$g"); done
+  (cd packages/amico-run && pnpm exec vitest run --passWithNoTests --exclude '**/slow/**' "${excl[@]}" \
+      --reporter=default --reporter=json --outputFile.json="$out")
+  vexit=$?
+  (cd packages/amico-run && node ../../scripts/test_quarantine_gate.mjs --runner-exit "$vexit" "$out")
+}
+
+run_pkg_suite() {
+  local p="$1" excl=() g
+  for g in $ENV_DEPENDENT_EXCLUDES; do excl+=(--exclude "$g"); done
+  (cd "packages/$p" && pnpm exec vitest run --passWithNoTests --exclude '**/slow/**' "${excl[@]}")
+}
+
+if want drift; then
+  step drift "overlay edit without a manifest refresh? run 'node packages/app-bundle/scripts/refresh_manifest.mjs' then drift_gate, and commit manifest.json" \
+    node packages/app-bundle/scripts/drift_gate.mjs
+fi
+if want typecheck; then
+  step typecheck "" pnpm -r run typecheck
+fi
+if want vitest && [ -n "$SELECTED" ]; then
+  step build "" pnpm -r run build
+  for p in $SELECTED; do
+    if [ "$p" = "amico-run" ]; then
+      step "vitest:$p" "" run_amico_run_suite
+    else
+      step "vitest:$p" "" run_pkg_suite "$p"
+    fi
+  done
+fi
+
+DUR=$((SECONDS - T0))
+if [ -n "$FAILED" ]; then
+  echo "[notturno-gates] RESULT: RED (${DUR}s) — failed:${FAILED}; passed:${PASSED:- none}${HINTS:+ — fix:$HINTS}"
+  exit 1
+fi
+echo "[notturno-gates] RESULT: GREEN (${DUR}s) — passed:${PASSED:- none} (base ${BASE:-none})"
+exit 0
