@@ -7,8 +7,10 @@ import {
   editableExtensions,
   externalUpdate,
   detectMode,
+  gotoLineKeymap,
 } from "./editor-core"
 import { EditorView } from "@codemirror/view"
+import { gotoLine } from "@codemirror/search"
 
 /**
  * Tests for editor-core — the extracted general-purpose CM6 setup functions
@@ -112,6 +114,26 @@ describe("baseExtensions (via editor-core)", () => {
     const theme = buildThemeExtension("dark")
     const exts = baseExtensions({ theme })
     expect(exts).toContain(EditorView.lineWrapping)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// gotoLineKeymap — Mod-l go-to-line binding (#1515)
+// ---------------------------------------------------------------------------
+
+describe("gotoLineKeymap (#1515)", () => {
+  test("is exported as an array", () => {
+    expect(Array.isArray(gotoLineKeymap)).toBe(true)
+  })
+
+  test("contains exactly one entry", () => {
+    expect(gotoLineKeymap).toHaveLength(1)
+  })
+
+  test("binds Mod-l to the gotoLine command", () => {
+    const binding = gotoLineKeymap[0]
+    expect(binding.key).toBe("Mod-l")
+    expect(binding.run).toBe(gotoLine)
   })
 })
 

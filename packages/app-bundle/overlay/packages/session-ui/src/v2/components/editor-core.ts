@@ -21,7 +21,7 @@ import {
   highlightSpecialChars,
 } from "@codemirror/view"
 import { history, defaultKeymap, historyKeymap } from "@codemirror/commands"
-import { search, searchKeymap, highlightSelectionMatches } from "@codemirror/search"
+import { search, searchKeymap, highlightSelectionMatches, gotoLine } from "@codemirror/search"
 import { type LanguageSupport, bracketMatching } from "@codemirror/language"
 import {
   HighlightStyle,
@@ -267,6 +267,18 @@ export function buildSyntaxHighlightStyle(): Extension {
 // ---------------------------------------------------------------------------
 
 /**
+ * Additional keybindings added on top of `searchKeymap`.
+ *
+ * `Mod-l` → `gotoLine` — go-to-line dialog (Overleaf convention, also common
+ * in Sublime/Atom). The existing `Mod-Alt-g` binding from `searchKeymap` is
+ * preserved unchanged; this adds a more discoverable shortcut alongside it
+ * (#1515).
+ */
+export const gotoLineKeymap: { key: string; run: typeof gotoLine }[] = [
+  { key: "Mod-l", run: gotoLine },
+]
+
+/**
  * Build the mutable extensions that live inside a Compartment and can be
  * swapped via `setReadOnly()` without re-creating the editor.
  */
@@ -308,7 +320,7 @@ export function baseExtensions(opts: {
     highlightSpecialChars(),
     drawSelection(),
     bracketMatching(),
-    keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap]),
+    keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap, ...gotoLineKeymap]),
     search(),
     highlightSelectionMatches(),
     EditorView.lineWrapping,
