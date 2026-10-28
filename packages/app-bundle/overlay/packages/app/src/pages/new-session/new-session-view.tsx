@@ -8,6 +8,7 @@ import { createStore } from "solid-js/store"
 import { Portal } from "solid-js/web"
 import createPresence from "solid-presence"
 import { PromptInputV2Composer } from "@/components/prompt-input-v2"
+import { ModelDeadPickWarning } from "@/components/model-dead-pick-warning"
 import { PromptGitStatus, PromptWorkspaceSelector } from "@/components/prompt-workspace-selector"
 import {
   PromptProjectAddButton,
@@ -69,6 +70,8 @@ export function NewSessionView(props: {
                 <Show when={bugReportEnabled()}>
                   <SessionBugDock />
                 </Show>
+                {/* amicode#1989: warn before sending on a model already known dead */}
+                <ModelDeadPickWarning />
                 <PromptInputV2Composer controller={props.input} />
               </div>
               <Show when={props.project.empty()}>

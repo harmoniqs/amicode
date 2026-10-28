@@ -31,6 +31,9 @@ export function createModelReachability() {
   return {
     /** undefined ⇒ passthrough (no data / route unavailable). */
     snapshot: (): ReachabilitySnapshot | undefined => (snapshot.error ? undefined : snapshot.latest),
+    /** amicode#1989: true until the first fetch settles (a demote waits for it
+     *  so it never overrides a fresher probe it has not seen yet). */
+    loading: () => snapshot.loading,
     showUnavailable,
     setShowUnavailable,
     rechecking,
