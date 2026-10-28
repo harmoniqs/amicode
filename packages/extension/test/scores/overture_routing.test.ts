@@ -73,6 +73,44 @@ describe("overture routing predicate (spec §3)", () => {
     const manifest = JSON.parse(fs.readFileSync(path.join(proj.projectDir, "score_manifest.json"), "utf8"));
     expect(manifest.manifest.id).toBe("pulse-designer");
   });
+  it("profile.json has identity fields but NO completion marker → overture (identity ≠ done)", () => {
+    // Regression: #1161 — About You card writes profile.json before the interview runs.
+    // shouldOnboard must not treat identity presence as "done"; only the completion
+    // marker is authoritative.
+    const profileDir = fs.mkdtempSync(path.join(os.tmpdir(), "prof-identity-"));
+    const profilePath = path.join(profileDir, "profile.json");
+    fs.writeFileSync(profilePath, JSON.stringify({ name: "Alice", affiliation: "MIT" }));
+    const prevProfile = process.env.AMICO_PROFILE_FILE;
+    process.env.AMICO_PROFILE_FILE = profilePath;
+    try {
+      const proj = prep(mkVault(), fs.mkdtempSync(path.join(os.tmpdir(), "ops-")));
+      const manifest = JSON.parse(fs.readFileSync(path.join(proj.projectDir, "score_manifest.json"), "utf8"));
+      // Identity in profile.json must NOT suppress the interview.
+      expect(manifest.manifest.id).toBe("overture");
+    } finally {
+      if (prevProfile === undefined) delete process.env.AMICO_PROFILE_FILE;
+      else process.env.AMICO_PROFILE_FILE = prevProfile;
+    }
+  });
+  it("profile.json has identity AND completion marker exists → pulse-designer (marker is authoritative)", () => {
+    // Regression guard: the completion marker remains the sole gate.
+    const profileDir = fs.mkdtempSync(path.join(os.tmpdir(), "prof-identity-done-"));
+    const profilePath = path.join(profileDir, "profile.json");
+    fs.writeFileSync(profilePath, JSON.stringify({ name: "Alice", affiliation: "MIT" }));
+    const ops = fs.mkdtempSync(path.join(os.tmpdir(), "ops-"));
+    fs.mkdirSync(path.join(ops, "onboarding"), { recursive: true });
+    fs.writeFileSync(path.join(ops, "onboarding", "completed"), "");
+    const prevProfile = process.env.AMICO_PROFILE_FILE;
+    process.env.AMICO_PROFILE_FILE = profilePath;
+    try {
+      const proj = prep(mkVault(), ops);
+      const manifest = JSON.parse(fs.readFileSync(path.join(proj.projectDir, "score_manifest.json"), "utf8"));
+      expect(manifest.manifest.id).toBe("pulse-designer");
+    } finally {
+      if (prevProfile === undefined) delete process.env.AMICO_PROFILE_FILE;
+      else process.env.AMICO_PROFILE_FILE = prevProfile;
+    }
+  });
 });
 
 describe("compileChainedScore / chainManifest (unit)", () => {
