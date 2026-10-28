@@ -132,25 +132,36 @@ export const run = Effect.fn("ProviderProbe.run")(function* (input: Input) {
     })
     const model = info.models[modelID]
     if (!model) return done("invalid", "model not listed by provider")
-    const outcome = yield* provider.getLanguage(model).pipe(
-      Effect.flatMap((language) =>
-        Effect.tryPromise({
-          try: () =>
-            language.doGenerate({
-              prompt: [{ role: "user", content: [{ type: "text", text: "ping" }] }],
-              maxOutputTokens: PROBE_MAX_OUTPUT_TOKENS,
-              headers: model.headers,
-              abortSignal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
-            }),
-          catch: (error) => error,
-        }),
-      ),
-      Effect.as(undefined),
-      Effect.catchCause((cause) => Effect.succeed({ error: Cause.squash(cause) })),
-    )
+    const attempt = (maxOutputTokens: number) =>
+      provider.getLanguage(model).pipe(
+        Effect.flatMap((language) =>
+          Effect.tryPromise({
+            try: () =>
+              language.doGenerate({
+                prompt: [{ role: "user", content: [{ type: "text", text: "ping" }] }],
+                maxOutputTokens,
+                headers: model.headers,
+                abortSignal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+              }),
+            catch: (error) => error,
+          }),
+        ),
+        Effect.as(undefined),
+        Effect.catchCause((cause) => Effect.succeed({ error: Cause.squash(cause) })),
+      )
+    const first = yield* attempt(PROBE_MAX_OUTPUT_TOKENS)
+    if (!first) return done("ok", null)
+    // #1994: a max_output_tokens floor is a request-shape rejection, not a dead
+    // model — retry exactly once at the (parsed, capped) floor and classify that.
+    const floor = ProviderError.probeTokenFloor(first.error)
+    const outcome = floor !== undefined && floor > PROBE_MAX_OUTPUT_TOKENS ? yield* attempt(floor) : first
     if (!outcome) return done("ok", null)
     const classified = ProviderError.classifyProbeError({ providerID: model.providerID, error: outcome.error })
-    return done(classified.status, classified.message)
+    const retriedIntoFloor = outcome !== first && ProviderError.probeTokenFloor(outcome.error) !== undefined
+    return done(
+      classified.status,
+      retriedIntoFloor ? `retried at ${floor} output tokens; ${classified.message}` : classified.message,
+    )
   })
 
   const results = yield* Effect.forEach(modelIDs, probeOne, { concurrency: PROBE_CONCURRENCY })

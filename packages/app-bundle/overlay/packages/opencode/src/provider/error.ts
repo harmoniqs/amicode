@@ -223,6 +223,41 @@ const INVALID =
   /validationexception|inference profile|on-demand throughput|invalid model|model identifier is invalid|model[_ ]not[_ ]found|unknown model|no such model|does not exist|is not supported|resourcenotfoundexception/i
 const DENIED = /accessdenied|access denied|not authorized|unauthorized|unrecognizedclient|forbidden|permission denied|invalid api key|invalid_api_key|security token/i
 
+// #1994: OpenAI-style models (e.g. on Bedrock) reject the one-token probe with
+// "Invalid 'max_output_tokens': integer below minimum value. Expected a value
+// >= 16 ..." — sometimes wrapped in "The model returned the following errors:"
+// with a ValidationException type. That is a request-shape problem, not a dead
+// model: the probe retries at the floor, and the matcher runs before INVALID so
+// it can never classify as `invalid`.
+const TOKEN_FLOOR =
+  /max[_ ]?(output|completion)?[_ ]?tokens'?"?\s*:?\s*(integer )?(is )?below (the )?minimum|below minimum value[^\n]*max[_ ]?(output|completion)?[_ ]?tokens/i
+const TOKEN_FLOOR_VALUE = /expected a value\s*>=?\s*(\d+)/i
+export const PROBE_TOKEN_FLOOR_DEFAULT = 16
+export const PROBE_TOKEN_FLOOR_CAP = 64
+
+function probeErrorText(error: unknown) {
+  if (APICallError.isInstance(error)) return [error.message, error.responseBody ?? ""].join("\n")
+  if (error instanceof Error) return error.message
+  return String(error)
+}
+
+/**
+ * When a probe failure is a max-output-token minimum error, the token count to
+ * retry with: the floor parsed from the message (default 16), capped at 64.
+ * `undefined` for any other error.
+ */
+export function probeTokenFloor(error: unknown): number | undefined {
+  const text = probeErrorText(error)
+  if (!TOKEN_FLOOR.test(text)) return undefined
+  const parsed = Number(TOKEN_FLOOR_VALUE.exec(text)?.[1])
+  const floor = Number.isFinite(parsed) && parsed > 0 ? parsed : PROBE_TOKEN_FLOOR_DEFAULT
+  return Math.min(floor, PROBE_TOKEN_FLOOR_CAP)
+}
+
+function tokenFloorClassification(message: string): ProbeClassification {
+  return { status: "error", message: `probe rejected by a max_output_tokens floor: ${message}` }
+}
+
 function headerValue(headers: Record<string, string> | undefined, name: string) {
   if (!headers) return undefined
   const key = Object.keys(headers).find((k) => k.toLowerCase() === name)
@@ -238,6 +273,7 @@ export function classifyProbeError(input: { providerID: ProviderV2.ID; error: un
     const haystack = [parsed.message, errorType, error.responseBody ?? ""].join("\n")
     if (UNAVAILABLE.test(haystack)) return { status: "unavailable", message: parsed.message }
     if (status === 429 || RATE_LIMITED.test(haystack)) return { status: "rate-limited", message: parsed.message }
+    if (TOKEN_FLOOR.test(haystack)) return tokenFloorClassification(parsed.message)
     if (status === 404 || INVALID.test(haystack)) return { status: "invalid", message: parsed.message }
     if (status === 401 || status === 403 || DENIED.test(haystack)) return { status: "denied", message: parsed.message }
     return { status: "error", message: parsed.message }
@@ -250,6 +286,7 @@ export function classifyProbeError(input: { providerID: ProviderV2.ID; error: un
     const text = `${error.name}: ${error.message}`
     if (UNAVAILABLE.test(text)) return { status: "unavailable", message: error.message }
     if (RATE_LIMITED.test(text)) return { status: "rate-limited", message: error.message }
+    if (TOKEN_FLOOR.test(text)) return tokenFloorClassification(error.message)
     if (DENIED.test(text)) return { status: "denied", message: error.message }
     return { status: "error", message: error.message }
   }

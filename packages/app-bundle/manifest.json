@@ -372,8 +372,8 @@
     "packages/opencode/src/project/instance-context.ts": "65a35792e50e96a50ea14cd9f928045c0e2fc15eb49506f5bbceee38c4af1457",
     "packages/opencode/src/project/instance-store.ts": "c22d3e2499e63dd8d9395d58189df75444d306774df833e746f22e327edcf2ab",
     "packages/opencode/src/provider/auth.ts": "b0ab1322c1039e27176bf9e3500603eae27506065ac141a69710220f3361f6b8",
-    "packages/opencode/src/provider/error.ts": "42bce3a89795d5d851fad39d388493cbe06dc5f955aaad20c0bf36c01c4d60fe",
-    "packages/opencode/src/provider/probe.ts": "c10dce199ce375c8ea7a67ba35d3b4f73599bb4b69c59ca0124c61d433a4e931",
+    "packages/opencode/src/provider/error.ts": "eef84e43f4d0f2779e53a5570498d08d2f339fdc01c24c12046b9107dacef516",
+    "packages/opencode/src/provider/probe.ts": "6f5b7f3a201a67b66c387411f4c893c7e91ca74a70fdcf7b220f1a2ff511adc7",
     "packages/opencode/src/provider/provider.ts": "b89bc0ca0a12ea0cfaf5c956a4b731a0397d4c407e787a16cdd66fb7f54ee476",
     "packages/opencode/src/provider/transform.ts": "70c7492d4a23a30ebc340a5605702b1602960f4b412e18557534e02962c137b8",
     "packages/opencode/src/question/index.ts": "8317348c2ca27dd9e4f7d18fdc126a4d355c20495c1b86668430ad477a68e9b3",
@@ -458,7 +458,7 @@
     "packages/opencode/test/server/httpapi-file.test.ts": "d3386129bc81467ecbcc57a3861f53767ee56ac41b4ff6ad58d8b168fb3b3373",
     "packages/opencode/test/server/httpapi-global-event.test.ts": "8a78dc59edf48eb3cf6d1c09448f7dfe5ceb138e1bd6125949ebc88976c903f0",
     "packages/opencode/test/server/httpapi-instance-route-auth.test.ts": "4b73a89d2431c02bc3b665d93f9002914e51eb1add979dc1867efbcbc0c36e25",
-    "packages/opencode/test/server/httpapi-provider.test.ts": "a8ec90f18028d255be101edb5faeb34738a71a478b7183c01fdafc243af92611",
+    "packages/opencode/test/server/httpapi-provider.test.ts": "a047ee63f5a1000738a33afc4fee6c19c994ffe6ba12e124e34b83762e11ac47",
     "packages/opencode/test/server/httpapi-session.test.ts": "eda6fd763ac4c17891cedaa4ccd49597c03e7227fcfdcf0f94a1b4545ba623ed",
     "packages/opencode/test/server/httpapi-ui.test.ts": "d029e959cfd9347fff4cf17c5686dd125b0bd3a41afb3408a23b31418f12e3b0",
     "packages/opencode/test/server/pasqal-secret.test.ts": "54be8c666160dad22cd37bbf041f5bd40aec120271818f3c56c94107d987b9fb",
@@ -1047,7 +1047,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-28T18:35:42.869Z",
+  "extracted_at": "2026-10-28T19:40:57.940Z",
   "per_package": {
     "packages/app": {
       "A": 270,
