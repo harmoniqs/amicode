@@ -468,6 +468,21 @@ function openAiError(status: number, message: string, type: string, headers: Rec
   })
 }
 
+function tokenFloorMessage(floor: number, got: number) {
+  return `Invalid 'max_output_tokens': integer below minimum value. Expected a value >= ${floor}, but got ${got} instead.`
+}
+
+function probeOk(model: string) {
+  return Response.json({
+    id: "chatcmpl-probe",
+    object: "chat.completion",
+    created: 1,
+    model,
+    choices: [{ index: 0, message: { role: "assistant", content: "p" }, finish_reason: "length" }],
+    usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+  })
+}
+
 const probeUpstream = Bun.serve({
   port: 0,
   async fetch(req) {
@@ -505,6 +520,36 @@ const probeUpstream = Bun.serve({
         )
       case "probe-throttled":
         return openAiError(429, "Too many requests, please wait before trying again.", "ThrottlingException")
+      // #1994: OpenAI-style models on Bedrock enforce a max_output_tokens floor
+      // (typically 16); the shapes below are the live messages from 2026-10-28.
+      case "probe-floor": {
+        const max = Number(body.max_tokens ?? body.max_completion_tokens)
+        if (max >= 16) return probeOk(model)
+        return openAiError(400, tokenFloorMessage(16, max), "invalid_request_error")
+      }
+      case "probe-floor-wrapped": {
+        const max = Number(body.max_tokens ?? body.max_completion_tokens)
+        if (max >= 16) return probeOk(model)
+        return openAiError(
+          400,
+          `The model returned the following errors: ${tokenFloorMessage(16, max)}`,
+          "ValidationException",
+        )
+      }
+      case "probe-floor-throttled": {
+        const max = Number(body.max_tokens ?? body.max_completion_tokens)
+        if (max >= 32) return openAiError(429, "Too many requests, please wait before trying again.", "ThrottlingException")
+        return openAiError(400, tokenFloorMessage(32, max), "invalid_request_error")
+      }
+      case "probe-floor-stuck": {
+        // a floor above the probe's cap: the retry (at the cap) is rejected too
+        const max = Number(body.max_tokens ?? body.max_completion_tokens)
+        return openAiError(
+          400,
+          `The model returned the following errors: ${tokenFloorMessage(100, max)}`,
+          "ValidationException",
+        )
+      }
       default:
         return openAiError(500, "unexpected", "InternalServerException")
     }
@@ -538,7 +583,17 @@ const probeOptions = {
         env: [],
         npm: "@ai-sdk/openai-compatible",
         models: Object.fromEntries(
-          ["probe-ok", "probe-denied", "probe-unavailable", "probe-invalid", "probe-throttled"].map((id) => [
+          [
+            "probe-ok",
+            "probe-denied",
+            "probe-unavailable",
+            "probe-invalid",
+            "probe-throttled",
+            "probe-floor",
+            "probe-floor-wrapped",
+            "probe-floor-throttled",
+            "probe-floor-stuck",
+          ].map((id) => [
             id,
             probeModel(id),
           ]),
@@ -601,6 +656,49 @@ describe("provider probe HttpApi (#1984)", () => {
       expect(text).not.toContain(PROBE_SECRET)
       expect(text).not.toContain("SECRET")
       expect(text).not.toContain("Bearer")
+    }),
+    probeOptions,
+    30000,
+  )
+
+  it.instance(
+    "retries once at a max_output_tokens floor instead of misclassifying the model (#1994)",
+    Effect.gen(function* () {
+      probeSeen.length = 0
+      const directory = (yield* TestInstance).directory
+      const response = yield* request("/provider/probe", {
+        method: "POST",
+        headers: { "x-opencode-directory": directory, "content-type": "application/json" },
+        body: JSON.stringify({
+          providerID: "probe-fake",
+          modelIDs: ["probe-floor", "probe-floor-wrapped", "probe-floor-throttled", "probe-floor-stuck"],
+        }),
+      })
+      expect(response.status).toBe(200)
+      const body = JSON.parse(yield* response.text)
+      type ProbeRow = { model: string; status: string; reason: string | null }
+      const byModel: Record<string, ProbeRow> = Object.fromEntries(
+        (body.results as ProbeRow[]).map((r) => [r.model, r]),
+      )
+      const sent = (model: string) => probeSeen.filter((seen) => seen.model === model).map((seen) => seen.maxTokens)
+
+      // rejects 1 with the minimum error, accepts 16 → ok after exactly one retry at the parsed floor
+      expect(byModel["probe-floor"]).toMatchObject({ status: "ok", reason: null })
+      expect(sent("probe-floor")).toEqual([1, 16])
+
+      // the Bedrock "model returned the following errors" wrapper triggers the same retry
+      expect(byModel["probe-floor-wrapped"]).toMatchObject({ status: "ok", reason: null })
+      expect(sent("probe-floor-wrapped")).toEqual([1, 16])
+
+      // both attempts rejected → the second attempt's classification
+      expect(byModel["probe-floor-throttled"].status).toBe("rate-limited")
+      expect(sent("probe-floor-throttled")).toEqual([1, 32])
+
+      // floor above the cap: one retry at the cap (64); the floor error is never `invalid`
+      expect(sent("probe-floor-stuck")).toEqual([1, 64])
+      expect(byModel["probe-floor-stuck"].status).toBe("error")
+      expect(byModel["probe-floor-stuck"].reason).toMatch(/max_output_tokens/)
+      expect(byModel["probe-floor-stuck"].reason).toMatch(/64/)
     }),
     probeOptions,
     30000,
