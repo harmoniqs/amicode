@@ -814,13 +814,16 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
     // profile NOR a completion marker. The overture is NEVER chained into
     // pulse-designer — domain interviews start in subsequent sessions via the
     // onset router.
+    // NOTE: profileHasIdentity() was formerly part of this conjunction but was
+    // removed (#1161): identity fields written by the About You card are NOT a
+    // completion signal — the completion marker is the sole gate for "onboarding
+    // done." The interview's own resume logic merges any partial profile state.
     const shouldOnboard =
       !!overture &&
       vaultDir !== "" &&
       readProfileMd(vaultDir) === "" &&
       !hasOnboardingCompleted(onboardingDir()) &&
-      !consumeDevtoolsRestoreMarker() &&
-      !profileHasIdentity(); // the welcome WIZARD already collected identity — don't re-interview
+      !consumeDevtoolsRestoreMarker();
     if (shouldOnboard && overture) {
       // Standalone overture: the onboarding interview runs alone, no domain
       // score chained after it. The pulse-designer (or any domain interview)
