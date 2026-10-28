@@ -55,7 +55,7 @@ export class SessionStreamFilter {
   /** The partial frame, as received (accumulated until a boundary is found). */
   private parts: Buffer[] = [];
   /** The last ≤2 bytes of the partial frame — lookback for a split delimiter. */
-  private tail = Buffer.alloc(0);
+  private tail: Buffer = Buffer.alloc(0);
 
   constructor(
     private readonly resumeFrom: number | undefined,
