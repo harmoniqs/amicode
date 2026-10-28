@@ -140,6 +140,100 @@ solve!(ptp; max_iter = 5)
   $y_\text{goal} + y_\text{model} - y_\text{exp}$, pre-compensating the
   estimated model error $\hat\varepsilon = y_\text{exp} - y_\text{model}$.
 
+## QP-ILC: `QPILCStrategy` (the one-shot hardware step)
+
+`QPILCStrategy(; …)` is the second inner step for the same `PulseTuningProblem` chassis:
+each outer iteration solves one box-constrained QP
+$\min_\delta \tfrac12\delta^\top(G_w^\top G_w + \lambda I)\delta - r_w^\top G_w\delta$ on a
+whitened measurement Jacobian $G_w$, inside per-channel trust boxes, and the chassis
+accepts or reverts on the measured outcome. Typical pairing:
+`acceptance = OneShotAcceptance(β = 0.25, ρ_rej = 2.0, k = 3.0)` plus an explicit
+`y_goal`.
+
+```julia
+strat = QPILCStrategy(;
+    jacobian    = AnalyticJacobian(),    # opt-in eigen/Daleckii–Krein G (10–100× faster)
+    qp_backend  = :lowrank,              # opt-in identity-plus-low-rank box QP
+    robust_mode = true,                  # null-space penalty λ‖P_null δ‖²
+    robust_lambda_mode = :relative, robust_lambda = 1e2,   # the H25 production dose
+)                                        # robust_rtol = nothing ⇒ 1e-8 under robust_mode
+ptp = PulseTuningProblem(qcp, expmt, mm; strategy = strat,
+    acceptance = OneShotAcceptance(β = 0.25, ρ_rej = 2.0, k = 3.0), y_goal = y_goal)
+solve!(ptp; max_iter = 12)
+strat.last_linearization   # (; Gw, rw, δ_lo, δ_hi) of the last successful step
+```
+
+The knobs merged since 2026-10-26 (Intonatissimo `main` @ `29a4c91`; docstring
+`src/strategies/qp_ilc_strategy.jl:26-195`):
+
+- **`jacobian`** — `ModelJacobian()` (default; per-interval AD on the nominal or
+  recalibrated system), **`AnalyticJacobian()`** (#117, opt-in), `OpenSystemJacobian`
+  (Lindblad FD), `InjectedJacobian` (empirical G). `AnalyticJacobian` differentiates the
+  SAME discrete map as the AD source (midpoint substeps, the pulse's own interpolation)
+  by exact eigen-exponentials and Daleckii–Krein divided differences — agrees with AD to
+  its Taylor error (≲ 1e-12 relative on the campaign fixtures). It supports
+  `ZeroOrderPulse` (one exact exponential per interval), `LinearSplinePulse` and
+  `CubicSplinePulse` on **Hermitian, time-independent systems affine in the controls**
+  (ket and stacked multi-ket); anything else falls back to the AD source with a one-time
+  warning. It changes only G — the F-model diagnostic keeps the default Taylor rollout
+  (`src/optimizers/analytic_jacobian.jl:33-77`).
+- **`qp_backend`** — `:clarabel` (default), `:osqp`, or **`:lowrank`** (#115, opt-in): one
+  thin SVD of $G_w$, the Hessian held exactly as $\alpha I + V D V^\top$ with the same
+  robust-mode rank cut, pinned variables eliminated, bounds satisfied exactly, never an
+  $n \times n$ matrix (≫ 50× faster than Clarabel on the 1206-DOF Rydberg shape —
+  the Intonatissimo repo's 2026-10-27 low-rank QP benchmark note, #113). The #64 ensemble
+  normal equations and the #66 `dt_dof` column are not identity-plus-low-rank and fall
+  back to `:clarabel` with a one-time warning. Telemetry: `last_qp_backend`,
+  `last_qp_iterations`, `last_qp_status`. Its solution tolerance is ~1e-8 — don't write
+  equivalence clauses tighter than that (H27: a 1e-10 clause sat 3 decades below it).
+- **`robust_mode`** (default `false`) — adds $\lambda\|P_\text{null}\delta\|^2$,
+  $P_\text{null} = I - G_w^+ G_w$: penalizes J-invisible displacement (the E11 plateau fix).
+  `robust_lambda` (default `1e-2`) is read per **`robust_lambda_mode`**: `:absolute`
+  (default, prior numerics) or `:relative`, $\lambda_\text{eff} = $ `robust_lambda` ·
+  $\sigma_\max(G_w)^2$ recomputed each step (telemetry `last_robust_lambda_eff`).
+- **`robust_rtol`** (#110) — the singular-value cut of the projector. `nothing` (default)
+  now means **`1e-8` under `robust_mode`** (`DEFAULT_ROBUST_RTOL`, `:23`); the old
+  `pinv` cut (`eps·min(m, n)`) counted round-off modes as range and let the rank flip
+  across iterations, so $I - G^+G$ stopped being a projector and the QP failed. Spell the
+  old cut explicitly (`robust_rtol = eps(Float64) * min(size(Gw)...)`) only to reproduce
+  pre-#110 runs. Telemetry `last_robust_rtol`. Also from #110: a pulse whose interior knot
+  sits beyond the trust-box half-width outside its drive bound is clipped into bounds and
+  re-linearized instead of asserting (`last_restored_to_bound`, `restored_to_bound_count`).
+- **`last_linearization`** (#114, read-only) — after a successful step, that step's
+  `(; Gw, rw, δ_lo, δ_hi)` (with the δT column under `dt_dof`), `==` a fresh
+  linearization at the same inputs, so analysis code need not re-assemble G; `nothing`
+  before the first step and after a failed QP. #114 also made the ZOH Jacobian hot paths
+  fast and bit-identical (substep-exp hoist, F-model rollout reuse, threaded intervals).
+- **Pulse bases** — the QP proposes in the pulse's native space: ZOH and linear knot
+  values, cubic `[u; du]` (`du_frac` scales the tangent box); candidates are rebuilt in
+  the same type (a ZOH stays a `ZeroOrderPulse`, `src/optimizers/qp_inner_solver.jl:814-830`).
+  Design the pulse in its platform basis (PWL for AHS atoms, cubic elsewhere — ZOH is a
+  playback property); the QP inherits it. #116 also replaced the fixed-order Taylor
+  exponential with a norm-scaled one. Main's tests are re-paired to Piccolo #377's basis
+  guards (#119) — on a Piccolo with #377, the nominal `qcp` must pass its pairing check.
+- `ridge` is numerical damping, **not** a step-size control; the box radius
+  (`tr_frac`, `tr_mode = :range | :gain`) is the knob.
+
+**Production guidance (Rydberg persistent-drift fixture, H25 16 seeds / H27 32 seeds × 3
+parameterizations; qpilc campaign ledger, personal vault):**
+
+- For the full (unrestricted) QP use **`robust_mode = true`, `robust_lambda_mode =
+  :relative`, `robust_lambda = 1e2`, `robust_rtol` default** ("FR_prod"). H25: 0 QP
+  failures (the old pinv cut failed 17/192 rounds at the same λ — the rtol default, not
+  the dose, removes them), non-inferior to the labelled restricted step, dose-insensitive
+  over c ∈ {10, 100, 1000}. H27: FR_prod beat the unpenalized full QP at every
+  parameterization (PWL13 25/32, PWL25 31/32, ZOH201 30/32 seeds).
+- **Size expectations honestly:** the out-of-sample benefit vs doing nothing is small and
+  seed-dependent (ZOH201 median 1.2e-4 at 32 seeds; H25's 6.08e-4 was an upper-tail draw).
+  Read seed-paired contrasts, never absolute benefit at n ≈ 16.
+- **The refit is the lever, not the step.** The per-seed losers are drift below the
+  per-step cost and in-loop **refit runaways** (Spearman −0.63…−0.73 at ZOH), not step
+  representation. rank($G_w$) = 5 at every parameterization tried (gate + 45-row readout
+  physics), so a readout null space exists regardless of knot count; the next work is a
+  prior-anchored / bounded refit (campaign R2 H26).
+- At too few design columns the penalty costs **reach** (PWL13: ‖G_w δ‖ 0.50× the
+  unpenalized step at 33 free columns) — check reach before adopting a coarse design.
+
 ## Error channels (call level)
 
 For updates confined to a labelled set of dissipative error channels, the
