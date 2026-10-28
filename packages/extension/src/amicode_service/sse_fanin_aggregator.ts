@@ -647,6 +647,10 @@ export class SseFanInAggregator {
     if (this.peerArms.size === 0) return "sever"; // fleet-of-one → NO synthetic frame (#1264)
     this.writeControl(gapFrame([namespace]));
     this.noteGap([namespace], "reopen");
+    // #1793 — one gap per lost stretch. Clear the arm's delivered record: until it
+    // delivers a data frame again, a refusing member's reconcile-tick re-opens are
+    // INITIAL opens (nothing lost since the last gap), not a re-signal every tick.
+    this.everDelivered.delete(namespace);
     return "gap";
   }
 

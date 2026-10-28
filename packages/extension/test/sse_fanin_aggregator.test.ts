@@ -1285,3 +1285,47 @@ describe("#1777 AC1 — the aggregator resumes a sequenced arm from its last id"
     expect(solo.reopenArm(LOCAL_NAMESPACE)).toBe("sever");
   });
 });
+
+// #1798-class fix (issue #1793): one gap per lost stretch. A member that stays
+// listed but refuses the stream used to re-signal the gap on EVERY reconcile tick
+// (the driver re-opens the peer arm each tick), so clients refetched ~1/s for the
+// whole outage. Fallback path only (an id-less engine, pre-#1776).
+describe("#1793 — the fallback gap is signalled once per lost stretch", () => {
+  const gapFrames = (text: string) => text.split("\n\n").filter((f) => f.includes("amicode.sync.gap"));
+
+  it("a sustained refusal signals at most one gap until the arm delivers a frame again", () => {
+    const sink = collectingSink();
+    const agg = new SseFanInAggregator({ sink });
+    agg.connect();
+    agg.setMembership([{ machineId: "studio", reachable: true, token: "tok-studio" }]);
+    const studio = fakeEngine({ legacy: true });
+
+    expect(agg.reopenArm("studio")).toBe("open");
+    agg.ingest("studio", studio.connected());
+    expect(agg.reopenArm("studio")).toBe("gap"); // the first loss: one gap
+    expect(gapFrames(sink.text())).toHaveLength(1);
+
+    // the member refuses: every later reconcile tick re-opens the arm, delivers nothing
+    for (let tick = 0; tick < 10; tick++) {
+      expect(agg.reopenArm("studio")).toBe("open");
+    }
+    expect(gapFrames(sink.text())).toHaveLength(1);
+  });
+
+  it("once the arm delivers again, the next loss signals a gap as usual", () => {
+    const sink = collectingSink();
+    const agg = new SseFanInAggregator({ sink });
+    agg.connect();
+    agg.setMembership([{ machineId: "studio", reachable: true, token: "tok-studio" }]);
+    const studio = fakeEngine({ legacy: true });
+
+    expect(agg.reopenArm("studio")).toBe("open");
+    agg.ingest("studio", studio.connected());
+    expect(agg.reopenArm("studio")).toBe("gap");
+    expect(agg.reopenArm("studio")).toBe("open"); // refusing, quiet
+
+    agg.ingest("studio", studio.connected()); // delivers again
+    expect(agg.reopenArm("studio")).toBe("gap"); // the next loss signals
+    expect(gapFrames(sink.text())).toHaveLength(2);
+  });
+});
