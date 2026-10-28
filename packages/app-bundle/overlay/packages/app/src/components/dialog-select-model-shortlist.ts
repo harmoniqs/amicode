@@ -17,6 +17,8 @@
 //  - No favorites, no recommended, no recents ⇒ mode "all": every candidate,
 //    exactly as the uncapped list (nothing is invented to fill the short list).
 //  - Default `model.recommended` with no config: none.
+//  - amicode#1988 (S5): an optional `searchSort` orders search matches
+//    (within each role group) — cheapest-that-works, model-row-meta.ts.
 import { matchesModelSearch } from "./dialog-select-model-search"
 import type { ModelRef } from "./dialog-select-model-reachability"
 
@@ -101,6 +103,10 @@ export function buildModelShortlist<T>(input: {
   config: ShortlistConfig | undefined
   query: string
   cap?: number
+  /** amicode#1988 (S5): search-only order (cheapest-that-works); applied to
+   *  the matches before role grouping, so it orders within each group. The
+   *  default short list and the "all" view never use it. */
+  searchSort?: (a: T, b: T) => number
 }): ModelShortlist<T> {
   const allowlist = input.config?.allowlist
   const candidates = [...input.shown, ...(input.showUnavailable ? input.hidden : [])].filter((item) =>
@@ -115,7 +121,8 @@ export function buildModelShortlist<T>(input: {
 
   const query = input.query.trim()
   if (query) {
-    const matched = candidates.filter((item) => matchesModelSearch(query, input.searchText(item)))
+    const filtered = candidates.filter((item) => matchesModelSearch(query, input.searchText(item)))
+    const matched = input.searchSort ? [...filtered].sort(input.searchSort) : filtered
     return byRole("search", matched, (item) => roleOf.get(refKey(input.keyOf(item))))
   }
 

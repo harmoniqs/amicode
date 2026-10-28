@@ -37,6 +37,17 @@ import {
   type ShortlistGroup,
 } from "./dialog-select-model-shortlist"
 import { createModelShortlistConfig } from "./dialog-select-model-shortlist-source"
+// amicode#1988 (#1979 S5): price / context / tools / measured latency inline,
+// full detail in the tooltip; cheapest-that-works order while searching.
+import {
+  compareCheapestOk,
+  effectivePrice,
+  formatRowInline,
+  latencyOf,
+  modelRowMeta,
+  searchTier,
+  type ModelRowMeta,
+} from "./model-row-meta"
 
 const isFree = (provider: string, cost: { input: number } | undefined) =>
   provider === "opencode" && (!cost || cost.input === 0)
@@ -128,6 +139,7 @@ function ReachabilityControls(props: { state: ModelReachabilityState; hiddenCoun
 // allowed models; buildModelShortlist re-applies it (the tested hard filter).
 function createModelShortlist(input: { model: ModelState; provider: () => string | undefined }) {
   const models = useModels()
+  const language = useLanguage()
   const reachability = createModelReachability()
   const config = createModelShortlistConfig()
   const byName = (a: ModelItem, b: ModelItem) => a.name.localeCompare(b.name)
@@ -147,6 +159,17 @@ function createModelShortlist(input: { model: ModelState; provider: () => string
     shown: [...partition().shown].sort(byName),
     hidden: [...partition().hidden].sort(byName),
   }))
+  // amicode#1988: search-only — a dead model never sorts above an ok one.
+  const searchSort = compareCheapestOk<ModelItem>({
+    tierOf: (item) => searchTier(partition().view(item)),
+    priceOf: (item) => effectivePrice(item.cost),
+    nameOf: (item) => item.name,
+  })
+  const labels = () => ({
+    free: language.t("model.meta.free"),
+    cache: language.t("model.meta.cache"),
+    perMtok: language.t("model.meta.perMtok"),
+  })
   return {
     reachability,
     partition,
@@ -161,7 +184,10 @@ function createModelShortlist(input: { model: ModelState; provider: () => string
         recents: models.recent.list(),
         config: config(),
         query: search,
+        searchSort,
       }),
+    meta: (item: ModelItem): ModelRowMeta =>
+      modelRowMeta(item, latencyOf(reachability.snapshot(), modelRef(item)), labels()),
     isFavorite: (item: ModelItem) => models.favorite.has(modelRef(item)),
     toggleFavorite: (item: ModelItem) => models.favorite.toggle(modelRef(item)),
   }
@@ -293,7 +319,14 @@ const ModelList: Component<{
             placement="right-start"
             gutter={12}
             openDelay={0}
-            value={<ModelTooltip model={item} latest={item.latest} free={isFree(item.provider.id, item.cost)} />}
+            value={
+              <ModelTooltip
+                model={item}
+                latest={item.latest}
+                free={isFree(item.provider.id, item.cost)}
+                meta={shortlist.meta(item)}
+              />
+            }
           >
             {node}
           </Tooltip>
@@ -312,6 +345,16 @@ const ModelList: Component<{
           >
             <span class="truncate">{i.name}</span>
             <span class="shrink-0 truncate text-12-regular text-text-weak">{i.provider.name}</span>
+            <span
+              data-slot="model-row-meta"
+              class="min-w-0 truncate text-12-regular text-text-weak tabular-nums"
+              title={shortlist.meta(i).price}
+            >
+              {formatRowInline(shortlist.meta(i), {
+                omitPrice: isFree(i.provider.id, i.cost),
+                noTools: language.t("model.meta.noTools"),
+              })}
+            </span>
             <Show when={isFree(i.provider.id, i.cost)}>
               <Tag>{language.t("model.tag.free")}</Tag>
             </Show>
@@ -457,6 +500,7 @@ export function ModelSelectorPopoverV2(props: {
       trigger={props.trigger}
       view={controller.view}
       favorite={controller.favorite}
+      meta={controller.meta}
       current={controller.current}
       select={controller.select}
       reachability={controller.reachability}
@@ -498,6 +542,7 @@ function createModelSelectorController(input: {
       has: shortlist.isFavorite,
       toggle: shortlist.toggleFavorite,
     },
+    meta: shortlist.meta,
     current: () => {
       const value = model.current()
       return value ? modelKey(value) : undefined
@@ -522,6 +567,7 @@ function ModelSelectorPopoverV2View(props: {
     groups: { category: string; label: string; items: ModelItem[] }[]
   }
   favorite?: { has: (item: ModelItem) => boolean; toggle: (item: ModelItem) => void }
+  meta?: (item: ModelItem) => ModelRowMeta
   current: () => string | undefined
   select: (item: ModelItem) => void
   reachability?: {
@@ -702,6 +748,7 @@ function ModelSelectorPopoverV2View(props: {
                                   model={item}
                                   latest={item.latest}
                                   free={isFree(item.provider.id, item.cost)}
+                                  meta={props.meta?.(item)}
                                   v2
                                 />
                               }
@@ -725,6 +772,20 @@ function ModelSelectorPopoverV2View(props: {
                                 <span class="shrink-0 truncate text-[12px] leading-5 text-v2-text-text-faint">
                                   {item.provider.name}
                                 </span>
+                                <Show when={props.meta?.(item)}>
+                                  {(meta) => (
+                                    <span
+                                      data-slot="model-row-meta"
+                                      class="min-w-0 truncate text-[12px] leading-5 text-v2-text-text-faint tabular-nums"
+                                      title={meta().price}
+                                    >
+                                      {formatRowInline(meta(), {
+                                        omitPrice: isFree(item.provider.id, item.cost),
+                                        noTools: language.t("model.meta.noTools"),
+                                      })}
+                                    </span>
+                                  )}
+                                </Show>
                                 <Show when={isFree(item.provider.id, item.cost)}>
                                   <TagV2 class="shrink-0">{language.t("model.tag.free")}</TagV2>
                                 </Show>

@@ -163,6 +163,20 @@ export const dict = {
   "composer.model.deadPick.noAlternative": "No working model found — pick another model",
   "composer.model.deadPick.reason.unknown": "it failed a real request",
 
+  // amicode#1988 (#1979 S5): picker row meta — price / context / tools / measured latency.
+  "model.meta.free": "free",
+  "model.meta.cache": "cache",
+  "model.meta.perMtok": "per Mtok",
+  "model.meta.noTools": "no tools",
+  "model.tooltip.price": "Price",
+  "model.tooltip.price.line": "Price: {{price}}",
+  "model.tooltip.tools": "Tools",
+  "model.tooltip.tools.line": "Tools: {{tools}}",
+  "model.tooltip.tools.yes": "Yes",
+  "model.tooltip.tools.no": "No",
+  "model.tooltip.latency": "Latency",
+  "model.tooltip.latency.line": "Measured latency: {{latency}}",
+
   "dialog.model.unpaid.freeModels.title": "Free models provided by Amicode",
   "dialog.model.unpaid.addMore.title": "Add more models from popular providers",
   "dialog.model.unpaid.viewMoreProviders": "See 70+ more providers",

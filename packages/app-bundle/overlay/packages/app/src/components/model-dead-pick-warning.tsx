@@ -16,6 +16,7 @@ import { useServer } from "@/context/server"
 import { useSync } from "@/context/sync"
 import { amicodePost } from "@/utils/amicode-fetch"
 import { createModelReachability } from "./dialog-select-model-reachability-source"
+import { createModelShortlistConfig } from "./dialog-select-model-shortlist-source"
 import {
   REACHABILITY_DEMOTE_ROUTE,
   applyTurnFailure,
@@ -23,6 +24,7 @@ import {
   deadPickWarning,
   demoteRequest,
   latestTurnFailure,
+  recommendedSwitchTargets,
   shouldDemote,
   type DeadPickCandidate,
 } from "./model-dead-pick"
@@ -34,6 +36,7 @@ export function ModelDeadPickWarning(props: { sessionID?: Accessor<string | unde
   const server = useServer()
   const sync = useSync()
   const reachability = createModelReachability()
+  const config = createModelShortlistConfig()
   const gate = createDemoteGate()
 
   const failure = createMemo(() => {
@@ -72,9 +75,9 @@ export function ModelDeadPickWarning(props: { sessionID?: Accessor<string | unde
       current: current ? { providerID: current.provider.id, modelID: current.id } : undefined,
       snapshot: applyTurnFailure(reachability.snapshot(), failure()),
       candidates: candidates(),
-      // #1987 (S4) owns the deployment's recommended list; until it lands the
-      // rules fall back to the cheapest ok model of the same provider.
-      recommended: [],
+      // amicode#1988: the S4 deployment config's recommended list (role order,
+      // allowlist-filtered); no config ⇒ the cheapest ok same-provider model.
+      recommended: recommendedSwitchTargets(config()),
     })
   })
 

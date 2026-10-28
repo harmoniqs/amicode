@@ -26,6 +26,7 @@ import {
   type ReachabilitySnapshot,
   type ReachabilityStatus,
 } from "./dialog-select-model-reachability"
+import { ROLE_ORDER, isAllowed, type ShortlistConfig } from "./dialog-select-model-shortlist"
 
 export const REACHABILITY_DEMOTE_ROUTE = "/amicode/model-reachability/demote"
 
@@ -230,4 +231,22 @@ export function deadPickWarning(input: {
     ? { providerID: recommended.providerID, modelID: recommended.modelID }
     : (cheapest(ok.filter((c) => c.providerID === current.providerID)) ?? cheapest(ok))
   return switchTo ? { model, status: row.status, reason, switchTo } : { model, status: row.status, reason }
+}
+
+/** amicode#1988 (S5, the S6 follow-up): the S4 deployment config's recommended
+ *  list as dead-pick switch targets — role order (default, fast, strong,
+ *  open-weight), config order within a role, deduped, allowlist-filtered.
+ *  No config ⇒ none (deadPickWarning falls back to the cheapest ok model). */
+export function recommendedSwitchTargets(config: ShortlistConfig | undefined): ModelRef[] {
+  const seen = new Set<string>()
+  return ROLE_ORDER.flatMap((role) =>
+    (config?.recommended ?? [])
+      .filter((entry) => entry.role === role && isAllowed(entry.ref, config?.allowlist))
+      .flatMap((entry) => {
+        const key = `${entry.ref.providerID}\u0000${entry.ref.modelID}`
+        if (seen.has(key)) return []
+        seen.add(key)
+        return [{ providerID: entry.ref.providerID, modelID: entry.ref.modelID }]
+      }),
+  )
 }

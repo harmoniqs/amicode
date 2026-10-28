@@ -10,6 +10,7 @@ import {
   formatLatency,
   formatPrice,
   formatPriceCompact,
+  formatRowInline,
   formatTools,
   formatUsd,
   latencyOf,
@@ -235,5 +236,26 @@ describe("compareCheapestOk — cheapest-that-works", () => {
         { name: "a-unknown", price: undefined, tier: 0 },
       ]),
     ).toEqual(["a", "b", "a-unknown", "z-unknown"])
+  })
+})
+
+describe("formatRowInline — the compact meta on each picker row", () => {
+  const meta = modelRowMeta(
+    { cost: { input: 3, output: 15, cache: { read: 0.3 } }, limit: { context: 200_000 }, capabilities: { toolcall: true } },
+    900,
+  )
+
+  test("$in/$out · context · latency", () => {
+    expect(formatRowInline(meta)).toBe("$3/$15 · 200K · 0.9 s")
+  })
+
+  test("no latency → omitted; missing price stays —", () => {
+    expect(formatRowInline(modelRowMeta({ limit: { context: 1_000_000 } }, undefined))).toBe("— · 1M")
+  })
+
+  test("a model without tool calls says so; the price can be omitted (a Free tag already shows)", () => {
+    const noTools = modelRowMeta({ cost: { input: 0, output: 0 }, limit: { context: 8000 }, capabilities: { toolcall: false } }, 1500)
+    expect(formatRowInline(noTools)).toBe("free · 8K · 1.5 s · no tools")
+    expect(formatRowInline(noTools, { omitPrice: true, noTools: "sin herramientas" })).toBe("8K · 1.5 s · sin herramientas")
   })
 })

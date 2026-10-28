@@ -125,9 +125,9 @@
     "packages/app/src/components/dialog-select-model-reachability.test.ts": "03e4a5e72a03f2c7c05deed3eb008a7f832af7e9beb10d2889c9fe92061e3346",
     "packages/app/src/components/dialog-select-model-reachability.ts": "479403f9e2c799542e89fa0a28d4271684c48deccf02bd1e7c2caed9482e1602",
     "packages/app/src/components/dialog-select-model-shortlist-source.ts": "3de6605f0e950a0af9e01297f492b14940fb1ef2456afb584215ab5e0a1455c1",
-    "packages/app/src/components/dialog-select-model-shortlist.test.ts": "211cec6aad142f5de8fd6c0b1c39ea6ad7e610c5fd620cba1197b24d0ea53ba5",
-    "packages/app/src/components/dialog-select-model-shortlist.ts": "f76834d2bde22397841dd309c2abf76c41f96bcf62f766a7c40afb2018374b07",
-    "packages/app/src/components/dialog-select-model.tsx": "0ae1ceac87082fa240264cd51452e54899c47101e4f29142ae535bfdc698adf7",
+    "packages/app/src/components/dialog-select-model-shortlist.test.ts": "57aa5604f7d9cba9f0f82103f382c988e9ea26a2cf104d14e89e56f0b1b0bc29",
+    "packages/app/src/components/dialog-select-model-shortlist.ts": "3412a56925a540c2d0843406f7018f689b990ff4a81402ee2ed35767590cfbcd",
+    "packages/app/src/components/dialog-select-model.tsx": "3773becba23527b2b31afd55d337eb61bc3fa4dcd5c9dd5a9b85500af841bea2",
     "packages/app/src/components/engine-state-signal.ts": "2726628b85d4bc58bf6b3bd3045fc4239ad384deaba14fc8f46b818741549a5e",
     "packages/app/src/components/engine-toggle-utils.test.ts": "bf53ca7a6fac3696f8d9aac032ceee5e35fb3b7e3dfaef3f9afb1fa0ff3135bb",
     "packages/app/src/components/engine-toggle-utils.ts": "bab8a7ddef9f49d4fc243477b7206feb741afdf5ec154a2d70a9f31c814f8c5d",
@@ -136,9 +136,12 @@
     "packages/app/src/components/harness-switch.test.ts": "db263ece42911e756fb8b6e88697a6bbbd0d1317decd1e63b027d9fe8c69b405",
     "packages/app/src/components/harness-switch.ts": "b4cb2b2241d71c477be71285fe6041d4b0d604a26d74c30dc5239694211a1f90",
     "packages/app/src/components/help-button.tsx": "780d533f776a784660cfed072a131198bc6fcc8e8fe332e8e1a220d516c9684e",
-    "packages/app/src/components/model-dead-pick-warning.tsx": "8675d103a66b50db07cc741e08f136a69629fba137aa2bf6f88b5c72c19bf2c5",
-    "packages/app/src/components/model-dead-pick.test.ts": "de2423bbfd9876d5528073a1aaca05672a3fb40437d238a509c0e6b4b9f0c9ad",
-    "packages/app/src/components/model-dead-pick.ts": "84cd496b0100862039b2eccb77857e5a1f59a489445193e89f0319af1a8adfbd",
+    "packages/app/src/components/model-dead-pick-warning.tsx": "51a3b761437e7cf0d33d49cf06ffa7be20c59cbdfb073637a5d7945e67840c14",
+    "packages/app/src/components/model-dead-pick.test.ts": "b4bd51255fffc12ca92ebeb21893e2d1ee329cc5845c0dfe0a79cb1c82419013",
+    "packages/app/src/components/model-dead-pick.ts": "eaa584e8072b59a9a6f0b4056c202ffeff4d96c8a0270d962b3d004e2d79f143",
+    "packages/app/src/components/model-row-meta.test.ts": "51c5e8b9c4ef3f8e2616e63c8cbc16ae055dedc5fec7c24280ed28a3712938ad",
+    "packages/app/src/components/model-row-meta.ts": "7870b265f4ca9b08505ae6f1b0afb66ca002fe05f67c3b8194417a45f0b170cd",
+    "packages/app/src/components/model-tooltip.tsx": "c402abe9674806c9dd308589d7acb96dfd9c400299e650a94fcc44a165e920e2",
     "packages/app/src/components/new-session-machine-picker.ts": "8c7689f79c7610e32fef478320870d1468fa17a3a02463e2cbe058a487fb4769",
     "packages/app/src/components/pane-bridge.tsx": "756b3306b51c963fac6778716f6c6c4626f0f3bf75c93b7cb4cab58ea0bf3d4e",
     "packages/app/src/components/profile-popover.tsx": "eff742e90544455f13234a9351bb1b82189663cba2cd3172bdcea1a8a37284e8",
@@ -250,7 +253,7 @@
     "packages/app/src/i18n/compaction-failure.test.ts": "a4a3765beb238a2c157c07c9c8ede8418b9febb814d8d1e3a5b2d8868cbd80d9",
     "packages/app/src/i18n/da.ts": "db685cb94f22ace194850efe9bdc02c530777a4583dc9eb9d00b97002b0a0968",
     "packages/app/src/i18n/de.ts": "c440ad7543321cae1425e0c2fad92ff73963f21672fbf31176831933573bf103",
-    "packages/app/src/i18n/en.ts": "71688402eed207d925916c1040091d21d967b2f204ad18c22729024d89431044",
+    "packages/app/src/i18n/en.ts": "068394508cd4af085017cbd9344dd8e7ef6d6a85fa6f4be4251520834eee95fc",
     "packages/app/src/i18n/es.ts": "8cdec3592cddf0b91d7fd59002c81c4e8973c5bf6573e065df64d48c42e1802f",
     "packages/app/src/i18n/fr.ts": "b9f646352189054b6918bfbac670579e76418c3148eb7e5afca9d71d97e7f2b7",
     "packages/app/src/i18n/ja.ts": "27ffc41a0fd8dc4b2e814a45c55fad4726ff1c7a85c884cf6af95f8397f17cbf",
@@ -1044,11 +1047,11 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-28T18:28:20.591Z",
+  "extracted_at": "2026-10-28T18:35:42.869Z",
   "per_package": {
     "packages/app": {
-      "A": 268,
-      "M": 165,
+      "A": 270,
+      "M": 166,
       "D": 0
     },
     "packages/core": {
@@ -1093,7 +1096,7 @@
     }
   },
   "counts": {
-    "overlay_total": 1022,
+    "overlay_total": 1025,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1229,6 +1232,9 @@
     "packages/app/src/components/model-dead-pick-warning.tsx": "A",
     "packages/app/src/components/model-dead-pick.test.ts": "A",
     "packages/app/src/components/model-dead-pick.ts": "A",
+    "packages/app/src/components/model-row-meta.test.ts": "A",
+    "packages/app/src/components/model-row-meta.ts": "A",
+    "packages/app/src/components/model-tooltip.tsx": "M",
     "packages/app/src/components/new-session-machine-picker.ts": "A",
     "packages/app/src/components/pane-bridge.tsx": "A",
     "packages/app/src/components/profile-popover.tsx": "A",
