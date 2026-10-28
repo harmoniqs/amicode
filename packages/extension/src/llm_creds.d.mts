@@ -33,3 +33,28 @@ export function fetchProviderIds(
   baseUrl: string,
   opts?: { fetchImpl?: typeof fetch; timeoutMs?: number; headers?: Record<string, string> },
 ): Promise<string[] | undefined>;
+
+/** #1985: the live provider → model-id catalog (key-free: provider ids and
+ *  model keys only); undefined when the query fails (unknown, never empty). */
+export function fetchProviderModels(
+  baseUrl: string,
+  opts?: { fetchImpl?: typeof fetch; timeoutMs?: number; headers?: Record<string, string> },
+): Promise<Record<string, string[]> | undefined>;
+
+/** One row of the engine's POST /provider/probe response (#1984). */
+export interface ProviderProbeResultWire {
+  model: string;
+  status: "ok" | "denied" | "unavailable" | "invalid" | "rate-limited" | "error";
+  latency_ms: number;
+  reason: string | null;
+  credential_fp: string | null;
+  checked_at: number;
+}
+
+/** #1985: POST /provider/probe {providerID, modelIDs}; undefined on failure. */
+export function probeProviderModels(
+  baseUrl: string,
+  providerID: string,
+  modelIDs: string[],
+  opts?: { fetchImpl?: typeof fetch; timeoutMs?: number; headers?: Record<string, string> },
+): Promise<{ providerID: string; results: ProviderProbeResultWire[] } | undefined>;
