@@ -672,10 +672,12 @@ export default function Page() {
   )
   // The observer reports the content-box width, which already excludes the row
   // padding; only the flex gap between the panels remains to subtract.
+  // amicode#1609: only subtract gap when work column is visible (both panels shown).
   const sessionPanelAvailable = createMemo(() => {
     const width = panelRowWidth()
     if (width === undefined) return undefined
-    return width - (settings.general.newLayoutDesigns() ? 6 : 0)
+    const gapNeeded = settings.general.newLayoutDesigns() && desktopV2PanelLayout().visible
+    return width - (gapNeeded ? 6 : 0)
   })
   const sessionPanelMax = createMemo(() => {
     const available = sessionPanelAvailable()
@@ -716,6 +718,8 @@ export default function Page() {
     if (desktopSessionResizeOpen()) return `${sessionPanelResizedWidth()}px`
     return `calc(100% - ${layout.fileTree.width()}px)`
   })
+  // amicode#1609: detect when chat is at minimum width (collapsed) so work column can expand
+  const chatAtMinimum = createMemo(() => layout.session.width() <= SESSION_PANEL_WIDTH_MIN)
 
   function normalizeTab(tab: string) {
     if (!tab.startsWith("file://")) return tab
@@ -2777,7 +2781,9 @@ export default function Page() {
         ref={panelRow}
         class="flex-1 min-h-0 flex flex-col md:flex-row"
         classList={{
-           "gap-1.5 px-1.5 py-2": settings.general.newLayoutDesigns(),
+           // amicode#1609: only apply gap when both panels are visible.
+           // When work column is hidden (chat only), remove gap to avoid reserving space.
+           "gap-1.5 px-1.5 py-2": settings.general.newLayoutDesigns() && desktopV2PanelLayout().visible,
         }}
       >
         <Show when={!isDesktop() && !!params.id && !settings.general.newLayoutDesigns()}>{mobileTabs()}</Show>
@@ -2847,13 +2853,14 @@ export default function Page() {
         </Show>
         <Show when={newSessionDesign()}>
           <Show when={isDesktop() ? desktopV2PanelLayout().visible : terminalOpen()}>
+            {/* amicode#1609: when chat is at minimum (collapsed), work column expands to fill available space */}
             <div
               classList={{
                 "min-w-0 h-full flex flex-col relative": true,
-                "flex-1": !isDesktop(),
-                "flex-none": isDesktop(),
+                "flex-1": !isDesktop() || chatAtMinimum(),
+                "flex-none": isDesktop() && !chatAtMinimum(),
               }}
-              style={{ width: isDesktop() ? `${workColumnWidth()}px` : undefined }}
+              style={{ width: isDesktop() && !chatAtMinimum() ? `${workColumnWidth()}px` : undefined }}
             >
               {/* amicode#105: the work column's own resize handle (its left
                   edge), sizing layout.panelColumn within the policy bounds —
