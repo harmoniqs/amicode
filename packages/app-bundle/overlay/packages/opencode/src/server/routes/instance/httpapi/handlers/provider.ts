@@ -2,6 +2,7 @@ import { ProviderAuth } from "@/provider/auth"
 import { Config } from "@/config/config"
 import { ModelsDev } from "@opencode-ai/core/models-dev"
 import { Provider } from "@/provider/provider"
+import { ProviderProbe } from "@/provider/probe"
 
 import { mapValues } from "remeda"
 import { Effect, Schema } from "effect"
@@ -65,6 +66,10 @@ export const providerHandlers = HttpApiBuilder.group(InstanceHttpApi, "provider"
       return yield* svc.methods()
     })
 
+    const probe = Effect.fn("ProviderHttpApi.probe")(function* (ctx: { payload: ProviderProbe.Input }) {
+      return yield* ProviderProbe.run(ctx.payload)
+    })
+
     const authorize = Effect.fn("ProviderHttpApi.authorize")(function* (ctx: {
       params: { providerID: ProviderV2.ID }
       payload: ProviderAuth.AuthorizeInput
@@ -110,6 +115,7 @@ export const providerHandlers = HttpApiBuilder.group(InstanceHttpApi, "provider"
     return handlers
       .handle("list", list)
       .handle("auth", auth)
+      .handle("probe", probe)
       .handleRaw("authorize", authorizeRaw)
       .handle("callback", callback)
   }),

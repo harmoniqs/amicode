@@ -126,3 +126,56 @@ export async function fetchProviderIds(baseUrl, { fetchImpl = fetch, timeoutMs =
     return undefined;
   }
 }
+
+/**
+ * The live provider → model-id catalog (#1985, the model-reachability cache's
+ * probe list): the same /config/providers query, stripped at the parse
+ * boundary to provider ids and their model KEYS only (never a model's
+ * options, never a provider key). A failed query yields undefined (UNKNOWN —
+ * never an empty catalog).
+ */
+export async function fetchProviderModels(baseUrl, { fetchImpl = fetch, timeoutMs = 4000, headers } = {}) {
+  const base = String(baseUrl).replace(/\/$/, "");
+  try {
+    const r = await fetchImpl(`${base}/config/providers`, { signal: AbortSignal.timeout(timeoutMs), headers });
+    if (!r.ok) return undefined;
+    const json = await r.json();
+    const arr = json && Array.isArray(json.providers) ? json.providers : undefined;
+    if (!arr) return undefined;
+    const out = {};
+    for (const p of arr) {
+      if (!p || typeof p.id !== "string" || p.id.length === 0) continue;
+      const models = p.models && typeof p.models === "object" && !Array.isArray(p.models) ? Object.keys(p.models) : [];
+      out[p.id] = models.filter((m) => typeof m === "string" && m.length > 0);
+    }
+    return out;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The engine's one-token reachability probe (#1984, POST /provider/probe):
+ * the engine sends 1 token per model through its OWN credentials and returns
+ * a named status per model — no secret crosses. The probe is bounded inside
+ * the engine (10s per model, concurrency 4), so the client budget scales with
+ * the batch. Failure (unreachable / non-2xx / malformed) → undefined.
+ */
+export async function probeProviderModels(baseUrl, providerID, modelIDs, { fetchImpl = fetch, timeoutMs, headers } = {}) {
+  const base = String(baseUrl).replace(/\/$/, "");
+  const budget = timeoutMs ?? Math.ceil(Math.max(1, modelIDs.length) / 4) * 10_000 + 15_000;
+  try {
+    const r = await fetchImpl(`${base}/provider/probe`, {
+      method: "POST",
+      signal: AbortSignal.timeout(budget),
+      headers: { ...(headers ?? {}), "content-type": "application/json" },
+      body: JSON.stringify({ providerID, modelIDs }),
+    });
+    if (!r.ok) return undefined;
+    const json = await r.json();
+    if (!json || !Array.isArray(json.results)) return undefined;
+    return json;
+  } catch {
+    return undefined;
+  }
+}

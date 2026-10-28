@@ -9,6 +9,7 @@ import { SessionTourSpotlight, isTourRequest } from "@/pages/session/composer/se
 import { SessionFollowupDock } from "@/pages/session/composer/session-followup-dock"
 import { SessionRevertDock } from "@/pages/session/composer/session-revert-dock"
 import { SessionTodoDock } from "@/pages/session/composer/session-todo-dock"
+import { ModelDeadPickWarning } from "@/components/model-dead-pick-warning"
 import type { SessionComposerRegionController } from "./session-composer-region-controller"
 
 export function SessionComposerRegion(props: {
@@ -165,6 +166,8 @@ export function SessionComposerRegion(props: {
                           !controller.state.blocked() || isTourRequest(controller.state.questionRequest())
                         }
                       >
+                        {/* amicode#1989: named dead-pick warning + one-click switch */}
+                        <ModelDeadPickWarning sessionID={controller.sessionID} />
                         {props.promptInput}
                       </Show>
                     }

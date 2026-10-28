@@ -49,6 +49,7 @@ import { buildMachineStableConfig } from "./opencode_config";
 import { buildHubFleetOption } from "./hub_fleet_wiring";
 import { readFleetTopology } from "./fleet_topology";
 import { buildFleetPeerProvider } from "./amicode_service/fleet_peer_provider";
+import { engineReachabilityDeps } from "./amicode_service/model_reachability";
 
 /** The named boot-abort: `reason` is the stable grep-able phrase, `message`
  *  carries the detail (engine output tail for health failures). */
@@ -577,6 +578,15 @@ export async function bootAmicodeServiceRunner(opts: AmicodeServiceRunnerOptions
     engine: { password: unarmed ? undefined : password, getUrl: () => engineUrl },
     shelf: { distRoot: opts.appDistRoot },
     ...(hubFleet ? { fleet: hubFleet } : {}),
+    // #1985 (#1979 S2): the model-reachability cache's engine seams — the hub
+    // is where the shared cache lives (fleet clients proxy /amicode/* here),
+    // so the headless path MUST wire it (the model-routing gap is not
+    // repeated). The engine credential matches the spawn posture: none when
+    // unarmed, the per-boot mint otherwise.
+    modelReachability: engineReachabilityDeps({
+      getUrl: () => engineUrl,
+      ...(password !== undefined ? { headers: { Authorization: serverAuthHeader(password) } } : {}),
+    }),
     // #1771: the fan-in census + owner-map refresh outcomes → the runner's log.
     log,
   });
