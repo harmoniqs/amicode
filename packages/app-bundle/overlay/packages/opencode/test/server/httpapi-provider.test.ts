@@ -1,4 +1,4 @@
-import { describe, expect } from "bun:test"
+import { afterAll, describe, expect } from "bun:test"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { Effect, Layer } from "effect"
@@ -450,5 +450,199 @@ describe("provider HttpApi", () => {
       expect(hasNonZeroModelCost(providerBody, "all", "google")).toBe(true)
     }),
     { ...projectOptions, init: writeProviderModelsMutationPlugin },
+  )
+})
+
+// #1984 — POST /provider/probe: one-token reachability probe with named
+// statuses. A fake OpenAI-compatible upstream answers per model id with the
+// error shapes Bedrock returns (AccessDenied, Marketplace "not available for
+// this account", ValidationException on a profile-only id, throttling), so the
+// engine's classifier is exercised end-to-end through Provider.getLanguage.
+const PROBE_SECRET = "sk-probe-SECRET-0123456789abcdef"
+const probeSeen: { model?: string; authorization?: string | null; maxTokens?: unknown }[] = []
+
+function openAiError(status: number, message: string, type: string, headers: Record<string, string> = {}) {
+  return new Response(JSON.stringify({ error: { message, type, code: type } }), {
+    status,
+    headers: { "content-type": "application/json", ...headers },
+  })
+}
+
+const probeUpstream = Bun.serve({
+  port: 0,
+  async fetch(req) {
+    const body = (await req.json().catch(() => ({}))) as Record<string, unknown>
+    const model = typeof body.model === "string" ? body.model : undefined
+    probeSeen.push({
+      model,
+      authorization: req.headers.get("authorization"),
+      maxTokens: body.max_tokens ?? body.max_completion_tokens,
+    })
+    switch (model) {
+      case "probe-ok":
+        return Response.json({
+          id: "chatcmpl-probe",
+          object: "chat.completion",
+          created: 1,
+          model,
+          choices: [{ index: 0, message: { role: "assistant", content: "p" }, finish_reason: "length" }],
+          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        })
+      case "probe-denied":
+        return openAiError(
+          403,
+          `User: arn:aws:iam::123456789012:user/probe is not authorized to perform: bedrock:InvokeModel (key ${PROBE_SECRET})`,
+          "AccessDeniedException",
+          { "x-amzn-errortype": "AccessDeniedException" },
+        )
+      case "probe-unavailable":
+        return openAiError(403, "This model version is not available for this account.", "AccessDeniedException")
+      case "probe-invalid":
+        return openAiError(
+          400,
+          "Invocation of model ID probe-invalid with on-demand throughput isn't supported. Retry your request with the ID or ARN of an inference profile that contains this model.",
+          "ValidationException",
+        )
+      case "probe-throttled":
+        return openAiError(429, "Too many requests, please wait before trying again.", "ThrottlingException")
+      default:
+        return openAiError(500, "unexpected", "InternalServerException")
+    }
+  },
+})
+afterAll(() => probeUpstream.stop(true))
+
+function probeModel(id: string) {
+  return {
+    id,
+    name: id,
+    attachment: false,
+    reasoning: false,
+    temperature: false,
+    tool_call: true,
+    release_date: "2025-01-01",
+    limit: { context: 100_000, output: 10_000 },
+    cost: { input: 0, output: 0 },
+    options: {},
+  }
+}
+
+const probeOptions = {
+  config: () => ({
+    formatter: false as const,
+    lsp: false as const,
+    provider: {
+      "probe-fake": {
+        name: "Probe Fake",
+        id: "probe-fake",
+        env: [],
+        npm: "@ai-sdk/openai-compatible",
+        models: Object.fromEntries(
+          ["probe-ok", "probe-denied", "probe-unavailable", "probe-invalid", "probe-throttled"].map((id) => [
+            id,
+            probeModel(id),
+          ]),
+        ),
+        options: { apiKey: PROBE_SECRET, baseURL: probeUpstream.url.href.replace(/\/$/, "") },
+      },
+    },
+  }),
+}
+
+describe("provider probe HttpApi (#1984)", () => {
+  it.instance(
+    "classifies ok, denied, unavailable, invalid and rate-limited models with no secret material",
+    Effect.gen(function* () {
+      probeSeen.length = 0
+      const directory = (yield* TestInstance).directory
+      const response = yield* request("/provider/probe", {
+        method: "POST",
+        headers: { "x-opencode-directory": directory, "content-type": "application/json" },
+        body: JSON.stringify({
+          providerID: "probe-fake",
+          modelIDs: ["probe-ok", "probe-denied", "probe-unavailable", "probe-invalid", "probe-throttled", "nope"],
+        }),
+      })
+      const text = yield* response.text
+      expect(response.status).toBe(200)
+      const body = JSON.parse(text)
+      expect(body.providerID).toBe("probe-fake")
+      type ProbeRow = {
+        model: string
+        status: string
+        latency_ms: number
+        reason: string | null
+        credential_fp: string | null
+      }
+      const byModel: Record<string, ProbeRow> = Object.fromEntries(
+        (body.results as ProbeRow[]).map((r) => [r.model, r]),
+      )
+      expect(byModel["probe-ok"].status).toBe("ok")
+      expect(byModel["probe-ok"].reason).toBeNull()
+      expect(byModel["probe-denied"].status).toBe("denied")
+      expect(byModel["probe-unavailable"].status).toBe("unavailable")
+      expect(byModel["probe-invalid"].status).toBe("invalid")
+      expect(byModel["probe-throttled"].status).toBe("rate-limited")
+      // a model id the provider does not list never reaches the network
+      expect(byModel["nope"].status).toBe("invalid")
+      for (const result of Object.values(byModel)) {
+        expect(typeof result.latency_ms).toBe("number")
+        expect(result.credential_fp).toMatch(/^[0-9a-f]{16}$/)
+      }
+      // one stable fingerprint per credential
+      expect(new Set(Object.values(byModel).map((r) => r.credential_fp)).size).toBe(1)
+
+      // the probe really went through the configured credential...
+      expect(probeSeen.length).toBe(5)
+      expect(probeSeen.every((seen) => seen.authorization === `Bearer ${PROBE_SECRET}`)).toBe(true)
+      // ...asked for a single output token...
+      expect(probeSeen.every((seen) => seen.maxTokens === 1)).toBe(true)
+      // ...and no secret material comes back, even when the upstream echoes it
+      expect(text).not.toContain(PROBE_SECRET)
+      expect(text).not.toContain("SECRET")
+      expect(text).not.toContain("Bearer")
+    }),
+    probeOptions,
+    30000,
+  )
+
+  it.instance(
+    "keeps the credential fingerprint stable across probes",
+    Effect.gen(function* () {
+      const directory = (yield* TestInstance).directory
+      const probe = () =>
+        Effect.gen(function* () {
+          const response = yield* request("/provider/probe", {
+            method: "POST",
+            headers: { "x-opencode-directory": directory, "content-type": "application/json" },
+            body: JSON.stringify({ providerID: "probe-fake", modelIDs: ["probe-ok"] }),
+          })
+          return JSON.parse(yield* response.text).results[0].credential_fp as string
+        })
+      const first = yield* probe()
+      const second = yield* probe()
+      expect(first).toBe(second)
+      expect(first).not.toContain(PROBE_SECRET.slice(0, 8))
+    }),
+    probeOptions,
+    30000,
+  )
+
+  it.instance(
+    "reports models of an unconnected provider as errors without probing",
+    Effect.gen(function* () {
+      const directory = (yield* TestInstance).directory
+      const response = yield* request("/provider/probe", {
+        method: "POST",
+        headers: { "x-opencode-directory": directory, "content-type": "application/json" },
+        body: JSON.stringify({ providerID: "not-connected", modelIDs: ["x"] }),
+      })
+      expect(response.status).toBe(200)
+      const body = JSON.parse(yield* response.text)
+      expect(body.results).toHaveLength(1)
+      expect(body.results[0]).toMatchObject({ model: "x", status: "error", credential_fp: null })
+    }),
+    projectOptions,
+    30000,
   )
 })
