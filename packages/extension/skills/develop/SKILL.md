@@ -4,7 +4,7 @@ description: The develop mode in one skill — the director loop protocol bound 
 agents: [implementer, orchestrator]
 surface: public
 source: amicode
-revision: 4
+revision: 5
 ---
 
 # Develop — the director's protocol & issue-DAG walk
@@ -288,6 +288,11 @@ human-only where the label says HITL, always. Raw artifacts are the evidence.
   edit on disk, the ledger is lying; refresh it before acting on it.
 - **EXHAUSTED returns** — an implementer that hit its step cap reports
   `EXHAUSTED:`; that's an open loop in §5, never an outcome in §2.
+- **CAST DEATH** — a cast that returns state `completed` with zero output
+  (no commits, no structured return) is a CAST DEATH, not an outcome: verify
+  from worktree artifacts (commits, `git status`, file mtimes) — the empty
+  return carries no information, including about the brief — record the death
+  in the ledger with the artifacts evidence, and recast the same brief.
 - **Summary drift** — after each compaction, the audit in §9 is the check that
   the summary still points HERE rather than becoming a competing source of
   truth.
