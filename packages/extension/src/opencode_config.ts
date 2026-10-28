@@ -814,13 +814,17 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
     // profile NOR a completion marker. The overture is NEVER chained into
     // pulse-designer — domain interviews start in subsequent sessions via the
     // onset router.
+    // NOTE: profileHasIdentity() is intentionally NOT part of this predicate.
+    // The About You card can write profile.json before the interview runs;
+    // identity presence is not evidence the conversational onboarding ran.
+    // The completion marker (~/.amico/amicode/onboarding/completed) is the
+    // sole gate for "onboarding done" (#1161).
     const shouldOnboard =
       !!overture &&
       vaultDir !== "" &&
       readProfileMd(vaultDir) === "" &&
       !hasOnboardingCompleted(onboardingDir()) &&
-      !consumeDevtoolsRestoreMarker() &&
-      !profileHasIdentity(); // the welcome WIZARD already collected identity — don't re-interview
+      !consumeDevtoolsRestoreMarker();
     if (shouldOnboard && overture) {
       // Standalone overture: the onboarding interview runs alone, no domain
       // score chained after it. The pulse-designer (or any domain interview)
