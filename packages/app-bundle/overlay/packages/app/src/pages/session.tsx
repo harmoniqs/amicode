@@ -60,7 +60,7 @@ import { TerminalProvider, useTerminal } from "@/context/terminal"
 import { PromptInput } from "@/components/prompt-input"
 import { PromptInputV2Composer, usePromptInputV2Controller } from "@/components/prompt-input-v2"
 import { useSettingsCommand } from "@/components/settings-dialog"
-import { setCursorPosition } from "@/components/prompt-input/editor-dom"
+import { getCursorPosition, setCursorPosition } from "@/components/prompt-input/editor-dom"
 import { promptLength } from "@/components/prompt-input/history"
 import { type FollowupDraft, sendFollowupDraft } from "@/components/prompt-input/submit"
 import {
@@ -2460,11 +2460,44 @@ export default function Page() {
     consumePendingMessage: layout.pendingMessage.consume,
   })
 
+  // #1248: per-session saved caret offsets — keyed by session ID so switching
+  // tabs restores exactly where the user left the cursor in each session.
+  const sessionCaretOffsets = new Map<string, number>()
+
+  // #1248: save the caret offset whenever the selection moves inside inputRef.
+  // selectionchange fires on document for every cursor move / selection change in
+  // any contenteditable; the guard ensures we only capture events that belong to
+  // the composer and only when a session is active.
+  const onComposerSelectionChange = () => {
+    const id = params.id
+    if (!id) return
+    const input = inputRef
+    if (!input) return
+    if (!input.contains(document.activeElement) && document.activeElement !== input) return
+    const pos = getCursorPosition(input)
+    if (pos !== null) sessionCaretOffsets.set(id, pos)
+  }
+  document.addEventListener("selectionchange", onComposerSelectionChange, { passive: true })
+  onCleanup(() => document.removeEventListener("selectionchange", onComposerSelectionChange))
+
   createEffect(
     on(
       () => params.id,
-      (id) => {
-        if (!id) requestAnimationFrame(() => inputRef?.focus())
+      (id, prev) => {
+        if (!id) {
+          requestAnimationFrame(() => inputRef?.focus())
+        } else if (id !== prev) {
+          // #1248: tab switch to an existing session — refocus the composer and
+          // restore the saved caret for this session (falls back to the prompt
+          // context's saved cursor, then to end-of-content).
+          requestAnimationFrame(() => {
+            const input = inputRef
+            if (!input) return
+            input.focus()
+            const saved = sessionCaretOffsets.get(id)
+            setCursorPosition(input, saved ?? prompt.cursor() ?? promptLength(prompt.current()))
+          })
+        }
       },
     ),
   )
