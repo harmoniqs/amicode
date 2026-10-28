@@ -569,6 +569,25 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     return true;
   }
 
+  // Image copy bridge (chat image frame + preview "Copy"): vscode.env.clipboard
+  // is text-only, so write the PNG with the platform tool. This handler runs in
+  // the extension host — on the machine the user is sitting at — which is what
+  // makes the paste land there even when the image was rendered on a remote
+  // server. PNG only (the iframe rasterizes anything else), bounded like
+  // save-file; the result is echoed for the nonce'd caller.
+  if (msg.kind === "clipboard-image-write" && typeof (msg as { dataUrl?: unknown }).dataUrl === "string") {
+    if (!io.visible()) return true;
+    const raw = msg as unknown as { dataUrl: string; nonce?: string; tab?: string };
+    const prefix = "data:image/png;base64,";
+    if (!raw.dataUrl.startsWith(prefix)) return true;
+    const base64 = raw.dataUrl.slice(prefix.length);
+    if (!base64 || base64.length > 24_000_000) return true;
+    void writeClipboardImageNative(Buffer.from(base64, "base64")).then((ok) => {
+      io.postToWebview({ source: "amicode", kind: "clipboard-image-written", nonce: raw.nonce, tab: raw.tab, ok });
+    });
+    return true;
+  }
+
   // Clipboard image bridge: the outer webview's navigator.clipboard.read()
   // requires user activation (a keystroke on that document), but the user typed
   // inside the sandboxed iframe — so the async Clipboard API throws in newer
@@ -1638,6 +1657,66 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
   }
 
   return false;
+}
+
+// ---------------------------------------------------------------------------
+// Native clipboard image writer
+// ---------------------------------------------------------------------------
+// Puts a PNG on the system clipboard via a temp file and the platform tool.
+// The path is passed as an argument (never spliced into a script). Resolves
+// false on any failure or an unsupported platform.
+
+export async function writeClipboardImageNative(png: Buffer): Promise<boolean> {
+  const command = clipboardImageWriteCommand(process.platform, process.env);
+  if (!command) return false;
+  const file = path.join(os.tmpdir(), `amicode-copy-${process.pid}-${Date.now()}.png`);
+  fs.writeFileSync(file, png);
+  const ok = await runToExit(command.cmd, [...command.args, file]);
+  // xclip/wl-copy fork a selection server that keeps the bytes in memory, but
+  // give it a moment to finish reading before the temp file goes.
+  setTimeout(() => fs.rmSync(file, { force: true }), 5000);
+  return ok;
+}
+
+/** The writer for this host; the PNG path is appended as the last argument. */
+export function clipboardImageWriteCommand(
+  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv,
+): { cmd: string; args: string[] } | null {
+  if (platform === "darwin")
+    return {
+      cmd: "osascript",
+      args: ["-e", "on run argv", "-e", "set the clipboard to (read (POSIX file (item 1 of argv)) as «class PNGf»)", "-e", "end run"],
+    };
+  if (platform === "linux" && env.WAYLAND_DISPLAY)
+    return { cmd: "sh", args: ["-c", 'exec wl-copy --type image/png < "$1"', "amicode-copy"] };
+  if (platform === "linux") return { cmd: "xclip", args: ["-selection", "clipboard", "-t", "image/png", "-i"] };
+  // win32 is served through WSL (the linux branch); a native Windows host has no writer.
+  return null;
+}
+
+// Resolve on the launched process's own exit, not on stdio close: xclip and
+// wl-copy daemonize a child that inherits stdio, so execFile would hang until
+// its timeout and report failure for a copy that worked.
+function runToExit(cmd: string, args: string[]): Promise<boolean> {
+  return import("node:child_process").then(
+    ({ spawn }) =>
+      new Promise<boolean>((resolve) => {
+        const child = spawn(cmd, args, { stdio: "ignore" });
+        const timer = setTimeout(() => {
+          child.kill();
+          resolve(false);
+        }, 5000);
+        child.on("error", () => {
+          clearTimeout(timer);
+          resolve(false);
+        });
+        child.on("exit", (code) => {
+          clearTimeout(timer);
+          resolve(code === 0);
+        });
+      }),
+  );
 }
 
 // ---------------------------------------------------------------------------

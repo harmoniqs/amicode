@@ -1,6 +1,6 @@
 import { useMarked } from "@opencode-ai/ui/context/marked"
 import { useI18n } from "@opencode-ai/ui/context/i18n"
-import { copyTextToClipboard } from "../util/clipboard"
+import { copyImageToClipboard, copyTextToClipboard } from "../util/clipboard"
 import { normalizeDisplayMath } from "./markdown-stream"
 import morphdom from "morphdom"
 import { checksum } from "@opencode-ai/core/util/encode"
@@ -34,6 +34,9 @@ import { shouldResetCodeTokens, type RenderedCodeState } from "./markdown-code-s
 import { getCachedMarkdown, sanitizeMarkdown, touchCachedMarkdown, type MarkdownCacheEntry } from "./markdown-cache"
 import { inlineCodeKind } from "./markdown-inline-code-kind"
 import { cachedFileRef, fileRefResolver, fileRefResolverVersion, fileRefUrl, resolveFileRefCached } from "./markdown-file-refs"
+import { frameImages, loadLocalImages, localImageLoaderVersion } from "./markdown-local-images"
+import { useDialog } from "@opencode-ai/ui/context/dialog"
+import { ImageLightbox } from "./image-lightbox"
 
 type RenderedBlock =
   | (MarkdownCacheEntry & { key: string; mode: Exclude<Block["mode"], "code"> })
@@ -343,6 +346,24 @@ function decorate(root: HTMLDivElement, labels: CopyLabels) {
   // linkification (markFileLinks consumes data-inline-code-kind) — a core
   // capability, not a layout preference. Runs unconditionally.
   markInlineCode(root)
+  // AMICODE: chat image frames (preview + copy) — see markdown-local-images.
+  frameImages(root, () => createCopyButton(labels))
+}
+
+// Clicking a chat image opens it full-size (with copy). Optional dialog: a
+// Markdown rendered outside a DialogProvider (stories, embeds) keeps images inert.
+function setupImagePreview(root: HTMLDivElement, open: ((src: string, alt: string) => void) | undefined) {
+  if (!open) return
+  const handleClick = (event: MouseEvent) => {
+    const target = event.target
+    if (!(target instanceof HTMLImageElement)) return
+    if (target.closest('[data-component="markdown-image"]') === null) return
+    if (!target.src) return
+    event.preventDefault()
+    open(target.src, target.alt)
+  }
+  root.addEventListener("click", handleClick)
+  return () => root.removeEventListener("click", handleClick)
 }
 
 // Issue #270: Mark regular markdown links as external so they open via the bridge
@@ -373,11 +394,17 @@ function setupCodeCopy(root: HTMLDivElement, getLabels: () => CopyLabels) {
 
     const button = target.closest('[data-slot="markdown-copy-button"]')
     if (!(button instanceof HTMLElement)) return
-    const code = button.closest('[data-component="markdown-code"]')?.querySelector("code")
-    const content = code?.textContent ?? ""
-    if (!content) return
-    // Amicode webview: navigator.clipboard dies in the chat iframe — bridge-aware write.
-    if (!(await copyTextToClipboard(content))) return
+    const image = button.closest('[data-component="markdown-image"]')?.querySelector("img")
+    if (image) {
+      if (!image.src || !(await copyImageToClipboard(image.src))) return
+    }
+    if (!image) {
+      const code = button.closest('[data-component="markdown-code"]')?.querySelector("code")
+      const content = code?.textContent ?? ""
+      if (!content) return
+      // Amicode webview: navigator.clipboard dies in the chat iframe — bridge-aware write.
+      if (!(await copyTextToClipboard(content))) return
+    }
     const labels = getLabels()
     setCopyState(button, labels, true)
     const existing = timeouts.get(button)
@@ -468,6 +495,10 @@ export function Markdown(
   const i18n = useI18n()
   const [root, setRoot] = createSignal<HTMLDivElement>()
   const owner = createUniqueId()
+  const dialog = optionalDialog()
+  const openImage = dialog
+    ? (src: string, alt: string) => dialog.show(() => <ImageLightbox src={src} alt={alt} />)
+    : undefined
   const activeCodeKeys = new Set<string>()
   const completedCode = new Map<string, Extract<RenderedBlock, { mode: "code" }>>()
   const projection = createMemo((previous: Projection | undefined) =>
@@ -557,6 +588,7 @@ export function Markdown(
 
   let copyCleanup: (() => void) | undefined
   let linkCleanup: (() => void) | undefined
+  let imageCleanup: (() => void) | undefined
 
   createEffect(() => {
     const container = root()
@@ -597,12 +629,20 @@ export function Markdown(
         copied: i18n.t("ui.message.copied"),
       }))
     if (!linkCleanup) linkCleanup = setupExternalLinks(container)
-    if (!linkCleanup) linkCleanup = setupExternalLinks(container)
+    if (!imageCleanup) imageCleanup = setupImagePreview(container, openImage)
     // #1839: file-reference linkification is core, not a layout preference —
     // runs unconditionally (the pills it consumes are tagged unconditionally
     // in decorate). The live report: with data-new-layout off, every file
     // link in chat was silently inert.
     markFileLinks(container)
+    loadLocalImages(container)
+  })
+
+  // A loader registered after this message rendered loads its local images.
+  createEffect(() => {
+    localImageLoaderVersion()
+    const container = root()
+    if (container) loadLocalImages(container)
   })
 
   // #1845: a resolver registered after this message rendered re-linkifies it
@@ -616,6 +656,7 @@ export function Markdown(
   onCleanup(() => {
     if (copyCleanup) copyCleanup()
     if (linkCleanup) linkCleanup()
+    if (imageCleanup) imageCleanup()
     activeCodeKeys.forEach(disposeCode)
     completedCode.clear()
   })
@@ -794,4 +835,14 @@ function createTokenSpan(token: MarkdownToken) {
   span.setAttribute("style", token[1])
   span.textContent = token[0]
   return span
+}
+
+function optionalDialog() {
+  // useDialog throws outside a DialogProvider; Markdown also renders in
+  // provider-less hosts (stories, the widget frame), where previews are off.
+  try {
+    return useDialog()
+  } catch {
+    return undefined
+  }
 }
