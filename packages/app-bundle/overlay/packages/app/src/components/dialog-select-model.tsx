@@ -15,6 +15,8 @@ import { Tag as TagV2 } from "@opencode-ai/ui/v2/badge-v2"
 import { MenuV2 } from "@opencode-ai/ui/v2/menu-v2"
 import { TooltipV2 } from "@opencode-ai/ui/v2/tooltip-v2"
 import { ModelTooltip } from "./model-tooltip"
+// amicode#1999 (#1979 S9): two-line row — the name gets the full width.
+import { ModelPickerRow } from "./model-picker-row"
 import { useLanguage } from "@/context/language"
 import { decode64 } from "@/utils/base64"
 import { handleDocumentSearchKeydown } from "@/utils/search-keydown"
@@ -65,12 +67,22 @@ const currentRef = (model: ModelState) => {
   return value ? modelRef(value) : undefined
 }
 
-function ReachabilityBadge(props: { view: ModelReachabilityView; v2?: boolean }) {
+// amicode#1999: the reachability reason text — the tag's title, and (for a
+// greyed row) the row's line-2 note.
+function useReachabilityReason() {
   const language = useLanguage()
-  const reason = () => {
-    const r = reachabilityReason(props.view)
+  return (view: ModelReachabilityView) => {
+    const r = reachabilityReason(view)
     return r ? ("key" in r ? language.t(r.key) : r.text) : undefined
   }
+}
+
+/** The reachability tag (trailing, line 1). The greyed reason text moved to
+ *  the row's line 2 (amicode#1999) so it never squeezes the name. */
+function ReachabilityBadge(props: { view: ModelReachabilityView; v2?: boolean }) {
+  const language = useLanguage()
+  const reasonOf = useReachabilityReason()
+  const reason = () => reasonOf(props.view)
   const label = () => {
     if (props.view.tag === "unchecked") return language.t("dialog.model.reachability.tag.unchecked")
     if (props.view.tag === "rate-limited") return language.t("dialog.model.reachability.tag.rateLimited")
@@ -78,26 +90,17 @@ function ReachabilityBadge(props: { view: ModelReachabilityView; v2?: boolean })
     return undefined
   }
   return (
-    <>
-      <Show when={label()}>
-        {(text) =>
-          props.v2 ? (
-            <TagV2 class="shrink-0" title={reason()}>
-              {text()}
-            </TagV2>
-          ) : (
-            <Tag title={reason()}>{text()}</Tag>
-          )
-        }
-      </Show>
-      <Show when={props.view.greyed ? reason() : undefined}>
-        {(text) => (
-          <span class="min-w-0 truncate text-12-regular text-text-weak" title={text()}>
+    <Show when={label()}>
+      {(text) =>
+        props.v2 ? (
+          <TagV2 class="shrink-0" title={reason()}>
             {text()}
-          </span>
-        )}
-      </Show>
-    </>
+          </TagV2>
+        ) : (
+          <Tag title={reason()}>{text()}</Tag>
+        )
+      }
+    </Show>
   )
 }
 
@@ -279,6 +282,7 @@ const ModelList: Component<{
   const language = useLanguage()
 
   const shortlist = createModelShortlist({ model, provider: () => props.provider })
+  const reasonOf = useReachabilityReason()
   const reachability = shortlist.reachability
   const partition = shortlist.partition
   // amicode#1987: the short-list view owns filtering, order and grouping —
@@ -339,31 +343,29 @@ const ModelList: Component<{
         }}
       >
         {(i) => (
-          <div
-            class="w-full flex items-center gap-x-2 text-13-regular"
-            classList={{ "opacity-50": partition().view(i).greyed }}
-          >
-            <span class="truncate">{i.name}</span>
-            <span class="shrink-0 truncate text-12-regular text-text-weak">{i.provider.name}</span>
-            <span
-              data-slot="model-row-meta"
-              class="min-w-0 truncate text-12-regular text-text-weak tabular-nums"
-              title={shortlist.meta(i).price}
-            >
-              {formatRowInline(shortlist.meta(i), {
-                omitPrice: isFree(i.provider.id, i.cost),
-                noTools: language.t("model.meta.noTools"),
-              })}
-            </span>
-            <Show when={isFree(i.provider.id, i.cost)}>
-              <Tag>{language.t("model.tag.free")}</Tag>
-            </Show>
-            <Show when={i.latest}>
-              <Tag>{language.t("model.tag.latest")}</Tag>
-            </Show>
-            <ReachabilityBadge view={partition().view(i)} />
-            <FavoriteStar active={shortlist.isFavorite(i)} onToggle={() => shortlist.toggleFavorite(i)} />
-          </div>
+          <ModelPickerRow
+            name={i.name}
+            provider={i.provider.name}
+            meta={formatRowInline(shortlist.meta(i), {
+              omitPrice: isFree(i.provider.id, i.cost),
+              noTools: language.t("model.meta.noTools"),
+            })}
+            metaTitle={shortlist.meta(i).price}
+            greyed={partition().view(i).greyed}
+            reason={partition().view(i).greyed ? reasonOf(partition().view(i)) : undefined}
+            trailing={
+              <>
+                <Show when={isFree(i.provider.id, i.cost)}>
+                  <Tag>{language.t("model.tag.free")}</Tag>
+                </Show>
+                <Show when={i.latest}>
+                  <Tag>{language.t("model.tag.latest")}</Tag>
+                </Show>
+                <ReachabilityBadge view={partition().view(i)} />
+                <FavoriteStar active={shortlist.isFavorite(i)} onToggle={() => shortlist.toggleFavorite(i)} />
+              </>
+            }
+          />
         )}
       </List>
       <ShortlistMore count={current.view.rest} class="px-4 pt-1" />
@@ -579,6 +581,7 @@ function ModelSelectorPopoverV2View(props: {
   onClose: () => void
 }) {
   const language = useLanguage()
+  const reasonOf = useReachabilityReason()
   const [store, setStore] = createStore({ open: false, search: "", active: "" })
   let searchRef: HTMLInputElement | undefined
   let contentRef: HTMLDivElement | undefined
@@ -658,7 +661,7 @@ function ModelSelectorPopoverV2View(props: {
       <MenuV2.Portal>
         <MenuV2.Content
           ref={(element: HTMLDivElement) => (contentRef = element)}
-          class="w-[284px] overflow-hidden rounded-md border-0 bg-v2-background-bg-layer-01 !p-0 shadow-[var(--v2-elevation-floating)] focus:outline-none"
+          class="w-[340px] max-w-[calc(100vw-16px)] overflow-hidden rounded-md border-0 bg-v2-background-bg-layer-01 !p-0 shadow-[var(--v2-elevation-floating)] focus:outline-none"
           onPointerDownOutside={dismiss.preventTriggerRestore}
           onFocusOutside={dismiss.preventTriggerRestore}
           onCloseAutoFocus={dismiss.onCloseAutoFocus}
@@ -757,7 +760,7 @@ function ModelSelectorPopoverV2View(props: {
                                 value={modelKey(item)}
                                 data-option-key={modelKey(item)}
                                 data-selected-model={props.current() === modelKey(item) ? true : undefined}
-                                class="scroll-my-6 w-full"
+                                class="scroll-my-6 w-full !h-auto min-h-7 !py-1"
                                 classList={{
                                   "!bg-v2-overlay-simple-overlay-hover": store.active === modelKey(item),
                                   "opacity-50": props.reachability?.view(item).greyed === true,
@@ -768,41 +771,46 @@ function ModelSelectorPopoverV2View(props: {
                                 }}
                                 onSelect={() => selectModel(item)}
                               >
-                                <span class="min-w-0 truncate leading-5">{item.name}</span>
-                                <span class="shrink-0 truncate text-[12px] leading-5 text-v2-text-text-faint">
-                                  {item.provider.name}
-                                </span>
-                                <Show when={props.meta?.(item)}>
-                                  {(meta) => (
-                                    <span
-                                      data-slot="model-row-meta"
-                                      class="min-w-0 truncate text-[12px] leading-5 text-v2-text-text-faint tabular-nums"
-                                      title={meta().price}
-                                    >
-                                      {formatRowInline(meta(), {
-                                        omitPrice: isFree(item.provider.id, item.cost),
-                                        noTools: language.t("model.meta.noTools"),
-                                      })}
-                                    </span>
-                                  )}
-                                </Show>
-                                <Show when={isFree(item.provider.id, item.cost)}>
-                                  <TagV2 class="shrink-0">{language.t("model.tag.free")}</TagV2>
-                                </Show>
-                                <Show when={item.latest}>
-                                  <TagV2 class="shrink-0">{language.t("model.tag.latest")}</TagV2>
-                                </Show>
-                                <Show when={props.reachability?.view(item)}>
-                                  {(view) => <ReachabilityBadge view={view()} v2 />}
-                                </Show>
-                                <Show when={props.favorite}>
-                                  {(favorite) => (
-                                    <FavoriteStar
-                                      active={favorite().has(item)}
-                                      onToggle={() => favorite().toggle(item)}
-                                    />
-                                  )}
-                                </Show>
+                                <ModelPickerRow
+                                  v2
+                                  name={item.name}
+                                  provider={item.provider.name}
+                                  meta={(() => {
+                                    const meta = props.meta?.(item)
+                                    return meta
+                                      ? formatRowInline(meta, {
+                                          omitPrice: isFree(item.provider.id, item.cost),
+                                          noTools: language.t("model.meta.noTools"),
+                                        })
+                                      : undefined
+                                  })()}
+                                  metaTitle={props.meta?.(item).price}
+                                  reason={(() => {
+                                    const view = props.reachability?.view(item)
+                                    return view?.greyed ? reasonOf(view) : undefined
+                                  })()}
+                                  trailing={
+                                    <>
+                                      <Show when={isFree(item.provider.id, item.cost)}>
+                                        <TagV2 class="shrink-0">{language.t("model.tag.free")}</TagV2>
+                                      </Show>
+                                      <Show when={item.latest}>
+                                        <TagV2 class="shrink-0">{language.t("model.tag.latest")}</TagV2>
+                                      </Show>
+                                      <Show when={props.reachability?.view(item)}>
+                                        {(view) => <ReachabilityBadge view={view()} v2 />}
+                                      </Show>
+                                      <Show when={props.favorite}>
+                                        {(favorite) => (
+                                          <FavoriteStar
+                                            active={favorite().has(item)}
+                                            onToggle={() => favorite().toggle(item)}
+                                          />
+                                        )}
+                                      </Show>
+                                    </>
+                                  }
+                                />
                               </MenuV2.RadioItem>
                             </TooltipV2>
                           )}

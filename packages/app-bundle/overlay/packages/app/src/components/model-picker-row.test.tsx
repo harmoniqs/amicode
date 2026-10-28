@@ -16,7 +16,11 @@ type Child = Node | string | number | boolean | null | undefined | Child[]
 type Props = Record<string, unknown>
 
 function appendChildren(parent: Element, children: Child[]) {
-  for (const child of children.flat(Infinity) as Exclude<Child, Child[]>[]) {
+  for (const child of children) {
+    if (Array.isArray(child)) {
+      appendChildren(parent, child)
+      continue
+    }
     if (child === null || child === undefined || child === false || child === true) continue
     parent.append(child instanceof Node ? child : document.createTextNode(String(child)))
   }
@@ -35,7 +39,7 @@ function createElement(type: string | ((props: Props) => Child), props: Props | 
   return element
 }
 
-const host = globalThis as typeof globalThis & { React?: unknown }
+const host = globalThis as unknown as Record<string, unknown>
 let previous: unknown
 beforeAll(() => {
   previous = host.React
