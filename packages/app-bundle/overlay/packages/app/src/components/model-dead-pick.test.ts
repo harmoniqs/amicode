@@ -9,6 +9,7 @@ import {
   deadPickWarning,
   demoteRequest,
   latestTurnFailure,
+  recommendedSwitchTargets,
   shouldDemote,
   createDemoteGate,
   type DeadPickCandidate,
@@ -311,5 +312,58 @@ describe("deadPickWarning — the named warning and its switch target", () => {
     expect(got).toBeDefined()
     expect(got?.status).toBe("invalid")
     expect(got?.switchTo).toBeUndefined()
+  })
+})
+
+// amicode#1988 (#1979 S5): the S6 follow-up — the S4 deployment config's
+// recommended list feeds the switch target.
+describe("recommendedSwitchTargets — S4 config → dead-pick recommended (#1988)", () => {
+  const ref = (providerID: string, modelID: string) => ({ providerID, modelID })
+
+  test("no config → none (the cheapest-ok fallback rules)", () => {
+    expect(recommendedSwitchTargets(undefined)).toEqual([])
+    expect(recommendedSwitchTargets({ recommended: [], allowlist: undefined })).toEqual([])
+  })
+
+  test("in role order (default, fast, strong, open-weight), config order within a role, deduped", () => {
+    expect(
+      recommendedSwitchTargets({
+        recommended: [
+          { ref: ref("a", "strong"), role: "strong" },
+          { ref: ref("a", "fast"), role: "fast" },
+          { ref: ref("a", "default-1"), role: "default" },
+          { ref: ref("a", "default-2"), role: "default" },
+          { ref: ref("a", "fast"), role: "strong" },
+        ],
+        allowlist: undefined,
+      }),
+    ).toEqual([ref("a", "default-1"), ref("a", "default-2"), ref("a", "fast"), ref("a", "strong")])
+  })
+
+  test("the allowlist hard-filters the switch targets too", () => {
+    expect(
+      recommendedSwitchTargets({
+        recommended: [
+          { ref: ref("a", "x"), role: "default" },
+          { ref: ref("b", "y"), role: "default" },
+        ],
+        allowlist: ["b/*"],
+      }),
+    ).toEqual([ref("b", "y")])
+  })
+
+  test("the switch prefers a recommended ok model over a cheaper same-provider one", () => {
+    const current = ref("bedrock", "dead")
+    const candidates = [cand("bedrock", "dead", 1, 1), cand("bedrock", "cheap", 1, 5), cand("anthropic", "rec", 3, 15)]
+    const snapshot = snap(row("bedrock", "dead", "denied"), row("bedrock", "cheap", "ok"), row("anthropic", "rec", "ok"))
+    const recommended = recommendedSwitchTargets({
+      recommended: [{ ref: ref("anthropic", "rec"), role: "default" }],
+      allowlist: undefined,
+    })
+    expect(deadPickWarning({ current, snapshot, candidates, recommended })?.switchTo).toEqual(ref("anthropic", "rec"))
+    // without the config the same snapshot falls back to the cheapest same-provider model
+    expect(
+      deadPickWarning({ current, snapshot, candidates, recommended: recommendedSwitchTargets(undefined) })?.switchTo,
+    ).toEqual(ref("bedrock", "cheap"))
   })
 })

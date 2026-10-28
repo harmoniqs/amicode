@@ -9,6 +9,7 @@ import {
   parseShortlistConfig,
   type ShortlistConfig,
 } from "./dialog-select-model-shortlist"
+import { compareCheapestOk } from "./model-row-meta"
 
 type Item = { id: string; name: string; provider: { id: string; name: string } }
 const item = (provider: string, id: string): Item => ({ id, name: id, provider: { id: provider, name: provider } })
@@ -261,5 +262,56 @@ describe("buildModelShortlist — search", () => {
     const shown = [item("a", "x")]
     const view = buildModelShortlist({ ...base, shown, favorites: [ref("a", "x")], query: "   " })
     expect(view.mode).toBe("shortlist")
+  })
+})
+
+// amicode#1988 (#1979 S5): cheapest-that-works order — search only.
+describe("buildModelShortlist — search sort (#1988)", () => {
+  const price: Record<string, number | undefined> = { "x-cheap": 1, "x-mid": 4, "x-pricey": 9, "x-dead": 0 }
+  const dead = new Set(["x-dead"])
+  const searchSort = compareCheapestOk<Item>({
+    tierOf: (x) => (dead.has(x.id) ? 2 : 0),
+    priceOf: (x) => price[x.id],
+    nameOf: (x) => x.name,
+  })
+
+  test("a non-empty query sorts matches cheapest ok first; dead never above ok", () => {
+    const shown = [item("p", "x-pricey"), item("p", "x-mid"), item("p", "x-cheap")]
+    const hidden = [item("p", "x-dead")]
+    const view = buildModelShortlist({ ...base, shown, hidden, showUnavailable: true, query: "x", searchSort })
+    expect(ids(view.items)).toEqual(["p/x-cheap", "p/x-mid", "p/x-pricey", "p/x-dead"])
+  })
+
+  test("the sort applies within each role group; groups keep their order", () => {
+    const shown = [item("p", "x-pricey"), item("p", "x-mid"), item("p", "x-cheap")]
+    const view = buildModelShortlist({
+      ...base,
+      shown,
+      config: {
+        recommended: [
+          { ref: ref("p", "x-pricey"), role: "default" },
+          { ref: ref("p", "x-mid"), role: "default" },
+        ],
+        allowlist: undefined,
+      },
+      query: "x",
+      searchSort,
+    })
+    expect(view.groups.map((g) => g.role ?? g.kind)).toEqual(["default", "other"])
+    expect(ids(view.items)).toEqual(["p/x-mid", "p/x-pricey", "p/x-cheap"])
+  })
+
+  test("the default (no-query) short list and the all view keep their order", () => {
+    const shown = [item("p", "x-pricey"), item("p", "x-mid"), item("p", "x-cheap")]
+    const short = buildModelShortlist({
+      ...base,
+      shown,
+      favorites: [ref("p", "x-pricey"), ref("p", "x-cheap"), ref("p", "x-mid")],
+      searchSort,
+    })
+    expect(ids(short.items)).toEqual(["p/x-pricey", "p/x-cheap", "p/x-mid"])
+    const all = buildModelShortlist({ ...base, shown, searchSort })
+    expect(all.mode).toBe("all")
+    expect(ids(all.items)).toEqual(["p/x-pricey", "p/x-mid", "p/x-cheap"])
   })
 })
