@@ -166,6 +166,23 @@ describe("the merged develop skill — the issue-DAG walk half (#1732)", () => {
   });
 });
 
+// ── cast-death class (#1824, finding F33) ─────────────────────────────────────
+describe("the develop skill — cast-death class documented (#1824)", () => {
+  const develop = skillText("develop");
+
+  it("documents the empty-return class (CAST DEATH) in the failure-modes section with artifact-verification + recast protocol", () => {
+    const failureModes = develop.slice(develop.indexOf("## Failure modes"));
+    // the class is named and tagged as an outcome-class, not a delivery
+    expect(failureModes).toMatch(/CAST DEATH|cast death/i);
+    // the artifact-verification step: worktree artifacts, not the return value
+    expect(failureModes).toMatch(/worktree|artifact/i);
+    // the protocol prescribes a recast of the same brief
+    expect(failureModes).toMatch(/recast/i);
+    // the key insight: empty return carries no information about the brief
+    expect(failureModes).toMatch(/no information|carries no/i);
+  });
+});
+
 // ── the #809 content lens, mechanically (the pass is recorded in PR notes; ────
 //    this is its regression guard — per-line usage-vs-internals boundary)
 
