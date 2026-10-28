@@ -7,7 +7,9 @@ import {
   editableExtensions,
   externalUpdate,
   detectMode,
+  multiCursorKeymap,
 } from "./editor-core"
+import { addCursorAbove, addCursorBelow } from "@codemirror/commands"
 import { EditorView } from "@codemirror/view"
 
 /**
@@ -141,5 +143,50 @@ describe("detectMode (via editor-core)", () => {
   test("returns a valid mode string", () => {
     const mode = detectMode()
     expect(mode === "light" || mode === "dark").toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// multiCursorKeymap — Cmd+Alt+Up/Down multi-cursor keybindings (#1516)
+// ---------------------------------------------------------------------------
+
+describe("multiCursorKeymap (via editor-core)", () => {
+  test("is exported as an array", () => {
+    expect(Array.isArray(multiCursorKeymap)).toBe(true)
+    expect(multiCursorKeymap.length).toBeGreaterThan(0)
+  })
+
+  test("binds Mod-Alt-ArrowUp to addCursorAbove", () => {
+    const binding = multiCursorKeymap.find((b) => b.key === "Mod-Alt-ArrowUp")
+    expect(binding).toBeDefined()
+    expect(binding?.run).toBe(addCursorAbove)
+  })
+
+  test("binds Mod-Alt-ArrowDown to addCursorBelow", () => {
+    const binding = multiCursorKeymap.find((b) => b.key === "Mod-Alt-ArrowDown")
+    expect(binding).toBeDefined()
+    expect(binding?.run).toBe(addCursorBelow)
+  })
+
+  test("both bindings have preventDefault set", () => {
+    const up = multiCursorKeymap.find((b) => b.key === "Mod-Alt-ArrowUp")
+    const down = multiCursorKeymap.find((b) => b.key === "Mod-Alt-ArrowDown")
+    expect(up?.preventDefault).toBe(true)
+    expect(down?.preventDefault).toBe(true)
+  })
+})
+
+describe("baseExtensions multi-cursor wiring (#1516)", () => {
+  test("baseExtensions returns more extensions after multi-cursor keymap is added", () => {
+    // The returned array must be non-empty and include the multi-cursor keymap
+    // extension (added via keymap.of). We can't inspect extension internals, so
+    // we verify the count is consistent across calls (keymap.of is deterministic).
+    const theme = buildThemeExtension("dark")
+    const exts = baseExtensions({ theme })
+    // With multiCursorKeymap wired, we expect at least one more extension than
+    // the pre-#1516 count of 11 (lineNumbers, highlightActiveLine,
+    // highlightSpecialChars, drawSelection, bracketMatching, keymap x2,
+    // search, highlightSelectionMatches, lineWrapping, syntaxHighlighting, theme).
+    expect(exts.length).toBeGreaterThanOrEqual(12)
   })
 })

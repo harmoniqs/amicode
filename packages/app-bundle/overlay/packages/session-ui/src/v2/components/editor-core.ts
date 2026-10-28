@@ -19,8 +19,15 @@ import {
   drawSelection,
   highlightActiveLine,
   highlightSpecialChars,
+  type KeyBinding,
 } from "@codemirror/view"
-import { history, defaultKeymap, historyKeymap } from "@codemirror/commands"
+import {
+  history,
+  defaultKeymap,
+  historyKeymap,
+  addCursorAbove,
+  addCursorBelow,
+} from "@codemirror/commands"
 import { search, searchKeymap, highlightSelectionMatches } from "@codemirror/search"
 import { type LanguageSupport, bracketMatching } from "@codemirror/language"
 import {
@@ -266,6 +273,35 @@ export function buildSyntaxHighlightStyle(): Extension {
 // Shared extensions — base setup shared by all editor instances.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Multi-cursor keymap — Cmd+Alt+Up/Down (#1516).
+//
+// CM6's defaultKeymap already contains these bindings (`Mod-Alt-ArrowUp` →
+// addCursorAbove, `Mod-Alt-ArrowDown` → addCursorBelow), but they are buried
+// in a large spread and not visible at the call site. Extracting them into a
+// named constant makes the multi-cursor support explicit and auditable, and
+// keeps the keymap slot in baseExtensions() self-documenting.
+//
+// Cmd+Click (add cursor at pointer) is CM6's default pointer behavior and
+// requires no additional wiring. Escape (collapse to primary cursor) is
+// handled by CM6's simplifySelection command, which is in defaultKeymap.
+// ---------------------------------------------------------------------------
+
+/**
+ * Explicit multi-cursor keybindings for CM6 editors.
+ *
+ * - `Mod-Alt-ArrowUp`  → addCursorAbove (Cmd+Alt+Up on macOS)
+ * - `Mod-Alt-ArrowDown` → addCursorBelow (Cmd+Alt+Down on macOS)
+ *
+ * These are already present in CM6's defaultKeymap but are declared here
+ * as a named constant to make the multi-cursor support visible at the
+ * call site in baseExtensions() (#1516).
+ */
+export const multiCursorKeymap: KeyBinding[] = [
+  { key: "Mod-Alt-ArrowUp", run: addCursorAbove, preventDefault: true },
+  { key: "Mod-Alt-ArrowDown", run: addCursorBelow, preventDefault: true },
+]
+
 /**
  * Build the mutable extensions that live inside a Compartment and can be
  * swapped via `setReadOnly()` without re-creating the editor.
@@ -309,6 +345,7 @@ export function baseExtensions(opts: {
     drawSelection(),
     bracketMatching(),
     keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap]),
+    keymap.of(multiCursorKeymap),
     search(),
     highlightSelectionMatches(),
     EditorView.lineWrapping,
