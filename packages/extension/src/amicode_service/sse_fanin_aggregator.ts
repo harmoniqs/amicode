@@ -419,10 +419,15 @@ export class SseFanInAggregator {
   }
 
   /** Reconcile the fan-in membership from the SessionOwnerMap (§D1 / AC2). Each
-   *  reachable owner-peer with a usable token becomes an active upstream arm;
-   *  peers are added/removed as ownership changes. A reachable-but-token-less or
-   *  unreachable owner-peer is a NAMED unavailable source — an honest comment
-   *  frame on transition into unavailable, never a silent gap, never local. */
+    *  reachable owner-peer with a usable token becomes an active upstream arm;
+    *  peers are added/removed as ownership changes. A reachable-but-token-less or
+    *  unreachable owner-peer is a NAMED unavailable source — an honest comment
+    *  frame on transition into unavailable, never a silent gap, never local.
+    *
+    *  #1793 — when a peer becomes unavailable or is removed, clear its delivered
+    *  state so the next reopenArm for that arm is an initial open (no gap). This
+    *  ensures at most one gap per lost stretch: after a gap, stay quiet until it
+    *  delivers again. */
   setMembership(peers: PeerMember[]): void {
     const seen = new Set<string>();
     for (const peer of peers) {
@@ -443,9 +448,29 @@ export class SseFanInAggregator {
       }
     }
     // Owner-peers no longer in the map (their sessions ended) drop their arm —
-    // this is not an unavailability, so no comment frame.
-    for (const id of [...this.peerArms]) if (!seen.has(id)) this.peerArms.delete(id);
-    for (const id of [...this.unavailable]) if (!seen.has(id)) this.unavailable.delete(id);
+    // this is not an unavailability, so no comment frame. Clear their delivered
+    // state so a future re-add starts fresh (no spurious gaps).
+    for (const id of [...this.peerArms]) {
+      if (!seen.has(id)) {
+        this.peerArms.delete(id);
+        this.clearDeliveredState(id);
+      }
+    }
+    for (const id of [...this.unavailable]) {
+      if (!seen.has(id)) {
+        this.unavailable.delete(id);
+        this.clearDeliveredState(id);
+      }
+    }
+  }
+
+  /** #1793 — clear the delivered state for an arm that dropped out. This ensures
+    *  that a re-open of that arm after it comes back is an initial open (no gap)
+    *  until it delivers again, implementing "one gap per lost stretch". */
+  private clearDeliveredState(namespace: string): void {
+    this.everDelivered.delete(namespace);
+    this.resumeAt.delete(namespace);
+    this.composite.delete(namespace);
   }
 
   /** The active PEER upstream arms (excludes `local`, excludes unavailable
