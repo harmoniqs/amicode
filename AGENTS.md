@@ -68,6 +68,16 @@ macOS note: the vendored binary is unsigned — if Gatekeeper blocks it:
 | Julia solve E2E | `AMICO_TEST_JULIA_PROJECT=$HOME/.amico/julia pnpm --filter amicode run test:slow` | template vet passes, F > 0.999 |
 | Live interview E2E | `cd packages/extension && AMICODE_E2E_LIVE=1 npx vitest run test/slow/interview_e2e.test.ts` | tiers A/B/C pass (C needs a provider; flaky on free tier) |
 | Full chain (opt-in, ~3 min) | add `AMICODE_E2E_FULLCHAIN=1` | tier D: interview → real solve → F > 0.99 |
+| Pre-push gates (night runner) | `./.notturno/gates` | `RESULT: GREEN` — drift gate + `pnpm -r run typecheck` + vitest of the packages the diff touched (vs the merge-base with `NOTTURNO_BASE`, else the nearest `origin/lane/*`/`origin/main`) |
+
+**Overlay rule (CI's app-bundle drift gate):** any edit under `packages/app-bundle/overlay/**`
+(add, change, delete, rename) must be followed by
+`node packages/app-bundle/scripts/refresh_manifest.mjs` and then
+`node packages/app-bundle/scripts/drift_gate.mjs` (expect `PASS`) **before you commit**;
+commit the refreshed `packages/app-bundle/manifest.json` with the overlay change.
+`refresh_manifest` needs the materialized upstream tree
+(`pnpm --filter @amicode/app-bundle run materialize` once). An overlay edit without the
+refresh reds CI (2 of night batch 1's red PRs, #1980) and reds `./.notturno/gates`.
 
 ## Development facts you need
 
