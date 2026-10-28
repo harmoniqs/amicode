@@ -121,7 +121,10 @@
     "packages/app/src/components/dialog-release-notes.tsx": "0ea5b049786787643a7f6b54d4ccf84c4f8ffa4e8272426c0d32f60d445b6890",
     "packages/app/src/components/dialog-select-directory-v2.css": "2e2f18abdca77f9fe85da157c40f288f3b1641ca92845208749e16455fd58637",
     "packages/app/src/components/dialog-select-file.tsx": "e6278ee35dd27d203e00ad73f70c709c44a6c06f81ffbd931edfaa0c986b9e03",
+    "packages/app/src/components/dialog-select-model-reachability-source.ts": "9e60400178db0408814b493e609a3f0177bdf89b8317a56af929cf0d12756d4e",
     "packages/app/src/components/dialog-select-model-reachability.test.ts": "03e4a5e72a03f2c7c05deed3eb008a7f832af7e9beb10d2889c9fe92061e3346",
+    "packages/app/src/components/dialog-select-model-reachability.ts": "479403f9e2c799542e89fa0a28d4271684c48deccf02bd1e7c2caed9482e1602",
+    "packages/app/src/components/dialog-select-model.tsx": "2f06bf33209afb471bb18007eca02b5ce86e26c2997ef80220520f0651d0ed2e",
     "packages/app/src/components/engine-state-signal.ts": "2726628b85d4bc58bf6b3bd3045fc4239ad384deaba14fc8f46b818741549a5e",
     "packages/app/src/components/engine-toggle-utils.test.ts": "bf53ca7a6fac3696f8d9aac032ceee5e35fb3b7e3dfaef3f9afb1fa0ff3135bb",
     "packages/app/src/components/engine-toggle-utils.ts": "bab8a7ddef9f49d4fc243477b7206feb741afdf5ec154a2d70a9f31c814f8c5d",
@@ -239,7 +242,7 @@
     "packages/app/src/i18n/compaction-failure.test.ts": "a4a3765beb238a2c157c07c9c8ede8418b9febb814d8d1e3a5b2d8868cbd80d9",
     "packages/app/src/i18n/da.ts": "db685cb94f22ace194850efe9bdc02c530777a4583dc9eb9d00b97002b0a0968",
     "packages/app/src/i18n/de.ts": "c440ad7543321cae1425e0c2fad92ff73963f21672fbf31176831933573bf103",
-    "packages/app/src/i18n/en.ts": "d073d90198297bcc33ad5da1975a3829250b20a1e18fec35eb65809c35fca973",
+    "packages/app/src/i18n/en.ts": "9cff63af9ac743a6b87987e7bfbfc282213adf55e13e949a2d60747dc15fab9e",
     "packages/app/src/i18n/es.ts": "8cdec3592cddf0b91d7fd59002c81c4e8973c5bf6573e065df64d48c42e1802f",
     "packages/app/src/i18n/fr.ts": "b9f646352189054b6918bfbac670579e76418c3148eb7e5afca9d71d97e7f2b7",
     "packages/app/src/i18n/ja.ts": "27ffc41a0fd8dc4b2e814a45c55fad4726ff1c7a85c884cf6af95f8397f17cbf",
@@ -1033,11 +1036,11 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-28T18:01:52.424Z",
+  "extracted_at": "2026-10-28T18:04:17.863Z",
   "per_package": {
     "packages/app": {
-      "A": 258,
-      "M": 164,
+      "A": 260,
+      "M": 165,
       "D": 0
     },
     "packages/core": {
@@ -1082,7 +1085,7 @@
     }
   },
   "counts": {
-    "overlay_total": 1011,
+    "overlay_total": 1014,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1200,7 +1203,10 @@
     "packages/app/src/components/dialog-release-notes.tsx": "M",
     "packages/app/src/components/dialog-select-directory-v2.css": "M",
     "packages/app/src/components/dialog-select-file.tsx": "M",
+    "packages/app/src/components/dialog-select-model-reachability-source.ts": "A",
     "packages/app/src/components/dialog-select-model-reachability.test.ts": "A",
+    "packages/app/src/components/dialog-select-model-reachability.ts": "A",
+    "packages/app/src/components/dialog-select-model.tsx": "M",
     "packages/app/src/components/engine-state-signal.ts": "A",
     "packages/app/src/components/engine-toggle-utils.test.ts": "A",
     "packages/app/src/components/engine-toggle-utils.ts": "A",
