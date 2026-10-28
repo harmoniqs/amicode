@@ -900,8 +900,8 @@
     "packages/session-ui/src/v2/components/editable-diff-view-core.ts": "f01a341c4c1cdb4a9522f9ccd3c856bd3b9b7310c01d87327b3ce777052c8c59",
     "packages/session-ui/src/v2/components/editable-diff-view.test.ts": "ab206fa17779e6e9015d343ae37e3067dfc1821a93b6ba566b7a0dce0fc19acb",
     "packages/session-ui/src/v2/components/editable-diff-view.tsx": "f682e398ece864b5b854ca36698581c7e1cc5964eed96e7b45cabfcb64748b24",
-    "packages/session-ui/src/v2/components/editor-core.test.ts": "bd6552c0e7080afd554cb57ad690cc1504555712274c8b02702c64bb09460234",
-    "packages/session-ui/src/v2/components/editor-core.ts": "8306fc9b87fffe853c96212664ba5003c4e020c8779fc7d5410c26b543736a7e",
+    "packages/session-ui/src/v2/components/editor-core.test.ts": "d109f176b02a6a71af0ffbfdc6b633a93b3deb7aeeb1734f235dea919acf7c2a",
+    "packages/session-ui/src/v2/components/editor-core.ts": "bfca26dca037b732572932630c9e9edd644d8fe0c950943e5835179ec1d4eb46",
     "packages/session-ui/src/v2/components/file-name-picker.test.tsx": "1ce9741e315b549165d390c74b5885a43580aa70e24de987f9ba8388cd521b41",
     "packages/session-ui/src/v2/components/markdown-utils.test.ts": "10e1034293bf385cf50d860bf1667d8370abc61dcee0c5a93295f21f5f55876a",
     "packages/session-ui/src/v2/components/markdown-utils.ts": "3bc47cfed5b99ab23f857d5324be3189f3a7e800d991103d72ef1c2f970b910b",
@@ -1031,7 +1031,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-27T16:49:20.256Z",
+  "extracted_at": "2026-10-28T17:32:41.925Z",
   "per_package": {
     "packages/app": {
       "A": 257,
