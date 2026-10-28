@@ -3,7 +3,6 @@ import { Component, ComponentProps, createEffect, createMemo, For, JSX, Show } f
 import { createStore } from "solid-js/store"
 import { useLocal } from "@/context/local"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
-import { popularProviders } from "@/hooks/use-providers"
 import { Button } from "@opencode-ai/ui/button"
 import { IconButton } from "@opencode-ai/ui/icon-button"
 import { ScrollView } from "@opencode-ai/ui/scroll-view"
@@ -21,7 +20,6 @@ import { decode64 } from "@/utils/base64"
 import { handleDocumentSearchKeydown } from "@/utils/search-keydown"
 import { createMenuDismissController } from "@/utils/menu-dismiss-controller"
 import { createEventListener } from "@solid-primitives/event-listener"
-import { matchesModelSearch } from "./dialog-select-model-search"
 // amicode#1986 (#1979 S3): reachability merge — hide dead models, "Show unavailable (N)".
 import { createModelReachability, type ModelReachabilityState } from "./dialog-select-model-reachability-source"
 import {
@@ -29,6 +27,16 @@ import {
   reachabilityReason,
   type ModelReachabilityView,
 } from "./dialog-select-model-reachability"
+// amicode#1987 (#1979 S4): short-list view — Favorites → Recommended (by role) → Recent,
+// capped; everything else behind search; model.allowlist hard-filters all of it.
+import { useModels } from "@/context/models"
+import {
+  buildModelShortlist,
+  isAllowed,
+  type ModelShortlist,
+  type ShortlistGroup,
+} from "./dialog-select-model-shortlist"
+import { createModelShortlistConfig } from "./dialog-select-model-shortlist-source"
 
 const isFree = (provider: string, cost: { input: number } | undefined) =>
   provider === "opencode" && (!cost || cost.input === 0)
@@ -115,16 +123,123 @@ function ReachabilityControls(props: { state: ModelReachabilityState; hiddenCoun
   )
 }
 
-const sortModelGroups = (a: { category: string; items: ModelItem[] }, b: { category: string; items: ModelItem[] }) => {
-  const aIndex = popularProviders.indexOf(a.category)
-  const bIndex = popularProviders.indexOf(b.category)
-  const aPopular = aIndex >= 0
-  const bPopular = bIndex >= 0
+// amicode#1987: the shared short-list wiring for both pickers. The allowlist
+// filters BEFORE the reachability merge so "Show unavailable (N)" counts only
+// allowed models; buildModelShortlist re-applies it (the tested hard filter).
+function createModelShortlist(input: { model: ModelState; provider: () => string | undefined }) {
+  const models = useModels()
+  const reachability = createModelReachability()
+  const config = createModelShortlistConfig()
+  const byName = (a: ModelItem, b: ModelItem) => a.name.localeCompare(b.name)
+  const partition = createMemo(() =>
+    partitionByReachability(
+      input.model
+        .list()
+        .filter((m) => input.model.visible({ modelID: m.id, providerID: m.provider.id }))
+        .filter((m) => (input.provider() ? m.provider.id === input.provider() : true))
+        .filter((m) => isAllowed(modelRef(m), config()?.allowlist)),
+      modelRef,
+      reachability.snapshot(),
+      currentRef(input.model),
+    ),
+  )
+  const sorted = createMemo(() => ({
+    shown: [...partition().shown].sort(byName),
+    hidden: [...partition().hidden].sort(byName),
+  }))
+  return {
+    reachability,
+    partition,
+    view: (search: string): ModelShortlist<ModelItem> =>
+      buildModelShortlist({
+        shown: sorted().shown,
+        hidden: sorted().hidden,
+        showUnavailable: reachability.showUnavailable(),
+        keyOf: modelRef,
+        searchText: (item) => [item.name, item.id, item.provider.name],
+        favorites: models.favorite.list(),
+        recents: models.recent.list(),
+        config: config(),
+        query: search,
+      }),
+    isFavorite: (item: ModelItem) => models.favorite.has(modelRef(item)),
+    toggleFavorite: (item: ModelItem) => models.favorite.toggle(modelRef(item)),
+  }
+}
 
-  if (aPopular && !bPopular) return -1
-  if (!aPopular && bPopular) return 1
-  if (aPopular && bPopular) return aIndex - bIndex
-  return a.items[0].provider.name.localeCompare(b.items[0].provider.name)
+type ShortlistLabelKey =
+  | "dialog.model.shortlist.favorites"
+  | "dialog.model.shortlist.recent"
+  | "dialog.model.shortlist.other"
+  | "dialog.model.shortlist.role.default"
+  | "dialog.model.shortlist.role.fast"
+  | "dialog.model.shortlist.role.strong"
+  | "dialog.model.shortlist.role.openWeight"
+
+const shortlistLabelKey = (group: ShortlistGroup<ModelItem>): ShortlistLabelKey => {
+  if (group.kind === "favorites") return "dialog.model.shortlist.favorites"
+  if (group.kind === "recent") return "dialog.model.shortlist.recent"
+  if (group.kind === "other") return "dialog.model.shortlist.other"
+  if (group.role === "fast") return "dialog.model.shortlist.role.fast"
+  if (group.role === "strong") return "dialog.model.shortlist.role.strong"
+  if (group.role === "open-weight") return "dialog.model.shortlist.role.openWeight"
+  return "dialog.model.shortlist.role.default"
+}
+
+/** The group heading; empty when the whole (uncapped) list is one "Other"
+ *  group — a lone "Other" header over everything says nothing. */
+const shortlistGroupLabel = (
+  view: ModelShortlist<ModelItem>,
+  group: ShortlistGroup<ModelItem>,
+  t: (key: ShortlistLabelKey) => string,
+) => (view.mode === "all" && view.groups.length === 1 ? "" : t(shortlistLabelKey(group)))
+
+function FavoriteStar(props: { active: boolean; onToggle: () => void }) {
+  const language = useLanguage()
+  const stop = (event: Event) => {
+    event.preventDefault()
+    event.stopPropagation()
+  }
+  const label = () => language.t(props.active ? "dialog.model.favorite.remove" : "dialog.model.favorite.add")
+  return (
+    <span
+      role="button"
+      tabIndex={-1}
+      aria-label={label()}
+      aria-pressed={props.active}
+      title={label()}
+      data-slot="model-favorite-toggle"
+      class="ml-auto flex size-5 shrink-0 items-center justify-center rounded-sm hover:text-text-strong"
+      classList={{ "text-text-weak opacity-60 hover:opacity-100": !props.active, "text-icon-warning-base": props.active }}
+      on:pointerdown={stop}
+      on:pointerup={stop}
+      on:mousedown={stop}
+      on:click={(event) => {
+        stop(event)
+        props.onToggle()
+      }}
+    >
+      <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+        <path
+          d="M8 1.75l1.9 3.85 4.25.62-3.08 3 .73 4.23L8 11.45l-3.8 2 .73-4.23-3.08-3 4.25-.62L8 1.75z"
+          fill={props.active ? "currentColor" : "none"}
+          stroke="currentColor"
+          stroke-linejoin="round"
+        />
+      </svg>
+    </span>
+  )
+}
+
+function ShortlistMore(props: { count: number; class?: string }) {
+  const language = useLanguage()
+  return (
+    <Show when={props.count > 0}>
+      <div class={`truncate text-12-regular text-text-weak ${props.class ?? ""}`}>
+        {language.t("dialog.model.shortlist.more", { count: props.count })}
+      </div>
+    </Show>
+  )
 }
 
 const ModelList: Component<{
@@ -137,19 +252,24 @@ const ModelList: Component<{
   const model = props.model ?? useLocal().model
   const language = useLanguage()
 
-  const reachability = createModelReachability()
-  const partition = createMemo(() =>
-    partitionByReachability(
-      model
-        .list()
-        .filter((m) => model.visible({ modelID: m.id, providerID: m.provider.id }))
-        .filter((m) => (props.provider ? m.provider.id === props.provider : true)),
-      modelRef,
-      reachability.snapshot(),
-      currentRef(model),
-    ),
-  )
-  const models = createMemo(() => partition().list(reachability.showUnavailable()))
+  const shortlist = createModelShortlist({ model, provider: () => props.provider })
+  const reachability = shortlist.reachability
+  const partition = shortlist.partition
+  // amicode#1987: the short-list view owns filtering, order and grouping —
+  // List's own fuzzy filter is skipped (skipFilter) and its groups follow the
+  // view's (group label → view order) for the query List last asked about.
+  const [current, setCurrent] = createStore({ view: shortlist.view("") })
+  const groupOf = createMemo(() => {
+    const view = current.view
+    const label = new Map<string, string>()
+    const order = new Map<string, number>()
+    view.groups.forEach((group, index) => {
+      const text = shortlistGroupLabel(view, group, (key) => language.t(key))
+      order.set(text, index)
+      for (const item of group.items) label.set(modelKey(item), text)
+    })
+    return { label, order }
+  })
 
   return (
     <>
@@ -158,18 +278,15 @@ const ModelList: Component<{
         search={{ placeholder: language.t("dialog.model.search.placeholder"), autofocus: true, action: props.action }}
         emptyMessage={language.t("dialog.model.empty")}
         key={(x) => `${x.provider.id}:${x.id}`}
-        items={models}
-        current={model.current()}
-        filterKeys={["provider.name", "name", "id"]}
-        sortBy={(a, b) => a.name.localeCompare(b.name)}
-        groupBy={(x) => x.provider.name}
-        sortGroupsBy={(a, b) => {
-          const aProvider = a.items[0].provider.id
-          const bProvider = b.items[0].provider.id
-          if (popularProviders.includes(aProvider) && !popularProviders.includes(bProvider)) return -1
-          if (!popularProviders.includes(aProvider) && popularProviders.includes(bProvider)) return 1
-          return popularProviders.indexOf(aProvider) - popularProviders.indexOf(bProvider)
+        items={(filter) => {
+          const view = shortlist.view(filter)
+          setCurrent("view", view)
+          return view.items
         }}
+        current={model.current()}
+        skipFilter={() => true}
+        groupBy={(x) => groupOf().label.get(modelKey(x)) ?? ""}
+        sortGroupsBy={(a, b) => (groupOf().order.get(a.category) ?? 0) - (groupOf().order.get(b.category) ?? 0)}
         itemWrapper={(item, node) => (
           <Tooltip
             class="w-full"
@@ -194,6 +311,7 @@ const ModelList: Component<{
             classList={{ "opacity-50": partition().view(i).greyed }}
           >
             <span class="truncate">{i.name}</span>
+            <span class="shrink-0 truncate text-12-regular text-text-weak">{i.provider.name}</span>
             <Show when={isFree(i.provider.id, i.cost)}>
               <Tag>{language.t("model.tag.free")}</Tag>
             </Show>
@@ -201,9 +319,11 @@ const ModelList: Component<{
               <Tag>{language.t("model.tag.latest")}</Tag>
             </Show>
             <ReachabilityBadge view={partition().view(i)} />
+            <FavoriteStar active={shortlist.isFavorite(i)} onToggle={() => shortlist.toggleFavorite(i)} />
           </div>
         )}
       </List>
+      <ShortlistMore count={current.view.rest} class="px-4 pt-1" />
       <ReachabilityControls state={reachability} hiddenCount={partition().hiddenCount} class="px-4 pt-1" />
     </>
   )
@@ -335,8 +455,8 @@ export function ModelSelectorPopoverV2(props: {
   return (
     <ModelSelectorPopoverV2View
       trigger={props.trigger}
-      models={controller.models}
-      groups={controller.groups}
+      view={controller.view}
+      favorite={controller.favorite}
       current={controller.current}
       select={controller.select}
       reachability={controller.reachability}
@@ -356,34 +476,27 @@ function createModelSelectorController(input: {
   onSelect: () => void
 }) {
   const model = input.model ?? useLocal().model
-  const reachability = createModelReachability()
-  const partition = createMemo(() =>
-    partitionByReachability(
-      model
-        .list()
-        .filter((item) => model.visible({ modelID: item.id, providerID: item.provider.id }))
-        .filter((item) => (input.provider() ? item.provider.id === input.provider() : true)),
-      modelRef,
-      reachability.snapshot(),
-      currentRef(model),
-    ),
-  )
-  const allModels = createMemo(() => partition().list(reachability.showUnavailable()))
+  const language = useLanguage()
+  const shortlist = createModelShortlist({ model, provider: input.provider })
+  const reachability = shortlist.reachability
+  const partition = shortlist.partition
 
   return {
-    models: (search: string) => {
-      const query = search.trim()
-      const filtered = query
-        ? allModels().filter((item) => matchesModelSearch(query, [item.name, item.id, item.provider.name]))
-        : allModels()
-      return [...filtered].sort((a, b) => a.name.localeCompare(b.name))
-    },
-    groups: (models: ModelItem[]) => {
-      const byProvider = new Map<string, ModelItem[]>()
-      for (const item of models) {
-        byProvider.set(item.provider.id, [...(byProvider.get(item.provider.id) ?? []), item])
+    view: (search: string) => {
+      const view = shortlist.view(search)
+      return {
+        items: view.items,
+        rest: view.rest,
+        groups: view.groups.map((group) => ({
+          category: group.role ?? group.kind,
+          label: shortlistGroupLabel(view, group, (key) => language.t(key)),
+          items: group.items,
+        })),
       }
-      return Array.from(byProvider, ([category, items]) => ({ category, items })).sort(sortModelGroups)
+    },
+    favorite: {
+      has: shortlist.isFavorite,
+      toggle: shortlist.toggleFavorite,
     },
     current: () => {
       const value = model.current()
@@ -403,8 +516,12 @@ function createModelSelectorController(input: {
 
 function ModelSelectorPopoverV2View(props: {
   trigger: ModelSelectorTrigger
-  models: (search: string) => ModelItem[]
-  groups: (models: ModelItem[]) => { category: string; items: ModelItem[] }[]
+  view: (search: string) => {
+    items: ModelItem[]
+    rest: number
+    groups: { category: string; label: string; items: ModelItem[] }[]
+  }
+  favorite?: { has: (item: ModelItem) => boolean; toggle: (item: ModelItem) => void }
   current: () => string | undefined
   select: (item: ModelItem) => void
   reachability?: {
@@ -421,8 +538,9 @@ function ModelSelectorPopoverV2View(props: {
   let contentRef: HTMLDivElement | undefined
   const dismiss = createMenuDismissController(() => contentRef)
 
-  const models = createMemo(() => props.models(store.search))
-  const groups = createMemo(() => props.groups(models()))
+  const view = createMemo(() => props.view(store.search))
+  const models = createMemo(() => view().items)
+  const groups = createMemo(() => view().groups)
   const keys = () => [...models().map(modelKey), manageKey]
   const initialActive = () => {
     const selected = props.current()
@@ -474,7 +592,7 @@ function ModelSelectorPopoverV2View(props: {
     queueMicrotask(() => activeItem()?.scrollIntoView({ block: "nearest" }))
   }
   const setSearch = (value: string) => {
-    const first = props.models(value)[0]
+    const first = props.view(value).items[0]
     setStore({ search: value, active: first ? modelKey(first) : manageKey })
   }
 
@@ -566,9 +684,11 @@ function ModelSelectorPopoverV2View(props: {
                 <For each={groups()}>
                   {(group) => (
                     <MenuV2.Group>
-                      <MenuV2.GroupLabel class="sticky top-0 z-10 gap-2 bg-v2-background-bg-layer-01 px-3">
-                        <span class="min-w-0 truncate">{group.items[0].provider.name}</span>
-                      </MenuV2.GroupLabel>
+                      <Show when={group.label}>
+                        <MenuV2.GroupLabel class="sticky top-0 z-10 gap-2 bg-v2-background-bg-layer-01 px-3">
+                          <span class="min-w-0 truncate">{group.label}</span>
+                        </MenuV2.GroupLabel>
+                      </Show>
                       <MenuV2.RadioGroup value={props.current()}>
                         <For each={group.items}>
                           {(item) => (
@@ -602,6 +722,9 @@ function ModelSelectorPopoverV2View(props: {
                                 onSelect={() => selectModel(item)}
                               >
                                 <span class="min-w-0 truncate leading-5">{item.name}</span>
+                                <span class="shrink-0 truncate text-[12px] leading-5 text-v2-text-text-faint">
+                                  {item.provider.name}
+                                </span>
                                 <Show when={isFree(item.provider.id, item.cost)}>
                                   <TagV2 class="shrink-0">{language.t("model.tag.free")}</TagV2>
                                 </Show>
@@ -610,6 +733,14 @@ function ModelSelectorPopoverV2View(props: {
                                 </Show>
                                 <Show when={props.reachability?.view(item)}>
                                   {(view) => <ReachabilityBadge view={view()} v2 />}
+                                </Show>
+                                <Show when={props.favorite}>
+                                  {(favorite) => (
+                                    <FavoriteStar
+                                      active={favorite().has(item)}
+                                      onToggle={() => favorite().toggle(item)}
+                                    />
+                                  )}
                                 </Show>
                               </MenuV2.RadioItem>
                             </TooltipV2>
@@ -623,6 +754,7 @@ function ModelSelectorPopoverV2View(props: {
             </div>
           </ScrollView>
           <div class="h-px bg-v2-border-border-muted" />
+          <ShortlistMore count={view().rest} class="h-7 px-3 leading-7" />
           <Show when={props.reachability}>
             {(r) => <ReachabilityControls state={r().state} hiddenCount={r().hiddenCount()} class="h-7 px-3" />}
           </Show>

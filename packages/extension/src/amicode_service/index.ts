@@ -109,6 +109,7 @@ import {
   demoteModelReachabilityResponse,
   type ModelReachabilityDeps,
 } from "./model_reachability";
+import { modelPickerConfigResponse } from "./model_picker_config";
 
 export function registerProfileRoutes(server: AmicodeServiceServer): AmicodeServiceServer {
   server.add("GET", "/amicode/profile", () => ({ body: profileResponse() }));
@@ -463,6 +464,10 @@ export function registerModelReachabilityRoutes(
     body: await demoteModelReachabilityResponse(body, mr),
   }));
   server.registerCleanup(mr.startScheduler());
+  // #1987 (#1979 S4): the picker's deployment config (model.recommended /
+  // model.allowlist) rides beside the reachability family — see
+  // model_picker_config.ts for why this is the path (not the engine /config).
+  server.add("GET", "/amicode/model-picker", () => ({ body: modelPickerConfigResponse() }));
   return server;
 }
 

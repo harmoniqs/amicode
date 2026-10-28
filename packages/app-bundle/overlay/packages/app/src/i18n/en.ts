@@ -125,6 +125,18 @@ export const dict = {
   "dialog.provider.openrouter.note": "Access all supported models from one provider",
   "dialog.provider.vercel.note": "Unified access to AI models with smart routing",
 
+  // amicode#1987 (#1979 S4): the picker's short-list view.
+  "dialog.model.shortlist.favorites": "Favorites",
+  "dialog.model.shortlist.recent": "Recent",
+  "dialog.model.shortlist.other": "Other",
+  "dialog.model.shortlist.role.default": "Recommended",
+  "dialog.model.shortlist.role.fast": "Fast",
+  "dialog.model.shortlist.role.strong": "Strong",
+  "dialog.model.shortlist.role.openWeight": "Open-weight",
+  "dialog.model.shortlist.more": "{{count}} more — search to see all",
+  "dialog.model.favorite.add": "Add to favorites",
+  "dialog.model.favorite.remove": "Remove from favorites",
+
   "dialog.model.select.title": "Select model",
   "dialog.model.search.placeholder": "Search models",
   "dialog.model.empty": "No model results",

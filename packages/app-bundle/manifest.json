@@ -124,7 +124,10 @@
     "packages/app/src/components/dialog-select-model-reachability-source.ts": "9e60400178db0408814b493e609a3f0177bdf89b8317a56af929cf0d12756d4e",
     "packages/app/src/components/dialog-select-model-reachability.test.ts": "03e4a5e72a03f2c7c05deed3eb008a7f832af7e9beb10d2889c9fe92061e3346",
     "packages/app/src/components/dialog-select-model-reachability.ts": "479403f9e2c799542e89fa0a28d4271684c48deccf02bd1e7c2caed9482e1602",
-    "packages/app/src/components/dialog-select-model.tsx": "2f06bf33209afb471bb18007eca02b5ce86e26c2997ef80220520f0651d0ed2e",
+    "packages/app/src/components/dialog-select-model-shortlist-source.ts": "3de6605f0e950a0af9e01297f492b14940fb1ef2456afb584215ab5e0a1455c1",
+    "packages/app/src/components/dialog-select-model-shortlist.test.ts": "211cec6aad142f5de8fd6c0b1c39ea6ad7e610c5fd620cba1197b24d0ea53ba5",
+    "packages/app/src/components/dialog-select-model-shortlist.ts": "f76834d2bde22397841dd309c2abf76c41f96bcf62f766a7c40afb2018374b07",
+    "packages/app/src/components/dialog-select-model.tsx": "0ae1ceac87082fa240264cd51452e54899c47101e4f29142ae535bfdc698adf7",
     "packages/app/src/components/engine-state-signal.ts": "2726628b85d4bc58bf6b3bd3045fc4239ad384deaba14fc8f46b818741549a5e",
     "packages/app/src/components/engine-toggle-utils.test.ts": "bf53ca7a6fac3696f8d9aac032ceee5e35fb3b7e3dfaef3f9afb1fa0ff3135bb",
     "packages/app/src/components/engine-toggle-utils.ts": "bab8a7ddef9f49d4fc243477b7206feb741afdf5ec154a2d70a9f31c814f8c5d",
@@ -198,7 +201,9 @@
     "packages/app/src/context/local-agent.test.ts": "a5a9d60bb4401d409218cc247c1cc06ede8b7878ddf01dc6080328f54eb9cade",
     "packages/app/src/context/local-agent.ts": "0aab67e695dc3bb45a733ac0df80a0a5e14cfe29b2375b6dc3cd07fbccea33e2",
     "packages/app/src/context/local.tsx": "3ab8b9fc2db082df4ba485373679f00a95d0ffe3c691a0afee1dc53db7eabd9e",
-    "packages/app/src/context/models.tsx": "8904525767b36ed5ba93e85a0fddb9bf737a8d066dfff084380ce1a67182f535",
+    "packages/app/src/context/models-favorites.test.ts": "6336bc4dd46a0492e393110ee7aab6ee58f152982ec657e17ad9f750d22483f8",
+    "packages/app/src/context/models-favorites.ts": "60d4e6889ca9143432417f624ddee14047f14bcfd1325fca2f491fb19803b1a2",
+    "packages/app/src/context/models.tsx": "39821854ea95753c583c05f9b911a0898ed8ef7b6da49613a19aa3ee39404707",
     "packages/app/src/context/platform.tsx": "edd9b1773feb5c084b922a57b6914f6a473eed558b44f9de0eeb1c4d4e2b49da",
     "packages/app/src/context/question-inbox.test.ts": "d4e2c666194fe6463d1a1da1901f2aef3b6a17eec00394a2b020d7ce698d4c92",
     "packages/app/src/context/question-inbox.ts": "f42a2490670e44578f88d626bc0db0a0205fa2b5ec7cd719ba0544915f3a6179",
@@ -242,7 +247,7 @@
     "packages/app/src/i18n/compaction-failure.test.ts": "a4a3765beb238a2c157c07c9c8ede8418b9febb814d8d1e3a5b2d8868cbd80d9",
     "packages/app/src/i18n/da.ts": "db685cb94f22ace194850efe9bdc02c530777a4583dc9eb9d00b97002b0a0968",
     "packages/app/src/i18n/de.ts": "c440ad7543321cae1425e0c2fad92ff73963f21672fbf31176831933573bf103",
-    "packages/app/src/i18n/en.ts": "9cff63af9ac743a6b87987e7bfbfc282213adf55e13e949a2d60747dc15fab9e",
+    "packages/app/src/i18n/en.ts": "38517f7b3560a41b32c2bf4a695f2145bc5f9e46d7919a3a44761be8854be8be",
     "packages/app/src/i18n/es.ts": "8cdec3592cddf0b91d7fd59002c81c4e8973c5bf6573e065df64d48c42e1802f",
     "packages/app/src/i18n/fr.ts": "b9f646352189054b6918bfbac670579e76418c3148eb7e5afca9d71d97e7f2b7",
     "packages/app/src/i18n/ja.ts": "27ffc41a0fd8dc4b2e814a45c55fad4726ff1c7a85c884cf6af95f8397f17cbf",
@@ -1036,10 +1041,10 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-28T18:04:17.863Z",
+  "extracted_at": "2026-10-28T18:25:43.822Z",
   "per_package": {
     "packages/app": {
-      "A": 260,
+      "A": 265,
       "M": 165,
       "D": 0
     },
@@ -1085,7 +1090,7 @@
     }
   },
   "counts": {
-    "overlay_total": 1014,
+    "overlay_total": 1019,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1206,6 +1211,9 @@
     "packages/app/src/components/dialog-select-model-reachability-source.ts": "A",
     "packages/app/src/components/dialog-select-model-reachability.test.ts": "A",
     "packages/app/src/components/dialog-select-model-reachability.ts": "A",
+    "packages/app/src/components/dialog-select-model-shortlist-source.ts": "A",
+    "packages/app/src/components/dialog-select-model-shortlist.test.ts": "A",
+    "packages/app/src/components/dialog-select-model-shortlist.ts": "A",
     "packages/app/src/components/dialog-select-model.tsx": "M",
     "packages/app/src/components/engine-state-signal.ts": "A",
     "packages/app/src/components/engine-toggle-utils.test.ts": "A",
@@ -1280,6 +1288,8 @@
     "packages/app/src/context/local-agent.test.ts": "M",
     "packages/app/src/context/local-agent.ts": "M",
     "packages/app/src/context/local.tsx": "M",
+    "packages/app/src/context/models-favorites.test.ts": "A",
+    "packages/app/src/context/models-favorites.ts": "A",
     "packages/app/src/context/models.tsx": "M",
     "packages/app/src/context/platform.tsx": "M",
     "packages/app/src/context/question-inbox.test.ts": "A",

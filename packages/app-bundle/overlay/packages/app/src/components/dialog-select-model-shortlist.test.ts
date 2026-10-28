@@ -148,8 +148,14 @@ describe("buildModelShortlist — default view", () => {
   })
 
   test("refs to models not in the list (disconnected / hidden by visibility) are skipped", () => {
-    const view = buildModelShortlist({ ...base, shown, favorites: [ref("zz", "gone")], recents: [ref("a", "nope")] })
-    expect(view.items).toEqual([])
+    const view = buildModelShortlist({
+      ...base,
+      shown,
+      favorites: [ref("zz", "gone")],
+      recents: [ref("a", "nope"), ref("b", "recent1")],
+    })
+    expect(ids(view.items)).toEqual(["b/recent1"])
+    expect(view.groups.map((g) => g.kind)).toEqual(["recent"])
   })
 
   test(`capped at ${SHORTLIST_CAP} entries across sections, in section order`, () => {
