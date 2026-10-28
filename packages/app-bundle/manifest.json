@@ -133,6 +133,7 @@
     "packages/app/src/components/harness-switch.test.ts": "db263ece42911e756fb8b6e88697a6bbbd0d1317decd1e63b027d9fe8c69b405",
     "packages/app/src/components/harness-switch.ts": "b4cb2b2241d71c477be71285fe6041d4b0d604a26d74c30dc5239694211a1f90",
     "packages/app/src/components/help-button.tsx": "780d533f776a784660cfed072a131198bc6fcc8e8fe332e8e1a220d516c9684e",
+    "packages/app/src/components/model-dead-pick.test.ts": "de2423bbfd9876d5528073a1aaca05672a3fb40437d238a509c0e6b4b9f0c9ad",
     "packages/app/src/components/new-session-machine-picker.ts": "8c7689f79c7610e32fef478320870d1468fa17a3a02463e2cbe058a487fb4769",
     "packages/app/src/components/pane-bridge.tsx": "756b3306b51c963fac6778716f6c6c4626f0f3bf75c93b7cb4cab58ea0bf3d4e",
     "packages/app/src/components/profile-popover.tsx": "eff742e90544455f13234a9351bb1b82189663cba2cd3172bdcea1a8a37284e8",
@@ -1036,10 +1037,10 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-28T18:04:17.863Z",
+  "extracted_at": "2026-10-28T18:10:39.816Z",
   "per_package": {
     "packages/app": {
-      "A": 260,
+      "A": 261,
       "M": 165,
       "D": 0
     },
@@ -1085,7 +1086,7 @@
     }
   },
   "counts": {
-    "overlay_total": 1014,
+    "overlay_total": 1015,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1215,6 +1216,7 @@
     "packages/app/src/components/harness-switch.test.ts": "A",
     "packages/app/src/components/harness-switch.ts": "A",
     "packages/app/src/components/help-button.tsx": "M",
+    "packages/app/src/components/model-dead-pick.test.ts": "A",
     "packages/app/src/components/new-session-machine-picker.ts": "A",
     "packages/app/src/components/pane-bridge.tsx": "A",
     "packages/app/src/components/profile-popover.tsx": "A",
