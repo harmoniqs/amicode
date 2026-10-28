@@ -3,6 +3,7 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 import { ServerManager } from "./server_manager";
 import { fetchProviderSignal, fetchProviderIds } from "./llm_creds.mjs";
+import { engineReachabilityDeps } from "./amicode_service/model_reachability";
 import { resolveOpencodeBinary, OpencodeMissingError, unsupportedHostAdvice } from "./opencode_binary";
 import { resolveSelectedLaunch, harnessMenu, decideHarnessSwitch } from "./harness";
 import { watchHarnessSwitch, writeHarnessOptionsFile } from "./harness_switch";
@@ -1973,6 +1974,13 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           return fetchProviderIds(engineUrl, { headers: serverAuthHeaders });
         },
       },
+      // #1985 (#1979 S2): the model-reachability cache's engine seams — the
+      // key-free catalog + the one-token probe over the SAME late-bound
+      // engine URL and credential the routing refresh uses.
+      modelReachability: engineReachabilityDeps({
+        getUrl: () => serverManager?.url?.toString(),
+        headers: serverAuthHeaders,
+      }),
       appDistRoot: resolveAppDistRoot(
         vscode.workspace.getConfiguration("amicode").get<string>("appBundleDir", ""),
         ctx.extensionPath,
@@ -2340,6 +2348,11 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
             return fetchProviderIds(engineUrl, { headers: serverAuthHeaders });
           },
         },
+        // #1985: same reachability seams on the adopted-engine path.
+        modelReachability: engineReachabilityDeps({
+          getUrl: () => opencodeReadyUrl?.toString(),
+          headers: serverAuthHeaders,
+        }),
         appDistRoot: resolveAppDistRoot(
           vscode.workspace.getConfiguration("amicode").get<string>("appBundleDir", ""),
           ctx.extensionPath,

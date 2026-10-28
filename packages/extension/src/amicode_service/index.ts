@@ -102,6 +102,13 @@ import {
   resetModelRoutingResponse,
   type ModelRoutingDeps,
 } from "./model_routing";
+import {
+  ModelReachability,
+  modelReachabilityResponse,
+  refreshModelReachabilityResponse,
+  demoteModelReachabilityResponse,
+  type ModelReachabilityDeps,
+} from "./model_reachability";
 
 export function registerProfileRoutes(server: AmicodeServiceServer): AmicodeServiceServer {
   server.add("GET", "/amicode/profile", () => ({ body: profileResponse() }));
@@ -423,6 +430,39 @@ export function registerModelRoutingRoutes(
     body: await resetModelRoutingResponse(body, deps),
   }));
 
+  return server;
+}
+
+// Model-reachability routes (#1985, #1979 S2): the per-(provider, model)
+// reachability cache over the engine's one-token probe (S1, #1984). GET —
+// the rows ("unchecked" for anything the cache cannot vouch for, never ok) +
+// per-provider probe metadata; POST /refresh — the on-demand probe,
+// rate-limited per provider; POST /demote — a runtime demotion that sticks
+// until the next probe. ALWAYS registered (no engine deps → GET serves the
+// cache, refresh answers engine_unavailable); the scheduler (on-connect +
+// daily, rate-limited, shared across hub shards through the locked cache
+// file) is armed only when both engine seams are wired, and stops with the
+// service. Fleet clients proxy /amicode/* to the host, so one hub cache
+// serves every machine.
+export function registerModelReachabilityRoutes(
+  server: AmicodeServiceServer,
+  deps: ModelReachabilityDeps = {},
+): AmicodeServiceServer {
+  const mr = new ModelReachability(deps);
+  server.add("GET", "/amicode/model-reachability", async () => {
+    const body = await modelReachabilityResponse(mr);
+    // the GET is also an on-connect trigger: a newly connected provider is
+    // probed in the background (the claim + floor still apply)
+    if (mr.canSchedule) void mr.tick();
+    return { body };
+  });
+  server.add("POST", "/amicode/model-reachability/refresh", async ({ body }) => ({
+    body: await refreshModelReachabilityResponse(body, mr),
+  }));
+  server.add("POST", "/amicode/model-reachability/demote", async ({ body }) => ({
+    body: await demoteModelReachabilityResponse(body, mr),
+  }));
+  server.registerCleanup(mr.startScheduler());
   return server;
 }
 
@@ -938,6 +978,10 @@ export function createAmicodeService(
      *  credential gate's refresh loop). Absent → the surface renders empty
      *  roles (no cards known) with providers from the stored snapshot. */
     modelRouting?: ModelRoutingDeps;
+    /** #1985: the model-reachability cache's engine seams (the key-free
+     *  catalog + the S1 probe) and tuning. Absent → the routes still answer
+     *  (GET serves the cache; refresh is engine_unavailable; no scheduler). */
+    modelReachability?: ModelReachabilityDeps;
     /** #1771: the service's diagnostic log (the hub runner's stdout →
      *  /tmp/amico-hub.log; the window's Amicode output channel). The fan-in
      *  census and the owner-map refresh outcomes write here. Absent → silent. */
@@ -1551,5 +1595,6 @@ export function createAmicodeService(
   server.add("POST", PEER_REVOKE_PATH, peerRevokeHandler());
   registerPostureRoutes(server);
   registerModelRoutingRoutes(server, opts.modelRouting);
+  registerModelReachabilityRoutes(server, opts.modelReachability);
   return server;
 }
