@@ -19,6 +19,30 @@
 import * as http from "node:http";
 import type { SessionOwnerTag, OwnerRefreshPeer } from "./merged_projection";
 import { evaluateRemoteWriteGate, type WriteGrantRead } from "./remote_write_gate";
+import { SseFrameSplitter } from "./sse_frame_splitter";
+
+/** #1790 — the peer session-event stream reader's per-chunk path: decoded
+ *  chunks in, each frame's parsed `data:` JSON out via `onEvent`. Splits with
+ *  SseFrameSplitter, so it is LINEAR in the text received (the old reader
+ *  appended every chunk to the whole partial buffer and searched it from the
+ *  start — quadratic for a large frame in small chunks) and ends a frame at a
+ *  CRLF blank line too. Malformed `data:` payloads are skipped. Exported so the
+ *  split cost can be measured on this exact path. */
+export function sessionEventChunkReader(
+  onEvent: (event: Record<string, unknown>) => void,
+): (chunk: string) => void {
+  const splitter = new SseFrameSplitter();
+  return (chunk) => {
+    for (const frame of splitter.push(chunk)) {
+      // Parse the data: line from the whole frame (may contain \r\n).
+      const dataLine = frame.split(/\r?\n/).find((l) => l.startsWith("data:"));
+      if (!dataLine) continue;
+      try {
+        onEvent(JSON.parse(dataLine.slice(5).trim()) as Record<string, unknown>);
+      } catch { /* skip malformed */ }
+    }
+  };
+}
 
 // ── owner-routing header ─────────────────────────────────────────────────────
 
@@ -871,25 +895,12 @@ export class SessionMultiplexProxy implements MultiplexResolver {
       try {
         const target = new URL(`/api/session/${sessionId}/event`, peerUrl);
         req = http.get(target, (res) => {
-          let buf = "";
+          // #1790: linear-time frame splitting (see sessionEventChunkReader).
+          const read = sessionEventChunkReader(push);
           res.setEncoding("utf8");
           res.on("data", (chunk: string) => {
             if (closed) return;
-            buf += chunk;
-            // Split SSE events on double-newline
-            let idx: number;
-            while ((idx = buf.indexOf("\n\n")) >= 0) {
-              const block = buf.slice(0, idx);
-              buf = buf.slice(idx + 2);
-              // Parse the data: line
-              const dataLine = block.split("\n").find((l) => l.startsWith("data:"));
-              if (dataLine) {
-                try {
-                  const data = JSON.parse(dataLine.slice(5).trim()) as Record<string, unknown>;
-                  push(data);
-                } catch { /* skip malformed */ }
-              }
-            }
+            read(chunk);
           });
           res.on("end", () => { /* stream ended — nothing more to push */ });
           res.on("error", () => { /* stream error — nothing more to push */ });
