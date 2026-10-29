@@ -263,7 +263,9 @@ async function fetchSessions(
       headers: authHeaders,
       signal: AbortSignal.timeout(timeoutMs),
     });
-    if (res.status === 401) return done({ record: { ...base, reason: "unauthorized" }, entries: [] });
+    // #1794: a 403 is a refusal of the same kind as a 401 (the peer does not
+    // trust this machine), so it classifies as unauthorized and drops at once.
+    if (res.status === 401 || res.status === 403) return done({ record: { ...base, reason: "unauthorized" }, entries: [] });
     if (!res.ok) {
       return done({ record: { ...base, reason: "fetch-failed", detail: `HTTP ${res.status}` }, entries: [] });
     }

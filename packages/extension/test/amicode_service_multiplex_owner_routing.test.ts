@@ -368,6 +368,40 @@ describe("#1774 AC1 — a refresh in which one peer times out or errors keeps th
     expect(ownerMap.resolveOwner("ses-s1")).toBe("studio"); // retained, not dropped to local
   });
 
+  it("#1794: a peer whose session list answers 403 is refused like a 401 — its owner entries drop at once", async () => {
+    let studioRefused = false;
+    const lines: string[] = [];
+    const fetchImpl = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.startsWith("http://studio") && studioRefused) return new Response("forbidden", { status: 403 });
+      if (url.endsWith("/global/health")) return new Response(JSON.stringify({ version: "t" }), { status: 200 });
+      if (url.startsWith("http://studio")) return new Response(JSON.stringify(/archived=true/.test(url) ? [] : [{ id: "ses-s1" }]), { status: 200 });
+      return new Response(JSON.stringify([]), { status: 200 }); // local
+    }) as unknown as typeof fetch;
+    const ownerMap = new SessionOwnerMap();
+    const feed = new OwnerMapFeed({
+      ownerMap,
+      log: (l) => lines.push(l),
+      buildProjection: async () => {
+        const p = await buildOwnerRoutingProjection({
+          localMachineId: "macbook",
+          local: { getUrl: () => "http://local" },
+          peers: [{ machineId: "studio", getUrl: () => "http://studio", token: "tok" }],
+          rosterLookup: () => undefined,
+          fetchImpl,
+        });
+        return { sessions: p.sessions as SessionEntry[], peers: p.peers };
+      },
+    });
+    await feed.refreshOnce();
+    expect(ownerMap.resolveOwner("ses-s1")).toBe("studio");
+    studioRefused = true;
+    await feed.refreshOnce();
+    expect(ownerMap.resolveOwner("ses-s1")).toBeUndefined(); // dropped immediately, not retained for 60 s
+    expect(ownerMap.ownerMachineIds()).toContain("studio"); // still NAMED unavailable
+    expect(lines.at(-1)).toMatch(/outcome=unauthorized .* reason=unauthorized retention=dropped dropped=1$/);
+  });
+
   it("its event arm stays OPEN across the failed refresh — no close, no unavailable comment", async () => {
     const ownerMap = new SessionOwnerMap();
     ownerMap.update([ownedBy("ses-s1", "studio")], [peerOk("studio")]);
