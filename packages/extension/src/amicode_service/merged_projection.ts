@@ -105,7 +105,7 @@ export interface FleetProjectionOptions {
 
 /** #1771: one peer's ownership-refresh outcome — what the OwnerMapFeed logs.
  *  `timeout` is the fetch guard firing (AbortSignal.timeout); `unauthorized` a
- *  401; every other absence (fetch failure, no upstream, missing credential,
+ *  401 or 403 (a refusal); every other absence (fetch failure, no upstream, missing credential,
  *  untrusted) is `error`, with its named `reason`. */
 export type OwnerRefreshOutcome = "ok" | "timeout" | "error" | "unauthorized";
 
@@ -237,10 +237,15 @@ async function fetchSessions(
   now: () => number = Date.now,
 ): Promise<SourceFetch> {
   const started = now();
-  const done = (r: { record: SourceFetchRecord; entries: Record<string, unknown>[] }, timedOut = false): SourceFetch => ({
+  const done = (
+    r: { record: SourceFetchRecord; entries: Record<string, unknown>[] },
+    timedOut = false,
+    status?: number,
+  ): SourceFetch => ({
     ...r,
     durationMs: Math.max(0, now() - started),
     timedOut,
+    ...(status !== undefined ? { status } : {}),
   });
   const base: SourceFetchRecord = { source: tag, present: false };
   const origin = opts.getUrl();
@@ -263,9 +268,13 @@ async function fetchSessions(
       headers: authHeaders,
       signal: AbortSignal.timeout(timeoutMs),
     });
-    if (res.status === 401) return done({ record: { ...base, reason: "unauthorized" }, entries: [] });
+    if (res.status === 401) return done({ record: { ...base, reason: "unauthorized" }, entries: [] }, false, 401);
     if (!res.ok) {
-      return done({ record: { ...base, reason: "fetch-failed", detail: `HTTP ${res.status}` }, entries: [] });
+      return done(
+        { record: { ...base, reason: "fetch-failed", detail: `HTTP ${res.status}` }, entries: [] },
+        false,
+        res.status,
+      );
     }
     const parsed: unknown = await res.json();
     if (!Array.isArray(parsed)) {
@@ -323,6 +332,9 @@ interface SourceFetch {
   entries: Record<string, unknown>[];
   durationMs: number;
   timedOut: boolean;
+  /** #1794: the HTTP status the peer answered with, when it answered at all —
+   *  lets the refresh classifier tell a refusal (403) from a 5xx. */
+  status?: number;
 }
 
 /** Merge both stores into ONE provenance-tagged list. The hub wins conflicts
@@ -560,6 +572,8 @@ function refreshOutcomeOf(f: SourceFetch): OwnerRefreshOutcome {
   if (f.record.present) return "ok";
   if (f.timedOut) return "timeout";
   if (f.record.reason === "unauthorized") return "unauthorized";
+  // #1794: a 403 is the peer refusing us, like a 401 — drop at once; 5xx stays an error (retained).
+  if (f.status === 403) return "unauthorized";
   return "error";
 }
 

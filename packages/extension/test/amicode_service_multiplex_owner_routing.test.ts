@@ -368,6 +368,45 @@ describe("#1774 AC1 — a refresh in which one peer times out or errors keeps th
     expect(ownerMap.resolveOwner("ses-s1")).toBe("studio"); // retained, not dropped to local
   });
 
+  for (const [status, expectOwner, outcome] of [
+    [403, undefined, "unauthorized"],
+    [401, undefined, "unauthorized"],
+    [503, "studio", "error"],
+  ] as const) {
+    it(`#1794 — through the REAL routing projection: a peer answering ${status} is ${outcome}; its owner entries ${expectOwner ? "are retained" : "are dropped at once"}`, async () => {
+      let studioStatus: number | undefined;
+      const fetchImpl = (async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.startsWith("http://studio") && studioStatus !== undefined) return new Response("no", { status: studioStatus });
+        if (url.endsWith("/global/health")) return new Response(JSON.stringify({ version: "t" }), { status: 200 });
+        if (url.startsWith("http://studio")) return new Response(JSON.stringify(/archived=true/.test(url) ? [] : [{ id: "ses-s1" }]), { status: 200 });
+        return new Response(JSON.stringify([]), { status: 200 }); // local
+      }) as unknown as typeof fetch;
+      const ownerMap = new SessionOwnerMap();
+      let last: OwnerRefreshPeer[] = [];
+      const feed = new OwnerMapFeed({
+        ownerMap,
+        buildProjection: async () => {
+          const p = await buildOwnerRoutingProjection({
+            localMachineId: "macbook",
+            local: { getUrl: () => "http://local" },
+            peers: [{ machineId: "studio", getUrl: () => "http://studio", token: "tok" }],
+            rosterLookup: () => undefined,
+            fetchImpl,
+          });
+          last = p.peers;
+          return { sessions: p.sessions as SessionEntry[], peers: p.peers };
+        },
+      });
+      await feed.refreshOnce();
+      expect(ownerMap.resolveOwner("ses-s1")).toBe("studio");
+      studioStatus = status;
+      await feed.refreshOnce();
+      expect(last[0].outcome).toBe(outcome);
+      expect(ownerMap.resolveOwner("ses-s1")).toBe(expectOwner);
+    });
+  }
+
   it("its event arm stays OPEN across the failed refresh — no close, no unavailable comment", async () => {
     const ownerMap = new SessionOwnerMap();
     ownerMap.update([ownedBy("ses-s1", "studio")], [peerOk("studio")]);
