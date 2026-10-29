@@ -54,7 +54,7 @@ Trace chains via `warm_started_from` in catalog:
 
 ### Step 6: Generate Outputs
 - **Insight notes**: Create in `<project>/ledger/observations/` when patterns are clear (3+ supporting experiments)
-- **Direction suggestions**: Note which direction tiers are progressing vs stalled (from the strategy brief — `amico-run strategy-brief`); route them per the D6 rules (hopper triage tag, or the proposals surface for intent-direction items)
+- **Direction suggestions**: Note which direction tiers are progressing vs stalled (from the strategy brief — `amico strategy-brief`); route them per the D6 rules (hopper triage tag, or the proposals surface for intent-direction items)
 
 > **Fidelity convention:** Always report both fixed-phase and free-phase fidelity for multi-subsystem gates — free-phase is the primary metric, and fixed-phase can underreport substantially for entangling gates. The `setup` skill owns the canonical statement of this convention (the quantified gap and its reference) — consult it rather than restating it here.
 
