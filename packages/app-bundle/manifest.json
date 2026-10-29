@@ -287,7 +287,7 @@
     "packages/app/src/pages/new-session.tsx": "c060bbb15569b6da2f67146e6af0879ccb5444345df03dbc2f9b39cb98b9db78",
     "packages/app/src/pages/overlay-content-hash.test.ts": "aa208098213522dcde42434408afe9c8641fad663f44a58c316922dbd0da2f5c",
     "packages/app/src/pages/research-surfaces-absence.test.ts": "9944a8ec5492500eb82548d03b24ea7fb8ccc9c2ae5de14a4d18ddb309378746",
-    "packages/app/src/pages/session.tsx": "19039f79f338c1a47b63b3e2b8d333e4d48c0f07b674ed6aee8bc0d5a2da5203",
+    "packages/app/src/pages/session.tsx": "a115ebf2fda802db0cf4beda9fd68a521ec7500ba04f877d9c47b248f308f353",
     "packages/app/src/utils/amicode-bridge.ts": "3ec87c24c0384d312f7eb644807d9217a53b1b4b97f7fffadab1cc1595603f3b",
     "packages/app/src/utils/amicode-bug-report.test.ts": "b1bbf49230ff3aa6d1a43ffa9165ba5a84ca4ee18a6d49f52ee5cd887c3e6444",
     "packages/app/src/utils/amicode-bug-report.ts": "d55d9cecfe17719c0d4a0ca498345c7eff6fca1de6b645e4bc3fecb40f2f4645",
@@ -840,6 +840,8 @@
     "packages/app/src/pages/new-session/new-session-view.test.ts": "eb337485bf03facbc59d9eadac37cfeb04f75bf97814df80d3be4d0ec9455047",
     "packages/app/src/pages/new-session/new-session-view.tsx": "9390bb0c6d24d6ad1cbc753b6a57d85488a7355264e37641991a931769a3f482",
     "packages/app/src/pages/session/amicode-session-relay.integration.test.ts": "4991e775d3a6c63a514072ccfa5aad190c586383b77ef41689c853fb271d3bf4",
+    "packages/app/src/pages/session/composer-refocus.test.ts": "fb2fc95d2b4284e039f59552fe82232f1c190a613b40ef39529b310c92aeea30",
+    "packages/app/src/pages/session/composer-refocus.ts": "4e837f00cd0e606d32ca648a0f310dfd605a897f17efc82696f257af8d1802f5",
     "packages/app/src/pages/session/fleet-manager-tab.test.tsx": "f3bb956e343ccd82acd8bf38c9ad2413d48b24ec9f484c5dfd3939d9e07139b7",
     "packages/app/src/pages/session/fleet-manager-tab.tsx": "1e7db225a1f2fa3234e0eb47f314de49185db1f3ebddb5585fd0247184adebaa",
     "packages/app/src/pages/session/fleet-manager.test.ts": "b10aa624fba721c66e295a08f5bb862363701e09fe870295028c8d4b39d3b850",
@@ -1049,10 +1051,10 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-29T12:44:15.637Z",
+  "extracted_at": "2026-10-29T12:45:52.275Z",
   "per_package": {
     "packages/app": {
-      "A": 272,
+      "A": 274,
       "M": 166,
       "D": 0
     },
@@ -1098,7 +1100,7 @@
     }
   },
   "counts": {
-    "overlay_total": 1027,
+    "overlay_total": 1029,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1935,6 +1937,8 @@
     "packages/app/src/pages/new-session/new-session-view.test.ts": "A",
     "packages/app/src/pages/new-session/new-session-view.tsx": "M",
     "packages/app/src/pages/session/amicode-session-relay.integration.test.ts": "A",
+    "packages/app/src/pages/session/composer-refocus.test.ts": "A",
+    "packages/app/src/pages/session/composer-refocus.ts": "A",
     "packages/app/src/pages/session/fleet-manager-tab.test.tsx": "A",
     "packages/app/src/pages/session/fleet-manager-tab.tsx": "A",
     "packages/app/src/pages/session/fleet-manager.test.ts": "A",

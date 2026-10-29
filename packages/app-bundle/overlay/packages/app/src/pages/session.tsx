@@ -60,7 +60,7 @@ import { TerminalProvider, useTerminal } from "@/context/terminal"
 import { PromptInput } from "@/components/prompt-input"
 import { PromptInputV2Composer, usePromptInputV2Controller } from "@/components/prompt-input-v2"
 import { useSettingsCommand } from "@/components/settings-dialog"
-import { getCursorPosition, setCursorPosition } from "@/components/prompt-input/editor-dom"
+import { setCursorPosition } from "@/components/prompt-input/editor-dom"
 import { promptLength } from "@/components/prompt-input/history"
 import { type FollowupDraft, sendFollowupDraft } from "@/components/prompt-input/submit"
 import {
@@ -110,6 +110,7 @@ import { serializeSession } from "@/utils/serialize-session"
 import { useUsageExceededDialogs } from "./session/usage-exceeded-dialogs"
 import { createSessionOwnership } from "./session/session-ownership"
 import { createSessionLineage } from "./session/session-lineage"
+import { composerRefocusOffset } from "./session/composer-refocus"
 
 type FollowupItem = FollowupDraft & { id: string }
 type FollowupEdit = Pick<FollowupItem, "id" | "prompt" | "context">
@@ -1598,43 +1599,30 @@ export default function Page() {
     inputRef?.focus()
   }
 
-  // #1248: per-session caret offset — saves the live selection offset while the
-  // composer has focus so refocusing on a tab switch can put the caret back where
-  // the user left it rather than jumping to the end.
-  const sessionCaretOffsets = new Map<string, number>()
-
-  onMount(() => {
-    const saveCaretOffset = () => {
-      const editor = inputRef
-      if (!editor) return
-      // Only record when the composer editor owns the current selection.
-      const active = document.activeElement
-      if (active !== editor && !editor.contains(active)) return
-      const sel = window.getSelection()
-      if (!sel || sel.rangeCount === 0) return
-      if (!editor.contains(sel.anchorNode)) return
-      const key = sessionKey()
-      if (!key) return
-      sessionCaretOffsets.set(key, getCursorPosition(editor))
-    }
-    document.addEventListener("selectionchange", saveCaretOffset, { passive: true })
-    onCleanup(() => document.removeEventListener("selectionchange", saveCaretOffset))
-  })
-
-  // #1248: on every session tab switch, refocus the composer and restore the
-  // saved caret offset for that session (fallback: prompt.cursor(), then end).
+  // #1248: on a session tab switch, give the composer its focus back and put the
+  // caret where the user left it in that session (prompt.cursor(), written on
+  // composer blur; fallback: end). Guards mirror type-to-focus — see
+  // composerRefocusOffset. Decided inside the frame so focus has settled.
   createEffect(
     on(
       sessionKey,
       (key, prevKey) => {
-        if (!key || !prevKey || key === prevKey) return
-        if (isChildSession()) return
         requestAnimationFrame(() => {
           const editor = inputRef
-          if (!editor) return
+          const offset = composerRefocusOffset({
+            key,
+            prevKey,
+            childSession: isChildSession(),
+            composerBlocked: composer.blocked(),
+            dialogActive: !!dialog.active,
+            active: deepActiveElement(),
+            composer: editor,
+            saved: prompt.cursor(),
+            length: promptLength(prompt.current()),
+          })
+          if (offset === undefined || !editor) return
           editor.focus()
-          const saved = sessionCaretOffsets.get(key) ?? prompt.cursor() ?? promptLength(prompt.current())
-          setCursorPosition(editor, saved)
+          setCursorPosition(editor, offset)
         })
       },
       { defer: true },
