@@ -8,7 +8,9 @@ import {
   externalUpdate,
   detectMode,
 } from "./editor-core"
-import { EditorView } from "@codemirror/view"
+import { EditorView, runScopeHandlers } from "@codemirror/view"
+import { EditorState } from "@codemirror/state"
+import { foldable, foldedRanges, syntaxTree } from "@codemirror/language"
 
 /**
  * Tests for editor-core — the extracted general-purpose CM6 setup functions
@@ -112,6 +114,71 @@ describe("baseExtensions (via editor-core)", () => {
     const theme = buildThemeExtension("dark")
     const exts = baseExtensions({ theme })
     expect(exts).toContain(EditorView.lineWrapping)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Code folding (#1517) — fold gutter, Mod-Shift-[ / Mod-Shift-] shortcuts
+// ---------------------------------------------------------------------------
+
+describe("baseExtensions code folding (#1517)", () => {
+  const SRC = "function f() {\n  const a = 1\n  return a\n}\n"
+
+  async function makeView(): Promise<EditorView> {
+    const language = await loadLanguage("ts")
+    expect(language).not.toBeNull()
+    const parent = document.createElement("div")
+    document.body.appendChild(parent)
+    const view = new EditorView({
+      parent,
+      state: EditorState.create({
+        doc: SRC,
+        selection: { anchor: 0 },
+        extensions: baseExtensions({ theme: buildThemeExtension("dark"), language }),
+      }),
+    })
+    // Make sure the lezer tree is fully parsed so fold ranges are available.
+    syntaxTree(view.state)
+    return view
+  }
+
+  function keyEvent(init: KeyboardEventInit): KeyboardEvent {
+    return new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init })
+  }
+
+  test("renders a fold gutter next to the line numbers", async () => {
+    const view = await makeView()
+    expect(view.dom.querySelector(".cm-foldGutter")).not.toBeNull()
+    expect(view.dom.querySelector(".cm-lineNumbers")).not.toBeNull()
+    view.destroy()
+  })
+
+  test("the lezer grammar reports a foldable region on the function line", async () => {
+    const view = await makeView()
+    const line = view.state.doc.line(1)
+    expect(foldable(view.state, line.from, line.to)).not.toBeNull()
+    view.destroy()
+  })
+
+  test("Mod-Shift-[ folds the region at the cursor and Mod-Shift-] unfolds it", async () => {
+    const view = await makeView()
+    const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/.test(navigator.platform)
+    const mod = isMac ? { metaKey: true } : { ctrlKey: true }
+    const count = () => {
+      let n = 0
+      foldedRanges(view.state).between(0, view.state.doc.length, () => { n++ })
+      return n
+    }
+    expect(count()).toBe(0)
+
+    const fold = keyEvent({ key: "{", code: "BracketLeft", keyCode: 219, shiftKey: true, ...mod })
+    expect(runScopeHandlers(view, fold, "editor")).toBe(true)
+    expect(count()).toBe(1)
+
+    const unfold = keyEvent({ key: "}", code: "BracketRight", keyCode: 221, shiftKey: true, ...mod })
+    expect(runScopeHandlers(view, unfold, "editor")).toBe(true)
+    expect(count()).toBe(0)
+    view.destroy()
   })
 })
 
