@@ -842,6 +842,33 @@ describe("amicode bridge — project-selected (#663)", () => {
   });
 });
 
+describe("amicode bridge — reveal-in-sidebar (#1036)", () => {
+  it("consumes reveal-in-sidebar and calls onRevealInSidebar with the path", () => {
+    const revealed: string[] = [];
+    const host = { ...io(), onRevealInSidebar: (p: string) => revealed.push(p) };
+    const handled = handleAmicodeBridgeMessage(
+      { source: "amicode", kind: "reveal-in-sidebar", path: "/Users/jj/harmoniqs/src/a.jl" },
+      host,
+    );
+    expect(handled).toBe(true);
+    expect(revealed).toEqual(["/Users/jj/harmoniqs/src/a.jl"]);
+  });
+
+  it("consumes the message even without onRevealInSidebar wired", () => {
+    expect(
+      handleAmicodeBridgeMessage({ source: "amicode", kind: "reveal-in-sidebar", path: "/x/y" }, io()),
+    ).toBe(true);
+  });
+
+  it("ignores empty and non-string paths", () => {
+    const revealed: string[] = [];
+    const host = { ...io(), onRevealInSidebar: (p: string) => revealed.push(p) };
+    handleAmicodeBridgeMessage({ source: "amicode", kind: "reveal-in-sidebar", path: "" }, host);
+    handleAmicodeBridgeMessage({ source: "amicode", kind: "reveal-in-sidebar", path: 42 }, host);
+    expect(revealed).toEqual([]);
+  });
+});
+
 // ============================================================================
 // #1551 — the enable-control act rides a PAYLOAD envelope (kind:
 // "fleet-enable-control" carrying { ownerMachineId, sessionID }), NOT the

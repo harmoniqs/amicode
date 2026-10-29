@@ -202,6 +202,10 @@ export interface BridgeIo {
    *  "reset" = expand selected + collapse others, "expand" = expand selected
    *  only, "none" = highlight only. */
   onProjectSelected?: (path: string, mode?: "none" | "expand" | "reset") => void;
+  /** #1036: the Preview tab's "Find in sidebar" posts a `reveal-in-sidebar`
+   *  envelope carrying an absolute file path; the extension reveals it in the
+   *  sidebar project tree. (A dedicated kind: the `command` lane carries no args.) */
+  onRevealInSidebar?: (path: string) => void;
   /** #1551: the self-owned enable-control act. The app posts a
    *  `fleet-enable-control` PAYLOAD envelope carrying the target owner
    *  machineId + sessionID (the bare command lane cannot carry a target); the
@@ -1607,6 +1611,13 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     const validModes = new Set(["none", "expand", "reset"]);
     const resolvedMode = typeof mode === "string" && validModes.has(mode) ? mode as "none" | "expand" | "reset" : "reset";
     if (typeof p === "string" && p !== "") io.onProjectSelected?.(p, resolvedMode);
+    return true;
+  }
+
+  // #1036: Preview tab "Find in sidebar" — forward the file path to the sidebar.
+  if (msg.kind === "reveal-in-sidebar") {
+    const p = (msg as { path?: unknown }).path;
+    if (typeof p === "string" && p !== "") io.onRevealInSidebar?.(p);
     return true;
   }
 
