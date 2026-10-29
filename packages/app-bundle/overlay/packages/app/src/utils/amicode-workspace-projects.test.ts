@@ -1,7 +1,7 @@
 import { describe, expect, test, mock } from "bun:test"
 import { readFileSync } from "fs"
 import { resolve } from "path"
-import { notifyProjectSelected } from "./amicode-workspace-projects"
+import { notifyProjectSelected, requestRevealInSidebar } from "./amicode-workspace-projects"
 
 describe("amicode workspace-projects — notifyProjectSelected (#663)", () => {
   test("posts a project-selected envelope to the parent frame", () => {
@@ -43,6 +43,60 @@ describe("amicode workspace-projects — notifyProjectSelected (#663)", () => {
     } finally {
       window.parent.postMessage = orig
     }
+  })
+})
+
+describe("amicode workspace-projects — requestRevealInSidebar (#1036)", () => {
+  test("posts a reveal-in-sidebar envelope carrying the path", () => {
+    const calls: unknown[] = []
+    const orig = window.parent.postMessage
+    window.parent.postMessage = (...args: unknown[]) => { calls.push(args) }
+    try {
+      requestRevealInSidebar("/Users/jj/harmoniqs/src/a.jl")
+      expect(calls).toHaveLength(1)
+      const [msg, origin] = calls[0] as [Record<string, unknown>, string]
+      expect(msg).toEqual({ source: "amicode", kind: "reveal-in-sidebar", path: "/Users/jj/harmoniqs/src/a.jl" })
+      expect(origin).toBe("*")
+    } finally {
+      window.parent.postMessage = orig
+    }
+  })
+
+  test("ignores an empty path", () => {
+    const calls: unknown[] = []
+    const orig = window.parent.postMessage
+    window.parent.postMessage = (...args: unknown[]) => { calls.push(args) }
+    try {
+      requestRevealInSidebar("")
+      expect(calls).toHaveLength(0)
+    } finally {
+      window.parent.postMessage = orig
+    }
+  })
+})
+
+describe("session-preview-tab — Find in sidebar menu item (#1036)", () => {
+  const src = readFileSync(
+    resolve(__dirname, "..", "components", "session", "session-preview-tab.tsx"),
+    "utf8",
+  )
+  const menu = src.slice(src.indexOf("<MenuV2.Content"))
+
+  test("Find in sidebar is first, then a separator, then the copy items", () => {
+    const find = menu.indexOf("Find in sidebar")
+    const sep = menu.indexOf("<MenuV2.Separator")
+    const copyName = menu.indexOf("Copy filename")
+    const copyPath = menu.indexOf("Copy filepath")
+    expect(find).toBeGreaterThan(-1)
+    expect(find).toBeLessThan(sep)
+    expect(sep).toBeLessThan(copyName)
+    expect(copyName).toBeLessThan(copyPath)
+  })
+
+  test("the item is disabled when the tab has no path and posts via requestRevealInSidebar", () => {
+    const item = menu.slice(0, menu.indexOf("Find in sidebar"))
+    expect(item).toContain("disabled={!tabContextMenu()?.path}")
+    expect(item).toContain("requestRevealInSidebar(")
   })
 })
 

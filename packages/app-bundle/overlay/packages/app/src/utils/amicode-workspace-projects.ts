@@ -39,3 +39,11 @@ export type ActiveProjectMode = "none" | "expand" | "reset"
 export function notifyProjectSelected(worktree: string, mode: ActiveProjectMode = "reset"): void {
   window.parent.postMessage({ source: "amicode", kind: "project-selected", path: worktree, mode }, "*")
 }
+
+/** #1036: ask the extension host to reveal a file in the Amicode sidebar project tree.
+ *  A dedicated message kind (not the `command` lane, which carries no arguments).
+ *  Empty paths are ignored. */
+export function requestRevealInSidebar(path: string): void {
+  if (!path) return
+  window.parent.postMessage({ source: "amicode", kind: "reveal-in-sidebar", path }, "*")
+}
