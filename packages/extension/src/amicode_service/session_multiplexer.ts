@@ -19,6 +19,7 @@
 import * as http from "node:http";
 import type { SessionOwnerTag, OwnerRefreshPeer } from "./merged_projection";
 import { evaluateRemoteWriteGate, type WriteGrantRead } from "./remote_write_gate";
+import { SseFrameSplitter } from "./sse_fanin_driver";
 
 // ── owner-routing header ─────────────────────────────────────────────────────
 
@@ -871,18 +872,17 @@ export class SessionMultiplexProxy implements MultiplexResolver {
       try {
         const target = new URL(`/api/session/${sessionId}/event`, peerUrl);
         req = http.get(target, (res) => {
-          let buf = "";
+          // #1790: linear-time frame splitting — scans only new chunks, with a
+          // two-character lookback for a boundary (`\n\n` or `\r\n\r\n`) split
+          // across chunks.  Replaces the quadratic `buf += chunk;
+          // buf.indexOf("\n\n")` pattern the original reader shipped with.
+          const splitter = new SseFrameSplitter();
           res.setEncoding("utf8");
           res.on("data", (chunk: string) => {
             if (closed) return;
-            buf += chunk;
-            // Split SSE events on double-newline
-            let idx: number;
-            while ((idx = buf.indexOf("\n\n")) >= 0) {
-              const block = buf.slice(0, idx);
-              buf = buf.slice(idx + 2);
-              // Parse the data: line
-              const dataLine = block.split("\n").find((l) => l.startsWith("data:"));
+            for (const frame of splitter.push(chunk)) {
+              // Parse the data: line from the whole frame (may contain \r\n).
+              const dataLine = frame.split(/\r?\n/).find((l) => l.startsWith("data:"));
               if (dataLine) {
                 try {
                   const data = JSON.parse(dataLine.slice(5).trim()) as Record<string, unknown>;
