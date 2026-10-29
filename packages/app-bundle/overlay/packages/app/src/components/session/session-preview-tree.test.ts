@@ -3,9 +3,13 @@ import {
   createPreviewWorkspace,
   movePreviewTab,
   openPreviewPath,
+  previewActiveAfterClose,
   previewLeafByID,
   previewLeaves,
   previewMinimumExtent,
+  previewMissingPaths,
+  previewRestoreTarget,
+  removePreviewPath,
   setPreviewLeafZoom,
 } from "./session-preview-tree"
 
@@ -87,5 +91,81 @@ describe("Preview workspace pane tree", () => {
     })
 
     expect(previewLeafByID(transferred.tree, "root")?.zoom).toBe(90)
+  })
+})
+
+// The flat list of open paths is what the session view persists and what the
+// SessionPreviewTab restores from on reload/remount. These tests pin the
+// round-trip invariant that restore depends on (split-pane layout is
+// intentionally NOT persisted — only this flat list + the active tab).
+describe("Preview open-paths persistence round-trip", () => {
+  const openedPaths = (workspace: ReturnType<typeof createPreviewWorkspace>) =>
+    previewLeaves(workspace.tree).flatMap((leaf) => leaf.tabs)
+
+  test("restores the open-paths list in order, activating the last", () => {
+    const paths = ["file://paper3.tex", "file://paper3.pdf"]
+    const restored = createPreviewWorkspace(paths)
+    expect(openedPaths(restored)).toEqual(paths)
+    const root = previewLeafByID(restored.tree, restored.focusedLeafID)
+    expect(root?.selectedPath).toBe("file://paper3.pdf")
+  })
+
+  test("an empty persisted list restores to an empty workspace", () => {
+    const restored = createPreviewWorkspace([])
+    expect(openedPaths(restored)).toEqual([])
+    expect(previewLeafByID(restored.tree, restored.focusedLeafID)?.selectedPath).toBeNull()
+  })
+
+  test("re-opening the persisted active path after restore is idempotent (no duplicate)", () => {
+    const restored = createPreviewWorkspace(["file://paper3.tex", "file://paper3.pdf"])
+    const refocused = openPreviewPath(restored, "file://paper3.tex")
+    expect(openedPaths(refocused)).toEqual(["file://paper3.tex", "file://paper3.pdf"])
+    expect(previewLeafByID(refocused.tree, refocused.focusedLeafID)?.selectedPath).toBe("file://paper3.tex")
+  })
+
+  test("closing a tab shrinks the persisted list", () => {
+    const restored = createPreviewWorkspace(["file://paper3.tex", "file://paper3.pdf"])
+    const afterClose = removePreviewPath(restored, "file://paper3.pdf")
+    expect(openedPaths(afterClose)).toEqual(["file://paper3.tex"])
+  })
+})
+
+// The pure restore/close decisions the persistence uses. Each test pins a
+// specific regression we hit by hand across many rebuilds.
+describe("preview persistence decisions", () => {
+  describe("previewRestoreTarget", () => {
+    test("folds in a net-new active file (first open that mounted the tab)", () => {
+      expect(previewRestoreTarget(["a"], "c")).toEqual(["a", "c"])
+    })
+    test("leaves the list unchanged when the active file is already tracked", () => {
+      expect(previewRestoreTarget(["a", "b"], "b")).toEqual(["a", "b"])
+    })
+    test("no active file → just the persisted list", () => {
+      expect(previewRestoreTarget(["a", "b"], null)).toEqual(["a", "b"])
+    })
+  })
+
+  describe("previewMissingPaths", () => {
+    test("restores the FULL set when only the active file is open (the 1-of-N bug)", () => {
+      expect(previewMissingPaths(["a", "b", "c"], ["c"])).toEqual(["a", "b"])
+    })
+    test("re-instantiation with everything already open opens nothing (no reopen)", () => {
+      expect(previewMissingPaths(["a", "b"], ["a", "b"])).toEqual([])
+    })
+    test("opens only the not-yet-open paths", () => {
+      expect(previewMissingPaths(["a", "b", "c"], ["a"])).toEqual(["b", "c"])
+    })
+  })
+
+  describe("previewActiveAfterClose", () => {
+    test("closing the active tab moves active to the last remaining tab", () => {
+      expect(previewActiveAfterClose("b", "b", ["a", "c"])).toBe("c")
+    })
+    test("closing the last/active tab clears active to null (no reopen pointer)", () => {
+      expect(previewActiveAfterClose("a", "a", [])).toBeNull()
+    })
+    test("closing a background tab leaves active unchanged", () => {
+      expect(previewActiveAfterClose("a", "b", ["b", "c"])).toBe("b")
+    })
   })
 })
