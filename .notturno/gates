@@ -18,8 +18,20 @@
 #              loopback suites below (fleet-dependent; they self-skip without
 #              an sshd and mutate ~/.ssh/authorized_keys when one exists).
 #              Vault-dependent tests self-skip on their own existsSync/env
-#              guards, exactly as in CI. A `pnpm -r run build` precedes the
-#              suites, as in CI (several suites read built bundles).
+#              guards, exactly as in CI. A `pnpm -r run build` (step `build`)
+#              precedes the suites, as in CI (several suites read built bundles).
+#              The suites run in CI's environment (#2007), not the sandbox's:
+#              a scrubbed env (`env -i` + PATH/TMPDIR/locale/USER) with CI=true,
+#              GITHUB_ACTIONS=true, RUNNER_TEMP, GITHUB_BASE_REF=<base> (a
+#              pull_request run), TZ=UTC, and a fresh EMPTY scratch HOME — the
+#              GitHub runner's HOME has no ~/.amico, no ~/.config/opencode, no
+#              fleet; the sandbox's HOME has the implementer's opencode config
+#              and the env carries AWS/GH tokens + NOTTURNO_*, which tests read.
+#              A red suite names its failing test files (first 5) in RESULT:
+#                failed: vitest:extension [test/a.test.ts, test/b.test.ts]
+#              Divergences the gate cannot erase are printed as `warn:` lines:
+#              node major != CI's 20, running as root (CI's runner is not —
+#              chmod-000 tests cannot fail for root).
 # NOT here (need the vendored engine binary / bun materialization / Julia /
 # PyPI): build-binary, engine-tests, vsix-gate, boot-smoke, schema-roundtrip.
 #
@@ -30,7 +42,9 @@
 #                          Unset/unresolvable → the nearest of origin/lane/* and
 #                          origin/main (fewest commits from merge-base to HEAD).
 #                          No base at all → every package's suite runs.
-#   NOTTURNO_GATES_STEPS   comma list subset of drift,typecheck,vitest (default all)
+#   NOTTURNO_GATES_STEPS   comma list subset of drift,typecheck,build,vitest (default all;
+#                          build only runs when vitest has packages to test)
+#   NOTTURNO_GATES_HERMETIC=0  run the suites in the ambient env/HOME (debugging only)
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -45,16 +59,16 @@ PLAN=0
 for a in "$@"; do
   case "$a" in
     --plan) PLAN=1 ;;
-    -h|--help) sed -n '2,36p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,52p' "$0"; exit 0 ;;
     *) echo "[notturno-gates] RESULT: RED — unknown argument: $a"; exit 2 ;;
   esac
 done
 
-STEPS="${NOTTURNO_GATES_STEPS:-drift,typecheck,vitest}"
+STEPS="${NOTTURNO_GATES_STEPS:-drift,typecheck,build,vitest}"
 for s in ${STEPS//,/ }; do
   case "$s" in
-    drift|typecheck|vitest) ;;
-    *) echo "[notturno-gates] RESULT: RED — unknown step '$s' in NOTTURNO_GATES_STEPS (known: drift,typecheck,vitest)"; exit 2 ;;
+    drift|typecheck|build|vitest) ;;
+    *) echo "[notturno-gates] RESULT: RED — unknown step '$s' in NOTTURNO_GATES_STEPS (known: drift,typecheck,build,vitest)"; exit 2 ;;
   esac
 done
 want() { case ",$STEPS," in *",$1,"*) return 0 ;; *) return 1 ;; esac; }
@@ -146,9 +160,11 @@ PASSED=""
 FAILED=""
 HINTS=""
 T0=$SECONDS
+STEP_DETAIL="" # a step may set this to a short " [..]" suffix for the RESULT line
 step() { # step <name> <hint-on-failure> <cmd...>
   local name="$1" hint="$2" t=$SECONDS rc
   shift 2
+  STEP_DETAIL=""
   say "── $name: $*"
   "$@"
   rc=$?
@@ -156,27 +172,112 @@ step() { # step <name> <hint-on-failure> <cmd...>
     PASSED="$PASSED $name"
     say "── $name: ok ($((SECONDS - t))s)"
   else
-    FAILED="$FAILED $name"
+    FAILED="$FAILED $name$STEP_DETAIL"
     [ -n "$hint" ] && HINTS="$HINTS $hint;"
-    say "── $name: FAIL exit $rc ($((SECONDS - t))s)"
+    say "── $name: FAIL exit $rc ($((SECONDS - t))s)${STEP_DETAIL}"
+  fi
+}
+
+# ── CI's environment for the vitest suites (#2007) ───────────────────────────
+SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/notturno-gates.XXXXXX")" || { echo "[notturno-gates] RESULT: RED — mktemp failed"; exit 2; }
+trap 'chmod -R u+rwx "$SCRATCH" 2>/dev/null; rm -rf "$SCRATCH"' EXIT
+CI_TMP="$SCRATCH/tmp"
+mkdir -p "$CI_TMP" "$SCRATCH/runner-temp"
+
+# run a command the way CI's `fast` job runs a test step
+ci_env() {
+  if [ "${NOTTURNO_GATES_HERMETIC:-1}" = "0" ]; then "$@"; return; fi
+  local home
+  home="$(mktemp -d "$SCRATCH/home.XXXXXX")" || return 2  # fresh + empty per suite
+  local keep=() v
+  for v in PATH LANG LC_ALL USER LOGNAME SHELL; do
+    [ -n "${!v:-}" ] && keep+=("$v=${!v}")
+  done
+  env -i "${keep[@]}" \
+    HOME="$home" TMPDIR="$CI_TMP" RUNNER_TEMP="$SCRATCH/runner-temp" TZ=UTC \
+    CI=true GITHUB_ACTIONS=true ${BASE:+GITHUB_BASE_REF="${BASE#origin/}"} \
+    "$@"
+}
+
+vitest_bin() { # the package's own vitest bin (no pnpm/corepack under the scratch HOME)
+  if [ -x "packages/$1/node_modules/.bin/vitest" ]; then echo "$ROOT/packages/$1/node_modules/.bin/vitest"; else echo ""; fi
+}
+
+# failed_files <vitest-json> [quarantine-gate-log] → "test/a.test.ts, test/b.test.ts, +N more" (first 5)
+failed_files() {
+  node - "$@" <<'NODE' 2>/dev/null
+const fs = require("fs"), path = require("path");
+const [json, gateLog] = process.argv.slice(2);
+const files = [];
+const add = (f) => { if (f && !files.includes(f)) files.push(f); };
+if (gateLog && fs.existsSync(gateLog)) {
+  // quarantine-gate violations: "... FAIL <kind> <suite>::<file>::<test>: ..."
+  for (const m of fs.readFileSync(gateLog, "utf8").matchAll(/ FAIL [\w-]+ [^:\s]+::([^:]+)::/g)) add(m[1]);
+}
+if (!files.length && json && fs.existsSync(json)) {
+  let r; try { r = JSON.parse(fs.readFileSync(json, "utf8")); } catch { r = null; }
+  for (const t of (r && r.testResults) || []) {
+    const bad = t.status === "failed" || (t.assertionResults || []).some((a) => a.status === "failed");
+    if (bad) add(path.relative(process.env.PKG_DIR || process.cwd(), t.name));
+  }
+}
+if (files.length) {
+  const head = files.slice(0, 5);
+  if (files.length > 5) head.push(`+${files.length - 5} more`);
+  process.stdout.write(head.join(", "));
+}
+NODE
+}
+
+set_detail() { # set_detail <pkg> <json> [gate-log]
+  local f
+  f="$(PKG_DIR="$ROOT/packages/$1" failed_files "$2" "${3:-}")"
+  [ -n "$f" ] && STEP_DETAIL=" [$f]"
+  return 0
+}
+
+vitest_args() { # common CI flags + exclusions + a JSON report
+  local g
+  VARGS=(run --passWithNoTests --exclude '**/slow/**')
+  for g in $ENV_DEPENDENT_EXCLUDES; do VARGS+=(--exclude "$g"); done
+  VARGS+=(--reporter=default --reporter=json "--outputFile.json=$1")
+}
+
+run_vitest() { # run_vitest <pkg> <json>
+  local bin
+  bin="$(vitest_bin "$1")"
+  vitest_args "$2"
+  if [ -n "$bin" ]; then
+    (cd "packages/$1" && ci_env "$bin" "${VARGS[@]}")
+  else
+    (cd "packages/$1" && ci_env pnpm exec vitest "${VARGS[@]}")
   fi
 }
 
 run_amico_run_suite() {
-  local out vexit excl=() g
-  out="${TMPDIR:-/tmp}/notturno-amico-run-$$.json"
-  for g in $ENV_DEPENDENT_EXCLUDES; do excl+=(--exclude "$g"); done
-  (cd packages/amico-run && pnpm exec vitest run --passWithNoTests --exclude '**/slow/**' "${excl[@]}" \
-      --reporter=default --reporter=json --outputFile.json="$out")
+  local out="$SCRATCH/vitest-amico-run.json" glog="$SCRATCH/quarantine-amico-run.log" vexit qexit
+  run_vitest amico-run "$out"
   vexit=$?
-  (cd packages/amico-run && node ../../scripts/test_quarantine_gate.mjs --runner-exit "$vexit" "$out")
+  (cd packages/amico-run && node ../../scripts/test_quarantine_gate.mjs --runner-exit "$vexit" "$out") 2>&1 | tee "$glog"
+  qexit=${PIPESTATUS[0]}
+  [ "$qexit" -ne 0 ] && set_detail amico-run "$out" "$glog"
+  return "$qexit"
 }
 
 run_pkg_suite() {
-  local p="$1" excl=() g
-  for g in $ENV_DEPENDENT_EXCLUDES; do excl+=(--exclude "$g"); done
-  (cd "packages/$p" && pnpm exec vitest run --passWithNoTests --exclude '**/slow/**' "${excl[@]}")
+  local p="$1" out="$SCRATCH/vitest-$1.json" rc
+  run_vitest "$p" "$out"
+  rc=$?
+  [ "$rc" -ne 0 ] && set_detail "$p" "$out"
+  return "$rc"
 }
+
+if want vitest && [ -n "$SELECTED" ]; then
+  NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo '?')"
+  say "vitest env: $([ "${NOTTURNO_GATES_HERMETIC:-1}" = "0" ] && echo 'AMBIENT (NOTTURNO_GATES_HERMETIC=0)' || echo "CI mirror — env -i, CI=true GITHUB_ACTIONS=true TZ=UTC, scratch HOME under $SCRATCH${BASE:+, GITHUB_BASE_REF=${BASE#origin/}}"); node $(node --version 2>/dev/null || echo '?')"
+  [ "$NODE_MAJOR" != "20" ] && say "warn: node major $NODE_MAJOR != CI's 20 (actions/setup-node node-version: 20) — a red that CI would not show may be a node-version difference"
+  [ "$(id -u 2>/dev/null)" = "0" ] && say "warn: running as root — CI's runner is unprivileged; permission tests (chmod 000/0500 dirs) cannot fail for root"
+fi
 
 if want drift; then
   step drift "overlay edit without a manifest refresh? run 'node packages/app-bundle/scripts/refresh_manifest.mjs' then drift_gate, and commit manifest.json" \
@@ -186,7 +287,7 @@ if want typecheck; then
   step typecheck "" pnpm -r run typecheck
 fi
 if want vitest && [ -n "$SELECTED" ]; then
-  step build "" pnpm -r run build
+  want build && step build "" pnpm -r run build
   for p in $SELECTED; do
     if [ "$p" = "amico-run" ]; then
       step "vitest:$p" "" run_amico_run_suite

@@ -15,7 +15,7 @@
 //     origin/lane/* (or origin/main), and maps the diff to vitest packages.
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync, appendFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync, appendFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -171,6 +171,83 @@ describe(".notturno/gates — the night runner's pre-push gate (#1980)", () => {
       expect(r.status, r.out).toBe(0);
       expect(r.stdout).toMatch(/vitest packages: bar foo$/m);
     });
+  });
+});
+
+// #2007: in the Modal sandbox the extension/amico-run vitest steps went red
+// whatever the diff, and the summary hid which tests. The vitest steps must run
+// the way CI's `fast` job does (CI=true, GITHUB_ACTIONS=true, an empty runner
+// HOME, no ambient secrets/dev-shell env), and a red suite must name its
+// failing files in the RESULT line (the runner surfaces only the last lines).
+describe(".notturno/gates — vitest steps mirror CI and name failing files (#2007)", () => {
+  let fx: string;
+  const VITEST_PKG = join(REPO, "packages", "amico-run", "node_modules", "vitest");
+
+  /** give a fixture package a real vitest (symlinked from this checkout) */
+  function linkVitest(pkg: string) {
+    const nm = join(fx, "packages", pkg, "node_modules");
+    mkdirSync(join(nm, ".bin"), { recursive: true });
+    symlinkSync(VITEST_PKG, join(nm, "vitest"));
+    symlinkSync(join(VITEST_PKG, "vitest.mjs"), join(nm, ".bin", "vitest"));
+  }
+
+  beforeEach(() => {
+    fx = makeFixture();
+    linkVitest("foo");
+    linkVitest("bar");
+  });
+  afterEach(() => {
+    rmSync(fx, { recursive: true, force: true });
+    rmSync(upstreamOf(fx), { recursive: true, force: true });
+  });
+
+  test("the vitest step runs under CI's env: CI=true, GITHUB_ACTIONS=true, a scratch empty HOME, ambient secrets scrubbed", () => {
+    const outerHome = process.env.HOME ?? "";
+    put(fx, "packages/foo/test/env.test.ts", [
+      `import { test, expect } from "vitest";`,
+      `import { existsSync, readdirSync } from "node:fs";`,
+      `import { join } from "node:path";`,
+      `test("ci env", () => {`,
+      `  expect(process.env.CI).toBe("true");`,
+      `  expect(process.env.GITHUB_ACTIONS).toBe("true");`,
+      `  const home = process.env.HOME ?? "";`,
+      `  expect(home).not.toBe(${JSON.stringify(outerHome)});`,
+      `  expect(home).not.toBe("");`,
+      `  expect(existsSync(join(home, ".amico"))).toBe(false);`,
+      `  expect(existsSync(join(home, ".config", "opencode"))).toBe(false);`,
+      `  expect(readdirSync(home)).toEqual([]);`,
+      `  expect(process.env.AWS_SECRET_ACCESS_KEY).toBeUndefined();`,
+      `  expect(process.env.GH_TOKEN).toBeUndefined();`,
+      `  expect(process.env.AMICO_LEAK).toBeUndefined();`,
+      `  expect(process.env.NOTTURNO_ISSUE).toBeUndefined();`,
+      `});`,
+      ``,
+    ].join("\n"));
+    const r = run("./.notturno/gates", [], fx, {
+      NOTTURNO_GATES_STEPS: "vitest",
+      AWS_SECRET_ACCESS_KEY: "leak",
+      GH_TOKEN: "ghp_leak",
+      AMICO_LEAK: "1",
+      NOTTURNO_ISSUE: "2007",
+    });
+    expect(r.status, r.out).toBe(0);
+    expect(r.out).toMatch(/1 passed/);
+    expect(lastLine(r.stdout)).toMatch(/GREEN/);
+  });
+
+  test("a red suite names its failing test files (first 5) in the RESULT line", () => {
+    for (const n of ["a", "b", "c", "d", "e", "f", "g"]) {
+      put(fx, `packages/foo/test/${n}.test.ts`, `import { test, expect } from "vitest";\ntest("${n}", () => { expect(1).toBe(2); });\n`);
+    }
+    put(fx, "packages/foo/test/ok.test.ts", `import { test, expect } from "vitest";\ntest("ok", () => { expect(1).toBe(1); });\n`);
+    put(fx, "packages/bar/test/bad.test.ts", `import { test, expect } from "vitest";\ntest("bad", () => { expect(1).toBe(2); });\n`);
+    const r = run("./.notturno/gates", [], fx, { NOTTURNO_GATES_STEPS: "vitest" });
+    expect(r.status, r.out).not.toBe(0);
+    const summary = lastLine(r.stdout);
+    expect(summary).toMatch(/RED/);
+    expect(summary).toContain("vitest:foo [test/a.test.ts, test/b.test.ts, test/c.test.ts, test/d.test.ts, test/e.test.ts, +2 more]");
+    expect(summary).toContain("vitest:bar [test/bad.test.ts]");
+    expect(summary).not.toContain("ok.test.ts");
   });
 });
 
