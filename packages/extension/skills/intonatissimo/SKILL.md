@@ -108,22 +108,11 @@ solve!(ptp; max_iter = 5, tol = 1e-3, γ = 0.8, min_nominal_fidelity = 0.8)
 ### The QP-ILC step: which representation to use
 
 `QPILCStrategy` (the QP inner step) is the production choice for correlator/population readouts. How to
-shape its step was measured head-to-head in a research campaign (2026-10, transmon + Rydberg fixtures):
+shape its step was measured head-to-head in a research campaign (2026-10, transmon + Rydberg fixtures).
+The production configuration (the relative-dose readout-null-space penalty, "FR_prod") and its measured
+numbers live under **Production guidance** in the QP-ILC section below; the step-shaping lessons around it:
 
-- **Use the readout-null-space penalty, not a hand-labelled basis.** When the readout has far fewer
-  independent rows than the pulse has DOF, the unrestricted step spends most of its norm in directions
-  the measurement cannot see (often saturating the trust box), and that content costs true fidelity.
-  `QPILCStrategy(; robust_mode = true, robust_lambda_mode = :relative, robust_lambda = 100)` penalizes
-  exactly that (λ_eff = 100·σ_max(Gw)², recomputed per step). Leave `robust_rtol` at its `robust_mode`
-  default of 1e-8. At pinv's default cut, round-off singular values enter the projector, the QP matrix
-  becomes indefinite, and the solver fails on some rounds (measured at the same λ: 17 of 192 rounds failed
-  at the old cut, 0 of 768 at 1e-8). The dose is not sensitive: c = 10, 100 and 1000 performed within
-  noise of each other. What has been measured for this exact configuration: at a Rydberg fixture under
-  persistent drift (16 seeds) it never failed, was within 5e-4 of a hand-labelled K=2 basis at 90%
-  confidence, and beat the unrestricted step on 14 of 16 seeds. A fixed-λ version of the same penalty tied
-  a hand-built K=4 basis at a transmon fixture. Both results needed no labels and stayed within the drive
-  bounds.
-- **Don't shrink the box instead.** A smaller trust box removes visible and invisible motion in
+- **Don't shrink the box instead of penalizing the null space.** A smaller trust box removes visible and invisible motion in
   proportion. It helped at one fixture and did nothing at the other.
 - **If you do project onto a basis** (`project_step` above, or your own), **clamp the projected step to
   the production box afterwards**. A raw projection discards the QP's pull back inside the drive bounds,
@@ -131,11 +120,10 @@ shape its step was measured head-to-head in a research campaign (2026-10, transm
   step).
 - **Only correct drift that persists, and expect a modest gain.** If the drift is redrawn independently
   each round, no step representation beats leaving the pulse alone when the correction is scored on the
-  next round. Under persistent drift a row-space-confined step helps on average, but by about a third of
-  the drift-induced infidelity, not most of it (Rydberg fixture, 16 seeds: mean gain 6e-4 to 7e-4 against
-  a mean drift loss of 1.75e-3). The gain is roughly a fixed fraction of the drift loss minus a per-step
-  cost, so when the drift loss is small (below about 1e-3 at that fixture) every representation did
-  slightly worse than doing nothing. The unrestricted QP step gained nothing on average.
+  next round. Under persistent drift a row-space-confined step helps on average, but recovers only part
+  of the drift-induced infidelity, not most of it — see **Size expectations honestly** below for the
+  measured, seed-dependent size. The gain is roughly a fixed fraction of the drift loss minus a per-step
+  cost, so when the drift loss is small every representation did slightly worse than doing nothing.
 - **Watch the in-loop refit.** A refit that re-centres its search on the previous estimate each round,
   with no prior pull, can random-walk away from the device. Measured: on 2 of 16 seeds the fitted Rabi
   scale drifted about 10% from truth while the true drift was about 1%, and fidelity fell round after
