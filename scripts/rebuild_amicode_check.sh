@@ -224,6 +224,33 @@ else
   fail "AC10 interlock" "$UNIFIED missing"
 fi
 
+# ── AC11: a restarted hub's handshake survives; stale ones are cleared (#1797) ─
+# Driven through the hidden --self-test-handshake (throwaway HOME, real
+# stop_surviving_server): launchd-style restart keeps the fresh record, a record
+# naming the stopped or a dead PID is cleared.
+if [ -f "$UNIFIED" ]; then
+  hs_out="$(timeout 60 bash "$UNIFIED" --self-test-handshake 2>&1)"; hs_rc=$?
+  if [ "$hs_rc" -eq 0 ] && [ "$(printf '%s\n' "$hs_out" | grep -c '^PASS')" -eq 3 ]; then
+    pass "AC11 handshake: restarted hub's record kept, stale record cleared"
+  else
+    fail "AC11 handshake" "rc=$hs_rc $hs_out"
+  fi
+else
+  fail "AC11 handshake" "$UNIFIED missing"
+fi
+
+# ── AC12: rehome step returns 0 when nothing needed rehoming (#1797) ────────
+if [ -f "$UNIFIED" ]; then
+  rh_out="$(bash "$UNIFIED" --self-test-rehome 2>&1)"; rh_rc=$?
+  if [ "$rh_rc" -eq 0 ] && ! printf '%s' "$rh_out" | grep -q '^FAIL'; then
+    pass "AC12 rehome returns 0 when nothing to rehome"
+  else
+    fail "AC12 rehome exit status" "rc=$rh_rc $rh_out"
+  fi
+else
+  fail "AC12 rehome exit status" "$UNIFIED missing"
+fi
+
 # ── AC9: real --mode local --yes build → binary + .source == overlay <sha> ──
 if [ "${RUN_FULL_BUILD:-0}" = "1" ]; then
   key="$(node -e 'process.stdout.write(process.platform+"-"+process.arch)')"

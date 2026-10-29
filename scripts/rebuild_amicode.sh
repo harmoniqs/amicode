@@ -51,6 +51,8 @@ CHECK_LIVE_ONLY=0
 STRICT_LIVE_CHECK=0
 ALLOW_LIVE_SERVER=0
 SELF_TEST_DEPLOY=0
+SELF_TEST_HANDSHAKE=0
+SELF_TEST_REHOME=0
 
 usage() {
   cat >&2 <<EOF
@@ -93,6 +95,8 @@ while [ $# -gt 0 ]; do
     --strict-live-check) STRICT_LIVE_CHECK=1 ;;
     --allow-live-server) ALLOW_LIVE_SERVER=1 ;;
     --self-test-deploy) SELF_TEST_DEPLOY=1 ;;
+    --self-test-handshake) SELF_TEST_HANDSHAKE=1 ;;
+    --self-test-rehome) SELF_TEST_REHOME=1 ;;
     -h|--help) usage; exit 0 ;;
     *) usage; die "unknown argument: $1" ;;
   esac
@@ -334,7 +338,13 @@ rehome_stale_worktree_sessions() {
     fi
   done <<< "$dirs"
 
-  [ "$rehomed" -gt 0 ] && echo "==> Rehomed sessions from $rehomed stale worktree director(y/ies) to their main project path"
+  if [ "$rehomed" -gt 0 ]; then
+    echo "==> Rehomed sessions from $rehomed stale worktree director(y/ies) to their main project path"
+  fi
+  # Explicit success: the conditional above is false when nothing needed
+  # rehoming, and a function's status is its last command's — under `set -e`
+  # that would abort a rebuild whose deploy already succeeded (#1797).
+  return 0
 }
 
 # ── Build recipe (shared) — mirrors the in-app handler order ────────────────
@@ -449,6 +459,27 @@ find_installed_ext() {
 # after the server is down so the new extension cold-spawns cleanly.
 HANDSHAKE_PATH="${HOME}/.amico/ops/server/standalone.json"
 
+# Delete the handshake only while it is STALE with respect to the process this
+# script stopped (#1797): it names that process, names a dead process, or names
+# no process at all. A hub run as a launchd KeepAlive service is restarted
+# within ~1s of the stop and writes its handshake only at startup, so a record
+# naming a different, live process belongs to the new hub and must survive.
+#   clear_handshake_if_stale [stopped_pid]
+clear_handshake_if_stale() {
+  local stopped="${1:-}" current=""
+  [ -f "$HANDSHAKE_PATH" ] || return 0
+  current="$(HS="$HANDSHAKE_PATH" node -e "try{const h=JSON.parse(require('fs').readFileSync(process.env.HS,'utf8'));process.stdout.write(String(h.pid||''))}catch{}" 2>/dev/null || true)"
+  case "$current" in
+    ''|*[!0-9]*) rm -f "$HANDSHAKE_PATH" 2>/dev/null || true; return 0 ;;
+  esac
+  if [ "$current" = "$stopped" ] || ! kill -0 "$current" 2>/dev/null; then
+    rm -f "$HANDSHAKE_PATH" 2>/dev/null || true
+    return 0
+  fi
+  echo "==> Handshake now names live PID $current (restarted hub) — keeping it"
+  return 0
+}
+
 stop_surviving_server() {
   local pid="" port=""
 
@@ -476,7 +507,7 @@ stop_surviving_server() {
   # 4. Verify PID is alive before trying to kill.
   if ! kill -0 "$pid" 2>/dev/null; then
     echo "==> Surviving server PID $pid is already dead — cleaning up handshake"
-    rm -f "$HANDSHAKE_PATH" 2>/dev/null || true
+    clear_handshake_if_stale "$pid"
     return 0
   fi
 
@@ -494,9 +525,11 @@ stop_surviving_server() {
     sleep 1
   fi
 
-  # 6. Delete the handshake so the new extension cold-spawns cleanly.
-  rm -f "$HANDSHAKE_PATH" 2>/dev/null || true
-  echo "==> Surviving server stopped and handshake cleared"
+  # 6. Delete the handshake so the new extension cold-spawns cleanly — but only
+  #    if it still names the process we stopped (a launchd-restarted hub has
+  #    already written a fresh one; deleting it strands every window, #1797).
+  clear_handshake_if_stale "$pid"
+  echo "==> Surviving server stopped"
 }
 
 # ── Running-server interlock (OB12) — lsof-scoped, warn-by-default (#1138) ──
@@ -790,7 +823,101 @@ main() {
   echo "Reload the VS Code window (Cmd/Ctrl+Shift+P → Developer: Reload Window) to pick up changes."
 }
 
+# ── Handshake / rehome self-tests (#1797, hidden; used by the harness) ──────
+# Run against a throwaway HOME; touch no real state. Each prints PASS/FAIL lines
+# and the function returns non-zero on any failure.
+
+# Start a long-lived process detached from this shell (so it is reparented and
+# reaped on exit, never a zombie that still answers kill -0). Prints its PID.
+_st_spawn() {
+  local f; f="$(mktemp)"
+  ( sleep 120 >/dev/null 2>&1 </dev/null & echo $! > "$f" )
+  sleep 0.2
+  cat "$f"; rm -f "$f"
+}
+
+_st_write_handshake() { # <pid>
+  mkdir -p "$(dirname "$HANDSHAKE_PATH")"
+  printf '{"pid":%s,"port":43117,"binaryHash":"abc"}\n' "$1" > "$HANDSHAKE_PATH"
+}
+
+self_test_handshake() {
+  local rc=0 old new
+  local saved_home="$HOME" tmp; tmp="$(mktemp -d)"
+  HOME="$tmp"; HANDSHAKE_PATH="$HOME/.amico/ops/server/standalone.json"
+
+  # (1) launchd-style restart: the old hub dies, a new one writes a fresh
+  #     handshake before the script gets to its cleanup → record survives.
+  old="$(_st_spawn)"; new="$(_st_spawn)"
+  _st_write_handshake "$old"
+  (
+    while kill -0 "$old" 2>/dev/null; do sleep 0.05; done
+    _st_write_handshake "$new"
+  ) &
+  local writer=$!
+  stop_surviving_server >/dev/null 2>&1
+  wait "$writer" 2>/dev/null
+  if [ -f "$HANDSHAKE_PATH" ] && grep -q "\"pid\":$new" "$HANDSHAKE_PATH" && grep -q '"binaryHash":"abc"' "$HANDSHAKE_PATH"; then
+    echo "PASS  restarted hub's handshake survives"
+  else
+    echo "FAIL  restarted hub's handshake was deleted"; rc=1
+  fi
+  kill "$new" 2>/dev/null || true
+
+  # (2) no restart: handshake still names the stopped PID → cleared.
+  old="$(_st_spawn)"; _st_write_handshake "$old"
+  stop_surviving_server >/dev/null 2>&1
+  if [ ! -e "$HANDSHAKE_PATH" ]; then echo "PASS  handshake naming the stopped PID is cleared"
+  else echo "FAIL  handshake naming the stopped PID survived"; rc=1; fi
+
+  # (3) handshake names a dead process → stale, cleared.
+  old="$(_st_spawn)"; kill "$old" 2>/dev/null || true; sleep 0.3
+  _st_write_handshake "$old"
+  stop_surviving_server >/dev/null 2>&1
+  if [ ! -e "$HANDSHAKE_PATH" ]; then echo "PASS  stale handshake (dead PID) is cleared"
+  else echo "FAIL  stale handshake (dead PID) survived"; rc=1; fi
+
+  HOME="$saved_home"; rm -rf "$tmp"
+  return "$rc"
+}
+
+self_test_rehome() {
+  local rc=0
+  if ! command -v sqlite3 >/dev/null 2>&1; then
+    echo "SKIP  sqlite3 not installed"; return 0
+  fi
+  local tmp; tmp="$(mktemp -d)"
+  DBDIR="$tmp"
+  local db="$DBDIR/opencode.db"
+  mkdir -p "$DBDIR/worktree/live"
+  sqlite3 "$db" "CREATE TABLE project(id TEXT, worktree TEXT);
+    CREATE TABLE session(id TEXT, project_id TEXT, directory TEXT);
+    INSERT INTO project VALUES('p','/main');
+    INSERT INTO session VALUES('s1','p','$DBDIR/worktree/live');"
+  # Nothing to rehome: must return 0 — a non-zero status here aborts a
+  # successful deploy under the script's errexit (checked via the status itself,
+  # since errexit is suppressed inside conditionals).
+  local st=0
+  rehome_stale_worktree_sessions >/dev/null 2>&1 || st=$?
+  if [ "$st" -eq 0 ]; then echo "PASS  rehome with nothing to do returns 0"
+  else echo "FAIL  rehome with nothing to do returned $st"; rc=1; fi
+  # Something to rehome: repointed, still returns 0.
+  sqlite3 "$db" "INSERT INTO session VALUES('s2','p','$DBDIR/worktree/gone');"
+  st=0
+  rehome_stale_worktree_sessions >/dev/null 2>&1 || st=$?
+  if [ "$st" -eq 0 ] && [ "$(sqlite3 "$db" "SELECT directory FROM session WHERE id='s2';")" = "/main" ]; then
+    echo "PASS  rehome repoints a stale worktree session and returns 0"
+  else
+    echo "FAIL  rehome of a stale session (status $st)"; rc=1
+  fi
+  rm -rf "$tmp"
+  return "$rc"
+}
+
 # ── Dispatch (after every function is defined) ──────────────────────────────
+
+if [ "$SELF_TEST_HANDSHAKE" -eq 1 ]; then self_test_handshake; exit $?; fi
+if [ "$SELF_TEST_REHOME" -eq 1 ]; then self_test_rehome; exit $?; fi
 
 # Deploy self-test (OB7, hidden; used by the acceptance harness). Needs no mode.
 if [ "$SELF_TEST_DEPLOY" -eq 1 ]; then
