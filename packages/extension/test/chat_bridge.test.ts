@@ -11,6 +11,7 @@ import {
   rebuildGitCommand,
   resolveDbBackupDir,
   resolveRebuildMode,
+  writeClipboardImageNative,
   type BridgeIo,
 } from "../src/chat_bridge";
 
@@ -406,6 +407,31 @@ describe("amicode bridge — clipboard-image-write", () => {
     await flush();
     expect(hidden.posted).toHaveLength(0);
     expect(host.posted).toHaveLength(0);
+  });
+
+  it("a failed temp-file write answers ok:false instead of throwing (the caller is never left waiting)", async () => {
+    const savedTmp = { TMPDIR: process.env.TMPDIR, TMP: process.env.TMP, TEMP: process.env.TEMP };
+    const missing = path.join(os.tmpdir(), `amicode-no-such-dir-${process.pid}`, "nested");
+    process.env.TMPDIR = missing;
+    process.env.TMP = missing;
+    process.env.TEMP = missing;
+    try {
+      await expect(writeClipboardImageNative(Buffer.from("iVBORw0KGgo=", "base64"))).resolves.toBe(false);
+      const host = io();
+      expect(
+        handleAmicodeBridgeMessage(
+          { source: "amicode", kind: "clipboard-image-write", dataUrl: "data:image/png;base64,iVBORw0KGgo=", nonce: "c9", tab: "pane-3" },
+          host,
+        ),
+      ).toBe(true);
+      await vi.waitFor(() => expect(host.posted).toHaveLength(1));
+      expect(host.posted[0]).toEqual({ source: "amicode", kind: "clipboard-image-written", nonce: "c9", tab: "pane-3", ok: false });
+    } finally {
+      for (const [k, v] of Object.entries(savedTmp)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
   });
 
   it("picks the platform writer and never splices the path into a script", () => {

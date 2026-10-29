@@ -12,14 +12,22 @@ import { copyImageToClipboard } from "../util/clipboard"
 export function ImageLightbox(props: { src: string; alt?: string }) {
   const i18n = useI18n()
   const [copied, setCopied] = createSignal(false)
+  // The host's native write can fail (copyImageToClipboard awaits its nonce'd
+  // reply) — a failure is reported on the button, never shown as "Copied".
+  const [failed, setFailed] = createSignal(false)
   let timer: ReturnType<typeof setTimeout> | undefined
   onCleanup(() => clearTimeout(timer))
   const copy = async () => {
-    if (!(await copyImageToClipboard(props.src))) return
-    setCopied(true)
+    const ok = await copyImageToClipboard(props.src)
+    setCopied(ok)
+    setFailed(!ok)
     clearTimeout(timer)
-    timer = setTimeout(() => setCopied(false), 2000)
+    timer = setTimeout(() => {
+      setCopied(false)
+      setFailed(false)
+    }, 2000)
   }
+  const label = () => (copied() ? i18n.t("ui.message.copied") : failed() ? "Copy failed" : i18n.t("ui.message.copy"))
   return (
     <div data-component="image-preview">
       <div data-slot="image-preview-container">
@@ -29,8 +37,9 @@ export function ImageLightbox(props: { src: string; alt?: string }) {
               data-slot="image-preview-copy"
               icon={copied() ? "check-small" : "copy"}
               variant="ghost"
-              aria-label={copied() ? i18n.t("ui.message.copied") : i18n.t("ui.message.copy")}
-              title={copied() ? i18n.t("ui.message.copied") : i18n.t("ui.message.copy")}
+              data-copy-failed={failed() ? "true" : undefined}
+              aria-label={label()}
+              title={label()}
               onClick={() => void copy()}
             />
             <Kobalte.CloseButton

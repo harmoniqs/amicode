@@ -10,6 +10,7 @@ import { registerLocalImageLoader } from "@opencode-ai/session-ui/markdown-local
 import { ServerConnection, useServer } from "@/context/server"
 import { useGlobal } from "@/context/global"
 import { amicodeGet } from "@/utils/amicode-fetch"
+import { loadLocalImageViaServer } from "./amicode-local-image-loader"
 import { pickVaultServer } from "@/components/vault-browser-model"
 
 export function AmicodeFileRefBridge() {
@@ -37,17 +38,7 @@ export function AmicodeFileRefBridge() {
     // Chat images authored as `![](/abs/path.png)`: read the bytes through the
     // server (the iframe can't reach its disk, and a bare <img> can't carry the
     // credential) and hand session-ui a data: URL.
-    unregisterImages = registerLocalImageLoader(async (path) => {
-      const raw = (await amicodeGet(pick(), `/file/content?path=${encodeURIComponent(path)}`)) as
-        | { type?: string; content?: unknown; encoding?: string; mimeType?: unknown }
-        | undefined
-      if (typeof raw?.content !== "string" || raw.content === "") return null
-      if (raw.type === "binary" && raw.encoding === "base64" && typeof raw.mimeType === "string" && raw.mimeType.startsWith("image/"))
-        return `data:${raw.mimeType};base64,${raw.content}`
-      if (raw.type === "text" && path.toLowerCase().endsWith(".svg"))
-        return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(raw.content)}`
-      return null
-    })
+    unregisterImages = registerLocalImageLoader((path) => loadLocalImageViaServer(pick(), path))
   })
   onCleanup(() => {
     unregister?.()

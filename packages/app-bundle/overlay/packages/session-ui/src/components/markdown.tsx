@@ -162,6 +162,19 @@ function setCopyState(host: HTMLElement, labels: CopyLabels, copied: boolean) {
   host.removeAttribute("data-copied")
 }
 
+// Image-copy failure marker (no i18n key exists for it upstream yet; the
+// button's title carries the plain-English reason while the marker is set).
+const COPY_FAILED_TITLE = "Copy failed"
+function setCopyFailed(host: HTMLElement) {
+  host.setAttribute("data-copy-failed", "true")
+  host.setAttribute("title", COPY_FAILED_TITLE)
+}
+function clearCopyFailed(host: HTMLElement) {
+  if (host.getAttribute("data-copy-failed") !== "true") return
+  host.removeAttribute("data-copy-failed")
+  host.removeAttribute("title")
+}
+
 function disposeCopyButton(host: HTMLElement) {
   copyButtonState.get(host)?.dispose()
   copyButtonState.delete(host)
@@ -396,7 +409,17 @@ function setupCodeCopy(root: HTMLDivElement, getLabels: () => CopyLabels) {
     if (!(button instanceof HTMLElement)) return
     const image = button.closest('[data-component="markdown-image"]')?.querySelector("img")
     if (image) {
-      if (!image.src || !(await copyImageToClipboard(image.src))) return
+      if (!image.src) return
+      // The host's native image write can fail — copyImageToClipboard awaits its
+      // nonce'd reply. Say so instead of silently leaving the button as-is.
+      if (!(await copyImageToClipboard(image.src))) {
+        setCopyFailed(button)
+        const existing = timeouts.get(button)
+        if (existing) clearTimeout(existing)
+        timeouts.set(button, setTimeout(() => clearCopyFailed(button), 2000))
+        return
+      }
+      clearCopyFailed(button)
     }
     if (!image) {
       const code = button.closest('[data-component="markdown-code"]')?.querySelector("code")

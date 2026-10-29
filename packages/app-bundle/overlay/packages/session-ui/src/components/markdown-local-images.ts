@@ -105,6 +105,10 @@ export function frameImages(root: HTMLElement, button: () => HTMLElement) {
     if (img.parentElement?.getAttribute("data-component") === "markdown-image") continue
     const frame = document.createElement("span")
     frame.setAttribute("data-component", "markdown-image")
+    // The paper backing (markdown.css) is for agent-written figures on the
+    // server's disk — typically transparent PNG/SVG inked for a light slide.
+    // Remote/data images render as authored.
+    if (local) frame.setAttribute("data-local", "")
     img.parentNode?.replaceChild(frame, img)
     frame.appendChild(img)
     frame.appendChild(button())

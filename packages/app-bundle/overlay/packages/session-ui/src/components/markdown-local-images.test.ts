@@ -89,6 +89,15 @@ describe("chat image frames", () => {
     expect(frames[0]!.querySelectorAll('[data-slot="markdown-copy-button"]').length).toBe(1)
   })
 
+  test("only local images get the paper backing marker (data-local); remote images render as authored", () => {
+    const root = block('<p><img src="/home/me/eq.png" alt="eq"><img src="https://example.com/a.png" alt="a"></p>')
+    frameImages(root, button)
+    const frames = Array.from(root.querySelectorAll('[data-component="markdown-image"]'))
+    expect(frames).toHaveLength(2)
+    expect(frames[0]!.hasAttribute("data-local")).toBe(true)
+    expect(frames[1]!.hasAttribute("data-local")).toBe(false)
+  })
+
   test("a local path never reaches the network: src is parked until the loader answers", async () => {
     let release: (url: string) => void = () => {}
     registerLocalImageLoader(() => new Promise<string>((resolve) => (release = resolve)))

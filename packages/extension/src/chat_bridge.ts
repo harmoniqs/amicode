@@ -582,9 +582,11 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     if (!raw.dataUrl.startsWith(prefix)) return true;
     const base64 = raw.dataUrl.slice(prefix.length);
     if (!base64 || base64.length > 24_000_000) return true;
-    void writeClipboardImageNative(Buffer.from(base64, "base64")).then((ok) => {
-      io.postToWebview({ source: "amicode", kind: "clipboard-image-written", nonce: raw.nonce, tab: raw.tab, ok });
-    });
+    void writeClipboardImageNative(Buffer.from(base64, "base64"))
+      .catch(() => false)
+      .then((ok) => {
+        io.postToWebview({ source: "amicode", kind: "clipboard-image-written", nonce: raw.nonce, tab: raw.tab, ok });
+      });
     return true;
   }
 
@@ -1670,7 +1672,13 @@ export async function writeClipboardImageNative(png: Buffer): Promise<boolean> {
   const command = clipboardImageWriteCommand(process.platform, process.env);
   if (!command) return false;
   const file = path.join(os.tmpdir(), `amicode-copy-${process.pid}-${Date.now()}.png`);
-  fs.writeFileSync(file, png);
+  // A full/readonly tmpdir must answer the nonce'd caller with ok:false — a
+  // throw here would reject the reply promise and leave the iframe waiting.
+  try {
+    fs.writeFileSync(file, png);
+  } catch {
+    return false;
+  }
   const ok = await runToExit(command.cmd, [...command.args, file]);
   // xclip/wl-copy fork a selection server that keeps the bytes in memory, but
   // give it a moment to finish reading before the temp file goes.
