@@ -331,11 +331,7 @@ const foldShortcutKeymap = [
  * - defaultKeymap, historyKeymap, searchKeymap (the CM6 standard set)
  * - { key: "Mod-l", run: gotoLine } — Cmd+L go-to-line shortcut (#1515)
  */
-export function keymapBindings(_opts: {
-  theme: Extension
-  language?: LanguageSupport | null
-  lang?: string
-}): KeyBinding[] {
+export function keymapBindings(): KeyBinding[] {
   return [
     ...defaultKeymap,
     ...historyKeymap,
@@ -359,7 +355,7 @@ export function baseExtensions(opts: {
     highlightSpecialChars(),
     drawSelection(),
     bracketMatching(),
-    keymap.of([...foldShortcutKeymap, ...keymapBindings(opts), ...foldKeymap]),
+    keymap.of([...foldShortcutKeymap, ...keymapBindings(), ...foldKeymap]),
     search(),
     highlightSelectionMatches(),
     EditorView.lineWrapping,

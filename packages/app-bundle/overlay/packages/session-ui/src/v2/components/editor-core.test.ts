@@ -189,22 +189,56 @@ describe("baseExtensions code folding (#1517)", () => {
 // ---------------------------------------------------------------------------
 
 describe("keymapBindings — Mod-l gotoLine (#1515)", () => {
-  test("exports keymapBindings as a function", () => {
-    expect(typeof keymapBindings).toBe("function")
-  })
-
-  test("keymapBindings includes an entry with key 'Mod-l'", () => {
-    const theme = buildThemeExtension("dark")
-    const bindings = keymapBindings({ theme })
-    const modLEntry = bindings.find((b) => b.key === "Mod-l")
-    expect(modLEntry).toBeDefined()
-  })
-
-  test("Mod-l binding runs gotoLine", () => {
-    const theme = buildThemeExtension("dark")
-    const bindings = keymapBindings({ theme })
-    const modLEntry = bindings.find((b) => b.key === "Mod-l")
+  test("keymapBindings binds Mod-l to gotoLine", () => {
+    const modLEntry = keymapBindings().find((b) => b.key === "Mod-l")
     expect(modLEntry?.run).toBe(gotoLine)
+  })
+
+  test("Mod-l is not bound by any other binding in the editor keymap", () => {
+    const keys = keymapBindings().flatMap((b) => [b.key, b.mac, b.win, b.linux]).filter(Boolean)
+    expect(keys.filter((k) => k === "Mod-l")).toHaveLength(1)
+  })
+})
+
+describe("baseExtensions go-to-line shortcuts (#1515)", () => {
+  const SRC = "line one\nline two\nline three\nline four\n"
+
+  function makeView(): EditorView {
+    const parent = document.createElement("div")
+    document.body.appendChild(parent)
+    return new EditorView({
+      parent,
+      state: EditorState.create({
+        doc: SRC,
+        selection: { anchor: 0 },
+        extensions: baseExtensions({ theme: buildThemeExtension("dark") }),
+      }),
+    })
+  }
+
+  const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/.test(navigator.platform)
+  const mod = isMac ? { metaKey: true } : { ctrlKey: true }
+
+  function keyEvent(init: KeyboardEventInit): KeyboardEvent {
+    return new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init })
+  }
+
+  test("Mod-L opens the go-to-line panel", () => {
+    const view = makeView()
+    expect(view.dom.querySelector(".cm-goto-line")).toBeNull()
+    const ev = keyEvent({ key: "l", code: "KeyL", keyCode: 76, ...mod })
+    expect(runScopeHandlers(view, ev, "editor")).toBe(true)
+    expect(view.dom.querySelector(".cm-goto-line")).not.toBeNull()
+    view.destroy()
+  })
+
+  test("Mod-Alt-G still opens the go-to-line panel", () => {
+    const view = makeView()
+    expect(view.dom.querySelector(".cm-goto-line")).toBeNull()
+    const ev = keyEvent({ key: "g", code: "KeyG", keyCode: 71, altKey: true, ...mod })
+    expect(runScopeHandlers(view, ev, "editor")).toBe(true)
+    expect(view.dom.querySelector(".cm-goto-line")).not.toBeNull()
+    view.destroy()
   })
 })
 
