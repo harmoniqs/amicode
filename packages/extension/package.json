@@ -191,6 +191,10 @@
         "title": "Amicode: Redo Onboarding"
       },
       {
+        "command": "amicode.revealInSidebar",
+        "title": "Amicode: Find in Sidebar"
+      },
+      {
         "command": "amicode.updateOpencode",
         "title": "Amicode: Update canonical opencode (check + adopt)",
         "category": "Amicode"

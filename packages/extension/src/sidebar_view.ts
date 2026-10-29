@@ -636,6 +636,8 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
   private chatActive = false;
   private activeProjectPath: string | null | undefined = undefined;
   private activeProjectMode: "none" | "expand" | "reset" = "reset";
+  /** #1036: a reveal requested before the view resolved; replayed once on resolve. */
+  private pendingReveal?: string;
   private watcher?: vscode.FileSystemWatcher;
   private fsDebounceTimer?: ReturnType<typeof setTimeout>;
   private fsPendingFolders = new Set<string>();
@@ -898,6 +900,12 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
     if (this.activeProjectPath !== undefined) {
       this.postDown({ kind: "active-project", path: this.activeProjectPath, mode: this.activeProjectMode });
     }
+    // #1036: a Find-in-sidebar reveal requested before the view resolved. One-shot.
+    if (this.pendingReveal !== undefined) {
+      const pending = this.pendingReveal;
+      this.pendingReveal = undefined;
+      this.postDown({ kind: "reveal-file", path: pending });
+    }
 
     // Replay saved section order so the webview renders sections in the
     // user's preferred order. Falls back to the default if nothing is saved.
@@ -929,6 +937,27 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
     this.activeProjectMode = mode;
     this.postDown({ kind: "active-project", path: projectPath, mode });
   }
+
+  /**
+   * #1036 — "Find in sidebar": focus the sidebar and reveal an absolute file
+   * path (expand ancestors, scroll, flash). A path outside every sidebar root
+   * is a silent no-op in the webview. If the view has not resolved yet, the
+   * reveal is held once and replayed on resolve (one-shot — a later re-resolve
+   * must not re-scroll the tree).
+   */
+  revealFile(filePath: string): void {
+    if (this.view) {
+      this.postDown({ kind: "reveal-file", path: filePath });
+    } else {
+      this.pendingReveal = filePath;
+    }
+    try {
+      void Promise.resolve(vscode.commands.executeCommand("amicode.workspace.focus")).catch(() => undefined);
+    } catch {
+      /* focus is best-effort; the reveal itself is already queued or posted */
+    }
+  }
+
 
   /**
    * Persist a new section order to globalState and push it to the webview.
