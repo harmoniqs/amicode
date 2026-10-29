@@ -1,9 +1,9 @@
 ---
 name: formulation-display
-description: Present an optimization problem in classic form — objective, constraints, dynamics written out the way QOC trajectory-optimization papers do (style exemplars: Direct Collocation for Quantum Optimal Control, arXiv:2305.03261; Universal Dynamics with Globally Controlled Analog Quantum Simulators, arXiv:2508.19075): continuous core, direct collocation, indirect/GRAPE contrast, free-time/min-time, robustness ensembles, the full component inventory, plus the per-solve display set. Use when writing a problem statement for a research loop report finding, demo, paper, or spec, or when a report/paper must show what was actually solved.
+description: "Present an optimization problem in classic form — objective, constraints, dynamics written out the way QOC trajectory-optimization papers do (style exemplars: Direct Collocation for Quantum Optimal Control, arXiv:2305.03261; Universal Dynamics with Globally Controlled Analog Quantum Simulators, arXiv:2508.19075): continuous core, direct collocation, indirect/GRAPE contrast, free-time/min-time, robustness ensembles, the full component inventory, plus the per-solve display set. Use when writing a problem statement for a research loop report finding, demo, paper, or spec, or when a report/paper must show what was actually solved."
 agents: [researcher, experimenter, engineer]
 surface: public
-scenarios: [pi-report-findings, demo-writeup, paper-section, spec-cards]
+scenarios: [demo-writeup, paper-section, spec-cards]
 ---
 
 # Formulation display — the problem in classic optimization form
