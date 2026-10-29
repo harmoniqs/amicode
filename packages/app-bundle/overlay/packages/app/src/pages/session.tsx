@@ -86,6 +86,14 @@ import {
 } from "@/pages/session/session-panel-width"
 import { SessionSidePanel } from "@/pages/session/session-side-panel"
 import { sessionPanelLayout } from "@/pages/session/session-panel-layout"
+import {
+  reduceWorkColumnPhase,
+  WORK_COLUMN_TRANSITION_MS,
+  workColumnExpanded,
+  workColumnMounted,
+  workColumnTransitioning,
+  type WorkColumnPhase,
+} from "@/pages/session/work-column-presence"
 import { SessionReviewEmptyChangesV2 } from "@opencode-ai/session-ui/v2/session-review-empty-changes-v2"
 import { ReviewPanelV2 } from "@/pages/session/v2/review-panel-v2"
 import { createReviewPanelV2State } from "@/pages/session/v2/review-panel-v2-state"
@@ -710,6 +718,39 @@ export default function Page() {
   const workColumnWidth = createMemo(() =>
     clampWorkColumnWidth({ width: layout.panelColumn.width(), available: sessionPanelAvailable() }),
   )
+  // amicode#1610: the work column animates its width on collapse/restore
+  // instead of unmounting in one frame. It stays mounted through `closing`
+  // (width → 0) and `opening` (0 → width); the timers below settle the phase.
+  const workColumnVisible = createMemo(() => isDesktop() && desktopV2PanelLayout().visible)
+  const [workColumnPhase, setWorkColumnPhase] = createSignal<WorkColumnPhase>(
+    untrack(workColumnVisible) ? "open" : "unmounted",
+  )
+  createEffect(
+    on(
+      workColumnVisible,
+      (visible, previous) => {
+        if (previous === undefined || visible === previous) return
+        setWorkColumnPhase((phase) => reduceWorkColumnPhase(phase, visible ? "show" : "hide"))
+      },
+      { defer: true },
+    ),
+  )
+  createEffect(() => {
+    const phase = workColumnPhase()
+    if (!workColumnTransitioning(phase)) return
+    let live = true
+    const settle = () => {
+      if (live) setWorkColumnPhase((current) => reduceWorkColumnPhase(current, "settled"))
+    }
+    // closing: wait out the width transition. opening: let the collapsed
+    // width paint first (two frames), then expand so the transition runs.
+    const timer = phase === "closing" ? setTimeout(settle, WORK_COLUMN_TRANSITION_MS) : undefined
+    if (phase === "opening") requestAnimationFrame(() => requestAnimationFrame(settle))
+    onCleanup(() => {
+      live = false
+      if (timer !== undefined) clearTimeout(timer)
+    })
+  })
   const sessionPanelWidth = createMemo(() => {
     if (chatTakesRemainder()) return undefined
     if (!desktopSidePanelOpen()) return "100%"
@@ -2846,14 +2887,25 @@ export default function Page() {
           </Suspense>
         </Show>
         <Show when={newSessionDesign()}>
-          <Show when={isDesktop() ? desktopV2PanelLayout().visible : terminalOpen()}>
+          <Show when={isDesktop() ? workColumnMounted(workColumnPhase()) : terminalOpen()}>
             <div
               classList={{
                 "min-w-0 h-full flex flex-col relative": true,
                 "flex-1": !isDesktop(),
                 "flex-none": isDesktop(),
+                // amicode#1610: animate collapse/restore only — never during a
+                // manual drag (size.active()), which must track the pointer 1:1.
+                "transition-[width] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none":
+                  isDesktop() && !size.active(),
+                "overflow-hidden": isDesktop() && workColumnPhase() !== "open",
               }}
-              style={{ width: isDesktop() ? `${workColumnWidth()}px` : undefined }}
+              style={{
+                width: isDesktop()
+                  ? workColumnExpanded(workColumnPhase())
+                    ? `${workColumnWidth()}px`
+                    : "0px"
+                  : undefined,
+              }}
             >
               {/* amicode#105: the work column's own resize handle (its left
                   edge), sizing layout.panelColumn within the policy bounds —

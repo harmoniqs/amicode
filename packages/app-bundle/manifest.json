@@ -287,7 +287,7 @@
     "packages/app/src/pages/new-session.tsx": "c060bbb15569b6da2f67146e6af0879ccb5444345df03dbc2f9b39cb98b9db78",
     "packages/app/src/pages/overlay-content-hash.test.ts": "aa208098213522dcde42434408afe9c8641fad663f44a58c316922dbd0da2f5c",
     "packages/app/src/pages/research-surfaces-absence.test.ts": "9944a8ec5492500eb82548d03b24ea7fb8ccc9c2ae5de14a4d18ddb309378746",
-    "packages/app/src/pages/session.tsx": "7918f8bed4b1bd0932e5e6681546217fa24e5b6e81667163ef4b63439516328f",
+    "packages/app/src/pages/session.tsx": "546262aa8537e9f0229d63fbe7c94179db328568709ec27c44d5de9a374086ee",
     "packages/app/src/utils/amicode-bridge.ts": "3ec87c24c0384d312f7eb644807d9217a53b1b4b97f7fffadab1cc1595603f3b",
     "packages/app/src/utils/amicode-bug-report.test.ts": "b1bbf49230ff3aa6d1a43ffa9165ba5a84ca4ee18a6d49f52ee5cd887c3e6444",
     "packages/app/src/utils/amicode-bug-report.ts": "d55d9cecfe17719c0d4a0ca498345c7eff6fca1de6b645e4bc3fecb40f2f4645",
@@ -1034,7 +1034,9 @@
     "packages/opencode/src/server/routes/instance/httpapi/handlers/session.ts": "b37ff4136c4aea85b23083bf441f03e09820e3e4cdd95e4118ca570d8435b94f",
     "packages/opencode/src/server/routes/instance/httpapi/middleware/file-write-workspace.ts": "665c33633173ee89c6da1d4a0eaacaf4eebe3ccdd04eb36b063515cb4c093e4a",
     "packages/opencode/src/server/routes/instance/httpapi/middleware/gateway-secret.ts": "ec6133ee5d331920ded81042fbeb05221bec0c4b26f5897b3f28bc267d26aefa",
-    "packages/opencode/src/server/routes/instance/httpapi/middleware/workspace-routing.ts": "6ded09e0f424f894e100e1f4904787d97ae1512f25688cfa2f05cbfbd3811a2a"
+    "packages/opencode/src/server/routes/instance/httpapi/middleware/workspace-routing.ts": "6ded09e0f424f894e100e1f4904787d97ae1512f25688cfa2f05cbfbd3811a2a",
+    "packages/app/src/pages/session/work-column-presence.ts": "a6a1485299d602267f91bf821d816f6e97f620fc5e5bb9e946511d111b6fe57e",
+    "packages/app/src/pages/session/work-column-presence.test.ts": "435ded3491681f9274ee1d4f219ce6191e2f374005271844deb12b1c67cb9f1b"
   },
   "symlinks": [
     "packages/app/public/amico.svg"
@@ -1098,7 +1100,7 @@
     }
   },
   "counts": {
-    "overlay_total": 1027,
+    "overlay_total": 1029,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -2129,7 +2131,9 @@
     "packages/opencode/src/server/routes/instance/httpapi/handlers/session.ts": "M",
     "packages/opencode/src/server/routes/instance/httpapi/middleware/file-write-workspace.ts": "A",
     "packages/opencode/src/server/routes/instance/httpapi/middleware/gateway-secret.ts": "A",
-    "packages/opencode/src/server/routes/instance/httpapi/middleware/workspace-routing.ts": "M"
+    "packages/opencode/src/server/routes/instance/httpapi/middleware/workspace-routing.ts": "M",
+    "packages/app/src/pages/session/work-column-presence.ts": "A",
+    "packages/app/src/pages/session/work-column-presence.test.ts": "A"
   },
   "upstream_base_archive_sha256": "4b5f2e5edfc796082a353fd09c1b1dec3e7a108a4b080fe3a86b12d9fa59fae6"
 }
