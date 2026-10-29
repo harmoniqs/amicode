@@ -851,7 +851,7 @@
     "packages/app/src/pages/session/session-panel-width.test.ts": "9482afba7fbce254cbbd21ef885e9e9620b981616681635376f466478f611155",
     "packages/app/src/pages/session/session-panel-width.ts": "02ee3a02ed78db2eac47c2528055cf78aef95f389641e929ddc56c17471dcbe2",
     "packages/app/src/pages/session/session-side-panel-structure.test.ts": "b2d1d007d9200d0ac4a0889e45c2dbe57a324a10cb26ae9ab8f420d3c890402b",
-    "packages/app/src/pages/session/session-side-panel.tsx": "a27806be45c93c2cd8ae24639829cca936c2e444fdab1ff224270847effdc47c",
+    "packages/app/src/pages/session/session-side-panel.tsx": "fdf3b2eb6fe7484adb03f6b7fb52dfab2c74a7a41628b8562340d657174abd13",
     "packages/app/src/pages/session/terminal-panel-v2.tsx": "68dad9307f1d2abf3ff9248e451bd08005acf01ddc46b30a6d01b58f4a90dce0",
     "packages/app/src/pages/session/use-amicode-commands.test.ts": "65671d054c404edd2b799b0f6591a9c055e6ecb454a674fa0bd9a7fa6f68e111",
     "packages/app/src/pages/session/use-amicode-commands.tsx": "88bfdad9ae6dfd920b8e6a14ffebd2cf9e52b8f67bb9284cb358ad940643ca67",
@@ -977,8 +977,8 @@
     "packages/app/src/pages/session/composer/session-question-dock.tsx": "44c0814284ef4a5273c8034b8d1f5cd45306406d04e2f4f6646000facae47d7e",
     "packages/app/src/pages/session/composer/session-revert-dock.stories.tsx": "0310ce448c1f8feaf4732e66429654fe3602d470f3121835cf6435084c455c36",
     "packages/app/src/pages/session/composer/session-revert-dock.tsx": "3f2d030126a4c673731bac65406fd48797464ddc515444b891e39b0eb538e002",
-    "packages/app/src/pages/session/composer/session-tour.test.ts": "147473505d54466417b6b34fa672d280b71e1b9577e8bd41fbf9870035d1083e",
-    "packages/app/src/pages/session/composer/session-tour.tsx": "da5d807c7efe7aed1140d65d7eddd7982a8c17348d928f5d0a887d1b2a8d3a50",
+    "packages/app/src/pages/session/composer/session-tour.test.ts": "82bb857109fcc727670bd9f748aaa8e2408aea0446d2f48b4990098e30fcea5e",
+    "packages/app/src/pages/session/composer/session-tour.tsx": "ddc3b58d52e9bbbe73eea80a7d02ead93eef51613feee40f1b525f489b8b5c91",
     "packages/app/src/pages/session/composer/todo-panel-motion.stories.tsx": "70a8267c725af320d78d266b85fd0ff005d067c4d09a21bef824126602e831e7",
     "packages/app/src/pages/session/timeline/last-prompt-bubble.test.ts": "83753b3ec7227570523c2e0b9e82401fae7a20f3a23980bb40deaeb13304327b",
     "packages/app/src/pages/session/timeline/message-timeline-archive.test.ts": "5699d233b5b1a8ba165354113ff40cc9d55b37a80787d163c15165655d591555",
@@ -1017,7 +1017,7 @@
     "packages/sdk/js/src/v2/gen/sdk.gen.ts": "6610638b4fb71bac498da98d232ef9adcd4b011b63e5e81a63fc6dc20d311b17",
     "packages/sdk/js/src/v2/gen/types.gen.ts": "20dfc17423861bd51c197fe6a2fcb6efbd7ad11853b28e0bb79844115256e729",
     "packages/session-ui/src/v2/components/prompt-input/attachments.ts": "ff66078f2edc9a67a4df0d7dfd76a49be5eab27ac332b303f3412721ef7268ea",
-    "packages/session-ui/src/v2/components/prompt-input/index.tsx": "098bf84bf22573fcab2826a827e6789d41ad660545a0364ffb4a77cda5e01b30",
+    "packages/session-ui/src/v2/components/prompt-input/index.tsx": "5c5c852ad55ae759f5869fd2e48ade6da99a98b6ab3c6dc102f3e062898e3f60",
     "packages/opencode/src/server/routes/instance/httpapi/server.ts": "8f142f16accad5a5a7ca84507f5c95863416af9f85b11131e5cd97cb6b128d90",
     "packages/sdk/js/src/v2/gen/core/serverSentEvents.gen.ts": "9da41a900811e8526f3d6796341b787f7e3c64bdc9cc3a547977f05780c1f79f",
     "packages/opencode/src/server/routes/instance/httpapi/groups/experimental.ts": "944a0aee215a917e867fd9482f3c2bd40f49082bd3174c8a7d967ca40e34ec15",
@@ -1049,7 +1049,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-28T20:53:06.380Z",
+  "extracted_at": "2026-10-29T08:48:42.118Z",
   "per_package": {
     "packages/app": {
       "A": 272,
