@@ -63,8 +63,9 @@ export const CORRECTIONS_CONFIDENCE_MIN = 0.80;
 export const CORRECTIONS_NOUL_MIN = 0.5;
 
 /** Jev budget: at most this many residual consultations per pass (the
- *  pre-filter is generous by design — the cap is the cost guard). */
-export const DEFAULT_MAX_JEV = 400;
+ *  pre-filter is generous by design — the cap is the cost guard). Kept low
+ *  while the classifier path is in preview; raise per pass with `--max-jev`. */
+export const DEFAULT_MAX_JEV = 50;
 
 /** Digest unverified-entries cap (digest rows, never findings). */
 export const DIGEST_UNVERIFIED_CAP = 20;
@@ -581,8 +582,9 @@ export interface CorrectionsDeps {
  *  one receipt), unavailable/disabled short-circuits the whole pass — the
  *  curation loop convention (no call is made after unavailability is known).
  *  Circuit breaker: 5 consecutive transport/http/malformed failures degrade
- *  the pass to `error` — at --max-jev 400 a hanging endpoint must not cost
- *  400 × 10 s of serial waiting; the remaining candidates read as unverified. */
+ *  the pass to `error` — even at the default --max-jev 50 a hanging endpoint
+ *  must not cost 50 × 10 s of serial waiting; the remaining candidates read
+ *  as unverified. */
 const JEV_CONSECUTIVE_FAILURE_BREAK = 5;
 
 async function jevCorrections(
@@ -813,9 +815,10 @@ export async function correctionsScan(argv: string[], env: NodeJS.ProcessEnv, de
   };
 }
 
-/** The `corrections` verb body: route on the subcommand. Backs BOTH the CLI
- *  (amico.ts — SPINE_VERBS dispatch) and the MCP facade (mcp_serve.ts — the
- *  registry auto-publishes `amico_corrections`): one impl, two transports. */
+/** The `corrections` verb body: route on the subcommand. Backs the CLI
+ *  (amico.ts — SPINE_VERBS dispatch). It is NOT published as an agent MCP tool
+ *  by default (`mcpDefault: false` in verbs.ts — a preview, spend-bearing
+ *  classifier pass); opt in with AMICO_MCP_EXPOSE=corrections. */
 export async function correctionsVerb(argv: string[]): Promise<VerbResult> {
   const sub = argv[0];
   if (sub === "scan") return correctionsScan(argv.slice(1), process.env);

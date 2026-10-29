@@ -18,6 +18,7 @@ import {
   correctionsScan,
   correctionsVerb,
   correctionsWatermarkFile,
+  DEFAULT_MAX_JEV,
   DEFAULT_SCAN_DAYS,
   effectiveSinceMs,
   filingAdmits,
@@ -34,6 +35,7 @@ import {
   type CorrectionCandidate,
 } from "../src/corrections_verb.js";
 import { SPINE_VERBS } from "../src/verbs.js";
+import { callMcpTool, listMcpTools } from "../src/mcp_serve.js";
 
 const now = Date.now();
 const min = (n: number) => now - n * 60_000;
@@ -294,12 +296,24 @@ describe("the digest section", () => {
 });
 
 describe("verb registration", () => {
-  it("corrections is a real (non-stub) spine verb — CLI dispatch + MCP facade", () => {
+  it("corrections is a real (non-stub) spine verb — CLI dispatch", () => {
     const verb = SPINE_VERBS.find((v) => v.name === "corrections");
     expect(verb).toBeDefined();
     expect(verb!.stub).toBeFalsy();
     expect(verb!.summary).toMatch(/corrections/i);
     expect(verb!.summary).not.toMatch(/amico-run/);
+  });
+
+  it("is NOT an agent MCP tool by default (preview opt-out); AMICO_MCP_EXPOSE opts it in", async () => {
+    const names = (env: NodeJS.ProcessEnv) => listMcpTools(env).map((t) => t.name);
+    expect(names({})).not.toContain("amico_corrections");
+    expect(names({})).toContain("amico_skills"); // other verbs stay published
+    await expect(callMcpTool("amico_corrections", ["scan"], {})).rejects.toThrow(/unknown tool/);
+    expect(names({ AMICO_MCP_EXPOSE: "skills, corrections" })).toContain("amico_corrections");
+  });
+
+  it("the preview classifier-call cap defaults to 50", () => {
+    expect(DEFAULT_MAX_JEV).toBe(50);
   });
 });
 

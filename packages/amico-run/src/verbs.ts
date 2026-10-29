@@ -52,6 +52,10 @@ export interface Verb {
   stub?: boolean; // true while the body is still a B1 seam (help renders "[stub → slice]")
   /** Subcommands the MCP facade refuses: reachable from the CLI only (callMcpTool checks argv[0]). */
   cliOnlySubcommands?: readonly string[];
+  /** `false` = NOT published as an `amico_<name>` MCP tool by default (the agent
+   *  surface opt-out — e.g. a preview, spend-bearing verb). The CLI still
+   *  dispatches it; AMICO_MCP_EXPOSE=<name>[,<name>…] opts it back in. */
+  mcpDefault?: boolean;
   run: (args: string[]) => VerbResult | Promise<VerbResult>;
 }
 
@@ -466,6 +470,8 @@ const corrections: Verb = {
     "scan — mine chat sessions for user corrections, classify with jev, file skills-integrity findings (status: open) + a digest; P0/P1 ping Slack",
   generalizes: "the skills-integrity front-line rule's missing half: corrections observed in sessions but never filed by hand",
   slice: "corrections scan (amicode#1677)",
+  // Preview classifier pass (spends Jev calls): CLI/notturno only, not an agent tool by default.
+  mcpDefault: false,
   run: (args) => correctionsVerb(args),
 };
 
