@@ -13,14 +13,14 @@
     "packages/app/package.json": "3c9bf3d487052d4834b7fd3ce93fcf6b7fc358de92b8be4b0e84fc424a971f74",
     "packages/app/playwright.config.ts": "b7dae0b39248b4ddf7cba829af96ac7fe3cc919add9711ecb5292d9bd52e1805",
     "packages/core/schema.json": "f23c01f0670b96f80db5bc3d8e326f311143087d290064bb6b4805d7201d5818",
-    "packages/opencode/package.json": "01d9338ee64108d0bd6af80b971fa2da4c7bf63e7efae59cc97cd58a9cfce55c",
+    "packages/opencode/package.json": "b7e1946bec2d72302646fa7128e3686a73723bab9d5f0812984e5fda16e376d3",
     "packages/opencode/pasqal-live-test.mjs": "2ff0edf222ce29660ef8d901c0b6f10951943ef01824d2d264339f8d720206f1",
     "packages/opencode/pasqal-live-test.sh": "0bb0089eb413956f0252939f933a139c2f11520466887ad91fcae362f1698e41",
     "packages/session-ui/bunfig.toml": "468114e9b52c3cf926d2385c12d93385992cd70c97ea9e32ed22154617b7799d",
     "packages/session-ui/happydom.ts": "d81d6b14e988f058fa502c841df34b55307c57fc94a26fb4f8a5deb6aa0d4834",
-    "packages/session-ui/package.json": "9661896519610a5909b1ce9d9b9aa66c113704b1c91f288ecf81207cb1a2fc86",
+    "packages/session-ui/package.json": "e45791b38522223cab314dad535a960bc8d2dc5d8752a1d9d67677b417369339",
     "packages/session-ui/preload-worker-mock.ts": "b53280029a042575734d7bfdf27713f6c5cd6a6665599dc429d839a3e3372bd1",
-    "packages/ui/package.json": "b1d168d0371e9094faae1107fc6c00be197f09bc69daa2247a3890d607f4b629",
+    "packages/ui/package.json": "40b60d6bcb07157d998c431f42d2732d1dd96bcf1e0c1d1514f39428f5b82116",
     "packages/app/public/amico.svg": "7c64b145bdd063bacd53318336a423f0654ec702de2b4e0c4a4a384694052804",
     "packages/app/public/oc-theme-preload.js": "27227e802b3494e7c545da903e679efdb30ccc754cd4eb5cdf08005a40d560b6",
     "packages/app/src/app-desktop-commands.test.ts": "1d2057f238dc14e4407ff5c4e53afe091784790bc0fd0dbfde0eacd91e2bd968",
@@ -1065,7 +1065,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-29T12:52:12.371Z",
+  "extracted_at": "2026-10-29T12:58:42.347Z",
   "per_package": {
     "packages/app": {
       "A": 284,
