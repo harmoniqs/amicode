@@ -102,6 +102,10 @@ interface CachedModel {
   checked_at: number;
   credential_fp: string | null;
   source: "probe" | "demoted";
+  /** #2001: when this model was FIRST seen ok on this credential (epoch ms);
+   *  0 = ok since the provider's baseline probe (never an arrival); null =
+   *  never ok. Feeds the What's-new page's "new for you" arrivals (#2000). */
+  first_ok_at: number | null;
 }
 
 interface CachedProvider {
@@ -126,6 +130,8 @@ export interface ReachabilityRow {
   checked_at: number | null;
   credential_fp: string | null;
   source: "probe" | "demoted" | null;
+  /** #2001: see CachedModel.first_ok_at. */
+  first_ok_at: number | null;
 }
 
 export interface ReachabilityProviderMeta {
@@ -218,6 +224,8 @@ function parseDoc(text: string | undefined): CacheDoc {
           checked_at: checked,
           credential_fp: strOrNull(mv.credential_fp),
           source: mv.source === "demoted" ? "demoted" : "probe",
+          // a legacy row (pre-#2001) that is ok was there before tracking → 0
+          first_ok_at: numOrNull(mv.first_ok_at) ?? (status === "ok" ? 0 : null),
         };
       }
     }
@@ -383,7 +391,7 @@ export class ModelReachability {
     // The key includes the fp: a row cached under another credential is not
     // a verdict about this one → unchecked.
     if (p === undefined || m === undefined || m.credential_fp !== p.credential_fp) {
-      return { provider, model, status: "unchecked", reason: null, latency_ms: null, checked_at: null, credential_fp: null, source: null };
+      return { provider, model, status: "unchecked", reason: null, latency_ms: null, checked_at: null, credential_fp: null, source: null, first_ok_at: null };
     }
     return {
       provider,
@@ -394,6 +402,7 @@ export class ModelReachability {
       checked_at: m.checked_at,
       credential_fp: m.credential_fp,
       source: m.source,
+      first_ok_at: m.first_ok_at,
     };
   }
 
@@ -495,10 +504,14 @@ export class ModelReachability {
     await this.update((doc) => {
       const p = doc.providers[provider] ?? emptyProvider();
       const fp = rows.length > 0 ? rows[0]!.credential_fp : p.credential_fp;
+      // #2001: the provider's first probe (or the first under a new credential)
+      // is the BASELINE — what is ok there was already available, not an arrival.
+      const baseline = p.last_probe_at === null || fp !== p.credential_fp;
       // The credential changed: nothing cached under the old one survives.
       if (fp !== p.credential_fp) p.models = {};
       p.credential_fp = fp;
       for (const r of rows) {
+        const prior = p.models[r.model]?.first_ok_at ?? null;
         p.models[r.model] = {
           status: r.status,
           reason: r.reason,
@@ -506,6 +519,7 @@ export class ModelReachability {
           checked_at: r.checked_at,
           credential_fp: r.credential_fp,
           source: "probe",
+          first_ok_at: prior ?? (r.status === "ok" ? (baseline ? 0 : r.checked_at) : null),
         };
       }
       p.last_probe_at = now;
@@ -603,7 +617,8 @@ export class ModelReachability {
     try {
       await this.update((doc) => {
         const p = doc.providers[provider] ?? emptyProvider();
-        p.models[model] = { status, reason, latency_ms: null, checked_at: now, credential_fp: p.credential_fp, source: "demoted" };
+        const first_ok_at = p.models[model]?.first_ok_at ?? null;
+        p.models[model] = { status, reason, latency_ms: null, checked_at: now, credential_fp: p.credential_fp, source: "demoted", first_ok_at };
         doc.providers[provider] = p;
       });
     } catch {

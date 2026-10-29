@@ -57,6 +57,7 @@ import {
 } from "./onboarding_panel";
 import { registerFleetPanel } from "./fleet_panel";
 import { registerFleetManagerCommands } from "./fleet_manager_command";
+import { configureWhatsNew, registerWhatsNewCommand } from "./whats_new";
 import { isModelConfigured } from "./onboarding_routing";
 import { getWorkspaceProjects, type WorkspaceProjectDeps } from "./workspace_projects";
 import { detectProjectType } from "./project/detect";
@@ -795,6 +796,17 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // Manager Work Column tab. registerFleetPanel stays a no-op (retired).
   registerFleetPanel(ctx);
   registerFleetManagerCommands(ctx);
+  // #2001: the What's-new page — last-seen version in globalState (per
+  // machine) + "Amicode: What's New" (reveal the chat, then open the page;
+  // posted twice like postComputeConnect so a cold iframe still hears it).
+  configureWhatsNew(ctx.globalState);
+  registerWhatsNewCommand(ctx, {
+    postToAll: (msg) => {
+      void vscode.commands.executeCommand("amicode.openChat");
+      ChatPanel.postToAll(msg);
+      setTimeout(() => ChatPanel.postToAll(msg), 1500);
+    },
+  });
 
   // #1375: fleet heartbeat producer — periodically re-POSTs this machine's
   // roster row with a fresh last_report so peers see it as reachable. Lazy

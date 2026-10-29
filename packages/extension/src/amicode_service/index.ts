@@ -110,6 +110,7 @@ import {
   type ModelReachabilityDeps,
 } from "./model_reachability";
 import { modelPickerConfigResponse } from "./model_picker_config";
+import { registerReleasesRoutes, type ReleasesDeps } from "./releases";
 
 export function registerProfileRoutes(server: AmicodeServiceServer): AmicodeServiceServer {
   server.add("GET", "/amicode/profile", () => ({ body: profileResponse() }));
@@ -987,6 +988,9 @@ export function createAmicodeService(
      *  catalog + the S1 probe) and tuning. Absent → the routes still answer
      *  (GET serves the cache; refresh is engine_unavailable; no scheduler). */
     modelReachability?: ModelReachabilityDeps;
+    /** #2001: the What's-new content route's bundled dir + version (absent →
+     *  dist/releases + the extension's package.json version). */
+    releases?: Pick<ReleasesDeps, "dir" | "version">;
     /** #1771: the service's diagnostic log (the hub runner's stdout →
      *  /tmp/amico-hub.log; the window's Amicode output channel). The fan-in
      *  census and the owner-map refresh outcomes write here. Absent → silent. */
@@ -1601,5 +1605,9 @@ export function createAmicodeService(
   registerPostureRoutes(server);
   registerModelRoutingRoutes(server, opts.modelRouting);
   registerModelReachabilityRoutes(server, opts.modelReachability);
+  // #2001: GET /amicode/releases — the What's-new cards + "new for you"
+  // arrivals read from the SAME reachability cache (a read-only instance).
+  const releasesReachability = new ModelReachability({ ...opts.modelReachability, schedulerIntervalMs: 0 });
+  registerReleasesRoutes(server, { ...opts.releases, reachability: () => releasesReachability.snapshot() });
   return server;
 }
