@@ -1,4 +1,4 @@
-# Paper Mode: live-draft source of truth and snapshot-base 3-way merge for AI/human co-editing
+# ADR 0038 — Paper Mode: live-draft source of truth and snapshot-base 3-way merge for AI/human co-editing
 
 Status: proposed (2026-09-28)
 
