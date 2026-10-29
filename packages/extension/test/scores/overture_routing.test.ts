@@ -34,9 +34,12 @@ function prep(vaultDir: string, opsDir: string) {
   }
 }
 
-// Hermetic: the routing predicate consults ~/.amico/profile.json (wizard
-// identity gate) — point it at a nonexistent file so a dev machine's real
-// profile can't flip shouldOnboard under the tests.
+// Hermetic: the routing predicate no longer reads ~/.amico/profile.json — the
+// identity gate is gone (#1161), so profile identity can't flip shouldOnboard.
+// The profile path stays pinned to a nonexistent file anyway, so a dev
+// machine's real profile can never leak into these tests if a profile read
+// is ever reintroduced; the #1161 regression cases below point it at a
+// populated profile instead.
 process.env.AMICO_PROFILE_FILE = path.join(os.tmpdir(), "amicode-tests-no-profile", "profile.json");
 
 describe("overture routing predicate (spec §3)", () => {
@@ -74,7 +77,7 @@ describe("overture routing predicate (spec §3)", () => {
     expect(manifest.manifest.id).toBe("pulse-designer");
   });
   it("populated profile.json identity + no completion marker → overture (identity is NOT a completion gate)", () => {
-    // Regression for #1161: profileHasIdentity() must not gate shouldOnboard.
+    // Regression for #1161: profile.json identity must not gate shouldOnboard.
     // The About You card can write name/affiliation before onboarding runs; the
     // completion marker (~/.amico/amicode/onboarding/completed) is the sole gate.
     const profileDir = fs.mkdtempSync(path.join(os.tmpdir(), "prof-id-"));

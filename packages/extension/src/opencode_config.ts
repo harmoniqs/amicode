@@ -312,23 +312,6 @@ export function entitlementsTablePath(scoresRoot: string = DEFAULT_SCORES_ROOT):
 
 /** Where the amico CLI reads the authoring config (spec C seam). $AMICO_AUTHORING_FILE
  *  overrides (tests + parity with the amico CLI's own reader). */
-/** True when ~/.amico/profile.json already carries identity — the onboarding
- *  WIZARD (or the About-You card) saved it, so the chat overture must not
- *  re-ask session-zero questions. Complements hasOnboardingCompleted (which
- *  tracks the conversational path's marker). */
-export function profileHasIdentity(
-  profilePath: string = process.env.AMICO_PROFILE_FILE?.trim() || path.join(os.homedir(), ".amico", "profile.json"),
-): boolean {
-  try {
-    const p = JSON.parse(fs.readFileSync(profilePath, "utf8")) as Record<string, unknown>;
-    return ["name", "affiliation", "focus", "scholar"].some(
-      (k) => typeof p[k] === "string" && (p[k] as string).trim() !== "",
-    );
-  } catch {
-    return false;
-  }
-}
-
 export function authoringFilePath(): string {
   const env = process.env.AMICO_AUTHORING_FILE;
   if (env && env.trim() !== "") return env;
@@ -814,10 +797,11 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
     // profile NOR a completion marker. The overture is NEVER chained into
     // pulse-designer — domain interviews start in subsequent sessions via the
     // onset router.
-    // NOTE: profileHasIdentity() was formerly part of this conjunction but was
-    // removed (#1161): identity fields written by the About You card are NOT a
-    // completion signal — the completion marker is the sole gate for "onboarding
-    // done." The interview's own resume logic merges any partial profile state.
+    // Identity in ~/.amico/profile.json is deliberately NOT part of this
+    // conjunction (#1161): the About You card can write a name or affiliation
+    // before the interview ever runs, so identity is not evidence onboarding
+    // happened. The completion marker is the single "onboarding done" signal;
+    // the interview's own resume logic merges any partial profile.json state.
     const shouldOnboard =
       !!overture &&
       vaultDir !== "" &&
