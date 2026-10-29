@@ -7,10 +7,12 @@ import {
   editableExtensions,
   externalUpdate,
   detectMode,
+  keymapBindings,
 } from "./editor-core"
 import { EditorView, runScopeHandlers } from "@codemirror/view"
 import { EditorState } from "@codemirror/state"
 import { foldable, foldedRanges, syntaxTree } from "@codemirror/language"
+import { gotoLine } from "@codemirror/search"
 
 /**
  * Tests for editor-core — the extracted general-purpose CM6 setup functions
@@ -179,6 +181,30 @@ describe("baseExtensions code folding (#1517)", () => {
     expect(runScopeHandlers(view, unfold, "editor")).toBe(true)
     expect(count()).toBe(0)
     view.destroy()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Cmd+L (Mod-l) → gotoLine keybinding (#1515)
+// ---------------------------------------------------------------------------
+
+describe("keymapBindings — Mod-l gotoLine (#1515)", () => {
+  test("exports keymapBindings as a function", () => {
+    expect(typeof keymapBindings).toBe("function")
+  })
+
+  test("keymapBindings includes an entry with key 'Mod-l'", () => {
+    const theme = buildThemeExtension("dark")
+    const bindings = keymapBindings({ theme })
+    const modLEntry = bindings.find((b) => b.key === "Mod-l")
+    expect(modLEntry).toBeDefined()
+  })
+
+  test("Mod-l binding runs gotoLine", () => {
+    const theme = buildThemeExtension("dark")
+    const bindings = keymapBindings({ theme })
+    const modLEntry = bindings.find((b) => b.key === "Mod-l")
+    expect(modLEntry?.run).toBe(gotoLine)
   })
 })
 
