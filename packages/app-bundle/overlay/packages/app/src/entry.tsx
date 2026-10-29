@@ -11,6 +11,7 @@ import { createBrowserDraftStore } from "@/utils/draft-store"
 import { dict as en } from "@/i18n/en"
 import { dict as zh } from "@/i18n/zh"
 import { installGlobalClipboardFallback } from "@/utils/global-clipboard"
+import { installPdfFindGuard } from "@/components/session/pdf-find-guard"
 import { installWebviewContextMenu } from "@/utils/webview-context-menu"
 import { webZoom } from "@/utils/web-zoom"
 import { inAmicode } from "@/utils/amicode-bridge"
@@ -220,6 +221,9 @@ if (root instanceof HTMLElement) {
   // extension-host bridge (framed contexts only — self-gates unframed).
   installGlobalClipboardFallback(window)
   installWebviewContextMenu()
+  // Shield Cmd+F on Preview PDF panes from upstream file-find's window-capture
+  // hijack — must install before any File (diff/tool card) component mounts.
+  installPdfFindGuard(window)
   adoptHiddenProject(location.search) // amicode#203: hide the extension's scaffold project
   adoptBugReportFlag(location.search) // opencode#116: gate the composer's report-a-bug button
   adoptDeveloperFlag(location.search) // amicode devtools: persist developer mode across port rotations
