@@ -147,7 +147,8 @@ user exports is theirs to parse — arJev never scrapes a site.
   app in **their** workspace — fastest via the manifest
   (https://github.com/harmoniqs/arJev/blob/main/docs/slack-app-manifest.yaml:
   Create New App → From an app manifest → paste). Scopes: `chat:write`,
-  `reactions:read`, `channels:history` (`groups:history` for a private channel;
+  `reactions:read`, `channels:history`, `channels:join` (lets the bot join the
+  digest channel itself, no `/invite`; `groups:history` for a private channel;
   Slack has no `conversations:replies` scope — replies are read via history).
   Token in a mode-600 file → `ARJEV_SLACK_TOKEN`; then
   set `channel`, `keepers` (user IDs whose reactions count as labels), `why_style`
