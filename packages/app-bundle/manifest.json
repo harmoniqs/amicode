@@ -763,8 +763,9 @@
     "packages/app/src/components/prompt-input/placeholder.test.ts": "d3cee5e2c758faf5fda626e270adad81129622bbc2bf2c335c2bffe1544165c3",
     "packages/app/src/components/prompt-input/placeholder.ts": "6b2af23a0588e7970cd0dd059fc60c3671c907a76ba3db660483a932f1dce79d",
     "packages/app/src/components/prompt-input/slash-popover.tsx": "a1800173edebcd419802796470f7270acaf0ef689a72f1b81a1cedfd8968337d",
+    "packages/app/src/components/prompt-input/submit-concise.test.ts": "5d76bad06ced24bda9e5be84f6a01577145bcf2ad6dfa55d2941344da2a3d935",
     "packages/app/src/components/prompt-input/submit-stream-gap.test.ts": "351f0f5a8cf7aff55c859cb82fbca388ef848831256b80f74ee52ab9cf5d07c6",
-    "packages/app/src/components/prompt-input/submit.ts": "6c120283585827beb6749c0a5933d89441016826a3f1adeebdb81e8557c7b4cc",
+    "packages/app/src/components/prompt-input/submit.ts": "42c2177bc7f36355d65cd363e5ea2780d16c960991b5347a8ceadaccf11b8b65",
     "packages/app/src/components/server/server-row.tsx": "caf3179cf0b34b00fcab6ed57a324ff1f90f571f604216c49164dc54bd9f12ab",
     "packages/app/src/components/session/context-warning-banner.tsx": "c4ceb3f9589ebd21cc66e21cef209552fc5fcff6cd825da5069c2259c8d33e50",
     "packages/app/src/components/session/index.ts": "f0d58fa3a336639566ec51a10b692649707f91a7b780c0b5c4dcf18642d030e8",
@@ -1064,10 +1065,10 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-29T12:51:18.638Z",
+  "extracted_at": "2026-10-29T12:52:12.371Z",
   "per_package": {
     "packages/app": {
-      "A": 283,
+      "A": 284,
       "M": 166,
       "D": 0
     },
@@ -1113,7 +1114,7 @@
     }
   },
   "counts": {
-    "overlay_total": 1042,
+    "overlay_total": 1043,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1873,6 +1874,7 @@
     "packages/app/src/components/prompt-input/placeholder.test.ts": "M",
     "packages/app/src/components/prompt-input/placeholder.ts": "M",
     "packages/app/src/components/prompt-input/slash-popover.tsx": "M",
+    "packages/app/src/components/prompt-input/submit-concise.test.ts": "A",
     "packages/app/src/components/prompt-input/submit-stream-gap.test.ts": "A",
     "packages/app/src/components/prompt-input/submit.ts": "M",
     "packages/app/src/components/server/server-row.tsx": "M",

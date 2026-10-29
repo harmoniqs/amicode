@@ -70,8 +70,11 @@ const draftImages = (prompt: Prompt) => prompt.filter((part): part is ImageAttac
 // amicode: the concise directive. When the composer's concise switch is on it
 // rides as the message's per-turn `system` instruction (invisible — reaches the
 // model, not rendered as a user part), never appended to the visible text.
-const CONCISE_DIRECTIVE =
+export const CONCISE_DIRECTIVE =
   "Concise mode is on for this message. Respond concisely: lead with the answer or next action, no preamble or closing pleasantries, and keep it tight — without dropping required caveats, questions, or safety confirmations."
+
+/** The per-turn `system` instruction for the composer's concise switch state. */
+export const conciseSystem = (on: boolean): string | undefined => (on ? CONCISE_DIRECTIVE : undefined)
 
 export async function sendFollowupDraft(input: FollowupSendInput) {
   const text = draftText(input.draft.prompt)
@@ -559,7 +562,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       agent,
       model,
       variant,
-      system: conciseAtSend ? CONCISE_DIRECTIVE : undefined,
+      system: conciseSystem(conciseAtSend),
     }
 
     const clearInput = () => {
