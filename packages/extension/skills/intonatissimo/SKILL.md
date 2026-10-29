@@ -3,6 +3,7 @@ name: intonatissimo
 description: Intonatissimo.jl usage — the entitled calibration tier. Measurement-matching objectives, NLP subproblem construction/updates, and the public-API ILC loop over Intonato's PulseTuningProblem chassis. Use when authoring a closed-loop pulse-tuning solve.jl in an Intonatissimo-enabled environment.
 surface: entitled
 entitlement: issimo
+revision: 1
 ---
 
 # Intonatissimo — usage guide
@@ -38,8 +39,11 @@ kpo, params = MeasurementMatchingObjective(model, y_target, traj; weights = w_ve
   point's target and weights. Mutate through the references between outer
   iterations; rebuilding the objective allocates and loses warm-start structure.
 - `update_targets!(params, y_target)` — retarget in place. `y_target` is a
-  `Vector{Measurement}` (a `Measurement` wraps one measurement vector plus its
-  knot index).
+  `Vector{Measurement}` (a `Measurement` wraps one measurement vector plus an
+  integer `index`). Here, as in `MeasurementModel` and `SimulatedExperiment`, the
+  index is a **knot index** π_j ∈ 1:N of the pulse — the state is read at
+  `get_knot_times(pulse)[index]`. See the hardware-path caveat below before
+  mixing these with measurements from a soc.
 - `update_weights!(params, w_flat)` — write the flattened per-element effective
   weights in model element order (measurement-major), in place.
 - `weights` are per-measurement task-importance vectors. The legacy `Q` /
@@ -89,6 +93,19 @@ solve!(ptp; max_iter = 5, tol = 1e-3, γ = 0.8, min_nominal_fidelity = 0.8)
 # ptp.qcp is updated in place with the tuned result
 ```
 
+- **Hardware-path index caveat (Intonato's QICK seam).** Through
+  `StrumentoExperiment` → `StrumentoBackend` → a soc (`MockSoc`, `TwinSoc`,
+  `StrumentoSoc`), the backend's `indices` are documented as knot indices, but
+  every soc resamples the pulse onto its DAC grid
+  (`floor(Int, T*dac_rate) + 1` points) and uses the integers as **DAC-sample**
+  indices of that grid — while the returned `Measurement`s still carry the knot
+  label. With N = 11, T = 5, `dac_rate = 20`, "index 11" is measured at t = 0.5,
+  not t = 5, so `y_exp` and the model targets disagree for a reason that is not
+  model error and ILC will "correct" it. Until Intonato measures at
+  `t = knot_times[k]` on the soc path: pass each knot's sample index
+  (`round(Int, t_k * dac_rate) + 1`) to the backend, or put the pulse's knots on
+  the DAC grid, and check one evaluation against `SimulatedExperiment` before a
+  loop. `SimulatedExperiment` itself is unaffected.
 - **Plain ILC** is the bare `ILCStrategy()` — no parameter calibration.
 - `solve!` kwargs: `max_iter` (outer iterations, default 5), `tol` (measurement
   error convergence, default 1e-3), `γ` (trust-region schedule factor, default
