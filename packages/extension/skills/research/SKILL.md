@@ -220,10 +220,12 @@ experiment, only the parent's own working notes); re-read + audit after every co
 
 ## Parallel sessions & shared checkouts
 
-`ledger/campaigns/CHECKOUTS.md` is the project-wide claim registry. Pinned scratch harnesses rot between loops: /tmp trees get cleaned, and shared depots garbage-collect pinned package trees. Before re-using one, verify the worktree SHAs and clean status, check every Manifest tree hash is present, instantiate if not, and assert the Manifest is byte-unchanged afterwards (never resolve). Record this in the run's env log. Re-read it before
+`ledger/campaigns/CHECKOUTS.md` is the project-wide claim registry. Re-read it before
 casting any experimenter; claim your row; release it when work lands. First-writer-wins;
 races are possible and visible — a visible conflict beats a silent double-ownership every
 time.
+
+Pinned scratch harnesses rot between loops: /tmp trees get cleaned, and shared depots garbage-collect pinned package trees. Before re-using one, verify the worktree SHAs and clean status, check every Manifest tree hash is present, instantiate if not, and assert the Manifest is byte-unchanged afterwards (never resolve). Record this in the run's env log.
 
 ## Standing anti-gaming contract
 
