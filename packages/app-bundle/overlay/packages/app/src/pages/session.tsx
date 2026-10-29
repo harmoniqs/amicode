@@ -60,7 +60,7 @@ import { TerminalProvider, useTerminal } from "@/context/terminal"
 import { PromptInput } from "@/components/prompt-input"
 import { PromptInputV2Composer, usePromptInputV2Controller } from "@/components/prompt-input-v2"
 import { useSettingsCommand } from "@/components/settings-dialog"
-import { setCursorPosition } from "@/components/prompt-input/editor-dom"
+import { getCursorPosition, setCursorPosition } from "@/components/prompt-input/editor-dom"
 import { promptLength } from "@/components/prompt-input/history"
 import { type FollowupDraft, sendFollowupDraft } from "@/components/prompt-input/submit"
 import {
@@ -1597,6 +1597,49 @@ export default function Page() {
     if (isChildSession()) return
     inputRef?.focus()
   }
+
+  // #1248: per-session caret offset — saves the live selection offset while the
+  // composer has focus so refocusing on a tab switch can put the caret back where
+  // the user left it rather than jumping to the end.
+  const sessionCaretOffsets = new Map<string, number>()
+
+  onMount(() => {
+    const saveCaretOffset = () => {
+      const editor = inputRef
+      if (!editor) return
+      // Only record when the composer editor owns the current selection.
+      const active = document.activeElement
+      if (active !== editor && !editor.contains(active)) return
+      const sel = window.getSelection()
+      if (!sel || sel.rangeCount === 0) return
+      if (!editor.contains(sel.anchorNode)) return
+      const key = sessionKey()
+      if (!key) return
+      sessionCaretOffsets.set(key, getCursorPosition(editor))
+    }
+    document.addEventListener("selectionchange", saveCaretOffset, { passive: true })
+    onCleanup(() => document.removeEventListener("selectionchange", saveCaretOffset))
+  })
+
+  // #1248: on every session tab switch, refocus the composer and restore the
+  // saved caret offset for that session (fallback: prompt.cursor(), then end).
+  createEffect(
+    on(
+      sessionKey,
+      (key, prevKey) => {
+        if (!key || !prevKey || key === prevKey) return
+        if (isChildSession()) return
+        requestAnimationFrame(() => {
+          const editor = inputRef
+          if (!editor) return
+          editor.focus()
+          const saved = sessionCaretOffsets.get(key) ?? prompt.cursor() ?? promptLength(prompt.current())
+          setCursorPosition(editor, saved)
+        })
+      },
+      { defer: true },
+    ),
+  )
 
   useComposerCommands()
   useSessionCommands({
