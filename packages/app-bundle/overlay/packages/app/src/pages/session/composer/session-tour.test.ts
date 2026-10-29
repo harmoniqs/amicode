@@ -26,18 +26,25 @@ describe("tourTargetKeys", () => {
     expect(tourTargetKeys(request("Tour · Settings"))).toEqual(['[data-tour-target="settings"]'])
   })
 
-  // The Pulse Inspector, Preview and the file list all live behind the one
-  // panel button, so the score sends a single stop for them.
+  // The Pulse Inspector lives behind the one panel button, so the score sends a
+  // single stop for the panel. Preview is its own stop (see the new stops below).
   test("the panel is one stop, and its old sub-stops are gone", () => {
     expect(tourTargetKeys(request("Tour · Side panel"))).toEqual(['[data-tour-target="side-panel"]'])
     expect(tourTargetKeys(request("Tour · Pulse Inspector"))).toBeUndefined()
-    expect(tourTargetKeys(request("Tour · Preview"))).toBeUndefined()
   })
 
-  // Mirrors the 9 stops the score sends in its single tour card, in order.
-  // That order is the READING ORDER of the window — the top bar left to right,
-  // then the row beneath it, then the composer — so the highlight walks the
-  // screen instead of hopping across it.
+  test("the side-panel stops each resolve to their own anchor", () => {
+    expect(tourTargetKeys(request("Tour · File tree"))).toEqual(['[data-tour-target="file-tree"]'])
+    expect(tourTargetKeys(request("Tour · Preview"))).toEqual(['[data-tour-target="preview-tab"]'])
+    expect(tourTargetKeys(request("Tour · Files changed"))).toEqual(['[data-tour-target="files-changed"]'])
+    expect(tourTargetKeys(request("Tour · Posture"))).toEqual(['[data-tour-target="posture"]'])
+  })
+
+  // Mirrors the 13 stops of the tour card, in order. The first nine are the
+  // READING ORDER of the window — the top bar left to right, then the row
+  // beneath it, then the composer — so the highlight walks the screen instead
+  // of hopping across it. The last four are the side-panel stops and the
+  // posture (mode) indicator, appended after the original nine.
   const SCORED_STOPS = [
     "Tabs",
     "New chat",
@@ -48,6 +55,10 @@ describe("tourTargetKeys", () => {
     "Settings",
     "Context",
     "Composer",
+    "File tree",
+    "Preview",
+    "Files changed",
+    "Posture",
   ]
 
   test("every stop the score sends resolves to at least one candidate", () => {
