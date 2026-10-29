@@ -19,10 +19,18 @@ import {
   drawSelection,
   highlightActiveLine,
   highlightSpecialChars,
+  type KeyBinding,
 } from "@codemirror/view"
 import { history, defaultKeymap, historyKeymap } from "@codemirror/commands"
-import { search, searchKeymap, highlightSelectionMatches } from "@codemirror/search"
-import { type LanguageSupport, bracketMatching } from "@codemirror/language"
+import { search, searchKeymap, highlightSelectionMatches, gotoLine } from "@codemirror/search"
+import {
+  type LanguageSupport,
+  bracketMatching,
+  foldGutter,
+  foldKeymap,
+  foldCode,
+  unfoldCode,
+} from "@codemirror/language"
 import {
   HighlightStyle,
   syntaxHighlighting,
@@ -189,6 +197,14 @@ export function buildThemeExtension(mode: "light" | "dark"): Extension {
       ".cm-activeLine": {
         backgroundColor: "color-mix(in srgb, var(--v2-background-bg-layer-01, var(--background-weak)) 50%, transparent)",
       },
+      ".cm-foldGutter .cm-gutterElement": {
+        cursor: "pointer",
+        padding: "0 4px",
+        color: "var(--v2-text-text-muted, var(--text-weak))",
+      },
+      ".cm-foldGutter .cm-gutterElement:hover": {
+        color: "var(--v2-text-text-base, var(--text-strong))",
+      },
       ".cm-foldPlaceholder": {
         backgroundColor: "transparent",
         border: "none",
@@ -296,6 +312,34 @@ export function editableExtensions(opts: {
   return exts
 }
 
+/**
+ * Cmd/Ctrl+Shift+[ folds the region at the cursor, Cmd/Ctrl+Shift+] unfolds it
+ * (#1517). `foldKeymap` binds these to Ctrl-Shift on non-mac but to Cmd-Alt on
+ * mac, so the mac chord is added explicitly; `foldKeymap` stays for fold-all.
+ */
+const foldShortcutKeymap = [
+  { key: "Mod-Shift-[", run: foldCode },
+  { key: "Mod-Shift-]", run: unfoldCode },
+]
+
+/**
+ * Return the flat array of KeyBinding objects that baseExtensions wires into
+ * its keymap. Exported so tests can assert specific bindings (e.g. Mod-l →
+ * gotoLine, #1515) without coupling to CM6 extension internals.
+ *
+ * Includes:
+ * - defaultKeymap, historyKeymap, searchKeymap (the CM6 standard set)
+ * - { key: "Mod-l", run: gotoLine } — Cmd+L go-to-line shortcut (#1515)
+ */
+export function keymapBindings(): KeyBinding[] {
+  return [
+    ...defaultKeymap,
+    ...historyKeymap,
+    ...searchKeymap,
+    { key: "Mod-l", run: gotoLine },
+  ]
+}
+
 export function baseExtensions(opts: {
   theme: Extension
   language?: LanguageSupport | null
@@ -304,11 +348,14 @@ export function baseExtensions(opts: {
 }): Extension[] {
   return [
     lineNumbers(),
+    // Syntax-aware code folding (#1517): chevrons in the gutter next to the
+    // line numbers; fold regions come from each language's lezer grammar.
+    foldGutter(),
     highlightActiveLine(),
     highlightSpecialChars(),
     drawSelection(),
     bracketMatching(),
-    keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap]),
+    keymap.of([...foldShortcutKeymap, ...keymapBindings(), ...foldKeymap]),
     search(),
     highlightSelectionMatches(),
     EditorView.lineWrapping,

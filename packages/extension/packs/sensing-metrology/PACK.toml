@@ -1,0 +1,45 @@
+# The sensing / metrology domain pack (plan-20260920 step 10; amicode #1328).
+# The NV-center substrate is the existing exploratory bet (INTENT's
+# exploratory tier); this pack seeds the domain: filter functions, noise
+# spectroscopy, metrology-grade estimation with confidence intervals.
+# SEEDED, not exercised: the first task (filter-function validation against
+# synthetic noise spectra) is the shakedown exercise, the next milestone.
+schema_version = "1"
+id = "sensing-metrology"
+name = "Sensing & Metrology"
+version = 1
+scores = []
+curricula = ["curricula/noise-spectroscopy/CURRICULUM.md"]
+skills = [] # the sensing physics rides the flagship's Lindblad/filter-function material at exercise time
+payload_schemas = ["PAYLOADS.md"]
+benchmarks = ["benchmarks/README.md"]
+
+[[instruments]]
+kind = "NV-center testbed (data substrate, not wired in this build)"
+coverage = "unmodeled-until-hardware"
+
+[[instruments]]
+kind = "synthetic noise spectra (validation substrate)"
+coverage = "modeled"
+
+[verification]
+contract = "VERIFICATION.md"
+bindings = [
+  "filter-function validation vs synthetic spectra: T1b (exit-code + artifact contract — the validation harness over the synthetic ground truth)",
+  "estimation results (noise spectral density, filter response): T1b with CI folding — the estimation payload carries lo/hi bounds and the method tag",
+  "real-testbed claims: un-tiered until real data is measured",
+]
+
+[first_task]
+declaration = "FIRST-TASK.md"
+level = "shakedown"
+
+[onboarding]
+primary = "noise-spectroscopy"
+head = "noise-spectroscopy"
+
+[corrector]
+name = "synthetic-spectra ground truth (the validation harness: declared spectra, deterministic comparison)"
+paths = ["FIRST-TASK.md", "VERIFICATION.md"]
+integrity = "corrector/integrity.toml"
+tier = "open"

@@ -358,6 +358,75 @@ describe("demote sticks until the next probe", () => {
   });
 });
 
+// #2001 (feeds #2000): first_ok_at — when a model was FIRST seen ok on this
+// account, so the What's-new page can list arrivals since the last-seen
+// version. The first probe of a provider is the BASELINE (first_ok_at 0 —
+// "already there", never an arrival), so a fresh cache never floods the page.
+describe("first_ok_at records model arrivals (#2001)", () => {
+  const firstOk = (snap: { models: unknown[] }, provider: string, model: string) =>
+    (snap.models as Array<{ provider: string; model: string; first_ok_at: number | null }>).find(
+      (m) => m.provider === provider && m.model === model,
+    )?.first_ok_at;
+
+  it("the baseline probe marks ok models 0; a model that turns ok on a LATER probe gets that probe's time", async () => {
+    const h = harness();
+    h.catalog = { anthropic: ["claude-a", "claude-b"] };
+    h.statuses["anthropic/claude-b"] = "denied";
+    const mr = h.make({ minProbeIntervalMs: 0 });
+    await mr.refresh({ provider: "anthropic" });
+    let snap = await mr.snapshot();
+    expect(firstOk(snap, "anthropic", "claude-a")).toBe(0);
+    expect(firstOk(snap, "anthropic", "claude-b")).toBeNull();
+
+    // later: claude-b is granted, and a brand-new claude-c appears in the catalog
+    h.clock.now += 86_400_000;
+    delete h.statuses["anthropic/claude-b"];
+    h.catalog.anthropic = ["claude-a", "claude-b", "claude-c"];
+    await mr.refresh({ provider: "anthropic" });
+    snap = await mr.snapshot();
+    expect(firstOk(snap, "anthropic", "claude-a")).toBe(0);
+    expect(firstOk(snap, "anthropic", "claude-b")).toBe(h.clock.now);
+    expect(firstOk(snap, "anthropic", "claude-c")).toBe(h.clock.now);
+  });
+
+  it("first_ok_at survives a demotion and a re-probe (it is the FIRST time, not the latest)", async () => {
+    const h = harness();
+    h.catalog = { openai: ["gpt-x"] };
+    h.statuses["openai/gpt-x"] = "denied";
+    const mr = h.make({ minProbeIntervalMs: 0 });
+    await mr.refresh({ provider: "openai" });
+    h.clock.now += 1000;
+    delete h.statuses["openai/gpt-x"];
+    await mr.refresh({ provider: "openai" });
+    const arrived = h.clock.now;
+    await mr.demote({ provider: "openai", model: "gpt-x", status: "rate-limited", reason: null });
+    h.clock.now += 1000;
+    await mr.refresh({ provider: "openai" });
+    expect(firstOk(await mr.snapshot(), "openai", "gpt-x")).toBe(arrived);
+  });
+
+  it("a legacy cache row (no first_ok_at) that is ok reads as 0 — never a fabricated arrival", async () => {
+    const h = harness();
+    mkdirSync(join(h.file, ".."), { recursive: true });
+    writeFileSync(
+      h.file,
+      JSON.stringify({
+        version: 1,
+        providers: {
+          openai: {
+            credential_fp: "aaaaaaaaaaaaaaaa",
+            last_probe_at: h.clock.now,
+            last_attempt_at: h.clock.now,
+            last_error: null,
+            models: { "gpt-x": { status: "ok", reason: null, latency_ms: 1, checked_at: h.clock.now, credential_fp: "aaaaaaaaaaaaaaaa", source: "probe" } },
+          },
+        },
+      }),
+    );
+    expect(firstOk(await h.make({ listModels: async () => ({ openai: ["gpt-x"] }) }).snapshot(), "openai", "gpt-x")).toBe(0);
+  });
+});
+
 describe("the engine client (llm_creds) — key-free catalog + probe", () => {
   it("fetchProviderModels returns only provider ids → model ids (no key material)", async () => {
     const fetchImpl = (async (url: string) => {

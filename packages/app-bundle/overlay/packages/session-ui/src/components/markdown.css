@@ -309,6 +309,40 @@
     margin: 1.5rem 0;
     display: block;
   }
+
+  /* AMICODE: chat image frame — click to preview, hover to copy. */
+  [data-component="markdown-image"] {
+    position: relative;
+    display: block;
+    width: fit-content;
+    max-width: 100%;
+    margin: 1.5rem 0;
+
+    img {
+      margin: 0;
+      cursor: zoom-in;
+    }
+
+    img:not([src]) {
+      width: 160px;
+      height: 48px;
+    }
+  }
+
+  /* The paper backing is deliberate, not a theme color, and applies to LOCAL
+     images only (agent figures on the server's disk — equations, plots —
+     usually transparent PNG/SVG inked for a light slide, which vanish on a dark
+     chat background). Remote/data images render as authored. The copied image
+     keeps its transparency. */
+  [data-component="markdown-image"][data-local] {
+    padding: 8px;
+    border-radius: var(--radius-sm);
+    background: #fff;
+  }
+
+  [data-component="markdown-image"]:hover [data-slot="markdown-copy-button"] {
+    opacity: 1;
+  }
 }
 
 body[data-new-layout] [data-component="markdown"] {

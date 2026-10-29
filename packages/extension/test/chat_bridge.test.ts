@@ -4,12 +4,14 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
+  clipboardImageWriteCommand,
   extractReportBugModel,
   handleAmicodeBridgeMessage,
   rebuildAppBundleStep,
   rebuildGitCommand,
   resolveDbBackupDir,
   resolveRebuildMode,
+  writeClipboardImageNative,
   type BridgeIo,
 } from "../src/chat_bridge";
 
@@ -382,6 +384,63 @@ describe("amicode bridge — clipboard", () => {
     expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "clipboard-write", text: "x".repeat(5_000_001) }, host)).toBe(true);
     await flush();
     expect(env.clipboard.text).toBe("");
+  });
+});
+
+describe("amicode bridge — clipboard-image-write", () => {
+  it("writes on the host the user sits at and answers the nonce'd caller", async () => {
+    const host = io();
+    const png = "data:image/png;base64,iVBORw0KGgo=";
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "clipboard-image-write", dataUrl: png, nonce: "c1", tab: "pane-2" }, host)).toBe(true);
+    await vi.waitFor(() => expect(host.posted).toHaveLength(1));
+    const reply = host.posted[0] as { kind: string; nonce: string; tab: string; ok: unknown };
+    expect(reply).toMatchObject({ source: "amicode", kind: "clipboard-image-written", nonce: "c1", tab: "pane-2" });
+    expect(typeof reply.ok).toBe("boolean");
+  });
+
+  it("drops non-PNG payloads, oversize payloads, and hidden panels", async () => {
+    const hidden = io(false);
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "clipboard-image-write", dataUrl: "data:image/png;base64,AA==" }, hidden)).toBe(true);
+    const host = io();
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "clipboard-image-write", dataUrl: "data:image/svg+xml;base64,AA==" }, host)).toBe(true);
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "clipboard-image-write", dataUrl: "data:image/png;base64," + "A".repeat(24_000_001) }, host)).toBe(true);
+    await flush();
+    expect(hidden.posted).toHaveLength(0);
+    expect(host.posted).toHaveLength(0);
+  });
+
+  it("a failed temp-file write answers ok:false instead of throwing (the caller is never left waiting)", async () => {
+    const savedTmp = { TMPDIR: process.env.TMPDIR, TMP: process.env.TMP, TEMP: process.env.TEMP };
+    const missing = path.join(os.tmpdir(), `amicode-no-such-dir-${process.pid}`, "nested");
+    process.env.TMPDIR = missing;
+    process.env.TMP = missing;
+    process.env.TEMP = missing;
+    try {
+      await expect(writeClipboardImageNative(Buffer.from("iVBORw0KGgo=", "base64"))).resolves.toBe(false);
+      const host = io();
+      expect(
+        handleAmicodeBridgeMessage(
+          { source: "amicode", kind: "clipboard-image-write", dataUrl: "data:image/png;base64,iVBORw0KGgo=", nonce: "c9", tab: "pane-3" },
+          host,
+        ),
+      ).toBe(true);
+      await vi.waitFor(() => expect(host.posted).toHaveLength(1));
+      expect(host.posted[0]).toEqual({ source: "amicode", kind: "clipboard-image-written", nonce: "c9", tab: "pane-3", ok: false });
+    } finally {
+      for (const [k, v] of Object.entries(savedTmp)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  });
+
+  it("picks the platform writer and never splices the path into a script", () => {
+    const mac = clipboardImageWriteCommand("darwin", {});
+    expect(mac?.cmd).toBe("osascript");
+    expect(mac?.args.join(" ")).toContain("item 1 of argv");
+    expect(clipboardImageWriteCommand("linux", {})).toEqual({ cmd: "xclip", args: ["-selection", "clipboard", "-t", "image/png", "-i"] });
+    expect(clipboardImageWriteCommand("linux", { WAYLAND_DISPLAY: "wayland-0" })?.args[1]).toContain("wl-copy --type image/png");
+    expect(clipboardImageWriteCommand("win32", {})).toBeNull();
   });
 });
 

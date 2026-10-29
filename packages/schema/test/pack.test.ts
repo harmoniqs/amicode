@@ -51,8 +51,12 @@ describe("the pack kind", () => {
   it("requires the onboarding primary score — a score is a FIELD of a pack", () => {
     expect(validate(pack({ onboarding: { head: "overture" } }), "pack").ok).toBe(false);
   });
-  it("requires a non-empty scores list", () => {
-    expect(validate(pack({ scores: [] }), "pack").ok).toBe(false);
+  it("allows an empty scores list — the seeded-domain-pack contract (plan-20260920 step 10)", () => {
+    // A seeded domain pack legitimately carries no composed scores yet: the
+    // curriculum skeleton rides `curricula` and composed interviews come at
+    // maturity. The flagship keeps its non-empty list; minItems was the
+    // quantum-era single-pack contract, relaxed deliberately for domains.
+    expect(validate(pack({ scores: [] }), "pack").ok).toBe(true);
   });
   it("requires corrector.integrity — the threshold condition is a load-time property, not a convention", () => {
     const c = { ...(pack().corrector as object) } as Record<string, unknown>;

@@ -110,6 +110,7 @@ import { serializeSession } from "@/utils/serialize-session"
 import { useUsageExceededDialogs } from "./session/usage-exceeded-dialogs"
 import { createSessionOwnership } from "./session/session-ownership"
 import { createSessionLineage } from "./session/session-lineage"
+import { composerRefocusOffset } from "./session/composer-refocus"
 
 type FollowupItem = FollowupDraft & { id: string }
 type FollowupEdit = Pick<FollowupItem, "id" | "prompt" | "context">
@@ -1597,6 +1598,36 @@ export default function Page() {
     if (isChildSession()) return
     inputRef?.focus()
   }
+
+  // #1248: on a session tab switch, give the composer its focus back and put the
+  // caret where the user left it in that session (prompt.cursor(), written on
+  // composer blur; fallback: end). Guards mirror type-to-focus — see
+  // composerRefocusOffset. Decided inside the frame so focus has settled.
+  createEffect(
+    on(
+      sessionKey,
+      (key, prevKey) => {
+        requestAnimationFrame(() => {
+          const editor = inputRef
+          const offset = composerRefocusOffset({
+            key,
+            prevKey,
+            childSession: isChildSession(),
+            composerBlocked: composer.blocked(),
+            dialogActive: !!dialog.active,
+            active: deepActiveElement(),
+            composer: editor,
+            saved: prompt.cursor(),
+            length: promptLength(prompt.current()),
+          })
+          if (offset === undefined || !editor) return
+          editor.focus()
+          setCursorPosition(editor, offset)
+        })
+      },
+      { defer: true },
+    ),
+  )
 
   useComposerCommands()
   useSessionCommands({

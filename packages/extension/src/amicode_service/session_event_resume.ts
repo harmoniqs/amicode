@@ -27,18 +27,6 @@ export function matchSessionEventPath(pathname: string): string | undefined {
   return m ? m[1] : undefined;
 }
 
-/** Find the end offset of the first SSE event boundary (a blank line) in `s`,
- *  or -1 if none is complete yet. Handles both LF (`\n\n`) and CRLF
- *  (`\r\n\r\n`) framings. Returns the index JUST PAST the delimiter so the
- *  block is forwarded verbatim (delimiter included). */
-function boundaryEnd(s: string): number {
-  const lf = s.indexOf("\n\n");
-  const crlf = s.indexOf("\r\n\r\n");
-  if (lf < 0 && crlf < 0) return -1;
-  if (crlf < 0 || (lf >= 0 && lf < crlf)) return lf + 2;
-  return crlf + 4;
-}
-
 /** The aggregate seq of an SSE event block = its LAST `id:` line (SSE
  *  last-wins), parsed as a number. Undefined for a block with no numeric id
  *  (a comment/heartbeat, or an id-less event) — such blocks are never deduped. */
@@ -53,13 +41,25 @@ function blockSeq(block: string): number | undefined {
   return seq;
 }
 
+const LF = 10;
+const CR = 13;
+
 /** A per-CONNECTION SSE filter: buffers upstream bytes, splits them into whole
  *  event blocks, DROPS blocks whose seq is at or below the resume threshold
  *  (the boundary dedupe), forwards the rest VERBATIM, and reports each
  *  forwarded seq so the store's high-water mark advances. Byte-preserving —
- *  kept blocks are re-emitted exactly as received (steady-state unchanged). */
+ *  kept blocks are re-emitted exactly as received (steady-state unchanged).
+ *
+ *  #1790: LINEAR-TIME scanning — scans only the new chunk, carrying a
+ *  two-byte lookback for a frame boundary (`\n\n` or `\r\n\r\n`) split
+ *  across chunks.  Replaces the quadratic `boundaryEnd(this.buf)` loop which
+ *  re-scanned the whole accumulated partial buffer on every incoming chunk. */
 export class SessionStreamFilter {
-  private buf = "";
+  /** The partial frame, as received (accumulated until a boundary is found). */
+  private parts: Buffer[] = [];
+  /** The last ≤2 bytes of the partial frame — lookback for a split delimiter. */
+  private tail: Buffer = Buffer.alloc(0);
+
   constructor(
     private readonly resumeFrom: number | undefined,
     private readonly onForward: (seq: number) => void,
@@ -67,27 +67,61 @@ export class SessionStreamFilter {
 
   /** Feed raw upstream bytes; returns the bytes to forward to the client. */
   push(chunk: Buffer | string): Buffer {
-    this.buf += typeof chunk === "string" ? chunk : chunk.toString("utf8");
-    const out: string[] = [];
-    let end: number;
-    while ((end = boundaryEnd(this.buf)) >= 0) {
-      const block = this.buf.slice(0, end);
-      this.buf = this.buf.slice(end);
-      const seq = blockSeq(block);
+    const c: Buffer = typeof chunk === "string" ? Buffer.from(chunk, "utf8") : chunk;
+    if (c.length === 0) return Buffer.alloc(0);
+    const out: Buffer[] = [];
+    const tail = this.tail;
+    let start = 0; // where the current partial frame resumes in this chunk
+    let floor = -tail.length; // the current frame's first position (negative = in the tail)
+    /** The byte at chunk position `i` (negative reaches into the tail), or NaN
+     *  before the current frame — a lookback never crosses a frame boundary
+     *  (same rule as SseFrameSplitter). Without it, the LF that ends one frame
+     *  would make a lone `\n` right after it look like a blank line. */
+    const at = (i: number): number => (i < floor ? NaN : i >= 0 ? c[i] : tail[tail.length + i]);
+
+    // A frame ends at a line feed whose line is empty: the byte before it is a
+    // line feed (`\n\n`, `\r\n\n`), or a CR preceded by a line feed
+    // (`\r\n\r\n`, `\n\r\n`).
+    let lf: number;
+    let from = 0;
+    while ((lf = c.indexOf(LF, from)) !== -1) {
+      from = lf + 1;
+      const prev = at(lf - 1);
+      if (prev !== LF && !(prev === CR && at(lf - 2) === LF)) continue;
+      this.parts.push(c.subarray(start, from));
+      const frame = this.parts.length === 1 ? this.parts[0] : Buffer.concat(this.parts);
+      this.parts = [];
+      start = floor = from;
+
+      // a whole frame: any multibyte character in it arrived whole, so decoding is safe
+      const seq = blockSeq(frame.toString("utf8"));
       // dedupe: a durable event already delivered (seq <= the resume cursor) is
       // dropped — idempotent resume, no double-delivery at the boundary.
       if (seq !== undefined && this.resumeFrom !== undefined && seq <= this.resumeFrom) continue;
       if (seq !== undefined) this.onForward(seq);
-      out.push(block);
+      out.push(frame);
     }
-    return Buffer.from(out.join(""), "utf8");
+
+    if (start < c.length) {
+      const rest = start === 0 ? c : c.subarray(start);
+      this.parts.push(rest);
+      // the last ≤2 bytes of the partial frame — only reach back into the old
+      // tail when no frame ended in this chunk (the tail belongs to this frame)
+      this.tail = rest.length >= 2 ? rest.subarray(-2) : start === 0 ? Buffer.concat([tail, rest]).subarray(-2) : rest;
+    } else {
+      this.tail = Buffer.alloc(0); // a frame ended exactly at the chunk's end
+    }
+
+    return out.length === 0 ? Buffer.alloc(0) : out.length === 1 ? out[0] : Buffer.concat(out);
   }
 
   /** Flush any trailing partial block on stream end (never lose bytes). */
   flush(): Buffer {
-    const rest = this.buf;
-    this.buf = "";
-    return Buffer.from(rest, "utf8");
+    if (this.parts.length === 0) return Buffer.alloc(0);
+    const rest = Buffer.concat(this.parts);
+    this.parts = [];
+    this.tail = Buffer.alloc(0);
+    return rest;
   }
 }
 

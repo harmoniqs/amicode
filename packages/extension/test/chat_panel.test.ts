@@ -759,6 +759,18 @@ describe("ChatPanel — clipboard-image-request routes through extension host", 
     // The old client-side replyClipboardImage with navigator.clipboard.read should be gone
     expect(html).not.toContain("navigator.clipboard.read");
   });
+
+  it("image copy round-trips: clipboard-image-write goes up, the nonce'd clipboard-image-written reply comes back down", () => {
+    const cap = capturePanel();
+    restore = cap.restore;
+    created = cap.created;
+    ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
+    const html = cap.created[0].webview.html;
+    expect(html).toContain('d.kind === "clipboard-image-write"');
+    // Without the down-lane forward the iframe would wait out its timeout and
+    // report every copy as failed.
+    expect(html).toContain('d.kind === "clipboard-image-written"');
+  });
 });
 
 // #1764 — per-panel app-ready tracking for the shared chat-session launcher.
