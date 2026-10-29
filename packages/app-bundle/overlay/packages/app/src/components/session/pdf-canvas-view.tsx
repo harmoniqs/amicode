@@ -58,6 +58,10 @@ interface PdfCanvasViewProps {
   initialScrollTop?: number
   /** Reports page/scroll changes for persistence. */
   onViewStateChange?: (state: { page: number; scrollTop: number }) => void
+  /** Called once with the wrapper div (the find index root), and again with
+   *  null on unmount. Lets the per-pane find controller build its text-layer
+   *  index without owning the viewer. */
+  onRootChange?: (root: HTMLDivElement | null) => void
 }
 
 type PdfPageNavigation = {
@@ -529,6 +533,7 @@ export function PdfCanvasView(props: PdfCanvasViewProps) {
     if (doc) doc.cleanup()
     if (navigationFrame !== undefined) cancelAnimationFrame(navigationFrame)
     props.onPageNavigationChange?.(null)
+    props.onRootChange?.(null)
   })
 
   createEffect(() => {
@@ -601,7 +606,13 @@ export function PdfCanvasView(props: PdfCanvasViewProps) {
   }
 
   return (
-    <div ref={wrapperRef} class="inline-flex flex-col items-center gap-3 p-4 min-w-full min-h-full">
+    <div
+      ref={(el) => {
+        wrapperRef = el
+        props.onRootChange?.(el ?? null)
+      }}
+      class="inline-flex flex-col items-center gap-3 p-4 min-w-full min-h-full"
+    >
       <style>{PDF_TEXT_LAYER_STYLE}</style>
       <style>{PDF_ANNOTATION_LAYER_STYLE}</style>
       {textAvailabilityMessage() && (
