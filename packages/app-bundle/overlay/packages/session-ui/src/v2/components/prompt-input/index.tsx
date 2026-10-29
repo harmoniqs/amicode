@@ -243,7 +243,12 @@ export function PromptInputV2(props: PromptInputV2Props) {
             >
               <Show when={view.agent} keyed>
                 {(control) => (
-                  <PromptInputV2ConfiguredSelect title="Choose agent" keybind={["Mod", "."]} control={control} />
+                  <PromptInputV2ConfiguredSelect
+                    title="Choose agent"
+                    keybind={["Mod", "."]}
+                    control={control}
+                    tourTarget="posture"
+                  />
                 )}
               </Show>
               <Show
@@ -563,12 +568,14 @@ function PromptInputV2ConfiguredSelect(props: {
   keybind?: string[]
   control: PromptInputV2SelectControl
   model?: boolean
+  tourTarget?: string
 }) {
   const current = () => props.control.current()
   const providerID = () => props.control.options().find((option) => option.id === current())?.providerID
   return (
     <PromptInputV2Select
       title={props.title}
+      tourTarget={props.tourTarget}
       keybind={props.control.keybind?.() ?? props.keybind}
       options={props.control.options()}
       current={current()}
@@ -589,6 +596,8 @@ export function PromptInputV2Select(props: {
   current: string
   currentIcon?: JSX.Element
   class?: string
+  /** data-tour-target anchor on the trigger button, for the onboarding spotlight. */
+  tourTarget?: string
   onOpenChange?: (open: boolean) => void
   onSelect: (id: string) => void
 }) {
@@ -609,6 +618,7 @@ export function PromptInputV2Select(props: {
           size="normal"
           class={`max-w-[220px] justify-start ![font-weight:440] ${props.class ?? ""}`}
           aria-label={props.title}
+          data-tour-target={props.tourTarget}
         >
           {props.currentIcon}
           <span class="truncate capitalize leading-5">
