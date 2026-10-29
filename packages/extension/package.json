@@ -83,6 +83,10 @@
         }
       },
       {
+        "command": "amicode.revealInSidebar",
+        "title": "Amicode: Reveal in Sidebar"
+      },
+      {
         "command": "amicode.newChat",
         "title": "Amicode: New Chat (Side by Side)",
         "icon": "$(add)"

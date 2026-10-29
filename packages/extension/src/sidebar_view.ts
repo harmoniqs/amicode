@@ -636,6 +636,8 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
   private chatActive = false;
   private activeProjectPath: string | null | undefined = undefined;
   private activeProjectMode: "none" | "expand" | "reset" = "reset";
+  /** #1036: a reveal requested before the webview was resolved; replayed on resolve. */
+  private pendingRevealPath: string | undefined = undefined;
   private watcher?: vscode.FileSystemWatcher;
   private fsDebounceTimer?: ReturnType<typeof setTimeout>;
   private fsPendingFolders = new Set<string>();
@@ -899,6 +901,13 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
       this.postDown({ kind: "active-project", path: this.activeProjectPath, mode: this.activeProjectMode });
     }
 
+    // #1036: replay a reveal requested before the view existed.
+    if (this.pendingRevealPath !== undefined) {
+      const path = this.pendingRevealPath;
+      this.pendingRevealPath = undefined;
+      this.postDown({ kind: "reveal-file", path });
+    }
+
     // Replay saved section order so the webview renders sections in the
     // user's preferred order. Falls back to the default if nothing is saved.
     const savedOrder = this.globalState?.get(
@@ -928,6 +937,27 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
     this.activeProjectPath = projectPath;
     this.activeProjectMode = mode;
     this.postDown({ kind: "active-project", path: projectPath, mode });
+  }
+
+  /**
+   * #1036 — reveal a file in the project tree. Focuses (and thereby opens) the
+   * sidebar view if needed, then asks the webview to expand ancestors, scroll
+   * and flash the row. If the webview is not resolved yet the path is queued
+   * and replayed from resolveWebviewView. Files outside the tree no-op in the
+   * webview.
+   */
+  async revealFile(path: string): Promise<void> {
+    if (typeof path !== "string" || path === "") return;
+    this.pendingRevealPath = path;
+    try {
+      await vscode.commands.executeCommand("amicode.workspace.focus");
+    } catch {
+      /* focus is best-effort; the reveal still queues below */
+    }
+    if (this.view && this.pendingRevealPath === path) {
+      this.pendingRevealPath = undefined;
+      this.postDown({ kind: "reveal-file", path });
+    }
   }
 
   /**
@@ -1315,6 +1345,15 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
     }
     .tree-node:hover {
       background: var(--vscode-list-hoverBackground);
+    }
+    /* #1036: transient "look here" flash for Find in sidebar. The highlight
+       appears instantly; .reveal-fade swaps in as it is removed so the
+       background transitions back out. */
+    .tree-node.reveal-highlight {
+      background: var(--vscode-editor-findMatchHighlightBackground);
+    }
+    .tree-node.reveal-fade {
+      transition: background-color 0.6s ease-out;
     }
     .tree-node .indent {
       flex-shrink: 0;

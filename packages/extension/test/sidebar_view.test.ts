@@ -1476,6 +1476,39 @@ describe("SidebarViewProvider — session awareness", () => {
     });
   });
 
+  it("revealFile posts reveal-file to a resolved webview (#1036)", async () => {
+    const provider = new SidebarViewProvider(makeExtensionUri());
+    const view = makeWebviewView();
+    provider.resolveWebviewView(view, {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
+
+    await provider.revealFile("/projects/quantum-sim/src/a.jl");
+
+    expect(view.webview.postMessage).toHaveBeenCalledWith({
+      kind: "reveal-file",
+      path: "/projects/quantum-sim/src/a.jl",
+    });
+  });
+
+  it("revealFile queued before the webview resolves is replayed once, on resolve (#1036)", async () => {
+    const provider = new SidebarViewProvider(makeExtensionUri());
+    await provider.revealFile("/projects/quantum-sim/src/a.jl");
+
+    const view = makeWebviewView();
+    provider.resolveWebviewView(view, {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
+
+    const reveals = (view.webview.postMessage as any).mock.calls.filter((c: any[]) => c[0]?.kind === "reveal-file");
+    expect(reveals).toEqual([[{ kind: "reveal-file", path: "/projects/quantum-sim/src/a.jl" }]]);
+  });
+
+  it("revealFile ignores an empty path (#1036)", async () => {
+    const provider = new SidebarViewProvider(makeExtensionUri());
+    const view = makeWebviewView();
+    provider.resolveWebviewView(view, {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
+    await provider.revealFile("");
+    const reveals = (view.webview.postMessage as any).mock.calls.filter((c: any[]) => c[0]?.kind === "reveal-file");
+    expect(reveals).toEqual([]);
+  });
+
   it("setActiveProject with null clears the highlight", () => {
     const provider = new SidebarViewProvider(makeExtensionUri());
     const view = makeWebviewView();

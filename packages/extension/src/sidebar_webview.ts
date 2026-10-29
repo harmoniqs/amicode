@@ -200,6 +200,9 @@ function createIconEl(icon: string): HTMLElement {
   // scrolls regardless.
   let lastScrolledPath: string | null = null;
 
+  // #1036: a reveal-file request that arrived before the roots rendered.
+  let pendingReveal: string | null = null;
+
   /** Resolve rendering order: saved keys filtered to available, new keys appended.
    *  Migration (#911): strip "environments" from any saved order — that section no
    *  longer exists; environments are nested inside "research" now. */
@@ -1450,6 +1453,13 @@ function createIconEl(icon: string): HTMLElement {
     if (pendingActiveProject !== null) {
       applyActiveProject(pendingActiveProject.path, pendingActiveProject.mode);
     }
+
+    // #1036: replay a reveal-file that beat the roots render.
+    if (pendingReveal !== null) {
+      const path = pendingReveal;
+      pendingReveal = null;
+      void revealFileInTree(path);
+    }
   }
 
   // ── Section drag-reorder (#708) ──────────────────────────────────────────
@@ -2315,6 +2325,169 @@ function createIconEl(icon: string): HTMLElement {
     // session switch. The project row receives the highlight directly.
   }
 
+  // ── Reveal a file in the tree (#1036) ───────────────────────────────────
+
+  const REVEAL_ROW_OFFSET = 3;       // rows of context kept above the revealed file
+  const REVEAL_HIGHLIGHT_MS = 2500;  // how long the flash stays before fading
+  const REVEAL_FADE_MS = 600;        // matches the CSS transition on .reveal-fade
+  const REVEAL_CHILDREN_TIMEOUT_MS = 4000;
+
+  let revealToken = 0;
+  let revealHighlightEl: HTMLElement | null = null;
+  let revealHighlightTimer: ReturnType<typeof setTimeout> | null = null;
+  let revealFadeTimer: ReturnType<typeof setTimeout> | null = null;
+  const childrenWaiters = new Map<string, Array<() => void>>();
+
+  function findTreeNode(nodePath: string, type: "file" | "directory"): HTMLElement | null {
+    if (!treeRoot) return null;
+    return treeRoot.querySelector(`[data-path="${CSS.escape(nodePath)}"][data-type="${type}"]`) as HTMLElement | null;
+  }
+
+  /** Resolves when a "children" message for dir arrives, or after a timeout. */
+  function waitForChildren(dir: string): Promise<void> {
+    return new Promise((resolveWait) => {
+      const waiters = childrenWaiters.get(dir) ?? [];
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        resolveWait();
+      };
+      const timer = setTimeout(finish, REVEAL_CHILDREN_TIMEOUT_MS);
+      waiters.push(finish);
+      childrenWaiters.set(dir, waiters);
+    });
+  }
+
+  function notifyChildrenWaiters(dir: string): void {
+    const waiters = childrenWaiters.get(dir);
+    if (!waiters) return;
+    childrenWaiters.delete(dir);
+    for (const w of waiters) w();
+  }
+
+  /** Remove any live reveal highlight and its timers (rapid successive reveals). */
+  function clearRevealHighlight(): void {
+    if (revealHighlightTimer !== null) clearTimeout(revealHighlightTimer);
+    if (revealFadeTimer !== null) clearTimeout(revealFadeTimer);
+    revealHighlightTimer = null;
+    revealFadeTimer = null;
+    if (revealHighlightEl) {
+      revealHighlightEl.classList.remove("reveal-highlight", "reveal-fade");
+      revealHighlightEl = null;
+    }
+  }
+
+  function flashRevealHighlight(el: HTMLElement): void {
+    clearRevealHighlight();
+    revealHighlightEl = el;
+    el.classList.add("reveal-highlight");
+    revealHighlightTimer = setTimeout(() => {
+      revealHighlightTimer = null;
+      // Swap to the fading class so the background transitions out.
+      el.classList.add("reveal-fade");
+      el.classList.remove("reveal-highlight");
+      revealFadeTimer = setTimeout(() => {
+        revealFadeTimer = null;
+        el.classList.remove("reveal-fade");
+        if (revealHighlightEl === el) revealHighlightEl = null;
+      }, REVEAL_FADE_MS);
+    }, REVEAL_HIGHLIGHT_MS);
+  }
+
+  /** Expand the section holding el when collapsed. Returns true when it animated open. */
+  function ensureSectionExpandedFor(el: HTMLElement): boolean {
+    const section = el.closest(".section") as HTMLElement | null;
+    const sectionKey = section?.dataset.sectionKey;
+    if (!section || !sectionKey || sectionExpanded[sectionKey]) return false;
+    sectionExpanded[sectionKey] = true;
+    saveSectionState();
+    const chevron = section.querySelector(".section-chevron") as HTMLElement | null;
+    if (chevron) chevron.classList.add("expanded");
+    const body = section.querySelector(".section-body") as HTMLElement | null;
+    if (!body) return false;
+    toggleSectionBody(body, true, section);
+    return true;
+  }
+
+  /**
+   * Reveal filePath in the tree: expand the owning section, expand ancestors
+   * top-down (awaiting each level's children), scroll the file to roughly
+   * REVEAL_ROW_OFFSET rows below the visible top, and flash a highlight.
+   * Anything not found in the tree is a silent no-op.
+   */
+  async function revealFileInTree(filePath: string): Promise<void> {
+    const token = ++revealToken;
+    if (!treeRoot || !filePath) return;
+
+    // The owning root is the deepest root containing the file.
+    let root: TreeRoot | null = null;
+    for (const r of currentRoots) {
+      if (filePath.startsWith(r.path + "/") && (!root || r.path.length > root.path.length)) root = r;
+    }
+    if (!root) return;
+
+    // Ancestor chain: root, then every directory down to the file's parent.
+    const chain: string[] = [root.path];
+    const rel = filePath.slice(root.path.length + 1).split("/").filter(Boolean);
+    let acc = root.path;
+    for (let i = 0; i < rel.length - 1; i++) {
+      acc = acc + "/" + rel[i];
+      chain.push(acc);
+    }
+
+    let sectionAnimated = false;
+    for (let i = 0; i < chain.length; i++) {
+      const dir = chain[i];
+      const next = i + 1 < chain.length ? chain[i + 1] : filePath;
+      const nextType = i + 1 < chain.length ? "directory" : "file";
+      const dirEl = findTreeNode(dir, "directory");
+      if (!dirEl) return;
+      if (i === 0 && ensureSectionExpandedFor(dirEl)) sectionAnimated = true;
+
+      const row = dirEl.querySelector(":scope > .tree-node") as HTMLElement | null;
+      const childrenEl = dirEl.querySelector(":scope > .children") as HTMLElement | null;
+      if (!row || !childrenEl) return;
+
+      if (!expanded[dir]) {
+        // The row's own click handler expands, renders cached children or requests them.
+        row.click();
+      } else {
+        childrenEl.style.display = "block";
+        if (!childrenCache[dir] && !childrenEl.hasChildNodes()) {
+          vscode.postMessage({ kind: "get-children", path: dir });
+        }
+      }
+
+      if (!findTreeNode(next, nextType)) {
+        if (!childrenCache[dir]) await waitForChildren(dir);
+        if (token !== revealToken) return; // superseded by a newer reveal
+        if (!findTreeNode(next, nextType)) return; // not in the tree: silent no-op
+      }
+    }
+
+    if (token !== revealToken) return;
+    const target = findTreeNode(filePath, "file");
+    if (!target) return;
+
+    const doReveal = () => {
+      if (token !== revealToken) return;
+      const body = target.closest(".section-body") as HTMLElement | null;
+      if (body) {
+        const rowHeight = target.offsetHeight || 22;
+        const targetTop = target.getBoundingClientRect().top - body.getBoundingClientRect().top + body.scrollTop;
+        body.scrollTop = Math.max(0, targetTop - REVEAL_ROW_OFFSET * rowHeight);
+      }
+      flashRevealHighlight(target);
+    };
+    if (sectionAnimated) {
+      setTimeout(doReveal, SECTION_ANIM_MS + 50);
+    } else {
+      requestAnimationFrame(doReveal);
+    }
+  }
+
   // ── Host → Webview messages ────────────────────────────────────────────────
 
   window.addEventListener("message", (event) => {
@@ -2378,6 +2551,7 @@ function createIconEl(icon: string): HTMLElement {
             activeInlineEdit.input.focus();
           }
         }
+        notifyChildrenWaiters(msg.path);
         break;
       }
 
@@ -2417,6 +2591,17 @@ function createIconEl(icon: string): HTMLElement {
           : "reset";
         pendingActiveProject = { path: activePath, mode };
         applyActiveProject(activePath, mode);
+        break;
+      }
+
+      case "reveal-file": {
+        // #1036: Preview tab → "Find in sidebar". Queue until roots exist.
+        if (typeof msg.path !== "string" || msg.path === "") break;
+        if (currentRoots.length === 0) {
+          pendingReveal = msg.path;
+        } else {
+          void revealFileInTree(msg.path);
+        }
         break;
       }
 

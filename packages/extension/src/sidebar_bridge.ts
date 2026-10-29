@@ -84,6 +84,8 @@ export type FsChangedMessage = { kind: "fs-changed"; folder: string };
 export type FileOpErrorMessage = { kind: "file-op-error"; op: string; path: string; message: string };
 export type FileOpOkMessage = { kind: "file-op-ok"; op: string; path: string };
 export type ActiveProjectMessage = { kind: "active-project"; path: string | null; mode?: "none" | "expand" | "reset" };
+/** #1036 — reveal a file in the project tree: expand ancestors, scroll, flash. */
+export type RevealFileMessage = { kind: "reveal-file"; path: string };
 export type GitStatusMessage = { kind: "git-status"; statusMap: Record<string, string> };
 export type SectionOrderMessage = { kind: "section-order"; order: string[] };
 /** #1321 — the host pushes the read-only fleet view-model (roster + posture +
@@ -98,6 +100,7 @@ export type SidebarDownMessage =
   | FileOpErrorMessage
   | FileOpOkMessage
   | ActiveProjectMessage
+  | RevealFileMessage
   | GitStatusMessage
   | SectionOrderMessage
   | FleetStatusMessage;
@@ -433,6 +436,7 @@ export function handleSidebarMessage(
     case "file-op-error":
     case "file-op-ok":
     case "active-project":
+    case "reveal-file":
     case "git-status":
     case "section-order":
     case "fleet-status":
