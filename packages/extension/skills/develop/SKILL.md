@@ -4,7 +4,7 @@ description: The develop mode in one skill — the director loop protocol bound 
 agents: [implementer, orchestrator]
 surface: public
 source: amicode
-revision: 4
+revision: 5
 ---
 
 # Develop — the director's protocol & issue-DAG walk
@@ -181,10 +181,18 @@ The walk dispatches **the Engineer** — a role, not an engine feature. The role
 
 Engine-specific bindings stay engine-side; this skill names the role. A session with no binding for the Engineer runs the sequential sub-mode.
 
+### Cast deaths (the empty return)
+
+A cast that returns **empty** — state `completed`, zero output: no commits, no structured return — is a **cast death**, not an outcome. The empty return carries no information, including about the brief: verify from the worktree artifacts (commits, status, file mtimes), record the death in the ledger with that evidence, and recast the same brief. Three observed instances in one campaign all succeeded first-try on the recast — the brief was not the cause (finding F33).
+
 ### Terminal state per unit
 
 - **AFK** parent → the ready PR auto-merges (gated on CI where the repo has it); the parent issue closes on merge → the board's "Item closed" workflow moves its card to **Done** (never set manually).
 - **HITL** parent → the ready PR requests review and stops (no merge) → set the parent's board card to **In Review** as the final step, then verify it held and re-set if the board's async "PR linked → In Progress" workflow clobbered it.
+
+### Standing directives (AFK mandates)
+
+A standing directive recorded in the ledger (the user's words + date — "do it all", "keep going for a while") is the explicit approval for the arc's issue filings AND its merge ladder, within the scope the directive names; every filing and every merge under it is reported in the loop record and the session summary. The mandate does not extend past its named scope: outward-publishing acts (releases, registration, visibility flips) always need the word. Worked example: the Favo campaign merged twelve standard-tier issues under two AFK mandates while holding its General-registry trigger parked for the user's explicit word (finding F34).
 
 ### When NOT to use
 
