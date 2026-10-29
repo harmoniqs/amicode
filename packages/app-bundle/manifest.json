@@ -791,11 +791,11 @@
     "packages/app/src/components/session/session-header.test.tsx": "733f48a613d3d1fb57ae87a38a0f857d1f37261ee4b1db2bcf0dd8457ec6c196",
     "packages/app/src/components/session/session-header.tsx": "8d5e943e3b2b338e519530842e5c06cdb30ca5d393d9652cc362e0105f0f7e64",
     "packages/app/src/components/session/session-new-view.tsx": "98298ae1c8745b8c3d5ec738e4c2354eb84bd7b3d80639fbb32f96374e7be5dd",
-    "packages/app/src/components/session/session-preview-tab.tsx": "62ff109b25d47ce49eaef286c24bae359dbab880c7788328731addbb733b4283",
+    "packages/app/src/components/session/session-preview-tab.tsx": "8f1244abea55bbed6f6bcb321d4c8f3d10bcbf8f4ead7992e51f04ca525de88f",
     "packages/app/src/components/session/session-preview-tabs.test.ts": "773fc0116c5f61302eaa4a09fd5f91e6b26dee978c89e29c21714243ae3a5653",
     "packages/app/src/components/session/session-preview-tabs.ts": "672d147a6f1f46a7ac2eff7aff9da6cc069c476ff918e5ff4aed3a997310e6fe",
-    "packages/app/src/components/session/session-preview-tree.test.ts": "cc3b40facb9e6cbc1dcda2254abc7a47a547ffdc1c4ded90aaa1fabefbda5e54",
-    "packages/app/src/components/session/session-preview-tree.ts": "a0136354eb5c90b0b50e333e9fc145984b37e38861dccff05b83c92837e7d339",
+    "packages/app/src/components/session/session-preview-tree.test.ts": "36aa705c79e39f42f4281e3ef3b6de41c445d18c044f5ce262a41a50bc5cdc59",
+    "packages/app/src/components/session/session-preview-tree.ts": "8cc3fc50299ffebedd562640e157892461cb1372501cc58d50328b10297ee892",
     "packages/app/src/components/session/session-sortable-tab.tsx": "a015277347fe679ac1afa1372202de49fc98a0930ac10682c8897f70a0300909",
     "packages/app/src/components/session/session-sortable-terminal-tab-v2.tsx": "08db0e378c3e07d243121f40c77e153bafe897e5e2ececd48a3e00786793032b",
     "packages/app/src/components/session/use-context-warning.ts": "af7a6d0159a5541aa02ad4d08fd694af1cc4853fc1c0a70763bc264a634d1c53",
@@ -1061,7 +1061,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-29T12:48:29.135Z",
+  "extracted_at": "2026-10-29T12:51:09.939Z",
   "per_package": {
     "packages/app": {
       "A": 280,

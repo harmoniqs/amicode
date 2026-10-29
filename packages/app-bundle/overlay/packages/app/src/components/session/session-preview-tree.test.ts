@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import {
+  createPreviewPersister,
   createPreviewWorkspace,
+  isForegroundDocument,
   movePreviewTab,
   openPreviewPath,
   previewActiveAfterClose,
@@ -167,5 +169,43 @@ describe("preview persistence decisions", () => {
     test("closing a background tab leaves active unchanged", () => {
       expect(previewActiveAfterClose("a", "b", ["b", "c"])).toBe("b")
     })
+  })
+})
+
+// #1648 / critic follow-up for #1641: the `preview-file` bridge message reaches
+// every retained session view. A BACKGROUND view still opens it locally, but
+// only the visible foreground session may persist its open set.
+describe("preview open-set persistence is foreground-only", () => {
+  test("a backgrounded session view handling the broadcast open never saves", () => {
+    const writes: string[][] = []
+    let foreground = false
+    const persist = createPreviewPersister({ hydrated: () => true, foreground: () => foreground, write: (p) => writes.push(p) })
+    // The broadcast lands: the background view opens it in its own workspace…
+    const local = openPreviewPath(createPreviewWorkspace(["mine.md"]), "theirs.pdf")
+    const open = previewLeaves(local.tree).flatMap((leaf) => leaf.tabs)
+    expect(open).toContain("theirs.pdf")
+    // …but the write is refused, so it never lands under this session's key.
+    expect(persist(open)).toBe(false)
+    expect(writes).toEqual([])
+    // Once this session is the visible foreground one, its own opens persist.
+    foreground = true
+    expect(persist(["mine.md", "notes.md"])).toBe(true)
+    expect(writes).toEqual([["mine.md", "notes.md"]])
+  })
+
+  test("still held until the layout store hydrates, even in the foreground", () => {
+    const writes: string[][] = []
+    let hydrated = false
+    const persist = createPreviewPersister({ hydrated: () => hydrated, foreground: () => true, write: (p) => writes.push(p) })
+    expect(persist(["a.md"])).toBe(false)
+    hydrated = true
+    expect(persist(["a.md"])).toBe(true)
+    expect(writes).toEqual([["a.md"]])
+  })
+
+  test("the default foreground signal is document visibility (a hidden retained webview is background)", () => {
+    expect(isForegroundDocument({ visibilityState: "hidden" })).toBe(false)
+    expect(isForegroundDocument({ visibilityState: "visible" })).toBe(true)
+    expect(isForegroundDocument(undefined)).toBe(true)
   })
 })

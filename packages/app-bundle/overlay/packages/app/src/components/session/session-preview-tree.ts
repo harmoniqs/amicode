@@ -69,6 +69,32 @@ export const previewActiveAfterClose = (
   remaining: readonly string[],
 ): string | null => (closed === wasActive ? (remaining[remaining.length - 1] ?? null) : wasActive)
 
+/** Is this app document the visible, foreground one? Each VS Code chat tab is
+ *  its own retained webview (retainContextWhenHidden), and the `preview-file`
+ *  bridge message is an un-targeted broadcast to ALL of them (#1648) — so a
+ *  backgrounded session view receives every open. visibilityState is the
+ *  signal that actually flips on a VS Code tab switch (#1584). */
+export const isForegroundDocument = (doc: { visibilityState?: string } | undefined = globalThis.document): boolean =>
+  !doc || doc.visibilityState !== "hidden"
+
+/** The persisted-open-set writer for a Preview tab: writes only once the
+ *  layout store has hydrated (a pre-hydration transient would clobber the
+ *  stored list) AND only from the visible foreground session. A background
+ *  session view still handles the broadcast `preview-file` locally, but it
+ *  must not save — otherwise one open lands under every live session's key
+ *  (the cross-session bleed, #1648). */
+export const createPreviewPersister = (opts: {
+  hydrated?: () => boolean
+  foreground?: () => boolean
+  write?: (paths: string[]) => void
+}) => (paths: string[]): boolean => {
+  if (opts.hydrated && !opts.hydrated()) return false
+  if (!(opts.foreground ?? isForegroundDocument)()) return false
+  if (!opts.write) return false
+  opts.write(paths)
+  return true
+}
+
 export const previewLeaves = (tree: PreviewPane): PreviewLeaf[] => {
   if (tree.kind === "leaf") return [tree]
   return [...previewLeaves(tree.first), ...previewLeaves(tree.second)]

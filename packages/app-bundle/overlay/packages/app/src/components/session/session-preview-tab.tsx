@@ -21,7 +21,9 @@ import { PreviewFileView } from "./preview-file-view"
 import { isPdfFindTarget } from "./pdf-find-guard"
 import { FileVisual } from "./session-sortable-tab"
 import {
+  createPreviewPersister,
   createPreviewWorkspace,
+  isForegroundDocument,
   movePreviewTab,
   openPreviewPath,
   previewActiveAfterClose,
@@ -114,6 +116,10 @@ export function SessionPreviewTab(props: {
    *  persisted open-paths list is held until this flips true (the store loads
    *  async); reconciling earlier clobbers the list to just the active file. */
   hydrated?: () => boolean
+  /** True while this session view is the visible foreground one (default: the
+   *  document is not hidden). Persistence of the open set is held while false
+   *  — see createPreviewPersister (#1648). */
+  foreground?: () => boolean
 }) {
   const platform = usePlatform()
   const command = useCommand()
@@ -145,9 +151,15 @@ export function SessionPreviewTab(props: {
   // pre-hydration transient can't clobber the stored list; called EXPLICITLY at
   // open/close (not from a reactive openedPaths watcher) so the stored list is
   // always current and the restore below can never re-add a just-closed tab.
+  // Foreground-gated too (#1648): a backgrounded session view still opens a
+  // broadcast `preview-file` locally, but never saves it under its own key.
+  const persistOpenPaths = createPreviewPersister({
+    hydrated: () => (props.hydrated ? props.hydrated() : true),
+    foreground: () => (props.foreground ?? isForegroundDocument)(),
+    write: (paths) => props.onOpenedPathsChange?.(paths),
+  })
   const syncOpenPaths = () => {
-    if (props.hydrated && !props.hydrated()) return
-    props.onOpenedPathsChange?.(openedPaths())
+    persistOpenPaths(openedPaths())
   }
 
   const openPath = (path: string) => {
