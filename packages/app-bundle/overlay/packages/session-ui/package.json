@@ -13,6 +13,7 @@
     "./markdown-stream": "./src/components/markdown-stream.ts",
     "./markdown-cache": "./src/components/markdown-cache.tsx",
     "./markdown-file-refs": "./src/components/markdown-file-refs.ts",
+    "./markdown-local-images": "./src/components/markdown-local-images.ts",
     "./line-comment-styles": "./src/components/line-comment-styles.ts",
     "./pierre": "./src/pierre/index.ts",
     "./pierre/*": "./src/pierre/*.ts",
