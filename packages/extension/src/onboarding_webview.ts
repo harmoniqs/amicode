@@ -1029,6 +1029,9 @@ if (cancelBtn) {
 // a specific "Connect X" entry point elsewhere in the product; the welcome
 // beat belongs to first-run Stage-0 only.
 if (focusProvider) {
+  // Hide the (empty, 100vh) animation shell so the form is not pushed below
+  // the fold. Mirrors the "Get Started" path in playWelcomeAnimation().
+  animationEl.style.display = "none";
   revealForm();
 } else {
   playWelcomeAnimation();
