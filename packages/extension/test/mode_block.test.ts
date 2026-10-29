@@ -226,41 +226,54 @@ describe.skipIf(!existsSync(OC_BIN))("H4 FIRST — the session-API availability 
         }
         expect(up, `vendored binary did not serve within 30s\n--- server output ---\n${log}`).toBe(true);
 
-        // (2) create the session ON the director agent (Session.CreateInput.agent).
-        //     NOTE, recorded live: external plugin loading is INSTANCE-LAZY in the
-        //     pinned binary — the plugin factory runs when the first session
-        //     spins up the directory's instance, not at boot. The factory record
-        //     is therefore asserted after the create, before the prompt.
-        //
-        //     (#830) the FIRST session spins up the instance lazily — the
-        //     plugin factory + the cold-HOME package install happen inside
-        //     this POST on a fresh runner; 10s aborted it on CI.
-        //     (#1796) TWO fixes:
-        //       (a) LOG: the engine output is captured on any failure so a
-        //           slow install is distinguishable from a hung startup.
-        //       (b) COLD-START OUT: the fetch uses a manual AbortController
-        //           so the cold-start budget (120s) is separate from the
-        //           60s "warm session-create" budget — the cold-start install
-        //           cost sits in this pre-warm phase, not in the later
-        //           assertion windows. The warm path stays instant (8–13s).
-        const coldStartCtrl = new AbortController();
-        const coldStartTimer = setTimeout(() => coldStartCtrl.abort(), 120_000);
-        let created: Response;
-        try {
-          created = await fetch(`http://127.0.0.1:${port}/session`, {
+        // A fetch bounded by `ms`; on a timeout or a transport error it throws
+        // with the engine's output attached (#1796), so a slow cold-start
+        // install can be told apart from a hung startup.
+        const boundedFetch = async (label: string, path: string, init: RequestInit, ms: number): Promise<Response> => {
+          const ctrl = new AbortController();
+          const timer = setTimeout(() => ctrl.abort(), ms);
+          try {
+            return await fetch(`http://127.0.0.1:${port}${path}`, { ...init, signal: ctrl.signal });
+          } catch (e) {
+            const why = ctrl.signal.aborted
+              ? `timed out after ${ms / 1000}s`
+              : `threw: ${e instanceof Error ? e.message : String(e)}`;
+            throw new Error(`${label} ${why}\n--- engine output (${log.length} chars) ---\n${log}`);
+          } finally {
+            clearTimeout(timer);
+          }
+        };
+
+        // (2a) WARM-UP (#1796). The directory's instance boots LAZILY, on the
+        //     first instance-scoped request: config load, the plugin factory,
+        //     and the cold-HOME package install all happen there. Before
+        //     #1796 that was the session create itself, so the timed POST also
+        //     carried the whole cold start (#830: 10s aborted it on CI; #1796:
+        //     60s once did too). This GET /config boots the instance first,
+        //     under its own cold-start budget, so the timed create below runs
+        //     against a warm instance.
+        const warm = await boundedFetch("warm-up GET /config (instance cold start)", "/config", {}, 120_000);
+        expect(warm.status, `warm-up GET /config failed (${warm.status})\n--- engine output ---\n${log}`).toBe(200);
+        await warm.body?.cancel();
+        // the instance really booted in (2a): the plugin factory has run
+        expect(
+          readProbeLines(probeOut).some((l) => l.event === "factory"),
+          `the warm-up did not boot the instance (no plugin factory record)\n--- engine output ---\n${log}`,
+        ).toBe(true);
+
+        // (2b) create the session ON the director agent (Session.CreateInput.agent),
+        //     timed on the warm instance. The plugin factory has already run
+        //     in (2a); its record is asserted after the create, before the prompt.
+        const created = await boundedFetch(
+          "POST /session (warm instance)",
+          "/session",
+          {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ agent: "develop" }),
-            signal: coldStartCtrl.signal,
-          });
-        } catch (e) {
-          const label = coldStartCtrl.signal.aborted
-            ? "POST /session timed out after 120s (cold-start budget exceeded)"
-            : `POST /session threw: ${e instanceof Error ? e.message : String(e)}`;
-          throw new Error(`${label}\n--- engine output (${log.length} chars) ---\n${log}`);
-        } finally {
-          clearTimeout(coldStartTimer);
-        }
+          },
+          60_000,
+        );
         expect(created.status, `POST /session failed (${created.status})\n--- engine output ---\n${log}`).toBe(200);
         const session = (await created.json()) as { id?: string; agent?: string };
         expect(typeof session.id).toBe("string");
@@ -440,7 +453,8 @@ describe.skipIf(!existsSync(OC_BIN))("H4 FIRST — the session-API availability 
         rmSync(proj, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
       }
     },
-    300_000,
+    // 30s boot + 120s warm-up + 60s create + the 30s/60s probe waits + teardown
+    360_000,
   );
 });
 
