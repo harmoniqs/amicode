@@ -857,6 +857,56 @@ describe("#1638 — composite-mode reopenArm emits exactly one id-less gap; flee
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
+// #1793 — one gap per LOST STRETCH. A fleet member that stays listed but refuses
+// the stream (hub down) is re-opened on every reconcile tick; on the fallback path
+// (an engine with no ids to resume from) each re-open used to signal the gap again,
+// so clients refetched about once a second for the whole outage.
+// ══════════════════════════════════════════════════════════════════════════════
+describe("#1793 — a refusing member signals one gap per lost stretch (fallback path)", () => {
+  const gapCount = (text: string) => (text.match(/event: amicode\.sync\.gap/g) ?? []).length;
+  const setup = () => {
+    const sink = collectingSink();
+    const agg = new SseFanInAggregator({ sink });
+    agg.connect();
+    agg.setMembership([{ machineId: "studio", reachable: true, token: "tok-studio" }]);
+    agg.ingest("studio", legacyEvent({ ns: "studio", n: 1 }));
+    return { sink, agg };
+  };
+
+  it("AC1: repeated re-opens during a sustained refusal signal at most one gap until the arm delivers again", () => {
+    const { sink, agg } = setup();
+    expect(agg.reopenArm("studio")).toBe("gap");
+    for (let tick = 0; tick < 5; tick++) agg.reopenArm("studio"); // refused: no frame in between
+    expect(gapCount(sink.text())).toBe(1);
+  });
+
+  it("AC2: once the arm has delivered again, the next loss signals a gap as usual", () => {
+    const { sink, agg } = setup();
+    agg.reopenArm("studio");
+    agg.reopenArm("studio"); // still refusing — quiet
+    expect(gapCount(sink.text())).toBe(1);
+
+    agg.ingest("studio", legacyEvent({ ns: "studio", n: 2 })); // delivers again
+    expect(agg.reopenArm("studio")).toBe("gap"); // the next loss
+    agg.reopenArm("studio"); // and quiet again through that outage
+    expect(gapCount(sink.text())).toBe(2);
+  });
+
+  it("the quiet arm is independent per member: another delivered arm still gaps on its own loss", () => {
+    const { sink, agg } = setup();
+    agg.setMembership([
+      { machineId: "studio", reachable: true, token: "tok-studio" },
+      { machineId: "lab", reachable: true, token: "tok-lab" },
+    ]);
+    agg.ingest("lab", legacyEvent({ ns: "lab", n: 1 }));
+    agg.reopenArm("studio");
+    agg.reopenArm("studio");
+    agg.reopenArm("lab");
+    expect(gapCount(sink.text())).toBe(2);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
 // #1773 AC1 — "delivered" means ANY data frame, not only an id'd one. The re-open
 // gap used to fire only for arms that had delivered a frame carrying an SSE id —
 // which a peer running an older engine never sends — so a re-opened arm never
