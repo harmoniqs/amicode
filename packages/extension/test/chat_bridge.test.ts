@@ -4,6 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
+  clipboardImageWriteCommand,
   extractReportBugModel,
   handleAmicodeBridgeMessage,
   rebuildAppBundleStep,
@@ -382,6 +383,38 @@ describe("amicode bridge — clipboard", () => {
     expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "clipboard-write", text: "x".repeat(5_000_001) }, host)).toBe(true);
     await flush();
     expect(env.clipboard.text).toBe("");
+  });
+});
+
+describe("amicode bridge — clipboard-image-write", () => {
+  it("writes on the host the user sits at and answers the nonce'd caller", async () => {
+    const host = io();
+    const png = "data:image/png;base64,iVBORw0KGgo=";
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "clipboard-image-write", dataUrl: png, nonce: "c1", tab: "pane-2" }, host)).toBe(true);
+    await vi.waitFor(() => expect(host.posted).toHaveLength(1));
+    const reply = host.posted[0] as { kind: string; nonce: string; tab: string; ok: unknown };
+    expect(reply).toMatchObject({ source: "amicode", kind: "clipboard-image-written", nonce: "c1", tab: "pane-2" });
+    expect(typeof reply.ok).toBe("boolean");
+  });
+
+  it("drops non-PNG payloads, oversize payloads, and hidden panels", async () => {
+    const hidden = io(false);
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "clipboard-image-write", dataUrl: "data:image/png;base64,AA==" }, hidden)).toBe(true);
+    const host = io();
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "clipboard-image-write", dataUrl: "data:image/svg+xml;base64,AA==" }, host)).toBe(true);
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "clipboard-image-write", dataUrl: "data:image/png;base64," + "A".repeat(24_000_001) }, host)).toBe(true);
+    await flush();
+    expect(hidden.posted).toHaveLength(0);
+    expect(host.posted).toHaveLength(0);
+  });
+
+  it("picks the platform writer and never splices the path into a script", () => {
+    const mac = clipboardImageWriteCommand("darwin", {});
+    expect(mac?.cmd).toBe("osascript");
+    expect(mac?.args.join(" ")).toContain("item 1 of argv");
+    expect(clipboardImageWriteCommand("linux", {})).toEqual({ cmd: "xclip", args: ["-selection", "clipboard", "-t", "image/png", "-i"] });
+    expect(clipboardImageWriteCommand("linux", { WAYLAND_DISPLAY: "wayland-0" })?.args[1]).toContain("wl-copy --type image/png");
+    expect(clipboardImageWriteCommand("win32", {})).toBeNull();
   });
 });
 
