@@ -754,6 +754,7 @@ export function SessionSidePanel(props: {
                                 <Tabs.Trigger
                                   value="review"
                                   id={reviewTabID}
+                                  data-tour-target="files-changed"
                                   style={{ order: layout.sidePanelTabs.order().indexOf("review") }}
                                   aria-controls={activeTab() === "review" ? reviewTabPanelID : undefined}
                                 >
@@ -878,6 +879,7 @@ export function SessionSidePanel(props: {
                               >
                                 <Tabs.Trigger
                                   value={SESSION_PREVIEW_TAB}
+                                  data-tour-target="preview-tab"
                                   closeButton={
                                     <TooltipKeybind
                                       title={language.t("common.closeTab")}
@@ -1068,6 +1070,7 @@ export function SessionSidePanel(props: {
                                       <Tabs.Trigger
                                         value="review"
                                         id={reviewTabID}
+                                        data-tour-target="files-changed"
                                         aria-controls={activeTab() === "review" ? reviewTabPanelID : undefined}
                                         closeButton={
                                           <TooltipV2
@@ -1208,6 +1211,7 @@ export function SessionSidePanel(props: {
                                     <Match when={tab === SESSION_PREVIEW_TAB}>
                                       <Tabs.Trigger
                                         value={SESSION_PREVIEW_TAB}
+                                        data-tour-target="preview-tab"
                                         closeButton={
                                           <TooltipV2
                                             value={
@@ -1394,6 +1398,7 @@ export function SessionSidePanel(props: {
             <Show when={fileOpen()}>
               <div
                 id="file-tree-panel"
+                data-tour-target="file-tree"
                 class="relative min-w-0 h-full shrink-0 overflow-hidden"
                 classList={{
                   "transition-[width] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] will-change-[width] motion-reduce:transition-none":
