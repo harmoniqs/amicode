@@ -1,5 +1,5 @@
 import { build, context } from "esbuild";
-import { cpSync, mkdirSync, existsSync, chmodSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, existsSync, chmodSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { basename } from "node:path";
 
 const watch = process.argv.includes("--watch");
@@ -58,6 +58,19 @@ if (declaredBins.some((name) => existsSync(`${arRoot}/dist/${name}.js`))) {
   writeFileSync("bin/package.json", JSON.stringify({ type: "module" }) + "\n");
 } else {
   console.warn("[esbuild] amico-run/dist not built — run `pnpm --filter @amicode/amico-run build` before packaging");
+}
+
+// #2001: the What's-new page's release cards (docs/releases/<version>.md) ride
+// the VSIX in dist/releases, so GET /amicode/releases works offline (and on a
+// hub runner, from the same extension tree). dist/ ships (not in .vscodeignore).
+const releasesSrc = "../../docs/releases";
+if (existsSync(releasesSrc)) {
+  mkdirSync("dist/releases", { recursive: true });
+  for (const name of readdirSync(releasesSrc)) {
+    if (name.endsWith(".md")) cpSync(`${releasesSrc}/${name}`, `dist/releases/${name}`);
+  }
+} else {
+  console.warn("[esbuild] docs/releases missing — the What's-new page will have no release cards");
 }
 
 const targets = [

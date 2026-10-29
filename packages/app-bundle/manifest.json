@@ -24,7 +24,7 @@
     "packages/app/public/amico.svg": "7c64b145bdd063bacd53318336a423f0654ec702de2b4e0c4a4a384694052804",
     "packages/app/public/oc-theme-preload.js": "27227e802b3494e7c545da903e679efdb30ccc754cd4eb5cdf08005a40d560b6",
     "packages/app/src/app-desktop-commands.test.ts": "1d2057f238dc14e4407ff5c4e53afe091784790bc0fd0dbfde0eacd91e2bd968",
-    "packages/app/src/app.tsx": "6fe2c1136330b0b76beb10b15c0ca9df2c62877c98ba3eb4cb91844125916a82",
+    "packages/app/src/app.tsx": "c475ffe441d06e0392e6d5b436e564e67ce5eb17cd17ecc4d3afed6d2fc0972e",
     "packages/app/src/design-polish.css": "abe7515fe2ffdc090a51302f910d4b0873fb741f1534bd5196ddecc71fc7b714",
     "packages/app/src/desktop-menu.ts": "350e0e9f2e4294bfe1b1f357b3cd2ea0908b14d20ca1e79fda2305db1958fb24",
     "packages/app/src/entry.tsx": "f35e1017f4c9d478d254b2a38043e5750064b6bef25169c3e07ae9f72ff1049c",
@@ -166,7 +166,7 @@
     "packages/app/src/components/settings-providers.tsx": "c86c9bf4a6f6e198dc7b0995a69d5b76e851144987bbe601802b1b0120ee4ac4",
     "packages/app/src/components/solver-switch-banner.tsx": "ec7edeec6dc05a4a06b39241b4f3a8e7534da97722dd8ec6f26ff782025802e9",
     "packages/app/src/components/split-frame.tsx": "44c53737f72027b461097c03df48a4f411d04a82d02b1fce4901813c73dfcc72",
-    "packages/app/src/components/status-popover-body.tsx": "2b6aa39a4358bbce7b6836b6a719be8eb24db96cd603bc0b4fb9fb0365413fed",
+    "packages/app/src/components/status-popover-body.tsx": "8efb35f2cf50f61a6440696056249b1fbc68d49b458dec95c357721bd4a77b70",
     "packages/app/src/components/status-popover-indicator.test.ts": "e3530caa3a46b822603a8d0a753550605951c2cc5e95c60c46636935f2398a7a",
     "packages/app/src/components/status-popover-indicator.ts": "d705c258e3404567fa5ae6d8ce9c27010832f12fdd614cef21f0297154e7faae",
     "packages/app/src/components/status-popover-model.test.ts": "10634035bab0f31de24564e0d6c8413a0f7434fb2c08ac3ef722981a69dd08e7",
@@ -742,6 +742,9 @@
     "packages/app/src/amicode/inspector/inspector-bridge.ts": "460dbf4509b4e56a8eacd6cac7adcb3a63c6cd3e417d851df5f3e3b259095d3e",
     "packages/app/src/amicode/inspector/inspector-context.tsx": "ac81b9e0e2a4035f85b6af68b7f0cefcb9f256a175b244ba13136f3a307c0c77",
     "packages/app/src/amicode/inspector/run-inspector.tsx": "63a6351fad12a8377550eb87f7602a712bae586fe482ff46cd847c8544fc6e8a",
+    "packages/app/src/amicode/whats-new/whats-new-model.test.ts": "49c8b21d35f286c174456991584f66f99b4fdcec6b438b84317d8c6abc43987c",
+    "packages/app/src/amicode/whats-new/whats-new-model.ts": "30ef4aa0f3b04c6cd2743bb757cadf198d6fd6e463301b8c5645b1cbdd877cbd",
+    "packages/app/src/amicode/whats-new/whats-new.tsx": "a7ee5d41f4e17b80528efa451b7c15be2bd194813c0b2d4bd22a560dcc7944a7",
     "packages/app/src/components/prompt-input/attachments.ts": "c3c28df0d2f18378d39e17147a4c64e8ea01d63b97c39e1874ed9445ca671bb1",
     "packages/app/src/components/prompt-input/clipboard-bridge.test.ts": "15f76dca1a25d024128718e4099220b79ca029263410aab55502cf9caf9b2914",
     "packages/app/src/components/prompt-input/clipboard-bridge.ts": "4b5a1edf59d4c85268d6ff72aa9f9d66f82d4fdb887121fb978c09caf4c5be65",
@@ -1049,10 +1052,10 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-29T08:48:42.118Z",
+  "extracted_at": "2026-10-29T12:53:12.715Z",
   "per_package": {
     "packages/app": {
-      "A": 272,
+      "A": 275,
       "M": 166,
       "D": 0
     },
@@ -1098,7 +1101,7 @@
     }
   },
   "counts": {
-    "overlay_total": 1027,
+    "overlay_total": 1030,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1837,6 +1840,9 @@
     "packages/app/src/amicode/inspector/inspector-bridge.ts": "A",
     "packages/app/src/amicode/inspector/inspector-context.tsx": "A",
     "packages/app/src/amicode/inspector/run-inspector.tsx": "A",
+    "packages/app/src/amicode/whats-new/whats-new-model.test.ts": "A",
+    "packages/app/src/amicode/whats-new/whats-new-model.ts": "A",
+    "packages/app/src/amicode/whats-new/whats-new.tsx": "A",
     "packages/app/src/components/prompt-input/attachments.ts": "M",
     "packages/app/src/components/prompt-input/clipboard-bridge.test.ts": "A",
     "packages/app/src/components/prompt-input/clipboard-bridge.ts": "A",

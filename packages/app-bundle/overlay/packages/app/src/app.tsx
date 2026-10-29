@@ -94,6 +94,7 @@ import { SessionPage, SessionRouteErrorBoundary, TargetSessionRouteContent, regi
 import { LegacyHome } from "@/pages/home/legacy-home"
 import { AmicodeFileRefBridge } from "@/components/amicode-file-ref-bridge"
 import { DevToolsReopenBridge } from "@/components/settings-dialog"
+import { AmicodeWhatsNew } from "@/amicode/whats-new/whats-new"
 
 const NewSession = lazy(() => retryImport(() => import("@/pages/new-session")))
 
@@ -1177,6 +1178,8 @@ export function AppInterface(props: {
                 root={(routerProps) => (
                   <TabsProvider>
                     <AmicodeNavigateBridge />
+                    {/* amicode#2001: the What's-new page (overlay above the session view) */}
+                    <AmicodeWhatsNew />
                     <SessionLineagePrewarmer />
                     {/* #1287/#1290 debug badge — opt-in via localStorage so it
                         never shows to users by default. Enable:

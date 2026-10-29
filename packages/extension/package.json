@@ -171,6 +171,10 @@
         "title": "Amicode: Open Fleet Manager"
       },
       {
+        "command": "amicode.whatsNew",
+        "title": "Amicode: What's New"
+      },
+      {
         "command": "amicode.fleet.goStandalone",
         "title": "Amicode: Fleet \u2014 Go Standalone (leave fleet, run locally)"
       },

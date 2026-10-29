@@ -4,6 +4,7 @@ import { Icon } from "@opencode-ai/ui/icon"
 import { Switch } from "@opencode-ai/ui/switch"
 import { Tabs } from "@opencode-ai/ui/tabs"
 import { showToast } from "@/utils/toast"
+import { WhatsNewStatusEntry } from "@/amicode/whats-new/whats-new"
 import { useNavigate } from "@solidjs/router"
 import {
   type Accessor,
@@ -597,6 +598,8 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean>; onClose?: (
 
         <AmicodeStatusTabContents state={amicodeTabs} />
       </Tabs>
+      {/* amicode#2001: reopen the What's-new page */}
+      <WhatsNewStatusEntry onClose={props.onClose} />
       </div>
     </div>
   )

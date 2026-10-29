@@ -15,6 +15,7 @@ import type { ExplorerIconTheme } from "./explorer_icon_theme";
 import { resolveLatexTarget } from "./latex_compile";
 import { resolveChatFileLink, type LinkResolutionContext } from "./link_resolution";
 import { resolveRemoteSshTarget } from "./fleet_connect_remote_ssh";
+import { handleWhatsNewBridgeMessage } from "./whats_new";
 import { HARMONIQS_MODEL_ID, HARMONIQS_PROVIDER_ID, testConnection, writeOnboardingConfig } from "./onboarding_panel";
 import {
   readSkillProviders,
@@ -682,6 +683,8 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
   }
   // The app's boot catch-up: re-post open-bug-report when a bug session is
   // live (heals a lost one-shot open — cold-boot race, webview reload).
+  // #2001: the What's-new page's last-seen version (globalState) — query/seen.
+  if (handleWhatsNewBridgeMessage(msg, (m) => io.postToWebview(m))) return true;
   if (msg.kind === "bug-report-poke") {
     io.bugReport?.poke();
     return true;
