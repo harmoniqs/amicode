@@ -73,6 +73,43 @@ describe("overture routing predicate (spec §3)", () => {
     const manifest = JSON.parse(fs.readFileSync(path.join(proj.projectDir, "score_manifest.json"), "utf8"));
     expect(manifest.manifest.id).toBe("pulse-designer");
   });
+  it("populated profile.json identity + no completion marker → overture (identity is NOT a completion gate)", () => {
+    // Regression for #1161: profileHasIdentity() must not gate shouldOnboard.
+    // The About You card can write name/affiliation before onboarding runs; the
+    // completion marker (~/.amico/amicode/onboarding/completed) is the sole gate.
+    const profileDir = fs.mkdtempSync(path.join(os.tmpdir(), "prof-id-"));
+    const profilePath = path.join(profileDir, "profile.json");
+    fs.writeFileSync(profilePath, JSON.stringify({ name: "Alice", affiliation: "NYU" }));
+    const prev = process.env.AMICO_PROFILE_FILE;
+    process.env.AMICO_PROFILE_FILE = profilePath;
+    try {
+      const proj = prep(mkVault(), fs.mkdtempSync(path.join(os.tmpdir(), "ops-")));
+      const manifest = JSON.parse(fs.readFileSync(path.join(proj.projectDir, "score_manifest.json"), "utf8"));
+      expect(manifest.manifest.id).toBe("overture");
+    } finally {
+      if (prev === undefined) delete process.env.AMICO_PROFILE_FILE;
+      else process.env.AMICO_PROFILE_FILE = prev;
+    }
+  });
+  it("populated profile.json identity + completion marker → pulse-designer (marker is the sole gate)", () => {
+    // Completion marker must still block re-onboarding even when profile has identity.
+    const profileDir = fs.mkdtempSync(path.join(os.tmpdir(), "prof-id2-"));
+    const profilePath = path.join(profileDir, "profile.json");
+    fs.writeFileSync(profilePath, JSON.stringify({ name: "Bob", affiliation: "MIT" }));
+    const prev = process.env.AMICO_PROFILE_FILE;
+    process.env.AMICO_PROFILE_FILE = profilePath;
+    try {
+      const ops = fs.mkdtempSync(path.join(os.tmpdir(), "ops-"));
+      fs.mkdirSync(path.join(ops, "onboarding"), { recursive: true });
+      fs.writeFileSync(path.join(ops, "onboarding", "completed"), "");
+      const proj = prep(mkVault(), ops);
+      const manifest = JSON.parse(fs.readFileSync(path.join(proj.projectDir, "score_manifest.json"), "utf8"));
+      expect(manifest.manifest.id).toBe("pulse-designer");
+    } finally {
+      if (prev === undefined) delete process.env.AMICO_PROFILE_FILE;
+      else process.env.AMICO_PROFILE_FILE = prev;
+    }
+  });
 });
 
 describe("compileChainedScore / chainManifest (unit)", () => {
