@@ -2,7 +2,7 @@ import * as http from "node:http";
 import * as vscode from "vscode";
 import type { StatusBarManager } from "./status_bar";
 import { SseLivenessTracker, type SseState } from "./sse_liveness";
-import { SseFrameSplitter } from "./amicode_service/sse_fanin_driver";
+import { SseFrameSplitter } from "./amicode_service/sse_frame_splitter";
 
 // ============================================================================
 // OpencodeEventClient — Channel 1 of the bidirectional plumbing.

@@ -24,11 +24,11 @@ import { describe, it, expect } from "vitest";
 import { appendFileSync } from "node:fs";
 import * as http from "node:http";
 import { StringDecoder } from "node:string_decoder";
-import { SseFrameSplitter } from "../src/amicode_service/sse_fanin_driver";
 import { SessionStreamFilter } from "../src/amicode_service/session_event_resume";
 import {
   SessionOwnerMap,
   SessionMultiplexProxy,
+  sessionEventChunkReader,
 } from "../src/amicode_service/session_multiplexer";
 import { OpencodeEventClient, type OpencodeStreamEvent } from "../src/sse_client";
 import {
@@ -254,12 +254,11 @@ describe("#1790 AC1 — SessionStreamFilter: 10 MB frame in 64 KB chunks ≤ 3×
 });
 
 describe("#1790 AC1 — OpencodeEventClient: 10 MB frame in 64 KB chunks ≤ 3× one-chunk time", () => {
-  // The client's onChunk path is inside a real http.get — isolating just the
-  // chunk-splitting from the socket overhead is impractical in a unit test.
-  // Instead we test the SseFrameSplitter (the fix target) directly as a proxy
-  // for the split-time ratio.  The CORRECTNESS of the client path is pinned in
-  // the AC2/AC3 suites below via a real server.
-  it("SseFrameSplitter (the fix target) is ≤ 3× — this is the reference the client will be measured against after the fix", () => {
+  // Times the client's real per-chunk path — OpencodeEventClient.onChunk
+  // (liveness note, frame split, block parse, dispatch) — fed the decoded
+  // chunks the socket would deliver. Only the socket itself is left out; the
+  // AC2/AC3 suites below drive the same path through a real server.
+  it("onChunk: chunked ÷ whole ≤ 3, and the frame is dispatched once either way", () => {
     const stream = largeSummaryFrame({ epoch: LOCAL_EPOCH, seq: 1 });
     const streamBuf = Buffer.from(stream, "utf8");
     expect(streamBuf.byteLength).toBeGreaterThanOrEqual(TEN_MB);
@@ -268,35 +267,52 @@ describe("#1790 AC1 — OpencodeEventClient: 10 MB frame in 64 KB chunks ≤ 3×
     const chunked = chunkBytes(stream, CHUNK_64K);
     expect(chunked.length).toBeGreaterThan(160);
 
-    const decode = (cs: Buffer[]) => {
+    const channel = { appendLine: () => undefined } as never;
+    const read = (cs: Buffer[]): number => {
+      let dispatched = 0;
+      const client = new OpencodeEventClient({ channel, onEvent: () => { dispatched++; } });
+      const onChunk = (client as unknown as { onChunk(chunk: string): void }).onChunk.bind(client);
       const dec = new StringDecoder("utf8");
-      const sp = new SseFrameSplitter();
-      for (const c of cs) { const t = dec.write(c); if (t) sp.push(t); }
+      for (const c of cs) { const t = dec.write(c); if (t) onChunk(t); }
+      client.dispose();
+      return dispatched;
     };
-    const { ratio, wholeMs, chunkedMs } = splitTimeRatio(decode, whole, chunked);
+    expect(read(whole)).toBe(1);
+    expect(read(chunked)).toBe(1);
+
+    const { ratio, wholeMs, chunkedMs } = splitTimeRatio(read, whole, chunked);
     if (process.env.SPLIT_RATIO_LOG) {
-      appendFileSync(process.env.SPLIT_RATIO_LOG, `sse_client_ref ${ratio.toFixed(3)} ${wholeMs.toFixed(2)} ${chunkedMs.toFixed(2)}\n`);
+      appendFileSync(process.env.SPLIT_RATIO_LOG, `sse_client ${ratio.toFixed(3)} ${wholeMs.toFixed(2)} ${chunkedMs.toFixed(2)}\n`);
     }
     expect(ratio, `chunked ${chunkedMs.toFixed(1)} ms vs whole ${wholeMs.toFixed(1)} ms`).toBeLessThanOrEqual(SPLIT_RATIO_FACTOR);
   }, 60_000);
 });
 
 describe("#1790 AC1 — SessionMultiplexProxy.openSseStream: 10 MB frame in 64 KB chunks ≤ 3× one-chunk time", () => {
-  it("SseFrameSplitter (the fix target) is ≤ 3× — reference for the mux stream reader", () => {
+  // Times sessionEventChunkReader — the exact per-chunk path openSseStream's
+  // `data` handler runs (frame split + data: parse) — fed decoded chunks.
+  it("sessionEventChunkReader: chunked ÷ whole ≤ 3, and the frame is parsed once either way", () => {
     const stream = largeSummaryFrame({ epoch: LOCAL_EPOCH, seq: 1 });
     const streamBuf = Buffer.from(stream, "utf8");
     expect(streamBuf.byteLength).toBeGreaterThanOrEqual(TEN_MB);
 
     const whole = [streamBuf];
     const chunked = chunkBytes(stream, CHUNK_64K);
-    const decode = (cs: Buffer[]) => {
+    expect(chunked.length).toBeGreaterThan(160);
+
+    const read = (cs: Buffer[]): number => {
+      let events = 0;
+      const push = sessionEventChunkReader(() => { events++; });
       const dec = new StringDecoder("utf8");
-      const sp = new SseFrameSplitter();
-      for (const c of cs) { const t = dec.write(c); if (t) sp.push(t); }
+      for (const c of cs) { const t = dec.write(c); if (t) push(t); }
+      return events;
     };
-    const { ratio, wholeMs, chunkedMs } = splitTimeRatio(decode, whole, chunked);
+    expect(read(whole)).toBe(1);
+    expect(read(chunked)).toBe(1);
+
+    const { ratio, wholeMs, chunkedMs } = splitTimeRatio(read, whole, chunked);
     if (process.env.SPLIT_RATIO_LOG) {
-      appendFileSync(process.env.SPLIT_RATIO_LOG, `session_mux_ref ${ratio.toFixed(3)} ${wholeMs.toFixed(2)} ${chunkedMs.toFixed(2)}\n`);
+      appendFileSync(process.env.SPLIT_RATIO_LOG, `session_mux ${ratio.toFixed(3)} ${wholeMs.toFixed(2)} ${chunkedMs.toFixed(2)}\n`);
     }
     expect(ratio, `chunked ${chunkedMs.toFixed(1)} ms vs whole ${wholeMs.toFixed(1)} ms`).toBeLessThanOrEqual(SPLIT_RATIO_FACTOR);
   }, 60_000);
@@ -406,6 +422,31 @@ describe("#1790 AC3 — SessionStreamFilter: framing unchanged at every byte off
           expected: stream,
         });
       }
+    }
+  });
+});
+
+describe("#1790 AC3 — SessionStreamFilter: a lookback never crosses a frame boundary", () => {
+  // A stray line feed right after a frame is not a blank line of its own: it
+  // starts the next block (as the pre-#1790 `indexOf("\n\n")` splitter had it),
+  // so a deduped block is dropped together with it.
+  const stream = "id: 1\ndata: a\n\n\nid: 2\ndata: b\n\nid: 3\r\ndata: c\r\n\r\n\r\nid: 4\ndata: d\n\n";
+  const expected = "id: 3\r\ndata: c\r\n\r\n";
+
+  it("drops the deduped blocks whole, at every byte offset", () => {
+    const want = { output: expected + "\r\nid: 4\ndata: d\n\n", seqs: [3, 4] };
+    expect(runFilter([Buffer.from(stream, "utf8")], 2)).toEqual(want);
+    for (const delivery of everySplit(stream)) {
+      expect({ cuts: delivery.map((c) => c.length), ...runFilter(delivery, 2) }).toEqual({
+        cuts: delivery.map((c) => c.length),
+        ...want,
+      });
+    }
+  });
+
+  it("a frame boundary resets the lookback: dropping seq ≤ 4 drops everything", () => {
+    for (const delivery of [[Buffer.from(stream, "utf8")], ...everySplit(stream)]) {
+      expect(runFilter(delivery, 4)).toEqual({ output: "", seqs: [] });
     }
   });
 });

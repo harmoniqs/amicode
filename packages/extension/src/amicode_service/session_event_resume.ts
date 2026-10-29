@@ -41,6 +41,9 @@ function blockSeq(block: string): number | undefined {
   return seq;
 }
 
+const LF = 10;
+const CR = 13;
+
 /** A per-CONNECTION SSE filter: buffers upstream bytes, splits them into whole
  *  event blocks, DROPS blocks whose seq is at or below the resume threshold
  *  (the boundary dedupe), forwards the rest VERBATIM, and reports each
@@ -69,40 +72,28 @@ export class SessionStreamFilter {
     const out: Buffer[] = [];
     const tail = this.tail;
     let start = 0; // where the current partial frame resumes in this chunk
+    let floor = -tail.length; // the current frame's first position (negative = in the tail)
+    /** The byte at chunk position `i` (negative reaches into the tail), or NaN
+     *  before the current frame — a lookback never crosses a frame boundary
+     *  (same rule as SseFrameSplitter). Without it, the LF that ends one frame
+     *  would make a lone `\n` right after it look like a blank line. */
+    const at = (i: number): number => (i < floor ? NaN : i >= 0 ? c[i] : tail[tail.length + i]);
 
-    // Scan for `\n` (LF) bytes in the new chunk only.  A blank SSE line
-    // immediately follows another line ending, so:
-    //   `\n\n`       — LF at i, prev byte (i-1 in chunk, or from tail) is also LF.
-    //   `\r\n\r\n`   — LF at i, prev is CR, and the byte before that is LF.
-    //   `\n\r\n`     — LF at i, prev is CR, byte before that is LF (mixed endings).
-    //   `\r\n\n`     — LF at i, prev is LF (coming right after a CRLF-terminated line).
-    //   `\r\n`-only blank line: after a CR, the next LF makes it \r\n\r\n or \n\r\n.
-    // All patterns reduce to: the LF at `i` ends an empty line, meaning the
-    // byte before the line ending is itself a line-feed (LF) — or, with CRLF,
-    // the two bytes before are CR+LF.  Same logic as SseFrameSplitter.
-    const LF = 10, CR = 13;
-    const at = (i: number): number => {
-      // i < 0 → look into tail; i >= 0 → look into chunk; i < start → past frame boundary
-      if (i < -tail.length) return NaN;
-      if (i < 0) return tail[tail.length + i];
-      return c[i];
-    };
-
-    for (let i = start; i < c.length; i++) {
-      if (c[i] !== LF) continue;
-      // Is the line this LF ends empty?
-      const prev = at(i - 1);
-      if (prev !== LF && !(prev === CR && at(i - 2) === LF)) continue;
-      // Found a frame boundary at position i (inclusive — the frame ends at i+1).
-      const frameEnd = i + 1;
-      this.parts.push(c.subarray(start, frameEnd));
+    // A frame ends at a line feed whose line is empty: the byte before it is a
+    // line feed (`\n\n`, `\r\n\n`), or a CR preceded by a line feed
+    // (`\r\n\r\n`, `\n\r\n`).
+    let lf: number;
+    let from = 0;
+    while ((lf = c.indexOf(LF, from)) !== -1) {
+      from = lf + 1;
+      const prev = at(lf - 1);
+      if (prev !== LF && !(prev === CR && at(lf - 2) === LF)) continue;
+      this.parts.push(c.subarray(start, from));
       const frame = this.parts.length === 1 ? this.parts[0] : Buffer.concat(this.parts);
       this.parts = [];
-      start = frameEnd;
-      this.tail = Buffer.alloc(0);
+      start = floor = from;
 
-      // seq extraction: decode the frame as UTF-8 text (any multibyte chars at
-      // boundaries arrive here whole, so toString is safe at this point).
+      // a whole frame: any multibyte character in it arrived whole, so decoding is safe
       const seq = blockSeq(frame.toString("utf8"));
       // dedupe: a durable event already delivered (seq <= the resume cursor) is
       // dropped — idempotent resume, no double-delivery at the boundary.
@@ -112,13 +103,16 @@ export class SessionStreamFilter {
     }
 
     if (start < c.length) {
-      const rest = c.subarray(start);
+      const rest = start === 0 ? c : c.subarray(start);
       this.parts.push(rest);
-      // keep the last ≤2 bytes as the lookback for the next chunk's scan
-      this.tail = rest.length >= 2 ? rest.subarray(-2) : Buffer.concat([tail, rest]).subarray(-2);
+      // the last ≤2 bytes of the partial frame — only reach back into the old
+      // tail when no frame ended in this chunk (the tail belongs to this frame)
+      this.tail = rest.length >= 2 ? rest.subarray(-2) : start === 0 ? Buffer.concat([tail, rest]).subarray(-2) : rest;
+    } else {
+      this.tail = Buffer.alloc(0); // a frame ended exactly at the chunk's end
     }
 
-    return out.length === 0 ? Buffer.alloc(0) : (out.length === 1 ? out[0] : Buffer.concat(out));
+    return out.length === 0 ? Buffer.alloc(0) : out.length === 1 ? out[0] : Buffer.concat(out);
   }
 
   /** Flush any trailing partial block on stream end (never lose bytes). */
