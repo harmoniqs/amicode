@@ -32,8 +32,7 @@ import {
   previewLeafContaining,
   previewLeaves,
   previewMinimumExtent,
-  previewMissingPaths,
-  previewRestoreTarget,
+  planPreviewRestore,
   previewTabCount,
   removePreviewPath,
   resizePreviewSplit,
@@ -207,26 +206,31 @@ export function SessionPreviewTab(props: {
   createEffect(() => {
     const persisted = props.openPaths?.() ?? []
     const active = props.previewFile()
+    // `hydrated` is a tracked input: a net-new open whose write was held before
+    // the store hydrated is persisted when it flips (see planPreviewRestore).
     // Every document with an unsaved draft returns with its session, even an
     // inactive one — a draft must never be orphaned from its tab (#1249).
-    const drafted = draftSession ? previewDrafts.paths(draftSession).filter((path) => !persisted.includes(path)) : []
-    const target = previewRestoreTarget([...persisted, ...drafted], active)
-    const signature = target.join("\u0000")
-    if (signature === restoredSignature) return
-    restoredSignature = signature
-    if (target.length === 0) return
-    const missing = previewMissingPaths(target, openedPaths())
-    if (missing.length > 0) {
+    const plan = planPreviewRestore({
+      last: restoredSignature,
+      hydrated: props.hydrated ? props.hydrated() : true,
+      persisted,
+      active,
+      open: openedPaths(),
+      extra: draftSession ? previewDrafts.paths(draftSession) : [],
+    })
+    if (!plan.run) return
+    restoredSignature = plan.signature
+    if (plan.missing.length > 0) {
       setWorkspace((current) => {
         let next = current
-        for (const path of missing) next = openPreviewPath(next, path)
+        for (const path of plan.missing) next = openPreviewPath(next, path)
         if (active) next = openPreviewPath(next, active)
         return next
       })
     }
     // Persist a net-new active file that mounted the tab (not yet in the list).
     // Deduped in the setter, so a plain re-instantiation writes nothing.
-    if ((active && !persisted.includes(active)) || drafted.length > 0) syncOpenPaths()
+    if (plan.persistNetNew) syncOpenPaths()
   })
 
   onMount(() => {
