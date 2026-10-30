@@ -1766,13 +1766,26 @@ export async function startAuthResponse(rawBody: string, deps: MutationDeps = {}
         ]
   const clientId = process.env.GOOGLE_CLIENT_ID?.trim()
   const redirectUri = process.env.GOOGLE_REDIRECT_URI?.trim() || "http://127.0.0.1:8085/oauth/callback"
-  // If no client is configured, we still open Google's OAuth consent screen with an
-  // explanatory error — this proves the browser wiring is end-to-end and gives the
-  // operator a clear next step (set GOOGLE_CLIENT_ID) rather than silently doing nothing.
-  // When the client is configured, this constructs the real authorization URL.
+  // No OAuth client configured: there is nothing to authorize against, and opening a
+  // bare Google sign-in page (what this used to do) just shows the user's existing
+  // account chooser/workspace with no flow behind it (#624). Refuse with a fixed
+  // message that says how to get a token and that pasting one works today.
+  if (!clientId) {
+    return synthesizeConnection(
+      "google_client_not_configured",
+      "Browser login needs a Google OAuth client, and none is configured (set GOOGLE_CLIENT_ID). " +
+        "Instead, paste an access token: open developers.google.com/oauthplayground, authorize the " +
+        (id === "google"
+          ? "Gmail API v1 gmail.readonly scope"
+          : "Drive API v3 drive.file and Sheets API v4 spreadsheets scopes") +
+        ", click 'Exchange authorization code for tokens', then paste the access token here. " +
+        "Tokens from the Playground expire after about an hour.",
+    )
+  }
+  // Client configured: build the real authorization URL.
   const state = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2)
-  const pendingUrl = clientId
-    ? `https://accounts.google.com/o/oauth2/v2/auth?` +
+  const pendingUrl =
+    `https://accounts.google.com/o/oauth2/v2/auth?` +
       new URLSearchParams({
         client_id: clientId,
         redirect_uri: redirectUri,
@@ -1782,7 +1795,6 @@ export async function startAuthResponse(rawBody: string, deps: MutationDeps = {}
         access_type: "offline",
         prompt: "consent",
       }).toString()
-    : `https://accounts.google.com/signin/v2/identifier?connector=${id}&error=missing_client_id`
   // Best-effort browser open — failure is soft: the UI fallback (window.open
   // in status-popover-body) will also try, and the BrowserOpenFailed event
   // carries the URL for any listener.

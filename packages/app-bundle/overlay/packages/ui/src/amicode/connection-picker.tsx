@@ -193,6 +193,11 @@ export function ConnectionPicker(props: {
                   onInput={(e) => setToken(e.currentTarget.value)}
                   class="amc-input amc-input--compact"
                 />
+                <span class="text-11-regular text-text-weaker" data-slot="amicode-picker-google-token-help">
+                  Get an access token at developers.google.com/oauthplayground: authorize the{" "}
+                  {picked() === "google" ? "Gmail API v1 gmail.readonly" : "Drive API v3 drive.file and Sheets API v4 spreadsheets"}{" "}
+                  scope, exchange the code for tokens, and paste the access token here. Playground tokens expire after about an hour.
+                </span>
                 <div class="flex gap-2">
                   <Button type="submit" variant="primary" size="small">
                     Connect with token

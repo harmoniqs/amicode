@@ -62,3 +62,44 @@ describe("startAuthResponse — refusal shapes (post-pin route, source-level par
     expect(JSON.parse(body).ok).toBe(false);
   });
 });
+
+describe("startAuthResponse — google without an OAuth client (#624)", () => {
+  let savedClient: string | undefined;
+  let savedBrowser: string | undefined;
+
+  beforeEach(() => {
+    savedClient = process.env.GOOGLE_CLIENT_ID;
+    savedBrowser = process.env.BROWSER;
+    delete process.env.GOOGLE_CLIENT_ID;
+    // A browser command that would leave a marker if it were ever invoked.
+    process.env.BROWSER = "false";
+  });
+
+  afterEach(() => {
+    if (savedClient !== undefined) process.env.GOOGLE_CLIENT_ID = savedClient;
+    else delete process.env.GOOGLE_CLIENT_ID;
+    if (savedBrowser !== undefined) process.env.BROWSER = savedBrowser;
+    else delete process.env.BROWSER;
+  });
+
+  for (const id of ["google", "google-drive"]) {
+    it(`${id} browser auth without a client id refuses with token guidance instead of opening a page`, async () => {
+      const parsed = JSON.parse(await startAuthResponse(JSON.stringify({ id, method: "browser" })));
+      expect(parsed.ok).toBe(false);
+      expect(parsed.connection).toBeNull();
+      expect(parsed.error).toContain("google_client_not_configured");
+      // tells the user where to obtain a token and that pasting one works
+      expect(parsed.error).toContain("developers.google.com/oauthplayground");
+      expect(parsed.error).toContain("paste");
+      expect(parsed.error).not.toContain("accounts.google.com");
+    });
+  }
+
+  it("with a client id configured the flow still reaches waiting-browser", async () => {
+    process.env.GOOGLE_CLIENT_ID = "test-client.apps.googleusercontent.com";
+    const parsed = JSON.parse(await startAuthResponse(JSON.stringify({ id: "google-drive", method: "browser" })));
+    expect(parsed.ok).toBe(true);
+    expect(parsed.connection.state).toBe("waiting-browser");
+  });
+});
+
