@@ -456,6 +456,23 @@ find_installed_ext() {
 # after the server is down so the new extension cold-spawns cleanly.
 HANDSHAKE_PATH="${HOME}/.amico/ops/server/standalone.json"
 
+# Delete the handshake only while it does not name a live process other than the
+# one the script stopped. A launchd KeepAlive hub restarts within about a second
+# and writes a fresh handshake; deleting that one leaves every window without a
+# handshake (#1797). A handshake naming a dead or unreadable process is stale and
+# is cleared as before.
+clear_handshake_for_pid() {
+  local stopped="$1" current=""
+  if [ -f "$HANDSHAKE_PATH" ]; then
+    current="$(node -e "try{const h=JSON.parse(require('fs').readFileSync('$HANDSHAKE_PATH','utf8'));process.stdout.write(String(h.pid||''))}catch{}" 2>/dev/null || true)"
+  fi
+  if [ -n "$current" ] && [ "$current" != "$stopped" ] && kill -0 "$current" 2>/dev/null; then
+    echo "==> Handshake names a restarted live engine (PID $current) — leaving it in place"
+    return 0
+  fi
+  rm -f "$HANDSHAKE_PATH" 2>/dev/null || true
+}
+
 stop_surviving_server() {
   local pid="" port=""
 
@@ -483,7 +500,7 @@ stop_surviving_server() {
   # 4. Verify PID is alive before trying to kill.
   if ! kill -0 "$pid" 2>/dev/null; then
     echo "==> Surviving server PID $pid is already dead — cleaning up handshake"
-    rm -f "$HANDSHAKE_PATH" 2>/dev/null || true
+    clear_handshake_for_pid "$pid"
     return 0
   fi
 
@@ -501,9 +518,10 @@ stop_surviving_server() {
     sleep 1
   fi
 
-  # 6. Delete the handshake so the new extension cold-spawns cleanly.
-  rm -f "$HANDSHAKE_PATH" 2>/dev/null || true
-  echo "==> Surviving server stopped and handshake cleared"
+  # 6. Delete the handshake so the new extension cold-spawns cleanly, but only
+  # if it still names the process we stopped (see clear_handshake_for_pid).
+  clear_handshake_for_pid "$pid"
+  echo "==> Surviving server stopped; handshake handled"
 }
 
 # ── Running-server interlock (OB12) — lsof-scoped, warn-by-default (#1138) ──
@@ -690,6 +708,7 @@ self_test_deploy() {
 # Hidden flag, like --self-test-deploy. Drives stop_surviving_server and
 # rehome_stale_worktree_sessions in a sandbox (HOME, DBDIR, HANDSHAKE_PATH and a
 # sqlite3 stub on PATH are all redirected) and asserts:
+#   (a) a handshake a launchd-restarted hub wrote during the stop survives;
 #   (b) a handshake naming a dead process is cleared;
 #   (c) a handshake naming a live process that is stopped with no restart is cleared;
 #   (d) rehome with nothing to rehome returns 0 (set -e must not exit the script).
@@ -705,6 +724,21 @@ self_test_shutdown() {
   write_handshake() {
     printf '{"pid":%s,"port":43117,"binary_hash":"%s"}\n' "$1" "$2" > "$HANDSHAKE_PATH"
   }
+
+  # (a) launchd KeepAlive restarts the hub while the script is stopping it: the
+  # old hub's TERM handler writes a fresh handshake naming a new live process.
+  # The restarted hub's handshake must survive the stop.
+  sleep 300 & local new_pid=$!
+  ( trap "write_handshake $new_pid new; exit 0" TERM
+    while :; do sleep 0.1; done ) &
+  local old_pid=$!
+  write_handshake "$old_pid" old
+  stop_surviving_server >/dev/null 2>&1
+  grep -q "\"pid\":$new_pid," "$HANDSHAKE_PATH" && grep -q '"binary_hash":"new"' "$HANDSHAKE_PATH" \
+    || { echo "SELFTEST: (a) restarted hub's handshake was deleted or altered: $(cat "$HANDSHAKE_PATH" 2>/dev/null)" >&2; kill "$new_pid" 2>/dev/null; return 1; }
+  kill "$new_pid" 2>/dev/null; wait "$new_pid" 2>/dev/null || true
+  wait "$old_pid" 2>/dev/null || true
+  rm -f "$HANDSHAKE_PATH"
 
   # (b) dead process named by the handshake → record is cleared.
   ( exit 0 ) & local dead_pid=$!

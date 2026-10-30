@@ -226,13 +226,14 @@ fi
 
 # ── AC11: shutdown + rehome steps (#1797) ───────────────────────────────────
 # Hidden --self-test-shutdown drives stop_surviving_server and
-# rehome_stale_worktree_sessions in a sandbox: a dead-PID handshake is cleared,
+# rehome_stale_worktree_sessions in a sandbox: a launchd-restarted hub's handshake
+# survives the stop, a dead-PID handshake is cleared,
 # a stopped live-PID handshake is cleared, and rehome with nothing to rehome
 # returns 0 (no set -e abort before the deploy summary).
 if [ -f "$UNIFIED" ]; then
   out="$(bash "$UNIFIED" --self-test-shutdown 2>&1)"; rc=$?
   if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -qi 'SELFTEST_SHUTDOWN_OK'; then
-    pass "AC11 shutdown handshake clear + rehome-nothing returns 0"
+    pass "AC11 restarted-hub handshake kept, stale cleared, rehome-nothing returns 0"
   else
     fail "AC11 shutdown handshake clear + rehome-nothing returns 0" "rc=$rc out=$out"
   fi
