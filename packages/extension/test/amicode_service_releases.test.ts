@@ -14,6 +14,8 @@ import {
   parseReleaseFile,
   releaseBaselineMs,
   releasesResponse,
+  resolveOwnVersion,
+  resolveReleasesDir,
   selectReleaseCards,
   type ReleaseCard,
 } from "../src/amicode_service/releases";
@@ -225,6 +227,27 @@ describe("GET /amicode/releases", () => {
     } finally {
       await service.stop();
     }
+  });
+
+  it("#2017: the version resolves from AMICODE_VERSION, then the build-time define — never 0.0.0 when no package.json is near", () => {
+    const empty = mkdtempSync(join(tmpdir(), "amc-2017-empty-"));
+    // env override wins over everything
+    expect(resolveOwnVersion({ here: empty, env: { AMICODE_VERSION: "0.4.0-lane.7" }, defined: "0.4.0-lane.1" })).toBe("0.4.0-lane.7");
+    // a malformed env value is ignored → the define
+    expect(resolveOwnVersion({ here: empty, env: { AMICODE_VERSION: "banana" }, defined: "0.4.0-lane.1" })).toBe("0.4.0-lane.1");
+    // no env → the define (the hub runner bundle: no package.json near it)
+    expect(resolveOwnVersion({ here: empty, env: {}, defined: "0.4.0-lane.1" })).toBe("0.4.0-lane.1");
+    // no env, no define (plain vitest) → the package.json lookup still works
+    const pkg = JSON.parse(readFileSync(resolve(__dirname, "../package.json"), "utf8")) as { version: string };
+    expect(resolveOwnVersion({ here: resolve(__dirname, "../src/amicode_service"), env: {}, defined: undefined })).toBe(pkg.version);
+  });
+
+  it("#2017: the releases dir is found at <here>/releases (the runner bundle's bin/dist/releases)", () => {
+    const here = mkdtempSync(join(tmpdir(), "amc-2017-bin-dist-"));
+    mkdirSync(join(here, "releases"));
+    writeFileSync(join(here, "releases", "0.4.0.md"), md("0.4.0", "2026-10-29"));
+    expect(resolveReleasesDir({}, here)).toBe(resolve(here, "releases"));
+    expect(resolveReleasesDir({ AMICODE_RELEASES_DIR: "/x/y" }, here)).toBe("/x/y");
   });
 
   it("the default version is the extension's own package.json version", async () => {

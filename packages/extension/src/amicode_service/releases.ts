@@ -213,15 +213,16 @@ function moduleDir(): string {
   return typeof __dirname === "string" ? __dirname : process.cwd();
 }
 
-/** The bundled releases dir: $AMICODE_RELEASES_DIR, else the build's
- *  dist/releases (from dist/ or bin/dist/), else the repo's docs/releases
- *  (a dev checkout). undefined → no cards (the route still answers). */
-export function resolveReleasesDir(env: NodeJS.ProcessEnv = process.env): string | undefined {
+/** The bundled releases dir: $AMICODE_RELEASES_DIR, else <here>/releases
+ *  (dist/releases beside the extension bundle, or bin/dist/releases beside the
+ *  runner bundle — #2017: a hub deploy copies the runner + its releases/ only),
+ *  else dist/releases from bin/dist, else the repo's docs/releases (a dev
+ *  checkout). undefined → no cards (the route still answers). */
+export function resolveReleasesDir(env: NodeJS.ProcessEnv = process.env, here: string = moduleDir()): string | undefined {
   const override = env.AMICODE_RELEASES_DIR;
   if (typeof override === "string" && override.trim() !== "") return override;
-  const here = moduleDir();
   const candidates = [
-    path.resolve(here, "releases"), // dist/ → dist/releases
+    path.resolve(here, "releases"), // dist/ → dist/releases; bin/dist/ → bin/dist/releases
     path.resolve(here, "..", "..", "dist", "releases"), // bin/dist/ → dist/releases
     path.resolve(here, "..", "..", "..", "docs", "releases"), // dist/ in a checkout
     path.resolve(here, "..", "..", "..", "..", "docs", "releases"), // src/amicode_service or bin/dist in a checkout
@@ -229,15 +230,42 @@ export function resolveReleasesDir(env: NodeJS.ProcessEnv = process.env): string
   return candidates.find((c) => existsSync(c));
 }
 
-let cachedVersion: string | undefined;
-/** The extension's own version (its package.json, name "amicode"). */
-export function resolveOwnVersion(): string {
-  if (cachedVersion) return cachedVersion;
-  const here = moduleDir();
+/** The build-time version esbuild bakes into BOTH the extension and the runner
+ *  bundle (#2017). Guarded so vitest (no define) sees undefined, not a
+ *  ReferenceError. */
+function definedVersion(): string | undefined {
+  return typeof __AMICODE_VERSION__ === "string" ? __AMICODE_VERSION__ : undefined;
+}
+
+export interface ResolveOwnVersionOpts {
+  env?: NodeJS.ProcessEnv;
+  /** The bundle's dir (the package.json walk starts here). Default: moduleDir(). */
+  here?: string;
+  /** The build-time define. Default: __AMICODE_VERSION__ when defined. */
+  defined?: string | undefined;
+}
+
+const cachedByDir = new Map<string, string>();
+/** The extension's own version: $AMICODE_VERSION, else the build-time define,
+ *  else its package.json (name "amicode") near the bundle, else "0.0.0".
+ *  (#2017: the hub's standalone runner has no package.json near it — the
+ *  define is what keeps it from answering 0.0.0 and filtering every card.) */
+export function resolveOwnVersion(opts: ResolveOwnVersionOpts = {}): string {
+  const env = opts.env ?? process.env;
+  const fromEnv = env.AMICODE_VERSION?.trim();
+  if (fromEnv && isVersion(fromEnv)) return fromEnv.replace(/^v/, "");
+  const defined = "defined" in opts ? opts.defined : definedVersion();
+  if (defined && isVersion(defined)) return defined.replace(/^v/, "");
+  const here = opts.here ?? moduleDir();
+  const cached = cachedByDir.get(here);
+  if (cached) return cached;
   for (const rel of [[".."], ["..", ".."], ["..", "..", ".."]]) {
     try {
       const pkg = JSON.parse(readFileSync(path.resolve(here, ...rel, "package.json"), "utf8")) as { name?: unknown; version?: unknown };
-      if (pkg.name === "amicode" && isVersion(pkg.version)) return (cachedVersion = pkg.version);
+      if (pkg.name === "amicode" && isVersion(pkg.version)) {
+        cachedByDir.set(here, pkg.version);
+        return pkg.version;
+      }
     } catch {
       /* next candidate */
     }
