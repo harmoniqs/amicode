@@ -87,13 +87,13 @@ export function clearLocalImageCache(): void {
   inflight.clear()
 }
 
-// Every chat image gets a frame with an action button (the caller supplies the
-// copy button). Local-path sources (`![](/abs/x.png)`) can't load directly in
+// Every chat image gets a frame with action buttons (the caller supplies them:
+// download + copy). Local-path sources (`![](/abs/x.png)`) can't load directly in
 // the iframe: park the path in data-local-src and drop the src so no doomed
 // request fires; loadLocalImages fills it in on the live container, and once
 // cached the next pass sets it synchronously, so a morphdom rebuild of the
 // block never flashes the image away. Idempotent.
-export function frameImages(root: HTMLElement, button: () => HTMLElement) {
+export function frameImages(root: HTMLElement, buttons: () => HTMLElement[]) {
   for (const img of Array.from(root.querySelectorAll("img"))) {
     const local = localImagePath(img.getAttribute("src") ?? "")
     if (local) {
@@ -107,8 +107,21 @@ export function frameImages(root: HTMLElement, button: () => HTMLElement) {
     frame.setAttribute("data-component", "markdown-image")
     img.parentNode?.replaceChild(frame, img)
     frame.appendChild(img)
-    frame.appendChild(button())
+    for (const button of buttons()) frame.appendChild(button)
   }
+}
+
+/** The saved file's name: the authored file's basename when the image came
+ *  from disk, else the alt text, else "image" — always `.png`, because the
+ *  save path rasterizes to PNG (the one type the host's save bridge accepts). */
+export function imageFileName(img: HTMLImageElement): string {
+  const local = img.getAttribute("data-local-src") ?? localImagePath(img.getAttribute("src") ?? "")
+  const base = local ? (local.split("/").pop() ?? "").replace(/\.[^.]+$/, "") : img.alt
+  const name = base
+    .trim()
+    .replace(/[^\w.-]+/g, "-")
+    .replace(/^[-.]+|[-.]+$/g, "")
+  return `${name || "image"}.png`
 }
 
 /** Live-container pass: load every parked local image that has no src yet. */

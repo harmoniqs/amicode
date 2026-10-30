@@ -335,6 +335,11 @@
     }
   }
 
+  /* Download sits left of copy: copy's 4px inset + its 24px width + an 8px gap. */
+  [data-component="markdown-image"] [data-slot="markdown-copy-button"][data-action="download"] {
+    right: 36px;
+  }
+
   [data-component="markdown-image"]:hover [data-slot="markdown-copy-button"] {
     opacity: 1;
   }

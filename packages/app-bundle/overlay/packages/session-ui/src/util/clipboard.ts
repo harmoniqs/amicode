@@ -56,7 +56,7 @@ export async function copyImageToClipboard(src: string): Promise<boolean> {
   )
 }
 
-async function pngDataUrl(src: string): Promise<string | undefined> {
+export async function pngDataUrl(src: string): Promise<string | undefined> {
   if (src.startsWith("data:image/png;base64,")) return src
   if (typeof document === "undefined") return undefined
   const image = new Image()

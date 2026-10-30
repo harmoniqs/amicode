@@ -192,4 +192,5 @@ export const dict = {
   "ui.message.duration.seconds": "{{count}}วิ",
   "ui.message.duration.minutesSeconds": "{{minutes}}นาที {{seconds}}วิ",
   "ui.message.copyTrace": "Copy trace",
+  "ui.message.download": "Download",
 }
