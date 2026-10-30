@@ -126,3 +126,9 @@ test("keeps \\[...\\] literal inside code spans and never spans paragraphs (#189
   const unclosed = await parse("an escaped \\[bracket here\n\nand a later \\] one")
   expect(unclosed).not.toContain("katex")
 })
+
+test("one-line $$ block never swallows two spans on one line (#1894)", async () => {
+  const html = await parse("$$a$$ and $$b$$")
+  expect(html).not.toContain("katex-display")
+  expect(await parse("$$\\Omega_x$$")).toContain("katex-display")
+})
