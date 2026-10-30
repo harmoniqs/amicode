@@ -6,15 +6,18 @@ import {
   localImageLoaderVersion,
   localImagePath,
   frameImages,
+  imageFileName,
   loadLocalImages,
   registerLocalImageLoader,
 } from "./markdown-local-images"
 
-const button = () => {
+const host = (action?: string) => {
   const el = document.createElement("div")
   el.setAttribute("data-slot", "markdown-copy-button")
+  if (action) el.setAttribute("data-action", action)
   return el
 }
+const button = () => [host("download"), host()]
 const PNG = "data:image/png;base64,iVBORw0KGgo="
 
 beforeEach(() => {
@@ -79,14 +82,15 @@ describe("loader registry", () => {
 })
 
 describe("chat image frames", () => {
-  test("every image is framed with a copy button, once", () => {
+  test("every image is framed with download + copy buttons, once", () => {
     const root = block('<p><img src="https://example.com/a.png" alt="a"></p>')
     frameImages(root, button)
     frameImages(root, button)
     const frames = root.querySelectorAll('[data-component="markdown-image"]')
     expect(frames.length).toBe(1)
     expect(frames[0]!.querySelector("img")?.getAttribute("src")).toBe("https://example.com/a.png")
-    expect(frames[0]!.querySelectorAll('[data-slot="markdown-copy-button"]').length).toBe(1)
+    expect(frames[0]!.querySelectorAll('[data-slot="markdown-copy-button"]').length).toBe(2)
+    expect(frames[0]!.querySelectorAll('[data-action="download"]').length).toBe(1)
   })
 
   test("only local images get the paper backing marker (data-local); remote images render as authored", () => {
@@ -118,5 +122,29 @@ describe("chat image frames", () => {
     const root = block('<p><img src="/home/me/eq.png"></p>')
     frameImages(root, button)
     expect(root.querySelector("img")?.getAttribute("src")).toBe(PNG)
+  })
+})
+
+describe("imageFileName", () => {
+  const img = (html: string) => {
+    const root = block(html)
+    frameImages(root, button)
+    return root.querySelector("img")!
+  }
+
+  test("a disk image keeps its basename, saved as png", () => {
+    expect(imageFileName(img('<img src="/home/me/talk/18-piccolo-mintime.png" alt="eq">'))).toBe(
+      "18-piccolo-mintime.png",
+    )
+    expect(imageFileName(img('<img src="/tmp/plot.svg">'))).toBe("plot.png")
+    expect(imageFileName(img('<img src="/home/me/my%20figure.v2.jpg">'))).toBe("my-figure.v2.png")
+  })
+
+  test("otherwise the alt text names it, else 'image'", () => {
+    expect(imageFileName(img('<img src="https://example.com/a" alt="Fig 3: comb vs posterior">'))).toBe(
+      "Fig-3-comb-vs-posterior.png",
+    )
+    expect(imageFileName(img('<img src="https://example.com/a">'))).toBe("image.png")
+    expect(imageFileName(img('<img src="https://example.com/a" alt="../../">'))).toBe("image.png")
   })
 })

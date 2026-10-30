@@ -620,6 +620,27 @@ export function PreviewFileView(props: {
     "backdrop-filter": "blur(4px)",
   }
 
+  // AMICODE: save a previewed PDF/image to the user's machine. Downloads are
+  // dead inside the webview iframe, so the bytes ride the extension's
+  // save-file bridge (a native Save dialog on the machine the user is at);
+  // unframed, a plain anchor download stands.
+  const downloadPreview = () => {
+    const data = binaryData()
+    if (!data) return
+    const filename = props.filePath.split("/").pop() || "download"
+    const dataUrl = `data:${data.mime};base64,${data.base64}`
+    if (window.parent !== window) {
+      window.parent.postMessage({ source: "amicode", kind: "save-file", filename, dataUrl }, "*")
+      return
+    }
+    const link = document.createElement("a")
+    link.href = dataUrl
+    link.download = filename
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+  }
+
   return (
     <div
       class="h-full relative overflow-hidden"
@@ -749,6 +770,19 @@ export function PreviewFileView(props: {
                 </div>
               )
             }}
+          </Show>
+          <Show when={binaryData()}>
+            <TooltipV2 openDelay={400} value="Download">
+              <button
+                data-preview-download
+                class="shrink-0 flex items-center justify-center w-7 h-7 rounded-md border border-border-base shadow-sm cursor-pointer text-text-weak hover:text-text-base hover:bg-background-stronger transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-border-focus"
+                style={previewControlSurfaceStyle}
+                onClick={downloadPreview}
+                aria-label="Download"
+              >
+                <Icon name="download" size="small" />
+              </button>
+            </TooltipV2>
           </Show>
           {/* Zoom controls: [editable %] [reset] [+ over -] */}
           <div
