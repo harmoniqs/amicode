@@ -95,6 +95,7 @@ import { sessionTitle } from "@/utils/session-title"
 import { scheduleConnectedMeasure } from "./measure"
 import { observeElementOffsetReconnectAware } from "./observe-element-offset"
 import { smoothScrollInterpolate, SMOOTH_SCROLL_DURATION, shouldInstantScroll } from "./smooth-scroll"
+import { queuedUserMessageIDs } from "./model-pure"
 import { createTimelineProjection } from "./projection"
 import { MessageComment, SummaryDiff, TimelineRow, TimelineRowMap } from "./rows"
 import { filterVirtualIndexes } from "./virtual-items"
@@ -484,6 +485,8 @@ export function MessageTimeline(props: {
     return !!id && sync().data.session_working(id)
   })
   const sessionMessages = createMemo(() => (sessionID() ? (sync().data.message[sessionID()!] ?? []) : []))
+  // #1671 — messages sent mid-run read as queued (terminal parity).
+  const queuedMessageIDs = createMemo(() => queuedUserMessageIDs(sessionMessages(), sessionWorking()))
   const projectedMessages = createMemo(() => {
     const id = sessionID()
     if (!id) return []
@@ -1870,6 +1873,7 @@ export function MessageTimeline(props: {
                       actions={props.actions}
                       useV2Actions={settings.general.newLayoutDesigns()}
                       comments={messageComments()}
+                      queued={queuedMessageIDs().has(message().id)}
                     />
                   </div>
                 </div>
