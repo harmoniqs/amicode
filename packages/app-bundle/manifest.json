@@ -789,13 +789,14 @@
     "packages/app/src/components/session/preview-file-helpers.ts": "2244aaef25f7412df7b53a45a7d2f72380d45eb90caefa5e96c48d01e988eb4e",
     "packages/app/src/components/session/preview-file-target.test.ts": "d9a341349d8922b0369f3fdf911cce35d96344962ad442267e9078106d266db3",
     "packages/app/src/components/session/preview-file-target.ts": "11738d77fc1e86a4a968b65f3fb342f51792b6a2c2d57a08114197ff2e82a51b",
-    "packages/app/src/components/session/preview-file-view.tsx": "7c5f2bee779fd192c5e49f90514ad4db07977c44695832640b0745ac9a4c18f1",
+    "packages/app/src/components/session/preview-file-view.tsx": "5781fdd4a3a812efbe0c635b6eabcd6468d2d0131a008bccbde751f9050dc12f",
     "packages/app/src/components/session/preview-find-in-sidebar.test.ts": "68cdc2d9743b3c3a6a6c1fab6cbd362d27b4f7179cba973cba67d10f01b35970",
     "packages/app/src/components/session/preview-frontmatter-card.tsx": "00f439e3bf482673dfb06c0ce3464c0f51985093ed57b321cdebd38d452f2e5d",
     "packages/app/src/components/session/preview-frontmatter.test.ts": "93ec9f7f4c604d8ed8ee6009779c425bffecfca331a122a7a700b588a8ca3c0c",
     "packages/app/src/components/session/preview-frontmatter.ts": "036250edd8c2886ee8f8ac0723f2b9a41d363898006a53f47bc44b8194c5a3d3",
     "packages/app/src/components/session/preview-human-write-gate.ts": "4c4b1cf258a06b0012d722add0125ecb77a0f4e463dd95d193f21e5e73541098",
     "packages/app/src/components/session/preview-latex-compile.test.ts": "bfd86b8e7ae2da8060aaabdb167ec8521983777040c7201a7bbb7d7e3c877ac6",
+    "packages/app/src/components/session/preview-latex-compile.ts": "b9388ca0ba698b023e73d823b6064428937fdacc4ce63f1682018f49387307b8",
     "packages/app/src/components/session/preview-restore.test.ts": "99f4945ad4aa603d6245a82464bbba8b374eb169ec5a559fc1963d5a706ecf35",
     "packages/app/src/components/session/session-archived-fleet.test.ts": "f5d0e16dea2ab6e6cb44a6768b5ef1e772f8ccc39aeeb02571525ec44336ab57",
     "packages/app/src/components/session/session-chats-dropdown.test.ts": "72e2e797fe96a59ee46ae59c4a5cb34eae8d338a468977bd4e8f61cefd6abd49",
@@ -956,7 +957,7 @@
     "packages/session-ui/src/v2/components/preview-editor-helpers.ts": "7f61e97e54286af1bbf5e88538e9c73995eb30f19868c6f43694422205aeda4b",
     "packages/session-ui/src/v2/components/preview-editor.test.ts": "b8da9320a594aaa680ed3848612fcea66f41c0a046a673f0cf6155c2a0b697dd",
     "packages/session-ui/src/v2/components/preview-editor.tsx": "96cfbfbbe06cc797f71ac667a29ece3c44a192c9cd94d91e90f79359cdab932b",
-    "packages/session-ui/src/v2/components/preview-file-routing.test.ts": "fca02a21261b291fd94001baa2294e7b2fa45b18b0c0403848f045763b41bf15",
+    "packages/session-ui/src/v2/components/preview-file-routing.test.ts": "6422e3b36de18a19b101f7321ae2b93e5bcd19a5d1b6e588b64f34af91098d6d",
     "packages/session-ui/src/v2/components/preview-nav-state.test.ts": "cec09a8b3c08ab16581d3d5b6ff704584b3c87d81c25e8af20f6f00272f3593f",
     "packages/session-ui/src/v2/components/preview-nav-state.ts": "ccaeb94d1ab39271f5dcd49c935c8fc7b54d4ffbd66e1352e4d797c9205553fc",
     "packages/session-ui/src/v2/components/preview-view-state.ts": "4ec961c7720417166dcccd45f0d4702afec664dfe7f4d0dd8668bb9b1d8af5e6",
@@ -1078,10 +1079,10 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-30T19:57:36.808Z",
+  "extracted_at": "2026-10-30T19:59:11.359Z",
   "per_package": {
     "packages/app": {
-      "A": 297,
+      "A": 298,
       "M": 166,
       "D": 0
     },
@@ -1127,7 +1128,7 @@
     }
   },
   "counts": {
-    "overlay_total": 1056,
+    "overlay_total": 1057,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1920,6 +1921,7 @@
     "packages/app/src/components/session/preview-frontmatter.ts": "A",
     "packages/app/src/components/session/preview-human-write-gate.ts": "A",
     "packages/app/src/components/session/preview-latex-compile.test.ts": "A",
+    "packages/app/src/components/session/preview-latex-compile.ts": "A",
     "packages/app/src/components/session/preview-restore.test.ts": "A",
     "packages/app/src/components/session/session-archived-fleet.test.ts": "A",
     "packages/app/src/components/session/session-chats-dropdown.test.ts": "A",

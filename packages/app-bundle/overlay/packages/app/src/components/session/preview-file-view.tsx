@@ -35,6 +35,14 @@ import { PdfFindPill } from "./pdf-find-pill"
 import { toAbsolutePath, shouldApplyWatcherRead } from "./preview-file-helpers"
 import { validateHumanWritePath } from "./preview-human-write-gate"
 import { previewDrafts } from "./preview-draft-store"
+import {
+  COMPILE_DONE_FADE_MS,
+  canStartCompile,
+  compileRequestMessage,
+  compileStatusFromMessage,
+  isLatexFile,
+  type CompileState,
+} from "./preview-latex-compile"
 import { splitFrontmatter } from "./preview-frontmatter"
 import { FrontmatterCard } from "./preview-frontmatter-card"
 
@@ -367,6 +375,41 @@ export function PreviewFileView(props: {
     }
     window.addEventListener("message", handler)
     onCleanup(() => window.removeEventListener("message", handler))
+  })
+
+  // ─── Compile button status (#1403) ─────────────────────────────────────
+  // idle → compiling → done (check fades) | error, driven by the same
+  // run-latex-status relay the PDF refresh above listens to. Only for LaTeX files.
+  const [compileState, setCompileState] = createSignal<CompileState>("idle")
+  const [compileDetail, setCompileDetail] = createSignal<string | undefined>(undefined)
+  let compileFadeTimer: ReturnType<typeof setTimeout> | undefined
+  const applyCompileStatus = (status: { state: CompileState; detail?: string }) => {
+    if (compileFadeTimer) clearTimeout(compileFadeTimer)
+    compileFadeTimer = undefined
+    setCompileState(status.state)
+    setCompileDetail(status.detail)
+    if (status.state === "done") {
+      compileFadeTimer = setTimeout(() => setCompileState("idle"), COMPILE_DONE_FADE_MS)
+    }
+  }
+  const requestCompile = () => {
+    if (!canStartCompile(compileState())) return
+    // Same message Cmd+S posts after a save — works on a clean (unmodified) file.
+    try {
+      window.parent?.postMessage(compileRequestMessage(selfAbsolute()), "*")
+    } catch {}
+  }
+  onMount(() => {
+    const handler = (event: MessageEvent) => {
+      if (!isLatexFile(props.filePath)) return
+      const status = compileStatusFromMessage(event.data, selfAbsolute())
+      if (status) applyCompileStatus(status)
+    }
+    window.addEventListener("message", handler)
+    onCleanup(() => window.removeEventListener("message", handler))
+  })
+  onCleanup(() => {
+    if (compileFadeTimer) clearTimeout(compileFadeTimer)
   })
 
   // ─── Binary URLs ───────────────────────────────────────────────────────
@@ -702,6 +745,62 @@ export function PreviewFileView(props: {
                 </SegmentedControlItemV2>
               </TooltipV2>
             </SegmentedControlV2>
+          </div>
+        </Show>
+        {/* Compile (#1403): LaTeX sources only. A .tex opens straight in the editor, where
+            the zoom/page controls are hidden, so this sits OUTSIDE the isEditing gate. */}
+        <Show when={isLatexFile(props.filePath)}>
+          <div
+            class="shrink-0 flex items-center h-7 rounded-md border border-border-base overflow-hidden shadow-sm"
+            style={previewControlSurfaceStyle}
+          >
+            <TooltipV2
+              openDelay={400}
+              value={compileState() === "error" && compileDetail() ? `Compile failed: ${compileDetail()}` : "Compile LaTeX"}
+            >
+              <button
+                type="button"
+                data-preview-compile
+                data-compile-state={compileState()}
+                class="flex items-center justify-center gap-1 h-full px-2 cursor-pointer text-12-regular text-text-weak hover:text-text-base hover:bg-background-stronger transition-colors disabled:cursor-wait focus-visible:outline focus-visible:outline-2 focus-visible:outline-border-focus"
+                aria-label={compileState() === "compiling" ? "Compiling" : "Compile LaTeX"}
+                aria-busy={compileState() === "compiling"}
+                onClick={requestCompile}
+              >
+                <Show
+                  when={compileState() !== "compiling"}
+                  fallback={<span data-compile-spinner class="size-3 rounded-full border-2 border-current border-t-transparent animate-spin" />}
+                >
+                  <Show
+                    when={compileState() === "done"}
+                    fallback={
+                      <Show
+                        when={compileState() === "error"}
+                        fallback={
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                            <path d="M7 4.5v15a.5.5 0 0 0 .77.42l11.5-7.5a.5.5 0 0 0 0-.84L7.77 4.08A.5.5 0 0 0 7 4.5z" />
+                          </svg>
+                        }
+                      >
+                        <Icon name="circle-x" size="small" class="text-icon-critical-base" />
+                      </Show>
+                    }
+                  >
+                    <Icon name="check-small" size="small" />
+                  </Show>
+                </Show>
+                <span>Compile</span>
+              </button>
+            </TooltipV2>
+            <span class="sr-only" role="status" aria-live="polite">
+              {compileState() === "compiling"
+                ? "Compiling"
+                : compileState() === "done"
+                  ? "Compiled"
+                  : compileState() === "error"
+                    ? "Compile failed"
+                    : ""}
+            </span>
           </div>
         </Show>
         <Show when={!isEditing()}>

@@ -249,7 +249,10 @@ const isAmicode = (msg: unknown): msg is { source: "amicode"; kind: string; tab?
 // PDF so rapid saves never overlap. Availability is detected once. Status
 // (compiling / done / error / unavailable) is relayed back so the Preview can
 // show a spinner and, on done, refresh the companion PDF (#1254).
-type LatexTargetRef = { dir: string; base: string; pdf: string };
+// `requested` (#1403): the path exactly as the app asked for it — echoed on every
+// status so the Preview's Compile button can match a status to its file even when
+// `file` (symlink-resolved) differs from the posted path.
+type LatexTargetRef = { dir: string; base: string; pdf: string; requested?: string };
 // #1414: the coalesced re-run remembers the LATEST request's target+tab, not a
 // bare boolean — otherwise the rerun replays the stale target/tab captured by
 // the original in-flight call's closure.
@@ -331,7 +334,15 @@ export async function runLatexmk(
   // the running check and spawning a second latexmk.
   state.running = true;
   const post = (extra: Record<string, unknown>) =>
-    io.postToWebview({ source: "amicode", kind: "run-latex-status", tab, file: texFile, pdf: target.pdf, ...extra });
+    io.postToWebview({
+      source: "amicode",
+      kind: "run-latex-status",
+      tab,
+      file: texFile,
+      pdf: target.pdf,
+      ...(target.requested !== undefined ? { requested: target.requested } : {}),
+      ...extra,
+    });
 
   const detect = deps.detect ?? detectLatexmk;
   if (!(await detect())) {
@@ -671,7 +682,7 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     const roots = (vscode.workspace.workspaceFolders ?? []).map((folder) => folder.uri.fsPath);
     const target = resolveLatexTarget(rawFile, roots);
     if (!target.ok) return true; // invalid / uncontained / non-tex — ignore silently
-    scheduleLatexCompile(target, tab, io);
+    scheduleLatexCompile({ dir: target.dir, base: target.base, pdf: target.pdf, requested: rawFile }, tab, io);
     return true;
   }
 
