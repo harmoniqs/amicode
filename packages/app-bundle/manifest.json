@@ -794,7 +794,7 @@
     "packages/app/src/components/session/session-archived-fleet.test.ts": "f5d0e16dea2ab6e6cb44a6768b5ef1e772f8ccc39aeeb02571525ec44336ab57",
     "packages/app/src/components/session/session-chats-dropdown.test.ts": "72e2e797fe96a59ee46ae59c4a5cb34eae8d338a468977bd4e8f61cefd6abd49",
     "packages/app/src/components/session/session-context-tab.test.ts": "bb42b97a6f3966c0b1a626b1fecdd82c6dba26e65a364020ed55be49754c987b",
-    "packages/app/src/components/session/session-context-tab.tsx": "4062ef39e161f041bf1d7a300173c510cecd581ad8e1fbb4503961b7cd1a29f5",
+    "packages/app/src/components/session/session-context-tab.tsx": "7af0d57b5ec319b662238f5647536628f14e636bc9739a6c69f27ae74424b127",
     "packages/app/src/components/session/session-fleet-control-projection.ts": "c1a91ce975dd0399251e491091af81abf2d24c0bbba074a334b58c56868bcad1",
     "packages/app/src/components/session/session-fleet-peers.test.ts": "0b9e128d62f09907691d676b560edd610b6d92fa919d38705addd888d6fce54a",
     "packages/app/src/components/session/session-fleet-peers.ts": "474fd37998061f1c2df1be81c88e8362654f5aee6bcf79fd4b6669caf2ce50bd",
@@ -1073,7 +1073,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-30T19:39:40.625Z",
+  "extracted_at": "2026-10-30T19:39:53.481Z",
   "per_package": {
     "packages/app": {
       "A": 290,
