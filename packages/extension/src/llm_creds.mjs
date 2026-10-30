@@ -155,6 +155,46 @@ export async function fetchProviderModels(baseUrl, { fetchImpl = fetch, timeoutM
 }
 
 /**
+ * The FULL provider catalog (#2000, model arrivals): the engine's GET /provider
+ * — every listed provider (connected or not) with its model ids and the
+ * non-secret price (USD/Mtok) + context meta, plus the connected provider ids.
+ * Stripped at the parse boundary to ids and those numbers only (never options,
+ * never a key). A failed query yields undefined (UNKNOWN — never empty).
+ */
+export async function fetchProviderCatalog(baseUrl, { fetchImpl = fetch, timeoutMs = 6000, headers } = {}) {
+  const base = String(baseUrl).replace(/\/$/, "");
+  const finite = (n) => (typeof n === "number" && Number.isFinite(n) ? n : undefined);
+  try {
+    const r = await fetchImpl(`${base}/provider`, { signal: AbortSignal.timeout(timeoutMs), headers });
+    if (!r.ok) return undefined;
+    const json = await r.json();
+    const all = json && Array.isArray(json.all) ? json.all : undefined;
+    if (!all || !json || !Array.isArray(json.connected)) return undefined;
+    const providers = {};
+    for (const p of all) {
+      if (!p || typeof p.id !== "string" || p.id.length === 0) continue;
+      const models = {};
+      const src = p.models && typeof p.models === "object" && !Array.isArray(p.models) ? p.models : {};
+      for (const [id, m] of Object.entries(src)) {
+        if (id.length === 0) continue;
+        const meta = {};
+        const input = finite(m?.cost?.input);
+        const output = finite(m?.cost?.output);
+        const context = finite(m?.limit?.context);
+        if (input !== undefined) meta.input = input;
+        if (output !== undefined) meta.output = output;
+        if (context !== undefined) meta.context = context;
+        models[id] = meta;
+      }
+      providers[p.id] = models;
+    }
+    return { connected: json.connected.filter((c) => typeof c === "string" && c.length > 0), providers };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * The engine's one-token reachability probe (#1984, POST /provider/probe):
  * the engine sends 1 token per model through its OWN credentials and returns
  * a named status per model — no secret crosses. The probe is bounded inside

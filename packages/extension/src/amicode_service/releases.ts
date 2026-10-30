@@ -64,6 +64,14 @@ export interface ArrivalRow {
   first_ok_at?: number | null;
 }
 
+/** #2000: an arrival event, structurally (model_arrivals' Arrival subset). */
+export interface ArrivalEventRow {
+  provider: string;
+  model: string;
+  kind: string;
+  first_seen_at: number;
+}
+
 export interface ReleasesDeps {
   /** The bundled releases dir. Default: resolveReleasesDir(). */
   dir?: string;
@@ -72,6 +80,10 @@ export interface ReleasesDeps {
   /** The live reachability rows (the GET /amicode/model-reachability body).
    *  undefined / throwing = no arrivals section. */
   reachability?: () => Promise<{ models: ArrivalRow[] }>;
+  /** #2000: the arrival events (GET /amicode/model-arrivals). Available
+   *  arrivals after the baseline join "new for you" (first_seen_at stands in
+   *  for first_ok_at); the first_ok_at path above keeps working. */
+  arrivals?: () => Promise<ArrivalEventRow[]>;
 }
 
 const VERSION_RE = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/;
@@ -206,6 +218,27 @@ export function newForYouModels(rows: ArrivalRow[], baselineMs: number | null): 
     .sort((a, b) => b.first_ok_at - a.first_ok_at || a.provider.localeCompare(b.provider) || a.model.localeCompare(b.model));
 }
 
+/** #2000: available arrival events after the baseline, as "new for you" rows. */
+export function arrivalModels(events: ArrivalEventRow[], baselineMs: number | null): NewForYouModel[] {
+  if (baselineMs === null) return [];
+  return events
+    .filter((e) => e.kind === "available" && e.first_seen_at > baselineMs)
+    .map((e) => ({ provider: e.provider, model: e.model, first_ok_at: e.first_seen_at }));
+}
+
+/** Union by (provider, model), newest first — the first_ok_at row wins a tie. */
+export function mergeNewForYou(a: NewForYouModel[], b: NewForYouModel[]): NewForYouModel[] {
+  const seen = new Set<string>();
+  const out: NewForYouModel[] = [];
+  for (const m of [...a, ...b]) {
+    const k = `${m.provider}\u0000${m.model}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(m);
+  }
+  return out.sort((x, y) => y.first_ok_at - x.first_ok_at || x.provider.localeCompare(y.provider) || x.model.localeCompare(y.model));
+}
+
 // ── bundled-file + version resolution ──────────────────────────────────────
 // __dirname is native in the CJS extension bundle (dist/) and shimmed by the
 // ESM runner bundle's banner (bin/dist/); under vitest it is src/amicode_service.
@@ -290,6 +323,13 @@ export async function releasesResponse(query: { since?: string | null }, deps: R
       models = newForYouModels((await deps.reachability()).models ?? [], releaseBaselineMs(cards, since));
     } catch {
       models = [];
+    }
+  }
+  if (sel.show && !sel.welcome && deps.arrivals) {
+    try {
+      models = mergeNewForYou(models, arrivalModels(await deps.arrivals(), releaseBaselineMs(cards, since)));
+    } catch {
+      /* arrivals are additive — a broken store leaves the first_ok_at rows */
     }
   }
   return JSON.stringify({

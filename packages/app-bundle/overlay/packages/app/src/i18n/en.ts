@@ -260,6 +260,7 @@ export const dict = {
 
   "model.tag.free": "Free",
   "model.tag.latest": "Latest",
+  "model.tag.new": "New",
   "model.provider.anthropic": "Anthropic",
   "model.provider.openai": "OpenAI",
   "model.provider.google": "Google",
