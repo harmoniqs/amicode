@@ -534,10 +534,11 @@
     "packages/session-ui/src/components/message-part-task.ts": "4276091c6f8ea2c31819c72b82747871e4548b3d402b7d1b7b06603ae69b2d5a",
     "packages/session-ui/src/components/message-part-text.ts": "e38d68224f1743ccc5e0e0a8023e11977e3b761ec67dd5364cde9cb34e97ea4b",
     "packages/session-ui/src/components/message-part-tool-status.test.ts": "7f536848fe91bf9f07246774f1357791bcc45037483ec4c0697fbb766aa027ba",
+    "packages/session-ui/src/components/message-part-tool-status.ts": "b68c636e71027f79e6a42280a450611922118e4a8be99b03b5a4d10257da50b0",
     "packages/session-ui/src/components/message-part-user.ts": "1f2c8cb4efff5274863a133f369a7397cac804678e953740f356ae03b71d475c",
     "packages/session-ui/src/components/message-part.css": "4eeb80f648de4655f882474256e6d34f965d01461079887bef3c7d699040d031",
     "packages/session-ui/src/components/message-part.test.ts": "7c66430837fa3d2607657e57e35720ae68dc5e84662e12826713a938301eeb7b",
-    "packages/session-ui/src/components/message-part.tsx": "4281870956e6ad918c601d72e416b4ce69949ba416d8220ff48a874966f3915e",
+    "packages/session-ui/src/components/message-part.tsx": "8ce432505e980312bf0f729821d852d322c0e1ddc9b1df0fba377ea8fbfa943f",
     "packages/session-ui/src/components/session-retry.tsx": "2cb1513d73275a269894f601e8c1d29bc790b14927134fe36177f2b371888721",
     "packages/session-ui/src/components/session-review.css": "ec8c5b359dd4b7ff80d7fad8906359678adade9ce62c9d74aedc000b646db341",
     "packages/session-ui/src/components/session-review.test.ts": "41515bba238b4e60ce3d80e206013e9b43e3b0d0a51be45796028dbae47c99ae",
@@ -1071,7 +1072,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-30T19:37:42.984Z",
+  "extracted_at": "2026-10-30T19:38:41.405Z",
   "per_package": {
     "packages/app": {
       "A": 289,
@@ -1109,7 +1110,7 @@
       "D": 0
     },
     "packages/session-ui": {
-      "A": 50,
+      "A": 51,
       "M": 32,
       "D": 0
     },
@@ -1120,7 +1121,7 @@
     }
   },
   "counts": {
-    "overlay_total": 1049,
+    "overlay_total": 1050,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1651,6 +1652,7 @@
     "packages/session-ui/src/components/message-part-task.ts": "A",
     "packages/session-ui/src/components/message-part-text.ts": "M",
     "packages/session-ui/src/components/message-part-tool-status.test.ts": "A",
+    "packages/session-ui/src/components/message-part-tool-status.ts": "A",
     "packages/session-ui/src/components/message-part-user.ts": "A",
     "packages/session-ui/src/components/message-part.css": "M",
     "packages/session-ui/src/components/message-part.test.ts": "M",

@@ -75,6 +75,7 @@ import { animate } from "motion"
 import { attached, inline, kind, typeLabel } from "./message-file"
 import { readPartText, splitSettledChunks } from "./message-part-text"
 import { shouldShowUserMessageText } from "./message-part-user"
+import { settledToolStatus } from "./message-part-tool-status"
 import { buildTrace } from "./build-trace"
 import { SessionProgressIndicatorV2 } from "../v2/components/session-progress-indicator-v2"
 
@@ -2220,7 +2221,7 @@ PART_MAPPING["tool"] = function ToolPartDisplay(props) {
               metadata={partMetadata()}
               // @ts-expect-error
               output={part().state.output}
-              status={part().state.status}
+              status={settledToolStatus(part().state.status, props.message)}
               hideDetails={props.hideDetails}
               defaultOpen={props.defaultOpen}
               open={controlledOpen()}
