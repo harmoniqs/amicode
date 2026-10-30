@@ -769,10 +769,14 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
           // in the layout context, auto-opening the side panel.
           const panel = ChatPanel.peek();
           if (panel) {
+            // #1648: target the open at the panel's settled session so the
+            // app's other (retained) session views ignore it.
+            const sessionID = panel.previewFileTarget();
             void panel.postMessage({
               source: "amicode",
               kind: "preview-file",
               path: p,
+              ...(sessionID !== undefined ? { sessionID } : {}),
             });
           } else {
             // Fallback: if chat panel isn't open, open in native editor

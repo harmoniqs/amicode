@@ -210,6 +210,9 @@ export interface BridgeIo {
    *  self-owned control grant. Undefined until activation wires it; the kind is
    *  consumed regardless. */
   onFleetEnableControl?: (req: { ownerMachineId: string; sessionID: string }) => void;
+  /** #1648: the panel's settled session id for targeting `preview-file`
+   *  opens; undefined when it cannot target (draft route / not yet reported). */
+  previewFileTarget?: () => string | undefined;
   previewVisibleChildren?: (root: string, relativeDirectory: string) => Promise<Array<{ name: string; kind: "file" | "directory"; absolute: string; relative: string }>>;
   /** Returns the currently-selected Explorer file icon theme as opaque assets. */
   explorerIconTheme?: () => ExplorerIconTheme;
@@ -218,6 +221,19 @@ export interface BridgeIo {
    *  the #1784 posture is decided. Undefined keeps the pre-#1826 local-stat
    *  behavior (panels constructed before the wiring lands). */
   linkResolution?: LinkResolutionContext;
+}
+
+/** #1648: a `preview-file` open stamped with the host panel's settled session
+ *  id; the field is omitted when the host cannot target (draft route, unknown,
+ *  deck pane — legacy broadcast), so those still open everywhere. */
+function previewFileMessage(filePath: string, io: BridgeIo) {
+  const sessionID = io.previewFileTarget?.();
+  return {
+    source: "amicode" as const,
+    kind: "preview-file" as const,
+    path: filePath,
+    ...(sessionID !== undefined ? { sessionID } : {}),
+  };
 }
 
 const isAmicode = (msg: unknown): msg is { source: "amicode"; kind: string; tab?: string } =>
@@ -467,11 +483,7 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
       // Route to the Preview companion tab (#935) — the session page's
       // preview-file listener (from #934) sets previewFile, opens the side
       // panel, and switches to the Preview tab.
-      io.postToWebview({
-        source: "amicode",
-        kind: "preview-file",
-        path: fsPath,
-      });
+      io.postToWebview(previewFileMessage(fsPath, io));
       return true;
     }
     // #1826: one function owns the resolution order; the outcome is Preview
@@ -479,11 +491,7 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     // toast — never a silent no-op.
     void resolveChatFileLink(fsPath, linkResolution).then((resolution) => {
       if (resolution.action === "preview") {
-        io.postToWebview({
-          source: "amicode",
-          kind: "preview-file",
-          path: resolution.path,
-        });
+        io.postToWebview(previewFileMessage(resolution.path, io));
       } else if (resolution.action === "failed") {
         vscode.window.showErrorMessage(`Amicode: link not opened — ${resolution.reason} (${resolution.detail})`);
       } else {

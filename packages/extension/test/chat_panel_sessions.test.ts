@@ -173,7 +173,7 @@ describe("ChatPanel — side-by-side sessions (multi-instance registry)", () => 
   });
 
   // ── #1648: preview-file is session-targeted at the source ────────────────
-  it("#1648 — previewFileTarget is the panel's settled route: unknown until reported, the session id, null on a draft", () => {
+  it("#1648 — previewFileTarget is the panel's settled session id; unknown and draft routes stay untargeted", () => {
     const cap = capturePanels();
     restore = cap.restore;
     created = cap.created;
@@ -186,9 +186,9 @@ describe("ChatPanel — side-by-side sessions (multi-instance registry)", () => 
     expect(panel.previewFileTarget()).toBeUndefined();
     sim.webview._simulateMessage({ source: "amicode", kind: "session-context", sessionID: "ses_a" });
     expect(panel.previewFileTarget()).toBe("ses_a");
-    // A draft / closed route is a KNOWN "no session" — session views must ignore it.
+    // A draft / closed route holds no session: never target a session by a stale id.
     sim.webview._simulateMessage({ source: "amicode", kind: "session-context", draft: true });
-    expect(panel.previewFileTarget()).toBeNull();
+    expect(panel.previewFileTarget()).toBeUndefined();
   });
 
   it("relays session context upstream and opaque reassessment invalidations downstream in both iframe shells", () => {

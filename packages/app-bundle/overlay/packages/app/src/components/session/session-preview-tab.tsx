@@ -19,6 +19,7 @@ import { usePlatform } from "@/context/platform"
 import type { PreviewViewState } from "@opencode-ai/session-ui/v2/preview-view-state"
 import { PreviewFileView } from "./preview-file-view"
 import { isPdfFindTarget } from "./pdf-find-guard"
+import { previewFilePathForSession } from "./preview-file-target"
 import { FileVisual } from "./session-sortable-tab"
 import {
   createPreviewPersister,
@@ -120,6 +121,9 @@ export function SessionPreviewTab(props: {
    *  document is not hidden). Persistence of the open set is held while false
    *  — see createPreviewPersister (#1648). */
   foreground?: () => boolean
+  /** This view's own session id. A session-targeted `preview-file` broadcast
+   *  (carries `sessionID`) is ignored unless it names this session (#1648). */
+  sessionID?: () => string | undefined
 }) {
   const platform = usePlatform()
   const command = useCommand()
@@ -217,8 +221,8 @@ export function SessionPreviewTab(props: {
 
   onMount(() => {
     const handlePreviewFile = (event: MessageEvent) => {
-      const data = event.data as { source?: string; kind?: string; path?: string } | undefined
-      if (data?.source === "amicode" && data.kind === "preview-file" && data.path) openPath(data.path)
+      const path = previewFilePathForSession(event.data, props.sessionID?.())
+      if (path) openPath(path)
     }
     const focusLeafFromPointer = (event: PointerEvent) => {
       if (!(event.target instanceof Node)) return

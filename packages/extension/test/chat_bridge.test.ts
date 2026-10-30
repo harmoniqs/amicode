@@ -261,14 +261,10 @@ describe("amicode bridge — preview-file carries its target session (#1648)", (
     expect(msg.sessionID).toBe("ses_a");
   });
 
-  it("stamps null for a draft route and omits the field when the host cannot target (legacy broadcast)", async () => {
-    const draft = io();
-    draft.previewFileTarget = () => null;
-    expect((await open(draft)).sessionID).toBeNull();
-
-    const legacy = io();
-    legacy.previewFileTarget = () => undefined;
-    expect("sessionID" in (await open(legacy))).toBe(false);
+  it("omits the field when the host cannot target (draft route / unknown / no callback) — legacy broadcast", async () => {
+    const unknown = io();
+    unknown.previewFileTarget = () => undefined;
+    expect("sessionID" in (await open(unknown))).toBe(false);
     const bare = io();
     expect("sessionID" in (await open(bare))).toBe(false);
   });

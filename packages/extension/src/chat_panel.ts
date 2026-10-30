@@ -235,6 +235,7 @@ export class ChatPanel implements LaunchTarget {
         const handled = handleAmicodeBridgeMessage(msg, {
           visible: () => this.panel.visible,
           postToWebview: (m) => void this.panel.webview.postMessage(m),
+          previewFileTarget: () => this.previewFileTarget(),
           ...(serverAuth ? { server: { url: serverUrl, authorization: serverAuth } } : {}),
           // Bug-session lifecycle (#250): the dock's bug-filed /
           // bug-report-closed route to the window's manager (undefined until
@@ -324,6 +325,14 @@ export class ChatPanel implements LaunchTarget {
     // Fallback: if app-ready never fires (server hung, iframe broken),
     // post after timeout so the user isn't stuck on the splash forever.
     setTimeout(send, timeoutMs);
+  }
+
+  /** #1648: the session a `preview-file` open sent to this panel is FOR — the
+   *  panel's settled session id, stamped on the message so the app's other
+   *  session views ignore it. Undefined (untargeted legacy broadcast) when the
+   *  panel shows a draft/closed route or has not reported a route yet. */
+  previewFileTarget(): string | undefined {
+    return this.sessionID;
   }
 
   /** Post an arbitrary message to the webview (relayed to the iframe). */

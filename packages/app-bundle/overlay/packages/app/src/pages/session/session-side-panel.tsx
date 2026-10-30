@@ -993,7 +993,7 @@ export function SessionSidePanel(props: {
                             inert={activeTab() !== SESSION_PREVIEW_TAB}
                           >
                             <div class="relative flex-1 min-h-0 overflow-hidden">
-                              <SessionPreviewTab previewFile={previewFile} panelVisible={() => activeTab() === SESSION_PREVIEW_TAB} openPaths={previewPaths} onOpenedPathsChange={setPreviewPaths} onActiveChange={setPreviewActive} hydrated={layout.ready} />
+                              <SessionPreviewTab previewFile={previewFile} panelVisible={() => activeTab() === SESSION_PREVIEW_TAB} openPaths={previewPaths} onOpenedPathsChange={setPreviewPaths} onActiveChange={setPreviewActive} hydrated={layout.ready} sessionID={() => params.id} />
                             </div>
                           </Tabs.Content>
 
@@ -1368,7 +1368,7 @@ export function SessionSidePanel(props: {
                         inert={activeTab() !== SESSION_PREVIEW_TAB}
                       >
                         <div class="relative flex-1 min-h-0 overflow-hidden">
-                          <SessionPreviewTab previewFile={previewFile} panelVisible={() => activeTab() === SESSION_PREVIEW_TAB} openPaths={previewPaths} onOpenedPathsChange={setPreviewPaths} onActiveChange={setPreviewActive} hydrated={layout.ready} />
+                          <SessionPreviewTab previewFile={previewFile} panelVisible={() => activeTab() === SESSION_PREVIEW_TAB} openPaths={previewPaths} onOpenedPathsChange={setPreviewPaths} onActiveChange={setPreviewActive} hydrated={layout.ready} sessionID={() => params.id} />
                         </div>
                       </Tabs.Content>
 
