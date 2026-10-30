@@ -1059,3 +1059,38 @@ describe("#1449 AC2/AC3 — per-session request routing retires the single attac
   });
 });
 
+describe("#1794 — a 403 ownership refresh drops the peer's sessions at once, as a 401 does", () => {
+  it("through the REAL routing projection: a peer that held sessions and then answers 403 is dropped immediately, not retained", async () => {
+    let studioRefused = false;
+    const fetchImpl = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.startsWith("http://studio") && studioRefused) return new Response("forbidden", { status: 403 });
+      if (url.endsWith("/global/health")) return new Response(JSON.stringify({ version: "t" }), { status: 200 });
+      if (url.startsWith("http://studio")) return new Response(JSON.stringify(/archived=true/.test(url) ? [] : [{ id: "ses-s1" }]), { status: 200 });
+      return new Response(JSON.stringify([]), { status: 200 }); // local
+    }) as unknown as typeof fetch;
+    const ownerMap = new SessionOwnerMap();
+    const lines: string[] = [];
+    const feed = new OwnerMapFeed({
+      ownerMap,
+      log: (l) => lines.push(l),
+      buildProjection: async () => {
+        const p = await buildOwnerRoutingProjection({
+          localMachineId: "macbook",
+          local: { getUrl: () => "http://local" },
+          peers: [{ machineId: "studio", getUrl: () => "http://studio", token: "tok" }],
+          rosterLookup: () => undefined,
+          fetchImpl,
+        });
+        return { sessions: p.sessions as SessionEntry[], peers: p.peers };
+      },
+    });
+    await feed.refreshOnce();
+    expect(ownerMap.resolveOwner("ses-s1")).toBe("studio");
+    studioRefused = true;
+    await feed.refreshOnce();
+    expect(ownerMap.resolveOwner("ses-s1")).toBeUndefined(); // dropped at once — not held for the 60 s window
+    expect(ownerMap.ownerMachineIds()).toEqual(["studio"]); // still named unavailable
+    expect(lines.at(-1)).toMatch(/^\[owner-map\] refresh peer=studio outcome=unauthorized duration_ms=\d+ entries=0 reason=unauthorized retention=dropped dropped=1$/);
+  });
+});

@@ -263,7 +263,9 @@ async function fetchSessions(
       headers: authHeaders,
       signal: AbortSignal.timeout(timeoutMs),
     });
-    if (res.status === 401) return done({ record: { ...base, reason: "unauthorized" }, entries: [] });
+    // #1794: a 403 is a refusal too (the peer will not serve us) — classified with the 401, so an
+    // ownership refresh drops that peer's sessions at once instead of retaining them as a transport blip.
+    if (res.status === 401 || res.status === 403) return done({ record: { ...base, reason: "unauthorized" }, entries: [] });
     if (!res.ok) {
       return done({ record: { ...base, reason: "fetch-failed", detail: `HTTP ${res.status}` }, entries: [] });
     }
