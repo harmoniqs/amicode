@@ -11,6 +11,7 @@ import {
   rebuildGitCommand,
   resolveDbBackupDir,
   resolveRebuildMode,
+  saveFileRequest,
   writeClipboardImageNative,
   type BridgeIo,
 } from "../src/chat_bridge";
@@ -178,6 +179,34 @@ describe("developer-tools rebuild — only amicodePath is required (#1018/#1115)
     if (failMsg) {
       expect(failMsg.error).not.toContain("Both repo paths");
     }
+  });
+});
+
+describe("amicode bridge — save-file payloads", () => {
+  const b64 = (text: string) => Buffer.from(text).toString("base64");
+
+  it("saves a previewed PDF with a PDF filter and its exact bytes", () => {
+    const save = saveFileRequest("comb-vs-posterior.pdf", `data:application/pdf;base64,${b64("%PDF-1.5 x")}`);
+    expect(save?.name).toBe("comb-vs-posterior.pdf");
+    expect(save?.filters).toEqual({ PDF: ["pdf"] });
+    expect(save?.bytes.toString()).toBe("%PDF-1.5 x");
+  });
+
+  it("keeps the run-card PNG and markdown export paths", () => {
+    expect(saveFileRequest("card.png", `data:image/png;base64,${b64("png")}`)?.filters).toEqual({
+      Images: ["png", "jpg", "jpeg", "gif", "webp", "svg"],
+    });
+    expect(saveFileRequest("session.md", `data:text/markdown;base64,${b64("# hi")}`)?.filters).toEqual({
+      Markdown: ["md", "markdown", "txt"],
+    });
+  });
+
+  it("refuses paths, unknown types, non-base64 URLs and oversized payloads", () => {
+    expect(saveFileRequest("../../etc/x.pdf", `data:application/pdf;base64,${b64("x")}`)?.name).toBe("x.pdf");
+    expect(saveFileRequest("run.sh", `data:text/plain;base64,${b64("x")}`)).toBeNull();
+    expect(saveFileRequest("pdf", `data:application/pdf;base64,${b64("x")}`)).toBeNull();
+    expect(saveFileRequest("a.pdf", "data:application/pdf,%25PDF")).toBeNull();
+    expect(saveFileRequest("a.pdf", `data:application/pdf;base64,${"A".repeat(24_000_004)}`)).toBeNull();
   });
 });
 
