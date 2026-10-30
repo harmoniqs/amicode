@@ -155,6 +155,9 @@ import { postDeviceStatus, postDeviceActions, postDeviceActivate } from "./inspe
 let serverManager: ServerManager | undefined;
 let amicodeService: { url: string; authHeader: string } | undefined;
 let statusBar: StatusBarManager | undefined;
+// #1571: set on the adopted path when the stale-engine audit wires its restart;
+// the persistent status-bar indicator's click (amicode.restartStaleEngine) runs it.
+let staleEngineRestart: (() => Promise<void>) | undefined;
 let sseClient: OpencodeEventClient | undefined;
 /** #1788 (S3): the passive-notification watcher — observes the sseClient's
  *  parsed events (no new connection) and raises VS Code notifications on
@@ -2339,6 +2342,15 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       // offers a restart onto the current build (kill survivor → drop handshake
       // → reload → clean cold-spawn). Adopt-then-notice keeps in-flight turns.
       if (binary && adoptedHashes && adoptedPort > 0) {
+        // #1571: the persistent status-bar indicator's click runs the SAME restart.
+        const restartStale = (): Promise<void> => restartAdoptedEngine({
+          port: adoptedPort,
+          reclaimPort: reclaimOrphanPort,
+          deleteHandshake,
+          reloadWindow: () => void vscode.commands.executeCommand("workbench.action.reloadWindow"),
+          log: (l) => opencodeChannel.appendLine(l),
+        });
+        staleEngineRestart = restartStale;
         void auditAdoptedEngine(
           adoptedHashes,
           { binaryPath: binary, configContent },
@@ -2347,13 +2359,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
             hashString,
             notify: {
               showInformationMessage: (m, ...items) => vscode.window.showInformationMessage(m, ...items),
-              onRestartRequested: () => restartAdoptedEngine({
-                port: adoptedPort,
-                reclaimPort: reclaimOrphanPort,
-                deleteHandshake,
-                reloadWindow: () => void vscode.commands.executeCommand("workbench.action.reloadWindow"),
-                log: (l) => opencodeChannel.appendLine(l),
-              }),
+              onRestartRequested: restartStale,
+              setStaleIndicator: (state) => statusBar?.setEngineStale(state?.detail),
             },
           },
           adoptedUnarmed,
@@ -3593,6 +3600,10 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       }
       triggerSweep(distillerSetup, true);
       void vscode.window.showInformationMessage("Amicode: distilling recent sessions in the background.");
+    }),
+    vscode.commands.registerCommand("amicode.restartStaleEngine", async () => {
+      if (staleEngineRestart) await staleEngineRestart();
+      else void vscode.commands.executeCommand("amicode.restartServer");
     }),
     vscode.commands.registerCommand("amicode.restartServer", async () => {
       // Fix #382: error page's Restart now posts this from the iframe

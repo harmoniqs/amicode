@@ -791,18 +791,28 @@ export function detectStaleEngine(
 export interface StaleNoticeDeps {
   showInformationMessage: (message: string, ...items: string[]) => Thenable<string | undefined>;
   onRestartRequested: () => Promise<void>;
+  /** #1571: the PERSISTENT indicator (status bar). Called with the stale
+   *  detail while the engine is stale — independent of whether the toast is
+   *  dismissed — and with undefined when it is current. */
+  setStaleIndicator?: (state: { detail: string } | undefined) => void;
+}
+
+/** What differs, in words: "engine binary and config" | "engine binary" | "config". */
+export function staleDetail(result: StaleEngineResult): string {
+  return result.binaryChanged && result.configChanged
+    ? "engine binary and config"
+    : result.binaryChanged
+      ? "engine binary"
+      : "config";
 }
 
 export function surfaceStaleNotice(
   result: StaleEngineResult,
   deps: StaleNoticeDeps,
 ): void {
+  const detail = staleDetail(result);
+  deps.setStaleIndicator?.(result.stale ? { detail } : undefined);
   if (!result.stale) return;
-  const detail = result.binaryChanged && result.configChanged
-    ? "engine binary and config"
-    : result.binaryChanged
-      ? "engine binary"
-      : "config";
   void deps.showInformationMessage(
     `Amicode: the running server's ${detail} differs from the current build.`,
     "Restart Engine",
