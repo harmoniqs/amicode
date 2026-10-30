@@ -21,6 +21,8 @@ import {
   stampToDate,
   isRoutableType,
   ROUTE_FOLDERS,
+  checkRoutedSchema,
+  teamCommitMessage,
   type BestGate,
 } from "../src/note.js";
 import type { Mount } from "../src/mounts.js";
@@ -434,6 +436,143 @@ describe("amico note route (bundle)", () => {
     expect(out.written).toBe(true);
     expect(out.commit.committed).toBe(false);
     expect(out.commit.warning).toMatch(/git/i);
+    rmSync(root, { recursive: true, force: true });
+  });
+});
+
+// ── #1863: attributed team-mount writes, schema check before write, quarantine ──
+describe("teamCommitMessage + checkRoutedSchema (pure, #1863)", () => {
+  it("commit message names the note, role, session and source as git trailers", () => {
+    const msg = teamCommitMessage({ basename: "spec-20260711-013000-x", role: "librarian", session: "s-123", source: "[[exp-1]]" });
+    expect(msg.split("\n")[0]).toBe("note: add spec-20260711-013000-x");
+    expect(msg).toMatch(/^Agent-Role: librarian$/m);
+    expect(msg).toMatch(/^Session: s-123$/m);
+    expect(msg).toMatch(/^Source: \[\[exp-1\]\]$/m);
+  });
+  it("a schema-complete spec passes; a spec missing status/visibility is named in the errors", () => {
+    const ok = { type: "spec", date: "2026-07-11", session_id: "s-1", tags: ["spec"], status: "draft", visibility: "team" };
+    expect(checkRoutedSchema(ok, "spec")).toEqual([]);
+    const bad = { type: "spec", date: "2026-07-11", session_id: "s-1", tags: ["spec"] };
+    expect(checkRoutedSchema(bad, "spec")).toEqual(expect.arrayContaining([expect.stringMatching(/status/), expect.stringMatching(/visibility/)]));
+  });
+  it("renderRoutedNote stamps extra frontmatter fields (schema fields supplied by the caller)", () => {
+    const txt = renderRoutedNote({ type: "spec", title: "T", body: "b", stamp: STAMP_PURE, session_id: "s-1", extra: { status: "draft", visibility: "team" } });
+    expect(txt).toMatch(/^status: draft$/m);
+    expect(txt).toMatch(/^visibility: team$/m);
+  });
+});
+const STAMP_PURE = "20260711-013000";
+
+describe("amico note route — team mount writes (#1863)", () => {
+  /** A git-backed team mount (writable via mounts.toml) with a bare origin. */
+  function teamFixture(): { root: string; team: string; bare: string; env: Record<string, string> } {
+    const root = mkdtempSync(join(tmpdir(), "amico-team-"));
+    const bare = join(root, "origin.git");
+    execFileSync("git", ["init", "-q", "--bare", bare]);
+    const team = seedMarker(root, "shared", "team");
+    execFileSync("git", ["-C", team, "init", "-q"]);
+    execFileSync("git", ["-C", team, "symbolic-ref", "HEAD", "refs/heads/main"]);
+    execFileSync("git", ["-C", team, "config", "user.email", "t@example.com"]);
+    execFileSync("git", ["-C", team, "config", "user.name", "Test"]);
+    writeFileSync(join(team, "README.md"), "team\n");
+    execFileSync("git", ["-C", team, "add", "README.md"]);
+    execFileSync("git", ["-C", team, "commit", "-q", "-m", "init"]);
+    execFileSync("git", ["-C", team, "remote", "add", "origin", bare]);
+    execFileSync("git", ["-C", team, "push", "-q", "-u", "origin", "main"]);
+    const toml = join(root, "mounts.toml");
+    writeFileSync(toml, '[[mount]]\nid = "shared"\nwritable = true\n');
+    return { root, team, bare, env: { AMICO_VAULTS_ROOT: root, AMICO_MOUNTS_TOML: toml, AMICO_VAULT_DIR: "" } };
+  }
+  const ATTR = ["--role", "librarian", "--session", "sess-abc", "--source", "[[exp-1]]"];
+  const headCount = (dir: string): number => Number(execFileSync("git", ["-C", dir, "rev-list", "--count", "HEAD"], { encoding: "utf8" }).trim());
+
+  it("a team write without --role / --session / --source is refused with a plain error and writes nothing", () => {
+    const fx = teamFixture();
+    const before = headCount(fx.team);
+    const r = run(["note", "route", "--type", "note", "--intent", "team", "--title", "Refused", "--body", "b", "--stamp", STAMP, "--commit"], fx.env);
+    expect(r.code).toBe(64);
+    const out = JSON.parse(r.stdout);
+    expect(out.error).toMatch(/--role.*--session.*--source|attribution/i);
+    expect(existsSync(join(fx.team, "notes", `note-${STAMP}-refused.md`))).toBe(false);
+    expect(headCount(fx.team)).toBe(before);
+    rmSync(fx.root, { recursive: true, force: true });
+  });
+
+  it("a valid team write lands at its target path as ONE commit naming role, session and source — and is pushed", () => {
+    const fx = teamFixture();
+    const before = headCount(fx.team);
+    const r = run(["note", "route", "--type", "note", "--intent", "team", "--title", "Hello", "--body", "b", "--stamp", STAMP, "--commit", ...ATTR], fx.env);
+    expect(r.code).toBe(0);
+    const out = JSON.parse(r.stdout);
+    expect(out).toMatchObject({ written: true, mount: "shared", pushed: true });
+    expect(existsSync(join(fx.team, "notes", `note-${STAMP}-hello.md`))).toBe(true);
+    expect(headCount(fx.team)).toBe(before + 1);
+    const msg = execFileSync("git", ["-C", fx.team, "log", "-1", "--format=%B"], { encoding: "utf8" });
+    expect(msg).toMatch(/^Agent-Role: librarian$/m);
+    expect(msg).toMatch(/^Session: sess-abc$/m);
+    expect(msg).toMatch(/^Source: \[\[exp-1\]\]$/m);
+    const headSha = execFileSync("git", ["-C", fx.team, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+    const remoteSha = execFileSync("git", ["--git-dir", fx.bare, "rev-parse", "main"], { encoding: "utf8" }).trim();
+    expect(remoteSha).toBe(headSha);
+    rmSync(fx.root, { recursive: true, force: true });
+  });
+
+  it("an invalid note is quarantined with the validation error attached — never at its target path — and the writer reports it", () => {
+    const fx = teamFixture();
+    // a spec with no --field status=… / visibility=… fails the spec schema
+    const r = run(["note", "route", "--type", "spec", "--intent", "team", "--title", "Bad Spec", "--body", "b", "--stamp", STAMP, "--commit", ...ATTR], fx.env);
+    expect(r.code).toBe(65);
+    const out = JSON.parse(r.stdout);
+    expect(out).toMatchObject({ written: false, quarantined: true, mount: "shared" });
+    expect(out.schema_errors).toEqual(expect.arrayContaining([expect.stringMatching(/status/)]));
+    expect(existsSync(join(fx.team, "specs", `spec-${STAMP}-bad-spec.md`))).toBe(false);
+    const q = join(fx.team, "quarantine", `spec-${STAMP}-bad-spec.md`);
+    expect(out.quarantine_path).toBe(q);
+    const text = readFileSync(q, "utf8");
+    expect(text).toMatch(/quarantine_error/);
+    expect(text).toMatch(/status/);
+    rmSync(fx.root, { recursive: true, force: true });
+  });
+
+  it("a quarantined note does not block the next valid write in the same mount", () => {
+    const fx = teamFixture();
+    const bad = run(["note", "route", "--type", "spec", "--intent", "team", "--title", "Bad", "--body", "b", "--stamp", STAMP, "--commit", ...ATTR], fx.env);
+    expect(bad.code).toBe(65);
+    const good = run(["note", "route", "--type", "note", "--intent", "team", "--title", "Fine", "--body", "b", "--stamp", STAMP, "--commit", ...ATTR], fx.env);
+    expect(good.code).toBe(0);
+    expect(existsSync(join(fx.team, "notes", `note-${STAMP}-fine.md`))).toBe(true);
+    rmSync(fx.root, { recursive: true, force: true });
+  });
+
+  it("--field status=… --field visibility=… makes a spec schema-complete and it lands at its target path", () => {
+    const fx = teamFixture();
+    const r = run(["note", "route", "--type", "spec", "--intent", "team", "--title", "Good Spec", "--body", "b", "--stamp", STAMP, "--commit", ...ATTR, "--field", "status=draft", "--field", "visibility=team"], fx.env);
+    expect(r.code).toBe(0);
+    expect(existsSync(join(fx.team, "specs", `spec-${STAMP}-good-spec.md`))).toBe(true);
+    rmSync(fx.root, { recursive: true, force: true });
+  });
+
+  it("a failed push leaves the note committed locally and exits 69 with pushed:false (revertible, retryable)", () => {
+    const fx = teamFixture();
+    execFileSync("git", ["-C", fx.team, "remote", "set-url", "origin", join(fx.root, "missing.git")]);
+    const r = run(["note", "route", "--type", "note", "--intent", "team", "--title", "NoPush", "--body", "b", "--stamp", STAMP, "--commit", ...ATTR], fx.env);
+    expect(r.code).toBe(69);
+    const out = JSON.parse(r.stdout);
+    expect(out).toMatchObject({ written: true, pushed: false });
+    expect(execFileSync("git", ["-C", fx.team, "log", "-1", "--format=%s"], { encoding: "utf8" })).toMatch(/note-20260711-013000-nopush/);
+    rmSync(fx.root, { recursive: true, force: true });
+  });
+
+  it("a personal write needs no attribution and keeps today's behaviour (no trailers, no push)", () => {
+    const root = mkdtempSync(join(tmpdir(), "amico-team-"));
+    const me = seedMarker(root, "me", "personal");
+    execFileSync("git", ["-C", me, "init", "-q"]);
+    execFileSync("git", ["-C", me, "config", "user.email", "t@example.com"]);
+    execFileSync("git", ["-C", me, "config", "user.name", "Test"]);
+    const r = run(["note", "route", "--type", "note", "--title", "Mine", "--body", "b", "--stamp", STAMP, "--commit"], mountEnv(root));
+    expect(r.code).toBe(0);
+    expect(JSON.parse(r.stdout).pushed).toBeUndefined();
+    expect(execFileSync("git", ["-C", me, "log", "-1", "--format=%B"], { encoding: "utf8" })).not.toMatch(/Agent-Role:/);
     rmSync(root, { recursive: true, force: true });
   });
 });
