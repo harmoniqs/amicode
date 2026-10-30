@@ -533,6 +533,7 @@
     "packages/session-ui/src/components/message-part-task.test.ts": "f5896e3f5eeeed2dcc55d690be56483902ecc06f047cb44cecb2dad31ee6c405",
     "packages/session-ui/src/components/message-part-task.ts": "4276091c6f8ea2c31819c72b82747871e4548b3d402b7d1b7b06603ae69b2d5a",
     "packages/session-ui/src/components/message-part-text.ts": "e38d68224f1743ccc5e0e0a8023e11977e3b761ec67dd5364cde9cb34e97ea4b",
+    "packages/session-ui/src/components/message-part-tool-status.test.ts": "7f536848fe91bf9f07246774f1357791bcc45037483ec4c0697fbb766aa027ba",
     "packages/session-ui/src/components/message-part-user.ts": "1f2c8cb4efff5274863a133f369a7397cac804678e953740f356ae03b71d475c",
     "packages/session-ui/src/components/message-part.css": "4eeb80f648de4655f882474256e6d34f965d01461079887bef3c7d699040d031",
     "packages/session-ui/src/components/message-part.test.ts": "7c66430837fa3d2607657e57e35720ae68dc5e84662e12826713a938301eeb7b",
@@ -1070,7 +1071,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-30T19:35:36.324Z",
+  "extracted_at": "2026-10-30T19:37:42.984Z",
   "per_package": {
     "packages/app": {
       "A": 289,
@@ -1108,7 +1109,7 @@
       "D": 0
     },
     "packages/session-ui": {
-      "A": 49,
+      "A": 50,
       "M": 32,
       "D": 0
     },
@@ -1119,7 +1120,7 @@
     }
   },
   "counts": {
-    "overlay_total": 1048,
+    "overlay_total": 1049,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1649,6 +1650,7 @@
     "packages/session-ui/src/components/message-part-task.test.ts": "A",
     "packages/session-ui/src/components/message-part-task.ts": "A",
     "packages/session-ui/src/components/message-part-text.ts": "M",
+    "packages/session-ui/src/components/message-part-tool-status.test.ts": "A",
     "packages/session-ui/src/components/message-part-user.ts": "A",
     "packages/session-ui/src/components/message-part.css": "M",
     "packages/session-ui/src/components/message-part.test.ts": "M",
