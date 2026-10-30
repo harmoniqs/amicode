@@ -172,6 +172,23 @@ else
   fail "AC8 deploy self-test" "$UNIFIED missing"
 fi
 
+# ── AC11: shutdown + rehome correctness (#1797) ─────────────────────────────
+# --self-test-shutdown drives stop_surviving_server and the worktree rehome step
+# in a sandbox: (a) a launchd-restarted hub's fresh handshake (live, different
+# PID) survives the stop; (b) a record naming the stopped process is cleared;
+# (c) a record naming a dead process is still cleared as stale; (d) a rehome
+# with nothing to rehome returns 0 so `set -e` does not abort a good deploy.
+if [ -f "$UNIFIED" ]; then
+  out="$(bash "$UNIFIED" --self-test-shutdown 2>&1)"; rc=$?
+  if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q 'SELFTEST_SHUTDOWN_OK'; then
+    pass "AC11 shutdown keeps restarted hub's handshake; rehome returns 0"
+  else
+    fail "AC11 shutdown/rehome self-test" "rc=$rc out=$out"
+  fi
+else
+  fail "AC11 shutdown/rehome self-test" "$UNIFIED missing"
+fi
+
 # ── AC10: running-server interlock is lsof-scoped + warn-by-default (#1138) ──
 # The interlock (OB12) must NOT block on unrelated opencode processes (the old
 # pgrep 'opencode.*serve' false-positived on the chat server). Contract:
