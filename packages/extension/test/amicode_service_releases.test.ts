@@ -196,6 +196,29 @@ describe("GET /amicode/releases", () => {
     expect(body.new_for_you.models).toEqual([]);
   });
 
+  it("#2000: available arrival events join new_for_you (deduped with first_ok_at rows); non-available and pre-baseline events do not", async () => {
+    const dir = releasesDir(files);
+    const arrivals = async () => [
+      { provider: "moonshotai", model: "kimi-k3.1-pro", kind: "available", first_seen_at: Date.parse("2026-10-29T12:00:00Z") },
+      { provider: "anthropic", model: "claude-new", kind: "available", first_seen_at: Date.parse("2026-10-28T06:00:00Z") },
+      { provider: "amazon-bedrock", model: "us.google.gemini-4-carbon", kind: "needs-allowlist", first_seen_at: Date.parse("2026-10-29T13:00:00Z") },
+      { provider: "openai", model: "old", kind: "available", first_seen_at: Date.parse("2026-10-20T00:00:00Z") },
+    ];
+    const body = JSON.parse(await releasesResponse({ since: "0.3.10" }, { dir, version: "0.4.0", reachability, arrivals }));
+    expect(body.new_for_you.models).toEqual([
+      { provider: "moonshotai", model: "kimi-k3.1-pro", first_ok_at: Date.parse("2026-10-29T12:00:00Z") },
+      { provider: "anthropic", model: "claude-new", first_ok_at: Date.parse("2026-10-28T00:00:00Z") },
+    ]);
+    // a broken arrivals store leaves the first_ok_at rows
+    const broken = JSON.parse(
+      await releasesResponse({ since: "0.3.10" }, { dir, version: "0.4.0", reachability, arrivals: async () => { throw new Error("x"); } }),
+    );
+    expect(broken.new_for_you.models).toHaveLength(1);
+    // arrivals alone (no reachability dep)
+    const only = JSON.parse(await releasesResponse({ since: "0.3.10" }, { dir, version: "0.4.0", arrivals }));
+    expect(only.new_for_you.models).toHaveLength(2);
+  });
+
   it("a malformed since is a named bad_request (never echoed)", async () => {
     const body = JSON.parse(await releasesResponse({ since: "<script>" }, { dir: releasesDir(files), version: "0.4.0" }));
     expect(body.ok).toBe(false);
