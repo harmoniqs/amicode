@@ -39,3 +39,10 @@ export type ActiveProjectMode = "none" | "expand" | "reset"
 export function notifyProjectSelected(worktree: string, mode: ActiveProjectMode = "reset"): void {
   window.parent.postMessage({ source: "amicode", kind: "project-selected", path: worktree, mode }, "*")
 }
+
+/** #1036 — "Find in sidebar" from the Preview tab context menu. Posts a
+ *  dedicated message kind (the bare `command` lane passes no arguments, so it
+ *  cannot carry the file path). The extension reveals the file in the sidebar. */
+export function notifyRevealInSidebar(path: string): void {
+  window.parent.postMessage({ source: "amicode", kind: "reveal-in-sidebar", path }, "*")
+}
