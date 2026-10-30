@@ -793,6 +793,7 @@
     "packages/app/src/components/session/preview-human-write-gate.ts": "4c4b1cf258a06b0012d722add0125ecb77a0f4e463dd95d193f21e5e73541098",
     "packages/app/src/components/session/session-archived-fleet.test.ts": "f5d0e16dea2ab6e6cb44a6768b5ef1e772f8ccc39aeeb02571525ec44336ab57",
     "packages/app/src/components/session/session-chats-dropdown.test.ts": "72e2e797fe96a59ee46ae59c4a5cb34eae8d338a468977bd4e8f61cefd6abd49",
+    "packages/app/src/components/session/session-context-tab.test.ts": "bb42b97a6f3966c0b1a626b1fecdd82c6dba26e65a364020ed55be49754c987b",
     "packages/app/src/components/session/session-context-tab.tsx": "4062ef39e161f041bf1d7a300173c510cecd581ad8e1fbb4503961b7cd1a29f5",
     "packages/app/src/components/session/session-fleet-control-projection.ts": "c1a91ce975dd0399251e491091af81abf2d24c0bbba074a334b58c56868bcad1",
     "packages/app/src/components/session/session-fleet-peers.test.ts": "0b9e128d62f09907691d676b560edd610b6d92fa919d38705addd888d6fce54a",
@@ -1072,10 +1073,10 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-30T19:38:41.405Z",
+  "extracted_at": "2026-10-30T19:39:40.625Z",
   "per_package": {
     "packages/app": {
-      "A": 289,
+      "A": 290,
       "M": 166,
       "D": 0
     },
@@ -1121,7 +1122,7 @@
     }
   },
   "counts": {
-    "overlay_total": 1050,
+    "overlay_total": 1051,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1911,6 +1912,7 @@
     "packages/app/src/components/session/preview-human-write-gate.ts": "A",
     "packages/app/src/components/session/session-archived-fleet.test.ts": "A",
     "packages/app/src/components/session/session-chats-dropdown.test.ts": "A",
+    "packages/app/src/components/session/session-context-tab.test.ts": "A",
     "packages/app/src/components/session/session-context-tab.tsx": "M",
     "packages/app/src/components/session/session-fleet-control-projection.ts": "A",
     "packages/app/src/components/session/session-fleet-peers.test.ts": "A",
