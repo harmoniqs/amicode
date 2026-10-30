@@ -59,6 +59,8 @@ export class ChatPanel implements LaunchTarget {
    *  "reset" = expand selected + collapse others, "expand" = expand selected
    *  only, "none" = highlight only. */
   private static onProjectSelectedCallback?: (path: string | null, mode?: "none" | "expand" | "reset") => void;
+  /** #1036: "Find in sidebar" from the Preview tab context menu. */
+  private static onRevealInSidebarCallback?: (path: string) => void;
   /** #1551: the self-owned enable-control act. Wired at activation to the
    *  extension host's fleet-peer provider + authority resolver + grant store —
    *  the handler shows the ADR 0034 D4 native modal and mints the grant. */
@@ -110,6 +112,11 @@ export class ChatPanel implements LaunchTarget {
   /** Subscribe to project-selected events from the composer dropdown (#663). */
   static onProjectSelected(cb: ((path: string | null, mode?: "none" | "expand" | "reset") => void) | undefined): void {
     ChatPanel.onProjectSelectedCallback = cb;
+  }
+
+  /** #1036: subscribe to "Find in sidebar" requests from the Preview tab. */
+  static onRevealInSidebar(cb: ((path: string) => void) | undefined): void {
+    ChatPanel.onRevealInSidebarCallback = cb;
   }
 
   /** #1551: subscribe to the self-owned enable-control act (the composer scrim's
@@ -246,6 +253,8 @@ export class ChatPanel implements LaunchTarget {
           onProjectSelected: ChatPanel.onProjectSelectedCallback
             ? (p, mode) => { this.lastProjectPath = p; ChatPanel.onProjectSelectedCallback!(p, mode); }
             : undefined,
+          // #1036: "Find in sidebar" → sidebar reveal.
+          onRevealInSidebar: (p) => ChatPanel.onRevealInSidebarCallback?.(p),
           // #1551: the enable-control act → the host's modal + self-owned mint.
           onFleetEnableControl: ChatPanel.onFleetEnableControlCallback,
           previewVisibleChildren: ChatPanel.previewVisibleChildrenCallback,
@@ -700,7 +709,7 @@ export class ChatPanel implements LaunchTarget {
             vscode.postMessage(d);
             return;
           }
-          if (d && d.source === "amicode" && (d.kind === "command" || d.kind === "clipboard-request" || d.kind === "clipboard-write" || d.kind === "clipboard-image-write" || d.kind === "open-external" || d.kind === "open-file" || d.kind === "save-file" || d.kind === "set-default-model" || d.kind === "bug-filed" || d.kind === "bug-report-closed" || d.kind === "bug-report-poke" || d.kind === "dev-tools-update" || d.kind === "dev-tools-rebuild" || d.kind === "dev-tools-build-vsix" || d.kind === "data-storage-query" || d.kind === "data-storage-update" || d.kind === "redo-onboarding" || d.kind === "connect-harmoniqs-provider" || d.kind === "device:refresh" || d.kind === "connections-credential" || d.kind === "connections-disconnect" || d.kind === "connections-revalidate" || d.kind === "connections-auth" || d.kind === "connections-choose-project" || d.kind === "connections-add-custom" || d.kind === "connections-remove" || d.kind === "skill-providers-query" || d.kind === "skill-providers-add" || d.kind === "skill-providers-remove" || d.kind === "skill-providers-rename" || d.kind === "skill-providers-autodiscover" || d.kind === "skill-providers-pick-directory" || d.kind === "add-workspace-project" || d.kind === "project-selected" || d.kind === "app-ready" || d.kind === "watch-files" || d.kind === "preview-visible-children-request" || d.kind === "explorer-icon-theme-request" || d.kind === "run-latex" || d.kind === "fleet-enable-control" || d.kind === "whats-new-query" || d.kind === "whats-new-seen")) {
+          if (d && d.source === "amicode" && (d.kind === "command" || d.kind === "clipboard-request" || d.kind === "clipboard-write" || d.kind === "clipboard-image-write" || d.kind === "open-external" || d.kind === "open-file" || d.kind === "save-file" || d.kind === "set-default-model" || d.kind === "bug-filed" || d.kind === "bug-report-closed" || d.kind === "bug-report-poke" || d.kind === "dev-tools-update" || d.kind === "dev-tools-rebuild" || d.kind === "dev-tools-build-vsix" || d.kind === "data-storage-query" || d.kind === "data-storage-update" || d.kind === "redo-onboarding" || d.kind === "connect-harmoniqs-provider" || d.kind === "device:refresh" || d.kind === "connections-credential" || d.kind === "connections-disconnect" || d.kind === "connections-revalidate" || d.kind === "connections-auth" || d.kind === "connections-choose-project" || d.kind === "connections-add-custom" || d.kind === "connections-remove" || d.kind === "skill-providers-query" || d.kind === "skill-providers-add" || d.kind === "skill-providers-remove" || d.kind === "skill-providers-rename" || d.kind === "skill-providers-autodiscover" || d.kind === "skill-providers-pick-directory" || d.kind === "add-workspace-project" || d.kind === "project-selected" || d.kind === "reveal-in-sidebar" || d.kind === "app-ready" || d.kind === "watch-files" || d.kind === "preview-visible-children-request" || d.kind === "explorer-icon-theme-request" || d.kind === "run-latex" || d.kind === "fleet-enable-control" || d.kind === "whats-new-query" || d.kind === "whats-new-seen")) {
             vscode.postMessage(d);
           }
           return;
@@ -871,7 +880,7 @@ export class ChatPanel implements LaunchTarget {
             vscode.postMessage(d);
             return;
           }
-          if (d && d.source === "amicode" && (d.kind === "command" || d.kind === "clipboard-request" || d.kind === "clipboard-write" || d.kind === "clipboard-image-write" || d.kind === "open-external" || d.kind === "open-file" || d.kind === "save-file" || d.kind === "set-default-model" || d.kind === "bug-filed" || d.kind === "bug-report-closed" || d.kind === "bug-report-poke" || d.kind === "dev-tools-update" || d.kind === "dev-tools-rebuild" || d.kind === "dev-tools-build-vsix" || d.kind === "data-storage-query" || d.kind === "data-storage-update" || d.kind === "redo-onboarding" || d.kind === "connect-harmoniqs-provider" || d.kind === "device:refresh" || d.kind === "connections-credential" || d.kind === "connections-disconnect" || d.kind === "connections-revalidate" || d.kind === "connections-auth" || d.kind === "connections-choose-project" || d.kind === "connections-add-custom" || d.kind === "connections-remove" || d.kind === "skill-providers-query" || d.kind === "skill-providers-add" || d.kind === "skill-providers-remove" || d.kind === "skill-providers-rename" || d.kind === "skill-providers-autodiscover" || d.kind === "skill-providers-pick-directory" || d.kind === "add-workspace-project" || d.kind === "project-selected" || d.kind === "app-ready" || d.kind === "watch-files" || d.kind === "preview-visible-children-request" || d.kind === "explorer-icon-theme-request" || d.kind === "run-latex" || d.kind === "fleet-enable-control" || d.kind === "whats-new-query" || d.kind === "whats-new-seen")) {
+          if (d && d.source === "amicode" && (d.kind === "command" || d.kind === "clipboard-request" || d.kind === "clipboard-write" || d.kind === "clipboard-image-write" || d.kind === "open-external" || d.kind === "open-file" || d.kind === "save-file" || d.kind === "set-default-model" || d.kind === "bug-filed" || d.kind === "bug-report-closed" || d.kind === "bug-report-poke" || d.kind === "dev-tools-update" || d.kind === "dev-tools-rebuild" || d.kind === "dev-tools-build-vsix" || d.kind === "data-storage-query" || d.kind === "data-storage-update" || d.kind === "redo-onboarding" || d.kind === "connect-harmoniqs-provider" || d.kind === "device:refresh" || d.kind === "connections-credential" || d.kind === "connections-disconnect" || d.kind === "connections-revalidate" || d.kind === "connections-auth" || d.kind === "connections-choose-project" || d.kind === "connections-add-custom" || d.kind === "connections-remove" || d.kind === "skill-providers-query" || d.kind === "skill-providers-add" || d.kind === "skill-providers-remove" || d.kind === "skill-providers-rename" || d.kind === "skill-providers-autodiscover" || d.kind === "skill-providers-pick-directory" || d.kind === "add-workspace-project" || d.kind === "project-selected" || d.kind === "reveal-in-sidebar" || d.kind === "app-ready" || d.kind === "watch-files" || d.kind === "preview-visible-children-request" || d.kind === "explorer-icon-theme-request" || d.kind === "run-latex" || d.kind === "fleet-enable-control" || d.kind === "whats-new-query" || d.kind === "whats-new-seen")) {
             vscode.postMessage(d);
           }
           return;
