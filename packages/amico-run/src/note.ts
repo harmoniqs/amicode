@@ -362,6 +362,68 @@ export interface RoutedNoteFields {
   stamp: string; // YYYYMMDD-HHMMSS
   route_intent?: string; // stamped only on a personal fallback
   session_id?: string | null; // routed notes are agent-agnostic → null
+  /** Extra scalar frontmatter (e.g. `status`, `visibility` for a spec). Keys are
+   *  checked by the caller; reserved keys are rejected by `routeExtraError`. */
+  extra?: Record<string, string>;
+}
+
+/** Frontmatter keys the routed renderer owns — `--field` may not override them. */
+export const ROUTED_RESERVED_KEYS = ["type", "date", "session_id", "tags", "route_intent"] as const;
+
+/** A `--field key=value` key/value pair is acceptable iff the key is a plain
+ *  identifier, not reserved, and the value is a single line. Returns an error
+ *  message, or undefined when fine. */
+export function routeExtraError(key: string, value: string): string | undefined {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) return `--field key "${key}" is not a plain identifier`;
+  if ((ROUTED_RESERVED_KEYS as readonly string[]).includes(key)) return `--field key "${key}" is reserved (set by the writer)`;
+  if (/[\r\n]/.test(value)) return `--field value for "${key}" must be a single line`;
+  return undefined;
+}
+
+/** Required frontmatter fields per note type — the amico-vault schema table (the
+ *  amico-schema-check skill mirrors it). Types with no fuller schema meet the
+ *  generic floor `date + session_id + tags`. `hopper` has no session_id. */
+export const ROUTED_SCHEMAS: Record<string, readonly string[]> = {
+  spec: ["type", "date", "session_id", "status", "tags", "visibility"],
+  plan: ["type", "date", "session_id", "status", "spec", "tags", "visibility"],
+  insight: ["type", "date", "session_id", "evidence", "confidence", "tags"],
+  method: ["type", "name", "date", "session_id", "applicability", "tags"],
+  note: ["type", "date", "session_id", "tags"],
+  hopper: ["type", "date", "status", "tags"],
+};
+
+/** Check a routed note's frontmatter fields against its type schema BEFORE the
+ *  write. Returns the list of violations (empty = valid). Pure: `fields` is the
+ *  exact key→value set the renderer will emit. */
+export function checkRoutedSchema(fields: Record<string, unknown>, type: string): string[] {
+  const required = ROUTED_SCHEMAS[type] ?? ["type", "date", "session_id", "tags"];
+  const errors: string[] = [];
+  for (const key of required) {
+    if (!(key in fields) || fields[key] === undefined) errors.push(`missing required field: ${key}`);
+    else if (key === "session_id" && fields[key] === null && type !== "hopper") errors.push("session_id must be set on a team write");
+  }
+  return errors;
+}
+
+/** The frontmatter field set a routed note renders to — the input that
+ *  `checkRoutedSchema` validates. Mirrors `renderRoutedNote` exactly. */
+export function routedFields(f: RoutedNoteFields): Record<string, unknown> {
+  const fields: Record<string, unknown> = {
+    type: f.type,
+    date: stampToDate(f.stamp),
+    session_id: f.session_id ? f.session_id : null,
+    tags: [f.type],
+  };
+  if (f.route_intent) fields.route_intent = f.route_intent;
+  for (const [k, v] of Object.entries(f.extra ?? {})) fields[k] = v;
+  return fields;
+}
+
+/** Git commit message for an attributed team write. Subject names the note; the
+ *  trailers name the agent role, session and source so attribution is readable
+ *  from the commit alone (`git log -1 --format=%B`). */
+export function teamCommitMessage(a: { basename: string; role: string; session: string; source: string }): string {
+  return [`note: add ${a.basename}`, "", `Agent-Role: ${a.role}`, `Session: ${a.session}`, `Source: ${a.source}`, ""].join("\n");
 }
 
 /** Render a routed generic note: minimal frontmatter (`type`, `date`,
@@ -377,6 +439,7 @@ export function renderRoutedNote(f: RoutedNoteFields): string {
     `tags: [${f.type}]`,
   ];
   if (f.route_intent) fm.push(`route_intent: ${f.route_intent}`);
+  for (const [k, v] of Object.entries(f.extra ?? {})) fm.push(`${k}: ${v}`);
   fm.push("---");
 
   const body = ["", `# ${f.title}`, "", f.body.trim(), ""].join("\n");
