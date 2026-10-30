@@ -376,7 +376,7 @@
     "packages/opencode/src/control-plane/workspace.ts": "ab986282d1bd15b7f4473e33766884e17c97684ef0778cd8d84fd173604175cc",
     "packages/opencode/src/effect/runner.ts": "b660b5b22df810b16293c23c6d832e5e8dcfb12b9a8a858c875d2c051c855b81",
     "packages/opencode/src/mcp/browser.ts": "ecdda42cbd55a97b8d14050aa15c6e6450a1d63b0a641c8c8e5b81e50f957c87",
-    "packages/opencode/src/mcp/index.ts": "da45165e6791a5b30c8962c7fd0ea391bb8e1931cc2357c6b90e9fd090cdeb0d",
+    "packages/opencode/src/mcp/index.ts": "0b6cbd751a0e57c6f103f1d22b228288e537180f5989a60c33ae8247c9ebe9e3",
     "packages/opencode/src/permission/index.ts": "feb352aacc8c110ad930b53319cd99c4b7cee015bd2bf9289f3eb24c608b01e8",
     "packages/opencode/src/project/instance-context.ts": "65a35792e50e96a50ea14cd9f928045c0e2fc15eb49506f5bbceee38c4af1457",
     "packages/opencode/src/project/instance-store.ts": "c22d3e2499e63dd8d9395d58189df75444d306774df833e746f22e327edcf2ab",
@@ -430,6 +430,7 @@
     "packages/opencode/test/effect/runner.test.ts": "6be02ad6a7d173642100a9e17b323410bad7ece842a00018d2170b91d4894c5a",
     "packages/opencode/test/fixture/fixture.ts": "357bdaa06c6233a91069db20cc5f1cbb2d6eafa3bc7ba3e89b019859d195d6ef",
     "packages/opencode/test/lib/cli-process.ts": "110c43d247930e834ffffb9068682c5ab2e1b95460ec1ac3d0a75cafbdee60ff",
+    "packages/opencode/test/mcp/remove-static-config.test.ts": "e69002eeaa099ab78b6bf5aa4a84da69a2cb20911da8237e4559fa2a32615060",
     "packages/opencode/test/permission/permission-store.test.ts": "0a105e3a1d5f238fd641d30f30d1d38ce49ae3dcaba3deaa445b505e4b6c1921",
     "packages/opencode/test/project/worktree-rename.test.ts": "3ec168c9f8595249b75832895a251483ec1f3641ce44ad0bd5a664b5bbd6dad1",
     "packages/opencode/test/provider/combine-abort-signals.test.ts": "0a997303e717184e3e237e4b978b64a34ab8022724c47245b25f32e90738d205",
@@ -1091,7 +1092,7 @@
       "D": 0
     },
     "packages/opencode": {
-      "A": 102,
+      "A": 103,
       "M": 100,
       "D": 0
     },
@@ -1122,7 +1123,7 @@
     }
   },
   "counts": {
-    "overlay_total": 1051,
+    "overlay_total": 1052,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1549,6 +1550,7 @@
     "packages/opencode/test/effect/runner.test.ts": "M",
     "packages/opencode/test/fixture/fixture.ts": "M",
     "packages/opencode/test/lib/cli-process.ts": "M",
+    "packages/opencode/test/mcp/remove-static-config.test.ts": "A",
     "packages/opencode/test/permission/permission-store.test.ts": "A",
     "packages/opencode/test/project/worktree-rename.test.ts": "A",
     "packages/opencode/test/provider/combine-abort-signals.test.ts": "A",
