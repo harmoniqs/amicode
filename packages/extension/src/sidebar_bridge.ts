@@ -90,6 +90,10 @@ export type SectionOrderMessage = { kind: "section-order"; order: string[] };
  *  manage-enabled) to the webview's fleet section. Host→webview only. */
 export type FleetStatusMessage = { kind: "fleet-status"; model: FleetSectionModel };
 
+/** #1036 — the host asks the webview to expand ancestors of `path`, scroll it
+ *  into view with a few rows of context, and flash a transient highlight. */
+export type RevealFileMessage = { kind: "reveal-file"; path: string };
+
 export type SidebarDownMessage =
   | ChatActiveMessage
   | RootsMessage
@@ -100,7 +104,8 @@ export type SidebarDownMessage =
   | ActiveProjectMessage
   | GitStatusMessage
   | SectionOrderMessage
-  | FleetStatusMessage;
+  | FleetStatusMessage
+  | RevealFileMessage;
 
 // ── Webview → Host (up) ──────────────────────────────────────────────────────
 
@@ -436,6 +441,7 @@ export function handleSidebarMessage(
     case "git-status":
     case "section-order":
     case "fleet-status":
+    case "reveal-file":
       // Down-direction messages — no host-side handler needed.
       break;
   }

@@ -636,6 +636,8 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
   private chatActive = false;
   private activeProjectPath: string | null | undefined = undefined;
   private activeProjectMode: "none" | "expand" | "reset" = "reset";
+  /** #1036 — a "Find in sidebar" request that arrived before the webview resolved. */
+  private pendingRevealPath: string | null = null;
   private watcher?: vscode.FileSystemWatcher;
   private fsDebounceTimer?: ReturnType<typeof setTimeout>;
   private fsPendingFolders = new Set<string>();
@@ -899,6 +901,13 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
       this.postDown({ kind: "active-project", path: this.activeProjectPath, mode: this.activeProjectMode });
     }
 
+    // #1036 — replay a "Find in sidebar" request that arrived before resolve.
+    if (this.pendingRevealPath) {
+      const revealPath = this.pendingRevealPath;
+      this.pendingRevealPath = null;
+      this.postDown({ kind: "reveal-file", path: revealPath });
+    }
+
     // Replay saved section order so the webview renders sections in the
     // user's preferred order. Falls back to the default if nothing is saved.
     const savedOrder = this.globalState?.get(
@@ -929,6 +938,27 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
     this.activeProjectMode = mode;
     this.postDown({ kind: "active-project", path: projectPath, mode });
   }
+
+  /**
+   * #1036 — "Find in sidebar": make sure the sidebar is visible, then ask the
+   * webview to expand the file's ancestors, scroll it into view, and flash it.
+   * A path outside every root is a silent no-op on the webview side. If the
+   * webview has not resolved yet, the request is replayed in resolveWebviewView.
+   */
+  async revealFile(filePath: string): Promise<void> {
+    if (!filePath) return;
+    this.pendingRevealPath = filePath;
+    try {
+      await vscode.commands.executeCommand("amicode.workspace.focus");
+    } catch {
+      /* focus is best-effort; the pending replay still covers an unresolved view */
+    }
+    if (this.view && this.pendingRevealPath === filePath) {
+      this.pendingRevealPath = null;
+      this.postDown({ kind: "reveal-file", path: filePath });
+    }
+  }
+
 
   /**
    * Persist a new section order to globalState and push it to the webview.

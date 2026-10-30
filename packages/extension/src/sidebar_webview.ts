@@ -2315,6 +2315,161 @@ function createIconEl(icon: string): HTMLElement {
     // session switch. The project row receives the highlight directly.
   }
 
+  // ── Reveal in sidebar (#1036) ─────────────────────────────────────────────
+  // "Find in sidebar" from the Preview tab: expand the file's ancestors top-down
+  // (awaiting each level's children), scroll the file to sit a few rows below
+  // the visible top, and flash a transient highlight. A path outside every root
+  // is a silent no-op.
+
+  const REVEAL_CONTEXT_ROWS = 3;
+  const REVEAL_HIGHLIGHT_MS = 2500;
+  const REVEAL_CHILD_WAIT_MS = 3000;
+  let revealHighlightTimer: ReturnType<typeof setTimeout> | undefined;
+  let revealHighlightRow: HTMLElement | null = null;
+  // A reveal that arrives before any roots have rendered; replayed on "roots".
+  let pendingRevealPath: string | null = null;
+
+  /** Resolve after `pred()` is true, polling every 25 ms; false on timeout. */
+  function waitUntil(pred: () => boolean, timeoutMs: number): Promise<boolean> {
+    return new Promise((resolve) => {
+      const started = Date.now();
+      const tick = (): void => {
+        if (pred()) { resolve(true); return; }
+        if (Date.now() - started > timeoutMs) { resolve(false); return; }
+        setTimeout(tick, 25);
+      };
+      tick();
+    });
+  }
+
+  function findDirNode(dirPath: string): HTMLElement | null {
+    return treeRoot?.querySelector(`[data-path="${CSS.escape(dirPath)}"][data-type='directory']`) as HTMLElement | null;
+  }
+
+  function findRowForPath(nodePath: string): HTMLElement | null {
+    const el = treeRoot?.querySelector(`[data-path="${CSS.escape(nodePath)}"]`) as HTMLElement | null;
+    if (!el) return null;
+    return el.classList.contains("tree-node") ? el : (el.querySelector(":scope > .tree-node") as HTMLElement | null);
+  }
+
+  /** The deepest rendered root that contains `filePath`, or null (silent no-op). */
+  function rootContaining(filePath: string): TreeRoot | null {
+    let best: TreeRoot | null = null;
+    for (const root of currentRoots) {
+      const sep = root.path.includes("\\") ? "\\" : "/";
+      if (filePath === root.path || filePath.startsWith(root.path + sep)) {
+        if (!best || root.path.length > best.path.length) best = root;
+      }
+    }
+    return best;
+  }
+
+  /** Directories from the root down to the file's parent, inclusive of the root. */
+  function ancestorChain(filePath: string, root: TreeRoot): string[] {
+    const sep = root.path.includes("\\") ? "\\" : "/";
+    const parts = filePath.slice(root.path.length).split(sep).filter(Boolean);
+    const chain = [root.path];
+    let cur = root.path;
+    for (let i = 0; i < parts.length - 1; i++) {
+      cur = cur + sep + parts[i];
+      chain.push(cur);
+    }
+    return chain;
+  }
+
+  function nearestScrollableAncestor(el: HTMLElement): HTMLElement | null {
+    let p = el.parentElement;
+    while (p && p !== document.body) {
+      const oy = getComputedStyle(p).overflowY;
+      if ((oy === "auto" || oy === "scroll") && p.scrollHeight > p.clientHeight) return p;
+      p = p.parentElement;
+    }
+    return null;
+  }
+
+  function scrollRowToRevealPosition(row: HTMLElement): void {
+    const scroller = nearestScrollableAncestor(row);
+    if (!scroller) {
+      row.scrollIntoView({ block: "nearest" });
+      return;
+    }
+    const rowH = row.offsetHeight || 22;
+    const rowTopInContent = row.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+    scroller.scrollTop = Math.max(0, rowTopInContent - REVEAL_CONTEXT_ROWS * rowH);
+  }
+
+  function flashRevealHighlight(row: HTMLElement): void {
+    if (revealHighlightTimer !== undefined) clearTimeout(revealHighlightTimer);
+    if (revealHighlightRow && revealHighlightRow !== row) {
+      revealHighlightRow.style.transition = "";
+      revealHighlightRow.style.backgroundColor = "";
+    }
+    revealHighlightRow = row;
+    // Appear instantly, then fade on clear: the transition is only enabled
+    // for the fade-out so the highlight does not animate in.
+    row.style.transition = "none";
+    row.style.backgroundColor = "var(--vscode-editor-findMatchHighlightBackground)";
+    revealHighlightTimer = setTimeout(() => {
+      row.style.transition = "background-color 0.6s ease-out";
+      row.style.backgroundColor = "";
+      revealHighlightTimer = undefined;
+      revealHighlightRow = null;
+    }, REVEAL_HIGHLIGHT_MS);
+  }
+
+  async function revealFileInTree(filePath: string): Promise<void> {
+    if (!filePath) return;
+    if (currentRoots.length === 0) {
+      pendingRevealPath = filePath;
+      return;
+    }
+    const root = rootContaining(filePath);
+    if (!root) return; // outside every root → silent no-op
+
+    // 1. Open the root's section if collapsed (animated; scroll waits for it).
+    let sectionWasExpanded = false;
+    const sectionKey = root.projectType;
+    if (!sectionExpanded[sectionKey]) {
+      sectionExpanded[sectionKey] = true;
+      saveSectionState();
+      const section = getAllSections().find((s) => s.dataset.sectionKey === sectionKey);
+      if (section) {
+        const chevron = section.querySelector(".section-chevron") as HTMLElement | null;
+        if (chevron) chevron.classList.add("expanded");
+        const body = section.querySelector(".section-body") as HTMLElement | null;
+        if (body) {
+          toggleSectionBody(body, true, section);
+          sectionWasExpanded = true;
+        }
+      }
+      if (sectionWasExpanded) await new Promise((r) => setTimeout(r, SECTION_ANIM_MS + 50));
+    }
+
+    // 2. Expand ancestors top-down. Each level's children must be rendered
+    //    before the next level exists in the DOM, so wait for it.
+    const chain = ancestorChain(filePath, root);
+    const targets = [...chain.slice(1), filePath];
+    for (let i = 0; i < chain.length; i++) {
+      const dir = chain[i];
+      const dirEl = findDirNode(dir);
+      if (!dirEl) return; // not rendered (root missing) — silent no-op
+      const row = dirEl.querySelector(":scope > .tree-node") as HTMLElement | null;
+      if (!expanded[dir] && row) row.click(); // same toggle path as a user click
+      else if (expanded[dir] && !childrenCache[dir]) vscode.postMessage({ kind: "get-children", path: dir });
+      const next = targets[i];
+      const present = await waitUntil(() => findRowForPath(next) !== null, REVEAL_CHILD_WAIT_MS);
+      if (!present) return; // children failed to load → no scroll, no highlight
+    }
+
+    // 3. Scroll the file to sit REVEAL_CONTEXT_ROWS below the visible top.
+    const fileRow = findRowForPath(filePath);
+    if (!fileRow) return;
+    scrollRowToRevealPosition(fileRow);
+
+    // 4. Transient highlight.
+    flashRevealHighlight(fileRow);
+  }
+
   // ── Host → Webview messages ────────────────────────────────────────────────
 
   window.addEventListener("message", (event) => {
@@ -2346,6 +2501,12 @@ function createIconEl(icon: string): HTMLElement {
           );
         if (!same) {
           renderRoots(incoming);
+        }
+        // #1036: replay a reveal that arrived before any roots rendered.
+        if (pendingRevealPath && currentRoots.length > 0) {
+          const queued = pendingRevealPath;
+          pendingRevealPath = null;
+          void revealFileInTree(queued);
         }
         break;
       }
@@ -2417,6 +2578,12 @@ function createIconEl(icon: string): HTMLElement {
           : "reset";
         pendingActiveProject = { path: activePath, mode };
         applyActiveProject(activePath, mode);
+        break;
+      }
+
+      case "reveal-file": {
+        // #1036: "Find in sidebar" — expand ancestors, scroll, flash.
+        void revealFileInTree(msg.path);
         break;
       }
 
