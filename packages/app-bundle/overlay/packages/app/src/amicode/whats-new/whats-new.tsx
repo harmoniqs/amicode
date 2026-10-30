@@ -3,23 +3,32 @@
 // underneath stays mounted, so Continue (or Esc) records the version as seen
 // and simply reveals the session that was open. Reopened from the command
 // palette ("Amicode: What's New" → open-whats-new) and the status popover.
-// One Continue, no tour. Content: GET /amicode/releases (bundled notes, works
-// offline); the decisions live in whats-new-model.ts + the service.
-import { Button } from "@opencode-ai/ui/button"
-import { For, Show, createEffect, createSignal, onCleanup } from "solid-js"
+// One Continue, no tour. amicode#2020: a fixed frame (pinned header + footer,
+// only the cards scroll); the markup is whats-new-view.tsx, the decisions
+// (expanded cards, clamp, ordering, keys) are whats-new-model.ts. Content:
+// GET /amicode/releases (bundled notes, works offline); which cards and the
+// "new for you" arrivals come from the service.
+import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
 import { usePlatform } from "@/context/platform"
 import { useServer } from "@/context/server"
 import { amicodeGet } from "@/utils/amicode-fetch"
 import { inAmicode } from "@/utils/amicode-bridge"
 import {
+  buildCardViews,
+  initialExpanded,
+  notesLink,
   onWhatsNewRequest,
   parseReleasesBody,
   releasesRoute,
   requestWhatsNew,
   resolveLastSeen,
+  summaryLine,
+  toggleIn,
+  whatsNewKeyHandler,
   writeLastSeenLocal,
   type WhatsNewPayload,
 } from "./whats-new-model"
+import { WhatsNewCardView, WhatsNewFrame, WhatsNewWelcome, focusContinue } from "./whats-new-view"
 
 const QUERY_TIMEOUT_MS = 1500
 
@@ -54,18 +63,30 @@ const storage = () => {
   }
 }
 
-const fmtDate = (d: string) => {
-  const t = Date.parse(`${d}T00:00:00Z`)
-  return Number.isFinite(t)
-    ? new Date(t).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric", timeZone: "UTC" })
-    : d
-}
+const ROOT = '[data-component="amicode-whats-new"]'
+
+/** A toggled card re-renders; put keyboard focus back on the control that was used. */
+const refocus = (selector: string) =>
+  queueMicrotask(() => (document.querySelector(`${ROOT} ${selector}`) as HTMLElement | null)?.focus())
 
 export function AmicodeWhatsNew() {
   const server = useServer()
   const platform = usePlatform()
   const [page, setPage] = createSignal<WhatsNewPayload | undefined>()
+  // amicode#2020: the newest card starts expanded, older ones collapsed.
+  const [expanded, setExpanded] = createSignal<string[]>([])
+  const [more, setMore] = createSignal<string[]>([])
   let checked = false
+
+  const open = (p: WhatsNewPayload) => {
+    setExpanded(initialExpanded(p.cards))
+    setMore([])
+    setPage(p)
+  }
+  // Focus lands on Continue when the page opens.
+  createEffect(() => {
+    if (page()) setTimeout(() => focusContinue(document), 0)
+  })
 
   const load = async (since: string | null) => {
     const conn = server.current
@@ -86,14 +107,14 @@ export function AmicodeWhatsNew() {
         serverUrl: conn.http.url,
       })
       const p = await load(since)
-      if (p?.show) setPage(p)
+      if (p?.show) open(p)
     })()
   })
 
   // Reopen (palette command / status popover): the full bundled history.
   const reopen = async () => {
     const p = await load("0.0.0")
-    if (p) setPage({ ...p, welcome: p.cards.length === 0 })
+    if (p) open({ ...p, welcome: p.cards.length === 0 })
   }
   onCleanup(onWhatsNewRequest(() => void reopen()))
   const onBridge = (e: MessageEvent) => {
@@ -116,103 +137,59 @@ export function AmicodeWhatsNew() {
     }
   }
 
+  // Enter and Esc both dismiss (Enter yields to inputs / other controls).
+  const keys = whatsNewKeyHandler(dismiss)
   const onKey = (e: KeyboardEvent) => {
-    if (e.key !== "Escape" || !page()) return
-    e.preventDefault()
-    e.stopPropagation()
-    dismiss()
+    if (page()) keys(e)
   }
   window.addEventListener("keydown", onKey, { capture: true })
   onCleanup(() => window.removeEventListener("keydown", onKey, { capture: true }))
 
   return (
     <Show when={page()}>
-      {(p) => (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-label="What's new in Amicode"
-          data-component="amicode-whats-new"
-          class="fixed inset-0 z-[200] flex justify-center overflow-y-auto bg-background-base"
-        >
-          <div class="flex flex-col gap-5 w-full max-w-[640px] px-6 py-10">
-            <div class="flex flex-col gap-1">
-              <div class="text-16-medium text-text-strong">
-                {p().welcome ? "Welcome to Amicode" : "What's new in Amicode"}
-              </div>
-              <div class="text-12-regular text-text-weak">Version {p().current}</div>
-            </div>
-
+      {(p) => {
+        const views = createMemo(() => buildCardViews(p(), expanded(), more()))
+        return (
+          <WhatsNewFrame
+            title={p().welcome ? "Welcome to Amicode" : "What's new in Amicode"}
+            version={p().current}
+            summary={summaryLine(p())}
+            notesHref={notesLink(p())}
+            onContinue={dismiss}
+            onOpenNotes={(href) => platform.openExternal(href)}
+          >
             <Show when={p().welcome}>
-              <div class="flex flex-col gap-2 p-4 rounded-lg bg-[var(--v2-background-bg-base)] shadow-[var(--shadow-lg-border-base)]">
-                <div class="text-14-medium text-text-strong">Conversational research, in your editor</div>
-                <div class="text-14-regular text-text-base">
-                  Start a session and describe what you want to explore. Amicode connects your vaults, models and
-                  compute, and runs the work where you can watch it. This page comes back after each update with
-                  what changed.
-                </div>
-              </div>
+              <WhatsNewWelcome />
             </Show>
-
-            <For each={p().cards}>
-              {(card, i) => (
-                <div class="flex flex-col gap-3 p-4 rounded-lg bg-[var(--v2-background-bg-base)] shadow-[var(--shadow-lg-border-base)]">
-                  <div class="flex items-baseline justify-between gap-2">
-                    <div class="text-14-medium text-text-strong">{card.version}</div>
-                    <div class="text-12-regular text-text-weak">{fmtDate(card.date)}</div>
-                  </div>
-                  <For each={card.highlights}>
-                    {(h) => (
-                      <div class="flex flex-col gap-0.5">
-                        <div class="text-14-medium text-text-base">{h.title}</div>
-                        <Show when={h.body}>
-                          <div class="text-13-regular text-text-weak">{h.body}</div>
-                        </Show>
-                      </div>
-                    )}
-                  </For>
-                  <Show when={i() === 0 && p().newForYou.length > 0}>
-                    <div class="flex flex-col gap-1 pt-1" data-slot="new-for-you">
-                      <div class="text-12-medium text-text-strong">New for you</div>
-                      <div class="text-12-regular text-text-weak">Models now available to your account:</div>
-                      <For each={p().newForYou}>
-                        {(m) => (
-                          <div class="text-13-regular text-text-base">
-                            {m.model} <span class="text-text-weak">· {m.provider}</span>
-                          </div>
-                        )}
-                      </For>
-                    </div>
-                  </Show>
-                  <Show when={card.body}>
-                    <div class="text-13-regular text-text-weak whitespace-pre-line">{card.body}</div>
-                  </Show>
-                  <Show when={card.notes}>
-                    {(href) => (
-                      <a
-                        class="text-12-regular text-text-weak underline self-start"
-                        href={href()}
-                        target="_blank"
-                        rel="noreferrer"
-                        onClick={(e) => {
-                          e.preventDefault()
-                          platform.openExternal(href())
+            {/* one slot per version: a toggle re-renders only that card, so the
+                scroll region (and its scroll position) is never rebuilt */}
+            <For each={p().cards.map((c) => c.version)}>
+              {(version) => {
+                const view = createMemo(() => views().find((c) => c.version === version)!, undefined, {
+                  equals: (a, b) => JSON.stringify(a) === JSON.stringify(b),
+                })
+                return (
+                  <>
+                    {(() => (
+                      <WhatsNewCardView
+                        card={view()}
+                        onToggleCard={(v) => {
+                          setExpanded((l) => toggleIn(l, v))
+                          refocus(`[data-version="${v}"] [data-slot="whats-new-card-toggle"]`)
                         }}
-                      >
-                        Full release notes
-                      </a>
-                    )}
-                  </Show>
-                </div>
-              )}
+                        onToggleMore={(k) => {
+                          setMore((l) => toggleIn(l, k))
+                          refocus(`[data-slot="whats-new-more"][data-key="${k}"]`)
+                        }}
+                      />
+                    ))()}
+                  </>
+                )
+              }}
             </For>
-
-            <Button variant="primary" class="self-start h-8 px-4" onClick={dismiss} autofocus>
-              Continue
-            </Button>
-          </div>
-        </div>
-      )}
+          </WhatsNewFrame>
+        )
+      }}
     </Show>
   )
 }

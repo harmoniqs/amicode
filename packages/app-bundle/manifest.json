@@ -751,9 +751,11 @@
     "packages/app/src/amicode/inspector/inspector-bridge.ts": "460dbf4509b4e56a8eacd6cac7adcb3a63c6cd3e417d851df5f3e3b259095d3e",
     "packages/app/src/amicode/inspector/inspector-context.tsx": "ac81b9e0e2a4035f85b6af68b7f0cefcb9f256a175b244ba13136f3a307c0c77",
     "packages/app/src/amicode/inspector/run-inspector.tsx": "63a6351fad12a8377550eb87f7602a712bae586fe482ff46cd847c8544fc6e8a",
-    "packages/app/src/amicode/whats-new/whats-new-model.test.ts": "49c8b21d35f286c174456991584f66f99b4fdcec6b438b84317d8c6abc43987c",
-    "packages/app/src/amicode/whats-new/whats-new-model.ts": "30ef4aa0f3b04c6cd2743bb757cadf198d6fd6e463301b8c5645b1cbdd877cbd",
-    "packages/app/src/amicode/whats-new/whats-new.tsx": "a7ee5d41f4e17b80528efa451b7c15be2bd194813c0b2d4bd22a560dcc7944a7",
+    "packages/app/src/amicode/whats-new/whats-new-model.test.ts": "fcc998d0b73b8d5ef30cad993fb3a803b130fea335040463a1425b5600d22d96",
+    "packages/app/src/amicode/whats-new/whats-new-model.ts": "8d73f0f32d7bc24c52a620a124d0b8ad661ee168c7771d8236c4b7c62616fdd0",
+    "packages/app/src/amicode/whats-new/whats-new-view.test.tsx": "3c795fe0ba6bf45fe40b0c5bca3cd3f96ebfb3c95cc3b18ae9f80237af987907",
+    "packages/app/src/amicode/whats-new/whats-new-view.tsx": "90b31bc029bafb088f3e1f0669e0a484fd90b6d314f70d2f77a4613121877c23",
+    "packages/app/src/amicode/whats-new/whats-new.tsx": "1b996377d7b67a8b1954f4b0711cf52619eb7f2552b175f2f76ed1e7b938a68d",
     "packages/app/src/components/prompt-input/attachments.ts": "c3c28df0d2f18378d39e17147a4c64e8ea01d63b97c39e1874ed9445ca671bb1",
     "packages/app/src/components/prompt-input/clipboard-bridge.test.ts": "15f76dca1a25d024128718e4099220b79ca029263410aab55502cf9caf9b2914",
     "packages/app/src/components/prompt-input/clipboard-bridge.ts": "4b5a1edf59d4c85268d6ff72aa9f9d66f82d4fdb887121fb978c09caf4c5be65",
@@ -1070,10 +1072,10 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-29T13:09:53.406Z",
+  "extracted_at": "2026-10-30T19:24:02.446Z",
   "per_package": {
     "packages/app": {
-      "A": 289,
+      "A": 291,
       "M": 166,
       "D": 0
     },
@@ -1119,7 +1121,7 @@
     }
   },
   "counts": {
-    "overlay_total": 1048,
+    "overlay_total": 1050,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1869,6 +1871,8 @@
     "packages/app/src/amicode/inspector/run-inspector.tsx": "A",
     "packages/app/src/amicode/whats-new/whats-new-model.test.ts": "A",
     "packages/app/src/amicode/whats-new/whats-new-model.ts": "A",
+    "packages/app/src/amicode/whats-new/whats-new-view.test.tsx": "A",
+    "packages/app/src/amicode/whats-new/whats-new-view.tsx": "A",
     "packages/app/src/amicode/whats-new/whats-new.tsx": "A",
     "packages/app/src/components/prompt-input/attachments.ts": "M",
     "packages/app/src/components/prompt-input/clipboard-bridge.test.ts": "A",
