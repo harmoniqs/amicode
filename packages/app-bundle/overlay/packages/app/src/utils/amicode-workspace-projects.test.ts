@@ -1,7 +1,7 @@
 import { describe, expect, test, mock } from "bun:test"
 import { readFileSync } from "fs"
 import { resolve } from "path"
-import { notifyProjectSelected } from "./amicode-workspace-projects"
+import { notifyProjectSelected, notifyRevealInSidebar } from "./amicode-workspace-projects"
 
 describe("amicode workspace-projects — notifyProjectSelected (#663)", () => {
   test("posts a project-selected envelope to the parent frame", () => {
@@ -164,5 +164,48 @@ describe("session-composer-controls — toggle deselect (#673)", () => {
     const toggleBranch = selectFn.slice(0, selectFn.indexOf("notifyProjectSelected(worktree)"))
     // Must NOT pass "none" — needs "reset" (or default) so the sidebar collapses the old folder
     expect(toggleBranch).not.toMatch(/notifyProjectSelected\([^)]*,\s*["']none["']/)
+  })
+})
+
+describe("amicode workspace-projects — notifyRevealInSidebar (#1036)", () => {
+  test("posts a reveal-in-sidebar envelope carrying the path", () => {
+    const calls: unknown[] = []
+    const orig = window.parent.postMessage
+    window.parent.postMessage = (...args: unknown[]) => { calls.push(args) }
+    try {
+      notifyRevealInSidebar("/Users/jj/harmoniqs/src/a.jl")
+      expect(calls).toHaveLength(1)
+      const [msg, origin] = calls[0] as [Record<string, unknown>, string]
+      expect(msg).toEqual({ source: "amicode", kind: "reveal-in-sidebar", path: "/Users/jj/harmoniqs/src/a.jl" })
+      expect(origin).toBe("*")
+    } finally {
+      window.parent.postMessage = orig
+    }
+  })
+
+  test("empty path posts nothing", () => {
+    const calls: unknown[] = []
+    const orig = window.parent.postMessage
+    window.parent.postMessage = (...args: unknown[]) => { calls.push(args) }
+    try {
+      notifyRevealInSidebar("")
+      expect(calls).toHaveLength(0)
+    } finally {
+      window.parent.postMessage = orig
+    }
+  })
+})
+
+describe("Preview tab context menu — Find in sidebar (#1036)", () => {
+  test("is the first item, followed by a separator, then the copy items", () => {
+    const src = readFileSync(resolve(__dirname, "../components/session/session-preview-tab.tsx"), "utf8")
+    const find = src.indexOf("Find in sidebar")
+    const sep = src.indexOf("<MenuV2.Separator />")
+    const copy = src.indexOf("Copy filename")
+    expect(find).toBeGreaterThan(-1)
+    expect(find).toBeLessThan(sep)
+    expect(sep).toBeLessThan(copy)
+    expect(src).toContain("notifyRevealInSidebar(")
+    expect(src).toContain("disabled={!tabContextMenu()?.path}")
   })
 })

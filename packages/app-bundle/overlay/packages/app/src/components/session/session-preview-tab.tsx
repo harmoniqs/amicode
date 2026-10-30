@@ -16,6 +16,7 @@ import { Tabs } from "@opencode-ai/ui/tabs"
 import { MenuV2 } from "@opencode-ai/ui/v2/menu-v2"
 import { useCommand, type CommandOption } from "@/context/command"
 import { usePlatform } from "@/context/platform"
+import { notifyRevealInSidebar } from "@/utils/amicode-workspace-projects"
 import type { PreviewViewState } from "@opencode-ai/session-ui/v2/preview-view-state"
 import { PreviewFileView } from "./preview-file-view"
 import { isPdfFindTarget } from "./pdf-find-guard"
@@ -786,6 +787,13 @@ export function SessionPreviewTab(props: {
               top: `${tabContextMenu()?.y ?? 0}px`,
             }}
           >
+            <MenuV2.Item
+              disabled={!tabContextMenu()?.path}
+              onSelect={() => notifyRevealInSidebar(tabContextMenu()?.path ?? "")}
+            >
+              Find in sidebar
+            </MenuV2.Item>
+            <MenuV2.Separator />
             <MenuV2.Item onSelect={() => void copyPreviewPath((tabContextMenu()?.path ?? "").split("/").at(-1) ?? "")}>
               Copy filename
             </MenuV2.Item>
