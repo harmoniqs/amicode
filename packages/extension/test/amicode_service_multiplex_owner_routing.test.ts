@@ -221,6 +221,50 @@ describe("#1771 — each ownership refresh logs a per-peer outcome record", () =
     expect(lines).toHaveLength(2); // per PEER — the local engine is not a peer
   });
 
+  it("#1794: through the REAL projection, a 403 refresh drops the peer's sessions at once like a 401; a 5xx retains them", async () => {
+    const run = async (status: number) => {
+      const ownerMap = new SessionOwnerMap();
+      let failing = false;
+      const fetchImpl = (async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/global/health")) return new Response(JSON.stringify({ version: "t" }), { status: 200 });
+        if (url.startsWith("http://peer-a")) {
+          return failing ? new Response("no", { status }) : new Response(JSON.stringify([{ id: "ses-a1" }]), { status: 200 });
+        }
+        return new Response(JSON.stringify([]), { status: 200 }); // local
+      }) as unknown as typeof fetch;
+      const lines: string[] = [];
+      const feed = new OwnerMapFeed({
+        ownerMap,
+        log: (l) => lines.push(l),
+        buildProjection: async () => {
+          const p = await buildOwnerRoutingProjection({
+            localMachineId: "macbook",
+            local: { getUrl: () => "http://local" },
+            peers: [{ machineId: "peer-a", getUrl: () => "http://peer-a", token: "tok-a" }],
+            rosterLookup: () => undefined,
+            fetchImpl,
+          });
+          return { sessions: p.sessions as SessionEntry[], peers: p.peers };
+        },
+      });
+      await feed.refreshOnce();
+      expect(ownerMap.resolveOwner("ses-a1")).toBe("peer-a");
+      failing = true;
+      await feed.refreshOnce();
+      return { owner: ownerMap.resolveOwner("ses-a1"), lines };
+    };
+    for (const status of [401, 403]) {
+      const r = await run(status);
+      expect(r.owner).toBeUndefined(); // dropped at once
+      expect(r.lines.at(-1)).toMatch(/outcome=unauthorized .*reason=unauthorized/);
+    }
+    for (const status of [500, 502, 503]) {
+      const r = await run(status);
+      expect(r.owner).toBe("peer-a"); // retained inside the 60 s window
+    }
+  });
+
   it("a projection BUILD failure is logged too (and still never throws)", async () => {
     const lines: string[] = [];
     const feed = new OwnerMapFeed({
