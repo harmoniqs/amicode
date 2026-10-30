@@ -636,6 +636,9 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
   private chatActive = false;
   private activeProjectPath: string | null | undefined = undefined;
   private activeProjectMode: "none" | "expand" | "reset" = "reset";
+  /** #1036: a reveal requested while the webview does not exist yet (sidebar
+   *  never opened / collapsed before first resolve). Replayed once on resolve. */
+  private pendingReveal: string | undefined;
   private watcher?: vscode.FileSystemWatcher;
   private fsDebounceTimer?: ReturnType<typeof setTimeout>;
   private fsPendingFolders = new Set<string>();
@@ -903,6 +906,13 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
       this.postDown({ kind: "active-project", path: this.activeProjectPath, mode: this.activeProjectMode });
     }
 
+    // #1036: a "Find in sidebar" that arrived before the webview existed.
+    if (this.pendingReveal !== undefined) {
+      const path = this.pendingReveal;
+      this.pendingReveal = undefined;
+      this.postDown({ kind: "reveal-file", path });
+    }
+
     // Replay saved section order so the webview renders sections in the
     // user's preferred order. Falls back to the default if nothing is saved.
     const savedOrder = this.globalState?.get(
@@ -910,6 +920,26 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
       SidebarViewProvider.DEFAULT_SECTION_ORDER,
     ) as string[] | undefined;
     this.postDown({ kind: "section-order", order: savedOrder ?? SidebarViewProvider.DEFAULT_SECTION_ORDER });
+  }
+
+  /**
+   * #1036 "Find in sidebar": make sure the Amicode sidebar is visible, then ask
+   * the webview to reveal an absolute file path (expand ancestors, scroll,
+   * flash). Queued if the webview has not been created yet. A path outside the
+   * tree is a silent no-op in the webview.
+   */
+  async revealFile(filePath: string): Promise<void> {
+    if (typeof filePath !== "string" || filePath === "") return;
+    this.pendingReveal = filePath;
+    try {
+      await vscode.commands.executeCommand("amicode.workspace.focus");
+    } catch {
+      /* the view command is best-effort; the queued reveal still replays on resolve */
+    }
+    if (this.view && this.pendingReveal === filePath) {
+      this.pendingReveal = undefined;
+      this.postDown({ kind: "reveal-file", path: filePath });
+    }
   }
 
   /** Push chat-active state to the webview so it can dim the button. */
@@ -1316,6 +1346,10 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
       padding: 2px 8px 2px 0;
       cursor: pointer;
       user-select: none;
+    }
+    /* #1036 "Find in sidebar": transient, theme-adaptive "look here" flash. */
+    .tree-node.reveal-highlight {
+      background: var(--vscode-editor-findMatchHighlightBackground) !important;
     }
     .tree-node:hover {
       background: var(--vscode-list-hoverBackground);

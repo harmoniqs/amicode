@@ -213,6 +213,10 @@ export interface BridgeIo {
   /** #1648: the panel's settled session id for targeting `preview-file`
    *  opens; undefined when it cannot target (draft route / not yet reported). */
   previewFileTarget?: () => string | undefined;
+  /** #1036: the Preview tab's "Find in sidebar" — reveal this absolute file path
+   *  in the Amicode sidebar tree. A dedicated kind because the `command` lane
+   *  forwards no arguments. Undefined until activation wires it. */
+  onRevealInSidebar?: (path: string) => void;
   previewVisibleChildren?: (root: string, relativeDirectory: string) => Promise<Array<{ name: string; kind: "file" | "directory"; absolute: string; relative: string }>>;
   /** Returns the currently-selected Explorer file icon theme as opaque assets. */
   explorerIconTheme?: () => ExplorerIconTheme;
@@ -1626,6 +1630,13 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
           });
         }
       });
+    return true;
+  }
+
+  // #1036: Preview tab "Find in sidebar" → reveal the file in the sidebar tree.
+  if (msg.kind === "reveal-in-sidebar") {
+    const p = (msg as { path?: unknown }).path;
+    if (typeof p === "string" && p !== "" && p.length <= 4096) io.onRevealInSidebar?.(p);
     return true;
   }
 

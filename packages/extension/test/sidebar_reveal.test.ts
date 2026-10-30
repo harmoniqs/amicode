@@ -96,7 +96,8 @@ describe("webview reveal wiring (static pins — the webview is a browser IIFE)"
   it("handles the host's reveal-file message and flashes a theme-adaptive highlight", () => {
     expect(webview).toContain('case "reveal-file"');
     expect(webview).toContain("reveal-highlight");
-    expect(webview).toContain("--vscode-editor-findMatchHighlightBackground");
+    // the style lives in the sidebar's injected CSS (sidebar_view.ts)
+    expect(read("sidebar_view.ts")).toMatch(/\.tree-node\.reveal-highlight\s*\{[^}]*--vscode-editor-findMatchHighlightBackground/);
     // rapid successive reveals cancel the previous highlight timer
     expect(webview).toMatch(/clearTimeout\(revealHighlightTimer\)/);
   });

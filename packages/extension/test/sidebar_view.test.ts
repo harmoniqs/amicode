@@ -1465,7 +1465,9 @@ describe("SidebarViewProvider — revealFile (#1036)", () => {
     const provider = new SidebarViewProvider(makeExtensionUri());
     const view = makeWebviewView();
     provider.resolveWebviewView(view, {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
-    const executed = (vscode.commands as unknown as { executed: string[] }).executed;
+    // resetModules gave the provider a fresh vscode mock: read the same instance it sees.
+    const vs = await import("vscode");
+    const executed = (vs.commands as unknown as { executed: string[] }).executed;
     const before = executed.length;
 
     await provider.revealFile("/w/p/a.md");

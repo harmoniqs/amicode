@@ -16,11 +16,13 @@ import { Tabs } from "@opencode-ai/ui/tabs"
 import { MenuV2 } from "@opencode-ai/ui/v2/menu-v2"
 import { useCommand, type CommandOption } from "@/context/command"
 import { usePlatform } from "@/context/platform"
+import { useSDK } from "@/context/sdk"
 import type { PreviewViewState } from "@opencode-ai/session-ui/v2/preview-view-state"
 import { PreviewFileView } from "./preview-file-view"
 import { isPdfFindTarget } from "./pdf-find-guard"
-import { previewFilePathForSession } from "./preview-file-target"
+import { previewFilePathForSession, revealInSidebarMessage } from "./preview-file-target"
 import { previewDrafts } from "./preview-draft-store"
+import { toAbsolutePath } from "./preview-file-helpers"
 import { FileVisual } from "./session-sortable-tab"
 import {
   createPreviewPersister,
@@ -126,6 +128,7 @@ export function SessionPreviewTab(props: {
   sessionID?: () => string | undefined
 }) {
   const platform = usePlatform()
+  const sdk = useSDK()
   const command = useCommand()
   const [dirtyPaths, setDirtyPaths] = createStore<Record<string, boolean>>({})
   const [saveRequests, setSaveRequests] = createStore<Record<string, number>>({})
@@ -316,6 +319,17 @@ export function SessionPreviewTab(props: {
     if (platform.writeClipboardText && (await platform.writeClipboardText(value))) return
     try {
       await navigator.clipboard?.writeText(value)
+    } catch {}
+  }
+
+  // #1036: ask the host to reveal this tab's file in the Amicode sidebar tree.
+  // The path is the tab's own path, resolved against the session directory for
+  // relative tabs; a file outside the workspace is a silent no-op host-side.
+  const findInSidebar = (path: string) => {
+    const message = revealInSidebarMessage(path ? toAbsolutePath(path, sdk().directory) : "")
+    if (!message) return
+    try {
+      window.parent?.postMessage(message, "*")
     } catch {}
   }
 
@@ -838,6 +852,10 @@ export function SessionPreviewTab(props: {
               top: `${tabContextMenu()?.y ?? 0}px`,
             }}
           >
+            <MenuV2.Item disabled={!tabContextMenu()?.path} onSelect={() => findInSidebar(tabContextMenu()?.path ?? "")}>
+              Find in sidebar
+            </MenuV2.Item>
+            <MenuV2.Separator />
             <MenuV2.Item onSelect={() => void copyPreviewPath((tabContextMenu()?.path ?? "").split("/").at(-1) ?? "")}>
               Copy filename
             </MenuV2.Item>

@@ -17,3 +17,11 @@ export const previewFilePathForSession = (data: unknown, current: string | undef
   if (typeof msg.sessionID !== "string") return undefined
   return msg.sessionID === current ? msg.path : undefined
 }
+
+/** #1036: the Preview tab's "Find in sidebar" request. A DEDICATED message kind —
+ *  the `command` bridge lane forwards no arguments, so it cannot carry the path.
+ *  Undefined for an empty path (the menu item is disabled). */
+export const revealInSidebarMessage = (
+  path: string | undefined,
+): { source: "amicode"; kind: "reveal-in-sidebar"; path: string } | undefined =>
+  path ? { source: "amicode", kind: "reveal-in-sidebar", path } : undefined
