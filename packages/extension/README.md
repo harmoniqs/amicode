@@ -13,7 +13,7 @@ Amicode is an **open autonomous research studio** in VS Code. Describe what you 
 - **Vaults — your knowledge, mounted** — personal + team + project vaults stacked under `~/.amico/vaults/` (your notes, specs, experiment history, pulse catalog) become first-class context the assistant plans against. Works fully offline; scales to a team via vault mounts with `local | team | public` visibility and PR-based promotion.
 - **Fleet management — one logical studio across machines** — vault sync, canonical chat DB, and WIP that follows you between hosts over an SSH mesh. Solo, team, and fleet share the same invariants: one-file-per-note, a computed catalog index, per-session captures, and device locks. When the canonical is unreachable, `Amicode: Fleet — Enter Local Fallback` lets you work offline and `Rejoin` merges back; `Amicode: Fleet — Repair` and `pnpm sync` keep guard/tunnel/vendor in sync.
 - **Live execution + versioned memory** — the **Run Inspector** overlays pulse plots and traces fidelity and constraint violation as they fall; the **pulse catalog** keeps a warm-startable, versioned library of your best pulses and promotes when you beat the incumbent.
-- **Straight to hardware** — drive real RFSoC boards via [IntonatoQICK.jl](https://github.com/harmoniqs/IntonatoQICK.jl) over a coarse three-verb boundary (`upload_pulse!` / `trigger!` / `readout`), or run the *entire* closed loop against a pure-Julia mock with zero hardware for dev and CI. Same script, mock or metal.
+- **Straight to hardware** — drive real RFSoC boards through [Intonato](https://github.com/harmoniqs/Intonato.jl)'s hardware seam, which delegates to the Python `strumento` framework, over a coarse three-verb boundary (`upload_pulse!` / `trigger!` / `readout`), or run the *entire* closed loop against a pure-Julia mock with zero hardware for dev and CI. Same script, mock or metal.
 - **Physics that ships with the tool** — platform references for **Rydberg**, **transmon**, **fluxonium**, **trapped-ion**, and **bosonic** systems inline the Hamiltonians and drive conventions into each script so it stands alone.
 - **Skills are the product** — 37 public skills ship in the vsix, versioned with the product; your own vault mounts and Julia-package skills layer on top behind entitlements.
 
@@ -23,7 +23,7 @@ Amicode is an **open autonomous research studio** in VS Code. Describe what you 
 
 Open the Amicode panel and paste:
 
-> Design a minimum-time single-qubit X gate for a transmon (3 levels, penalize leakage to |2⟩). Then run the optimized pulse through the IntonatoQICK mock backend, read out the populations, and plot both the pulse and the readout.
+> Design a minimum-time single-qubit X gate for a transmon (3 levels, penalize leakage to |2⟩). Then run the optimized pulse through the QICK mock board (Intonato's `MockSoc`), read out the populations, and plot both the pulse and the readout.
 
 ## Requirements
 

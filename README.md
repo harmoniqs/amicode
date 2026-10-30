@@ -164,8 +164,8 @@ code --install-extension /tmp/amicode.vsix
 Open the Amicode panel and paste:
 
 > Design a minimum-time single-qubit X gate for a transmon (3 levels, penalize
-> leakage to |2⟩). Then run the optimized pulse through the IntonatoQICK mock
-> backend, read out the populations, and plot both the pulse and the readout.
+> leakage to |2⟩). Then run the optimized pulse through the QICK mock
+> board (Intonato's `MockSoc`), read out the populations, and plot both the pulse and the readout.
 
 This one prompt exercises the whole studio: it names a platform, a target, a constraint, and a hardware step — chat to physics skill to solve to mock readout to plot — without you writing the Piccolo API, the Hamiltonian, or the QICK verbs. Swap `transmon` for your own system and the loop is the same.
 

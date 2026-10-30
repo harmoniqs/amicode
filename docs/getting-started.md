@@ -41,12 +41,12 @@ that session.
 Open the chat and paste:
 
 > Design a minimum-time single-qubit X gate for a transmon (3 levels, penalize
-> leakage to |2⟩). Then run the optimized pulse through the IntonatoQICK mock
-> backend, read out the populations, and plot both the pulse and the readout.
+> leakage to |2⟩). Then run the optimized pulse through the QICK mock
+> board (Intonato's `MockSoc`), read out the populations, and plot both the pulse and the readout.
 
 This one prompt exercises the whole loop: it names a platform (transmon), a
 target (an X gate), a constraint (keep population out of |2⟩), and a hardware
-step (the QICK mock backend — see [Hardware](./hardware.md)). You don't need to
+step (the QICK mock board — see [Hardware](./hardware.md)). You don't need to
 know the Piccolo API, the transmon Hamiltonian, or the QICK verbs; the
 assistant supplies all three.
 
