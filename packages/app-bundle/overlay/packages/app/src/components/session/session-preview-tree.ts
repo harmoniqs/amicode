@@ -60,6 +60,44 @@ export const previewMissingPaths = (target: readonly string[], open: readonly st
   return target.filter((path) => !openSet.has(path))
 }
 
+export type PreviewRestorePlan = {
+  /** Identity of this input set; the caller stores it as `last`. */
+  signature: string
+  /** False when the inputs are unchanged since `last` — the restore is inert. */
+  run: boolean
+  /** Paths to merge into the workspace (never removes anything). */
+  missing: string[]
+  /** A net-new open (active file not yet persisted) that should be written now. */
+  persistNetNew: boolean
+}
+
+/** One reactive pass of the restore: a signature-guarded merge. `hydrated` is part
+ *  of the signature so a net-new open that arrived BEFORE the layout store
+ *  hydrated (its write was held) is re-planned — and persisted — once it does,
+ *  even when hydration leaves the persisted set unchanged. The write is only
+ *  planned once hydrated, so it is never silently dropped. */
+export const planPreviewRestore = (input: {
+  last: string
+  hydrated: boolean
+  persisted: readonly string[]
+  active: string | null
+  open: readonly string[]
+  /** Extra paths that must return with the session (unsaved drafts, #1249). */
+  extra?: readonly string[]
+}): PreviewRestorePlan => {
+  const extra = (input.extra ?? []).filter((path) => !input.persisted.includes(path))
+  const target = previewRestoreTarget([...input.persisted, ...extra], input.active)
+  const signature = `${input.hydrated ? "h" : "-"}\u0001${target.join("\u0000")}`
+  if (signature === input.last) return { signature, run: false, missing: [], persistNetNew: false }
+  const netNew = (!!input.active && !input.persisted.includes(input.active)) || extra.length > 0
+  return {
+    signature,
+    run: true,
+    missing: target.length === 0 ? [] : previewMissingPaths(target, input.open),
+    persistNetNew: input.hydrated && netNew,
+  }
+}
+
 /** The active file after closing `closed`: unchanged when a background tab was
  *  closed; otherwise the last remaining tab, or null if none remain — so a
  *  closed active file is never left as the pointer that gets re-opened. */

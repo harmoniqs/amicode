@@ -460,6 +460,38 @@ describe("ChatPanel — workspace-projects bridge relay (#663)", () => {
   });
 });
 
+describe("ChatPanel — onRevealInSidebar (#1036)", () => {
+  let restore: (() => void) | undefined;
+  let created: CapturedPanel[] = [];
+  afterEach(() => {
+    for (const p of created) p.dispose();
+    restore?.();
+    restore = undefined;
+    created = [];
+    ChatPanel.onRevealInSidebar(undefined);
+  });
+
+  it("the upstream relay admits 'reveal-in-sidebar' (iframe → extension)", () => {
+    const cap = capturePanel();
+    restore = cap.restore;
+    created = cap.created;
+    ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
+    expect(cap.created[0].webview.html).toContain('"reveal-in-sidebar"');
+  });
+
+  it("fires the registered callback with the path when the iframe asks to reveal a file", () => {
+    const revealed: string[] = [];
+    ChatPanel.onRevealInSidebar((p) => revealed.push(p));
+    const cap = capturePanel();
+    restore = cap.restore;
+    created = cap.created;
+    ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
+    const panel = cap.created[0] as unknown as { webview: { _simulateMessage(msg: unknown): void } };
+    panel.webview._simulateMessage({ source: "amicode", kind: "reveal-in-sidebar", path: "/w/p/a.md" });
+    expect(revealed).toEqual(["/w/p/a.md"]);
+  });
+});
+
 describe("ChatPanel — onProjectSelected callback (#663)", () => {
   let restore: (() => void) | undefined;
   let created: CapturedPanel[] = [];

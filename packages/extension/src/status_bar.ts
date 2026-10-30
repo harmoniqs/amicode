@@ -21,8 +21,21 @@ export function statusBarLabel(
   // / undefined leave the label untouched. NEVER the link-health `standalone`
   // token (AC1) — these are the window-mode values only.
   windowMode?: WindowMode,
+  // #1571 — the adopted engine runs a different build/config than what is on
+  // disk (what differs, e.g. "engine binary"). A PERSISTENT flag, unlike the
+  // one-shot #1190 toast; additive to whatever the base label claims.
+  engineStale?: string,
 ): { text: string; tooltip: string } {
-  return reflectWindowMode(baseLabel(serverReady, sseState), windowMode);
+  return reflectEngineStale(reflectWindowMode(baseLabel(serverReady, sseState), windowMode), engineStale);
+}
+
+/** Fold the stale-engine flag onto a computed label (additive; undefined = untouched). */
+function reflectEngineStale(base: { text: string; tooltip: string }, detail?: string): { text: string; tooltip: string } {
+  if (detail === undefined) return base;
+  return {
+    text: `${base.text} $(warning) engine stale`,
+    tooltip: `${base.tooltip} · The running server's ${detail} differs from the current build — click to restart the engine onto it.`,
+  };
 }
 
 /** Fold the window-mode axis onto a computed base label. Additive: a
@@ -60,6 +73,7 @@ export class StatusBarManager {
   private serverReady = false;
   private sseState: SseState = "connecting";
   private windowMode: WindowMode | undefined;
+  private engineStale: string | undefined;
 
   constructor() {
     this.item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
@@ -88,12 +102,20 @@ export class StatusBarManager {
     this.render();
   }
 
+  /** #1571: raise (detail) or clear (undefined) the persistent stale-engine
+   *  indicator. While raised, a click restarts the engine instead of opening chat. */
+  setEngineStale(detail: string | undefined): void {
+    this.engineStale = detail;
+    this.item.command = detail === undefined ? "amicode.openChat" : "amicode.restartStaleEngine";
+    this.render();
+  }
+
   dispose(): void {
     this.item.dispose();
   }
 
   private render(): void {
-    const { text, tooltip } = statusBarLabel(this.serverReady, this.sseState, this.windowMode);
+    const { text, tooltip } = statusBarLabel(this.serverReady, this.sseState, this.windowMode, this.engineStale);
     this.item.text = text;
     this.item.tooltip = tooltip;
   }

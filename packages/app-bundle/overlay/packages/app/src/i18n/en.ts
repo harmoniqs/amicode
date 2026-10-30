@@ -177,6 +177,10 @@ export const dict = {
   "model.tooltip.latency": "Latency",
   "model.tooltip.latency.line": "Measured latency: {{latency}}",
 
+  // amicode#612: the composer's drag-to-resize handle (aria-label + tooltip).
+  "prompt.resize.label": "Resize message box",
+  "prompt.resize.title": "Drag to resize · double-click to reset",
+
   "dialog.model.unpaid.freeModels.title": "Free models provided by Amicode",
   "dialog.model.unpaid.addMore.title": "Add more models from popular providers",
   "dialog.model.unpaid.viewMoreProviders": "See 70+ more providers",
@@ -260,6 +264,7 @@ export const dict = {
 
   "model.tag.free": "Free",
   "model.tag.latest": "Latest",
+  "model.tag.new": "New",
   "model.provider.anthropic": "Anthropic",
   "model.provider.openai": "OpenAI",
   "model.provider.google": "Google",

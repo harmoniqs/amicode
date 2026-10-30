@@ -1,9 +1,14 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
+import { fakeServeShim, reapFakeServes } from "./fake_serve_reaper";
 import { mkdtempSync, writeFileSync, chmodSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ServerManager } from "../src/server_manager";
 import { mintServerPassword, serverAuthHeader, serverAuthToken, buildServerSpawnEnv } from "../src/server_auth";
+
+// #1782: reap every detached fake_serve.mjs a test spawned, even when an assertion
+// failed before the test's own cleanup line.
+afterEach(() => reapFakeServes());
 
 // ============================================================================
 // #163: ServerManager injects OPENCODE_SERVER_PASSWORD into the spawn — so its
@@ -32,7 +37,7 @@ function fakeOpencodeBinary(dir: string, captureFile: string): string {
     ].join("\n"),
   );
   const bin = join(dir, "opencode");
-  writeFileSync(bin, `#!/bin/sh\nexec "${process.execPath}" "${serverMjs}" "$@"\n`);
+  writeFileSync(bin, fakeServeShim(dir, serverMjs));
   chmodSync(bin, 0o755);
   return bin;
 }

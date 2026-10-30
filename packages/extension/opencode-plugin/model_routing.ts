@@ -62,11 +62,21 @@ export const MODEL_CLASS_CATALOG: Record<ModelClass, string[]> = {
   "fast-cheap": ["anthropic/claude-haiku-4-5", "openai/gpt-5-mini", "zai/glm-5.3-flash"],
 };
 
-// ── the ops-dir files (the #864 convention: $AMICODE_OPS_DIR → ~/.amico) ────
+// ── the ops-dir files ($AMICODE_OPS_DIR → ~/.amico/amicode) ────
+// #1998: the SAME resolution as src/ops_dir.ts amicodeOpsDir() (the one definition).
+// The plugin dir deploys standalone (#995: no static parent-relative imports), so it
+// mirrors that two-line rule instead of importing it; test/ops_dir.test.ts pins parity.
 
 function opsDirOf(env: NodeJS.ProcessEnv = process.env): string {
   const v = env.AMICODE_OPS_DIR;
-  return v && v.trim() !== "" ? v : path.join(os.homedir(), ".amico", "amicode");
+  return typeof v === "string" && v.trim() !== "" ? v : path.join(os.homedir(), ".amico", "amicode");
+}
+
+/** #1998: the snapshot's pre-unification home (~/.amico/model-routing-providers.json).
+ *  Only the default dir has one — an $AMICODE_OPS_DIR override always wrote in place. */
+function legacySnapshotFile(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const v = env.AMICODE_OPS_DIR;
+  return typeof v === "string" && v.trim() !== "" ? undefined : path.join(os.homedir(), ".amico", "model-routing-providers.json");
 }
 
 /** The user-set tier's prefs file (the settings surface writes here). */
@@ -176,9 +186,17 @@ export function writeProviderSnapshot(file: string, providers: string[]): void {
  *  (UNKNOWN — the resolver fails safe to the default tier, named reason).
  *  undefined is honest: an empty array would claim "no credentials" and
  *  silently strip every tier. */
-export function readLiveProviders(file: string = routingSnapshotFile()): string[] | undefined {
+export function readLiveProviders(file?: string, env: NodeJS.ProcessEnv = process.env): string[] | undefined {
+  // #1998: the snapshot once lived at ~/.amico/ (one level up); an un-migrated
+  // snapshot is still read when the canonical one is missing. Only the default
+  // location has a legacy twin — an explicit `file` is read as given.
+  let resolved = file ?? routingSnapshotFile(env);
+  if (file === undefined) {
+    const legacy = legacySnapshotFile(env);
+    if (legacy !== undefined && !fs.existsSync(resolved) && fs.existsSync(legacy)) resolved = legacy;
+  }
   try {
-    const parsed = JSON.parse(fs.readFileSync(file, "utf8")) as { providers?: unknown };
+    const parsed = JSON.parse(fs.readFileSync(resolved, "utf8")) as { providers?: unknown };
     if (!Array.isArray(parsed.providers)) return undefined;
     const ids = parsed.providers.filter((p): p is string => typeof p === "string" && p.trim() !== "");
     return ids;
@@ -488,7 +506,7 @@ export function routeSpawnModel(args: {
     const agentsDir = args.agentsDir ?? null;
     const role = args.agent.trim();
     const prefs = readRoutingPrefs(routingPrefsFile(env));
-    const liveProviders = readLiveProviders(routingSnapshotFile(env));
+    const liveProviders = readLiveProviders(undefined, env);
     const resolution = resolveRoleRoute({
       role,
       prefs,

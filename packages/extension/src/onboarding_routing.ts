@@ -7,6 +7,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
+import { opencodeConfigDir } from "./opencode_xdg";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -49,7 +50,7 @@ export function resolveOnboardingAction(flags: OnboardingFlags): OnboardingActio
 // ─── Model-presence check ────────────────────────────────────────────────────
 
 /** Check if the opencode config has a model/provider configured.
- *  Reads the config file at the given path (default: ~/.config/opencode/opencode.json[c]).
+ *  Reads the config file at the given path (default: $XDG_CONFIG_HOME/opencode/opencode.json[c], else ~/.config/opencode).
  *  Returns true if there's at least one provider entry OR a model field is set. */
 export function isModelConfigured(
   configPath?: string,
@@ -57,8 +58,8 @@ export function isModelConfigured(
   const paths = configPath
     ? [configPath]
     : [
-        path.join(os.homedir(), ".config", "opencode", "opencode.json"),
-        path.join(os.homedir(), ".config", "opencode", "opencode.jsonc"),
+        path.join(opencodeConfigDir(), "opencode.json"),
+        path.join(opencodeConfigDir(), "opencode.jsonc"),
       ];
 
   for (const p of paths) {

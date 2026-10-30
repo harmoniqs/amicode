@@ -94,6 +94,14 @@ export function renderMathInText(text: string): string {
 
 const inlineMathRegex = /^\\\(((?:\\.|[^\\\n])*?)\\\)/
 const blockMathRegex = /^\$\$\n([\s\S]+?)\n\$\$(?:\n|$)/
+// harmoniqs/amicode#1894 — display shapes LLMs emit besides the fenced $$ form:
+// a one-line `$$ … $$` standing alone as its own block, and LaTeX's `\[ … \]`
+// (one line or fenced). Block-level, so a mid-paragraph `$$x$$` stays literal
+// for the stream normalizer to lift; `\[…\]` also gets an inline twin so
+// "the energy \[ E=mc^2 \] is conserved" renders (never across a blank line).
+const oneLineBlockMathRegex = /^\$\$[ \t]*((?:\\.|[^\n$\\])+?)[ \t]*\$\$[ \t]*(?:\n|$)/
+const bracketBlockMathRegex = /^\\\[[ \t]*\n?((?:(?!\n[ \t]*\n)[\s\S])+?)\n?[ \t]*\\\][ \t]*(?:\n|$)/
+const bracketInlineMathRegex = /^\\\[((?:(?!\n[ \t]*\n)[\s\S])+?)\\\]/
 
 export const katexExtension: MarkedExtension = {
   extensions: [
@@ -121,10 +129,30 @@ export const katexExtension: MarkedExtension = {
       name: "blockKatex",
       level: "block",
       tokenizer(src) {
-        const match = src.match(blockMathRegex)
+        const match = src.match(blockMathRegex) ?? src.match(oneLineBlockMathRegex) ?? src.match(bracketBlockMathRegex)
         if (!match) return
         return {
           type: "blockKatex",
+          raw: match[0],
+          text: match[1].trim(),
+          displayMode: true,
+        }
+      },
+      renderer: renderKatexToken,
+    },
+    {
+      name: "bracketKatex",
+      level: "inline",
+      start(src) {
+        const index = src.indexOf("\\[")
+        if (index === -1) return
+        return index
+      },
+      tokenizer(src) {
+        const match = src.match(bracketInlineMathRegex)
+        if (!match) return
+        return {
+          type: "bracketKatex",
           raw: match[0],
           text: match[1].trim(),
           displayMode: true,

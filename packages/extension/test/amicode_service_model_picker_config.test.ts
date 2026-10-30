@@ -6,7 +6,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { modelPickerConfigFile, modelPickerConfigResponse } from "../src/amicode_service/model_picker_config";
+import { modelPickerConfigFile, modelPickerConfigResponse, readWatchGlobs } from "../src/amicode_service/model_picker_config";
 
 const tmp = () => mkdtempSync(join(tmpdir(), "amc-1987-"));
 
@@ -58,6 +58,20 @@ describe("modelPickerConfigResponse", () => {
       recommended: [{ model: "a/y", role: "strong" }],
       allowlist: ["a/*"],
     });
+  });
+
+  it("#2000: model.watch globs are parsed, trimmed, and bad entries dropped; absent → no key", () => {
+    const file = join(tmp(), "model-picker.json");
+    writeFileSync(file, JSON.stringify({ model: { watch: ["gemini-4-carbon*", " kimi-k3.1* ", "", 7, null] } }));
+    expect(JSON.parse(modelPickerConfigResponse(file)).model).toEqual({
+      recommended: [],
+      watch: ["gemini-4-carbon*", "kimi-k3.1*"],
+    });
+    expect(readWatchGlobs(file)).toEqual(["gemini-4-carbon*", "kimi-k3.1*"]);
+    writeFileSync(file, JSON.stringify({ model: { recommended: [] } }));
+    expect(JSON.parse(modelPickerConfigResponse(file)).model).toEqual({ recommended: [] });
+    expect(readWatchGlobs(file)).toEqual([]);
+    expect(readWatchGlobs(join(tmp(), "missing.json"))).toEqual([]);
   });
 
   it("malformed JSON → ok:false with a fixed error string", () => {

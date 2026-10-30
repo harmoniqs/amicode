@@ -34,6 +34,15 @@ import { createPdfFindController } from "./pdf-find-controller"
 import { PdfFindPill } from "./pdf-find-pill"
 import { toAbsolutePath, shouldApplyWatcherRead } from "./preview-file-helpers"
 import { validateHumanWritePath } from "./preview-human-write-gate"
+import { previewDrafts } from "./preview-draft-store"
+import {
+  COMPILE_DONE_FADE_MS,
+  canStartCompile,
+  compileRequestMessage,
+  compileStatusFromMessage,
+  isLatexFile,
+  type CompileState,
+} from "./preview-latex-compile"
 import { splitFrontmatter } from "./preview-frontmatter"
 import { FrontmatterCard } from "./preview-frontmatter-card"
 
@@ -95,6 +104,10 @@ export function PreviewFileView(props: {
   findDirection?: () => number
   viewState?: () => PreviewViewState | undefined
   onViewStateChange?: (state: PreviewViewState) => void
+  /** The session this view belongs to (#1249). With it, unsaved edits are kept in
+   *  the per-(session, path) draft store so they survive a session-tab remount
+   *  and are never shown to another session. Absent = purely local drafts. */
+  draftSession?: string
   zoom: () => number
   zoomIn: (maximum: number) => void
   zoomOut: () => void
@@ -102,9 +115,17 @@ export function PreviewFileView(props: {
 }) {
   const sdk = useSDK()
   const serverSDK = useServerSDK()
-  const [fileContent, setFileContent] = createSignal("")
-  const [mode, setMode] = createSignal<"preview" | "edit">("preview")
-  const [unsavedContent, setUnsavedContent] = createSignal<string | null>(null)
+  // #1249: a remount (session-tab switch) restores this session's cached draft
+  // before anything reads the disk, so the editor returns with the exact text and
+  // dirty indicator the user left.
+  const draftScope = props.draftSession
+  const restoredDraft = draftScope ? previewDrafts.get(draftScope, props.filePath) : undefined
+  const [fileContent, setFileContent] = createSignal(restoredDraft?.content ?? "")
+  const [mode, setMode] = createSignal<"preview" | "edit">(restoredDraft ? "edit" : "preview")
+  const [unsavedContent, setUnsavedContent] = createSignal<string | null>(restoredDraft?.content ?? null)
+  onMount(() => {
+    if (restoredDraft) props.onDirtyChange(true)
+  })
   const [loading, setLoading] = createSignal(true)
   const [fileType, setFileType] = createSignal<FileType>(null)
   const [pdfNavigation, setPdfNavigation] = createSignal<PdfPageNavigation | null>(null)
@@ -236,6 +257,8 @@ export function PreviewFileView(props: {
               return
             }
             setFileType("text")
+            // A disk read never replaces a cached draft (#1249).
+            if (unsavedContent() !== null) return
             setFileContent(content.content)
           })
           .catch(() => {
@@ -354,6 +377,41 @@ export function PreviewFileView(props: {
     onCleanup(() => window.removeEventListener("message", handler))
   })
 
+  // ─── Compile button status (#1403) ─────────────────────────────────────
+  // idle → compiling → done (check fades) | error, driven by the same
+  // run-latex-status relay the PDF refresh above listens to. Only for LaTeX files.
+  const [compileState, setCompileState] = createSignal<CompileState>("idle")
+  const [compileDetail, setCompileDetail] = createSignal<string | undefined>(undefined)
+  let compileFadeTimer: ReturnType<typeof setTimeout> | undefined
+  const applyCompileStatus = (status: { state: CompileState; detail?: string }) => {
+    if (compileFadeTimer) clearTimeout(compileFadeTimer)
+    compileFadeTimer = undefined
+    setCompileState(status.state)
+    setCompileDetail(status.detail)
+    if (status.state === "done") {
+      compileFadeTimer = setTimeout(() => setCompileState("idle"), COMPILE_DONE_FADE_MS)
+    }
+  }
+  const requestCompile = () => {
+    if (!canStartCompile(compileState())) return
+    // Same message Cmd+S posts after a save — works on a clean (unmodified) file.
+    try {
+      window.parent?.postMessage(compileRequestMessage(selfAbsolute()), "*")
+    } catch {}
+  }
+  onMount(() => {
+    const handler = (event: MessageEvent) => {
+      if (!isLatexFile(props.filePath)) return
+      const status = compileStatusFromMessage(event.data, selfAbsolute())
+      if (status) applyCompileStatus(status)
+    }
+    window.addEventListener("message", handler)
+    onCleanup(() => window.removeEventListener("message", handler))
+  })
+  onCleanup(() => {
+    if (compileFadeTimer) clearTimeout(compileFadeTimer)
+  })
+
   // ─── Binary URLs ───────────────────────────────────────────────────────
 
   // Data URI for images (small enough for inline base64)
@@ -384,11 +442,23 @@ export function PreviewFileView(props: {
     }
     setSaveStatus("saving")
     try {
-      await serverSDK().client.file.write({ path: filePath, content })
+      // #1249: serialize per server + project + file; a close-save of the same text
+      // joins an in-flight save instead of writing twice. The draft revision is
+      // captured NOW so a completion can only clear the edit it actually wrote.
+      const revision = draftScope ? previewDrafts.get(draftScope, filePath)?.revision : undefined
+      const fileKey = [serverSDK().url, workspace ?? "", filePath].join("\u0000")
+      await previewDrafts.enqueueSave(fileKey, content, async () => {
+        await serverSDK().client.file.write({ path: filePath, content })
+      })
       setSaveStatus("saved")
-      setUnsavedContent(null)
-      props.onDirtyChange(false)
-      if (closeAfterSave) props.onSaveComplete?.()
+      // A newer edit typed while the write was in flight keeps the document dirty
+      // (and an older completion never closes it).
+      const settled = draftScope && revision !== undefined ? previewDrafts.settle(draftScope, filePath, revision) : true
+      if (settled) {
+        setUnsavedContent(null)
+        props.onDirtyChange(false)
+        if (closeAfterSave) props.onSaveComplete?.()
+      }
       if (savedTimer) clearTimeout(savedTimer)
       savedTimer = setTimeout(() => setSaveStatus("idle"), 2000)
       // #1253: trigger LaTeX compilation after saving a .tex file. #1414: post
@@ -404,6 +474,7 @@ export function PreviewFileView(props: {
   }
 
   const handleEdit = (content: string) => {
+    if (draftScope) previewDrafts.write(draftScope, props.filePath, content)
     setUnsavedContent(content)
     props.onDirtyChange(true)
     setFileContent(content)
@@ -674,6 +745,62 @@ export function PreviewFileView(props: {
                 </SegmentedControlItemV2>
               </TooltipV2>
             </SegmentedControlV2>
+          </div>
+        </Show>
+        {/* Compile (#1403): LaTeX sources only. A .tex opens straight in the editor, where
+            the zoom/page controls are hidden, so this sits OUTSIDE the isEditing gate. */}
+        <Show when={isLatexFile(props.filePath)}>
+          <div
+            class="shrink-0 flex items-center h-7 rounded-md border border-border-base overflow-hidden shadow-sm"
+            style={previewControlSurfaceStyle}
+          >
+            <TooltipV2
+              openDelay={400}
+              value={compileState() === "error" && compileDetail() ? `Compile failed: ${compileDetail()}` : "Compile LaTeX"}
+            >
+              <button
+                type="button"
+                data-preview-compile
+                data-compile-state={compileState()}
+                class="flex items-center justify-center gap-1 h-full px-2 cursor-pointer text-12-regular text-text-weak hover:text-text-base hover:bg-background-stronger transition-colors disabled:cursor-wait focus-visible:outline focus-visible:outline-2 focus-visible:outline-border-focus"
+                aria-label={compileState() === "compiling" ? "Compiling" : "Compile LaTeX"}
+                aria-busy={compileState() === "compiling"}
+                onClick={requestCompile}
+              >
+                <Show
+                  when={compileState() !== "compiling"}
+                  fallback={<span data-compile-spinner class="size-3 rounded-full border-2 border-current border-t-transparent animate-spin" />}
+                >
+                  <Show
+                    when={compileState() === "done"}
+                    fallback={
+                      <Show
+                        when={compileState() === "error"}
+                        fallback={
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                            <path d="M7 4.5v15a.5.5 0 0 0 .77.42l11.5-7.5a.5.5 0 0 0 0-.84L7.77 4.08A.5.5 0 0 0 7 4.5z" />
+                          </svg>
+                        }
+                      >
+                        <Icon name="circle-x" size="small" class="text-icon-critical-base" />
+                      </Show>
+                    }
+                  >
+                    <Icon name="check-small" size="small" />
+                  </Show>
+                </Show>
+                <span>Compile</span>
+              </button>
+            </TooltipV2>
+            <span class="sr-only" role="status" aria-live="polite">
+              {compileState() === "compiling"
+                ? "Compiling"
+                : compileState() === "done"
+                  ? "Compiled"
+                  : compileState() === "error"
+                    ? "Compile failed"
+                    : ""}
+            </span>
           </div>
         </Show>
         <Show when={!isEditing()}>

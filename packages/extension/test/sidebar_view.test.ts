@@ -1452,6 +1452,47 @@ describe("sidebar bridge — file operations", () => {
 
 // ── Session-aware highlighting (#677) ────────────────────────────────────────
 
+describe("SidebarViewProvider — revealFile (#1036)", () => {
+  let SidebarViewProvider: any;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    const mod = await import("../src/sidebar_view");
+    SidebarViewProvider = mod.SidebarViewProvider;
+  });
+
+  it("focuses the sidebar view, then posts reveal-file to the webview", async () => {
+    const provider = new SidebarViewProvider(makeExtensionUri());
+    const view = makeWebviewView();
+    provider.resolveWebviewView(view, {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
+    // resetModules gave the provider a fresh vscode mock: read the same instance it sees.
+    const vs = await import("vscode");
+    const executed = (vs.commands as unknown as { executed: string[] }).executed;
+    const before = executed.length;
+
+    await provider.revealFile("/w/p/a.md");
+
+    expect(executed.slice(before)).toContain("amicode.workspace.focus");
+    expect(view.webview.postMessage).toHaveBeenCalledWith({ kind: "reveal-file", path: "/w/p/a.md" });
+  });
+
+  it("queues the reveal until the webview exists and replays it on resolve", async () => {
+    const provider = new SidebarViewProvider(makeExtensionUri());
+    await provider.revealFile("/w/p/a.md"); // sidebar never opened: no view yet
+    const view = makeWebviewView();
+    provider.resolveWebviewView(view, {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
+    expect(view.webview.postMessage).toHaveBeenCalledWith({ kind: "reveal-file", path: "/w/p/a.md" });
+  });
+
+  it("ignores an empty path", async () => {
+    const provider = new SidebarViewProvider(makeExtensionUri());
+    const view = makeWebviewView();
+    provider.resolveWebviewView(view, {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
+    await provider.revealFile("");
+    expect(view.webview.postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ kind: "reveal-file" }));
+  });
+});
+
 describe("SidebarViewProvider — session awareness", () => {
   let SidebarViewProvider: any;
 
@@ -4398,6 +4439,14 @@ describe("sidebar openFile routes to preview-file bridge message (#934)", () => 
     const handlerBlock = src.slice(openFileIdx, openFileIdx + 400);
     expect(handlerBlock).toContain("preview-file");
     expect(handlerBlock).toContain("ChatPanel");
+  });
+
+  it("#1648 — openFile targets the open at the panel's settled session (an un-targeted broadcast bleeds across session views)", () => {
+    const src = readFileSync(resolve(__dirname, "..", "src", "sidebar_view.ts"), "utf8");
+    const start = src.indexOf("openFile:");
+    const block = src.slice(start, src.indexOf("openFileEditor:", start));
+    expect(block).toContain("previewFileTarget()");
+    expect(block).toContain("sessionID");
   });
 
   it("openFileEditor opens an editable text tab before falling back to vscode.open for binary files", () => {

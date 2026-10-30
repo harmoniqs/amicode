@@ -947,3 +947,33 @@ describe("files changed tab: pinch/wheel zoom in markdown preview (#937)", () =>
     expect(handlerBlock).toContain("Math.max")
   })
 })
+
+// ---------------------------------------------------------------------------
+// Compile button in the floating controls: LaTeX sources only (#1403)
+// ---------------------------------------------------------------------------
+
+describe("compile button visibility (#1403)", () => {
+  // The gate the file view applies to the button: `<Show when={isLatexFile(props.filePath)}>`.
+  const { isLatexFile } = require("../../../../app/src/components/session/preview-latex-compile") as {
+    isLatexFile: (path: string) => boolean
+  }
+  const fileViewSrc = fs.readFileSync(
+    path.resolve(__dirname, "../../../../app/src/components/session/preview-file-view.tsx"),
+    "utf8",
+  )
+
+  test("the button renders for .tex and .ltx", () => {
+    expect(isLatexFile("paper.tex")).toBe(true)
+    expect(isLatexFile("/w/refs/macros.ltx")).toBe(true)
+  })
+
+  test("the button does not render for markdown, images, PDFs, or plain text", () => {
+    for (const file of ["notes.md", "figure.png", "paper.pdf", "readme.txt", "Makefile"]) {
+      expect(isLatexFile(file)).toBe(false)
+    }
+  })
+
+  test("the file view gates the button on that predicate", () => {
+    expect(fileViewSrc).toMatch(/<Show when=\{isLatexFile\(props\.filePath\)\}>[\s\S]{0,1200}data-preview-compile/)
+  })
+})
