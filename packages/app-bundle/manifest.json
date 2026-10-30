@@ -722,7 +722,7 @@
     "packages/ui/src/components/toast.css": "60c06eda9f0ccc5641c03c002a6080db99c00d797dbdf7511c789089efc1c546",
     "packages/ui/src/components/tooltip.css": "a615df9b86e64c1565384baa8054c2f80ebad11856d33f5e6f53902541eacef2",
     "packages/ui/src/context/dialog.tsx": "876f8a5dc26ebb98f1f5e9e528e7d0bd7aa79c0a107b62027dd9fe78ed2cc620",
-    "packages/ui/src/context/marked-math.test.ts": "0a53b2701d79ef16abe3132a514831ada60a535324991e4d72ee4e0ced9a0ae6",
+    "packages/ui/src/context/marked-math.test.ts": "82fdb59a9f365b91b785d1e1e2ac424e708e020704ea9b26efca9972648778c3",
     "packages/ui/src/context/marked-parser.tsx": "2d8d0c2e5e28278f54296640d1e851fff4ef3b2902c7f70d02cdbcd82545bf39",
     "packages/ui/src/hooks/create-auto-scroll.tsx": "4a8e9aa41f075b5e1815e647ab3a8a5333340d00e20ff7414f5e6c1f9a738337",
     "packages/ui/src/i18n/ar.ts": "8113d320fe4a5300f1bd70150ae1695d68cb783e1c6e2be43b8a429b7dbdb711",
@@ -1070,7 +1070,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-29T13:09:53.406Z",
+  "extracted_at": "2026-10-30T19:29:31.483Z",
   "per_package": {
     "packages/app": {
       "A": 289,
