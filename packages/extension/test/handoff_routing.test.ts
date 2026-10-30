@@ -1,7 +1,7 @@
 // Handoff routing tests — Stage 8 (#438)
 //
-// Table-driven tests for the intent-based handoff routing, pre-fill resolution,
-// and intent reading from the events stream.
+// Tests for the post-onboarding handoff (always a normal new session, regardless
+// of intent), pre-fill resolution, and intent reading from the events stream.
 
 import { describe, it, expect } from "vitest";
 
@@ -16,26 +16,26 @@ import {
 
 // ─── AC6: Handoff routing table ─────────────────────────────────────────────
 
-describe("resolveHandoffAction — intent-based routing (AC6)", () => {
-  const cases: Array<{ intents: IntentSlug[]; expected: HandoffAction; name: string }> = [
-    { intents: ["research"], expected: "research-session", name: "research only → research-session" },
-    { intents: ["general_coding"], expected: "normal-session", name: "general coding only → normal-session" },
-    { intents: ["exploring"], expected: "tour-session", name: "exploring only → tour-session" },
-    { intents: ["research", "general_coding"], expected: "research-session-plus", name: "research + general → research-session-plus" },
-    { intents: ["research", "exploring"], expected: "research-session", name: "research + exploring → research-session" },
-    { intents: ["general_coding", "exploring"], expected: "normal-session", name: "general + exploring → normal-session" },
-    { intents: ["research", "general_coding", "exploring"], expected: "research-session-plus", name: "all three → research-session-plus" },
+describe("resolveHandoffAction — single exit path after onboarding (AC6)", () => {
+  // The tutorial now lives inside onboarding, so every intent selection
+  // (including none) yields the same plain new-session action.
+  const cases: Array<{ intents: IntentSlug[]; name: string }> = [
+    { intents: [], name: "no intent" },
+    { intents: ["research"], name: "research only" },
+    { intents: ["general_coding"], name: "general coding only" },
+    { intents: ["exploring"], name: "exploring only" },
+    { intents: ["research", "general_coding"], name: "research + general" },
+    { intents: ["research", "exploring"], name: "research + exploring" },
+    { intents: ["general_coding", "exploring"], name: "general + exploring" },
+    { intents: ["research", "general_coding", "exploring"], name: "all three" },
   ];
 
-  for (const { intents, expected, name } of cases) {
-    it(name, () => {
-      expect(resolveHandoffAction(intents)).toBe(expected);
+  for (const { intents, name } of cases) {
+    it(`${name} → normal-session`, () => {
+      const action: HandoffAction = resolveHandoffAction(intents);
+      expect(action).toBe("normal-session");
     });
   }
-
-  it("empty intents → normal-session (safe default)", () => {
-    expect(resolveHandoffAction([])).toBe("normal-session");
-  });
 });
 
 // ─── AC1-2: Pre-fill resolution ─────────────────────────────────────────────
