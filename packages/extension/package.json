@@ -75,6 +75,10 @@
         "title": "Amicode: Connect Harmoniqs AI Provider"
       },
       {
+        "command": "amicode.revealInSidebar",
+        "title": "Amicode: Find in Sidebar"
+      },
+      {
         "command": "amicode.openChat",
         "title": "Amicode: Open Chat",
         "icon": {

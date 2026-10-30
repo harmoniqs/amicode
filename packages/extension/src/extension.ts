@@ -707,6 +707,33 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // behavior: "reset" for explicit selection, "expand" for session/tab switch.
   ChatPanel.onProjectSelected((path, mode) => sidebarProvider.setActiveProject(path, mode));
   ChatPanel.onPreviewVisibleChildren((root, relativeDirectory) => sidebarProvider.previewVisibleChildren(root, relativeDirectory));
+  // #1036: "Find in sidebar" — open the sidebar if it is collapsed/hidden, then
+  // reveal the file in the project tree (expand ancestors, scroll, flash). The
+  // Preview tab context menu reaches this via the dedicated `reveal-in-sidebar`
+  // bridge message (the generic command lane forwards no arguments); the
+  // command is also callable from the palette / a keybinding with no argument,
+  // in which case it targets the active editor's file.
+  const revealInSidebar = async (target?: unknown): Promise<void> => {
+    let fsPath: string | undefined;
+    if (typeof target === "string") fsPath = target;
+    else if (target instanceof vscode.Uri) fsPath = target.fsPath;
+    else {
+      fsPath = vscode.window.activeTextEditor?.document.uri.fsPath;
+      if (!fsPath) {
+        const input = vscode.window.tabGroups.activeTabGroup.activeTab?.input as { uri?: vscode.Uri } | undefined;
+        fsPath = input?.uri instanceof vscode.Uri ? input.uri.fsPath : undefined;
+      }
+    }
+    if (!fsPath) return;
+    try {
+      await vscode.commands.executeCommand("amicode.workspace.focus");
+    } catch {
+      // Focus failure must not block the reveal; the provider queues it.
+    }
+    sidebarProvider.revealFile(fsPath);
+  };
+  ChatPanel.onRevealInSidebar((p) => void revealInSidebar(p));
+  ctx.subscriptions.push(vscode.commands.registerCommand("amicode.revealInSidebar", revealInSidebar));
   // #1551: the self-owned enable-control act. The composer scrim's CTA posts a
   // `fleet-enable-control` envelope (carrying the target owner machineId +
   // sessionID); here we show the ADR 0034 D4 native modal and, on confirm, mint
