@@ -105,7 +105,7 @@ export interface FleetProjectionOptions {
 
 /** #1771: one peer's ownership-refresh outcome — what the OwnerMapFeed logs.
  *  `timeout` is the fetch guard firing (AbortSignal.timeout); `unauthorized` a
- *  401; every other absence (fetch failure, no upstream, missing credential,
+ *  401 or 403; every other absence (fetch failure, no upstream, missing credential,
  *  untrusted) is `error`, with its named `reason`. */
 export type OwnerRefreshOutcome = "ok" | "timeout" | "error" | "unauthorized";
 
@@ -263,7 +263,13 @@ async function fetchSessions(
       headers: authHeaders,
       signal: AbortSignal.timeout(timeoutMs),
     });
+    // #1794: a 403 is the peer refusing us, exactly like a 401 — classify both as
+    // `unauthorized` so the owner map drops that peer's sessions at once instead of
+    // retaining them as a transient failure. 5xx stays `fetch-failed` (retained).
     if (res.status === 401) return done({ record: { ...base, reason: "unauthorized" }, entries: [] });
+    if (res.status === 403) {
+      return done({ record: { ...base, reason: "unauthorized", detail: "HTTP 403" }, entries: [] });
+    }
     if (!res.ok) {
       return done({ record: { ...base, reason: "fetch-failed", detail: `HTTP ${res.status}` }, entries: [] });
     }
