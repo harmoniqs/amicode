@@ -5,7 +5,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { ModelReachability, reachabilityCacheFile } from "../src/amicode_service/model_reachability";
 import { modelPickerConfigFile } from "../src/amicode_service/model_picker_config";
 import { amicodeOpsDir as vaultStoreOpsDir } from "../src/substrate/vault_store";
@@ -34,6 +34,23 @@ describe("#1998 one amicodeOpsDir()", () => {
 
   it("the re-exports are the SAME function", () => {
     expect(vaultStoreOpsDir).toBe(connectionsOpsDir);
+  });
+
+  it("the standalone plugin's mirrored resolution agrees with amicodeOpsDir() (override, blank override, default)", () => {
+    const home = mkdtempSync(join(tmpdir(), "amc-1998-parity-"));
+    const prev = { ops: process.env.AMICODE_OPS_DIR, home: process.env.HOME };
+    process.env.HOME = home;
+    try {
+      for (const v of ["/some/ops", "   ", undefined]) {
+        const env = { AMICODE_OPS_DIR: v } as NodeJS.ProcessEnv;
+        expect(dirname(routingSnapshotFile(env))).toBe(vaultStoreOpsDir(env));
+      }
+    } finally {
+      if (prev.ops === undefined) delete process.env.AMICODE_OPS_DIR;
+      else process.env.AMICODE_OPS_DIR = prev.ops;
+      if (prev.home === undefined) delete process.env.HOME;
+      else process.env.HOME = prev.home;
+    }
   });
 });
 

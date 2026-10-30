@@ -39,8 +39,8 @@
 // ============================================================================
 
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
-import { amicodeOpsDir, legacyOpsFile, readablePath } from "../src/ops_dir";
 
 /** The provenance classes — every resolution row carries exactly one; no
  *  silent source (the settings surface renders this per row). */
@@ -62,9 +62,22 @@ export const MODEL_CLASS_CATALOG: Record<ModelClass, string[]> = {
   "fast-cheap": ["anthropic/claude-haiku-4-5", "openai/gpt-5-mini", "zai/glm-5.3-flash"],
 };
 
-// ── the ops-dir files ($AMICODE_OPS_DIR → ~/.amico/amicode, #1998: one definition) ────
+// ── the ops-dir files ($AMICODE_OPS_DIR → ~/.amico/amicode) ────
+// #1998: the SAME resolution as src/ops_dir.ts amicodeOpsDir() (the one definition).
+// The plugin dir deploys standalone (#995: no static parent-relative imports), so it
+// mirrors that two-line rule instead of importing it; test/ops_dir.test.ts pins parity.
 
-const opsDirOf = amicodeOpsDir;
+function opsDirOf(env: NodeJS.ProcessEnv = process.env): string {
+  const v = env.AMICODE_OPS_DIR;
+  return typeof v === "string" && v.trim() !== "" ? v : path.join(os.homedir(), ".amico", "amicode");
+}
+
+/** #1998: the snapshot's pre-unification home (~/.amico/model-routing-providers.json).
+ *  Only the default dir has one — an $AMICODE_OPS_DIR override always wrote in place. */
+function legacySnapshotFile(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const v = env.AMICODE_OPS_DIR;
+  return typeof v === "string" && v.trim() !== "" ? undefined : path.join(os.homedir(), ".amico", "model-routing-providers.json");
+}
 
 /** The user-set tier's prefs file (the settings surface writes here). */
 export function routingPrefsFile(env: NodeJS.ProcessEnv = process.env): string {
@@ -177,8 +190,11 @@ export function readLiveProviders(file?: string, env: NodeJS.ProcessEnv = proces
   // #1998: the snapshot once lived at ~/.amico/ (one level up); an un-migrated
   // snapshot is still read when the canonical one is missing. Only the default
   // location has a legacy twin — an explicit `file` is read as given.
-  const resolved =
-    file ?? readablePath(routingSnapshotFile(env), legacyOpsFile("model-routing-providers.json", env));
+  let resolved = file ?? routingSnapshotFile(env);
+  if (file === undefined) {
+    const legacy = legacySnapshotFile(env);
+    if (legacy !== undefined && !fs.existsSync(resolved) && fs.existsSync(legacy)) resolved = legacy;
+  }
   try {
     const parsed = JSON.parse(fs.readFileSync(resolved, "utf8")) as { providers?: unknown };
     if (!Array.isArray(parsed.providers)) return undefined;
