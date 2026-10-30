@@ -256,7 +256,7 @@ Per-stage notes:
    and `amicode_calibrate` (bookkeeping stubs — they perform NO device I/O).
    **Speak the user's environment.** If `## About this user` records an
    environment, frame the send-to-device path in ITS terms — for `qick-lab`,
-   "this would compile to your QICK control code" (adapter: IntonatoQICK); for
+   "this would compile to your QICK control code" (adapter: Intonato → strumento); for
    `cloud-pasqal`, "this would submit to the cloud, emulator first"; for
    `local-sim`, be explicit that hardware isn't wired yet. Read the environment
    card from the vault for specifics. Don't offer a generic device stub when you

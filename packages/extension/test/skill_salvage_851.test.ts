@@ -9,15 +9,17 @@
 //   - the `visibility` authoring gate (PR #45's two one-line tags): the
 //     amico-vault spec + plan schemas and the brainstorming spec template
 //     carry the field;
-//   - the `intonatoqick` skill (amico-plugin PR #42): public surface,
+//   - the public QICK hardware skill (amico-plugin PR #42, renamed
+//     intonatoqick → intonato-hardware in amicode#2024): public surface,
 //     provenance, the entitled tier named as `intonatissimo` (current
-//     package reality), and the sibling skills referenced not duplicated;
+//     package reality), the sibling skills referenced not duplicated, and
+//     Intonato-only examples (the archived standalone QICK package is gone);
 //   - the restricted 6th vault kind (amico-plugin PRs #48/#27): the
 //     amico-vault kind table carries all SIX kinds and the prompt-side
 //     condensed routing (stack_state.ts) agrees — the prompt↔skill
 //     disagreement the audit found is closed and pinned shut.
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -95,21 +97,36 @@ describe("the visibility authoring gate (PR #45's two one-line tags)", () => {
   });
 });
 
-// ── PR #42: the intonatoqick public skill ────────────────────────────────────
+// ── PR #42: the QICK hardware public skill (intonatoqick → intonato-hardware) ─
+// The salvaged `intonatoqick` card targeted the standalone QICK backend
+// package, since archived (its role went to Intonato's hardware seam; Strumento.jl is being retired
+// too, harmoniqs/Intonato.jl#53). amicode#2024 replaced it with
+// `intonato-hardware`: the same public QICK path, on names Intonato itself
+// exports in both 0.4 and 0.5.
 
-describe("salvaged intonatoqick skill (amico-plugin PR #42 → amicode#851)", () => {
-  const skill = readSkill("intonatoqick");
+// The archived package's name, assembled so this guard does not itself become a
+// hit for the repo-wide grep it backs (`git grep` must reach only the
+// historical campaign fixtures).
+const ARCHIVED_PKG = new RegExp(["Intonato", "QICK"].join(""), "i");
+
+describe("the public QICK hardware skill (amico-plugin PR #42 → amicode#851 → amicode#2024)", () => {
+  const skill = readSkill("intonato-hardware");
+
+  it("the archived-package skill is gone (no intonatoqick directory)", () => {
+    expect(existsSync(join(SKILLS, "intonatoqick"))).toBe(false);
+  });
 
   it("carries shippable public frontmatter with the experimenter/engineer agents", () => {
     const fm = frontmatter(skill);
-    expect(fm).toMatch(/^name:\s*intonatoqick\s*$/m);
+    expect(fm).toMatch(/^name:\s*intonato-hardware\s*$/m);
     expect(fm).toMatch(/^surface:\s*public\b/m);
     expect(fm).toMatch(/^agents:\s*\[experimenter, engineer\]/m);
   });
 
-  it("carries its salvage provenance (amico-plugin PR #42, archived repo)", () => {
+  it("carries its salvage provenance (amico-plugin PR #42, archived repo) and the replacement issue", () => {
     expect(skill).toMatch(/amico-plugin.*PR #42/);
     expect(skill).toMatch(/#851/);
+    expect(skill).toMatch(/#2024/);
   });
 
   it("names the entitled tuning tier as `intonatissimo` (current package reality), not the archived private path", () => {
@@ -124,11 +141,53 @@ describe("salvaged intonatoqick skill (amico-plugin PR #42 → amicode#851)", ()
     expect(skill).toMatch(/Sibling skills/);
   });
 
-  it("carries no internal-machine path shape (it is public surface)", () => {
-    for (const shape of ["/home/", "/users/", "~/.amico", "armonissima", "~/armonia"]) {
-      expect(skill.includes(shape), `intonatoqick must not carry "${shape}"`).toBe(false);
+  it("its Julia examples import Intonato only — no archived or retiring Julia package", () => {
+    const julia = [...skill.matchAll(/```julia\n([\s\S]*?)```/g)].map((m) => m[1]).join("\n");
+    expect(julia).toMatch(/using Intonato\b/);
+    expect(skill.replace(/`intonatoqick`/g, "")).not.toMatch(ARCHIVED_PKG); // only the old skill id, as provenance
+    expect(julia).not.toMatch(/using Strumento\b|import Strumento\b/);
+    // the archived package's type names must not survive the port
+    // (word-bounded: Python strumento's own `MockQickSocV2` is a legitimate board-side name)
+    for (const stale of ["QickBackend", "MockQickSoc", "PyQickSoc", "QickExperiment"]) {
+      expect(skill, `intonato-hardware must not carry "${stale}"`).not.toMatch(new RegExp(`\\b${stale}\\b`));
     }
   });
+
+  it("uses the hardware-seam names Intonato exports (0.4 and 0.5 alike)", () => {
+    for (const name of ["MockSoc", "QickChannelMap", "QickGenChannel", "StrumentoBackend", "StrumentoExperiment", "StrumentoSoc", "HardwareExperiment", "PulseTuningProblem"]) {
+      expect(skill, `intonato-hardware names ${name}`).toContain(name);
+    }
+  });
+
+  it("carries no internal-machine path shape (it is public surface)", () => {
+    for (const shape of ["/home/", "/users/", "~/.amico", "armonissima", "~/armonia"]) {
+      expect(skill.includes(shape), `intonato-hardware must not carry "${shape}"`).toBe(false);
+    }
+  });
+});
+
+// The live surfaces that advertised the archived backend (amicode#2024). The
+// campaign fixtures under test/fixtures/campaign are historical records and are
+// deliberately not listed.
+describe("no live surface names the archived standalone QICK package (amicode#2024)", () => {
+  const REPO = join(EXT, "..", "..");
+  const LIVE = [
+    "README.md",
+    "docs/features.md",
+    "docs/getting-started.md",
+    "docs/hardware.md",
+    "ops/server/hub-AGENTS.md",
+    "scripts/armonia-workstation",
+    "packages/extension/README.md",
+    "packages/extension/scores/pulse-designer/SCORE.md",
+    "packages/extension/test/scores/golden/compile-score.md",
+    "packages/extension/test/scores/golden/compile-chained.md",
+  ];
+  for (const rel of LIVE) {
+    it(`${rel} does not name the archived package`, () => {
+      expect(readFileSync(join(REPO, rel), "utf8")).not.toMatch(ARCHIVED_PKG);
+    });
+  }
 });
 
 // ── PRs #48/#27: the restricted 6th vault kind, prompt ↔ skill agreement ─────

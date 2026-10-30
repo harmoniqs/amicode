@@ -57,7 +57,9 @@ ideal for development and CI. The boundary to the board is a deliberately coarse
 three-verb transport, so the same script runs against the mock and the metal
 unchanged.
 
-The backend is **[IntonatoQICK.jl](https://github.com/harmoniqs/IntonatoQICK.jl)**.
+The path is **[Intonato](https://github.com/harmoniqs/Intonato.jl)**'s hardware seam
+(`StrumentoBackend` / `StrumentoExperiment` over a soc), which reaches a real board
+by delegating to the Python `strumento` framework.
 See [Hardware](./hardware.md) for the full path from mock loop to real board.
 
 ## Open core

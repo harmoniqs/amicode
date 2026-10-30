@@ -1,8 +1,13 @@
 # Hardware — QICK / RFSoC
 
 Amicode's hardware path is
-**[IntonatoQICK.jl](https://github.com/harmoniqs/IntonatoQICK.jl)**, a QICK
-backend that bridges an optimized pulse to an RFSoC board. The design goal is a
+**[Intonato](https://github.com/harmoniqs/Intonato.jl)**'s hardware seam, which
+bridges an optimized pulse to a QICK RFSoC board. `using Intonato` brings the
+whole stack: the QICK channel map (`QickChannelMap` / `QickGenChannel`), the
+board-free `MockSoc`, and `StrumentoBackend` / `StrumentoExperiment`, which turn
+any soc into a `HardwareExperiment` for the `PulseTuningProblem` tuning loop. A
+real board is reached by delegating to the Python `strumento` framework, which
+drives QICK. The design goal is a
 single, thin firewall between you and the lab: a pulse you solved in the editor
 should reach the board without any transcription, and the whole loop should run
 on a laptop with no board attached. This page walks that path.
@@ -24,11 +29,11 @@ design leaks into the board firmware.
 
 ## The pure-Julia mock loop
 
-Every one of those three verbs has a pure-Julia mock implementation. The mock
-accepts an uploaded pulse, "fires" it, and returns simulated readout — so you
-can run the *entire* closed loop with **no Python and no board**. This is the
-default path for development and CI: the worked example in
-[Getting started](./getting-started.md) runs against the mock, and the backend's
+Behind those three verbs can sit a pure-Julia mock board, Intonato's `MockSoc`.
+The mock accepts an uploaded pulse, "fires" it, and returns simulated readout —
+so you can run the *entire* closed loop with **no Python and no board**. This is
+the default path for development and CI: the worked example in
+[Getting started](./getting-started.md) runs against the mock, and Intonato's
 own test suite exercises the full loop this way.
 
 Working against the mock first is the intended workflow, not a fallback. You
@@ -37,20 +42,25 @@ before a board is in the room.
 
 ## Swapping to a real board
 
-Because the mock and the real backend implement the same three verbs, moving to
-hardware **swaps the transport and nothing else** — the pulse, the script, and
-the readout handling are unchanged. You point Amicode at your board's hardware
-profile and the same loop now runs on metal.
+Because the same backend drives the mock and the real board through the same
+three verbs, moving to hardware **swaps the soc and nothing else**: `MockSoc`
+becomes `StrumentoSoc`, which hands the pulse to Python `strumento` (loaded
+through PythonCall). The pulse, the script, and the readout handling are
+unchanged. You point Amicode at your board's hardware profile and the same loop
+now runs on metal.
 
 The board profile lives in a `lab.toml` (by default `~/.amico/lab.toml`), which
 Amicode validates on load. A connected board's live status — its queue and
 health — surfaces in the Device Inspector panel; the endpoint you configure is a
 pointer only, never credentials.
 
-For the backend itself, its supported firmware, and setup on a specific RFSoC,
-follow the backend repository:
+For the Julia side of the path — the soc types, the channel map, and how to
+load the real-board soc — follow the Intonato repository:
 
-> **QICK v2 backend & docs → [github.com/harmoniqs/IntonatoQICK.jl](https://github.com/harmoniqs/IntonatoQICK.jl)**
+> **Hardware seam & docs → [github.com/harmoniqs/Intonato.jl](https://github.com/harmoniqs/Intonato.jl)**
+
+Board firmware and tProc-v2 specifics belong to Python `strumento` and QICK
+itself, on the board side of the boundary.
 
 ## Beyond open-loop
 
