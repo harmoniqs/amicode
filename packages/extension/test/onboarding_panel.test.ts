@@ -1552,3 +1552,51 @@ describe("probeModels — find first accessible model for a provider", () => {
     expect(url2).toContain("claude-sonnet-4-5-v2");
   });
 });
+
+describe("writeOnboardingConfig — default path honours XDG_CONFIG_HOME (#1573)", () => {
+  let tmpDir: string;
+  let prevXdgConfigHome: string | undefined;
+  let prevHome: string | undefined;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "onboard-xdg-"));
+    prevXdgConfigHome = process.env.XDG_CONFIG_HOME;
+    prevHome = process.env.HOME;
+    // Hermetic: a regression must never fall through to the real ~/.config.
+    process.env.HOME = path.join(tmpDir, "fake-home");
+  });
+
+  afterEach(() => {
+    if (prevXdgConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = prevXdgConfigHome;
+    if (prevHome === undefined) delete process.env.HOME;
+    else process.env.HOME = prevHome;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("writes to $XDG_CONFIG_HOME/opencode/opencode.json when no path is given", () => {
+    process.env.XDG_CONFIG_HOME = path.join(tmpDir, "xdg");
+    writeOnboardingConfig({
+      provider: "anthropic",
+      model: "anthropic/claude-sonnet-5",
+      apiKey: "sk-test-key-123",
+    });
+    const written = path.join(tmpDir, "xdg", "opencode", "opencode.json");
+    expect(fs.existsSync(written)).toBe(true);
+    expect(JSON.parse(fs.readFileSync(written, "utf8")).model).toBe("anthropic/claude-sonnet-5");
+  });
+
+  it("reconcileHarmoniqsProviderConfig reads the XDG config path by default", () => {
+    process.env.XDG_CONFIG_HOME = path.join(tmpDir, "xdg");
+    const cfgDir = path.join(tmpDir, "xdg", "opencode");
+    fs.mkdirSync(cfgDir, { recursive: true });
+    const cfgPath = path.join(cfgDir, "opencode.json");
+    fs.writeFileSync(
+      cfgPath,
+      JSON.stringify({ provider: { [HARMONIQS_PROVIDER_ID]: { models: { [HARMONIQS_MODEL_ID]: {} } } } }),
+    );
+    reconcileHarmoniqsProviderConfig();
+    const healed = JSON.parse(fs.readFileSync(cfgPath, "utf8"));
+    expect(healed.provider[HARMONIQS_PROVIDER_ID].models[HARMONIQS_MODEL_ID].tool_call).toBe(true);
+  });
+});
