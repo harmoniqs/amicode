@@ -51,6 +51,7 @@ CHECK_LIVE_ONLY=0
 STRICT_LIVE_CHECK=0
 ALLOW_LIVE_SERVER=0
 SELF_TEST_DEPLOY=0
+SELF_TEST_SHUTDOWN=0
 
 usage() {
   cat >&2 <<EOF
@@ -93,6 +94,7 @@ while [ $# -gt 0 ]; do
     --strict-live-check) STRICT_LIVE_CHECK=1 ;;
     --allow-live-server) ALLOW_LIVE_SERVER=1 ;;
     --self-test-deploy) SELF_TEST_DEPLOY=1 ;;
+    --self-test-shutdown) SELF_TEST_SHUTDOWN=1 ;;
     -h|--help) usage; exit 0 ;;
     *) usage; die "unknown argument: $1" ;;
   esac
@@ -334,7 +336,12 @@ rehome_stale_worktree_sessions() {
     fi
   done <<< "$dirs"
 
-  [ "$rehomed" -gt 0 ] && echo "==> Rehomed sessions from $rehomed stale worktree director(y/ies) to their main project path"
+  if [ "$rehomed" -gt 0 ]; then
+    echo "==> Rehomed sessions from $rehomed stale worktree director(y/ies) to their main project path"
+  fi
+  # Explicit success: "nothing to rehome" is not a failure. A trailing
+  # `[ ... ] && echo` would return 1 here and, under set -e, abort the deploy.
+  return 0
 }
 
 # ── Build recipe (shared) — mirrors the in-app handler order ────────────────
@@ -679,6 +686,59 @@ self_test_deploy() {
   return 0
 }
 
+# ── Self-test for the shutdown + rehome steps (#1797) ──────────────────────
+# Hidden flag, like --self-test-deploy. Drives stop_surviving_server and
+# rehome_stale_worktree_sessions in a sandbox (HOME, DBDIR, HANDSHAKE_PATH and a
+# sqlite3 stub on PATH are all redirected) and asserts:
+#   (b) a handshake naming a dead process is cleared;
+#   (c) a handshake naming a live process that is stopped with no restart is cleared;
+#   (d) rehome with nothing to rehome returns 0 (set -e must not exit the script).
+self_test_shutdown() {
+  local sandbox; sandbox="$(mktemp -d)"
+  trap 'rm -rf "$sandbox"' RETURN
+  HOME="$sandbox/home"; export HOME
+  HANDSHAKE_PATH="$HOME/.amico/ops/server/standalone.json"
+  mkdir -p "$(dirname "$HANDSHAKE_PATH")"
+  DBDIR="$sandbox/data/opencode"; mkdir -p "$DBDIR"
+
+  # Write a handshake naming pid $1 with binary hash $2.
+  write_handshake() {
+    printf '{"pid":%s,"port":43117,"binary_hash":"%s"}\n' "$1" "$2" > "$HANDSHAKE_PATH"
+  }
+
+  # (b) dead process named by the handshake → record is cleared.
+  ( exit 0 ) & local dead_pid=$!
+  wait "$dead_pid" 2>/dev/null
+  write_handshake "$dead_pid" dead
+  stop_surviving_server >/dev/null 2>&1
+  [ ! -e "$HANDSHAKE_PATH" ] || { echo "SELFTEST: (b) stale handshake for dead pid not cleared" >&2; return 1; }
+
+  # (c) live process, stopped, nobody restarted → record is cleared.
+  sleep 300 & local live_pid=$!
+  write_handshake "$live_pid" live
+  stop_surviving_server >/dev/null 2>&1
+  [ ! -e "$HANDSHAKE_PATH" ] || { echo "SELFTEST: (c) handshake of stopped pid not cleared" >&2; return 1; }
+  wait "$live_pid" 2>/dev/null || true   # reap: the stop killed it (non-zero is expected)
+
+  # (d) worktree session exists on disk → nothing to rehome → must return 0.
+  # sqlite3 is stubbed: the SELECT reports one directory that exists.
+  local existing="$DBDIR/worktree/existing"
+  mkdir -p "$existing"; : > "$DBDIR/opencode.db"
+  mkdir -p "$sandbox/bin"
+  printf '#!/usr/bin/env bash\ncase "$*" in *"SELECT DISTINCT"*) echo "%s" ;; esac\nexit 0\n' "$existing" > "$sandbox/bin/sqlite3"
+  chmod +x "$sandbox/bin/sqlite3"
+  local saved_path="$PATH"; PATH="$sandbox/bin:$PATH"
+  set +e
+  rehome_stale_worktree_sessions
+  local rehome_rc=$?
+  set -e
+  PATH="$saved_path"
+  [ "$rehome_rc" -eq 0 ] || { echo "SELFTEST: (d) rehome with nothing to rehome returned $rehome_rc" >&2; return 1; }
+
+  echo "SELFTEST_SHUTDOWN_OK"
+  return 0
+}
+
 # ── Deploy driver (production path) ─────────────────────────────────────────
 deploy_into_installed_ext() {
   local ext key built_dist built_bin
@@ -795,6 +855,10 @@ main() {
 # Deploy self-test (OB7, hidden; used by the acceptance harness). Needs no mode.
 if [ "$SELF_TEST_DEPLOY" -eq 1 ]; then
   self_test_deploy
+  exit $?
+fi
+if [ "$SELF_TEST_SHUTDOWN" -eq 1 ]; then
+  self_test_shutdown
   exit $?
 fi
 

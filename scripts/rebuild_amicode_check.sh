@@ -224,6 +224,22 @@ else
   fail "AC10 interlock" "$UNIFIED missing"
 fi
 
+# ── AC11: shutdown + rehome steps (#1797) ───────────────────────────────────
+# Hidden --self-test-shutdown drives stop_surviving_server and
+# rehome_stale_worktree_sessions in a sandbox: a dead-PID handshake is cleared,
+# a stopped live-PID handshake is cleared, and rehome with nothing to rehome
+# returns 0 (no set -e abort before the deploy summary).
+if [ -f "$UNIFIED" ]; then
+  out="$(bash "$UNIFIED" --self-test-shutdown 2>&1)"; rc=$?
+  if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -qi 'SELFTEST_SHUTDOWN_OK'; then
+    pass "AC11 shutdown handshake clear + rehome-nothing returns 0"
+  else
+    fail "AC11 shutdown handshake clear + rehome-nothing returns 0" "rc=$rc out=$out"
+  fi
+else
+  fail "AC11 shutdown self-test" "$UNIFIED missing"
+fi
+
 # ── AC9: real --mode local --yes build → binary + .source == overlay <sha> ──
 if [ "${RUN_FULL_BUILD:-0}" = "1" ]; then
   key="$(node -e 'process.stdout.write(process.platform+"-"+process.arch)')"
