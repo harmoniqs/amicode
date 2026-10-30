@@ -213,6 +213,8 @@
     "packages/app/src/context/layout.tsx": "9bb24aa18442cf0dba1dc749f49060de4d45e50bcd5b0e148325e8e4611fa2ca",
     "packages/app/src/context/local-agent.test.ts": "a5a9d60bb4401d409218cc247c1cc06ede8b7878ddf01dc6080328f54eb9cade",
     "packages/app/src/context/local-agent.ts": "0aab67e695dc3bb45a733ac0df80a0a5e14cfe29b2375b6dc3cd07fbccea33e2",
+    "packages/app/src/context/local-reseed.test.ts": "b060240fc15ed9464cd2f03b942d8ee0a27e43712791e8425a55417240738fc6",
+    "packages/app/src/context/local-reseed.ts": "8959700ce8143a478158644c5ff41e690949b21905ff71aa5b6a014a6decb085",
     "packages/app/src/context/local.tsx": "3ab8b9fc2db082df4ba485373679f00a95d0ffe3c691a0afee1dc53db7eabd9e",
     "packages/app/src/context/models-favorites.test.ts": "6336bc4dd46a0492e393110ee7aab6ee58f152982ec657e17ad9f750d22483f8",
     "packages/app/src/context/models-favorites.ts": "60d4e6889ca9143432417f624ddee14047f14bcfd1325fca2f491fb19803b1a2",
@@ -226,7 +228,7 @@
     "packages/app/src/context/server-session-orphan-part.test.ts": "1d635374c0bfff25a01825061aabac7334e5cdaedca2dab9f3d9467ff543caea",
     "packages/app/src/context/server-session.test.ts": "b332098635885211bccaec0d7da8ca6b60696b04bd3f89ba3fcd97cd4c881856",
     "packages/app/src/context/server-session.ts": "ad486fc5d36f93f5f53d51b70fdf191a3008b67f2b280dfc58b64e6d8d20982d",
-    "packages/app/src/context/server-sync.tsx": "55ac830560ddd947b5d58a9c496a4e94ffc63fd7241c74ba9b843aea724b74ce",
+    "packages/app/src/context/server-sync.tsx": "a8dad0dad76a402e6c4f912bba1d0a2018bf8885f30ac8fcf03b840f3bebc29e",
     "packages/app/src/context/server.tsx": "08e978e4b4b3094221a2a0b92e069f39cbedb6d6cf95935881e21cde52265ee2",
     "packages/app/src/context/session-mirror.test.ts": "65e6d6474e4e67f2da194047140c8c8aac04fe0cc9926441468e53fabc48db96",
     "packages/app/src/context/session-mirror.ts": "b98de060f2b06e6f9a48b1f69ed408f12086c626d90c7dd22029a4ee732260e2",
@@ -1074,7 +1076,7 @@
   "extracted_at": "2026-10-29T13:09:53.406Z",
   "per_package": {
     "packages/app": {
-      "A": 289,
+      "A": 291,
       "M": 166,
       "D": 0
     },
@@ -1120,7 +1122,7 @@
     }
   },
   "counts": {
-    "overlay_total": 1049,
+    "overlay_total": 1051,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1330,6 +1332,8 @@
     "packages/app/src/context/layout.tsx": "M",
     "packages/app/src/context/local-agent.test.ts": "M",
     "packages/app/src/context/local-agent.ts": "M",
+    "packages/app/src/context/local-reseed.test.ts": "A",
+    "packages/app/src/context/local-reseed.ts": "A",
     "packages/app/src/context/local.tsx": "M",
     "packages/app/src/context/models-favorites.test.ts": "A",
     "packages/app/src/context/models-favorites.ts": "A",
