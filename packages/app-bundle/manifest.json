@@ -534,9 +534,9 @@
     "packages/session-ui/src/components/message-part-task.ts": "4276091c6f8ea2c31819c72b82747871e4548b3d402b7d1b7b06603ae69b2d5a",
     "packages/session-ui/src/components/message-part-text.ts": "e38d68224f1743ccc5e0e0a8023e11977e3b761ec67dd5364cde9cb34e97ea4b",
     "packages/session-ui/src/components/message-part-user.ts": "1f2c8cb4efff5274863a133f369a7397cac804678e953740f356ae03b71d475c",
-    "packages/session-ui/src/components/message-part.css": "4b2950a029426fd90115e544a96847098e7e0426e9560187769e488b8cf8be37",
+    "packages/session-ui/src/components/message-part.css": "4eeb80f648de4655f882474256e6d34f965d01461079887bef3c7d699040d031",
     "packages/session-ui/src/components/message-part.test.ts": "7c66430837fa3d2607657e57e35720ae68dc5e84662e12826713a938301eeb7b",
-    "packages/session-ui/src/components/message-part.tsx": "750e65d7e79fcdb16db9e691a4d5aa2b406cc33c97871a8a2189c26f96d7d044",
+    "packages/session-ui/src/components/message-part.tsx": "4281870956e6ad918c601d72e416b4ce69949ba416d8220ff48a874966f3915e",
     "packages/session-ui/src/components/session-retry.tsx": "2cb1513d73275a269894f601e8c1d29bc790b14927134fe36177f2b371888721",
     "packages/session-ui/src/components/session-review.css": "ec8c5b359dd4b7ff80d7fad8906359678adade9ce62c9d74aedc000b646db341",
     "packages/session-ui/src/components/session-review.test.ts": "41515bba238b4e60ce3d80e206013e9b43e3b0d0a51be45796028dbae47c99ae",
@@ -1003,8 +1003,8 @@
     "packages/app/src/pages/session/composer/todo-panel-motion.stories.tsx": "70a8267c725af320d78d266b85fd0ff005d067c4d09a21bef824126602e831e7",
     "packages/app/src/pages/session/timeline/last-prompt-bubble.test.ts": "83753b3ec7227570523c2e0b9e82401fae7a20f3a23980bb40deaeb13304327b",
     "packages/app/src/pages/session/timeline/message-timeline-archive.test.ts": "5699d233b5b1a8ba165354113ff40cc9d55b37a80787d163c15165655d591555",
-    "packages/app/src/pages/session/timeline/message-timeline.tsx": "cfb17097fc20b91c7d18f3e0138068353e00b485a13f77851e4707833e9f2271",
-    "packages/app/src/pages/session/timeline/model-pure.ts": "50be4ba12d747dd8df9932044ceee29c5f3b6fa6d6ac36791207f91a91067cd4",
+    "packages/app/src/pages/session/timeline/message-timeline.tsx": "1b628ed55f3f55aa9fa036e6ae3c01b90b25c6e65893547b517e76abe8b84ac6",
+    "packages/app/src/pages/session/timeline/model-pure.ts": "2f12228b5eec30178634d481c6d92b44bf727d47da02bdb5e4f2f9f642690250",
     "packages/app/src/pages/session/timeline/model.test.ts": "ea9f4617e32ad7e33f9ce431104e29586cddbb20377cb245489790a738019804",
     "packages/app/src/pages/session/timeline/model.ts": "a67995b33bb7e7bc44994ff3e4511bb6ff0200448d7c3aa5251d5f18a133586e",
     "packages/app/src/pages/session/timeline/projection.test.ts": "68655f29c382640fc281780166aa528ea26d28d953f3376e1e062be7a0e13749",
@@ -1070,7 +1070,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-30T19:32:51.991Z",
+  "extracted_at": "2026-10-30T19:35:36.324Z",
   "per_package": {
     "packages/app": {
       "A": 289,
