@@ -4400,6 +4400,14 @@ describe("sidebar openFile routes to preview-file bridge message (#934)", () => 
     expect(handlerBlock).toContain("ChatPanel");
   });
 
+  it("#1648 — openFile targets the open at the panel's settled session (an un-targeted broadcast bleeds across session views)", () => {
+    const src = readFileSync(resolve(__dirname, "..", "src", "sidebar_view.ts"), "utf8");
+    const start = src.indexOf("openFile:");
+    const block = src.slice(start, src.indexOf("openFileEditor:", start));
+    expect(block).toContain("previewFileTarget()");
+    expect(block).toContain("sessionID");
+  });
+
   it("openFileEditor opens an editable text tab before falling back to vscode.open for binary files", () => {
     const src = readFileSync(
       resolve(__dirname, "..", "src", "sidebar_view.ts"),

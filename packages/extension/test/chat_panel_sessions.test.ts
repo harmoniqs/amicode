@@ -172,6 +172,25 @@ describe("ChatPanel — side-by-side sessions (multi-instance registry)", () => 
     expect(ChatPanel.lastFocusedMutationContext()).toBeUndefined();
   });
 
+  // ── #1648: preview-file is session-targeted at the source ────────────────
+  it("#1648 — previewFileTarget is the panel's settled route: unknown until reported, the session id, null on a draft", () => {
+    const cap = capturePanels();
+    restore = cap.restore;
+    created = cap.created;
+    args = cap.args;
+    ChatPanel.openOrReveal(fakeCtx(), BASE, "token");
+    const panel = ChatPanel.peek()!;
+    const sim = created[0] as unknown as { webview: { _simulateMessage(msg: unknown): void } };
+
+    // Before the app reports its route the host cannot target: legacy broadcast.
+    expect(panel.previewFileTarget()).toBeUndefined();
+    sim.webview._simulateMessage({ source: "amicode", kind: "session-context", sessionID: "ses_a" });
+    expect(panel.previewFileTarget()).toBe("ses_a");
+    // A draft / closed route is a KNOWN "no session" — session views must ignore it.
+    sim.webview._simulateMessage({ source: "amicode", kind: "session-context", draft: true });
+    expect(panel.previewFileTarget()).toBeNull();
+  });
+
   it("relays session context upstream and opaque reassessment invalidations downstream in both iframe shells", () => {
     const source = require("node:fs").readFileSync(require("node:path").resolve(__dirname, "..", "src", "chat_panel.ts"), "utf8");
     expect(source.match(/d\.kind === "session-context"/g)?.length).toBeGreaterThanOrEqual(2);

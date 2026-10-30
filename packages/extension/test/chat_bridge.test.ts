@@ -243,6 +243,37 @@ describe("amicode bridge — open-file routes to preview-file (#935)", () => {
   });
 });
 
+describe("amicode bridge — preview-file carries its target session (#1648)", () => {
+  const fileUrl = (target: string) => "file://" + target.split("/").map(encodeURIComponent).join("/");
+  const open = async (host: ReturnType<typeof io>) => {
+    const target = path.join(os.tmpdir(), `amicode target ${Date.now()}.md`);
+    fs.writeFileSync(target, "# note\n");
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "open-file", url: fileUrl(target) }, host)).toBe(true);
+    await flush();
+    fs.rmSync(target, { force: true });
+    return host.posted.find((m: any) => m.kind === "preview-file") as any;
+  };
+
+  it("stamps the host panel's session id so every other session view can ignore the open", async () => {
+    const host = io();
+    host.previewFileTarget = () => "ses_a";
+    const msg = await open(host);
+    expect(msg.sessionID).toBe("ses_a");
+  });
+
+  it("stamps null for a draft route and omits the field when the host cannot target (legacy broadcast)", async () => {
+    const draft = io();
+    draft.previewFileTarget = () => null;
+    expect((await open(draft)).sessionID).toBeNull();
+
+    const legacy = io();
+    legacy.previewFileTarget = () => undefined;
+    expect("sessionID" in (await open(legacy))).toBe(false);
+    const bare = io();
+    expect("sessionID" in (await open(bare))).toBe(false);
+  });
+});
+
 describe("amicode bridge — preview visible children", () => {
   it("echoes the requestId with Sidebar-filtered child entries", async () => {
     const host = io();
