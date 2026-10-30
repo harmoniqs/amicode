@@ -85,6 +85,9 @@ export type FileOpErrorMessage = { kind: "file-op-error"; op: string; path: stri
 export type FileOpOkMessage = { kind: "file-op-ok"; op: string; path: string };
 export type ActiveProjectMessage = { kind: "active-project"; path: string | null; mode?: "none" | "expand" | "reset" };
 export type GitStatusMessage = { kind: "git-status"; statusMap: Record<string, string> };
+/** #1036 — reveal a file in the tree: expand its ancestors, scroll it into
+ *  view, and flash a highlight. Silent no-op when the file is not in any root. */
+export type RevealFileMessage = { kind: "reveal-file"; path: string };
 export type SectionOrderMessage = { kind: "section-order"; order: string[] };
 /** #1321 — the host pushes the read-only fleet view-model (roster + posture +
  *  manage-enabled) to the webview's fleet section. Host→webview only. */
@@ -100,6 +103,7 @@ export type SidebarDownMessage =
   | ActiveProjectMessage
   | GitStatusMessage
   | SectionOrderMessage
+  | RevealFileMessage
   | FleetStatusMessage;
 
 // ── Webview → Host (up) ──────────────────────────────────────────────────────
@@ -203,6 +207,49 @@ export interface EnvGroup {
 export interface GroupedResearchRoots {
   envGroups: EnvGroup[];
   unboundProjects: TreeRoot[];
+}
+
+/** Result of resolving a file path against the sidebar roots (#1036). */
+export interface RevealChain {
+  /** The root project/environment that contains the file (deepest match wins). */
+  root: TreeRoot;
+  /** Directories to expand, top-down: the root first, then each intermediate
+   *  directory down to (and including) the file's parent. Empty when the
+   *  target is the root itself. */
+  dirs: string[];
+}
+
+/**
+ * #1036 — resolve which root contains `filePath` and the ordered ancestor
+ * directories that must be expanded to make it visible. Returns null when the
+ * file is outside every root (callers treat that as a silent no-op).
+ *
+ * Paths are absolute filesystem paths on both sides; the separator is taken
+ * from the file path itself so POSIX and Windows-style paths both work. Nested
+ * roots (a research project under an environment) resolve to the deepest one.
+ */
+export function resolveRevealChain(filePath: string, roots: TreeRoot[]): RevealChain | null {
+  if (!filePath) return null;
+  let best: TreeRoot | null = null;
+  for (const root of roots) {
+    const rp = root.path.replace(/[\\/]+$/, "");
+    if (!rp) continue;
+    if (filePath === rp || filePath.startsWith(rp + "/") || filePath.startsWith(rp + "\\")) {
+      if (!best || rp.length > best.path.replace(/[\\/]+$/, "").length) best = root;
+    }
+  }
+  if (!best) return null;
+  const rootPath = best.path.replace(/[\\/]+$/, "");
+  if (filePath === rootPath) return { root: best, dirs: [] };
+  const sep = filePath.charAt(rootPath.length);
+  const segments = filePath.slice(rootPath.length + 1).split(sep).filter((seg) => seg !== "");
+  const dirs: string[] = [best.path];
+  let acc = rootPath;
+  for (let k = 0; k < segments.length - 1; k++) {
+    acc = acc + sep + segments[k];
+    dirs.push(acc);
+  }
+  return { root: best, dirs };
 }
 
 /**
@@ -435,6 +482,7 @@ export function handleSidebarMessage(
     case "active-project":
     case "git-status":
     case "section-order":
+    case "reveal-file":
     case "fleet-status":
       // Down-direction messages — no host-side handler needed.
       break;

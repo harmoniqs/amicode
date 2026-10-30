@@ -1476,6 +1476,33 @@ describe("SidebarViewProvider — session awareness", () => {
     });
   });
 
+  it("revealFile posts reveal-file to the webview (#1036)", () => {
+    const provider = new SidebarViewProvider(makeExtensionUri());
+    const view = makeWebviewView();
+    provider.resolveWebviewView(view, {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
+
+    provider.revealFile("/projects/quantum-sim/src/a.jl");
+
+    expect(view.webview.postMessage).toHaveBeenCalledWith({
+      kind: "reveal-file",
+      path: "/projects/quantum-sim/src/a.jl",
+    });
+  });
+
+  it("revealFile queues until the webview resolves, then replays only the latest (#1036)", () => {
+    const provider = new SidebarViewProvider(makeExtensionUri());
+    provider.revealFile("/projects/first.jl");
+    provider.revealFile("/projects/second.jl");
+    provider.revealFile("");
+    const view = makeWebviewView();
+    provider.resolveWebviewView(view, {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
+
+    const reveals = (view.webview.postMessage as ReturnType<typeof vi.fn>).mock.calls
+      .map((c) => c[0] as { kind: string; path?: string })
+      .filter((m) => m.kind === "reveal-file");
+    expect(reveals).toEqual([{ kind: "reveal-file", path: "/projects/second.jl" }]);
+  });
+
   it("setActiveProject with null clears the highlight", () => {
     const provider = new SidebarViewProvider(makeExtensionUri());
     const view = makeWebviewView();

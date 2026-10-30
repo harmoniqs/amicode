@@ -2,7 +2,7 @@
 // Runs inside the webview iframe (platform: browser, format: iife).
 // Acquires the VS Code API and wires button clicks + tree rendering to bridge.
 
-import { groupRootsForResearchSection } from "./sidebar_bridge";
+import { groupRootsForResearchSection, resolveRevealChain } from "./sidebar_bridge";
 import type { EnvGroup } from "./sidebar_bridge";
 import { renderFleetSection, createFleetRefreshControl, FLEET_REFRESH_LABEL } from "./sidebar_fleet_section";
 import type { FleetSectionModel } from "./sidebar_fleet_section";
@@ -192,6 +192,9 @@ function createIconEl(icon: string): HTMLElement {
   // the DOM and re-dispatches with mode "none" (highlight only — the persisted
   // expanded state already handles folder visibility after re-render).
   let pendingActiveProject: { path: string | null; mode: "none" | "expand" | "reset" } | null = null;
+  // #1036: a reveal-file that arrived before the roots rendered (sidebar just
+  // opened). Replayed at the end of renderRoots; stale entries are dropped.
+  let pendingReveal: { path: string; at: number } | null = null;
 
   // Track the last path we scrolled the sidebar to. "expand" mode (tab switch /
   // session re-focus) only scrolls when the path actually changes — re-focusing
@@ -1450,6 +1453,13 @@ function createIconEl(icon: string): HTMLElement {
     if (pendingActiveProject !== null) {
       applyActiveProject(pendingActiveProject.path, pendingActiveProject.mode);
     }
+
+    // #1036: replay a reveal that arrived before the roots rendered.
+    if (pendingReveal !== null) {
+      const queued = pendingReveal;
+      pendingReveal = null;
+      if (Date.now() - queued.at <= REVEAL_PENDING_TTL_MS) void revealFileInTree(queued.path);
+    }
   }
 
   // ── Section drag-reorder (#708) ──────────────────────────────────────────
@@ -2315,6 +2325,201 @@ function createIconEl(icon: string): HTMLElement {
     // session switch. The project row receives the highlight directly.
   }
 
+  // ── Reveal file in tree (#1036) ───────────────────────────────────────────
+  //
+  // "Find in sidebar" from the Preview tab: expand the section + every ancestor
+  // folder top-down (awaiting each level's children — child DOM only exists
+  // after the parent renders), scroll the file ~3 rows below the visible top,
+  // then flash a transient highlight. Anything unresolvable is a silent no-op.
+
+  const REVEAL_ROW_OFFSET = 3;
+  const REVEAL_HIGHLIGHT_MS = 2500;
+  const REVEAL_FADE_MS = 700;
+  const REVEAL_CHILDREN_TIMEOUT_MS = 4000;
+  const REVEAL_PENDING_TTL_MS = 15000;
+
+  /** Monotonic token: a newer reveal supersedes any in-flight one. */
+  let revealToken = 0;
+  let revealFadeTimer: ReturnType<typeof setTimeout> | undefined;
+  let revealClearTimer: ReturnType<typeof setTimeout> | undefined;
+  let revealHighlightEl: HTMLElement | null = null;
+  /** Children-load waiters, resolved by the "children" message handler. */
+  const childrenWaiters: Record<string, Array<() => void>> = {};
+
+  function resolveChildrenWaiters(dirPath: string): void {
+    const waiters = childrenWaiters[dirPath];
+    if (!waiters) return;
+    delete childrenWaiters[dirPath];
+    for (const w of waiters) w();
+  }
+
+  /** Resolve true once `dirPath` children arrive, false on timeout. */
+  function waitForChildren(dirPath: string): Promise<boolean> {
+    return new Promise<boolean>((resolve) => {
+      let done = false;
+      const finish = (ok: boolean) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        resolve(ok);
+      };
+      const timer = setTimeout(() => {
+        const list = childrenWaiters[dirPath];
+        if (list) {
+          childrenWaiters[dirPath] = list.filter((w) => w !== onLoaded);
+          if (childrenWaiters[dirPath].length === 0) delete childrenWaiters[dirPath];
+        }
+        finish(false);
+      }, REVEAL_CHILDREN_TIMEOUT_MS);
+      const onLoaded = () => finish(true);
+      (childrenWaiters[dirPath] ??= []).push(onLoaded);
+    });
+  }
+
+  function findTreeNode(nodePath: string): HTMLElement | null {
+    return (treeRoot?.querySelector(`[data-path="${CSS.escape(nodePath)}"]`) as HTMLElement | null) ?? null;
+  }
+
+  function clearRevealHighlight(): void {
+    if (revealFadeTimer !== undefined) clearTimeout(revealFadeTimer);
+    if (revealClearTimer !== undefined) clearTimeout(revealClearTimer);
+    revealFadeTimer = undefined;
+    revealClearTimer = undefined;
+    if (revealHighlightEl) {
+      revealHighlightEl.classList.remove("reveal-highlight", "reveal-target");
+      revealHighlightEl = null;
+    }
+  }
+
+  function flashRevealHighlight(row: HTMLElement): void {
+    clearRevealHighlight();
+    revealHighlightEl = row;
+    // reveal-target carries the background transition; reveal-highlight the
+    // colour. Dropping reveal-highlight at the deadline lets the transition
+    // fade it out; reveal-target is dropped once the fade has finished.
+    row.classList.add("reveal-target");
+    // Force a style flush so the transition start state is the plain row.
+    void row.offsetWidth;
+    row.classList.add("reveal-highlight");
+    revealFadeTimer = setTimeout(() => {
+      row.classList.remove("reveal-highlight");
+      revealFadeTimer = undefined;
+      revealClearTimer = setTimeout(() => {
+        row.classList.remove("reveal-target");
+        if (revealHighlightEl === row) revealHighlightEl = null;
+        revealClearTimer = undefined;
+      }, REVEAL_FADE_MS);
+    }, REVEAL_HIGHLIGHT_MS);
+  }
+
+  /** Expand the section that hosts `root` if it is collapsed. Returns true when
+   *  it was just expanded (animated — the scroll must wait it out). */
+  function ensureSectionExpandedFor(root: TreeRoot): boolean {
+    const sectionKey = root.projectType === "dev" ? "dev" : "research";
+    if (sectionExpanded[sectionKey]) return false;
+    sectionExpanded[sectionKey] = true;
+    saveSectionState();
+    const section = getAllSections().find((s) => s.dataset.sectionKey === sectionKey);
+    if (!section) return false;
+    const chevron = section.querySelector(".section-chevron") as HTMLElement | null;
+    if (chevron) chevron.classList.add("expanded");
+    const body = section.querySelector(".section-body") as HTMLElement | null;
+    if (!body) return false;
+    toggleSectionBody(body, true, section);
+    return true;
+  }
+
+  /** Depth of the rows rendered inside `childrenEl` (mirrors the children handler). */
+  function childDepthOf(childrenEl: HTMLElement): number {
+    const parentRow = childrenEl.parentElement?.querySelector(".tree-node") as HTMLElement | null;
+    return Math.round((parseInt(parentRow?.style.paddingLeft ?? "8") - 8) / 16) + 1;
+  }
+
+  /**
+   * Make sure the directory node at `dirPath` is expanded with its children
+   * rendered. Returns false when the node is missing or its children never load.
+   */
+  async function ensureDirectoryExpanded(dirPath: string, token: number): Promise<boolean> {
+    const node = findTreeNode(dirPath);
+    if (!node || node.dataset.type !== "directory") return false;
+    const row = node.querySelector(":scope > .tree-node") as HTMLElement | null;
+    const childrenEl = node.querySelector(":scope > .children") as HTMLElement | null;
+    if (!row || !childrenEl) return false;
+
+    if (!expanded[dirPath]) {
+      expanded[dirPath] = true;
+      saveExpandedState();
+      const chevronSpan = row.querySelector(".chevron") as HTMLElement | null;
+      if (chevronSpan) chevronSpan.classList.add("expanded");
+      row.setAttribute("aria-expanded", "true");
+      if (node.dataset.envGroup === "true") node.classList.add("env-files-visible");
+      // Static custom icons (flask / clipboard) stay; folder icons swap to open.
+      const root = currentRoots.find((r) => r.path === dirPath);
+      if (root?.projectType !== "research" && root?.projectType !== "environment") {
+        const iconSpan = row.querySelector(".icon") as HTMLElement | null;
+        if (iconSpan) {
+          const newIcon = createFolderIconEl(true);
+          if (newIcon) iconSpan.replaceWith(newIcon);
+        }
+      }
+    }
+    childrenEl.style.display = "block";
+
+    if (childrenCache[dirPath]) {
+      if (!childrenEl.hasChildNodes()) renderChildren(childrenEl, childrenCache[dirPath], childDepthOf(childrenEl));
+      return true;
+    }
+    const loaded = waitForChildren(dirPath);
+    vscode.postMessage({ kind: "get-children", path: dirPath });
+    const ok = await loaded;
+    return ok && token === revealToken;
+  }
+
+  async function revealFileInTree(filePath: string): Promise<void> {
+    if (!treeRoot) return;
+    // A newer reveal supersedes everything in flight, including its highlight.
+    const token = ++revealToken;
+    clearRevealHighlight();
+
+    const chain = resolveRevealChain(filePath, currentRoots);
+    if (!chain) return; // not under any root → silent no-op
+
+    const sectionAnimating = ensureSectionExpandedFor(chain.root);
+    if (sectionAnimating) {
+      // The section body animates open; the tree nodes exist already, but the
+      // scroll geometry is only stable once the animation finishes.
+      await new Promise<void>((r) => setTimeout(r, SECTION_ANIM_MS + 50));
+      if (token !== revealToken) return;
+    }
+
+    for (const dir of chain.dirs) {
+      if (token !== revealToken) return;
+      const ok = await ensureDirectoryExpanded(dir, token);
+      if (!ok || token !== revealToken) return; // stop; target never appears → no-op
+    }
+
+    const target = findTreeNode(filePath);
+    if (!target) return;
+    const row = target.classList.contains("tree-node")
+      ? target
+      : (target.querySelector(":scope > .tree-node") as HTMLElement | null);
+    if (!row) return;
+
+    // Let the browser lay out the just-rendered rows before measuring.
+    await new Promise<void>((r) => requestAnimationFrame(() => r()));
+    if (token !== revealToken) return;
+
+    const scroller = row.closest(".section-body") as HTMLElement | null;
+    if (scroller) {
+      const rowHeight = row.getBoundingClientRect().height || 22;
+      const rowTop = row.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+      scroller.scrollTop = Math.max(0, rowTop - REVEAL_ROW_OFFSET * rowHeight);
+    } else {
+      row.scrollIntoView({ block: "center" });
+    }
+    flashRevealHighlight(row);
+  }
+
   // ── Host → Webview messages ────────────────────────────────────────────────
 
   window.addEventListener("message", (event) => {
@@ -2378,6 +2583,8 @@ function createIconEl(icon: string): HTMLElement {
             activeInlineEdit.input.focus();
           }
         }
+        // #1036: unblock a pending reveal waiting on this directory.
+        resolveChildrenWaiters(msg.path);
         break;
       }
 
@@ -2417,6 +2624,18 @@ function createIconEl(icon: string): HTMLElement {
           : "reset";
         pendingActiveProject = { path: activePath, mode };
         applyActiveProject(activePath, mode);
+        break;
+      }
+
+      case "reveal-file": {
+        // #1036: reveal a file in the tree. Queue until the roots render when
+        // the sidebar was just opened; otherwise run immediately.
+        if (typeof msg.path !== "string" || msg.path === "") break;
+        if (!treeRoot || treeRoot.childElementCount === 0) {
+          pendingReveal = { path: msg.path, at: Date.now() };
+        } else {
+          void revealFileInTree(msg.path);
+        }
         break;
       }
 
