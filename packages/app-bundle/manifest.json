@@ -795,6 +795,7 @@
     "packages/app/src/components/session/preview-frontmatter.test.ts": "93ec9f7f4c604d8ed8ee6009779c425bffecfca331a122a7a700b588a8ca3c0c",
     "packages/app/src/components/session/preview-frontmatter.ts": "036250edd8c2886ee8f8ac0723f2b9a41d363898006a53f47bc44b8194c5a3d3",
     "packages/app/src/components/session/preview-human-write-gate.ts": "4c4b1cf258a06b0012d722add0125ecb77a0f4e463dd95d193f21e5e73541098",
+    "packages/app/src/components/session/preview-latex-compile.test.ts": "bfd86b8e7ae2da8060aaabdb167ec8521983777040c7201a7bbb7d7e3c877ac6",
     "packages/app/src/components/session/preview-restore.test.ts": "99f4945ad4aa603d6245a82464bbba8b374eb169ec5a559fc1963d5a706ecf35",
     "packages/app/src/components/session/session-archived-fleet.test.ts": "f5d0e16dea2ab6e6cb44a6768b5ef1e772f8ccc39aeeb02571525ec44336ab57",
     "packages/app/src/components/session/session-chats-dropdown.test.ts": "72e2e797fe96a59ee46ae59c4a5cb34eae8d338a468977bd4e8f61cefd6abd49",
@@ -1077,10 +1078,10 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-30T19:53:44.962Z",
+  "extracted_at": "2026-10-30T19:57:36.808Z",
   "per_package": {
     "packages/app": {
-      "A": 296,
+      "A": 297,
       "M": 166,
       "D": 0
     },
@@ -1126,7 +1127,7 @@
     }
   },
   "counts": {
-    "overlay_total": 1055,
+    "overlay_total": 1056,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1918,6 +1919,7 @@
     "packages/app/src/components/session/preview-frontmatter.test.ts": "A",
     "packages/app/src/components/session/preview-frontmatter.ts": "A",
     "packages/app/src/components/session/preview-human-write-gate.ts": "A",
+    "packages/app/src/components/session/preview-latex-compile.test.ts": "A",
     "packages/app/src/components/session/preview-restore.test.ts": "A",
     "packages/app/src/components/session/session-archived-fleet.test.ts": "A",
     "packages/app/src/components/session/session-chats-dropdown.test.ts": "A",
