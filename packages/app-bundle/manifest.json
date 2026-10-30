@@ -575,7 +575,8 @@
     "packages/ui/src/amicode/brain-data.ts": "f23483cda811e148748d4f47435c6d01c03d52e9a65ad74cae2c0ea30ce0b8dc",
     "packages/ui/src/amicode/brain-engine.test.ts": "3b244fbe15ac87529655acd688da9181af53a1dfeb3f9f87e5f77000db3aada6",
     "packages/ui/src/amicode/brain-engine.ts": "500b03cd43d4cdbd76a575f4517a4aaac788167e1d41a396d6dc6bce3cdfb8dc",
-    "packages/ui/src/amicode/brain-ref.ts": "9d8aaa8b24fb0b74acc0c4cdafc265c1808c28c95d4ac9b815fd2e54ea89f46d",
+    "packages/ui/src/amicode/brain-ref.test.ts": "d1ea44c003446d1824543bc56884e0d218291417bda9ea7835a21d8547c256f1",
+    "packages/ui/src/amicode/brain-ref.ts": "0f8e866933ec3d161973f5e62acdfd51b0320f3ad5be4c487685c469467901c4",
     "packages/ui/src/amicode/bridge.ts": "e7b93a15060a0cb1ab0be2b367f73e926d74b990a8af917a9966b451ee303b5b",
     "packages/ui/src/amicode/card.stories.tsx": "b1591abb4af426b0eb08588ea1585336a392d755b5d308cb31f17cb65acf5a3e",
     "packages/ui/src/amicode/card.tsx": "1f462017d9113082bb2e802e3d812b25cf5ee9b1bd848559e0533de4d382517f",
@@ -611,7 +612,7 @@
     "packages/ui/src/amicode/problem.ts": "186c1615f387ce930f61b2a8bcc41a11c7d6979c3a398e04be9a3939a6931d5b",
     "packages/ui/src/amicode/project-type-icons.test.ts": "1db755e2818a5e97d018e7133ae329b9ce1ff63fc347a06bcac7b9f4d0784969",
     "packages/ui/src/amicode/rail-gate.test.ts": "01b5ae4907ab2ccb8d5ce3284747f5055832de1221eabb88285eb699004e991b",
-    "packages/ui/src/amicode/rail-gate.ts": "c24f99d8285a5484863078acedc5ed36d8de67084c2baaf2bb2f7b6d87e657cb",
+    "packages/ui/src/amicode/rail-gate.ts": "9941b9739bd1150a460cb685f787f9daa6a2efa32aee79d68fd6984ba0b90b47",
     "packages/ui/src/amicode/receipt-runs.test.ts": "2c25968b2ba9eaa7fe70ed4cf767aae88d3db9595e01d880215514fef7a4563f",
     "packages/ui/src/amicode/receipt-runs.ts": "4aa31624ea3d61ab352bfda7cd0da48f7d367f123cf7929f52f4da84629a190b",
     "packages/ui/src/amicode/receipt.test.ts": "7065899d0efd4b2b712bf412053d1b3071e6aee4be163f38a3e0a7dcdbbb45fa",
@@ -1113,13 +1114,13 @@
       "D": 0
     },
     "packages/ui": {
-      "A": 150,
+      "A": 151,
       "M": 66,
       "D": 0
     }
   },
   "counts": {
-    "overlay_total": 1048,
+    "overlay_total": 1049,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1691,6 +1692,7 @@
     "packages/ui/src/amicode/brain-data.ts": "A",
     "packages/ui/src/amicode/brain-engine.test.ts": "A",
     "packages/ui/src/amicode/brain-engine.ts": "A",
+    "packages/ui/src/amicode/brain-ref.test.ts": "A",
     "packages/ui/src/amicode/brain-ref.ts": "A",
     "packages/ui/src/amicode/bridge.ts": "A",
     "packages/ui/src/amicode/card.stories.tsx": "A",
