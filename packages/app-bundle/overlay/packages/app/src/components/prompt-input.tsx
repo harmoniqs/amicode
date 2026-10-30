@@ -1491,7 +1491,11 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
           [props.class ?? ""]: !!props.class,
         }}
       >
-        <ComposerResizeHandle resize={resize} gripClass="bg-text-weak" />
+        <ComposerResizeHandle
+          resize={resize}
+          label={language.t("prompt.resize.label")}
+          title={language.t("prompt.resize.title")}
+        />
         <PromptDragOverlay
           type={store.draggingType}
           label={language.t(store.draggingType === "@mention" ? "prompt.dropzone.file.label" : "prompt.dropzone.label")}

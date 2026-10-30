@@ -151,7 +151,7 @@ export function PromptInputV2(props: PromptInputV2Props) {
         onDragLeave={props.controller.onDragLeave}
         onDrop={props.controller.onDrop}
       >
-        <ComposerResizeHandle resize={resize} gripClass="bg-v2-text-text-faint" />
+        <ComposerResizeHandle resize={resize} />
 
         <Show when={state.drag === "active"}>
           <div class="pointer-events-none absolute inset-0 z-20 grid place-items-center rounded-xl bg-v2-background-bg-base/90 text-v2-text-text-base">
