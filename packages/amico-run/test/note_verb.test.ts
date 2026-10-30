@@ -21,6 +21,9 @@ import {
   stampToDate,
   isRoutableType,
   ROUTE_FOLDERS,
+  checkNoteSchema,
+  requireAttribution,
+  attributedCommitMessage,
   type BestGate,
 } from "../src/note.js";
 import type { Mount } from "../src/mounts.js";
@@ -435,5 +438,162 @@ describe("amico note route (bundle)", () => {
     expect(out.commit.committed).toBe(false);
     expect(out.commit.warning).toMatch(/git/i);
     rmSync(root, { recursive: true, force: true });
+  });
+});
+
+// ── attributed team writes (#1863) ─────────────────────────────────────────────────
+describe("checkNoteSchema / requireAttribution / attributedCommitMessage (pure)", () => {
+  it("accepts a note with every required field; null session_id counts as present", () => {
+    const ok = "---\ntype: note\ndate: 2026-07-11\nsession_id: null\ntags: [note]\n---\n\n# T\n";
+    expect(checkNoteSchema(ok, "note")).toEqual({ ok: true });
+  });
+  it("names every missing required field of the type", () => {
+    const bad = "---\ntype: spec\ndate: 2026-07-11\nsession_id: s\ntags: [spec]\n---\n";
+    const r = checkNoteSchema(bad, "spec");
+    expect(r.ok).toBe(false);
+    expect(JSON.stringify(r)).toMatch(/status, visibility/);
+  });
+  it("flags missing frontmatter, a type mismatch, and a scalar where a list is required", () => {
+    expect(checkNoteSchema("# no frontmatter", "note").ok).toBe(false);
+    expect(JSON.stringify(checkNoteSchema("---\ntype: plan\ndate: d\nsession_id: s\ntags: [x]\n---\n", "note"))).toMatch(/expected \\"note\\"/);
+    expect(JSON.stringify(checkNoteSchema("---\ntype: note\ndate: d\nsession_id: s\ntags: oops\n---\n", "note"))).toMatch(/\\"tags\\" must be a list/);
+  });
+  it("requireAttribution refuses any blank piece with a plain error naming the flags", () => {
+    const r = requireAttribution({ role: "librarian", session: " " });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/--session, --source/);
+    expect(requireAttribution({ role: "a", session: "b", source: "c\nd" }).ok).toBe(false);
+    expect(requireAttribution({ role: " a ", session: "b", source: "c" })).toEqual({ ok: true, attribution: { role: "a", session: "b", source: "c" } });
+  });
+  it("commit message carries role, session, source as trailers", () => {
+    const m = attributedCommitMessage("add note-x", { role: "librarian", session: "s-1", source: "run r1" });
+    expect(m).toMatch(/^librarian: add note-x\n/);
+    expect(m).toMatch(/\nAgent-Role: librarian\nSession-Id: s-1\nSource: run r1\n$/);
+  });
+});
+
+describe("amico note route → attributed team mount (bundle, fixture git repo)", () => {
+  const git = (cwd: string, ...a: string[]) => execFileSync("git", ["-C", cwd, ...a], { encoding: "utf8" });
+  /** root/{me (personal), shared (writable team clone of a bare origin)}; returns paths. */
+  function fixture() {
+    const root = mkdtempSync(join(tmpdir(), "amico-team-"));
+    seedMarker(root, "me", "personal");
+    const origin = join(root, "origin.git");
+    execFileSync("git", ["init", "-q", "--bare", "-b", "main", origin]);
+    const shared = seedMarker(root, "shared", "team");
+    git(shared, "init", "-q", "-b", "main");
+    git(shared, "config", "user.email", "t@example.com");
+    git(shared, "config", "user.name", "Test");
+    git(shared, "add", ".");
+    git(shared, "commit", "-q", "-m", "init");
+    git(shared, "remote", "add", "origin", origin);
+    git(shared, "push", "-q", "-u", "origin", "main");
+    const toml = join(root, "mounts.toml");
+    writeFileSync(toml, `[[mount]]\nid = "shared"\nkind = "team"\nwritable = true\n`);
+    const env = { AMICO_VAULTS_ROOT: join(root, "vaults"), AMICO_MOUNTS_TOML: toml, AMICO_VAULT_DIR: "" };
+    // mounts live under vaults/: move the seeded dirs there
+    mkdirSync(join(root, "vaults"));
+    execFileSync("mv", [join(root, "me"), join(root, "shared"), join(root, "vaults")]);
+    return { root, origin, shared: join(root, "vaults", "shared"), me: join(root, "vaults", "me"), env };
+  }
+  const ATTR = ["--role", "librarian", "--session", "sess-42", "--source", "brief B-7"];
+  const base = ["note", "route", "--type", "note", "--intent", "team", "--title", "Hello", "--body", "b", "--stamp", STAMP];
+
+  it("a valid note lands at its target path as ONE attributed commit and is pushed", () => {
+    const f = fixture();
+    const r = run([...base, ...ATTR], f.env);
+    expect(r.code).toBe(0);
+    const out = JSON.parse(r.stdout);
+    expect(out).toMatchObject({ written: true, mount: "shared", quarantined: false, commit: { committed: true }, push: { pushed: true } });
+    const file = join(f.shared, "notes", `note-${STAMP}-hello.md`);
+    expect(out.path).toBe(file);
+    expect(readFileSync(file, "utf8")).toMatch(/session_id: "sess-42"/);
+    expect(git(f.shared, "rev-list", "--count", "init..HEAD".replace("init", "HEAD~1")).trim()).toBe("1");
+    const msg = git(f.shared, "log", "-1", "--format=%B");
+    expect(msg).toMatch(/Agent-Role: librarian/);
+    expect(msg).toMatch(/Session-Id: sess-42/);
+    expect(msg).toMatch(/Source: brief B-7/);
+    expect(git(f.shared, "show", "--name-only", "--format=", "HEAD").trim()).toBe(`notes/note-${STAMP}-hello.md`);
+    // pushed: origin's main == local HEAD
+    expect(git(f.origin, "rev-parse", "main").trim()).toBe(git(f.shared, "rev-parse", "HEAD").trim());
+    rmSync(f.root, { recursive: true, force: true });
+  });
+
+  it("refuses without role, session, or source — nothing written, nothing committed", () => {
+    const f = fixture();
+    const before = git(f.shared, "rev-parse", "HEAD");
+    for (const drop of ["--role", "--session", "--source"]) {
+      const i = ATTR.indexOf(drop);
+      const attr = ATTR.filter((_, j) => j !== i && j !== i + 1);
+      const r = run([...base, ...attr], f.env);
+      expect(r.code).toBe(64);
+      expect(JSON.parse(r.stdout).error).toContain(drop);
+    }
+    expect(existsSync(join(f.shared, "notes"))).toBe(false);
+    expect(git(f.shared, "rev-parse", "HEAD")).toBe(before);
+    rmSync(f.root, { recursive: true, force: true });
+  });
+
+  it("a note failing its type schema is quarantined with the error, never at the target path, and reported", () => {
+    const f = fixture();
+    // spec requires status + visibility; supply neither
+    const r = run(["note", "route", "--type", "spec", "--intent", "team", "--title", "Bad Spec", "--body", "b", "--stamp", STAMP, ...ATTR], f.env);
+    expect(r.code).toBe(65);
+    const out = JSON.parse(r.stdout);
+    expect(out).toMatchObject({ written: false, quarantined: true, mount: "shared" });
+    expect(JSON.stringify(out.errors)).toMatch(/status, visibility/);
+    expect(existsSync(join(f.shared, "specs", `spec-${STAMP}-bad-spec.md`))).toBe(false);
+    const q = join(f.shared, ".quarantine", "specs", `spec-${STAMP}-bad-spec.md`);
+    expect(out.quarantine_path).toBe(q);
+    expect(existsSync(q)).toBe(true);
+    expect(readFileSync(`${q}.error.txt`, "utf8")).toMatch(/status, visibility/);
+    // the quarantine itself is one attributed, pushed commit
+    expect(git(f.shared, "log", "-1", "--format=%B")).toMatch(/Agent-Role: librarian/);
+    expect(git(f.origin, "rev-parse", "main").trim()).toBe(git(f.shared, "rev-parse", "HEAD").trim());
+    rmSync(f.root, { recursive: true, force: true });
+  });
+
+  it("--field supplies the extra frontmatter a typed note needs; a quarantine does not block the next write", () => {
+    const f = fixture();
+    const bad = run(["note", "route", "--type", "spec", "--intent", "team", "--title", "A", "--body", "b", "--stamp", STAMP, ...ATTR], f.env);
+    expect(bad.code).toBe(65);
+    const good = run(["note", "route", "--type", "spec", "--intent", "team", "--title", "B", "--body", "b", "--stamp", STAMP, "--field", "status=draft", "--field", "visibility=team", ...ATTR], f.env);
+    expect(good.code).toBe(0);
+    const text = readFileSync(JSON.parse(good.stdout).path, "utf8");
+    expect(text).toMatch(/status: draft/);
+    expect(text).toMatch(/visibility: team/);
+    rmSync(f.root, { recursive: true, force: true });
+  });
+
+  it("push failure is reported (exit 1) but the attributed commit stays local and revertible", () => {
+    const f = fixture();
+    git(f.shared, "remote", "set-url", "origin", join(f.root, "nonexistent.git"));
+    const r = run([...base, ...ATTR], f.env);
+    expect(r.code).toBe(1);
+    const out = JSON.parse(r.stdout);
+    expect(out).toMatchObject({ written: true, commit: { committed: true }, push: { pushed: false } });
+    expect(out.push.error).toBeTruthy();
+    expect(git(f.shared, "log", "-1", "--format=%B")).toMatch(/Session-Id: sess-42/);
+    rmSync(f.root, { recursive: true, force: true });
+  });
+
+  it("a team mount that is not a git repo → error, no note left behind", () => {
+    const f = fixture();
+    rmSync(join(f.shared, ".git"), { recursive: true, force: true });
+    const r = run([...base, ...ATTR], f.env);
+    expect(r.code).toBe(64);
+    expect(JSON.parse(r.stdout).error).toMatch(/git/i);
+    expect(existsSync(join(f.shared, "notes", `note-${STAMP}-hello.md`))).toBe(false);
+    rmSync(f.root, { recursive: true, force: true });
+  });
+
+  it("personal mounts keep today's behavior: no attribution needed, no forced commit", () => {
+    const f = fixture();
+    const r = run(["note", "route", "--type", "note", "--title", "Mine", "--body", "b", "--stamp", STAMP], f.env);
+    expect(r.code).toBe(0);
+    const out = JSON.parse(r.stdout);
+    expect(out).toMatchObject({ written: true, mount: "me" });
+    expect(out.commit).toBeUndefined();
+    rmSync(f.root, { recursive: true, force: true });
   });
 });

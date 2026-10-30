@@ -15,6 +15,7 @@
 // subcommand from `note write`: the experiment writer above is byte-for-byte
 // untouched. The routing logic here is pure (mount stack + intent in, decision out;
 // clock/fs stay in note_verb.ts).
+import { parseFrontmatter } from "./frontmatter.js";
 import type { Mount } from "./mounts.js";
 import { SHAPE_METRICS_SOURCE, type ShapeQuartet } from "./repertoire.js";
 
@@ -362,6 +363,9 @@ export interface RoutedNoteFields {
   stamp: string; // YYYYMMDD-HHMMSS
   route_intent?: string; // stamped only on a personal fallback
   session_id?: string | null; // routed notes are agent-agnostic → null
+  /** Extra frontmatter (`--field key=value`), rendered verbatim as `key: value`
+   *  after the base fields. A `tags` entry REPLACES the default `[<type>]`. */
+  extra?: Record<string, string>;
 }
 
 /** Render a routed generic note: minimal frontmatter (`type`, `date`,
@@ -369,16 +373,130 @@ export interface RoutedNoteFields {
  *  title and the supplied body. Deterministic — stamp/date/intent come from the
  *  caller, nothing is invented. */
 export function renderRoutedNote(f: RoutedNoteFields): string {
+  const extra = f.extra ?? {};
   const fm = [
     "---",
     `type: ${f.type}`,
     `date: ${stampToDate(f.stamp)}`,
     `session_id: ${f.session_id ? `"${f.session_id}"` : "null"}`,
-    `tags: [${f.type}]`,
+    `tags: ${"tags" in extra ? extra.tags : `[${f.type}]`}`,
   ];
   if (f.route_intent) fm.push(`route_intent: ${f.route_intent}`);
+  for (const [k, v] of Object.entries(extra)) if (k !== "tags") fm.push(`${k}: ${v}`);
   fm.push("---");
 
   const body = ["", `# ${f.title}`, "", f.body.trim(), ""].join("\n");
   return fm.join("\n") + "\n" + body + "\n";
 }
+
+// ── attributed team writes (#1863) ───────────────────────────────────────────────
+// Agents write straight to team mounts (no human promotion gate — #1860). The
+// mechanical replacements: every write is ONE git commit whose message carries
+// role + session + source as trailers (machine-checkable from the commit alone),
+// the note is schema-checked BEFORE it lands, and a failing note is quarantined
+// with its validation error instead of landing at its target path.
+
+/** Frontmatter keys `--field` may not set: they are derived by the writer. */
+export const RESERVED_FIELDS: readonly string[] = ["type", "date", "session_id", "route_intent"];
+
+/** Required frontmatter per note type — MIRRORS the `amico-vault` skill's schema
+ *  table (`amico-schema-check` mirrors the same table). amico-vault owns it:
+ *  change it there first, then here. */
+export const TYPE_SCHEMAS: Readonly<Record<string, readonly string[]>> = {
+  experiment: ["type", "date", "session_id", "platform", "gate", "task_type", "status", "fidelity", "duration_us", "tags"],
+  paper: ["type", "arxiv", "title", "authors", "date_read", "session_id", "relevance", "systems", "tags"],
+  insight: ["type", "date", "session_id", "evidence", "confidence", "tags"],
+  method: ["type", "name", "date", "session_id", "applicability", "tags"],
+  spec: ["type", "date", "session_id", "status", "tags", "visibility"],
+  plan: ["type", "date", "session_id", "status", "spec", "tags", "visibility"],
+  hypothesis: ["type", "date", "session_id", "status", "evidence", "tags"],
+  hopper: ["type", "date", "status", "tags"],
+  retrospective: ["type", "date", "session_id", "outcome", "tags"],
+  "research-brief": ["type", "date", "session_id", "tags"],
+  charter: ["type", "date", "session_id", "tags"],
+  reference: ["type", "date", "session_id", "tags"],
+  note: ["type", "date", "session_id", "tags"],
+  "system-context": ["type", "platform", "variant"],
+  "control-hardware": ["type", "date", "session_id", "tags"],
+  project: ["type", "date", "session_id", "tags"],
+  device: ["type", "name", "status", "device_class", "platforms", "location", "tags"],
+  person: ["type", "name", "org", "role", "tags"],
+  org: ["type", "name", "domain", "relationship", "tags"],
+  meeting: ["type", "date", "attendees", "org", "topic", "tags"],
+};
+
+/** List-valued fields: a present-but-scalar value is a type mismatch. */
+const LIST_FIELDS = new Set(["tags", "evidence", "authors", "systems", "platforms", "attendees"]);
+
+export type SchemaCheck = { ok: true } | { ok: false; errors: string[] };
+
+/** Check a rendered note against its type schema: parseable frontmatter, a `type`
+ *  that matches `expectedType`, every required field PRESENT (null is a legal value
+ *  — `session_id: null` on human-curated notes), list fields actually lists. Pure;
+ *  never throws. */
+export function checkNoteSchema(text: string, expectedType: string): SchemaCheck {
+  const fm = parseFrontmatter(text);
+  if (!fm.ok) return { ok: false, errors: [fm.error] };
+  const required = TYPE_SCHEMAS[expectedType];
+  if (!required) return { ok: false, errors: [`no schema registered for type "${expectedType}"`] };
+  const errors: string[] = [];
+  if (fm.data.type !== expectedType) {
+    errors.push(`type is ${JSON.stringify(fm.data.type ?? null)}, expected "${expectedType}"`);
+  }
+  const missing = required.filter((k) => !(k in fm.data));
+  if (missing.length > 0) errors.push(`missing required field(s) for type "${expectedType}": ${missing.join(", ")}`);
+  for (const k of required) {
+    if (k in fm.data && LIST_FIELDS.has(k) && !Array.isArray(fm.data[k])) {
+      errors.push(`field "${k}" must be a list`);
+    }
+  }
+  return errors.length === 0 ? { ok: true } : { ok: false, errors };
+}
+
+export interface Attribution {
+  role: string;
+  session: string;
+  source: string;
+}
+
+/** Validate the mandatory attribution: role, session, source must each be present,
+ *  non-blank, and single-line (they become commit trailers). Returns a plain-language
+ *  error naming every problem, or the trimmed attribution. */
+export function requireAttribution(
+  raw: { role?: string; session?: string; source?: string },
+): { ok: true; attribution: Attribution } | { ok: false; error: string } {
+  const flags: Array<[keyof Attribution, string]> = [
+    ["role", "--role"],
+    ["session", "--session"],
+    ["source", "--source"],
+  ];
+  const missing: string[] = [];
+  const multiline: string[] = [];
+  const out: Partial<Attribution> = {};
+  for (const [k, flag] of flags) {
+    const v = raw[k]?.trim();
+    if (!v) missing.push(flag);
+    else if (/[\r\n]/.test(v)) multiline.push(flag);
+    else out[k] = v;
+  }
+  if (missing.length > 0) {
+    return {
+      ok: false,
+      error: `refusing to write to a team mount without attribution: missing ${missing.join(", ")} (a team write needs --role <agent role>, --session <session id>, and --source <the brief, run, or digest that caused it>)`,
+    };
+  }
+  if (multiline.length > 0) return { ok: false, error: `attribution values must be a single line: ${multiline.join(", ")}` };
+  return { ok: true, attribution: out as Attribution };
+}
+
+/** The ONE commit message of an attributed team write. Subject names the role and
+ *  the note; the trailers carry role, session, source in git's own trailer format,
+ *  so `git log --format=%(trailers:key=Agent-Role,valueonly)` reads them back. */
+export function attributedCommitMessage(subject: string, a: Attribution): string {
+  return `${a.role}: ${subject}\n\nAgent-Role: ${a.role}\nSession-Id: ${a.session}\nSource: ${a.source}\n`;
+}
+
+/** Where a schema-failing note is parked inside its mount (relative path). Hidden
+ *  dir: the vault globs (schema-check, dream) skip it, so quarantined notes never
+ *  count as schema-invalid notes on the mount. */
+export const QUARANTINE_DIR = ".quarantine";
