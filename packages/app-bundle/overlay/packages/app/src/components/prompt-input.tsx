@@ -56,6 +56,7 @@ import { usePlatform } from "@/context/platform"
 import { createSessionTabs } from "@/pages/session/helpers"
 import { createTextFragment, getCursorPosition, setCursorPosition, setRangeEdge } from "./prompt-input/editor-dom"
 import { createPromptAttachments } from "./prompt-input/attachments"
+import { ComposerResizeHandle, createComposerResize } from "@opencode-ai/session-ui/v2/prompt-input/resize-handle"
 import { readClipboardImageViaBridge, readClipboardViaBridge } from "./prompt-input/clipboard-bridge"
 import { ACCEPTED_FILE_TYPES, pickAttachmentFiles } from "./prompt-input/files"
 import {
@@ -134,9 +135,17 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
   let restoreEndOnFocus = true
   let savedCursor: number | null = null
 
+  // amicode#612: drag the composer's top edge to make the text area taller;
+  // shares behavior + persisted height with the v2 composer. The stored height
+  // is the TEXT area; this scroller also holds the 56px control-row inset below
+  // the text, so that is added when applying and removed when measuring.
   const mirror = { input: false }
   const inset = 56
   const space = `${inset}px`
+  const resize = createComposerResize(() => {
+    const h = scrollRef?.getBoundingClientRect().height
+    return h === undefined ? undefined : h - inset
+  })
 
   const scrollCursorIntoView = () => {
     const container = scrollRef
@@ -1482,6 +1491,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
           [props.class ?? ""]: !!props.class,
         }}
       >
+        <ComposerResizeHandle resize={resize} gripClass="bg-text-weak" />
         <PromptDragOverlay
           type={store.draggingType}
           label={language.t(store.draggingType === "@mention" ? "prompt.dropzone.file.label" : "prompt.dropzone.label")}
@@ -1524,7 +1534,17 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
           <div
             class="relative max-h-[240px] overflow-y-auto no-scrollbar"
             ref={(el) => (scrollRef = el)}
-            style={{ "scroll-padding-bottom": space }}
+            style={{
+              "scroll-padding-bottom": space,
+              // Pins the text area to the chosen height (overrides max-h-[240px]);
+              // unset keeps the stock auto-grow.
+              ...(resize.height() === undefined
+                ? {}
+                : {
+                    height: `${resize.height()! + inset}px`,
+                    "max-height": `${resize.height()! + inset}px`,
+                  }),
+            }}
           >
             <div
               data-component="prompt-input"

@@ -152,7 +152,7 @@
     "packages/app/src/components/profile-popover.tsx": "eff742e90544455f13234a9351bb1b82189663cba2cd3172bdcea1a8a37284e8",
     "packages/app/src/components/prompt-input-clipboard-structure.test.ts": "946b718c2164da394602f26e4d9919d752da0d0b9bee714f345ba16c274542da",
     "packages/app/src/components/prompt-input-v2.tsx": "f0b637e46737e3c7345957a0167c878c8e9870a15bb850057665a4444ea91fe8",
-    "packages/app/src/components/prompt-input.tsx": "c127f81e2c0de4bdbc21a349473df39c623d8d7e2df8df0c03ea60bbef101a25",
+    "packages/app/src/components/prompt-input.tsx": "6eaaba582ed28b73aa7273ea5e33dd0a0b81255b8b8db2c572e1f369ec14ae86",
     "packages/app/src/components/prompt-project-selector.tsx": "0157c954b938bce2b5aca9a82f4a72338e361f4c9027e55a7fd5a14a1654d294",
     "packages/app/src/components/question-inbox.tsx": "5ce03a30b7110092ddffccf3bf38e6c1b1a79624f378c819be7019725c96478a",
     "packages/app/src/components/remote-create-arm.test.ts": "388132209e16b6f00d79ac7c700f8c2bfb5f80343eee34cee73451b32842d3f2",
@@ -194,6 +194,7 @@
     "packages/app/src/components/vault-panel.tsx": "1d9f06f42b94ffb94a28bfd6d2693a36c75ceb969bcd434081b4cd2fbf99665c",
     "packages/app/src/components/windows-app-menu.tsx": "262d085facace692084d79763a6bd8eba6c5ceb53b952a134e12c7e8a8a12946",
     "packages/app/src/components/workbench-panel.tsx": "d16f477044098842a214a2e16f9be719e7688a04bcb575889ca544988f23c690",
+    "packages/app/src/components/prompt-input-resize-structure.test.ts": "38244b103702afc4b45cd40176f338c2a632d64b8ee9a719ee2073b6d7aaf062",
     "packages/app/src/context/command.tsx": "388d6cb12b6dc43ecb0827e3fb918370cb9d16d96161a5990dec10fff05af172",
     "packages/app/src/context/concise-mode.test.ts": "534258a1d82d66bd8b482bb3a8ca6a24d508328505abd0f7f52e1b75cdf57fa2",
     "packages/app/src/context/concise-mode.ts": "b03ac887222543e590d31781c944e69aca97bff32a661751dd817d46bf4ead64",
@@ -1038,7 +1039,10 @@
     "packages/sdk/js/src/v2/gen/sdk.gen.ts": "6610638b4fb71bac498da98d232ef9adcd4b011b63e5e81a63fc6dc20d311b17",
     "packages/sdk/js/src/v2/gen/types.gen.ts": "20dfc17423861bd51c197fe6a2fcb6efbd7ad11853b28e0bb79844115256e729",
     "packages/session-ui/src/v2/components/prompt-input/attachments.ts": "ff66078f2edc9a67a4df0d7dfd76a49be5eab27ac332b303f3412721ef7268ea",
-    "packages/session-ui/src/v2/components/prompt-input/index.tsx": "5c5c852ad55ae759f5869fd2e48ade6da99a98b6ab3c6dc102f3e062898e3f60",
+    "packages/session-ui/src/v2/components/prompt-input/index.tsx": "f393de5a7600796df174c877ffd5af64139df7fc65294c2bb9023cdc29945f66",
+    "packages/session-ui/src/v2/components/prompt-input/resize-handle.tsx": "e0c47cd2c8140eda79d96562d311c7c5e2ff9c162695691e9f6acd2a8c1786a1",
+    "packages/session-ui/src/v2/components/prompt-input/resize.test.ts": "c049ad1cd60e5ac4ec779dd37ab4b2c8a6244b5b6cbbc59240d1c43a449cfabd",
+    "packages/session-ui/src/v2/components/prompt-input/resize.ts": "bf1323b437bd0cc342084ac9d21035c8ea6d12fcdf644b5587fd88453638f83c",
     "packages/opencode/src/server/routes/instance/httpapi/server.ts": "8f142f16accad5a5a7ca84507f5c95863416af9f85b11131e5cd97cb6b128d90",
     "packages/sdk/js/src/v2/gen/core/serverSentEvents.gen.ts": "9da41a900811e8526f3d6796341b787f7e3c64bdc9cc3a547977f05780c1f79f",
     "packages/opencode/src/server/routes/instance/httpapi/groups/experimental.ts": "944a0aee215a917e867fd9482f3c2bd40f49082bd3174c8a7d967ca40e34ec15",
@@ -1073,7 +1077,7 @@
   "extracted_at": "2026-10-29T13:09:53.406Z",
   "per_package": {
     "packages/app": {
-      "A": 289,
+      "A": 290,
       "M": 166,
       "D": 0
     },
@@ -1108,7 +1112,7 @@
       "D": 0
     },
     "packages/session-ui": {
-      "A": 49,
+      "A": 52,
       "M": 32,
       "D": 0
     },
@@ -1119,7 +1123,7 @@
     }
   },
   "counts": {
-    "overlay_total": 1048,
+    "overlay_total": 1052,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1310,6 +1314,7 @@
     "packages/app/src/components/vault-panel.tsx": "A",
     "packages/app/src/components/windows-app-menu.tsx": "M",
     "packages/app/src/components/workbench-panel.tsx": "A",
+    "packages/app/src/components/prompt-input-resize-structure.test.ts": "A",
     "packages/app/src/context/command.tsx": "M",
     "packages/app/src/context/concise-mode.test.ts": "A",
     "packages/app/src/context/concise-mode.ts": "A",
@@ -2155,6 +2160,9 @@
     "packages/sdk/js/src/v2/gen/types.gen.ts": "M",
     "packages/session-ui/src/v2/components/prompt-input/attachments.ts": "M",
     "packages/session-ui/src/v2/components/prompt-input/index.tsx": "M",
+    "packages/session-ui/src/v2/components/prompt-input/resize-handle.tsx": "A",
+    "packages/session-ui/src/v2/components/prompt-input/resize.test.ts": "A",
+    "packages/session-ui/src/v2/components/prompt-input/resize.ts": "A",
     "packages/opencode/src/server/routes/instance/httpapi/server.ts": "M",
     "packages/sdk/js/src/v2/gen/core/serverSentEvents.gen.ts": "M",
     "packages/opencode/src/server/routes/instance/httpapi/groups/experimental.ts": "M",
