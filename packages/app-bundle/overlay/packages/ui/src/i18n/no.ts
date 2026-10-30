@@ -195,4 +195,5 @@ export const dict: Record<Keys, string> = {
   "ui.sessionTurn.diffs.showLess": "Vis færre",
   "ui.sessionTurn.diffs.more": "+{{count}} til",
   "ui.message.copyTrace": "Copy trace",
+  "ui.message.download": "Download",
 }

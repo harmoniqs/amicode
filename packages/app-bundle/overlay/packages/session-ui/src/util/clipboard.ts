@@ -32,3 +32,43 @@ export async function copyTextToClipboard(text: string): Promise<boolean> {
     () => false,
   )
 }
+
+// Image copy. The OS clipboard belongs to the VS Code extension host, which
+// runs on the machine the user is sitting at (an interface machine, not
+// necessarily the server that rendered the image), so inside the chat iframe
+// the PNG rides the bridge as "clipboard-image-write" and the host writes it
+// natively (vscode.env.clipboard is text-only). Unframed, the async Clipboard
+// API stands. Non-PNG sources are rasterized first: PNG is the one image type
+// every clipboard target (Slides, Keynote, Docs) accepts.
+export async function copyImageToClipboard(src: string): Promise<boolean> {
+  const png = await pngDataUrl(src)
+  if (!png) return false
+  if (typeof window !== "undefined" && window.parent !== window) {
+    window.parent.postMessage({ source: "amicode", kind: "clipboard-image-write", dataUrl: png }, "*")
+    return true // fire-and-forget, like copyTextToClipboard
+  }
+  const clipboard = typeof navigator === "undefined" ? undefined : navigator.clipboard
+  if (!clipboard?.write || typeof ClipboardItem === "undefined") return false
+  const blob = await fetch(png).then((res) => res.blob())
+  return clipboard.write([new ClipboardItem({ "image/png": blob })]).then(
+    () => true,
+    () => false,
+  )
+}
+
+export async function pngDataUrl(src: string): Promise<string | undefined> {
+  if (src.startsWith("data:image/png;base64,")) return src
+  if (typeof document === "undefined") return undefined
+  const image = new Image()
+  image.src = src
+  const loaded = await image.decode().then(
+    () => true,
+    () => false,
+  )
+  if (!loaded || !image.naturalWidth) return undefined
+  const canvas = document.createElement("canvas")
+  canvas.width = image.naturalWidth
+  canvas.height = image.naturalHeight
+  canvas.getContext("2d")?.drawImage(image, 0, 0)
+  return canvas.toDataURL("image/png")
+}
