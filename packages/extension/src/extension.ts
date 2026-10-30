@@ -706,6 +706,19 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // the sidebar with the appropriate mode. mode controls expand/collapse
   // behavior: "reset" for explicit selection, "expand" for session/tab switch.
   ChatPanel.onProjectSelected((path, mode) => sidebarProvider.setActiveProject(path, mode));
+  // #1036: the Preview tab's "Find in sidebar" (dedicated bridge kind) and the
+  // amicode.revealInSidebar command (palette / keybinding) both land here.
+  ChatPanel.onRevealInSidebar((filePath) => void sidebarProvider.revealFile(filePath));
+  ctx.subscriptions.push(
+    vscode.commands.registerCommand("amicode.revealInSidebar", async (target?: unknown) => {
+      // Palette / keybinding: no argument → the active text editor's file. A
+      // caller may pass an absolute path or a Uri. Anything else is a silent no-op.
+      const fromUri = target instanceof vscode.Uri ? target.fsPath : undefined;
+      const filePath =
+        typeof target === "string" ? target : (fromUri ?? vscode.window.activeTextEditor?.document.uri.fsPath);
+      if (filePath) await sidebarProvider.revealFile(filePath);
+    }),
+  );
   ChatPanel.onPreviewVisibleChildren((root, relativeDirectory) => sidebarProvider.previewVisibleChildren(root, relativeDirectory));
   // #1551: the self-owned enable-control act. The composer scrim's CTA posts a
   // `fleet-enable-control` envelope (carrying the target owner machineId +

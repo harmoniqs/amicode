@@ -210,6 +210,13 @@ export interface BridgeIo {
    *  self-owned control grant. Undefined until activation wires it; the kind is
    *  consumed regardless. */
   onFleetEnableControl?: (req: { ownerMachineId: string; sessionID: string }) => void;
+  /** #1648: the panel's settled session id for targeting `preview-file`
+   *  opens; undefined when it cannot target (draft route / not yet reported). */
+  previewFileTarget?: () => string | undefined;
+  /** #1036: the Preview tab's "Find in sidebar" — reveal this absolute file path
+   *  in the Amicode sidebar tree. A dedicated kind because the `command` lane
+   *  forwards no arguments. Undefined until activation wires it. */
+  onRevealInSidebar?: (path: string) => void;
   previewVisibleChildren?: (root: string, relativeDirectory: string) => Promise<Array<{ name: string; kind: "file" | "directory"; absolute: string; relative: string }>>;
   /** Returns the currently-selected Explorer file icon theme as opaque assets. */
   explorerIconTheme?: () => ExplorerIconTheme;
@@ -218,6 +225,19 @@ export interface BridgeIo {
    *  the #1784 posture is decided. Undefined keeps the pre-#1826 local-stat
    *  behavior (panels constructed before the wiring lands). */
   linkResolution?: LinkResolutionContext;
+}
+
+/** #1648: a `preview-file` open stamped with the host panel's settled session
+ *  id; the field is omitted when the host cannot target (draft route, unknown,
+ *  deck pane — legacy broadcast), so those still open everywhere. */
+function previewFileMessage(filePath: string, io: BridgeIo) {
+  const sessionID = io.previewFileTarget?.();
+  return {
+    source: "amicode" as const,
+    kind: "preview-file" as const,
+    path: filePath,
+    ...(sessionID !== undefined ? { sessionID } : {}),
+  };
 }
 
 const isAmicode = (msg: unknown): msg is { source: "amicode"; kind: string; tab?: string } =>
@@ -229,7 +249,10 @@ const isAmicode = (msg: unknown): msg is { source: "amicode"; kind: string; tab?
 // PDF so rapid saves never overlap. Availability is detected once. Status
 // (compiling / done / error / unavailable) is relayed back so the Preview can
 // show a spinner and, on done, refresh the companion PDF (#1254).
-type LatexTargetRef = { dir: string; base: string; pdf: string };
+// `requested` (#1403): the path exactly as the app asked for it — echoed on every
+// status so the Preview's Compile button can match a status to its file even when
+// `file` (symlink-resolved) differs from the posted path.
+type LatexTargetRef = { dir: string; base: string; pdf: string; requested?: string };
 // #1414: the coalesced re-run remembers the LATEST request's target+tab, not a
 // bare boolean — otherwise the rerun replays the stale target/tab captured by
 // the original in-flight call's closure.
@@ -311,7 +334,15 @@ export async function runLatexmk(
   // the running check and spawning a second latexmk.
   state.running = true;
   const post = (extra: Record<string, unknown>) =>
-    io.postToWebview({ source: "amicode", kind: "run-latex-status", tab, file: texFile, pdf: target.pdf, ...extra });
+    io.postToWebview({
+      source: "amicode",
+      kind: "run-latex-status",
+      tab,
+      file: texFile,
+      pdf: target.pdf,
+      ...(target.requested !== undefined ? { requested: target.requested } : {}),
+      ...extra,
+    });
 
   const detect = deps.detect ?? detectLatexmk;
   if (!(await detect())) {
@@ -467,11 +498,7 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
       // Route to the Preview companion tab (#935) — the session page's
       // preview-file listener (from #934) sets previewFile, opens the side
       // panel, and switches to the Preview tab.
-      io.postToWebview({
-        source: "amicode",
-        kind: "preview-file",
-        path: fsPath,
-      });
+      io.postToWebview(previewFileMessage(fsPath, io));
       return true;
     }
     // #1826: one function owns the resolution order; the outcome is Preview
@@ -479,11 +506,7 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     // toast — never a silent no-op.
     void resolveChatFileLink(fsPath, linkResolution).then((resolution) => {
       if (resolution.action === "preview") {
-        io.postToWebview({
-          source: "amicode",
-          kind: "preview-file",
-          path: resolution.path,
-        });
+        io.postToWebview(previewFileMessage(resolution.path, io));
       } else if (resolution.action === "failed") {
         vscode.window.showErrorMessage(`Amicode: link not opened — ${resolution.reason} (${resolution.detail})`);
       } else {
@@ -659,7 +682,7 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     const roots = (vscode.workspace.workspaceFolders ?? []).map((folder) => folder.uri.fsPath);
     const target = resolveLatexTarget(rawFile, roots);
     if (!target.ok) return true; // invalid / uncontained / non-tex — ignore silently
-    scheduleLatexCompile(target, tab, io);
+    scheduleLatexCompile({ dir: target.dir, base: target.base, pdf: target.pdf, requested: rawFile }, tab, io);
     return true;
   }
 
@@ -1618,6 +1641,13 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
           });
         }
       });
+    return true;
+  }
+
+  // #1036: Preview tab "Find in sidebar" → reveal the file in the sidebar tree.
+  if (msg.kind === "reveal-in-sidebar") {
+    const p = (msg as { path?: unknown }).path;
+    if (typeof p === "string" && p !== "" && p.length <= 4096) io.onRevealInSidebar?.(p);
     return true;
   }
 
