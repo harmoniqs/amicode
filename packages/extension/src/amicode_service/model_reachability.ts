@@ -43,7 +43,7 @@ import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
-import os from "node:os";
+import { amicodeOpsDir, legacyOpsFile } from "../ops_dir";
 import { fetchProviderCatalog, fetchProviderModels, probeProviderModels } from "../llm_creds.mjs";
 
 export type ProbeStatus = "ok" | "denied" | "unavailable" | "invalid" | "rate-limited" | "error";
@@ -188,12 +188,16 @@ const PROBE_BATCH = 500; // the engine's PROBE_MAX_MODELS
 const REASON_MAX = 300;
 const ID_MAX = 256;
 
-/** The cache file (the #864 ops-dir convention: $AMICODE_OPS_DIR → ~/.amico),
- *  beside model-routing-providers.json. */
+/** The cache file: $AMICODE_OPS_DIR → ~/.amico/amicode (#1998 — the ONE ops
+ *  dir, beside model-picker.json and model-routing-providers.json). */
 export function reachabilityCacheFile(env: NodeJS.ProcessEnv = process.env): string {
-  const v = env.AMICODE_OPS_DIR;
-  const dir = typeof v === "string" && v.trim() !== "" ? v : path.join(os.homedir(), ".amico");
-  return path.join(dir, "model-reachability.json");
+  return path.join(amicodeOpsDir(env), "model-reachability.json");
+}
+
+/** Where the cache lived before #1998 (~/.amico/model-reachability.json) —
+ *  read when the canonical file is missing; never written. */
+export function legacyReachabilityCacheFile(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  return legacyOpsFile("model-reachability.json", env);
 }
 
 const emptyDoc = (): CacheDoc => ({ version: 1, providers: {} });
@@ -289,6 +293,9 @@ function pidAlive(pid: unknown): boolean {
 
 export class ModelReachability {
   readonly file: string;
+  /** #1998: the pre-unification location, consulted only when `file` is the
+   *  default (an explicit deps.file is the caller's exact choice). */
+  private readonly legacyFile: string | undefined;
   private readonly deps: ModelReachabilityDeps;
   private ticking: Promise<void> | undefined;
   private readonly tickHooks: Array<() => Promise<void>> = [];
@@ -296,6 +303,7 @@ export class ModelReachability {
   constructor(deps: ModelReachabilityDeps = {}) {
     this.deps = deps;
     this.file = deps.file ?? reachabilityCacheFile();
+    this.legacyFile = deps.file === undefined ? legacyReachabilityCacheFile() : undefined;
   }
 
   private now(): number {
@@ -316,10 +324,20 @@ export class ModelReachability {
   }
 
   // ── the shared-file lock ────────────────────────────────────────────────
+  /** The file to read: canonical when present, else the legacy twin. */
+  private get readFile_(): string {
+    return this.legacyFile === undefined || existsSync(this.file)
+      ? this.file
+      : existsSync(this.legacyFile)
+        ? this.legacyFile
+        : this.file;
+  }
+
   private readDocSync(): CacheDoc {
-    if (!existsSync(this.file)) return emptyDoc();
+    const src = this.readFile_;
+    if (!existsSync(src)) return emptyDoc();
     try {
-      return parseDoc(readFileSync(this.file, "utf8"));
+      return parseDoc(readFileSync(src, "utf8"));
     } catch {
       return emptyDoc();
     }
@@ -373,7 +391,7 @@ export class ModelReachability {
     const lockDir = `${this.file}.lock`;
     await this.acquire(lockDir);
     try {
-      const text = await readFile(this.file, "utf8").catch(() => undefined);
+      const text = await readFile(this.readFile_, "utf8").catch(() => undefined);
       const doc = parseDoc(text);
       const result = fn(doc);
       const tmp = path.join(path.dirname(this.file), `.${path.basename(this.file)}.${randomBytes(6).toString("hex")}.tmp`);

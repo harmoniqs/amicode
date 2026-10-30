@@ -43,6 +43,7 @@ import {
   type ModelClass,
 } from "../../opencode-plugin/model_routing";
 import { readFileSync, existsSync } from "node:fs";
+import { legacyOpsFile, readablePath } from "../ops_dir";
 
 export interface ModelRoutingDeps {
   /** The shipped role cards (the suggestion source + the hand-set tier). */
@@ -161,7 +162,7 @@ export async function modelRoutingResponse(deps: ModelRoutingDeps = {}): Promise
       /* the engine is unreachable — the snapshot stands or stays unknown */
     }
   }
-  if (providers === undefined) providers = readLiveProviders(snapshotFileOf(deps));
+  if (providers === undefined) providers = readLiveProviders(snapshotReadFileOf(deps));
 
   const roles = (deps.agentsDir ? listSubagentRoles(deps.agentsDir) : []).map((role) =>
     roleView(role, deps.agentsDir, prefs, tuned, fleet, providers, deps.fleetSession === true),
@@ -172,7 +173,7 @@ export async function modelRoutingResponse(deps: ModelRoutingDeps = {}): Promise
     roles,
     opt_in: prefs.suggested_opt_in,
     providers: providers ?? null,
-    snapshot_refreshed_at: snapshotMeta(snapshotFileOf(deps)),
+    snapshot_refreshed_at: snapshotMeta(snapshotReadFileOf(deps)),
     seats: { tuned: tuned !== undefined, fleet: fleet !== undefined },
   });
 }
@@ -183,6 +184,9 @@ export async function modelRoutingResponse(deps: ModelRoutingDeps = {}): Promise
 // mirroring posture.ts's prefsFile handling.
 const prefsFileOf = (deps: ModelRoutingDeps): string => deps.prefsFile ?? routingPrefsFile();
 const snapshotFileOf = (deps: ModelRoutingDeps): string => deps.snapshotFile ?? routingSnapshotFile();
+// #1998: reads fall back to the legacy ~/.amico snapshot; writes stay canonical.
+const snapshotReadFileOf = (deps: ModelRoutingDeps): string =>
+  deps.snapshotFile ?? readablePath(routingSnapshotFile(), legacyOpsFile("model-routing-providers.json"));
 
 /** POST /amicode/model-routing — {role, model}. The ONLY writes the
  *  settings surface makes into the user-set tier; anything else is the

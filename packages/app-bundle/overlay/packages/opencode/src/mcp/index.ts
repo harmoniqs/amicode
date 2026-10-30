@@ -145,6 +145,11 @@ interface State {
   clients: Record<string, MCPClient>
   defs: Record<string, MCPToolDef[]>
   instructions: Record<string, string>
+  /** #1205: names of servers baked into the STATIC config (OPENCODE_CONFIG_CONTENT /
+   *  config files) that were explicitly removed. The static config is immutable
+   *  for the life of the engine process, so without this tombstone status()
+   *  re-lists a removed server straight from cfg.mcp (a red zombie row). */
+  removed: Set<string>
 }
 
 export interface ServerInstructions {
@@ -501,6 +506,7 @@ const layer = Layer.effect(
           clients: {},
           defs: {},
           instructions: {},
+          removed: new Set(),
         }
 
         yield* Effect.forEach(
@@ -598,6 +604,7 @@ const layer = Layer.effect(
 
       for (const [key, mcp] of Object.entries(config)) {
         if (!isMcpConfigured(mcp)) continue
+        if (s.removed.has(key)) continue // #1205: removed from the static config view
         result[key] = s.status[key] ?? { status: "disabled" }
       }
 
@@ -642,6 +649,7 @@ const layer = Layer.effect(
     const add = Effect.fn("MCP.add")(function* (name: string, mcp: ConfigMCPV1.Info) {
       const s = yield* InstanceState.get(state)
       s.config[name] = mcp
+      s.removed.delete(name) // #1205: an explicit (re-)add lists it again
       yield* createAndStore(name, mcp)
       yield* events.publish(ToolsChanged, { server: name }).pipe(Effect.ignore)
       return { status: s.status }
@@ -662,8 +670,13 @@ const layer = Layer.effect(
 
     const remove = Effect.fn("MCP.remove")(function* (name: string) {
       const s = yield* InstanceState.get(state)
+      // #1205: a server baked into the static config (OPENCODE_CONFIG_CONTENT) has
+      // no runtime s.config entry; tombstone it so status() stops re-listing it.
+      const staticConfig = (yield* cfgSvc.get()).mcp ?? {}
+      const baked = isMcpConfigured(staticConfig[name])
       // Idempotent: removing a non-existent server is a no-op.
-      if (!s.config[name] && !s.clients[name] && !s.status[name]) return
+      if (!s.config[name] && !s.clients[name] && !s.status[name] && !baked) return
+      if (baked) s.removed.add(name)
       yield* closeClient(s, name)
       delete s.config[name]
       delete s.status[name]
