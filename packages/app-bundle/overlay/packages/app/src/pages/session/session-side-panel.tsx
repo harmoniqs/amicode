@@ -993,7 +993,14 @@ export function SessionSidePanel(props: {
                             inert={activeTab() !== SESSION_PREVIEW_TAB}
                           >
                             <div class="relative flex-1 min-h-0 overflow-hidden">
-                              <SessionPreviewTab previewFile={previewFile} panelVisible={() => activeTab() === SESSION_PREVIEW_TAB} openPaths={previewPaths} onOpenedPathsChange={setPreviewPaths} onActiveChange={setPreviewActive} hydrated={layout.ready} sessionID={() => params.id} />
+                              {/* #1249: one Preview per session — the route instance is shared across session tabs, so
+                                  key it or one session's open files and unsaved drafts carry into the next. Drafts live in
+                                  the per-(session, path) store and come back with the session. */}
+                              <Show when={params.id ?? "none"} keyed>
+                                {(_session) => (
+                                  <SessionPreviewTab previewFile={previewFile} panelVisible={() => activeTab() === SESSION_PREVIEW_TAB} openPaths={previewPaths} onOpenedPathsChange={setPreviewPaths} onActiveChange={setPreviewActive} hydrated={layout.ready} sessionID={() => params.id} />
+                                )}
+                              </Show>
                             </div>
                           </Tabs.Content>
 
@@ -1368,7 +1375,14 @@ export function SessionSidePanel(props: {
                         inert={activeTab() !== SESSION_PREVIEW_TAB}
                       >
                         <div class="relative flex-1 min-h-0 overflow-hidden">
-                          <SessionPreviewTab previewFile={previewFile} panelVisible={() => activeTab() === SESSION_PREVIEW_TAB} openPaths={previewPaths} onOpenedPathsChange={setPreviewPaths} onActiveChange={setPreviewActive} hydrated={layout.ready} sessionID={() => params.id} />
+                          {/* #1249: one Preview per session — the route instance is shared across session tabs, so
+                              key it or one session's open files and unsaved drafts carry into the next. Drafts live in
+                              the per-(session, path) store and come back with the session. */}
+                          <Show when={params.id ?? "none"} keyed>
+                            {(_session) => (
+                              <SessionPreviewTab previewFile={previewFile} panelVisible={() => activeTab() === SESSION_PREVIEW_TAB} openPaths={previewPaths} onOpenedPathsChange={setPreviewPaths} onActiveChange={setPreviewActive} hydrated={layout.ready} sessionID={() => params.id} />
+                            )}
+                          </Show>
                         </div>
                       </Tabs.Content>
 

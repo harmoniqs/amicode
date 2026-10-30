@@ -70,6 +70,24 @@ describe("revisioned clear", () => {
   })
 })
 
+describe("settling a save", () => {
+  test("a save settles (clears) its own revision, and a joined second settle still reads as saved", () => {
+    const store = createPreviewDraftStore()
+    const rev = store.write("ses_a", "/p/a.md", "v1")
+    expect(store.settle("ses_a", "/p/a.md", rev)).toBe(true)
+    expect(store.get("ses_a", "/p/a.md")).toBeUndefined()
+    expect(store.settle("ses_a", "/p/a.md", rev)).toBe(true) // the close-save that joined the write
+  })
+
+  test("a newer edit (or a reopened draft) keeps the document dirty", () => {
+    const store = createPreviewDraftStore()
+    const rev = store.write("ses_a", "/p/a.md", "v1")
+    store.write("ses_a", "/p/a.md", "v2")
+    expect(store.settle("ses_a", "/p/a.md", rev)).toBe(false)
+    expect(store.get("ses_a", "/p/a.md")?.content).toBe("v2")
+  })
+})
+
 describe("save serialization per file", () => {
   const deferred = () => {
     let resolve!: () => void
@@ -151,6 +169,20 @@ describe("session-owned close intent", () => {
     expect(store.closeRequest("ses_a")?.path).toBe("/p/a.md")
     // Re-requesting the same path rejoins the same decision.
     expect(store.requestClose("ses_a", "/p/a.md")).toBe(token)
+  })
+
+  test("a resolved close reaches the session's LIVE Preview, even if a different mount asked", () => {
+    const store = createPreviewDraftStore()
+    const closed: string[] = []
+    const token = store.requestClose("ses_a", "/p/a.md")!
+    // The asking mount was disposed by a session switch; a fresh mount subscribed.
+    const stale = store.onClosed("ses_a", (p) => closed.push(`stale:${p}`))
+    stale()
+    const unsubscribe = store.onClosed("ses_a", (p) => closed.push(`live:${p}`))
+    store.onClosed("ses_b", (p) => closed.push(`other:${p}`))
+    expect(store.resolveClose("ses_a", token)).toBe(true)
+    expect(closed).toEqual(["live:/p/a.md"])
+    unsubscribe()
   })
 
   test("resolving completes the close only for the current token; a canceled request never closes", () => {

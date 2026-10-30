@@ -782,13 +782,14 @@
     "packages/app/src/components/session/pdf-find-pill.tsx": "1e298a28d9b986a749ad15619623504be8126a4161af24ca674ffd978120505b",
     "packages/app/src/components/session/pdf-restore.test.ts": "4cd4cabbdc8063deb5fe95b5e637cf154ccdf864c5ff9f2f6833826bd69e4f90",
     "packages/app/src/components/session/pdf-restore.ts": "e5c92096b9302a452439babfc2732610a7e0d18e23793ce3bf6352fa32f91a36",
-    "packages/app/src/components/session/preview-draft-store.test.ts": "ab22042432f419d2282b93c5de42f12d70c95332aa3f11ae7c715f95709388b5",
-    "packages/app/src/components/session/preview-draft-wiring.test.ts": "75a6b323186150a49c71469c22477dbfe05b69c0821056270be6fddc02f15945",
+    "packages/app/src/components/session/preview-draft-store.test.ts": "3985665fbbe2255dcc1ea683a4353c5d2e4c24e77e93e5981bb466698fe23c05",
+    "packages/app/src/components/session/preview-draft-store.ts": "28355fc9be787f81ddc0f052f96d51c283ab9a917b309ae05a29c1c98ffba7a3",
+    "packages/app/src/components/session/preview-draft-wiring.test.ts": "8d54de2788ab52e7ba02a90e606072602aa1de3411d2371148258e2a9d33b44a",
     "packages/app/src/components/session/preview-file-helpers.test.ts": "e0c1ccb40b48990c0c5b87ea62a35de60b860cd760067c7f1327cbb1d36584b1",
     "packages/app/src/components/session/preview-file-helpers.ts": "2244aaef25f7412df7b53a45a7d2f72380d45eb90caefa5e96c48d01e988eb4e",
     "packages/app/src/components/session/preview-file-target.test.ts": "d9a341349d8922b0369f3fdf911cce35d96344962ad442267e9078106d266db3",
     "packages/app/src/components/session/preview-file-target.ts": "86a60d27192484506939be5a6d446c045748c4719ff46b366486e3c411a22aa9",
-    "packages/app/src/components/session/preview-file-view.tsx": "caccb771210950896631ac7efd4cb3ca5689e0ba5049d9e2f53154ca86bb07b9",
+    "packages/app/src/components/session/preview-file-view.tsx": "7c5f2bee779fd192c5e49f90514ad4db07977c44695832640b0745ac9a4c18f1",
     "packages/app/src/components/session/preview-frontmatter-card.tsx": "00f439e3bf482673dfb06c0ce3464c0f51985093ed57b321cdebd38d452f2e5d",
     "packages/app/src/components/session/preview-frontmatter.test.ts": "93ec9f7f4c604d8ed8ee6009779c425bffecfca331a122a7a700b588a8ca3c0c",
     "packages/app/src/components/session/preview-frontmatter.ts": "036250edd8c2886ee8f8ac0723f2b9a41d363898006a53f47bc44b8194c5a3d3",
@@ -802,7 +803,7 @@
     "packages/app/src/components/session/session-header.test.tsx": "733f48a613d3d1fb57ae87a38a0f857d1f37261ee4b1db2bcf0dd8457ec6c196",
     "packages/app/src/components/session/session-header.tsx": "8d5e943e3b2b338e519530842e5c06cdb30ca5d393d9652cc362e0105f0f7e64",
     "packages/app/src/components/session/session-new-view.tsx": "98298ae1c8745b8c3d5ec738e4c2354eb84bd7b3d80639fbb32f96374e7be5dd",
-    "packages/app/src/components/session/session-preview-tab.tsx": "a5e15417194a7143ebf3d0932fc00bb0f2cedf640f0037941aa265cfcd7aa658",
+    "packages/app/src/components/session/session-preview-tab.tsx": "7c0570a8bdaf9f69189f153395604990973da569e13797ca78c2548d6c87e182",
     "packages/app/src/components/session/session-preview-tabs.test.ts": "773fc0116c5f61302eaa4a09fd5f91e6b26dee978c89e29c21714243ae3a5653",
     "packages/app/src/components/session/session-preview-tabs.ts": "672d147a6f1f46a7ac2eff7aff9da6cc069c476ff918e5ff4aed3a997310e6fe",
     "packages/app/src/components/session/session-preview-tree.test.ts": "36aa705c79e39f42f4281e3ef3b6de41c445d18c044f5ce262a41a50bc5cdc59",
@@ -876,7 +877,7 @@
     "packages/app/src/pages/session/session-panel-width.test.ts": "9482afba7fbce254cbbd21ef885e9e9620b981616681635376f466478f611155",
     "packages/app/src/pages/session/session-panel-width.ts": "02ee3a02ed78db2eac47c2528055cf78aef95f389641e929ddc56c17471dcbe2",
     "packages/app/src/pages/session/session-side-panel-structure.test.ts": "b2d1d007d9200d0ac4a0889e45c2dbe57a324a10cb26ae9ab8f420d3c890402b",
-    "packages/app/src/pages/session/session-side-panel.tsx": "1a1621c7eb01c857092bc23c3bfb6d05e1412578be6a6fa212939384e66133f9",
+    "packages/app/src/pages/session/session-side-panel.tsx": "43cbf60797b5b382e1cc6e69015f242d684ab92eb68f45a5dcef9cf56422d59a",
     "packages/app/src/pages/session/terminal-panel-v2.tsx": "68dad9307f1d2abf3ff9248e451bd08005acf01ddc46b30a6d01b58f4a90dce0",
     "packages/app/src/pages/session/use-amicode-commands.test.ts": "65671d054c404edd2b799b0f6591a9c055e6ecb454a674fa0bd9a7fa6f68e111",
     "packages/app/src/pages/session/use-amicode-commands.tsx": "88bfdad9ae6dfd920b8e6a14ffebd2cf9e52b8f67bb9284cb358ad940643ca67",
@@ -1074,10 +1075,10 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-30T19:41:47.469Z",
+  "extracted_at": "2026-10-30T19:44:45.133Z",
   "per_package": {
     "packages/app": {
-      "A": 293,
+      "A": 294,
       "M": 166,
       "D": 0
     },
@@ -1123,7 +1124,7 @@
     }
   },
   "counts": {
-    "overlay_total": 1052,
+    "overlay_total": 1053,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1903,6 +1904,7 @@
     "packages/app/src/components/session/pdf-restore.test.ts": "A",
     "packages/app/src/components/session/pdf-restore.ts": "A",
     "packages/app/src/components/session/preview-draft-store.test.ts": "A",
+    "packages/app/src/components/session/preview-draft-store.ts": "A",
     "packages/app/src/components/session/preview-draft-wiring.test.ts": "A",
     "packages/app/src/components/session/preview-file-helpers.test.ts": "A",
     "packages/app/src/components/session/preview-file-helpers.ts": "A",

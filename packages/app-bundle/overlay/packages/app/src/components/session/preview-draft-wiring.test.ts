@@ -13,7 +13,7 @@ const previewTab = read("./session-preview-tab.tsx")
 
 describe("session-scoped Preview", () => {
   test("both Preview mounts are keyed by the session so another session's workspace never carries over", () => {
-    const keyed = sidePanel.match(/<Show when=\{params\.id \?\? "none"\} keyed>\s*\{\(\) => \(\s*<SessionPreviewTab/g)
+    const keyed = sidePanel.match(/<Show when=\{params\.id \?\? "none"\} keyed>\s*\{\(_session\) => \(\s*<SessionPreviewTab/g)
     expect(keyed?.length).toBe(2)
   })
 
@@ -33,7 +33,7 @@ describe("draft lifecycle goes through the store", () => {
 
   test("a save clears only its own revision and is serialized per file; a newer edit keeps the tab dirty", () => {
     expect(fileView).toContain("previewDrafts.enqueueSave(")
-    expect(fileView).toContain("previewDrafts.clear(")
+    expect(fileView).toContain("previewDrafts.settle(")
     expect(fileView).toContain("revision")
   })
 
@@ -42,6 +42,7 @@ describe("draft lifecycle goes through the store", () => {
     expect(previewTab).toContain("previewDrafts.requestClose(")
     expect(previewTab).toContain("previewDrafts.cancelClose(")
     expect(previewTab).toContain("previewDrafts.resolveClose(")
+    expect(previewTab).toContain("previewDrafts.onClosed(")
   })
 
   test("dirty draft paths come back with the session (restore target includes them)", () => {

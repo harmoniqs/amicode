@@ -34,6 +34,7 @@ import { createPdfFindController } from "./pdf-find-controller"
 import { PdfFindPill } from "./pdf-find-pill"
 import { toAbsolutePath, shouldApplyWatcherRead } from "./preview-file-helpers"
 import { validateHumanWritePath } from "./preview-human-write-gate"
+import { previewDrafts } from "./preview-draft-store"
 import { splitFrontmatter } from "./preview-frontmatter"
 import { FrontmatterCard } from "./preview-frontmatter-card"
 
@@ -95,6 +96,10 @@ export function PreviewFileView(props: {
   findDirection?: () => number
   viewState?: () => PreviewViewState | undefined
   onViewStateChange?: (state: PreviewViewState) => void
+  /** The session this view belongs to (#1249). With it, unsaved edits are kept in
+   *  the per-(session, path) draft store so they survive a session-tab remount
+   *  and are never shown to another session. Absent = purely local drafts. */
+  draftSession?: string
   zoom: () => number
   zoomIn: (maximum: number) => void
   zoomOut: () => void
@@ -102,9 +107,17 @@ export function PreviewFileView(props: {
 }) {
   const sdk = useSDK()
   const serverSDK = useServerSDK()
-  const [fileContent, setFileContent] = createSignal("")
-  const [mode, setMode] = createSignal<"preview" | "edit">("preview")
-  const [unsavedContent, setUnsavedContent] = createSignal<string | null>(null)
+  // #1249: a remount (session-tab switch) restores this session's cached draft
+  // before anything reads the disk, so the editor returns with the exact text and
+  // dirty indicator the user left.
+  const draftScope = props.draftSession
+  const restoredDraft = draftScope ? previewDrafts.get(draftScope, props.filePath) : undefined
+  const [fileContent, setFileContent] = createSignal(restoredDraft?.content ?? "")
+  const [mode, setMode] = createSignal<"preview" | "edit">(restoredDraft ? "edit" : "preview")
+  const [unsavedContent, setUnsavedContent] = createSignal<string | null>(restoredDraft?.content ?? null)
+  onMount(() => {
+    if (restoredDraft) props.onDirtyChange(true)
+  })
   const [loading, setLoading] = createSignal(true)
   const [fileType, setFileType] = createSignal<FileType>(null)
   const [pdfNavigation, setPdfNavigation] = createSignal<PdfPageNavigation | null>(null)
@@ -236,6 +249,8 @@ export function PreviewFileView(props: {
               return
             }
             setFileType("text")
+            // A disk read never replaces a cached draft (#1249).
+            if (unsavedContent() !== null) return
             setFileContent(content.content)
           })
           .catch(() => {
@@ -384,11 +399,23 @@ export function PreviewFileView(props: {
     }
     setSaveStatus("saving")
     try {
-      await serverSDK().client.file.write({ path: filePath, content })
+      // #1249: serialize per server + project + file; a close-save of the same text
+      // joins an in-flight save instead of writing twice. The draft revision is
+      // captured NOW so a completion can only clear the edit it actually wrote.
+      const revision = draftScope ? previewDrafts.get(draftScope, filePath)?.revision : undefined
+      const fileKey = [serverSDK().url, workspace ?? "", filePath].join("\u0000")
+      await previewDrafts.enqueueSave(fileKey, content, async () => {
+        await serverSDK().client.file.write({ path: filePath, content })
+      })
       setSaveStatus("saved")
-      setUnsavedContent(null)
-      props.onDirtyChange(false)
-      if (closeAfterSave) props.onSaveComplete?.()
+      // A newer edit typed while the write was in flight keeps the document dirty
+      // (and an older completion never closes it).
+      const settled = draftScope && revision !== undefined ? previewDrafts.settle(draftScope, filePath, revision) : true
+      if (settled) {
+        setUnsavedContent(null)
+        props.onDirtyChange(false)
+        if (closeAfterSave) props.onSaveComplete?.()
+      }
       if (savedTimer) clearTimeout(savedTimer)
       savedTimer = setTimeout(() => setSaveStatus("idle"), 2000)
       // #1253: trigger LaTeX compilation after saving a .tex file. #1414: post
@@ -404,6 +431,7 @@ export function PreviewFileView(props: {
   }
 
   const handleEdit = (content: string) => {
+    if (draftScope) previewDrafts.write(draftScope, props.filePath, content)
     setUnsavedContent(content)
     props.onDirtyChange(true)
     setFileContent(content)

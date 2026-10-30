@@ -20,6 +20,7 @@ import type { PreviewViewState } from "@opencode-ai/session-ui/v2/preview-view-s
 import { PreviewFileView } from "./preview-file-view"
 import { isPdfFindTarget } from "./pdf-find-guard"
 import { previewFilePathForSession } from "./preview-file-target"
+import { previewDrafts } from "./preview-draft-store"
 import { FileVisual } from "./session-sortable-tab"
 import {
   createPreviewPersister,
@@ -136,7 +137,13 @@ export function SessionPreviewTab(props: {
   const [localViewState, setLocalViewState] = createStore<Record<string, PreviewViewState | undefined>>({})
   const [workspace, setWorkspace] = createSignal(createPreviewWorkspace())
   const [capacityMessage, setCapacityMessage] = createSignal<string | null>(null)
-  const [closingPath, setClosingPath] = createSignal<string | null>(null)
+  // #1249: this Preview belongs to the session it was mounted for (the side panel
+  // remounts it per session), and unsaved drafts + the close decision live in the
+  // per-(session, path) store so a session switch neither leaks nor loses them.
+  const draftSession = props.sessionID?.()
+  const restoredClose = draftSession ? previewDrafts.closeRequest(draftSession) : undefined
+  const [closingPath, setClosingPath] = createSignal<string | null>(restoredClose?.path ?? null)
+  let closeToken: number | undefined = restoredClose?.token
   const [previewDrag, setPreviewDrag] = createSignal<PreviewDrag | null>(null)
   const [resizingSplitID, setResizingSplitID] = createSignal<string | null>(null)
   const [tabContextMenu, setTabContextMenu] = createSignal<{ path: string; x: number; y: number } | null>(null)
@@ -200,7 +207,10 @@ export function SessionPreviewTab(props: {
   createEffect(() => {
     const persisted = props.openPaths?.() ?? []
     const active = props.previewFile()
-    const target = previewRestoreTarget(persisted, active)
+    // Every document with an unsaved draft returns with its session, even an
+    // inactive one — a draft must never be orphaned from its tab (#1249).
+    const drafted = draftSession ? previewDrafts.paths(draftSession).filter((path) => !persisted.includes(path)) : []
+    const target = previewRestoreTarget([...persisted, ...drafted], active)
     const signature = target.join("\u0000")
     if (signature === restoredSignature) return
     restoredSignature = signature
@@ -216,7 +226,7 @@ export function SessionPreviewTab(props: {
     }
     // Persist a net-new active file that mounted the tab (not yet in the list).
     // Deduped in the setter, so a plain re-instantiation writes nothing.
-    if (active && !persisted.includes(active)) syncOpenPaths()
+    if ((active && !persisted.includes(active)) || drafted.length > 0) syncOpenPaths()
   })
 
   onMount(() => {
@@ -250,6 +260,9 @@ export function SessionPreviewTab(props: {
   }
 
   const removePath = (path: string) => {
+    // Explicit Close / Discard (or a completed close-save) is the only thing that
+    // removes a draft besides a matching Save (#1249).
+    if (draftSession) previewDrafts.clear(draftSession, path)
     const wasActive = props.previewFile()
     setWorkspace((current) => removePreviewPath(current, path))
     setDirtyPaths(path, false)
@@ -266,10 +279,33 @@ export function SessionPreviewTab(props: {
 
   const closePath = (path: string) => {
     if (dirtyPaths[path]) {
+      if (draftSession) {
+        // One session-owned decision at a time: a second dirty tab cannot replace it.
+        const token = previewDrafts.requestClose(draftSession, path)
+        if (token === undefined) return
+        closeToken = token
+      }
       setClosingPath(path)
       return
     }
     removePath(path)
+  }
+
+  const endCloseDecision = () => {
+    if (draftSession && closeToken !== undefined) previewDrafts.cancelClose(draftSession, closeToken)
+    closeToken = undefined
+    setClosingPath(null)
+  }
+
+  // A close-save outlives a session switch: its completion resolves the session's
+  // decision in the store, which tells THIS (possibly newer) mount to close the tab.
+  if (draftSession) {
+    const unsubscribe = previewDrafts.onClosed(draftSession, (path) => {
+      removePath(path)
+      closeToken = undefined
+      setClosingPath(null)
+    })
+    onCleanup(unsubscribe)
   }
 
   const copyPreviewPath = async (value: string) => {
@@ -673,7 +709,7 @@ export function SessionPreviewTab(props: {
                 <button
                   type="button"
                   class="px-2 py-1 text-12-regular text-text-weak hover:text-text-base focus-visible:outline focus-visible:outline-2 focus-visible:outline-border-focus"
-                  onClick={() => setClosingPath(null)}
+                  onClick={endCloseDecision}
                 >
                   Cancel
                 </button>
@@ -682,7 +718,7 @@ export function SessionPreviewTab(props: {
                   class="px-2 py-1 text-12-regular text-text-weak hover:text-text-base focus-visible:outline focus-visible:outline-2 focus-visible:outline-border-focus"
                   onClick={() => {
                     removePath(path())
-                    setClosingPath(null)
+                    endCloseDecision()
                   }}
                 >
                   Discard
@@ -759,7 +795,15 @@ export function SessionPreviewTab(props: {
                               saveRequest={() => saveRequests[path] ?? 0}
                               findRequest={() => findRequests[path] ?? 0}
                               findDirection={() => findDirections[path] ?? 0}
+                              draftSession={draftSession}
                               onSaveComplete={() => {
+                                // Only the current close decision may close the tab: a
+                                // canceled / superseded close-save leaves it open (#1249).
+                                if (draftSession) {
+                                  const token = closeToken ?? previewDrafts.closeRequest(draftSession)?.token
+                                  if (token !== undefined) previewDrafts.resolveClose(draftSession, token)
+                                  return
+                                }
                                 removePath(path)
                                 setClosingPath(null)
                               }}
