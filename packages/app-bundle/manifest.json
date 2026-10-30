@@ -610,7 +610,7 @@
     "packages/ui/src/amicode/problem.test.ts": "3b7d212cc5a11855c0606189c007f2bbc3957c6b2ee4e1642fc95242f3dd94bd",
     "packages/ui/src/amicode/problem.ts": "186c1615f387ce930f61b2a8bcc41a11c7d6979c3a398e04be9a3939a6931d5b",
     "packages/ui/src/amicode/project-type-icons.test.ts": "1db755e2818a5e97d018e7133ae329b9ce1ff63fc347a06bcac7b9f4d0784969",
-    "packages/ui/src/amicode/rail-gate.test.ts": "7cf0ff5add76f27eb4022224a0f18532a7bc419dd5368788e7a0667f9913dcae",
+    "packages/ui/src/amicode/rail-gate.test.ts": "01b5ae4907ab2ccb8d5ce3284747f5055832de1221eabb88285eb699004e991b",
     "packages/ui/src/amicode/rail-gate.ts": "c24f99d8285a5484863078acedc5ed36d8de67084c2baaf2bb2f7b6d87e657cb",
     "packages/ui/src/amicode/receipt-runs.test.ts": "2c25968b2ba9eaa7fe70ed4cf767aae88d3db9595e01d880215514fef7a4563f",
     "packages/ui/src/amicode/receipt-runs.ts": "4aa31624ea3d61ab352bfda7cd0da48f7d367f123cf7929f52f4da84629a190b",
