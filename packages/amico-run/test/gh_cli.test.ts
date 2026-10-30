@@ -4,7 +4,7 @@
 // the configured cases use a PREFILLED fresh cache so no network is touched.
 import { describe, it, expect, beforeAll } from "vitest";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { testKeyPair } from "../src/github_app.js";
 import { tmpRoot } from "./helpers.js";
@@ -149,8 +149,16 @@ describe("gh shim (bundle)", () => {
       return;
     }
     const root = tmpRoot();
+    // #2021: expose ONLY node, via a private dir. A node bin dir like /usr/bin
+    // (the Modal night sandbox: nodesource node + the image's apt gh, both in
+    // /usr/bin) also carries a real gh, which defeated the "no real gh" premise
+    // and made the shim succeed instead of exiting 127. CI's hostedtoolcache
+    // node dir has no gh, so it passed there by luck of layout.
+    const onlyNode = join(root, "only-node");
+    mkdirSync(onlyNode, { recursive: true });
+    symlinkSync(join(nodeDir, "node"), join(onlyNode, "node"));
     const r = runShim(["pr", "list"], {
-      PATH: `${join(ROOT, "launcher")}:${nodeDir}`,
+      PATH: `${join(ROOT, "launcher")}:${onlyNode}`,
       AMICO_GITHUB_FILE: join(root, "github.json"),
       AMICO_GITHUB_TOKEN_FILE: join(root, "tok.json"),
       AMICO_GITHUB_APPS_DIR: join(root, "github-apps"),
