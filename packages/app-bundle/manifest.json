@@ -939,7 +939,7 @@
     "packages/session-ui/src/v2/components/editable-diff-view-core.ts": "f01a341c4c1cdb4a9522f9ccd3c856bd3b9b7310c01d87327b3ce777052c8c59",
     "packages/session-ui/src/v2/components/editable-diff-view.test.ts": "ab206fa17779e6e9015d343ae37e3067dfc1821a93b6ba566b7a0dce0fc19acb",
     "packages/session-ui/src/v2/components/editable-diff-view.tsx": "f682e398ece864b5b854ca36698581c7e1cc5964eed96e7b45cabfcb64748b24",
-    "packages/session-ui/src/v2/components/editor-core.test.ts": "c758e1fb20da30cae44a3311ddd27591a074f137020b28b79d9d879666ee37d6",
+    "packages/session-ui/src/v2/components/editor-core.test.ts": "0850cfe850a09bf71eb97dcc09f3f31f2388651cb7ba20e4a26febec04dca922",
     "packages/session-ui/src/v2/components/editor-core.ts": "efc2b5f6fe774f1be862184db381f9229f1e642cf93d1f4ca925ed39ceb211d0",
     "packages/session-ui/src/v2/components/file-name-picker.test.tsx": "1ce9741e315b549165d390c74b5885a43580aa70e24de987f9ba8388cd521b41",
     "packages/session-ui/src/v2/components/markdown-utils.test.ts": "10e1034293bf385cf50d860bf1667d8370abc61dcee0c5a93295f21f5f55876a",
