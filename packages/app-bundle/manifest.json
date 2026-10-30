@@ -526,7 +526,7 @@
     "packages/session-ui/src/components/markdown-stream.ts": "50e38abd5d4ff919564655799678be10463dec58502fc5487c1c97a9a8db5399",
     "packages/session-ui/src/components/markdown.css": "e5654bf01501ab93bcad54b488b460d6ca283da9875978557f853106738ec830",
     "packages/session-ui/src/components/markdown.tsx": "9eba82666012819518e4e9145e75373e3a6d1d0d33738da639c8e5be117c43c5",
-    "packages/session-ui/src/components/message-part-css.test.ts": "bc164695d0195684d646ebf490ba7bb4ed72adcf2bf3d01b00de47f4f03bcd4f",
+    "packages/session-ui/src/components/message-part-css.test.ts": "ce4bac108c6510197358023cc5f79d2f265313da2f0e8f70672919e72e576b10",
     "packages/session-ui/src/components/message-part-groups.ts": "37be069bf46e926fcde83d3744ee706911ff002e6b532e279290d841aeee96da",
     "packages/session-ui/src/components/message-part-skill.test.ts": "453bdcb25e4df91ad1004635b8766070a60421355adf18ee53f43cd2fa7d0486",
     "packages/session-ui/src/components/message-part-skill.ts": "d65a15dc39b8c0dece13aebe5e308426ae2dd758b07740251525ba9257654cf7",
@@ -1005,7 +1005,7 @@
     "packages/app/src/pages/session/timeline/message-timeline-archive.test.ts": "5699d233b5b1a8ba165354113ff40cc9d55b37a80787d163c15165655d591555",
     "packages/app/src/pages/session/timeline/message-timeline.tsx": "cfb17097fc20b91c7d18f3e0138068353e00b485a13f77851e4707833e9f2271",
     "packages/app/src/pages/session/timeline/model-pure.ts": "50be4ba12d747dd8df9932044ceee29c5f3b6fa6d6ac36791207f91a91067cd4",
-    "packages/app/src/pages/session/timeline/model.test.ts": "459e0694409ffcf2530252a65491e1006f982b8f5c78a15573ed41646b2c85cf",
+    "packages/app/src/pages/session/timeline/model.test.ts": "ea9f4617e32ad7e33f9ce431104e29586cddbb20377cb245489790a738019804",
     "packages/app/src/pages/session/timeline/model.ts": "a67995b33bb7e7bc44994ff3e4511bb6ff0200448d7c3aa5251d5f18a133586e",
     "packages/app/src/pages/session/timeline/projection.test.ts": "68655f29c382640fc281780166aa528ea26d28d953f3376e1e062be7a0e13749",
     "packages/app/src/pages/session/timeline/projection.ts": "e76549e34baedee02c8d2fd9357245f80aa4e79dcf2916869f48f0ea1efed980",
@@ -1070,7 +1070,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-30T19:30:08.408Z",
+  "extracted_at": "2026-10-30T19:32:51.991Z",
   "per_package": {
     "packages/app": {
       "A": 289,
