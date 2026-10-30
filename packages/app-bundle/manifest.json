@@ -790,6 +790,7 @@
     "packages/app/src/components/session/preview-file-target.test.ts": "d9a341349d8922b0369f3fdf911cce35d96344962ad442267e9078106d266db3",
     "packages/app/src/components/session/preview-file-target.ts": "86a60d27192484506939be5a6d446c045748c4719ff46b366486e3c411a22aa9",
     "packages/app/src/components/session/preview-file-view.tsx": "7c5f2bee779fd192c5e49f90514ad4db07977c44695832640b0745ac9a4c18f1",
+    "packages/app/src/components/session/preview-find-in-sidebar.test.ts": "68cdc2d9743b3c3a6a6c1fab6cbd362d27b4f7179cba973cba67d10f01b35970",
     "packages/app/src/components/session/preview-frontmatter-card.tsx": "00f439e3bf482673dfb06c0ce3464c0f51985093ed57b321cdebd38d452f2e5d",
     "packages/app/src/components/session/preview-frontmatter.test.ts": "93ec9f7f4c604d8ed8ee6009779c425bffecfca331a122a7a700b588a8ca3c0c",
     "packages/app/src/components/session/preview-frontmatter.ts": "036250edd8c2886ee8f8ac0723f2b9a41d363898006a53f47bc44b8194c5a3d3",
@@ -1076,10 +1077,10 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-10-30T19:46:12.138Z",
+  "extracted_at": "2026-10-30T19:49:16.485Z",
   "per_package": {
     "packages/app": {
-      "A": 295,
+      "A": 296,
       "M": 166,
       "D": 0
     },
@@ -1125,7 +1126,7 @@
     }
   },
   "counts": {
-    "overlay_total": 1054,
+    "overlay_total": 1055,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1912,6 +1913,7 @@
     "packages/app/src/components/session/preview-file-target.test.ts": "A",
     "packages/app/src/components/session/preview-file-target.ts": "A",
     "packages/app/src/components/session/preview-file-view.tsx": "A",
+    "packages/app/src/components/session/preview-find-in-sidebar.test.ts": "A",
     "packages/app/src/components/session/preview-frontmatter-card.tsx": "A",
     "packages/app/src/components/session/preview-frontmatter.test.ts": "A",
     "packages/app/src/components/session/preview-frontmatter.ts": "A",

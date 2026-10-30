@@ -1452,6 +1452,45 @@ describe("sidebar bridge — file operations", () => {
 
 // ── Session-aware highlighting (#677) ────────────────────────────────────────
 
+describe("SidebarViewProvider — revealFile (#1036)", () => {
+  let SidebarViewProvider: any;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    const mod = await import("../src/sidebar_view");
+    SidebarViewProvider = mod.SidebarViewProvider;
+  });
+
+  it("focuses the sidebar view, then posts reveal-file to the webview", async () => {
+    const provider = new SidebarViewProvider(makeExtensionUri());
+    const view = makeWebviewView();
+    provider.resolveWebviewView(view, {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
+    const executed = (vscode.commands as unknown as { executed: string[] }).executed;
+    const before = executed.length;
+
+    await provider.revealFile("/w/p/a.md");
+
+    expect(executed.slice(before)).toContain("amicode.workspace.focus");
+    expect(view.webview.postMessage).toHaveBeenCalledWith({ kind: "reveal-file", path: "/w/p/a.md" });
+  });
+
+  it("queues the reveal until the webview exists and replays it on resolve", async () => {
+    const provider = new SidebarViewProvider(makeExtensionUri());
+    await provider.revealFile("/w/p/a.md"); // sidebar never opened: no view yet
+    const view = makeWebviewView();
+    provider.resolveWebviewView(view, {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
+    expect(view.webview.postMessage).toHaveBeenCalledWith({ kind: "reveal-file", path: "/w/p/a.md" });
+  });
+
+  it("ignores an empty path", async () => {
+    const provider = new SidebarViewProvider(makeExtensionUri());
+    const view = makeWebviewView();
+    provider.resolveWebviewView(view, {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
+    await provider.revealFile("");
+    expect(view.webview.postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ kind: "reveal-file" }));
+  });
+});
+
 describe("SidebarViewProvider — session awareness", () => {
   let SidebarViewProvider: any;
 

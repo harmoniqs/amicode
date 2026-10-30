@@ -895,6 +895,25 @@ describe("amicode bridge — add-workspace-project (#663)", () => {
   });
 });
 
+describe("amicode bridge — reveal-in-sidebar (#1036)", () => {
+  it("hands a string path to onRevealInSidebar (a dedicated kind, because the command lane carries no args)", () => {
+    const revealed: string[] = [];
+    const host = { ...io(), onRevealInSidebar: (p: string) => revealed.push(p) };
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "reveal-in-sidebar", path: "/w/p/a.md" }, host)).toBe(true);
+    expect(revealed).toEqual(["/w/p/a.md"]);
+  });
+
+  it("consumes the message silently without the callback, and ignores empty / non-string paths", () => {
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "reveal-in-sidebar", path: "/x" }, io())).toBe(true);
+    const revealed: string[] = [];
+    const host = { ...io(), onRevealInSidebar: (p: string) => revealed.push(p) };
+    for (const path of ["", 42, undefined, "x".repeat(5000)]) {
+      expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "reveal-in-sidebar", path }, host)).toBe(true);
+    }
+    expect(revealed).toEqual([]);
+  });
+});
+
 describe("amicode bridge — project-selected (#663)", () => {
   it("consumes project-selected and calls onProjectSelected with the path", () => {
     const selected: string[] = [];
