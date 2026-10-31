@@ -34,7 +34,7 @@ body.append(
         { v: q.T1.toFixed(0), u: "µs", k: h("span", { class: "nocase" }, "T₁"), note: "as stored" },
       ]),
       h("table", { class: "data" },
-        h("thead", null, h("tr", null, h("th", null, "pulse"), h("th", null, "shape"), h("th", { class: "n" }, "gain"), h("th", { class: "n" }, h("span", { class: "nocase" }, "σ (µs)")))),
+        h("thead", null, h("tr", null, h("th", null, "Pulse"), h("th", null, "Shape"), h("th", { class: "n" }, "Gain"), h("th", { class: "n" }, h("span", { class: "nocase" }, "σ (µs)")))),
         h("tbody", null, Object.entries(q.pulses).map(([k, p]) => h("tr", null, h("td", { class: "mono", style: { "font-size": "11px" } }, k), h("td", { class: "faint" }, p.type), h("td", { class: "n" }, Number(p.gain).toLocaleString("en-US")), h("td", { class: "n" }, p.sigma))))),
       Rows([
         ["readout", `${ro.frequency.toFixed(1)} MHz · gain ${ro.gain} · ${ro.readout_length} µs`],

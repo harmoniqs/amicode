@@ -77,15 +77,18 @@
       o.footer && h("footer", null, o.footer),
     )
   }
+  // labels are written sentence-case; v0's eyebrow style uppercases them in CSS, the
+  // alternatives don't. Element labels (notation in .nocase) are left untouched.
+  const cap = (k) => (typeof k === "string" && /^[a-z]/.test(k) ? k[0].toUpperCase() + k.slice(1) : k)
   function Rows(pairs) {
-    return h("dl", { class: "rows" }, pairs.filter(Boolean).map(([k, v]) => [h("dt", null, k), h("dd", { title: typeof v === "string" ? v : null }, v)]))
+    return h("dl", { class: "rows" }, pairs.filter(Boolean).map(([k, v]) => [h("dt", null, cap(k)), h("dd", { title: typeof v === "string" ? v : null }, v)]))
   }
   function Stats(items, cols) {
     return h(
       "div",
       { class: "stats", style: { "--cols": cols || items.length } },
       items.map((s) =>
-        h("div", { class: "stat" }, h("div", { class: "v" }, s.v, s.u && h("small", null, s.u)), h("div", { class: "k eyebrow" }, s.k), s.note && h("div", { class: "note" }, s.note)),
+        h("div", { class: "stat" }, h("div", { class: "v" }, s.v, s.u && h("small", null, s.u)), h("div", { class: "k eyebrow" }, cap(s.k)), s.note && h("div", { class: "note" }, s.note)),
       ),
     )
   }
@@ -309,7 +312,9 @@
   }
   function mountFrame(o) {
     const wc = WorkColumn(o)
-    const frame = h("div", { class: "frame" + (o.solo ? " solo" : ""), style: o.panelW ? { "--panel-w": o.panelW + "px" } : null }, o.solo ? null : ChatGhost(o.chat), wc.el)
+    // inside compare.html's iframes there is no room for the chat column: render the panel alone
+    const solo = o.solo || window.top !== window
+    const frame = h("div", { class: "frame" + (solo ? " solo" : ""), style: solo ? { "--panel-w": "100%" } : o.panelW ? { "--panel-w": o.panelW + "px" } : null }, solo ? null : ChatGhost(o.chat), wc.el)
     document.body.append(frame)
     return wc.body
   }
@@ -350,7 +355,21 @@
       document.documentElement.dataset.theme = t
       localStorage.setItem("sp2-theme", t)
     } }, "Light / Dark")
-    document.body.append(b)
+    // design directions (styles.css): v0 = the first pass; a/b/c = the alternatives
+    const sq = new URLSearchParams(location.search).get("style")
+    const style = sq || localStorage.getItem("sp2-style") || "v0"
+    document.documentElement.dataset.style = style
+    if (!document.querySelector('link[href="styles.css"]')) document.head.append(h("link", { rel: "stylesheet", href: "styles.css" }))
+    const names = { v0: "First pass", a: "A · Swiss", b: "B · Paper", c: "C · Instrument" }
+    const seg = h("div", { class: "seg style-switch", role: "tablist", "aria-label": "Design direction" },
+      Object.entries(names).map(([k, label]) => h("button", { role: "tab", "aria-selected": String(k === style), onclick: () => {
+        localStorage.setItem("sp2-style", k)
+        const u = new URL(location.href)
+        u.searchParams.set("style", k)
+        location.href = u.toString()
+      } }, label)))
+    if (window.top === window) document.body.append(h("div", { class: "theme-toggle", style: { display: "flex", gap: "8px", "align-items": "center" } }, seg, b))
+    b.classList.remove("theme-toggle")
   }
 
   window.V = { h, e, F, usd, dur, ago, clock, minus, Panel, Rows, Stats, Chip, VerdictChip, Rail, Meter, StackMeter, RAMP, Convergence, Sparkline, StackBars, Forest, LogStrip, Gantt, mountFrame, mountWide, themeToggle, icon }

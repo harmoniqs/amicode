@@ -366,3 +366,9 @@ table.data tbody tr:hover td { background: var(--amc-ink-04); }
 
 /* physics notation never takes the eyebrow's case transform: b ≠ B, µs ≠ MS, π ≠ Π */
 .nocase { text-transform: none; letter-spacing: 0.02em; }
+
+@media (max-width: 760px) {
+  .board > * { grid-column: span 12; }
+  .board-wrap { padding: 16px 12px 40px; }
+  .frame.solo .wc { border-left: 0; }
+}

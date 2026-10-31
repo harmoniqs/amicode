@@ -73,7 +73,7 @@ board.append(
       src: "ledger §2 ÷ session cost",
       flush: true,
       body: h("table", { class: "data" },
-        h("thead", null, h("tr", null, h("th", null, "campaign"), h("th", { class: "n" }, "verdicts"), h("th", { class: "n" }, "LLM"), h("th", { class: "n" }, "$ / verdict"))),
+        h("thead", null, h("tr", null, h("th", null, "Campaign"), h("th", { class: "n" }, "Verdicts"), h("th", { class: "n" }, "LLM"), h("th", { class: "n" }, "$ / verdict"))),
         h("tbody", null, CS.map((c) => {
           const closed = c.ledger.hypotheses.filter((x) => x.cls !== "open").length
           return h("tr", null, h("td", { class: "mono", style: { "font-size": "11px" } }, c.slug), h("td", { class: "n" }, closed + " / " + c.ledger.hypotheses.length), h("td", { class: "n" }, usd(llm(c), 0)), h("td", { class: "n" }, closed ? usd(llm(c) / closed, 0) : "—"))

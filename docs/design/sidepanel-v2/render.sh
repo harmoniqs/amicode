@@ -13,7 +13,7 @@ for p in "${pages[@]}"; do
   for t in light dark; do
     "$CHROME" --headless=new --no-sandbox --disable-gpu --hide-scrollbars --allow-file-access-from-files \
       --force-prefers-reduced-motion --window-size="$size" --virtual-time-budget=1500 \
-      --screenshot="shots/$p-$t${SHOT_SUFFIX:-}.png" "file://$PWD/$p.html?theme=$t" >/dev/null 2>&1
+      --screenshot="shots/$p-${STYLE:-v0}-$t${SHOT_SUFFIX:-}.png" "file://$PWD/$p.html?theme=$t&style=${STYLE:-v0}" >/dev/null 2>&1
   done
   echo "shots/$p-{light,dark}.png"
 done

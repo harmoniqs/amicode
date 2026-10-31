@@ -62,7 +62,7 @@ body.append(
     src: "~/.amico/runs/" + C.runs[0].lab,
     flush: true,
     body: h("table", { class: "data" },
-      h("thead", null, h("tr", null, h("th", null, "run"), h("th", { class: "n" }, h("span", { class: "nocase" }, "1−F_ms")), h("th", { class: "n" }, "defect"), h("th", null, ""), h("th", null, "trace"))),
+      h("thead", null, h("tr", null, h("th", null, "Run"), h("th", { class: "n" }, h("span", { class: "nocase" }, "1−F_ms")), h("th", { class: "n" }, "Defect"), h("th", null, ""), h("th", null, "Trace"))),
       h("tbody", null, ranked.map((r) => {
         const feasible = last(r).pr <= FEAS
         return h("tr", { class: r === ranked.find((x) => last(x).pr <= FEAS) ? "sel" : "" },

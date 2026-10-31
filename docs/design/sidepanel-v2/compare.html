@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Design directions — side panel v2</title>
+<link rel="stylesheet" href="mock.css" />
+<style>
+  body { background: var(--amc-layer2); }
+  .top { display: flex; gap: 16px; align-items: baseline; padding: 16px 20px; border-bottom: 1px solid var(--amc-border); background: var(--amc-bg); position: sticky; top: 0; z-index: 3; flex-wrap: wrap; }
+  .top h1 { font-size: 18px; margin: 0; font-weight: 600; letter-spacing: -0.01em; }
+  .top select { font: inherit; padding: 4px 8px; border: 1px solid var(--amc-border-strong); border-radius: 4px; background: var(--amc-bg); color: var(--amc-text); }
+  .cols { display: grid; grid-template-columns: repeat(4, 460px); gap: 16px; padding: 16px 20px; overflow-x: auto; }
+  .col h2 { font-size: 14px; margin: 0 0 2px; font-weight: 600; }
+  .col p { margin: 0 0 10px; color: var(--amc-text-muted); font-size: 12px; min-height: 52px; }
+  .col iframe { width: 460px; height: 1500px; border: 1px solid var(--amc-border); border-radius: 4px; background: var(--amc-bg); }
+  .col a { font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="top">
+  <h1>Design directions</h1>
+  <label>Page <select id="page"></select></label>
+  <label>Theme <select id="theme"><option>light</option><option>dark</option></select></label>
+  <span class="faint" style="font-size: 12px">Same data and layout in each column; only typography and surface treatment change.</span>
+</div>
+<div class="cols" id="cols"></div>
+<script>
+const DIRS = [
+  ["v0", "First pass", "Tracked uppercase mono labels, a pill on every value, boxes inside boxes. This is the version you flagged."],
+  ["a", "A · Swiss", "One sans family, sentence case, sections divided by rules instead of cards. Numbers in DM Sans tabular figures; mono only for ids and code. Status is a coloured word."],
+  ["b", "B · Paper", "Journal typography: serif titles and figures, booktabs tables (heavy top and bottom rule, no grid), italic captions, figure legends. Best viewed on the Mac, where Iowan Old Style or Charter is installed."],
+  ["c", "C · Instrument", "JuliaMono everywhere, square corners, tight rows, bracketed status. Reads like a lab instrument or a terminal dashboard; densest of the four."],
+]
+const PAGES = ["now", "runcard", "measurement", "calibration", "campaign", "compute", "home", "files"]
+const q = new URLSearchParams(location.search)
+const page = document.getElementById("page"), theme = document.getElementById("theme")
+PAGES.forEach((p) => page.append(new Option(p, p)))
+page.value = q.get("page") || "now"
+theme.value = q.get("theme") || "light"
+document.documentElement.dataset.theme = theme.value
+const cols = document.getElementById("cols")
+function render() {
+  cols.replaceChildren(...DIRS.map(([id, name, text]) => {
+    const src = `${page.value}.html?style=${id}&theme=${theme.value}`
+    const col = document.createElement("div")
+    col.className = "col"
+    col.innerHTML = `<h2>${name}</h2><p>${text}</p><iframe loading="lazy" src="${src}" title="${name}"></iframe><div><a href="${src}" target="_blank">Open full page ↗</a></div>`
+    return col
+  }))
+  history.replaceState(null, "", `?page=${page.value}&theme=${theme.value}`)
+  document.documentElement.dataset.theme = theme.value
+}
+page.onchange = theme.onchange = render
+render()
+</script>
+</body>
+</html>

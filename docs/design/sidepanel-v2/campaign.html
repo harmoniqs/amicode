@@ -54,7 +54,7 @@ board.append(
       body: h("div", null,
         h("div", { style: { padding: "10px 12px 2px" } }, StackMeter(order.filter((k) => counts[k]).map((k) => ({ v: counts[k], color: COLORS[k], title: `${counts[k]} ${k}` })))),
         h("table", { class: "data" },
-          h("thead", null, h("tr", null, h("th", null, "id"), h("th", null, "verdict, as written"), h("th", null, ""))),
+          h("thead", null, h("tr", null, h("th", null, "ID"), h("th", null, "Verdict, as written"), h("th", null, ""))),
           h("tbody", null, L.hypotheses.slice().reverse().map((x) =>
             h("tr", null,
               h("td", { class: "mono", style: { width: "1%", "white-space": "nowrap", "font-size": "11px" } }, x.id),
