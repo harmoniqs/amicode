@@ -255,7 +255,11 @@ on every check and rule at spec-review time, then use the triage rule when one f
 - **Floor above ceiling is a spec defect.** If the measured floor exceeds the ceiling, fix the spec before launch. Do not launch and wait for the STOP.
 
 **2. Test the property, not a proxy.** A disjointness or independence check must run on the
-space the claim is about. Example: test key-space disjointness on the `(seed, round, setting,
+space the claim is about. The same holds for designs: a measurement design validated only by a local
+Fisher/CRLB or Laplace bound is validated on a proxy — local criteria are blind to multimodal
+likelihoods (phase wrap aliased ~40% of fits in one bosonic Kerr-probe design that was L-optimal
+locally), so require a global synthetic-fit / recovery Monte Carlo check before trusting it
+(bosonic-calibration lane, BC-9). Example: test key-space disjointness on the `(seed, round, setting,
 use)` tuples, not on their hashed keys. Common-random-number (CRN) stream keys built as
 `hash(tuple) mod 2³¹` can collide in *structured pairs*, because some language hashes are
 affine in their arguments. Derive CRN streams from a cryptographic tuple digest or a
