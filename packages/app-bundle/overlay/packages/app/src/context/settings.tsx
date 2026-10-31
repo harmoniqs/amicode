@@ -68,8 +68,8 @@ export interface Settings {
 }
 
 export const monoDefault = "JuliaMono"
-export const sansDefault = "System Sans"
-export const terminalDefault = "JetBrainsMono Nerd Font Mono"
+export const sansDefault = "DM Sans"
+export const terminalDefault = "JuliaMono"
 const legacyNewLayoutDesignsDefault = import.meta.env.VITE_OPENCODE_CHANNEL !== "prod"
 export const newLayoutDesignsDefault = true
 // Existing users can switch layouts until local midnight on this date. Set new Date(YYYY, M-1, D) to show.
@@ -146,9 +146,14 @@ export function resolveNewLayoutDesigns(retired: boolean, preference: boolean | 
 
 const monoFallback =
   '"JuliaMono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace'
-const sansFallback = 'ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+// DM Sans leads, matching theme.css: this stack is written onto :root at runtime,
+// so a system-only fallback here silently overrode the brand face everywhere.
+const sansFallback =
+  '"DM Sans", "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+// JuliaMono is the house mono, terminal included; the Nerd Font stays next in the
+// stack so powerline/prompt private-use glyphs JuliaMono lacks still resolve.
 const terminalFallback =
-  '"JetBrainsMono Nerd Font Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace'
+  '"JuliaMono", "JetBrainsMono Nerd Font Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace'
 
 const monoBase = monoFallback
 const sansBase = sansFallback
