@@ -2641,6 +2641,7 @@ export default function Page() {
                     onUserScroll={markUserScroll}
                     onHistoryScroll={onHistoryScroll}
                     onAutoScrollInteraction={autoScroll.handleInteraction}
+                    onHoldScrollPosture={autoScroll.pause}
                     shouldAnchorBottom={() =>
                       !location.hash && !store.messageId && !ui.pendingMessage && !autoScroll.userScrolled()
                     }

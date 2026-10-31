@@ -298,7 +298,7 @@
     "packages/app/src/pages/new-session.tsx": "e69db43dfd9f29a3b8920bf63654f40772bfb0ab6d24029c7903a754c94e8571",
     "packages/app/src/pages/overlay-content-hash.test.ts": "aa208098213522dcde42434408afe9c8641fad663f44a58c316922dbd0da2f5c",
     "packages/app/src/pages/research-surfaces-absence.test.ts": "9944a8ec5492500eb82548d03b24ea7fb8ccc9c2ae5de14a4d18ddb309378746",
-    "packages/app/src/pages/session.tsx": "d0c9474b9ac19db10c14b2dfe723f31243c0c8bbbba05e76a1bd226c0d58d6e3",
+    "packages/app/src/pages/session.tsx": "5ca8a657c2c58a27a40f9aea5a0470e7460f3c0672e4f0ee2aefe83b3f6e588e",
     "packages/app/src/utils/amicode-bridge.ts": "3ec87c24c0384d312f7eb644807d9217a53b1b4b97f7fffadab1cc1595603f3b",
     "packages/app/src/utils/amicode-bug-report.test.ts": "b1bbf49230ff3aa6d1a43ffa9165ba5a84ca4ee18a6d49f52ee5cd887c3e6444",
     "packages/app/src/utils/amicode-bug-report.ts": "d55d9cecfe17719c0d4a0ca498345c7eff6fca1de6b645e4bc3fecb40f2f4645",
@@ -1025,7 +1025,8 @@
     "packages/app/src/pages/session/composer/todo-panel-motion.stories.tsx": "70a8267c725af320d78d266b85fd0ff005d067c4d09a21bef824126602e831e7",
     "packages/app/src/pages/session/timeline/last-prompt-bubble.test.ts": "83753b3ec7227570523c2e0b9e82401fae7a20f3a23980bb40deaeb13304327b",
     "packages/app/src/pages/session/timeline/message-timeline-archive.test.ts": "5699d233b5b1a8ba165354113ff40cc9d55b37a80787d163c15165655d591555",
-    "packages/app/src/pages/session/timeline/message-timeline.tsx": "1b628ed55f3f55aa9fa036e6ae3c01b90b25c6e65893547b517e76abe8b84ac6",
+    "packages/app/src/pages/session/timeline/message-timeline-scroll-posture.test.ts": "b3ab86854d9fe88ed5022bcb5cbe18f2e8e1efe680fca1f75f2424373e7ee03b",
+    "packages/app/src/pages/session/timeline/message-timeline.tsx": "aa5dd0e4e518bd210fa7ae94cfb7bfc86e87e376fd3376e46dedbc77bf16fba7",
     "packages/app/src/pages/session/timeline/model-pure.ts": "2f12228b5eec30178634d481c6d92b44bf727d47da02bdb5e4f2f9f642690250",
     "packages/app/src/pages/session/timeline/model.test.ts": "ea9f4617e32ad7e33f9ce431104e29586cddbb20377cb245489790a738019804",
     "packages/app/src/pages/session/timeline/model.ts": "a67995b33bb7e7bc44994ff3e4511bb6ff0200448d7c3aa5251d5f18a133586e",
@@ -1033,6 +1034,8 @@
     "packages/app/src/pages/session/timeline/projection.ts": "e76549e34baedee02c8d2fd9357245f80aa4e79dcf2916869f48f0ea1efed980",
     "packages/app/src/pages/session/timeline/rows-current.test.ts": "b6a2d9671cfba970990b36d9ef0d1f107efcee59f0a9863f1280526116299095",
     "packages/app/src/pages/session/timeline/rows.ts": "5063098af62102fb85d5e3ce05626242e82ce12b3efc266b01f2d5199630f873",
+    "packages/app/src/pages/session/timeline/scroll-posture.test.ts": "3a81809dce7804f951934ee92f78a45b556c48f3e8ad28739f8669e89347297e",
+    "packages/app/src/pages/session/timeline/scroll-posture.ts": "785a2e3a2f1b112c768bf43ea5136f4bbde953f3ae43d9ee5f35c2e107d57722",
     "packages/app/src/pages/session/timeline/session-header-provenance.test.ts": "4bdf201c16d00eb60957d0ad9b40dafd69410a4b46deb0634e16da26103be1da",
     "packages/app/src/pages/session/timeline/session-header-provenance.ts": "7b73833aa5a3530c704edef2ca38cb6730aaaa729c23e06b6227788fb5c7e324",
     "packages/app/src/pages/session/timeline/smooth-scroll.test.ts": "79d3bba42ad83c3ab80df907e0acf08665a38c4809468e6c12ac9fcf5e94682f",
@@ -1099,7 +1102,7 @@
   "extracted_at": "2026-10-30T20:21:59.423Z",
   "per_package": {
     "packages/app": {
-      "A": 307,
+      "A": 310,
       "M": 166,
       "D": 0
     },
@@ -1145,7 +1148,7 @@
     }
   },
   "counts": {
-    "overlay_total": 1074,
+    "overlay_total": 1077,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -2167,6 +2170,7 @@
     "packages/app/src/pages/session/composer/todo-panel-motion.stories.tsx": "M",
     "packages/app/src/pages/session/timeline/last-prompt-bubble.test.ts": "A",
     "packages/app/src/pages/session/timeline/message-timeline-archive.test.ts": "A",
+    "packages/app/src/pages/session/timeline/message-timeline-scroll-posture.test.ts": "A",
     "packages/app/src/pages/session/timeline/message-timeline.tsx": "M",
     "packages/app/src/pages/session/timeline/model-pure.ts": "A",
     "packages/app/src/pages/session/timeline/model.test.ts": "M",
@@ -2175,6 +2179,8 @@
     "packages/app/src/pages/session/timeline/projection.ts": "M",
     "packages/app/src/pages/session/timeline/rows-current.test.ts": "M",
     "packages/app/src/pages/session/timeline/rows.ts": "M",
+    "packages/app/src/pages/session/timeline/scroll-posture.test.ts": "A",
+    "packages/app/src/pages/session/timeline/scroll-posture.ts": "A",
     "packages/app/src/pages/session/timeline/session-header-provenance.test.ts": "A",
     "packages/app/src/pages/session/timeline/session-header-provenance.ts": "A",
     "packages/app/src/pages/session/timeline/smooth-scroll.test.ts": "A",
