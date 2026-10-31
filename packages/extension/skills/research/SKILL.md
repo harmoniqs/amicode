@@ -3,7 +3,7 @@ name: research
 description: The research mode's director loop protocol — session-ledger discipline, the hypothesizer/experimenter/analyzer trio, deliberate spec gates, checkout registry, and compaction-any-time safety. Use when starting, running, or resuming a research loop. (The mode and this skill renamed from `autoresearch` per the three-mode surface; old ids read-resolve to `research`.)
 agents: [hypothesizer, experimenter, analyzer]
 surface: public
-revision: 2
+revision: 3
 project_contract:
   folders: [ledger/hypotheses, ledger/observations, ledger/campaigns, scripts, data, reports, config]
 ---
@@ -237,7 +237,7 @@ catalog/status is human-only, always.
 
 A spec's pre-registered checks are part of the experiment. If a check is mis-targeted, it
 STOPs the run before any data exists, and the cost is compute plus a loop. One campaign hit
-this **seven times**; every one was a spec defect, not a finding. Run the four lenses below
+this **seven times**; every one was a spec defect, not a finding. Run the lenses below
 on every check and rule at spec-review time, then use the triage rule when one fires anyway.
 
 **1. Classify every tolerance. Measure its floor BEFORE you write the literal.**
@@ -253,6 +253,7 @@ on every check and rule at spec-review time, then use the triage rule when one f
 - **Derive the bar from its consequence.** Propagate the tolerance to its effect on the decision (e.g. the linearized Δestimate ≤ 1% of the decision bar), not from a machine-epsilon heuristic.
 - **Record provenance.** For each bar, record whether it is floor-derived and which class it uses. A tolerance literal with no measured floor is a review finding.
 - **Floor above ceiling is a spec defect.** If the measured floor exceeds the ceiling, fix the spec before launch. Do not launch and wait for the STOP.
+- **Premise checks cite (file, key) at full precision.** Otherwise the tolerance must be ≥ half a unit of the last quoted digit. H36 quoted the δ-oracle as −2.1e-6 against a 1% bar; the record is −2.1424e-6, so a 2-significant-figure quote cannot pass.
 
 **2. Test the property, not a proxy.** A disjointness or independence check must run on the
 space the claim is about. The same holds for designs: a measurement design validated only by a local
@@ -272,7 +273,9 @@ in one place. Otherwise a contrast can pass Holm while it fails the reading, and
 ends up resting on the ambiguity. Apply the same rule to downgrades and upgrades. Name labels
 and tags for the mechanism they claim, and apply them only to the rows they were defined for.
 Quote every free-text field in an emitted CSV, and round-trip-parse every CSV in the scorer's
-self-test.
+self-test. **Emit every satisfied label as a record**, not only the first match: a first-match
+ladder hides co-true labels (H36's INFO-CEILING-CLOSED was co-true with its headline (b) and went
+unreported).
 
 **4. Picks and deliverables are monotone in the evidence.**
 - **No dominated picks.** A pick or deliverable rule must never recommend an arm that the registered readings show is dominated in that cell.
@@ -280,7 +283,12 @@ self-test.
 - **One set of readings.** The pick uses the same POS/NEG readings as the labels. Never use a median or tie-band rule (`CI_lo > 0 ∧ median > TIE_BAND`) that can read a contrast whose CI is entirely positive as a tie while its mirror reads INFERIOR.
 - **A registered rule stands for its run.** If the rule is defective, report the per-cell evidence beside it and fix the rule in the next spec revision.
 
-**5. Pre-data STOP triage.** A STOP before any scored data exists, caused by a check that
+**5. The gate is reachable from FIT data.** Before freezing, compute each rule's in-sample
+(fit-set) gain. That is its ceiling: out-of-sample it will not do better. If the best in-sample gain
+is below the gate, declare **NULL-by-reachability** in the spec instead of spending the score set.
+S0's best rule gained 6.9e-6/round in-sample against a 2e-5/round gate; it came back S0-NULL.
+
+**6. Pre-data STOP triage.** A STOP before any scored data exists, caused by a check that
 tested the wrong thing (wrong class, a proxy, a floor above the ceiling), is a **spec defect**.
 It is not a result. Fix it this way:
 1. Amend the spec revision.
@@ -291,12 +299,24 @@ It is not a result. Fix it this way:
 **Never silently loosen** a bar, and never re-run on a different seed set. A STOP after scored
 data is evidence: ledger it as such.
 
+**Re-freeze after a writer crash.** Have the scorer compute everything first and emit last. A
+crash in a record writer after scored data exists allows a writer-only re-freeze only if all of
+these hold:
+- the diff touches no computed value;
+- the constants sha and every input sha are unchanged;
+- the crashed attempt's partial outputs are kept (sha recorded) and byte-compared to the final outputs;
+- the self-test exercises every emitter.
+
+S0 re-froze twice for type-only writer crashes. The r2 attempt had already written four score CSVs
+before it crashed, and the note claimed it had written none. The verdict was unaffected.
+
 Provenance (skills-integrity findings, campaign `session-20261028-qilc-measurement-design`):
 `proposal-20261028-floor-derived-tolerance` (+ loop-5 amendment),
 `finding-20261031-paired-oos-scorer-holm-level-and-csv`,
 `proposal-20261031-crn-shot-keys-and-tuple-checks`,
 `proposal-20261031-deliverables-monotone-in-evidence`,
-`finding-20261029-cmp-pick-rule-asymmetry`; ledger §3 loop-5 rule and §7 loop-8 gotchas.
+`finding-20261029-cmp-pick-rule-asymmetry`; ledger §3 loop-5 rule, §7 loop-8 gotchas, and loop-9
+experiments S0 (`experiment-20261031-s0-alpha-screen`) and H36 (`experiment-20261031-h36-ident-vs-direct`).
 
 ## Failure modes to watch
 
