@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { createPreviewDraftStore } from "./preview-draft-store"
+import { createPreviewDraftStore, previewDraftScope } from "./preview-draft-store"
 
 // #1249: unsaved Preview edits live in an in-memory store keyed by
 // (session, path) so a session-tab switch (which remounts the Preview) neither
@@ -195,5 +195,74 @@ describe("session-owned close intent", () => {
     expect(store.resolveClose("ses_a", token)).toBe(false) // stale token
     expect(store.resolveClose("ses_a", next)).toBe(true)
     expect(store.closeRequest("ses_a")).toBeUndefined()
+  })
+})
+
+describe("project-scoped draft scope", () => {
+  test("the same session id under two Projects never shares a draft or a close decision", () => {
+    const a = previewDraftScope("/proj/one", "ses_a")!
+    const b = previewDraftScope("/proj/two", "ses_a")!
+    expect(a).not.toBe(b)
+    const store = createPreviewDraftStore()
+    store.write(a, "/p/a.md", "one")
+    expect(store.get(b, "/p/a.md")).toBeUndefined()
+    store.requestClose(a, "/p/a.md")
+    expect(store.closeRequest(b)).toBeUndefined()
+  })
+
+  test("no session id means no scope (purely local drafts)", () => {
+    expect(previewDraftScope("/proj", undefined)).toBeUndefined()
+    expect(previewDraftScope(undefined, "ses_a")).toBe(previewDraftScope("", "ses_a"))
+  })
+})
+
+describe("dirty presentation derives from the cache", () => {
+  test("subscribers of a session hear every draft transition for their session only", () => {
+    const store = createPreviewDraftStore()
+    const heard: string[] = []
+    const off = store.subscribe("ses_a", (path) => heard.push(path))
+    store.subscribe("ses_b", (path) => heard.push(`b:${path}`))
+    const rev = store.write("ses_a", "/p/a.md", "x")
+    store.settle("ses_a", "/p/a.md", rev)
+    store.write("ses_a", "/p/b.md", "y")
+    store.clear("ses_a", "/p/b.md")
+    expect(heard).toEqual(["/p/a.md", "/p/a.md", "/p/b.md", "/p/b.md"])
+    off()
+    store.write("ses_a", "/p/a.md", "z")
+    expect(heard.length).toBe(4)
+  })
+
+  test("a refused (stale) settle or clear does not notify", () => {
+    const store = createPreviewDraftStore()
+    const rev = store.write("ses_a", "/p/a.md", "x")
+    store.write("ses_a", "/p/a.md", "x2")
+    const heard: string[] = []
+    store.subscribe("ses_a", (path) => heard.push(path))
+    expect(store.settle("ses_a", "/p/a.md", rev)).toBe(false)
+    expect(store.clear("ses_a", "/p/a.md", rev)).toBe(false)
+    expect(heard).toEqual([])
+  })
+})
+
+describe("close-save token captured at request time", () => {
+  test("closeTokenFor answers only for the path the active decision is about", () => {
+    const store = createPreviewDraftStore()
+    const token = store.requestClose("ses_a", "/p/a.md")!
+    expect(store.closeTokenFor("ses_a", "/p/a.md")).toBe(token)
+    expect(store.closeTokenFor("ses_a", "/p/b.md")).toBeUndefined()
+    expect(store.closeTokenFor("ses_b", "/p/a.md")).toBeUndefined()
+  })
+
+  test("a canceled close-save finishing later cannot close a different path's newer decision", () => {
+    const store = createPreviewDraftStore()
+    const closed: string[] = []
+    store.onClosed("ses_a", (p) => closed.push(p))
+    const first = store.requestClose("ses_a", "/p/a.md")!
+    const captured = store.closeTokenFor("ses_a", "/p/a.md")! // taken when Save was pressed
+    store.cancelClose("ses_a", first)
+    store.requestClose("ses_a", "/p/b.md")
+    expect(store.resolveClose("ses_a", captured)).toBe(false)
+    expect(closed).toEqual([])
+    expect(store.closeRequest("ses_a")?.path).toBe("/p/b.md")
   })
 })

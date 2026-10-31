@@ -18,6 +18,12 @@ export type PreviewDraft = { content: string; revision: number }
 const SEP = "\u0000"
 const draftKey = (session: string, path: string) => `${session}${SEP}${path}`
 
+/** The draft scope of one Preview: Project (directory) + Session. Session ids are
+ *  not guaranteed unique across Projects, so the Project is part of the identity.
+ *  Undefined without a session — such a Preview keeps purely local drafts. */
+export const previewDraftScope = (directory: string | undefined, sessionID: string | undefined): string | undefined =>
+  sessionID ? `${directory ?? ""}${SEP}${sessionID}` : undefined
+
 type SaveEntry = { content: string; promise: Promise<void> }
 
 export const createPreviewDraftStore = () => {
@@ -25,7 +31,11 @@ export const createPreviewDraftStore = () => {
   const latestSave = new Map<string, SaveEntry>()
   const closes = new Map<string, { path: string; token: number }>()
   const closedListeners = new Map<string, Set<(path: string) => void>>()
+  const draftListeners = new Map<string, Set<(path: string) => void>>()
   let counter = 0
+  const notify = (session: string, path: string) => {
+    for (const listener of [...(draftListeners.get(session) ?? [])]) listener(path)
+  }
 
   return {
     get: (session: string, path: string): PreviewDraft | undefined => {
@@ -37,6 +47,7 @@ export const createPreviewDraftStore = () => {
     write: (session: string, path: string, content: string): number => {
       const revision = ++counter
       drafts.set(draftKey(session, path), { session, path, content, revision })
+      notify(session, path)
       return revision
     },
 
@@ -56,6 +67,7 @@ export const createPreviewDraftStore = () => {
       if (!draft) return false
       if (revision !== undefined && draft.revision !== revision) return false
       drafts.delete(key)
+      notify(session, path)
       return true
     },
 
@@ -69,7 +81,21 @@ export const createPreviewDraftStore = () => {
       if (!draft) return true
       if (draft.revision !== revision) return false
       drafts.delete(key)
+      notify(session, path)
       return true
+    },
+
+    /** Hear every draft transition (write / clear / settle) of one session, so a
+     *  live Preview derives its dirty presentation from the cache rather than from
+     *  a local flag a remount or a late save completion can leave stale. */
+    subscribe: (session: string, listener: (path: string) => void): (() => void) => {
+      const set = draftListeners.get(session) ?? new Set()
+      set.add(listener)
+      draftListeners.set(session, set)
+      return () => {
+        set.delete(listener)
+        if (set.size === 0 && draftListeners.get(session) === set) draftListeners.delete(session)
+      }
     },
 
     /** Serialize writes per file key (server + project + path). A request whose
@@ -101,6 +127,14 @@ export const createPreviewDraftStore = () => {
     closeRequest: (session: string): { path: string; token: number } | undefined => {
       const active = closes.get(session)
       return active && { ...active }
+    },
+
+    /** The token of the active decision when it is about `path`. A close-save
+     *  captures this when Save is pressed, so a completion that arrives after a
+     *  cancel can never resolve a different, newer decision. */
+    closeTokenFor: (session: string, path: string): number | undefined => {
+      const active = closes.get(session)
+      return active?.path === path ? active.token : undefined
     },
 
     /** Cancel the decision (user pressed Cancel). True when it was the current one. */
