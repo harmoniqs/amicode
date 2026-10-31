@@ -495,6 +495,31 @@ export function methodEntryKind(id: string, method: ConnectionAuthMethod): Metho
   return connectionFormKind(id)
 }
 
+/** #624: the "paste a key" box used to say nothing about where the key comes
+ *  from. Google connectors take a short-lived OAuth access token; this is the
+ *  one-line how-to (and the page to open) shown under the field. Mirrors the
+ *  server's google_app_not_configured guidance. */
+export function tokenHelp(id: string): { text: string; url: string } | undefined {
+  const url = "https://developers.google.com/oauthplayground"
+  if (id === GOOGLE_DRIVE_ID) {
+    return {
+      url,
+      text:
+        "No key? Open the Google OAuth Playground, authorize drive.file, spreadsheets and userinfo.email, " +
+        'click "Exchange authorization code for tokens", and paste the access token (valid about an hour).',
+    }
+  }
+  if (id === GOOGLE_ID) {
+    return {
+      url,
+      text:
+        "No key? Open the Google OAuth Playground, authorize gmail.readonly and userinfo.email, " +
+        'click "Exchange authorization code for tokens", and paste the access token (valid about an hour).',
+    }
+  }
+  return undefined
+}
+
 export type StartAuthPayload = { id: string; method: ConnectionAuthMethod }
 
 /** Start gate: only wire-advertised interactive methods may start a flow. */

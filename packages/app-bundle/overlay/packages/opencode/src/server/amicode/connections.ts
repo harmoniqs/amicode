@@ -1650,6 +1650,22 @@ function parseAnyIdBody(rawBody: string): string | undefined {
 }
 
 
+/** #624: where a user gets a Google token to paste when browser sign-in is not
+ *  available. Shared by the refusal above and mirrored (text only) in the UI's
+ *  paste-a-token hint. Access tokens from the Playground last ~1 hour. */
+export const GOOGLE_TOKEN_GUIDANCE: Record<"google" | "google-drive", string> = {
+  google:
+    "To connect now, paste an access token instead: open https://developers.google.com/oauthplayground, " +
+    "authorize the scopes https://www.googleapis.com/auth/gmail.readonly and " +
+    "https://www.googleapis.com/auth/userinfo.email, click \"Exchange authorization code for tokens\", " +
+    "and paste the access token (it expires in about an hour).",
+  "google-drive":
+    "To connect now, paste an access token instead: open https://developers.google.com/oauthplayground, " +
+    "authorize the scopes https://www.googleapis.com/auth/drive.file, " +
+    "https://www.googleapis.com/auth/spreadsheets and https://www.googleapis.com/auth/userinfo.email, " +
+    "click \"Exchange authorization code for tokens\", and paste the access token (it expires in about an hour).",
+}
+
 // --- Browser OAuth start (Google) -------------------------------------------
 // POST /amicode/connections/auth  body {id, method:"browser"|"device-code"}
 // For google/google-drive the method is always "browser". The server's job is
@@ -1854,23 +1870,29 @@ export async function startAuthResponse(rawBody: string, deps: MutationDeps = {}
         ]
   const clientId = process.env.GOOGLE_CLIENT_ID?.trim()
   const redirectUri = process.env.GOOGLE_REDIRECT_URI?.trim() || "http://127.0.0.1:8085/oauth/callback"
-  // If no client is configured, we still open Google's OAuth consent screen with an
-  // explanatory error — this proves the browser wiring is end-to-end and gives the
-  // operator a clear next step (set GOOGLE_CLIENT_ID) rather than silently doing nothing.
-  // When the client is configured, this constructs the real authorization URL.
+  // #624: with no OAuth client there is no flow to start. Opening Google's generic
+  // sign-in page (the old fallback) only showed the user's existing logged-in
+  // session and then waited forever on a callback that could never arrive. Refuse
+  // up front, never open a browser, and say where a token comes from instead.
+  if (!clientId) {
+    return synthesizeConnection(
+      "google_app_not_configured",
+      "Browser sign-in needs an Amicode Google OAuth client (GOOGLE_CLIENT_ID) and none is configured. " +
+        GOOGLE_TOKEN_GUIDANCE[id],
+    )
+  }
   const state = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2)
-  const pendingUrl = clientId
-    ? `https://accounts.google.com/o/oauth2/v2/auth?` +
-      new URLSearchParams({
-        client_id: clientId,
-        redirect_uri: redirectUri,
-        response_type: "code",
-        scope: scopes.join(" "),
-        state,
-        access_type: "offline",
-        prompt: "consent",
-      }).toString()
-    : `https://accounts.google.com/signin/v2/identifier?connector=${id}&error=missing_client_id`
+  const pendingUrl =
+    `https://accounts.google.com/o/oauth2/v2/auth?` +
+    new URLSearchParams({
+      client_id: clientId,
+      redirect_uri: redirectUri,
+      response_type: "code",
+      scope: scopes.join(" "),
+      state,
+      access_type: "offline",
+      prompt: "consent",
+    }).toString()
   // Best-effort browser open — failure is soft: the UI fallback (window.open
   // in status-popover-body) will also try, and the BrowserOpenFailed event
   // carries the URL for any listener.

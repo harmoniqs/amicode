@@ -12,6 +12,7 @@ import {
   pasqalSubmitPayload,
   stateCopy,
   submitPayload,
+  tokenHelp,
   validatedAtDisplay,
   type ConnectionCardState,
   type ConnectionStateLabels,
@@ -612,5 +613,23 @@ describe("status-tab connection list", () => {
 
   test("an empty list stays empty", () => {
     expect(statusTabConnections([])).toEqual([])
+  })
+})
+
+describe("tokenHelp — where a pasted token comes from (#624)", () => {
+  test("google-drive: Playground link and the Drive/Sheets scopes", () => {
+    const help = tokenHelp("google-drive")
+    expect(help?.url).toBe("https://developers.google.com/oauthplayground")
+    expect(help?.text).toContain("drive.file")
+    expect(help?.text).toContain("spreadsheets")
+  })
+  test("google: Playground link and the Gmail scope", () => {
+    const help = tokenHelp("google")
+    expect(help?.url).toBe("https://developers.google.com/oauthplayground")
+    expect(help?.text).toContain("gmail.readonly")
+  })
+  test("connections without a hint return undefined", () => {
+    expect(tokenHelp("github")).toBeUndefined()
+    expect(tokenHelp("company-compute")).toBeUndefined()
   })
 })

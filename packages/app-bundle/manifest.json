@@ -444,6 +444,7 @@
     "packages/opencode/test/question/question-store.test.ts": "9186b84cb1b390f47e8e8c30b6e2448ebe5096335aee38fe4c12c897d27d2150",
     "packages/opencode/test/server/amicode-connections-routes.test.ts": "de8ddeaabe23e20a0dc33eef6c70232ba20cca0301cbea08fe9fd751a07d6649",
     "packages/opencode/test/server/amicode-connections.test.ts": "dfe3dc70044ef2d6bf90dd494480439cb945d330d241fb3501a3e43bf6341967",
+    "packages/opencode/test/server/amicode-google-auth.test.ts": "8a4b993c44b9396542a90ab47d76ba86595b9cfbf2723a01e447d5302139479d",
     "packages/opencode/test/server/amicode-credentials.test.ts": "ba77d064fd2be799930524510ce6e32c6f6a0d144d3cdf41673a8283dbe95bf6",
     "packages/opencode/test/server/amicode-dashboard.test.ts": "e25b284b9eb434da7f07dfa8b72b7919a0cd1ffaed275a6725d9cd44cd1298c0",
     "packages/opencode/test/server/amicode-file-resolve.test.ts": "39db84780125c8fd4551137e4f6a0ea6b0a9dce45b04e26ed15f649efe251311",
@@ -590,12 +591,12 @@
     "packages/ui/src/amicode/card.stories.tsx": "b1591abb4af426b0eb08588ea1585336a392d755b5d308cb31f17cb65acf5a3e",
     "packages/ui/src/amicode/card.tsx": "1f462017d9113082bb2e802e3d812b25cf5ee9b1bd848559e0533de4d382517f",
     "packages/ui/src/amicode/connection-icon.tsx": "f0ffda2ebae57a2945a60cd278b5aa3986273b0cabe97ed46f417c037d167879",
-    "packages/ui/src/amicode/connection-picker.tsx": "73293d1e159dab94a6d1600844fa1e47810ce0558bda6ba4e4209f7e368e3aff",
+    "packages/ui/src/amicode/connection-picker.tsx": "6a076a4d0b4264a7e67ab18d6bc63e07dc1274b336cba2eac1ce574832bcfd77",
     "packages/ui/src/amicode/connections-paths.test.ts": "07c86e8e04700cdbd55bff8db342a8400d85114d76bc73fee8205e9162953f2a",
-    "packages/ui/src/amicode/connections-tab.tsx": "da11957bee28ff988427f9001be81716254bea218057d6f1ff5e7a2fce374446",
+    "packages/ui/src/amicode/connections-tab.tsx": "edb02e4f123101c32c51c9be1cd7bb522878d1c6589f5c2aad78c63dc9abbc02",
     "packages/ui/src/amicode/connections.stories.tsx": "fda54a41c4b46f5cab5278278f92c01d1fea70610f7b8641fa5855be6bd9d486",
-    "packages/ui/src/amicode/connections.test.ts": "a718b1b698178087fdac5294c1661ca2eb200491e2a076465a09ab52c70b8910",
-    "packages/ui/src/amicode/connections.ts": "89b6c99e991e1aa594768a6555f7f555782dd615c21132e6a688155431cc0dfd",
+    "packages/ui/src/amicode/connections.test.ts": "48f7fc4ea27173662792208cf598ac1eeeab3a2db339d2a53fff3b38ea2917ae",
+    "packages/ui/src/amicode/connections.ts": "c81e9c7683beade012e4b0612c045cbaf16eddc3c75b4370788636f18b76e73a",
     "packages/ui/src/amicode/context-tree-data.test.ts": "bd51dc84d6c14c64f38c8f467ef29d9d8f45dcb77cc83ec92bffc8aaa983b463",
     "packages/ui/src/amicode/context-tree-data.ts": "d623578b957b9a49d6f7b930a2264b7bf0ea71fabf1a485d9666706c7b77485d",
     "packages/ui/src/amicode/context-tree-engine.test.ts": "afa3199c18c7ca05a19fdf0663a5b4d6e1fd2303e038cf25641c29e254e610f4",
@@ -917,7 +918,7 @@
     "packages/llm/src/route/transport/http.ts": "1263905d4814ba62d98854bcf99d63e825c25a2c272f70d998c3c6309dce2fbe",
     "packages/llm/test/route/transport/response-cap.test.ts": "6f8e7bedbbe6228fe87b0280e157fcba60185b25bce5f780774e81ebfc494f10",
     "packages/opencode/src/plugin/openai/codex.ts": "e7f3988ad2afca6b0112cc820729372f774bfa04ecf3d348ed82b2bbf1b07c40",
-    "packages/opencode/src/server/amicode/connections.ts": "dcfeeeddb380e11d8653c77e0dffa4ac3acabed4091f07f88b6ce0c7ae5772b3",
+    "packages/opencode/src/server/amicode/connections.ts": "e5b66b9fa39e33acd6d6ea8c5c2b6adaa75ec41b878213e10918a7bccc8ffd82",
     "packages/opencode/src/server/amicode/credentials.ts": "f3a15c82496f9a3b6e8c1006a6a4ab419a02156e9a93a43c6c2319632c30063f",
     "packages/opencode/src/server/amicode/dashboard.ts": "031a4f40bfdc847984a1deecfefbe0fd27f42cbd1caf8823dc43c7eb5bcb9af0",
     "packages/opencode/src/server/amicode/file-resolve.ts": "3f0548fc97aad431d3f7707fd0b911e66fb4fd68ac4f643da71a2f00a73beffe",
@@ -1114,7 +1115,7 @@
       "D": 0
     },
     "packages/opencode": {
-      "A": 103,
+      "A": 104,
       "M": 100,
       "D": 0
     },
@@ -1145,7 +1146,7 @@
     }
   },
   "counts": {
-    "overlay_total": 1074,
+    "overlay_total": 1075,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1586,6 +1587,7 @@
     "packages/opencode/test/question/question-store.test.ts": "A",
     "packages/opencode/test/server/amicode-connections-routes.test.ts": "A",
     "packages/opencode/test/server/amicode-connections.test.ts": "A",
+    "packages/opencode/test/server/amicode-google-auth.test.ts": "A",
     "packages/opencode/test/server/amicode-credentials.test.ts": "A",
     "packages/opencode/test/server/amicode-dashboard.test.ts": "A",
     "packages/opencode/test/server/amicode-file-resolve.test.ts": "A",

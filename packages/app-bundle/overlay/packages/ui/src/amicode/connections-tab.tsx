@@ -39,7 +39,7 @@ import {
 import { ConnectionIcon } from "./connection-icon"
 import { ACTIVITY_COLOR } from "./activity"
 import { ActivityDot } from "./activity-dot"
-import { ConnectionPicker } from "./connection-picker"
+import { ConnectionPicker, TokenHelp } from "./connection-picker"
 
 export type ConnectionsTabLabels = {
   empty: string
@@ -509,6 +509,7 @@ export function ConnectionCard(props: {
                   onInput={(event) => setToken(event.currentTarget.value)}
                   class="amc-input amc-input--compact"
                 />
+                <TokenHelp id={props.conn.id} />
               </Show>
               <Show when={entryKind() === "base-url-token" || entryKind() === "pasqal-token"}>
                 <input

@@ -1,7 +1,7 @@
 // AMICODE: ConnectionPicker — Add-flow picker list + inline forms (issue #327)
 import { createSignal, For, Show } from "solid-js"
 import { Button } from "../components/button"
-import { CONNECTION_ICONS, customConnectionPayload, tokenOnlySubmitPayload } from "./connections"
+import { CONNECTION_ICONS, customConnectionPayload, tokenHelp, tokenOnlySubmitPayload } from "./connections"
 
 /** Open a URL via the extension bridge (window.open is dead in the webview
  *  iframe); plain-browser contexts fall back to window.open. */
@@ -11,6 +11,31 @@ function openExternal(url: string) {
 }
 
 export type CatalogEntry = { id: string; name: string; icon: string; authShape: string }
+
+/** #624: one-line "where do I get this key?" under a paste-a-token field.
+ *  Renders nothing for connections without a hint (see `tokenHelp`). */
+export function TokenHelp(props: { id: string | undefined }) {
+  const help = () => (props.id ? tokenHelp(props.id) : undefined)
+  return (
+    <Show when={help()}>
+      {(h) => (
+        <div class="text-11-regular text-text-weaker" data-slot="amicode-token-help">
+          {h().text}{" "}
+          <a
+            href={h().url}
+            class="underline cursor-pointer"
+            onClick={(e) => {
+              e.preventDefault()
+              openExternal(h().url)
+            }}
+          >
+            Open the Playground
+          </a>
+        </div>
+      )}
+    </Show>
+  )
+}
 
 export function ConnectionPicker(props: {
   catalog: CatalogEntry[]
@@ -193,6 +218,7 @@ export function ConnectionPicker(props: {
                   onInput={(e) => setToken(e.currentTarget.value)}
                   class="amc-input amc-input--compact"
                 />
+                <TokenHelp id={picked()} />
                 <div class="flex gap-2">
                   <Button type="submit" variant="primary" size="small">
                     Connect with token
