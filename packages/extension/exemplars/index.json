@@ -16,7 +16,7 @@
         "Printf"
       ],
       "notes": "EXPERIMENTAL exemplar — the NLP's first iteration is pathologically slow at this size in the current Piccolo path (see the script header); splice params but expect long solves until vetted.",
-      "baseline_hash": "sha256:b059453d448cbdfd4ca167d065a57682d49c1ad9ee41a1bf53a83e3fb0bbdda8"
+      "baseline_hash": "sha256:e588d0c2ee916db21028143f6749b10d258daff8f498862d5faa49c72358b2b0"
     }
   ]
 }

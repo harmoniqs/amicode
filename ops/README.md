@@ -92,6 +92,10 @@ bash ops/install-cli-pin.sh --dist packages/amico-run/dist
 #   sidecars (shasum format) — the papers-digest convention
 ```
 
+**Release checklist step** (#1949): a CLI change ships only once the pin is refreshed —
+run the two lines above on **every machine** after any release that changes
+`packages/amico-run`. Until then that machine's `amico` keeps running the old pinned dist.
+
 `amico doctor` reports the pin as the `pinned_cli` record: the root, the bundle
 count, the `amico.js` sha, and the sidecars' freshness (a mismatched or missing
 sidecar is an integrity error — refresh the pin; an absent root is a warning, the

@@ -90,6 +90,46 @@ describe("auditAdoptedEngine — detect + notice on the adopted path (#1190)", (
   });
 });
 
+describe("auditAdoptedEngine — persistent stale indicator (#1571)", () => {
+  const mk = (indicator: (s: { detail: string } | undefined) => void, choice?: string): StaleNoticeDeps => ({
+    showInformationMessage: async () => choice,
+    onRestartRequested: async () => {},
+    setStaleIndicator: indicator,
+  });
+
+  it("raises the indicator while stale — even when the toast is dismissed", async () => {
+    const calls: Array<{ detail: string } | undefined> = [];
+    const r = await auditAdoptedEngine(
+      { binaryHash: "OLD", configHash: "CFG" },
+      { binaryPath: "/opt/opencode", configContent: "cfg" },
+      { hashFile: async () => "NEW", hashString: () => "CFG", notify: mk((s) => calls.push(s), undefined) },
+    );
+    await new Promise((res) => setTimeout(res, 0));
+    expect(r?.stale).toBe(true);
+    expect(calls).toEqual([{ detail: "engine binary" }]);
+  });
+
+  it("names binary+config when both diverge", async () => {
+    const calls: Array<{ detail: string } | undefined> = [];
+    await auditAdoptedEngine(
+      { binaryHash: "OLD", configHash: "OLDC" },
+      { binaryPath: "/opt/opencode", configContent: "cfg" },
+      { hashFile: async () => "NEW", hashString: () => "NEWC", notify: mk((s) => calls.push(s)) },
+    );
+    expect(calls).toEqual([{ detail: "engine binary and config" }]);
+  });
+
+  it("clears the indicator when the engine is current", async () => {
+    const calls: Array<{ detail: string } | undefined> = [];
+    await auditAdoptedEngine(
+      { binaryHash: "BIN", configHash: "CFG" },
+      { binaryPath: "/opt/opencode", configContent: "cfg" },
+      { hashFile: async () => "BIN", hashString: () => "CFG", notify: mk((s) => calls.push(s)) },
+    );
+    expect(calls).toEqual([undefined]);
+  });
+});
+
 describe("restartAdoptedEngine — correct restart for an adopted (no serverManager) server (#1190)", () => {
   it("reclaims the port, deletes the handshake, then reloads the window — in that order", async () => {
     const order: string[] = [];

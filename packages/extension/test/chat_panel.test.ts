@@ -460,6 +460,38 @@ describe("ChatPanel — workspace-projects bridge relay (#663)", () => {
   });
 });
 
+describe("ChatPanel — onRevealInSidebar (#1036)", () => {
+  let restore: (() => void) | undefined;
+  let created: CapturedPanel[] = [];
+  afterEach(() => {
+    for (const p of created) p.dispose();
+    restore?.();
+    restore = undefined;
+    created = [];
+    ChatPanel.onRevealInSidebar(undefined);
+  });
+
+  it("the upstream relay admits 'reveal-in-sidebar' (iframe → extension)", () => {
+    const cap = capturePanel();
+    restore = cap.restore;
+    created = cap.created;
+    ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
+    expect(cap.created[0].webview.html).toContain('"reveal-in-sidebar"');
+  });
+
+  it("fires the registered callback with the path when the iframe asks to reveal a file", () => {
+    const revealed: string[] = [];
+    ChatPanel.onRevealInSidebar((p) => revealed.push(p));
+    const cap = capturePanel();
+    restore = cap.restore;
+    created = cap.created;
+    ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
+    const panel = cap.created[0] as unknown as { webview: { _simulateMessage(msg: unknown): void } };
+    panel.webview._simulateMessage({ source: "amicode", kind: "reveal-in-sidebar", path: "/w/p/a.md" });
+    expect(revealed).toEqual(["/w/p/a.md"]);
+  });
+});
+
 describe("ChatPanel — onProjectSelected callback (#663)", () => {
   let restore: (() => void) | undefined;
   let created: CapturedPanel[] = [];
@@ -758,6 +790,18 @@ describe("ChatPanel — clipboard-image-request routes through extension host", 
     expect(html).toContain('"clipboard-image-read"');
     // The old client-side replyClipboardImage with navigator.clipboard.read should be gone
     expect(html).not.toContain("navigator.clipboard.read");
+  });
+
+  it("image copy round-trips: clipboard-image-write goes up, the nonce'd clipboard-image-written reply comes back down", () => {
+    const cap = capturePanel();
+    restore = cap.restore;
+    created = cap.created;
+    ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
+    const html = cap.created[0].webview.html;
+    expect(html).toContain('d.kind === "clipboard-image-write"');
+    // Without the down-lane forward the iframe would wait out its timeout and
+    // report every copy as failed.
+    expect(html).toContain('d.kind === "clipboard-image-written"');
   });
 });
 

@@ -9,7 +9,6 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import * as os from "node:os";
 import { randomUUID } from "node:crypto";
 import * as vscode from "vscode";
 
@@ -23,7 +22,7 @@ import {
   BEDROCK_PLANTED_PLACEHOLDER,
   type DetectedCredential,
 } from "./credential_scanner";
-import { opencodeDataDir } from "./opencode_xdg";
+import { opencodeConfigDir, opencodeDataDir } from "./opencode_xdg";
 import { ChatPanel } from "./chat_panel";
 
 // ─── Harmoniqs AI — branded custom-provider preset ───────────────────────────
@@ -141,9 +140,11 @@ export interface OnboardingConfig {
   apiKey: string;
 }
 
-/** The default opencode config path — ~/.config/opencode/opencode.json */
+/** The default opencode config path — $XDG_CONFIG_HOME/opencode/opencode.json,
+ *  falling back to ~/.config/opencode/opencode.json (same resolution opencode
+ *  itself uses; #1573). */
 function defaultConfigPath(): string {
-  return path.join(os.homedir(), ".config", "opencode", "opencode.json");
+  return path.join(opencodeConfigDir(), "opencode.json");
 }
 
 /** #602: drop the always-write Bedrock placeholder entry planted by ≤#589, if
@@ -906,6 +907,12 @@ export function openOnboardingPanel(
     vscode.ViewColumn.One,
     {
       enableScripts: true,
+      // retain-exempt: one-shot welcome walkthrough — no live stream; the
+      // form state is transient by design and onDidDispose below clears the
+      // singleton (and held credentials) so a re-open rebuilds the
+      // walkthrough from scratch. Recorded against
+      // test/panel_registration_invariants.test.ts — see the 7b658cc1
+      // sidebar failure for why the STREAM-bearing panels are not exempt.
       localResourceRoots: [
         vscode.Uri.joinPath(ctx.extensionUri, "dist"),
         vscode.Uri.joinPath(ctx.extensionUri, "media"),

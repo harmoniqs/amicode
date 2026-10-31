@@ -86,6 +86,13 @@ type SessionView = {
   pendingMessage?: string
   pendingMessageAt?: number
   todoCollapsed?: boolean
+  /** Preview companion — the active file shown in the Preview tab. Persisted
+   *  (was ephemeral) so it survives session re-instantiation AND editor reloads. */
+  previewActive?: string | null
+  /** Preview companion — the ordered list of open Preview file paths, so a
+   *  reload restores every open preview tab, not just the active one. Split-pane
+   *  layout is deliberately not persisted here (see #981). */
+  previewPaths?: string[]
 }
 
 type TabHandoff = {
@@ -341,8 +348,6 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
     const [ephemeral, setEphemeral] = createStore({
       reviewPanelSource: "other" as ReviewPanelSource,
       sessionTabPreview: {} as Record<string, string | undefined>,
-      /** Per-session preview file path (companion viewer). Null = empty state. */
-      sessionPreviewFile: {} as Record<string, string | null>,
     })
 
     const MAX_SESSION_KEYS = 50
@@ -923,11 +928,41 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
               }
             },
           },
-          /** Preview companion — the file to show in the Preview tab. */
+          /** Preview companion — the active file shown in the Preview tab.
+           *  Persisted in the session view so it survives session
+           *  re-instantiation AND editor reloads (#1398 + reload persistence). */
           previewFile: {
-            get: createMemo(() => ephemeral.sessionPreviewFile[key()] ?? null),
+            get: createMemo(() => s().previewActive ?? null),
             set(path: string | null) {
-              setEphemeral("sessionPreviewFile", key(), path)
+              const session = key()
+              const current = store.sessionView[session]
+              if (!current) {
+                setStore("sessionView", session, { scroll: {}, previewActive: path })
+                prune(session)
+                return
+              }
+              if (current.previewActive === path) return
+              setStore("sessionView", session, "previewActive", path)
+              prune(session)
+            },
+          },
+          /** Preview companion — the ordered list of open Preview file paths.
+           *  Persisted alongside previewActive so a reload restores every open
+           *  preview tab, not just the active one. */
+          previewPaths: {
+            get: createMemo(() => s().previewPaths ?? []),
+            set(paths: string[]) {
+              const session = key()
+              const next = Array.from(new Set(paths))
+              const current = store.sessionView[session]
+              if (!current) {
+                setStore("sessionView", session, { scroll: {}, previewPaths: next })
+                prune(session)
+                return
+              }
+              if (same(current.previewPaths, next)) return
+              setStore("sessionView", session, "previewPaths", next)
+              prune(session)
             },
           },
           terminal: {

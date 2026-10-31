@@ -79,6 +79,47 @@ Before diving into debugging quantum optimal control code, verify these fundamen
 - **Common causes:** Timestep too large for operator norms, stiff dynamics, numerical overflow in matrix exponential.
 - **Investigation:** Reduce $\Delta t$. Check $\|H\| \cdot \Delta t$. Examine which timestep first produces NaN. Verify no division by zero in custom objectives.
 
+### The Vacuous Solve (silent control-drop) — 2026-10, measured
+- **Symptoms:** The solver consumes thousands of iterations, the variables MOVE (extracted
+  knots differ from the seed), but the internal objective/fidelity is **bit-identical to the
+  seed value across every option, setting, and formulation change** (max_iter, mu_strategy,
+  member count). Post-solve quality is entirely explained by regularizer drift.
+- **Common causes:** The problem's dynamics integrator never received the controls — template
+  integrator auto-resolution silently resolving to a control-free path (Piccolo 2.2.0
+  measured: `SplineIntegrator` auto-wiring left the objective constant); or reading a STALE
+  `fidelity(qtraj)` (the construction-time ODE solution) that masks movement in the other
+  direction.
+- **Investigation:** Evaluate the objective at the SEED and assert the post-solve value has
+  MOVED (a descent method cannot end where it started, bit-identical). Pass integrators
+  explicitly. Verify extracted solutions through independent scorers, never the problem's
+  internal readouts. Provenance: harmoniqs/diraq-esr-realism 2026-10-23 overnight §4.
+
+### The Silent Edit (no-op transformations) — six measured instances
+- **Symptoms:** An edit reports success but behavior never changes; archaeology shows the
+  pattern never matched (trailing comma, already-replaced form, reverted block). Worst case:
+  stacked no-ops make the file's edit history untrustworthy and force a clean rewrite.
+- **Common causes:** `str.replace`/`sed` succeed on no-match by design; kwargs that miss
+  their consumer get swallowed; later edits revert earlier ones through shared patterns;
+  LLM memory of what landed is not evidence.
+- **Investigation/Prevention:** Every programmatic edit ASSERTS its pattern matched
+  (`assert old in s`) and the critical line is grep-verified after the write; multi-edit
+  confusion resolves by rewriting clean with git as arbiter; numbers are never hand-copied
+  between files when a formula can be evaluated (machine-pinned literals, rtol ≤ 1e-9).
+  Provenance: six instances in harmoniqs/diraq-esr-realism loops 4–10.
+
+### The Silent OOM (death right after initialization)
+- **Symptoms:** A process dies immediately after "optimizer initialization complete" with no
+  error in any log — the OOM killer SIGKILLs without a traceback.
+- **Common causes:** Dense interior-point Hessians over unitary trajectories scale as
+  (2·d²·N)² — a 36-dim member block at N=21 needs ~25 GB. Member counts are memory decisions.
+- **Investigation:** Compute the Hessian memory before launching; prefer small-d blocks.
+  Check `dmesg`/journalctl for oom-kill records where readable.
+
+### Background process death at harness boundaries
+- **Symptoms:** `nohup … &` jobs are gone by the next interaction; logs end mid-init.
+- **Cause:** Sandboxed tool environments reap the process group when the call returns.
+- **Fix:** `setsid nohup … &` detaches the session (measured both ways, 2026-10-23).
+
 ### Infeasibility (conflicting constraints)
 - **Symptoms:** Solver reports "infeasible" or "locally infeasible"; no solution found.
 - **Common causes:** Control bounds too tight for the target gate, conflicting time and fidelity constraints, target gate unreachable in given time.

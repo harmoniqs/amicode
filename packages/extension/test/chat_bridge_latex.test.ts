@@ -94,3 +94,33 @@ describe("runLatexmk coalescing", () => {
     expect(calls.length).toBe(1);
   });
 });
+
+// #1403: the Compile button matches a status to ITS file. The status's `file` is
+// the symlink-RESOLVED path, which can differ from the path the app posted
+// (/tmp vs /private/tmp), so every status also echoes the path as REQUESTED.
+describe("run-latex-status echoes the requested path (#1403)", () => {
+  it("carries `requested` on compiling / done / error / unavailable", async () => {
+    const posted: any[] = [];
+    const io: BridgeIo = { visible: () => true, postToWebview: (m) => void posted.push(m) };
+    const target = { dir: "/real/w", base: "a.tex", pdf: "/real/w/requested-1403.pdf", requested: "/link/w/a.tex" };
+
+    let cb!: Parameters<LatexExec>[3];
+    await runLatexmk(target, undefined, io, { exec: (_c, _a, _o, done) => void (cb = done), detect: async () => true });
+    cb(null, "", "");
+    await runLatexmk({ ...target, pdf: "/real/w/requested-1403b.pdf" }, undefined, io, { detect: async () => false });
+
+    const statuses = posted.filter((m) => m.kind === "run-latex-status");
+    expect(statuses.map((m) => m.state)).toEqual(["compiling", "done", "unavailable"]);
+    for (const status of statuses) {
+      expect(status.requested).toBe("/link/w/a.tex");
+      expect(status.file).toBe("/real/w/a.tex");
+    }
+  });
+
+  it("omits `requested` when the target did not carry one (legacy callers)", async () => {
+    const posted: any[] = [];
+    const io: BridgeIo = { visible: () => true, postToWebview: (m) => void posted.push(m) };
+    await runLatexmk({ dir: "/w", base: "a.tex", pdf: "/w/requested-1403c.pdf" }, undefined, io, { detect: async () => false });
+    expect("requested" in posted[0]).toBe(false);
+  });
+});

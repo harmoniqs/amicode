@@ -4,4 +4,4 @@
 # Regenerate: shasum -a 256 <path> from packages/extension/
 [files]
 "../../scores/pulse-designer/templates/solve.jl" = "54e042c1c262ddca34bc22b1b2ad9e982504dff705094e25f7cc0063830d2941"
-"../../exemplars/index.json" = "0d187afd4d1efc0109b63740859eb8e3dc5c2eceafa163e3d63c487d3576d2af"
+"../../exemplars/index.json" = "b37c736657d0c483c68dd47adb24baeb9ac43ea365f7b23a9001671c7a4edadf"

@@ -1,0 +1,379 @@
+#!/usr/bin/env bash
+# .notturno/gates — the night runner's pre-push gate for amicode (#1980).
+#
+# harmoniqs/amicissimo automation/notturno/runner/night-run.sh runs this
+# (cwd = repo root, inside a Modal sandbox with NO vault and NO fleet) after
+# the headless implementer commits; a non-zero exit reports `gates-red`
+# instead of opening a red PR. The runner surfaces the LAST lines of the log,
+# so the final line is always a one-line summary.
+#
+# It runs the cheap, deterministic, environment-independent subset of CI
+# (.github/workflows/ci.yml):
+#   drift      node packages/app-bundle/scripts/drift_gate.mjs   (app-bundle-gate)
+#   typecheck  pnpm -r run typecheck                             (fast)
+#   vitest     the vitest suites of the packages the diff touched (fast), vs
+#              the merge-base with the base branch. amico-run goes through the
+#              same test-quarantine gate CI uses (#1907/#1939); every suite
+#              runs with CI's `--exclude '**/slow/**'`, plus the real-SSH
+#              loopback suites below (fleet-dependent; they self-skip without
+#              an sshd and mutate ~/.ssh/authorized_keys when one exists).
+#              Vault-dependent tests self-skip on their own existsSync/env
+#              guards, exactly as in CI. A `pnpm -r run build` (step `build`)
+#              precedes the suites, as in CI (several suites read built bundles).
+#              The suites run in CI's environment (#2007), not the sandbox's:
+#              a scrubbed env (`env -i` + PATH/TMPDIR/locale/USER) with CI=true,
+#              GITHUB_ACTIONS=true, RUNNER_TEMP, GITHUB_BASE_REF=<base> (a
+#              pull_request run), TZ=UTC, and a fresh EMPTY scratch HOME — the
+#              GitHub runner's HOME has no ~/.amico, no ~/.config/opencode, no
+#              fleet; the sandbox's HOME has the implementer's opencode config
+#              and the env carries AWS/GH tokens + NOTTURNO_*, which tests read.
+#              A red suite names its failing test files (first 5) in RESULT:
+#                failed: vitest:extension [test/a.test.ts, test/b.test.ts]
+#              As root (the Modal sandbox) the suites DROP to an unprivileged user
+#              (#2021): CI's runner is not root, and chmod-000/0500 permission
+#              tests cannot fail for root. The tree + scratch are chowned to a
+#              `notturno-gates` user for the vitest steps (restored on exit) and
+#              the suites run via setpriv/runuser. NOTTURNO_GATES_DROP_ROOT=0 opts out.
+#              Divergences the gate cannot erase are printed as `warn:` lines:
+#              node major != CI's 20, still root (drop unavailable/disabled),
+#              CI-runner tools missing from the image (zip, rsync, shasum).
+# NOT here (need the vendored engine binary / bun materialization / Julia /
+# PyPI): build-binary, engine-tests, vsix-gate, boot-smoke, schema-roundtrip.
+#
+# Usage:  ./.notturno/gates            run the gates
+#         ./.notturno/gates --plan     print base, merge-base, selected packages; run nothing
+# Env:
+#   NOTTURNO_BASE          base branch (e.g. lane/0.3.11 or origin/lane/0.3.11).
+#                          Unset/unresolvable → the nearest of origin/lane/* and
+#                          origin/main (fewest commits from merge-base to HEAD).
+#                          No base at all → every package's suite runs.
+#   NOTTURNO_GATES_STEPS   comma list subset of drift,typecheck,build,vitest (default all;
+#                          build only runs when vitest has packages to test)
+#   NOTTURNO_GATES_HERMETIC=0  run the suites in the ambient env/HOME (debugging only)
+#   NOTTURNO_GATES_DROP_ROOT=0 keep root for the vitest steps (debugging only)
+#   NOTTURNO_GATES_USER    the unprivileged user (default notturno-gates; created if absent)
+#   NOTTURNO_GATES_DROP_TOOLS  privilege-drop tools to try, in order (default: setpriv runuser; tests only)
+#   NOTTURNO_GATES_EUID    pretend the effective uid is this (tests only)
+#   NOTTURNO_GATES_CI_TOOLS  tools CI's runner has that the suites spawn (default: zip rsync shasum)
+set -uo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT" || { echo "[notturno-gates] RESULT: RED — cannot cd to repo root $ROOT"; exit 2; }
+
+say() { echo "[notturno-gates] $*"; }
+
+# Fleet-dependent suites (real loopback SSH), excluded by basename glob.
+ENV_DEPENDENT_EXCLUDES="**/fleet_peer_e2e.test.ts **/amicode_service_attachment_transport.test.ts **/amicode_service_attach_switch_latency.test.ts"
+
+PLAN=0
+for a in "$@"; do
+  case "$a" in
+    --plan) PLAN=1 ;;
+    -h|--help) sed -n '2,57p' "$0"; exit 0 ;;
+    *) echo "[notturno-gates] RESULT: RED — unknown argument: $a"; exit 2 ;;
+  esac
+done
+
+STEPS="${NOTTURNO_GATES_STEPS:-drift,typecheck,build,vitest}"
+for s in ${STEPS//,/ }; do
+  case "$s" in
+    drift|typecheck|build|vitest) ;;
+    *) echo "[notturno-gates] RESULT: RED — unknown step '$s' in NOTTURNO_GATES_STEPS (known: drift,typecheck,build,vitest)"; exit 2 ;;
+  esac
+done
+want() { case ",$STEPS," in *",$1,"*) return 0 ;; *) return 1 ;; esac; }
+
+# ── base + merge-base ────────────────────────────────────────────────────────
+is_commit() { git rev-parse --verify -q "$1^{commit}" >/dev/null 2>&1; }
+
+resolve_base() {
+  local b="${NOTTURNO_BASE:-}" c
+  if [ -n "$b" ]; then
+    # prefer the remote-tracking ref for a bare branch name (a local branch may be stale);
+    # HEAD-relative refs are taken as given (origin/HEAD would silently mean main)
+    case "$b" in HEAD|HEAD~*|HEAD^*|@*) set -- "$b" ;; *) set -- "origin/${b#origin/}" "$b" ;; esac
+    for c in "$@"; do
+      if is_commit "$c"; then echo "$c"; return 0; fi
+    done
+    say "warn: NOTTURNO_BASE='$b' does not resolve — falling back to origin/lane/* | origin/main" >&2
+  fi
+  local best="" best_n="" mb n
+  for c in $(git for-each-ref --sort=-version:refname --format='%(refname:short)' 'refs/remotes/origin/lane/' 2>/dev/null) origin/main; do
+    is_commit "$c" || continue
+    mb="$(git merge-base "$c" HEAD 2>/dev/null)" || continue
+    n="$(git rev-list --count "$mb..HEAD" 2>/dev/null)" || continue
+    if [ -z "$best_n" ] || [ "$n" -lt "$best_n" ]; then best="$c"; best_n="$n"; fi
+  done
+  [ -n "$best" ] && echo "$best"
+  return 0
+}
+
+BASE="$(resolve_base)"
+MB=""
+[ -n "$BASE" ] && MB="$(git merge-base "$BASE" HEAD 2>/dev/null || true)"
+
+# packages with a vitest `test` script
+all_test_pkgs() {
+  local d
+  for d in packages/*/; do
+    d="${d%/}"
+    [ -f "$d/package.json" ] || continue
+    node -e 'const s=(require(process.argv[1]).scripts||{}).test||"";process.exit(/\bvitest\b/.test(s)?0:1)' "$ROOT/$d/package.json" 2>/dev/null \
+      && echo "${d#packages/}"
+  done
+}
+
+touched_pkgs() {
+  local f
+  {
+    git diff --name-only "$MB" -- 2>/dev/null
+    git ls-files --others --exclude-standard 2>/dev/null
+  } | while IFS= read -r f; do
+    case "$f" in
+      packages/*/*) f="${f#packages/}"; echo "${f%%/*}" ;;
+      # repo-root scripts + the quarantine lists + this gate are tested in amico-run
+      scripts/*|config/test-quarantine/*|.notturno/*) echo "amico-run" ;;
+      # workspace-wide inputs: every suite
+      package.json|pnpm-lock.yaml|pnpm-workspace.yaml) echo "__ALL__" ;;
+    esac
+  done
+}
+
+ALL_PKGS="$(all_test_pkgs | sort -u | tr '\n' ' ')"
+if [ -z "$MB" ]; then
+  SELECTED="$ALL_PKGS"
+  SEL_WHY="no base resolved — every package"
+else
+  T="$(touched_pkgs | sort -u | tr '\n' ' ')"
+  case " $T " in
+    *" __ALL__ "*) SELECTED="$ALL_PKGS"; SEL_WHY="workspace manifest touched — every package" ;;
+    *)
+      SELECTED=""
+      for p in $T; do case " $ALL_PKGS " in *" $p "*) SELECTED="$SELECTED $p" ;; esac; done
+      SEL_WHY="packages the diff touched"
+      ;;
+  esac
+fi
+SELECTED="$(echo $SELECTED)" # trim / squeeze
+
+say "repo: $ROOT  head: $(git rev-parse --short HEAD 2>/dev/null || echo '?')"
+MB_SHORT="(none)"
+[ -n "$MB" ] && MB_SHORT="$(git rev-parse --short "$MB")"
+say "base: ${BASE:-(none)}  merge-base: $MB_SHORT"
+say "steps: $STEPS"
+echo "vitest packages: ${SELECTED:-(none)}"
+say "($SEL_WHY)"
+
+# ── root → unprivileged for the vitest steps (#2021) ─────────────────────────
+# The sandbox runs as root; CI's runner does not. Under root, chmod-000/0500
+# permission-denial tests cannot fail, so their assertions break. The decision
+# is made here (and shown by --plan); the user/chown work happens in prepare_drop.
+GATES_EUID="${NOTTURNO_GATES_EUID:-$(id -u 2>/dev/null || echo '?')}"
+DROP_USER="${NOTTURNO_GATES_USER:-notturno-gates}"
+DROP_TOOL=""
+DROP_WHY=""
+if [ "$GATES_EUID" != "0" ]; then
+  DROP_WHY="current user (uid $GATES_EUID, not root)"
+elif [ "${NOTTURNO_GATES_DROP_ROOT:-1}" = "0" ]; then
+  DROP_WHY="root (drop disabled by NOTTURNO_GATES_DROP_ROOT=0)"
+else
+  for t in ${NOTTURNO_GATES_DROP_TOOLS:-setpriv runuser}; do
+    if command -v "$t" >/dev/null 2>&1; then DROP_TOOL="$t"; break; fi
+  done
+  if [ -n "$DROP_TOOL" ]; then DROP_WHY="drop root → non-root user '$DROP_USER' via $DROP_TOOL"
+  else DROP_WHY="root (neither setpriv nor runuser available to drop with)"; fi
+fi
+echo "vitest user: $DROP_WHY"
+[ "$PLAN" -eq 1 ] && exit 0
+
+# ── run ──────────────────────────────────────────────────────────────────────
+PASSED=""
+FAILED=""
+HINTS=""
+T0=$SECONDS
+STEP_DETAIL="" # a step may set this to a short " [..]" suffix for the RESULT line
+step() { # step <name> <hint-on-failure> <cmd...>
+  local name="$1" hint="$2" t=$SECONDS rc
+  shift 2
+  STEP_DETAIL=""
+  say "── $name: $*"
+  "$@"
+  rc=$?
+  if [ "$rc" -eq 0 ]; then
+    PASSED="$PASSED $name"
+    say "── $name: ok ($((SECONDS - t))s)"
+  else
+    FAILED="$FAILED $name$STEP_DETAIL"
+    [ -n "$hint" ] && HINTS="$HINTS $hint;"
+    say "── $name: FAIL exit $rc ($((SECONDS - t))s)${STEP_DETAIL}"
+  fi
+}
+
+# ── CI's environment for the vitest suites (#2007) ───────────────────────────
+SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/notturno-gates.XXXXXX")" || { echo "[notturno-gates] RESULT: RED — mktemp failed"; exit 2; }
+TREE_OWNER=""   # set by prepare_drop: who to hand the tree back to
+cleanup() {
+  [ -n "$TREE_OWNER" ] && chown -R "$TREE_OWNER" "$ROOT" 2>/dev/null
+  chmod -R u+rwx "$SCRATCH" 2>/dev/null
+  rm -rf "$SCRATCH"
+}
+trap cleanup EXIT
+CI_TMP="$SCRATCH/tmp"
+mkdir -p "$CI_TMP" "$SCRATCH/runner-temp"
+
+# prepare_drop — make the tree + scratch writable by an unprivileged user and
+# fill DROP (the wrapper argv). On any failure it warns and stays root.
+DROP=()
+DROP_UID=""
+DROP_GID=""
+prepare_drop() {
+  [ -n "$DROP_TOOL" ] || return 0
+  local u="$DROP_USER" owner
+  if ! id -u "$u" >/dev/null 2>&1; then
+    useradd --system --no-create-home --shell /usr/sbin/nologin "$u" >/dev/null 2>&1 \
+      || { u=nobody; say "warn: could not create '$DROP_USER' — falling back to 'nobody'"; }
+  fi
+  DROP_UID="$(id -u "$u" 2>/dev/null)" && DROP_GID="$(id -g "$u" 2>/dev/null)" || DROP_UID=""
+  if [ -z "$DROP_UID" ] || [ "$DROP_UID" = "0" ]; then
+    DROP_UID=""; say "warn: no unprivileged user to drop to — vitest stays root"; return 0
+  fi
+  owner="$(stat -c '%u:%g' "$ROOT" 2>/dev/null || stat -f '%u:%g' "$ROOT" 2>/dev/null)" || owner=""
+  if [ -z "$owner" ] || ! chown -R "$DROP_UID:$DROP_GID" "$ROOT" "$SCRATCH"; then
+    DROP_UID=""; say "warn: could not hand the tree to '$u' — vitest stays root"
+    [ -n "$owner" ] && chown -R "$owner" "$ROOT" 2>/dev/null
+    return 0
+  fi
+  TREE_OWNER="$owner"
+  if [ "$DROP_TOOL" = setpriv ]; then
+    DROP=(setpriv "--reuid=$DROP_UID" "--regid=$DROP_GID" --clear-groups --)
+  else
+    DROP=(runuser -u "$u" --)
+  fi
+  say "vitest steps run as '$u' (uid $DROP_UID), tree handed over until exit"
+}
+
+# run a command the way CI's `fast` job runs a test step
+ci_env() {
+  if [ "${NOTTURNO_GATES_HERMETIC:-1}" = "0" ]; then ${DROP[@]+"${DROP[@]}"} "$@"; return; fi
+  local home
+  home="$(mktemp -d "$SCRATCH/home.XXXXXX")" || return 2  # fresh + empty per suite
+  [ -n "$DROP_UID" ] && chown "$DROP_UID:$DROP_GID" "$home"
+  local keep=() v
+  for v in PATH LANG LC_ALL USER LOGNAME SHELL; do
+    [ -n "${!v:-}" ] && keep+=("$v=${!v}")
+  done
+  ${DROP[@]+"${DROP[@]}"} env -i "${keep[@]}" \
+    HOME="$home" TMPDIR="$CI_TMP" RUNNER_TEMP="$SCRATCH/runner-temp" TZ=UTC \
+    CI=true GITHUB_ACTIONS=true ${BASE:+GITHUB_BASE_REF="${BASE#origin/}"} \
+    "$@"
+}
+
+vitest_bin() { # the package's own vitest bin (no pnpm/corepack under the scratch HOME)
+  if [ -x "packages/$1/node_modules/.bin/vitest" ]; then echo "$ROOT/packages/$1/node_modules/.bin/vitest"; else echo ""; fi
+}
+
+# failed_files <vitest-json> [quarantine-gate-log] → "test/a.test.ts, test/b.test.ts, +N more" (first 5)
+failed_files() {
+  node - "$@" <<'NODE' 2>/dev/null
+const fs = require("fs"), path = require("path");
+const [json, gateLog] = process.argv.slice(2);
+const files = [];
+const add = (f) => { if (f && !files.includes(f)) files.push(f); };
+if (gateLog && fs.existsSync(gateLog)) {
+  // quarantine-gate violations: "... FAIL <kind> <suite>::<file>::<test>: ..."
+  for (const m of fs.readFileSync(gateLog, "utf8").matchAll(/ FAIL [\w-]+ [^:\s]+::([^:]+)::/g)) add(m[1]);
+}
+if (!files.length && json && fs.existsSync(json)) {
+  let r; try { r = JSON.parse(fs.readFileSync(json, "utf8")); } catch { r = null; }
+  for (const t of (r && r.testResults) || []) {
+    const bad = t.status === "failed" || (t.assertionResults || []).some((a) => a.status === "failed");
+    if (bad) add(path.relative(process.env.PKG_DIR || process.cwd(), t.name));
+  }
+}
+if (files.length) {
+  const head = files.slice(0, 5);
+  if (files.length > 5) head.push(`+${files.length - 5} more`);
+  process.stdout.write(head.join(", "));
+}
+NODE
+}
+
+set_detail() { # set_detail <pkg> <json> [gate-log]
+  local f
+  f="$(PKG_DIR="$ROOT/packages/$1" failed_files "$2" "${3:-}")"
+  [ -n "$f" ] && STEP_DETAIL=" [$f]"
+  return 0
+}
+
+vitest_args() { # common CI flags + exclusions + a JSON report
+  local g
+  VARGS=(run --passWithNoTests --exclude '**/slow/**')
+  for g in $ENV_DEPENDENT_EXCLUDES; do VARGS+=(--exclude "$g"); done
+  VARGS+=(--reporter=default --reporter=json "--outputFile.json=$1")
+}
+
+run_vitest() { # run_vitest <pkg> <json>
+  local bin
+  bin="$(vitest_bin "$1")"
+  vitest_args "$2"
+  if [ -n "$bin" ]; then
+    (cd "packages/$1" && ci_env "$bin" "${VARGS[@]}")
+  else
+    (cd "packages/$1" && ci_env pnpm exec vitest "${VARGS[@]}")
+  fi
+}
+
+run_amico_run_suite() {
+  local out="$SCRATCH/vitest-amico-run.json" glog="$SCRATCH/quarantine-amico-run.log" vexit qexit
+  run_vitest amico-run "$out"
+  vexit=$?
+  (cd packages/amico-run && node ../../scripts/test_quarantine_gate.mjs --runner-exit "$vexit" "$out") 2>&1 | tee "$glog"
+  qexit=${PIPESTATUS[0]}
+  [ "$qexit" -ne 0 ] && set_detail amico-run "$out" "$glog"
+  return "$qexit"
+}
+
+run_pkg_suite() {
+  local p="$1" out="$SCRATCH/vitest-$1.json" rc
+  run_vitest "$p" "$out"
+  rc=$?
+  [ "$rc" -ne 0 ] && set_detail "$p" "$out"
+  return "$rc"
+}
+
+if want vitest && [ -n "$SELECTED" ]; then
+  NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo '?')"
+  say "vitest env: $([ "${NOTTURNO_GATES_HERMETIC:-1}" = "0" ] && echo 'AMBIENT (NOTTURNO_GATES_HERMETIC=0)' || echo "CI mirror — env -i, CI=true GITHUB_ACTIONS=true TZ=UTC, scratch HOME under $SCRATCH${BASE:+, GITHUB_BASE_REF=${BASE#origin/}}"); node $(node --version 2>/dev/null || echo '?')"
+  [ "$NODE_MAJOR" != "20" ] && say "warn: node major $NODE_MAJOR != CI's 20 (actions/setup-node node-version: 20) — a red that CI would not show may be a node-version difference"
+  [ "$GATES_EUID" = "0" ] && [ -z "$DROP_TOOL" ] && say "warn: running vitest as root — CI's runner is unprivileged; permission tests (chmod 000/0500 dirs) cannot fail for root"
+  MISSING=""
+  for t in ${NOTTURNO_GATES_CI_TOOLS:-zip rsync shasum}; do command -v "$t" >/dev/null 2>&1 || MISSING="$MISSING $t"; done
+  [ -n "$MISSING" ] && say "warn: tools CI's runner has are missing here:$MISSING — suites that spawn them fail ENOENT / exit 127 (sandbox image gap, not a code bug)"
+fi
+
+if want drift; then
+  step drift "overlay edit without a manifest refresh? run 'node packages/app-bundle/scripts/refresh_manifest.mjs' then drift_gate, and commit manifest.json" \
+    node packages/app-bundle/scripts/drift_gate.mjs
+fi
+if want typecheck; then
+  step typecheck "" pnpm -r run typecheck
+fi
+if want vitest && [ -n "$SELECTED" ]; then
+  want build && step build "" pnpm -r run build
+  prepare_drop # after the build (root-owned dist/), before the suites
+  for p in $SELECTED; do
+    if [ "$p" = "amico-run" ]; then
+      step "vitest:$p" "" run_amico_run_suite
+    else
+      step "vitest:$p" "" run_pkg_suite "$p"
+    fi
+  done
+fi
+
+DUR=$((SECONDS - T0))
+if [ -n "$FAILED" ]; then
+  echo "[notturno-gates] RESULT: RED (${DUR}s) — failed:${FAILED}; passed:${PASSED:- none}${HINTS:+ — fix:$HINTS}"
+  exit 1
+fi
+echo "[notturno-gates] RESULT: GREEN (${DUR}s) — passed:${PASSED:- none} (base ${BASE:-none})"
+exit 0

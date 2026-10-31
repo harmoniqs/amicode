@@ -22,6 +22,7 @@ import {
 } from "./credentials"
 import { pasqalSecretStore } from "./pasqal_secret"
 import { parseTomlLite } from "./toml_lite"
+import { amicodeOpsDir } from "../ops_dir"
 
 // --- status contract (parent #159 data contract; secret-free by construction) ---
 
@@ -1036,14 +1037,10 @@ function clearStatus(id: ConnectionType): void {
 // switch mechanism. One-way on connect: disconnect never reverts solver mode
 // (the user's toggle owns reverting).
 
-/** $AMICODE_OPS_DIR override → ~/.amico/amicode — the SAME resolution the
- *  extension's amicodeOpsDir() uses (substrate/vault_store.ts), so the watcher
- *  reads exactly where we write and tests stay hermetic. */
-export function amicodeOpsDir(): string {
-  const env = process.env.AMICODE_OPS_DIR
-  if (env && env.trim() !== "") return env
-  return path.join(homedir(), ".amico", "amicode")
-}
+// $AMICODE_OPS_DIR override → ~/.amico/amicode — the ONE definition (#1998,
+// src/ops_dir.ts) the whole extension shares, so the watcher reads exactly where
+// we write and tests stay hermetic. (The engine overlay's port keeps its own.)
+export { amicodeOpsDir }
 
 export function entitlementsFile(): string {
   return path.join(amicodeOpsDir(), "entitlements.toml")

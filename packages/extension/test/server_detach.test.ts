@@ -1,10 +1,15 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
+import { fakeServeShim, reapFakeServes } from "./fake_serve_reaper";
 import { mkdtempSync, writeFileSync, chmodSync, readFileSync, existsSync, statSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
 import { join, dirname } from "node:path";
 import { ServerManager } from "../src/server_manager";
 import { serverLogPath } from "../src/server_handshake";
 import { mintServerPassword, buildServerSpawnEnv } from "../src/server_auth";
+
+// #1782: reap every detached fake_serve.mjs a test spawned, even when an assertion
+// failed before the test's own cleanup line.
+afterEach(() => reapFakeServes());
 
 // ============================================================================
 // #1146 (ADR 0020): Detached spawn + deactivate stops killing
@@ -38,7 +43,7 @@ function fakeOpencodeBinary(dir: string, captureFile: string, argsFile?: string)
     ].join("\n"),
   );
   const bin = join(dir, "opencode");
-  writeFileSync(bin, `#!/bin/sh\nexec "${process.execPath}" "${serverMjs}" "$@"\n`);
+  writeFileSync(bin, fakeServeShim(dir, serverMjs));
   chmodSync(bin, 0o755);
   return bin;
 }

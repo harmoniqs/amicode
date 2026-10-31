@@ -68,6 +68,10 @@ export function sqliteBatch(
     input: JSON.stringify({ db: dbPath, mode, statements }),
     encoding: "utf8",
     timeout: 60_000,
+    // 128 MB: a fleet-scale windowed gather (e.g. the corrections scan over 30
+    // days of user messages with concatenated text) blows node's 1 MB default
+    // with ENOBUFS; the bridge's own queries never approach this ceiling.
+    maxBuffer: 128 * 1024 * 1024,
   });
   if (res.error) {
     throw new SqliteBridgeError(

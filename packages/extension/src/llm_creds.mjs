@@ -126,3 +126,96 @@ export async function fetchProviderIds(baseUrl, { fetchImpl = fetch, timeoutMs =
     return undefined;
   }
 }
+
+/**
+ * The live provider → model-id catalog (#1985, the model-reachability cache's
+ * probe list): the same /config/providers query, stripped at the parse
+ * boundary to provider ids and their model KEYS only (never a model's
+ * options, never a provider key). A failed query yields undefined (UNKNOWN —
+ * never an empty catalog).
+ */
+export async function fetchProviderModels(baseUrl, { fetchImpl = fetch, timeoutMs = 4000, headers } = {}) {
+  const base = String(baseUrl).replace(/\/$/, "");
+  try {
+    const r = await fetchImpl(`${base}/config/providers`, { signal: AbortSignal.timeout(timeoutMs), headers });
+    if (!r.ok) return undefined;
+    const json = await r.json();
+    const arr = json && Array.isArray(json.providers) ? json.providers : undefined;
+    if (!arr) return undefined;
+    const out = {};
+    for (const p of arr) {
+      if (!p || typeof p.id !== "string" || p.id.length === 0) continue;
+      const models = p.models && typeof p.models === "object" && !Array.isArray(p.models) ? Object.keys(p.models) : [];
+      out[p.id] = models.filter((m) => typeof m === "string" && m.length > 0);
+    }
+    return out;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The FULL provider catalog (#2000, model arrivals): the engine's GET /provider
+ * — every listed provider (connected or not) with its model ids and the
+ * non-secret price (USD/Mtok) + context meta, plus the connected provider ids.
+ * Stripped at the parse boundary to ids and those numbers only (never options,
+ * never a key). A failed query yields undefined (UNKNOWN — never empty).
+ */
+export async function fetchProviderCatalog(baseUrl, { fetchImpl = fetch, timeoutMs = 6000, headers } = {}) {
+  const base = String(baseUrl).replace(/\/$/, "");
+  const finite = (n) => (typeof n === "number" && Number.isFinite(n) ? n : undefined);
+  try {
+    const r = await fetchImpl(`${base}/provider`, { signal: AbortSignal.timeout(timeoutMs), headers });
+    if (!r.ok) return undefined;
+    const json = await r.json();
+    const all = json && Array.isArray(json.all) ? json.all : undefined;
+    if (!all || !json || !Array.isArray(json.connected)) return undefined;
+    const providers = {};
+    for (const p of all) {
+      if (!p || typeof p.id !== "string" || p.id.length === 0) continue;
+      const models = {};
+      const src = p.models && typeof p.models === "object" && !Array.isArray(p.models) ? p.models : {};
+      for (const [id, m] of Object.entries(src)) {
+        if (id.length === 0) continue;
+        const meta = {};
+        const input = finite(m?.cost?.input);
+        const output = finite(m?.cost?.output);
+        const context = finite(m?.limit?.context);
+        if (input !== undefined) meta.input = input;
+        if (output !== undefined) meta.output = output;
+        if (context !== undefined) meta.context = context;
+        models[id] = meta;
+      }
+      providers[p.id] = models;
+    }
+    return { connected: json.connected.filter((c) => typeof c === "string" && c.length > 0), providers };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The engine's one-token reachability probe (#1984, POST /provider/probe):
+ * the engine sends 1 token per model through its OWN credentials and returns
+ * a named status per model — no secret crosses. The probe is bounded inside
+ * the engine (10s per model, concurrency 4), so the client budget scales with
+ * the batch. Failure (unreachable / non-2xx / malformed) → undefined.
+ */
+export async function probeProviderModels(baseUrl, providerID, modelIDs, { fetchImpl = fetch, timeoutMs, headers } = {}) {
+  const base = String(baseUrl).replace(/\/$/, "");
+  const budget = timeoutMs ?? Math.ceil(Math.max(1, modelIDs.length) / 4) * 10_000 + 15_000;
+  try {
+    const r = await fetchImpl(`${base}/provider/probe`, {
+      method: "POST",
+      signal: AbortSignal.timeout(budget),
+      headers: { ...(headers ?? {}), "content-type": "application/json" },
+      body: JSON.stringify({ providerID, modelIDs }),
+    });
+    if (!r.ok) return undefined;
+    const json = await r.json();
+    if (!json || !Array.isArray(json.results)) return undefined;
+    return json;
+  } catch {
+    return undefined;
+  }
+}

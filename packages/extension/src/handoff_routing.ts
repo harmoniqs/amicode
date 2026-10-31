@@ -1,40 +1,22 @@
-// Handoff routing — Stage 8 intent-based routing (#438)
+// Handoff routing — post-onboarding exit
 //
-// Pure routing logic for the onboarding handoff: given the user's intent
-// selections from Stage 2, determines the correct next experience.
+// The guided tutorial now lives inside onboarding, so every user has already
+// been walked through the research loop. The handoff therefore has one exit
+// path: a plain new working session. Intent is still recorded in the profile
+// (see readIntentFromState) and read by recommendation logic elsewhere; it no
+// longer selects the post-onboarding destination.
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 export type IntentSlug = "research" | "general_coding" | "exploring";
 
-export type HandoffAction =
-  | "research-session"   // Research selected → guided research interview (domain-specific)
-  | "normal-session"     // General coding only → open session, highlight memory + vault
-  | "tour-session"       // Exploring only → open session with brief tour offer
-  | "research-session-plus"; // Research + General coding → research interview with broader studio mention
+export type HandoffAction = "normal-session"; // Open a fresh working session
 
-// ─── Routing table (pure, testable) ──────────────────────────────────────────
+// ─── Routing (pure, testable) ────────────────────────────────────────────────
 
-/** Given the user's intent selections, determine the handoff action.
- *  Research takes priority when combined with other selections. */
-export function resolveHandoffAction(intents: IntentSlug[]): HandoffAction {
-  const hasResearch = intents.includes("research");
-  const hasGeneral = intents.includes("general_coding");
-  const hasExploring = intents.includes("exploring");
-
-  // Research always routes to the research session (domain-specific interview)
-  if (hasResearch && hasGeneral) return "research-session-plus";
-  if (hasResearch && hasExploring) return "research-session";
-  if (hasResearch) return "research-session";
-
-  // General coding only
-  if (hasGeneral && hasExploring) return "normal-session";
-  if (hasGeneral) return "normal-session";
-
-  // Exploring only
-  if (hasExploring) return "tour-session";
-
-  // Fallback (empty or unknown) — safe default
+/** Post-onboarding handoff action. Independent of recorded intent: every
+ *  user, whatever they selected in Stage 2, gets the same new session. */
+export function resolveHandoffAction(_intents: IntentSlug[]): HandoffAction {
   return "normal-session";
 }
 

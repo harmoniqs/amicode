@@ -1,4 +1,5 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
+import { fakeServeShim, reapFakeServes } from "./fake_serve_reaper";
 import * as cp from "node:child_process";
 import { execSync } from "node:child_process";
 import { mkdtempSync, writeFileSync, chmodSync } from "node:fs";
@@ -11,6 +12,10 @@ import {
   freePortIfOurs,
 } from "../src/server_daemonize";
 import { ServerManager } from "../src/server_manager";
+
+// #1782: reap every detached fake_serve.mjs a test spawned, even when an assertion
+// failed before the test's own cleanup line.
+afterEach(() => reapFakeServes());
 
 // ============================================================================
 // #1183 (ADR 0020): daemonize the standalone server so it survives a VS Code
@@ -59,7 +64,7 @@ function fakeOpencodeBinary(dir: string): string {
     `http.createServer((_, res) => res.end("ok")).listen(port, "127.0.0.1", () => console.log("fake opencode serving on " + port));`,
   ].join("\n"));
   const bin = join(dir, "opencode");
-  writeFileSync(bin, `#!/bin/sh\nexec "${process.execPath}" "${serverMjs}" "$@"\n`);
+  writeFileSync(bin, fakeServeShim(dir, serverMjs));
   chmodSync(bin, 0o755);
   return bin;
 }

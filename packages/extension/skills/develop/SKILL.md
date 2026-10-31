@@ -4,7 +4,7 @@ description: The develop mode in one skill — the director loop protocol bound 
 agents: [implementer, orchestrator]
 surface: public
 source: amicode
-revision: 3
+revision: 5
 ---
 
 # Develop — the director's protocol & issue-DAG walk
@@ -151,13 +151,14 @@ Examples:
 
 - **One integration branch + one PR per top-level argument** (`amico/issue-<n>-<slug>`), cut from the default branch. N issues → N PRs. Multi-issue input is an AFK throughput convenience, not a bundling instruction — coupling between units lives in the DAG (`Blocked by`), never on a shared branch.
 - A unit's slices merge into its integration branch; the **parent draft PR** opens at the first frontier commit (`Closes #<parent>`, advancing the parent's board card to **In Progress**) and is marked ready when the unit's DAG completes green.
+- **Campaign PRDs: the unit is the tier/wave per repo.** When a parent is a **campaign PRD** — it has `amico-spec-slices` children, or its slices span more than one repo — the parent is NOT a deliverable unit: no parent integration branch, no parent draft PR (one branch cannot span repos, and a weeks-long campaign needs continuous charter merges). Walk it one tier/wave per repo; each slice is a **unit of one** (its own branch and PR — the no-per-slice-PR rule does not apply), merged onto the release train (`lane/<version>`) when it needs a live test, else onto `main`. The parent PRD stays open as the campaign's tracker. The integration-branch rule above stays for ordinary feature parents.
 - **Cross-unit** `Blocked by` is honored globally: a unit blocked by another only starts once the blocker's code is on the default branch (its PR merged), then branches from the updated default — no stacking. A cross-unit-blocked parent sits in **Blocked** until then, clearing the same way (→ Ready on the blocker's merge, → In Progress at its first frontier commit).
 
 ### Parallel dispatch & shared worktrees
 
 When a frontier has independent slices (non-overlapping `Touches:`/files, no `Blocked by` between them), dispatch them concurrently, capped by `AMICO_MAX_PARALLEL` (default 2; lower to 1 for Julia-heavy work). A slice that started in **Blocked** (an open `Blocked by` at creation) flips to **Ready** the instant its last blocker's PR merges — then to In Progress when actually dispatched (a parked-but-unblocked slice must not sit in stale Blocked). On dispatch, each slice's sub-issue card moves to **In Progress**; on its merge into the integration branch, closing the sub-issue lets the board's "Item closed" workflow move it to Done.
 
-Worktrees are the isolation unit, created via `amicode_session` with `workspace: "create"` — **never** via direct `git worktree add`. Each worktree gets its `opencode/<slug>` branch. The checkout registry is the project-wide claim registry: re-read it before casting any implementer; claim the row; release it when work lands. First-writer-wins; races are possible and visible — a visible conflict beats a silent double-ownership every time.
+Worktrees are the isolation unit, created via `amicode_session` with `workspace: "create"` — **never** via direct `git worktree add` while that tool is present (where it is absent, see the lifecycle-tools fallback under [Honest degradation](#honest-degradation-what-is-missing-on-this-machine)). Each worktree gets its `opencode/<slug>` branch. The checkout registry is the project-wide claim registry: re-read it before casting any implementer; claim the row; release it when work lands. First-writer-wins; races are possible and visible — a visible conflict beats a silent double-ownership every time.
 
 ### Merge strategy
 
@@ -169,7 +170,7 @@ The parent session merges worktree branches into the integration branch in **dep
 
 ### Worktree cleanup
 
-Worktree removal after a successful merge is **best-effort**: the parent session attempts to remove the worktree directory after merging its branch. Residual worktrees (from crashes, interrupted sessions, or failed cleanups) are handled by the lifecycle tool `amicode_workspace` — never manually `rm -rf` a worktree directory or call `git worktree remove` directly.
+Worktree removal after a successful merge is **best-effort**: the parent session attempts to remove the worktree directory after merging its branch. Residual worktrees (from crashes, interrupted sessions, or failed cleanups) are handled by the lifecycle tool `amicode_workspace` — never manually `rm -rf` a worktree directory or call `git worktree remove` directly (the one exception is the director-managed fallback when the lifecycle tools are absent — see [Honest degradation](#honest-degradation-what-is-missing-on-this-machine)).
 
 ### Role binding (engine-neutral)
 
@@ -180,10 +181,18 @@ The walk dispatches **the Engineer** — a role, not an engine feature. The role
 
 Engine-specific bindings stay engine-side; this skill names the role. A session with no binding for the Engineer runs the sequential sub-mode.
 
+### Cast deaths (the empty return)
+
+A cast that returns **empty** — state `completed`, zero output: no commits, no structured return — is a **cast death**, not an outcome. The empty return carries no information, including about the brief: verify from the worktree artifacts (commits, status, file mtimes), record the death in the ledger with that evidence, and recast the same brief. Three observed instances in one campaign all succeeded first-try on the recast — the brief was not the cause (finding F33).
+
 ### Terminal state per unit
 
 - **AFK** parent → the ready PR auto-merges (gated on CI where the repo has it); the parent issue closes on merge → the board's "Item closed" workflow moves its card to **Done** (never set manually).
 - **HITL** parent → the ready PR requests review and stops (no merge) → set the parent's board card to **In Review** as the final step, then verify it held and re-set if the board's async "PR linked → In Progress" workflow clobbered it.
+
+### Standing directives (AFK mandates)
+
+A standing directive recorded in the ledger (the user's words + date — "do it all", "keep going for a while") is the explicit approval for the arc's issue filings AND its merge ladder, within the scope the directive names; every filing and every merge under it is reported in the loop record and the session summary. The mandate does not extend past its named scope: outward-publishing acts (releases, registration, visibility flips) always need the word. Worked example: the Favo campaign merged twelve standard-tier issues under two AFK mandates while holding its General-registry trigger parked for the user's explicit word (finding F34).
 
 ### When NOT to use
 
@@ -249,6 +258,12 @@ is present:
   (`modes/develop/` missing or incomplete), the phase/gate summary above is
   the only copy you have; name the gap, and record it for the doctor to
   surface.
+- **Absent lifecycle tools** — if `amicode_session` / `amicode_workspace`
+  are absent in this engine binding, say so and fall back explicitly to
+  director-managed `git worktree add` / `git worktree remove`: each worktree
+  is recorded in the ledger (§3 and §6: path, branch, slice) when added, and
+  removed after its branch merges. This is the only sanctioned direct
+  worktree use; never `rm -rf` a worktree directory.
 - **Absent dispatch surface** — with no dispatchable implementer binding,
   the walk collapses to sequential in-session slices (the walk's fallback
   sub-mode); that is a degraded but correct mode, never a silent one.

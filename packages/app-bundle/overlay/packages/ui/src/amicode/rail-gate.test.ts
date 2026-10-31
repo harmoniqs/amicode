@@ -6,7 +6,7 @@ import { countAmicodeParts, sessionHasAmicodeParts } from "./rail-gate"
 // The gate used to be `part.tool.startsWith("amicode_")` alone, so a session that
 // did its amicode work through the shell showed NO chips — observed 2026-07-29 on
 // a session that created a problem workspace, wrote a solvespec, and drove a solve
-// to iteration 29 with frames on disk, entirely via bash + amico-run.
+// to iteration 29 with frames on disk, entirely via bash + the amico CLI (`amico run`; originally the amico-run bin).
 
 const msgs = [{ id: "m1" }]
 const parts =
@@ -22,8 +22,21 @@ describe("rail gate", () => {
     expect(sessionHasAmicodeParts(msgs, parts(amicodeTool()))).toBe(true)
   })
 
-  test("a shell part that launches amico-run opens the gate", () => {
-    expect(sessionHasAmicodeParts(msgs, parts(bash("nohup amico-run --spec s.json solve.jl &")))).toBe(true)
+  test("a shell part that launches `amico run` opens the gate", () => {
+    expect(sessionHasAmicodeParts(msgs, parts(bash("nohup amico run --spec s.json solve.jl &")))).toBe(true)
+  })
+
+  // #1673: the post-sunset CLI vocabulary — every `amico <verb>` the gate intends
+  // to treat as amicode work.
+  test.each(["run", "plan", "spec", "catalog", "vault"])("a shell part running `amico %s` opens the gate", (verb) => {
+    expect(sessionHasAmicodeParts(msgs, parts(bash(`amico ${verb} --help`)))).toBe(true)
+  })
+
+  // #1673: the deleted `amico-run` bin (#1667) is retired on BOTH sides — its
+  // bare token alone no longer classifies a shell row as amicode work.
+  test("the deleted `amico-run` token alone no longer opens the gate", () => {
+    expect(sessionHasAmicodeParts(msgs, parts(bash("nohup amico-run --spec s.json solve.jl &")))).toBe(false)
+    expect(sessionHasAmicodeParts(msgs, parts(bash("cd packages/amico-run && npm test")))).toBe(false)
   })
 
   test("a shell part that only touches the problems dir opens the gate", () => {
@@ -48,7 +61,7 @@ describe("rail gate", () => {
   // view through the tool seam, so counting them would refetch the problem on
   // unrelated shell activity.
   test("completed counts only amicode_* tools, never shell", () => {
-    const c = countAmicodeParts(msgs, parts(amicodeTool("completed"), bash("amico-run solve.jl")))
+    const c = countAmicodeParts(msgs, parts(amicodeTool("completed"), bash("amico run solve.jl")))
     expect(c.any).toBe(2)
     expect(c.completed).toBe(1)
   })

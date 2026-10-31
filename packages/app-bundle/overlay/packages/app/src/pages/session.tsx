@@ -110,6 +110,9 @@ import { serializeSession } from "@/utils/serialize-session"
 import { useUsageExceededDialogs } from "./session/usage-exceeded-dialogs"
 import { createSessionOwnership } from "./session/session-ownership"
 import { createSessionLineage } from "./session/session-lineage"
+import { composerRefocusOffset } from "./session/composer-refocus"
+import { previewFilePathForSession } from "@/components/session/preview-file-target"
+import { sessionContextMessage } from "@/utils/amicode-session-relay"
 
 type FollowupItem = FollowupDraft & { id: string }
 type FollowupEdit = Pick<FollowupItem, "id" | "prompt" | "context">
@@ -1012,14 +1015,25 @@ export default function Page() {
   window.addEventListener("message", onFileOpNotify)
   onCleanup(() => window.removeEventListener("message", onFileOpNotify))
 
+  // Report the settled session to the host panel (the draft page reports its own
+  // "no session"; #1287 dropped the session half). The host stamps `preview-file`
+  // opens with this id so every other session view ignores them (#1648), and
+  // derives its follow set / mutation context from it (#1788).
+  createEffect(() => {
+    if (window.parent === window) return
+    window.parent.postMessage(sessionContextMessage(params.id), "*")
+    onCleanup(() => window.parent.postMessage(sessionContextMessage(), "*"))
+  })
+
   // #934: preview-file — the sidebar (or chat bridge, #935) tells us to show
   // a file in the Preview companion tab. Opens the side panel, switches to
   // the Preview tab, and sets the previewFile signal in the layout context.
   const onPreviewFile = (e: MessageEvent) => {
-    const d = e.data as { source?: string; kind?: string; path?: string } | undefined
-    if (d?.source !== "amicode" || d?.kind !== "preview-file" || !d.path) return
+    // #1648: a session-targeted open belongs to exactly one live session view.
+    const path = previewFilePathForSession(e.data, params.id)
+    if (!path) return
     batch(() => {
-      view().previewFile.set(d.path!)
+      view().previewFile.set(path)
       void tabs().open(SESSION_PREVIEW_TAB)
       tabs().setActive(SESSION_PREVIEW_TAB)
       if (!view().reviewPanel.opened()) view().reviewPanel.open()
@@ -1597,6 +1611,36 @@ export default function Page() {
     if (isChildSession()) return
     inputRef?.focus()
   }
+
+  // #1248: on a session tab switch, give the composer its focus back and put the
+  // caret where the user left it in that session (prompt.cursor(), written on
+  // composer blur; fallback: end). Guards mirror type-to-focus — see
+  // composerRefocusOffset. Decided inside the frame so focus has settled.
+  createEffect(
+    on(
+      sessionKey,
+      (key, prevKey) => {
+        requestAnimationFrame(() => {
+          const editor = inputRef
+          const offset = composerRefocusOffset({
+            key,
+            prevKey,
+            childSession: isChildSession(),
+            composerBlocked: composer.blocked(),
+            dialogActive: !!dialog.active,
+            active: deepActiveElement(),
+            composer: editor,
+            saved: prompt.cursor(),
+            length: promptLength(prompt.current()),
+          })
+          if (offset === undefined || !editor) return
+          editor.focus()
+          setCursorPosition(editor, offset)
+        })
+      },
+      { defer: true },
+    ),
+  )
 
   useComposerCommands()
   useSessionCommands({

@@ -15,6 +15,7 @@ import type { ExplorerIconTheme } from "./explorer_icon_theme";
 import { resolveLatexTarget } from "./latex_compile";
 import { resolveChatFileLink, type LinkResolutionContext } from "./link_resolution";
 import { resolveRemoteSshTarget } from "./fleet_connect_remote_ssh";
+import { handleWhatsNewBridgeMessage } from "./whats_new";
 import { HARMONIQS_MODEL_ID, HARMONIQS_PROVIDER_ID, testConnection, writeOnboardingConfig } from "./onboarding_panel";
 import {
   readSkillProviders,
@@ -209,6 +210,13 @@ export interface BridgeIo {
    *  self-owned control grant. Undefined until activation wires it; the kind is
    *  consumed regardless. */
   onFleetEnableControl?: (req: { ownerMachineId: string; sessionID: string }) => void;
+  /** #1648: the panel's settled session id for targeting `preview-file`
+   *  opens; undefined when it cannot target (draft route / not yet reported). */
+  previewFileTarget?: () => string | undefined;
+  /** #1036: the Preview tab's "Find in sidebar" — reveal this absolute file path
+   *  in the Amicode sidebar tree. A dedicated kind because the `command` lane
+   *  forwards no arguments. Undefined until activation wires it. */
+  onRevealInSidebar?: (path: string) => void;
   previewVisibleChildren?: (root: string, relativeDirectory: string) => Promise<Array<{ name: string; kind: "file" | "directory"; absolute: string; relative: string }>>;
   /** Returns the currently-selected Explorer file icon theme as opaque assets. */
   explorerIconTheme?: () => ExplorerIconTheme;
@@ -217,6 +225,19 @@ export interface BridgeIo {
    *  the #1784 posture is decided. Undefined keeps the pre-#1826 local-stat
    *  behavior (panels constructed before the wiring lands). */
   linkResolution?: LinkResolutionContext;
+}
+
+/** #1648: a `preview-file` open stamped with the host panel's settled session
+ *  id; the field is omitted when the host cannot target (draft route, unknown,
+ *  deck pane — legacy broadcast), so those still open everywhere. */
+function previewFileMessage(filePath: string, io: BridgeIo) {
+  const sessionID = io.previewFileTarget?.();
+  return {
+    source: "amicode" as const,
+    kind: "preview-file" as const,
+    path: filePath,
+    ...(sessionID !== undefined ? { sessionID } : {}),
+  };
 }
 
 const isAmicode = (msg: unknown): msg is { source: "amicode"; kind: string; tab?: string } =>
@@ -228,7 +249,10 @@ const isAmicode = (msg: unknown): msg is { source: "amicode"; kind: string; tab?
 // PDF so rapid saves never overlap. Availability is detected once. Status
 // (compiling / done / error / unavailable) is relayed back so the Preview can
 // show a spinner and, on done, refresh the companion PDF (#1254).
-type LatexTargetRef = { dir: string; base: string; pdf: string };
+// `requested` (#1403): the path exactly as the app asked for it — echoed on every
+// status so the Preview's Compile button can match a status to its file even when
+// `file` (symlink-resolved) differs from the posted path.
+type LatexTargetRef = { dir: string; base: string; pdf: string; requested?: string };
 // #1414: the coalesced re-run remembers the LATEST request's target+tab, not a
 // bare boolean — otherwise the rerun replays the stale target/tab captured by
 // the original in-flight call's closure.
@@ -310,7 +334,15 @@ export async function runLatexmk(
   // the running check and spawning a second latexmk.
   state.running = true;
   const post = (extra: Record<string, unknown>) =>
-    io.postToWebview({ source: "amicode", kind: "run-latex-status", tab, file: texFile, pdf: target.pdf, ...extra });
+    io.postToWebview({
+      source: "amicode",
+      kind: "run-latex-status",
+      tab,
+      file: texFile,
+      pdf: target.pdf,
+      ...(target.requested !== undefined ? { requested: target.requested } : {}),
+      ...extra,
+    });
 
   const detect = deps.detect ?? detectLatexmk;
   if (!(await detect())) {
@@ -466,11 +498,7 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
       // Route to the Preview companion tab (#935) — the session page's
       // preview-file listener (from #934) sets previewFile, opens the side
       // panel, and switches to the Preview tab.
-      io.postToWebview({
-        source: "amicode",
-        kind: "preview-file",
-        path: fsPath,
-      });
+      io.postToWebview(previewFileMessage(fsPath, io));
       return true;
     }
     // #1826: one function owns the resolution order; the outcome is Preview
@@ -478,11 +506,7 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     // toast — never a silent no-op.
     void resolveChatFileLink(fsPath, linkResolution).then((resolution) => {
       if (resolution.action === "preview") {
-        io.postToWebview({
-          source: "amicode",
-          kind: "preview-file",
-          path: resolution.path,
-        });
+        io.postToWebview(previewFileMessage(resolution.path, io));
       } else if (resolution.action === "failed") {
         vscode.window.showErrorMessage(`Amicode: link not opened — ${resolution.reason} (${resolution.detail})`);
       } else {
@@ -569,6 +593,27 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     return true;
   }
 
+  // Image copy bridge (chat image frame + preview "Copy"): vscode.env.clipboard
+  // is text-only, so write the PNG with the platform tool. This handler runs in
+  // the extension host — on the machine the user is sitting at — which is what
+  // makes the paste land there even when the image was rendered on a remote
+  // server. PNG only (the iframe rasterizes anything else), bounded like
+  // save-file; the result is echoed for the nonce'd caller.
+  if (msg.kind === "clipboard-image-write" && typeof (msg as { dataUrl?: unknown }).dataUrl === "string") {
+    if (!io.visible()) return true;
+    const raw = msg as unknown as { dataUrl: string; nonce?: string; tab?: string };
+    const prefix = "data:image/png;base64,";
+    if (!raw.dataUrl.startsWith(prefix)) return true;
+    const base64 = raw.dataUrl.slice(prefix.length);
+    if (!base64 || base64.length > 24_000_000) return true;
+    void writeClipboardImageNative(Buffer.from(base64, "base64"))
+      .catch(() => false)
+      .then((ok) => {
+        io.postToWebview({ source: "amicode", kind: "clipboard-image-written", nonce: raw.nonce, tab: raw.tab, ok });
+      });
+    return true;
+  }
+
   // Clipboard image bridge: the outer webview's navigator.clipboard.read()
   // requires user activation (a keystroke on that document), but the user typed
   // inside the sandboxed iframe — so the async Clipboard API throws in newer
@@ -637,7 +682,7 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     const roots = (vscode.workspace.workspaceFolders ?? []).map((folder) => folder.uri.fsPath);
     const target = resolveLatexTarget(rawFile, roots);
     if (!target.ok) return true; // invalid / uncontained / non-tex — ignore silently
-    scheduleLatexCompile(target, tab, io);
+    scheduleLatexCompile({ dir: target.dir, base: target.base, pdf: target.pdf, requested: rawFile }, tab, io);
     return true;
   }
 
@@ -682,6 +727,8 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
   }
   // The app's boot catch-up: re-post open-bug-report when a bug session is
   // live (heals a lost one-shot open — cold-boot race, webview reload).
+  // #2001: the What's-new page's last-seen version (globalState) — query/seen.
+  if (handleWhatsNewBridgeMessage(msg, (m) => io.postToWebview(m))) return true;
   if (msg.kind === "bug-report-poke") {
     io.bugReport?.poke();
     return true;
@@ -1597,6 +1644,13 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     return true;
   }
 
+  // #1036: Preview tab "Find in sidebar" → reveal the file in the sidebar tree.
+  if (msg.kind === "reveal-in-sidebar") {
+    const p = (msg as { path?: unknown }).path;
+    if (typeof p === "string" && p !== "" && p.length <= 4096) io.onRevealInSidebar?.(p);
+    return true;
+  }
+
   // #663: the chat app posts project-selected when the user picks a project in
   // the composer dropdown. Forward to the sidebar so it can update folder state.
   // mode controls expand/collapse behavior: "reset" (default) for explicit
@@ -1638,6 +1692,72 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
   }
 
   return false;
+}
+
+// ---------------------------------------------------------------------------
+// Native clipboard image writer
+// ---------------------------------------------------------------------------
+// Puts a PNG on the system clipboard via a temp file and the platform tool.
+// The path is passed as an argument (never spliced into a script). Resolves
+// false on any failure or an unsupported platform.
+
+export async function writeClipboardImageNative(png: Buffer): Promise<boolean> {
+  const command = clipboardImageWriteCommand(process.platform, process.env);
+  if (!command) return false;
+  const file = path.join(os.tmpdir(), `amicode-copy-${process.pid}-${Date.now()}.png`);
+  // A full/readonly tmpdir must answer the nonce'd caller with ok:false — a
+  // throw here would reject the reply promise and leave the iframe waiting.
+  try {
+    fs.writeFileSync(file, png);
+  } catch {
+    return false;
+  }
+  const ok = await runToExit(command.cmd, [...command.args, file]);
+  // xclip/wl-copy fork a selection server that keeps the bytes in memory, but
+  // give it a moment to finish reading before the temp file goes.
+  setTimeout(() => fs.rmSync(file, { force: true }), 5000);
+  return ok;
+}
+
+/** The writer for this host; the PNG path is appended as the last argument. */
+export function clipboardImageWriteCommand(
+  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv,
+): { cmd: string; args: string[] } | null {
+  if (platform === "darwin")
+    return {
+      cmd: "osascript",
+      args: ["-e", "on run argv", "-e", "set the clipboard to (read (POSIX file (item 1 of argv)) as «class PNGf»)", "-e", "end run"],
+    };
+  if (platform === "linux" && env.WAYLAND_DISPLAY)
+    return { cmd: "sh", args: ["-c", 'exec wl-copy --type image/png < "$1"', "amicode-copy"] };
+  if (platform === "linux") return { cmd: "xclip", args: ["-selection", "clipboard", "-t", "image/png", "-i"] };
+  // win32 is served through WSL (the linux branch); a native Windows host has no writer.
+  return null;
+}
+
+// Resolve on the launched process's own exit, not on stdio close: xclip and
+// wl-copy daemonize a child that inherits stdio, so execFile would hang until
+// its timeout and report failure for a copy that worked.
+function runToExit(cmd: string, args: string[]): Promise<boolean> {
+  return import("node:child_process").then(
+    ({ spawn }) =>
+      new Promise<boolean>((resolve) => {
+        const child = spawn(cmd, args, { stdio: "ignore" });
+        const timer = setTimeout(() => {
+          child.kill();
+          resolve(false);
+        }, 5000);
+        child.on("error", () => {
+          clearTimeout(timer);
+          resolve(false);
+        });
+        child.on("exit", (code) => {
+          clearTimeout(timer);
+          resolve(code === 0);
+        });
+      }),
+  );
 }
 
 // ---------------------------------------------------------------------------

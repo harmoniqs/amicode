@@ -2701,17 +2701,22 @@ try:
     PORT = int(_env("AMICODE_FRONTDOOR_PORT", "4096"))
 except ValueError:
     PORT = 4096
+# Bind address: LOOPBACK by default. Remote people reach the hub through
+# `tailscale serve` (tailnet-only HTTPS + verified identity headers) or an ssh
+# tunnel, never an open LAN port. AMICODE_FRONTDOOR_BIND=0.0.0.0 restores the
+# old exposure explicitly (logged).
+BIND = _env("AMICODE_FRONTDOOR_BIND", "127.0.0.1") or "127.0.0.1"
 srv = socket.socket(); srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-srv.bind(("0.0.0.0", PORT)); srv.listen(128)
+srv.bind((BIND, PORT)); srv.listen(128)
 # 2026-09-19 origin shift: fleet clients' Chromium HTTP cache holds the
 # binary-era index (stored without revalidation headers) and self-assembles
 # the whole app from cache on every reload — app updates NEVER reach them.
 # The app now also listens on 4097; fleet.json points clients there. A fresh
 # origin has no cache anywhere. 4096 stays for the watchdog + stragglers.
 srv2 = socket.socket(); srv2.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-srv2.bind(("0.0.0.0", PORT + 1)); srv2.listen(128)
-log("front-door v3 (sharded-router, #1717 phase 1) listening %d+%d -> %s"
-    % (PORT, PORT + 1,
+srv2.bind((BIND, PORT + 1)); srv2.listen(128)
+log("front-door v3 (sharded-router, #1717 phase 1) listening %s:%d+%d -> %s"
+    % (BIND, PORT, PORT + 1,
        ("%d shards, default %d" % (len(TABLE["backends"]), TABLE["default_shard"])) if SHARDED
        else ("%s:%d (legacy)" % (BACKEND[0], BACKEND[1]))))
 cid = 0

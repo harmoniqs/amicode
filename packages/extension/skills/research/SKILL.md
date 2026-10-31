@@ -225,12 +225,29 @@ casting any experimenter; claim your row; release it when work lands. First-writ
 races are possible and visible — a visible conflict beats a silent double-ownership every
 time.
 
+Pinned scratch harnesses rot between loops: /tmp trees get cleaned, and shared depots garbage-collect pinned package trees. Before re-using one, verify the worktree SHAs and clean status, check every Manifest tree hash is present, instantiate if not, and assert the Manifest is byte-unchanged afterwards (never resolve). Record this in the run's env log.
+
 ## Standing anti-gaming contract
 
 Production `step` paths only for A/B loop experiments; CRN pairing with f=0-style
 invariants; impossibility checks on noise denominators; FD sanity gates on derived
 quantities; raw artifacts are the evidence, prose is not. Promotion of any result to
 catalog/status is human-only, always.
+
+**Every measured axis carries its own wiring gate** (2026-10, three measured instances:
+loop-3 playback-unwired, loop-6 detuning-axis-unwired, loop-10's S2-objective probe) — an
+unwired axis returns 0s (or a unit-slip returns ~0.5) and banks a wrong verdict with every
+other gate green. A spec whose axis lacks a positive wiring check (loader reproduction,
+monotonicity, a closed-form anchor cell) is an incomplete spec; critics reject on this
+class. Bonus idiom: a symmetric ±σ telegraph arm's MEAN equals the closed-form single-node
+cost exactly — a free wiring validator for detuning axes. Analyzer findings are verified by
+the director before being applied (2026-10, a factually-wrong receipts finding was caught);
+a critic's arithmetic is never trusted over the test file's machine-pinned literals.
+
+- **Score corrections out of sample.** Under drift drawn fresh each round, a correction fitted at round k and scored at round k is in-sample. Report the one-step-ahead score F(k+1) − F_do-nothing(k+1) beside it. One campaign's entire arm ordering turned out to rank least harm: every arm was worse than doing nothing on 8/8 seeds. Always carry a do-nothing reference, and pair by seed, because pooled medians can reverse paired orderings.
+- **Keep every STOP artifact** (rename it `*_STOP`; never delete it). An extra check an experimenter adds is a record, never a pass condition. An unregistered gate is a spec deviation even when it is caught.
+- **Run-mode tokens live only in filenames.** Determinism twins must not carry `_det` (or any pass marker) in their content. After the det pass, `grep -F _det` over twinned content must come back empty. This defect broke byte-identity four times in one campaign.
+- **Interpretation waits for the analyzer.** The director records a mechanical label at the gate. Its meaning (recommendations, mechanism claims) lands only after the read-only analysis of the raw artifacts.
 
 ## Failure modes to watch
 
@@ -242,3 +259,12 @@ catalog/status is human-only, always.
   that's an open loop in §5, never an outcome in §2.
 - **Summary drift** — after each compaction, the audit in §9 is the check that the summary
   still points HERE rather than becoming a competing source of truth.
+- **The silent no-op edit** — programmatic edits that report success but never matched
+  (six measured instances, 2026-10): every edit asserts its pattern and grep-verifies the
+  critical line; before `git add -A`, inspect status and account for every path (silent
+  subagent failures leave partial state that a blind add commits); after multi-edit
+  confusion, rewrite clean and let git arbitrate.
+- **Unattended runs** — plain `nohup` backgrounds die at tool-call exit in sandboxed
+  harnesses; `setsid` survives (measured both ways). Chain unattended cells through a
+  driver script; commit the state to the ledger BEFORE the night starts so any compaction
+  is safe.
