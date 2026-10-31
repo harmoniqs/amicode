@@ -45,8 +45,9 @@ Invariants you must respect:
 ## Stage 0 — preconditions
 
 - Python 3.11+ and `uv` (or `pipx`). Check: `uv --version`.
-- A vault path: either an existing Obsidian vault with literature notes, or a
-  fresh empty directory for one. Ask which if not already known.
+- A vault path: on Amicode, their writable personal mount is the default (Stage 2
+  resolves it); otherwise either an existing Obsidian vault with literature
+  notes, or a fresh empty directory for one. Ask which if not already known.
 - What they already have (ask in the interview, Stage 2): a Google Scholar or
   Zotero library, a PDF collection, a Slack channel where their group shares
   papers — any combination seeds the vault.
@@ -54,7 +55,7 @@ Invariants you must respect:
 ## Stage 1 — install
 
 ```bash
-uv tool install git+https://github.com/harmoniqs/arJev@v0.4.0
+uv tool install git+https://github.com/harmoniqs/arJev@v0.6.1
 ```
 
 **Gate:** `arjev --version` prints a version.
@@ -64,8 +65,15 @@ uv tool install git+https://github.com/harmoniqs/arJev@v0.4.0
 1. **Field** → their arXiv categories from <https://arxiv.org/category_taxonomy>
    (e.g. a condensed-matter researcher: `cond-mat.mes-hall`, `cond-mat.str-el`;
    an econometrician: `econ.TH`, `econ.GN`). Never default.
-2. **Vault state** → extant literature notes (Stage 3A: adopt) or none (Stage 3B:
-   `arjev init`). Ask where the notes live.
+2. **Vault root** → resolve their personal mount first, by the Amicode mount rule,
+   never by a remembered name or path: run `amico vault status --json` and take
+   the first mount in the stack whose `kind` is `personal` and `writable` is
+   `true`. If one resolves, offer its `path` as the default `--vault` root (one
+   `question`: use it, or point elsewhere) — no second vault. Then look inside:
+   paper notes already there → Stage 3A (adopt); none → Stage 3B (`arjev init
+   --vault <that path>`). **Only if no personal mount resolves**, fall back to the
+   plain question: extant literature notes (Stage 3A: adopt) or none (Stage 3B:
+   `arjev init`), and ask where the notes live.
 3. **Schema** (extant only) → read two or three of their real notes' frontmatter
    before configuring anything.
 4. **Taste** → what they want more of, less of (Stage 4 drafts it; they edit).
@@ -104,8 +112,11 @@ arjev init --vault /path/to/their/vault
 
 `init` writes the config as a checklist-file: every slot explains itself inline,
 `feeds` starts empty. Fill it **with the human**, one interview answer at a time.
-Right after init, `arjev inspect` blocks with `blocked: zero identity-bearing
-notes` — expected; the seeds (Stage 5) make it pass.
+The first `arjev inspect` on a fresh config blocks — `blocked: no feeds
+configured` until `feeds` is filled, then `blocked: zero identity-bearing notes`
+until seeds exist. That is expected, not a failure, and it holds just as much for
+a personal mount you only just minted: the feeds (Stage 2) and the seeds (Stage 5)
+make it pass.
 
 ## Stage 4 — taste directives (HUMAN STEP)
 
@@ -129,7 +140,7 @@ user exports is theirs to parse — arJev never scrapes a site.
 - **A PDF folder**: `arjev ingest --pdf-dir ~/Papers` (arXiv ids from filenames
   or the arXiv stamp inside the PDF).
 - **Slack**: `arjev ingest --slack-channel-id C0123456ABC --limit 200` (needs
-  `ARJEV_SLACK_TOKEN`; every human-shared arXiv link becomes a staged note
+  `ARJEV_SLACK_TOKEN_FILE`; every human-shared arXiv link becomes a staged note
   carrying who/where/when provenance — bot posts filtered).
 
 **Gate:** printed counts match reality; seeded notes appear in the vault's
@@ -141,7 +152,7 @@ user exports is theirs to parse — arJev never scrapes a site.
 - **Jev** — semantic ranking of the full feed (~pennies/day). **HUMAN STEP**: the
   user signs up at <https://console.typesafe.ai> and gets **their own** key. Have
   them drop it in a mode-600 file (`chmod 600 ~/.config/arjev/jev.key`); the
-  timer's service exports `ARJEV_JEV_KEY_FILE=<that path>`. Without a key the
+  daily service exports `ARJEV_JEV_KEY_FILE=<that path>`. Without a key the
   digest runs lexical-only and the `mode:` line says so — degraded, never broken.
 - **Slack** (optional attention layer) — **HUMAN STEP**: they create the Slack
   app in **their** workspace — fastest via the manifest
@@ -150,31 +161,52 @@ user exports is theirs to parse — arJev never scrapes a site.
   `reactions:read`, `channels:history`, `channels:join` (lets the bot join the
   digest channel itself, no `/invite`; `groups:history` for a private channel;
   Slack has no `conversations:replies` scope — replies are read via history).
-  Token in a mode-600 file → `ARJEV_SLACK_TOKEN`; then
+  Token in a mode-600 file (`install -m 600 /dev/stdin
+  ~/.config/arjev/slack-token`) → read through `ARJEV_SLACK_TOKEN_FILE`; then
   set `channel`, `keepers` (user IDs whose reactions count as labels), `why_style`
   in the config. The full five-minute walkthrough:
   https://github.com/harmoniqs/arJev/blob/main/docs/slack-setup.md
 
 **Gate:** with a Jev key, the digest's `mode:` line says `jev`.
 
-## Stage 7 — first digest, then the timer
+## Stage 7 — first run, then the daily timer
 
-One manual run first: `arjev digest --post slack` (or `vault`/`stdout`) — the
-configured feeds run as one deduped union, each pick carrying a why-line. Then a
-timer. Linux systemd user unit:
+One manual run first: `arjev digest` previews today's picks (stdout, nothing
+posted), each with its why-line; then `arjev daily` — the whole day in one command:
+the digest (retried if arXiv's feed is flaky), Slack ingest and reaction sync when
+a token and channel are configured, and on Sundays the calibration report and the
+week-in-review. It reads the key and token files from Stage 6; either can be
+missing. Then schedule it with the units arJev ships — do **not** hand-write a
+timer or wrapper.
 
-```ini
-# ~/.config/systemd/user/arjev-digest.timer
-[Timer]
-OnCalendar=*-*-* 13:00:00 UTC
-Persistent=true
+**Linux (systemd user units):**
+
+```bash
+mkdir -p ~/.config/systemd/user
+for f in arjev-daily.service arjev-daily.timer; do
+  curl -fsSL -o ~/.config/systemd/user/$f https://raw.githubusercontent.com/harmoniqs/arJev/main/contrib/systemd/$f
+done
+systemctl --user daemon-reload
+systemctl --user enable --now arjev-daily.timer
+loginctl enable-linger "$USER"     # so the timer also runs when you're logged out
 ```
 
-with a `.service` running a wrapper that exports the key env vars from the
-mode-600 files, then `arjev digest --top 5 --post slack` and `arjev slack sync`
-(idempotent; harvests reactions → labels → staged stubs). macOS: a launchd
-plist with the same shape. **Gate:** `systemctl --user list-timers` shows it
-armed (or `launchctl list`), and the first manual run posted.
+**macOS (launchd):**
+
+```bash
+P=~/Library/LaunchAgents/io.github.harmoniqs.arjev.daily.plist
+curl -fsSL https://raw.githubusercontent.com/harmoniqs/arJev/main/contrib/launchd/io.github.harmoniqs.arjev.daily.plist \
+  | sed "s|__HOME__|$HOME|g" > "$P"
+launchctl bootstrap gui/$(id -u) "$P"
+```
+
+The units set `ARJEV_JEV_KEY_FILE` and `ARJEV_SLACK_TOKEN_FILE` to the Stage 6
+paths. The macOS job runs at 9:00 local time (edit `Hour` in the plist if they are
+not on US Eastern time; 13:00 UTC is when arXiv's new listings are out).
+**Gate:** `arjev daily` ran once by hand and ended with `done`;
+`systemctl --user list-timers` lists `arjev-daily.timer` (or `launchctl list |
+grep arjev` on macOS). Logs: `journalctl --user -u arjev-daily` on Linux,
+`~/Library/Logs/arjev-daily.log` on macOS.
 
 ## Stage 8 — the staged loop: your prose obligation
 
@@ -204,6 +236,14 @@ down. A digested keep left staged is a loop left open — run this pass daily.
 - `arjev backfill` — fetches every corpus paper's PDF + extracted text into the
   library (paced, idempotent, one run), so kept papers carry their own abstracts
   and conclusions in the taste context.
+- Posting to more than one sink — `arjev digest --post slack,vault` ranks once and
+  writes the dated vault note and the Slack channel together (a failed sink is
+  named on stderr and the others still run). Offer it when they use Slack and
+  want the digest kept in the vault too.
+- The weekly review — `arjev review --days 7` shows relevant papers that missed a
+  daily top 5, tracked-author matches, and the week's labels (`--post slack` shares
+  it). `arjev daily` already runs it on Sundays; offer it on demand for a
+  mid-week look.
 - The v0.4 content arms — `state_policy = "budget-greedy"` (a recency-weighted,
   budgeted context window) and `candidate_content = true` (finalist conclusions) —
   ship **opt-in**: defaults stay incumbent until
