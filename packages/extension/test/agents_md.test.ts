@@ -382,3 +382,19 @@ describe("staged hub AGENTS.md source is platform-correct (#1665)", () => {
     expect(HUB_AGENTS).not.toMatch(/(?:darwin|linux|win32)-(?:x64|arm64)/);
   });
 });
+
+// harmoniqs/amicode#624: Amico had no awareness of the Settings → Connections
+// panel and could not point a user at it or at where a Google token comes from.
+describe("AGENTS.md — Connections awareness (#624)", () => {
+  it("names the Connections panel and the Google connectors", () => {
+    expect(AGENTS).toMatch(/Settings → Connections/);
+    expect(AGENTS).toMatch(/Google Drive/);
+  });
+  it("tells the agent where a Google token comes from (OAuth Playground) and that browser sign-in needs a configured client", () => {
+    expect(AGENTS).toMatch(/developers\.google\.com\/oauthplayground/);
+    expect(AGENTS).toMatch(/GOOGLE_CLIENT_ID/);
+  });
+  it("never asks the agent to handle the secret itself", () => {
+    expect(AGENTS).toMatch(/never ask (the user )?to paste (a |the )?(token|secret|key) (into|in) (the )?chat/i);
+  });
+});
