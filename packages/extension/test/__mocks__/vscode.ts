@@ -27,6 +27,7 @@ export const window = {
     dispose() {},
   }),
   registerWebviewViewProvider: () => ({ dispose() {} }),
+  registerWebviewPanelSerializer: () => ({ dispose() {} }),
   registerFileDecorationProvider: () => ({ dispose() {} }),
   createTreeView: (_id: string, _opts?: unknown) => ({
     dispose() {},

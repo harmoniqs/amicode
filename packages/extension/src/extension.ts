@@ -624,6 +624,29 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     warn: (m) => { void vscode.window.showWarningMessage(m); },
     log: (line) => opencodeChannel.appendLine(line),
   });
+  // #705 — restore chat tabs VS Code re-opens on window reload. Without a
+  // serializer every restored "amicode.chat" tab was a dead panel, and tabs whose
+  // session's turn a server restart killed mid-flight hung forever. The restore
+  // waits (bounded) for the server, re-opens healthy sessions, shows a resume
+  // state for interrupted ones, and closes tabs it cannot restore.
+  ctx.subscriptions.push(
+    vscode.window.registerWebviewPanelSerializer("amicode.chat", {
+      deserializeWebviewPanel: (restored, state) =>
+        ChatPanel.restore(restored, state, ctx, {
+          resolveServer: async () => {
+            const deadline = Date.now() + 60_000;
+            while (!opencodeReadyUrl && Date.now() < deadline) await new Promise((r) => setTimeout(r, 500));
+            const readyUrl = opencodeReadyUrl;
+            if (!readyUrl) return undefined;
+            return {
+              url: frameUrl() ?? readyUrl,
+              authToken: serverAuthToken(serverPassword),
+              hideProjectDir: opencodeProject.projectDir,
+            };
+          },
+        }),
+    }),
+  );
   const sidebarProvider = new SidebarViewProvider(ctx.extensionUri, undefined, defaultFleetSectionDeps({
     // #1764 — sidebar Troubleshoot + Add machine launch through the shared launcher.
     launchSession: (prompt) => chatSessionLauncher.launch(prompt),

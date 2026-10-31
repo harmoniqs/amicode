@@ -40,6 +40,7 @@
     "onCommand:amicode.newProject",
     "onCommand:amicode.chatDeck",
     "onView:amicode.workspace",
+    "onWebviewPanel:amicode.chat",
     "onStartupFinished"
   ],
   "main": "./dist/extension.js",

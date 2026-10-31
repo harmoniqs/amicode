@@ -11,6 +11,29 @@ import { ExternalMutationTransport } from "./external_mutation_transport";
 import type { MutationTrackingContext } from "./external_mutation";
 import { shouldReframe } from "./amicode_service_wiring";
 import type { LaunchTarget } from "./chat_session_launcher";
+import {
+  parseRestoredState,
+  probeSessionTurn,
+  renderInterruptedHtml,
+  RESTORE_RESUME_KIND,
+  type ProbeServer,
+  type TurnVerdict,
+} from "./chat_restore";
+
+/** Where a restored chat tab frames its app (same inputs openOrReveal takes). */
+export interface ChatRestoreTarget {
+  url: URL;
+  authToken?: string;
+  hideProjectDir?: string;
+}
+
+export interface ChatRestoreDeps {
+  /** Resolve the frame target once the server is ready; undefined = no server
+   *  reachable in time (the restored tab is then closed, not left dead). */
+  resolveServer(): Promise<ChatRestoreTarget | undefined>;
+  /** Override the dangling-turn probe (tests). */
+  probe?: (server: ProbeServer, sessionID: string) => Promise<TurnVerdict>;
+}
 
 // ============================================================================
 // ChatPanel — a WebviewPanel that iframes opencode's SolidJS chat at
@@ -640,6 +663,74 @@ export class ChatPanel implements LaunchTarget {
     return ChatPanel.createPanel(ctx, vscode.ViewColumn.Beside, opencodeUrl, authToken, hideProjectDir);
   }
 
+  /** #705: restore a chat tab VS Code re-opened on window reload (the body of
+   *  the "amicode.chat" WebviewPanelSerializer). A healthy session's tab is
+   *  re-framed and navigated back to its session; a tab whose session's last
+   *  turn was killed mid-flight (server restart) shows an explicit
+   *  "turn interrupted — resume?" state instead of hanging; a tab with no
+   *  reachable server is closed rather than left as a dead panel. */
+  static async restore(
+    panel: vscode.WebviewPanel,
+    state: unknown,
+    ctx: vscode.ExtensionContext,
+    deps: ChatRestoreDeps,
+  ): Promise<void> {
+    // The restored webview keeps the options it was created with (VS Code
+    // serializes enableScripts / retainContextWhenHidden / localResourceRoots
+    // with the editor), so none are re-assigned here.
+    panel.iconPath = tabIconPath(ctx);
+    let disposed = false;
+    panel.onDidDispose(() => {
+      disposed = true;
+    });
+    let target: ChatRestoreTarget | undefined;
+    try {
+      target = await deps.resolveServer();
+    } catch {
+      target = undefined;
+    }
+    if (disposed) return;
+    if (!target) {
+      panel.dispose();
+      return;
+    }
+    const server = target;
+    const { sessionID } = parseRestoredState(state);
+    const mount = (): void => {
+      if (disposed) return;
+      const title = ChatPanel.nextTitle();
+      panel.title = title;
+      const instance = new ChatPanel(panel, title, server.url, server.authToken, server.hideProjectDir);
+      if (!ChatPanel.current) ChatPanel.current = instance;
+      if (!sessionID) return;
+      const envelope = { source: "amicode", kind: "navigate", path: `/session/${encodeURIComponent(sessionID)}` };
+      const unsubscribe = instance.subscribeAppReady(() => {
+        unsubscribe();
+        void instance.postMessage(envelope);
+      });
+    };
+    let verdict: TurnVerdict = "ok";
+    if (sessionID) {
+      const probe = deps.probe ?? probeSessionTurn;
+      verdict = await probe(
+        { url: server.url, authorization: server.authToken ? `Basic ${server.authToken}` : undefined },
+        sessionID,
+      ).catch((): TurnVerdict => "ok");
+      if (disposed) return;
+    }
+    if (verdict === "interrupted" && sessionID) {
+      panel.webview.html = renderInterruptedHtml(sessionID, randomBytes(16).toString("base64"));
+      const sub = panel.webview.onDidReceiveMessage((msg: unknown) => {
+        const m = msg as { source?: unknown; kind?: unknown } | undefined;
+        if (m?.source !== "amicode" || m.kind !== RESTORE_RESUME_KIND) return;
+        sub.dispose();
+        mount();
+      });
+      return;
+    }
+    mount();
+  }
+
   private renderHtml(opencodeUrl: URL, authToken?: string, hideProjectDir?: string): string {
     // CSP: allow the iframe to load opencode's localhost origin. The frame
     // itself is isolated, but VS Code's webview CSP needs to explicitly grant
@@ -713,6 +804,10 @@ export class ChatPanel implements LaunchTarget {
             return;
           }
           if (d && d.source === "amicode" && d.kind === "session-context") {
+            // #705: persist the session identity in the webview's own state so
+            // VS Code's editor restore (window reload) hands it back to the
+            // serializer — the restored tab can then re-open ITS session.
+            try { vscode.setState(d.draft === true || !d.sessionID ? {} : { sessionID: d.sessionID }); } catch (_) {}
             vscode.postMessage(d);
             return;
           }
