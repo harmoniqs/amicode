@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Files — side panel v2 mock</title>
+<link rel="stylesheet" href="mock.css" />
+<script src="snapshot.js"></script>
+<script src="views.js"></script>
+</head>
+<body>
+<script>
+const { h, e, ago, clock, Panel, Chip } = V
+V.themeToggle()
+const NOW = Date.parse(SNAP.generated) / 1000
+const FS = SNAP.files
+const M = SNAP.measurement
+const C = SNAP.campaigns.find((c) => c.slug === "qilc-measurement")
+
+const body = V.mountFrame({
+  tab: "files",
+  filesBadge: FS.tree.flatMap((d) => d.children).filter((f) => f.changed).length,
+  session: C.title,
+  panelW: 820,
+  chat: [{ me: true, text: "open the branch record", n: 1 }, { text: "Here — headline E258_0.3, M1B module void on the roundoff bar…", n: 2 }],
+})
+body.style.padding = "0"
+body.style.gap = "0"
+
+const changed = FS.tree.flatMap((d) => d.children.filter((f) => f.changed).map((f) => ({ ...f, parent: d.name })))
+const tree = h("div", { class: "tree", style: { padding: "8px 6px", "border-right": "1px solid var(--amc-border)", overflow: "hidden" } },
+  h("div", { style: { display: "flex", gap: "6px", "align-items": "center", padding: "0 4px 8px" } },
+    h("div", { class: "seg" }, h("button", { "aria-selected": "true" }, "Changed ", h("span", { class: "badge" }, changed.length)), h("button", null, "All")),
+  ),
+  h("div", { class: "eyebrow", style: { padding: "4px 8px" } }, FS.root),
+  FS.tree.map((d) => [
+    h("div", { class: "row" }, h("span", { class: "ico" }, "▾"), h("span", { class: "name", style: { "font-weight": 600 } }, d.name)),
+    d.children.filter((f) => f.changed).slice(0, 14).map((f) =>
+      h("div", { class: "row" + (d.name + "/" + f.name === FS.open.path ? " sel" : ""), style: { "padding-left": "22px" }, title: `${d.name}/${f.name} · ${clock(f.mtime)}` },
+        h("span", { class: "ico" }, f.dir ? "▸" : /\.(jl|py)$/.test(f.name) ? "ƒ" : /\.csv$/.test(f.name) ? "▦" : "·"),
+        h("span", { class: "name" }, f.name),
+        h("span", { class: "st M", title: "written during this session" }, "●"))),
+  ]),
+)
+
+/* editor pane: a real file, lightly highlighted */
+const hl = (line) => {
+  if (/^\s*#/.test(line)) return h("span", { class: "c" }, line)
+  if (/^\s*\[/.test(line)) return h("b", null, line)
+  const m = line.match(/^(\s*)([\w.]+)(\s*=\s*)(.*)$/)
+  if (!m) return line
+  const v = m[4]
+  return [m[1], h("span", { class: "k" }, m[2]), m[3], /^"/.test(v) ? h("span", { class: "s" }, v) : v]
+}
+const editor = h("div", { style: { display: "flex", "flex-direction": "column", "min-width": "0", "border-bottom": "1px solid var(--amc-border)" } },
+  h("div", { class: "tabs" },
+    h("div", { class: "tab on" }, "m1b_branch.toml", h("span", { class: "x" }, "✕")),
+    h("div", { class: "tab" }, "m1b_designs.csv", h("span", { class: "x" }, "✕")),
+    h("div", { class: "tab" }, "m1b_score.jl", h("span", { class: "x" }, "✕")),
+    h("span", { style: { flex: 1 } }),
+    h("div", { class: "tab", style: { "border-right": 0 } }, h("span", { class: "eyebrow" }, "toml · read-only run record")),
+  ),
+  h("div", { class: "code", style: { "max-height": "330px", "background": "var(--amc-bg)" } }, FS.open.lines.slice(0, 22).map((l) => h("span", { class: "l" }, hl(l)))),
+)
+
+/* preview pane: a CSV rendered as a table, with the bridge to a widget */
+const rows = M.designs.filter((d) => d.pulse === "nom").sort((a, b) => a.R - b.R).slice(1, 8)
+const preview = h("div", { style: { display: "flex", "flex-direction": "column", "min-width": "0" } },
+  h("div", { class: "tabs" },
+    h("div", { class: "tab on" }, "m1b_designs.csv", h("span", { class: "eyebrow" }, "preview")),
+    h("span", { style: { flex: 1 } }),
+    h("div", { style: { display: "flex", gap: "6px", "align-items": "center", padding: "0 8px" } }, h("button", { class: "btn ghost" }, "Open as table"), h("button", { class: "btn" }, "Chart as widget")),
+  ),
+  h("div", { style: { padding: "8px 0" } },
+    h("table", { class: "data" },
+      h("thead", null, h("tr", null, ["pulse", "design", "nrows", "R_L", "share_END", "share_PRE", "share_GERM"].map((c, i) => h("th", { class: i > 1 ? "n" : "" }, c)))),
+      h("tbody", null, rows.map((r) => h("tr", null, h("td", { class: "mono" }, r.pulse), h("td", { class: "mono" }, r.design), h("td", { class: "n" }, r.rows), h("td", { class: "n" }, e(r.R, 3)), ["END", "PRE", "GERM"].map((k) => h("td", { class: "n" }, (r.share[k] ?? 0).toFixed(2))))))),
+    h("div", { class: "legend", style: { padding: "0 8px" } }, h("span", null, "2 comment lines carry provenance: spec r3 · intonatissimo 63a651d · manifest d196e6d"), h("span", null, `${M.designs.length} rows`)),
+  ),
+)
+
+body.append(h("div", { style: { display: "grid", "grid-template-columns": "220px minmax(0, 1fr)", "min-height": "calc(100vh - 80px)" } }, tree, h("div", { style: { display: "flex", "flex-direction": "column", "min-width": "0" } }, editor, preview)))
+</script>
+</body>
+</html>

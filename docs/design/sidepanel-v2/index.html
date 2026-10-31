@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Side panel v2 — mocks</title>
+<link rel="stylesheet" href="mock.css" />
+<script src="snapshot.js"></script>
+<script src="views.js"></script>
+</head>
+<body>
+<main class="gallery">
+  <div class="eyebrow">Amicode · side panel v2 · design mocks</div>
+  <h1>The Work Column, <mark>from the ground up</mark></h1>
+  <p class="lede">Session-scoped <b>Now · Files · Context</b>, global <b>Home · Fleet</b>, and widgets that sessions write as data and first-party views render. Every number on these pages is read from real on-disk state — run dirs, ledgers, the chat DB — and says where it came from; fixtures, models and example output are badged as such.</p>
+  <p class="faint mono" id="gen" style="font-size: 11px"></p>
+  <div class="cards" id="cards"></div>
+  <p class="muted" style="margin-top: 40px; max-width: 640px">Spec: <a href="SPEC.md">SPEC.md</a>. Refresh the data with <code>python3 snapshot/build.py &gt; snapshot.js</code>; render PNGs in both themes with <code>./render.sh</code>.</p>
+</main>
+<script>
+const { h } = V
+V.themeToggle()
+document.getElementById("gen").textContent = "snapshot " + SNAP.generated
+const pages = [
+  ["now.html", "Now", "A live campaign session: needs-you strip, live run with phase rail and gates, ledger verdicts, casts, compute, the off-by-default watcher, widget revisions."],
+  ["runcard.html", "Solves", "A solve family on one card, a lab board with a feasibility column, a failed run drawn honestly (F > 1 is flagged, not plotted), and the docked strip."],
+  ["files.html", "Files", "One workspace: a changed/all tree, editor tabs, and a data preview that can become a widget."],
+  ["campaign.html", "Campaign board", "The maximized Now view: the whole hypothesis ledger as verdicts, the watcher's findings, casts over time."],
+  ["compute.html", "Compute", "Where four campaigns spend: LLM dollars by role, casts and runs over seven days, cost per verdict, and what is measured versus inferred."],
+  ["measurement.html", "Measurement", "QILC design efficiency on a log strip, shot allocation per design, and paired out-of-sample effects as a forest plot."],
+  ["calibration.html", "Calibration", "A device's calibrated state, a strumento task timeline with its gate, a model curve labelled as a model, and an honest empty state for drift."],
+  ["home.html", "Home", "Global: needs-you across every session, one card per campaign, the compute total."],
+]
+document.getElementById("cards").append(...pages.map(([href, title, text]) => h("a", { class: "card", href }, h("div", { class: "eyebrow" }, href), h("h3", null, title), h("p", null, text), h("span", { class: "go eyebrow" }, "Open →"))))
+</script>
+</body>
+</html>

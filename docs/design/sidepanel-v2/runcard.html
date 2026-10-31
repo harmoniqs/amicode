@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Solves — side panel v2 mock</title>
+<link rel="stylesheet" href="mock.css" />
+<script src="snapshot.js"></script>
+<script src="views.js"></script>
+</head>
+<body>
+<script>
+const { h, e, usd, dur, ago, clock, Panel, Rows, Stats, Chip, Rail, Convergence, Sparkline } = V
+V.themeToggle()
+const NOW = Date.parse(SNAP.generated) / 1000
+const C = SNAP.campaigns.find((c) => c.slug === "gkp-prestissimo")
+const runs = C.runs.filter((r) => r.series.length)
+const short = (id) => id.replace(/^r\d{8}[T-]\d{6}Z-/, "")
+const last = (r) => r.series[r.series.length - 1]
+// objective semantics: these labs emit 1−F_ms; the knot/alt Modal runs emit a raw penalty objective (f ≫ 1)
+const isInfid = (r) => !/knot|alt-/.test(r.id)
+const FEAS = 1e-6
+
+const body = V.mountFrame({
+  tab: "now",
+  session: C.title,
+  sessionChip: Chip("director handed off", "", "ledger §3: directed from the cat-pair-gates session since 2026-10-31"),
+  chat: [{ me: true, text: "add widgets for solves", n: 1 }, { text: "Mirrored the rfree and DMS-b run dirs into ~/.amico/runs — the board below reads them directly…", n: 3 }],
+})
+
+/* 1 · a solve family: one card, many traces */
+const fam = runs.filter((r) => /rfree-R\d$/.test(r.id))
+const best = fam.reduce((a, b) => (last(a).f < last(b).f ? a : b))
+body.append(
+  Panel({
+    eyebrow: "Solve family · rfree R1–R6",
+    chips: [Chip("completed", "ok"), Chip("untrusted", "untrusted", best.trust)],
+    src: best.lab,
+    body: h("div", { style: { display: "grid", gap: "12px" } },
+      Stats([
+        { v: e(last(best).f, 2), k: h("span", { class: "nocase" }, "best 1−F_ms"), note: short(best.id) + " · optimizer-reported" },
+        { v: last(best).i, k: "outers", note: "each run" },
+        { v: dur(best.t1 - best.t0), k: "wall", note: "inferred · erlich" },
+      ]),
+      Convergence({
+        w: 420, h: 160, xunit: "outer",
+        series: fam.map((r) => ({ pts: r.series.map((p) => [p.i, p.f]), cls: r === best ? "" : "secondary", endMark: r === best })),
+        label: "1−F_ms per outer iteration, six restoration-free runs",
+      }),
+      h("div", { class: "legend" }, h("span", null, h("i"), short(best.id) + " (best)"), h("span", null, h("i", { style: { background: "var(--amc-trace-2)" } }), "R1–R6, same spec")),
+    ),
+    footer: [h("span", null, "director re-roll: not run"), h("span", { class: "spacer" }), h("button", { class: "btn" }, "Re-roll")],
+  }),
+)
+
+/* 2 · leaderboard with the honesty column: feasibility */
+const ranked = runs.filter(isInfid).filter((r) => last(r).f > 0).sort((a, b) => last(a).f - last(b).f).slice(0, 8)
+const excluded = runs.length - runs.filter(isInfid).length
+body.append(
+  Panel({
+    eyebrow: "Lab board · " + C.runs.length + " runs",
+    src: "~/.amico/runs/" + C.runs[0].lab,
+    flush: true,
+    body: h("table", { class: "data" },
+      h("thead", null, h("tr", null, h("th", null, "run"), h("th", { class: "n" }, h("span", { class: "nocase" }, "1−F_ms")), h("th", { class: "n" }, "defect"), h("th", null, ""), h("th", null, "trace"))),
+      h("tbody", null, ranked.map((r) => {
+        const feasible = last(r).pr <= FEAS
+        return h("tr", { class: r === ranked.find((x) => last(x).pr <= FEAS) ? "sel" : "" },
+          h("td", { class: "mono", style: { "font-size": "11px" } }, short(r.id)),
+          h("td", { class: "n" }, e(last(r).f, 2)),
+          h("td", { class: "n", style: { color: feasible ? null : "var(--amc-danger)" } }, last(r).pr === 0 ? "0" : e(last(r).pr, 1)),
+          h("td", null, feasible ? Chip("feasible", "ok") : Chip("infeasible", "bad", "dynamics defect above 1e-6 — the objective is not a fidelity of a real pulse")),
+          h("td", null, Sparkline(r.series.map((p) => p.f), { log: true, w: 72, h: 18 })),
+        )
+      })),
+    ),
+    footer: [h("span", null, `${excluded} runs hidden: objective is a raw penalty, not 1−F`), h("span", { class: "spacer" }), h("span", null, "highlight = best feasible")],
+  }),
+)
+
+/* 3 · a failed run, drawn honestly */
+const bad = C.runs.find((r) => /dmsb-E1-cont/.test(r.id))
+const unphys = bad.series.filter((p) => p.f <= 0).length
+body.append(
+  Panel({
+    cls: "attention",
+    eyebrow: "Run · " + short(bad.id),
+    chips: [Chip("failed", "bad"), Chip("rc " + bad.rc, "")],
+    src: bad.executor,
+    body: h("div", { style: { display: "grid", gap: "10px" } },
+      Convergence({
+        w: 420, h: 120, xunit: "outer",
+        series: [
+          { pts: bad.series.map((p) => [p.i, p.f]) },
+          { pts: bad.series.map((p) => [p.i, p.pr]), cls: "secondary", endMark: false },
+        ],
+        label: "objective and dynamics defect for the failed DMS-b continuation",
+      }),
+      h("div", { class: "legend" }, h("span", null, h("i"), "1−F_ms"), h("span", null, h("i", { style: { background: "var(--amc-trace-2)" } }), "defect ‖c‖∞"), h("span", null, "○ on the floor = objective ≤ 0")),
+      Rows([
+        ["unphysical outers", `${unphys} / ${bad.series.length}  (F_ms > 1)`],
+        ["final defect", e(last(bad).pr, 2) + "  — not a pulse yet"],
+        ["exit", "SIGTERM (rc 143) at outer " + last(bad).i],
+        ["last write", clock(bad.t1)],
+      ]),
+    ),
+    footer: [h("span", null, "why: F_ms > 1 is only possible while the dynamics are violated"), h("span", { class: "spacer" }), h("button", { class: "btn ghost" }, "Ask")],
+  }),
+)
+
+/* 4 · the docked strip (sticky, density tight, 64 px) */
+const strip = (r) =>
+  h("div", { class: "panel", style: { display: "grid", "grid-template-columns": "auto 1fr auto auto", gap: "10px", "align-items": "center", padding: "0 12px", height: "64px" } },
+    h("div", null, h("div", { class: "eyebrow", style: { "white-space": "nowrap" } }, "solve · " + short(r.id)), h("div", { class: "num", style: { "font-size": "16px" } }, e(last(r).f, 2), h("span", { class: "faint", style: { "font-size": "10px" } }, " 1−F_ms"))),
+    Sparkline(r.series.map((p) => p.f), { log: true, w: 104, h: 28 }),
+    Chip("outer " + last(r).i, ""),
+    Chip("done", "ok"),
+  )
+body.append(h("div", { class: "eyebrow", style: { "margin-top": "4px" } }, "Docked form — when the card scrolls away"), strip(best))
+</script>
+</body>
+</html>

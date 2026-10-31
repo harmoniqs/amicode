@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Now — side panel v2 mock</title>
+<link rel="stylesheet" href="mock.css" />
+<script src="snapshot.js"></script>
+<script src="views.js"></script>
+</head>
+<body>
+<script>
+const { h, e, usd, dur, ago, clock, Panel, Rows, Stats, Chip, VerdictChip, Rail, Meter, StackMeter, RAMP } = V
+V.themeToggle()
+const NOW = Date.parse(SNAP.generated) / 1000
+const C = SNAP.campaigns.find((c) => c.slug === "qmotion-autotune")
+const run = C.runs[0]
+const L = C.ledger
+
+const body = V.mountFrame({
+  tab: "now",
+  nowBadge: 2,
+  session: C.title,
+  sessionChip: Chip("director live", "live"),
+  chat: [
+    { me: true, text: "how's the freeze run looking", n: 1 },
+    { text: "Held-out oracle failed on 9701016 — the TRUE class got pruned. Draws are banked, so thresholds and the dev gate can still run once…", n: 4 },
+    { n: 3 },
+  ],
+})
+
+/* 1 · attention — only things that want a human, newest first */
+const failGate = run.tags.gate.map((g) => g.split("|")).find(([, v]) => /FAIL/.test(v))
+body.append(
+  h("div", { class: "attn", role: "list", "aria-label": "Needs you" },
+    h("div", { class: "item bad", role: "listitem" },
+      h("span", { class: "glyph" }, "✕"),
+      h("div", { class: "what" }, h("div", null, "Gate failed — ", h("b", null, failGate[0])), h("div", { class: "d" }, `${failGate[1]} · ${run.id}`)),
+      h("button", { class: "btn" }, "Open")),
+    h("div", { class: "item ask", role: "listitem" },
+      h("span", { class: "glyph" }, "?"),
+      h("div", { class: "what" }, h("div", null, "Phase ", h("b", null, "thresholds"), " is blocked behind the held-out oracle"), h("div", { class: "d" }, "director's ledger §4 · draws banked, not reached")),
+      h("button", { class: "btn ghost" }, "Ask")),
+  ),
+)
+
+/* 2 · live run */
+const phases = run.tags.phase.map((p) => p.split("|"))
+const [spent, cap] = run.tags.cost[0].split("|").map(Number)
+const draws = run.series.length ? run.series[run.series.length - 1].i : null
+body.append(
+  Panel({
+    eyebrow: "Live run · " + run.lab,
+    chips: Chip("running", "live"),
+    src: run.id.slice(0, 16) + "…",
+    body: h("div", { style: { display: "grid", gap: "12px" } },
+      h("div", { style: { "font-weight": 600, "font-size": "13px", "letter-spacing": "-0.01em" } }, run.tags.label[0].split(":")[0]),
+      Stats([
+        { v: draws?.toLocaleString("en-US"), k: "draw index", note: "progress, not an objective" },
+        { v: dur(NOW - run.t0).replace(" d", ""), u: NOW - run.t0 > 172800 ? "d" : "", k: "elapsed", note: "inferred · run-id → last write" },
+        { v: usd(spent), u: "/ " + usd(cap, 0), k: "Modal spend", note: "from [cost] tail line" },
+      ]),
+      Meter(spent / cap, { title: `${usd(spent)} of ${usd(cap, 0)} cap` }),
+      V.Rail(phases.map(([id, st, title, d]) => ({ title, detail: d, state: st === "done" ? "done" : st === "failed" ? "failed" : st === "running" ? "running" : "planned", chip: st === "failed" ? Chip("failed", "bad") : null }))),
+      Rows(run.tags.gate.map((g) => { const [k, v] = g.split("|"); return [k, /FAIL/.test(v) ? h("span", { style: { color: "var(--amc-danger)" } }, v) : v] })),
+    ),
+    footer: [h("span", null, "updated " + ago(run.t1, NOW)), h("span", { class: "spacer" }), h("span", null, "executor " + run.executor)],
+  }),
+)
+
+/* 3 · campaign */
+const counts = { confirmed: 0, refuted: 0, partial: 0, open: 0, stopped: 0 }
+for (const x of L.hypotheses) counts[x.cls]++
+const COLORS = { confirmed: "var(--amc-success)", refuted: "var(--amc-danger)", partial: "var(--amc-warning)", open: "var(--amc-ink-13)", stopped: "var(--amc-text-faint)" }
+body.append(
+  Panel({
+    eyebrow: "Campaign · " + C.slug,
+    chips: Chip(L.status.toLowerCase(), "live"),
+    src: L.path.split("/").pop(),
+    body: h("div", { style: { display: "grid", gap: "10px" } },
+      h("div", { style: { display: "flex", "justify-content": "space-between", "align-items": "baseline" } },
+        h("span", { class: "num", style: { "font-size": "18px" } }, L.hypotheses.length, h("span", { class: "faint", style: { "font-size": "11px" } }, " hypotheses")),
+        h("span", { class: "eyebrow" }, Object.entries(counts).filter(([, n]) => n).map(([k, n]) => `${n} ${k}`).join(" · "))),
+      StackMeter(Object.entries(counts).filter(([, n]) => n).map(([k, n]) => ({ v: n, color: COLORS[k], title: `${n} ${k}` }))),
+      h("table", { class: "data" }, h("tbody", null, L.hypotheses.slice(-5).reverse().map((x) => h("tr", null, h("td", { class: "mono", style: { width: "1%", "white-space": "nowrap", "font-size": "11px" } }, x.id), h("td", { style: { color: "var(--amc-text-muted)", "font-size": "12px", "max-width": "0", overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" } }, x.label), h("td", { style: { width: "1%" } }, VerdictChip(x.cls, x.label)))))),
+    ),
+    footer: [h("span", null, "ledger edited " + ago(L.mtime, NOW)), h("span", { class: "spacer" }), h("a", { href: "campaign.html" }, "Board →")],
+  }),
+)
+
+/* 4 · casts + compute */
+const roleUsd = Object.entries(C.by_role).sort((a, b) => b[1].usd - a[1].usd)
+const castUsd = roleUsd.reduce((a, [, r]) => a + r.usd, 0)
+body.append(
+  Panel({
+    eyebrow: "Casts · " + C.casts + " subagent sessions",
+    body: h("div", { style: { display: "grid", gap: "12px" } },
+      Rail(C.recent.slice(0, 4).map((k, i) => ({
+        title: k.title,
+        when: clock(k.end),
+        detail: `${k.role} · ${dur(k.end - k.start)} · ${usd(k.usd)}`,
+        state: NOW - k.end < 120 ? "running" : "done",
+      }))),
+    ),
+  }),
+  Panel({
+    eyebrow: "Compute · this campaign",
+    src: "chat DB · list-price est.",
+    body: h("div", { style: { display: "grid", gap: "10px" } },
+      Stats([
+        { v: usd(C.director_usd + castUsd, 0), k: "LLM total", note: `director ${usd(C.director_usd, 0)}` },
+        { v: Math.round(roleUsd.reduce((a, [, r]) => a + r.agent_h, 0)), u: "h", k: "agent time", note: "subagent wall, summed" },
+        { v: usd(spent), k: "cloud", note: "Modal, 1 run reports cost" },
+      ]),
+      V.StackBars([{ label: "LLM by role", parts: roleUsd.map(([k, r]) => ({ k, v: r.usd })) }], { fmt: (x) => usd(x, 0), labelW: 74 }),
+    ),
+    footer: [h("a", { href: "compute.html" }, "All campaigns →")],
+  }),
+)
+
+/* 5 · watcher — off by default, the one yellow CTA on the page */
+body.append(
+  Panel({
+    cls: "dashed",
+    eyebrow: "Watcher · off",
+    body: h("div", { style: { display: "grid", gap: "8px" } },
+      h("div", { style: { color: "var(--amc-text-muted)" } }, "A second session that reads this campaign's ledger, casts and run logs whenever something changes, and flags stalls, gamed gates and ledger drift."),
+      h("div", { style: { display: "flex", gap: "8px", "align-items": "center" } }, h("button", { class: "btn cta" }, "Start watcher"), h("label", { class: "faint", style: { "font-size": "12px", display: "flex", gap: "6px", "align-items": "center" } }, h("input", { type: "checkbox" }), "allow steering")),
+    ),
+  }),
+)
+
+/* 6 · this session's widgets, as revisions */
+body.append(
+  Panel({
+    eyebrow: "Widgets from this session",
+    chips: Chip("illustrative", "open", "revisions do not exist yet — spec §B"),
+    body: Rail([
+      { title: "r0b-r9-modal-tracker", chip: Chip("rev 7", ""), when: "pinned", detail: "hero · run-series · phase/gate/cost tail", state: "done" },
+      { title: "rev 6 → 7", detail: "added [gate] rows after held-out fail", state: "done" },
+      { title: "proposed: compute ledger", detail: "spec drafted by director — not pinned", state: "planned" },
+    ]),
+  }),
+)
+</script>
+</body>
+</html>

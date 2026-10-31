@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Campaign — side panel v2 mock</title>
+<link rel="stylesheet" href="mock.css" />
+<script src="snapshot.js"></script>
+<script src="views.js"></script>
+</head>
+<body>
+<script>
+const { h, e, usd, dur, ago, clock, Panel, Rows, Stats, Chip, VerdictChip, Rail, StackMeter, Gantt, RAMP } = V
+V.themeToggle()
+const NOW = Date.parse(SNAP.generated) / 1000
+const C = SNAP.campaigns.find((c) => c.slug === "qilc-measurement")
+const L = C.ledger
+const wrap = V.mountWide({ tab: "now" })
+const llm = C.director_usd + Object.values(C.by_role).reduce((a, r) => a + r.usd, 0)
+
+wrap.append(
+  h("div", { class: "board-head" },
+    h("div", null, h("div", { class: "eyebrow" }, "Now · campaign board · maximized"), h("h1", null, C.title)),
+    h("span", { class: "spacer" }),
+    Chip(L.status.toLowerCase(), "live"),
+    h("button", { class: "btn" }, "Open ledger"),
+  ),
+)
+const board = h("div", { class: "board" })
+wrap.append(board)
+
+const order = ["confirmed", "partial", "refuted", "stopped", "open"]
+const counts = Object.fromEntries(order.map((k) => [k, L.hypotheses.filter((x) => x.cls === k).length]))
+const COLORS = { confirmed: "var(--amc-success)", refuted: "var(--amc-danger)", partial: "var(--amc-warning)", open: "var(--amc-ink-13)", stopped: "var(--amc-text-faint)" }
+board.append(
+  h("div", { class: "span-12" },
+    Stats([
+      { v: L.hypotheses.length, k: "hypotheses", note: order.filter((k) => counts[k]).map((k) => `${counts[k]} ${k}`).join(" · ") },
+      { v: C.casts, k: "casts", note: Object.entries(C.by_role).map(([k, r]) => `${r.n} ${k}`).slice(0, 3).join(" · ") },
+      { v: usd(llm, 0), k: "LLM spend", note: "list-price estimate" },
+      { v: dur(NOW - C.created).split(" ").slice(0, 2).join(" "), k: "running", note: "since " + clock(C.created) },
+      { v: ago(L.mtime, NOW).replace(" ago", ""), k: "since ledger edit", note: L.path.split("/").pop() },
+    ]),
+  ),
+)
+
+/* hypothesis ledger, as verdicts */
+board.append(
+  h("div", { class: "span-7" },
+    Panel({
+      eyebrow: "Hypothesis ledger · §2",
+      src: L.path,
+      flush: true,
+      body: h("div", null,
+        h("div", { style: { padding: "10px 12px 2px" } }, StackMeter(order.filter((k) => counts[k]).map((k) => ({ v: counts[k], color: COLORS[k], title: `${counts[k]} ${k}` })))),
+        h("table", { class: "data" },
+          h("thead", null, h("tr", null, h("th", null, "id"), h("th", null, "verdict, as written"), h("th", null, ""))),
+          h("tbody", null, L.hypotheses.slice().reverse().map((x) =>
+            h("tr", null,
+              h("td", { class: "mono", style: { width: "1%", "white-space": "nowrap", "font-size": "11px" } }, x.id),
+              h("td", { style: { "max-width": "0", overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap", color: x.cls === "open" ? "var(--amc-text-faint)" : null } }, x.label),
+              h("td", { style: { width: "1%" } }, VerdictChip(x.cls, x.label)),
+            ))),
+        ),
+      ),
+      footer: [h("span", null, "newest first · chip = parsed class, the words are the director's")],
+    }),
+  ),
+)
+
+/* right column: watcher, casts */
+const castRows = Object.keys(C.by_role).map((role) => ({ label: role, bars: C.cast_spans.filter((s) => s.role === role).map((s) => ({ t0: s.t0, t1: s.t1, k: role, title: `${dur(s.t1 - s.t0)} · ${usd(s.usd)}` })) }))
+const right = h("div", { class: "span-5", style: { display: "grid", gap: "12px", "align-content": "start" } })
+board.append(right)
+right.append(
+  Panel({
+    cls: "attention",
+    eyebrow: "Watcher · last check",
+    chips: [Chip("example output", "open", "the watcher is not built yet — this is the proposed verdict block"), Chip("watch", "warn")],
+    body: h("div", { style: { display: "grid", gap: "10px" } },
+      Rows([
+        ["verdict", "WATCH — no steer sent"],
+        ["checked", "ledger §2, §3, §8 · 6 casts · 0 runs"],
+        ["trigger", "experimenter returned"],
+      ]),
+      (() => {
+        // findings computed from the snapshot, the way the watcher would: no invented facts
+        const lastCast = Math.max(...C.cast_spans.map((s) => s.t1))
+        const lag = lastCast - L.mtime
+        const open = L.hypotheses.filter((x) => x.cls === "open").map((x) => x.id)
+        return Rail([
+          { title: "H32c has two §2 rows", detail: "a deferred row and the RESGAIN-WINS row share one id", state: "failed" },
+          lag > 600
+            ? { title: "Ledger older than the last cast", detail: `last cast returned ${dur(lag)} after the last ledger edit`, state: "running" }
+            : { title: "Ledger current", detail: "edited after the last cast returned", state: "done" },
+          { title: `${open.length} rows still open`, detail: open.join(" · "), state: "planned" },
+        ])
+      })(),
+    ),
+    footer: [h("span", null, "steering off"), h("span", { class: "spacer" }), h("button", { class: "btn" }, "Draft steer"), h("button", { class: "btn ghost" }, "Open watcher")],
+  }),
+  Panel({
+    eyebrow: "Casts over time · by role",
+    src: "chat DB",
+    body: h("div", null, Gantt(castRows, { w: 520, labelW: 90, colors: Object.fromEntries(Object.keys(C.by_role).map((k, i) => [k, RAMP[i % RAMP.length]])) })),
+  }),
+  Panel({
+    eyebrow: "Latest casts",
+    body: Rail(C.recent.map((k) => ({ title: k.title, when: clock(k.end), detail: `${k.role} · ${dur(k.end - k.start)} · ${usd(k.usd)}`, state: "done" }))),
+  }),
+)
+</script>
+</body>
+</html>

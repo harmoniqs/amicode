@@ -274,7 +274,7 @@ _Avoid_: remote session, controlling (as a noun), piloting
 ### Surfaces
 
 **Work Column**:
-The session-scoped auxiliary surface beside Chat that contains Home, Files Changed, Context, Pulse Inspector, and Preview. On desktop it may dock right, left, or bottom of Chat or move into a paired panel-only VS Code editor tab; every host presents the same logical state and features.
+The auxiliary surface beside Chat. Its session tabs are **Now**, **Files** and **Context**, and its global tabs are **Home** and **Fleet** (ADR 0038, proposed; until it lands the tabs are Home, Files Changed, Context, Pulse Inspector and Preview). On desktop it may dock right, left, or bottom of Chat or move into a paired panel-only VS Code editor tab; every host presents the same logical state and features. Open state, active tab, width and maximized are per session.
 _Avoid_: Side panel, sidebar, editor
 
 **Detached Work Column**:
@@ -285,13 +285,29 @@ _Avoid_: Floating chat, copied panel, separate chat
 A durable Work Column record with no live host after its source Chat and detached panel have closed. A matching Chat may recover it without losing acknowledged state.
 _Avoid_: Discarded panel, orphaned window
 
+**Now**:
+The first session tab of the Work Column: what this session is doing, ordered by urgency — needs-you (pending questions, failed gates and runs, watcher flags), live runs (the Pulse Inspector is a run's detail view here), the campaign, casts, compute, the watcher, and the session's own widgets with their revisions. Strictly this session; never another root's records (ADR 0038, proposed).
+_Avoid_: Dashboard, activity feed
+
+**Files**:
+The session tab that is the one file workspace: a tree filtered to Changed (written by this session) or All, plus Preview's editor/preview panes and persistent tabs, and typed data previews that can become a widget. Replaces Files Changed, the file-tree column and the separate Preview tab (ADR 0038, proposed).
+_Avoid_: Review (the review panel is folded in), Explorer
+
 **Home**:
-The always-present first tab in the Work Column that renders the user's widget grid — profile cards, run status, problem summaries, and custom agent-authored widgets. The single canonical surface for widgets; replaces the standalone home page. Internally powered by the widget kernel (WidgetGrid, WidgetFrame, the bridge protocol, `/amicode/widgets` + `/amicode/dashboard` endpoints).
+The global Work Column tab: the cross-session board — needs-you across every session, one card per campaign, overnight results, compute — and the only surface for global widgets. Session-owned widgets live in Now instead (ADR 0038 amends ADR 0009). Internally powered by the widget kernel (WidgetGrid, WidgetFrame, the bridge protocol, `/amicode/widgets` + `/amicode/dashboard` endpoints).
 _Avoid_: Dashboard (as the surface name), widget panel
 
 **Widget**:
-A sandboxed ES-module card rendered in an iframe within Home. Authored by the agent (`amicode_author_widget` tool) or shipped as a builtin. Communicates with the host via the bridge protocol (postMessage). Two size classes: hero (full panel width) and tile (half-width, 2-across). Each has a TOML manifest, a JS module, and optional config fields.
+A card rendered in a sandboxed frame in Now (session-owned) or Home (global). In the ADR 0038 model a widget is a declarative spec — `{view, bind, options, size}` — that binds Records to a first-party View; `view: "custom"` keeps the sandboxed ES-module escape hatch, whose data still arrives through bound Records. Authored by the agent (`amicode_author_widget`) or shipped as a builtin; updates add revisions rather than overwriting. Size classes: strip (64px docked), tile, card, board.
 _Avoid_: Card (ambiguous — the UI has many cards), tile (as the concept name — tile is a size class)
+
+**Record**:
+One append-only JSON line a session or runner writes about its work — `run`, `series`, `progress`, `campaign`, `compute`, `calibration` or `measurement` — with an envelope of session, producing message, provenance (source path, hash) and a trust level only the corrector sets. Widgets read Records; they never embed data (ADR 0038, proposed).
+_Avoid_: Event (the EventV2 spine is a different thing), log line
+
+**View**:
+A first-party, versioned renderer in the widget runtime's library (RunCard, LabBoard, ProgressRail, CampaignBoard, ComputeLedger, CalibrationCard, DesignStrip, Forest, …). Each View owns its honesty duties — source on every number, `untrusted` until verified, objective kind and feasibility where they apply.
+_Avoid_: Component (too generic), template
 
 **Sidebar**:
 The webview in the VS Code activity bar container, showing project navigation and system status. Contains action buttons (open chat, create project), a session-aware unified project tree (Research Projects with lifecycle metadata expanding into file trees; Dev Projects as plain expandable folders), and a collapsible fleet section that is **read-only** toward the fleet — a glanceable list of Machines from the host-owned Roster (one row per machine: name, `server_mode` labeled "role" + capability chips, a `reachable`/`degraded`/`down` health indicator, and `last_report` labeled "last-seen"), marking the Focused machine. It offers navigation actions only — connect, focus, Troubleshoot, Add machine, Refresh — and never writes fleet config or Roster rows. The section refreshes on posture-change and shows an honest empty/degraded state when the roster host is down — never a fabricated list (#1321, ADR 0026). The sidebar is navigation chrome — it renders state and navigates, never mutating fleet config or driving session switching. Single-clicking a file opens it as a tab in Preview (the multi-document file workspace in the side panel); double-clicking opens a native VS Code editor tab.

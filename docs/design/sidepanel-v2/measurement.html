@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Measurement — side panel v2 mock</title>
+<link rel="stylesheet" href="mock.css" />
+<script src="snapshot.js"></script>
+<script src="views.js"></script>
+</head>
+<body>
+<script>
+const { h, e, usd, Panel, Rows, Stats, Chip, StackBars, Forest, LogStrip } = V
+V.themeToggle()
+const M = SNAP.measurement
+const C = SNAP.campaigns.find((c) => c.slug === "qilc-measurement")
+const body = V.mountFrame({
+  tab: "now",
+  session: C.title,
+  sessionChip: Chip("director live", "live"),
+  chat: [{ me: true, text: "show me where the shots should go", n: 1 }, { text: "The certified Frank–Wolfe design reaches R ≈ 0.03–0.04 on five or six rows — about 70% of shots on one mid-pulse row…", n: 4 }],
+  panelW: 480,
+})
+
+/* 1 · design efficiency */
+const SHOW = ["FW_INT", "BA_INT", "GERM_8", "E258_0.3", "E258_0.1", "E258_0.5", "PRE", "END", "PLACEBO", "E258P_0.7"]
+const pulses = [...new Set(M.designs.map((d) => d.pulse))]
+const by = (des) => M.designs.filter((d) => d.design === des)
+const best = SHOW.map((d) => [d, Math.max(...by(d).map((x) => x.R))]).sort((a, b) => a[1] - b[1])[0][0]
+body.append(
+  Panel({
+    eyebrow: ["Measurement design · M1b · ", h("span", { class: "nocase" }, "θ₀")],
+    src: "qilc-m1b-module/run/m1b_designs.csv",
+    body: h("div", { style: { display: "grid", gap: "10px" } },
+      Stats([
+        { v: e(Math.min(...by(best).map((x) => x.R)), 1) + "–" + e(Math.max(...by(best).map((x) => x.R)), 1), k: h("span", null, "best ", h("span", { class: "nocase" }, "R_L")), note: best + " · across 4 pulses" },
+        { v: Math.round(1 / Math.max(...by(best).map((x) => x.R))) + "×", k: "vs endpoint", note: "information at matched shots" },
+        { v: Math.max(...by(best).map((x) => x.rows)), k: "rows", note: "END uses 45" },
+      ]),
+      LogStrip(SHOW.map((d) => ({ label: d, pts: by(d).map((x) => ({ x: x.R, label: x.pulse, hi: d === best && x.pulse === "nom" })) })), { w: 456, labelW: 70, ref: 1 }),
+      h("div", { class: "legend" }, h("span", null, "one dot per pulse (" + pulses.join(", ") + ")"), h("span", null, "dashed = END reference, R = 1"), h("span", null, "lower is better")),
+    ),
+    footer: [h("span", null, "ORACLE_ALL (R = 0) and duplicate CONT rows omitted")],
+  }),
+)
+
+/* 2 · where the shots go */
+const nom = (d) => M.designs.find((x) => x.design === d && x.pulse === "nom")
+body.append(
+  Panel({
+    eyebrow: "Shot allocation · pulse nom",
+    src: "share_* columns",
+    body: StackBars(
+      ["FW_INT", "BA_INT", "GERM_8", "E258_0.3", "PRE", "END"].map((d) => ({ label: d + " · " + nom(d).rows + " rows", parts: Object.entries(nom(d).share).map(([k, v]) => ({ k, v })) })),
+      { keys: ["END", "PRE", "GERM", "LOSS", "PLACEBO"], max: 1, fmt: (x) => Math.round(x * 100) + "%", w: 456, labelW: 112 },
+    ),
+    footer: [h("span", null, "45k shots in every arm")],
+  }),
+)
+
+/* 3 · paired out-of-sample effects */
+const arms = M.arms.filter((a) => a.cmp !== "GROSS_resgain")
+const kind = (r) => (r === "POS" ? "ok" : r === "NEG" ? "bad" : "warn")
+body.append(
+  Panel({
+    eyebrow: ["H32c · paired effects on ", h("span", { class: "nocase" }, "b"), ", fresh seeds"],
+    chips: Chip("n = " + arms[0].n + " pairs", ""),
+    src: "qpilc-h32c-designed/run/h32c_arms.csv",
+    body: h("div", { style: { display: "grid", gap: "8px" } },
+      Forest(arms.map((a) => ({ label: a.cmp, mean: a.mean, lo: a.lo, hi: a.hi })), { w: 456, labelW: 96 }),
+      h("table", { class: "data" }, h("tbody", null, arms.map((a) => h("tr", null, h("td", { class: "mono", style: { "font-size": "11px" } }, a.cmp), h("td", { class: "faint", style: { "font-size": "11px" } }, a.expr), h("td", { style: { width: "1%" } }, Chip(a.reading.toLowerCase(), kind(a.reading))))))),
+    ),
+    footer: [h("span", null, "filled = interval excludes 0 · bars are the scorer's CI, as written")],
+  }),
+)
+</script>
+</body>
+</html>

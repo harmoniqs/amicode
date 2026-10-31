@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Compute — side panel v2 mock</title>
+<link rel="stylesheet" href="mock.css" />
+<script src="snapshot.js"></script>
+<script src="views.js"></script>
+</head>
+<body>
+<script>
+const { h, e, usd, dur, clock, Panel, Rows, Stats, Chip, StackBars, Gantt, RAMP } = V
+V.themeToggle()
+const NOW = Date.parse(SNAP.generated) / 1000
+const CS = SNAP.campaigns
+const wrap = V.mountWide({ tab: "home" })
+
+const ROLES = ["experimenter", "implementer", "director", "explore", "analyzer", "hypothesizer", "critic", "general"]
+const COLORS = Object.fromEntries(ROLES.map((r, i) => [r, RAMP[Math.min(i, RAMP.length - 1)]]))
+COLORS.director = "var(--amc-accent)" // the director is the one highlighted series
+const llm = (c) => c.director_usd + Object.values(c.by_role).reduce((a, r) => a + r.usd, 0)
+const agentH = (c) => Object.values(c.by_role).reduce((a, r) => a + r.agent_h, 0) + (c.updated - c.created) / 3600
+const allRuns = CS.flatMap((c) => (c.runs || []).map((r) => ({ ...r, campaign: c.slug })))
+const runH = allRuns.reduce((a, r) => a + (r.wall_s || 0), 0) / 3600
+const measured = allRuns.filter((r) => r.wall_measured).length
+const cloud = allRuns.flatMap((r) => r.tags.cost || []).reduce((a, c) => a + Number(c.split("|")[0]), 0)
+
+wrap.append(
+  h("div", { class: "board-head" },
+    h("div", null, h("div", { class: "eyebrow" }, "Home · compute"), h("h1", null, "Where the campaigns spend")),
+    h("span", { class: "spacer" }),
+    h("div", { class: "seg" }, ["24 h", "7 d", "All"].map((t) => h("button", { "aria-selected": String(t === "All") }, t))),
+  ),
+)
+
+const board = h("div", { class: "board" })
+wrap.append(board)
+
+board.append(
+  h("div", { class: "span-12" },
+    Stats([
+      { v: usd(CS.reduce((a, c) => a + llm(c), 0), 0), k: "LLM spend", note: "4 campaigns · list-price estimate from session cost" },
+      { v: Math.round(CS.reduce((a, c) => a + agentH(c), 0)), u: "h", k: "agent time", note: "director + every subagent session, wall" },
+      { v: Math.round(runH), u: "h", k: "solver wall", note: `${allRuns.length} runs · ${measured} measured, rest inferred` },
+      { v: usd(cloud), k: "cloud spend", note: "Modal · only 1 run emits [cost]" },
+      { v: CS.reduce((a, c) => a + c.casts, 0), k: "subagent casts", note: "experimenter / implementer / critic / …" },
+    ]),
+  ),
+)
+
+/* LLM by campaign × role */
+board.append(
+  h("div", { class: "span-7" },
+    Panel({
+      eyebrow: "LLM spend by campaign · role",
+      src: "chat DB (mode=ro) · session.cost",
+      body: StackBars(
+        CS.map((c) => ({ label: c.slug, parts: [{ k: "director", v: c.director_usd }, ...ROLES.filter((r) => r !== "director" && c.by_role[r]).map((r) => ({ k: r, v: c.by_role[r].usd }))] })),
+        { keys: ROLES.filter((r) => CS.some((c) => r === "director" || c.by_role[r])), colors: COLORS, fmt: (x) => usd(x, 0), w: 720, labelW: 130 },
+      ),
+      footer: [h("span", null, (() => {
+        const tot = CS.reduce((a, c) => a + llm(c), 0)
+        const doers = CS.reduce((a, c) => a + (c.by_role.experimenter?.usd || 0) + (c.by_role.implementer?.usd || 0), 0)
+        const crit = CS.reduce((a, c) => a + (c.by_role.critic?.usd || 0), 0)
+        return `experimenters + implementers ${Math.round((doers / tot) * 100)}% of spend · critics ${Math.round((crit / tot) * 100)}%`
+      })()), h("span", { class: "spacer" }), h("span", null, "yellow = director")],
+    }),
+  ),
+  h("div", { class: "span-5" },
+    Panel({
+      eyebrow: "Cost per verdict",
+      src: "ledger §2 ÷ session cost",
+      flush: true,
+      body: h("table", { class: "data" },
+        h("thead", null, h("tr", null, h("th", null, "campaign"), h("th", { class: "n" }, "verdicts"), h("th", { class: "n" }, "LLM"), h("th", { class: "n" }, "$ / verdict"))),
+        h("tbody", null, CS.map((c) => {
+          const closed = c.ledger.hypotheses.filter((x) => x.cls !== "open").length
+          return h("tr", null, h("td", { class: "mono", style: { "font-size": "11px" } }, c.slug), h("td", { class: "n" }, closed + " / " + c.ledger.hypotheses.length), h("td", { class: "n" }, usd(llm(c), 0)), h("td", { class: "n" }, closed ? usd(llm(c) / closed, 0) : "—"))
+        })),
+      ),
+      footer: [h("span", null, "a verdict = any non-open ledger row; parsing is heuristic")],
+    }),
+  ),
+)
+
+/* activity timeline: casts by campaign, runs by executor */
+const spans = CS.map((c) => ({ label: c.slug, bars: c.cast_spans.map((s) => ({ t0: s.t0, t1: s.t1, k: s.role, title: `${s.role} · ${dur(s.t1 - s.t0)} · ${usd(s.usd)}` })) }))
+const execs = [...new Set(allRuns.map((r) => r.executor))]
+const runRows = execs.map((x) => ({ label: x.replace(/ \(.*\)/, "").replace("erlich-background", "erlich"), bars: allRuns.filter((r) => r.executor === x).map((r) => ({ t0: r.t0, t1: r.t1, k: "run", title: `${r.id} · ${dur(r.wall_s)}` })) }))
+const tmin = NOW - 7 * 86400
+const clip = (rows) => rows.map((r) => ({ ...r, bars: r.bars.filter((b) => b.t1 > tmin).map((b) => ({ ...b, t0: Math.max(b.t0, tmin) })) })).filter((r) => r.bars.length)
+board.append(
+  h("div", { class: "span-12" },
+    Panel({
+      eyebrow: "Last 7 days · subagent sessions and solver runs",
+      src: "chat DB + ~/.amico/runs",
+      body: h("div", { style: { display: "grid", gap: "4px" } },
+        h("div", { class: "eyebrow" }, "casts"),
+        Gantt(clip(spans), { w: 1300, labelW: 140, colors: COLORS, t0: tmin, t1: NOW }),
+        h("div", { class: "eyebrow", style: { "margin-top": "8px" } }, "runs by executor"),
+        Gantt(clip(runRows), { w: 1300, labelW: 140, colors: { run: "var(--amc-text-muted)" }, t0: tmin, t1: NOW }),
+        h("div", { class: "legend" }, ROLES.filter((r) => r !== "director").map((r) => h("span", null, h("i", { class: "sq", style: { background: COLORS[r] } }), r))),
+      ),
+      footer: [h("span", null, "run bars span run-id timestamp → last log write (inferred); a 5-day local bar is the qmotion freeze run")],
+    }),
+  ),
+)
+
+/* honesty panel: what is measured and what is not */
+board.append(
+  h("div", { class: "span-6" },
+    Panel({
+      eyebrow: "Provenance of these numbers",
+      body: Rows([
+        ["LLM $", "session.cost — provider list price, not the invoice"],
+        ["agent time", "session time_updated − time_created; idle counts"],
+        ["solver wall", `${measured} of ${allRuns.length} runs write wall_seconds`],
+        ["cloud $", "one hand-written [cost] tail line (qmotion)"],
+        ["CPU / GPU h", "not recorded anywhere"],
+      ]),
+    }),
+  ),
+  h("div", { class: "span-6" },
+    Panel({
+      cls: "dashed",
+      eyebrow: "What a compute record would add",
+      body: h("div", { class: "muted", style: { display: "grid", gap: "8px" } },
+        h("div", null, "The run gate writes one ", h("code", null, "compute"), " record per run: executor, host, cores, wall seconds, billed dollars, and the cast and hypothesis that launched it."),
+        h("div", null, "Then this board can answer “what did H32c cost?” and “is erlich idle?” without guessing from file times."),
+      ),
+      footer: [h("span", null, "spec §C.1")],
+    }),
+  ),
+)
+</script>
+</body>
+</html>

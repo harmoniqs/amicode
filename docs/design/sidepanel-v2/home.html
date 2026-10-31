@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Home — side panel v2 mock</title>
+<link rel="stylesheet" href="mock.css" />
+<script src="snapshot.js"></script>
+<script src="views.js"></script>
+</head>
+<body>
+<script>
+const { h, e, usd, dur, ago, clock, Panel, Rows, Stats, Chip, VerdictChip, Rail, StackMeter, Sparkline } = V
+V.themeToggle()
+const NOW = Date.parse(SNAP.generated) / 1000
+const CS = SNAP.campaigns
+const wrap = V.mountWide({ tab: "home" })
+const llm = (c) => c.director_usd + Object.values(c.by_role).reduce((a, r) => a + r.usd, 0)
+const live = (c) => c.heartbeat && NOW - c.heartbeat < 120
+const COLORS = { confirmed: "var(--amc-success)", refuted: "var(--amc-danger)", partial: "var(--amc-warning)", open: "var(--amc-ink-13)", stopped: "var(--amc-text-faint)" }
+
+wrap.append(
+  h("div", { class: "board-head" },
+    h("div", null, h("div", { class: "eyebrow" }, "Home · " + new Date(NOW * 1000).toLocaleString("en-US", { weekday: "long", hour: "2-digit", minute: "2-digit", hour12: false })), h("h1", null, `${CS.filter(live).length} campaigns running, ${CS.length - CS.filter(live).length} idle`)),
+    h("span", { class: "spacer" }),
+    h("button", { class: "btn" }, "Rehash open threads"),
+    h("button", { class: "btn cta" }, "New session"),
+  ),
+)
+const board = h("div", { class: "board" })
+wrap.append(board)
+
+/* needs you — computed from the same records the panels use */
+const q = CS.find((c) => c.slug === "qmotion-autotune")
+const gk = CS.find((c) => c.slug === "gkp-prestissimo")
+const failRun = gk.runs.filter((r) => r.status === "failed").pop()
+const fail = q.runs[0].tags.gate.find((g) => /FAIL/.test(g)).split("|")
+board.append(
+  h("div", { class: "span-12" },
+    h("div", { class: "attn" },
+      h("div", { class: "item bad" }, h("span", { class: "glyph" }, "✕"), h("div", { class: "what" }, h("div", null, h("b", null, "qmotion-autotune"), " — gate failed: ", fail[0]), h("div", { class: "d" }, fail[1])), h("button", { class: "btn" }, "Open")),
+      h("div", { class: "item bad" }, h("span", { class: "glyph" }, "✕"), h("div", { class: "what" }, h("div", null, h("b", null, "gkp-prestissimo"), " — run failed: ", failRun.id.replace(/^r\S+?Z-/, "")), h("div", { class: "d" }, `rc ${failRun.rc} · ${clock(failRun.t1)} · ${failRun.series.filter((p) => p.f <= 0).length} unphysical outers`)), h("button", { class: "btn" }, "Open")),
+      h("div", { class: "item ask" }, h("span", { class: "glyph" }, "→"), h("div", { class: "what" }, h("div", null, h("b", null, "gkp-prestissimo"), " — director handed off to the cat-pair-gates session"), h("div", { class: "d" }, "ledger §3 HANDOFF 2026-10-31 · ledger stays the record")), h("button", { class: "btn ghost" }, "Follow")),
+    ),
+  ),
+)
+
+/* one card per campaign */
+for (const c of CS) {
+  const L = c.ledger
+  const counts = {}
+  for (const x of L.hypotheses) counts[x.cls] = (counts[x.cls] || 0) + 1
+  const runs = (c.runs || []).filter((r) => r.series.length && !/knot|alt-/.test(r.id))
+  const lastRun = (c.runs || []).slice(-1)[0]
+  const lastCast = c.recent[0]
+  board.append(
+    h("div", { class: "span-6" },
+      Panel({
+        eyebrow: c.slug,
+        chips: live(c) ? Chip("director live", "live") : Chip("idle " + ago(c.updated, NOW).replace(" ago", ""), ""),
+        src: L.path.split("/").pop(),
+        body: h("div", { style: { display: "grid", gap: "12px" } },
+          h("div", { style: { "font-size": "15px", "font-weight": 600, "letter-spacing": "-0.015em" } }, c.title),
+          Stats([
+            { v: L.hypotheses.length, k: "hypotheses", note: Object.entries(counts).map(([k, n]) => `${n} ${k}`).slice(0, 3).join(" · ") },
+            { v: c.casts, k: "casts", note: "last " + ago(lastCast.end, NOW) },
+            { v: usd(llm(c), 0), k: "LLM", note: "list-price est." },
+            lastRun ? { v: lastRun.status === "running" ? "live" : lastRun.status, k: "last run", note: lastRun.id.replace(/^r\S+?Z-/, "") } : { v: "—", k: "runs", note: "none mirrored" },
+          ], 4),
+          StackMeter(["confirmed", "partial", "refuted", "stopped", "open"].filter((k) => counts[k]).map((k) => ({ v: counts[k], color: COLORS[k], title: `${counts[k]} ${k}` }))),
+          h("div", { style: { display: "flex", gap: "8px", "align-items": "center", "justify-content": "space-between" } },
+            h("div", { style: { "min-width": 0 } }, h("div", { class: "eyebrow" }, "latest cast"), h("div", { style: { "white-space": "nowrap", overflow: "hidden", "text-overflow": "ellipsis" } }, lastCast.title, h("span", { class: "faint mono", style: { "font-size": "11px" } }, ` · ${lastCast.role} · ${usd(lastCast.usd)}`))),
+            runs.length ? Sparkline(runs.slice(-12).map((r) => r.series[r.series.length - 1].f), { log: true, w: 120, h: 26 }) : null,
+          ),
+        ),
+        footer: [h("span", null, "ledger edited " + ago(L.mtime, NOW)), h("span", { class: "spacer" }), h("a", { href: "now.html" }, "Open session →")],
+      }),
+    ),
+  )
+}
+
+board.append(
+  h("div", { class: "span-12" },
+    Panel({
+      eyebrow: "Compute · all campaigns",
+      body: Stats([
+        { v: usd(CS.reduce((a, c) => a + llm(c), 0), 0), k: "LLM" },
+        { v: CS.reduce((a, c) => a + c.casts, 0), k: "casts" },
+        { v: CS.flatMap((c) => c.runs || []).length, k: "runs mirrored" },
+        { v: usd(CS.flatMap((c) => c.runs || []).flatMap((r) => r.tags.cost || []).reduce((a, x) => a + Number(x.split("|")[0]), 0)), k: "cloud reported", note: "only runs that emit [cost]" },
+      ]),
+      footer: [h("a", { href: "compute.html" }, "Where it went →")],
+    }),
+  ),
+)
+</script>
+</body>
+</html>

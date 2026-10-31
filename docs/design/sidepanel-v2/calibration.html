@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Calibration — side panel v2 mock</title>
+<link rel="stylesheet" href="mock.css" />
+<script src="snapshot.js"></script>
+<script src="views.js"></script>
+</head>
+<body>
+<script>
+const { h, e, Panel, Rows, Stats, Chip, Rail, Meter } = V
+V.themeToggle()
+const K = SNAP.calibration
+const q = K.qubit, ro = K.readout
+const body = V.mountFrame({
+  tab: "now",
+  session: "Bring-up · multimode_demo",
+  sessionChip: Chip("synthetic device", "untrusted", "strumento/devices/multimode_demo — calibration numbers are synthetic"),
+  chat: [{ me: true, text: "recalibrate the π pulse and show me the fit", n: 1 }, { text: "Ran the loopback task: acquire → fit → store. The fit-recovery gate passed at 0.4% relative π-gain error…", n: 3 }],
+})
+
+/* 1 · the device's calibrated state */
+body.append(
+  Panel({
+    eyebrow: "Device · " + K.device,
+    chips: Chip("config " + K.task.config.slice(4, 12), "", K.task.config),
+    src: "devices/multimode_demo/device.yaml",
+    body: h("div", { style: { display: "grid", gap: "12px" } },
+      Stats([
+        { v: q.f_ge.toFixed(1), u: "MHz", k: h("span", { class: "nocase" }, "f_ge"), note: "qubit" },
+        { v: (q.f_ef - q.f_ge).toFixed(1), u: "MHz", k: "anharmonicity", note: "f_ef − f_ge" },
+        { v: q.T1.toFixed(0), u: "µs", k: h("span", { class: "nocase" }, "T₁"), note: "as stored" },
+      ]),
+      h("table", { class: "data" },
+        h("thead", null, h("tr", null, h("th", null, "pulse"), h("th", null, "shape"), h("th", { class: "n" }, "gain"), h("th", { class: "n" }, h("span", { class: "nocase" }, "σ (µs)")))),
+        h("tbody", null, Object.entries(q.pulses).map(([k, p]) => h("tr", null, h("td", { class: "mono", style: { "font-size": "11px" } }, k), h("td", { class: "faint" }, p.type), h("td", { class: "n" }, Number(p.gain).toLocaleString("en-US")), h("td", { class: "n" }, p.sigma))))),
+      Rows([
+        ["readout", `${ro.frequency.toFixed(1)} MHz · gain ${ro.gain} · ${ro.readout_length} µs`],
+        ["relax delay", `${ro.relax_delay} µs`],
+        ["threshold", String(ro.threshold)],
+      ]),
+    ),
+  }),
+)
+
+/* 2 · the calibration task, as its record tells it */
+const ev = K.task.events
+const t0 = Date.parse(ev[0].t)
+const at = (x) => "+" + Math.round((Date.parse(x.t) - t0) / 1000) + " s"
+const gate = ev.find((x) => x.ev === "gate")
+body.append(
+  Panel({
+    eyebrow: "Task · " + K.task.id,
+    chips: [Chip("done", "ok"), Chip("fixture", "open", "packages/amico-run/fixtures/bridge — a replay fixture, not a real experiment")],
+    src: "task.toml · progress.jsonl · result.toml",
+    body: h("div", { style: { display: "grid", gap: "12px" } },
+      Rail(ev.filter((x) => x.ev !== "heartbeat").map((x) => {
+        if (x.ev === "progress") return { title: `${x.label} · step ${x.step}/${x.of}`, detail: "infidelity " + e(x.metrics.infidelity, 2), when: at(x), state: "done" }
+        if (x.ev === "artifact") return { title: "artifact · " + x.kind, detail: x.path, when: at(x), state: "done" }
+        if (x.ev === "calibration") return { title: "stored calibration", detail: x.content_id.slice(0, 22) + "…", when: at(x), state: "done" }
+        if (x.ev === "gate") return { title: "gate · " + x.name, chip: Chip(x.pass ? "pass" : "fail", x.pass ? "ok" : "bad"), detail: `${x.params.metric} ${e(x.params.value, 2)} ≤ ${e(x.params.tolerance, 2)}`, when: at(x), state: x.pass ? "done" : "failed" }
+        return { title: `unknown event “${x.ev}”`, detail: "skipped — readers never fail on new event kinds", when: at(x), state: "planned" }
+      })),
+      h("div", null,
+        h("div", { style: { display: "flex", "justify-content": "space-between" } }, h("span", { class: "eyebrow nocase" }, gate.params.metric), h("span", { class: "num", style: { "font-size": "11px" } }, e(gate.params.value, 2) + " of " + e(gate.params.tolerance, 2) + " tolerance")),
+        h("div", { style: { "margin-top": "6px" } }, Meter(gate.params.value / gate.params.tolerance)),
+      ),
+    ),
+    footer: [h("span", null, K.task.summary)],
+  }),
+)
+
+/* 3 · the fit — a MODEL curve, labelled as such, because no measured trace exists on disk */
+const piGain = Number(q.pulses.pi_ge.gain)
+const W = 420, H = 130, L = 30, R = 8, T = 8, B = 18
+const sx = (g) => L + (g / (2.2 * piGain)) * (W - L - R), sy = (p) => T + (1 - p) * (H - T - B)
+const pts = Array.from({ length: 121 }, (_, i) => (i / 120) * 2.2 * piGain).map((g) => [g, Math.sin((Math.PI * g) / (2 * piGain)) ** 2])
+const svg = h("svg", { class: "plot", viewBox: `0 0 ${W} ${H}` },
+  h("defs", null, h("pattern", { id: "dgc", width: 16, height: 16, patternUnits: "userSpaceOnUse" }, h("circle", { cx: 8, cy: 8, r: 0.6, fill: "var(--amc-ink-13)" }))),
+  h("rect", { x: L, y: T, width: W - L - R, height: H - T - B, fill: "url(#dgc)" }),
+  h("text", { class: "watermark", x: (W + L) / 2, y: H / 2 + 6, "text-anchor": "middle" }, "MODEL"),
+  h("line", { class: "axis", x1: L, x2: W - R, y1: H - B, y2: H - B }), h("line", { class: "axis", x1: L, x2: L, y1: T, y2: H - B }),
+  h("text", { x: L - 4, y: sy(1) + 3, "text-anchor": "end" }, "1"), h("text", { x: L - 4, y: sy(0) + 3, "text-anchor": "end" }, "0"),
+  h("polyline", { class: "trace", points: pts.map(([g, p]) => `${sx(g).toFixed(1)},${sy(p).toFixed(1)}`).join(" ") }),
+  h("line", { class: "zero", x1: sx(piGain), x2: sx(piGain), y1: T, y2: H - B }),
+  h("text", { x: sx(piGain) + 4, y: T + 10 }, "π gain " + piGain.toLocaleString("en-US")),
+  h("text", { x: L, y: H - 4 }, "0"), h("text", { x: W - R, y: H - 4, "text-anchor": "end" }, "DAC gain"),
+)
+body.append(
+  Panel({
+    eyebrow: "Amplitude Rabi · qubit",
+    chips: Chip("no measured trace", "untrusted", "the fixture's fit artifact carries numbers only; this curve is sin²(πg/2g_π) from the stored gain"),
+    body: h("div", null, svg, h("div", { class: "legend" }, h("span", null, h("i"), "P(e) model from stored π gain"), h("span", null, "measured points render here when a task emits artifact kind = trace"))),
+  }),
+)
+
+/* 4 · drift history — honest empty state */
+body.append(
+  Panel({
+    cls: "dashed",
+    eyebrow: ["Drift · ", h("span", { class: "nocase" }, "f_ge"), " and ", h("span", { class: "nocase" }, "π"), " gain over versions"],
+    body: h("div", { class: "muted" }, "No calibration history on disk yet. Each stored ", h("code", null, "cfg-…"), " version in strumento's FileConfigStore becomes one point here, with the task that wrote it."),
+  }),
+)
+</script>
+</body>
+</html>
