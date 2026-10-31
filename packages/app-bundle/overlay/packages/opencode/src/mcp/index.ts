@@ -215,6 +215,13 @@ const layer = Layer.effect(
     const events = yield* EventV2Bridge.Service
     const browser = yield* McpBrowser.Service
 
+    // #1205: tombstones for servers baked into the STATIC config (OPENCODE_CONFIG_CONTENT /
+    // config files) that were explicitly removed. Layer-scoped (one per engine process),
+    // NOT per-instance: an instance reload rebuilds State from cfg.mcp, which would
+    // otherwise resurrect (and respawn) the removed server. Reconciled against the
+    // current config in status() so a tombstone never outlives its config entry.
+    const staticRemoved = new Set<string>()
+
     type Transport = StdioClientTransport | StreamableHTTPClientTransport | SSEClientTransport
 
     /**
@@ -506,7 +513,7 @@ const layer = Layer.effect(
           clients: {},
           defs: {},
           instructions: {},
-          removed: new Set(),
+          removed: staticRemoved,
         }
 
         yield* Effect.forEach(
@@ -517,6 +524,9 @@ const layer = Layer.effect(
                 yield* Effect.logError("Ignoring MCP config entry without type", { key })
                 return
               }
+
+              // #1205: explicitly removed earlier in this engine process — do not respawn.
+              if (s.removed.has(key)) return
 
               if (mcp.enabled === false) {
                 s.status[key] = { status: "disabled" }
@@ -601,6 +611,12 @@ const layer = Layer.effect(
       const cfg = yield* cfgSvc.get()
       const config = cfg.mcp ?? {}
       const result: Record<string, Status> = {}
+
+      // #1205: reconcile tombstones against the current static config — a server the
+      // config no longer lists has nothing left to suppress.
+      for (const name of [...s.removed]) {
+        if (!isMcpConfigured(config[name])) s.removed.delete(name)
+      }
 
       for (const [key, mcp] of Object.entries(config)) {
         if (!isMcpConfigured(mcp)) continue

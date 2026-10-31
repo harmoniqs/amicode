@@ -380,7 +380,7 @@
     "packages/opencode/src/control-plane/workspace.ts": "ab986282d1bd15b7f4473e33766884e17c97684ef0778cd8d84fd173604175cc",
     "packages/opencode/src/effect/runner.ts": "b660b5b22df810b16293c23c6d832e5e8dcfb12b9a8a858c875d2c051c855b81",
     "packages/opencode/src/mcp/browser.ts": "ecdda42cbd55a97b8d14050aa15c6e6450a1d63b0a641c8c8e5b81e50f957c87",
-    "packages/opencode/src/mcp/index.ts": "0b6cbd751a0e57c6f103f1d22b228288e537180f5989a60c33ae8247c9ebe9e3",
+    "packages/opencode/src/mcp/index.ts": "a7c09606118be88401005f1ff0c14c6fe9c21f7039501c8acd47fdeb89e6b114",
     "packages/opencode/src/permission/index.ts": "feb352aacc8c110ad930b53319cd99c4b7cee015bd2bf9289f3eb24c608b01e8",
     "packages/opencode/src/project/instance-context.ts": "65a35792e50e96a50ea14cd9f928045c0e2fc15eb49506f5bbceee38c4af1457",
     "packages/opencode/src/project/instance-store.ts": "c22d3e2499e63dd8d9395d58189df75444d306774df833e746f22e327edcf2ab",
