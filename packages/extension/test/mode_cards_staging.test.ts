@@ -58,6 +58,15 @@ describe("globalAgentsDir", () => {
     expect(globalAgentsDir()).toBe(join("/var/app/flatpak/config", "opencode", "agents"));
     expect(opencodeGlobalConfigRoot()).toBe(join("/var/app/flatpak/config", "opencode"));
   });
+
+  it("stageModCards with no explicit destDir lands every card under $XDG_CONFIG_HOME/opencode/agents (#1015)", () => {
+    const xdg = mkdtempSync(join(tmpdir(), "amicode-xdg-"));
+    process.env.XDG_CONFIG_HOME = xdg;
+    const r = stageModCards(EXTENSION_PATH, undefined, HERMETIC);
+    expect(r).toBeTruthy();
+    const staged = readdirSync(join(xdg, "opencode", "agents")).filter((f) => f.endsWith(".md")).sort();
+    expect(staged).toEqual(expectedCards());
+  });
 });
 
 describe("stageModCards", () => {

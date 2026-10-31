@@ -385,7 +385,7 @@ export interface StagingResult {
   receiptPath: string;
 }
 
-/** Copy the shipped mode cards into ~/.config/opencode/agents/ — precedence
+/** Copy the shipped mode cards into the global agents dir (globalAgentsDir()) — precedence
  *  staging: every base card always lands; when the premium entitlement is
  *  present and an overlay source resolves, each card's `dispatch:` target
  *  resolves against the overlay registry and method-class fields merge in.

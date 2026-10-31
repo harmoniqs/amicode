@@ -18,7 +18,7 @@ import { writeFileSync, rmSync, readFileSync, chmodSync, mkdirSync, cpSync } fro
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { dirname, join as joinPath } from "node:path";
-import { surfaceInventory, canonicalJson, type SurfaceContext, type SurfaceRecord } from "../src/surfaces.js";
+import { surfaceInventory, defaultSurfaceContext, canonicalJson, type SurfaceContext, type SurfaceRecord } from "../src/surfaces.js";
 import { loadDoctorSchema, validateDoctorReport } from "../src/doctor_schema.js";
 import {
   buildDoctorWorld,
@@ -803,5 +803,24 @@ describe("doctor v2 JSON contract", () => {
     // the bump is REAL: a v1 report (no top-level schema_version) fails v2
     const v1 = { surfaces: withComponents.surfaces } as unknown;
     expect(validateDoctorReport(v1).errors.some((e) => e.path === "$" && /schema_version/.test(e.message))).toBe(true);
+  });
+});
+
+
+// #1015: the default opencode config root follows the engine's own XDG
+// resolution, so Flatpak VS Code (XDG_CONFIG_HOME overridden) is probed where
+// the extension staged the cards.
+describe("defaultSurfaceContext rootConfig honours XDG_CONFIG_HOME (#1015)", () => {
+  test("uses $XDG_CONFIG_HOME/opencode when set, ~/.config/opencode otherwise", () => {
+    const prev = process.env.XDG_CONFIG_HOME;
+    try {
+      process.env.XDG_CONFIG_HOME = "/var/app/flatpak/config";
+      expect(defaultSurfaceContext().rootConfig).toBe(join("/var/app/flatpak/config", "opencode"));
+      delete process.env.XDG_CONFIG_HOME;
+      expect(defaultSurfaceContext().rootConfig).toMatch(/\.config[\\/]opencode$/);
+    } finally {
+      if (prev === undefined) delete process.env.XDG_CONFIG_HOME;
+      else process.env.XDG_CONFIG_HOME = prev;
+    }
   });
 });
