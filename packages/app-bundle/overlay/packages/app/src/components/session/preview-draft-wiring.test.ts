@@ -18,7 +18,7 @@ describe("session-scoped Preview", () => {
   })
 
   test("the tab hands its mounted session to every file view as the draft scope", () => {
-    expect(previewTab).toContain("const draftSession = props.sessionID?.()")
+    expect(previewTab).toContain("const draftSession = previewDraftScope(sdk().directory, props.sessionID?.())")
     expect(previewTab).toContain("draftSession={draftSession}")
   })
 })
@@ -47,5 +47,25 @@ describe("draft lifecycle goes through the store", () => {
 
   test("dirty draft paths come back with the session (restore target includes them)", () => {
     expect(previewTab).toContain("previewDrafts.paths(")
+  })
+})
+
+describe("save requests capture their target at request time (#1249)", () => {
+  test("the server, directory and client are captured before the write is queued, and the write names the Project", () => {
+    expect(fileView).toMatch(/const writeClient = serverSDK\(\)\.client/)
+    expect(fileView).toMatch(/directory: workspace/)
+    // The queued run uses the captured client, not a late re-read of the context.
+    expect(fileView).toMatch(/await writeClient\.file\.write\(/)
+    expect(fileView).not.toMatch(/await serverSDK\(\)\.client\.file\.write/)
+  })
+
+  test("a close-save carries the token captured when Save was pressed, never a late lookup", () => {
+    expect(fileView).toContain("previewDrafts.closeTokenFor(")
+    expect(fileView).toContain("props.onSaveComplete?.(closeToken)")
+    expect(previewTab).not.toContain("closeToken ?? previewDrafts.closeRequest")
+  })
+
+  test("dirty presentation derives from the cache: the view subscribes to its session's draft transitions", () => {
+    expect(fileView).toContain("previewDrafts.subscribe(")
   })
 })

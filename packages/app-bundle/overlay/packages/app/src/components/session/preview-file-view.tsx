@@ -93,7 +93,9 @@ export function PreviewFileView(props: {
   filePath: string
   active?: () => boolean
   onDirtyChange: (dirty: boolean) => void
-  onSaveComplete?: () => void
+  /** A close-save finished. Carries the session close-decision token captured when
+   *  Save was pressed (undefined = none), so only that decision can be resolved. */
+  onSaveComplete?: (closeToken?: number) => void
   saveRequest?: () => number
   onSaveStatusChange?: (status: "idle" | "saving" | "saved") => void
   /** Request-counter for "open the PDF find pill" (Cmd+F / Cmd+G routing).
@@ -431,7 +433,7 @@ export function PreviewFileView(props: {
     props.onSaveStatusChange?.(saveStatus())
   })
 
-  const saveFile = async (filePath: string, content: string, closeAfterSave = false) => {
+  const saveFile = async (filePath: string, content: string, closeAfterSave = false, closeToken?: number) => {
     // #1454 (W5): human write gate — reject a write that resolves outside the
     // session workspace (the engine handler stays permissive for the agent; the
     // gate is applied UPSTREAM here). Only gate when the workspace is known.
@@ -446,9 +448,14 @@ export function PreviewFileView(props: {
       // joins an in-flight save instead of writing twice. The draft revision is
       // captured NOW so a completion can only clear the edit it actually wrote.
       const revision = draftScope ? previewDrafts.get(draftScope, filePath)?.revision : undefined
-      const fileKey = [serverSDK().url, workspace ?? "", filePath].join("\u0000")
+      // The server, Project directory and client are captured at REQUEST time: a
+      // write that waits its turn behind another must still land in the Project
+      // that asked for it, whatever the context points at by then.
+      const writeServer = serverSDK()
+      const writeClient = serverSDK().client
+      const fileKey = [writeServer.url, workspace ?? "", filePath].join("\u0000")
       await previewDrafts.enqueueSave(fileKey, content, async () => {
-        await serverSDK().client.file.write({ path: filePath, content })
+        await writeClient.file.write({ path: filePath, content, directory: workspace })
       })
       setSaveStatus("saved")
       // A newer edit typed while the write was in flight keeps the document dirty
@@ -457,7 +464,7 @@ export function PreviewFileView(props: {
       if (settled) {
         setUnsavedContent(null)
         props.onDirtyChange(false)
-        if (closeAfterSave) props.onSaveComplete?.()
+        if (closeAfterSave) props.onSaveComplete?.(closeToken)
       }
       if (savedTimer) clearTimeout(savedTimer)
       savedTimer = setTimeout(() => setSaveStatus("idle"), 2000)
@@ -471,6 +478,20 @@ export function PreviewFileView(props: {
     } catch {
       setSaveStatus("idle")
     }
+  }
+
+  // Dirty presentation derives from the draft cache (#1249): when this document's
+  // draft is cleared by a save that completed elsewhere (e.g. one started before a
+  // session switch), the live view stops claiming unsaved edits.
+  if (draftScope) {
+    const unsubscribe = previewDrafts.subscribe(draftScope, (path) => {
+      if (path !== props.filePath) return
+      if (previewDrafts.get(draftScope, path) === undefined && unsavedContent() !== null) {
+        setUnsavedContent(null)
+        props.onDirtyChange(false)
+      }
+    })
+    onCleanup(unsubscribe)
   }
 
   const handleEdit = (content: string) => {
@@ -490,8 +511,13 @@ export function PreviewFileView(props: {
       () => props.saveRequest?.() ?? 0,
       (request) => {
         if (request === 0) return
+        // The close decision this Save belongs to is captured NOW; a completion
+        // that arrives after a cancel (or for a newer decision) cannot close anything.
+        const closeToken = draftScope ? previewDrafts.closeTokenFor(draftScope, props.filePath) : undefined
         const content = unsavedContent()
-        if (content !== null) void saveFile(props.filePath, content, true)
+        if (content !== null) void saveFile(props.filePath, content, true, closeToken)
+        // Already clean (a save we joined finished first): the requested close can proceed.
+        else if (closeToken !== undefined) props.onSaveComplete?.(closeToken)
       },
     ),
   )

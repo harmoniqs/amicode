@@ -21,7 +21,7 @@ import type { PreviewViewState } from "@opencode-ai/session-ui/v2/preview-view-s
 import { PreviewFileView } from "./preview-file-view"
 import { isPdfFindTarget } from "./pdf-find-guard"
 import { previewFilePathForSession, revealInSidebarMessage } from "./preview-file-target"
-import { previewDrafts } from "./preview-draft-store"
+import { previewDraftScope, previewDrafts } from "./preview-draft-store"
 import { toAbsolutePath } from "./preview-file-helpers"
 import { FileVisual } from "./session-sortable-tab"
 import {
@@ -142,7 +142,7 @@ export function SessionPreviewTab(props: {
   // #1249: this Preview belongs to the session it was mounted for (the side panel
   // remounts it per session), and unsaved drafts + the close decision live in the
   // per-(session, path) store so a session switch neither leaks nor loses them.
-  const draftSession = props.sessionID?.()
+  const draftSession = previewDraftScope(sdk().directory, props.sessionID?.())
   const restoredClose = draftSession ? previewDrafts.closeRequest(draftSession) : undefined
   const [closingPath, setClosingPath] = createSignal<string | null>(restoredClose?.path ?? null)
   let closeToken: number | undefined = restoredClose?.token
@@ -814,12 +814,12 @@ export function SessionPreviewTab(props: {
                               findRequest={() => findRequests[path] ?? 0}
                               findDirection={() => findDirections[path] ?? 0}
                               draftSession={draftSession}
-                              onSaveComplete={() => {
-                                // Only the current close decision may close the tab: a
-                                // canceled / superseded close-save leaves it open (#1249).
+                              onSaveComplete={(savedToken) => {
+                                // Only the decision this Save was pressed for may close the
+                                // tab: the token was captured at request time, so a canceled
+                                // or superseded close-save leaves it open (#1249).
                                 if (draftSession) {
-                                  const token = closeToken ?? previewDrafts.closeRequest(draftSession)?.token
-                                  if (token !== undefined) previewDrafts.resolveClose(draftSession, token)
+                                  if (savedToken !== undefined) previewDrafts.resolveClose(draftSession, savedToken)
                                   return
                                 }
                                 removePath(path)
