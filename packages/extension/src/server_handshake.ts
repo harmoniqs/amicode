@@ -68,6 +68,71 @@ export function writeHandshake(record: HandshakeRecord, filePath?: string): void
   writeFileSync(p, JSON.stringify(record, null, 2) + "\n", { mode: 0o600 });
 }
 
+// ── Restart marker (#1420) ──────────────────────────────────────────────────
+//
+// `amicode.restartServer` deletes the handshake and only writes the replacement
+// after the new server passes its health check. With one shared server per
+// host, a SECOND window activating inside that gap reads "no handshake",
+// calls the server stale, and cold-spawns a rival that kills the half-booted
+// replacement. The restarter therefore publishes a short-lived marker next to
+// the handshake for the whole stop → delete → start window; adopt-or-spawn
+// waits on a live marker before concluding anything is stale.
+
+/** A marker older than this is a crashed restarter's leftover — ignore it. */
+export const RESTART_MARKER_TTL_MS = 120_000;
+
+/** Marker path: sibling of the handshake file (`restart.json`). */
+export function restartMarkerPath(handshakeFilePath?: string): string {
+  return join(dirname(handshakeFilePath ?? handshakePath()), "restart.json");
+}
+
+/** Publish "a restart is in progress" (best-effort data: pid + timestamp). */
+export function writeRestartMarker(
+  markerPath?: string,
+  opts: { pid?: number; now?: () => number } = {},
+): void {
+  const p = markerPath ?? restartMarkerPath();
+  mkdirSync(dirname(p), { recursive: true });
+  const startedAtMs = (opts.now ?? Date.now)();
+  writeFileSync(
+    p,
+    JSON.stringify({ pid: opts.pid ?? process.pid, startedAtMs }) + "\n",
+    { mode: 0o600 },
+  );
+}
+
+/** Remove the marker. Absent file is a no-op. */
+export function clearRestartMarker(markerPath?: string): void {
+  try {
+    unlinkSync(markerPath ?? restartMarkerPath());
+  } catch (err: any) {
+    if (err?.code !== "ENOENT") throw err;
+  }
+}
+
+/** True when a LIVE restart marker exists: parseable, younger than the TTL,
+ *  and its writer process is still alive. Never throws. */
+export function isRestartInProgress(
+  markerPath?: string,
+  opts: { now?: () => number; pidAlive?: (pid: number) => boolean; ttlMs?: number } = {},
+): boolean {
+  let raw: string;
+  try {
+    raw = readFileSync(markerPath ?? restartMarkerPath(), "utf8");
+  } catch {
+    return false;
+  }
+  try {
+    const m = JSON.parse(raw) as { pid?: unknown; startedAtMs?: unknown };
+    if (typeof m.pid !== "number" || typeof m.startedAtMs !== "number") return false;
+    const age = (opts.now ?? Date.now)() - m.startedAtMs;
+    if (age > (opts.ttlMs ?? RESTART_MARKER_TTL_MS)) return false;
+    return (opts.pidAlive ?? defaultPidAlive)(m.pid);
+  } catch {
+    return false;
+  }
+}
+
 // ── Hub handshake (#1576) ──────────────────────────────────────────────────
 
 /** The password sentinel written by the hub service's handshake. The hub engine

@@ -1,5 +1,7 @@
 import {
   readHandshake,
+  restartMarkerPath,
+  isRestartInProgress,
   classifyGate,
   PROTOCOL_VERSION,
   type GateInputs,
@@ -50,6 +52,10 @@ export interface AdoptOrSpawnDeps {
    *  When set, the no-handshake path polls for the handshake to appear on a
    *  bounded budget (ms) before falling back to cold-spawn. */
   hubPollBudgetMs?: number;
+  // ── Restart-race guard (#1420) ──
+  /** Max time (ms) to wait for another window's in-progress restart (its
+   *  restart marker) to finish before judging the handshake. Default 60 000. */
+  restartWaitBudgetMs?: number;
   /** Optional log sink for adoption diagnostics. */
   log?: (line: string) => void;
 }
@@ -87,6 +93,25 @@ export async function adoptOrSpawn(
   handshakePath: string,
   deps: AdoptOrSpawnDeps,
 ): Promise<AdoptOrSpawnResult> {
+  // Step 0 (#1420): another window may be mid-restart — the handshake is
+  // deleted before its replacement is written, so reading now would call a
+  // healthy-in-the-making server "stale" and cold-spawn a rival over it. Wait
+  // (bounded) for the restart marker to clear, then judge the fresh handshake.
+  const markerPath = restartMarkerPath(handshakePath);
+  if (isRestartInProgress(markerPath, { pidAlive: deps.pidAlive })) {
+    const budget = deps.restartWaitBudgetMs ?? 60_000;
+    deps.log?.(`[adopt] restart in progress in another window — waiting up to ${budget}ms before judging the handshake`);
+    const deadline = Date.now() + budget;
+    while (Date.now() < deadline && isRestartInProgress(markerPath, { pidAlive: deps.pidAlive })) {
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    deps.log?.(
+      isRestartInProgress(markerPath, { pidAlive: deps.pidAlive })
+        ? `[adopt] restart wait budget expired — judging the handshake as-is`
+        : `[adopt] restart finished — re-reading the handshake`,
+    );
+  }
+
   // Step 1: read the handshake
   const hs = readHandshake(handshakePath);
 
