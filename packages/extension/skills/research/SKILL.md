@@ -267,6 +267,12 @@ affine in their arguments. Derive CRN streams from a cryptographic tuple digest 
 counter-based RNG. Size the expected-collision budget on the real effective key space, and
 show the arithmetic in the spec.
 
+**2b. Controls must match on everything but the factor.** A placebo or control arm must match the arm it is
+contrasted with on error magnitude AND processing path (e.g. refit on/off), or the contrast measures wrongness, not
+the named factor (one QP-ILC 'churn' placebo was ≈ √2× wrong and skipped a refit — most of its effect was error).
+Arms that are identical by construction read IDENTICAL / NOT-TESTED, never an equivalence (BAND) result. Synthetic
+pre-freeze dry runs use CHECK-key labels too, never main-range keys.
+
 **3. Multiplicity agrees with the reading.** The Holm/FWER level must be **≤ the α of the
 reading it guards**: a one-sided 0.05 reading needs Holm at ≤ 0.05, not 0.10. State both once,
 in one place. Otherwise a contrast can pass Holm while it fails the reading, and the headline
@@ -277,7 +283,9 @@ self-test. **Emit every satisfied label as a record**, not only the first match:
 ladder hides co-true labels (H36's INFO-CEILING-CLOSED was co-true with its headline (b) and went
 unreported).
 
-**4. Picks and deliverables are monotone in the evidence.**
+**4. Picks and deliverables are monotone in the evidence.** Mean-positive is not enough for an "it helps"
+label: report the median, a sign test, and the effect by baseline-severity tercile (loop gains can be
+c·severity − fixed cost, mean-positive yet median-null).
 - **No dominated picks.** A pick or deliverable rule must never recommend an arm that the registered readings show is dominated in that cell.
 - **Per-cell picks survive.** A campaign-level CELL-DEPENDENT verdict must not collapse into "keep the incumbent everywhere".
 - **One set of readings.** The pick uses the same POS/NEG readings as the labels. Never use a median or tie-band rule (`CI_lo > 0 ∧ median > TIE_BAND`) that can read a contrast whose CI is entirely positive as a tie while its mirror reads INFERIOR.
