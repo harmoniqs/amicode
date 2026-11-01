@@ -73,7 +73,9 @@ export interface SurfaceContext {
   rootServer: string;
   /** VS Code extensions dir (default ~/.vscode/extensions) */
   rootVscext: string;
-  /** opencode config root; global cards at <root>/agents (default ~/.config/opencode) */
+  /** opencode config root; global cards at <root>/agents (default
+   *  $XDG_CONFIG_HOME/opencode, else ~/.config/opencode — the engine's own
+   *  resolution, so Flatpak VS Code installs probe where the extension staged, #1015) */
   rootConfig: string;
   /** amicode repo checkout (default ~/armonia/repos/amicode) */
   rootRepoAmicode: string;
@@ -121,7 +123,7 @@ export function defaultSurfaceContext(): SurfaceContext {
   return {
     rootServer,
     rootVscext: join(homedir(), ".vscode", "extensions"),
-    rootConfig: join(homedir(), ".config", "opencode"),
+    rootConfig: join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "opencode"),
     rootRepoAmicode: join(homedir(), "armonia", "repos", "amicode"),
     rootStaging: join(rootServer, "opencode-project-staging", "opencode-project"),
     runningBinary: null,
