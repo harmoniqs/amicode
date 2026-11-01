@@ -40,7 +40,7 @@ absolute to `/Users/aaron`). The linux-side cadence units are versioned at
 enable --now <unit>.timer`. Never edit the installed copies; this repo is the source.
 (The one sanctioned exception to date: the 2026-10-04 watchdog hotfix was applied on
 erlich first to re-arm the guard during a live wedge, then upstreamed here —
-`ops/fleet-watchdog/README.md` has the deploy snippet.)
+`ops/hub/fleet-watchdog/README.md` has the deploy snippet.)
 
 ## Runtime state (NOT in this repo, never overwritten by deploy)
 

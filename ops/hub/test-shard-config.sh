@@ -69,7 +69,7 @@ check "wd shard3 inspect"   "inspect_port=9231" "$(echo "$W3" | grep '^inspect_p
 WL="$(gw)"
 check "wd legacy service"   "service=co.harmoniqs.amicode-server.service" "$(echo "$WL" | grep '^service=')"
 check "wd legacy health"    "health_port=4094"  "$(echo "$WL" | grep '^health_port=')"
-check "wd legacy pattern"   "pattern=$HOME/.amico/server/bin/opencode serve" "$(echo "$WL" | grep '^pattern=')"
+check "wd legacy pattern"   "pattern=$HOME/.amico/server/bin/opencode serve --port 4094" "$(echo "$WL" | grep '^pattern=')"
 check "wd legacy log"        "log=$HOME/.amico/server/fleet-watchdog/rss-trajectory.log" "$(echo "$WL" | grep '^log=')"
 check "wd legacy inspect"   "inspect_port=9229" "$(echo "$WL" | grep '^inspect_port=')"
 

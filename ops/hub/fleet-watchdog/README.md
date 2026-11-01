@@ -21,19 +21,36 @@ over**:
    after M3.
 
 Every 5-min sample logged `pid=none status=server-missing` since Oct 2. The
-fixed default matches by **binary path** — immune to port moves and separator
-style:
+pattern is now derived **per shard from the engine port** (the cmdline is
+`… serve --port <N>`, space-separated) — with three engines running, a
+binary-path-only pattern plus `head -1` grabs an arbitrary shard's engine:
 
 ```
-WATCHDOG_PATTERN default → $HOME/.amico/server/bin/opencode serve
+shard 1 (legacy, no AMICODE_SHARD_INDEX) → $HOME/.amico/server/bin/opencode serve --port 4094
+shard N (AMICODE_SHARD_INDEX=N)          → $HOME/.amico/server/bin/opencode serve --port $((4094 + 100*(N-1)))
 ```
+
+## One canonical script (amicode#2044 / A0, 2026-11-01)
+
+There used to be three diverged copies (`ops/fleet-watchdog/`, `ops/hub/fleet-watchdog/`,
+the hub deploy). This directory is now the only one. It carries: the
+**liveness-alone recovery** (two consecutive silent probes ⇒ capture + restart
+regardless of RSS, per-shard `http-silent-tick[-shardN]` marker — restored after
+the Oct 11 deploy regressed it), the gateway-secret-aware probe, per-shard
+config, and **every restart goes through `../solve-guard.sh`**: refused while
+compute runs in the unit's process group; after `WATCHDOG_DEFER_ALERT_TICKS`
+(12) deferrals an alert marker `$WATCHDOG_ALERT_DIR/live-compute-deferred-<unit>`
+is written (and an `alert` line in the decision log) and the watchdog keeps
+deferring; `touch ~/.amico/server/restart-override/<unit>` lets a human force
+it. See `ops/hub/README.md` ("The restart guard").
 
 Incident capture: `~/.amico/server/incidents/20261003-wedge/` on erlich.
 
 ## Deploy (erlich, one-time — the repo is the source of truth)
 
 ```bash
-scp ops/fleet-watchdog/rss-watchdog.sh erlich:.amico/server/fleet-watchdog/
+scp ops/hub/fleet-watchdog/rss-watchdog.sh erlich:.amico/server/fleet-watchdog/
+scp ops/hub/solve-guard.sh erlich:.amico/server/solve-guard.sh   # the watchdog fails closed without it
 scp ops/systemd/rss-watchdog.{service,timer} erlich:.config/systemd/user/
 ssh erlich 'systemctl --user daemon-reload && systemctl --user enable --now rss-watchdog.timer'
 ```
@@ -46,9 +63,11 @@ tail -2 ~/.amico/server/fleet-watchdog/rss-trajectory.log   # erlich
 # (a server-missing streak means the pattern broke again: check the engine cmdline)
 ```
 
-Knobs (env overrides): `WATCHDOG_THRESHOLD_KB` (default 1536000 = 1.5 GB,
+Knobs (env overrides): `WATCHDOG_THRESHOLD_KB` (default 2621440 = 2.5 GiB,
 healthy baseline ~400–700 MB), `WATCHDOG_SERVICE`
-(`co.harmoniqs.amicode-server.service`), `WATCHDOG_PATTERN`, `WATCHDOG_LOG_DIR`.
+(`co.harmoniqs.amicode-server.service`), `WATCHDOG_PATTERN`, `WATCHDOG_LOG_DIR`,
+`WATCHDOG_DEFER_ALERT_TICKS` (12), `WATCHDOG_ALERT_DIR`
+(`~/.amico/server/alerts`), `WATCHDOG_POST_RESTART_SLEEP` (5).
 
 Runtime state (never in this repo): `rss-trajectory.log` under
 `~/.amico/server/fleet-watchdog/` on erlich.
