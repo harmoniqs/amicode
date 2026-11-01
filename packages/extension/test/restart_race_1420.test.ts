@@ -153,3 +153,25 @@ describe("#1420 AC5 — marker helpers", () => {
     expect(readHandshake(fp).status).toBe("absent");
   });
 });
+
+// AC6 — wiring: the restart publishes its marker BEFORE the handshake is deleted
+// and retracts it in finally. (activate() is not unit-constructible, so this is a
+// structural check on the stop-and-respawn branch — the repo's convention for
+// activation wiring.)
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+const extSrc = readFileSync(resolve(__dirname, "..", "src", "extension.ts"), "utf8");
+describe("#1420 AC6 — amicode.restartServer stop-and-respawn wiring", () => {
+  it("marks before stop/delete and clears in finally", () => {
+    const start = extSrc.indexOf('plan === "stop-and-respawn"');
+    expect(start).toBeGreaterThan(-1);
+    const block = extSrc.slice(start, extSrc.indexOf("clearRestartInProgress(handshakePath());", start) + 60);
+    const mark = block.indexOf("markRestartInProgress(handshakePath());");
+    const stop = block.indexOf("await serverManager?.stop();");
+    const del = block.indexOf("deleteHandshake();");
+    expect(mark).toBeGreaterThan(-1);
+    expect(mark).toBeLessThan(stop);
+    expect(stop).toBeLessThan(del);
+    expect(block).toMatch(/finally \{\s*clearRestartInProgress\(handshakePath\(\)\);/);
+  });
+});

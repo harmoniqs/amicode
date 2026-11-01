@@ -120,7 +120,7 @@ import { buildDeviceStatus, nextActions, capabilityHint, type DriveLine } from "
 import { SchusterJobServer } from "./qick_client";
 import { adoptOrSpawn, buildLiveDeps, isPidAlive, reclaimOrphanPort, auditAdoptedEngine, restartAdoptedEngine, readoptHubInPlace, sweepStrayEngines, listOpencodeEngines, hasLiveClient, reclaimEnginePid, planEngineRestart, planServerActivation, adoptedTheHub, probeUnarmedHub, shouldRideDeterministicHub, planHubYieldBack } from "./server_lifecycle";
 import { hubEnginePortFor } from "./amicode_service/fleet_hub_service";
-import { handshakePath, readHandshake, deleteHandshake, serverLogPath, coldSpawnHandshakeHook, hashFile, hashString, UNARMED_SENTINEL, isUnarmedHandshake } from "./server_handshake";
+import { handshakePath, readHandshake, deleteHandshake, serverLogPath, coldSpawnHandshakeHook, hashFile, hashString, UNARMED_SENTINEL, isUnarmedHandshake, markRestartInProgress, clearRestartInProgress } from "./server_handshake";
 import { startKeepalive, stopKeepalive, readGraceSeconds, pingKeepalive } from "./server_keepalive";
 import { FleetPollHysteresis } from "./fleet_poll_hysteresis";
 import { FleetPostureStateWriter } from "./fleet_posture_state";
@@ -3718,21 +3718,30 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
 
       // plan === "stop-and-respawn": the window owns its engine — the simple kill
       // and fresh spawn.
-      await serverManager?.stop();
-      // #1146 (ADR 0020): Restart is the deliberate kill — delete the
-      // handshake so the next activation cold-spawns instead of adopting
-      // the (now-dead) old server.
-      deleteHandshake();
-      statusBar?.setServerReady(false);
-      opencodeReadyUrl = undefined;
-      // #1598: push booting before start (wireReadyState pushes "on" on ready).
-      pushEngineState("booting");
+      // #1420: publish the restart BEFORE the old handshake goes, so another
+      // window's activation waits for this replacement instead of reclaiming the
+      // port or cold-spawning a rival into the handshake gap. Cleared in finally
+      // (success, failure, or a throwing stop) so no marker outlives the restart.
+      markRestartInProgress(handshakePath());
       try {
-        await serverManager?.start();
-      } catch (err) {
-        // #1598: start failed — push off so the toggle reflects the real state.
-        pushEngineState("off");
-        vscode.window.showErrorMessage(`Amicode: restart failed — ${(err as Error).message}`);
+        await serverManager?.stop();
+        // #1146 (ADR 0020): Restart is the deliberate kill — delete the
+        // handshake so the next activation cold-spawns instead of adopting
+        // the (now-dead) old server.
+        deleteHandshake();
+        statusBar?.setServerReady(false);
+        opencodeReadyUrl = undefined;
+        // #1598: push booting before start (wireReadyState pushes "on" on ready).
+        pushEngineState("booting");
+        try {
+          await serverManager?.start();
+        } catch (err) {
+          // #1598: start failed — push off so the toggle reflects the real state.
+          pushEngineState("off");
+          vscode.window.showErrorMessage(`Amicode: restart failed — ${(err as Error).message}`);
+        }
+      } finally {
+        clearRestartInProgress(handshakePath());
       }
     }),
     // #1149 (ADR 0020): Stop server — the deliberate kill alongside Restart.
