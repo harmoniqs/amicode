@@ -37,7 +37,8 @@ import {
 } from "./telemetry";
 import { resolveLabTomlPath, checkLabToml } from "./lab_config";
 import { computeSetupState, writeSetupStateFile } from "./setup_state";
-import { OpencodeEventClient } from "./sse_client";
+import { OpencodeEventClient, type OpencodeStreamEvent } from "./sse_client";
+import { InflightTurnTracker, probeBusySessions } from "./inflight_turns";
 import { FollowedSessionWatcher } from "./followed_session_watcher";
 import { RunsManager } from "./runs_manager";
 import { stageDemoRun } from "./demo_replay";
@@ -159,6 +160,18 @@ let statusBar: StatusBarManager | undefined;
 // the persistent status-bar indicator's click (amicode.restartStaleEngine) runs it.
 let staleEngineRestart: (() => Promise<void>) | undefined;
 let sseClient: OpencodeEventClient | undefined;
+/** #1571: the real hasInflightTurns() — fed by every sseClient's parsed events. */
+const inflightTracker = new InflightTurnTracker();
+/** The one observe-only sink every sseClient hands its parsed events to. */
+function observeEngineEvent(e: OpencodeStreamEvent): void {
+  inflightTracker.observe(e);
+  followedSessionWatcher?.observe(e);
+}
+/** #1571 loop guard: an automatic stale-engine restart is allowed at most once
+ *  per window of this length per workspace — a restart that does not cure the
+ *  staleness must degrade to the toast + indicator, never reload forever. */
+const STALE_AUTO_RESTART_MIN_GAP_MS = 10 * 60 * 1000;
+const STALE_AUTO_RESTART_KEY = "amicode.staleEngine.autoRestartAt";
 /** #1788 (S3): the passive-notification watcher — observes the sseClient's
  *  parsed events (no new connection) and raises VS Code notifications on
  *  followed sessions. Created once per activation, before any posture branch
@@ -1288,7 +1301,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       statusBar,
       authorization: serverAuthHeaders.Authorization,
       // #1788 (S3): the watcher observes this stream — never a new connection.
-      onEvent: (e) => followedSessionWatcher?.observe(e),
+      onEvent: observeEngineEvent,
     });
     ctx.subscriptions.push(sseClient);
     // The hub session: probe the hub, attach through hysteresis. ONE server,
@@ -1360,7 +1373,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       statusBar,
       authorization: serverAuthHeaders.Authorization,
       // #1788 (S3): the watcher observes this stream — never a new connection.
-      onEvent: (e) => followedSessionWatcher?.observe(e),
+      onEvent: observeEngineEvent,
     });
     ctx.subscriptions.push(sseClient);
     // Poll the tunnel — when the canonical server is reachable the forward answers 200.
@@ -2298,7 +2311,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       statusBar,
       authorization: serverAuthHeaders.Authorization,
       // #1788 (S3): the watcher observes this stream — never a new connection.
-      onEvent: (e) => followedSessionWatcher?.observe(e),
+      onEvent: observeEngineEvent,
     });
     ctx.subscriptions.push(sseClient);
 
@@ -2339,7 +2352,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         statusBar,
         authorization: serverAuthHeaders.Authorization,
         // #1788 (S3): the watcher observes this stream — never a new connection.
-        onEvent: (e) => followedSessionWatcher?.observe(e),
+        onEvent: observeEngineEvent,
       });
       ctx.subscriptions.push(sseClient);
 
@@ -2374,6 +2387,24 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
               showInformationMessage: (m, ...items) => vscode.window.showInformationMessage(m, ...items),
               onRestartRequested: restartStale,
               setStaleIndicator: (state) => statusBar?.setEngineStale(state?.detail),
+              // #1571: self-heal when idle; retry on quiesce when a turn is running.
+              autoRestart: {
+                hasInflightTurns: async () => {
+                  if (inflightTracker.hasInflightTurns()) return true;
+                  // Turns that began before this window adopted the survivor
+                  // never showed a busy frame — ask the engine. Unknown → busy.
+                  const url = opencodeReadyUrl?.toString() ?? `http://127.0.0.1:${adoptedPort}/`;
+                  const busy = await probeBusySessions(url, { headers: serverAuthHeaders });
+                  return busy === undefined || busy > 0;
+                },
+                onQuiesce: (cb) => inflightTracker.onQuiesce(cb),
+                allow: () => {
+                  const last = ctx.workspaceState.get<number>(STALE_AUTO_RESTART_KEY);
+                  return last === undefined || Date.now() - last > STALE_AUTO_RESTART_MIN_GAP_MS;
+                },
+                record: () => { void ctx.workspaceState.update(STALE_AUTO_RESTART_KEY, Date.now()); },
+                log: (l) => opencodeChannel.appendLine(l),
+              },
             },
           },
           adoptedUnarmed,
