@@ -17,6 +17,7 @@ import {
   ModelArrivals,
   arrivalKind,
   baseModelId,
+  firstPartyProvider,
   globMatches,
   markSeenResponse,
   modelArrivalsResponse,
@@ -40,6 +41,8 @@ function harness(opts: { watch?: string[] } = {}) {
     connected: ["anthropic", "amazon-bedrock", "moonshotai"] as string[],
     statuses: {} as Record<string, ProbeStatus>,
     reasons: {} as Record<string, string>,
+    /** "provider/model" → catalog price (default 1.5/6) */
+    prices: {} as Record<string, { input?: number; output?: number }>,
     watch: opts.watch ?? ([] as string[]),
     probes: [] as Array<{ provider: string; ids: string[] }>,
     mr: undefined as unknown as ModelReachability,
@@ -51,7 +54,7 @@ function harness(opts: { watch?: string[] } = {}) {
     providers: Object.fromEntries(
       Object.entries(h.all).map(([p, ids]) => [
         p,
-        Object.fromEntries(ids.map((id) => [id, { input: 1.5, output: 6, context: 200_000 }])),
+        Object.fromEntries(ids.map((id) => [id, { input: 1.5, output: 6, context: 200_000, ...(h.prices[`${p}/${id}`] ?? {}) }])),
       ]),
     ),
   });
@@ -253,6 +256,196 @@ describe("watchlist (#2000)", () => {
     h.clock.now += 6 * MIN;
     await h.mr.tick();
     expect(await events(h)).toEqual([]);
+  });
+});
+
+// ── #2025: one arrival per model across unconnected resellers ──────────────
+/** The live hub catalog (2026-10-30) for watch ["kimi-k3.1*"]: ONE model on six
+ *  unconnected resellers → ten per-provider events before the collapse. */
+const LIVE_KIMI: Record<string, string[]> = {
+  "302ai": ["kimi-k3.1-pro"],
+  llmgateway: ["kimi-k3.1-pro", "kimi-k3.1-pro-highspeed"],
+  "moonshotai-cn": ["kimi-k3.1-pro", "kimi-k3.1-pro-highspeed"],
+  moonshotai: ["kimi-k3.1-pro", "kimi-k3.1-pro-highspeed"],
+  "opencode-go": ["kimi-k3.1-pro"],
+  requesty: ["kimi-k3.1-pro", "kimi-k3.1-pro-highspeed"],
+};
+
+/** A harness whose catalog carries per-model prices and starts with the live
+ *  kimi data on unconnected providers (anthropic is the only connected one). */
+function liveHarness() {
+  const h = harness({ watch: ["kimi-k3.1*"] });
+  h.all = { anthropic: ["claude-a"], ...structuredClone(LIVE_KIMI) };
+  h.connected = ["anthropic"];
+  return h;
+}
+
+describe("watch collapse across unconnected providers (#2025)", () => {
+  it("the live fixture (10 per-provider hits) yields exactly 2 arrivals, with also_on listing the rest", async () => {
+    const h = liveHarness();
+    await h.mr.tick();
+    const got = await events(h);
+    expect(got.map((e) => e.id).sort()).toEqual(["watch/kimi-k3.1-pro", "watch/kimi-k3.1-pro-highspeed"]);
+    const pro = got.find((e) => e.id === "watch/kimi-k3.1-pro")!;
+    expect(pro).toMatchObject({
+      kind: "listed",
+      watch: true,
+      seen: false,
+      status: "unchecked",
+      reason: "provider not connected",
+      // the first-party provider is the representative
+      provider: "moonshotai",
+      model: "kimi-k3.1-pro",
+    });
+    expect(pro.also_on).toEqual(["302ai", "llmgateway", "moonshotai-cn", "opencode-go", "requesty"]);
+    const fast = got.find((e) => e.id === "watch/kimi-k3.1-pro-highspeed")!;
+    expect(fast).toMatchObject({ provider: "moonshotai", model: "kimi-k3.1-pro-highspeed" });
+    expect(fast.also_on).toEqual(["llmgateway", "moonshotai-cn", "requesty"]);
+    // announced once, not every pass
+    h.clock.now += 6 * MIN;
+    await h.mr.tick();
+    expect(await events(h)).toHaveLength(2);
+  });
+
+  it("takes the cheapest known price across the providers; a first-party-less model falls back to the cheapest provider", async () => {
+    const h = liveHarness();
+    h.all = { anthropic: ["claude-a"], "302ai": ["kimi-k3.1-pro"], requesty: ["kimi-k3.1-pro"], llmgateway: ["kimi-k3.1-pro"], moonshotai: ["kimi-k3.1-pro"] };
+    h.prices = {
+      "302ai/kimi-k3.1-pro": { input: 1, output: 3 },
+      "requesty/kimi-k3.1-pro": { input: 0.4, output: 2 },
+      "llmgateway/kimi-k3.1-pro": { input: 0.9, output: 2.5 },
+      "moonshotai/kimi-k3.1-pro": { input: 0.6, output: 2.5 },
+    };
+    await h.mr.tick();
+    const [pro] = await events(h);
+    expect(pro).toMatchObject({ provider: "moonshotai", price: { input: 0.4, output: 2 } }); // cheapest price, first-party rep
+    // no first-party reseller listed → the cheapest provider represents
+    const h2 = liveHarness();
+    h2.all = { anthropic: ["claude-a"], "302ai": ["kimi-k3.1-pro"], requesty: ["kimi-k3.1-pro"], llmgateway: ["kimi-k3.1-pro"] };
+    h2.prices = h.prices;
+    await h2.mr.tick();
+    const [only] = await events(h2);
+    expect(only).toMatchObject({ provider: "requesty", model: "kimi-k3.1-pro", price: { input: 0.4, output: 2 } });
+    expect(only!.also_on).toEqual(["302ai", "llmgateway"]);
+  });
+
+  it("a connected-provider hit for the same model is its own event and wins over the collapsed one", async () => {
+    const h = liveHarness();
+    h.connected = ["anthropic", "requesty"]; // requesty is connected now
+    await h.mr.tick(); // baseline for requesty
+    const got = await events(h);
+    const ids = got.map((e) => e.id).sort();
+    // the connected hit keeps its per-provider id; the collapsed unconnected entries for the SAME base models are suppressed
+    expect(ids).toEqual(["requesty/kimi-k3.1-pro", "requesty/kimi-k3.1-pro-highspeed"]);
+    expect(got.every((e) => e.provider === "requesty" && e.watch)).toBe(true);
+    expect(got.every((e) => e.also_on === undefined)).toBe(true);
+  });
+
+  it("an unconnected hit for a DIFFERENT model still collapses alongside a connected hit", async () => {
+    const h = liveHarness();
+    h.connected = ["anthropic", "requesty"];
+    h.all.requesty = ["kimi-k3.1-pro"];
+    h.all["302ai"] = ["kimi-k3.1-pro", "kimi-k3.1-mini"];
+    await h.mr.tick();
+    const ids = (await events(h)).map((e) => e.id).sort();
+    expect(ids).toContain("requesty/kimi-k3.1-pro");
+    expect(ids).toContain("watch/kimi-k3.1-mini");
+    expect(ids).not.toContain("watch/kimi-k3.1-pro");
+  });
+
+  it("provider-qualified catalog ids collapse onto the same base model", async () => {
+    const h = harness({ watch: ["kimi-k3.1*"] });
+    h.all = { anthropic: ["claude-a"], requesty: ["moonshot/kimi-k3.1-pro"], "302ai": ["kimi-k3.1-pro"] };
+    h.connected = ["anthropic"];
+    await h.mr.tick();
+    const got = await events(h);
+    expect(got).toHaveLength(1);
+    expect(got[0]!.id).toBe("watch/kimi-k3.1-pro");
+  });
+
+  it("marking seen persists across a provider appearing in (or leaving) the list; the event is refreshed in place", async () => {
+    const h = liveHarness();
+    await h.mr.tick();
+    const first = (await events(h)).find((e) => e.id === "watch/kimi-k3.1-pro")!;
+    await h.arrivals.markSeen([first.id]);
+    h.all.novita = ["kimi-k3.1-pro"]; // a NEW reseller lists it
+    h.clock.now += 6 * MIN;
+    await h.mr.tick();
+    let got = (await events(h)).filter((e) => e.id === "watch/kimi-k3.1-pro");
+    expect(got).toHaveLength(1);
+    expect(got[0]).toMatchObject({ seen: true, first_seen_at: first.first_seen_at });
+    expect(got[0]!.also_on).toContain("novita");
+    delete h.all["302ai"]; // one drops out
+    h.clock.now += 6 * MIN;
+    await h.mr.tick();
+    got = (await events(h)).filter((e) => e.id === "watch/kimi-k3.1-pro");
+    expect(got).toHaveLength(1);
+    expect(got[0]).toMatchObject({ seen: true });
+    expect(got[0]!.also_on).not.toContain("302ai");
+    expect((await events(h)).filter((e) => !e.seen).map((e) => e.id)).toEqual(["watch/kimi-k3.1-pro-highspeed"]);
+  });
+
+  it("first-party preference: gemini→google, claude→anthropic, glm→zai, gpt→openai", () => {
+    expect(firstPartyProvider("kimi-k3.1-pro", ["requesty", "moonshotai"])).toBe("moonshotai");
+    expect(firstPartyProvider("gemini-4-pro", ["requesty", "google", "moonshotai"])).toBe("google");
+    expect(firstPartyProvider("claude-x", ["requesty", "anthropic"])).toBe("anthropic");
+    expect(firstPartyProvider("glm-5.3", ["requesty", "zai"])).toBe("zai");
+    expect(firstPartyProvider("kimi-k3.1-pro", ["requesty", "google"])).toBeUndefined();
+  });
+});
+
+describe("legacy per-provider watch events fold into the collapsed id (#2025)", () => {
+  const legacy = (provider: string, model: string, over: Record<string, unknown> = {}) => ({
+    id: `${provider}/${model}`,
+    provider,
+    model,
+    status: "unchecked",
+    kind: "listed",
+    reason: "provider not connected",
+    first_seen_at: T0 - 1000,
+    seen: false,
+    watch: true,
+    price: { input: 1, output: 3 },
+    context: null,
+    latency_ms: null,
+    ...over,
+  });
+
+  it("the 10 stored per-provider events read back as 2 collapsed ones, keeping seen", async () => {
+    const h = liveHarness();
+    const stored = Object.entries(LIVE_KIMI).flatMap(([p, ms]) =>
+      ms.map((m) => legacy(p, m, m === "kimi-k3.1-pro" && p === "moonshotai" ? { seen: true } : {})),
+    );
+    expect(stored).toHaveLength(10);
+    writeFileSync(join(h.dir, "model-arrivals.json"), JSON.stringify({ version: 1, events: stored }));
+    // folded on read, before any pass
+    const got = await events(h);
+    expect(got.map((e) => e.id).sort()).toEqual(["watch/kimi-k3.1-pro", "watch/kimi-k3.1-pro-highspeed"]);
+    expect(got.find((e) => e.id === "watch/kimi-k3.1-pro")).toMatchObject({ seen: true, first_seen_at: T0 - 1000 });
+    expect(got.find((e) => e.id === "watch/kimi-k3.1-pro-highspeed")).toMatchObject({ seen: false });
+    // the next pass persists the migration without re-announcing or resetting seen
+    await h.mr.tick();
+    h.clock.now += 6 * MIN;
+    await h.mr.tick();
+    const disk = JSON.parse(readFileSync(join(h.dir, "model-arrivals.json"), "utf8"));
+    expect(disk.events.map((e: { id: string }) => e.id).sort()).toEqual(["watch/kimi-k3.1-pro", "watch/kimi-k3.1-pro-highspeed"]);
+    const pro = disk.events.find((e: { id: string }) => e.id === "watch/kimi-k3.1-pro");
+    expect(pro).toMatchObject({ seen: true, first_seen_at: T0 - 1000, provider: "moonshotai" });
+    expect(pro.also_on).toEqual(["302ai", "llmgateway", "moonshotai-cn", "opencode-go", "requesty"]);
+  });
+
+  it("does not fold connected-provider events (own ids, own probes)", async () => {
+    const h = liveHarness();
+    const keep = legacy("requesty", "kimi-k3.1-pro", { status: "denied", reason: "403", kind: "listed" });
+    writeFileSync(join(h.dir, "model-arrivals.json"), JSON.stringify({ version: 1, events: [keep] }));
+    expect((await events(h)).map((e) => e.id)).toEqual(["requesty/kimi-k3.1-pro"]);
+  });
+
+  it("marking a legacy id seen marks its collapsed event", async () => {
+    const h = liveHarness();
+    writeFileSync(join(h.dir, "model-arrivals.json"), JSON.stringify({ version: 1, events: [legacy("302ai", "kimi-k3.1-pro")] }));
+    expect(await h.arrivals.markSeen(["302ai/kimi-k3.1-pro"])).toBe(1);
+    expect((await events(h))[0]).toMatchObject({ id: "watch/kimi-k3.1-pro", seen: true });
   });
 });
 

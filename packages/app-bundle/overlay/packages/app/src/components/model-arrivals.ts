@@ -29,6 +29,8 @@ export type ModelArrival = {
   first_seen_at: number
   seen: boolean
   watch: boolean
+  /** #2025: other (unconnected) providers listing the same model, on a collapsed watch arrival. */
+  also_on?: string[]
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v)
@@ -55,6 +57,9 @@ export function parseArrivalsResponse(raw: unknown): ModelArrival[] | undefined 
       first_seen_at: a.first_seen_at,
       seen: a.seen === true,
       watch: a.watch === true,
+      ...(Array.isArray(a.also_on) && a.also_on.some((p) => typeof p === "string")
+        ? { also_on: a.also_on.filter((p): p is string => typeof p === "string") }
+        : {}),
     })
   }
   return out

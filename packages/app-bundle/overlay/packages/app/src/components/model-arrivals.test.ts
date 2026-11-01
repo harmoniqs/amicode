@@ -83,4 +83,11 @@ describe("parseArrivalsResponse", () => {
     expect(parseArrivalsResponse({ ok: false, error: "x" })).toBeUndefined()
     expect(parseArrivalsResponse(null)).toBeUndefined()
   })
+
+  test("#2025: a collapsed watch arrival carries also_on through (optional, strings only)", () => {
+    const row = { id: "watch/m", provider: "moonshotai", model: "m", status: "unchecked", kind: "listed", first_seen_at: 5, seen: false, watch: true }
+    const got = parseArrivalsResponse({ ok: true, arrivals: [{ ...row, also_on: ["requesty", 7, "302ai"] }, row] })
+    expect(got?.[0]?.also_on).toEqual(["requesty", "302ai"])
+    expect(got?.[1]).not.toHaveProperty("also_on")
+  })
 })

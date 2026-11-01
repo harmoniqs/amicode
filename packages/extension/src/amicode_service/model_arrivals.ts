@@ -26,9 +26,16 @@
 //  - us./global./eu./apac. variants of one base id announce ONCE (the
 //    representative is the callable variant when there is one).
 //  - WATCHLIST (`model.watch` globs in model-picker.json) matches across ALL
-//    providers' catalogs, connected or not; a hit on an unconnected provider
-//    is announced as "listed" with the reason. A watch hit is announced once
-//    per (provider, base id).
+//    providers' catalogs, connected or not. A hit on a CONNECTED provider is
+//    its own event, announced once per (provider, base id). Hits on
+//    UNCONNECTED providers (#2025) collapse to ONE "listed" arrival per base
+//    model id — id `watch/<base id>`, the first-party provider as the
+//    representative (else the cheapest), `also_on` naming the other
+//    providers, the cheapest known price. A connected hit for the same base
+//    model wins (no collapsed entry). The collapsed entry is refreshed in
+//    place as providers come and go, so `seen` survives; old per-provider
+//    events (`<provider>/<base>`, watch, listed, "provider not connected")
+//    are folded into it on read, keeping `seen`.
 //  - kind: ok → available; Bedrock denied → needs-allowlist (the aws-infra
 //    IAM list); Bedrock "not available for this account"/Marketplace →
 //    needs-agreement; everything else → listed.
@@ -45,7 +52,8 @@ import { readWatchGlobs } from "./model_picker_config";
 export type ArrivalKind = "available" | "needs-allowlist" | "needs-agreement" | "listed";
 
 export interface Arrival {
-  /** `${provider}/${base id}` — stable across the regional variants. */
+  /** `${provider}/${base id}` — stable across the regional variants. A
+   *  collapsed unconnected watch hit (#2025) is `watch/${base id}`. */
   id: string;
   provider: string;
   /** The representative catalog id (the callable variant when there is one). */
@@ -60,6 +68,9 @@ export interface Arrival {
   price: { input?: number; output?: number } | null;
   context: number | null;
   latency_ms: number | null;
+  /** #2025: the other (unconnected) providers listing the same model, on a
+   *  collapsed watch arrival. Absent on every other event. */
+  also_on?: string[];
 }
 
 export const MAX_UNSEEN = 20;
@@ -96,6 +107,122 @@ export function watchMatches(globs: readonly string[], provider: string, model: 
   return globs.some((g) =>
     g.includes("/") ? forms.some((f) => globMatches(g, `${provider}/${f}`)) : forms.some((f) => globMatches(g, f)),
   );
+}
+
+/** #2025: the cross-provider identity of a model — the base id minus any
+ *  reseller path prefix ("moonshot/kimi-x" → "kimi-x") and Bedrock vendor
+ *  segment ("google.gemini-x" → "gemini-x"), lowercased. */
+export function collapseKey(id: string): string {
+  let b = baseModelId(id);
+  const slash = b.lastIndexOf("/");
+  if (slash >= 0) b = b.slice(slash + 1);
+  if (/^[a-z]+\./i.test(b)) b = b.slice(b.indexOf(".") + 1);
+  return b.toLowerCase();
+}
+
+/** Which provider is the model's maker — checked in order, so the global
+ *  endpoint outranks its regional twin. */
+const FIRST_PARTY: ReadonlyArray<readonly [string, RegExp]> = [
+  ["moonshotai", /^kimi/],
+  ["moonshotai-cn", /^kimi/],
+  ["google", /^(gemini|gemma)/],
+  ["anthropic", /^claude/],
+  ["zai", /^glm/],
+  ["zhipuai", /^glm/],
+  ["openai", /^(gpt|chatgpt|codex|o\d)/],
+  ["deepseek", /^deepseek/],
+  ["mistral", /^(mistral|codestral|devstral|ministral|magistral|pixtral)/],
+  ["xai", /^grok/],
+  ["alibaba", /^qwen/],
+  ["alibaba-cn", /^qwen/],
+  ["minimax", /^minimax/],
+  ["minimax-cn", /^minimax/],
+  ["cohere", /^command/],
+];
+
+/** The first-party provider for `model` among `providers`, if one lists it. */
+export function firstPartyProvider(model: string, providers: readonly string[]): string | undefined {
+  const key = collapseKey(model);
+  return FIRST_PARTY.find(([p, re]) => providers.includes(p) && re.test(key))?.[0];
+}
+
+interface Member {
+  provider: string;
+  model: string;
+  price: Arrival["price"];
+  context: number | null;
+}
+
+const priceScore = (p: Arrival["price"]): number => {
+  if (!p) return Number.POSITIVE_INFINITY;
+  const parts = [p.input, p.output].filter((n): n is number => typeof n === "number");
+  return parts.length === 0 ? Number.POSITIVE_INFINITY : parts.reduce((a, b) => a + b, 0);
+};
+
+/** One collapsed watch arrival's moving parts from its member providers. */
+function collapseMembers(members: Member[]): Pick<Arrival, "provider" | "model" | "price" | "context" | "also_on"> {
+  const byProvider = new Map<string, Member>();
+  for (const m of members) if (!byProvider.has(m.provider)) byProvider.set(m.provider, m);
+  const all = [...byProvider.values()];
+  const cheapest = [...all].sort((a, b) => priceScore(a.price) - priceScore(b.price) || a.provider.localeCompare(b.provider))[0]!;
+  const fp = firstPartyProvider(cheapest.model, all.map((m) => m.provider));
+  const rep = (fp !== undefined ? byProvider.get(fp) : undefined) ?? cheapest;
+  const also = all.map((m) => m.provider).filter((p) => p !== rep.provider).sort();
+  return {
+    provider: rep.provider,
+    model: rep.model,
+    price: priceScore(cheapest.price) === Number.POSITIVE_INFINITY ? null : cheapest.price,
+    context: rep.context,
+    ...(also.length > 0 ? { also_on: also } : {}),
+  };
+}
+
+const COLLAPSED_PREFIX = "watch/";
+
+/** A pre-#2025 per-provider event for an UNCONNECTED watch hit. */
+const isLegacyWatchHit = (e: Arrival): boolean =>
+  e.watch && e.kind === "listed" && e.status === "unchecked" && e.reason === "provider not connected" && !e.id.startsWith(COLLAPSED_PREFIX);
+
+/** #2025: fold legacy per-provider watch events into `watch/<base id>`
+ *  (keeping seen — any member seen ⇒ seen — and the earliest first_seen_at).
+ *  Pure; `alias` maps each folded legacy id to its collapsed id. */
+export function foldLegacyWatchEvents(events: Arrival[]): { events: Arrival[]; changed: boolean; alias: Map<string, string> } {
+  const alias = new Map<string, string>();
+  const legacy = events.filter(isLegacyWatchHit);
+  if (legacy.length === 0) return { events, changed: false, alias };
+  const groups = new Map<string, Arrival[]>();
+  for (const e of legacy) {
+    const id = COLLAPSED_PREFIX + collapseKey(e.model);
+    alias.set(e.id, id);
+    groups.set(id, [...(groups.get(id) ?? []), e]);
+  }
+  const kept = events.filter((e) => !isLegacyWatchHit(e));
+  for (const [id, group] of groups) {
+    const existingAt = kept.findIndex((e) => e.id === id);
+    const existing = existingAt >= 0 ? kept[existingAt] : undefined;
+    const members: Member[] = group.map((e) => ({ provider: e.provider, model: e.model, price: e.price, context: e.context }));
+    if (existing) {
+      members.push({ provider: existing.provider, model: existing.model, price: existing.price, context: existing.context });
+      for (const p of existing.also_on ?? []) members.push({ provider: p, model: existing.model, price: null, context: null });
+    }
+    const all = existing ? [existing, ...group] : group;
+    const folded: Arrival = {
+      ...(existing ?? group[0]!),
+      ...collapseMembers(members),
+      id,
+      kind: "listed",
+      status: "unchecked",
+      reason: "provider not connected",
+      watch: true,
+      seen: all.some((e) => e.seen),
+      first_seen_at: Math.min(...all.map((e) => e.first_seen_at)),
+      latency_ms: null,
+    };
+    if (folded.also_on === undefined) delete folded.also_on;
+    if (existingAt >= 0) kept[existingAt] = folded;
+    else kept.push(folded);
+  }
+  return { events: kept, changed: true, alias };
 }
 
 const isBedrock = (provider: string) => /bedrock/i.test(provider);
@@ -168,6 +295,9 @@ function parseEvents(text: string | undefined): EventsDoc {
         price,
         context: numOrNull(e.context),
         latency_ms: numOrNull(e.latency_ms),
+        ...(Array.isArray(e.also_on) && e.also_on.some((p) => typeof p === "string")
+          ? { also_on: e.also_on.filter((p): p is string => typeof p === "string") }
+          : {}),
       });
     }
   } catch {
@@ -250,8 +380,11 @@ export class ModelArrivals {
     const connected = new Set(info.connected);
     const snap = parseSnapshot(await readText(this.snapshotFile));
 
-    // 1. candidate groups (per provider, grouped by base id)
+    // 1. candidate groups (per provider, grouped by base id); watch hits on
+    //    UNCONNECTED providers gather per model across providers instead (#2025)
     const groups = new Map<string, Group>();
+    const unconnectedHits = new Map<string, Member[]>(); // collapseKey → members
+    const connectedKeys = new Set<string>(); // collapseKeys a connected provider has a candidate for
     for (const [pid, models] of Object.entries(info.providers)) {
       const ids = Object.keys(models).sort();
       const isConnected = connected.has(pid);
@@ -264,6 +397,17 @@ export class ModelArrivals {
         const isNewId = isConnected && prev !== undefined && !prevSet.has(id);
         const diffNew = isNewId && !prevBases.has(base);
         if (!diffNew && !watched) continue;
+        if (!isConnected) {
+          const meta = models[id];
+          const price =
+            meta && (meta.input !== undefined || meta.output !== undefined)
+              ? { ...(meta.input !== undefined ? { input: meta.input } : {}), ...(meta.output !== undefined ? { output: meta.output } : {}) }
+              : null;
+          const ck = collapseKey(id);
+          unconnectedHits.set(ck, [...(unconnectedHits.get(ck) ?? []), { provider: pid, model: id, price, context: meta?.context ?? null }]);
+          continue;
+        }
+        connectedKeys.add(collapseKey(id));
         const key = `${pid}/${base}`;
         const g = groups.get(key) ?? { provider: pid, base, ids: [], watch: false, fromDiff: false };
         g.ids.push(id);
@@ -274,14 +418,17 @@ export class ModelArrivals {
     }
 
     // 2. resolve a verdict per group (probe the connected ones' new ids)
-    const existing = parseEvents(await readText(this.eventsFile));
+    const existing = foldLegacyWatchEvents(parseEvents(await readText(this.eventsFile)).events);
     const have = new Set(existing.events.map((e) => e.id));
+    // one collapsed arrival per base model; a connected candidate for it wins
+    const collapsed: Array<{ id: string; fields: ReturnType<typeof collapseMembers> }> = [];
+    for (const [ck, members] of unconnectedHits)
+      if (!connectedKeys.has(ck)) collapsed.push({ id: COLLAPSED_PREFIX + ck, fields: collapseMembers(members) });
     const decided: Array<{ group: Group; event: Arrival }> = [];
     const pending = new Set<string>(); // `${pid}\0${id}` left out of the snapshot
     const toProbe = new Map<string, string[]>();
     for (const g of groups.values()) {
       if (!g.fromDiff && have.has(`${g.provider}/${g.base}`)) continue; // watch hit already announced
-      if (!connected.has(g.provider)) continue;
       const need = g.ids.filter((id) => this.mr.cachedRow(g.provider, id).status === "unchecked");
       if (need.length > 0) toProbe.set(g.provider, [...(toProbe.get(g.provider) ?? []), ...need]);
     }
@@ -294,14 +441,6 @@ export class ModelArrivals {
       const key = `${g.provider}/${g.base}`;
       if (!g.fromDiff && have.has(key)) continue;
       const meta = (id: string): CatalogModelMeta | undefined => info!.providers[g.provider]?.[id];
-      if (!connected.has(g.provider)) {
-        const rep = g.ids[0]!;
-        decided.push({
-          group: g,
-          event: this.event(g, rep, "unchecked", "provider not connected", null, meta(rep), nowMs),
-        });
-        continue;
-      }
       if (g.ids.some((id) => pending.has(`${g.provider}\0${id}`))) continue; // retry next pass
       const rows = g.ids.map((id) => this.mr.cachedRow(g.provider, id));
       // an id the probe returned no row for (not probeable) is skipped
@@ -327,6 +466,35 @@ export class ModelArrivals {
       const snapNow = parseSnapshot(await readText(this.snapshotFile));
       const evNow = parseEvents(await readText(this.eventsFile));
       const announced = new Set<string>();
+      const folded = foldLegacyWatchEvents(evNow.events);
+      evNow.events = folded.events;
+      let dirty = folded.changed;
+      for (const { id, fields } of collapsed) {
+        const i = evNow.events.findIndex((e) => e.id === id);
+        if (i < 0) {
+          evNow.events.push({
+            id,
+            ...fields,
+            status: "unchecked",
+            kind: "listed",
+            reason: "provider not connected",
+            first_seen_at: nowMs,
+            seen: false,
+            watch: true,
+            latency_ms: null,
+          });
+          dirty = true;
+          continue;
+        }
+        // refresh in place — id, seen and first_seen_at are the event's identity
+        const cur = evNow.events[i]!;
+        const next: Arrival = { ...cur, ...fields };
+        if (fields.also_on === undefined) delete next.also_on;
+        if (JSON.stringify(next) !== JSON.stringify(cur)) {
+          evNow.events[i] = next;
+          dirty = true;
+        }
+      }
       for (const { group, event } of decided) {
         const prevIds = new Set(snapNow.providers[group.provider] ?? []);
         // another shard already took this diff (its ids are in the snapshot)
@@ -338,6 +506,7 @@ export class ModelArrivals {
         }
         evNow.events.push(event);
         announced.add(event.id);
+        dirty = true;
       }
       evNow.events.sort((a, b) => b.first_seen_at - a.first_seen_at || a.id.localeCompare(b.id));
       evNow.events.length = Math.min(evNow.events.length, MAX_EVENTS);
@@ -347,7 +516,7 @@ export class ModelArrivals {
         snapNow.providers[pid] = [...new Set([...(snapNow.providers[pid] ?? []), ...keep])].sort();
       }
       await writeAtomic(this.snapshotFile, snapNow);
-      if (announced.size > 0) await writeAtomic(this.eventsFile, evNow);
+      if (dirty) await writeAtomic(this.eventsFile, evNow);
     });
   }
 
@@ -382,7 +551,7 @@ export class ModelArrivals {
 
   /** The GET body's data: all unseen (capped) + the recent seen. */
   async list(): Promise<{ arrivals: Arrival[]; unseen: number; collapsed: number }> {
-    const doc = parseEvents(await readText(this.eventsFile));
+    const doc = { events: foldLegacyWatchEvents(parseEvents(await readText(this.eventsFile)).events).events };
     const sorted = [...doc.events].sort((a, b) => b.first_seen_at - a.first_seen_at || a.id.localeCompare(b.id));
     const unseen = sorted.filter((e) => !e.seen);
     const seen = sorted.filter((e) => e.seen).slice(0, MAX_SEEN_RETURNED);
@@ -393,16 +562,19 @@ export class ModelArrivals {
 
   /** Mark events seen; returns how many existing, previously-unseen events changed. */
   async markSeen(ids: string[]): Promise<number> {
-    const want = new Set(ids);
     return this.mr.withLock("arrivals", async () => {
       const doc = parseEvents(await readText(this.eventsFile));
+      const folded = foldLegacyWatchEvents(doc.events);
+      doc.events = folded.events;
+      // a legacy per-provider id resolves to its collapsed event
+      const want = new Set(ids.map((i) => folded.alias.get(i) ?? i));
       let n = 0;
       for (const e of doc.events)
         if (want.has(e.id) && !e.seen) {
           e.seen = true;
           n++;
         }
-      if (n > 0) await writeAtomic(this.eventsFile, doc);
+      if (n > 0 || folded.changed) await writeAtomic(this.eventsFile, doc);
       return n;
     });
   }
