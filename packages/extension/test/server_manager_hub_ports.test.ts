@@ -5,7 +5,8 @@
 // never is. The observed failure this kills: a Machine-settings pin of
 // amicode.opencodePort=4094 on the hub host races the hub's own engine
 // socket (the erlich three-bounce pattern).
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
+import { fakeServeShim, reapFakeServes } from "./fake_serve_reaper";
 import { mkdtempSync, writeFileSync, chmodSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -28,10 +29,14 @@ function fakeOpencodeBinary(dir: string, argsFile: string): string {
     ].join("\n"),
   );
   const bin = join(dir, "opencode");
-  writeFileSync(bin, `#!/bin/sh\nexec "${process.execPath}" "${serverMjs}" "$@"\n`);
+  writeFileSync(bin, fakeServeShim(dir, serverMjs));
   chmodSync(bin, 0o755);
   return bin;
 }
+
+// #1782: reap every detached fake_serve.mjs a test spawned, even when an assertion
+// failed before the test's own cleanup line.
+afterEach(() => reapFakeServes());
 
 describe("ServerManager — the reserved hub port guard (#1760 P4 requirement 3)", () => {
   it("refuses a pinned reserved hub port: the spawn lands on a non-reserved port, with the named log line", async () => {

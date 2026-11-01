@@ -10,9 +10,10 @@ import {
   keymapBindings,
 } from "./editor-core"
 import { EditorView, runScopeHandlers } from "@codemirror/view"
-import { EditorState } from "@codemirror/state"
+import { EditorSelection, EditorState } from "@codemirror/state"
 import { foldable, foldedRanges, syntaxTree } from "@codemirror/language"
 import { gotoLine } from "@codemirror/search"
+import { addCursorAbove, addCursorBelow, cursorCharRight, deleteCharBackward } from "@codemirror/commands"
 
 /**
  * Tests for editor-core — the extracted general-purpose CM6 setup functions
@@ -238,6 +239,117 @@ describe("baseExtensions go-to-line shortcuts (#1515)", () => {
     const ev = keyEvent({ key: "g", code: "KeyG", keyCode: 71, altKey: true, ...mod })
     expect(runScopeHandlers(view, ev, "editor")).toBe(true)
     expect(view.dom.querySelector(".cm-goto-line")).not.toBeNull()
+    view.destroy()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Multiple cursors (#1516) — Mod-Alt-Up/Down, Mod-d, Escape, in-sync edits.
+// CM6's defaultKeymap already binds Mod-Alt-ArrowUp/Down (addCursorAbove /
+// addCursorBelow) and searchKeymap binds Mod-d (selectNextOccurrence). The
+// facet below is what actually lets those commands keep extra ranges.
+//
+// Vertical cursor placement (Mod-Alt-Up/Down) reads real layout geometry, which
+// happy-dom does not provide, so those cases assert the binding wiring here and
+// are verified by hand in a live webview. Editing and movement across several
+// cursors are exercised on explicitly built multi-range selections.
+// ---------------------------------------------------------------------------
+
+describe("multiple-cursor keybindings (#1516)", () => {
+  const SRC = "alpha foo\nbeta foo\ngamma foo\n"
+
+  function makeView(anchor: number, head?: number): EditorView {
+    const parent = document.createElement("div")
+    document.body.appendChild(parent)
+    return new EditorView({
+      parent,
+      state: EditorState.create({
+        doc: SRC,
+        selection: { anchor, head },
+        extensions: baseExtensions({ theme: buildThemeExtension("dark") }),
+      }),
+    })
+  }
+
+  function withCursors(view: EditorView, positions: number[]): void {
+    view.dispatch({
+      selection: EditorSelection.create(positions.map((p) => EditorSelection.cursor(p))),
+    })
+  }
+
+  const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/.test(navigator.platform)
+  const mod = isMac ? { metaKey: true } : { ctrlKey: true }
+
+  function keyEvent(init: KeyboardEventInit): KeyboardEvent {
+    return new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init })
+  }
+
+  test("baseExtensions enables multiple selections (CM6 default is off)", () => {
+    const view = makeView(0)
+    expect(view.state.facet(EditorState.allowMultipleSelections)).toBe(true)
+    view.destroy()
+  })
+
+  test("Mod-Alt-ArrowDown is wired to addCursorBelow and handled by the editor", () => {
+    expect(keymapBindings().find((b) => b.key === "Mod-Alt-ArrowDown")?.run).toBe(addCursorBelow)
+    const view = makeView(0)
+    const ev = keyEvent({ key: "ArrowDown", code: "ArrowDown", keyCode: 40, altKey: true, ...mod })
+    expect(runScopeHandlers(view, ev, "editor")).toBe(true)
+    view.destroy()
+  })
+
+  test("Mod-Alt-ArrowUp is wired to addCursorAbove and handled by the editor", () => {
+    expect(keymapBindings().find((b) => b.key === "Mod-Alt-ArrowUp")?.run).toBe(addCursorAbove)
+    const view = makeView(SRC.indexOf("gamma"))
+    const ev = keyEvent({ key: "ArrowUp", code: "ArrowUp", keyCode: 38, altKey: true, ...mod })
+    expect(runScopeHandlers(view, ev, "editor")).toBe(true)
+    view.destroy()
+  })
+
+  test("Mod-d selects the next occurrence and adds a cursor", () => {
+    const view = makeView(6, 9) // "foo" on line 1
+    const ev = keyEvent({ key: "d", code: "KeyD", keyCode: 68, ...mod })
+    expect(runScopeHandlers(view, ev, "editor")).toBe(true)
+    const texts = view.state.selection.ranges.map((r) => view.state.sliceDoc(r.from, r.to))
+    expect(texts).toEqual(["foo", "foo"])
+    view.destroy()
+  })
+
+  test("Escape collapses multiple cursors to the primary cursor", () => {
+    const view = makeView(0)
+    withCursors(view, [0, SRC.indexOf("beta")])
+    expect(view.state.selection.ranges).toHaveLength(2)
+    const primaryHead = view.state.selection.main.head
+    const esc = keyEvent({ key: "Escape", code: "Escape", keyCode: 27 })
+    expect(runScopeHandlers(view, esc, "editor")).toBe(true)
+    expect(view.state.selection.ranges).toHaveLength(1)
+    expect(view.state.selection.main.head).toBe(primaryHead)
+    view.destroy()
+  })
+
+  test("cursor movement applies to every cursor", () => {
+    const view = makeView(0)
+    withCursors(view, [0, SRC.indexOf("beta")])
+    expect(cursorCharRight(view)).toBe(true)
+    const columns = view.state.selection.ranges.map((r) => r.head - view.state.doc.lineAt(r.head).from)
+    expect(columns).toEqual([1, 1])
+    view.destroy()
+  })
+
+  test("deletion applies to every cursor", () => {
+    // Cursors after "alpha" and after "beta " (column 5 on lines 1 and 2).
+    const view = makeView(5)
+    withCursors(view, [5, SRC.indexOf("beta") + 5])
+    expect(deleteCharBackward(view)).toBe(true)
+    expect(view.state.doc.toString()).toBe("alph foo\nbetafoo\ngamma foo\n")
+    view.destroy()
+  })
+
+  test("typing inserts text at every cursor", () => {
+    const view = makeView(0)
+    withCursors(view, [0, SRC.indexOf("beta")])
+    view.dispatch(view.state.replaceSelection("X"))
+    expect(view.state.doc.toString()).toBe("Xalpha foo\nXbeta foo\ngamma foo\n")
     view.destroy()
   })
 })

@@ -43,8 +43,8 @@ import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
-import os from "node:os";
-import { fetchProviderModels, probeProviderModels } from "../llm_creds.mjs";
+import { amicodeOpsDir, legacyOpsFile } from "../ops_dir";
+import { fetchProviderCatalog, fetchProviderModels, probeProviderModels } from "../llm_creds.mjs";
 
 export type ProbeStatus = "ok" | "denied" | "unavailable" | "invalid" | "rate-limited" | "error";
 export type ReachabilityStatus = ProbeStatus | "unchecked";
@@ -52,6 +52,20 @@ export type ReachabilityStatus = ProbeStatus | "unchecked";
 const PROBE_STATUSES: readonly ProbeStatus[] = ["ok", "denied", "unavailable", "invalid", "rate-limited", "error"];
 /** A demotion names a FAILURE — "ok" is only ever a probe's word. */
 const DEMOTE_STATUSES: readonly ProbeStatus[] = ["denied", "unavailable", "invalid", "rate-limited", "error"];
+
+/** #2000: one catalog model's non-secret meta (USD per Mtok, context tokens). */
+export interface CatalogModelMeta {
+  input?: number;
+  output?: number;
+  context?: number;
+}
+
+/** #2000: the full catalog — every provider the engine lists (connected or
+ *  not) plus which of them are connected. */
+export interface CatalogInfo {
+  connected: string[];
+  providers: Record<string, Record<string, CatalogModelMeta>>;
+}
 
 /** One row of the engine's POST /provider/probe response (#1984). */
 export interface ProbeResult {
@@ -78,6 +92,12 @@ export interface ModelReachabilityDeps {
   listModels?: () => Promise<Record<string, string[]> | undefined>;
   /** The engine probe (S1). undefined/throwing = the probe failed. */
   probe?: (providerID: string, modelIDs: string[]) => Promise<ProbeOutput | undefined>;
+  /** #2000: the FULL catalog with per-model price/context and the connected
+   *  provider set (engine GET /provider) — feeds the arrivals pass. undefined/
+   *  throwing = unknown; the pass is skipped, never read as "no models". */
+  listCatalog?: () => Promise<CatalogInfo | undefined>;
+  /** #2000: the watchlist globs (model-picker.json `model.watch`). */
+  getWatch?: () => string[];
   /** Floor between probe attempts of one provider, any trigger. Default 5 min. */
   minProbeIntervalMs?: number;
   /** The scheduler's re-probe age. Default 24 h. */
@@ -168,12 +188,16 @@ const PROBE_BATCH = 500; // the engine's PROBE_MAX_MODELS
 const REASON_MAX = 300;
 const ID_MAX = 256;
 
-/** The cache file (the #864 ops-dir convention: $AMICODE_OPS_DIR → ~/.amico),
- *  beside model-routing-providers.json. */
+/** The cache file: $AMICODE_OPS_DIR → ~/.amico/amicode (#1998 — the ONE ops
+ *  dir, beside model-picker.json and model-routing-providers.json). */
 export function reachabilityCacheFile(env: NodeJS.ProcessEnv = process.env): string {
-  const v = env.AMICODE_OPS_DIR;
-  const dir = typeof v === "string" && v.trim() !== "" ? v : path.join(os.homedir(), ".amico");
-  return path.join(dir, "model-reachability.json");
+  return path.join(amicodeOpsDir(env), "model-reachability.json");
+}
+
+/** Where the cache lived before #1998 (~/.amico/model-reachability.json) —
+ *  read when the canonical file is missing; never written. */
+export function legacyReachabilityCacheFile(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  return legacyOpsFile("model-reachability.json", env);
 }
 
 const emptyDoc = (): CacheDoc => ({ version: 1, providers: {} });
@@ -269,12 +293,17 @@ function pidAlive(pid: unknown): boolean {
 
 export class ModelReachability {
   readonly file: string;
+  /** #1998: the pre-unification location, consulted only when `file` is the
+   *  default (an explicit deps.file is the caller's exact choice). */
+  private readonly legacyFile: string | undefined;
   private readonly deps: ModelReachabilityDeps;
   private ticking: Promise<void> | undefined;
+  private readonly tickHooks: Array<() => Promise<void>> = [];
 
   constructor(deps: ModelReachabilityDeps = {}) {
     this.deps = deps;
     this.file = deps.file ?? reachabilityCacheFile();
+    this.legacyFile = deps.file === undefined ? legacyReachabilityCacheFile() : undefined;
   }
 
   private now(): number {
@@ -295,10 +324,20 @@ export class ModelReachability {
   }
 
   // ── the shared-file lock ────────────────────────────────────────────────
+  /** The file to read: canonical when present, else the legacy twin. */
+  private get readFile_(): string {
+    return this.legacyFile === undefined || existsSync(this.file)
+      ? this.file
+      : existsSync(this.legacyFile)
+        ? this.legacyFile
+        : this.file;
+  }
+
   private readDocSync(): CacheDoc {
-    if (!existsSync(this.file)) return emptyDoc();
+    const src = this.readFile_;
+    if (!existsSync(src)) return emptyDoc();
     try {
-      return parseDoc(readFileSync(this.file, "utf8"));
+      return parseDoc(readFileSync(src, "utf8"));
     } catch {
       return emptyDoc();
     }
@@ -352,7 +391,7 @@ export class ModelReachability {
     const lockDir = `${this.file}.lock`;
     await this.acquire(lockDir);
     try {
-      const text = await readFile(this.file, "utf8").catch(() => undefined);
+      const text = await readFile(this.readFile_, "utf8").catch(() => undefined);
       const doc = parseDoc(text);
       const result = fn(doc);
       const tmp = path.join(path.dirname(this.file), `.${path.basename(this.file)}.${randomBytes(6).toString("hex")}.tmp`);
@@ -479,7 +518,7 @@ export class ModelReachability {
   }
 
   /** Probe one claimed provider (batched at the engine's cap) and merge. */
-  private async probeAndMerge(provider: string, models: string[]): Promise<boolean> {
+  private async probeAndMerge(provider: string, models: string[], partial = false): Promise<boolean> {
     let results: ProbeResult[] | undefined = [];
     for (let i = 0; i < models.length && results !== undefined; i += PROBE_BATCH) {
       let out: ProbeOutput | undefined;
@@ -501,9 +540,16 @@ export class ModelReachability {
       return false;
     }
     const rows = results;
+    let kept = true;
     await this.update((doc) => {
       const p = doc.providers[provider] ?? emptyProvider();
       const fp = rows.length > 0 ? rows[0]!.credential_fp : p.credential_fp;
+      // #2000: a SUBSET probe never reconciles a credential change (that would
+      // wipe every other row on a partial view) — the next full probe does.
+      if (partial && p.last_probe_at !== null && fp !== p.credential_fp) {
+        kept = false;
+        return;
+      }
       // #2001: the provider's first probe (or the first under a new credential)
       // is the BASELINE — what is ok there was already available, not an arrival.
       const baseline = p.last_probe_at === null || fp !== p.credential_fp;
@@ -522,11 +568,55 @@ export class ModelReachability {
           first_ok_at: prior ?? (r.status === "ok" ? (baseline ? 0 : r.checked_at) : null),
         };
       }
-      p.last_probe_at = now;
+      // a subset probe (new arrivals) must not defer the provider's daily pass
+      if (!partial) p.last_probe_at = now;
       p.last_error = null;
       doc.providers[provider] = p;
     });
-    return true;
+    return kept;
+  }
+
+  /** #2000: probe just these model ids now (a new arrival), through the SAME
+   *  per-provider rate-limit claim as every other trigger. false = refused
+   *  (inside the floor), failed, or the credential changed under us — the
+   *  caller leaves the ids pending and retries next pass. Never throws. */
+  async probeSubset(provider: string, models: string[]): Promise<boolean> {
+    if (!this.deps.probe || models.length === 0) return false;
+    try {
+      const { claimed } = await this.claim([provider]);
+      if (!claimed.includes(provider)) return false;
+      return await this.probeAndMerge(provider, models, true);
+    } catch {
+      return false;
+    }
+  }
+
+  /** #2000: the cached verdict for one model, read straight from the cache
+   *  file (unchecked when the cache cannot vouch for it). */
+  cachedRow(provider: string, model: string): ReachabilityRow {
+    return this.rowOf(this.readDocSync(), provider, model);
+  }
+
+  /** #2000: run `fn` under a sibling lock beside the cache file (the arrivals
+   *  store's read-modify-write rides the same stale-reclaim lock machinery). */
+  async withLock<T>(name: string, fn: () => Promise<T>): Promise<T> {
+    const lockDir = `${this.file}.${name}.lock`;
+    await this.acquire(lockDir);
+    try {
+      return await fn();
+    } finally {
+      await rm(lockDir, { recursive: true, force: true });
+    }
+  }
+
+  /** #2000: register a post-pass hook (the arrivals pass) — runs at the end of
+   *  every scheduler tick, after the daily probes. Errors are contained. */
+  onTick(hook: () => Promise<void>): void {
+    this.tickHooks.push(hook);
+  }
+
+  get catalogDeps(): Pick<ModelReachabilityDeps, "listCatalog" | "getWatch" | "log"> {
+    return { listCatalog: this.deps.listCatalog, getWatch: this.deps.getWatch, log: this.deps.log };
   }
 
   /** On-demand refresh (one provider, or every catalog provider). */
@@ -577,6 +667,13 @@ export class ModelReachability {
         p === undefined || p.last_probe_at === null ? true : now - p.last_probe_at >= this.dailyMs,
       );
       for (const pid of claimed) await this.probeAndMerge(pid, catalog[pid] ?? []);
+      for (const hook of this.tickHooks) {
+        try {
+          await hook();
+        } catch (err) {
+          this.deps.log?.(`[model-reachability] tick hook failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
     })()
       .catch((err) => this.deps.log?.(`[model-reachability] scheduler pass failed: ${err instanceof Error ? err.message : String(err)}`))
       .finally(() => {
@@ -676,7 +773,7 @@ export async function demoteModelReachabilityResponse(body: unknown, mr: ModelRe
 export function engineReachabilityDeps(engine: {
   getUrl: () => string | undefined;
   headers?: Record<string, string>;
-}): Pick<ModelReachabilityDeps, "listModels" | "probe"> {
+}): Pick<ModelReachabilityDeps, "listModels" | "probe" | "listCatalog"> {
   return {
     listModels: async () => {
       const url = engine.getUrl();
@@ -685,6 +782,10 @@ export function engineReachabilityDeps(engine: {
     probe: async (providerID, modelIDs) => {
       const url = engine.getUrl();
       return url ? probeProviderModels(url, providerID, modelIDs, { headers: engine.headers }) : undefined;
+    },
+    listCatalog: async () => {
+      const url = engine.getUrl();
+      return url ? fetchProviderCatalog(url, { headers: engine.headers }) : undefined;
     },
   };
 }

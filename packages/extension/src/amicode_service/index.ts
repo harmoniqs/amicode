@@ -110,6 +110,7 @@ import {
   type ModelReachabilityDeps,
 } from "./model_reachability";
 import { modelPickerConfigResponse } from "./model_picker_config";
+import { ModelArrivals, markSeenResponse, modelArrivalsResponse } from "./model_arrivals";
 import { registerReleasesRoutes, type ReleasesDeps } from "./releases";
 
 export function registerProfileRoutes(server: AmicodeServiceServer): AmicodeServiceServer {
@@ -451,6 +452,14 @@ export function registerModelReachabilityRoutes(
   deps: ModelReachabilityDeps = {},
 ): AmicodeServiceServer {
   const mr = new ModelReachability(deps);
+  // #2000: model arrivals — the catalog-diff pass rides the scheduler tick
+  // (after the daily probes), the events store is a sibling of the cache file.
+  const arrivals = new ModelArrivals({ reachability: mr });
+  mr.onTick(() => arrivals.pass());
+  server.add("GET", "/amicode/model-arrivals", async () => ({ body: await modelArrivalsResponse(arrivals) }));
+  server.add("POST", "/amicode/model-arrivals/seen", async ({ body }) => ({
+    body: await markSeenResponse(body, arrivals),
+  }));
   server.add("GET", "/amicode/model-reachability", async () => {
     const body = await modelReachabilityResponse(mr);
     // the GET is also an on-connect trigger: a newly connected provider is
@@ -1608,6 +1617,12 @@ export function createAmicodeService(
   // #2001: GET /amicode/releases — the What's-new cards + "new for you"
   // arrivals read from the SAME reachability cache (a read-only instance).
   const releasesReachability = new ModelReachability({ ...opts.modelReachability, schedulerIntervalMs: 0 });
-  registerReleasesRoutes(server, { ...opts.releases, reachability: () => releasesReachability.snapshot() });
+  const releasesArrivals = new ModelArrivals({ reachability: releasesReachability });
+  registerReleasesRoutes(server, {
+    ...opts.releases,
+    reachability: () => releasesReachability.snapshot(),
+    // #2000: the arrival events (same store the picker reads) feed "new for you"
+    arrivals: async () => (await releasesArrivals.list()).arrivals,
+  });
   return server;
 }

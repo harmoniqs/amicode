@@ -11,6 +11,7 @@ import { createNewSessionWorkspaceController } from "./new-session/new-session-w
 import { useNewSessionCommands } from "./new-session/use-new-session-commands"
 import { postRouteInfo } from "@/utils/amicode-route-info"
 import { sessionContextMessage } from "@/utils/amicode-session-relay"
+import { previewFilePathForSession } from "@/components/session/preview-file-target"
 import { useAmicodeCommands } from "@/pages/session/use-amicode-commands"
 
 /** The draft-only V2 session page. Submitting promotes the draft into a real session. */
@@ -52,8 +53,9 @@ export default function NewSessionPage() {
     // so the shell can rebuild this pane with its draft text intact.
     postRouteInfo(`${location.pathname}${location.search}`, "New session")
     const onPreviewFile = (event: MessageEvent) => {
-      const data = event.data as { source?: string; kind?: string; path?: string } | undefined
-      if (data?.source === "amicode" && data.kind === "preview-file" && data.path) setPreviewFile(data.path)
+      // #1648: the draft page has no session — only untargeted or draft-targeted opens.
+      const path = previewFilePathForSession(event.data, undefined)
+      if (path) setPreviewFile(path)
     }
     window.addEventListener("message", onPreviewFile)
     onCleanup(() => window.removeEventListener("message", onPreviewFile))

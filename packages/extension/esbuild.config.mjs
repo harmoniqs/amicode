@@ -63,15 +63,26 @@ if (declaredBins.some((name) => existsSync(`${arRoot}/dist/${name}.js`))) {
 // #2001: the What's-new page's release cards (docs/releases/<version>.md) ride
 // the VSIX in dist/releases, so GET /amicode/releases works offline (and on a
 // hub runner, from the same extension tree). dist/ ships (not in .vscodeignore).
+// #2017: ALSO beside the standalone runner (bin/dist/releases) — the hub runs
+// bin/dist/amicode-service-runner.mjs on its own, and resolveReleasesDir()
+// checks <here>/releases first, so a runner deploy carries its cards with it.
 const releasesSrc = "../../docs/releases";
 if (existsSync(releasesSrc)) {
-  mkdirSync("dist/releases", { recursive: true });
-  for (const name of readdirSync(releasesSrc)) {
-    if (name.endsWith(".md")) cpSync(`${releasesSrc}/${name}`, `dist/releases/${name}`);
+  for (const out of ["dist/releases", "bin/dist/releases"]) {
+    mkdirSync(out, { recursive: true });
+    for (const name of readdirSync(releasesSrc)) {
+      if (name.endsWith(".md")) cpSync(`${releasesSrc}/${name}`, `${out}/${name}`);
+    }
   }
 } else {
   console.warn("[esbuild] docs/releases missing — the What's-new page will have no release cards");
 }
+
+// #2017: bake this build's version into the node bundles — the hub runner has
+// no package.json near it, and a 0.0.0 fallback filtered every release card.
+// Read via a typeof guard (src/build_defines.d.ts) so vitest without it works.
+const ownVersion = JSON.parse(readFileSync("package.json", "utf8")).version;
+const versionDefine = { __AMICODE_VERSION__: JSON.stringify(ownVersion) };
 
 const targets = [
   // extension host entry point
@@ -83,6 +94,7 @@ const targets = [
     format: "cjs",
     outfile: "dist/extension.js",
     external: ["vscode"],
+    define: versionDefine,
     sourcemap: true,
     minify: false,
     logLevel: "info",
@@ -139,6 +151,7 @@ const targets = [
     target: "node20",
     format: "esm",
     outfile: "bin/dist/amicode-service-runner.mjs",
+    define: versionDefine,
     sourcemap: true,
     minify: false,
     logLevel: "info",

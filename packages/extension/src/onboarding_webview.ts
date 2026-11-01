@@ -1029,6 +1029,9 @@ if (cancelBtn) {
 // a specific "Connect X" entry point elsewhere in the product; the welcome
 // beat belongs to first-run Stage-0 only.
 if (focusProvider) {
+  // #animation is a 100vh flex box by default; without hiding it the form
+  // renders below the fold and the panel looks blank (#1418).
+  animationEl.style.display = "none";
   revealForm();
 } else {
   playWelcomeAnimation();

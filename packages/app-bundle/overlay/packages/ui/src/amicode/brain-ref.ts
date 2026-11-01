@@ -58,7 +58,7 @@ export function amicoBrainRef(tool: string, input: Record<string, unknown> = {})
     case "bash": {
       const cmd = str(input.command) ?? ""
       const desc = str(input.description)
-      if (/amico-run|julia/.test(cmd)) return { label: desc?.slice(0, 28) ?? "solve run", type: "experiment", consider: false }
+      if (/amico run|julia/.test(cmd)) return { label: desc?.slice(0, 28) ?? "solve run", type: "experiment", consider: false }
       return desc ? { label: desc.slice(0, 28), type: "resource", consider: false } : undefined
     }
     case "question":

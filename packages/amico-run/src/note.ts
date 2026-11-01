@@ -362,7 +362,13 @@ export interface RoutedNoteFields {
   stamp: string; // YYYYMMDD-HHMMSS
   route_intent?: string; // stamped only on a personal fallback
   session_id?: string | null; // routed notes are agent-agnostic → null
+  /** Extra frontmatter scalars (`--meta key=value`), e.g. `status`/`visibility` a
+   *  spec needs to clear its schema. Emitted after `tags`, before `route_intent`. */
+  meta?: Record<string, string>;
 }
+
+/** Frontmatter keys a caller may NOT set through `--meta` (the renderer owns them). */
+export const RESERVED_META_KEYS = ["type", "date", "session_id", "tags", "route_intent"] as const;
 
 /** Render a routed generic note: minimal frontmatter (`type`, `date`,
  *  `session_id: null`, `tags: [<type>]`, and `route_intent` only when set) + an H1
@@ -376,9 +382,64 @@ export function renderRoutedNote(f: RoutedNoteFields): string {
     `session_id: ${f.session_id ? `"${f.session_id}"` : "null"}`,
     `tags: [${f.type}]`,
   ];
+  for (const [k, v] of Object.entries(f.meta ?? {})) fm.push(`${k}: ${v}`);
   if (f.route_intent) fm.push(`route_intent: ${f.route_intent}`);
   fm.push("---");
 
   const body = ["", `# ${f.title}`, "", f.body.trim(), ""].join("\n");
   return fm.join("\n") + "\n" + body + "\n";
+}
+
+// ── schema check before a team write (#1863) ─────────────────────────────────────
+// Required frontmatter per note type — mirrors the `amico-schema-check` skill's
+// table (owned by `amico-vault`; change it there and mirror here). Only the types
+// the routed writer can produce are listed.
+export const ROUTED_REQUIRED_FIELDS: Record<string, readonly string[]> = {
+  spec: ["type", "date", "session_id", "status", "tags", "visibility"],
+  plan: ["type", "date", "session_id", "status", "spec", "tags", "visibility"],
+  insight: ["type", "date", "session_id", "evidence", "confidence", "tags"],
+  method: ["type", "name", "date", "session_id", "applicability", "tags"],
+  note: ["type", "date", "session_id", "tags"],
+  hopper: ["type", "date", "status", "tags"],
+};
+
+/** The top-level `key: value` pairs of a note's leading frontmatter block (raw value
+ *  text, quotes kept). Empty map when there is no frontmatter. */
+export function frontmatterMap(text: string): Map<string, string> {
+  const out = new Map<string, string>();
+  const lines = text.split("\n");
+  if (lines[0] !== "---") return out;
+  for (let i = 1; i < lines.length && lines[i] !== "---"; i++) {
+    const m = lines[i].match(/^([A-Za-z_][A-Za-z0-9_]*):(.*)$/);
+    if (m) out.set(m[1], m[2].trim());
+  }
+  return out;
+}
+
+/** Schema errors for a rendered routed note (empty = valid). A required key that is
+ *  absent or has a blank value is an error; so is a `type:` that disagrees with the
+ *  declared type. Types without a schema row here are not checked. */
+export function validateRoutedNote(type: string, text: string): string[] {
+  const required = ROUTED_REQUIRED_FIELDS[type];
+  if (!required) return [];
+  const fm = frontmatterMap(text);
+  if (fm.size === 0) return ["no frontmatter"];
+  const errors: string[] = [];
+  const missing = required.filter((k) => !fm.has(k) || fm.get(k) === "");
+  if (missing.length) errors.push(`missing required field(s): ${missing.join(", ")}`);
+  const declared = fm.get("type")?.replace(/^["']|["']$/g, "");
+  if (declared !== undefined && declared !== type) errors.push(`type "${declared}" does not match "${type}"`);
+  return errors;
+}
+
+/** Attach a validation error to a note that is being quarantined: a single
+ *  `quarantine_error:` frontmatter line (JSON-quoted, so it is one YAML scalar). The
+ *  rest of the note is untouched. */
+export function attachQuarantineError(text: string, errors: readonly string[]): string {
+  const lines = text.split("\n");
+  if (lines[0] !== "---") return `---\nquarantine_error: ${JSON.stringify(errors.join("; "))}\n---\n${text}`;
+  const close = lines.indexOf("---", 1);
+  if (close === -1) return text;
+  lines.splice(close, 0, `quarantine_error: ${JSON.stringify(errors.join("; "))}`);
+  return lines.join("\n");
 }

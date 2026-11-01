@@ -64,6 +64,14 @@ export interface ArrivalRow {
   first_ok_at?: number | null;
 }
 
+/** #2000: an arrival event, structurally (model_arrivals' Arrival subset). */
+export interface ArrivalEventRow {
+  provider: string;
+  model: string;
+  kind: string;
+  first_seen_at: number;
+}
+
 export interface ReleasesDeps {
   /** The bundled releases dir. Default: resolveReleasesDir(). */
   dir?: string;
@@ -72,6 +80,10 @@ export interface ReleasesDeps {
   /** The live reachability rows (the GET /amicode/model-reachability body).
    *  undefined / throwing = no arrivals section. */
   reachability?: () => Promise<{ models: ArrivalRow[] }>;
+  /** #2000: the arrival events (GET /amicode/model-arrivals). Available
+   *  arrivals after the baseline join "new for you" (first_seen_at stands in
+   *  for first_ok_at); the first_ok_at path above keeps working. */
+  arrivals?: () => Promise<ArrivalEventRow[]>;
 }
 
 const VERSION_RE = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/;
@@ -206,6 +218,27 @@ export function newForYouModels(rows: ArrivalRow[], baselineMs: number | null): 
     .sort((a, b) => b.first_ok_at - a.first_ok_at || a.provider.localeCompare(b.provider) || a.model.localeCompare(b.model));
 }
 
+/** #2000: available arrival events after the baseline, as "new for you" rows. */
+export function arrivalModels(events: ArrivalEventRow[], baselineMs: number | null): NewForYouModel[] {
+  if (baselineMs === null) return [];
+  return events
+    .filter((e) => e.kind === "available" && e.first_seen_at > baselineMs)
+    .map((e) => ({ provider: e.provider, model: e.model, first_ok_at: e.first_seen_at }));
+}
+
+/** Union by (provider, model), newest first — the first_ok_at row wins a tie. */
+export function mergeNewForYou(a: NewForYouModel[], b: NewForYouModel[]): NewForYouModel[] {
+  const seen = new Set<string>();
+  const out: NewForYouModel[] = [];
+  for (const m of [...a, ...b]) {
+    const k = `${m.provider}\u0000${m.model}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(m);
+  }
+  return out.sort((x, y) => y.first_ok_at - x.first_ok_at || x.provider.localeCompare(y.provider) || x.model.localeCompare(y.model));
+}
+
 // ── bundled-file + version resolution ──────────────────────────────────────
 // __dirname is native in the CJS extension bundle (dist/) and shimmed by the
 // ESM runner bundle's banner (bin/dist/); under vitest it is src/amicode_service.
@@ -213,15 +246,16 @@ function moduleDir(): string {
   return typeof __dirname === "string" ? __dirname : process.cwd();
 }
 
-/** The bundled releases dir: $AMICODE_RELEASES_DIR, else the build's
- *  dist/releases (from dist/ or bin/dist/), else the repo's docs/releases
- *  (a dev checkout). undefined → no cards (the route still answers). */
-export function resolveReleasesDir(env: NodeJS.ProcessEnv = process.env): string | undefined {
+/** The bundled releases dir: $AMICODE_RELEASES_DIR, else <here>/releases
+ *  (dist/releases beside the extension bundle, or bin/dist/releases beside the
+ *  runner bundle — #2017: a hub deploy copies the runner + its releases/ only),
+ *  else dist/releases from bin/dist, else the repo's docs/releases (a dev
+ *  checkout). undefined → no cards (the route still answers). */
+export function resolveReleasesDir(env: NodeJS.ProcessEnv = process.env, here: string = moduleDir()): string | undefined {
   const override = env.AMICODE_RELEASES_DIR;
   if (typeof override === "string" && override.trim() !== "") return override;
-  const here = moduleDir();
   const candidates = [
-    path.resolve(here, "releases"), // dist/ → dist/releases
+    path.resolve(here, "releases"), // dist/ → dist/releases; bin/dist/ → bin/dist/releases
     path.resolve(here, "..", "..", "dist", "releases"), // bin/dist/ → dist/releases
     path.resolve(here, "..", "..", "..", "docs", "releases"), // dist/ in a checkout
     path.resolve(here, "..", "..", "..", "..", "docs", "releases"), // src/amicode_service or bin/dist in a checkout
@@ -229,15 +263,42 @@ export function resolveReleasesDir(env: NodeJS.ProcessEnv = process.env): string
   return candidates.find((c) => existsSync(c));
 }
 
-let cachedVersion: string | undefined;
-/** The extension's own version (its package.json, name "amicode"). */
-export function resolveOwnVersion(): string {
-  if (cachedVersion) return cachedVersion;
-  const here = moduleDir();
+/** The build-time version esbuild bakes into BOTH the extension and the runner
+ *  bundle (#2017). Guarded so vitest (no define) sees undefined, not a
+ *  ReferenceError. */
+function definedVersion(): string | undefined {
+  return typeof __AMICODE_VERSION__ === "string" ? __AMICODE_VERSION__ : undefined;
+}
+
+export interface ResolveOwnVersionOpts {
+  env?: NodeJS.ProcessEnv;
+  /** The bundle's dir (the package.json walk starts here). Default: moduleDir(). */
+  here?: string;
+  /** The build-time define. Default: __AMICODE_VERSION__ when defined. */
+  defined?: string | undefined;
+}
+
+const cachedByDir = new Map<string, string>();
+/** The extension's own version: $AMICODE_VERSION, else the build-time define,
+ *  else its package.json (name "amicode") near the bundle, else "0.0.0".
+ *  (#2017: the hub's standalone runner has no package.json near it — the
+ *  define is what keeps it from answering 0.0.0 and filtering every card.) */
+export function resolveOwnVersion(opts: ResolveOwnVersionOpts = {}): string {
+  const env = opts.env ?? process.env;
+  const fromEnv = env.AMICODE_VERSION?.trim();
+  if (fromEnv && isVersion(fromEnv)) return fromEnv.replace(/^v/, "");
+  const defined = "defined" in opts ? opts.defined : definedVersion();
+  if (defined && isVersion(defined)) return defined.replace(/^v/, "");
+  const here = opts.here ?? moduleDir();
+  const cached = cachedByDir.get(here);
+  if (cached) return cached;
   for (const rel of [[".."], ["..", ".."], ["..", "..", ".."]]) {
     try {
       const pkg = JSON.parse(readFileSync(path.resolve(here, ...rel, "package.json"), "utf8")) as { name?: unknown; version?: unknown };
-      if (pkg.name === "amicode" && isVersion(pkg.version)) return (cachedVersion = pkg.version);
+      if (pkg.name === "amicode" && isVersion(pkg.version)) {
+        cachedByDir.set(here, pkg.version);
+        return pkg.version;
+      }
     } catch {
       /* next candidate */
     }
@@ -262,6 +323,13 @@ export async function releasesResponse(query: { since?: string | null }, deps: R
       models = newForYouModels((await deps.reachability()).models ?? [], releaseBaselineMs(cards, since));
     } catch {
       models = [];
+    }
+  }
+  if (sel.show && !sel.welcome && deps.arrivals) {
+    try {
+      models = mergeNewForYou(models, arrivalModels(await deps.arrivals(), releaseBaselineMs(cards, since)));
+    } catch {
+      /* arrivals are additive — a broken store leaves the first_ok_at rows */
     }
   }
   return JSON.stringify({

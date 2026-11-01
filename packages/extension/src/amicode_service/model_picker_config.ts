@@ -5,7 +5,8 @@
 //
 // SOURCE: $AMICODE_OPS_DIR/model-picker.json, shape
 //   { "model": { "recommended": [{ "model": "provider/id", "role": "default" | "fast" | "strong" | "open-weight" }],
-//                "allowlist":   ["provider/id" | "provider/*"] } }
+//                "allowlist":   ["provider/id" | "provider/*"],
+//                "watch":       ["gemini-4-carbon*", ...] } }   // #2000
 //
 // WHY THIS PATH (not OPENCODE_CONFIG_CONTENT → the engine's /config): the
 // engine's config schema types `model` as a string ("provider/model") and its
@@ -30,6 +31,10 @@ export type ModelRole = (typeof MODEL_ROLES)[number];
 export interface ModelPickerConfig {
   recommended: Array<{ model: string; role: ModelRole }>;
   allowlist?: string[];
+  /** #2000: model-id globs ("gemini-4-carbon*", "google/gemini-4*") whose
+   *  arrival is announced across ALL providers' catalogs. Present only when the
+   *  file has a `watch` array. */
+  watch?: string[];
 }
 
 export function modelPickerConfigFile(): string {
@@ -53,8 +58,21 @@ export function readModelPickerConfig(raw: unknown): ModelPickerConfig {
       ? [{ model: e.model, role: e.role as ModelRole }]
       : [],
   );
-  if (!Array.isArray(model.allowlist)) return { recommended };
-  return { recommended, allowlist: model.allowlist.filter(isModelRef) };
+  const watch = Array.isArray(model.watch)
+    ? { watch: model.watch.filter((g): g is string => typeof g === "string" && g.trim() !== "" && g.length <= 200).map((g) => g.trim()) }
+    : {};
+  if (!Array.isArray(model.allowlist)) return { recommended, ...watch };
+  return { recommended, allowlist: model.allowlist.filter(isModelRef), ...watch };
+}
+
+/** #2000: the watchlist globs from model-picker.json; [] when absent or
+ *  unreadable (a watchlist is opt-in — nothing is invented). */
+export function readWatchGlobs(file: string = modelPickerConfigFile()): string[] {
+  try {
+    return readModelPickerConfig(JSON.parse(readFileSync(file, "utf8"))).watch ?? [];
+  } catch {
+    return [];
+  }
 }
 
 /** GET /amicode/model-picker. Never throws. */

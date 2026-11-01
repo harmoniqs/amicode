@@ -15,7 +15,7 @@
 //     origin/lane/* (or origin/main), and maps the diff to vitest packages.
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync, appendFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync, appendFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -248,6 +248,113 @@ describe(".notturno/gates — vitest steps mirror CI and name failing files (#20
     expect(summary).toContain("vitest:foo [test/a.test.ts, test/b.test.ts, test/c.test.ts, test/d.test.ts, test/e.test.ts, +2 more]");
     expect(summary).toContain("vitest:bar [test/bad.test.ts]");
     expect(summary).not.toContain("ok.test.ts");
+  });
+});
+
+// #2021: the first night with #2009's file-naming gates showed the same five
+// files red on 7/10 issues — reproduced in a real Modal sandbox: the sandbox
+// runs as ROOT (chmod-000/0500 permission-denial assertions cannot fail for
+// root: mode_cards_staging "unreadable overlays dir", spec_review "sidecar that
+// cannot be written"), and the image lacks tools CI's runner has (zip, rsync).
+// The gates therefore drop root for the vitest steps and name missing tools.
+// The decision is shown by --plan; the wiring is proven with stub tools on PATH
+// (we are not root here, so setpriv/chown/useradd/id are recorded no-ops).
+describe(".notturno/gates — root drop + CI-tool preflight for the vitest steps (#2021)", () => {
+  let fx: string;
+  let stubs: string;
+  let log: string;
+  const VITEST_PKG = join(REPO, "packages", "amico-run", "node_modules", "vitest");
+
+  beforeEach(() => {
+    fx = makeFixture();
+    for (const pkg of ["foo", "bar"]) {
+      const nm = join(fx, "packages", pkg, "node_modules");
+      mkdirSync(join(nm, ".bin"), { recursive: true });
+      symlinkSync(VITEST_PKG, join(nm, "vitest"));
+      symlinkSync(join(VITEST_PKG, "vitest.mjs"), join(nm, ".bin", "vitest"));
+    }
+    stubs = mkdtempSync(join(tmpdir(), "notturno-gates-stubs-"));
+    log = join(stubs, "calls.log");
+    const stub = (name: string, body: string) => {
+      writeFileSync(join(stubs, name), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+    };
+    stub("id", `echo 4242`); // every `id -u <user>` / `id -g <user>` answers 4242
+    stub("useradd", `echo "useradd $*" >> "${log}"`);
+    stub("chown", `echo "chown $*" >> "${log}"`);
+    // setpriv stub: record argv, skip its options up to `--`, exec the rest
+    stub("setpriv", `echo "setpriv $*" >> "${log}"\nwhile [ "$1" != "--" ]; do shift; done; shift\nexec "$@"`);
+  });
+  afterEach(() => {
+    rmSync(fx, { recursive: true, force: true });
+    rmSync(upstreamOf(fx), { recursive: true, force: true });
+    rmSync(stubs, { recursive: true, force: true });
+  });
+
+  const withStubs = (env: Record<string, string> = {}) => ({ PATH: `${stubs}:${process.env.PATH ?? ""}`, ...env });
+  const calls = () => (existsSync(log) ? readFileSync(log, "utf8") : "");
+  const passing = () =>
+    put(fx, "packages/foo/test/ok.test.ts", `import { test, expect } from "vitest";\ntest("ok", () => { expect(1).toBe(1); });\n`);
+
+  test("--plan as root announces the drop to an unprivileged user", () => {
+    const r = run("./.notturno/gates", ["--plan"], fx, withStubs({ NOTTURNO_GATES_EUID: "0" }));
+    expect(r.status, r.out).toBe(0);
+    expect(r.stdout).toMatch(/^vitest user: drop root → non-root user 'notturno-gates' via setpriv$/m);
+    expect(calls()).toBe(""); // --plan has no side effects: no user created, nothing chowned
+  });
+
+  test("--plan as a normal user keeps the current user", () => {
+    const r = run("./.notturno/gates", ["--plan"], fx, { NOTTURNO_GATES_EUID: "1000" });
+    expect(r.stdout).toMatch(/^vitest user: current user \(uid 1000, not root\)$/m);
+  });
+
+  test("NOTTURNO_GATES_DROP_ROOT=0 opts out; no drop tool available is said plainly", () => {
+    const off = run("./.notturno/gates", ["--plan"], fx, { NOTTURNO_GATES_EUID: "0", NOTTURNO_GATES_DROP_ROOT: "0" });
+    expect(off.stdout).toMatch(/^vitest user: root \(drop disabled by NOTTURNO_GATES_DROP_ROOT=0\)$/m);
+    const none = run("./.notturno/gates", ["--plan"], fx, { NOTTURNO_GATES_EUID: "0", NOTTURNO_GATES_DROP_TOOLS: "no-such-drop-tool" });
+    expect(none.stdout).toMatch(/^vitest user: root \(neither setpriv nor runuser available to drop with\)$/m);
+  });
+
+  test("as root the suite runs THROUGH the drop; the tree is handed over and handed back", () => {
+    passing();
+    const r = run("./.notturno/gates", [], fx, withStubs({ NOTTURNO_GATES_EUID: "0", NOTTURNO_GATES_STEPS: "vitest", NOTTURNO_GATES_CI_TOOLS: "node" }));
+    expect(r.status, r.out).toBe(0);
+    expect(lastLine(r.stdout)).toMatch(/GREEN/);
+    const c = calls();
+    expect(c).toContain("setpriv --reuid=4242 --regid=4242 --clear-groups -- env -i"); // the suite ran under the drop, hermetic env intact
+    const tree = realpathSync(fx); // the gates cd to the physical path (macOS /var → /private/var)
+    expect(c).toContain(`chown -R 4242:4242 ${tree} `); // tree handed to the user
+    const owner = `${statSync(tree).uid}:${statSync(tree).gid}`;
+    expect(c).toContain(`chown -R ${owner} ${tree}`); // ...and handed back on exit
+    expect(r.out).toMatch(/vitest steps run as 'notturno-gates' \(uid 4242\)/);
+    expect(r.out).not.toMatch(/warn: running vitest as root/);
+  });
+
+  test("a red suite is still red and named when run through the drop", () => {
+    put(fx, "packages/foo/test/bad.test.ts", `import { test, expect } from "vitest";\ntest("bad", () => { expect(1).toBe(2); });\n`);
+    const r = run("./.notturno/gates", [], fx, withStubs({ NOTTURNO_GATES_EUID: "0", NOTTURNO_GATES_STEPS: "vitest", NOTTURNO_GATES_CI_TOOLS: "node" }));
+    expect(r.status, r.out).not.toBe(0);
+    expect(lastLine(r.stdout)).toContain("vitest:foo [test/bad.test.ts]");
+    expect(calls()).toContain("setpriv --reuid=4242");
+  });
+
+  test("a non-root run never touches setpriv/chown/useradd", () => {
+    passing();
+    const r = run("./.notturno/gates", [], fx, withStubs({ NOTTURNO_GATES_EUID: "1000", NOTTURNO_GATES_STEPS: "vitest", NOTTURNO_GATES_CI_TOOLS: "node" }));
+    expect(r.status, r.out).toBe(0);
+    expect(calls()).toBe("");
+  });
+
+  test("root with no way to drop warns loudly (permission tests cannot fail for root)", () => {
+    passing();
+    const r = run("./.notturno/gates", [], fx, withStubs({ NOTTURNO_GATES_EUID: "0", NOTTURNO_GATES_DROP_TOOLS: "no-such-drop-tool", NOTTURNO_GATES_STEPS: "vitest", NOTTURNO_GATES_CI_TOOLS: "node" }));
+    expect(r.out).toMatch(/warn: running vitest as root/);
+  });
+
+  test("tools CI's runner has but the image lacks are named up front", () => {
+    passing();
+    const r = run("./.notturno/gates", [], fx, { NOTTURNO_GATES_EUID: "1000", NOTTURNO_GATES_STEPS: "vitest", NOTTURNO_GATES_CI_TOOLS: "node no-such-zip no-such-rsync" });
+    expect(r.out).toMatch(/warn: tools CI's runner has are missing here: no-such-zip no-such-rsync/);
+    expect(r.out).not.toMatch(/missing here:.* node\b/);
   });
 });
 

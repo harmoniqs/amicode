@@ -167,6 +167,10 @@
         "title": "Amicode: Fleet & Versions (open Fleet Manager \u2014 Versions)"
       },
       {
+        "command": "amicode.revealInSidebar",
+        "title": "Amicode: Find File in Sidebar"
+      },
+      {
         "command": "amicode.openFleetManager",
         "title": "Amicode: Open Fleet Manager"
       },

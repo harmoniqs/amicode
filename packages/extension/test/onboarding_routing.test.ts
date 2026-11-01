@@ -292,3 +292,32 @@ describe("devtools restore marker — toggle-OFF guard", () => {
     expect(hasOnboardingCompleted(tmpDir)).toBe(false);
   });
 });
+
+describe("isModelConfigured — default lookup honours XDG_CONFIG_HOME (#1573)", () => {
+  let tmpDir: string;
+  let prevXdg: string | undefined;
+  let prevHome: string | undefined;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "routing-xdg-"));
+    prevXdg = process.env.XDG_CONFIG_HOME;
+    prevHome = process.env.HOME;
+    process.env.HOME = path.join(tmpDir, "fake-home");
+    process.env.XDG_CONFIG_HOME = path.join(tmpDir, "xdg");
+  });
+
+  afterEach(() => {
+    if (prevXdg === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = prevXdg;
+    if (prevHome === undefined) delete process.env.HOME;
+    else process.env.HOME = prevHome;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("finds a configured model under $XDG_CONFIG_HOME/opencode when no path is given", () => {
+    const dir = path.join(tmpDir, "xdg", "opencode");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "opencode.json"), JSON.stringify({ model: "anthropic/claude-sonnet-5" }));
+    expect(isModelConfigured()).toBe(true);
+  });
+});

@@ -347,6 +347,11 @@ export function baseExtensions(opts: {
   lang?: string
 }): Extension[] {
   return [
+    // Multiple cursors (#1516): CM6 collapses to a single selection unless this
+    // facet is on, which silently disables Mod-Alt-Up/Down, Mod-d and
+    // Cmd/Ctrl+Click adds. The keys themselves come from defaultKeymap and
+    // searchKeymap via keymapBindings().
+    EditorState.allowMultipleSelections.of(true),
     lineNumbers(),
     // Syntax-aware code folding (#1517): chevrons in the gutter next to the
     // line numbers; fold regions come from each language's lezer grammar.

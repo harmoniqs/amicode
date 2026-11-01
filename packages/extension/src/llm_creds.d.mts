@@ -41,6 +41,19 @@ export function fetchProviderModels(
   opts?: { fetchImpl?: typeof fetch; timeoutMs?: number; headers?: Record<string, string> },
 ): Promise<Record<string, string[]> | undefined>;
 
+/** #2000: the FULL catalog (engine GET /provider): every listed provider's
+ *  model ids with non-secret price/context meta, plus the connected set. */
+export function fetchProviderCatalog(
+  baseUrl: string,
+  opts?: { fetchImpl?: typeof fetch; timeoutMs?: number; headers?: Record<string, string> },
+): Promise<
+  | {
+      connected: string[];
+      providers: Record<string, Record<string, { input?: number; output?: number; context?: number }>>;
+    }
+  | undefined
+>;
+
 /** One row of the engine's POST /provider/probe response (#1984). */
 export interface ProviderProbeResultWire {
   model: string;

@@ -14,9 +14,18 @@
 // also recognises a bash part whose command drives amicode. It stays SESSION-scoped
 // (the point of the gate), so an unrelated session still shows nothing.
 
-/** Substrings in a shell command that mark it as amicode work. `amico-run` is the
- *  launcher; the problems dir is where a workspace gets created before any run. */
-const SHELL_MARKERS = ["amico-run", ".amico/problems", "amico plan", "amico spec"] as const
+/** Substrings in a shell command that mark it as amicode work. `amico run` is the
+ *  launcher (the standalone `amico-run` bin was deleted in #1667 — its token is
+ *  retired, #1673); `amico plan|spec|catalog|vault` are the sibling verbs; the
+ *  problems dir is where a workspace gets created before any run. */
+const SHELL_MARKERS = [
+  "amico run",
+  ".amico/problems",
+  "amico plan",
+  "amico spec",
+  "amico catalog",
+  "amico vault",
+] as const
 
 export interface GatePartLike {
   type?: string

@@ -19,7 +19,7 @@ import {
   type ProbeOutput,
   type ProbeStatus,
 } from "../src/amicode_service/model_reachability";
-import { fetchProviderModels, probeProviderModels } from "../src/llm_creds.mjs";
+import { fetchProviderCatalog, fetchProviderModels, probeProviderModels } from "../src/llm_creds.mjs";
 import { bootAmicodeServiceRunner, type AmicodeServiceRunnerBoot } from "../src/amicode_service_runner";
 
 interface Harness {
@@ -444,6 +444,29 @@ describe("the engine client (llm_creds) — key-free catalog + probe", () => {
     const out = await fetchProviderModels("http://e/", { fetchImpl });
     expect(out).toEqual({ anthropic: ["claude-a", "claude-b"], openai: [] });
     expect(JSON.stringify(out)).not.toContain("SECRET");
+  });
+
+  it("#2000: fetchProviderCatalog keeps ids + price/context meta + the connected set, nothing else", async () => {
+    const fetchImpl = (async () =>
+      new Response(
+        JSON.stringify({
+          all: [
+            { id: "google", key: "SECRET", models: { "gemini-4": { cost: { input: 1.25, output: 10, cache: {} }, limit: { context: 1_000_000 }, options: { apiKey: "SECRET" } }, bare: {} } },
+            { id: "moonshotai", models: {} },
+            { nope: 1 },
+          ],
+          connected: ["moonshotai", 7],
+        }),
+        { status: 200 },
+      )) as unknown as typeof fetch;
+    const out = await fetchProviderCatalog("http://e/", { fetchImpl });
+    expect(out).toEqual({
+      connected: ["moonshotai"],
+      providers: { google: { "gemini-4": { input: 1.25, output: 10, context: 1_000_000 }, bare: {} }, moonshotai: {} },
+    });
+    expect(JSON.stringify(out)).not.toMatch(/SECRET/);
+    expect(await fetchProviderCatalog("http://e", { fetchImpl: (async () => new Response("{}", { status: 500 })) as unknown as typeof fetch })).toBeUndefined();
+    expect(await fetchProviderCatalog("http://e", { fetchImpl: (async () => new Response("{}", { status: 200 })) as unknown as typeof fetch })).toBeUndefined();
   });
 
   it("fetchProviderModels → undefined on failure (unknown, never empty)", async () => {

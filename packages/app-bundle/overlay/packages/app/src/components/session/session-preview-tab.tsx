@@ -16,9 +16,13 @@ import { Tabs } from "@opencode-ai/ui/tabs"
 import { MenuV2 } from "@opencode-ai/ui/v2/menu-v2"
 import { useCommand, type CommandOption } from "@/context/command"
 import { usePlatform } from "@/context/platform"
+import { useSDK } from "@/context/sdk"
 import type { PreviewViewState } from "@opencode-ai/session-ui/v2/preview-view-state"
 import { PreviewFileView } from "./preview-file-view"
 import { isPdfFindTarget } from "./pdf-find-guard"
+import { previewFilePathForSession, revealInSidebarMessage } from "./preview-file-target"
+import { previewDrafts } from "./preview-draft-store"
+import { toAbsolutePath } from "./preview-file-helpers"
 import { FileVisual } from "./session-sortable-tab"
 import {
   createPreviewPersister,
@@ -30,8 +34,7 @@ import {
   previewLeafContaining,
   previewLeaves,
   previewMinimumExtent,
-  previewMissingPaths,
-  previewRestoreTarget,
+  planPreviewRestore,
   previewTabCount,
   removePreviewPath,
   resizePreviewSplit,
@@ -120,8 +123,12 @@ export function SessionPreviewTab(props: {
    *  document is not hidden). Persistence of the open set is held while false
    *  — see createPreviewPersister (#1648). */
   foreground?: () => boolean
+  /** This view's own session id. A session-targeted `preview-file` broadcast
+   *  (carries `sessionID`) is ignored unless it names this session (#1648). */
+  sessionID?: () => string | undefined
 }) {
   const platform = usePlatform()
+  const sdk = useSDK()
   const command = useCommand()
   const [dirtyPaths, setDirtyPaths] = createStore<Record<string, boolean>>({})
   const [saveRequests, setSaveRequests] = createStore<Record<string, number>>({})
@@ -132,7 +139,13 @@ export function SessionPreviewTab(props: {
   const [localViewState, setLocalViewState] = createStore<Record<string, PreviewViewState | undefined>>({})
   const [workspace, setWorkspace] = createSignal(createPreviewWorkspace())
   const [capacityMessage, setCapacityMessage] = createSignal<string | null>(null)
-  const [closingPath, setClosingPath] = createSignal<string | null>(null)
+  // #1249: this Preview belongs to the session it was mounted for (the side panel
+  // remounts it per session), and unsaved drafts + the close decision live in the
+  // per-(session, path) store so a session switch neither leaks nor loses them.
+  const draftSession = props.sessionID?.()
+  const restoredClose = draftSession ? previewDrafts.closeRequest(draftSession) : undefined
+  const [closingPath, setClosingPath] = createSignal<string | null>(restoredClose?.path ?? null)
+  let closeToken: number | undefined = restoredClose?.token
   const [previewDrag, setPreviewDrag] = createSignal<PreviewDrag | null>(null)
   const [resizingSplitID, setResizingSplitID] = createSignal<string | null>(null)
   const [tabContextMenu, setTabContextMenu] = createSignal<{ path: string; x: number; y: number } | null>(null)
@@ -196,29 +209,37 @@ export function SessionPreviewTab(props: {
   createEffect(() => {
     const persisted = props.openPaths?.() ?? []
     const active = props.previewFile()
-    const target = previewRestoreTarget(persisted, active)
-    const signature = target.join("\u0000")
-    if (signature === restoredSignature) return
-    restoredSignature = signature
-    if (target.length === 0) return
-    const missing = previewMissingPaths(target, openedPaths())
-    if (missing.length > 0) {
+    // `hydrated` is a tracked input: a net-new open whose write was held before
+    // the store hydrated is persisted when it flips (see planPreviewRestore).
+    // Every document with an unsaved draft returns with its session, even an
+    // inactive one — a draft must never be orphaned from its tab (#1249).
+    const plan = planPreviewRestore({
+      last: restoredSignature,
+      hydrated: props.hydrated ? props.hydrated() : true,
+      persisted,
+      active,
+      open: openedPaths(),
+      extra: draftSession ? previewDrafts.paths(draftSession) : [],
+    })
+    if (!plan.run) return
+    restoredSignature = plan.signature
+    if (plan.missing.length > 0) {
       setWorkspace((current) => {
         let next = current
-        for (const path of missing) next = openPreviewPath(next, path)
+        for (const path of plan.missing) next = openPreviewPath(next, path)
         if (active) next = openPreviewPath(next, active)
         return next
       })
     }
     // Persist a net-new active file that mounted the tab (not yet in the list).
     // Deduped in the setter, so a plain re-instantiation writes nothing.
-    if (active && !persisted.includes(active)) syncOpenPaths()
+    if (plan.persistNetNew) syncOpenPaths()
   })
 
   onMount(() => {
     const handlePreviewFile = (event: MessageEvent) => {
-      const data = event.data as { source?: string; kind?: string; path?: string } | undefined
-      if (data?.source === "amicode" && data.kind === "preview-file" && data.path) openPath(data.path)
+      const path = previewFilePathForSession(event.data, props.sessionID?.())
+      if (path) openPath(path)
     }
     const focusLeafFromPointer = (event: PointerEvent) => {
       if (!(event.target instanceof Node)) return
@@ -246,6 +267,9 @@ export function SessionPreviewTab(props: {
   }
 
   const removePath = (path: string) => {
+    // Explicit Close / Discard (or a completed close-save) is the only thing that
+    // removes a draft besides a matching Save (#1249).
+    if (draftSession) previewDrafts.clear(draftSession, path)
     const wasActive = props.previewFile()
     setWorkspace((current) => removePreviewPath(current, path))
     setDirtyPaths(path, false)
@@ -262,16 +286,50 @@ export function SessionPreviewTab(props: {
 
   const closePath = (path: string) => {
     if (dirtyPaths[path]) {
+      if (draftSession) {
+        // One session-owned decision at a time: a second dirty tab cannot replace it.
+        const token = previewDrafts.requestClose(draftSession, path)
+        if (token === undefined) return
+        closeToken = token
+      }
       setClosingPath(path)
       return
     }
     removePath(path)
   }
 
+  const endCloseDecision = () => {
+    if (draftSession && closeToken !== undefined) previewDrafts.cancelClose(draftSession, closeToken)
+    closeToken = undefined
+    setClosingPath(null)
+  }
+
+  // A close-save outlives a session switch: its completion resolves the session's
+  // decision in the store, which tells THIS (possibly newer) mount to close the tab.
+  if (draftSession) {
+    const unsubscribe = previewDrafts.onClosed(draftSession, (path) => {
+      removePath(path)
+      closeToken = undefined
+      setClosingPath(null)
+    })
+    onCleanup(unsubscribe)
+  }
+
   const copyPreviewPath = async (value: string) => {
     if (platform.writeClipboardText && (await platform.writeClipboardText(value))) return
     try {
       await navigator.clipboard?.writeText(value)
+    } catch {}
+  }
+
+  // #1036: ask the host to reveal this tab's file in the Amicode sidebar tree.
+  // The path is the tab's own path, resolved against the session directory for
+  // relative tabs; a file outside the workspace is a silent no-op host-side.
+  const findInSidebar = (path: string) => {
+    const message = revealInSidebarMessage(path ? toAbsolutePath(path, sdk().directory) : "")
+    if (!message) return
+    try {
+      window.parent?.postMessage(message, "*")
     } catch {}
   }
 
@@ -669,7 +727,7 @@ export function SessionPreviewTab(props: {
                 <button
                   type="button"
                   class="px-2 py-1 text-12-regular text-text-weak hover:text-text-base focus-visible:outline focus-visible:outline-2 focus-visible:outline-border-focus"
-                  onClick={() => setClosingPath(null)}
+                  onClick={endCloseDecision}
                 >
                   Cancel
                 </button>
@@ -678,7 +736,7 @@ export function SessionPreviewTab(props: {
                   class="px-2 py-1 text-12-regular text-text-weak hover:text-text-base focus-visible:outline focus-visible:outline-2 focus-visible:outline-border-focus"
                   onClick={() => {
                     removePath(path())
-                    setClosingPath(null)
+                    endCloseDecision()
                   }}
                 >
                   Discard
@@ -755,7 +813,15 @@ export function SessionPreviewTab(props: {
                               saveRequest={() => saveRequests[path] ?? 0}
                               findRequest={() => findRequests[path] ?? 0}
                               findDirection={() => findDirections[path] ?? 0}
+                              draftSession={draftSession}
                               onSaveComplete={() => {
+                                // Only the current close decision may close the tab: a
+                                // canceled / superseded close-save leaves it open (#1249).
+                                if (draftSession) {
+                                  const token = closeToken ?? previewDrafts.closeRequest(draftSession)?.token
+                                  if (token !== undefined) previewDrafts.resolveClose(draftSession, token)
+                                  return
+                                }
                                 removePath(path)
                                 setClosingPath(null)
                               }}
@@ -786,6 +852,10 @@ export function SessionPreviewTab(props: {
               top: `${tabContextMenu()?.y ?? 0}px`,
             }}
           >
+            <MenuV2.Item disabled={!tabContextMenu()?.path} onSelect={() => findInSidebar(tabContextMenu()?.path ?? "")}>
+              Find in sidebar
+            </MenuV2.Item>
+            <MenuV2.Separator />
             <MenuV2.Item onSelect={() => void copyPreviewPath((tabContextMenu()?.path ?? "").split("/").at(-1) ?? "")}>
               Copy filename
             </MenuV2.Item>

@@ -14,6 +14,8 @@ import {
   parseReleaseFile,
   releaseBaselineMs,
   releasesResponse,
+  resolveOwnVersion,
+  resolveReleasesDir,
   selectReleaseCards,
   type ReleaseCard,
 } from "../src/amicode_service/releases";
@@ -194,6 +196,29 @@ describe("GET /amicode/releases", () => {
     expect(body.new_for_you.models).toEqual([]);
   });
 
+  it("#2000: available arrival events join new_for_you (deduped with first_ok_at rows); non-available and pre-baseline events do not", async () => {
+    const dir = releasesDir(files);
+    const arrivals = async () => [
+      { provider: "moonshotai", model: "kimi-k3.1-pro", kind: "available", first_seen_at: Date.parse("2026-10-29T12:00:00Z") },
+      { provider: "anthropic", model: "claude-new", kind: "available", first_seen_at: Date.parse("2026-10-28T06:00:00Z") },
+      { provider: "amazon-bedrock", model: "us.google.gemini-4-carbon", kind: "needs-allowlist", first_seen_at: Date.parse("2026-10-29T13:00:00Z") },
+      { provider: "openai", model: "old", kind: "available", first_seen_at: Date.parse("2026-10-20T00:00:00Z") },
+    ];
+    const body = JSON.parse(await releasesResponse({ since: "0.3.10" }, { dir, version: "0.4.0", reachability, arrivals }));
+    expect(body.new_for_you.models).toEqual([
+      { provider: "moonshotai", model: "kimi-k3.1-pro", first_ok_at: Date.parse("2026-10-29T12:00:00Z") },
+      { provider: "anthropic", model: "claude-new", first_ok_at: Date.parse("2026-10-28T00:00:00Z") },
+    ]);
+    // a broken arrivals store leaves the first_ok_at rows
+    const broken = JSON.parse(
+      await releasesResponse({ since: "0.3.10" }, { dir, version: "0.4.0", reachability, arrivals: async () => { throw new Error("x"); } }),
+    );
+    expect(broken.new_for_you.models).toHaveLength(1);
+    // arrivals alone (no reachability dep)
+    const only = JSON.parse(await releasesResponse({ since: "0.3.10" }, { dir, version: "0.4.0", arrivals }));
+    expect(only.new_for_you.models).toHaveLength(2);
+  });
+
   it("a malformed since is a named bad_request (never echoed)", async () => {
     const body = JSON.parse(await releasesResponse({ since: "<script>" }, { dir: releasesDir(files), version: "0.4.0" }));
     expect(body.ok).toBe(false);
@@ -225,6 +250,27 @@ describe("GET /amicode/releases", () => {
     } finally {
       await service.stop();
     }
+  });
+
+  it("#2017: the version resolves from AMICODE_VERSION, then the build-time define — never 0.0.0 when no package.json is near", () => {
+    const empty = mkdtempSync(join(tmpdir(), "amc-2017-empty-"));
+    // env override wins over everything
+    expect(resolveOwnVersion({ here: empty, env: { AMICODE_VERSION: "0.4.0-lane.7" }, defined: "0.4.0-lane.1" })).toBe("0.4.0-lane.7");
+    // a malformed env value is ignored → the define
+    expect(resolveOwnVersion({ here: empty, env: { AMICODE_VERSION: "banana" }, defined: "0.4.0-lane.1" })).toBe("0.4.0-lane.1");
+    // no env → the define (the hub runner bundle: no package.json near it)
+    expect(resolveOwnVersion({ here: empty, env: {}, defined: "0.4.0-lane.1" })).toBe("0.4.0-lane.1");
+    // no env, no define (plain vitest) → the package.json lookup still works
+    const pkg = JSON.parse(readFileSync(resolve(__dirname, "../package.json"), "utf8")) as { version: string };
+    expect(resolveOwnVersion({ here: resolve(__dirname, "../src/amicode_service"), env: {}, defined: undefined })).toBe(pkg.version);
+  });
+
+  it("#2017: the releases dir is found at <here>/releases (the runner bundle's bin/dist/releases)", () => {
+    const here = mkdtempSync(join(tmpdir(), "amc-2017-bin-dist-"));
+    mkdirSync(join(here, "releases"));
+    writeFileSync(join(here, "releases", "0.4.0.md"), md("0.4.0", "2026-10-29"));
+    expect(resolveReleasesDir({}, here)).toBe(resolve(here, "releases"));
+    expect(resolveReleasesDir({ AMICODE_RELEASES_DIR: "/x/y" }, here)).toBe("/x/y");
   });
 
   it("the default version is the extension's own package.json version", async () => {

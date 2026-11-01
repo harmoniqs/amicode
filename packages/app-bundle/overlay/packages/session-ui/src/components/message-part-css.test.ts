@@ -45,3 +45,9 @@ describe("inline group members (rework)", () => {
     expect(css).toContain('[data-slot="group-member-detail"]')
   })
 })
+
+describe("queued user message tag (#1671)", () => {
+  test("the Queued tag slot is styled", () => {
+    expect(css).toContain('[data-slot="user-message-queued"]')
+  })
+})

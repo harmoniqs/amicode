@@ -39,6 +39,7 @@ import {
   type ShortlistGroup,
 } from "./dialog-select-model-shortlist"
 import { createModelShortlistConfig } from "./dialog-select-model-shortlist-source"
+import { createModelArrivals } from "./model-arrivals-source"
 // amicode#1988 (#1979 S5): price / context / tools / measured latency inline,
 // full detail in the tooltip; cheapest-that-works order while searching.
 import {
@@ -145,6 +146,7 @@ function createModelShortlist(input: { model: ModelState; provider: () => string
   const language = useLanguage()
   const reachability = createModelReachability()
   const config = createModelShortlistConfig()
+  const arrivals = createModelArrivals() // amicode#2000: the 7-day "New" tag
   const byName = (a: ModelItem, b: ModelItem) => a.name.localeCompare(b.name)
   const partition = createMemo(() =>
     partitionByReachability(
@@ -191,6 +193,7 @@ function createModelShortlist(input: { model: ModelState; provider: () => string
       }),
     meta: (item: ModelItem): ModelRowMeta =>
       modelRowMeta(item, latencyOf(reachability.snapshot(), modelRef(item)), labels()),
+    isNew: (item: ModelItem) => arrivals.isNew(modelRef(item)),
     isFavorite: (item: ModelItem) => models.favorite.has(modelRef(item)),
     toggleFavorite: (item: ModelItem) => models.favorite.toggle(modelRef(item)),
   }
@@ -361,6 +364,9 @@ const ModelList: Component<{
                 <Show when={i.latest}>
                   <Tag>{language.t("model.tag.latest")}</Tag>
                 </Show>
+                <Show when={shortlist.isNew(i)}>
+                  <Tag>{language.t("model.tag.new")}</Tag>
+                </Show>
                 <ReachabilityBadge view={partition().view(i)} />
                 <FavoriteStar active={shortlist.isFavorite(i)} onToggle={() => shortlist.toggleFavorite(i)} />
               </>
@@ -503,6 +509,7 @@ export function ModelSelectorPopoverV2(props: {
       view={controller.view}
       favorite={controller.favorite}
       meta={controller.meta}
+      isNew={controller.isNew}
       current={controller.current}
       select={controller.select}
       reachability={controller.reachability}
@@ -545,6 +552,7 @@ function createModelSelectorController(input: {
       toggle: shortlist.toggleFavorite,
     },
     meta: shortlist.meta,
+    isNew: shortlist.isNew,
     current: () => {
       const value = model.current()
       return value ? modelKey(value) : undefined
@@ -570,6 +578,7 @@ function ModelSelectorPopoverV2View(props: {
   }
   favorite?: { has: (item: ModelItem) => boolean; toggle: (item: ModelItem) => void }
   meta?: (item: ModelItem) => ModelRowMeta
+  isNew?: (item: ModelItem) => boolean
   current: () => string | undefined
   select: (item: ModelItem) => void
   reachability?: {
@@ -796,6 +805,9 @@ function ModelSelectorPopoverV2View(props: {
                                       </Show>
                                       <Show when={item.latest}>
                                         <TagV2 class="shrink-0">{language.t("model.tag.latest")}</TagV2>
+                                      </Show>
+                                      <Show when={props.isNew?.(item)}>
+                                        <TagV2 class="shrink-0">{language.t("model.tag.new")}</TagV2>
                                       </Show>
                                       <Show when={props.reachability?.view(item)}>
                                         {(view) => <ReachabilityBadge view={view()} v2 />}
