@@ -195,6 +195,61 @@ export function deleteHandshake(filePath?: string): void {
   }
 }
 
+// ── Restart-in-progress marker (#1420) ──────────────────────────────────────
+
+/** A restart marker older than this is treated as a leftover from a crashed
+ *  restart and ignored (the normal adopt-or-spawn path then applies). */
+export const RESTART_MARKER_MAX_AGE_MS = 120_000;
+
+/** Path of the restart marker: a sibling of the handshake file. */
+export function restartMarkerPath(handshakeFile?: string): string {
+  return `${handshakeFile ?? handshakePath()}.restarting`;
+}
+
+/** Publish "a restart has begun" BEFORE the old handshake is deleted, so a
+ *  second window's adopt-or-spawn does not treat the handshake gap as "no
+ *  server" and reclaim the port or cold-spawn a rival (#1420). */
+export function markRestartInProgress(handshakeFile?: string, now: number = Date.now()): void {
+  const p = restartMarkerPath(handshakeFile);
+  mkdirSync(dirname(p), { recursive: true });
+  writeFileSync(p, JSON.stringify({ startedAt: new Date(now).toISOString() }) + "\n", { mode: 0o600 });
+}
+
+/** Retract the restart marker (after the replacement server is up, or the
+ *  restart failed). Clearing an absent marker is a no-op. */
+export function clearRestartInProgress(handshakeFile?: string): void {
+  try {
+    unlinkSync(restartMarkerPath(handshakeFile));
+  } catch (err: any) {
+    if (err?.code !== "ENOENT") throw err;
+  }
+}
+
+/** The epoch-ms at which a fresh (non-stale) restart began, or undefined when no
+ *  restart is in progress. A marker older than RESTART_MARKER_MAX_AGE_MS, or one
+ *  that cannot be parsed, does not count. */
+export function restartInProgressSince(
+  handshakeFile?: string,
+  now: number = Date.now(),
+  maxAgeMs: number = RESTART_MARKER_MAX_AGE_MS,
+): number | undefined {
+  let raw: string;
+  try {
+    raw = readFileSync(restartMarkerPath(handshakeFile), "utf8");
+  } catch {
+    return undefined;
+  }
+  let since: number;
+  try {
+    since = Date.parse(JSON.parse(raw).startedAt);
+  } catch {
+    return undefined;
+  }
+  if (!Number.isFinite(since)) return undefined;
+  if (now - since > maxAgeMs) return undefined;
+  return since;
+}
+
 // ── Gate classifier ─────────────────────────────────────────────────────────
 
 export interface GateInputs {

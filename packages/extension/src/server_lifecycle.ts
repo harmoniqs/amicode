@@ -1,6 +1,7 @@
 import {
   readHandshake,
   classifyGate,
+  restartInProgressSince,
   PROTOCOL_VERSION,
   type GateInputs,
   type HandshakeRecord,
@@ -50,9 +51,16 @@ export interface AdoptOrSpawnDeps {
    *  When set, the no-handshake path polls for the handshake to appear on a
    *  bounded budget (ms) before falling back to cold-spawn. */
   hubPollBudgetMs?: number;
+  /** #1420: budget (ms) to wait for a replacement handshake while another
+   *  window's restart is in progress. Defaults to RESTART_POLL_BUDGET_MS. */
+  restartPollBudgetMs?: number;
   /** Optional log sink for adoption diagnostics. */
   log?: (line: string) => void;
 }
+
+/** #1420: how long a window waits for a restarting window's replacement
+ *  handshake before falling through to the normal adopt-or-spawn path. */
+export const RESTART_POLL_BUDGET_MS = 60_000;
 
 export type AdoptOrSpawnOutcome =
   | "adopted"
@@ -87,6 +95,32 @@ export async function adoptOrSpawn(
   handshakePath: string,
   deps: AdoptOrSpawnDeps,
 ): Promise<AdoptOrSpawnResult> {
+  // Step 0 (#1420): another window is restarting the engine. Its old handshake
+  // is about to die and the handshake is deleted mid-restart, so neither the
+  // old record nor the "no handshake" gap is evidence of a dead server. Wait
+  // for a replacement handshake written AFTER the restart began; never adopt
+  // the old record, never reclaim the port, never cold-spawn over the restart.
+  const restartSince = restartInProgressSince(handshakePath);
+  if (restartSince !== undefined) {
+    const budget = deps.restartPollBudgetMs ?? RESTART_POLL_BUDGET_MS;
+    deps.log?.(`[adopt] restart in progress (since ${new Date(restartSince).toISOString()}) — waiting for the replacement handshake (budget ${budget}ms)`);
+    const deadline = Date.now() + budget;
+    while (Date.now() < deadline && restartInProgressSince(handshakePath) !== undefined) {
+      await new Promise((r) => setTimeout(r, 250));
+      const retry = readHandshake(handshakePath);
+      if (
+        retry.status === "ok" &&
+        Date.parse(retry.record.startedAt) >= restartSince &&
+        deps.pidAlive(retry.record.pid) &&
+        (await deps.healthCheck(retry.record.port))
+      ) {
+        deps.log?.(`[adopt] restart: replacement handshake appeared — adopting it`);
+        return adoptFromRecord(retry.record, deps);
+      }
+    }
+    deps.log?.(`[adopt] restart wait ended without a replacement handshake — normal adopt-or-spawn`);
+  }
+
   // Step 1: read the handshake
   const hs = readHandshake(handshakePath);
 
