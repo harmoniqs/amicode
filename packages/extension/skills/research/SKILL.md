@@ -3,6 +3,7 @@ name: research
 description: The research mode's director loop protocol — session-ledger discipline, the hypothesizer/experimenter/analyzer trio, deliberate spec gates, checkout registry, and compaction-any-time safety. Use when starting, running, or resuming a research loop. (The mode and this skill renamed from `autoresearch` per the three-mode surface; old ids read-resolve to `research`.)
 agents: [hypothesizer, experimenter, analyzer]
 surface: public
+revision: 3
 project_contract:
   folders: [ledger/hypotheses, ledger/observations, ledger/campaigns, scripts, data, reports, config]
 ---
@@ -231,6 +232,99 @@ Production `step` paths only for A/B loop experiments; CRN pairing with f=0-styl
 invariants; impossibility checks on noise denominators; FD sanity gates on derived
 quantities; raw artifacts are the evidence, prose is not. Promotion of any result to
 catalog/status is human-only, always.
+
+## Designing checks that cannot false-STOP
+
+A spec's pre-registered checks are part of the experiment. If a check is mis-targeted, it
+STOPs the run before any data exists, and the cost is compute plus a loop. One campaign hit
+this **seven times**; every one was a spec defect, not a finding. Run the lenses below
+on every check and rule at spec-review time, then use the triage rule when one fires anyway.
+
+**1. Classify every tolerance. Measure its floor BEFORE you write the literal.**
+
+| Class | What it compares | Bar |
+|---|---|---|
+| identity / weld | two paths that should agree exactly (row identities, refactor welds, replays) | `max(10 × measured same-host floor, roundoff)`. **Bitwise** only within one process or call. Cross-host comparisons are **tolerance-equal**. Cross-ISA (e.g. AMD↔Intel) mismatches are **tagged, never STOPped**. |
+| model-fidelity | the production model vs a finer or reference version of itself (discretization, integrator, substeps) | ceiling ≈ **1% of the measured truth–model gap**, or 1% of the decision-relevant damage (e.g. the drift loss). **Never a shot-noise fraction**, because the production discretization *is* the model. |
+| shot-scale | quantities that enter the estimator at shot-noise scale | a fraction of the shot sd. Use this class **only** for these quantities. |
+
+- **Measure the floor first.** Run a ×2/×4 refinement ladder per (input, family, quantity), fit the order, and keep **roundoff** floors separate from **truncation** floors. Never gate a truncation ladder on a roundoff bar.
+- **Measure the floor where the check will run.** A floor measured at the nominal input does not transfer to a loop-history input.
+- **Derive the bar from its consequence.** Propagate the tolerance to its effect on the decision (e.g. the linearized Δestimate ≤ 1% of the decision bar), not from a machine-epsilon heuristic.
+- **Record provenance.** For each bar, record whether it is floor-derived and which class it uses. A tolerance literal with no measured floor is a review finding.
+- **Floor above ceiling is a spec defect.** If the measured floor exceeds the ceiling, fix the spec before launch. Do not launch and wait for the STOP.
+- **Premise checks cite (file, key) at full precision.** Otherwise the tolerance must be ≥ half a unit of the last quoted digit. H36 quoted the δ-oracle as −2.1e-6 against a 1% bar; the record is −2.1424e-6, so a 2-significant-figure quote cannot pass.
+
+**2. Test the property, not a proxy.** A disjointness or independence check must run on the
+space the claim is about. The same holds for designs: a measurement design validated only by a local
+Fisher/CRLB or Laplace bound is validated on a proxy — local criteria are blind to multimodal
+likelihoods (phase wrap aliased ~40% of fits in one bosonic Kerr-probe design that was L-optimal
+locally), so require a global synthetic-fit / recovery Monte Carlo check before trusting it
+(bosonic-calibration lane, BC-9). Example: test key-space disjointness on the `(seed, round, setting,
+use)` tuples, not on their hashed keys. Common-random-number (CRN) stream keys built as
+`hash(tuple) mod 2³¹` can collide in *structured pairs*, because some language hashes are
+affine in their arguments. Derive CRN streams from a cryptographic tuple digest or a
+counter-based RNG. Size the expected-collision budget on the real effective key space, and
+show the arithmetic in the spec.
+
+**2b. Controls must match on everything but the factor.** A placebo or control arm must match the arm it is
+contrasted with on error magnitude AND processing path (e.g. refit on/off), or the contrast measures wrongness, not
+the named factor (one QP-ILC 'churn' placebo was ≈ √2× wrong and skipped a refit — most of its effect was error).
+Arms that are identical by construction read IDENTICAL / NOT-TESTED, never an equivalence (BAND) result. Synthetic
+pre-freeze dry runs use CHECK-key labels too, never main-range keys.
+
+**3. Multiplicity agrees with the reading.** The Holm/FWER level must be **≤ the α of the
+reading it guards**: a one-sided 0.05 reading needs Holm at ≤ 0.05, not 0.10. State both once,
+in one place. Otherwise a contrast can pass Holm while it fails the reading, and the headline
+ends up resting on the ambiguity. Apply the same rule to downgrades and upgrades. Name labels
+and tags for the mechanism they claim, and apply them only to the rows they were defined for.
+Quote every free-text field in an emitted CSV, and round-trip-parse every CSV in the scorer's
+self-test. **Emit every satisfied label as a record**, not only the first match: a first-match
+ladder hides co-true labels (H36's INFO-CEILING-CLOSED was co-true with its headline (b) and went
+unreported).
+
+**4. Picks and deliverables are monotone in the evidence.** Mean-positive is not enough for an "it helps"
+label: report the median, a sign test, and the effect by baseline-severity tercile (loop gains can be
+c·severity − fixed cost, mean-positive yet median-null).
+- **No dominated picks.** A pick or deliverable rule must never recommend an arm that the registered readings show is dominated in that cell.
+- **Per-cell picks survive.** A campaign-level CELL-DEPENDENT verdict must not collapse into "keep the incumbent everywhere".
+- **One set of readings.** The pick uses the same POS/NEG readings as the labels. Never use a median or tie-band rule (`CI_lo > 0 ∧ median > TIE_BAND`) that can read a contrast whose CI is entirely positive as a tie while its mirror reads INFERIOR.
+- **A registered rule stands for its run.** If the rule is defective, report the per-cell evidence beside it and fix the rule in the next spec revision.
+
+**5. The gate is reachable from FIT data.** Before freezing, compute each rule's in-sample
+(fit-set) gain. That is its ceiling: out-of-sample it will not do better. If the best in-sample gain
+is below the gate, declare **NULL-by-reachability** in the spec instead of spending the score set.
+S0's best rule gained 6.9e-6/round in-sample against a 2e-5/round gate; it came back S0-NULL.
+
+**6. Pre-data STOP triage.** A STOP before any scored data exists, caused by a check that
+tested the wrong thing (wrong class, a proxy, a floor above the ceiling), is a **spec defect**.
+It is not a result. Fix it this way:
+1. Amend the spec revision.
+2. Re-freeze, changing **only that predicate**, and record the freeze diff.
+3. Re-run review.
+4. **Re-score** from the existing artifacts where they suffice. Re-run only what the amended predicate needs.
+
+**Never silently loosen** a bar, and never re-run on a different seed set. A STOP after scored
+data is evidence: ledger it as such.
+
+**Re-freeze after a writer crash.** Have the scorer compute everything first and emit last. A
+crash in a record writer after scored data exists allows a writer-only re-freeze only if all of
+these hold:
+- the diff touches no computed value;
+- the constants sha and every input sha are unchanged;
+- the crashed attempt's partial outputs are kept (sha recorded) and byte-compared to the final outputs;
+- the self-test exercises every emitter.
+
+S0 re-froze twice for type-only writer crashes. The r2 attempt had already written four score CSVs
+before it crashed, and the note claimed it had written none. The verdict was unaffected.
+
+Provenance (skills-integrity findings, campaign `session-20261028-qilc-measurement-design`):
+`proposal-20261028-floor-derived-tolerance` (+ loop-5 amendment),
+`finding-20261031-paired-oos-scorer-holm-level-and-csv`,
+`proposal-20261031-crn-shot-keys-and-tuple-checks`,
+`proposal-20261031-deliverables-monotone-in-evidence`,
+`finding-20261029-cmp-pick-rule-asymmetry`; ledger §3 loop-5 rule, §7 loop-8 gotchas, and loop-9
+experiments S0 (`experiment-20261031-s0-alpha-screen`) and H36 (`experiment-20261031-h36-ident-vs-direct`).
 
 ## Failure modes to watch
 
