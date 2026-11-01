@@ -885,6 +885,16 @@ export interface OpenOnboardingPanelOptions {
   bootstrap?: boolean;
 }
 
+/** Restart the running engine so it re-reads the provider config/credentials
+ *  just written. A failure is the registered command's own concern (it logs
+ *  there) -- the write already succeeded, so it must not block closing the
+ *  panel. */
+async function restartServerForNewProvider(): Promise<void> {
+  try {
+    await vscode.commands.executeCommand("amicode.restartServer");
+  } catch { /* restart errors are handled by the registered command itself */ }
+}
+
 /** Open (or reveal) the onboarding webview panel. Extracted from the
  *  `amicode.onboarding.open` command body so the focused single-provider
  *  connect flow ({@link registerHarmoniqsConnectCommand}) can reuse the
@@ -941,8 +951,14 @@ export function openOnboardingPanel(
         void vscode.workspace.getConfiguration("amicode").update("defaultModel", undefined, vscode.ConfigurationTarget.Global);
         if (!bootstrap) {
           // Focused connect: the chat panel + server are already live — just
-          // close the handoff panel. No restart, no greeting, no splash;
-          // those are Stage-0-only (see OpenOnboardingPanelOptions above).
+          // close the handoff panel. No greeting, no splash; those are
+          // Stage-0-only (see OpenOnboardingPanelOptions above). The running
+          // server DID cache its provider list before the write above landed,
+          // so it still needs a restart to pick the new credentials up --
+          // otherwise the provider is only usable after a window reload
+          // (#1428). Awaited, then disposed, so the panel never closes ahead
+          // of a still-stale server.
+          await restartServerForNewProvider();
           panel.dispose();
           fireOnboardingComplete();
           return;
@@ -1062,7 +1078,9 @@ export function openOnboardingPanel(
         );
         if (!bootstrap) {
           // Focused connect: same reasoning as config-success above — no
-          // live server/chat to bootstrap, just close.
+          // greeting/splash, but the live server needs a restart to see the
+          // newly written providers (#1428).
+          await restartServerForNewProvider();
           panel.dispose();
           fireOnboardingComplete();
           return;

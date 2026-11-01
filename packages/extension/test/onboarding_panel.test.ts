@@ -1312,6 +1312,51 @@ describe("registerHarmoniqsConnectCommand — focused connect entry point (Conne
     spy.mockRestore();
   });
 
+  // #1428: the focused connect used to skip the server restart, so the live
+  // engine kept its stale provider list until a window reload.
+  it("bootstrap:false — config-success writes to disk, restarts the live server, and closes without a splash or greeting (#1428)", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "amicode-1428-"));
+    const prevCfg = process.env.XDG_CONFIG_HOME;
+    const prevData = process.env.XDG_DATA_HOME;
+    process.env.XDG_CONFIG_HOME = path.join(tmp, "config");
+    process.env.XDG_DATA_HOME = path.join(tmp, "data");
+    (vscode.commands as { executed: string[] }).executed = [];
+    const spy = vi.spyOn(vscode.window, "createWebviewPanel");
+    try {
+      await vscode.commands.executeCommand("amicode.connectHarmoniqsProvider");
+      const panel = spy.mock.results[0].value as {
+        webview: { html: string; _simulateMessage: (msg: unknown) => void };
+      };
+      let completed = false;
+      const disposable = onOnboardingComplete(() => { completed = true; });
+      const htmlBefore = panel.webview.html;
+
+      panel.webview._simulateMessage({
+        type: "config-success",
+        payload: { provider: HARMONIQS_PROVIDER_ID, model: `${HARMONIQS_PROVIDER_ID}/${HARMONIQS_MODEL_ID}`, apiKey: "hqa_test_key_1428" },
+      });
+      await new Promise((r) => setTimeout(r, 20));
+
+      // Persisted: provider entry in opencode.json, secret only in auth.json.
+      const cfg = JSON.parse(fs.readFileSync(path.join(tmp, "config", "opencode", "opencode.json"), "utf8"));
+      expect(cfg.provider[HARMONIQS_PROVIDER_ID]).toBeDefined();
+      const auth = JSON.parse(fs.readFileSync(path.join(tmp, "data", "opencode", "auth.json"), "utf8"));
+      expect(auth[HARMONIQS_PROVIDER_ID]).toEqual({ type: "api", key: "hqa_test_key_1428" });
+
+      const executed = (vscode.commands as { executed: string[] }).executed;
+      expect(executed).toContain("amicode.restartServer");
+      expect(completed).toBe(true);
+      // No splash swap (nothing would ever dismiss it with chat already live).
+      expect(panel.webview.html).toBe(htmlBefore);
+      disposable.dispose();
+    } finally {
+      spy.mockRestore();
+      if (prevCfg === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = prevCfg;
+      if (prevData === undefined) delete process.env.XDG_DATA_HOME; else process.env.XDG_DATA_HOME = prevData;
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("bootstrap:true (Stage-0 default) — cancel DOES fall back to amicode.openChat, unchanged", async () => {
     (vscode.commands as { executed: string[] }).executed = [];
     const spy = vi.spyOn(vscode.window, "createWebviewPanel");

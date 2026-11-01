@@ -485,7 +485,9 @@ describe("amicode bridge — connect-harmoniqs-provider", () => {
     const ack = host.posted.find((m: any) => m.kind === "connect-harmoniqs-provider-ack") as any;
     expect(ack).toEqual({ source: "amicode", kind: "connect-harmoniqs-provider-ack", tab: "tab-1" });
     expect(host.posted.find((m: any) => m.kind === "connect-harmoniqs-provider-result")).toBeUndefined();
-    expect(executed.slice(before)).toContain("amicode.onboarding.open");
+    expect(executed.slice(before)).toContain("amicode.connectHarmoniqsProvider");
+    // #1428: the full Stage-0 bootstrap panel hangs on its splash when chat is already live.
+    expect(executed.slice(before)).not.toContain("amicode.onboarding.open");
   });
 
   it("rejects a present-but-malformed key inline without opening the onboarding panel", async () => {
