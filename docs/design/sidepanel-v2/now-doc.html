@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Now — editable layout document</title>
+<link rel="stylesheet" href="mock.css" />
+<link rel="stylesheet" href="simple.css" />
+<script src="snapshot.js"></script>
+<script src="views.js"></script>
+<style>
+  .style-switch { display: none !important; }
+  .wrap { display: grid; grid-template-columns: 440px minmax(0, 520px); gap: 24px; justify-content: center; padding: 24px; align-items: start; background: var(--amc-layer2); min-height: 100vh; }
+  .wrap .s { margin: 0; min-height: 0; border: 1px solid var(--amc-border); }
+  .side { font-size: 12px; }
+  .side h2 { font-size: 13px; font-weight: 600; margin: 0 0 6px; }
+  .side section { background: var(--amc-bg); border: 1px solid var(--amc-border); border-radius: 4px; padding: 14px 16px; margin-bottom: 12px; }
+  .side pre { font: 11px/1.45 var(--amc-font-mono); white-space: pre-wrap; margin: 0; max-height: 340px; overflow: auto; color: var(--amc-text-muted); }
+  .side .rev { display: flex; gap: 8px; padding: 6px 0; border-top: 1px solid var(--amc-border-muted); align-items: baseline; }
+  .side .rev:first-of-type { border-top: 0; }
+  .side .rev .grow { flex: 1; }
+  .bar { display: flex; gap: 8px; align-items: center; padding: 10px 20px; border-bottom: 1px solid var(--amc-border-muted); }
+  .bar .sp { flex: 1; }
+  .bar .scope { color: var(--amc-text-muted); }
+  .blk { position: relative; }
+  .blk + .blk { margin-top: 28px; }
+  .blk .tools { display: none; position: absolute; right: -8px; top: -6px; gap: 2px; background: var(--amc-bg); border: 1px solid var(--amc-border); border-radius: 4px; padding: 2px; z-index: 2; }
+  .blk .tools button { border: 0; background: none; padding: 2px 6px; font: 12px var(--amc-font-sans); color: var(--amc-text-muted); cursor: pointer; border-radius: 2px; }
+  .blk .tools button:hover { background: var(--amc-ink-08); color: var(--amc-text); }
+  .blk:hover .tools, .blk.menu .tools { display: flex; }
+  .editing .blk { outline: 1px dashed var(--amc-border-strong); outline-offset: 8px; }
+  .editing .blk .tools { display: flex; }
+  .editing .blk.off { opacity: 0.4; }
+  [contenteditable="true"] { outline: 0; box-shadow: inset 0 -1px 0 var(--amc-border-strong); font-family: var(--amc-font-mono); font-size: 12px; }
+  .gen { color: var(--amc-text-faint); font-size: 11px; margin-left: 6px; }
+  .missing { color: var(--amc-warning); }
+  .fields { display: flex; flex-wrap: wrap; gap: 4px 10px; font: 11px var(--amc-font-mono); color: var(--amc-text-muted); }
+  .fields span { cursor: pointer; }
+  .fields span:hover { color: var(--amc-text); }
+  .suggest { margin-top: 10px; display: grid; gap: 6px; }
+  .suggest textarea { font: 13px var(--amc-font-sans); border: 1px solid var(--amc-border-strong); border-radius: 4px; padding: 8px; background: var(--amc-bg); color: var(--amc-text); min-height: 56px; resize: vertical; }
+  .addlist button { display: block; width: 100%; text-align: left; border: 0; border-top: 1px solid var(--amc-border-muted); background: none; padding: 8px 0; font: 13px var(--amc-font-sans); color: var(--amc-text); cursor: pointer; }
+  .addlist button span { color: var(--amc-text-muted); }
+</style>
+</head>
+<body>
+<script>
+const { h, usd, dur, ago } = V
+V.themeToggle()
+document.documentElement.dataset.style = "a"
+const NOW = Date.parse(SNAP.generated) / 1000
+const C = SNAP.campaigns.find((c) => c.slug === "qmotion-autotune")
+const run = C.runs[0]
+
+/* ── 1 · named queries: the ONLY place data is read. Agents and users bind to
+       these names; they never write data access code. ───────────────────── */
+const phases = run.tags.phase.map((p) => p.split("|"))
+const gates = run.tags.gate.map((g) => g.split("|"))
+const failGate = gates.find(([, v]) => /FAIL/.test(v))
+const blocked = phases.find(([, st]) => st === "pending")
+const [spent, cap] = run.tags.cost[0].split("|").map(Number)
+const L = C.ledger
+const FIELDS = {
+  "session.title": C.title,
+  "session.state": C.heartbeat && NOW - C.heartbeat < 120 ? "running" : "idle",
+  "run.name": "Freeze run r10",
+  "run.elapsed": dur(NOW - run.t0),
+  "run.updated": ago(run.t1, NOW),
+  "run.progress": run.series[run.series.length - 1].i.toLocaleString("en-US"),
+  "run.progress_unit": "draws",
+  "gate.failed.name": failGate && failGate[0],
+  "gate.failed.value": failGate && failGate[1].replace(/^FAIL\s*/, ""),
+  "phase.blocked": blocked && blocked[2],
+  "campaign.hypotheses": L.hypotheses.length,
+  "campaign.confirmed": L.hypotheses.filter((x) => x.cls === "confirmed").length,
+  "campaign.refuted": L.hypotheses.filter((x) => x.cls === "refuted").length,
+  "cast.last": C.recent[0].title,
+  "cast.count": C.casts,
+  "spend.model": usd(C.director_usd + Object.values(C.by_role).reduce((a, r) => a + r.usd, 0), 0),
+  "spend.cloud": usd(spent),
+  "spend.cloud_cap": usd(cap, 0),
+}
+const LISTS = {
+  "run.phases": phases.map(([id, st]) => ({ id, st })),
+  "events.recent": [
+    { t: null, text: `${failGate[0]} failed`, bad: true },
+    ...C.recent.map((k) => ({ t: k.end, text: k.title.replace(/^(\w+):\s*/, "$1 · "), meta: usd(k.usd, 0) })),
+  ],
+  "gates": gates.map(([k, v]) => ({ k, v, bad: /FAIL/.test(v) })),
+}
+const fill = (tpl) => {
+  let missing = false
+  const out = String(tpl).replace(/\{([\w.]+)\}/g, (_, k) => (FIELDS[k] == null ? ((missing = true), "—") : FIELDS[k]))
+  return { text: out, missing }
+}
+
+/* ── 2 · the layout document: the thing users and Amico both edit ───────── */
+const DEFAULT = {
+  schema: "amicode.now/1",
+  kind: "research-director",
+  blocks: [
+    { id: "live", type: "focus", label: "{run.name} · running {run.elapsed}", value: "{run.progress}", unit: "{run.progress_unit}", list: "run.phases",
+      note: { tpl: "{gate.failed.name} failed: {gate.failed.value}. {phase.blocked} is waiting on it.", by: "template" }, actions: ["Open run", "Ask about it"] },
+    { id: "summary", type: "lines", rows: [
+      { label: "Campaign", tpl: "{campaign.hypotheses} hypotheses, {campaign.confirmed} confirmed" },
+      { label: "Last cast", tpl: "{cast.last}" },
+      { label: "Spend", tpl: "{spend.model} model · {spend.cloud} Modal" },
+    ] },
+    { id: "gates", type: "rows", title: "Gates", list: "gates", hidden: true },
+    { id: "activity", type: "feed", title: "Activity", list: "events.recent", limit: 6, hidden: true },
+    { id: "watch", type: "toggle", label: "Watch this campaign" },
+  ],
+}
+
+/* ── 3 · storage: revisions per scope (this session → all research sessions) */
+const KEY = { session: "sp2-doc:" + C.session, kind: "sp2-doc-kind:research-director" }
+const load = (k) => JSON.parse(localStorage.getItem(k) || "null")
+let history = load(KEY.session) || load(KEY.kind) || [{ rev: 1, by: "default", note: "shipped default for research-director sessions", doc: DEFAULT }]
+let doc = structuredClone(history[history.length - 1].doc)
+let editing = false
+const feedback = JSON.parse(localStorage.getItem("sp2-feedback") || "[]")
+const commit = (note, by = "you") => {
+  history.push({ rev: history[history.length - 1].rev + 1, by, note, at: new Date().toISOString(), doc: structuredClone(doc) })
+  localStorage.setItem(KEY.session, JSON.stringify(history))
+  render()
+}
+const logFeedback = (block, kind, text) => {
+  feedback.push({ at: new Date().toISOString(), session: C.session, kind: doc.kind, rev: history[history.length - 1].rev, block, signal: kind, text: text || null })
+  localStorage.setItem("sp2-feedback", JSON.stringify(feedback))
+  render()
+}
+
+/* ── 4 · renderer: fixed design, one function per block type ──────────────── */
+const editable = (obj, key, onDone) =>
+  editing
+    ? h("span", { contenteditable: "true", spellcheck: "false", onblur: (ev) => { const v = ev.target.textContent; if (v !== obj[key]) { obj[key] = v; onDone() } } }, obj[key])
+    : (() => { const r = fill(obj[key]); // a sentence that opens on a field is capitalised; literal text keeps the author's case (µs, f_ge)
+      const t = /^\{/.test(obj[key]) ? r.text.charAt(0).toUpperCase() + r.text.slice(1) : r.text; return h("span", { class: r.missing ? "missing" : "", title: r.missing ? "a field in this text has no data" : null }, t) })()
+
+const RENDER = {
+  focus: (b) => [
+    h("div", { class: "label" }, editable(b, "label", () => commit(`edited ${b.id} label`))),
+    h("div", { class: "big", style: { marginTop: "6px" } }, editable(b, "value", () => commit(`changed ${b.id} value`)), h("span", { class: "label", style: { fontSize: "13px", fontWeight: 400, letterSpacing: 0 } }, " ", editable(b, "unit", () => commit(`changed ${b.id} unit`)))),
+    h("div", { class: "steps" }, LISTS[b.list].map((p) => h("i", { class: p.st === "done" ? "done" : p.st === "failed" ? "fail" : "" }))),
+    h("div", { class: "steplabels" }, LISTS[b.list].map((p) => h("span", { class: p.st === "failed" ? "bad" : p.st === "done" ? "on" : "" }, p.id))),
+    b.note && h("p", { style: { margin: "16px 0 0" } }, editable(b.note, "tpl", () => { b.note.by = "you"; commit(`rewrote ${b.id} sentence`) }), !editing && h("span", { class: "gen", title: "how this sentence was produced" }, b.note.by === "template" ? "template" : b.note.by === "amico" ? "written by Amico" : "edited by you")),
+    h("div", { style: { display: "flex", gap: "8px", marginTop: "12px" } }, b.actions.map((a, i) => h("button", { class: "btn2" + (i === 0 ? " cta" : "") }, a))),
+  ],
+  lines: (b) => b.rows.map((r, i) =>
+    h("div", { class: "row" },
+      h("span", { style: { width: "84px", flex: "none", color: "var(--amc-text-muted)" } }, editable(r, "label", () => commit(`renamed a ${b.id} row`))),
+      h("span", { class: "grow ell" }, editable(r, "tpl", () => commit(`edited the ${r.label} row`))),
+      editing ? h("button", { class: "btn2", onclick: () => { b.rows.splice(i, 1); commit(`removed the ${r.label} row`) } }, "Remove") : h("span", { class: "label" }, "›"))),
+  rows: (b) => [h("div", { class: "label" }, b.title), LISTS[b.list].map((g) => h("div", { class: "row" }, h("span", { class: "grow" }, g.k), h("span", { class: g.bad ? "bad" : "meta" }, g.v)))],
+  feed: (b) => [h("div", { class: "label" }, b.title), LISTS[b.list].slice(0, b.limit).map((x) => h("div", { class: "row" }, h("span", { class: "t" }, x.t ? new Date(x.t * 1000).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false }) : ""), h("span", { class: "grow ell " + (x.bad ? "bad" : "") }, x.text), h("span", { class: "meta" }, x.meta || "")))],
+  toggle: (b) => h("label", { class: "switch" }, h("i"), b.label),
+}
+
+function block(b, i) {
+  const move = (d) => { const j = i + d; if (j < 0 || j >= doc.blocks.length) return; [doc.blocks[i], doc.blocks[j]] = [doc.blocks[j], doc.blocks[i]]; commit(`moved ${b.id} ${d < 0 ? "up" : "down"}`) }
+  const tools = editing
+    ? [h("button", { onclick: () => move(-1), "aria-label": "Move up" }, "↑"), h("button", { onclick: () => move(1), "aria-label": "Move down" }, "↓"), h("button", { onclick: () => { b.hidden = true; commit(`hid ${b.id}`) } }, "Hide")]
+    : [h("button", { onclick: () => logFeedback(b.id, "useful") }, "Useful"), h("button", { onclick: () => logFeedback(b.id, "not-useful") }, "Not useful"), h("button", { onclick: () => { suggestFor = b.id; render() } }, "Suggest…")]
+  return h("div", { class: "blk", "data-id": b.id }, h("div", { class: "tools" }, tools), RENDER[b.type](b))
+}
+
+let suggestFor = null
+function render() {
+  document.body.replaceChildren()
+  const visible = doc.blocks.filter((b) => !b.hidden)
+  const hiddenBlocks = doc.blocks.filter((b) => b.hidden)
+  const panel = h("div", { class: "s" + (editing ? " editing" : "") },
+    h("nav", { class: "tabs2" }, h("a", { class: "on" }, "Now"), h("a", null, "Files"), h("a", null, "Context"), h("span", { class: "sp" }), h("a", null, "Home")),
+    h("div", { class: "bar" },
+      h("span", { class: "scope" }, `Layout rev ${history[history.length - 1].rev} · ${history[history.length - 1].by}`),
+      h("span", { class: "sp" }),
+      h("button", { class: "btn2" + (editing ? " cta" : ""), onclick: () => { editing = !editing; suggestFor = null; render() } }, editing ? "Done" : "Edit"),
+    ),
+    h("div", { class: "pad" },
+      h("h1", null, fill("{session.title}").text),
+      h("div", { class: "sub" }, fill("Director {session.state} · updated {run.updated}").text),
+      h("div", { class: "sec" }, visible.map((b) => block(b, doc.blocks.indexOf(b)))),
+      editing && h("div", { class: "sec addlist" }, h("div", { class: "label" }, "Add"),
+        hiddenBlocks.map((b) => h("button", { onclick: () => { b.hidden = false; commit(`showed ${b.id}`) } }, (b.title || b.id) + " ", h("span", null, "· " + b.type))),
+        h("button", { onclick: () => { const s = doc.blocks.find((x) => x.type === "lines"); s.rows.push({ label: "New row", tpl: "{campaign.refuted} refuted" }); commit("added a summary row") } }, "Summary row ", h("span", null, "· bind any field below"))),
+      editing && h("div", { class: "sec" }, h("div", { class: "label" }, "Fields you can use in any text"), h("div", { class: "fields" }, Object.keys(FIELDS).map((k) => h("span", { title: String(FIELDS[k]), onclick: () => navigator.clipboard && navigator.clipboard.writeText(`{${k}}`) }, `{${k}}`)))),
+      suggestFor && h("div", { class: "sec suggest" },
+        h("div", { class: "label" }, `Suggest a change to “${suggestFor}”`),
+        h("textarea", { id: "sg", placeholder: "e.g. show the Modal budget as a bar, or tell me which cast is blocking" }),
+        h("div", { style: { display: "flex", gap: "8px" } }, h("button", { class: "btn2 cta", onclick: () => { logFeedback(suggestFor, "suggest", document.getElementById("sg").value); suggestFor = null } }, "Send to Amico"), h("button", { class: "btn2", onclick: () => { suggestFor = null; render() } }, "Cancel"))),
+    ),
+  )
+
+  /* right column: what this prototype is doing underneath */
+  const last = feedback.filter((f) => f.signal === "suggest").slice(-1)[0]
+  const side = h("div", { class: "side" },
+    h("section", null, h("h2", null, "How this works"),
+      h("p", { class: "muted", style: { margin: 0 } }, "The panel is a layout document rendered by a fixed design. Text is a template over named fields, so you, Amico, and the shipped default all edit the same small JSON. Hover a block for feedback; Edit to move, hide, retitle or rewrite anything.")),
+    h("section", null, h("h2", null, "Revisions"),
+      history.slice().reverse().map((r) => h("div", { class: "rev" }, h("span", { class: "num" }, "rev " + r.rev), h("span", { class: "grow" }, r.note, h("span", { class: "faint" }, " · " + r.by)),
+        r !== history[history.length - 1] && h("button", { class: "btn2", onclick: () => { doc = structuredClone(r.doc); commit(`reverted to rev ${r.rev}`) } }, "Revert"))),
+      h("div", { style: { display: "flex", gap: "8px", marginTop: "10px" } },
+        h("button", { class: "btn2", onclick: () => { localStorage.setItem(KEY.kind, JSON.stringify(history)); alert("Saved as the default for every research-director session on this machine.") } }, "Use for all research sessions"),
+        h("button", { class: "btn2", onclick: () => { localStorage.removeItem(KEY.session); localStorage.removeItem(KEY.kind); location.reload() } }, "Reset"))),
+    h("section", null, h("h2", null, `Feedback · ${feedback.length}`),
+      feedback.length ? feedback.slice(-6).reverse().map((f) => h("div", { class: "rev" }, h("span", { class: "grow" }, `${f.signal} · ${f.block}`, f.text && h("span", { class: "faint" }, " — " + f.text)), h("span", { class: "faint" }, "rev " + f.rev))) : h("div", { class: "faint" }, "Nothing yet. Hover a block and mark it useful or not, or suggest a change.")),
+    last && h("section", null, h("h2", null, "What Amico would receive"),
+      h("p", { class: "muted", style: { margin: "0 0 8px" } }, "Not wired in this mock. In the product this goes to a short Amico turn that returns a revised document; you see it as a diff and accept or reject it."),
+      h("pre", null, JSON.stringify({ task: "revise-now-layout", request: last.text, block: last.block, layout: doc, fields: Object.keys(FIELDS), lists: Object.keys(LISTS), recent_feedback: feedback.slice(-10).map(({ block, signal, text }) => ({ block, signal, text })) }, null, 2))),
+    h("section", null, h("h2", null, "Current document"), h("pre", null, JSON.stringify(doc, null, 2))),
+  )
+  document.body.append(h("div", { class: "wrap" }, panel, side))
+}
+render()
+</script>
+</body>
+</html>

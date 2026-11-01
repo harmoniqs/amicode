@@ -7,49 +7,7 @@
 <link rel="stylesheet" href="mock.css" />
 <script src="snapshot.js"></script>
 <script src="views.js"></script>
-<style>
-  /* Three sizes of type, two greys, one red, one yellow button. Nothing else. */
-  body { font-size: 13px; line-height: 1.5; }
-  .s { max-width: 440px; margin: 0 auto; min-height: 100vh; background: var(--amc-bg); border-inline: 1px solid var(--amc-border); }
-  body.inframe .s { max-width: none; border: 0; }
-  .tabs2 { display: flex; gap: 20px; padding: 12px 20px 0; border-bottom: 1px solid var(--amc-border); }
-  .tabs2 a { padding-bottom: 10px; color: var(--amc-text-muted); text-decoration: none; }
-  .tabs2 a.on { color: var(--amc-text); box-shadow: inset 0 -1.5px 0 var(--amc-text); }
-  .tabs2 .sp { flex: 1; }
-  .pad { padding: 20px; }
-  h1 { font-size: 15px; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
-  .sub { color: var(--amc-text-muted); margin-top: 2px; }
-  .label { color: var(--amc-text-muted); }
-  .big { font-size: 32px; font-weight: 500; letter-spacing: -0.025em; line-height: 1.1; font-variant-numeric: tabular-nums; }
-  .num { font-variant-numeric: tabular-nums; font-family: inherit; }
-  .bad { color: var(--amc-danger); }
-  .row { display: flex; gap: 12px; align-items: baseline; padding: 10px 0; border-top: 1px solid var(--amc-border-muted); }
-  .row:first-child { border-top: 0; }
-  .row .grow { flex: 1; min-width: 0; }
-  .row .meta { color: var(--amc-text-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
-  .row .t { color: var(--amc-text-muted); width: 40px; flex: none; font-variant-numeric: tabular-nums; }
-  .ell { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  a.more { color: var(--amc-text-muted); text-decoration: none; }
-  a.more:hover { color: var(--amc-text); }
-  .sec { margin-top: 28px; }
-  .sec > .label { margin-bottom: 4px; }
-  .btn2 { font: 500 12px/1 var(--amc-font-sans); height: 28px; padding: 0 12px; border-radius: 4px; border: 1px solid var(--amc-border-strong); background: var(--amc-bg); color: var(--amc-text); cursor: pointer; }
-  .btn2.cta { background: var(--amc-accent); color: var(--amc-accent-ink); border-color: var(--amc-accent-edge); }
-  .steps { display: grid; grid-template-columns: repeat(5, 1fr); gap: 3px; margin-top: 16px; }
-  .steps i { height: 3px; background: var(--amc-ink-13); }
-  .steps i.done { background: var(--amc-text); }
-  .steps i.fail { background: var(--amc-danger); }
-  .steplabels { display: grid; grid-template-columns: repeat(5, 1fr); gap: 3px; margin-top: 6px; color: var(--amc-text-muted); font-size: 12px; }
-  .steplabels span.on { color: var(--amc-text); }
-  table.t2 { width: 100%; border-collapse: collapse; }
-  table.t2 th { text-align: left; font-weight: 400; color: var(--amc-text-muted); padding: 0 8px 8px 0; border-bottom: 1px solid var(--amc-border); }
-  table.t2 td { padding: 9px 8px 9px 0; border-bottom: 1px solid var(--amc-border-muted); vertical-align: baseline; }
-  table.t2 td.r, table.t2 th.r { text-align: right; padding-right: 0; white-space: nowrap; color: var(--amc-text-muted); }
-  .switch { display: inline-flex; align-items: center; gap: 8px; color: var(--amc-text-muted); cursor: pointer; }
-  .switch i { width: 26px; height: 14px; border-radius: 999px; background: var(--amc-ink-13); position: relative; }
-  .style-switch { display: none !important; }
-  .switch i::after { content: ""; position: absolute; left: 2px; top: 2px; width: 10px; height: 10px; border-radius: 999px; background: var(--amc-bg); }
-</style>
+<link rel="stylesheet" href="simple.css" />
 </head>
 <body>
 <script>

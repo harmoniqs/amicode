@@ -268,6 +268,81 @@ Each lands through skills-integrity as a human-merged PR.
 
 The `amicode_author_widget` tool description and the `live-solve` skill are rewritten around specs. The tool description still lists `run-status` and `problems`, which the overlay removed.
 
+## E2. Generated, editable, and improved by feedback
+
+Prototype: [`now-doc.html`](now-doc.html). Layout direction chosen: **Focus** (`simple.html?layout=focus`), with Feed and Table available as blocks.
+
+### Four layers, one owner each
+
+| layer | what it is | who changes it | how fast |
+|---|---|---|---|
+| Records | facts: runs, gates, casts, spend | runners and the corrector | live |
+| Named fields and lists | `run.progress`, `gate.failed.value`, `campaign.confirmed`, `events.recent`, … — the only data access | us, in code, with tests | per release |
+| Layout document | which blocks, in what order, with what text templates | the user, Amico, shipped defaults | any time |
+| Renderer and design | one function per block type, fixed typography | us, in code | per release |
+
+The point of the split is that **everything people want to tune lives in the layout document, and the layout document cannot express anything unsafe or ugly**:
+
+- It names fields; it never contains data or code.
+- It picks block types; it never contains styles.
+- A field that has no data renders as "—" with a warning, never as a guess.
+
+### The layout document
+
+Small JSON with a schema version, the session kind it came from, and an ordered list of blocks. The block types are `focus`, `lines`, `rows`, `feed`, `table` and `toggle`, and the set grows only in code. Text is a template over named fields, for example:
+
+`"{gate.failed.name} failed: {gate.failed.value}. {phase.blocked} is waiting on it."`
+
+Every saved change is a revision recording who made it (`default`, `you`, `amico`) and a one-line note, and any revision can be restored.
+
+### Where content comes from
+
+1. **Templates.** These are the default: deterministic, instant, and correct whenever the field is correct.
+2. **Amico-written sentences.** Used where a template can't say it, for example "the r11 confirm cast is blocking thresholds because…".
+   - **Trigger:** generated when the bound records change, never on render.
+   - **Storage:** cached in the document with the record hashes they were written from.
+   - **Labelling:** marked "written by Amico".
+   - **Staleness:** shown greyed out as stale once their inputs change, until regenerated.
+3. **User text.** Any sentence can be overwritten. Once edited it is marked "edited by you" and Amico never rewrites it again unless asked.
+
+### The feedback loop
+
+Each signal goes to its own place:
+
+| signal | captured as | applied |
+|---|---|---|
+| Edit: move, hide, retitle, rewrite, add a row | a new revision, `by: you` | immediately, deterministically |
+| Useful / Not useful on a block | `feedback.jsonl` row `{session, kind, rev, block, signal}` | aggregated; feeds defaults, no immediate change |
+| Suggest… (free text) | feedback row + an Amico turn with the document, the field catalogue and the recent feedback | Amico returns a revised document; the user sees the diff and accepts or rejects it |
+| Undo / revert | a revision pointing at the restored one | immediately |
+
+### Scopes and promotion
+
+Changes climb a ladder, and each step is a human decision. This is Amico's own propose → gate → promote loop, applied to the UI:
+
+1. **This session.** Edits land here by default.
+2. **This kind of session on this machine** ("Use for all research sessions"). Stored per kind: `research-director`, `solve`, `calibration`, `dev`, …
+3. **The shipped default for that kind.** A periodic pass reads the feedback rows across users and opens a PR against the default documents in the repo:
+   - blocks marked not-useful most often;
+   - rows people add by hand;
+   - sentences people rewrite.
+
+   It never changes defaults on its own.
+
+Missing fields surface the same way. When users keep asking for something no field provides ("show the Modal budget as a bar"), the pass files it as a field or block-type request, which is code work for us.
+
+### Guardrails
+
+- **Validation.** Documents are schema-validated on save. Unknown block types and unknown fields are rejected on save, but tolerated (skipped) on read so old documents keep working.
+- **Amico's edits** go through the same validator and always arrive as a proposal, never applied silently.
+- **Trust rules hold.** A template can't drop a trust or source marker the block type requires: a focus block over an `untrusted` run always shows it.
+
+### What to measure
+
+- How often each default block is hidden, and how often each is restored.
+- Accept rate of Amico's proposals.
+- How often people use the edit mode at all. If almost nobody edits, the defaults are doing the job.
+
 ## F. Slices (to become sub-issues after review)
 
 1. **Records core:** the envelope, append-only store, `/amicode/records`, the SSE stream and `/amicode/runs`. The run gate writes `run`, `series` and `compute`.
@@ -278,7 +353,8 @@ The `amicode_author_widget` tool description and the `live-solve` skill are rewr
 6. **Campaign, compute and the watcher:** `campaign` records with `verdict_class`, CampaignBoard, ComputeLedger, and the watcher session with steering guards.
 7. **Calibration and measurement:** strumento bridge to `calibration`/`progress`, the scorer `measurement` emitter, CalibrationCard, DesignStrip and Forest.
 8. **Home board:** global needs-you, campaign cards, overnight results, compute. Migrate or drop the existing widgets and clean up `dashboard.json`.
-9. **Design-system follow-ups:** skill fixes, the DESIGN.md port, the notation rule in lint (uppercase transforms on known symbol glyphs).
+9. **Layout documents and feedback (E2):** the `amicode.now/1` schema and validator, the field catalogue, revisions and scopes, edit mode, `feedback.jsonl`, the Suggest turn with a diff to accept, and the periodic defaults PR pass.
+10. **Design-system follow-ups:** skill fixes, the DESIGN.md port, the notation rule in lint (uppercase transforms on known symbol glyphs).
 
 ## Open questions
 
