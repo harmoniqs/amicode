@@ -73,13 +73,11 @@ export interface ModelEntry {
 
 /** Data-driven provider→model map. Each provider key is the opencode provider id;
  *  models are the provider/model-id pairs opencode expects in `config.model`.
- *  "github-copilot" uses OAuth (no key); "custom" uses a base URL + model text. */
+ *  "custom" uses a base URL + model text. GitHub Copilot is deliberately absent:
+ *  the pinned opencode engine's provider catalog has no such entry, so it can never
+ *  be authenticated (#1421) — re-add only once the engine ships it AND
+ *  testConnection can verify it. */
 export const PROVIDER_MODELS: Record<string, ModelEntry[]> = {
-  "github-copilot": [
-    { id: "github-copilot/claude-sonnet-5", name: "Claude Sonnet 5" },
-    { id: "github-copilot/gpt-5.6", name: "GPT-5.6" },
-    { id: "github-copilot/gpt-5.6-luna", name: "GPT-5.6 Luna" },
-  ],
   [HARMONIQS_PROVIDER_ID]: [{ id: `${HARMONIQS_PROVIDER_ID}/${HARMONIQS_MODEL_ID}`, name: "Harmoniqs Auto" }],
   opencode: [
     { id: "anthropic/claude-opus-5", name: "Claude Opus 5" },
@@ -120,7 +118,6 @@ export const PROVIDER_MODELS: Record<string, ModelEntry[]> = {
 
 /** Human-readable display names for the provider dropdown. */
 export const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
-  "github-copilot": "GitHub Copilot (Free)",
   [HARMONIQS_PROVIDER_ID]: "Harmoniqs AI",
   opencode: "OpenCode",
   anthropic: "Anthropic",
@@ -461,7 +458,8 @@ function buildBedrockEndpoint(modelId: string, region: string = "us-east-1"): st
 
 /** Test the connection by making exactly one minimal LLM API call.
  *  Returns ok:true on success, ok:false with error message on failure.
- *  Providers without a known test endpoint return ok:true (untestable, not failed).
+ *  Providers onboarding offers but cannot probe (e.g. "custom") return ok:true
+ *  (untestable, not failed); providers onboarding does not offer at all fail (#1421).
  *  The API key is NEVER included in the return value. */
 export async function testConnection(
   config: OnboardingConfig,
@@ -474,10 +472,12 @@ export async function testConnection(
 
   const endpoint = PROVIDER_TEST_ENDPOINTS[config.provider];
   if (!endpoint) {
-    // Provider has no test endpoint — treat as untestable (pass), not unknown
-    if (config.provider === "unknown-provider" || config.provider === "") {
+    // A provider onboarding doesn't offer can't be verified, so reporting success
+    // would be a false positive (#1421: github-copilot) — fail it explicitly.
+    if (!(config.provider in PROVIDER_MODELS)) {
       return { ok: false, error: `Unknown provider: ${config.provider}` };
     }
+    // Offered but no probe endpoint (e.g. custom) — untestable, not failed
     return { ok: true };
   }
 
@@ -681,8 +681,8 @@ async function testBedrockConnection(
 // ─── Model probing (fallback on 403) ─────────────────────────────────────────
 
 /** Probe models in order for a provider. Returns the first model that passes
- *  testConnection, or undefined if all fail. For providers without a test
- *  endpoint (e.g. github-copilot), returns the first model without probing.
+ *  testConnection, or undefined if all fail. For offered providers without a test
+ *  endpoint, returns the first model without probing.
  *  Stops immediately on 401 (bad credentials — no point trying more models). */
 export async function probeModels(
   provider: string,

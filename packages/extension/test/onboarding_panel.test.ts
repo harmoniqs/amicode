@@ -128,7 +128,6 @@ describe("PROVIDER_MODELS — data-driven provider→model mapping (AC3)", () =>
   it("includes the expected provider lineup in order", () => {
     const keys = Object.keys(PROVIDER_MODELS);
     expect(keys).toEqual([
-      "github-copilot",
       "harmoniqs",
       "opencode",
       "anthropic",
@@ -141,9 +140,11 @@ describe("PROVIDER_MODELS — data-driven provider→model mapping (AC3)", () =>
     ]);
   });
 
-  it("github-copilot is the first option (free, no API key)", () => {
-    const keys = Object.keys(PROVIDER_MODELS);
-    expect(keys[0]).toBe("github-copilot");
+  // #1421: the pinned opencode engine's provider catalog has no github-copilot
+  // entry, so onboarding must not offer a provider that can never authenticate.
+  it("does not offer github-copilot (absent from the pinned engine's catalog, #1421)", () => {
+    expect(Object.keys(PROVIDER_MODELS)).not.toContain("github-copilot");
+    expect(Object.keys(PROVIDER_DISPLAY_NAMES)).not.toContain("github-copilot");
   });
 });
 
@@ -152,10 +153,6 @@ describe("PROVIDER_DISPLAY_NAMES — human-readable labels", () => {
     for (const key of Object.keys(PROVIDER_MODELS)) {
       expect(PROVIDER_DISPLAY_NAMES[key]).toBeTruthy();
     }
-  });
-
-  it("github-copilot label indicates it is free", () => {
-    expect(PROVIDER_DISPLAY_NAMES["github-copilot"].toLowerCase()).toContain("free");
   });
 
   it("custom label indicates OpenAI-compatible", () => {
@@ -236,20 +233,19 @@ describe("writeOnboardingConfig — config file writing (AC5)", () => {
     expect(written.provider.anthropic).toBeDefined(); // added
   });
 
-  it("writes config for github-copilot with empty apiKey (OAuth-based)", () => {
+  it("writes config with an empty apiKey for a keyless provider (no options.apiKey)", () => {
     const config: OnboardingConfig = {
-      provider: "github-copilot",
-      model: "github-copilot/claude-sonnet-5",
+      provider: "custom",
+      model: "custom/some-local-model",
       apiKey: "",
     };
     const configPath = path.join(tmpDir, "opencode.json");
     writeOnboardingConfig(config, configPath);
 
     const written = JSON.parse(fs.readFileSync(configPath, "utf8"));
-    expect(written.provider["github-copilot"]).toBeDefined();
-    expect(written.model).toBe("github-copilot/claude-sonnet-5");
-    // No options.apiKey when key is empty
-    expect(written.provider["github-copilot"].options).toBeUndefined();
+    expect(written.provider.custom).toBeDefined();
+    expect(written.model).toBe("custom/some-local-model");
+    expect(written.provider.custom.options?.apiKey).toBeUndefined();
   });
 
   it("writes config for opencode provider", () => {
@@ -368,6 +364,25 @@ describe("testConnection — credential validation (AC4, AC8)", () => {
     expect(result.ok).toBe(true);
     const url = fetchMock.mock.calls[0][0] as string;
     expect(url).toContain("openai.com");
+  });
+
+  it("#1421: github-copilot is not a false-positive success — unknown to onboarding fails", async () => {
+    const fetchMock = vi.fn();
+    const result = await testConnection(
+      { provider: "github-copilot", model: "github-copilot/gpt-5.6", apiKey: "" },
+      fetchMock,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("github-copilot");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("custom (OpenAI-compatible) remains untestable-but-ok", async () => {
+    const result = await testConnection(
+      { provider: "custom", model: "custom/x", apiKey: "k", baseUrl: "http://localhost:11434/v1" } as never,
+      vi.fn(),
+    );
+    expect(result.ok).toBe(true);
   });
 
   it("works for google provider", async () => {
@@ -1511,17 +1526,10 @@ describe("probeModels — find first accessible model for a provider", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("returns first model for providers without a test endpoint (untestable)", async () => {
+  it("returns undefined for a provider onboarding does not know (github-copilot, #1421)", async () => {
     const fetchMock = vi.fn();
-    // github-copilot has no test endpoint — probeModels should return first model without probing
-    const result = await probeModels(
-      "github-copilot",
-      "",
-      fetchMock,
-    );
-    expect(result).toBeDefined();
-    expect(result!.id).toBe(PROVIDER_MODELS["github-copilot"][0].id);
-    // No fetch call made for untestable providers
+    const result = await probeModels("github-copilot", "", fetchMock);
+    expect(result).toBeUndefined();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

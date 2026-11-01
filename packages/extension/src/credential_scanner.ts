@@ -281,7 +281,7 @@ const PLACEHOLDER_KEYS = new Set(["sk-test"]);
  * Returns true if the API key is valid for writing to config.
  * Rejects: empty strings, known placeholders, and keys shorter than 10 chars.
  * Empty string is allowed ONLY when the caller explicitly passes it (OAuth
- * providers like github-copilot don't use API keys at all — they pass empty
+ * keyless providers don't use API keys at all — they pass empty
  * and the entry is written without options.apiKey). This function is called
  * only when a key IS present (non-empty), so empty returns false here.
  */
