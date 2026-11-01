@@ -15,6 +15,10 @@
 //         `amico-vault status --json` (ops/scripts/amico-vault cmd_status). A drift
 //         warning fires when the marker kind ≠ the manifest-resolved kind (manifest
 //         wins); `last_sync` is `git log -1 --format=%cr`, "unknown" tolerated.
+//         Git-backed mounts additionally carry an additive `sync` object (state
+//         OK|STALE|UNKNOWN|ZOMBIE|ro-by-policy + failure/behind facts) read from the
+//         sync loop's records (vault_sync.ts), and a `warnings` entry for any state
+//         that needs a human (#2033).
 //
 //   amico vault resolve <relpath>
 //       → first-hit lookup of <relpath> across the stack in precedence order:
@@ -30,6 +34,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { loadNotesAcross, rankNotes, type QueryOpts } from "./vault_query.js";
 import { resolveMountStack, readVaultMarker } from "./mounts.js";
+import { isGitBacked, loadSyncRecords, syncInfoFor, syncWarning } from "./vault_sync.js";
 import type { VerbResult } from "./verbs.js";
 
 function flagValue(argv: string[], name: string): string | undefined {
@@ -92,6 +97,7 @@ function gitLastSync(dir: string): string {
 
 export function vaultStatus(_argv: string[]): VerbResult {
   const stack = resolveMountStack();
+  const records = loadSyncRecords();
   const mounts = stack.mounts.map((m) => {
     const markerKind = readVaultMarker(m.path).kind;
     const warnings: string[] = [];
@@ -100,7 +106,14 @@ export function vaultStatus(_argv: string[]): VerbResult {
     if ((markerKind ?? "") !== m.kind) {
       warnings.push(`drift: marker kind='${markerKind ?? ""}' but mounts.toml kind='${m.kind}' (using mounts.toml)`);
     }
-    return { id: m.name, path: m.path, kind: m.kind, writable: m.writable, last_sync: gitLastSync(m.path), warnings };
+    const base = { id: m.name, path: m.path, kind: m.kind, writable: m.writable, last_sync: gitLastSync(m.path), warnings };
+    // Sync-sidecar health (#2033): additive `sync` field for git-backed mounts only —
+    // a non-git mount has no sync loop, so it carries no state and no warning.
+    if (!isGitBacked(m.path)) return base;
+    const sync = syncInfoFor(m.path, records);
+    const w = syncWarning(sync);
+    if (w) warnings.push(w);
+    return { ...base, sync };
   });
   return { json: { ok: true, mounts, error: null }, code: 0 };
 }
