@@ -34,7 +34,8 @@ import { shouldResetCodeTokens, type RenderedCodeState } from "./markdown-code-s
 import { getCachedMarkdown, sanitizeMarkdown, touchCachedMarkdown, type MarkdownCacheEntry } from "./markdown-cache"
 import { inlineCodeKind } from "./markdown-inline-code-kind"
 import { cachedFileRef, fileRefResolver, fileRefResolverVersion, fileRefUrl, resolveFileRefCached } from "./markdown-file-refs"
-import { frameImages, loadLocalImages, localImageLoaderVersion } from "./markdown-local-images"
+import { frameImages, imageFileName, loadLocalImages, localImageLoaderVersion } from "./markdown-local-images"
+import { saveImage } from "../util/save-image"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { ImageLightbox } from "./image-lightbox"
 
@@ -91,7 +92,12 @@ async function code(text: string, language: string | undefined, key: string, com
 type CopyLabels = {
   copy: string
   copied: string
+  download: string
 }
+
+// A copy-button host either copies (code, image) or saves (image). Both ride
+// the same host lifecycle — render/dispose, the morphdom skip, label refresh.
+type CopyButtonKind = "copy" | "download"
 
 type CopyButtonState = {
   setLabels: Setter<CopyLabels>
@@ -114,9 +120,10 @@ function codeUrl(text: string) {
   }
 }
 
-function createCopyButton(labels: CopyLabels) {
+function createCopyButton(labels: CopyLabels, kind: CopyButtonKind = "copy") {
   const host = document.createElement("div")
   host.setAttribute("data-slot", "markdown-copy-button")
+  if (kind === "download") host.setAttribute("data-action", "download")
 
   const state: Partial<CopyButtonState> = {}
   const dispose = render(() => {
@@ -124,15 +131,16 @@ function createCopyButton(labels: CopyLabels) {
     const [copied, setCopied] = createSignal(false)
     state.setLabels = setLabels
     state.setCopied = setCopied
-    return <MarkdownCopyButton labels={labelState} copied={copied} />
+    return <MarkdownCopyButton labels={labelState} copied={copied} kind={kind} />
   }, host)
   state.dispose = dispose
   copyButtonState.set(host, state as CopyButtonState)
   return host
 }
 
-function MarkdownCopyButton(props: { labels: Accessor<CopyLabels>; copied: Accessor<boolean> }) {
-  const label = () => (props.copied() ? props.labels().copied : props.labels().copy)
+function MarkdownCopyButton(props: { labels: Accessor<CopyLabels>; copied: Accessor<boolean>; kind: CopyButtonKind }) {
+  const label = () =>
+    props.kind === "download" ? props.labels().download : props.copied() ? props.labels().copied : props.labels().copy
   return (
     <TooltipV2 placement="top" value={label()}>
       <IconButtonV2
@@ -141,10 +149,14 @@ function MarkdownCopyButton(props: { labels: Accessor<CopyLabels>; copied: Acces
         variant="ghost-muted"
         aria-label={label()}
         icon={
-          <>
-            <IconV2 name="outline-copy" data-copy-icon />
-            <IconV2 name="check" data-check-icon />
-          </>
+          props.kind === "download" ? (
+            <IconV2 name="outline-download" />
+          ) : (
+            <>
+              <IconV2 name="outline-copy" data-copy-icon />
+              <IconV2 name="check" data-check-icon />
+            </>
+          )
         }
       />
     </TooltipV2>
@@ -359,13 +371,17 @@ function decorate(root: HTMLDivElement, labels: CopyLabels) {
   // linkification (markFileLinks consumes data-inline-code-kind) — a core
   // capability, not a layout preference. Runs unconditionally.
   markInlineCode(root)
-  // AMICODE: chat image frames (preview + copy) — see markdown-local-images.
-  frameImages(root, () => createCopyButton(labels))
+  // AMICODE: chat image frames (preview + download + copy) — see markdown-local-images.
+  frameImages(root, () => [createCopyButton(labels, "download"), createCopyButton(labels)])
 }
 
-// Clicking a chat image opens it full-size (with copy). Optional dialog: a
-// Markdown rendered outside a DialogProvider (stories, embeds) keeps images inert.
-function setupImagePreview(root: HTMLDivElement, open: ((src: string, alt: string) => void) | undefined) {
+// Clicking a chat image opens it full-size (with download + copy). Optional
+// dialog: a Markdown rendered outside a DialogProvider (stories, embeds) keeps
+// images inert.
+function setupImagePreview(
+  root: HTMLDivElement,
+  open: ((src: string, alt: string, filename: string) => void) | undefined,
+) {
   if (!open) return
   const handleClick = (event: MouseEvent) => {
     const target = event.target
@@ -373,7 +389,7 @@ function setupImagePreview(root: HTMLDivElement, open: ((src: string, alt: strin
     if (target.closest('[data-component="markdown-image"]') === null) return
     if (!target.src) return
     event.preventDefault()
-    open(target.src, target.alt)
+    open(target.src, target.alt, imageFileName(target))
   }
   root.addEventListener("click", handleClick)
   return () => root.removeEventListener("click", handleClick)
@@ -408,6 +424,11 @@ function setupCodeCopy(root: HTMLDivElement, getLabels: () => CopyLabels) {
     const button = target.closest('[data-slot="markdown-copy-button"]')
     if (!(button instanceof HTMLElement)) return
     const image = button.closest('[data-component="markdown-image"]')?.querySelector("img")
+    if (button.getAttribute("data-action") === "download") {
+      // The host shows its own Save dialog; no "copied" state to flash here.
+      if (image?.src) await saveImage(image.src, imageFileName(image))
+      return
+    }
     if (image) {
       if (!image.src) return
       // The host's native image write can fail — copyImageToClipboard awaits its
@@ -520,7 +541,8 @@ export function Markdown(
   const owner = createUniqueId()
   const dialog = optionalDialog()
   const openImage = dialog
-    ? (src: string, alt: string) => dialog.show(() => <ImageLightbox src={src} alt={alt} />)
+    ? (src: string, alt: string, filename: string) =>
+        dialog.show(() => <ImageLightbox src={src} alt={alt} filename={filename} />)
     : undefined
   const activeCodeKeys = new Set<string>()
   const completedCode = new Map<string, Extract<RenderedBlock, { mode: "code" }>>()
@@ -629,6 +651,7 @@ export function Markdown(
     const labels = {
       copy: i18n.t("ui.message.copy"),
       copied: i18n.t("ui.message.copied"),
+      download: i18n.t("ui.message.download"),
     }
     const nextCodeKeys = new Set(content.filter((block) => block.mode === "code").map((block) => block.key))
     activeCodeKeys.forEach((key) => {
@@ -650,6 +673,7 @@ export function Markdown(
       copyCleanup = setupCodeCopy(container, () => ({
         copy: i18n.t("ui.message.copy"),
         copied: i18n.t("ui.message.copied"),
+        download: i18n.t("ui.message.download"),
       }))
     if (!linkCleanup) linkCleanup = setupExternalLinks(container)
     if (!imageCleanup) imageCleanup = setupImagePreview(container, openImage)
