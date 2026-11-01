@@ -21,6 +21,28 @@ import type { LaunchTarget } from "./chat_session_launcher";
 // pinned to its own in-app route (e.g. /new-session), one server underneath.
 // ============================================================================
 
+/** The chat editor's webview view type. `createPanel` keeps the literal at its
+ *  call site (panel_registration_invariants enumerates string-literal view
+ *  types); chat_panel_restore.test pins that the two agree. */
+export const CHAT_VIEW_TYPE = "amicode.chat";
+
+/** amicode#705 — own VS Code's editor-restore of chat tabs. A restored webview
+ *  carries the previous boot's shell: an iframe bound to the old origin and
+ *  per-boot auth token, with whatever turn was in flight when the server died.
+ *  Nothing ever re-streams into it, so it sits there as a hung "Amicode" tab.
+ *  The extension never registered a serializer, so no one owned those panels.
+ *  Restored panels are therefore not kept: they are disposed, and the live chat
+ *  comes up through the normal path (chat.autoOpen / the commands), bound to
+ *  the current server. Closing a stale tab loses nothing — sessions live in
+ *  the server, not the tab. */
+export function registerChatPanelSerializer(): vscode.Disposable {
+  return vscode.window.registerWebviewPanelSerializer(CHAT_VIEW_TYPE, {
+    async deserializeWebviewPanel(panel: vscode.WebviewPanel): Promise<void> {
+      panel.dispose();
+    },
+  });
+}
+
 /** VS Code theme kind → the fork app's ColorScheme. */
 export function themeKindToScheme(kind: vscode.ColorThemeKind): "light" | "dark" {
   return kind === vscode.ColorThemeKind.Light || kind === vscode.ColorThemeKind.HighContrastLight ? "light" : "dark";

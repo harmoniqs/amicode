@@ -8,7 +8,7 @@ import { resolveOpencodeBinary, OpencodeMissingError, unsupportedHostAdvice } fr
 import { resolveSelectedLaunch, harnessMenu, decideHarnessSwitch } from "./harness";
 import { watchHarnessSwitch, writeHarnessOptionsFile } from "./harness_switch";
 import { readLocalEntitlements } from "./scores/entitlements";
-import { ChatPanel } from "./chat_panel";
+import { ChatPanel, registerChatPanelSerializer } from "./chat_panel";
 import { createChatSessionLauncher } from "./chat_session_launcher";
 import { DeckPanel } from "./deck_panel";
 import type { LinkResolutionContext } from "./link_resolution";
@@ -703,6 +703,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       webviewOptions: { retainContextWhenHidden: true },
     }),
   );
+  // #705: restored chat editor tabs (window reload after a server restart) are
+  // dead shells — dispose them rather than leave hung panels.
+  ctx.subscriptions.push(registerChatPanelSerializer());
   // Mute the "Chat with Amico" button when a chat panel is open
   ChatPanel.onLiveChange((count) => sidebarProvider.setChatActive(count > 0));
   // #663: when the user picks a project in the composer dropdown, update
