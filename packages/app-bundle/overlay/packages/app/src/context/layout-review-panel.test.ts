@@ -78,6 +78,42 @@ describe("per-session review panel (#1966)", () => {
     expect(panel.source("A")).toBe("other")
   })
 
+  // Draft → session handoff: the draft page is keyed by the WORKSPACE key; on
+  // first submit the new session gets its own key and must keep the panel.
+  test("handoff carries an open draft panel (and its source) to the new session, then closes the draft", () => {
+    const { panel } = setup()
+    panel.set("workspace", true, "context-button")
+
+    panel.handoff("workspace", "session")
+
+    expect(panel.opened("session")).toBe(true)
+    expect(panel.source("session")).toBe("context-button")
+    expect(panel.opened("workspace")).toBe(false)
+    expect(panel.source("workspace")).toBe("other")
+  })
+
+  test("handoff from a closed draft leaves the new session closed", () => {
+    const { store, panel } = setup()
+
+    panel.handoff("workspace", "session")
+
+    expect(panel.opened("session")).toBe(false)
+    expect(panel.opened("workspace")).toBe(false)
+    expect(store.sessionView.session).toBeUndefined()
+  })
+
+  test("handoff does not overwrite a session that already set its own panel state", () => {
+    const { panel } = setup()
+    panel.set("workspace", true, "context-button")
+    panel.set("session", true, "context-button")
+    panel.set("session", false, "other")
+
+    panel.handoff("workspace", "session")
+
+    expect(panel.opened("session")).toBe(false)
+    expect(panel.opened("workspace")).toBe(false)
+  })
+
   test("a persisted open panel reads source 'other' after reload (source is ephemeral)", () => {
     const { panel } = setup({ A: { scroll: {}, reviewPanelOpened: true } })
     expect(panel.opened("A")).toBe(true)

@@ -25,18 +25,31 @@ export function createSessionReviewPanel(input: {
   const [sources, setSources] = createStore<Record<string, ReviewPanelSource | undefined>>({})
   const opened = (session: string) => input.views()[session]?.reviewPanelOpened ?? DEFAULT_REVIEW_PANEL_OPENED
 
+  const set = (session: string, next: boolean, source: ReviewPanelSource) => {
+    const nextSource = next ? source : "other"
+    batch(() => {
+      if (sources[session] !== nextSource) setSources(session, nextSource)
+      if (opened(session) === next) return
+      input.write(session, next)
+    })
+  }
+  const source = (session: string): ReviewPanelSource => {
+    if (!opened(session)) return "other"
+    return sources[session] ?? "other"
+  }
+
   return {
     opened,
-    source(session: string): ReviewPanelSource {
-      if (!opened(session)) return "other"
-      return sources[session] ?? "other"
-    },
-    set(session: string, next: boolean, source: ReviewPanelSource) {
-      const nextSource = next ? source : "other"
+    source,
+    set,
+    /** Draft → session handoff: the draft page is keyed by the workspace, so an
+     *  open draft panel moves to the new session (unless that session already
+     *  set its own state) and the draft closes so the next draft starts closed. */
+    handoff(from: string, to: string) {
+      if (!opened(from)) return
       batch(() => {
-        if (sources[session] !== nextSource) setSources(session, nextSource)
-        if (opened(session) === next) return
-        input.write(session, next)
+        if (input.views()[to]?.reviewPanelOpened === undefined) set(to, true, source(from))
+        set(from, false, "other")
       })
     },
     drop(sessions: string[]) {

@@ -684,6 +684,10 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
           if (!store.handoff?.tabs) return
           setStore("handoff", "tabs", undefined)
         },
+        // #1966: carry the draft (workspace-keyed) side-panel state to the new session.
+        reviewPanel(from: string, to: string) {
+          reviewPanel.handoff(from, to)
+        },
       },
       projects: {
         list,

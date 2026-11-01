@@ -622,6 +622,9 @@ export default function Page() {
         layout.handoff.clearTabs()
         if (pending.dir !== base64Encode(sdk().directory)) return
 
+        // #1966: the draft's side panel is keyed by the workspace; keep it open on the new session.
+        layout.handoff.reviewPanel(workspaceKey(), sessionKey())
+
         const from = workspaceTabs().tabs()
         if (from.all.length === 0 && !from.active) return
 
