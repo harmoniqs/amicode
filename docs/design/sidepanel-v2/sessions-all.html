@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Running sessions — Now panels</title>
+<link rel="stylesheet" href="mock.css" />
+<script src="sessions.js"></script>
+<style>
+  body { background: var(--amc-layer2); }
+  .top { display: flex; gap: 16px; align-items: baseline; padding: 16px 20px; border-bottom: 1px solid var(--amc-border); background: var(--amc-bg); position: sticky; top: 0; z-index: 3; }
+  .top h1 { font-size: 18px; margin: 0; font-weight: 600; letter-spacing: -0.01em; }
+  .top select { font: inherit; padding: 4px 8px; border: 1px solid var(--amc-border-strong); border-radius: 4px; background: var(--amc-bg); color: var(--amc-text); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, 440px); gap: 16px; padding: 16px 20px 60px; justify-content: center; }
+  iframe { width: 440px; height: 760px; border: 1px solid var(--amc-border); border-radius: 4px; background: var(--amc-bg); }
+</style>
+</head>
+<body>
+<div class="top">
+  <h1>Every running session, as its Now panel</h1>
+  <label>Theme <select id="theme"><option>light</option><option>dark</option></select></label>
+  <span class="faint" id="gen" style="font-size: 12px"></span>
+</div>
+<div class="grid" id="grid"></div>
+<script>
+const q = new URLSearchParams(location.search)
+const theme = document.getElementById("theme")
+theme.value = q.get("theme") || "light"
+document.getElementById("gen").textContent = `${SESSIONS.sessions.length} sessions active in the last 4 hours · snapshot ${SESSIONS.generated}`
+function render() {
+  document.documentElement.dataset.theme = theme.value
+  document.getElementById("grid").replaceChildren(...SESSIONS.sessions.map((s) => Object.assign(document.createElement("iframe"), { src: `sessions.html?id=${s.id}&theme=${theme.value}`, title: s.title, loading: "lazy" })))
+  history.replaceState(null, "", `?theme=${theme.value}`)
+}
+theme.onchange = render
+render()
+// sessions.js is rebuilt every 2 minutes on erlich; pick it up without a manual reload
+setInterval(() => location.reload(), 120000)
+</script>
+</body>
+</html>

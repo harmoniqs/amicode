@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Now — running sessions</title>
+<link rel="stylesheet" href="mock.css" />
+<link rel="stylesheet" href="simple.css" />
+<script src="sessions.js"></script>
+<script src="views.js"></script>
+<style>
+  .style-switch { display: none !important; }
+  .kind { color: var(--amc-text-faint); }
+  .quote { color: var(--amc-text-muted); margin: 14px 0 0; }
+  .quote::before { content: "Amico: "; color: var(--amc-text-faint); }
+  .now { margin-top: 6px; }
+  .now code { font: 12px var(--amc-font-mono); color: var(--amc-text-muted); }
+  .seg5 { display: flex; height: 3px; gap: 2px; margin-top: 14px; }
+  .seg5 i { display: block; height: 100%; }
+  .pr { display: flex; gap: 8px; }
+  .pr .st { width: 52px; flex: none; color: var(--amc-text-muted); }
+  .pr .st.MERGED { color: var(--amc-text-faint); }
+  .pr .st.OPEN { color: var(--amc-text); }
+  .empty { color: var(--amc-text-faint); }
+</style>
+</head>
+<body>
+<script>
+/* Each running session gets the Now panel its own records call for. The layout
+   document is chosen by kind (research director, develop, build/report, plan)
+   and filled from snapshot/sessions.py — no text here is typed per session. */
+const { h, usd, dur, ago } = V
+V.themeToggle()
+document.documentElement.dataset.style = "a"
+if (window.top !== window) document.body.classList.add("inframe")
+const NOW = Date.parse(SESSIONS.generated) / 1000
+const q = new URLSearchParams(location.search)
+const S = SESSIONS.sessions.find((s) => s.id === q.get("id")) || SESSIONS.sessions[0]
+
+const COLORS = { confirmed: "var(--amc-success)", partial: "var(--amc-warning)", refuted: "var(--amc-danger)", stopped: "var(--amc-text-faint)", open: "var(--amc-ink-13)" }
+const kindOf = (s) => (s.agent === "research" && s.ledger ? "research" : s.agent === "develop" ? "develop" : s.agent === "plan" ? "plan" : "build")
+const KIND = kindOf(S)
+
+/* what the session is doing right now, in words, from its running tool call */
+function doing(s) {
+  const live = s.casts_live[0]
+  if (live) return [`${live.title}`, h("span", { class: "label" }, ` · ${live.role} · ${dur(NOW - live.start)}`)]
+  const r = s.running
+  if (!r) return s.live ? ["Thinking"] : [h("span", { class: "label" }, "Idle · last active " + ago(s.updated, NOW))]
+  const sleep = r.what.match(/^sleep (\d+)/)
+  if (sleep) return [`Checking on progress every ${Math.round(sleep[1] / 60)} min`]
+  const pr = r.what.match(/gh pr view (\d+) -R ([\w./-]+)/)
+  if (pr) return [`Waiting for ${pr[2]} #${pr[1]} to merge`]
+  return [r.tool === "bash" ? "Running a command " : `Using ${r.tool} `, h("code", null, r.what.slice(0, 48) + (r.what.length > 48 ? "…" : ""))]
+}
+
+const row = (k, v, more = true) => h("a", { class: "row more", href: "#" }, k ? h("span", { style: { width: "84px", flex: "none" } }, k) : null, h("span", { class: "grow ell", style: { color: "var(--amc-text)" } }, v), more ? h("span", null, "›") : null)
+const short = (p) => p.split("/").slice(-2).join("/")
+
+/* ── one focus block per kind ─────────────────────────────────────────────── */
+const FOCUS = {
+  research: (s) => {
+    const H = s.ledger.hypotheses
+    const by = (c) => H.filter((x) => x.cls === c).length
+    const settled = H.length - by("open")
+    const latest = H.filter((x) => x.cls !== "open").slice(-1)[0]
+    return [
+      h("div", { class: "label" }, "Campaign · " + s.ledger.path.split("/").pop().replace(/^session-\d+-|\.md$/g, "")),
+      h("div", { class: "big", style: { marginTop: "6px" } }, settled, h("span", { class: "label", style: { fontSize: "13px", fontWeight: 400, letterSpacing: 0 } }, ` of ${H.length} hypotheses settled`)),
+      h("div", { class: "seg5" }, ["confirmed", "partial", "refuted", "stopped", "open"].filter(by).map((c) => h("i", { style: { flex: by(c), background: COLORS[c] }, title: `${by(c)} ${c}` }))),
+      h("div", { class: "steplabels", style: { display: "flex", gap: "14px" } }, ["confirmed", "partial", "refuted", "open"].filter(by).map((c) => h("span", null, `${by(c)} ${c}`))),
+      latest && h("p", { style: { margin: "14px 0 0" } }, h("span", { class: "label" }, "Latest verdict · "), h("b", { style: { fontWeight: 500 } }, latest.id), " ", latest.label.toLowerCase().replace(/^\w/, (c) => c.toUpperCase())),
+      h("div", { class: "now", style: { marginTop: "14px" } }, h("span", { class: "label" }, "Now · "), doing(s)),
+      h("div", { style: { display: "flex", gap: "8px", marginTop: "12px" } }, h("button", { class: "btn2 cta" }, "Open ledger"), h("button", { class: "btn2" }, "Ask about it")),
+    ]
+  },
+  develop: (s) => {
+    const open = s.prs.filter((p) => p.state === "OPEN"), merged = s.prs.filter((p) => p.state === "MERGED")
+    return [
+      h("div", { class: "label" }, "Pull requests from this session"),
+      h("div", { class: "big", style: { marginTop: "6px" } }, merged.length, h("span", { class: "label", style: { fontSize: "13px", fontWeight: 400, letterSpacing: 0 } }, ` merged · ${open.length} open`)),
+      h("div", { class: "now", style: { marginTop: "12px" } }, h("span", { class: "label" }, "Now · "), doing(s)),
+      h("div", { class: "sec", style: { marginTop: "16px" } }, s.prs.map((p) => h("div", { class: "row pr" }, h("span", { class: "st " + (p.state || "") }, (p.state || "—").toLowerCase()), h("span", { class: "grow ell" }, p.title || `${p.repo} #${p.n}`), h("span", { class: "meta" }, p.repo.split("/")[1] + " #" + p.n)))),
+      s.said && s.said.length > 40 && h("p", { class: "quote" }, s.said),
+    ]
+  },
+  build: (s) => {
+    const done = s.todos.filter((t) => t.status === "completed").length
+    const current = s.todos.find((t) => t.status === "in_progress")
+    const outputs = s.files.filter((f) => /\.(md|tex|pdf|html)$/.test(f.path))
+    return [
+      h("div", { class: "label" }, s.todos.length ? "Plan" : "Output"),
+      s.todos.length
+        ? h("div", { class: "big", style: { marginTop: "6px" } }, done, h("span", { class: "label", style: { fontSize: "13px", fontWeight: 400, letterSpacing: 0 } }, ` of ${s.todos.length} steps done`))
+        : h("div", { class: "big", style: { marginTop: "6px" } }, outputs.length, h("span", { class: "label", style: { fontSize: "13px", fontWeight: 400, letterSpacing: 0 } }, " documents written")),
+      s.todos.length && h("div", { class: "steps", style: { gridTemplateColumns: `repeat(${s.todos.length}, 1fr)` } }, s.todos.map((t) => h("i", { class: t.status === "completed" ? "done" : "", style: t.status === "in_progress" ? { background: "var(--amc-text-muted)" } : null }))),
+      current && h("p", { style: { margin: "12px 0 0" } }, h("span", { class: "label" }, "Step · "), current.content),
+      h("div", { class: "now", style: { marginTop: "12px" } }, h("span", { class: "label" }, "Now · "), doing(s)),
+      outputs.length ? h("div", { class: "sec", style: { marginTop: "16px" } }, outputs.slice(0, 4).map((f) => row("", short(f.path)))) : null,
+      s.said && s.said.length > 40 && h("p", { class: "quote" }, s.said),
+    ]
+  },
+  plan: (s) => [
+    h("div", { class: "label" }, "Planning"),
+    h("div", { class: "big", style: { marginTop: "6px" } }, s.casts_live.length || s.casts, h("span", { class: "label", style: { fontSize: "13px", fontWeight: 400, letterSpacing: 0 } }, s.casts_live.length ? " explorers reading the code" : " explorers so far")),
+    s.casts_live.length > 1 && h("div", { class: "sec", style: { marginTop: "12px" } }, s.casts_live.map((c) => h("div", { class: "row" }, h("span", { class: "grow ell" }, c.title), h("span", { class: "meta" }, dur(NOW - c.start))))),
+    h("div", { class: "now", style: { marginTop: "12px" } }, h("span", { class: "label" }, "Now · "), doing(s)),
+    s.said && s.said.length > 40 && h("p", { class: "quote" }, s.said),
+    h("div", { style: { display: "flex", gap: "8px", marginTop: "12px" } }, h("button", { class: "btn2" }, "Open plan")),
+  ],
+}
+
+/* ── the shared summary lines, filtered to what this session actually has ─── */
+function summary(s) {
+  const rows = []
+  if (KIND !== "plan" && s.casts) rows.push(["Casts", `${s.casts} subagent sessions` + (s.casts_live.length ? `, ${s.casts_live.length} running` : "") ])
+  if (KIND === "research" && s.prs.length) rows.push(["PRs", `${s.prs.filter((p) => p.state === "OPEN").length} open, ${s.prs.filter((p) => p.state === "MERGED").length} merged`])
+  if (KIND !== "build" && s.files.length) rows.push(["Files", `${s.files.length} written · ${short(s.files[0].path)}`])
+  if (s.todos.length && KIND !== "build") rows.push(["Plan", `${s.todos.filter((t) => t.status === "completed").length} of ${s.todos.length} steps done`])
+  rows.push(["Spend", `${usd(s.usd, 0)} model` + (s.casts ? ` · ${usd(s.director_usd, 0)} director` : "")])
+  return rows.map(([k, v]) => row(k, v))
+}
+
+const LABEL = { research: "Research director", develop: "Develop", build: "Build", plan: "Plan" }
+const page = h("div", { class: "s" },
+  h("nav", { class: "tabs2" }, h("a", { class: "on" }, "Now"), h("a", null, "Files"), h("a", null, "Context"), h("span", { class: "sp" }), h("a", null, "Home")),
+  h("div", { class: "pad" },
+    h("h1", null, S.title),
+    h("div", { class: "sub" }, `${LABEL[KIND]} · ${S.live ? "running" : "idle"} · updated ${ago(S.updated, NOW)}`),
+    S.pending.length ? h("div", { class: "sec" }, S.pending.map((p) => h("div", { class: "row" }, h("span", { class: "grow" }, h("b", { style: { fontWeight: 500 } }, p.kind === "question" ? "Question · " : "Permission · "), p.q), h("button", { class: "btn2 cta" }, "Answer")))) : null,
+    h("div", { class: "sec" }, FOCUS[KIND](S)),
+    h("div", { class: "sec" }, summary(S)),
+    KIND === "research" && h("div", { class: "sec" }, h("label", { class: "switch" }, h("i"), "Watch this campaign")),
+  ),
+)
+document.body.append(page)
+</script>
+</body>
+</html>
