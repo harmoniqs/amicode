@@ -210,11 +210,13 @@
     "packages/app/src/context/fleet-session-status.test.ts": "4d37bac382d59df115a72b26a09a1c01dbd1417e04eb443563f070dcab55597d",
     "packages/app/src/context/fleet-session-status.ts": "0088413ee2059d2828da97e8f4af98883c09b8d76c1e6078cd5e05b4bdbb7821",
     "packages/app/src/context/language.tsx": "0f7b1cbd33071f293c15b66e3a900dfd07347f9eb93d8cf61df0fac3bc4effc5",
+    "packages/app/src/context/layout-review-panel.test.ts": "eb69d9e8f6625514ea8468de1e7f3120928cd046a0a0a2aa719722519b155d6e",
+    "packages/app/src/context/layout-review-panel.ts": "271e70c71e61f515a6d906d6bb26cfdd1c08a6a1c44f83a3b5ce43209161ad58",
     "packages/app/src/context/layout-side-panel-tabs.test.ts": "297780d590110895baf053bdde81863439dac94a18592287314167db579a89d5",
     "packages/app/src/context/layout-side-panel-tabs.ts": "e8dec07b2b5a5ebe68a76c98d688afa1360a4e31741a10bb49228afb8a7f3777",
     "packages/app/src/context/layout-tabs.test.ts": "524327496e735379bb3425e78cbeb6cefa92e30296ddc44776eb8e99d644925d",
     "packages/app/src/context/layout-tabs.ts": "741506ce165f68cdb0b8f2931a2dad3e26c05880f9286c3daf04ec979bac21c5",
-    "packages/app/src/context/layout.tsx": "9bb24aa18442cf0dba1dc749f49060de4d45e50bcd5b0e148325e8e4611fa2ca",
+    "packages/app/src/context/layout.tsx": "83f70d1449e8ca0e4789fdc1556cfc02557442866291b502831df9abe9cb8b95",
     "packages/app/src/context/local-agent.test.ts": "a5a9d60bb4401d409218cc247c1cc06ede8b7878ddf01dc6080328f54eb9cade",
     "packages/app/src/context/local-agent.ts": "0aab67e695dc3bb45a733ac0df80a0a5e14cfe29b2375b6dc3cd07fbccea33e2",
     "packages/app/src/context/local-reseed.test.ts": "b060240fc15ed9464cd2f03b942d8ee0a27e43712791e8425a55417240738fc6",
@@ -1097,10 +1099,10 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-11-01T13:50:46.952Z",
+  "extracted_at": "2026-11-01T15:58:05.231Z",
   "per_package": {
     "packages/app": {
-      "A": 307,
+      "A": 309,
       "M": 166,
       "D": 0
     },
@@ -1146,7 +1148,7 @@
     }
   },
   "counts": {
-    "overlay_total": 1075,
+    "overlay_total": 1077,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1353,6 +1355,8 @@
     "packages/app/src/context/fleet-session-status.test.ts": "A",
     "packages/app/src/context/fleet-session-status.ts": "A",
     "packages/app/src/context/language.tsx": "M",
+    "packages/app/src/context/layout-review-panel.test.ts": "A",
+    "packages/app/src/context/layout-review-panel.ts": "A",
     "packages/app/src/context/layout-side-panel-tabs.test.ts": "A",
     "packages/app/src/context/layout-side-panel-tabs.ts": "A",
     "packages/app/src/context/layout-tabs.test.ts": "M",
