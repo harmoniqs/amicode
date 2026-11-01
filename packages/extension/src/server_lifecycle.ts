@@ -795,6 +795,25 @@ export interface StaleNoticeDeps {
    *  detail while the engine is stale — independent of whether the toast is
    *  dismissed — and with undefined when it is current. */
   setStaleIndicator?: (state: { detail: string } | undefined) => void;
+  /** #1571: self-heal. When present, a stale ARMED engine is restarted
+   *  automatically (via onRestartRequested) the moment no turn is in flight —
+   *  no toast, no click. Mid-turn it falls back to the toast and retries the
+   *  instant the turn ends. Absent → the original toast-only notice. */
+  autoRestart?: AutoRestartDeps;
+}
+
+export interface AutoRestartDeps {
+  /** True while any chat turn is running. May be async (e.g. an engine probe).
+   *  A throw / reject is treated as "in flight" — never restart on a guess. */
+  hasInflightTurns: () => boolean | Promise<boolean>;
+  /** Subscribe to "the last in-flight turn just ended"; returns unsubscribe. */
+  onQuiesce: (listener: () => void) => () => void;
+  /** Loop guard: false → do not auto-restart (the toast + indicator remain).
+   *  A restart that does not cure the staleness would otherwise reload forever. */
+  allow?: () => boolean;
+  /** Called immediately before an automatic restart (persist the loop guard). */
+  record?: () => void;
+  log?: (line: string) => void;
 }
 
 /** What differs, in words: "engine binary and config" | "engine binary" | "config". */
@@ -809,15 +828,62 @@ export function staleDetail(result: StaleEngineResult): string {
 export function surfaceStaleNotice(
   result: StaleEngineResult,
   deps: StaleNoticeDeps,
-): void {
+  opts: { allowAutoRestart?: boolean } = {},
+): Promise<void> {
   const detail = staleDetail(result);
   deps.setStaleIndicator?.(result.stale ? { detail } : undefined);
-  if (!result.stale) return;
-  void deps.showInformationMessage(
-    `Amicode: the running server's ${detail} differs from the current build.`,
-    "Restart Engine",
-  ).then((choice) => {
-    if (choice === "Restart Engine") void deps.onRestartRequested();
+  if (!result.stale) return Promise.resolve();
+  const notice = (extra = ""): void => {
+    void deps.showInformationMessage(
+      `Amicode: the running server's ${detail} differs from the current build.${extra}`,
+      "Restart Engine",
+    ).then((choice) => {
+      if (choice === "Restart Engine") void deps.onRestartRequested();
+    });
+  };
+  const auto = deps.autoRestart;
+  if (!auto || opts.allowAutoRestart === false || auto.allow?.() === false) {
+    notice();
+    return Promise.resolve();
+  }
+  return autoRestartWhenIdle(auto, deps.onRestartRequested, notice);
+}
+
+async function inflightNow(auto: AutoRestartDeps): Promise<boolean> {
+  try {
+    return await auto.hasInflightTurns();
+  } catch {
+    return true; // unknowable → assume a turn is running
+  }
+}
+
+/** The #1571 policy: restart now if idle; else notify and restart the moment
+ *  the in-flight turn ends. Resolves once the initial decision is made. */
+async function autoRestartWhenIdle(
+  auto: AutoRestartDeps,
+  restart: () => Promise<void>,
+  notice: (extra?: string) => void,
+): Promise<void> {
+  const go = async (): Promise<void> => {
+    auto.record?.();
+    auto.log?.("[stale-engine] no turn in flight — restarting onto the current build");
+    await restart();
+  };
+  if (!(await inflightNow(auto))) {
+    await go();
+    return;
+  }
+  notice(" A turn is in flight; the engine will restart automatically when it ends.");
+  let done = false;
+  let off: (() => void) | undefined;
+  off = auto.onQuiesce(() => {
+    if (done) return;
+    void (async () => {
+      if (done || (await inflightNow(auto))) return; // a new turn began — stay armed
+      done = true;
+      off?.();
+      await go();
+    })();
   });
 }
 
@@ -886,11 +952,13 @@ export async function auditAdoptedEngine(
   if (unarmed) {
     const binaryChanged = adoptedHashes.binaryHash !== "" && adoptedHashes.binaryHash !== onDiskHashes.binaryHash;
     const result: StaleEngineResult = { stale: binaryChanged, binaryChanged, configChanged: false };
-    surfaceStaleNotice(result, deps.notify);
+    // A hub engine is shared with other windows whose turns we cannot see —
+    // never auto-restart it; the toast + indicator leave the choice to a human.
+    await surfaceStaleNotice(result, deps.notify, { allowAutoRestart: false });
     return result;
   }
   const result = detectStaleEngine(adoptedHashes, onDiskHashes);
-  surfaceStaleNotice(result, deps.notify);
+  await surfaceStaleNotice(result, deps.notify);
   return result;
 }
 
