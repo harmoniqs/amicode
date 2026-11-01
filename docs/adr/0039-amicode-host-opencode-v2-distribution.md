@@ -80,14 +80,19 @@ unconditionally, and v2's guarantee that an orphaned claim's owner is dead lives
 in the SDK. A VS Code reload, a second window, or a browser all attach to the same host.
 
 **D4 — Scientific compute lives outside the host.** Every `amico run` becomes a transient unit
-(`systemd-run --user` on Linux; a launchd job on macOS) whose `ExecStart` is the *existing* orchestrator, so
-the iteration classifier, the ledger stanza the warrant counts, free-tier verification and the stdout contract
-are unchanged; the invoking command becomes a thin client that **detaches** (never aborts the solve) on
-`SIGTERM`/`SIGHUP`. A `run.lock` records {unit, pid, host, spec hash, protection, cloud run id} and is touched
+(`systemd-run --user`, Linux) that runs the *existing* orchestrator through a new internal `--adopt <run-dir>`
+mode — `launch.ts` has no foreground flag today and creates the run directory itself — so the iteration
+classifier, the ledger stanza the warrant counts, free-tier verification and the stdout contract are unchanged
+and the gate and warrant run once. The invoking command becomes a thin client that **detaches** (never aborts
+the solve) on `SIGTERM`/`SIGHUP`; timeouts call `amico run stop`. macOS is out of scope for this program: it gets
+the file-backed log and `protection: none`, because the loss there is the stdout pipe, not the process group. A `run.lock` records {unit, pid, host, spec hash, protection, cloud run id} and is touched
 by a heartbeat, so `dead` versus `stalled` is decidable from files alone, and a run that could not be placed in
 a unit says so and blocks restart gates. This ships on the v1 engine **before** the port, preceded by **step A0**:
-the restart paths that exist today (`lane-roll.sh`, `hub-restart.sh`, the RSS watchdog) restart a shard on
-session idleness alone and never check for solves, so they violate the invariant this ADR relies on. It remains
+the restart paths that exist today never check for solves: `lane-roll.sh` restarts after two idle status
+reads, `hub-restart.sh restart` is unconditional, the RSS watchdog restarts when memory is over threshold and the
+HTTP probe is silent, and the unit is `Restart=always`. A0 guards the first three atomically (the unguarded
+crash, out-of-memory and manual paths are accepted risks until A moves solves out of the cgroup) and gives a
+wedged engine with a live solve a bounded deferral and a human escalation instead of an automatic restart. It remains
 necessary on v2, because v2 cancels background *shell* jobs on restart (only background *subagents* and PTY
 terminals survive).
 
@@ -134,7 +139,9 @@ multi-server orchestration and desktop plugin host do not serve a VS Code webvie
 **D8 — Staying current is a loop, not a quarterly ordeal.** A bump bot opens a PR per upstream release,
 rebases the patch queue, runs the contract suite against `@opencode/client`, `@opencode/plugin` and the SSE
 events we consume, and reads upstream's changelog for patches it now obsoletes. Bump PRs are **human-merged** at first; patch-level and green becomes eligible for autonomous merge only
-after the charter exists (D10). A minor bump or a failing contract escalates. Upstream
+after the charter exists (D10), and then only through a single named deterministic bump identity (not an agent)
+bound to a pinned `@opencode/*` range and a lockfile-diff checker — the one carve-out from the human-only
+lockfile and manifest paths. A minor bump or a failing contract escalates. Upstream
 contributions are drafted and opened by the agent identity per the contribution policy; the first two are
 *export the server handler from `@opencode/sdk`* (if H0c chooses it) and *publish `@opencode/session-ui`*.
 
@@ -147,9 +154,18 @@ moves over when a parity checklist is green. After 0.4.0 the v1 overlay is **mai
 follow the Amicode loop (propose → trusted gate → independent corrector → stage → human promote), with the
 human step moving outward only as the corrector's own tests stay green. The deterministic floor (author trust tier,
 class path allowlist, deny-list on title and body, protected paths) applies whatever any model says; agents never
-write protected paths, never hold or reach publish secrets, and never edit the files that gate their own merges.
+write protected paths (CODEOWNERS is **default-deny**, enforced by an Active ruleset requiring code-owner review),
+never hold or reach publish secrets — including through credentials ambient in the agent's shell, since the
+identity shim defaults to the human's own login and today's agents run as the same OS user as the hub — and never
+edit the files that gate their own merges. The repository's default workflow token is **write** today and `ci.yml`
+declares no permissions, so a pull request's own test code already runs with a write token; making it read-only
+is a prerequisite, not a refinement.
 A rung (alpha cut, stable promote) is handed to an agent only by a charter amendment signed off the hub, and is
-revoked automatically on a revert, a canary rollback, a failed audit, or a missed planted-adversary drill. The
+revoked automatically on a revert, a canary rollback, a failed audit, or a missed planted-adversary drill. Soak is
+restricted to what GitHub can attest (days since the alpha, no revert, named-check conclusions); canary traffic is
+advisory, because the agent's own sessions would count as traffic. A signed denylist at extension start-up is a
+kill switch for honest-bug releases only — a compromised release can remove it — and Marketplace rollback is only
+roll-forward. The
 design of record is spec sections D, E and J; it was reviewed adversarially and **several claims in the first
 draft were wrong about the engine it reuses** (the existing critic does see the issue; the token mint sends no
 scope body; release secrets are repo-level with no protected environment; `promote.yml` accepts a SHA with zero
