@@ -75,6 +75,7 @@ import { animate } from "motion"
 import { attached, inline, kind, typeLabel } from "./message-file"
 import { readPartText, splitSettledChunks } from "./message-part-text"
 import { shouldShowUserMessageText } from "./message-part-user"
+import { settledToolStatus } from "./message-part-tool-status"
 import { buildTrace } from "./build-trace"
 import { SessionProgressIndicatorV2 } from "../v2/components/session-progress-indicator-v2"
 
@@ -178,6 +179,8 @@ export interface MessageProps {
   showReasoningSummaries?: boolean
   useV2Actions?: boolean
   comments?: UserMessageComment[]
+  /** #1671 — the user message was sent mid-run and has not started yet. */
+  queued?: boolean
 }
 
 export type SessionAction = (input: { sessionID: string; messageID: string }) => Promise<void> | void
@@ -1187,6 +1190,7 @@ export function Message(props: MessageProps) {
             actions={props.actions}
             useV2Actions={props.useV2Actions}
             comments={props.comments}
+            queued={props.queued}
           />
         )}
       </Match>
@@ -1748,6 +1752,7 @@ export function UserMessageDisplay(props: {
   actions?: UserActions
   useV2Actions?: boolean
   comments?: UserMessageComment[]
+  queued?: boolean
 }) {
   const data = useData()
   const dialog = useDialog()
@@ -1922,6 +1927,11 @@ export function UserMessageDisplay(props: {
         </div>
       </Show>
       <Show when={props.useV2Actions}>{renderAttachments()}</Show>
+      <Show when={props.queued}>
+        <div data-slot="user-message-queued" class="text-12-regular">
+          {i18n.t("ui.message.queued")}
+        </div>
+      </Show>
       <Show when={text() || skills().length > 0 || (props.useV2Actions && messageComments().length > 0)}>
         <div data-slot="user-message-copy-wrapper">
           <Show when={metaHead() || metaTail()}>
@@ -2211,7 +2221,7 @@ PART_MAPPING["tool"] = function ToolPartDisplay(props) {
               metadata={partMetadata()}
               // @ts-expect-error
               output={part().state.output}
-              status={part().state.status}
+              status={settledToolStatus(part().state.status, props.message)}
               hideDetails={props.hideDetails}
               defaultOpen={props.defaultOpen}
               open={controlledOpen()}

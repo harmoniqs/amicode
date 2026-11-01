@@ -20,6 +20,7 @@ import * as path from "node:path";
 import * as os from "node:os";
 import { createHash } from "node:crypto";
 import { readLocalEntitlements } from "./scores/entitlements";
+import { opencodeConfigDir } from "./opencode_xdg";
 
 /** The premium entitlement code that lights the overlay surface (the same
  *  code `amico premium` reports — entitlement, not capability fork). */
@@ -323,9 +324,11 @@ export function mergeOverlayIntoCard(
   return { text, mergedFields };
 }
 
-/** The global opencode agents directory where mode cards land. */
+/** The global opencode agents directory where mode cards land — under
+ *  `$XDG_CONFIG_HOME/opencode` (else `~/.config/opencode`), matching the
+ *  engine's own resolution so Flatpak-style XDG overrides still find them (#1015). */
 export function globalAgentsDir(): string {
-  return path.join(os.homedir(), ".config", "opencode", "agents");
+  return path.join(opencodeConfigDir(), "agents");
 }
 
 /** The global opencode CONFIG root — the parent of `agents/` and the staging
@@ -333,7 +336,7 @@ export function globalAgentsDir(): string {
  *  layout mirrors the source (modes/ and agents/ siblings), so the bundles'
  *  declared `../../agents/…` paths resolve identically deployed-side. */
 export function opencodeGlobalConfigRoot(): string {
-  return path.join(os.homedir(), ".config", "opencode");
+  return opencodeConfigDir();
 }
 
 /** Every mode-card markdown file shipped in <extensionPath>/agents/, sorted.

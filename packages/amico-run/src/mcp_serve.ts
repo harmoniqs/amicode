@@ -31,13 +31,22 @@ export function verbToMcpTool(v: Verb): McpToolDescriptor {
   };
 }
 
-export function listMcpTools(): McpToolDescriptor[] {
-  return SPINE_VERBS.map(verbToMcpTool);
+/** Is this verb published on the MCP (agent) surface? Verbs default IN; a
+ *  verb marked `mcpDefault: false` is opt-out unless named in
+ *  AMICO_MCP_EXPOSE (comma-separated verb names). */
+export function isMcpExposed(v: Verb, env: NodeJS.ProcessEnv = process.env): boolean {
+  if (v.mcpDefault !== false) return true;
+  const optIn = (env.AMICO_MCP_EXPOSE ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  return optIn.includes(v.name);
+}
+
+export function listMcpTools(env: NodeJS.ProcessEnv = process.env): McpToolDescriptor[] {
+  return SPINE_VERBS.filter((v) => isMcpExposed(v, env)).map(verbToMcpTool);
 }
 
 /** tools/call handler — dispatches to the same Verb.run the CLI uses. */
-export async function callMcpTool(name: string, argv: string[]): Promise<unknown> {
-  const verb = SPINE_VERBS.find((v) => `amico_${v.name}` === name);
+export async function callMcpTool(name: string, argv: string[], env: NodeJS.ProcessEnv = process.env): Promise<unknown> {
+  const verb = SPINE_VERBS.find((v) => `amico_${v.name}` === name && isMcpExposed(v, env));
   if (!verb) throw new Error(`unknown tool ${name}`);
   if (argv[0] !== undefined && verb.cliOnlySubcommands?.includes(argv[0]))
     return { verb: verb.name, subcommand: argv[0], ok: false, error: `\`amico ${verb.name} ${argv[0]}\` is CLI-only — not exposed through MCP` };

@@ -380,9 +380,13 @@ export function SessionSidePanel(props: {
 
   // ── Preview companion state ──────────────────────────────────────────────
   // The file to show in the Preview tab. Null = empty state ("Select a file
-  // from the sidebar"). Managed in the layout context's ephemeral store so
-  // the bridge message handler can set it from outside the side panel.
+  // from the sidebar"). Managed in the layout context's persisted session-view
+  // store (previewActive + previewPaths) so the bridge message handler can set
+  // it from outside the side panel AND it survives reloads.
   const previewFile = createMemo(() => view().previewFile.get())
+  const previewPaths = createMemo(() => view().previewPaths.get())
+  const setPreviewPaths = (paths: string[]) => view().previewPaths.set(paths)
+  const setPreviewActive = (path: string | null) => view().previewFile.set(path)
 
   createEffect(
     on(previewFile, (path) => {
@@ -754,6 +758,7 @@ export function SessionSidePanel(props: {
                                 <Tabs.Trigger
                                   value="review"
                                   id={reviewTabID}
+                                  data-tour-target="files-changed"
                                   style={{ order: layout.sidePanelTabs.order().indexOf("review") }}
                                   aria-controls={activeTab() === "review" ? reviewTabPanelID : undefined}
                                 >
@@ -878,6 +883,7 @@ export function SessionSidePanel(props: {
                               >
                                 <Tabs.Trigger
                                   value={SESSION_PREVIEW_TAB}
+                                  data-tour-target="preview-tab"
                                   closeButton={
                                     <TooltipKeybind
                                       title={language.t("common.closeTab")}
@@ -987,7 +993,14 @@ export function SessionSidePanel(props: {
                             inert={activeTab() !== SESSION_PREVIEW_TAB}
                           >
                             <div class="relative flex-1 min-h-0 overflow-hidden">
-                              <SessionPreviewTab previewFile={previewFile} panelVisible={() => activeTab() === SESSION_PREVIEW_TAB} />
+                              {/* #1249: one Preview per session — the route instance is shared across session tabs, so
+                                  key it or one session's open files and unsaved drafts carry into the next. Drafts live in
+                                  the per-(session, path) store and come back with the session. */}
+                              <Show when={params.id ?? "none"} keyed>
+                                {(_session) => (
+                                  <SessionPreviewTab previewFile={previewFile} panelVisible={() => activeTab() === SESSION_PREVIEW_TAB} openPaths={previewPaths} onOpenedPathsChange={setPreviewPaths} onActiveChange={setPreviewActive} hydrated={layout.ready} sessionID={() => params.id} />
+                                )}
+                              </Show>
                             </div>
                           </Tabs.Content>
 
@@ -1068,6 +1081,7 @@ export function SessionSidePanel(props: {
                                       <Tabs.Trigger
                                         value="review"
                                         id={reviewTabID}
+                                        data-tour-target="files-changed"
                                         aria-controls={activeTab() === "review" ? reviewTabPanelID : undefined}
                                         closeButton={
                                           <TooltipV2
@@ -1208,6 +1222,7 @@ export function SessionSidePanel(props: {
                                     <Match when={tab === SESSION_PREVIEW_TAB}>
                                       <Tabs.Trigger
                                         value={SESSION_PREVIEW_TAB}
+                                        data-tour-target="preview-tab"
                                         closeButton={
                                           <TooltipV2
                                             value={
@@ -1360,7 +1375,14 @@ export function SessionSidePanel(props: {
                         inert={activeTab() !== SESSION_PREVIEW_TAB}
                       >
                         <div class="relative flex-1 min-h-0 overflow-hidden">
-                          <SessionPreviewTab previewFile={previewFile} panelVisible={() => activeTab() === SESSION_PREVIEW_TAB} />
+                          {/* #1249: one Preview per session — the route instance is shared across session tabs, so
+                              key it or one session's open files and unsaved drafts carry into the next. Drafts live in
+                              the per-(session, path) store and come back with the session. */}
+                          <Show when={params.id ?? "none"} keyed>
+                            {(_session) => (
+                              <SessionPreviewTab previewFile={previewFile} panelVisible={() => activeTab() === SESSION_PREVIEW_TAB} openPaths={previewPaths} onOpenedPathsChange={setPreviewPaths} onActiveChange={setPreviewActive} hydrated={layout.ready} sessionID={() => params.id} />
+                            )}
+                          </Show>
                         </div>
                       </Tabs.Content>
 
@@ -1394,6 +1416,7 @@ export function SessionSidePanel(props: {
             <Show when={fileOpen()}>
               <div
                 id="file-tree-panel"
+                data-tour-target="file-tree"
                 class="relative min-w-0 h-full shrink-0 overflow-hidden"
                 classList={{
                   "transition-[width] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] will-change-[width] motion-reduce:transition-none":

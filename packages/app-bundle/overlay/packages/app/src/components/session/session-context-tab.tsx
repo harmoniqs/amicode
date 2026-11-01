@@ -170,20 +170,8 @@ export function SessionContextTab() {
     { equals: same },
   )
 
-  const usd = createMemo(
-    () =>
-      new Intl.NumberFormat(language.intl(), {
-        style: "currency",
-        currency: "USD",
-      }),
-  )
-
   const ctx = createMemo(() => getSessionContext(messages(), [...providers.all().values()]))
   const formatter = createMemo(() => createSessionContextFormatter(language.intl()))
-
-  const cost = createMemo(() => {
-    return usd().format(info()?.cost ?? 0)
-  })
 
   const counts = createMemo(() => {
     const all = messages()
@@ -259,7 +247,6 @@ export function SessionContextTab() {
     },
     { label: "context.stats.userMessages", value: () => counts().user.toLocaleString(language.intl()) },
     { label: "context.stats.assistantMessages", value: () => counts().assistant.toLocaleString(language.intl()) },
-    { label: "context.stats.totalCost", value: cost },
     { label: "context.stats.sessionCreated", value: () => formatter().time(info()?.time.created) },
     { label: "context.stats.lastActivity", value: () => formatter().time(ctx()?.message.time.created) },
   ] satisfies { label: string; value: () => JSX.Element }[]

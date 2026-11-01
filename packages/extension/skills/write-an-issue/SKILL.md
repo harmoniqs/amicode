@@ -4,7 +4,7 @@ description: Render and create the canonical design-of-record GitHub issue — t
 agents: []
 surface: public
 source: amicode
-revision: 1
+revision: 2
 ---
 
 # Write an Issue
@@ -76,7 +76,8 @@ The code-owning repo is the target. Ensure the `afk` and `hitl` labels exist the
 
 ### 5. Approval gate
 - **standard / PRD** — present the local draft and publish only on explicit user approval ("nothing outward-facing before approval", per `brainstorming`). Present it **rendered, not raw**: decision surface as a skimmable card, Acceptance Criteria as a checklist, and mathematical content typeset — inline LaTeX for symbols ($\hat H$, $\Omega_{\max}$), display equations for objectives and derivations, quantities in the researcher's notation (`F = 0.9982`, `2.1e-4`, tabular-nums where digits align). This is the **same render `implement-issue` shows at pickup** (its Step 1.5) — the approver and the implementer see the same brief.
-- **chore** — **auto-publish**. The chore tier exists to unblock development the moment the gate fires; an approval prompt would defeat it. Say what was created in one line and proceed.
+- **chore** — **auto-publish**. The chore tier exists to unblock development the moment the gate fires; an approval prompt would defeat it. Say what you created in one line and proceed.
+- **standing directive** — a standing AFK directive recorded in the ledger (the user's words + date) is the explicit approval for the arc's filings within its named scope; every filing under it is reported in the loop record (see `develop`'s Standing-directives section — outward-publishing acts always need the word).
 
 ### 6. Create the issue
 ```bash

@@ -172,3 +172,45 @@ solve!(qcp; max_iter = 60)
   knot data when you have it.
 - `load_pulse` returns only the pulse object; bundle metadata (fidelity, gate
   name) with `JLD2.jldsave(...; pulse = ..., fidelity = ...)` at save time.
+
+## Display — the spline NLP in classic form
+
+A Piccolissimo write-up states the problem in the `formulation-display`
+house style, with the spline parameterization explicit. The controls are
+**spline coefficients at knots** (not per-timestep samples): the emitted
+waveform is by construction the spline the integrator integrates — that
+is the package's defining honesty property (spline-faithful dynamics).
+Classic form:
+
+$$\begin{split}
+\underset{\text{knot values } \mathbf{a}_{1:K},\ (\Delta t,\ \theta)}{\text{minimize}}\quad &
+\ell(\widetilde{U}_N) + R\,\|\text{control regularization}\| \\
+\text{subject to}\quad &
+\text{spline-faithful collocation: } f(z_k, z_{k+1}; \text{spline}(\mathbf{a})) = 0 \\
+& \widetilde{U}_1 = I,\quad \text{amplitude bounds},\quad
+\text{slew bound } \|\mathrm{d}u\| \le \texttt{du\_bound}
+\end{split}$$
+
+with $\theta$ the (optionally free) globals and the second-order mode
+Gauss–Newton (matrix-free). State which integrator ran (`:spline` vs the
+Piccolo default) — the two are not interchangeable claims (the
+Piccolissimo-vs-Piccolo integrator comparison is a recorded lesson, not
+lore).
+
+### The required display set
+
+1. **The emitted spline against the optimizer's knots** — the device
+   plays the spline, not the knot values; the two rendered together
+   expose any knot-vs-emitted mismatch.
+2. **Gauss–Newton convergence** — the objective and constraint violation
+   trace; Altissimo's callback fields (`f_val`, `eq_viol`, `kkt_error`)
+   are the honest convergence line.
+3. **Slew/roughness against the bound** — the `du_bound` margin, since
+   the smoothness axis is Piccolissimo's reason for existing.
+
+## Cross-reference
+
+The adjoint-robustness objective's own form (when used) is stated
+alongside, from the robustness section above — a Piccolissimo report
+never presents robustness numbers without the objective that produced
+them.

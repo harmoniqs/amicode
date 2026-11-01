@@ -13,6 +13,7 @@ against a file that lived nowhere. This import fixes that.
 | `amicode-server.sh` | `~/.amico/server/amicode-server.sh` | systemd wrapper: binary resolution, skill staging, env, spawns the service runner (M3 cutover, #955) |
 | `engine-gateway-secret.sh` | `~/.amico/server/engine-gateway-secret.sh` | #1760 P1: generates/serves the one-door shared secret (`~/.amico/server/engine-gateway-secret.env`, mode 600) |
 | `deploy-dist.sh` | run in place from a lane worktree (not copied) | #1906 A13b: the app-dist deploy — lane-tip/dirty refusals, release dirs, atomic `dist-app` symlink flip, `dist-deploys.jsonl` provenance, keep-N prune, `--rollback` |
+| `deploy-gate.sh` | run in place from a checkout (not copied) | #1725: the pre-restart battery. Its staged-binary smoke stops the server with TERM → ≤10s bounded wait → KILL; a server that ignores TERM is a named smoke FAIL (#1944). Gate: `python3 ops/hub/test_deploy_gate.py` on the hub from `/tmp` (drives the real smoke via `AMICODE_GATE_SMOKE_ONLY=1` against fake servers, temp `HOME`) |
 | `fleet-watchdog/rss-watchdog.sh` | `~/.amico/server/fleet-watchdog/rss-watchdog.sh` | 5-min RSS trajectory + corroboration probe + wedge capture + restart authority |
 | `fleet-watchdog/cdp-stack.mjs` | `~/.amico/server/fleet-watchdog/cdp-stack.mjs` | CDP all-threads JS stack capture for wedge postmortems (connects to the engine's BUN_INSPECT port) |
 

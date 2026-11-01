@@ -15,7 +15,7 @@ import {
 function makeDeps(overrides?: Partial<FollowedSessionWatcherDeps>): FollowedSessionWatcherDeps {
   return {
     followedSessions: () => new Set(["ses_followed"]),
-    isSessionFocused: () => false,
+    isSessionVisible: () => false,
     showInformationMessage: vi.fn().mockResolvedValue(undefined),
     onFocusSession: vi.fn(),
     now: () => 0,
@@ -137,8 +137,8 @@ describe("#1788 — followed session watcher (notification policy)", () => {
     expect(deps.showInformationMessage).toHaveBeenCalledTimes(1);
   });
 
-  it("AC5 — no notification when the panel has that session open and focused (you're already there) — and the arrival is still deduped", () => {
-    deps = makeDeps({ isSessionFocused: (id) => id === "ses_followed" });
+  it("AC5 — no notification when a visible panel has that session open (you're already there) — and the arrival is still deduped", () => {
+    deps = makeDeps({ isSessionVisible: (id) => id === "ses_followed" });
     const watcher = new FollowedSessionWatcher(deps);
 
     // You're watching the session when the question lands — no ping.
@@ -148,12 +148,12 @@ describe("#1788 — followed session watcher (notification policy)", () => {
     // The arrival was still OBSERVED and deduped by request id: the replay
     // after you navigate away (reconnect gap replay) never re-notifies for
     // a question you were there to see.
-    deps.isSessionFocused = () => false;
+    deps.isSessionVisible = () => false;
     watcher.observe(questionAsked("req_watched", "ses_followed"));
     expect(deps.showInformationMessage).not.toHaveBeenCalled();
 
-    // A finished LONG turn while focused is equally silent.
-    deps.isSessionFocused = () => true;
+    // A finished LONG turn while visible is equally silent.
+    deps.isSessionVisible = () => true;
     let clock = 10_000;
     deps.now = () => clock;
     watcher.observe(sessionStatus("ses_followed", "busy", 1));
@@ -201,7 +201,71 @@ describe("#1788 — followed session watcher (notification policy)", () => {
     // The watcher is built once from ChatPanel's live follow state and its
     // activation focuses the panel on the session.
     expect(source).toContain("ChatPanel.followedSessionIds()");
-    expect(source).toContain("ChatPanel.focusedSessionId()");
+    // #1948: suppression reads EVERY visible panel, not the last-focused one.
+    expect(source).toContain("ChatPanel.visibleSessionIds()");
+    expect(source).not.toContain("ChatPanel.focusedSessionId() === sessionID");
     expect(source).toContain("ChatPanel.revealSession");
+  });
+});
+
+describe("#1948 — no notification for a session you are already viewing (visible panel, or an ancestor's)", () => {
+  /** A session-info frame carrying the parent link (subagent / child session). */
+  function sessionCreated(sessionID: string, parentID?: string, title = sessionID) {
+    return { type: "session.created", properties: { info: { id: sessionID, title, ...(parentID ? { parentID } : {}) } } };
+  }
+
+  it("a question in a session shown by a VISIBLE panel is silent (active or merely visible — the predicate is visibility)", () => {
+    const visible = new Set(["ses_followed"]);
+    const deps = makeDeps({ isSessionVisible: (id) => visible.has(id) });
+    const watcher = new FollowedSessionWatcher(deps);
+    watcher.observe(questionAsked("req_1", "ses_followed"));
+    expect(deps.showInformationMessage).not.toHaveBeenCalled();
+  });
+
+  it("a question from a subagent (child or grandchild) of the visible session is silent, even when the child is itself followed", () => {
+    const visible = new Set(["ses_parent"]);
+    const deps = makeDeps({
+      followedSessions: () => new Set(["ses_parent", "ses_child", "ses_grandchild"]),
+      isSessionVisible: (id) => visible.has(id),
+    });
+    const watcher = new FollowedSessionWatcher(deps);
+    watcher.observe(sessionCreated("ses_child", "ses_parent"));
+    watcher.observe(sessionCreated("ses_grandchild", "ses_child"));
+
+    watcher.observe(questionAsked("req_child", "ses_child"));
+    watcher.observe(questionAsked("req_grandchild", "ses_grandchild"));
+    expect(deps.showInformationMessage).not.toHaveBeenCalled();
+
+    // A finished long turn on the child is equally silent while the parent is visible.
+    let clock = 0;
+    deps.now = () => clock;
+    watcher.observe(sessionStatus("ses_child", "busy", 1));
+    clock += 60_000;
+    watcher.observe(sessionStatus("ses_child", "idle", 2));
+    expect(deps.showInformationMessage).not.toHaveBeenCalled();
+  });
+
+  it("a question from an unrelated followed session still notifies while another session is visible", () => {
+    const deps = makeDeps({
+      followedSessions: () => new Set(["ses_viewed", "ses_other"]),
+      isSessionVisible: (id) => id === "ses_viewed",
+    });
+    const watcher = new FollowedSessionWatcher(deps);
+    watcher.observe(sessionCreated("ses_viewed"));
+    watcher.observe(sessionCreated("ses_other"));
+    watcher.observe(questionAsked("req_other", "ses_other"));
+    expect(deps.showInformationMessage).toHaveBeenCalledOnce();
+  });
+
+  it("a parent-link cycle in the cache never hangs the ancestry walk", () => {
+    const deps = makeDeps({
+      followedSessions: () => new Set(["ses_a"]),
+      isSessionVisible: () => false,
+    });
+    const watcher = new FollowedSessionWatcher(deps);
+    watcher.observe(sessionCreated("ses_a", "ses_b"));
+    watcher.observe(sessionCreated("ses_b", "ses_a"));
+    watcher.observe(questionAsked("req_cycle", "ses_a"));
+    expect(deps.showInformationMessage).toHaveBeenCalledOnce();
   });
 });

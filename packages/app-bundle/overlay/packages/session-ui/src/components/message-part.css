@@ -220,6 +220,19 @@
     white-space: nowrap;
   }
 
+  /* #1671 — a message sent mid-run that has not started yet. Always visible
+     (unlike the hover-only copy row); a quiet neutral pill, no accent. */
+  [data-slot="user-message-queued"] {
+    align-self: flex-end;
+    width: fit-content;
+    margin-top: var(--space-1, 4px);
+    padding: var(--space-1, 4px) var(--space-2, 8px);
+    border: 1px solid var(--v2-border-border-base);
+    border-radius: var(--radius-md, 8px);
+    color: var(--v2-text-text-muted);
+    user-select: none;
+  }
+
   [data-slot="user-message-meta-wrap"] {
     flex: 1 1 auto;
     min-width: 0;

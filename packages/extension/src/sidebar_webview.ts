@@ -4,6 +4,13 @@
 
 import { groupRootsForResearchSection } from "./sidebar_bridge";
 import type { EnvGroup } from "./sidebar_bridge";
+import {
+  REVEAL_HIGHLIGHT_MS,
+  REVEAL_LOAD_TIMEOUT_MS,
+  nextRevealAction,
+  revealChain,
+  revealScrollTop,
+} from "./sidebar_reveal";
 import { renderFleetSection, createFleetRefreshControl, FLEET_REFRESH_LABEL } from "./sidebar_fleet_section";
 import type { FleetSectionModel } from "./sidebar_fleet_section";
 
@@ -192,6 +199,23 @@ function createIconEl(icon: string): HTMLElement {
   // the DOM and re-dispatches with mode "none" (highlight only — the persisted
   // expanded state already handles folder visibility after re-render).
   let pendingActiveProject: { path: string | null; mode: "none" | "expand" | "reset" } | null = null;
+  interface PendingReveal {
+    path: string;
+    dirs: string[];
+    /** The section body was just animated open — the scroll must wait it out. */
+    sectionAnimated: boolean;
+    /** Directories whose children we already asked for (no duplicate requests). */
+    requested: Set<string>;
+    /** The directory whose `children` reply we are waiting on, if any. */
+    awaiting?: string;
+    timeout?: ReturnType<typeof setTimeout>;
+  }
+  // #1036 "Find in sidebar" state (declared early: renderRoots replays a queued reveal).
+  let pendingReveal: PendingReveal | null = null;
+  let revealHighlightTimer: ReturnType<typeof setTimeout> | undefined;
+  let revealHighlightEl: HTMLElement | null = null;
+  /** A reveal that arrived before any roots rendered; replayed by renderRoots. */
+  let pendingRevealPath: string | null = null;
 
   // Track the last path we scrolled the sidebar to. "expand" mode (tab switch /
   // session re-focus) only scrolls when the path actually changes — re-focusing
@@ -1450,6 +1474,12 @@ function createIconEl(icon: string): HTMLElement {
     if (pendingActiveProject !== null) {
       applyActiveProject(pendingActiveProject.path, pendingActiveProject.mode);
     }
+    // #1036: a reveal queued before the roots rendered.
+    if (pendingRevealPath !== null) {
+      const queued = pendingRevealPath;
+      pendingRevealPath = null;
+      startReveal(queued);
+    }
   }
 
   // ── Section drag-reorder (#708) ──────────────────────────────────────────
@@ -2315,6 +2345,148 @@ function createIconEl(icon: string): HTMLElement {
     // session switch. The project row receives the highlight directly.
   }
 
+  // ── Find in sidebar (#1036) ────────────────────────────────────────────────
+  // Reveal an absolute file path: open its section, expand ancestors TOP-DOWN
+  // (a child's DOM only exists once its parent's children rendered, so each level
+  // awaits its `children` round-trip), scroll the row ~3 rows below the top, and
+  // flash a transient highlight. Anything that cannot be found is a silent no-op.
+
+
+  function treeNodeEl(nodePath: string): HTMLElement | null {
+    return (treeRoot?.querySelector(`[data-path="${CSS.escape(nodePath)}"]`) as HTMLElement | null) ?? null;
+  }
+
+  function cancelReveal(): void {
+    if (pendingReveal?.timeout) clearTimeout(pendingReveal.timeout);
+    pendingReveal = null;
+  }
+
+  /** Programmatically open one directory row (same effect as clicking its chevron). */
+  function expandDirectoryNode(dataEl: HTMLElement, nodePath: string): void {
+    expanded[nodePath] = true;
+    saveExpandedState();
+    const chevronSpan = dataEl.querySelector(".chevron") as HTMLElement | null;
+    if (chevronSpan) chevronSpan.classList.add("expanded");
+    const rootInfo = currentRoots.find((r) => r.path === nodePath);
+    // Custom SVG icons (flask, clipboard) are static for research/environment roots (#914).
+    if (rootInfo?.projectType !== "research" && rootInfo?.projectType !== "environment") {
+      const iconSpan = dataEl.querySelector(".icon") as HTMLElement | null;
+      if (iconSpan) {
+        const newIcon = createFolderIconEl(true);
+        if (newIcon) iconSpan.replaceWith(newIcon);
+      }
+    }
+    const childrenEl = dataEl.querySelector(".children") as HTMLElement | null;
+    if (childrenEl) childrenEl.style.display = "block";
+  }
+
+  function scrollParentOf(el: HTMLElement): HTMLElement | null {
+    for (let node = el.parentElement; node; node = node.parentElement) {
+      const overflowY = getComputedStyle(node).overflowY;
+      if ((overflowY === "auto" || overflowY === "scroll") && node.scrollHeight > node.clientHeight) return node;
+    }
+    return null;
+  }
+
+  function flashRevealHighlight(row: HTMLElement): void {
+    // Rapid successive reveals cancel the previous highlight (no stacking / flicker).
+    if (revealHighlightTimer) clearTimeout(revealHighlightTimer);
+    revealHighlightEl?.classList.remove("reveal-highlight");
+    revealHighlightEl = row;
+    row.style.transition = "background-color 0.6s ease-out";
+    row.classList.add("reveal-highlight");
+    revealHighlightTimer = setTimeout(() => {
+      row.classList.remove("reveal-highlight");
+      revealHighlightEl = null;
+      revealHighlightTimer = undefined;
+      setTimeout(() => { row.style.transition = ""; }, 700);
+    }, REVEAL_HIGHLIGHT_MS);
+  }
+
+  function scrollAndFlash(targetEl: HTMLElement, sectionAnimated: boolean): void {
+    const row = (targetEl.querySelector(".tree-node") as HTMLElement | null) ?? targetEl;
+    const run = () => {
+      const scroller = scrollParentOf(row);
+      if (scroller) {
+        const top = row.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+        scroller.scrollTo({ top: revealScrollTop(top, row.offsetHeight || 22), behavior: "smooth" });
+      } else {
+        row.scrollIntoView({ block: "center", behavior: "smooth" });
+      }
+      flashRevealHighlight(row);
+    };
+    // A section that was just opened animates for SECTION_ANIM_MS: scroll past it.
+    if (sectionAnimated) setTimeout(run, SECTION_ANIM_MS + 50);
+    else requestAnimationFrame(run);
+  }
+
+  function advanceReveal(): void {
+    const pending = pendingReveal;
+    if (!pending) return;
+    if (pending.timeout) clearTimeout(pending.timeout);
+    pending.timeout = undefined;
+    pending.awaiting = undefined;
+    // Bounded: each iteration either expands one more ancestor or returns.
+    for (let guard = 0; guard < 128; guard++) {
+      const targetEl = treeNodeEl(pending.path);
+      const action = nextRevealAction({
+        dirs: pending.dirs,
+        expanded: (d) => !!expanded[d],
+        childrenLoaded: (d) => !!childrenCache[d],
+        targetInDom: !!targetEl,
+      });
+      if (action.kind === "expand") {
+        const dirEl = treeNodeEl(action.path);
+        if (!dirEl) { cancelReveal(); return; }
+        expandDirectoryNode(dirEl, action.path);
+        continue;
+      }
+      if (action.kind === "load") {
+        if (!pending.requested.has(action.path)) {
+          pending.requested.add(action.path);
+          vscode.postMessage({ kind: "get-children", path: action.path });
+        }
+        pending.awaiting = action.path;
+        // Children load failed / never arrives: stop expanding (no broken state).
+        pending.timeout = setTimeout(cancelReveal, REVEAL_LOAD_TIMEOUT_MS);
+        return;
+      }
+      if (action.kind === "scroll" && targetEl) {
+        const animated = pending.sectionAnimated;
+        cancelReveal();
+        scrollAndFlash(targetEl, animated);
+      } else {
+        cancelReveal();
+      }
+      return;
+    }
+    cancelReveal();
+  }
+
+  function startReveal(filePath: string): void {
+    cancelReveal();
+    const chain = revealChain(filePath, currentRoots.map((r) => r.path));
+    if (!chain) return; // outside every root: silent no-op
+    // Auto-expand the section that owns the root (Research / Development).
+    const rootInfo = currentRoots.find((r) => r.path === chain.root);
+    const sectionKey = rootInfo?.projectType === "dev" ? "dev" : "research";
+    let sectionAnimated = false;
+    if (!sectionExpanded[sectionKey]) {
+      sectionExpanded[sectionKey] = true;
+      saveSectionState();
+      const section = getAllSections().find((s) => s.dataset.sectionKey === sectionKey);
+      const body = section?.querySelector(".section-body") as HTMLElement | null;
+      if (section && body) {
+        const chevron = section.querySelector(".section-chevron") as HTMLElement | null;
+        if (chevron) chevron.classList.add("expanded");
+        toggleSectionBody(body, true, section);
+        sectionAnimated = true;
+      }
+    }
+    pendingReveal = { path: filePath, dirs: chain.dirs, sectionAnimated, requested: new Set() };
+    advanceReveal();
+  }
+
   // ── Host → Webview messages ────────────────────────────────────────────────
 
   window.addEventListener("message", (event) => {
@@ -2378,6 +2550,12 @@ function createIconEl(icon: string): HTMLElement {
             activeInlineEdit.input.focus();
           }
         }
+        // #1036: the level a pending reveal was waiting on has rendered — continue
+        // top-down; an empty / failed load cannot contain the target, so stop.
+        if (pendingReveal && pendingReveal.awaiting === msg.path) {
+          if (childrenCache[msg.path]) advanceReveal();
+          else cancelReveal();
+        }
         break;
       }
 
@@ -2417,6 +2595,15 @@ function createIconEl(icon: string): HTMLElement {
           : "reset";
         pendingActiveProject = { path: activePath, mode };
         applyActiveProject(activePath, mode);
+        break;
+      }
+
+      case "reveal-file": {
+        if (typeof msg.path === "string" && msg.path !== "") {
+          // Roots may not have rendered yet (sidebar just opened): retry once they do.
+          if (currentRoots.length === 0) pendingRevealPath = msg.path;
+          else startReveal(msg.path);
+        }
         break;
       }
 

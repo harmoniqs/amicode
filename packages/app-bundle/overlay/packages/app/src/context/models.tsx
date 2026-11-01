@@ -5,11 +5,12 @@ import { filter, firstBy, flat, groupBy, mapValues, pipe, uniqueBy, values } fro
 import { createSimpleContext } from "@opencode-ai/ui/context"
 import { useProviders } from "@/hooks/use-providers"
 import { Persist, persisted } from "@/utils/persist"
+// amicode#1987 (#1979 S4): favorites — the pure seam over `user[].favorite`.
+import { favoritesOf, isFavorite, toggleFavorite, type UserModelEntry, type Visibility } from "./models-favorites"
 
 export type ModelKey = { providerID: string; modelID: string }
 
-type Visibility = "show" | "hide"
-type User = ModelKey & { visibility: Visibility; favorite?: boolean }
+type User = UserModelEntry
 type Store = {
   user: User[]
   recent: ModelKey[]
@@ -91,7 +92,7 @@ export const { use: useModels, provider: ModelsProvider } = createSimpleContext(
 
     const visibility = createMemo(() => {
       const map = new Map<string, Visibility>()
-      for (const item of store.user) map.set(`${item.providerID}:${item.modelID}`, item.visibility)
+      for (const item of store.user) if (item.visibility) map.set(`${item.providerID}:${item.modelID}`, item.visibility)
       return map
     })
 
@@ -119,6 +120,8 @@ export const { use: useModels, provider: ModelsProvider } = createSimpleContext(
       const state = visibility().get(key)
       if (state === "hide") return false
       if (state === "show") return true
+      // amicode#1987: a favorite is visible unless explicitly hidden
+      if (isFavorite(store.user, model)) return true
       if (latestSet().has(key)) return true
       const date = release().get(key)
       if (!date?.isValid) return true
@@ -127,6 +130,12 @@ export const { use: useModels, provider: ModelsProvider } = createSimpleContext(
 
     const setVisibility = (model: ModelKey, state: boolean) => {
       update(model, state ? "show" : "hide")
+    }
+
+    // amicode#1987: favorites persist on the same `model.v1` store (user[]).
+    const favorites = createMemo(() => favoritesOf(store.user))
+    const toggleFavoriteModel = (model: ModelKey) => {
+      setStore("user", toggleFavorite(store.user, model))
     }
 
     const push = (model: ModelKey) => {
@@ -172,6 +181,11 @@ export const { use: useModels, provider: ModelsProvider } = createSimpleContext(
       recent: {
         list: () => recentModels()!,
         push,
+      },
+      favorite: {
+        list: favorites,
+        has: (model: ModelKey) => isFavorite(store.user, model),
+        toggle: toggleFavoriteModel,
       },
       pin: {
         get: createMemo(() => store.pinned),

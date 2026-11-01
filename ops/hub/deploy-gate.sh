@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2317  # smoke/smoke_stop/panel_probe run indirectly via run_check
 # deploy-gate.sh — the pre-rebuild battery. NO hub restart without this green.
 #
 # amicode #1725 (2026-10-07): every same-day production break was a SEAM bug —
@@ -21,6 +22,16 @@
 # standing constraint is an ACCEPTANCE CRITERION: no surface ships in the
 # user's panel without live data. Dead-widgets-zero or the dist does not ship.
 #   AMICODE_GATE_QUICK=1 skips the engine test lane (typecheck still runs).
+#   AMICODE_GATE_SMOKE_ONLY=1 (needs --staged-binary) runs ONLY the staged boot
+#     smoke — no seam suites, no engine lanes, and NO gate approval recorded. It
+#     exists so ops/hub/test_deploy_gate.py can drive the real smoke() against
+#     fake servers (#1949); a smoke-only run is never a deploy verdict.
+#
+# THE SMOKE'S SHUTDOWN IS BOUNDED (#1944, #1949): the staged server gets TERM,
+# then up to AMICODE_GATE_SMOKE_TERM_WAIT seconds (default 10) to exit, then
+# KILL. A server that outlives TERM is a NAMED smoke failure — a binary that
+# cannot shut down cleanly would wedge every hub restart — and the gate itself
+# can never hang on it again.
 #
 # Exit 0 = deployable. Anything else = STOP — no stage, no swap, no restart.
 set -u
@@ -32,6 +43,7 @@ PANEL_GATE="${AMICODE_PANEL_GATE:-0}"
 PANEL_HOST="${AMICODE_PANEL_HOST:-macbook}"
 PANEL_HARNESS="${AMICODE_PANEL_HARNESS:-/tmp/opencode/panel-probe}"
 QUICK="${AMICODE_GATE_QUICK:-0}"
+SMOKE_ONLY="${AMICODE_GATE_SMOKE_ONLY:-0}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --scope) SCOPE="${2:?}"; shift 2 ;;
@@ -43,15 +55,9 @@ done
 
 FAILED=0
 
-# the watchdog's source-of-truth branch differs from the frontdoor's — resolve
-# wherever this run can see it (the repo checkout, else the hub's deployed copy)
-WATCHDOG=""
-for cand in "$HERE/../fleet-watchdog/rss-watchdog.sh" "$HOME/.amico/server/fleet-watchdog/rss-watchdog.sh"; do
-  if [ -f "$cand" ]; then WATCHDOG="$cand"; break; fi
-done
-if [ -z "$WATCHDOG" ]; then
-  echo "GATE CANNOT RUN: rss-watchdog.sh not found (repo or hub deploy path)"
-  exit 2
+if [ "$SMOKE_ONLY" = "1" ]; then
+  [ -n "$STAGED_BIN" ] || { echo "AMICODE_GATE_SMOKE_ONLY=1 needs --staged-binary <path>"; exit 2; }
+  SCOPE="smoke-only"
 fi
 
 run_check() {
@@ -67,28 +73,42 @@ run_check() {
   echo
 }
 
-# ── 1. syntax: everything that would run must parse first ────────────────────
-run_check "frontdoor py-compile" python3 -m py_compile "$HERE/hub-frontdoor.py" "$HERE/jev_placement.py"
-run_check "watchdog bash -n" bash -n "$WATCHDOG"
+if [ "$SMOKE_ONLY" != "1" ]; then
+  # the watchdog's source-of-truth branch differs from the frontdoor's — resolve
+  # wherever this run can see it (the repo checkout, else the hub's deployed copy)
+  WATCHDOG=""
+  for cand in "$HERE/../fleet-watchdog/rss-watchdog.sh" "$HOME/.amico/server/fleet-watchdog/rss-watchdog.sh"; do
+    if [ -f "$cand" ]; then WATCHDOG="$cand"; break; fi
+  done
+  if [ -z "$WATCHDOG" ]; then
+    echo "GATE CANNOT RUN: rss-watchdog.sh not found (repo or hub deploy path)"
+    exit 2
+  fi
 
-# ── 2. derived-config distinctness (the marker-race class: two watchdog
-# instances must never share a probe port, pgrep pattern, or log path —
-# 2026-10-07's shared-marker bug left a wedged shard un-restarted for 40 min) ─
-run_check "watchdog shard-env distinctness" bash -c '
-set -u
-wd="$1"; tmp=$(mktemp); trap "rm -f \"$tmp\"" EXIT
-for i in 1 2 3; do AMICODE_SHARD_INDEX=$i bash "$wd" --print-shard-env >> "$tmp"; done
-fail=0
-for field in service health_port pattern log inspect_port; do
-  n=$(( $(grep "^$field=" "$tmp" | cut -d= -f2- | sort -u | wc -l | tr -d " ") ))
-  [ "$n" = "3" ] || { echo "  $field not distinct across shards ($n distinct values)"; fail=1; }
-done
-exit $fail
-' gate "$WATCHDOG"
+  # ── 1. syntax: everything that would run must parse first ────────────────────
+  run_check "frontdoor py-compile" python3 -m py_compile "$HERE/hub-frontdoor.py" "$HERE/jev_placement.py"
+  run_check "watchdog bash -n" bash -n "$WATCHDOG"
 
-# ── 3. the seam suites (fake shards + the real frontdoor as a subprocess) ─────
-run_check "frontdoor integration suite (the seams)" python3 "$HERE/test_frontdoor.py"
-run_check "jev placement unit suite" python3 "$HERE/test_jev_placement.py"
+  # ── 2. derived-config distinctness (the marker-race class: two watchdog
+  # instances must never share a probe port, pgrep pattern, or log path —
+  # 2026-10-07's shared-marker bug left a wedged shard un-restarted for 40 min) ─
+  # shellcheck disable=SC2016  # the single quotes are the point: an inline script
+  run_check "watchdog shard-env distinctness" bash -c '
+  set -u
+  wd="$1"; tmp=$(mktemp); trap "rm -f \"$tmp\"" EXIT
+  for i in 1 2 3; do AMICODE_SHARD_INDEX=$i bash "$wd" --print-shard-env >> "$tmp"; done
+  fail=0
+  for field in service health_port pattern log inspect_port; do
+    n=$(( $(grep "^$field=" "$tmp" | cut -d= -f2- | sort -u | wc -l | tr -d " ") ))
+    [ "$n" = "3" ] || { echo "  $field not distinct across shards ($n distinct values)"; fail=1; }
+  done
+  exit $fail
+  ' gate "$WATCHDOG"
+
+  # ── 3. the seam suites (fake shards + the real frontdoor as a subprocess) ─────
+  run_check "frontdoor integration suite (the seams)" python3 "$HERE/test_frontdoor.py"
+  run_check "jev placement unit suite" python3 "$HERE/test_jev_placement.py"
+fi
 
 # ── 4. engine scope: the materialize/overlay/engine lanes ────────────────────
 if [ "$SCOPE" = "engine" ] || [ "$SCOPE" = "all" ]; then
@@ -118,7 +138,7 @@ if [ -n "$STAGED_BIN" ]; then
     local pid out code fail=0
     XDG_DATA_HOME="$SMOKE_DATA" XDG_CONFIG_HOME="$SMOKE_CFG" "$STAGED_BIN" serve --port "$SMOKE_PORT" --hostname 127.0.0.1 >/dev/null 2>&1 &
     pid=$!
-    for i in $(seq 1 30); do
+    for _ in $(seq 1 30); do
       curl -sS -o /dev/null -m 1 "http://127.0.0.1:$SMOKE_PORT/config?directory=%2Fhome%2Faaron%2Fharmoniqs%2Fopencode" 2>/dev/null && break
       sleep 1
     done
@@ -129,17 +149,41 @@ if [ -n "$STAGED_BIN" ]; then
     # the SSE reconnect contract: frames must carry id: lines
     out="$(timeout 4 curl -sN -m 4 "http://127.0.0.1:$SMOKE_PORT/event?directory=%2Fhome%2Faaron%2Fharmoniqs%2Fopencode" 2>/dev/null | head -2)"
     echo "$out" | grep -q "^id: " || { echo "  SSE frames carry no id: lines (replay contract broken)"; fail=1; }
-    kill "$pid" 2>/dev/null
-    wait "$pid" 2>/dev/null
-    return $fail
+    smoke_stop "$pid" || fail=1
+    return "$fail"
   }
+  # smoke_stop <pid>: TERM, poll kill -0 for up to TERM_WAIT s, then KILL (#1944).
+  # Never a bare `wait` on a live server: that is the hang this replaces.
+  smoke_stop() {
+    local pid="$1" limit="${AMICODE_GATE_SMOKE_TERM_WAIT:-10}" ticks=0
+    kill -TERM "$pid" 2>/dev/null || { wait "$pid" 2>/dev/null; return 0; }
+    while kill -0 "$pid" 2>/dev/null; do
+      if [ "$ticks" -ge $((limit * 10)) ]; then
+        kill -KILL "$pid" 2>/dev/null
+        wait "$pid" 2>/dev/null
+        echo "  staged binary ignored SIGTERM for ${limit}s (#1944) — killed"
+        return 1
+      fi
+      sleep 0.1
+      ticks=$((ticks + 1))
+    done
+    wait "$pid" 2>/dev/null
+    return 0
+  }
+  SMOKE_FAILED_BEFORE="$FAILED"; FAILED=0
   run_check "staged binary boot smoke (isolated XDG, port $SMOKE_PORT)" smoke
+  SMOKE_OK=$(( FAILED == 0 )); FAILED=$(( SMOKE_FAILED_BEFORE || FAILED ))
   rm -rf "$SMOKE_DATA" "$SMOKE_CFG"
   # the smoke pass is the STAMP OF APPROVAL for this exact binary: hub-restart
   # stage accepts the canonical sha OR this one (a gate-approved NEW build),
-  # while still refusing binaries that never passed a gate.
-  sha256sum "$STAGED_BIN" | awk '{print $1}' > "$HOME/.amico/server/bin/opencode.GATE-APPROVED-sha"
-  echo "gate-approved sha recorded: $(sha256sum "$STAGED_BIN" | cut -c1-16)…"
+  # while still refusing binaries that never passed a gate. A FAILED smoke
+  # (incl. an ignored SIGTERM) records nothing; nor does a smoke-only run.
+  if [ "$SMOKE_OK" = "1" ] && [ "$SMOKE_ONLY" != "1" ]; then
+    sha256sum "$STAGED_BIN" | awk '{print $1}' > "$HOME/.amico/server/bin/opencode.GATE-APPROVED-sha"
+    echo "gate-approved sha recorded: $(sha256sum "$STAGED_BIN" | cut -c1-16)…"
+  else
+    echo "no gate approval recorded (smoke ok=$SMOKE_OK, smoke-only=$SMOKE_ONLY)"
+  fi
 fi
 
 # ── the panel render gate (#1804) ────────────────────────────────────────────

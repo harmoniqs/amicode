@@ -317,9 +317,9 @@ jobs:
         # linux-x64 + linux-arm64 + darwin-arm64 — every pin machine-gated (spec §5).
         # ubuntu-24.04-arm is the free GitHub-hosted arm runner (public repo), and it
         # is the ONLY place a linux-arm64 binary is executed.
-        # macos-14 boot-smoke: the binary is cross-compiled from linux; native
+        # macos-15 boot-smoke: the binary is cross-compiled from linux; native
         # execution on macOS is the safety net.
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-14]
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-15]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7

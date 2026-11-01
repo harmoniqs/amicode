@@ -15,11 +15,10 @@ export function defaultVaultsRoot(): string {
   return path.join(os.homedir(), ".amico", "vaults");
 }
 
-/** Ops-side amicode state (queue, lock, onboarding stream, distiller config).
- *  NOT the vault — operational, per charter/19. */
-export function amicodeOpsDir(): string {
-  return process.env.AMICODE_OPS_DIR ?? path.join(os.homedir(), ".amico", "amicode");
-}
+// Ops-side amicode state (queue, lock, onboarding stream, distiller config).
+// NOT the vault — operational, per charter/19. ONE definition (#1998): src/ops_dir.ts.
+import { amicodeOpsDir } from "../ops_dir";
+export { amicodeOpsDir };
 
 export function onboardingDir(opsDir: string = amicodeOpsDir()): string {
   return path.join(opsDir, "onboarding");

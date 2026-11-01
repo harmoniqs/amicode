@@ -226,6 +226,17 @@ stalled  ⟸ a step's gates were exhausted, or the replan budget ran out
 Both conjuncts matter. Without the second, "all done" would mean "the gates passed and we ignored
 every critic".
 
+## Spec-design checks critics keep finding
+
+These came up repeatedly in one research campaign's critic rounds (the qpilc open-problems campaign, 2026-10). Each would have produced a wrong or pre-determined result. Run them yourself before the critics do:
+
+- **Pre-evaluate every trigger at the spec's own predicted effect size, in both directions.** Ask "can this condition fire?" and "can it fail to fire?" A bias trigger on a statistic that grows as √N, set at 3, fired by construction at the spec's own predicted shift. A sign-of-median trigger with |median| ≪ the per-seed SD is a coin flip. A materiality bar on the wrong statistic (a unitary distance, rather than the fidelity-ranking error the loop actually uses) nearly read "moot" where the loop-relevant quantity read "material". A trigger built never to fire is as uninformative as one built always to fire.
+- **Close every inaction route.** For each outcome, ask whether doing nothing (an always-reject gate, a never-firing gate, a near-zero step) can reach it. Do-nothing scored "regularization confirms" on a draw-free quality metric, a never-firing gate scored "safe", and a Euclidean motion floor admitted a placebo whose steps were J-invisible. Put a floor on benefit (a minimum median effect, not just a sign count) and match placebos in the measurement row space, not in Euclidean norm.
+- **Measure harness floors before pinning tolerances.** Weld, unitarity and identity tolerances must cite a measured dry-run floor of the exact code path, scaled with depth or steps where the error accumulates. Critics' estimates were wrong by 10–30× three times; each cost a pre-data amendment.
+- **Review the physics of every cited construction.** "[CITED] verbatim, hash-pinned" is provenance, not physics. For any truncated or extended Hilbert space, tabulate every operator element linking computational to non-computational levels and state its physical origin. Assert the symmetries the physical operator obeys: number conservation, total spin, ±1 readout spectra, time reversal. Run the factorization test: if the extra levels couple identically to every computational state, the channel must vanish. Treat any probe or log prose that names a modelling choice as the mechanism ("valley-agnostic", "effective", "truncated") as a blocking question.
+- **Put every verdict-moving choice in `acceptance`.** The review tool's design hash covers acceptance and budget only, so thresholds, grids, operator choices and the reading rule placed in prose invariants are unhashed. Paste constants under a weld tolerance at full precision with their file:row source, never rounded by hand.
+- **Make the outcome partition exhaustive and disjoint, and don't let a tie hand the label to one side.** If "X out-tracks Y" and "X ties Y" can both hold, the partition is broken. If the label rests on a precedence tie-break, report the robust ordering and the knife-edge seeds beside it.
+
 ## When to skip this
 
 Genuinely trivial and reversible work — a typo, a comment, a one-line config change with an

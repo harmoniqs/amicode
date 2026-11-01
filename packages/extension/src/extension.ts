@@ -3,6 +3,7 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 import { ServerManager } from "./server_manager";
 import { fetchProviderSignal, fetchProviderIds } from "./llm_creds.mjs";
+import { engineReachabilityDeps } from "./amicode_service/model_reachability";
 import { resolveOpencodeBinary, OpencodeMissingError, unsupportedHostAdvice } from "./opencode_binary";
 import { resolveSelectedLaunch, harnessMenu, decideHarnessSwitch } from "./harness";
 import { watchHarnessSwitch, writeHarnessOptionsFile } from "./harness_switch";
@@ -56,11 +57,13 @@ import {
 } from "./onboarding_panel";
 import { registerFleetPanel } from "./fleet_panel";
 import { registerFleetManagerCommands } from "./fleet_manager_command";
+import { configureWhatsNew, registerWhatsNewCommand } from "./whats_new";
 import { isModelConfigured } from "./onboarding_routing";
 import { getWorkspaceProjects, type WorkspaceProjectDeps } from "./workspace_projects";
 import { detectProjectType } from "./project/detect";
 import { stagePasqalConnector } from "./pasqal_assets";
 import { stageModCards, opencodeGlobalConfigRoot } from "./mode_cards";
+import { stageNativeUserSkills } from "./native_skills";
 import { stageModeBundles, parseRosterDocument, fleetRosterCachePath, type RosterRow } from "@amicode/schema";
 import { needsProvision, pasqalVenvDir, provisionPasqalPython } from "./pasqal_python";
 import { createLocalPersonalVault, sanitizeVaultName, suggestVaultName } from "./substrate/vault_setup";
@@ -152,6 +155,9 @@ import { postDeviceStatus, postDeviceActions, postDeviceActivate } from "./inspe
 let serverManager: ServerManager | undefined;
 let amicodeService: { url: string; authHeader: string } | undefined;
 let statusBar: StatusBarManager | undefined;
+// #1571: set on the adopted path when the stale-engine audit wires its restart;
+// the persistent status-bar indicator's click (amicode.restartStaleEngine) runs it.
+let staleEngineRestart: (() => Promise<void>) | undefined;
 let sseClient: OpencodeEventClient | undefined;
 /** #1788 (S3): the passive-notification watcher — observes the sseClient's
  *  parsed events (no new connection) and raises VS Code notifications on
@@ -703,6 +709,19 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // the sidebar with the appropriate mode. mode controls expand/collapse
   // behavior: "reset" for explicit selection, "expand" for session/tab switch.
   ChatPanel.onProjectSelected((path, mode) => sidebarProvider.setActiveProject(path, mode));
+  // #1036: the Preview tab's "Find in sidebar" (dedicated bridge kind) and the
+  // amicode.revealInSidebar command (palette / keybinding) both land here.
+  ChatPanel.onRevealInSidebar((filePath) => void sidebarProvider.revealFile(filePath));
+  ctx.subscriptions.push(
+    vscode.commands.registerCommand("amicode.revealInSidebar", async (target?: unknown) => {
+      // Palette / keybinding: no argument → the active text editor's file. A
+      // caller may pass an absolute path or a Uri. Anything else is a silent no-op.
+      const fromUri = target instanceof vscode.Uri ? target.fsPath : undefined;
+      const filePath =
+        typeof target === "string" ? target : (fromUri ?? vscode.window.activeTextEditor?.document.uri.fsPath);
+      if (filePath) await sidebarProvider.revealFile(filePath);
+    }),
+  );
   ChatPanel.onPreviewVisibleChildren((root, relativeDirectory) => sidebarProvider.previewVisibleChildren(root, relativeDirectory));
   // #1551: the self-owned enable-control act. The composer scrim's CTA posts a
   // `fleet-enable-control` envelope (carrying the target owner machineId +
@@ -793,6 +812,17 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // Manager Work Column tab. registerFleetPanel stays a no-op (retired).
   registerFleetPanel(ctx);
   registerFleetManagerCommands(ctx);
+  // #2001: the What's-new page — last-seen version in globalState (per
+  // machine) + "Amicode: What's New" (reveal the chat, then open the page;
+  // posted twice like postComputeConnect so a cold iframe still hears it).
+  configureWhatsNew(ctx.globalState);
+  registerWhatsNewCommand(ctx, {
+    postToAll: (msg) => {
+      void vscode.commands.executeCommand("amicode.openChat");
+      ChatPanel.postToAll(msg);
+      setTimeout(() => ChatPanel.postToAll(msg), 1500);
+    },
+  });
 
   // #1375: fleet heartbeat producer — periodically re-POSTs this machine's
   // roster row with a fresh last_report so peers see it as reachable. Lazy
@@ -1018,6 +1048,20 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   opencodeChannel.appendLine(`[boot] opencode project dir: ${opencodeProject.projectDir}`);
   opencodeChannel.appendLine(`[boot] AGENTS.md: ${opencodeProject.agentsPath}`);
   opencodeChannel.appendLine(`[boot] template: ${opencodeProject.templatePath}`);
+  // #1949 §1: stage the machine-scoped skill set (public + entitled library,
+  // entitlement-gated package skills — the same admission as the session
+  // staging) into opencode's NATIVE user skill dir, so a plain terminal
+  // `opencode` resolves director-core / develop / implement-issue / tdd too.
+  // Receipt-owned dirs only; user-authored skills are never touched; never
+  // blocks activation.
+  try {
+    const native = stageNativeUserSkills({ skillRoots: cfgArr("skillRoots"), skillLibraryRoots: cfgLibraryRoots() });
+    const skippedNote = native.skippedUserOwned.length > 0 ? `; user-owned, left alone: ${native.skippedUserOwned.join(", ")}` : "";
+    const removedNote = native.removed.length > 0 ? `; removed stale: ${native.removed.join(", ")}` : "";
+    opencodeChannel.appendLine(`[skills] native skills staged: ${native.dir} (${native.staged.length})${skippedNote}${removedNote}`);
+  } catch (e) {
+    opencodeChannel.appendLine(`[skills] native skill staging failed: ${(e as Error).message}`);
+  }
   // amicode#250 AC5: the composer bug button gates on the staged skill set —
   // re-pinned after EVERY session prep (boot, solver switch, vault respawn).
   ChatPanel.setBugReportAvailable(bugReportSkillStaged(opencodeProject.skillPaths));
@@ -1157,7 +1201,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // future work, not this slice.
   followedSessionWatcher = new FollowedSessionWatcher({
     followedSessions: () => ChatPanel.followedSessionIds(),
-    isSessionFocused: (sessionID) => ChatPanel.focusedSessionId() === sessionID,
+    // #1948: any VISIBLE panel on the session (or, via the watcher's parent
+    // cache, on an ancestor of it) suppresses — not just the active one.
+    isSessionVisible: (sessionID) => ChatPanel.visibleSessionIds().has(sessionID),
     showInformationMessage: (m, ...items) => vscode.window.showInformationMessage(m, ...items) as Promise<string | undefined>,
     onFocusSession: (sessionID) => ChatPanel.revealSession(sessionID),
     log: (line) => opencodeChannel.appendLine(line),
@@ -1973,6 +2019,13 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           return fetchProviderIds(engineUrl, { headers: serverAuthHeaders });
         },
       },
+      // #1985 (#1979 S2): the model-reachability cache's engine seams — the
+      // key-free catalog + the one-token probe over the SAME late-bound
+      // engine URL and credential the routing refresh uses.
+      modelReachability: engineReachabilityDeps({
+        getUrl: () => serverManager?.url?.toString(),
+        headers: serverAuthHeaders,
+      }),
       appDistRoot: resolveAppDistRoot(
         vscode.workspace.getConfiguration("amicode").get<string>("appBundleDir", ""),
         ctx.extensionPath,
@@ -2302,6 +2355,15 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       // offers a restart onto the current build (kill survivor → drop handshake
       // → reload → clean cold-spawn). Adopt-then-notice keeps in-flight turns.
       if (binary && adoptedHashes && adoptedPort > 0) {
+        // #1571: the persistent status-bar indicator's click runs the SAME restart.
+        const restartStale = (): Promise<void> => restartAdoptedEngine({
+          port: adoptedPort,
+          reclaimPort: reclaimOrphanPort,
+          deleteHandshake,
+          reloadWindow: () => void vscode.commands.executeCommand("workbench.action.reloadWindow"),
+          log: (l) => opencodeChannel.appendLine(l),
+        });
+        staleEngineRestart = restartStale;
         void auditAdoptedEngine(
           adoptedHashes,
           { binaryPath: binary, configContent },
@@ -2310,13 +2372,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
             hashString,
             notify: {
               showInformationMessage: (m, ...items) => vscode.window.showInformationMessage(m, ...items),
-              onRestartRequested: () => restartAdoptedEngine({
-                port: adoptedPort,
-                reclaimPort: reclaimOrphanPort,
-                deleteHandshake,
-                reloadWindow: () => void vscode.commands.executeCommand("workbench.action.reloadWindow"),
-                log: (l) => opencodeChannel.appendLine(l),
-              }),
+              onRestartRequested: restartStale,
+              setStaleIndicator: (state) => statusBar?.setEngineStale(state?.detail),
             },
           },
           adoptedUnarmed,
@@ -2340,6 +2397,11 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
             return fetchProviderIds(engineUrl, { headers: serverAuthHeaders });
           },
         },
+        // #1985: same reachability seams on the adopted-engine path.
+        modelReachability: engineReachabilityDeps({
+          getUrl: () => opencodeReadyUrl?.toString(),
+          headers: serverAuthHeaders,
+        }),
         appDistRoot: resolveAppDistRoot(
           vscode.workspace.getConfiguration("amicode").get<string>("appBundleDir", ""),
           ctx.extensionPath,
@@ -3551,6 +3613,10 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       }
       triggerSweep(distillerSetup, true);
       void vscode.window.showInformationMessage("Amicode: distilling recent sessions in the background.");
+    }),
+    vscode.commands.registerCommand("amicode.restartStaleEngine", async () => {
+      if (staleEngineRestart) await staleEngineRestart();
+      else void vscode.commands.executeCommand("amicode.restartServer");
     }),
     vscode.commands.registerCommand("amicode.restartServer", async () => {
       // Fix #382: error page's Restart now posts this from the iframe

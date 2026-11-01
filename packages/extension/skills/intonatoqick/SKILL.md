@@ -3,9 +3,18 @@ name: intonatoqick
 description: Drive the public IntonatoQICK.jl QICK/RFSoC hardware backend — mock loop, channel map, measurement model, and composing a QickExperiment into Intonato's closed-loop chassis. Use when running or testing quantum optimal control on QICK hardware (or its pure-Julia mock).
 agents: [experimenter, engineer]
 surface: public
+revision: 1
 ---
 
 # IntonatoQICK — the public QICK hardware backend
+
+> **Status: archived.** `harmoniqs/IntonatoQICK.jl` is archived and was renamed
+> Strumento.jl (`QickBackend` → `StrumentoBackend`, `MockQickSoc` → `MockSoc`,
+> `PyQickSoc` → `StrumentoSoc`); the closed-loop seam (`StrumentoBackend` /
+> `StrumentoExperiment`) now lives in Intonato itself (`src/hardware/`), and
+> Intonato 0.5 absorbs the socs too (Strumento.jl retiring). New work targets
+> `using Intonato`; the recipe below is kept for pinned IntonatoQICK 0.1.0
+> environments. The index caveat applies to both lines.
 
 > **Provenance:** salvaged from `harmoniqs/amico-plugin` PR #42 (repo archived
 > 2026-08-26) — ruled SALVAGE in amicode#850, ported in amicode#851.
@@ -58,8 +67,13 @@ ptp = PulseTuningProblem(qcp, qexp, model)
 solve!(ptp; max_iter = 10)
 ```
 
-- `dac_rate` is the mock DAC grid; readout converges to the continuum as it rises (translation
-  is faithful, not lossy) — it is not bit-identical to a coarse-knot direct sim.
+- `dac_rate` is the mock DAC grid. **Measurement indices are DAC-sample indices on this
+  path**, not knot indices: the mock resamples onto `floor(Int, T*dac_rate)+1` points and
+  measures at the reconstruction's `knot_times[k]`, so `[N]` means t = (N−1)/`dac_rate`, not
+  t = T, unless the knot grid equals the DAC grid. The "readout converges as `dac_rate`
+  rises" check therefore converges toward the *initial* state and does not show translation
+  is faithful. Pass each knot's sample index (`round(Int, t_k*dac_rate)+1`) or put the
+  knots on the DAC grid.
 - Swap `MockQickSoc` → `PyQickSoc` for a real board; nothing else in the loop changes.
 - **Intonato ≥ v0.4:** the `R_tr` / `Q_meas` constructor kwargs are **removed** — trust-region
   weighting belongs to the strategy (Intonatissimo's subproblem constructors take `R_tr`) and
@@ -81,6 +95,7 @@ drive the backend, roll the mock, validate the seam.
 ## Verification contract
 
 A script authored on this skill must emit: the backend/experiment constructed, the measurement
-model, and — for the mock — evidence the loop ran (per-iteration measurement + a convergence or
-faithfulness check as `dac_rate` rises). Keep the script self-contained (inline the constants;
+model, and — for the mock — evidence the loop ran (per-iteration measurement + a faithfulness
+check that compares the mock at the knot's time against a direct `SimulatedExperiment` — not
+a readout-vs-`dac_rate` trend at a fixed index). Keep the script self-contained (inline the constants;
 no `include` of demo-repo files).

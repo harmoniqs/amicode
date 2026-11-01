@@ -401,7 +401,7 @@ window.addEventListener("message", (e) => {
       boot.colorScheme = d.colorScheme;
       for (const f of frameByTab.values()) f.contentWindow?.postMessage({ source: "amicode", kind: "theme", colorScheme: d.colorScheme }, boot.origin);
     }
-    if (d.kind === "clipboard" && typeof d.tab === "string") {
+    if ((d.kind === "clipboard" || d.kind === "clipboard-image-written") && typeof d.tab === "string") {
       frameByTab.get(d.tab)?.contentWindow?.postMessage(d, boot.origin);
     }
     if ((d.kind === "dev-tools-status" || d.kind === "dev-tools-rebuild-status" || d.kind === "data-storage-defaults" || d.kind === "data-storage-status") && typeof d.tab === "string") {
@@ -485,6 +485,7 @@ window.addEventListener("message", (e) => {
     d.kind === "command" ||
     d.kind === "clipboard-request" ||
     d.kind === "clipboard-write" ||
+    d.kind === "clipboard-image-write" ||
     d.kind === "open-external" ||
     d.kind === "open-file" ||
     d.kind === "save-file" ||

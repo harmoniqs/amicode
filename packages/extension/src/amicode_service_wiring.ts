@@ -145,6 +145,10 @@ export interface AmicodeServiceWiringOptions {
    *  LIVE-provider getter (the running engine's /config/providers, key-free
    *  ids only) — the credential gate's refresh loop. */
   modelRouting?: import("./amicode_service/model_routing").ModelRoutingDeps;
+  /** #1985 (#1979 S2): the model-reachability cache's engine seams — the
+   *  caller supplies the key-free catalog + the S1 probe over the running
+   *  engine (engineReachabilityDeps, late-bound URL). */
+  modelReachability?: import("./amicode_service/model_reachability").ModelReachabilityDeps;
   /** #1261 (AC7): the version-skew relay-START gate. A client relay sets it
    *  (its pinned version + a host-version probe); the relay REFUSES to boot on
    *  a disagreement beyond tolerance (an actionable message, never a generic
@@ -331,6 +335,7 @@ export async function startAmicodeService(
       shelf: opts.appDistRoot !== undefined ? { distRoot: opts.appDistRoot } : undefined,
       fleet: fleet ?? opts.fleet,
       modelRouting: opts.modelRouting,
+      modelReachability: opts.modelReachability,
       // #1771: the fan-in census + owner-map refresh outcomes → the Amicode
       // output channel.
       log: (line) => log.appendLine(line),

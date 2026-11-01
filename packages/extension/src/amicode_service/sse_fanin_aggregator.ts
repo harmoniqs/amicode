@@ -637,7 +637,9 @@ export class SseFanInAggregator {
    *  is `sever`: the caller ends the listener with a transport error, and the
    *  client's disconnect is the gap signal. Nothing is written for `sever`. The
    *  INITIAL open of an arm (never delivered a data frame) is `open` in both
-   *  modes — nothing was lost. A gap never advances any cursor. */
+   *  modes — nothing was lost. A gap never advances any cursor. #1793: after a gap
+   *  the arm counts as not-yet-delivered again, so repeated re-opens during one
+   *  outage (a refusing member) signal ONE gap; its next delivered frame re-arms it. */
   reopenArm(namespace: string): ReopenVerdict {
     if (!this.everDelivered.has(namespace)) return "open"; // initial open → nothing lost
     if (parseEngineId(this.resumeAt.get(namespace)) !== undefined) {
@@ -647,6 +649,12 @@ export class SseFanInAggregator {
     if (this.peerArms.size === 0) return "sever"; // fleet-of-one → NO synthetic frame (#1264)
     this.writeControl(gapFrame([namespace]));
     this.noteGap([namespace], "reopen");
+    // #1793 — ONE gap per lost stretch: the stretch is now announced, so the arm
+    // goes quiet (its next re-open is `open`, nothing new lost) until it delivers
+    // a data frame again (`ingest` re-adds it). A member that stays listed but
+    // refuses the stream is re-opened every reconcile tick; without this each
+    // tick re-signalled the gap and clients refetched for the whole outage.
+    this.everDelivered.delete(namespace);
     return "gap";
   }
 

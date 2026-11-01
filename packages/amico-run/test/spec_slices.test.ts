@@ -16,6 +16,7 @@ import {
   PlanTableError,
   fileSlices,
   ghApiSlices,
+  parseAdoption,
   parsePlanTable,
   parseProvenance,
   provenanceMarker,
@@ -39,11 +40,21 @@ class FakeGh implements SlicesGh {
   subIssues = new Map<number, number[]>(); // parent id → child ids
   blockedBy = new Map<number, number[]>(); // issue id → blocker ids
   created = { issues: 0, subIssues: 0, blockedBy: 0 };
+  edits = 0;
 
-  seed(repo: string, number: number, body = ""): GhIssue {
-    const i = { id: this.nextId++, number, repo, body, title: `seed ${number}` };
+  seed(repo: string, number: number, body = "", state: "open" | "closed" = "open"): GhIssue {
+    const i = { id: this.nextId++, number, repo, body, state, title: `seed ${number}` };
     this.issues.push(i);
     return i;
+  }
+  getIssue(addr: IssueAddr): GhIssue {
+    this.calls.push(`getIssue ${addr.repo}#${addr.number}`);
+    return { ...this.byAddr(addr) };
+  }
+  editIssueBody(addr: IssueAddr, body: string): void {
+    this.calls.push(`editIssueBody ${addr.repo}#${addr.number}`);
+    this.byAddr(addr).body = body;
+    this.edits++;
   }
   private byAddr(a: IssueAddr) {
     const i = this.issues.find((x) => x.repo === a.repo && x.number === a.number);
@@ -90,7 +101,7 @@ class FakeGh implements SlicesGh {
 /** A trap layer: any call at all is a test failure. */
 function trapGh(): SlicesGh & { calls: number } {
   const t = { calls: 0 } as SlicesGh & { calls: number };
-  for (const m of ["findFiled", "createIssue", "listSubIssues", "addSubIssue", "listBlockedBy", "addBlockedBy"] as const) {
+  for (const m of ["findFiled", "createIssue", "getIssue", "editIssueBody", "listSubIssues", "addSubIssue", "listBlockedBy", "addBlockedBy"] as const) {
     (t as unknown as Record<string, unknown>)[m] = () => {
       t.calls++;
       throw new Error(`gh called during dry run: ${m}`);
@@ -138,6 +149,44 @@ describe("parsePlanTable — the real v2.1 Plan table", () => {
 
   it("53 blocked-by edges in total", () => {
     expect(steps.reduce((n, s) => n + (s.needs?.length ?? 0), 0)).toBe(53);
+  });
+
+  it("exactly one row adopts an existing issue: row 10 (`#1740 live skills`) → harmoniqs/amicode#1740 (#1949 §5)", () => {
+    const adopting = steps.filter((s) => s.adopts);
+    expect(adopting.map((s) => s.row)).toEqual([10]);
+    expect(adopting[0].adopts).toEqual({ repo: "harmoniqs/amicode", number: 1740 });
+    expect(adopting[0]).toMatchObject({ title: "#1740 live skills", repo: "amicode", tier: 2 });
+    // rows whose FIRST reference is a bare mid-text `#N`, `(#N E2)`, or `repo #N` (spaced) file new issues
+    for (const r of [11, 19, 21, 33, 37, 39, 46, 47]) expect(steps.find((s) => s.row === r)!.adopts).toBeUndefined();
+  });
+});
+
+describe("parseAdoption — the step text's FIRST issue reference decides", () => {
+  const a = (t: string, repo = "amicode") => parseAdoption(t, repo);
+  it("`(#N)` adopts in the row's repo", () => {
+    expect(a("wire the thing (#12)")).toEqual({ repo: "harmoniqs/amicode", number: 12 });
+    expect(a("wire the thing (#12)", "arJev")).toEqual({ repo: "harmoniqs/arJev", number: 12 });
+  });
+  it("a leading `#N` (the step names the issue) adopts in the row's repo", () => {
+    expect(a("#1740 live skills")).toEqual({ repo: "harmoniqs/amicode", number: 1740 });
+  });
+  it("`repo#N` adopts in harmoniqs/repo; `owner/repo#N` adopts verbatim", () => {
+    expect(a("land aws-infra#322 fence")).toEqual({ repo: "harmoniqs/aws-infra", number: 322 });
+    expect(a("land Telaio.jl#9 now")).toEqual({ repo: "harmoniqs/Telaio.jl", number: 9 });
+    expect(a("port acme/widgets#7 here")).toEqual({ repo: "acme/widgets", number: 7 });
+  });
+  it("only the FIRST reference counts: a non-adopting first ref blocks a later adopting one", () => {
+    expect(a("rebase #1678 then (#12)")).toBeUndefined();
+    expect(a("thing (#12) then aws-infra#3")).toEqual({ repo: "harmoniqs/amicode", number: 12 });
+  });
+  it("bare mid-text `#N`, `(#N more)`, and spaced `repo #N` do not adopt", () => {
+    expect(a("rebase + land #1678 corrections scan")).toBeUndefined();
+    expect(a("implementer layer-skill loading (#1742 E2)")).toBeUndefined();
+    expect(a("aws-infra #322: lease fence")).toBeUndefined();
+    expect(a("no refs at all")).toBeUndefined();
+  });
+  it("references inside code spans are ignored", () => {
+    expect(a("`foo#3` then (#4)")).toEqual({ repo: "harmoniqs/amicode", number: 4 });
   });
 });
 
@@ -198,14 +247,18 @@ describe("fileSlices — idempotent against a faked gh layer", () => {
   const hash = designHash(fm.data);
   const prd = { repo: "harmoniqs/amicode", number: 1820 };
 
-  it("run 1 creates N issues + E edges + N sub-issue links; run 2 creates 0 / 0 / 0", () => {
+  it("run 1 creates N-1 issues + adopts #1740 + E edges + N sub-issue links; run 2 creates 0 / 0 / 0", () => {
     const gh = new FakeGh();
     gh.seed("harmoniqs/amicode", 1820);
+    gh.seed("harmoniqs/amicode", 1740, "live skills, filed by hand");
     const r1 = fileSlices(steps, { specId, designHash: hash, prd, gh });
-    expect(r1.created_issues).toBe(50);
+    expect(r1.created_issues).toBe(49);
+    expect(r1.adopted_issues).toBe(1);
+    expect(r1.edited_bodies).toBe(1);
     expect(r1.created_edges).toBe(53);
     expect(r1.created_sub_issues).toBe(50);
-    expect(gh.created).toEqual({ issues: 50, subIssues: 50, blockedBy: 53 });
+    expect(gh.created).toEqual({ issues: 49, subIssues: 50, blockedBy: 53 });
+    expect(gh.edits).toBe(1);
 
     // Edges resolve to the right issues: row 2's issue is blocked by row 38's.
     const issueOf = (row: number) => r1.rows.find((x) => x.row === row)!.issue!;
@@ -214,12 +267,21 @@ describe("fileSlices — idempotent against a faked gh layer", () => {
     expect(gh.blockedBy.get(r2id)).toEqual([r38id]);
     // Cross-repo rows land in their own repo.
     expect(issueOf(47).repo).toBe("harmoniqs/aws-infra");
+    // Row 10 IS #1740; row 21 (after 10) is blocked by it.
+    expect(issueOf(10)).toEqual({ repo: "harmoniqs/amicode", number: 1740 });
+    expect(r1.rows.find((x) => x.row === 10)!.status).toBe("adopted");
+    const id1740 = gh.issues.find((i) => i.number === 1740)!.id;
+    const r21id = gh.issues.find((i) => i.repo === issueOf(21).repo && i.number === issueOf(21).number)!.id;
+    expect(gh.blockedBy.get(r21id)).toEqual([id1740]);
 
     const r2 = fileSlices(steps, { specId, designHash: hash, prd, gh });
     expect(r2.created_issues).toBe(0);
     expect(r2.created_edges).toBe(0);
     expect(r2.created_sub_issues).toBe(0);
-    expect(gh.created).toEqual({ issues: 50, subIssues: 50, blockedBy: 53 });
+    expect(r2.adopted_issues).toBe(1);
+    expect(r2.edited_bodies).toBe(0);
+    expect(gh.created).toEqual({ issues: 49, subIssues: 50, blockedBy: 53 });
+    expect(gh.edits).toBe(1);
   });
 
   it("the body carries spec id, row, tier and the provenance line with the design hash", () => {
@@ -260,10 +322,126 @@ describe("fileSlices — idempotent against a faked gh layer", () => {
 
   it("without --prd, no sub-issue calls are made", () => {
     const gh = new FakeGh();
+    gh.seed("harmoniqs/amicode", 1740);
     const r = fileSlices(steps, { specId, designHash: hash, gh });
-    expect(r.created_issues).toBe(50);
+    expect(r.created_issues).toBe(49);
     expect(r.created_sub_issues).toBe(0);
     expect(gh.calls.filter((c) => c.includes("SubIssue"))).toEqual([]);
+  });
+});
+
+describe("fileSlices — adopting an existing issue (#1949 §5)", () => {
+  const specId = "spec-mini";
+  const hash = "a".repeat(64);
+  const prd = { repo: "harmoniqs/amicode", number: 1820 };
+  const steps = parsePlanTable(
+    mini(
+      "| 0 | 1 | base work | amicode | implement-slice | — |\n" +
+        "| 1 | 1 | wire the thing (#77) | amicode | implement-slice | 0 |\n" +
+        "| 2 | 2 | land arJev#5 fence | amicode | implement-slice | 1 |\n",
+    ),
+  );
+
+  function world(arJevState: "open" | "closed" = "open") {
+    const gh = new FakeGh();
+    gh.seed("harmoniqs/amicode", 1820);
+    gh.seed("harmoniqs/amicode", 77, "the hand-filed body\n\n- [ ] keep me");
+    gh.seed("harmoniqs/arJev", 5, "cross-repo body", arJevState);
+    return gh;
+  }
+
+  it("adoption creates no issue and edits the body once to append the marker; the original body is kept", () => {
+    const gh = world();
+    const r = fileSlices(steps, { specId, designHash: hash, prd, gh });
+    expect(r.created_issues).toBe(1); // row 0 only
+    expect(r.adopted_issues).toBe(2);
+    expect(r.edited_bodies).toBe(2);
+    expect(gh.created.issues).toBe(1);
+    const i77 = gh.issues.find((i) => i.number === 77)!;
+    expect(i77.body!.startsWith("the hand-filed body\n\n- [ ] keep me")).toBe(true);
+    expect(parseProvenance(i77.body)).toEqual({ spec_id: specId, row: 1, design_hash: hash });
+    expect(r.rows.map((x) => [x.row, x.status, x.issue])).toEqual([
+      [0, "created", { repo: "harmoniqs/amicode", number: 101 }],
+      [1, "adopted", { repo: "harmoniqs/amicode", number: 77 }],
+      [2, "adopted", { repo: "harmoniqs/arJev", number: 5 }],
+    ]);
+  });
+
+  it("a single adopting row: 0 issues created, exactly 1 body edit; second run 0 edits", () => {
+    const gh = world();
+    const one = steps.filter((s) => s.row === 1).map((s) => ({ ...s, needs: undefined }));
+    const r1 = fileSlices(one, { specId, designHash: hash, prd, gh });
+    expect([r1.created_issues, r1.edited_bodies, gh.created.issues, gh.edits]).toEqual([0, 1, 0, 1]);
+    const r2 = fileSlices(one, { specId, designHash: hash, prd, gh });
+    expect([r2.created_issues, r2.edited_bodies, gh.created.issues, gh.edits]).toEqual([0, 0, 0, 1]);
+    expect(r2.rows[0].status).toBe("adopted");
+  });
+
+  it("adopted issues are linked under the PRD and carry the blocked-by edges; second run is idempotent", () => {
+    const gh = world();
+    fileSlices(steps, { specId, designHash: hash, prd, gh });
+    const id = (repo: string, n: number) => gh.issues.find((i) => i.repo === repo && i.number === n)!.id;
+    const prdKids = gh.subIssues.get(id("harmoniqs/amicode", 1820));
+    expect(prdKids).toEqual(expect.arrayContaining([id("harmoniqs/amicode", 77), id("harmoniqs/arJev", 5)]));
+    expect(gh.blockedBy.get(id("harmoniqs/amicode", 77))).toEqual([id("harmoniqs/amicode", 101)]);
+    expect(gh.blockedBy.get(id("harmoniqs/arJev", 5))).toEqual([id("harmoniqs/amicode", 77)]);
+    const r2 = fileSlices(steps, { specId, designHash: hash, prd, gh });
+    expect(r2).toMatchObject({ created_issues: 0, created_edges: 0, created_sub_issues: 0, edited_bodies: 0, adopted_issues: 2 });
+    expect(gh.edits).toBe(2);
+  });
+
+  it("a marker under an older design hash counts as present (no re-edit on a spec revision)", () => {
+    const gh = world();
+    gh.issues.find((i) => i.number === 77)!.body = `x\n${provenanceMarker(specId, 1, "0".repeat(64))}\n`;
+    const one = steps.filter((s) => s.row === 1).map((s) => ({ ...s, needs: undefined }));
+    expect(fileSlices(one, { specId, designHash: hash, gh }).edited_bodies).toBe(0);
+  });
+
+  it("another spec's marker on the adopted issue does not count; this spec's marker is appended beside it", () => {
+    const gh = world();
+    gh.issues.find((i) => i.number === 77)!.body = `x\n${provenanceMarker("spec-other", 4, hash)}\n`;
+    const one = steps.filter((s) => s.row === 1).map((s) => ({ ...s, needs: undefined }));
+    expect(fileSlices(one, { specId, designHash: hash, gh }).edited_bodies).toBe(1);
+    const body = gh.issues.find((i) => i.number === 77)!.body!;
+    expect(body).toContain("spec=spec-other row=4");
+    expect(body).toContain(`spec=${specId} row=1`);
+    expect(fileSlices(one, { specId, designHash: hash, gh }).edited_bodies).toBe(0);
+  });
+
+  it("an issue FILED for the row before it adopted is reported as superseded and left untouched", () => {
+    const gh = world();
+    const dup = gh.createIssue("harmoniqs/amicode", "wire the thing (#77)", `old\n${provenanceMarker(specId, 1, hash)}\n`);
+    gh.created.issues = 0;
+    const one = steps.filter((s) => s.row === 1).map((s) => ({ ...s, needs: undefined }));
+    const r = fileSlices(one, { specId, designHash: hash, gh });
+    expect(r.created_issues).toBe(0);
+    expect(r.rows[0]).toMatchObject({ status: "adopted", issue: { number: 77 }, superseded: { repo: "harmoniqs/amicode", number: dup.number } });
+    expect(gh.issues.find((i) => i.id === dup.id)!.body).toBe(`old\n${provenanceMarker(specId, 1, hash)}\n`);
+  });
+
+  it("a CLOSED adopted issue is still adopted, marked, linked and wired (a closed blocker is a satisfied edge)", () => {
+    const gh = world("closed");
+    const r = fileSlices(steps, { specId, designHash: hash, prd, gh });
+    const row2 = r.rows.find((x) => x.row === 2)!;
+    expect(row2).toMatchObject({ status: "adopted", state: "closed", issue: { repo: "harmoniqs/arJev", number: 5 } });
+    const i5 = gh.issues.find((i) => i.number === 5)!;
+    expect(parseProvenance(i5.body)?.row).toBe(2);
+    expect(gh.subIssues.get(gh.issues.find((i) => i.number === 1820)!.id)).toContain(i5.id);
+    expect(gh.blockedBy.get(i5.id)).toHaveLength(1);
+  });
+
+  it("dry-run shows `adopts` on the row and makes zero gh calls", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "spec-slices-adopt-"));
+    try {
+      const p = join(dir, "spec.md");
+      writeFileSync(p, mini("| 0 | 1 | wire the thing (#77) | amicode | implement-slice | — |\n"));
+      const gh = trapGh();
+      const r = await specVerb(["slices", p, "--dry-run"], { slicesGh: gh });
+      expect(gh.calls).toBe(0);
+      expect((r.json as { rows: Array<{ adopts?: string }> }).rows[0].adopts).toBe("harmoniqs/amicode#77");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -324,6 +502,19 @@ describe("ghApiSlices — the `gh api` argument shapes", () => {
     ]);
   });
 
+  it("getIssue: GET …/issues/{n}, returns id, number, body and state", () => {
+    const { calls, runner } = recorder({ "repos/harmoniqs/amicode/issues/1740": '{"id": 9, "number": 1740, "body": null, "state": "closed"}' });
+    const i = ghApiSlices(runner).getIssue({ repo: "harmoniqs/amicode", number: 1740 });
+    expect(calls[0]).toEqual(["repos/harmoniqs/amicode/issues/1740"]);
+    expect(i).toEqual({ id: 9, number: 1740, repo: "harmoniqs/amicode", body: "", state: "closed" });
+  });
+
+  it("editIssueBody: PATCH …/issues/{n} with the raw body field", () => {
+    const { calls, runner } = recorder({ "issues/7": "{}" });
+    ghApiSlices(runner).editIssueBody({ repo: "harmoniqs/arJev", number: 7 }, "@b");
+    expect(calls[0]).toEqual(["-X", "PATCH", "repos/harmoniqs/arJev/issues/7", "-f", "body=@b"]);
+  });
+
   it("a failed gh call throws with gh's stderr", () => {
     const runner: GhApiRunner = () => ({ code: 1, stdout: "", stderr: "HTTP 403: nope" });
     expect(() => ghApiSlices(runner).addBlockedBy({ repo: "harmoniqs/a", number: 1 }, 2)).toThrow(/403/);
@@ -357,11 +548,12 @@ describe("amico spec slices — the verb", () => {
   it("files through the injected layer; second run files nothing", async () => {
     const gh = new FakeGh();
     gh.seed("harmoniqs/amicode", 1820);
+    gh.seed("harmoniqs/amicode", 1740);
     const r1 = await specVerb(["slices", REAL_SPEC, "--prd", "harmoniqs/amicode#1820"], { slicesGh: gh });
     expect(r1.code).toBe(0);
-    expect(json(r1)).toMatchObject({ created_issues: 50, created_edges: 53, created_sub_issues: 50 });
+    expect(json(r1)).toMatchObject({ created_issues: 49, adopted_issues: 1, edited_bodies: 1, created_edges: 53, created_sub_issues: 50 });
     const r2 = await specVerb(["slices", REAL_SPEC, "--prd=harmoniqs/amicode#1820"], { slicesGh: gh });
-    expect(json(r2)).toMatchObject({ created_issues: 0, created_edges: 0, created_sub_issues: 0 });
+    expect(json(r2)).toMatchObject({ created_issues: 0, edited_bodies: 0, created_edges: 0, created_sub_issues: 0 });
   });
 
   it("a malformed table is exit 65 with the named error, and no gh calls", async () => {

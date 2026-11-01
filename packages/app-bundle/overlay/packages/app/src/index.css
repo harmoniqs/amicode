@@ -414,3 +414,19 @@
 .preview-tab-strip [data-slot="tabs-trigger"][data-selected] .tab-fileicon-mono {
   display: none !important;
 }
+
+/* amicode(#1633): responsive concise toggle. The composer wrapper is a named
+   query container (.amicode-composer-cq); hide the concise toggle when the
+   composer itself is narrow — the window narrowed OR a side panel / split
+   shrank it — so the control row never crowds the Send button. Default (wide)
+   is visible; hidden only below the breakpoint. Tune the max-width to taste. */
+.amicode-composer-cq {
+  container-type: inline-size;
+  container-name: amicode-composer;
+}
+
+@container amicode-composer (max-width: 26rem) {
+  .amicode-concise-toggle-wrap {
+    display: none;
+  }
+}

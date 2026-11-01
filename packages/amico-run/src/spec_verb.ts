@@ -22,7 +22,7 @@ import { designHash, validate } from "@amicode/schema";
 import { parseFrontmatter } from "./frontmatter.js";
 import { precedentFor } from "./ledger_query.js";
 import { reviewSpec, type ReviewOptions } from "./spec_review.js";
-import { PlanTableError, fileSlices, ghApiSlices, parsePlanTable, planView, type IssueAddr, type SlicesGh, type SlicesReport } from "./spec_slices.js";
+import { PlanTableError, emptySlicesReport, fileSlices, ghApiSlices, parsePlanTable, planView, type IssueAddr, type SlicesGh, type SlicesReport } from "./spec_slices.js";
 import type { VerbResult } from "./verbs.js";
 
 /** The `precedent` lens's ledger channel. Named here rather than inlined so the verb's default
@@ -178,7 +178,7 @@ function slices(argv: string[], ctx: SpecVerbCtx): VerbResult {
   const head = { verb: "spec", subcommand: "slices", spec_id, design_hash, prd: prd ? `${prd.repo}#${prd.number}` : null };
   if (dryRun) return { json: { ...head, ok: true, dry_run: true, ...planView(steps) }, code: 0 };
 
-  const progress: SlicesReport = { rows: [], edges: [], created_issues: 0, created_edges: 0, created_sub_issues: 0 };
+  const progress: SlicesReport = emptySlicesReport();
   try {
     fileSlices(steps, { specId: spec_id, designHash: design_hash, prd, gh: ctx.slicesGh ?? ghApiSlices(), progress });
   } catch (e) {

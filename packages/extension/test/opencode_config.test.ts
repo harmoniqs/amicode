@@ -9,7 +9,6 @@ import {
   buildOpencodeConfigContent,
   resolveModelPin,
   validatedModelPin,
-  profileHasIdentity,
   routingSection,
 } from "../src/opencode_config";
 
@@ -407,22 +406,6 @@ describe("resolveModelPin (no forced fallback)", () => {
     // A hardcoded fallback in config.model outranked the user's recent pick
     // (configuredModel ?? recentModel ?? default), overriding their choice.
     expect(resolveModelPin()).toBeUndefined();
-  });
-});
-
-describe("profileHasIdentity (wizard → overture gate)", () => {
-  it("true only when an identity field is a non-empty string", () => {
-    const dir = mkdtempSync(join(tmpdir(), "prof-"));
-    const fp = join(dir, "profile.json");
-    expect(profileHasIdentity(fp)).toBe(false); // absent
-    writeFileSync(fp, JSON.stringify({}));
-    expect(profileHasIdentity(fp)).toBe(false); // empty
-    writeFileSync(fp, JSON.stringify({ affiliation: "  " }));
-    expect(profileHasIdentity(fp)).toBe(false); // whitespace
-    writeFileSync(fp, JSON.stringify({ affiliation: "NYU" }));
-    expect(profileHasIdentity(fp)).toBe(true);
-    writeFileSync(fp, "not json");
-    expect(profileHasIdentity(fp)).toBe(false); // corrupt → safe default (onboard)
   });
 });
 

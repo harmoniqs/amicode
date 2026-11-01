@@ -5,7 +5,7 @@ agents: [researcher, librarian, dreamer]
 surface: public
 ---
 
-Pulse catalog management for the Amico system. Covers warm-start retrieval, pulse ingestion, and versioning. Phase 0 scope: basic warm-start retrieval and ingestion only. Compiler stack fields (system_hash, calibrated, etc.) are not present yet.
+Pulse catalog management for the Amico system. Covers warm-start retrieval, pulse ingestion, and versioning. Phase 0 scope: basic warm-start retrieval and ingestion only — the catalog CLI's query/ingest surface does not yet filter by or record the schema-v3 compiler stack fields (system hash, device id, verification block); that follow-up is tracked at harmoniqs/amicissimo#497. The schema-v3 fields themselves have landed in the compilation package (see "Compiler Stack Fields" below) — the ground truth lives there, not here.
 
 ## Catalog Structure
 
@@ -41,7 +41,18 @@ tags = ["seed", "three-level"]
 created = 2026-03-24
 ```
 
-Note: Compiler stack fields (`system_hash`, `calibrated`, etc.) are NOT present in Phase 0. They will be added when those phases land.
+Note: Compiler stack fields (`system_hash`, verification, etc.) are NOT present in this Phase 0 vault-catalog schema. They HAVE landed in the compilation package's schema v3 (see the next section) — the vault catalog and its CLI adopt them in the follow-up phase.
+
+## Compiler Stack Fields — where they landed (schema v3)
+
+The compiler-stack fields phase landed 2026-10-04 with the compilation package's PRD #50 completion (harmoniqs/Legato.jl, main @ ee79bc4). Ground truth for field names, shapes, and semantics is that package's pulse-library module and the `legato-dev` skill (team vault), not this card:
+
+- **`system_hash`** — SHA-256 over the device composite (name, per-qubit ω/δ/levels, couplings, drive bound); performance metadata (T1/T2) is hash-excluded. A hash mismatch on load throws — device drift invalidates stale entries loudly.
+- **`VerificationRecord`** — solver fidelity + independent rollout fidelity + verifier + verified date; complete or absent, never partial. An entry is *verified* only when the record is present; trust ranking puts verified above unverified at equal fidelity.
+- **Query/ranking** — filters by platform, gate, device id, system hash (exact-hash option); superseded versions drop from ranking unless requested.
+- **Ingestion** — provenance per block (git commit, source script); the bundled public library is IP-gated by a device-profile allowlist.
+
+Phase 0 of THIS card's surface (the vault catalog + `amico catalog` CLI) does not implement these yet: retrieval remains by platform+gate only. The CLI follow-up (schema-v3 fields in query/ingest, verification-aware ranking) is tracked at **harmoniqs/amicissimo#497**. Until it lands, a session needing hash-exact or verification-aware lookup should use the compilation package's query API directly.
 
 ## Warm-Start Retrieval
 
@@ -90,4 +101,4 @@ Old versions remain in catalog (never deleted) but are not candidates for warm-s
 
 ## Phase 0 Scope
 
-No compiler stack fields in metadata. No multi-branch catalog management yet. Retrieval is by platform+gate only; system-specific matching (e.g., by Hamiltonian hash) is a future phase concern.
+No compiler stack fields in THIS catalog's metadata or CLI yet (the fields themselves landed in the compilation package's schema v3 — see "Compiler Stack Fields" above; CLI adoption is harmoniqs/amicissimo#497). No multi-branch catalog management yet. Retrieval is by platform+gate only; system-specific matching (e.g., by Hamiltonian hash) is done through the compilation package's query API, not this catalog.

@@ -50,6 +50,14 @@ Skip any step = lying, not verifying
 | Regression test works | Red-green cycle verified | Test passes once |
 | Agent completed | VCS diff shows changes | Agent reports "success" |
 | Requirements met | Line-by-line checklist | Tests passing |
+| Edit applied | The edit's pattern ASSERTED a match and the critical line grep-verifies post-write | The edit command returning, "it should be in there" |
+| Options/kwargs reached their consumer | A probe shows behavior change (tiny `max_iter` moves the reported count) | No error raised on pass |
+| Numeric literal in a test/spec | Machine-pinned from the computing formula, rtol ≤ 1e-9 | Hand-copied digits, tolerance-sized rtol that masks drift |
+
+The edit row is the 2026-10 law (six measured instances in one campaign): `str.replace`,
+`sed`, and kwarg passes all **succeed on no-match by design** — an unverified edit is an
+unverified claim, and stacked silent no-ops leave a file whose edit history must be
+rewritten clean with git as arbiter.
 
 ## Quantum-Specific Verifications
 

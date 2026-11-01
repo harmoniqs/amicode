@@ -67,6 +67,7 @@ import {
   type FleetReseedDeps,
 } from "./fleet-session-status"
 import { createFleetReseedScheduler, viewedSessionIdFromLocation } from "./fleet-reseed-scheduler"
+import { runLocalReseed } from "./local-reseed"
 
 type GlobalStore = {
   ready: boolean
@@ -315,15 +316,17 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
   // fetch is timestamped BEFORE the request so the store's recency guard can
   // refuse a downgrade of a busy that was mutated locally after the snapshot.
   // #1766: this is now the FALLBACK — today's local re-seed, unchanged.
-  const localReseed = async () => {
-    const fetchedAt = Date.now()
-    try {
-      const statuses = (await serverSDK.client.session.status()).data ?? {}
-      session.reconcileStatuses(statuses, { fetchedAt })
-    } catch {
-      // A failed reconcile is non-fatal — the next edge retries.
-    }
-  }
+  // #1767: the engine keeps status PER DIRECTORY and resolves a directory-less
+  // read to its own working dir (a no-op for every real session) — so read once
+  // per directory of the PINNED sessions instead (never any other directory).
+  const localReseed = () =>
+    runLocalReseed({
+      pinnedIds: () => session.pinnedIds(),
+      directoryOf: (id) => session.data.info[id]?.directory,
+      resolve: (id) => session.resolve(id),
+      readStatus: async (directory) => (await serverSDK.client.session.status({ directory })).data ?? {},
+      reconcile: (statuses, opts) => session.reconcileStatuses(statuses, opts),
+    })
   // #1766 — the FLEET re-seed: name the pinned sessions (every open tab's, the
   // viewed one first) to the service's fleet session-status read, which asks
   // each session's OWNER for status in that session's exact DIRECTORY, and
