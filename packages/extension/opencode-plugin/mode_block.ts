@@ -125,7 +125,11 @@ const RULE_REGION_END = "<!-- AMICO-GENERATED: region=ledger-discovery-rule end 
  *  opencodeGlobalConfigRoot() + modeBundleStagingRoot() (`<config>/modes`).
  *  The extension stages there at activation; the plugin reads it per request. */
 export function deployedModesRoot(): string {
-  return join(homedir(), ".config", "opencode", "modes");
+  // Same resolution as the engine and the extension's opencodeConfigDir():
+  // $XDG_CONFIG_HOME wins (Flatpak VS Code overrides it, #1015). Inlined —
+  // the plugin is dependency-free and cannot import the extension's helper.
+  const base = process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
+  return join(base, "opencode", "modes");
 }
 
 /** Natural version compare — the same algorithm as the schema's
