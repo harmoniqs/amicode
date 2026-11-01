@@ -155,3 +155,133 @@ describe("restartAdoptedEngine — correct restart for an adopted (no serverMana
     expect(reloaded).toBe(true);
   });
 });
+
+describe("auditAdoptedEngine — self-heal when no turn is in flight (#1571)", () => {
+  const stale = { binaryHash: "OLD", configHash: "CFG" };
+  const disk = { binaryPath: "/opt/opencode", configContent: "cfg" };
+  const tick = () => new Promise((res) => setTimeout(res, 0));
+
+  function harness(opts: {
+    inflight: () => boolean | Promise<boolean>;
+    allow?: () => boolean;
+  }) {
+    const toasts: string[] = [];
+    const restarts: number[] = [];
+    const recorded: number[] = [];
+    const quiesce = new Set<() => void>();
+    const notify: StaleNoticeDeps = {
+      showInformationMessage: async (m: string) => { toasts.push(m); return undefined; },
+      onRestartRequested: async () => { restarts.push(1); },
+      autoRestart: {
+        hasInflightTurns: opts.inflight,
+        onQuiesce: (cb) => { quiesce.add(cb); return () => { quiesce.delete(cb); }; },
+        allow: opts.allow,
+        record: () => { recorded.push(1); },
+      },
+    };
+    const run = () => auditAdoptedEngine(stale, disk, { hashFile: async () => "NEW", hashString: () => "CFG", notify });
+    return { toasts, restarts, recorded, quiesce, run };
+  }
+
+  it("restarts automatically — no toast, no click — when stale and nothing is in flight", async () => {
+    const h = harness({ inflight: () => false });
+    const r = await h.run();
+    await tick();
+    expect(r?.stale).toBe(true);
+    expect(h.restarts).toHaveLength(1);
+    expect(h.recorded).toHaveLength(1);
+    expect(h.toasts).toHaveLength(0);
+  });
+
+  it("accepts an async hasInflightTurns", async () => {
+    const h = harness({ inflight: async () => false });
+    await h.run();
+    await tick();
+    expect(h.restarts).toHaveLength(1);
+  });
+
+  it("does NOT restart mid-turn: notifies instead, and retries the moment the turn ends", async () => {
+    let busy = true;
+    const h = harness({ inflight: () => busy });
+    await h.run();
+    await tick();
+    expect(h.restarts).toHaveLength(0);
+    expect(h.toasts).toHaveLength(1);
+    expect(h.quiesce.size).toBe(1);
+    busy = false;
+    for (const cb of [...h.quiesce]) cb();
+    await tick();
+    expect(h.restarts).toHaveLength(1);
+    expect(h.recorded).toHaveLength(1);
+    expect(h.quiesce.size).toBe(0); // one-shot
+  });
+
+  it("a quiesce while another turn already restarted the world re-checks before acting", async () => {
+    let busy = true;
+    const h = harness({ inflight: () => busy });
+    await h.run();
+    for (const cb of [...h.quiesce]) cb(); // fires but a new turn is already busy
+    await tick();
+    expect(h.restarts).toHaveLength(0);
+    expect(h.quiesce.size).toBe(1); // still armed for the next quiesce
+  });
+
+  it("an unknowable in-flight state (throws) is treated as in flight — never restart on a guess", async () => {
+    const h = harness({ inflight: () => { throw new Error("no seam"); } });
+    await h.run();
+    await tick();
+    expect(h.restarts).toHaveLength(0);
+    expect(h.toasts).toHaveLength(1);
+  });
+
+  it("loop guard: when allow() is false, falls back to the toast and never auto-restarts", async () => {
+    const h = harness({ inflight: () => false, allow: () => false });
+    await h.run();
+    await tick();
+    expect(h.restarts).toHaveLength(0);
+    expect(h.recorded).toHaveLength(0);
+    expect(h.toasts).toHaveLength(1);
+    expect(h.quiesce.size).toBe(0);
+  });
+
+  it("never auto-restarts a current engine", async () => {
+    const h = harness({ inflight: () => false });
+    const r = await auditAdoptedEngine(
+      { binaryHash: "BIN", configHash: "CFG" }, disk,
+      { hashFile: async () => "BIN", hashString: () => "CFG", notify: {
+        showInformationMessage: async () => undefined,
+        onRestartRequested: async () => { h.restarts.push(1); },
+        autoRestart: { hasInflightTurns: () => false, onQuiesce: () => () => {} },
+      } },
+    );
+    await tick();
+    expect(r?.stale).toBe(false);
+    expect(h.restarts).toHaveLength(0);
+  });
+
+  it("without an autoRestart seam the behavior is the original toast-only notice", async () => {
+    const toasts: string[] = [];
+    await auditAdoptedEngine(stale, disk, {
+      hashFile: async () => "NEW", hashString: () => "CFG",
+      notify: { showInformationMessage: async (m: string) => { toasts.push(m); return undefined; }, onRestartRequested: async () => {} },
+    });
+    expect(toasts).toHaveLength(1);
+  });
+
+  it("unarmed (hub) engines are never auto-restarted — shared with other windows", async () => {
+    const h = harness({ inflight: () => false });
+    const r = await auditAdoptedEngine(
+      { binaryHash: "OLD", configHash: "" }, disk,
+      { hashFile: async () => "NEW", hashString: () => "CFG", notify: {
+        showInformationMessage: async (m: string) => { h.toasts.push(m); return undefined; },
+        onRestartRequested: async () => { h.restarts.push(1); },
+        autoRestart: { hasInflightTurns: () => false, onQuiesce: () => () => {} },
+      } },
+      true,
+    );
+    await tick();
+    expect(r?.stale).toBe(true);
+    expect(h.restarts).toHaveLength(0);
+    expect(h.toasts).toHaveLength(1);
+  });
+});
