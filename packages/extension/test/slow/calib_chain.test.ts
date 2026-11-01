@@ -5,7 +5,7 @@
 //   AMICO_TEST_JULIA_PROJECT     the provisioned solve env (Piccolo ~1.19) —
 //                                produces the real pulses via amico-run
 //   AMICO_TEST_REHEARSAL_PROJECT the rehearsal env (templates/mocksoc-rehearsal/
-//                                — Strumento 0.3 + Intonato 0.4 + Piccolo 2.1;
+//                                — Intonato 0.5 + Piccolo 2.1;
 //                                instantiate once)
 //   AMICO_TEST_JULIA_BIN         optional julia override (default: PATH's julia)
 //
@@ -16,7 +16,7 @@
 //      for the researcher's sign-off — promotions are human-gated like all
 //      promotions; nothing here relaxes that).
 //   3. CALIBRATE: the SEAM 1 MockSoc rehearsal runs banked pulse A through the
-//      actual Strumento transport path — its "delta × 1.05" mismatch is the
+//      actual Intonato MockSoc transport path — its "delta × 1.05" mismatch is the
 //      calibration data → the pin δ=0.21 (the agent's derivation, recorded).
 //   4. PIN + seed: recordCalibChain stages the chain (the calibration_pin
 //      constraint lands on the formulation; the run stub carries the seed).
