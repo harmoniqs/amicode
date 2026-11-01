@@ -1,6 +1,6 @@
 # ADR 0039 — Amicode is an opencode v2 distribution (the amicode-host)
 
-- **Status:** proposed — pending adversarial review (`deliberate`); nothing below is implemented
+- **Status:** proposed — **not yet accepted**. Three adversarial review rounds (manual critics, one lens each; the model critics in `amico spec review` were unavailable) found 34, 21 and 12 findings, including 1, 5 and 8 quoted contradictions; round 3's fixes have not been re-reviewed. Nothing below is implemented.
 - **Date:** 2026-11-01
 - **Context refs:** ADR 0005 (managed fleet), 0019 (overlay provenance naming), 0020 (detached standalone
   server), 0027 / 0029 (peer fleet studios, `serving` capability), 0031 / 0033 (Fleet Studio in-window
@@ -101,8 +101,7 @@ terminals survive).
 turns stay **drain-gated** (the `lane-roll.sh` idle-check idea, kept) and must be idempotent where
 practical. A host binary change therefore costs a drained restart, not lost work; plugin, skill and config
 changes hot-reload with no restart at all. The cap is 10 resumes; the 11th terminalises the turn. A resumed
-turn that re-ran `amico run` would start a duplicate solve, so `run.lock`'s spec hash makes a second launch of
-the same spec refuse. Behaviour of a turn with a *pending permission or question* across a graceful restart is
+turn that re-ran `amico run` would start a duplicate solve, so `run.lock`'s spec hash makes a second launch of the same spec refuse while a live lock carries that hash. Behaviour of a turn with a *pending permission or question* across a graceful restart is
 unverified and is a contract test.
 
 **D6 — The fleet keeps its shape and changes its home.**
@@ -197,8 +196,7 @@ check runs and does not require ancestry from `main`). Those facts are now work 
 
 **Gains.** Upstream bumps become dependency upgrades with a failing test when a contract moves, instead of
 re-merging 423 replaced files. Plugin, skill and config edits are live in the next turn — a develop session
-can improve Amicode in place. Interrupted turns resume without bespoke recovery code. Solves survive any
-host restart. Federation gets a real mechanism. The handshake file, adopt gate, frontdoor, shard wrappers
+can improve Amicode in place. Interrupted turns resume without bespoke recovery code. Solves placed in a transient unit survive host restarts. Federation gets a real mechanism. The handshake file, adopt gate, frontdoor, shard wrappers
 and most of the lane-roll logic are deleted or shrink.
 
 **Costs and risks.**
