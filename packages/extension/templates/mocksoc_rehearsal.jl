@@ -1,16 +1,15 @@
 #!/usr/bin/env julia
 # ============================================================================
 # MockSoc rehearsal (SEAM 1, amicode #680) — the solved pulse runs a full sim
-# rehearsal through the ACTUAL Strumento.jl transport seam, in pure Julia:
+# rehearsal through the ACTUAL Intonato MockSoc transport seam, in pure Julia:
 #
 #   translate (pulse → QICK envelopes) → load → execute! (board-free rollout,
 #   synthetic IQ) → iq_to_measurements (Measurement) → one strategy step
 #   (IdentityStrategy — the rehearsal proves the TRANSPORT seam, not a strategy).
 #
-# NO bespoke simulation: every physics step runs through Strumento/Intonato/
-# Piccolo code (MockSoc is Strumento's Piccolo extension; StrumentoBackend /
-# StrumentoExperiment / PulseTuningProblem are Intonato ≥ 0.4's absorbed
-# hardware seam). This file only wires them together and records the result.
+# NO bespoke simulation: every physics step runs through Intonato/Piccolo
+# code (MockSoc, StrumentoBackend / StrumentoExperiment / PulseTuningProblem
+# are Intonato ≥ 0.5's own hardware seam). This file only wires them together and records the result.
 #
 # The artifact it writes (rehearsal.toml, ATOMIC — .tmp then rename) is the
 # device-session rehearsal record: honestly labeled `sim = true`, carrying the
@@ -20,8 +19,8 @@
 # stage stays an honest stub until a rehearsal passes.
 #
 # Env (committed alongside this script in templates/mocksoc-rehearsal/):
-#   Strumento 0.3 (registered) + Intonato ≥ 0.4 (the absorbed hardware seam,
-#   depends on Strumento) + Piccolo 2.x. Resolve + instantiate from the General
+#   Intonato ≥ 0.5 (owns the hardware seam; no separate Strumento package)
+#   + Piccolo 2.x. Resolve + instantiate from the General
 # registry once, then always run with --startup-file=no:
 #
 #   julia --startup-file=no --project=<this dir's parent>/mocksoc-rehearsal \
@@ -38,7 +37,7 @@
 # Stdout ends with one `REHEARSAL outcome=… pulse_hash=…` line for callers.
 # ============================================================================
 
-using Intonato         # the QILC chassis; reexports Piccolo + Strumento's soc surface + MockSoc
+using Intonato         # the QILC chassis; reexports Piccolo; owns MockSoc + the QICK seam
 using JLD2
 using TOML
 using SHA
@@ -206,7 +205,7 @@ try
     ψg = ComplexF64[0.0, 1.0, zeros(levels - 2)...]
 
     # 3. The board-free QICK stack — verbatim the hardware-loop idiom:
-    #    MockSoc (Strumento's Piccolo extension) → StrumentoBackend →
+    #    MockSoc (Intonato's) → StrumentoBackend →
     #    StrumentoExperiment (translate → envelopes → execute! → synthetic
     #    IQ → Measurement). Two drive quadratures ride one complex channel.
     soc = MockSoc(sys_mock, ψ0, ψg; dac_rate = DAC_RATE)

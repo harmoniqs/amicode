@@ -1,12 +1,12 @@
 # The MockSoc rehearsal env (SEAM 1, amicode #680) — resolved from the General
 # registry, NOT the provisioned solve env (packages/extension/julia, Piccolo
-# ~1.19): the rehearsal rides Strumento's transport stack, which needs Piccolo
-# 2.x for its MockSoc extension.
+# ~1.19): the rehearsal rides Intonato's MockSoc transport stack, which needs
+# Piccolo 2.x for its MockSoc.
 #
-#   Strumento 0.3  — the soc substrate: AbstractSoc + MockSoc (its Piccolo
-#                    extension) + the QICK envelope translation
-#   Intonato ≥ 0.4 — the loop chassis with the absorbed hardware seam
-#                    (StrumentoBackend / StrumentoExperiment / PulseTuningProblem)
+#   Intonato ≥ 0.5 — the loop chassis that owns the whole hardware seam:
+#                    MockSoc + the QICK channel map + StrumentoBackend /
+#                    StrumentoExperiment / PulseTuningProblem. Strumento.jl is
+#                    retired; there is no separate soc-substrate dependency.
 #   Piccolo 2.x    — the physics stack; pins the env to the 2.x line
 #
 # The Piccolo bound is load-bearing: without it the resolver picks Intonato
@@ -21,10 +21,8 @@
 [deps]
 Intonato = "4c8581c7-0eaf-45eb-b8fa-a3474c50779c"
 Piccolo = "c4671d76-df94-11ed-2057-43d4fd632fad"
-Strumento = "9a96c2ab-728f-48d1-a688-c746ce4d362f"
 
 [compat]
-Intonato = "0.4"
+Intonato = "0.5"
 Piccolo = "~2.1"
-Strumento = "0.3"
 julia = "1.12"
