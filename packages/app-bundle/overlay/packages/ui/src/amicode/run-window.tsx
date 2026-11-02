@@ -2,7 +2,7 @@ import { For, Show, createEffect, createMemo, onCleanup, onMount } from "solid-j
 import { createStore, reconcile } from "solid-js/store"
 import { fetchAmicodeRunSeries } from "./ui-bridge"
 import { heroPaths, objectivePath } from "./run-plot"
-import { runActivity } from "./activity"
+import { runActivity, runStatusLabel } from "./activity"
 import { ActivityDot } from "./activity-dot"
 import {
   type RunSeries,
@@ -106,9 +106,11 @@ export function RunWindow(props: { run: string; lab?: string }) {
   onMount(() => void load())
   createEffect(() => {
     const v = state.view
-    // Poll through "stalled" too: a stalled run can resume (or get force-
-    // finalized) and the window must converge instead of freezing forever.
-    const live = v?.ok === true && (v.run.status === "solving" || v.run.status === "stalled")
+    // Poll through "stalled" and "dead" too: a stalled run can resume (or get
+    // force-finalized), and a dead one can come back (a paused laptop resumes
+    // heartbeating) or be finalized — the window must converge, not freeze.
+    const live =
+      v?.ok === true && (v.run.status === "solving" || v.run.status === "stalled" || v.run.status === "dead")
     if (live && timer === undefined) timer = setInterval(() => void load(), POLL_MS)
     if (!live) stop()
   })
@@ -168,7 +170,7 @@ export function RunWindow(props: { run: string; lab?: string }) {
           {(r) => (
             <>
               {/* the dot carries the activity colour (blue solving, amber stalled,
-                  grey aborted/stopped); the word stays neutral ink so small
+                  red dead/failed, grey aborted/stopped); the word stays neutral ink so small
                   status text keeps body contrast in both schemes */}
               <span
                 style={{
@@ -180,7 +182,7 @@ export function RunWindow(props: { run: string; lab?: string }) {
                   "flex-shrink": "0",
                 }}
               >
-                <ActivityDot activity={runActivity(r().status)} label={`Run ${r().status}`} />
+                <ActivityDot activity={runActivity(r().status)} label={runStatusLabel(r().status)} />
                 {r().status}
               </span>
               <Show when={r().iteration !== null}>

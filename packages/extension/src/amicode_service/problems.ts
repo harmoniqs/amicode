@@ -7,7 +7,7 @@
 // injectable roots for tests; the cached entrypoints bind the real dirs.
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs"
 import path from "node:path"
-import { readTerminalState, displayStatus } from "./run_terminal"
+import { readTerminalState, displayStatus, isDead } from "./run_terminal"
 import { problemsRoot, runsRoot } from "./roots"
 
 export function synthesizeProblems(code: string, detail: string): string {
@@ -228,6 +228,11 @@ export function runStatusBody(root: string, runs: string, slug: string | undefin
     } catch {
       /* not started yet */
     }
+    // A2 (#2055): a run.lock whose heartbeat has gone cold (orchestrator died)
+    // is DEAD — outranks the legacy cold-log "stalled"; FINISHED already won above.
+    if (isDead(dir)) {
+      return { run_id: ref.run_id, status: "dead", fidelity: live.fidelity, iteration: live.iteration }
+    }
     if (isStalled(dir)) {
       return { run_id: ref.run_id, status: "stalled", fidelity: live.fidelity, iteration: live.iteration }
     }
@@ -337,7 +342,7 @@ export function runSeriesBody(runsRoot: string, run: string | undefined, lab: st
   // ONE-SPINE (amicode #84): terminal state via the shared contract reader.
   // FINISHED (the orchestrator's verdict) is the only terminal authority; its
   // status field decides; torn FINISHED = keep polling; user-stop → "stopped".
-  let status = isStalled(dir) ? "stalled" : "solving"
+  let status = isDead(dir) ? "dead" : isStalled(dir) ? "stalled" : "solving"
   let fidelity: number | null = null
   let iteration: number | null = lastIter?.iter ?? null
   const terminal = readTerminalState(dir, log)

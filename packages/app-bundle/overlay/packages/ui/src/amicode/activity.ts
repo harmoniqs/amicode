@@ -6,7 +6,7 @@
 //   running   = blue   in progress (solving, pending, validating)
 //   attention = amber  waiting on you (needs auth, expired, drift, stalled)
 //   success   = green  done / healthy
-//   error     = red    failed
+//   error     = red    failed, dead (orchestrator stopped heartbeating)
 //   idle      = grey   idle, aborted, stopped, disabled
 //
 // Yellow never encodes a state — it is brand and selection only.
@@ -33,6 +33,9 @@ const RUN_ACTIVITY: Record<string, Activity> = {
   solving: "running",
   // wedged (OOM?) — must not read as live
   stalled: "attention",
+  // the orchestrator's run.lock heartbeat went cold (#2055): no live process
+  // behind this run — red like failed, distinct from the amber "alive but quiet"
+  dead: "error",
   // a user-chosen stop: calm, not alarming, not live
   aborted: "idle",
   stopped: "idle",
@@ -42,6 +45,13 @@ const RUN_ACTIVITY: Record<string, Activity> = {
 
 export function runActivity(status: string): Activity {
   return RUN_ACTIVITY[status] ?? "idle"
+}
+
+/** Hover/aria text for a run-state dot: `Run <status>`, with the one state whose
+ *  meaning is not obvious from its name spelled out. */
+export function runStatusLabel(status: string): string {
+  if (status === "dead") return "Run dead — the run's orchestrator stopped heartbeating"
+  return `Run ${status}`
 }
 
 const CONNECTION_ACTIVITY: Record<"success" | "critical" | "warning" | "pending" | "neutral", Activity> = {

@@ -1,5 +1,5 @@
 import { describe, expect, test, beforeEach, afterEach } from "bun:test"
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs"
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import {
@@ -185,6 +185,37 @@ describe("runStatusBody", () => {
       { run_id: "r-done", status: "finished", fidelity: 0.9998, iteration: 60 },
       { run_id: "r-live", status: "solving", fidelity: 0.032, iteration: 12 },
       { run_id: "r-dead", status: "failed", fidelity: null, iteration: null },
+    ])
+    rmSync(runs, { recursive: true, force: true })
+  })
+  // #2055 (A2): the dead state. The exhaustive table lives in the extension's
+  // run_liveness_lockstep test (shared fixture, both copies); these pin the
+  // engine copy inside the engine's own suite.
+  test("run.lock heartbeat > 90 s with no FINISHED → dead; fresh heartbeat + cold log → stalled; FINISHED wins", () => {
+    const runs = mkdtempSync(path.join(tmpdir(), "amicode-runs-"))
+    seedProblem("x-gate", {
+      runs: ["r-dead", "r-quiet", "r-won", "r-nolock"].map((run_id) => ({ run_id, lab: "default", recorded: "t" })),
+    })
+    const lock = (id: string, ageS: number) =>
+      JSON.stringify({ schema: 1, run_id: id, heartbeat_at: new Date(Date.now() - ageS * 1000).toISOString(), ended: false })
+    const cold = new Date(Date.now() - 700_000)
+    for (const [id, ageS, finished] of [
+      ["r-dead", 120, false],
+      ["r-quiet", 10, false],
+      ["r-won", 600, true],
+    ] as const) {
+      seedRun(runs, "default", id, { log: "AMICODE_ITER iter=2 f=1.0e-02\n", finished })
+      writeFileSync(path.join(runs, "default", id, "run.lock"), lock(id, ageS))
+    }
+    utimesSync(path.join(runs, "default", "r-quiet", "run.log"), cold, cold)
+    seedRun(runs, "default", "r-nolock", { log: "AMICODE_ITER iter=2 f=1.0e-02\n" })
+    utimesSync(path.join(runs, "default", "r-nolock", "run.log"), cold, cold)
+    const parsed = JSON.parse(runStatusBody(root, runs, "x-gate"))
+    expect(parsed.runs.map((r: { run_id: string; status: string }) => [r.run_id, r.status])).toEqual([
+      ["r-dead", "dead"],
+      ["r-quiet", "stalled"],
+      ["r-won", "finished"],
+      ["r-nolock", "stalled"],
     ])
     rmSync(runs, { recursive: true, force: true })
   })

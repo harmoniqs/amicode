@@ -59,7 +59,7 @@ describe("amicode service — golden-fixture parity with the fork", () => {
     return obj;
   };
 
-  /** elapsed_ms on a NON-terminal run-series (solving/stalled) is measured to
+  /** elapsed_ms on a NON-terminal run-series (solving/stalled/dead) is measured to
    *  the observation clock — seed pins run.log mtime to each side's own now,
    *  so the value legitimately differs between recording and replay. It is the
    *  ONLY wall-clock field; terminal runs pin FINISHED mtimes to fixed epochs
@@ -176,7 +176,7 @@ describe("amicode service — golden-fixture parity with the fork", () => {
       typeof obj === "object" &&
       obj.run &&
       typeof obj.run === "object" &&
-      (obj.run.status === "solving" || obj.run.status === "stalled") &&
+      (obj.run.status === "solving" || obj.run.status === "stalled" || obj.run.status === "dead") &&
       typeof obj.run.elapsed_ms === "number"
     ) {
       return { ...obj, run: { ...obj.run, elapsed_ms: "<ELAPSED>" } };

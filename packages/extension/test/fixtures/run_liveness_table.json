@@ -1,0 +1,28 @@
+{
+  "_doc": "Shared fixture table for the run-liveness lockstep test (amicode#2055). Asserted against BOTH status implementations (extension service + engine overlay). Ages are seconds before 'now'; lock is the run.lock contract (scratchpad/run-lock-contract.md). finished is the raw FINISHED file body. log_age_s null = no run.log.",
+  "cases": [
+    { "name": "no lock, warm log -> solving (legacy)", "lock": null, "log_age_s": 5, "expect": "solving" },
+    { "name": "no lock, cold log -> stalled (legacy)", "lock": null, "log_age_s": 700, "expect": "stalled" },
+    { "name": "no lock, no log, fresh run.toml -> solving (legacy)", "lock": null, "log_age_s": null, "expect": "solving" },
+    { "name": "no lock, finished -> finished (legacy)", "lock": null, "log_age_s": 5, "finished": "status = \"completed\"\nexit_code = 0\n", "expect": "finished" },
+    { "name": "no lock, failed -> failed (legacy)", "lock": null, "log_age_s": 5, "finished": "status = \"failed\"\nexit_code = 1\n", "expect": "failed" },
+    { "name": "fresh heartbeat, warm log -> solving", "lock": { "heartbeat_age_s": 10 }, "log_age_s": 5, "expect": "solving" },
+    { "name": "fresh heartbeat, cold log -> stalled (live orchestrator, quiet solver)", "lock": { "heartbeat_age_s": 10 }, "log_age_s": 700, "expect": "stalled" },
+    { "name": "heartbeat just inside threshold (89 s) -> not dead", "lock": { "heartbeat_age_s": 89 }, "log_age_s": 5, "expect": "solving" },
+    { "name": "heartbeat just past threshold (91 s), warm log -> dead", "lock": { "heartbeat_age_s": 91 }, "log_age_s": 5, "expect": "dead" },
+    { "name": "stale heartbeat, cold log -> dead (beats stalled)", "lock": { "heartbeat_age_s": 600 }, "log_age_s": 700, "expect": "dead" },
+    { "name": "stale heartbeat, no log -> dead", "lock": { "heartbeat_age_s": 600 }, "log_age_s": null, "expect": "dead" },
+    { "name": "stale heartbeat + completed FINISHED -> finished (marker wins)", "lock": { "heartbeat_age_s": 600 }, "log_age_s": 700, "finished": "status = \"completed\"\nexit_code = 0\n", "expect": "finished" },
+    { "name": "stale heartbeat + failed FINISHED -> failed (marker wins)", "lock": { "heartbeat_age_s": 600 }, "log_age_s": 700, "finished": "status = \"failed\"\nexit_code = 1\n", "expect": "failed" },
+    { "name": "stale heartbeat + aborted FINISHED -> aborted (marker wins)", "lock": { "heartbeat_age_s": 600 }, "log_age_s": 700, "finished": "status = \"aborted\"\nexit_code = 1\n", "expect": "aborted" },
+    { "name": "stale heartbeat + torn FINISHED -> still dead (torn is not terminal)", "lock": { "heartbeat_age_s": 600 }, "log_age_s": 700, "finished": "stat", "expect": "dead" },
+    { "name": "stale heartbeat but ended=true, no FINISHED -> not dead (legacy cold-log rule)", "lock": { "heartbeat_age_s": 600, "ended": true }, "log_age_s": 700, "expect": "stalled" },
+    { "name": "stale heartbeat but ended=true, warm log -> solving", "lock": { "heartbeat_age_s": 600, "ended": true }, "log_age_s": 5, "expect": "solving" },
+    { "name": "ended=false explicit, stale -> dead", "lock": { "heartbeat_age_s": 600, "ended": false }, "log_age_s": 5, "expect": "dead" },
+    { "name": "corrupt lock file -> legacy (warm log -> solving)", "lock": { "raw": "{not json" }, "log_age_s": 5, "expect": "solving" },
+    { "name": "corrupt lock file -> legacy (cold log -> stalled)", "lock": { "raw": "{not json" }, "log_age_s": 700, "expect": "stalled" },
+    { "name": "lock without heartbeat_at -> legacy", "lock": { "raw": "{\"schema\":1,\"run_id\":\"x\",\"ended\":false}" }, "log_age_s": 700, "expect": "stalled" },
+    { "name": "lock with unparseable heartbeat_at -> legacy", "lock": { "raw": "{\"schema\":1,\"heartbeat_at\":\"yesterday-ish\"}" }, "log_age_s": 5, "expect": "solving" },
+    { "name": "lock with non-object JSON -> legacy", "lock": { "raw": "[1,2,3]" }, "log_age_s": 5, "expect": "solving" }
+  ]
+}
