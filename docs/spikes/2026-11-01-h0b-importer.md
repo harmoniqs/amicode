@@ -52,7 +52,7 @@ Raw outputs live beside this note in `2026-11-01-h0b-importer/` (counts, per-tab
 
 - Source: the live hub database, 8,991,510,528 bytes (9.0 GB) when the copy started; WAL mode with three engine shards writing.
 - Method: Python `sqlite3` backup API, one step (`pages=-1`, so a single consistent read snapshot), from a `file:...?mode=ro` handle, at `nice -n 19 ionice -c3`. Wall time **14.2 s**; copy 8,992,387,072 bytes. The handle was open for those 14 s and then closed. No retry was needed.
-- Live directory listing before and after (`live-dir-before.txt`, `live-dir-after.txt`): the only differences are the live `opencode.db` itself, which the running engines keep writing (8,991,510,528 to 9,003,069,440 bytes over about 14 minutes), and two harness directories (`external-diff`, `tool-output`) that belong to this session's tooling. The WAL and SHM sizes are identical. No file of ours was created in that directory; no unit was touched.
+- Live directory listing before and after (`live-dir-listing.md `live-dir-listing.md the only differences are the live `opencode.db` itself, which the running engines keep writing (8,991,510,528 to 9,003,069,440 bytes over about 14 minutes), and two harness directories (`external-diff`, `tool-output`) that belong to this session's tooling. The WAL and SHM sizes are identical. No file of ours was created in that directory; no unit was touched.
 - A pristine second copy was made for repeatability and every run below was done on a further copy of it.
 
 ### (a) Every table, source and after (rows)
@@ -227,4 +227,4 @@ That took 11.6 s and produced a 5.65 GB file with 2,618,393 `event` rows and 3,2
 
 ## Appendix: reproduction
 
-1. Snapshot with `copy.py` (the backup API from a `mode=ro` handle). 2. `git clone /home/aaron/harmoniqs/opencode`, `git checkout 12f7e1b59a`, `bun install`. 3. Copy `spike-h0b.ts` into `packages/core/`. 4. `XDG_*` and `OPENCODE_TEST_HOME` into a temp directory, `OPENCODE_DB=<copy>`, `env -u BUN_INSPECT -u AMICODE_ENGINE_INSPECT bun spike-h0b.ts`. The driver refuses an `OPENCODE_DB` outside `/tmp/opencode/h0b/`. The Python helpers `counts.py`, `analyze.py`, `loss.py`, `parts.py`, `archive.py` produce the JSON files here.
+1. Snapshot with `copy.py` (the backup API from a `mode=ro` handle). 2. `git clone $HOME/harmoniqs/opencode`, `git checkout 12f7e1b59a`, `bun install`. 3. Copy `spike-h0b.ts` into `packages/core/`. 4. `XDG_*` and `OPENCODE_TEST_HOME` into a temp directory, `OPENCODE_DB=<copy>`, `env -u BUN_INSPECT -u AMICODE_ENGINE_INSPECT bun spike-h0b.ts`. The driver refuses an `OPENCODE_DB` outside `/tmp/opencode/h0b/`. The Python helpers `counts.py`, `analyze.py`, `loss.py`, `parts.py`, `archive.py` produce the JSON files here.

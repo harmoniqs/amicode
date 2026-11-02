@@ -1,0 +1,1 @@
+The before/after listings of the live data directory were checked and are not published here: they enumerate private file names. Result recorded in the note: the live database file itself kept growing under its three writers; no other file in that directory changed except two harness directories created by the spike session.

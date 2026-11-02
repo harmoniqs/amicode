@@ -1,5 +1,5 @@
 import sqlite3, time, os, json
-src="/home/aaron/.local/share/opencode/opencode.db"
+src="$HOME/.local/share/opencode/opencode.db"
 dst="/tmp/opencode/h0b/hubcopy.db"
 t=time.time()
 s=sqlite3.connect("file:"+src+"?mode=ro", uri=True)
