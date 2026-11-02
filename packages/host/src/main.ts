@@ -7,6 +7,7 @@ import { ConfigError, loadConfig } from "./config.ts"
 import { front } from "./front.ts"
 import { listen } from "./listener.ts"
 import { acquireLock, LockHeldError } from "./lock.ts"
+import { loadPlugins, PluginConfigError } from "./plugins/index.ts"
 import { writeRegistration } from "./registration.ts"
 import { hostRoutes } from "./routes.ts"
 import { runtimeProblem } from "./runtime.ts"
@@ -31,6 +32,8 @@ export async function main(env: Record<string, string | undefined> = process.env
     }
   })()
   if (config instanceof ConfigError) return refuse(config.message, EXIT_USAGE)
+  const plugins = await loadPlugins(env).catch((error) => (error instanceof PluginConfigError ? error : Promise.reject(error)))
+  if (plugins instanceof PluginConfigError) return refuse(plugins.message, EXIT_USAGE)
 
   fs.mkdirSync(path.dirname(config.dbPath), { recursive: true })
   const lock = await acquireLock(config.dbPath, { waitMs: config.lockWaitMs }).catch((error) => {
@@ -54,6 +57,7 @@ export async function main(env: Record<string, string | undefined> = process.env
       password: config.password,
       resume: config.resume,
       serverOptions: config.serverOptions,
+      plugins,
     })
     const startedAt = Date.now()
     const listener = listen({
