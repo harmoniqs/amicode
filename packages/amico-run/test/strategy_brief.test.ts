@@ -8,7 +8,7 @@
 import { describe, expect, it } from "vitest"
 import { readFileSync, readdirSync } from "node:fs"
 import { join } from "node:path"
-import { renderStrategyBrief, parseLedger as parseLedgerFixture } from "../src/strategy_brief.js"
+import { renderStrategyBrief, defaultSessionsDir, parseLedger as parseLedgerFixture } from "../src/strategy_brief.js"
 
 const fixtures = join(import.meta.dirname, "fixtures", "strategy-brief")
 const intent = readFileSync(join(fixtures, "intent.md"), "utf8")
@@ -69,5 +69,24 @@ describe("the strategy-brief renderer", () => {
     expect(brief).toContain("state: paused (warrant renewal)")
     expect(brief).toContain("last loop: unknown") // no last_loop field in fixtures — honest
     expect(brief).toContain("blockers: 1") // one BLOCKED marker in the D1 fixture ledger
+  })
+})
+
+// #2095 — the sessions default must follow the PERSONAL mount, never a
+// hardcoded vault name (it used to be `vault-aaron`, shipped in the VSIX).
+describe("the strategy-brief sessions default", () => {
+  it("is <personal mount>/sessions, whatever the vault is called", () => {
+    const stack = {
+      mounts: [
+        { name: "vault-zoe", kind: "personal", path: "/vaults/vault-zoe", writable: true },
+        { name: "company", kind: "team", path: "/vaults/company", writable: false },
+      ],
+      warnings: [],
+    }
+    expect(defaultSessionsDir(stack)).toBe(join("/vaults/vault-zoe", "sessions"))
+  })
+
+  it("is undefined when there is no personal mount (the caller names the missing input)", () => {
+    expect(defaultSessionsDir({ mounts: [{ name: "company", kind: "team", path: "/v/c", writable: false }], warnings: [] })).toBeUndefined()
   })
 })

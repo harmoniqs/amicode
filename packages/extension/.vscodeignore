@@ -1,8 +1,16 @@
 # This file's EXISTENCE stops vsce falling back to .gitignore (which excludes vendor/).
 # The explicit negation keeps the vendored opencode shipping even if a future
 # exclusion pattern would otherwise swallow it — that's the trap β.2 exists to kill.
-!vendor/**
-!tools/**
+#
+# #2095 — ORDER DOES NOT MATTER in this file: vsce splits it into an ignore
+# list and a negate list, and ANY `!` match re-includes a file regardless of
+# position (@vscode/vsce collectFiles). A bare `!bin/**` therefore re-admitted
+# bin/**/*.map past `**/*.map`. Every directory re-include below is written
+# `!<dir>/**/!(*.map)` so it can never re-admit a source map (they are the
+# first thing a reverse-engineering agent reads). Gate:
+# scripts/vsix_leak_scan.mjs (test/vsix_leak.test.ts) — verify by listing.
+!vendor/**/!(*.map)
+!tools/**/!(*.map)
 !scripts/repo-sync.sh
 src/**
 test/**
@@ -12,9 +20,9 @@ node_modules/**
 esbuild.config.mjs
 tsconfig.json
 **/*.map
-!bin/**
-!julia/**
-!demo/**
+!bin/**/!(*.map)
+!julia/**/!(*.map)
+!demo/**/!(*.map)
 # #161: the Pasqal connector MUST ship despite scripts/** above — activation
 # stages it to <opsDir>/scripts/pasqal-connector (the Connections panel's
 # default $AMICO_PASQAL_VALIDATOR resolution). Only the two runtime files:
@@ -28,3 +36,9 @@ tsconfig.json
 !scripts/pasqal-connector/submit.py
 !scripts/pasqal-connector/pulse_contract.py
 !scripts/pasqal-connector/translate_and_simulate.py
+# #2095 — the agents/ provenance records carry machine paths + hostnames and
+# are dev-only: their readers (amico-run surfaces/upgrade, role_cards tests)
+# read them from the dev checkout (rootRepoAmicode), never from the installed
+# extension — the runtime readers of <extensionPath>/agents take *.md only.
+agents/.seed-provenance.json
+agents/.deploy-receipt.json
