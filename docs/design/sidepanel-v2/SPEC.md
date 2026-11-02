@@ -1,6 +1,6 @@
 # Side panel v2: the Work Column from the ground up
 
-Status: draft for review (2026-10-31) · Mocks: [`index.html`](index.html) · Decision record: [ADR 0038](../../adr/0038-work-column-v2-now-files-context.md)
+Status: draft for review (2026-10-31) · Mocks: [`index.html`](index.html) · Decision record: [ADR 0040](../../adr/0040-work-column-v2-now-files-context.md)
 
 ## Summary
 

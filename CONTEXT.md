@@ -274,7 +274,7 @@ _Avoid_: remote session, controlling (as a noun), piloting
 ### Surfaces
 
 **Work Column**:
-The auxiliary surface beside Chat. Its session tabs are **Now**, **Files** and **Context**, and its global tabs are **Home** and **Fleet** (ADR 0038, proposed; until it lands the tabs are Home, Files Changed, Context, Pulse Inspector and Preview). On desktop it may dock right, left, or bottom of Chat or move into a paired panel-only VS Code editor tab; every host presents the same logical state and features. Open state, active tab, width and maximized are per session.
+The auxiliary surface beside Chat. Its session tabs are **Now**, **Files** and **Context**, and its global tabs are **Home** and **Fleet** (ADR 0040, proposed; until it lands the tabs are Home, Files Changed, Context, Pulse Inspector and Preview). On desktop it may dock right, left, or bottom of Chat or move into a paired panel-only VS Code editor tab; every host presents the same logical state and features. Open state, active tab, width and maximized are per session.
 _Avoid_: Side panel, sidebar, editor
 
 **Detached Work Column**:
@@ -286,23 +286,23 @@ A durable Work Column record with no live host after its source Chat and detache
 _Avoid_: Discarded panel, orphaned window
 
 **Now**:
-The first session tab of the Work Column: what this session is doing, ordered by urgency — needs-you (pending questions, failed gates and runs, watcher flags), live runs (the Pulse Inspector is a run's detail view here), the campaign, casts, compute, the watcher, and the session's own widgets with their revisions. Strictly this session; never another root's records (ADR 0038, proposed).
+The first session tab of the Work Column: what this session is doing, ordered by urgency — needs-you (pending questions, failed gates and runs, watcher flags), live runs (the Pulse Inspector is a run's detail view here), the campaign, casts, compute, the watcher, and the session's own widgets with their revisions. Strictly this session; never another root's records (ADR 0040, proposed).
 _Avoid_: Dashboard, activity feed
 
 **Files**:
-The session tab that is the one file workspace: a tree filtered to Changed (written by this session) or All, plus Preview's editor/preview panes and persistent tabs, and typed data previews that can become a widget. Replaces Files Changed, the file-tree column and the separate Preview tab (ADR 0038, proposed).
+The session tab that is the one file workspace: a tree filtered to Changed (written by this session) or All, plus Preview's editor/preview panes and persistent tabs, and typed data previews that can become a widget. Replaces Files Changed, the file-tree column and the separate Preview tab (ADR 0040, proposed).
 _Avoid_: Review (the review panel is folded in), Explorer
 
 **Home**:
-The global Work Column tab: the cross-session board — needs-you across every session, one card per campaign, overnight results, compute — and the only surface for global widgets. Session-owned widgets live in Now instead (ADR 0038 amends ADR 0009). Internally powered by the widget kernel (WidgetGrid, WidgetFrame, the bridge protocol, `/amicode/widgets` + `/amicode/dashboard` endpoints).
+The global Work Column tab: the cross-session board — needs-you across every session, one card per campaign, overnight results, compute — and the only surface for global widgets. Session-owned widgets live in Now instead (ADR 0040 amends ADR 0009). Internally powered by the widget kernel (WidgetGrid, WidgetFrame, the bridge protocol, `/amicode/widgets` + `/amicode/dashboard` endpoints).
 _Avoid_: Dashboard (as the surface name), widget panel
 
 **Widget**:
-A card rendered in a sandboxed frame in Now (session-owned) or Home (global). In the ADR 0038 model a widget is a declarative spec — `{view, bind, options, size}` — that binds Records to a first-party View; `view: "custom"` keeps the sandboxed ES-module escape hatch, whose data still arrives through bound Records. Authored by the agent (`amicode_author_widget`) or shipped as a builtin; updates add revisions rather than overwriting. Size classes: strip (64px docked), tile, card, board.
+A card rendered in a sandboxed frame in Now (session-owned) or Home (global). In the ADR 0040 model a widget is a declarative spec — `{view, bind, options, size}` — that binds Records to a first-party View; `view: "custom"` keeps the sandboxed ES-module escape hatch, whose data still arrives through bound Records. Authored by the agent (`amicode_author_widget`) or shipped as a builtin; updates add revisions rather than overwriting. Size classes: strip (64px docked), tile, card, board.
 _Avoid_: Card (ambiguous — the UI has many cards), tile (as the concept name — tile is a size class)
 
 **Record**:
-One append-only JSON line a session or runner writes about its work — `run`, `series`, `progress`, `campaign`, `compute`, `calibration` or `measurement` — with an envelope of session, producing message, provenance (source path, hash) and a trust level only the corrector sets. Widgets read Records; they never embed data (ADR 0038, proposed).
+One append-only JSON line a session or runner writes about its work — `run`, `series`, `progress`, `campaign`, `compute`, `calibration` or `measurement` — with an envelope of session, producing message, provenance (source path, hash) and a trust level only the corrector sets. Widgets read Records; they never embed data (ADR 0040, proposed).
 _Avoid_: Event (the EventV2 spine is a different thing), log line
 
 **View**:
