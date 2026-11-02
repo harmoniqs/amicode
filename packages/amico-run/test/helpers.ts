@@ -338,7 +338,7 @@ export function buildDoctorWorld(opts: DoctorWorldOpts = {}): DoctorWorld {
 
   // ── agent cards: source (amicode repo) + both deployments + receipt ──
   const agentsSrc = join(repoAmicode, "packages", "extension", "agents");
-  const CARDS = ["analyzer.md", "develop.md", "research.md", "experimenter.md", "hypothesizer.md", "implementer.md", "librarian.md"];
+  const CARDS = ["analyzer.md", "critic.md", "develop.md", "research.md", "experimenter.md", "hypothesizer.md", "implementer.md", "librarian.md"];
   for (const c of CARDS) {
     mkdirSync(agentsSrc, { recursive: true });
     writeFileSync(join(agentsSrc, c), `---\nmode: ${c.replace(".md", "")}\n---\n# ${c}\n`);

@@ -295,8 +295,9 @@ describe("stageModCards — overlay merge (entitlement + overlays present)", () 
   it("cards with NO dispatch target stage alone, no errors — role cards, directors, and an absent-target synthetic", () => {
     const { destDir, receipt, result } = stageEntitled();
     // D3 (#806): the four seeded role cards carry no dispatch target —
-    // bundle-owned registry artifacts, never overlay-tuned
-    for (const card of ["hypothesizer.md", "experimenter.md", "analyzer.md", "implementer.md", "develop.md", "research.md"]) {
+    // bundle-owned registry artifacts, never overlay-tuned; the critic
+    // (#2093) is likewise a plain, untuned card
+    for (const card of ["hypothesizer.md", "experimenter.md", "analyzer.md", "implementer.md", "critic.md", "develop.md", "research.md"]) {
       expect(readFileSync(join(destDir, card), "utf8")).toBe(
         readFileSync(join(AGENTS_SRC, card), "utf8"),
       );

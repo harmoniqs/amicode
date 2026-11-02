@@ -46,6 +46,22 @@ path to write when done.
 - If the env assignment conflicts with reality (path missing, branch moved), STOP and
   report the conflict — never silently switch checkouts.
 
+## Return contract (receipt)
+
+The full work product goes to a file, never into the final message alone: the path the
+caller names in the brief, or, when the brief names none, a scratch path you choose and
+report. A read-only role (no write tools) hands the product over as one fenced block after
+the receipt, labelled with that path; the caller writes it there and carries only the
+receipt forward. The final message is a receipt of at most ~1,500 tokens:
+
+- **verdict / status** — the one-word outcome your role returns;
+- **key numbers** — the few values the caller's next decision turns on;
+- **artifact paths** — the work-product file first, then any raw artifacts cited;
+- **open items** — what remains, what is blocked, what the caller must decide.
+
+A structured result your card already defines (a verdict block, a debrief, filing
+receipts, a structured yaml) IS the receipt when it fits the bound — keep its shape.
+
 ## Model routing
 
 Model routing, suggested: workhorse — brief-driven execution over a reviewed spec is

@@ -49,7 +49,7 @@ describe("GET /amicode/model-routing (modelRoutingResponse)", () => {
     const body = JSON.parse(await modelRoutingResponse(deps));
     expect(body.ok).toBe(true);
     const roles = body.roles.map((r: { role: string }) => r.role).sort();
-    expect(roles).toEqual(["analyzer", "experimenter", "hypothesizer", "implementer", "librarian"]);
+    expect(roles).toEqual(["analyzer", "critic", "experimenter", "hypothesizer", "implementer", "librarian"]);
     const impl = body.roles.find((r: { role: string }) => r.role === "implementer");
     expect(impl.classes).toEqual(["workhorse"]);
     expect(impl.effective.outcome).toBe("inherit"); // zero config → the default tier

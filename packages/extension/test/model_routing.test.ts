@@ -81,7 +81,7 @@ describe("the role cards' Model routing lines (the suggestion source)", () => {
   it("every subagent role card names at least one class — the slots are filled, not empty", () => {
     const roles = listSubagentRoles(AGENTS_SRC);
     // the shipped worker cards (mode: subagent), not the director mode cards
-    expect(roles.sort()).toEqual(["analyzer", "experimenter", "hypothesizer", "implementer", "librarian"].sort());
+    expect(roles.sort()).toEqual(["analyzer", "critic", "experimenter", "hypothesizer", "implementer", "librarian"].sort());
     for (const role of roles) {
       expect(suggestedClassesForRole(AGENTS_SRC, role).length).toBeGreaterThan(0);
     }
@@ -93,6 +93,7 @@ describe("the role cards' Model routing lines (the suggestion source)", () => {
     expect(suggestedClassesForRole(AGENTS_SRC, "implementer")).toContain("workhorse");
     expect(suggestedClassesForRole(AGENTS_SRC, "experimenter")).toContain("workhorse");
     expect(suggestedClassesForRole(AGENTS_SRC, "librarian")).toContain("workhorse");
+    expect(suggestedClassesForRole(AGENTS_SRC, "critic")).toContain("workhorse");
     // the director mode cards are NOT subagent roles — the picker routes them
     expect(listSubagentRoles(AGENTS_SRC)).not.toContain("develop");
     expect(listSubagentRoles(AGENTS_SRC)).not.toContain("research");
