@@ -1,6 +1,6 @@
 # ADR 0039 — Amicode is an opencode v2 distribution (the amicode-host)
 
-- **Status:** proposed — **not yet accepted**. Three adversarial review rounds (manual critics, one lens each; the model critics in `amico spec review` were unavailable) found 34, 21 and 12 findings, including 1, 5 and 8 quoted contradictions; round 3's fixes have not been re-reviewed. Nothing below is implemented.
+- **Status:** proposed — **not yet accepted**. D1 amended 2026-11-02 with the H0c result (a spike outcome, not a re-review). Three adversarial review rounds (manual critics, one lens each; the model critics in `amico spec review` were unavailable) found 34, 21 and 12 findings, including 1, 5 and 8 quoted contradictions; round 3's fixes have not been re-reviewed. Nothing below is implemented.
 - **Date:** 2026-11-01
 - **Context refs:** ADR 0005 (managed fleet), 0019 (overlay provenance naming), 0020 (detached standalone
   server), 0027 / 0029 (peer fleet studios, `serving` capability), 0031 / 0033 (Fleet Studio in-window
@@ -56,11 +56,12 @@ unit record, so nothing can reattach.
 **D1 — Amicode is a distribution of opencode, not a fork.** A single TypeScript process, the
 **amicode-host**, runs the opencode v2 server in-process and serves the standard protocol. Upstream is a
 *versioned dependency*, upgraded like any other, gated by contract tests (D8). The overlay materializer
-is retired when the cutover completes. **How the host obtains the server is not yet settled:** the published
-`@opencode/sdk` entries (`.`, `./effect`, `./workerd`) return a client, not the server's `fetch` — that handler
-exists only inside the unexported `internal/host.ts`. Candidate seams, decided by spike H0c: (a) an upstream PR
-exporting the handler, (b) `@opencode/server`'s published `createRoutes` (it honours a password, and our routes
-are added in-router), (c) proxying a stock service (which loses in-process plugins and workspace providers).
+is retired when the cutover completes. **How the host obtains the server — settled by spike H0c (#2048, `docs/spikes/2026-11-01-h0c-seam.md`, 2026-11-01).** The published `@opencode/sdk` entries (`.`, `./effect`, `./workerd`) return a client, not the server's `fetch`; that handler exists only inside the unexported `internal/host.ts`. Five seams were run against ten pre-registered criteria. Every seam passes standard routes, SSE, heartbeat and abort-release; the differences are these:
+- **Preferred (route 1):** `EmbeddedHost.create`, behind our own deny-by-default front. It is the only seam that keeps in-process plugins *and* workspace providers, but it needs one upstream export (`@opencode/sdk/host`, tracked as #2054) and bare it has no authentication at all.
+- **Built today (route 2a):** `@opencode/server` `createRoutes`, whose package exports `./*` make it importable with no upstream change; it keeps plugins and workspace providers via `SdkPlugins.register` and `overrides`. `packages/host/src/server-seam.ts` uses this, and swapping to route 1 is confined to that one file.
+- **Rejected:** proxying a stock `serve` (no in-process plugins or providers; non-`/api` paths answer before authentication), and `ServerFetch.make` / `ServerProcess.start` (no handle for plugins or providers).
+
+Constraints the spike established, which the host must keep: the listener needs `idleTimeout: 0`; the front must pass response bodies through untouched so client aborts propagate; no seam authenticates by itself, so the front is mandatory and deny-by-default; nothing the host starts may register as the machine service. The upstream export (#2054) is a convenience for route 1, not a blocker.
 
 **D2 — Extension seams, in strict order of preference.** (1) a plugin hook, (2) plugin RPC, (3) a host route
 (the host fronts the SDK's `fetch` and answers its own paths first), (4) an upstream PR, (5) a source patch.
