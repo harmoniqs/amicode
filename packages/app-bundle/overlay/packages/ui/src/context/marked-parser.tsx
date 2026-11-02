@@ -102,6 +102,13 @@ const blockMathRegex = /^\$\$\n([\s\S]+?)\n\$\$(?:\n|$)/
 const oneLineBlockMathRegex = /^\$\$[ \t]*((?:\\.|[^\n$\\])+?)[ \t]*\$\$[ \t]*(?:\n|$)/
 const bracketBlockMathRegex = /^\\\[[ \t]*\n?((?:(?!\n[ \t]*\n)[\s\S])+?)\n?[ \t]*\\\][ \t]*(?:\n|$)/
 const bracketInlineMathRegex = /^\\\[((?:(?!\n[ \t]*\n)[\s\S])+?)\\\]/
+// Bare LaTeX display environments (no $$ / \[ wrapper) — only the ones KaTeX
+// implements, closed by the same name (backreference), never across a blank
+// line. The whole \begin…\end span is handed to KaTeX (it owns the env).
+const mathEnvBlockRegex =
+  /^(\\begin\{((?:equation|align|alignat|gather|eqnarray)\*?)\}(?:(?!\n[ \t]*\n)[\s\S])+?\\end\{\2\})[ \t]*(?:\n|$)/
+const mathEnvInlineRegex =
+  /^\\begin\{((?:equation|align|alignat|gather|eqnarray)\*?)\}(?:(?!\n[ \t]*\n)[\s\S])+?\\end\{\1\}/
 
 export const katexExtension: MarkedExtension = {
   extensions: [
@@ -129,6 +136,8 @@ export const katexExtension: MarkedExtension = {
       name: "blockKatex",
       level: "block",
       tokenizer(src) {
+        const env = src.match(mathEnvBlockRegex)
+        if (env) return { type: "blockKatex", raw: env[0], text: env[1], displayMode: true }
         const match = src.match(blockMathRegex) ?? src.match(oneLineBlockMathRegex) ?? src.match(bracketBlockMathRegex)
         if (!match) return
         return {
@@ -155,6 +164,28 @@ export const katexExtension: MarkedExtension = {
           type: "bracketKatex",
           raw: match[0],
           text: match[1].trim(),
+          displayMode: true,
+        }
+      },
+      renderer: renderKatexToken,
+    },
+    {
+      // \begin{align}…\end{align} glued to a paragraph line (a block rule
+      // cannot interrupt a paragraph) — display math, like the \[ twin above.
+      name: "envKatex",
+      level: "inline",
+      start(src) {
+        const index = src.indexOf("\\begin{")
+        if (index === -1) return
+        return index
+      },
+      tokenizer(src) {
+        const match = src.match(mathEnvInlineRegex)
+        if (!match) return
+        return {
+          type: "envKatex",
+          raw: match[0],
+          text: match[0],
           displayMode: true,
         }
       },

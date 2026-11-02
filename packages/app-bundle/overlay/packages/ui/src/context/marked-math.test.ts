@@ -132,3 +132,34 @@ test("one-line $$ block never swallows two spans on one line (#1894)", async () 
   expect(html).not.toContain("katex-display")
   expect(await parse("$$\\Omega_x$$")).toContain("katex-display")
 })
+
+// harmoniqs/amicode#1894 — bare LaTeX display environments (no $$ / \[ wrapper)
+// are the other shape LLMs emit; they fell through to markdown, which ate the
+// `\\` row separators and printed raw source.
+test("renders bare \\begin{align}/equation environments as display math (#1894)", async () => {
+  const align = await parse("\\begin{align}\na &= b \\\\\nc &= d\n\\end{align}")
+  expect(align).toContain("katex-display")
+  expect(align).not.toContain("<p>")
+
+  const starred = await parse("before\n\n\\begin{equation*}\nx_k = 1\n\\end{equation*}\n\nafter")
+  expect(starred).toContain("katex-display")
+  expect(starred).not.toContain("<p>\\begin")
+
+  // glued to a paragraph line (a block cannot interrupt a paragraph) — the
+  // inline twin lifts it
+  const glued = await parse("Where:\n\\begin{align}\na &= b\n\\end{align}\nnext")
+  expect(glued).toContain("katex-display")
+  expect(glued).not.toContain("<p>Where:\n\\begin")
+})
+
+test("leaves non-math environments and code-span environments literal (#1894)", async () => {
+  const code = await parse("write `\\begin{align} a \\end{align}` verbatim")
+  expect(code).toContain("<code>")
+  expect(code).not.toContain("katex")
+
+  const unclosed = await parse("\\begin{align}\na &= b")
+  expect(unclosed).not.toContain("katex")
+
+  const other = await parse("\\begin{itemize}\n\\item a\n\\end{itemize}")
+  expect(other).not.toContain("katex")
+})
