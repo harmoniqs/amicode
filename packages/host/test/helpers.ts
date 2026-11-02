@@ -65,6 +65,7 @@ export function hostEnv(sb: Sandbox, extra: Record<string, string | undefined> =
     OPENCODE_DISABLE_CLAUDE_CODE: "1",
     OPENCODE_CONFIG_PROJECT_DISABLE: "1",
     OPENCODE_DISABLE_MODELS_FETCH: "1",
+    OPENCODE_DISABLE_FREE_MODELS: "1", // a resumed turn must fail locally, never reach a hosted free-tier provider
     OPENCODE_FILEWATCHER_DISABLE: "1",
     AMICODE_HOST_DB: sb.db,
     AMICODE_HOST_PASSWORD: sb.password,

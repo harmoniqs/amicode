@@ -6,7 +6,7 @@ import { cleanup, makeSandbox, walkFiles } from "./helpers.ts"
 
 afterAll(cleanup)
 
-const info = (id = crypto.randomUUID()) => ({ id, version: "0.1.0", url: "http://127.0.0.1:52000", pid: process.pid })
+const info = (id: string = crypto.randomUUID()) => ({ id, version: "0.1.0", url: "http://127.0.0.1:52000", pid: process.pid })
 
 describe("host registration file", () => {
   test("is written atomically with mode 0600, exactly the documented keys, and never a password", () => {

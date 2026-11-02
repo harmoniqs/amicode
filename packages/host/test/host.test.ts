@@ -354,7 +354,8 @@ describe("a stock opencode client and the host do not see or touch each other", 
     const sb = makeSandbox("stock")
     const host = await startHost(sb)
     expect(stockDiscovery(sb)).toBeUndefined()
-    expect(fs.existsSync(path.dirname(sb.stockRegistration))).toBe(false)
+    // the engine itself may create its own state dir; it must never hold a service registration
+    expect(walkFiles(sb.root).filter((file) => /service[^/]*\.json$/.test(file))).toEqual([])
     await stop(host)
     expect(stockDiscovery(sb)).toBeUndefined()
   }, 60_000)
@@ -394,14 +395,14 @@ describe("resume of suspended sessions", () => {
     const id: string = (await json(created)).data.id
     expect(await stop(host)).toBe(0)
     const db = new Database(sb.db)
-    db.run("UPDATE session SET time_suspended = ? WHERE id = ?", [Date.now(), id])
+    db.run("UPDATE session_v2 SET time_suspended = ? WHERE id = ?", [Date.now(), id])
     db.close()
     return { sb, id }
   }
   const row = (sb: Sandbox, id: string) => {
     const db = new Database(sb.db, { readonly: true })
     try {
-      return db.query("SELECT time_suspended, resume_attempts FROM session WHERE id = ?").get(id) as { time_suspended: number | null; resume_attempts: number } | null
+      return db.query("SELECT time_suspended, resume_attempts FROM session_v2 WHERE id = ?").get(id) as { time_suspended: number | null; resume_attempts: number } | null
     } finally {
       db.close()
     }
@@ -414,7 +415,10 @@ describe("resume of suspended sessions", () => {
   test("AMICODE_HOST_RESUME=1 (default): the suspended session is resumed on start", async () => {
     const { sb, id } = await seed()
     const host = await startHost(sb)
-    await waitFor(async () => (await restartNotices(host, sb, id)) || (row(sb, id)?.resume_attempts ?? 0) > 0, { timeoutMs: 15_000, what: "resume of the suspended session" })
+    // observable effects of SessionRestart.resumeSuspendedSessions: the "Continuing after restart" notice is
+    // admitted, and (no model being available) the turn fails locally and the claim is released
+    await waitFor(() => restartNotices(host, sb, id), { timeoutMs: 15_000, what: "restart notice on the suspended session" })
+    await waitFor(() => row(sb, id)?.time_suspended === null, { timeoutMs: 15_000, what: "the resumed turn to terminalize and release its claim" })
     expect((await json(await fetch(host.url + "/amicode/health", { headers: host.auth }))).resume).toBe(true)
     await stop(host)
   }, 90_000)
