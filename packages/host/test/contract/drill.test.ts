@@ -10,6 +10,7 @@ import os from "node:os"
 import path from "node:path"
 import { plantBreak } from "./shim.ts"
 import { bunEnv, packageRoot } from "./support.ts"
+import { typeCheck } from "./typecheck.ts"
 
 const cleanups: (() => void)[] = []
 afterAll(() => cleanups.forEach((fn) => fn()))
@@ -50,6 +51,19 @@ describe("drill (a): the scan fails when an upstream import has no contract", ()
     expect(run.err).toContain("@opencode/core/plugin/sdk#lateBinding")
     // and it does not cry wolf about pairs that do have contracts
     expect(run.err).not.toContain("@opencode/server/routes#createRoutes")
+  })
+
+  test("a NEW non-literal dynamic import fails the scan until it is acknowledged (file:line named)", () => {
+    const dyn = fs.mkdtempSync(path.join(os.tmpdir(), "h1d-drill-dyn-"))
+    cleanups.push(() => fs.rmSync(dyn, { recursive: true, force: true }))
+    const copy = path.join(dyn, "src")
+    fs.cpSync(path.join(packageRoot, "src"), copy, { recursive: true })
+    expect(bun(["scripts/contract-scan.ts", "--root", copy], packageRoot).exitCode).toBe(0)
+    fs.writeFileSync(path.join(copy, "sneaky.ts"), `export const sneak = (name: string) => import(name)\n`)
+    const run = bun(["scripts/contract-scan.ts", "--root", copy], packageRoot)
+    expect(run.exitCode).toBe(1)
+    expect(run.err).toContain("sneaky.ts:1")
+    expect(run.err).toContain("dynamic import")
   })
 
   test("--json reports the same uncovered pairs", () => {
@@ -101,4 +115,37 @@ describe("drill (b): the contract suite fails when a used upstream export disapp
     expect(failed.some((line) => line.includes("Scope finalizers run last-registered-first"))).toBe(true)
     expect(failed.some((line) => line.includes("Scope.make"))).toBe(false)
   }, 120_000)
+})
+
+describe("drill (c): the @opencode/plugin contracts catch a removed symbol", () => {
+  const ALWAYS = ["test/contract/modules.test.ts"]
+  const failures = (all: string) => all.split("\n").filter((line) => line.startsWith("(fail)"))
+
+  test("fromPromise removed from @opencode/plugin/promise/adapter: its contract fails, and the host cannot register plugins or start", () => {
+    const planted = plantBreak("@opencode/plugin/promise/adapter#fromPromise")
+    cleanups.push(planted.cleanup)
+    const run = bun(["test", ...ALWAYS, "test/contract/loader.test.ts"], planted.copy)
+    expect(run.exitCode).not.toBe(0)
+    expect(failures(run.all).some((line) => line.includes("contract: @opencode/plugin/promise/adapter > fromPromise has the shape"))).toBe(true)
+    expect(run.all).toContain("host exited early")
+    expect(run.all).toContain("fromPromise is not a function")
+    expect(failures(run.all).some((line) => line.includes("contract: @opencode/server/routes"))).toBe(false)
+  }, 240_000)
+
+  test("type-only symbols: removing `Plugin` from the published declarations, or renaming Plugin.setup, fails the type contract", () => {
+    const dist = path.join(fs.realpathSync(path.join(packageRoot, "node_modules/@opencode/plugin")), "dist/promise")
+    expect(typeCheck(path.join(import.meta.dir, "types.contract.ts"))).toEqual([])
+    const indexDts = path.join(dist, "index.d.ts")
+    const removed = typeCheck(path.join(import.meta.dir, "types.contract.ts"), {
+      [indexDts]: fs.readFileSync(indexDts, "utf8").replace('export * as Plugin from "./plugin.js";', ""),
+    })
+    expect(removed.length).toBeGreaterThan(0)
+    expect(removed.join("\n")).toContain("Plugin")
+    const pluginDts = path.join(dist, "plugin.d.ts")
+    const renamed = typeCheck(path.join(import.meta.dir, "types.contract.ts"), {
+      [pluginDts]: fs.readFileSync(pluginDts, "utf8").replace("readonly setup:", "readonly start:"),
+    })
+    expect(renamed.length).toBeGreaterThan(0)
+    expect(renamed.join("\n")).toContain("setup")
+  }, 240_000)
 })

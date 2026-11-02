@@ -3,7 +3,7 @@
 import { describe, expect, test } from "bun:test"
 import path from "node:path"
 import { coverage, scanSources } from "../../scripts/contract-scan.ts"
-import { CONTRACTS } from "./registry.ts"
+import { CONTRACTS, DYNAMIC_IMPORTS } from "./registry.ts"
 import { bunEnv, packageRoot } from "./support.ts"
 
 describe("contract coverage of the host's upstream imports", () => {
@@ -30,10 +30,14 @@ describe("contract coverage of the host's upstream imports", () => {
     expect(report.inventory.entries.length).toBe(inventory.entries.length)
   })
 
-  test("dynamic imports the scanner cannot name are surfaced, not silently dropped", () => {
-    // Informational by policy (docs/contracts.md): a computed specifier (a user plugin loaded by path) has no
-    // package contract. This keeps them visible in the test output when present.
-    if (inventory.underivable.length) console.warn("contract-scan: underivable dynamic imports:\n" + inventory.underivable.map((u) => `  ${u.file}:${u.line} ${u.text}`).join("\n"))
-    expect(Array.isArray(inventory.underivable)).toBe(true)
+  test("every dynamic import with a non-literal specifier is acknowledged in the registry allowlist (file + expression + reason)", () => {
+    const result = coverage(inventory, CONTRACTS, DYNAMIC_IMPORTS)
+    expect(result.unacknowledged.map((u) => `${u.file}:${u.line} ${u.text}`)).toEqual([])
+  })
+
+  test("every allowlist entry still matches a real import site, and says why it is allowed", () => {
+    const result = coverage(inventory, CONTRACTS, DYNAMIC_IMPORTS)
+    expect(result.staleAllowances.map((a) => `${a.file} ${a.text}`)).toEqual([])
+    for (const allowance of DYNAMIC_IMPORTS) expect(allowance.reason.length).toBeGreaterThan(20)
   })
 })
