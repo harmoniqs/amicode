@@ -288,5 +288,107 @@ class TestAtomsKey(unittest.TestCase):
                 validate_schema(self.corrupt(atoms=bad))
 
 
+DEVICE = pulser.AnalogDevice
+CALIBRATED_LAYOUT = next(iter(DEVICE.calibrated_register_layouts.values()))
+
+
+def calibrated_triangle() -> list:
+    """The equilateral 3-atom triangle on the device's own calibrated layout —
+    coordinates exactly as Pulser's rounded trap grid holds them."""
+    reg = CALIBRATED_LAYOUT.hexagonal_register(3)
+    return [[float(c) for c in xy] for xy in reg.qubits.values()]
+
+
+class TestDistanceTolerance(unittest.TestCase):
+    """The min-distance check uses Pulser's own 10^-COORD_PRECISION tolerance
+    (harmoniqs/amicode#1854): the calibrated triangle's adjacent spacing is
+    4.9999999836 µm against the 5 µm minimum — float rounding, not a violation."""
+
+    def with_atoms(self, atoms):
+        data = copy.deepcopy(golden())
+        data["atoms"] = atoms
+        return data
+
+    def test_calibrated_triangle_passes_contract(self):
+        seq = build_sequence(self.with_atoms(calibrated_triangle()))
+        self.assertEqual(len(seq.register.qubits), 3)
+
+    def test_rounding_dust_below_min_distance_passes(self):
+        # 1.6e-8 µm short, the magnitude the calibrated layout produces
+        d = DEVICE.min_atom_distance - 1.6e-8
+        build_sequence(self.with_atoms([[0.0, 0.0], [d, 0.0]]))
+
+    def test_just_past_pulser_tolerance_is_rejected(self):
+        d = DEVICE.min_atom_distance - 2e-6  # beyond 10^-6
+        with self.assertRaises(ContractError) as ctx:
+            build_sequence(self.with_atoms([[0.0, 0.0], [d, 0.0]]))
+        self.assertIn("minimum atom distance", str(ctx.exception))
+
+    def test_genuinely_too_close_is_still_rejected(self):
+        with self.assertRaises(ContractError) as ctx:
+            build_sequence(self.with_atoms([[0.0, 0.0], [4.9, 0.0]]))
+        self.assertIn("minimum atom distance", str(ctx.exception))
+
+
+class TestLayoutKey(unittest.TestCase):
+    """Optional `layout` key: the register is defined from the device's
+    calibrated layout and keeps it (AnalogDevice needs it for QPU submission)."""
+
+    def data(self, **changes):
+        data = copy.deepcopy(golden())
+        data["atoms"] = calibrated_triangle()
+        data.update(changes)
+        return data
+
+    def test_register_keeps_calibrated_layout(self):
+        seq = build_sequence(self.data(layout="calibrated"))
+        self.assertIsNotNone(seq.register.layout)
+        self.assertTrue(DEVICE.register_is_from_calibrated_layout(seq.register))
+
+    def test_layout_by_explicit_name(self):
+        name = next(iter(DEVICE.calibrated_register_layouts))
+        seq = build_sequence(self.data(layout=name))
+        self.assertTrue(DEVICE.register_is_from_calibrated_layout(seq.register))
+
+    def test_layout_register_matches_atoms(self):
+        atoms = calibrated_triangle()
+        seq = build_sequence(self.data(layout="calibrated"))
+        got = sorted(tuple(round(float(c), 6) for c in xy) for xy in seq.register.qubits.values())
+        want = sorted(tuple(round(c, 6) for c in xy) for xy in atoms)
+        self.assertEqual(got, want)
+
+    def test_without_layout_key_register_has_no_layout(self):
+        seq = build_sequence(self.data())  # back-compat: coordinates only
+        self.assertIsNone(seq.register.layout)
+
+    def test_unknown_layout_raises(self):
+        with self.assertRaises(ContractError) as ctx:
+            build_sequence(self.data(layout="NoSuchLayout"))
+        self.assertIn("not a calibrated layout", str(ctx.exception))
+
+    def test_off_trap_atom_raises(self):
+        atoms = calibrated_triangle()
+        atoms[0] = [atoms[0][0] + 0.5, atoms[0][1]]
+        with self.assertRaises(ContractError) as ctx:
+            build_sequence(self.data(layout="calibrated", atoms=atoms))
+        self.assertIn("not on a trap", str(ctx.exception))
+
+    def test_two_atoms_on_one_trap_raise(self):
+        atoms = calibrated_triangle()
+        with self.assertRaises(ContractError):
+            build_sequence(self.data(layout="calibrated", atoms=[atoms[0], atoms[0]]))
+
+    def test_layout_requires_atoms(self):
+        data = copy.deepcopy(golden())
+        data["layout"] = "calibrated"
+        with self.assertRaises(ContractError):
+            validate_schema(data)
+
+    def test_malformed_layout_raises(self):
+        for bad in ("", 3, ["calibrated"]):
+            with self.assertRaises(ContractError):
+                validate_schema(self.data(layout=bad))
+
+
 if __name__ == "__main__":
     unittest.main()

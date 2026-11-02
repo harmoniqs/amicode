@@ -11,6 +11,12 @@ Design rules:
 - Numerical dust (optimizer sitting on a bound, ~1e-9) is clipped silently;
   real constraint violations RAISE. A bad solve must fail loudly here, not
   get silently squashed to the bound and submitted as if it were fine.
+- Distances are judged with Pulser's own coordinate-precision tolerance
+  (10^-COORD_PRECISION µm), so a register the device itself calibrated is never
+  rejected for floating-point rounding of its trap coordinates.
+- An optional `layout` key names a calibrated register layout of the device; the
+  built register is then defined from that layout (it keeps `register.layout`,
+  which QPU submission on layout-requiring devices like AnalogDevice needs).
 - Unknown TOML keys are ignored (additive schema policy, matching the
   amicode scores/run-dir contracts). `schema_version` is checked exactly.
 """
@@ -21,6 +27,7 @@ import warnings
 
 import numpy as np
 import pulser
+from pulser.register.traps import COORD_PRECISION
 
 SCHEMA_VERSION = 1
 UNITS = "rad/us"
@@ -33,6 +40,19 @@ DUST_TOL = 1e-6
 # Endpoints are "at idle" when both drives sit at Ω=Δ=0 to within the same
 # dust tolerance the bounds checks use.
 IDLE_TOL = DUST_TOL
+
+# Pulser's own tolerance when validating atom/trap distances
+# (Device._validate_atom_distance): coordinates are rounded to COORD_PRECISION
+# decimals, so distances are only trustworthy to this. Mirrored here so the
+# contract can never be stricter than Pulser about the same register.
+DIST_TOL = 10 ** (-COORD_PRECISION)
+
+# How close (µm) an `atoms` coordinate must sit to a layout trap to be
+# snapped onto it. Far looser than DIST_TOL on purpose: it absorbs TOML
+# round-trips of coordinates, while real off-trap atoms (µm away) still fail.
+LAYOUT_SNAP_TOL = 1e-3
+
+CALIBRATED = "calibrated"  # `layout = "calibrated"`: the device's only calibrated layout
 
 
 class ContractError(ValueError):
@@ -95,6 +115,16 @@ def validate_schema(data: dict) -> None:
             ):
                 raise ContractError(f"atoms[{i}] must be a finite [x, y] pair (µm), got {pos!r}")
 
+    layout = data.get("layout")
+    if layout is not None:
+        if not isinstance(layout, str) or not layout:
+            raise ContractError(f"layout, if present, must be a non-empty string, got {layout!r}")
+        if atoms is None:
+            raise ContractError(
+                "layout requires atoms: list the [x, y] of each occupied trap "
+                "(the contract snaps them onto the layout's traps)"
+            )
+
 
 def validate_against_device(
     data: dict, device: pulser.devices.Device = pulser.AnalogDevice,
@@ -141,16 +171,72 @@ def validate_against_device(
             raise ContractError(
                 f"{len(atoms)} atoms exceeds the device's max atom number ({max_atoms})"
             )
-        for i in range(len(atoms)):
-            for j in range(i + 1, len(atoms)):
-                dist = math.dist(atoms[i], atoms[j])
-                if dist < device.min_atom_distance:
+        # With a layout the register is built from the layout's own trap
+        # coordinates, so those (not the raw atoms) are what the device sees.
+        layout_selection = _layout_selection(data, device)
+        coords = (
+            layout_selection[2] if layout_selection is not None else atoms
+        )
+        for i in range(len(coords)):
+            for j in range(i + 1, len(coords)):
+                dist = math.dist(coords[i], coords[j])
+                # Same criterion as Pulser's Device._validate_atom_distance:
+                # strict `<` flagged the calibrated triangle's 4.9999999836 µm.
+                if dist - device.min_atom_distance < -DIST_TOL:
                     raise ContractError(
                         f"atoms[{i}] and atoms[{j}] are {dist:.3g} µm apart — below the "
                         f"device's minimum atom distance ({device.min_atom_distance} µm)"
                     )
 
     warn_non_idle_endpoints(data)
+
+
+def _resolve_layout(name: str, device):
+    """Look up a calibrated register layout of `device` by name."""
+    calibrated = dict(getattr(device, "calibrated_register_layouts", {}) or {})
+    if name == CALIBRATED:
+        if len(calibrated) != 1:
+            raise ContractError(
+                f"layout={CALIBRATED!r} needs the device to have exactly one "
+                f"calibrated layout; {device.name} has {len(calibrated)} "
+                f"({sorted(calibrated)}) — name one explicitly"
+            )
+        return next(iter(calibrated.values()))
+    if name not in calibrated:
+        raise ContractError(
+            f"layout {name!r} is not a calibrated layout of device {device.name} "
+            f"(has: {sorted(calibrated)})"
+        )
+    return calibrated[name]
+
+
+def _layout_selection(data: dict, device):
+    """(layout, trap_ids, trap_coords) for `data["layout"]`, or None if unset.
+
+    Each `atoms` entry is snapped onto its nearest trap; one that sits more than
+    LAYOUT_SNAP_TOL from every trap, or two atoms on one trap, are rejected.
+    `trap_coords` are the layout's own (rounded) trap coordinates.
+    """
+    name = data.get("layout")
+    if name is None:
+        return None
+    layout = _resolve_layout(name, device)
+    traps = [tuple(float(c) for c in row) for row in layout.sorted_coords]
+    trap_ids = []
+    for i, pos in enumerate(data["atoms"]):
+        dists = [math.dist(pos, t) for t in traps]
+        best = min(range(len(traps)), key=dists.__getitem__)
+        if dists[best] > LAYOUT_SNAP_TOL:
+            raise ContractError(
+                f"atoms[{i}] = {list(pos)!r} is not on a trap of layout {name!r} "
+                f"(nearest trap {best} is {dists[best]:.3g} µm away)"
+            )
+        trap_ids.append(best)
+    if len(set(trap_ids)) != len(trap_ids):
+        raise ContractError(
+            f"atoms map onto duplicate traps of layout {name!r}: {trap_ids}"
+        )
+    return layout, trap_ids, [traps[t] for t in trap_ids]
 
 
 def warn_non_idle_endpoints(data: dict) -> None:
@@ -227,8 +313,17 @@ def build_sequence(
     amp = np.clip(amp, 0.0, channel.max_amp)          # dust only, per above
     det = np.clip(det, -channel.max_abs_detuning, channel.max_abs_detuning)
 
-    coords = [tuple(pos) for pos in data.get("atoms", [[0, 0]])]
-    register = pulser.Register.from_coordinates(coords, prefix="q")
+    layout_selection = _layout_selection(data, device)
+    if layout_selection is not None:
+        # Keep the layout: AnalogDevice requires it for QPU submission, and a
+        # coordinates-only rebuild would silently drop it.
+        layout, trap_ids, _ = layout_selection
+        register = layout.define_register(
+            *trap_ids, qubit_ids=[f"q{i}" for i in range(len(trap_ids))]
+        )
+    else:
+        coords = [tuple(pos) for pos in data.get("atoms", [[0, 0]])]
+        register = pulser.Register.from_coordinates(coords, prefix="q")
     sequence = pulser.Sequence(register, device)
     sequence.declare_channel(channel_name, channel_name)
     pulse = pulser.Pulse(
