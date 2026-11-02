@@ -24,6 +24,16 @@ while [ $# -gt 0 ]; do case "$1" in
   --root) ROOT="$2"; shift 2;; *) echo "unknown arg $1" >&2; exit 64;; esac; done
 REPO="vault-${NAME}"; DEST="$ROOT/$REPO"
 
+# ── The outward-action gate (#2100). EVERY action that leaves this machine —  ──
+# gh (repo view/create, auth status), git clone, git push — runs only when
+# outward_ok is true, in EVERY branch (mint, resume, shared-vault mounts).
+# Closed by --no-github, AMICO_FORCE_DEGRADED=1, or AMICO_NO_NETWORK=1 (the
+# test setting: a test can never create a remote resource). Closed means the
+# run stays local-only — an honest state, never an error.
+outward_ok() {
+  [ "$GH" = 1 ] && [ "${AMICO_FORCE_DEGRADED:-0}" != 1 ] && [ "${AMICO_NO_NETWORK:-0}" != 1 ]
+}
+
 # ── Naming-rule lint (vault-mgmt spec M1): a minted name must not contain  ──
 # "armonia" — prefix or embedded. The lint applies to MINTED names only:
 # existing vaults and team vaults riding code repos are exempt by
@@ -57,7 +67,7 @@ if [ "$ENFORCE" = 1 ]; then
     mkdir -p "$CANON" 2>/dev/null || true
   elif [ -d "$ROOT" ]; then
     if [ -z "$(ls -A "$ROOT" 2>/dev/null)" ]; then
-      rmdir "$ROOT" && ln -s "$CANON" "$ROOT"   # empty real dir → adopt the doctrine
+      rmdir "$ROOT" && mkdir -p "$CANON" && ln -s "$CANON" "$ROOT"   # empty real dir → adopt the doctrine
     else
       { echo "REFUSED: $ROOT is a real directory holding content — the layout doctrine wants"
         echo "storage under $CANON with $ROOT as a symlink to it (the erich divergence class)."
@@ -78,11 +88,13 @@ if [ -e "$DEST" ]; then
   [ -f "$DEST/.amico-vault.toml" ] && STATE="$(grep -m1 '^provision_state' "$DEST/.amico-vault.toml" 2>/dev/null | sed -E 's/.*=[[:space:]]*"?([a-z-]+)"?.*/\1/')"
   if [ "$STATE" = "local-only" ]; then
     # resume: attach the remote (seam > existing repo > create), push, stamp
-    if [ -n "${AMICO_RESUME_REMOTE:-}" ]; then
+    # (every probe is gated: with the gate closed, none of them runs and the
+    # else branch below is the outcome — no remote is viewed/created/attached)
+    if outward_ok && [ -n "${AMICO_RESUME_REMOTE:-}" ]; then
       REMOTE="$AMICO_RESUME_REMOTE"
-    elif command -v gh >/dev/null 2>&1 && gh repo view "harmoniqs/$REPO" >/dev/null 2>&1; then
+    elif outward_ok && command -v gh >/dev/null 2>&1 && gh repo view "harmoniqs/$REPO" >/dev/null 2>&1; then
       REMOTE="git@github.com:harmoniqs/$REPO.git"   # mid-flight-death case: repo exists, remote unset
-    elif command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1 && gh repo create "harmoniqs/$REPO" --private >/dev/null 2>&1; then
+    elif outward_ok && command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1 && gh repo create "harmoniqs/$REPO" --private >/dev/null 2>&1; then
       REMOTE="git@github.com:harmoniqs/$REPO.git"
     else
       # expected retry-later state, NOT an error: still local-only, honestly stamped
@@ -116,7 +128,7 @@ fi
 # ── Credentials check → the degraded path (spec M2 step 4) ──────────────────
 DEGRADED=0
 if [ "$GH" = 1 ]; then
-  [ "${AMICO_FORCE_DEGRADED:-0}" = 1 ] && DEGRADED=1
+  outward_ok || DEGRADED=1   # AMICO_FORCE_DEGRADED / AMICO_NO_NETWORK
   if [ "$DEGRADED" = 0 ] && ! command -v gh >/dev/null 2>&1; then DEGRADED=1; fi
   if [ "$DEGRADED" = 0 ] && ! gh auth status >/dev/null 2>&1; then DEGRADED=1; fi
   if [ "$DEGRADED" = 0 ] && ! gh repo view "harmoniqs/$REPO" >/dev/null 2>&1 \
@@ -126,7 +138,7 @@ if [ "$GH" = 1 ]; then
 fi
 
 mkdir -p "$ROOT"
-if [ "$GH" = 1 ] && [ "$DEGRADED" = 0 ]; then
+if outward_ok && [ "$DEGRADED" = 0 ]; then
   if gh repo view "harmoniqs/$REPO" >/dev/null 2>&1; then
     # clone-only path: member machine, repo already provisioned centrally
     git clone "git@github.com:harmoniqs/$REPO.git" "$DEST"
@@ -181,11 +193,11 @@ fi
 
 # ── Shared mounts: company vault always; issimo where granted ──────────────
 # (existing vaults, not mints — the naming lint never applies here)
-if [ "$GH" = 1 ] && [ "$DEGRADED" = 0 ] && [ "$KIND" = personal ]; then
+if outward_ok && [ "$DEGRADED" = 0 ] && [ "$KIND" = personal ]; then
   if [ ! -d "$ROOT/armonissima" ]; then
     git clone "git@github.com:harmoniqs/armonissima.git" "$ROOT/armonissima" \
       && echo "Mounted: $ROOT/armonissima (kind=team)" \
-      || echo "⚠ could not clone armonissima — ask for access, then: git clone git@github.com:harmonissima.git $ROOT/armonissima"
+      || echo "⚠ could not clone armonissima — ask for access, then: git clone git@github.com:harmoniqs/armonissima.git $ROOT/armonissima"
   fi
   if [ ! -d "$ROOT/armonia-issimo" ]; then
     if git clone -q "git@github.com:harmoniqs/armonia-issimo.git" "$ROOT/armonia-issimo" 2>/dev/null; then
