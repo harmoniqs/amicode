@@ -186,7 +186,7 @@ export interface BringUpSshAttachmentOptions {
   /** Injectable spawn (test seam); default node:child_process spawn. */
   spawnFn?: typeof spawn;
   /** How long to wait for the forward to answer ANY request before giving
-   *  up (ms). Default 8000. */
+   *  up (ms). Default 10000. */
   readyTimeoutMs?: number;
   /** Poll interval while waiting for the forward to come up (ms). Default 150. */
   readyPollIntervalMs?: number;
@@ -207,7 +207,7 @@ export async function bringUpSshAttachment(opts: BringUpSshAttachmentOptions): P
   const localPort = opts.localPort ?? opts.remotePort;
   const spawnFn = opts.spawnFn ?? spawn;
   const doFetch = opts.fetchFn ?? fetch;
-  const readyTimeoutMs = opts.readyTimeoutMs ?? 8000;
+  const readyTimeoutMs = opts.readyTimeoutMs ?? 10000;
   const pollIntervalMs = opts.readyPollIntervalMs ?? 150;
 
   const args = attachmentForwardArgs({
@@ -216,25 +216,57 @@ export async function bringUpSshAttachment(opts: BringUpSshAttachmentOptions): P
     remotePort: opts.remotePort,
     extraSshOptions: opts.extraSshOptions,
   });
-  const child = spawnFn("ssh", args, { stdio: ["ignore", "pipe", "pipe"] }) as ChildProcessByStdio<null, Readable, Readable>;
-  let stderr = "";
-  child.stderr.on("data", (chunk: Buffer) => {
-    stderr += chunk.toString("utf8");
-  });
-  let exited: { code: number | null; signal: NodeJS.Signals | null } | undefined;
-  child.once("exit", (code, signal) => {
-    exited = { code, signal };
-  });
-
   const localUrl = `http://127.0.0.1:${localPort}`;
   const deadline = Date.now() + readyTimeoutMs;
+  const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+  // One ssh child per attempt. On a CI runner the first spawn can lose a race
+  // against sshd readiness / the known_hosts write and exit (code=255) before
+  // the forward ever binds; that is transient, so we respawn with backoff until
+  // the SAME overall budget (readyTimeoutMs) is spent. The last attempt's
+  // (bounded) ssh stderr is always reported when we finally give up.
+  const STDERR_CAP = 4096;
+  let child!: ChildProcessByStdio<null, Readable, Readable>;
+  let exited: { code: number | null; signal: NodeJS.Signals | null } | undefined;
+  let stderr = "";
+  let attempts = 0;
+  let backoffMs = pollIntervalMs;
   let ready = false;
   let lastFailure = "";
+  let lastExit = "";
+
+  const spawnAttempt = () => {
+    attempts += 1;
+    stderr = "";
+    exited = undefined;
+    const c = spawnFn("ssh", args, { stdio: ["ignore", "pipe", "pipe"] }) as ChildProcessByStdio<null, Readable, Readable>;
+    c.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString("utf8");
+      if (stderr.length > STDERR_CAP) stderr = stderr.slice(stderr.length - STDERR_CAP);
+    });
+    c.once("exit", (code, signal) => {
+      if (child === c) exited = { code, signal };
+    });
+    child = c;
+  };
+  const killChild = () => {
+    try {
+      if (!exited && child.exitCode === null) child.kill();
+    } catch {
+      /* already gone */
+    }
+  };
+
+  spawnAttempt();
   while (Date.now() < deadline) {
     if (exited) {
-      throw new Error(
-        `ssh forward exited before becoming reachable (code=${exited.code}, signal=${exited.signal}): ${stderr.trim() || "(no stderr)"}`,
-      );
+      lastExit = `code=${exited.code}, signal=${exited.signal}: ${stderr.trim() || "(no stderr)"}`;
+      const wait = Math.min(backoffMs, Math.max(0, deadline - Date.now()));
+      backoffMs = Math.min(backoffMs * 2, 1000);
+      await sleep(wait);
+      if (Date.now() >= deadline) break;
+      spawnAttempt();
+      continue;
     }
     try {
       // ANY response (even a 401) proves the WHOLE path is live: the local
@@ -242,17 +274,24 @@ export async function bringUpSshAttachment(opts: BringUpSshAttachmentOptions): P
       // target host's remote port answered — this is the readiness gate
       // AND the first proof of end-to-end reachability, at once.
       await doFetch(localUrl, { signal: AbortSignal.timeout(500) });
+      // A response from a port whose ssh child already died is not ours.
+      if (exited) continue;
       ready = true;
       break;
     } catch (e) {
       lastFailure = e instanceof Error ? e.message : String(e);
-      await new Promise((r) => setTimeout(r, pollIntervalMs));
+      await sleep(pollIntervalMs);
     }
   }
   if (!ready) {
-    child.kill();
+    killChild();
+    const tries = `${attempts} attempt${attempts === 1 ? "" : "s"} within ${readyTimeoutMs}ms`;
+    if (exited || lastExit) {
+      const detail = exited ? `code=${exited.code}, signal=${exited.signal}: ${stderr.trim() || "(no stderr)"}` : lastExit;
+      throw new Error(`ssh forward exited before becoming reachable (${detail}) after ${tries}`);
+    }
     throw new Error(
-      `ssh forward never became reachable within ${readyTimeoutMs}ms (last attempt: ${lastFailure})${stderr ? ` — stderr: ${stderr.trim()}` : ""}`,
+      `ssh forward never became reachable after ${tries} (last attempt: ${lastFailure})${stderr ? ` — stderr: ${stderr.trim()}` : ""}`,
     );
   }
 

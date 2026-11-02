@@ -290,6 +290,73 @@ describe("bringUpSshAttachment — honest failure when the ssh child exits befor
   });
 });
 
+function fakeLiveSshChild() {
+  const child = new EventEmitter() as unknown as ReturnType<typeof spawn> & { exitCode: number | null };
+  Object.assign(child, {
+    stdin: null,
+    stdout: new EventEmitter(),
+    stderr: new EventEmitter(),
+    exitCode: null,
+    kill: () => {
+      (child as { exitCode: number | null }).exitCode = 0;
+      queueMicrotask(() => (child as unknown as EventEmitter).emit("exit", 0, "SIGTERM"));
+      return true;
+    },
+  });
+  return child;
+}
+
+describe("bringUpSshAttachment — retries an early-exiting ssh forward within one budget (#1991)", () => {
+  const target: AttachmentTarget = { sshAlias: "loopback", transport: "ssh", machine_id: "m-retry" };
+
+  it("respawns after code=255 exits and succeeds once a forward stays up", async () => {
+    let spawns = 0;
+    const handle = await bringUpSshAttachment({
+      target,
+      remotePort: 59999,
+      localPort: 59998,
+      spawnFn: ((() => {
+        spawns += 1;
+        return spawns <= 2 ? fakeExitingSshChild("kex_exchange_identification: Connection closed\n") : fakeLiveSshChild();
+      }) as unknown) as typeof spawn,
+      fetchFn: (async () => {
+        // the unreachable-forward fetch fails until the third ssh is alive
+        if (spawns < 3) throw new Error("ECONNREFUSED");
+        return new Response("", { status: 401 });
+      }) as typeof fetch,
+      readyPollIntervalMs: 10,
+      readyTimeoutMs: 5000,
+    });
+    expect(spawns).toBe(3);
+    expect(handle.localUrl).toBe("http://127.0.0.1:59998");
+    await handle.stop();
+  });
+
+  it("when every attempt fails, the error carries the ssh stderr and the attempt count", async () => {
+    let spawns = 0;
+    const err = await bringUpSshAttachment({
+      target,
+      remotePort: 59999,
+      localPort: 59998,
+      spawnFn: ((() => {
+        spawns += 1;
+        return fakeExitingSshChild("Connection refused by sshd (attempt)\n");
+      }) as unknown) as typeof spawn,
+      fetchFn: (async () => {
+        throw new Error("ECONNREFUSED");
+      }) as typeof fetch,
+      readyPollIntervalMs: 10,
+      readyTimeoutMs: 600,
+    }).then(
+      () => undefined,
+      (e: unknown) => e as Error,
+    );
+    expect(err?.message).toMatch(/exited before becoming reachable \(code=255, signal=null: Connection refused by sshd/);
+    expect(err?.message).toMatch(/after \d+ attempts within 600ms/);
+    expect(spawns).toBeGreaterThan(1);
+  });
+});
+
 // ── real SSH-default per-attachment transport ───────────────────────────────
 // attach_over_real_transport == 1 / attach_injects_client_credential == 1
 //
