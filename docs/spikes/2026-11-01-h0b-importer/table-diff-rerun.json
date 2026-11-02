@@ -1,0 +1,272 @@
+{
+ "only_in_source": [],
+ "only_after": [],
+ "tables": {
+  "account": {
+   "cols_added": [],
+   "cols_dropped": [],
+   "rows_src": 0,
+   "rows_after": 0,
+   "common_cols_hash_equal": true
+  },
+  "account_state": {
+   "cols_added": [],
+   "cols_dropped": [],
+   "rows_src": 0,
+   "rows_after": 0,
+   "common_cols_hash_equal": true
+  },
+  "blob": {
+   "cols_added": [],
+   "cols_dropped": [],
+   "rows_src": 0,
+   "rows_after": 0,
+   "common_cols_hash_equal": true
+  },
+  "blob_ref": {
+   "cols_added": [],
+   "cols_dropped": [],
+   "rows_src": 0,
+   "rows_after": 0,
+   "common_cols_hash_equal": true
+  },
+  "control_account": {
+   "cols_added": [],
+   "cols_dropped": [],
+   "rows_src": 0,
+   "rows_after": 0,
+   "common_cols_hash_equal": true
+  },
+  "credential": {
+   "cols_added": [],
+   "cols_dropped": [],
+   "rows_src": 0,
+   "rows_after": 0,
+   "common_cols_hash_equal": true
+  },
+  "event": {
+   "cols_added": [],
+   "cols_dropped": [],
+   "rows_src": 0,
+   "rows_after": 0,
+   "common_cols_hash_equal": true
+  },
+  "event_sequence": {
+   "cols_added": [],
+   "cols_dropped": [],
+   "rows_src": 3420,
+   "rows_after": 3420,
+   "common_cols_hash_equal": true
+  },
+  "instruction_blob": {
+   "cols_added": [],
+   "cols_dropped": [],
+   "rows_src": 0,
+   "rows_after": 0,
+   "common_cols_hash_equal": true
+  },
+  "instruction_entry": {
+   "cols_added": [],
+   "cols_dropped": [],
+   "rows_src": 0,
+   "rows_after": 0,
+   "common_cols_hash_equal": true
+  },
+  "instruction_state": {
+   "cols_added": [],
+   "cols_dropped": [],
+   "rows_src": 0,
+   "rows_after": 0,
+   "common_cols_hash_equal": true
+  },
+  "job": {
+   "cols_added": [],
+   "cols_dropped": [],
+   "rows_src": 0,
+   "rows_after": 0,
+   "common_cols_hash_equal": true
+  },
+  "kv": {
+   "cols_added": [],
+   "cols_dropped": [],
+   "rows_src": 1,
+   "rows_after": 1,
+   "common_cols_hash_equal": false
+  },
+  "message": {
+   "cols_added": [],
+   "cols_dropped": [],
+   "rows_src": 184167,
+   "rows_after": 184167,
+   "common_cols_hash_equal": true
+  },
+  "migration": {
+   "cols_added": [],
+   "cols_dropped": [],
+   "rows_src": 66,
+   "rows_after": 66,
+   "common_cols_hash_equal": true
+  },
+  "part": {
+   "cols_added": [],
+   "cols_dropped": [],
+   "rows_src": 735801,
+   "rows_after": 735801,
+   "common_cols_hash_equal": true
+  },
+  "permission": {
+   "cols_added": [],
+   "cols_dropped": [],
+   "rows_src": 30,
+   "rows_after": 30,
+   "common_cols_hash_equal": true
+  },
+  "project": {
+   "cols_added": [],
+   "cols_dropped": [],
+   "rows_src": 14,
+   "rows_after": 14,
+   "common_cols_hash_equal": true
+  },
+  "project_directory": {
+   "cols_added": [],
+   "cols_dropped": [],
+   "rows_src": 42,
+   "rows_after": 42,
+   "common_cols_hash_equal": true
+  },
+  "provider_permission": {
+   "cols_added": [],
+   "cols_dropped": [],
+   "rows_src": 0,
+   "rows_after": 0,
+   "common_cols_hash_equal": true
+  },
+  "runtime_busy": {
+   "cols_added": [],
+   "cols_dropped": [],
+   "rows_src": 22,
+   "rows_after": 22,
+   "common_cols_hash_equal": true
+  },
+  "runtime_pending": {
+   "cols_added": [],
+   "cols_dropped": [],
+   "rows_src": 77,
+   "rows_after": 77,
+   "common_cols_hash_equal": true
+  },
+  "runtime_session_owner": {
+   "cols_added": [],
+   "cols_dropped": [],
+   "rows_src": 23,
+   "rows_after": 23,
+   "common_cols_hash_equal": true
+  },
+  "schedule": {
+   "cols_added": [],
+   "cols_dropped": [],
+   "rows_src": 0,
+   "rows_after": 0,
+   "common_cols_hash_equal": true
+  },
+  "session": {
+   "cols_added": [],
+   "cols_dropped": [],
+   "rows_src": 3420,
+   "rows_after": 3420,
+   "common_cols_hash_equal": true
+  },
+  "session_inbox": {
+   "cols_added": [],
+   "cols_dropped": [],
+   "rows_src": 0,
+   "rows_after": 0,
+   "common_cols_hash_equal": true
+  },
+  "session_lineage": {
+   "cols_added": [],
+   "cols_dropped": [],
+   "rows_src": 1314,
+   "rows_after": 1314,
+   "common_cols_hash_equal": true
+  },
+  "session_lineage_origin": {
+   "cols_added": [],
+   "cols_dropped": [],
+   "rows_src": 0,
+   "rows_after": 0,
+   "common_cols_hash_equal": true
+  },
+  "session_message": {
+   "cols_added": [],
+   "cols_dropped": [],
+   "rows_src": 186909,
+   "rows_after": 186909,
+   "common_cols_hash_equal": true
+  },
+  "session_part": {
+   "cols_added": [],
+   "cols_dropped": [],
+   "rows_src": 0,
+   "rows_after": 0,
+   "common_cols_hash_equal": true
+  },
+  "session_receipt": {
+   "cols_added": [],
+   "cols_dropped": [],
+   "rows_src": 0,
+   "rows_after": 0,
+   "common_cols_hash_equal": true
+  },
+  "session_receipt_assessment": {
+   "cols_added": [],
+   "cols_dropped": [],
+   "rows_src": 0,
+   "rows_after": 0,
+   "common_cols_hash_equal": true
+  },
+  "session_receipt_operation": {
+   "cols_added": [],
+   "cols_dropped": [],
+   "rows_src": 0,
+   "rows_after": 0,
+   "common_cols_hash_equal": true
+  },
+  "session_share": {
+   "cols_added": [],
+   "cols_dropped": [],
+   "rows_src": 0,
+   "rows_after": 0,
+   "common_cols_hash_equal": true
+  },
+  "session_v2": {
+   "cols_added": [],
+   "cols_dropped": [],
+   "rows_src": 3420,
+   "rows_after": 3420,
+   "common_cols_hash_equal": true
+  },
+  "todo": {
+   "cols_added": [],
+   "cols_dropped": [],
+   "rows_src": 1775,
+   "rows_after": 1775,
+   "common_cols_hash_equal": true
+  },
+  "workspace": {
+   "cols_added": [],
+   "cols_dropped": [],
+   "rows_src": 0,
+   "rows_after": 0,
+   "common_cols_hash_equal": true
+  },
+  "worktree": {
+   "cols_added": [],
+   "cols_dropped": [],
+   "rows_src": 42,
+   "rows_after": 42,
+   "common_cols_hash_equal": true
+  }
+ }
+}
