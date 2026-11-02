@@ -30,6 +30,7 @@ import { basename, join } from "node:path";
 import { EventQueue } from "./event_queue.js";
 import { appendRecord, type ReceiptRecord } from "./ledger.js";
 import { classifyLine } from "./telemetry.js";
+import { startRunLock, type LockHeartbeat } from "./run_lock.js";
 import {
   appendIndex,
   atomicWriteFile,
@@ -341,6 +342,8 @@ export interface CloudMirrorArgs {
   onLine?: (line: string) => void;
   /** Settle hook: fired once, after FINISHED and the receipt are on disk. */
   onSettle?: (result: Finished) => void;
+  /** run.lock heartbeat of the process driving this mirror (#2045): ended just before FINISHED. */
+  lock?: LockHeartbeat;
 }
 
 /** CloudMirror — the local half of a cloud run: it owns the run dir, the
@@ -364,6 +367,7 @@ export class CloudMirror {
   private readonly client: CloudClient;
   private readonly onLine?: (line: string) => void;
   private readonly onSettle?: (result: Finished) => void;
+  private readonly lock?: LockHeartbeat;
   private iterHigh = -1; // stats high-water: Δ4 re-serves history each poll; dedup here
   private frameHigh = -1; // frames high-water
   private pulseHigh = -1; // pulse high-water (AMICODE_PULSE iter=N); dedup like stats
@@ -377,6 +381,7 @@ export class CloudMirror {
     this.runDir = args.runDir;
     this.onLine = args.onLine;
     this.onSettle = args.onSettle;
+    this.lock = args.lock;
   }
 
   /** run.log line + event — byte-for-byte the LocalExecutor onLine path
@@ -480,6 +485,7 @@ export class CloudMirror {
   settle(status: RunStatus, exitCode: number): void {
     if (this.settled) return;
     this.settled = true;
+    this.lock?.end(); // run.lock ended:true immediately BEFORE FINISHED
     try {
       writeFinished(this.runDir, status, exitCode); // atomic; the mirror's authoritative verdict
     } catch (e) {
@@ -511,6 +517,8 @@ export interface CloudRunOpts {
    *  inferred terminal. Default 10 min — deliberately the inspector's
    *  STALL_AFTER_MS. */
   lostAfterMs?: number;
+  /** sha256 of the canonical solvespec for run.lock, or undefined for bare runs. */
+  specHash?: string;
 }
 
 /** The full cloud lifecycle — the RemoteExecutor.submit() body, moved once
@@ -541,11 +549,22 @@ export async function cloudRun(opts: CloudRunOpts): Promise<RunHandle> {
   const finished = new Promise<Finished>((r) => {
     resolveFinished = r;
   });
+  // run.lock: this process drives the mirror (unprotected by construction — a remote run's
+  // compute lives in the cloud, but the local mirror dies with its process); the lock records
+  // the remote task id so any engine can see what the run is.
+  const lock = startRunLock(runDir, {
+    runId,
+    unit: null,
+    protection: "none",
+    specHash: opts.specHash ?? null,
+    cloudRunId: taskId,
+  });
   const mirror = new CloudMirror({
     client,
     taskId,
     runId,
     runDir,
+    lock,
     onLine: (line) => events.push(classifyLine(line, "stdout")),
     onSettle: (f) => {
       events.push({ kind: "finished", status: f.status, exitCode: f.exitCode });

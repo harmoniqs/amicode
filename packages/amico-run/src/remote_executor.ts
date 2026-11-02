@@ -74,6 +74,7 @@ export class RemoteExecutor implements Executor {
       pollMs: this.pollMs,
       warmingBudgetMs: this.warmingBudgetMs,
       lostAfterMs: this.lostAfterMs,
+      specHash: opts.spec?.hashes?.spec_hash,
     });
   }
 }
