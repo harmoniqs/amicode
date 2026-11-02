@@ -1,0 +1,37 @@
+diff --git a/packages/server/src/event-feed.ts b/packages/server/src/event-feed.ts
+index 19cf5f014c..aca1e13088 100644
+--- a/packages/server/src/event-feed.ts
++++ b/packages/server/src/event-feed.ts
+@@ -69,6 +69,11 @@ export const make = Effect.fn("EventFeed.make")(function* (
+     }
+   })
+ 
++  // H0C INSTRUMENTATION (scratch clone only): record per-subscriber lifecycle server-side.
++  const h0c = (what: string) => {
++    const file = process.env.H0C_SUBS_LOG
++    if (file) require("node:fs").appendFileSync(file, `${Date.now()} ${what} subscribers=${subscribers.size}\n`)
++  }
+   const unsubscribe = yield* observe(publish)
+   yield* Effect.addFinalizer(() => unsubscribe)
+ 
+@@ -76,10 +81,18 @@ export const make = Effect.fn("EventFeed.make")(function* (
+     subscribe: (types) =>
+       Effect.acquireRelease(
+         Queue.dropping<string, Error>(capacity).pipe(
+-          Effect.tap((queue) => Effect.sync(() => subscribers.set(queue, types?.length ? new Set(types) : undefined))),
++          Effect.tap((queue) =>
++            Effect.sync(() => {
++              subscribers.set(queue, types?.length ? new Set(types) : undefined)
++              h0c("subscribe")
++            }),
++          ),
+         ),
+         (queue) =>
+-          Effect.sync(() => subscribers.delete(queue)).pipe(Effect.andThen(Queue.shutdown(queue)), Effect.asVoid),
++          Effect.sync(() => {
++            subscribers.delete(queue)
++            h0c("release")
++          }).pipe(Effect.andThen(Queue.shutdown(queue)), Effect.asVoid),
+       ).pipe(Effect.map(Stream.fromQueue)),
+   })
+ })

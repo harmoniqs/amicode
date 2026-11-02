@@ -1,0 +1,23 @@
+# c2a built: {"startup ms":119,"resumeSuspendedSessions forked":true,"context has SdkPlugins/Workspace":true}
+PASS c2a/bare                 C1   info=200 v=0.0.0-h0c create=200 id=ses_<scratch> listed=true (n=1)
+PASS c2a/bare                 C2   status=200 body.ok=true
+FAIL c2a/bare                 C3   no-credentials: /api/info=401 /api/session=401 /amicode/ping=401 /nope=404 /api/event=401; wrong-password /api/info=401
+PASS c2a/bare                 C4   server.connected=true
+PASS c2a/bare                 C5   heartbeat after 4 ms
+PASS c2a/bare                 C5b  heartbeats at 4, 15013 ms (gap 15009 ms)
+PASS c2a/bare                 C6   server-side feed log: subscribed(subscribers=1) -> released(subscribers=0)
+PASS c2a/bare                 C7   listed=true rpc=200 {"output":"pong-from-in-process-plugin"}
+PASS c2a/bare                 C8   provider=h0c calls=create,destroy
+PASS c2a/fronted              C1   info=200 v=0.0.0-h0c create=200 id=ses_<scratch> listed=true (n=2)
+PASS c2a/fronted              C2   status=200 body.ok=true
+PASS c2a/fronted              C3   no-credentials: /api/info=401 /api/session=401 /amicode/ping=401 /nope=401 /api/event=401; wrong-password /api/info=401
+PASS c2a/fronted              C4   server.connected=true
+PASS c2a/fronted              C5   heartbeat after 1 ms
+PASS c2a/fronted              C5b  heartbeats at 1, 15008 ms (gap 15007 ms)
+PASS c2a/fronted              C6   server-side feed log: subscribed(subscribers=1) -> released(subscribers=0)
+PASS c2a/fronted              C7   listed=true rpc=200 {"output":"pong-from-in-process-plugin"}
+PASS c2a/fronted              C8   provider=h0c calls=create,destroy,create,destroy
+PASS c2a                      C9a  hub-path fds=0; own fresh DB fds=3
+PASS c2a                      C9b  listening ports of process tree: [51061,51129]; outside 51000-51999: []
+PASS c2a                      C9c  service registration files under sandbox: []
+# c2a done

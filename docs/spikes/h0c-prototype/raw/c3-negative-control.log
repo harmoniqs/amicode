@@ -1,0 +1,15 @@
+# c3 built: {"startup ms":1513,"port":51157,"pid":3581309,"innerPassword":"h0c-inner-throwaway"}
+PASS c3/fronted-no-abort-forward C1   info=200 v=local create=200 id=ses_<scratch> listed=true (n=1)
+PASS c3/fronted-no-abort-forward C2   status=200 body.ok=true
+PASS c3/fronted-no-abort-forward C3   no-credentials: /api/info=401 /api/session=401 /amicode/ping=401 /nope=401 /api/event=401; wrong-password /api/info=401
+PASS c3/fronted-no-abort-forward C4   server.connected=true
+PASS c3/fronted-no-abort-forward C5   heartbeat after 4 ms
+PASS c3/fronted-no-abort-forward C5b  heartbeats at 4, 15008 ms (gap 15004 ms)
+FAIL c3/fronted-no-abort-forward C6   server-side feed log: subscribed(subscribers=1) -> NO release within 5 s of client abort
+NA   c3/fronted-no-abort-forward C7   seam exposes no in-process plugin handle
+PASS c3/fronted-no-abort-forward C7b  file plugin listed=true rpc=200 {"output":"pong-from-file-plugin"}
+NA   c3/fronted-no-abort-forward C8   seam cannot drive a workspace provider in-process
+PASS c3                       C9a  hub-path fds=0; own fresh DB fds=3
+PASS c3                       C9b  listening ports of process tree: [51157,51572]; outside 51000-51999: []
+PASS c3                       C9c  service registration files under sandbox: []
+# c3 done

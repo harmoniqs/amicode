@@ -1,0 +1,189 @@
+{
+  "name": "c2b",
+  "facts": {
+    "startup ms": 109,
+    "overrides accepted (workspace registry)": true
+  },
+  "rows": [
+    {
+      "target": "c2b/bare",
+      "id": "C1",
+      "verdict": "PASS",
+      "detail": "info=200 v=0.0.0-h0c create=200 id=ses_<scratch> listed=true (n=1)"
+    },
+    {
+      "target": "c2b/bare",
+      "id": "C2",
+      "verdict": "NA",
+      "detail": "no custom-route seam without a host front at this layer"
+    },
+    {
+      "target": "c2b/bare",
+      "id": "C3",
+      "verdict": "FAIL",
+      "detail": "no-credentials: /api/info=401 /api/session=401 /amicode/ping=404 /nope=404 /api/event=401; wrong-password /api/info=401"
+    },
+    {
+      "target": "c2b/bare",
+      "id": "C4",
+      "verdict": "PASS",
+      "detail": "server.connected=true"
+    },
+    {
+      "target": "c2b/bare",
+      "id": "C5",
+      "verdict": "PASS",
+      "detail": "heartbeat after 2 ms"
+    },
+    {
+      "target": "c2b/bare",
+      "id": "C5b",
+      "verdict": "PASS",
+      "detail": "heartbeats at 2, 15009 ms (gap 15007 ms)"
+    },
+    {
+      "target": "c2b/bare",
+      "id": "C6",
+      "verdict": "PASS",
+      "detail": "server-side feed log: subscribed(subscribers=1) -> released(subscribers=0)"
+    },
+    {
+      "target": "c2b/bare",
+      "id": "C7",
+      "verdict": "NA",
+      "detail": "seam exposes no in-process plugin handle"
+    },
+    {
+      "target": "c2b/bare",
+      "id": "C8",
+      "verdict": "NA",
+      "detail": "seam cannot drive a workspace provider in-process"
+    },
+    {
+      "target": "c2b/fronted",
+      "id": "C1",
+      "verdict": "PASS",
+      "detail": "info=200 v=0.0.0-h0c create=200 id=ses_<scratch> listed=true (n=2)"
+    },
+    {
+      "target": "c2b/fronted",
+      "id": "C2",
+      "verdict": "PASS",
+      "detail": "status=200 body.ok=true"
+    },
+    {
+      "target": "c2b/fronted",
+      "id": "C3",
+      "verdict": "PASS",
+      "detail": "no-credentials: /api/info=401 /api/session=401 /amicode/ping=401 /nope=401 /api/event=401; wrong-password /api/info=401"
+    },
+    {
+      "target": "c2b/fronted",
+      "id": "C4",
+      "verdict": "PASS",
+      "detail": "server.connected=true"
+    },
+    {
+      "target": "c2b/fronted",
+      "id": "C5",
+      "verdict": "PASS",
+      "detail": "heartbeat after 1 ms"
+    },
+    {
+      "target": "c2b/fronted",
+      "id": "C5b",
+      "verdict": "PASS",
+      "detail": "heartbeats at 1, 15010 ms (gap 15009 ms)"
+    },
+    {
+      "target": "c2b/fronted",
+      "id": "C6",
+      "verdict": "PASS",
+      "detail": "server-side feed log: subscribed(subscribers=1) -> released(subscribers=0)"
+    },
+    {
+      "target": "c2b/fronted",
+      "id": "C7",
+      "verdict": "NA",
+      "detail": "seam exposes no in-process plugin handle"
+    },
+    {
+      "target": "c2b/fronted",
+      "id": "C8",
+      "verdict": "NA",
+      "detail": "seam cannot drive a workspace provider in-process"
+    },
+    {
+      "target": "c2b/fronted-default-idle",
+      "id": "C1",
+      "verdict": "PASS",
+      "detail": "info=200 v=0.0.0-h0c create=200 id=ses_<scratch> listed=true (n=3)"
+    },
+    {
+      "target": "c2b/fronted-default-idle",
+      "id": "C2",
+      "verdict": "PASS",
+      "detail": "status=200 body.ok=true"
+    },
+    {
+      "target": "c2b/fronted-default-idle",
+      "id": "C3",
+      "verdict": "PASS",
+      "detail": "no-credentials: /api/info=401 /api/session=401 /amicode/ping=401 /nope=401 /api/event=401; wrong-password /api/info=401"
+    },
+    {
+      "target": "c2b/fronted-default-idle",
+      "id": "C4",
+      "verdict": "PASS",
+      "detail": "server.connected=true err=TypeError: The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()"
+    },
+    {
+      "target": "c2b/fronted-default-idle",
+      "id": "C5",
+      "verdict": "PASS",
+      "detail": "heartbeat after 1 ms"
+    },
+    {
+      "target": "c2b/fronted-default-idle",
+      "id": "C5b",
+      "verdict": "FAIL",
+      "detail": "only 1 heartbeat(s) in 40000 ms (TypeError: The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch())"
+    },
+    {
+      "target": "c2b/fronted-default-idle",
+      "id": "C6",
+      "verdict": "PASS",
+      "detail": "server-side feed log: subscribed(subscribers=1) -> released(subscribers=0)"
+    },
+    {
+      "target": "c2b/fronted-default-idle",
+      "id": "C7",
+      "verdict": "NA",
+      "detail": "seam exposes no in-process plugin handle"
+    },
+    {
+      "target": "c2b/fronted-default-idle",
+      "id": "C8",
+      "verdict": "NA",
+      "detail": "seam cannot drive a workspace provider in-process"
+    },
+    {
+      "target": "c2b",
+      "id": "C9a",
+      "verdict": "PASS",
+      "detail": "hub-path fds=0; own fresh DB fds=3"
+    },
+    {
+      "target": "c2b",
+      "id": "C9b",
+      "verdict": "PASS",
+      "detail": "listening ports of process tree: [51758,51956,51226]; outside 51000-51999: []"
+    },
+    {
+      "target": "c2b",
+      "id": "C9c",
+      "verdict": "PASS",
+      "detail": "service registration files under sandbox: []"
+    }
+  ]
+}

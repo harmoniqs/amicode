@@ -1,0 +1,269 @@
+{
+  "name": "c3",
+  "facts": {
+    "startup ms": 2119,
+    "port": 51918,
+    "pid": 3593679,
+    "innerPassword": "h0c-inner-throwaway"
+  },
+  "rows": [
+    {
+      "target": "c3/bare",
+      "id": "C1",
+      "verdict": "PASS",
+      "detail": "info=200 v=local create=200 id=ses_<scratch> listed=true (n=1)"
+    },
+    {
+      "target": "c3/bare",
+      "id": "C2",
+      "verdict": "NA",
+      "detail": "no custom-route seam without a host front at this layer"
+    },
+    {
+      "target": "c3/bare",
+      "id": "C3",
+      "verdict": "FAIL",
+      "detail": "no-credentials: /api/info=401 /api/session=401 /amicode/ping=500 /nope=500 /api/event=401; wrong-password /api/info=401"
+    },
+    {
+      "target": "c3/bare",
+      "id": "C4",
+      "verdict": "PASS",
+      "detail": "server.connected=true"
+    },
+    {
+      "target": "c3/bare",
+      "id": "C5",
+      "verdict": "PASS",
+      "detail": "heartbeat after 7 ms"
+    },
+    {
+      "target": "c3/bare",
+      "id": "C5b",
+      "verdict": "PASS",
+      "detail": "heartbeats at 7, 15008 ms (gap 15001 ms)"
+    },
+    {
+      "target": "c3/bare",
+      "id": "C6",
+      "verdict": "PASS",
+      "detail": "server-side feed log: subscribed(subscribers=1) -> released(subscribers=0)"
+    },
+    {
+      "target": "c3/bare",
+      "id": "C7",
+      "verdict": "NA",
+      "detail": "seam exposes no in-process plugin handle"
+    },
+    {
+      "target": "c3/bare",
+      "id": "C7b",
+      "verdict": "PASS",
+      "detail": "file plugin listed=true rpc=200 {\"output\":\"pong-from-file-plugin\"}"
+    },
+    {
+      "target": "c3/bare",
+      "id": "C8",
+      "verdict": "NA",
+      "detail": "seam cannot drive a workspace provider in-process"
+    },
+    {
+      "target": "c3/fronted",
+      "id": "C1",
+      "verdict": "PASS",
+      "detail": "info=200 v=local create=200 id=ses_<scratch> listed=true (n=2)"
+    },
+    {
+      "target": "c3/fronted",
+      "id": "C2",
+      "verdict": "PASS",
+      "detail": "status=200 body.ok=true"
+    },
+    {
+      "target": "c3/fronted",
+      "id": "C3",
+      "verdict": "PASS",
+      "detail": "no-credentials: /api/info=401 /api/session=401 /amicode/ping=401 /nope=401 /api/event=401; wrong-password /api/info=401"
+    },
+    {
+      "target": "c3/fronted",
+      "id": "C4",
+      "verdict": "PASS",
+      "detail": "server.connected=true"
+    },
+    {
+      "target": "c3/fronted",
+      "id": "C5",
+      "verdict": "PASS",
+      "detail": "heartbeat after 1 ms"
+    },
+    {
+      "target": "c3/fronted",
+      "id": "C5b",
+      "verdict": "PASS",
+      "detail": "heartbeats at 1, 15002 ms (gap 15001 ms)"
+    },
+    {
+      "target": "c3/fronted",
+      "id": "C6",
+      "verdict": "PASS",
+      "detail": "server-side feed log: subscribed(subscribers=1) -> released(subscribers=0)"
+    },
+    {
+      "target": "c3/fronted",
+      "id": "C7",
+      "verdict": "NA",
+      "detail": "seam exposes no in-process plugin handle"
+    },
+    {
+      "target": "c3/fronted",
+      "id": "C7b",
+      "verdict": "PASS",
+      "detail": "file plugin listed=true rpc=200 {\"output\":\"pong-from-file-plugin\"}"
+    },
+    {
+      "target": "c3/fronted",
+      "id": "C8",
+      "verdict": "NA",
+      "detail": "seam cannot drive a workspace provider in-process"
+    },
+    {
+      "target": "c3/fronted-body-cancel-only",
+      "id": "C1",
+      "verdict": "PASS",
+      "detail": "info=200 v=local create=200 id=ses_<scratch> listed=true (n=3)"
+    },
+    {
+      "target": "c3/fronted-body-cancel-only",
+      "id": "C2",
+      "verdict": "PASS",
+      "detail": "status=200 body.ok=true"
+    },
+    {
+      "target": "c3/fronted-body-cancel-only",
+      "id": "C3",
+      "verdict": "PASS",
+      "detail": "no-credentials: /api/info=401 /api/session=401 /amicode/ping=401 /nope=401 /api/event=401; wrong-password /api/info=401"
+    },
+    {
+      "target": "c3/fronted-body-cancel-only",
+      "id": "C4",
+      "verdict": "PASS",
+      "detail": "server.connected=true"
+    },
+    {
+      "target": "c3/fronted-body-cancel-only",
+      "id": "C5",
+      "verdict": "PASS",
+      "detail": "heartbeat after 2 ms"
+    },
+    {
+      "target": "c3/fronted-body-cancel-only",
+      "id": "C5b",
+      "verdict": "PASS",
+      "detail": "heartbeats at 2, 15003 ms (gap 15001 ms)"
+    },
+    {
+      "target": "c3/fronted-body-cancel-only",
+      "id": "C6",
+      "verdict": "PASS",
+      "detail": "server-side feed log: subscribed(subscribers=1) -> released(subscribers=0)"
+    },
+    {
+      "target": "c3/fronted-body-cancel-only",
+      "id": "C7",
+      "verdict": "NA",
+      "detail": "seam exposes no in-process plugin handle"
+    },
+    {
+      "target": "c3/fronted-body-cancel-only",
+      "id": "C7b",
+      "verdict": "PASS",
+      "detail": "file plugin listed=true rpc=200 {\"output\":\"pong-from-file-plugin\"}"
+    },
+    {
+      "target": "c3/fronted-body-cancel-only",
+      "id": "C8",
+      "verdict": "NA",
+      "detail": "seam cannot drive a workspace provider in-process"
+    },
+    {
+      "target": "c3/fronted-no-abort-forward",
+      "id": "C1",
+      "verdict": "PASS",
+      "detail": "info=200 v=local create=200 id=ses_<scratch> listed=true (n=4)"
+    },
+    {
+      "target": "c3/fronted-no-abort-forward",
+      "id": "C2",
+      "verdict": "PASS",
+      "detail": "status=200 body.ok=true"
+    },
+    {
+      "target": "c3/fronted-no-abort-forward",
+      "id": "C3",
+      "verdict": "PASS",
+      "detail": "no-credentials: /api/info=401 /api/session=401 /amicode/ping=401 /nope=401 /api/event=401; wrong-password /api/info=401"
+    },
+    {
+      "target": "c3/fronted-no-abort-forward",
+      "id": "C4",
+      "verdict": "PASS",
+      "detail": "server.connected=true"
+    },
+    {
+      "target": "c3/fronted-no-abort-forward",
+      "id": "C5",
+      "verdict": "PASS",
+      "detail": "heartbeat after 2 ms"
+    },
+    {
+      "target": "c3/fronted-no-abort-forward",
+      "id": "C5b",
+      "verdict": "PASS",
+      "detail": "heartbeats at 2, 15004 ms (gap 15002 ms)"
+    },
+    {
+      "target": "c3/fronted-no-abort-forward",
+      "id": "C6",
+      "verdict": "FAIL",
+      "detail": "server-side feed log: subscribed(subscribers=1) -> NO release within 5 s of client abort"
+    },
+    {
+      "target": "c3/fronted-no-abort-forward",
+      "id": "C7",
+      "verdict": "NA",
+      "detail": "seam exposes no in-process plugin handle"
+    },
+    {
+      "target": "c3/fronted-no-abort-forward",
+      "id": "C7b",
+      "verdict": "PASS",
+      "detail": "file plugin listed=true rpc=200 {\"output\":\"pong-from-file-plugin\"}"
+    },
+    {
+      "target": "c3/fronted-no-abort-forward",
+      "id": "C8",
+      "verdict": "NA",
+      "detail": "seam cannot drive a workspace provider in-process"
+    },
+    {
+      "target": "c3",
+      "id": "C9a",
+      "verdict": "PASS",
+      "detail": "hub-path fds=0; own fresh DB fds=3"
+    },
+    {
+      "target": "c3",
+      "id": "C9b",
+      "verdict": "PASS",
+      "detail": "listening ports of process tree: [51002,51918,51408,51340]; outside 51000-51999: []"
+    },
+    {
+      "target": "c3",
+      "id": "C9c",
+      "verdict": "PASS",
+      "detail": "service registration files under sandbox: []"
+    }
+  ]
+}

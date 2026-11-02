@@ -1,0 +1,88 @@
+{
+  "name": "c2c",
+  "facts": {
+    "lifecycle": true,
+    "startup ms": 164,
+    "returned": [
+      "address",
+      "shutdown",
+      "updateAvailable",
+      "updated"
+    ],
+    "port": 51395
+  },
+  "rows": [
+    {
+      "target": "c2c/bare",
+      "id": "C1",
+      "verdict": "PASS",
+      "detail": "info=200 v=0.0.0-h0c create=200 id=ses_<scratch> listed=true (n=1)"
+    },
+    {
+      "target": "c2c/bare",
+      "id": "C2",
+      "verdict": "PASS",
+      "detail": "status=200 body.ok=true"
+    },
+    {
+      "target": "c2c/bare",
+      "id": "C3",
+      "verdict": "PASS",
+      "detail": "no-credentials: /api/info=401 /api/session=401 /amicode/ping=401 /nope=401 /api/event=401; wrong-password /api/info=401"
+    },
+    {
+      "target": "c2c/bare",
+      "id": "C4",
+      "verdict": "PASS",
+      "detail": "server.connected=true"
+    },
+    {
+      "target": "c2c/bare",
+      "id": "C5",
+      "verdict": "PASS",
+      "detail": "heartbeat after 6 ms"
+    },
+    {
+      "target": "c2c/bare",
+      "id": "C5b",
+      "verdict": "PASS",
+      "detail": "heartbeats at 6, 15010 ms (gap 15004 ms)"
+    },
+    {
+      "target": "c2c/bare",
+      "id": "C6",
+      "verdict": "PASS",
+      "detail": "server-side feed log: subscribed(subscribers=1) -> released(subscribers=0)"
+    },
+    {
+      "target": "c2c/bare",
+      "id": "C7",
+      "verdict": "NA",
+      "detail": "seam exposes no in-process plugin handle"
+    },
+    {
+      "target": "c2c/bare",
+      "id": "C8",
+      "verdict": "NA",
+      "detail": "seam cannot drive a workspace provider in-process"
+    },
+    {
+      "target": "c2c",
+      "id": "C9a",
+      "verdict": "PASS",
+      "detail": "hub-path fds=0; own fresh DB fds=3"
+    },
+    {
+      "target": "c2c",
+      "id": "C9b",
+      "verdict": "PASS",
+      "detail": "listening ports of process tree: [51395]; outside 51000-51999: []"
+    },
+    {
+      "target": "c2c",
+      "id": "C9c",
+      "verdict": "PASS",
+      "detail": "service registration files under sandbox: []"
+    }
+  ]
+}
