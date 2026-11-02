@@ -620,6 +620,33 @@ describe("buildSkillIndexSection", () => {
     expect(s).toMatch(/invoke .*BEFORE authoring/i);
     expect(s).not.toContain("/abs/SKILL.md"); // no file path in the prose (agent invokes, doesn't read)
   });
+  // #2094: the inline-constants rule is stated ONCE in the header, not appended
+  // to every platform entry (~3k tokens/step on a 103-entry index).
+  const RULE =
+    "inline the constants; authored scripts stay self-contained (no `include` of demo-repo files).";
+  it("states the physics-reference rule exactly once, in the header, scoped to platform physics skills (#2094)", () => {
+    const s = buildSkillIndexSection([
+      { source: "library", name: "atoms", description: "Rydberg physics", path: "/a" },
+      { source: "library", name: "transmon", description: "Transmon physics", path: "/b" },
+      { source: "library", name: "tdd", description: "TDD workflow", path: "/c" },
+    ]);
+    expect(s.split(RULE).length - 1).toBe(1);
+    expect(s).toMatch(/For platform physics skills, use them as physics reference/);
+    expect(s.indexOf(RULE)).toBeLessThan(s.indexOf("- **atoms**")); // header, before the entries
+  });
+  it("renders one line per platform entry — no boilerplate sub-bullet, label unchanged (#2094)", () => {
+    const s = buildSkillIndexSection([
+      { source: "library", name: "atoms", description: "Rydberg physics", path: "/a" },
+      { source: "library", name: "transmon", description: "Transmon physics", path: "/b" },
+    ]);
+    const lines = s.split("\n");
+    const entryIdx = lines.flatMap((l, i) => (l.startsWith("- **") ? [i] : []));
+    expect(entryIdx).toHaveLength(2);
+    entryIdx.forEach((i) => expect(lines[i + 1] ?? "").not.toMatch(/^\s+- /));
+    expect(lines).toContain("- **atoms** (platform reference) — Rydberg physics");
+    expect(lines).toContain("- **transmon** (platform reference) — Transmon physics");
+    expect(s).not.toMatch(/^\s+- Use as physics reference/m);
+  });
   it("orders platform entries before package entries", () => {
     const s = buildSkillIndexSection([
       { source: "package", package: "Piccolissimo", name: "authoring", description: "d", path: "/a" },

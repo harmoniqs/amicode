@@ -467,10 +467,16 @@ export function buildSkillIndexSection(entries: SkillIndexEntry[]): string {
     "**Invoke a skill by its name to load its full reference BEFORE authoring any script on its platform or importing its package** —",
     "it carries construction patterns, integrator selection, and the verification",
     "contract your script must emit.",
+    // Stated ONCE here, not per entry (#2094): the per-entry copy cost ~3k tokens/step.
+    ...(platform.length > 0
+      ? [
+          "For platform physics skills, use them as physics reference — inline the constants; authored scripts stay self-contained (no `include` of demo-repo files).",
+        ]
+      : []),
     "",
     ...platform.map(
       (e) =>
-        `- **${e.name}** (platform reference) — ${e.description}${e.provenanceNote ? ` **[${e.provenanceNote}]**` : ""}\n  - Use as physics reference — inline the constants; authored scripts stay self-contained (no \`include\` of demo-repo files).`,
+        `- **${e.name}** (platform reference) — ${e.description}${e.provenanceNote ? ` **[${e.provenanceNote}]**` : ""}`,
     ),
     ...project.map((e) => {
       const label = (e as any).overridesShipped ? "(project, overrides platform)" : "(project)";

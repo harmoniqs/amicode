@@ -285,6 +285,41 @@ describe("buildSkillIndexSection labels user/workspace skills (issue #573)", () 
     expect(iMyTool).toBeLessThan(iTeamLint);
     expect(iTeamLint).toBeLessThan(iPkgAuth);
   });
+
+  it("mixed-source index: the rule appears once, no entry carries the boilerplate sub-bullet, labels unchanged (#2094)", () => {
+    const entries: MergedSkillEntry[] = [
+      { source: "library", name: "transmon", description: "Transmon physics", path: "/a" },
+      { source: "library", name: "tdd", description: "TDD", path: "/a2" },
+      { source: "project", name: "proj", description: "Proj", path: "/p" },
+      { source: "environment", name: "env", description: "Env", path: "/e" },
+      { source: "custom", name: "atoms", description: "My atoms", path: "/b", overridesShipped: true },
+      { source: "workspace", name: "team-lint", description: "Team lint", path: "/c" },
+      { source: "package", package: "Piccolissimo", name: "pkg-auth", description: "Authoring", path: "/d" },
+    ];
+    const s = buildSkillIndexSection(entries);
+    expect(s.split("inline the constants; authored scripts stay self-contained").length - 1).toBe(1);
+    const lines = s.split("\n");
+    lines.forEach((l, i) => {
+      if (l.startsWith("- **")) expect(lines[i + 1] ?? "").not.toMatch(/^\s+- /);
+    });
+    expect(lines).toEqual(
+      expect.arrayContaining([
+        "- **transmon** (platform reference) — Transmon physics",
+        "- **tdd** (platform reference) — TDD",
+        "- **proj** (project) — Proj",
+        "- **env** (environment) — Env",
+        "- **atoms** (custom, overrides platform) — My atoms",
+        "- **team-lint** (workspace) — Team lint",
+        "- **pkg-auth** (package: Piccolissimo) — Authoring",
+      ]),
+    );
+    expect(s).toMatch(/invoke .*BEFORE authoring/i);
+  });
+
+  it("an index with no platform entries carries no platform physics rule (#2094)", () => {
+    const s = buildSkillIndexSection([{ source: "custom", name: "my-tool", description: "d", path: "/b" }]);
+    expect(s).not.toContain("inline the constants");
+  });
 });
 
 describe("engine suppression (issue #573 — OPENCODE_DISABLE_EXTERNAL_SKILLS)", () => {
