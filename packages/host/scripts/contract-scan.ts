@@ -12,7 +12,7 @@
 import fs from "node:fs"
 import path from "node:path"
 import ts from "typescript"
-import { contractIds, contractShapes, CONTRACTS, type Contracts } from "../test/contract/registry.ts"
+import { contractIds, contractShapes, CONTRACTS, DYNAMIC_IMPORTS, type Contracts, type DynamicAllowance } from "../test/contract/registry.ts"
 
 export type Kind = "value" | "type"
 export type Member = { name: string; kind: Kind }
@@ -244,7 +244,7 @@ export function requiredIds(inventory: Inventory) {
   ].sort()
 }
 
-export function coverage(inventory: Inventory, contracts: Contracts) {
+export function coverage(inventory: Inventory, contracts: Contracts, dynamic: readonly DynamicAllowance[] = []) {
   const required = requiredIds(inventory)
   const have = new Set(contractIds(contracts))
   const shapes = contractShapes(contracts)
@@ -256,8 +256,18 @@ export function coverage(inventory: Inventory, contracts: Contracts) {
       ...entry.members.filter((m) => m.kind === "value" && shapes.get(`${id}.${m.name}`)?.is === "type").map((m) => `${id}.${m.name}`),
     ]
   })
+  // Each allowance covers one occurrence of (file, expression); anything left over is unacknowledged.
+  const unused = [...dynamic]
+  const unacknowledged = inventory.underivable.filter((site) => {
+    const at = unused.findIndex((allowance) => allowance.file === site.file && allowance.text === site.text)
+    if (at < 0) return true
+    unused.splice(at, 1)
+    return false
+  })
   return {
     required,
+    unacknowledged,
+    staleAllowances: unused,
     uncovered: required.filter((id) => !have.has(id)),
     mismatched,
     // contracts nobody demands: kept (they may be anticipated entry points) but surfaced
@@ -272,8 +282,8 @@ function contractIsAnticipated(contracts: Contracts, id: string) {
   return entry ? entry.anticipated === true : Object.values(contracts[specifier] ?? {}).every((c) => c.anticipated === true)
 }
 
-export function report(inventory: Inventory, contracts: Contracts) {
-  return { inventory, ...coverage(inventory, contracts) }
+export function report(inventory: Inventory, contracts: Contracts, dynamic: readonly DynamicAllowance[] = []) {
+  return { inventory, ...coverage(inventory, contracts, dynamic) }
 }
 
 export function table(inventory: Inventory, uncovered: string[] | undefined) {
@@ -319,29 +329,39 @@ if (import.meta.main) {
     }
   }
   const inventory = scanSources(roots.length ? roots : [path.join(packageRoot, "src"), path.join(packageRoot, "bin")])
-  const result = report(inventory, CONTRACTS)
+  const result = report(inventory, CONTRACTS, DYNAMIC_IMPORTS)
   if (json) console.log(JSON.stringify(inventoryOnly ? { inventory } : result, null, 2))
   else {
     console.log(table(inventory, inventoryOnly ? undefined : result.uncovered))
     if (inventory.underivable.length)
       console.log(
-        `\nUNDERIVABLE dynamic imports (specifier is not a string literal; the scan cannot name their contract):\n` +
-          inventory.underivable.map((u) => `  ${u.file}:${u.line}  ${u.text}`).join("\n"),
+        `\nUNDERIVABLE dynamic imports (specifier is not a string literal; no package contract can be named, so each must be acknowledged in DYNAMIC_IMPORTS):\n` +
+          inventory.underivable
+            .map((u) => `  ${u.file}:${u.line}  ${u.text}  [${result.unacknowledged.includes(u) ? "NOT ACKNOWLEDGED" : "acknowledged"}]`)
+            .join("\n"),
       )
+    if (!inventoryOnly && result.staleAllowances.length)
+      console.log(`\nDYNAMIC_IMPORTS entries matching no import site (informational):\n  ${result.staleAllowances.map((a) => `${a.file} ${a.text}`).join("\n  ")}`)
     if (!inventoryOnly && result.unused.length) console.log(`\ncontracts nothing in the sources demands (informational):\n  ${result.unused.join("\n  ")}`)
   }
-  if (!inventoryOnly && result.mismatched.length) {
-    console.error(
-      `\ncontract-scan: ${result.mismatched.length} import(s) are used at runtime but their contract says "type" (compile-time only):\n` +
-        result.mismatched.map((id) => `  - ${id}`).join("\n"),
-    )
-    process.exit(1)
-  }
-  if (!inventoryOnly && result.uncovered.length) {
-    console.error(
-      `\ncontract-scan: ${result.uncovered.length} upstream import(s) have NO contract in test/contract/registry.ts:\n` +
-        result.uncovered.map((id) => `  - ${id}`).join("\n"),
-    )
-    process.exit(1)
+  if (!inventoryOnly) {
+    const problems = [
+      ...(result.mismatched.length
+        ? [`${result.mismatched.length} import(s) are used at runtime but their contract says "type" (compile-time only):\n` + result.mismatched.map((id) => `  - ${id}`).join("\n")]
+        : []),
+      ...(result.unacknowledged.length
+        ? [
+            `${result.unacknowledged.length} dynamic import(s) with a non-literal specifier are not acknowledged in DYNAMIC_IMPORTS (test/contract/registry.ts):\n` +
+              result.unacknowledged.map((u) => `  - ${u.file}:${u.line}  ${u.text}`).join("\n"),
+          ]
+        : []),
+      ...(result.uncovered.length
+        ? [`${result.uncovered.length} upstream import(s) have NO contract in test/contract/registry.ts:\n` + result.uncovered.map((id) => `  - ${id}`).join("\n")]
+        : []),
+    ]
+    if (problems.length) {
+      console.error("\n" + problems.map((problem) => `contract-scan: ${problem}`).join("\n\n"))
+      process.exit(1)
+    }
   }
 }

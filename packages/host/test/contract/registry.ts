@@ -30,6 +30,21 @@ export function contractIds(contracts: Contracts) {
   ])
 }
 
+/**
+ * An acknowledged "underivable" import site: a dynamic `import(<expression>)` whose specifier is computed, so no
+ * package contract can be named for it. The scan fails on any site not listed here (a NEW non-literal import must be
+ * acknowledged by a person, with a reason and the contract that stands in for it). Sites are matched by file and
+ * expression text, not line number, so an unrelated edit above does not break the match; `line` is informational.
+ */
+export type DynamicAllowance = {
+  readonly file: string
+  readonly text: string
+  readonly line: number
+  readonly reason: string
+  /** The test that proves the dynamically loaded file registers/runs, standing in for a package contract. */
+  readonly contract: string
+}
+
 /** id -> shape (undefined for a bare module id). */
 export function contractShapes(contracts: Contracts) {
   return new Map<string, Shape | undefined>(
@@ -42,6 +57,23 @@ export function contractShapes(contracts: Contracts) {
     ]),
   )
 }
+
+export const DYNAMIC_IMPORTS: readonly DynamicAllowance[] = [
+  {
+    file: "plugins/index.ts",
+    text: "import(file)",
+    line: 84,
+    reason: "loads the user plugin modules named in AMICODE_HOST_PLUGIN_CONFIG.modules: the path is operator input, not a package specifier.",
+    contract: "test/contract/loader.test.ts (a user plugin file registers through fromPromise and its hooks fire in a real host)",
+  },
+  {
+    file: "plugins/context.ts",
+    text: "import(path.join(directory, file))",
+    line: 126,
+    reason: "loads the v1 context builders from the extension's opencode-plugin directory (context.extensionDir): a path, not a package specifier.",
+    contract: "test/contract/loader.test.ts (the extension builders' output reaches the model request)",
+  },
+]
 
 const fn = (max?: number): Shape => ({ is: "function", ...(max === undefined ? {} : { arity: { max } }) })
 const type: Shape = { is: "type" }
@@ -69,6 +101,15 @@ export const CONTRACTS: Contracts = {
   // becomes demanded like any other (drop `anticipated`).
   "@opencode/core/plugin/sdk": {
     SdkPlugins: { is: "object", anticipated: true, members: { Service: { is: "function", check: tag, anticipated: true } } },
+  },
+  // The plugin API the host's plugin set (src/plugins/**) is written against. `Plugin`, `Plugin.Plugin` ({ id, setup })
+  // and `Plugin.Context` (the hook surface) are used only as TYPES: types.contract.ts is their gate. `fromPromise`
+  // is how the seam hands a Promise-form plugin to SdkPlugins.register.
+  "@opencode/plugin": {
+    Plugin: { is: "type", members: { Context: type, Plugin: type } },
+  },
+  "@opencode/plugin/promise/adapter": {
+    fromPromise: fn(1),
   },
   effect: {
     Context: { is: "object", members: { get: fn(2) } },

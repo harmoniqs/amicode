@@ -16,6 +16,8 @@ Everything lives in `packages/host`:
 | `test/contract/coverage.test.ts` | The gate: scan the real sources, fail on any uncovered pair. It runs inside the default `bun test`, so it cannot be skipped. |
 | `test/contract/http.test.ts`, `client.test.ts`, `plugin.test.ts` | The HTTP, client and plugin contracts, against a real host process / the published packages. |
 | `test/contract/scan.test.ts` | Pins the scanner itself: every import form it must understand. |
+| `test/contract/types.contract.ts`, `types.test.ts`, `typecheck.ts` | The type-only gate (see below). |
+| `test/contract/loader.test.ts`, `fixtures/` | The plugin-loader contract that stands in for the two acknowledged dynamic imports. |
 | `test/contract/drill.test.ts`, `shim.ts` | The planted-break drill. |
 
 ## How the inventory is derived
@@ -38,11 +40,14 @@ Each inventory item demands a **contract id**: `specifier`, `specifier#symbol`, 
 The scan exits **1** listing every id the registry does not name, and also every symbol the host uses at
 runtime but whose contract says `type` (compile-time only).
 
-Current inventory (host `src/` at this commit):
+Current inventory (host `src/` on the combined H1b + H1d tree, plus the two acknowledged dynamic imports below):
 
 ```
 SPECIFIER                                 SYMBOL              MEMBERS
+@opencode/core/plugin/sdk                 SdkPlugins          Service
 @opencode/core/session/execution/restart  SessionRestart      Service
+@opencode/plugin                          Plugin              Context(type), Plugin(type)      [type-only]
+@opencode/plugin/promise/adapter          fromPromise
 @opencode/server/routes                   createRoutes
 effect                                    Context             get
 effect                                    Effect              Effect(type), gen, runFork, runPromise, scope, sync
@@ -99,6 +104,44 @@ Run against a **real host process** (`bin/amicode-host.mjs`) in a sandbox on loo
 - **Plugin registration**: `SdkPlugins.Service.register(plugin)` adds one generation, and the plugin's `effect`
   runs when a Location boots (any Location-scoped request).
 
+## Type-only symbols
+
+Some upstream symbols are used only as types (`Plugin.Plugin`, `Plugin.Context`, `Effect.Effect`,
+`HttpServerResponse.HttpServerResponse`): there is nothing to assert at runtime, so their registry entries are
+`{ is: "type" }` and their gate is the compiler. `types.contract.ts` is a small program that uses each of them the way
+`src/plugins/**` and the seam do (the whole hook surface the plugin set registers on, `Plugin.Plugin` as
+`{ id, setup }`, handing a plugin to `fromPromise`). `types.test.ts` compiles it with the TypeScript API — so a bare
+`bun test` catches a renamed or reshaped type without a separate `tsc` run — and asserts that **every** `type`
+entry in the registry is mentioned in that file. `typeCheck(file, overrides)` (`typecheck.ts`) can swap in-memory
+replacements for the published `.d.ts` files, which is how the drill plants a type break.
+
+## Underivable dynamic imports
+
+A dynamic `import(<expression>)` whose specifier is computed cannot be tied to a package, so the scan cannot derive a
+contract for it. Policy, enforced:
+
+1. Each such site must be **acknowledged** in `DYNAMIC_IMPORTS` (`test/contract/registry.ts`): file, the expression
+   text, a reason (at least a sentence), and the test that stands in for it. A site is matched by file and expression
+   text, not line number, so an unrelated edit above it does not break the match (`line` is informational).
+2. The scan **exits 1** and names `file:line` for any non-literal dynamic import that is not acknowledged, and
+   `coverage.test.ts` fails with it. A NEW one therefore stops the build until a person acknowledges it.
+   Allowances that match no site are reported as stale (informational).
+3. What an acknowledgement promises is a *behavioural* contract: `loader.test.ts` runs a real host with (a) a user
+   plugin file named in `AMICODE_HOST_PLUGIN_CONFIG.modules` — loaded through `plugins/index.ts`'s `import(file)` — and
+   (b) an extension directory of context builders — loaded through `plugins/context.ts`'s
+   `import(path.join(directory, file))`. It proves the loaded plugin registers (through `fromPromise` →
+   `SdkPlugins.register`), that its `context` and `permission.evaluate` hooks fire during a real model turn (a loopback
+   model on ports 52200–52299, no credentials), that its output reaches the model request, that the host's own
+   permission plugin refuses a shell command by default, that cleanup runs on shutdown, and that a file that is not a
+   plugin refuses the start.
+
+Acknowledged today:
+
+| Site | Why it is dynamic | Stand-in contract |
+|---|---|---|
+| `plugins/index.ts` `import(file)` (~l.84) | operator-supplied plugin module paths | `loader.test.ts` |
+| `plugins/context.ts` `import(path.join(directory, file))` (~l.126) | v1 context builders from the extension directory | `loader.test.ts` |
+
 ## The planted-break drill
 
 `drill.test.ts` runs in the default `bun test` and proves the suite can fail:
@@ -117,6 +160,14 @@ Run against a **real host process** (`bin/amicode-host.mjs`) in a sandbox on loo
    - `effect#Scope.close` removed → the member contract *and* the finalizer-ordering behaviour fail;
    - control: removing an unused sibling export (`createEmbeddedRoutes`) leaves the module contracts green.
 
+3. **Plugin symbols (on the combined tree).**
+   - `@opencode/plugin/promise/adapter#fromPromise` removed → its contract fails, and the real host cannot start
+     (`fromPromise is not a function`), so `loader.test.ts` fails in setup; the `@opencode/server/routes` contracts stay green.
+   - Type-only: `export * as Plugin` removed from the published `@opencode/plugin` declarations, or `Plugin.setup`
+     renamed, in memory → `types.contract.ts` stops compiling and the diagnostics name `Plugin` / `setup`.
+4. **New unacknowledged non-literal import.** A planted `import(name)` in a copy of `src/` makes the scan exit 1 naming
+   `sneaky.ts:1`; the untouched copy exits 0.
+
 To try your own: `plantBreak("pkg/specifier#symbol[.member]")` from `test/contract/shim.ts` returns `{ copy, cleanup }`;
 run `bun test test/contract/modules.test.ts` with `cwd = copy`.
 
@@ -133,8 +184,8 @@ between versions; the contract suite is the part that decides.
 - Anything the host does not import or call. The inventory is the host's *use*, not the upstream's surface; a break in
   an API only the engine uses internally is caught (or not) by the engine's own tests and by the end-to-end suites.
 - Type-only exports are checked by `pnpm run typecheck`, not at runtime. (A bump that renames a type fails `tsc`.)
-- Dynamic imports with a computed specifier (for example a user plugin loaded by path) cannot be named; the scan
-  lists them as *underivable* but does not fail on them — they have no package contract, only a runtime one.
+- Dynamic imports with a computed specifier have no *package* contract (see "Underivable dynamic imports"): they are
+  acknowledged one by one, and what they load is proven by `loader.test.ts`, not by an export check.
 - Same-named locals shadowed across scopes in one file are conflated (member accesses are attributed to every binding
   of that local name). It can only over-demand, never under-demand.
 - The shape of every HTTP route: only the ones the host and the extension use (above). Ticketed WebSockets (pty, MCP),
