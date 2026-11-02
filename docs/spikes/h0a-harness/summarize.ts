@@ -35,7 +35,9 @@ const missed = (row: ProbeRow) => row.h === null || row.hs === 0 || row.h >= CRI
 const asLatency = (ms: number | null) => (ms === null ? CRITERIA.miss_ms : Math.min(ms, CRITERIA.miss_ms))
 const round = (n: number, digits = 1) => (Number.isFinite(n) ? Math.round(n * 10 ** digits) / 10 ** digits : n)
 
-export function evaluate(data: RunData) {
+/** `minExtrapolationWindowS`: a window shorter than this cannot support the 24 h extrapolation (default 30 min); tests lower it. */
+export function evaluate(data: RunData, options: { minExtrapolationWindowS?: number } = {}) {
+  const minWindowS = options.minExtrapolationWindowS ?? 1800
   const from = data.config.measure_from
   const until = data.config.measure_until
   const inWindow = <T extends { t: number }>(rows: T[]) => rows.filter((row) => row.t >= from && row.t <= until)
@@ -98,10 +100,14 @@ export function evaluate(data: RunData) {
     // Projected RSS at 24 h after the end of warm-up: the fitted value at x = 0 plus the slope over 86 400 s.
     const projected = fit.intercept + fit.slope * 86_400
     const windowS = (rows.at(-1)!.t - rows[0]!.t) / 1000
-    const pass = growth < CRITERIA.growth_bytes && projected < CRITERIA.projected_bytes_24h
+    const growthOk = growth < CRITERIA.growth_bytes
+    const projectedOk = projected < CRITERIA.projected_bytes_24h
+    const reliable = windowS >= minWindowS
+    // Too short a window cannot support the 24 h extrapolation: it can still FAIL on growth, but it cannot pass.
+    const status: Status = !Number.isFinite(projected) ? "invalid" : !growthOk ? "fail" : !reliable ? "inconclusive" : projectedOk ? "pass" : "fail"
     return {
       criterion: "memory",
-      status: Number.isFinite(projected) ? (pass ? ("pass" as const) : ("fail" as const)) : ("invalid" as const),
+      status,
       samples: rows.length,
       window_s: windowS,
       rss_start_bytes: rows[0]!.rss,
@@ -110,8 +116,8 @@ export function evaluate(data: RunData) {
       growth_bytes: growth,
       slope_bytes_per_hour: fit.slope * 3600,
       projected_rss_24h_bytes: projected,
-      extrapolation_reliable: windowS >= 1800,
-      detail: `growth ${round(growth / 1e6)} MB (< ${CRITERIA.growth_bytes / 1e6}); least-squares projection at 24 h ${round(projected / 1e9, 2)} GB (< ${CRITERIA.projected_bytes_24h / 1e9})${windowS < 1800 ? "; window under 30 min: the extrapolation is not meaningful" : ""}`,
+      extrapolation_reliable: reliable,
+      detail: `growth ${round(growth / 1e6)} MB (< ${CRITERIA.growth_bytes / 1e6}); least-squares projection at 24 h ${round(projected / 1e9, 2)} GB (< ${CRITERIA.projected_bytes_24h / 1e9})${reliable ? "" : `; window ${round(windowS)} s is under ${minWindowS} s: the extrapolation is not assessed, so this cannot pass`}`,
     }
   })()
 
@@ -212,7 +218,7 @@ export function loadRun(dir: string) {
   return { data, problems }
 }
 
-export function summarizeRun(dir: string) {
+export function summarizeRun(dir: string, options: Parameters<typeof evaluate>[1] = {}) {
   const { data, problems } = fs.existsSync(dir) ? loadRun(dir) : { data: undefined, problems: [`${dir}: run directory does not exist`] }
   if (!data || problems.length > 0)
     return { verdict: "invalid" as const, problems, criteria: [] as Verdict[], note: "inputs missing or empty: no pass can be reported" }
@@ -220,7 +226,7 @@ export function summarizeRun(dir: string) {
     const file = path.join(dir, name)
     return fs.existsSync(file) ? (JSON.parse(fs.readFileSync(file, "utf8")) as unknown) : undefined
   }
-  return { ...evaluate(data), problems, config: data.config, model_stats: optional("model-stats.json"), driver_stats: optional("driver-stats.json") }
+  return { ...evaluate(data, options), problems, config: data.config, model_stats: optional("model-stats.json"), driver_stats: optional("driver-stats.json") }
 }
 
 if (import.meta.main) {

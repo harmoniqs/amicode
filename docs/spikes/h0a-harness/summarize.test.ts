@@ -19,7 +19,9 @@ function healthy(over: Partial<{ host: number; control: number; seconds: number 
     events: [{ t: T0 - 20_000, event: "host_started", planned: true }],
   }
 }
-const status = (data: RunData, criterion: string) => evaluate(data).criteria.find((c) => c.criterion === criterion)!.status
+// The fixtures are short; the real window is 2 h, so lower the minimum window that supports the 24 h extrapolation.
+const SHORT = { minExtrapolationWindowS: 30 }
+const status = (data: RunData, criterion: string) => evaluate(data, SHORT).criteria.find((c) => c.criterion === criterion)!.status
 
 describe("latency criterion at its boundaries (pre-registered: excess < 250 ms and host p99 < 500 ms; control p99 > 100 ms is inconclusive)", () => {
   test("excess 249 ms passes, 251 ms fails, exactly 250 ms fails (strictly under)", () => {
@@ -32,11 +34,11 @@ describe("latency criterion at its boundaries (pre-registered: excess < 250 ms a
   })
   test("control p99 over 100 ms is inconclusive, never a pass, even when the host looks fine", () => {
     expect(status(healthy({ host: 105, control: 101 }), "latency")).toBe("inconclusive")
-    expect(evaluate(healthy({ host: 105, control: 101 })).verdict).toBe("inconclusive")
+    expect(evaluate(healthy({ host: 105, control: 101 }), SHORT).verdict).toBe("inconclusive")
     expect(status(healthy({ host: 105, control: 100 }), "latency")).toBe("pass")
   })
   test("reports the numbers it judged", () => {
-    const latency = evaluate(healthy({ host: 300, control: 51 })).criteria.find((c) => c.criterion === "latency")!
+    const latency = evaluate(healthy({ host: 300, control: 51 }), SHORT).criteria.find((c) => c.criterion === "latency")!
     expect(latency).toMatchObject({ host_p99_ms: 300, control_p99_ms: 51, excess_p99_ms: 249 })
   })
   test("a miss counts as the 2 s timeout in the percentile, not as a missing sample", () => {
@@ -63,13 +65,13 @@ describe("wedge criterion", () => {
     two.probe[50] = { ...two.probe[50]!, h: null, hs: 0 }
     two.probe[51] = { ...two.probe[51]!, h: null, hs: 0 }
     expect(status(two, "no_wedge")).toBe("fail")
-    expect(evaluate(two).criteria.find((c) => c.criterion === "no_wedge")).toMatchObject({ wedges: 1 })
+    expect(evaluate(two, SHORT).criteria.find((c) => c.criterion === "no_wedge")).toMatchObject({ wedges: 1 })
   })
   test("a slow answer (>= 2 s) is a miss", () => {
     const data = healthy()
     data.probe[10] = { ...data.probe[10]!, h: 2000, hs: 200 }
     data.probe[11] = { ...data.probe[11]!, h: 2400, hs: 200 }
-    expect(evaluate(data).criteria.find((c) => c.criterion === "no_wedge")).toMatchObject({ wedges: 1 })
+    expect(evaluate(data, SHORT).criteria.find((c) => c.criterion === "no_wedge")).toMatchObject({ wedges: 1 })
   })
   test("an unplanned host exit fails; a planned stop does not", () => {
     const planned = healthy()
@@ -83,7 +85,7 @@ describe("wedge criterion", () => {
     const data = healthy()
     data.probe.unshift({ t: T0 - 500, h: null, c: 1, hs: 0, cs: 200 }, { t: T0 - 250, h: null, c: 1, hs: 0, cs: 200 })
     expect(status(data, "no_wedge")).toBe("pass")
-    expect(evaluate(data).criteria.find((c) => c.criterion === "no_wedge")).toMatchObject({ wedges: 0, warmup_wedges: 1 })
+    expect(evaluate(data, SHORT).criteria.find((c) => c.criterion === "no_wedge")).toMatchObject({ wedges: 0, warmup_wedges: 1 })
   })
 })
 
@@ -108,7 +110,7 @@ describe("memory criterion (growth < 2 GB and 24 h extrapolation < 8 GB)", () =>
   })
   test("a gentle slope passes, and the extrapolation is reported", () => {
     // 0.1 GB per hour = 2.4 GB/day: 1 GB + 2.4 GB projected
-    const result = evaluate(withRss((s) => 1 * GB + (0.1 * GB * s) / 3600)).criteria.find((c) => c.criterion === "memory")!
+    const result = evaluate(withRss((s) => 1 * GB + (0.1 * GB * s) / 3600), SHORT).criteria.find((c) => c.criterion === "memory")!
     expect(result.status).toBe("pass")
     expect(result.projected_rss_24h_bytes as number).toBeGreaterThan(3.3 * GB)
     expect(result.projected_rss_24h_bytes as number).toBeLessThan(3.5 * GB)
@@ -117,6 +119,19 @@ describe("memory criterion (growth < 2 GB and 24 h extrapolation < 8 GB)", () =>
     const data = healthy()
     data.sampler = [{ t: T0, rss: GB, cpu_s: 0, load1: 1 }]
     expect(status(data, "memory")).toBe("invalid")
+  })
+})
+
+describe("a window too short for the 24 h extrapolation can fail on memory but never pass", () => {
+  test("a 60 s window with flat RSS is inconclusive for memory, and so for the run", () => {
+    const result = evaluate(healthy())
+    expect(result.criteria.find((c) => c.criterion === "memory")).toMatchObject({ status: "inconclusive", extrapolation_reliable: false })
+    expect(result.verdict).toBe("inconclusive")
+  })
+  test("but 2 GB of growth in a short window still fails", () => {
+    const data = healthy()
+    data.sampler = [{ t: T0, rss: GB, cpu_s: 0, load1: 1 }, { t: T0 + 50_000, rss: 3.5 * GB, cpu_s: 5, load1: 1 }]
+    expect(evaluate(data).criteria.find((c) => c.criterion === "memory")!.status).toBe("fail")
   })
 })
 
@@ -150,41 +165,41 @@ describe("driver saturation", () => {
   test("p99 event-loop drift over 50 ms flags driver_saturated and makes the run inconclusive, not a pass", () => {
     const data = healthy()
     data.lag = data.lag.map((l, i) => ({ ...l, d: i % 50 === 0 ? 80 : 1 })) // 2 % of samples at 80 ms -> p99 80
-    const result = evaluate(data)
+    const result = evaluate(data, SHORT)
     expect(result.driver_saturated).toBe(true)
     expect(result.verdict).toBe("inconclusive")
   })
   test("a quiet driver is not flagged", () => {
-    expect(evaluate(healthy()).driver_saturated).toBe(false)
+    expect(evaluate(healthy(), SHORT).driver_saturated).toBe(false)
   })
 })
 
 describe("overall verdict", () => {
   test("a healthy run passes all four", () => {
-    const result = evaluate(healthy())
+    const result = evaluate(healthy(), SHORT)
     expect(result.verdict).toBe("pass")
     expect(result.criteria.map((c) => c.status)).toEqual(["pass", "pass", "pass", "pass"])
   })
   test("any failed criterion fails the run", () => {
-    expect(evaluate(healthy({ host: 400, control: 1 })).verdict).toBe("fail")
+    expect(evaluate(healthy({ host: 400, control: 1 }), SHORT).verdict).toBe("fail")
   })
   test("an unplanned exit of a harness process (model/probe/driver) makes the run inconclusive", () => {
     const data = healthy()
     data.events = [...data.events, { t: T0 + 100, event: "model_exit", planned: false }]
-    expect(evaluate(data).verdict).toBe("inconclusive")
+    expect(evaluate(data, SHORT).verdict).toBe("inconclusive")
   })
   test("a definitive failure (unplanned host exit) is a fail even when the run was cut short and other inputs are unusable", () => {
     const data = healthy()
     data.probe = data.probe.slice(0, 40) // the host died, the run ended early
     data.events = [...data.events, { t: T0 + 10_000, event: "host_exit", planned: false }]
-    const result = evaluate(data)
+    const result = evaluate(data, SHORT)
     expect(result.criteria.find((c) => c.criterion === "latency")!.status).toBe("invalid")
     expect(result.verdict).toBe("fail")
   })
   test("a probe that ran for less than 90 % of the window is invalid", () => {
     const data = healthy()
     data.probe = data.probe.slice(0, 100) // 100 of 240 expected
-    expect(evaluate(data).verdict).toBe("invalid")
+    expect(evaluate(data, SHORT).verdict).toBe("invalid")
   })
 })
 
@@ -208,7 +223,7 @@ describe("summarizeRun refuses to pass on missing or empty inputs", () => {
   test("a complete run directory passes", () => {
     const dir = fresh()
     write(dir, healthy())
-    const summary = summarizeRun(dir)
+    const summary = summarizeRun(dir, SHORT)
     expect(summary.verdict).toBe("pass")
     expect(summary.problems).toEqual([])
   })
@@ -235,7 +250,7 @@ describe("summarizeRun refuses to pass on missing or empty inputs", () => {
     const dir = fresh()
     write(dir, healthy())
     fs.appendFileSync(path.join(dir, "probe.ndjson"), '{"t":1,"h":')
-    expect(summarizeRun(dir).verdict).toBe("pass")
+    expect(summarizeRun(dir, SHORT).verdict).toBe("pass")
     const bad = fresh()
     write(bad, healthy())
     fs.writeFileSync(path.join(bad, "turns.ndjson"), "not json\n" + fs.readFileSync(path.join(bad, "turns.ndjson"), "utf8"))
