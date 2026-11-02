@@ -28,5 +28,10 @@ export default defineConfig({
     // Matches the historical `--exclude '**/slow/**'` in the package script; kept here so the
     // exclusion survives someone running `vitest` directly.
     exclude: ["**/node_modules/**", "**/dist/**", "**/slow/**"],
+    // 42 test files in this package spawn real subprocesses (the CLI, git, a fake julia). The 5 s default
+    // sits right at the edge for them: e.g. the 1200-session pagination walk takes ~7.5 s at load 27 on
+    // vitest 2 AND 4, and vault_status_sync timed out at 6.8 s in CI. 30 s keeps a genuinely hung test
+    // failing fast without turning runner speed into red builds (#2075).
+    testTimeout: 30_000,
   },
 });
