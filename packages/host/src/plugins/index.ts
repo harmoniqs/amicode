@@ -10,7 +10,7 @@ export class PluginConfigError extends Error {}
 
 export interface PluginConfig {
   readonly permission: { readonly grants: readonly Grant[]; readonly replaceDefaults: boolean }
-  /** Where the v1 context builders live; null turns context injection off. Default: the repo's extension. */
+  /** Where the v1 context builders live; null turns the injected context blocks off (headers and session env stay). Default: the repo's extension. */
   readonly context: { readonly extensionDir: string | null }
   readonly provider: ProviderConfig
   /** Absolute paths of extra plugin modules; each default-exports a `Plugin`. */
@@ -26,8 +26,8 @@ export async function loadPlugins(env: Env): Promise<Plugin.Plugin[]> {
   const config = parsePluginConfig(env[VAR])
   const grants = config.permission.replaceDefaults ? config.permission.grants : [...defaultPolicy({ home: env.HOME }).grants, ...config.permission.grants]
   const extra = await Promise.all(config.modules.map(loadModule))
-  const context = config.context.extensionDir === null ? [] : [contextPlugin({ sources: extensionSources(config.context.extensionDir) })]
-  return [permissionPlugin({ grants }), ...context, providerPlugin(config.provider), ...extra]
+  const context = contextPlugin({ sources: config.context.extensionDir === null ? [] : extensionSources(config.context.extensionDir) })
+  return [permissionPlugin({ grants }), context, providerPlugin(config.provider), ...extra]
 }
 
 export function parsePluginConfig(raw: string | undefined): PluginConfig {

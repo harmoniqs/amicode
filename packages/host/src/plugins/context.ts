@@ -30,7 +30,7 @@ export interface ContextSource {
 
 const log = (message: string) => process.stderr.write(`amicode-host: context: ${message}\n`)
 
-export function contextPlugin(options: { sources: readonly ContextSource[]; harmoniqsHeaders?: boolean }): Plugin.Plugin {
+export function contextPlugin(options: { sources: readonly ContextSource[]; harmoniqsHeaders?: boolean; sessionEnv?: boolean }): Plugin.Plugin {
   const keyed = options.sources.filter((source) => source.delivery === "keyed")
   const perRequest = options.sources.filter((source) => source.delivery === "request")
   return {
@@ -67,9 +67,31 @@ export function contextPlugin(options: { sources: readonly ContextSource[]; harm
             request.headers["Idempotency-Key"] = `amicode:${request.sessionID}:${crypto.randomUUID()}`
           }),
         )
+      if (options.sessionEnv !== false) registrations.push(...(await sessionEnv(context)))
       return async () => void (await Promise.all(registrations.map((registration) => registration.dispose())))
     },
   }
+}
+
+/**
+ * v1 `shell.env` (#1928, A15): every shell command's environment carries AMICO_SESSION_ID. The v2 `shell` hook
+ * (`create.before`) has the command and its env but not the session, so the session is learned from the tool hook
+ * (`execute.before`, which has both) and matched by command text. A command seen by two different sessions at once
+ * is ambiguous and gets NO id: a token must never be bound to the wrong session.
+ */
+async function sessionEnv(context: Plugin.Context) {
+  const live = new Map<string, { sessionID: string; command: string }>()
+  return [
+    await context.tool.hook("execute.before", (event) => {
+      const command = (event.input as { command?: unknown } | null)?.command
+      if (event.tool === "shell" && typeof command === "string") live.set(event.id, { sessionID: event.sessionID, command })
+    }),
+    await context.tool.hook("execute.after", (event) => void live.delete(event.id)),
+    await context.shell.hook("create.before", (event) => {
+      const sessions = new Set([...live.values()].filter((entry) => entry.command === event.command).map((entry) => entry.sessionID))
+      if (sessions.size === 1) event.env.AMICO_SESSION_ID = [...sessions][0]
+    }),
+  ]
 }
 
 // The one builder with a non-trivial signature; typed here so the extension's sources stay out of this typecheck.

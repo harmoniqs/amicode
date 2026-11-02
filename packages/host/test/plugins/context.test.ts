@@ -80,6 +80,33 @@ describe("the gateway routing headers (v1 chat.headers) on model.request", () =>
   })
 })
 
+describe("AMICO_SESSION_ID in the shell environment (v1 shell.env, #1928)", () => {
+  const before = (sessionID: string, command: string, id: string, tool = "shell") => ({ tool, sessionID, agent: "build", messageID: "m", id, input: { command } })
+  const create = (command: string) => ({ command, cwd: "/w", timeout: 1, shell: "sh", env: {} as Record<string, string | undefined> })
+
+  test("a shell command inherits the id of the session whose tool call it is", async () => {
+    const harness = await load(contextPlugin({ sources: [] }))
+    await harness.trigger("tool", "execute.before", before("ses_1", "make solve", "c1"))
+    expect((await harness.trigger("shell", "create.before", create("make solve"))).env.AMICO_SESSION_ID).toBe("ses_1")
+  })
+  test("the same command text live in two sessions is ambiguous: NO id is set (never bind a token to the wrong session)", async () => {
+    const harness = await load(contextPlugin({ sources: [] }))
+    await harness.trigger("tool", "execute.before", before("ses_1", "make solve", "c1"))
+    await harness.trigger("tool", "execute.before", before("ses_2", "make solve", "c2"))
+    expect((await harness.trigger("shell", "create.before", create("make solve"))).env.AMICO_SESSION_ID).toBeUndefined()
+    await harness.trigger("tool", "execute.after", { tool: "shell", sessionID: "ses_2", agent: "build", messageID: "m", id: "c2", input: {}, status: "completed", result: {} })
+    expect((await harness.trigger("shell", "create.before", create("make solve"))).env.AMICO_SESSION_ID).toBe("ses_1")
+  })
+  test("a finished tool call leaves nothing behind; other tools and other commands are ignored", async () => {
+    const harness = await load(contextPlugin({ sources: [] }))
+    await harness.trigger("tool", "execute.before", before("ses_1", "ls", "c1"))
+    await harness.trigger("tool", "execute.after", { tool: "shell", sessionID: "ses_1", agent: "build", messageID: "m", id: "c1", input: {}, status: "completed", result: {} })
+    await harness.trigger("tool", "execute.before", before("ses_1", "pwd", "c2", "read"))
+    expect((await harness.trigger("shell", "create.before", create("ls"))).env.AMICO_SESSION_ID).toBeUndefined()
+    expect((await harness.trigger("shell", "create.before", create("pwd"))).env.AMICO_SESSION_ID).toBeUndefined()
+  })
+})
+
 describe("extensionSources: the v1 builders, loaded from the extension directory", () => {
   const realDir = path.resolve(import.meta.dir, "../../../extension/opencode-plugin")
   test("an unreadable directory degrades to no context, never an exception out of the hook", async () => {
@@ -132,5 +159,25 @@ describe("end to end: a new session's first model request carries the injected c
     const system = provider.requests[0]!.body.messages.find((m: any) => m.role === "system").content as string
     expect(system).toContain("STACK-STATE-MARKER solver=local")
     expect(system).toContain("MODE-BLOCK agent=build")
+  }, 90_000)
+})
+
+describe("end to end: AMICO_SESSION_ID reaches a real shell command", () => {
+  test("`printenv AMICO_SESSION_ID` run by the agent prints the session's id", async () => {
+    const sb = makeSandbox("ctx-sid")
+    const provider = await fakeProvider((_r, n) => (n === 0 ? { tool: { name: "shell", arguments: { command: "printenv AMICO_SESSION_ID > sid.txt" } } } : { text: "done" }))
+    const host = await startPluginHost(
+      sb,
+      { context: { extensionDir: null }, permission: { replaceDefaults: true, grants: [{ action: "*", resource: "*", effect: "allow" }] } },
+      {},
+      { models: { fetch: false }, fs: { filewatcher: false, fff: false }, config: { directory: sb.serverConfig, project: false, claude: false, content: JSON.stringify(provider.providerConfig(["m"])) } },
+    )
+    const headers = { ...host.auth, ...dirHeader(sb), "content-type": "application/json" }
+    const created = await json(await fetch(host.url + "/api/session", { method: "POST", headers, body: JSON.stringify({ title: "sid", location: { directory: sb.work }, model: { providerID: "fake", id: "m" } }) }))
+    await fetch(`${host.url}/api/session/${created.data.id}/prompt`, { method: "POST", headers, body: JSON.stringify({ text: "go" }) })
+    const deadline = Date.now() + 30_000
+    while (provider.requests.length < 2 && Date.now() < deadline) await Bun.sleep(50)
+    provider.stop()
+    expect(fs.readFileSync(path.join(sb.work, "sid.txt"), "utf8").trim()).toBe(created.data.id)
   }, 90_000)
 })
