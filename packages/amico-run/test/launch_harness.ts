@@ -86,3 +86,83 @@ export function normalize(text: string, root: string): string {
     .replace(/r\d{8}-\d{6}Z-[0-9a-f]{4}/g, "<RUNID>")
     .replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z/g, "<TS>");
 }
+
+// ── helpers for the placement suites ──────────────────────────────────────────────────────────
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
+
+export const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+export async function waitUntil(what: string, pred: () => boolean, ms = 20000): Promise<void> {
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) {
+    if (pred()) return;
+    await sleep(40);
+  }
+  throw new Error(`timeout waiting for ${what}`);
+}
+
+export const fileHas = (file: string, needle: string): boolean => {
+  try {
+    return readFileSync(file, "utf8").includes(needle);
+  } catch {
+    return false;
+  }
+};
+
+/** The single run dir under a runs root (after its manifest exists). */
+export async function onlyRunDir(runsRoot: string, ms = 20000): Promise<string> {
+  let found = "";
+  await waitUntil(`a run dir under ${runsRoot}`, () => {
+    try {
+      const ids = readdirSync(runsRoot).filter((e) => /^r\d{8}-/.test(e) && existsSync(join(runsRoot, e, "run.toml")));
+      if (ids.length === 0) return false;
+      found = join(runsRoot, ids[0]);
+      return true;
+    } catch {
+      return false;
+    }
+  }, ms);
+  return found;
+}
+
+export const runIdOf = (runDir: string): string => runDir.split("/").at(-1)!;
+
+/** A fake julia that records its pid, prints READY, and runs until `<dir>/go` exists, then prints
+ *  DONE and exits 0 (SIGTERM kills it → the abort lane). */
+export function waitingJuliaBody(dir: string): string {
+  return [
+    `const fs = require('fs'), p = require('path');`,
+    `fs.writeFileSync(${JSON.stringify(join(dir, "julia.pid"))}, String(process.pid));`,
+    `console.log('READY');`,
+    `const t = setInterval(() => { if (fs.existsSync(${JSON.stringify(join(dir, "go"))})) { clearInterval(t); console.log('DONE f=0.99'); } }, 40);`,
+  ].join("\n");
+}
+
+export const letItFinish = (dir: string): void => writeFileSync(join(dir, "go"), "");
+
+/** Best-effort cleanup of everything a test may have left running: the julia recorded in
+ *  `<dir>/julia.pid` and the orchestrator in the run's lock. Only processes THIS test started. */
+export function killStragglers(dir: string, runDir?: string): void {
+  const kill = (pid: number): void => {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      /* gone */
+    }
+  };
+  try {
+    kill(Number(readFileSync(join(dir, "julia.pid"), "utf8")));
+  } catch {
+    /* none */
+  }
+  if (runDir) {
+    try {
+      kill(JSON.parse(readFileSync(join(runDir, "run.lock"), "utf8")).pid);
+    } catch {
+      /* none */
+    }
+  }
+}
+
+export { dirname };

@@ -135,7 +135,7 @@ export function findLiveDuplicate(
     return undefined;
   }
   for (const id of entries) {
-    if (id.startsWith(".")) continue;
+    if (!/^r\d{8}-\d{6}Z-[0-9a-f]+$/.test(id)) continue; // skips `latest`, `index`, dotfiles
     const dir = join(runsRoot, id);
     if (existsSync(join(dir, "FINISHED"))) continue;
     const lock = readRunLock(dir);
