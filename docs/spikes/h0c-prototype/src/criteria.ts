@@ -216,7 +216,7 @@ export async function checkIsolation(label: string, extraPids: number[] = []): P
       return []
     }
   })
-  const hub = fds.filter((l) => l.startsWith("/home/aaron/.local/share/opencode") || l.includes("/.amico/server"))
+  const hub = fds.filter((l) => l.startsWith("$HOME/.local/share/opencode") || l.includes("/.amico/server"))
   const ours = fds.filter((l) => l.startsWith(sandbox.dbPath))
   add("C9a", hub.length === 0 && ours.length > 0 ? "PASS" : "FAIL", `hub-path fds=${hub.length}; own fresh DB fds=${ours.length}`)
 

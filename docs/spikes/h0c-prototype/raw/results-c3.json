@@ -11,7 +11,7 @@
       "target": "c3/bare",
       "id": "C1",
       "verdict": "PASS",
-      "detail": "info=200 v=local create=200 id=ses_e665394a0ffeIWYDGH5XnepU8J listed=true (n=1)"
+      "detail": "info=200 v=local create=200 id=ses_<scratch> listed=true (n=1)"
     },
     {
       "target": "c3/bare",
@@ -71,7 +71,7 @@
       "target": "c3/fronted",
       "id": "C1",
       "verdict": "PASS",
-      "detail": "info=200 v=local create=200 id=ses_e665356f0ffetu3zY7wXYhkhK4 listed=true (n=2)"
+      "detail": "info=200 v=local create=200 id=ses_<scratch> listed=true (n=2)"
     },
     {
       "target": "c3/fronted",
@@ -131,7 +131,7 @@
       "target": "c3/fronted-body-cancel-only",
       "id": "C1",
       "verdict": "PASS",
-      "detail": "info=200 v=local create=200 id=ses_e66531bd3ffepH378t6WKw0kJ8 listed=true (n=3)"
+      "detail": "info=200 v=local create=200 id=ses_<scratch> listed=true (n=3)"
     },
     {
       "target": "c3/fronted-body-cancel-only",
@@ -191,7 +191,7 @@
       "target": "c3/fronted-no-abort-forward",
       "id": "C1",
       "verdict": "PASS",
-      "detail": "info=200 v=local create=200 id=ses_e6652e0c1ffe9e9a280RmFwacK listed=true (n=4)"
+      "detail": "info=200 v=local create=200 id=ses_<scratch> listed=true (n=4)"
     },
     {
       "target": "c3/fronted-no-abort-forward",

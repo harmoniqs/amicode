@@ -1,5 +1,5 @@
 # c3 built: {"startup ms":1513,"port":51157,"pid":3581309,"innerPassword":"h0c-inner-throwaway"}
-PASS c3/fronted-no-abort-forward C1   info=200 v=local create=200 id=ses_e6658b5fcffeTavoUbIfpAF8qW listed=true (n=1)
+PASS c3/fronted-no-abort-forward C1   info=200 v=local create=200 id=ses_<scratch> listed=true (n=1)
 PASS c3/fronted-no-abort-forward C2   status=200 body.ok=true
 PASS c3/fronted-no-abort-forward C3   no-credentials: /api/info=401 /api/session=401 /amicode/ping=401 /nope=401 /api/event=401; wrong-password /api/info=401
 PASS c3/fronted-no-abort-forward C4   server.connected=true

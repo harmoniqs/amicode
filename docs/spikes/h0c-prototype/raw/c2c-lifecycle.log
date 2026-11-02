@@ -1,5 +1,5 @@
 # c2c built: {"lifecycle":true,"startup ms":164,"returned":["address","shutdown","updateAvailable","updated"],"port":51395}
-PASS c2c/bare                 C1   info=200 v=0.0.0-h0c create=200 id=ses_e6653d928ffe24hbhFyAAhh9hU listed=true (n=1)
+PASS c2c/bare                 C1   info=200 v=0.0.0-h0c create=200 id=ses_<scratch> listed=true (n=1)
 PASS c2c/bare                 C2   status=200 body.ok=true
 PASS c2c/bare                 C3   no-credentials: /api/info=401 /api/session=401 /amicode/ping=401 /nope=401 /api/event=401; wrong-password /api/info=401
 PASS c2c/bare                 C4   server.connected=true

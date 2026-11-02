@@ -1,5 +1,5 @@
 # c1 built: {"resolve @opencode/sdk (package root)":"resolved /tmp/opencode/h0c/upstream/packages/sdk/src/index.ts","resolve @opencode/sdk/internal/host (deep)":"FAILS: Cannot find package '@opencode/sdk' imported from /tmp/opencode/h0c/xdg/c1/consumer","startup ms":94,"host keys":["runtime","fetch","plugins","sessions","workspace","close"]}
-PASS c1/bare                  C1   info=200 v=0.0.0-h0c create=200 id=ses_e6656179dffe7USAiKp6Fxx3CI listed=true (n=1)
+PASS c1/bare                  C1   info=200 v=0.0.0-h0c create=200 id=ses_<scratch> listed=true (n=1)
 NA   c1/bare                  C2   no custom-route seam without a host front at this layer
 FAIL c1/bare                  C3   no-credentials: /api/info=200 /api/session=200 /amicode/ping=404 /nope=404 /api/event=200; wrong-password /api/info=200
 PASS c1/bare                  C4   server.connected=true
@@ -8,7 +8,7 @@ PASS c1/bare                  C5b  heartbeats at 1, 15007 ms (gap 15007 ms)
 PASS c1/bare                  C6   server-side feed log: subscribed(subscribers=1) -> released(subscribers=0)
 PASS c1/bare                  C7   listed=true rpc=200 {"output":"pong-from-in-process-plugin"}
 PASS c1/bare                  C8   provider=h0c calls=create,destroy
-PASS c1/fronted               C1   info=200 v=0.0.0-h0c create=200 id=ses_e6655da5effe4oeTRedfcqcjEj listed=true (n=2)
+PASS c1/fronted               C1   info=200 v=0.0.0-h0c create=200 id=ses_<scratch> listed=true (n=2)
 PASS c1/fronted               C2   status=200 body.ok=true
 PASS c1/fronted               C3   no-credentials: /api/info=401 /api/session=401 /amicode/ping=401 /nope=401 /api/event=401; wrong-password /api/info=401
 PASS c1/fronted               C4   server.connected=true
@@ -17,7 +17,7 @@ PASS c1/fronted               C5b  heartbeats at 1, 15005 ms (gap 15003 ms)
 PASS c1/fronted               C6   server-side feed log: subscribed(subscribers=1) -> released(subscribers=0)
 PASS c1/fronted               C7   listed=true rpc=200 {"output":"pong-from-in-process-plugin"}
 PASS c1/fronted               C8   provider=h0c calls=create,destroy,create,destroy
-PASS c1/fronted-default-idle  C1   info=200 v=0.0.0-h0c create=200 id=ses_e66559f47ffe9IxU1EtXmXmOwl listed=true (n=3)
+PASS c1/fronted-default-idle  C1   info=200 v=0.0.0-h0c create=200 id=ses_<scratch> listed=true (n=3)
 PASS c1/fronted-default-idle  C2   status=200 body.ok=true
 PASS c1/fronted-default-idle  C3   no-credentials: /api/info=401 /api/session=401 /amicode/ping=401 /nope=401 /api/event=401; wrong-password /api/info=401
 PASS c1/fronted-default-idle  C4   server.connected=true err=TypeError: The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()

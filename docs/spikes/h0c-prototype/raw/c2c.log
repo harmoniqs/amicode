@@ -1,5 +1,5 @@
 # c2c built: {"lifecycle":false,"startup ms":133,"returned":["address","shutdown","updateAvailable","updated"],"port":51192}
-PASS c2c/bare                 C1   info=200 v=0.0.0-h0c create=200 id=ses_e66545541ffesv3dK53pqVOVMX listed=true (n=1)
+PASS c2c/bare                 C1   info=200 v=0.0.0-h0c create=200 id=ses_<scratch> listed=true (n=1)
 PASS c2c/bare                 C2   status=200 body.ok=true
 PASS c2c/bare                 C3   no-credentials: /api/info=401 /api/session=401 /amicode/ping=401 /nope=401 /api/event=401; wrong-password /api/info=401
 PASS c2c/bare                 C4   server.connected=true
@@ -8,7 +8,7 @@ PASS c2c/bare                 C5b  heartbeats at 3, 15005 ms (gap 15002 ms)
 PASS c2c/bare                 C6   server-side feed log: subscribed(subscribers=1) -> released(subscribers=0)
 NA   c2c/bare                 C7   seam exposes no in-process plugin handle
 NA   c2c/bare                 C8   seam cannot drive a workspace provider in-process
-PASS c2c/fronted              C1   info=200 v=0.0.0-h0c create=200 id=ses_e66541a02ffeNHbkdwavIFFXrc listed=true (n=2)
+PASS c2c/fronted              C1   info=200 v=0.0.0-h0c create=200 id=ses_<scratch> listed=true (n=2)
 PASS c2c/fronted              C2   status=200 body.ok=true
 PASS c2c/fronted              C3   no-credentials: /api/info=401 /api/session=401 /amicode/ping=401 /nope=401 /api/event=401; wrong-password /api/info=401
 PASS c2c/fronted              C4   server.connected=true

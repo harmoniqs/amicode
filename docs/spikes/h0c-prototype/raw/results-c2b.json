@@ -9,7 +9,7 @@
       "target": "c2b/bare",
       "id": "C1",
       "verdict": "PASS",
-      "detail": "info=200 v=0.0.0-h0c create=200 id=ses_e6654f7a7ffexmx51At6x9C9sJ listed=true (n=1)"
+      "detail": "info=200 v=0.0.0-h0c create=200 id=ses_<scratch> listed=true (n=1)"
     },
     {
       "target": "c2b/bare",
@@ -63,7 +63,7 @@
       "target": "c2b/fronted",
       "id": "C1",
       "verdict": "PASS",
-      "detail": "info=200 v=0.0.0-h0c create=200 id=ses_e6654bc86ffezybZYkhcgxCPro listed=true (n=2)"
+      "detail": "info=200 v=0.0.0-h0c create=200 id=ses_<scratch> listed=true (n=2)"
     },
     {
       "target": "c2b/fronted",
@@ -117,7 +117,7 @@
       "target": "c2b/fronted-default-idle",
       "id": "C1",
       "verdict": "PASS",
-      "detail": "info=200 v=0.0.0-h0c create=200 id=ses_e66548176ffeTvTAC4MAuRvGqD listed=true (n=3)"
+      "detail": "info=200 v=0.0.0-h0c create=200 id=ses_<scratch> listed=true (n=3)"
     },
     {
       "target": "c2b/fronted-default-idle",

@@ -1,4 +1,4 @@
-PASS prototype                C1   info=200 v=0.0.0-h0c create=200 id=ses_e66528ebcffeuNu6G2py5QbCtg listed=true (n=1)
+PASS prototype                C1   info=200 v=0.0.0-h0c create=200 id=ses_<scratch> listed=true (n=1)
 PASS prototype                C2   status=200 body.ok=true
 PASS prototype                C3   no-credentials: /api/info=401 /api/session=401 /amicode/ping=401 /nope=401 /api/event=401; wrong-password /api/info=401
 PASS prototype                C4   server.connected=true
