@@ -93,3 +93,33 @@ export function readTerminalState(dir: string, log?: string): TerminalState | un
 export function displayStatus(s: TerminalState["status"]): string {
   return s === "completed" ? "finished" : s
 }
+
+// BEGIN run.lock liveness (amicode#2055) — IDENTICAL in both run-terminal files;
+// test/run_liveness_lockstep.test.ts fails if the two copies drift.
+//
+// <runDir>/run.lock is written by the orchestrator (slice A, #2045): JSON with
+// `heartbeat_at` (ISO 8601, refreshed every 30 s) and `ended` (true in the same
+// atomic write that precedes FINISHED). A run is DEAD iff the lock exists AND
+// FINISHED does not (callers check readTerminalState first — FINISHED always
+// wins) AND ended !== true AND the heartbeat is older than 90 s (3 missed
+// beats). No lock, or an unreadable/torn lock ⇒ NOT dead: legacy behaviour
+// (stalled after 10 min of cold run.log) applies byte-for-byte.
+export const DEAD_AFTER_MS = 90 * 1000
+
+export function isDead(dir: string, now: number = Date.now()): boolean {
+  const fp = path.join(dir, "run.lock")
+  if (!existsSync(fp)) return false
+  let lock: { heartbeat_at?: unknown; ended?: unknown }
+  try {
+    lock = JSON.parse(readFileSync(fp, "utf8"))
+  } catch {
+    return false
+  }
+  if (lock === null || typeof lock !== "object" || Array.isArray(lock)) return false
+  if (lock.ended === true) return false
+  if (typeof lock.heartbeat_at !== "string") return false
+  const beat = Date.parse(lock.heartbeat_at)
+  if (!Number.isFinite(beat)) return false
+  return now - beat > DEAD_AFTER_MS
+}
+// END run.lock liveness
