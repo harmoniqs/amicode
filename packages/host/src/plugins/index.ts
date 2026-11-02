@@ -2,38 +2,51 @@
 // registers them with the engine. Nothing here imports the engine.
 import type { Plugin } from "@opencode/plugin"
 import path from "node:path"
+import { contextPlugin, extensionSources } from "./context.ts"
 import { defaultPolicy, permissionPlugin, type Effect, type Grant } from "./permission.ts"
 
 export class PluginConfigError extends Error {}
 
 export interface PluginConfig {
   readonly permission: { readonly grants: readonly Grant[]; readonly replaceDefaults: boolean }
+  /** Where the v1 context builders live; null turns context injection off. Default: the repo's extension. */
+  readonly context: { readonly extensionDir: string | null }
   /** Absolute paths of extra plugin modules; each default-exports a `Plugin`. */
   readonly modules: readonly string[]
 }
 
 type Env = Record<string, string | undefined>
 const VAR = "AMICODE_HOST_PLUGIN_CONFIG"
+// The v1 builders ship in the extension package; absent in a deployment that does not carry it (then: no context).
+const DEFAULT_EXTENSION_DIR = path.resolve(import.meta.dir, "../../../extension/opencode-plugin")
 
-export async function loadPlugins(env: Env): Promise<Plugin[]> {
+export async function loadPlugins(env: Env): Promise<Plugin.Plugin[]> {
   const config = parsePluginConfig(env[VAR])
   const grants = config.permission.replaceDefaults ? config.permission.grants : [...defaultPolicy({ home: env.HOME }).grants, ...config.permission.grants]
   const extra = await Promise.all(config.modules.map(loadModule))
-  return [permissionPlugin({ grants }), ...extra]
+  const context = config.context.extensionDir === null ? [] : [contextPlugin({ sources: extensionSources(config.context.extensionDir) })]
+  return [permissionPlugin({ grants }), ...context, ...extra]
 }
 
 export function parsePluginConfig(raw: string | undefined): PluginConfig {
   const value = raw === undefined || raw === "" ? {} : parse(raw)
-  const unknown = Object.keys(value).filter((key) => !["permission", "modules"].includes(key))
+  const unknown = Object.keys(value).filter((key) => !["permission", "context", "modules"].includes(key))
   if (unknown.length) throw new PluginConfigError(`${VAR} has unknown keys: ${unknown.join(", ")}`)
   const permission = record(value.permission, "permission")
   const unknownPermission = Object.keys(permission).filter((key) => !["grants", "replaceDefaults"].includes(key))
   if (unknownPermission.length) throw new PluginConfigError(`${VAR}.permission has unknown keys: ${unknownPermission.join(", ")}`)
+  const context = record(value.context, "context")
+  const unknownContext = Object.keys(context).filter((key) => key !== "extensionDir")
+  if (unknownContext.length) throw new PluginConfigError(`${VAR}.context has unknown keys: ${unknownContext.join(", ")}`)
+  const extensionDir = context.extensionDir === undefined ? DEFAULT_EXTENSION_DIR : context.extensionDir
+  if (extensionDir !== null && (typeof extensionDir !== "string" || !path.isAbsolute(extensionDir)))
+    throw new PluginConfigError(`${VAR}.context.extensionDir must be an absolute path or null`)
   const modules = value.modules ?? []
   if (!Array.isArray(modules) || modules.some((m) => typeof m !== "string" || !path.isAbsolute(m)))
     throw new PluginConfigError(`${VAR}.modules must be an array of absolute paths`)
   return {
     permission: { grants: grants(permission.grants), replaceDefaults: permission.replaceDefaults === true },
+    context: { extensionDir },
     modules: modules as string[],
   }
 }
@@ -64,7 +77,7 @@ function grants(value: unknown): Grant[] {
   })
 }
 
-async function loadModule(file: string): Promise<Plugin> {
+async function loadModule(file: string): Promise<Plugin.Plugin> {
   const loaded = await import(file).catch((error) => {
     throw new PluginConfigError(`${VAR}.modules: cannot load ${file}: ${error instanceof Error ? error.message : String(error)}`)
   })

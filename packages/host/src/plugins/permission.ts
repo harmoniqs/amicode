@@ -40,7 +40,7 @@ export function decide(policy: PermissionPolicy, request: Request): Decision {
   const resources = request.resources.length > 0 ? request.resources : ["*"]
   const grants = resources.map((resource) => ({
     resource,
-    grant: policy.grants.findLast((g) => match(request.action, g.action) && match(resource, g.resource)),
+    grant: [...policy.grants].reverse().find((g) => match(request.action, g.action) && match(resource, g.resource)),
   }))
   const missing = grants.find((g) => g.grant === undefined)
   if (missing) return { effect: "deny", message: `default-deny: no grant for ${request.action} on ${missing.resource}` }
@@ -79,7 +79,7 @@ export function defaultPolicy(input: { home?: string; scratch?: string } = {}): 
   }
 }
 
-export function permissionPlugin(policy: PermissionPolicy): Plugin {
+export function permissionPlugin(policy: PermissionPolicy): Plugin.Plugin {
   return {
     id: "amicode.permission",
     setup: async (context) => {

@@ -13,7 +13,7 @@ export interface Harness {
   cleanup: () => Promise<void>
 }
 
-export async function load(plugin: Plugin, extra: Record<string, unknown> = {}): Promise<Harness> {
+export async function load(plugin: Plugin.Plugin, extra: Record<string, unknown> = {}): Promise<Harness> {
   const hooks = new Map<string, Callback[]>()
   const registrar = (domain: string) => async (name: string, callback: Callback) => {
     const key = `${domain}:${name}`
@@ -30,13 +30,14 @@ export async function load(plugin: Plugin, extra: Record<string, unknown> = {}):
     shell: { hook: registrar("shell") },
     aisdk: { hook: registrar("aisdk") },
     ...extra,
+    session: { hook: registrar("session"), ...(extra.session as object) },
   }
   const context = new Proxy(base, {
     get(target, key) {
       if (typeof key === "string" && !(key in target)) throw new Error(`plugin touched ctx.${key}, which the test harness does not model`)
       return Reflect.get(target, key)
     },
-  }) as unknown as Parameters<Plugin["setup"]>[0]
+  }) as unknown as Plugin.Context
   const cleanup = await plugin.setup(context)
   return {
     async trigger(domain, name, input) {

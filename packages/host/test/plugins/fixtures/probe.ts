@@ -11,4 +11,4 @@ export default {
     await context.session.hook("context", (input) => log(`context agent=${input.agent}`))
     return () => log("cleanup")
   },
-} satisfies Plugin
+} satisfies Plugin.Plugin

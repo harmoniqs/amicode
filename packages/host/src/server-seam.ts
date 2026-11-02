@@ -29,7 +29,7 @@ export interface CreateServerOptions {
   /** Extra ServerOptions (config dir, models, fs ...). Host-owned keys are already rejected by config. */
   readonly serverOptions: Record<string, unknown>
   /** In-process plugins (promise API), registered with the engine before the first request (#2062). */
-  readonly plugins?: readonly Plugin[]
+  readonly plugins?: readonly Plugin.Plugin[]
 }
 
 export async function createServer(options: CreateServerOptions): Promise<HostServer> {
