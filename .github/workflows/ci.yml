@@ -150,7 +150,7 @@ jobs:
           path: packages/extension/vendor/opencode
       - name: Restore binary permissions
         run: chmod +x packages/extension/vendor/opencode/*/opencode
-      - run: pnpm -r --filter '!@amicode/amico-run' run test   # extension unit suite (incl. the opencode inject/merge integration) + @amicode/schema conformance + companion; amico-run runs through the quarantine gate below
+      - run: pnpm -r --filter '!@amicode/amico-run' --filter '!@amicode/host' run test   # (@amicode/host tests need Bun: see the host-tests job) extension unit suite (incl. the opencode inject/merge integration) + @amicode/schema conformance + companion; amico-run runs through the quarantine gate below
       # A13c test quarantine (#1907): the amico-run suite (incl. S31 grep rule)
       # is judged by scripts/test_quarantine_gate.mjs against the committed
       # config/test-quarantine/ lists, not by vitest's exit code alone. CI reds
@@ -187,6 +187,23 @@ jobs:
           # lines in the real ~/.amico/ledger/runs.jsonl) — validateFile parses by
           # .json extension, not TOML.
           $V packages/schema/test/fixtures/valid/ledger-record.json --schema ledger-record
+  # ── @amicode/host contract tests (#2061) ───────────────────────────────────
+  # The host runs on Bun only, so its suite is a separate job with Bun set up
+  # (the `fast` job runs its tests with Node tooling and excludes this package).
+  # Real host processes on loopback ports 52000-52999, temp XDG dirs and fresh
+  # databases; includes the ~15 s event-stream heartbeat test.
+  host-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6   # version pinned by packageManager in package.json
+      - uses: actions/setup-node@v7
+        with: { node-version: 20, cache: pnpm }
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: 1.4.2 }
+      - run: pnpm install --frozen-lockfile --filter '@amicode/host...'
+      - run: pnpm --filter @amicode/host run typecheck
+      - run: pnpm --filter @amicode/host run test
   schema-roundtrip:
     # 0.1d: the Julia round-trip against the SAME packages/schema/schemas/*.json the
     # TS side uses (cross-language anti-drift). Fast tier — JSONSchema only, NO Piccolo
