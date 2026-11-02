@@ -37,6 +37,9 @@ const symlinkPath = path.join(FAKE_HOME, ".local", "bin", "opencode");
 const symlinkDir = path.join(FAKE_HOME, ".local", "bin");
 
 beforeEach(() => {
+  // vitest 4: restoreAllMocks no longer resets plain vi.fn() call history, so
+  // clear it here or calls accumulate across tests.
+  vi.clearAllMocks();
   vi.spyOn(os, "homedir").mockReturnValue(FAKE_HOME);
   vi.mocked(existsSync).mockReturnValue(false);
   vi.mocked(accessSync).mockImplementation(() => {
