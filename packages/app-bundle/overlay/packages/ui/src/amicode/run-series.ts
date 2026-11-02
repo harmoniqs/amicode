@@ -9,6 +9,8 @@ export type RunSeries = {
   runId: string
   lab: string
   status: string // "solving" | "finished" | "failed" | …
+  /** "pending_verification" while the free-tier verification marker stands (#2056); never "suppressed" */
+  verification: "pending_verification" | null
   iteration: number | null
   fidelity: number | null // authoritative final fidelity; null while solving
   bestF: number | null // best objective so far (min f over the run)
@@ -58,6 +60,7 @@ export function parseRunSeriesResponse(raw: unknown): RunSeriesView {
       runId: typeof r.run_id === "string" ? r.run_id : "",
       lab: typeof r.lab === "string" ? r.lab : "",
       status: typeof r.status === "string" ? r.status : "solving",
+      verification: r.verification === "pending_verification" ? "pending_verification" : null,
       iteration: num(r.iteration),
       fidelity: num(r.fidelity),
       bestF: num(r.best_f),

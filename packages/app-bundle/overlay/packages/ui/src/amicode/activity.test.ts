@@ -7,6 +7,7 @@ import {
   mcpActivity,
   runActivity,
   runStatusLabel,
+  verificationLabel,
 } from "./activity"
 
 describe("activity tokens", () => {
@@ -20,6 +21,16 @@ describe("activity tokens", () => {
     })
     expect(ACTIVITY_SOFT.running).toBe("var(--activity-running-soft)")
     expect(ACTIVITY_SOFT.attention).toBe("var(--activity-attention-soft)")
+  })
+})
+
+describe("verificationLabel", () => {
+  test("the pending marker reads as a short 'not yet', not a failure", () => {
+    expect(verificationLabel("pending_verification")).toBe("Verification pending")
+  })
+  test("anything else has no label", () => {
+    expect(verificationLabel(null)).toBeUndefined()
+    expect(verificationLabel("suppressed")).toBeUndefined()
   })
 })
 

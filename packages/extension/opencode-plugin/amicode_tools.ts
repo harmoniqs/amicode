@@ -494,6 +494,8 @@ The \`amico\` client passed to mount:
         status is solving|stalled|dead|finished|failed|stopped|aborted; \`fidelity\` is the objective value
         (~ infidelity 1-F, LOWER is better).
         \`dead\` = the run's orchestrator stopped heartbeating (no live process); \`stalled\` = alive but quiet.
+        a run entry may also carry \`verification: "pending_verification"\` — the free-tier re-rollout hasn't landed yet;
+        show it as "Verification pending", never as a failed or suppressed verification (it is never promotable meanwhile).
     /amicode/run-series?run=..&lab=..  one run's per-iteration series
     /amicode/run-cards        shareable run cards (the showcase gallery)
     /amicode/library          uploaded papers + learnings

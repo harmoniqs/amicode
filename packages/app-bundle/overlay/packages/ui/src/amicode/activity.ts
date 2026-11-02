@@ -54,6 +54,12 @@ export function runStatusLabel(status: string): string {
   return `Run ${status}`
 }
 
+/** Short label for a run's verification state — only the pending marker (#2056)
+ *  has one; it is a "not yet", never a failure, so it carries no colour token. */
+export function verificationLabel(verification: string | null | undefined): string | undefined {
+  return verification === "pending_verification" ? "Verification pending" : undefined
+}
+
 const CONNECTION_ACTIVITY: Record<"success" | "critical" | "warning" | "pending" | "neutral", Activity> = {
   pending: "running",
   warning: "attention",
