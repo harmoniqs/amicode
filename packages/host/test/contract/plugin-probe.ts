@@ -1,3 +1,4 @@
+export {}
 // Child process (sandboxed by plugin.test.ts): the plugin registration entry point the host builds on.
 // Builds the routes exactly as server-seam.ts does, registers an in-process plugin through
 // `SdkPlugins.Service.register`, and reports what the server then shows. Prints one JSON line.
