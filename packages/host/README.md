@@ -118,3 +118,13 @@ no model is called and no credential exists. CI: the `host-tests` job in `.githu
 - Production defaults: the real port, where the password file lives, service/unit installation.
 - `XDG_*`/`HOME` are the process's own: the engine's global dirs (logs, auth, config) follow them, so a
   production unit should give the host its own state/data directories rather than the hub's.
+
+## CI
+
+`pnpm test` runs `scripts/test.mjs`: with Bun it runs `bun test`; **without Bun it prints a loud SKIPPED banner and exits 0** (it never claims a pass). That keeps the generic monorepo `fast` job green, but it means **these tests do not run in CI until the `host-tests` job is added**. The job is kept as an applyable patch because the automation credential that opened this change has no `workflow` scope and cannot modify `.github/workflows/`:
+
+```sh
+git apply packages/host/ci/host-tests-job.patch   # as a user with workflow scope, then commit
+```
+
+The patch adds a `host-tests` job (Bun 1.4.2, `AMICODE_HOST_REQUIRE_BUN=1` so a missing Bun fails instead of skipping) and excludes this package from the `fast` job's generic test run. Until it is applied, run the suite locally with `bun test` (or `pnpm run test:bun`).

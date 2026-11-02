@@ -9,7 +9,8 @@
   "types": "./src/main.ts",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "bun test"
+    "test": "node scripts/test.mjs",
+    "test:bun": "bun test"
   },
   "dependencies": {
     "@opencode/core": "2.2.5",
