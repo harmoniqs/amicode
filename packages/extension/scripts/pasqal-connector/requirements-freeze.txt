@@ -5,10 +5,12 @@
 # (campaign-era resolution) while requirements.txt pins 0.23.0 — the
 # auth-only pasqal_validate.py is version-tolerant (tested via stubs);
 # reconcile on the next venv rebuild.
+# #2075: pillow 12.3.0 -> 13.0.0 and certifi 2026.7.22 -> 2026.10.18 (security
+# floors); re-verified in a throwaway venv with the connector tests.
 annotated-types==0.8.0
 attrs==26.1.0
 auth0-python==3.24.1
-certifi==2026.7.22
+certifi==2026.10.18
 cffi==2.1.1
 charset-normalizer==3.5.1
 contourpy==1.4.0
@@ -23,7 +25,7 @@ matplotlib==3.11.2
 numpy==2.5.3
 packaging==26.3
 pasqal-cloud==0.22.0
-pillow==12.3.0
+pillow==13.0.0
 pulser==1.8.0
 pulser-core==1.8.0
 pulser-pasqal==0.24.0
