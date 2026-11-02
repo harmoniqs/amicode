@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, test } from "bun:test"
 import { authorized, front } from "../src/front.ts"
 import { hostRoutes } from "../src/routes.ts"
-import { listen } from "../src/listener.ts"
+import { IDLE_TIMEOUT, listen } from "../src/listener.ts"
 import { basic, cleanup, freePort } from "./helpers.ts"
 
 afterAll(cleanup)
@@ -212,7 +212,7 @@ describe("streaming over a real listener", () => {
       expect(server.port).toBe(port)
       // Bun's default idleTimeout is 10 s, which kills an idle SSE stream before the 15 s heartbeat; the
       // end-to-end proof is the second-heartbeat test in host.test.ts.
-      expect(listen.idleTimeout).toBe(0)
+      expect(IDLE_TIMEOUT).toBe(0)
     } finally {
       server.stop(true)
     }
