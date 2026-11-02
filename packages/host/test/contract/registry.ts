@@ -64,6 +64,12 @@ export const CONTRACTS: Contracts = {
       members: { Service: { is: "function", check: tag } },
     },
   },
+  // Anticipated: the plugin registration entry point the host's plugin hook-up (#2062) builds on. Not yet imported
+  // by src/, so the scan does not demand it; plugin.test.ts asserts its behaviour. Once src/ imports it, the entry
+  // becomes demanded like any other (drop `anticipated`).
+  "@opencode/core/plugin/sdk": {
+    SdkPlugins: { is: "object", anticipated: true, members: { Service: { is: "function", check: tag, anticipated: true } } },
+  },
   effect: {
     Context: { is: "object", members: { get: fn(2) } },
     Effect: {
