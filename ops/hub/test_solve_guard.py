@@ -343,6 +343,8 @@ class TestOrphanPrecompileExemption(Base):
         kids = subprocess.run(["pgrep", "-P", str(parent.pid)], capture_output=True, text=True).stdout.split()
         self.assertEqual(len(kids), 1, kids)
         self.add_to_cgroup(kids[0])
+        with open(self.spawned, "a") as f:  # tearDown reaps the child; killing the parent would orphan it
+            f.write(f"{kids[0]}\n")
         time.sleep(2.0)
         r = self.check()
         self.assertEqual(r.returncode, 3, r.stderr)
