@@ -1,0 +1,198 @@
+{
+  "name": "c1",
+  "facts": {
+    "resolve @opencode/sdk (package root)": "resolved /tmp/opencode/h0c/upstream/packages/sdk/src/index.ts",
+    "resolve @opencode/sdk/internal/host (deep)": "FAILS: Cannot find package '@opencode/sdk' imported from /tmp/opencode/h0c/xdg/c1/consumer",
+    "startup ms": 94,
+    "host keys": [
+      "runtime",
+      "fetch",
+      "plugins",
+      "sessions",
+      "workspace",
+      "close"
+    ]
+  },
+  "rows": [
+    {
+      "target": "c1/bare",
+      "id": "C1",
+      "verdict": "PASS",
+      "detail": "info=200 v=0.0.0-h0c create=200 id=ses_e6656179dffe7USAiKp6Fxx3CI listed=true (n=1)"
+    },
+    {
+      "target": "c1/bare",
+      "id": "C2",
+      "verdict": "NA",
+      "detail": "no custom-route seam without a host front at this layer"
+    },
+    {
+      "target": "c1/bare",
+      "id": "C3",
+      "verdict": "FAIL",
+      "detail": "no-credentials: /api/info=200 /api/session=200 /amicode/ping=404 /nope=404 /api/event=200; wrong-password /api/info=200"
+    },
+    {
+      "target": "c1/bare",
+      "id": "C4",
+      "verdict": "PASS",
+      "detail": "server.connected=true"
+    },
+    {
+      "target": "c1/bare",
+      "id": "C5",
+      "verdict": "PASS",
+      "detail": "heartbeat after 1 ms"
+    },
+    {
+      "target": "c1/bare",
+      "id": "C5b",
+      "verdict": "PASS",
+      "detail": "heartbeats at 1, 15007 ms (gap 15007 ms)"
+    },
+    {
+      "target": "c1/bare",
+      "id": "C6",
+      "verdict": "PASS",
+      "detail": "server-side feed log: subscribed(subscribers=1) -> released(subscribers=0)"
+    },
+    {
+      "target": "c1/bare",
+      "id": "C7",
+      "verdict": "PASS",
+      "detail": "listed=true rpc=200 {\"output\":\"pong-from-in-process-plugin\"}"
+    },
+    {
+      "target": "c1/bare",
+      "id": "C8",
+      "verdict": "PASS",
+      "detail": "provider=h0c calls=create,destroy"
+    },
+    {
+      "target": "c1/fronted",
+      "id": "C1",
+      "verdict": "PASS",
+      "detail": "info=200 v=0.0.0-h0c create=200 id=ses_e6655da5effe4oeTRedfcqcjEj listed=true (n=2)"
+    },
+    {
+      "target": "c1/fronted",
+      "id": "C2",
+      "verdict": "PASS",
+      "detail": "status=200 body.ok=true"
+    },
+    {
+      "target": "c1/fronted",
+      "id": "C3",
+      "verdict": "PASS",
+      "detail": "no-credentials: /api/info=401 /api/session=401 /amicode/ping=401 /nope=401 /api/event=401; wrong-password /api/info=401"
+    },
+    {
+      "target": "c1/fronted",
+      "id": "C4",
+      "verdict": "PASS",
+      "detail": "server.connected=true"
+    },
+    {
+      "target": "c1/fronted",
+      "id": "C5",
+      "verdict": "PASS",
+      "detail": "heartbeat after 1 ms"
+    },
+    {
+      "target": "c1/fronted",
+      "id": "C5b",
+      "verdict": "PASS",
+      "detail": "heartbeats at 1, 15005 ms (gap 15003 ms)"
+    },
+    {
+      "target": "c1/fronted",
+      "id": "C6",
+      "verdict": "PASS",
+      "detail": "server-side feed log: subscribed(subscribers=1) -> released(subscribers=0)"
+    },
+    {
+      "target": "c1/fronted",
+      "id": "C7",
+      "verdict": "PASS",
+      "detail": "listed=true rpc=200 {\"output\":\"pong-from-in-process-plugin\"}"
+    },
+    {
+      "target": "c1/fronted",
+      "id": "C8",
+      "verdict": "PASS",
+      "detail": "provider=h0c calls=create,destroy,create,destroy"
+    },
+    {
+      "target": "c1/fronted-default-idle",
+      "id": "C1",
+      "verdict": "PASS",
+      "detail": "info=200 v=0.0.0-h0c create=200 id=ses_e66559f47ffe9IxU1EtXmXmOwl listed=true (n=3)"
+    },
+    {
+      "target": "c1/fronted-default-idle",
+      "id": "C2",
+      "verdict": "PASS",
+      "detail": "status=200 body.ok=true"
+    },
+    {
+      "target": "c1/fronted-default-idle",
+      "id": "C3",
+      "verdict": "PASS",
+      "detail": "no-credentials: /api/info=401 /api/session=401 /amicode/ping=401 /nope=401 /api/event=401; wrong-password /api/info=401"
+    },
+    {
+      "target": "c1/fronted-default-idle",
+      "id": "C4",
+      "verdict": "PASS",
+      "detail": "server.connected=true err=TypeError: The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()"
+    },
+    {
+      "target": "c1/fronted-default-idle",
+      "id": "C5",
+      "verdict": "PASS",
+      "detail": "heartbeat after 1 ms"
+    },
+    {
+      "target": "c1/fronted-default-idle",
+      "id": "C5b",
+      "verdict": "FAIL",
+      "detail": "only 1 heartbeat(s) in 40000 ms (TypeError: The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch())"
+    },
+    {
+      "target": "c1/fronted-default-idle",
+      "id": "C6",
+      "verdict": "PASS",
+      "detail": "server-side feed log: subscribed(subscribers=1) -> released(subscribers=0)"
+    },
+    {
+      "target": "c1/fronted-default-idle",
+      "id": "C7",
+      "verdict": "PASS",
+      "detail": "listed=true rpc=200 {\"output\":\"pong-from-in-process-plugin\"}"
+    },
+    {
+      "target": "c1/fronted-default-idle",
+      "id": "C8",
+      "verdict": "PASS",
+      "detail": "provider=h0c calls=create,destroy,create,destroy,create,destroy"
+    },
+    {
+      "target": "c1",
+      "id": "C9a",
+      "verdict": "PASS",
+      "detail": "hub-path fds=0; own fresh DB fds=3"
+    },
+    {
+      "target": "c1",
+      "id": "C9b",
+      "verdict": "PASS",
+      "detail": "listening ports of process tree: [51078,51668,51362]; outside 51000-51999: []"
+    },
+    {
+      "target": "c1",
+      "id": "C9c",
+      "verdict": "PASS",
+      "detail": "service registration files under sandbox: []"
+    }
+  ]
+}

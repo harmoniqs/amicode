@@ -1,0 +1,166 @@
+2026-11-01T19:35:51-05:00
+a175e7a85de8d3e0763338d0ea8bc09285394afb2f4198c238d9401b49d4379f  /home/aaron/.config/systemd/user/amico-git-resolver.service
+97f112aaa147ad7ffe377e671158306f5c0414ae78e27ce016c800a627ca7252  /home/aaron/.config/systemd/user/amico-git-resolver.timer
+95dee6bbd0331cd60f7c78ff96ba2533fe90d655279bbdcbcd30d385114cc406  /home/aaron/.config/systemd/user/arjev-daily.service
+5f09daecd79a5f553172c5198b7aa582d992d09ef1eec35ce0100a4e3b4ed015  /home/aaron/.config/systemd/user/arjev-daily.timer
+f8c6e4aa74d707a1d53d8e07f7f8714dad024de6574e39e8dcec77963dec3427  /home/aaron/.config/systemd/user/armonia-sync.service
+ba1e1ae65cbb98bf8b7ec1d5d2d36bf8c38c2039e65a5001401a0d5f2af740df  /home/aaron/.config/systemd/user/armonia-sync.timer
+19eb975a0135a2424e5ccd371cf34a858af066498d76638e7204b5caf351161f  /home/aaron/.config/systemd/user/co.harmoniqs.amicode-frontdoor.service
+344fc726f8b3a329740d3307809d8ea8d0d41fdab28b8c0330936847feec0256  /home/aaron/.config/systemd/user/co.harmoniqs.amicode-frontdoor.service.d/jev-local.conf
+c3ceec2b2eafdbb2be4d019d0a687337b4e948092e29c868a2f2121912348b91  /home/aaron/.config/systemd/user/co.harmoniqs.amicode-server.service
+d816bce8f116d1e234e7e73981e492cf8237a897d664990bdebb10fa2e784dca  /home/aaron/.config/systemd/user/co.harmoniqs.amicode-server@.service
+1c23c7d9914356d0791003f56cea654774a0ab894c5b510a0bcea19197121895  /home/aaron/.config/systemd/user/co.harmoniqs.amicode-server@.service.d/engine-log.conf
+6c247acb6a21e649d5cd92f3c5152d32719af826fbc6d3277c9bfe30d9c27300  /home/aaron/.config/systemd/user/co.harmoniqs.amicode-server.service.d/machine-skill-root.conf
+6c247acb6a21e649d5cd92f3c5152d32719af826fbc6d3277c9bfe30d9c27300  /home/aaron/.config/systemd/user/co.harmoniqs.amicode-server@.service.d/machine-skill-root.conf
+4697e57ad46fa0189d127f561117e6474a19750c6dca4cf659bc964bc1a70c27  /home/aaron/.config/systemd/user/co.harmoniqs.amicode-server@.service.d/per-shard-files.conf
+7b21fa55deb71aed004de47d9e9654175403e97edc73edf4ff203c4f1af49319  /home/aaron/.config/systemd/user/co.harmoniqs.amicode-server.service.d/port-pin.conf
+e74220b7b3e2e561c1ccf6d2de3a922eb06d621d809347bfe052ba1aa91ee533  /home/aaron/.config/systemd/user/co.harmoniqs.arjev-digest.service
+d6902d658a62858b14151b24bb8594a10c32cd30006785ccb268dde2c1250002  /home/aaron/.config/systemd/user/co.harmoniqs.arjev-digest.service.d/override.conf
+d3fa2788eaa65af31bb9bde9b9d3c4e9b499726a07f7e22e8e0828b7e3085185  /home/aaron/.config/systemd/user/co.harmoniqs.arjev-digest.timer
+c467933a557f7bfbeaba1a9640d8f0178a1adb784f79adaf3635e07a3a913843  /home/aaron/.config/systemd/user/co.harmoniqs.fleet-status.service
+35a438fbe7b6a1dc4f7c8eb22124ecf8852e08015e2bc154a669e0a26312f1cc  /home/aaron/.config/systemd/user/co.harmoniqs.fleet-status.timer
+983dfcd6c6dc0fea1933aecd5753eb8b1856246efb01f8013a4a9380a657a5b5  /home/aaron/.config/systemd/user/co.harmoniqs.role-parity.service
+dec74e90e2e55167b27a995c5e54fdded3b7d05e706f278e25f290973f0a4da8  /home/aaron/.config/systemd/user/co.harmoniqs.role-parity.timer
+05d5ab104e3b9a445cc292f387a5ae725b72403ecbcc8eeb9f54f5ad79bcfc8d  /home/aaron/.config/systemd/user/co.harmoniqs.session-archive.service
+64265954f854c979dd66661a65f50caf613d61702a699dbbb1d3fa23881e4375  /home/aaron/.config/systemd/user/co.harmoniqs.session-archive.timer
+cc5a8ae93b690f91209852ebb2269691ece40fef515b24f151167e308b4fa5dd  /home/aaron/.config/systemd/user/co.harmoniqs.shard-watch.service
+7c38bd3f5354895ebf40472d48f658489963412bf514c4a6299d149a1fa3a1c6  /home/aaron/.config/systemd/user/co.harmoniqs.shard-watch.service.d/override.conf
+aef803c18a52b9fea901106139ef569fd1fd0525415bf219df051eee92392732  /home/aaron/.config/systemd/user/co.harmoniqs.shard-watch.timer
+735d3ca6c5a6e77c2d34839d2bf55d6e1297ac206dcd2bc035f4dcb5b159d32b  /home/aaron/.config/systemd/user/notturno-execute.service
+5dd93a07a16e503806d9d713ee9ef4716623ed2512f7fdc365b4d2a402ff29d8  /home/aaron/.config/systemd/user/notturno-execute.timer
+6b2e0c9a9a47837314f3eaf64abf3808c16516f551187444c12aed8db954a2a0  /home/aaron/.config/systemd/user/notturno-morning-deadman.service
+5a1e03d30b5d643b66c9c615b5f0f5f5fdf670b1d7280f53b802d1034aadde93  /home/aaron/.config/systemd/user/notturno-morning-deadman.timer
+602a782b4e475406f12fbba3c33041e8447206e0405a9be47e534e03b034cd93  /home/aaron/.config/systemd/user/notturno-night.service
+be9711306948d2a64d5e20e2071a58afed96c80a4ec09899ecca48fb9674ed2f  /home/aaron/.config/systemd/user/notturno-night.service.d/slack.conf
+c6217b4957b43fc973ddacf4644c7019bb1aa50607c95a51dae8c804a8b439f8  /home/aaron/.config/systemd/user/notturno-night.timer
+34eec3f690f5960a55809ec2f0ebcc2fc6db83ef62da10efd60766b77559b4c6  /home/aaron/.config/systemd/user/rss-watchdog.service
+84c34c1ea3115bbbda0bf58347ac72abbfcd65c6dcdda6151a0a1a1ed5789a37  /home/aaron/.config/systemd/user/rss-watchdog@.service
+2e6b020ab72b4c58dcfc22a296b2bc2d0544975fcfb2c8ec5d80105a145b515e  /home/aaron/.config/systemd/user/rss-watchdog.timer
+5932dbe5273ec410a1aa49044eab1595a51f2431274b709510e19449230db72e  /home/aaron/.config/systemd/user/rss-watchdog@.timer
+99088e7cb5769d2f33118fb6b761d45c8a264cab3595ee18c40407def3b67b34  /home/aaron/.config/systemd/user/skill-freshness-night.service
+325bbe127576b6a29112be5a499f7e7e091192c8c9e237620739af55c5cb9ef6  /home/aaron/.config/systemd/user/skill-freshness-night.timer
+10ca8b47417410278c682f58c08c4b1d3edd9253157c61d41d2745c9a06af188  /home/aaron/.amico/server/amicode-server.sh
+d8bf4b012c6f1afbb6c22bc1804804923d48b4da296aedb9ea457e58acaa9ca6  /home/aaron/.amico/server/hub-frontdoor.py
+co.harmoniqs.amicode-frontdoor.service active running
+co.harmoniqs.amicode-server.service active running
+co.harmoniqs.amicode-server@2.service active running
+co.harmoniqs.amicode-server@3.service active running
+● loaded failed
+co.harmoniqs.fleet-status.timer active waiting
+co.harmoniqs.role-parity.timer active waiting
+co.harmoniqs.session-archive.timer active waiting
+co.harmoniqs.shard-watch.timer active waiting
+-rw-r--r-- 1 aaron aaron 9016074240 2026-11-01 19:35:48.210814515 -0500 /home/aaron/.local/share/opencode/opencode.db
+-rw-r--r-- 1 aaron aaron 1894899712 2026-08-28 11:40:33.662903413 -0400 /home/aaron/.local/share/opencode/opencode.db.backup.1787931641
+-rw-r--r-- 1 aaron aaron 4774645760 2026-10-01 04:12:27.593443474 -0400 /home/aaron/.local/share/opencode/opencode.db.backup-20261001-macbook-shard-merge
+-rw-r--r-- 1 aaron aaron 2958045184 2026-09-04 14:31:07.106402615 -0400 /home/aaron/.local/share/opencode/opencode.db.backup.pre-merge-20260904
+-rw-r--r-- 1 aaron aaron 3044737024 2026-09-05 00:10:35.963183154 -0400 /home/aaron/.local/share/opencode/opencode.db.bak-20260905-001035
+-rw-r--r-- 1 aaron aaron 3795435520 2026-09-12 10:33:53.051682593 -0400 /home/aaron/.local/share/opencode/opencode.db.bak-20260912-103353-pre-shard-merge
+-rw-r--r-- 1 aaron aaron 4468756480 2026-09-20 08:33:46.433805249 -0400 /home/aaron/.local/share/opencode/opencode.db.bak-20260920-0840-pre-mini-merge
+-rw-r--r-- 1 aaron aaron 5021937664 2026-10-01 07:01:39.297199595 -0400 /home/aaron/.local/share/opencode/opencode.db.bak-20261001-070139-pre-dirfix
+-rw-r--r-- 1 aaron aaron 2852917248 2026-09-03 10:06:12.278905489 -0400 /home/aaron/.local/share/opencode/opencode.db.pre-move-20260903-100609
+-rw-r--r-- 1 aaron aaron      32768 2026-11-01 19:35:51.294933496 -0500 /home/aaron/.local/share/opencode/opencode.db-shm
+-rw-r--r-- 1 aaron aaron   11927432 2026-11-01 19:35:51.296933573 -0500 /home/aaron/.local/share/opencode/opencode.db-wal
+0.0.0.0:22
+0.0.0.0:33943
+0.0.0.0:33944
+0.0.0.0:34021
+0.0.0.0:34022
+0.0.0.0:34175
+0.0.0.0:34176
+0.0.0.0:36271
+0.0.0.0:36272
+0.0.0.0:37575
+0.0.0.0:37576
+0.0.0.0:43237
+0.0.0.0:43238
+0.0.0.0:45015
+0.0.0.0:45016
+0.0.0.0:45533
+0.0.0.0:45534
+0.0.0.0:49517
+0.0.0.0:49518
+0.0.0.0:49703
+0.0.0.0:49704
+0.0.0.0:54085
+0.0.0.0:54086
+0.0.0.0:54883
+0.0.0.0:54884
+0.0.0.0:56277
+0.0.0.0:56278
+0.0.0.0:57227
+0.0.0.0:57228
+0.0.0.0:59423
+0.0.0.0:59424
+0.0.0.0:60455
+0.0.0.0:60456
+100.104.59.70:51223
+100.104.59.70:8787
+127.0.0.1:33579
+127.0.0.1:34771
+127.0.0.1:34772
+127.0.0.1:36729
+127.0.0.1:37113
+127.0.0.1:37547
+127.0.0.1:37548
+127.0.0.1:38089
+127.0.0.1:38090
+127.0.0.1:39093
+127.0.0.1:39094
+127.0.0.1:39259
+127.0.0.1:39260
+127.0.0.1:39855
+127.0.0.1:39856
+127.0.0.1:4094
+127.0.0.1:4095
+127.0.0.1:4096
+127.0.0.1:4097
+127.0.0.1:41755
+127.0.0.1:41779
+127.0.0.1:41780
+127.0.0.1:41849
+127.0.0.1:4194
+127.0.0.1:4195
+127.0.0.1:42583
+127.0.0.1:42584
+127.0.0.1:42871
+127.0.0.1:42872
+127.0.0.1:4294
+127.0.0.1:4295
+127.0.0.1:43439
+127.0.0.1:44167
+127.0.0.1:44168
+127.0.0.1:46623
+127.0.0.1:46624
+127.0.0.1:48135
+127.0.0.1:48136
+127.0.0.1:50401
+127.0.0.1:50402
+127.0.0.1:50439
+127.0.0.1:50440
+127.0.0.1:52681
+127.0.0.1:52682
+127.0.0.1:55959
+127.0.0.1:55960
+127.0.0.1:56275
+127.0.0.1:56276
+127.0.0.1:56877
+127.0.0.1:56878
+127.0.0.1:57451
+127.0.0.1:57452
+127.0.0.1:57863
+127.0.0.1:57864
+127.0.0.1:58183
+127.0.0.1:58184
+127.0.0.1:59693
+127.0.0.1:59694
+127.0.0.1:631
+127.0.0.1:9229
+127.0.0.1:9230
+127.0.0.1:9231
+127.0.0.53%lo:53
+[::1]:631
+[::]:22
+*:9800
+[fd7a:115c:a1e0::d901:3ba0]:65525
+Local
