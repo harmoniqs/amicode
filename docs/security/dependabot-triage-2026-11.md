@@ -95,7 +95,7 @@ Alert state itself is **not** changed by this branch; the director dismisses aft
 
 ## What changed
 
-- `packages/{amico-run,extension,schema,companion}/package.json`: `vitest ^2.1.0` → `^4.1.12`; added `vite ^6.4.5`
+- `packages/amico-run/package.json`, `packages/extension/package.json`, `packages/schema/package.json`, `packages/companion/package.json`: `vitest ^2.1.0` → `^4.1.12`; added `vite ^6.4.5`
   (vitest 4 peers on vite 6/7/8, and the previously locked vite 5.4.21 is flagged GHSA-587h-7wmj-h5pm).
   This is a major bump that also removes `tinypool` from the tree (both critical tinypool advisories).
 - `packages/extension/package.json`: `happy-dom ^20.11.1` → `^21.0.4`.
