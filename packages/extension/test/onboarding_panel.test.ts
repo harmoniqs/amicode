@@ -128,7 +128,6 @@ describe("PROVIDER_MODELS — data-driven provider→model mapping (AC3)", () =>
   it("includes the expected provider lineup in order", () => {
     const keys = Object.keys(PROVIDER_MODELS);
     expect(keys).toEqual([
-      "github-copilot",
       "harmoniqs",
       "opencode",
       "anthropic",
@@ -141,9 +140,9 @@ describe("PROVIDER_MODELS — data-driven provider→model mapping (AC3)", () =>
     ]);
   });
 
-  it("github-copilot is the first option (free, no API key)", () => {
-    const keys = Object.keys(PROVIDER_MODELS);
-    expect(keys[0]).toBe("github-copilot");
+  it("does not offer github-copilot (absent from the pinned engine catalog, #1421)", () => {
+    expect(Object.keys(PROVIDER_MODELS)).not.toContain("github-copilot");
+    expect(PROVIDER_DISPLAY_NAMES["github-copilot"]).toBeUndefined();
   });
 });
 
@@ -152,10 +151,6 @@ describe("PROVIDER_DISPLAY_NAMES — human-readable labels", () => {
     for (const key of Object.keys(PROVIDER_MODELS)) {
       expect(PROVIDER_DISPLAY_NAMES[key]).toBeTruthy();
     }
-  });
-
-  it("github-copilot label indicates it is free", () => {
-    expect(PROVIDER_DISPLAY_NAMES["github-copilot"].toLowerCase()).toContain("free");
   });
 
   it("custom label indicates OpenAI-compatible", () => {
@@ -1513,16 +1508,17 @@ describe("probeModels — find first accessible model for a provider", () => {
 
   it("returns first model for providers without a test endpoint (untestable)", async () => {
     const fetchMock = vi.fn();
-    // github-copilot has no test endpoint — probeModels should return first model without probing
-    const result = await probeModels(
-      "github-copilot",
-      "",
-      fetchMock,
-    );
-    expect(result).toBeDefined();
-    expect(result!.id).toBe(PROVIDER_MODELS["github-copilot"][0].id);
-    // No fetch call made for untestable providers
-    expect(fetchMock).not.toHaveBeenCalled();
+    // No shipped provider lacks a test endpoint now; register a synthetic one.
+    PROVIDER_MODELS["untestable-fake"] = [{ id: "untestable-fake/m1", name: "M1" }];
+    try {
+      const result = await probeModels("untestable-fake", "", fetchMock);
+      expect(result).toBeDefined();
+      expect(result!.id).toBe("untestable-fake/m1");
+      // No fetch call made for untestable providers
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      delete PROVIDER_MODELS["untestable-fake"];
+    }
   });
 
   it("returns undefined for providers with empty model list", async () => {

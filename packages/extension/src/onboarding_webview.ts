@@ -489,13 +489,14 @@ function buildForm(): void {
     openai: "Requires API key from platform.openai.com (not included in ChatGPT Plus)",
     google: "Requires API key from aistudio.google.com (free tier available)",
     opencode: "Sign up at opencode.ai/auth — one key for curated models",
-    "github-copilot": "No API key needed — you'll sign in with GitHub when prompted",
     harmoniqs: "Harmoniqs AI's own curated model — get an hqa_... key at app.harmoniqs.ai. Includes local tool calling.",
     custom: "Any OpenAI-compatible endpoint (Ollama, Groq, DeepSeek, Mistral, Azure, etc.)",
   };
 
   // Providers that don't need an API key
-  const noKeyProviders = new Set(["github-copilot"]);
+  // (empty: every offered provider needs a key or custom endpoint. GitHub Copilot was
+  // removed in #1421 — it is absent from the pinned engine's provider catalog.)
+  const noKeyProviders = new Set<string>();
   // Providers that use free-text model input instead of a dropdown
   const freeModelProviders = new Set(["custom"]);
   // Providers that need a base URL
@@ -593,7 +594,7 @@ function buildForm(): void {
     if (testBtn.disabled) return;
     const selected = providerSelect.value;
 
-    // For no-key providers (Copilot), skip test — just write config and close
+    // For no-key providers, skip test — just write config and close
     if (noKeyProviders.has(selected)) {
       const model = freeModelProviders.has(selected)
         ? `${selected}/${modelInput.value.trim()}`

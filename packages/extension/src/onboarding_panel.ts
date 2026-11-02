@@ -73,13 +73,13 @@ export interface ModelEntry {
 
 /** Data-driven provider→model map. Each provider key is the opencode provider id;
  *  models are the provider/model-id pairs opencode expects in `config.model`.
- *  "github-copilot" uses OAuth (no key); "custom" uses a base URL + model text. */
+ *  "custom" uses a base URL + model text.
+ *
+ *  GitHub Copilot is deliberately NOT listed (#1421): the pinned opencode engine's
+ *  provider catalog has no "github-copilot" entry, so it can never authenticate and
+ *  onboarding's no-endpoint "untestable => ok" path reported a false success. Re-add
+ *  it only once the pinned engine supports it AND testConnection can verify it. */
 export const PROVIDER_MODELS: Record<string, ModelEntry[]> = {
-  "github-copilot": [
-    { id: "github-copilot/claude-sonnet-5", name: "Claude Sonnet 5" },
-    { id: "github-copilot/gpt-5.6", name: "GPT-5.6" },
-    { id: "github-copilot/gpt-5.6-luna", name: "GPT-5.6 Luna" },
-  ],
   [HARMONIQS_PROVIDER_ID]: [{ id: `${HARMONIQS_PROVIDER_ID}/${HARMONIQS_MODEL_ID}`, name: "Harmoniqs Auto" }],
   opencode: [
     { id: "anthropic/claude-opus-5", name: "Claude Opus 5" },
@@ -120,7 +120,6 @@ export const PROVIDER_MODELS: Record<string, ModelEntry[]> = {
 
 /** Human-readable display names for the provider dropdown. */
 export const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
-  "github-copilot": "GitHub Copilot (Free)",
   [HARMONIQS_PROVIDER_ID]: "Harmoniqs AI",
   opencode: "OpenCode",
   anthropic: "Anthropic",
@@ -682,7 +681,7 @@ async function testBedrockConnection(
 
 /** Probe models in order for a provider. Returns the first model that passes
  *  testConnection, or undefined if all fail. For providers without a test
- *  endpoint (e.g. github-copilot), returns the first model without probing.
+ *  endpoint, returns the first model without probing.
  *  Stops immediately on 401 (bad credentials — no point trying more models). */
 export async function probeModels(
   provider: string,
