@@ -83,6 +83,24 @@ last) and counts open request scopes: `GET /amicode/health` → `openStreams` go
 connect/abort. This is the scope that owns the subscription, not a read of the subscriber map itself.
 The negative control (a front that pumps the body leaks the stream) lives in `test/front.test.ts`.
 
+## Plugins (#2062)
+
+The host registers its behaviour as in-process **v2 plugins** (`@opencode/plugin` 2.2.5, exact pin) through the
+seam (`createServer({ plugins })` → the engine's `SdkPlugins` store, exactly what the SDK's embedded host does). No
+engine source is patched. Configure with `AMICODE_HOST_PLUGIN_CONFIG` (a JSON object; malformed ⇒ exit 64 naming the
+variable): `permission.{grants,replaceDefaults}`, `context.extensionDir` (`null` = no injected blocks), `provider.{qwen,bedrock,defaultModelGuard}`, `modules` (absolute paths of extra plugins).
+
+| Plugin (`src/plugins/`) | Hooks | Ports |
+|---|---|---|
+| `permission.ts` | `permission.evaluate` | **Default-deny**: every resource of a request needs a matching grant or the request is denied; a grant can keep or tighten the engine's effect, never loosen it (an `ask` stays `ask`; configured denies never reach the hook). Built-in allowlist from the v1 config: read-only tools, `question`, `external_directory` for scratch and `~/.amico`, `edit` in scratch. **Shell and general edits are not granted by default** — add scoped grants (`edit` resources are relative to the session's location directory). |
+| `context.ts` | `session.prompt` (+ `instructions.entry`), `session.context`, `session.model.request`, `tool.execute.before`/`shell.create.before` | v1 `amicode_context`: stack/setup state as **keyed instructions** (prompt cache stays intact), the mode block per request (depends on the request's agent), the Harmoniqs gateway headers (`chat.headers`), `AMICO_SESSION_ID` in the shell env (`shell.env`; ambiguous commands get no id). Recent-sessions and open-threads blocks are **not** ported: they read the v1 session table. |
+| `provider.ts` | `session.context`, `session.http.request`, `model.transform` | Qwen sampling defaults; Bedrock signature-less reasoning → text; Bedrock cache-point-after-reasoning repair on the wire body (valid bodies pass through untouched — SigV4 is signed before the hook); default-model guard. Error classification (context-overflow vs throttling) and the reachability probe live in engine code and have no hook. |
+| `role-cards.ts` | — (library) | v1 card `permission:` keys → v2 action names (`bash`→`shell`, `write`/`patch`/`apply_patch`→`edit`, `task`→`subagent`), unknown key ⇒ error, `renderV2Card`. **Hazard (tested):** a card that mixes a v1 `permission:` with any v2-native key (`permissions`, `system`, `request`, `disabled`) loses its deny silently in the engine. |
+
+Restart with a pending permission or question (observed; `test/plugins/restart.test.ts`): the request is cancelled on
+shutdown and the waiting tool call fails visibly (`aborted`); the turn is resumed on next start with a restart notice
+and one new model turn; the tool is not re-executed or re-asked.
+
 ## Safety properties
 
 - Never registers as, replaces, or reads the stock service registration (`<state>/opencode/service*.json`);
@@ -102,14 +120,14 @@ bun run typecheck
 
 Every process the tests start runs in a sandbox (`test/helpers.ts`): from-scratch environment, temp
 `XDG_{STATE,DATA,CONFIG,CACHE}_HOME` and `HOME`, a fresh database file under a temp dir, a random password
-per run, and **loopback ports 52000–52999 only** (never `49374/49375`, `4094–4296`, `9229–9231`,
+per run, and **loopback ports 52000–52999 only (the plugin tests use 52100–52199)** (never `49374/49375`, `4094–4296`, `9229–9231`,
 `51000–51999`, never `--service`). Resumed turns are made to fail locally (`OPENCODE_DISABLE_FREE_MODELS=1`);
 no model is called and no credential exists. CI: the `host-tests` job in `.github/workflows/ci.yml`
 (Bun 1.4.2); the `fast` job excludes this package from its Node-tooling `pnpm -r run test`.
 
 ## Not done here (by scope)
 
-- **Plugins** (in-process registration, #2062), the application routes port, the fleet, the UI.
+- The application routes port, the fleet, the UI.
 - **Ticketed WebSocket / pairing URLs** (pty, persistent-pty, mcp tickets, pairing connect) are authenticated
   by tickets rather than Basic credentials upstream; deny-by-default blocks them until the front learns the
   exact allow-list.
