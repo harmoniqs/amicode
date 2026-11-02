@@ -1,0 +1,28 @@
+{
+  "name": "@amicode/host",
+  "version": "0.1.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "description": "amicode-host: the embedded opencode v2 server behind a deny-by-default authenticating front. Runs on Bun only.",
+  "main": "./src/main.ts",
+  "types": "./src/main.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node scripts/test.mjs",
+    "test:bun": "bun test"
+  },
+  "dependencies": {
+    "@opencode/core": "2.2.5",
+    "@opencode/protocol": "2.2.5",
+    "@opencode/schema": "2.2.5",
+    "@opencode/sdk": "2.2.5",
+    "@opencode/server": "2.2.5",
+    "effect": "4.0.6"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.2",
+    "@types/node": "^26.1.2",
+    "typescript": "^5.6.0"
+  }
+}
