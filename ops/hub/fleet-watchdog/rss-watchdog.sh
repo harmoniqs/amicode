@@ -10,12 +10,24 @@
 # so the pattern's "--port=4095" (equals) could never match on any port.
 # Match by binary path instead: immune to port moves and separator style.
 #
+# 2026-11-01 (amicode#2044 / A0): the THREE diverged copies of this script are
+# reconciled into this one. It restores the 2026-10-07 liveness-alone wedge
+# recovery (two consecutive silent probes => capture + restart regardless of
+# RSS, per-shard marker) that the Oct 11 deploy of an older file silently
+# regressed, keeps the gateway-secret-aware probe, and derives the engine
+# pattern from the shard port in EVERY mode (the legacy no-index pattern was
+# binary-path-only, which with three engines running matches an arbitrary
+# shard's engine). EVERY restart goes through solve-guard.sh: a restart is
+# refused (deferred) while compute is running in the unit's process group; after
+# WATCHDOG_DEFER_ALERT_TICKS deferrals an alert marker is raised and the
+# watchdog KEEPS deferring; a human override file allows the restart.
+#
 # Every sample is logged — the trajectory file doubles as the #775 dataset.
 set -u
 
 THRESHOLD_KB="${WATCHDOG_THRESHOLD_KB:-2621440}"   # 1.5 GB — mid-burn, well above the ~400-700 MB healthy baseline
 SERVICE="${WATCHDOG_SERVICE:-co.harmoniqs.amicode-server.service}"
-PATTERN="${WATCHDOG_PATTERN:-$HOME/.amico/server/bin/opencode serve}"
+PATTERN="${WATCHDOG_PATTERN:-$HOME/.amico/server/bin/opencode serve --port 4094}"
 HEALTH_PORT="${WATCHDOG_HEALTH_PORT:-4094}"
 HEALTH_TIMEOUT="${WATCHDOG_HEALTH_TIMEOUT:-10}"
 # 2026-10-05: the corroboration probe must be CHEAP. /session is the heaviest
@@ -32,6 +44,12 @@ HEALTH_PATH="${WATCHDOG_HEALTH_PATH:-/config?directory=%2Fhome%2Faaron%2Fharmoni
 GW_SECRET_FILE="${WATCHDOG_SECRET_FILE:-$HOME/.amico/server/engine-gateway-secret.env}"
 LOG_DIR="${WATCHDOG_LOG_DIR:-$HOME/.amico/server/fleet-watchdog}"
 LOG="$LOG_DIR/rss-trajectory.log"
+# restart guard (solve-guard.sh sits one directory above this script, in both the
+# repo — ops/hub/ — and the deploy — ~/.amico/server/). Missing guard = no restart.
+GUARD="${SOLVE_GUARD_SCRIPT:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../solve-guard.sh}"
+DEFER_ALERT_TICKS="${WATCHDOG_DEFER_ALERT_TICKS:-12}"
+ALERT_DIR="${WATCHDOG_ALERT_DIR:-$HOME/.amico/server/alerts}"
+POST_RESTART_SLEEP="${WATCHDOG_POST_RESTART_SLEEP:-5}"
 STAMP="$(date '+%Y-%m-%dT%H:%M:%S')"
 
 # --- shard derivation (amicode #1717 phase 1) ---------------------------------
@@ -42,7 +60,8 @@ STAMP="$(date '+%Y-%m-%dT%H:%M:%S')"
 # matching + `head -1` would grab an arbitrary shard's engine. If the pattern
 # ever stops matching, this script reports server-missing and exits 0 (no
 # restart authority lost silently) — the per-shard smoke asserts the match.
-# No index = legacy shard-1 behavior, byte-for-byte.
+# No index = the legacy shard-1 unit; its default pattern is now port-specific
+# too (--port 4094) — see the 2026-11-01 note in the header.
 # --print-shard-env: print the derived config and exit (test seam).
 INSPECT_PORT=9229
 if [ -n "${AMICODE_SHARD_INDEX:-}" ]; then
@@ -121,22 +140,88 @@ capture() {
   sha256sum "$HOME/.amico/server/bin/opencode" > "$d/opencode.sha256" 2>/dev/null || true
   echo "$d"
 }
+# Per-shard marker (2026-10-07: a SHARED marker was a cross-shard kill race —
+# the healthy shards' watchdog instances wiped the wedged shard's marker on
+# their serving ticks, so the wedged shard armed forever and never fired).
+SILENT_MARKER="$LOG_DIR/http-silent-tick${AMICODE_SHARD_INDEX:+-shard$AMICODE_SHARD_INDEX}"
+DEFER_FILE="$LOG_DIR/defer-count-$SERVICE"
+ALERT_FILE="$ALERT_DIR/live-compute-deferred-$SERVICE"
+
+# guarded_restart <reason> <capture-tag> — the ONLY place this script restarts the engine.
+# Returns 0 when the restart ran, 1 when it was deferred or failed (the caller
+# keeps its armed state and retries next tick). Never exits non-zero: a deferral
+# is a normal decision, not a failed unit.
+guarded_restart() {
+  local reason="$1" tag="$2" rc=0 n
+  # forensics once per deferral episode — not every 5 minutes while compute runs
+  [ -f "$DEFER_FILE" ] || capture "$tag" "$pid" >/dev/null 2>&1 || true
+  if [ ! -f "$GUARD" ]; then
+    echo "$STAMP action=restart-deferred reason=$reason status=guard-missing ($GUARD) — never restarting unguarded" >> "$LOG"
+    rc=3
+  else
+    echo "$STAMP action=restart reason=$reason rss_kb=$rss_kb" >> "$LOG"
+    bash "$GUARD" run "$SERVICE" rss-watchdog --defer -- systemctl --user restart "$SERVICE" >> "$LOG" 2>&1 || rc=$?
+  fi
+  if [ "$rc" -eq 3 ]; then
+    n=$(( $(cat "$DEFER_FILE" 2>/dev/null || echo 0) + 1 ))
+    echo "$n" > "$DEFER_FILE"
+    echo "$STAMP action=restart-deferred reason=$reason deferrals=$n (live compute in $SERVICE's process group)" >> "$LOG"
+    if [ "$n" -ge "$DEFER_ALERT_TICKS" ]; then
+      mkdir -p "$ALERT_DIR"
+      echo "$STAMP $SERVICE needs a restart ($reason) but live compute has blocked it for $n ticks. To force it: touch ${SOLVE_GUARD_OVERRIDE_DIR:-$HOME/.amico/server/restart-override}/$SERVICE" > "$ALERT_FILE"
+      # one decision-log ALERT line when the bound is first crossed, then every bound-multiple
+      if [ $(( n % DEFER_ALERT_TICKS )) -eq 0 ]; then
+        bash "$GUARD" log "$SERVICE" rss-watchdog alert "deferred $n ticks: $reason" >/dev/null 2>&1 || true
+      fi
+    fi
+    return 1
+  fi
+  if [ "$rc" -ne 0 ]; then
+    echo "$STAMP action=restart-failed reason=$reason rc=$rc" >> "$LOG"
+    return 1
+  fi
+  rm -f "$DEFER_FILE" "$ALERT_FILE"
+  sleep "$POST_RESTART_SLEEP"
+  new_pid="$(pgrep -f "$PATTERN" | head -1)"
+  new_rss="$(ps -o rss= --no-headers -p "$new_pid" 2>/dev/null | tr -d ' ')"
+  echo "$STAMP action=restart-done old_pid=$pid new_pid=${new_pid:-none} new_rss_kb=${new_rss:-unknown}" >> "$LOG"
+  return 0
+}
+
 if [ "$rss_kb" -ge "$THRESHOLD_KB" ]; then
   if serving; then
     echo "$STAMP pid=$pid rss_kb=$rss_kb status=rss-high-but-serving (no restart)" >> "$LOG"
     capture "prewedge" "$pid" >/dev/null 2>&1 || true
+    rm -f "$SILENT_MARKER" "$DEFER_FILE" "$ALERT_FILE" 2>/dev/null || true
     exit 0
   fi
-  capture "wedge" "$pid" >/dev/null 2>&1 || true
 fi
 
 echo "$STAMP pid=$pid rss_kb=$rss_kb threshold_kb=$THRESHOLD_KB" >> "$LOG"
 
+# Branch 1 — memory wedge: RSS over threshold AND the HTTP surface silent.
 if [ "$rss_kb" -ge "$THRESHOLD_KB" ]; then
-  echo "$STAMP action=restart reason=rss-over-threshold-and-http-silent rss_kb=$rss_kb" >> "$LOG"
-  systemctl --user restart "$SERVICE"
-  sleep 5
-  new_pid="$(pgrep -f "$PATTERN" | head -1)"
-  new_rss="$(ps -o rss= --no-headers -p "$new_pid" 2>/dev/null | tr -d ' ')"
-  echo "$STAMP action=restart-done old_pid=$pid new_pid=${new_pid:-none} new_rss_kb=${new_rss:-unknown}" >> "$LOG"
+  guarded_restart "rss-over-threshold-and-http-silent" "wedge" && rm -f "$SILENT_MARKER"
+  exit 0
 fi
+
+# Branch 2 — 2026-10-07: the #775-class wedge is not always a memory wedge — the
+# 2026-10-07 07:55 event wedged at 401MB with the main thread parked in a
+# timed futex and the HTTP surface silent. The RSS gate alone would have
+# left that engine dead forever. Liveness is sufficient on its own: TWO
+# consecutive silent probes capture forensics and restart the engine
+# regardless of RSS. A single silent tick only arms the marker (one blip
+# must not kill in-flight sessions). A deferral KEEPS the marker armed, so the
+# next silent tick retries; a healthy tick disarms it.
+if ! serving; then
+  if [ -f "$SILENT_MARKER" ]; then
+    if guarded_restart "http-silent-two-ticks" "http-silent"; then
+      rm -f "$SILENT_MARKER"
+    fi
+    exit 0
+  fi
+  touch "$SILENT_MARKER"
+  echo "$STAMP pid=$pid rss_kb=$rss_kb status=http-silent-first-tick (armed)" >> "$LOG"
+  exit 0
+fi
+rm -f "$SILENT_MARKER" "$DEFER_FILE" "$ALERT_FILE" 2>/dev/null || true

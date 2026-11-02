@@ -77,7 +77,7 @@ if [ "$SMOKE_ONLY" != "1" ]; then
   # the watchdog's source-of-truth branch differs from the frontdoor's — resolve
   # wherever this run can see it (the repo checkout, else the hub's deployed copy)
   WATCHDOG=""
-  for cand in "$HERE/../fleet-watchdog/rss-watchdog.sh" "$HOME/.amico/server/fleet-watchdog/rss-watchdog.sh"; do
+  for cand in "$HERE/fleet-watchdog/rss-watchdog.sh" "$HOME/.amico/server/fleet-watchdog/rss-watchdog.sh"; do
     if [ -f "$cand" ]; then WATCHDOG="$cand"; break; fi
   done
   if [ -z "$WATCHDOG" ]; then
@@ -108,6 +108,9 @@ if [ "$SMOKE_ONLY" != "1" ]; then
   # ── 3. the seam suites (fake shards + the real frontdoor as a subprocess) ─────
   run_check "frontdoor integration suite (the seams)" python3 "$HERE/test_frontdoor.py"
   run_check "jev placement unit suite" python3 "$HERE/test_jev_placement.py"
+  # amicode#2044 / A0: the restart guard — real processes + a fabricated cgroup
+  # tree; stubs record restarts, nothing is ever restarted
+  run_check "restart guard suite" python3 "$HERE/test_solve_guard.py"
 fi
 
 # ── 4. engine scope: the materialize/overlay/engine lanes ────────────────────
