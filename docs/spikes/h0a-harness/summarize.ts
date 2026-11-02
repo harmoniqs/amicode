@@ -146,10 +146,12 @@ export function evaluate(data: RunData) {
 
   const criteria = [latency, wedge, memory, turns]
   const statuses = criteria.map((c) => c.status)
-  const verdict: Status = statuses.includes("invalid")
-    ? "invalid"
-    : statuses.includes("fail")
-      ? "fail"
+  // A criterion that definitively failed (a wedge, an unplanned host exit, a lost turn) fails the run even when another
+  // input is unusable: missing data can hide a pass but can never manufacture one, and it must not hide a failure either.
+  const verdict: Status = statuses.includes("fail")
+    ? "fail"
+    : statuses.includes("invalid")
+      ? "invalid"
       : statuses.includes("inconclusive") || driverSaturated || harnessExits.length > 0
         ? "inconclusive"
         : "pass"

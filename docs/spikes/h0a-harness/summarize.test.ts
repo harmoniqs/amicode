@@ -173,6 +173,14 @@ describe("overall verdict", () => {
     data.events = [...data.events, { t: T0 + 100, event: "model_exit", planned: false }]
     expect(evaluate(data).verdict).toBe("inconclusive")
   })
+  test("a definitive failure (unplanned host exit) is a fail even when the run was cut short and other inputs are unusable", () => {
+    const data = healthy()
+    data.probe = data.probe.slice(0, 40) // the host died, the run ended early
+    data.events = [...data.events, { t: T0 + 10_000, event: "host_exit", planned: false }]
+    const result = evaluate(data)
+    expect(result.criteria.find((c) => c.criterion === "latency")!.status).toBe("invalid")
+    expect(result.verdict).toBe("fail")
+  })
   test("a probe that ran for less than 90 % of the window is invalid", () => {
     const data = healthy()
     data.probe = data.probe.slice(0, 100) // 100 of 240 expected
