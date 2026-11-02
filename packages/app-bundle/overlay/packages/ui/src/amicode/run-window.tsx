@@ -2,7 +2,7 @@ import { For, Show, createEffect, createMemo, onCleanup, onMount } from "solid-j
 import { createStore, reconcile } from "solid-js/store"
 import { fetchAmicodeRunSeries } from "./ui-bridge"
 import { heroPaths, objectivePath } from "./run-plot"
-import { runActivity, runStatusLabel } from "./activity"
+import { runActivity, runStatusLabel, verificationLabel } from "./activity"
 import { ActivityDot } from "./activity-dot"
 import {
   type RunSeries,
@@ -185,6 +185,9 @@ export function RunWindow(props: { run: string; lab?: string }) {
                 <ActivityDot activity={runActivity(r().status)} label={runStatusLabel(r().status)} />
                 {r().status}
               </span>
+              <Show when={verificationLabel(r().verification)}>
+                {(t) => <span style={{ color: "var(--v2-text-text-muted)", "flex-shrink": "0" }}>{t()}</span>}
+              </Show>
               <Show when={r().iteration !== null}>
                 <Chip label="iter" value={String(r().iteration)} />
               </Show>

@@ -219,6 +219,33 @@ describe("runStatusBody", () => {
     ])
     rmSync(runs, { recursive: true, force: true })
   })
+  // #2056 (A3): the verification-pending marker (agree=false, pending=true). The
+  // exhaustive table is the extension's run_liveness_lockstep test; this pins the
+  // engine copy inside the engine's own suite.
+  test("pending verification marker → additive `verification` field; dead still wins status; final verification adds nothing", () => {
+    const runs = mkdtempSync(path.join(tmpdir(), "amicode-runs-"))
+    seedProblem("x-gate", {
+      runs: ["r-pend", "r-pend-dead", "r-final"].map((run_id) => ({ run_id, lab: "default", recorded: "t" })),
+    })
+    const pending = "agree = false\npending = true\nreason = \"pending\"\n"
+    seedRun(runs, "default", "r-pend", { log: "AMICODE_ITER iter=2 f=1.0e-02\n" })
+    seedRun(runs, "default", "r-pend-dead", { log: "AMICODE_ITER iter=2 f=1.0e-02\n" })
+    seedRun(runs, "default", "r-final", { log: "AMICODE_ITER iter=2 f=1.0e-02\n", finished: true })
+    writeFileSync(path.join(runs, "default", "r-pend", "verification.toml"), pending)
+    writeFileSync(path.join(runs, "default", "r-pend-dead", "verification.toml"), pending)
+    writeFileSync(
+      path.join(runs, "default", "r-pend-dead", "run.lock"),
+      JSON.stringify({ schema: 1, run_id: "r-pend-dead", heartbeat_at: new Date(Date.now() - 600_000).toISOString(), ended: false }),
+    )
+    writeFileSync(path.join(runs, "default", "r-final", "verification.toml"), 'agree = false\nreason = "re-rollout disagrees"\n')
+    const parsed = JSON.parse(runStatusBody(root, runs, "x-gate"))
+    expect(parsed.runs.map((r: { run_id: string; status: string; verification?: string }) => [r.run_id, r.status, r.verification])).toEqual([
+      ["r-pend", "solving", "pending_verification"],
+      ["r-pend-dead", "dead", "pending_verification"],
+      ["r-final", "finished", undefined],
+    ])
+    rmSync(runs, { recursive: true, force: true })
+  })
   test("missing run dir → stalled (ghost ref, never solving-forever); unknown slug → not_found", () => {
     const runs = mkdtempSync(path.join(tmpdir(), "amicode-runs-"))
     seedProblem("x-gate", { runs: [{ run_id: "r-gone", lab: "default", recorded: "t" }] })

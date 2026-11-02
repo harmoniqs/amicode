@@ -53,6 +53,16 @@ describe("parseRunSeriesResponse", () => {
     expect(parseRunSeriesResponse({}).ok).toBe(false)
   })
 
+  test("verification: only the pending_verification marker survives parsing (#2056)", () => {
+    const parse = (v: unknown) => {
+      const view = parseRunSeriesResponse(okRun(v === undefined ? {} : { verification: v }))
+      return view.ok ? view.run.verification : "not-ok"
+    }
+    expect(parse(undefined)).toBeNull()
+    expect(parse("pending_verification")).toBe("pending_verification")
+    expect(parse("suppressed")).toBeNull()
+  })
+
   test("drops non-finite series/pulse points defensively", () => {
     const view = parseRunSeriesResponse(
       okRun({
@@ -72,6 +82,7 @@ describe("headlineMetric", () => {
     runId: "r",
     lab: "default",
     status: "solving",
+    verification: null,
     iteration: 5,
     fidelity: null,
     bestF: null,
