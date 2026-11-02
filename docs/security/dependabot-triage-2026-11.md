@@ -145,3 +145,20 @@ stashing the changes, reinstalling the old lock and running it). Slow suites (`t
 - Third acceptance criterion (lifecycle scripts disabled in the sandbox and release job) needs `.github/` workflow edits; it is out of this slice and untouched.
 - Extension's own `@modelcontextprotocol/sdk ^1.32.2` is already patched (lock resolves 1.32.2, patched floor 1.32.0 for all six repo alerts, #113/#114 included). No action.
 - The 53 medium and 8 low alerts remain open, out of scope.
+
+
+## Director verification of the three dismiss candidates (#112, #115, #188) against the correct engine ref
+
+The first pass searched a fork checkout at `b2143c450a`, **not** the engine tree the overlay actually builds from. Re-run on the right ref: upstream base `anomalyco/opencode@3104c1428e` (cached by the app-bundle) plus `packages/app-bundle/overlay/`:
+
+```sh
+grep -rlE "@modelcontextprotocol/sdk/server" --include=*.ts --include=*.tsx <base>/packages <overlay>/packages
+```
+
+Result: seven files, **all under `opencode/test/` (six `*.test.ts` and one `test/fixture/mcp-lifecycle-stdio.ts`)**; none in production source, in either the base or the overlay. The SDK subpaths imported by non-test source are client-side (`client/index`, `client/streamableHttp`, `client/auth`, `client/stdio`, `client/sse`, `types`, `shared/auth`). So the three advisories, which concern SDK **servers** (unbounded Streamable-HTTP bodies and batches, validation memory, `taskStore`), are not reachable from shipped engine code. They stay dismiss candidates, to be dismissed by a human with this evidence, "vulnerable code is not used".
+
+**#7 (GHSA-6qxp-vccf-f47h, client-side OAuth credential leak) is NOT dismissed.** The engine is an MCP OAuth client (`client/auth`), so it is reachable; the fix needs SDK >= 1.31, which means leaving the deliberate 1.29.0 pin (#2010). It stays open and tracked there.
+
+## Counting note
+
+The open set returned by the Dependabot alerts API at triage time was 67 critical+high alert numbers (13 critical, 54 high) across 62 distinct (package, advisory) pairs. Earlier planning notes quoted "200 alerts, 14 critical, 72 high"; that was the repository-wide security banner, which counts differently. This document uses the API set, and every count above comes from a command.
