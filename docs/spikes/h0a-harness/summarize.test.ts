@@ -174,6 +174,16 @@ describe("driver saturation", () => {
   })
 })
 
+describe("harness cost", () => {
+  test("reports the model's and control's CPU and RSS over the window, not judged", () => {
+    const data = healthy()
+    data.sampler = data.sampler.map((r, i) => ({ ...r, procs: { model: { rss: 100e6 + i, cpu_s: i * 0.5 }, control: null } }))
+    const cost = evaluate(data, SHORT).harness_cost
+    expect(cost.model).toMatchObject({ cpu_s: 3 }) // 7 samples, 0..6 -> 3 s
+    expect(cost.control).toBeUndefined()
+  })
+})
+
 describe("overall verdict", () => {
   test("a healthy run passes all four", () => {
     const result = evaluate(healthy(), SHORT)

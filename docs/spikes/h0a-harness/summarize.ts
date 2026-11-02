@@ -22,7 +22,7 @@ export const CRITERIA = {
 } as const
 
 export type ProbeRow = { t: number; h: number | null; c: number | null; hs: number; cs: number }
-export type SamplerRow = { t: number; rss: number; cpu_s: number; load1: number }
+export type SamplerRow = { t: number; rss: number; cpu_s: number; load1: number; procs?: Record<string, { rss: number; cpu_s: number } | null> }
 export type TurnRow = { session: string; start: number; end: number | null; outcome: "succeeded" | "failed" | "interrupted" | "lost"; via?: string }
 export type LagRow = { t: number; d: number }
 export type EventRow = { t: number; event: string; planned?: boolean }
@@ -171,6 +171,13 @@ export function evaluate(data: RunData, options: { minExtrapolationWindowS?: num
     driver_p99_drift_limit_ms: CRITERIA.driver_p99_drift_ms,
     harness_unplanned_exits: harnessExits.map((e) => e.event),
     host_cpu_seconds: sampled.length >= 2 ? round(sampled.at(-1)!.cpu_s - sampled[0]!.cpu_s, 2) : null,
+    // What the harness's own model and control cost over the window (they share the machine, so this is reported, not judged).
+    harness_cost: Object.fromEntries(
+      ["model", "control"].flatMap((name) => {
+        const rows = sampled.map((r) => r.procs?.[name]).filter((p): p is { rss: number; cpu_s: number } => !!p)
+        return rows.length >= 2 ? [[name, { cpu_s: round(rows.at(-1)!.cpu_s - rows[0]!.cpu_s, 2), rss_end_bytes: rows.at(-1)!.rss }]] : []
+      }),
+    ),
     load1: sampled.length ? { mean: round(sampled.reduce((a, r) => a + r.load1, 0) / sampled.length, 2), max: Math.max(...sampled.map((r) => r.load1)) } : null,
   }
 }

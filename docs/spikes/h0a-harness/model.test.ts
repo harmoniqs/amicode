@@ -88,7 +88,7 @@ describe("the paced server, on the wire", () => {
     })
     const reader = res.body!.getReader()
     await reader.read()
-    expect((await (await fetch(`http://127.0.0.1:${model.port}/__stats`)).json()).active).toBe(1)
+    expect(((await (await fetch(`http://127.0.0.1:${model.port}/__stats`)).json()) as { active: number }).active).toBe(1)
     await reader.cancel()
     await Bun.sleep(100)
     expect(await (await fetch(`http://127.0.0.1:${model.port}/__stats`)).json()).toMatchObject({ active: 0, aborted: 1 })

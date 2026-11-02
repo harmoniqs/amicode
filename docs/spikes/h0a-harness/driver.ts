@@ -68,7 +68,6 @@ export function plannedSubscribers(sessions: number, seed: number) {
 export async function runDriver(options: {
   url: string
   password: string
-  dir: string
   work: string
   out: string
   sessions: number
@@ -273,7 +272,6 @@ if (import.meta.main) {
   await runDriver({
     url: need("url"),
     password: fs.readFileSync(need("password-file"), "utf8").trim(),
-    dir: need("out"),
     out: need("out"),
     work: need("work"),
     sessions: Number(a.sessions ?? 12),
