@@ -1330,6 +1330,75 @@ describe("registerHarmoniqsConnectCommand — focused connect entry point (Conne
   });
 });
 
+describe("focused Harmoniqs connect — config-success from a live chat (#1428)", () => {
+  let tmpDir: string;
+  let prevCfg: string | undefined;
+  let prevData: string | undefined;
+  let ctx: { subscriptions: unknown[]; extensionUri: unknown };
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "harmoniqs-focus-"));
+    prevCfg = process.env.XDG_CONFIG_HOME;
+    prevData = process.env.XDG_DATA_HOME;
+    // Hermetic: never touch the real ~/.config or ~/.local/share.
+    process.env.XDG_CONFIG_HOME = path.join(tmpDir, "config");
+    process.env.XDG_DATA_HOME = path.join(tmpDir, "data");
+    _resetForTesting();
+    ctx = { subscriptions: [], extensionUri: vscode.Uri.file("/ext") } as never;
+    registerOnboardingPanel(ctx as never);
+    registerHarmoniqsConnectCommand(ctx as never);
+  });
+
+  afterEach(() => {
+    if (prevCfg === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = prevCfg;
+    if (prevData === undefined) delete process.env.XDG_DATA_HOME;
+    else process.env.XDG_DATA_HOME = prevData;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  async function connectFocused() {
+    (vscode.commands as { executed: string[] }).executed = [];
+    const spy = vi.spyOn(vscode.window, "createWebviewPanel");
+    await vscode.commands.executeCommand("amicode.connectHarmoniqsProvider");
+    const panel = spy.mock.results[0].value as {
+      webview: { html: string; _simulateMessage: (msg: unknown) => void };
+    };
+    const htmlBefore = panel.webview.html;
+    panel.webview._simulateMessage({
+      type: "config-success",
+      payload: { provider: HARMONIQS_PROVIDER_ID, model: `${HARMONIQS_PROVIDER_ID}/${HARMONIQS_MODEL_ID}`, apiKey: "hqa_test_key_1428" },
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    spy.mockRestore();
+    return { panel, htmlBefore };
+  }
+
+  it("persists provider config + auth key, restarts the live server so it sees them, and closes without a splash", async () => {
+    const { panel, htmlBefore } = await connectFocused();
+
+    const cfg = JSON.parse(fs.readFileSync(path.join(tmpDir, "config", "opencode", "opencode.json"), "utf8"));
+    expect(cfg.provider[HARMONIQS_PROVIDER_ID].models[HARMONIQS_MODEL_ID]).toBeDefined();
+    const auth = JSON.parse(fs.readFileSync(path.join(tmpDir, "data", "opencode", "auth.json"), "utf8"));
+    expect(auth[HARMONIQS_PROVIDER_ID]).toEqual({ type: "api", key: "hqa_test_key_1428" });
+
+    const executed = (vscode.commands as { executed: string[] }).executed;
+    // The running server cached its provider list before this write landed.
+    expect(executed).toContain("amicode.restartServer");
+    // The panel is closed, not left as a "Getting Amico ready" splash that
+    // nothing will ever dismiss (the hang the issue reports).
+    expect(getOnboardingPanel()).toBeUndefined(); // dispose cleared the singleton
+    expect(panel.webview.html).toBe(htmlBefore);
+  });
+
+  it("does not queue the first-run onboarding greeting (no 'Onboarding kickoff' tab)", async () => {
+    const { ChatPanel } = await import("../src/chat_panel");
+    ChatPanel.consumePendingOnboardingGreeting(); // clear any leaked state
+    await connectFocused();
+    expect(ChatPanel.consumePendingOnboardingGreeting()).toBe(false);
+  });
+});
+
 describe("testConnection — Bedrock model probe (model-access validation)", () => {
   it("makes an HTTP call to Bedrock converse endpoint with bearer auth", async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true });

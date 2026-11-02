@@ -773,13 +773,17 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
   //      result — which the handoff dialog has no listener for — so clicking
   //      the row appeared to do nothing (no inline field, no panel, no ack).
   //
-  // Detect (b) by an absent/empty apiKey and hand off to the Stage-0
-  // onboarding webview, acking so the picker gets out of the way. A
-  // present-but-malformed key is still a (a)-shaped error.
+  // Detect (b) by an absent/empty apiKey and hand off to the FOCUSED
+  // Harmoniqs connect panel (bootstrap:false — the chat + server are already
+  // live), acking so the picker gets out of the way. Opening Stage-0's
+  // bootstrap flow here (amicode.onboarding.open) was #1428: on success it
+  // swaps to a "Getting Amico ready" splash that only the first-run chat
+  // adoption dismisses, so from a live chat it hung on "Welcome to Amicode".
+  // A present-but-malformed key is still a (a)-shaped error.
   if (msg.kind === "connect-harmoniqs-provider") {
     const rawApiKey = (msg as { apiKey?: unknown }).apiKey;
     if (rawApiKey === undefined || rawApiKey === null || rawApiKey === "") {
-      void vscode.commands.executeCommand("amicode.onboarding.open");
+      void vscode.commands.executeCommand("amicode.connectHarmoniqsProvider");
       io.postToWebview({ source: "amicode", kind: "connect-harmoniqs-provider-ack", tab: msg.tab });
       return true;
     }

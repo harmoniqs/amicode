@@ -879,9 +879,10 @@ export interface OpenOnboardingPanelOptions {
    *  (queue the post-onboarding greeting, restart the opencode server so a
    *  not-yet-running server picks up the very first provider). Defaults to
    *  true, so `amicode.onboarding.open`'s existing behavior is unchanged.
-   *  The focused-connect flow passes false: the chat panel and server are
-   *  already live when this fires, so there's no "get chat ready" splash to
-   *  show and no reason to bounce the running server. */
+   *  The focused-connect flow passes false: the chat panel is already live
+   *  when this fires, so there's no "get chat ready" splash or greeting. The
+   *  server is still restarted after the write (its cached provider list is
+   *  stale -- #1428), but only once the panel has been closed. */
   bootstrap?: boolean;
 }
 
@@ -940,11 +941,18 @@ export function openOnboardingPanel(
         // The server will resolve the new provider's default on its own.
         void vscode.workspace.getConfiguration("amicode").update("defaultModel", undefined, vscode.ConfigurationTarget.Global);
         if (!bootstrap) {
-          // Focused connect: the chat panel + server are already live — just
-          // close the handoff panel. No restart, no greeting, no splash;
-          // those are Stage-0-only (see OpenOnboardingPanelOptions above).
+          // Focused connect: the chat panel is already live, so no greeting
+          // and no splash (those are Stage-0-only, see
+          // OpenOnboardingPanelOptions above). But the running server cached
+          // its config/provider list before this write landed, so it must be
+          // restarted to see the new provider -- without that the new provider
+          // is unavailable until a window reload (#1428). Close the panel
+          // first so the UI never sits on this form while the engine bounces.
           panel.dispose();
           fireOnboardingComplete();
+          try {
+            await vscode.commands.executeCommand("amicode.restartServer");
+          } catch { /* restart errors are handled by the registered command itself */ }
           return;
         }
         // Swap the panel HTML directly to the splash (same as confirm-import)
@@ -1120,8 +1128,8 @@ export function registerOnboardingPanel(ctx: vscode.ExtensionContext): void {
  *  that the generic flow cannot express without duplicating that logic.
  *  Reuses the exact same webview/message-handling as Stage-0 — see
  *  openOnboardingPanel's `bootstrap: false` for the one behavioral
- *  difference (no restart, no greeting: the chat panel and server are
- *  already live). Call from extension.ts activate(). */
+ *  difference (no splash, no greeting: the chat panel is already live).
+ *  Call from extension.ts activate(). */
 export function registerHarmoniqsConnectCommand(ctx: vscode.ExtensionContext): void {
   ctx.subscriptions.push(
     vscode.commands.registerCommand("amicode.connectHarmoniqsProvider", () => {

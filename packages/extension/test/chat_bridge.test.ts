@@ -501,11 +501,15 @@ describe("amicode bridge — clipboard-image-write", () => {
 });
 
 describe("amicode bridge — connect-harmoniqs-provider", () => {
-  it("hands a keyless connect off to the onboarding panel and acks so the picker closes (amicode#962)", async () => {
+  it("hands a keyless connect off to the focused Harmoniqs connect panel and acks so the picker closes (amicode#962, #1428)", async () => {
     // The branded picker row (dialog-connect-provider-harmoniqs.ts) posts with
     // NO apiKey and waits for connect-harmoniqs-provider-ack to close. The host
-    // opens its own Stage-0 connection UI and acks — it must NOT fall through to
+    // opens its own focused connection UI and acks — it must NOT fall through to
     // the "Enter a valid API key" result the keyless post has no listener for.
+    // #1428: it must be the FOCUSED (bootstrap:false) command, not Stage-0's
+    // amicode.onboarding.open — Stage-0 swaps to a "Getting Amico ready" splash
+    // that only the first-run chat adoption ever dismisses, so from a live chat
+    // it hung on the Welcome screen forever.
     const host = io();
     const executed = (vscode.commands as unknown as { executed: string[] }).executed ?? [];
     const before = executed.length;
@@ -514,7 +518,8 @@ describe("amicode bridge — connect-harmoniqs-provider", () => {
     const ack = host.posted.find((m: any) => m.kind === "connect-harmoniqs-provider-ack") as any;
     expect(ack).toEqual({ source: "amicode", kind: "connect-harmoniqs-provider-ack", tab: "tab-1" });
     expect(host.posted.find((m: any) => m.kind === "connect-harmoniqs-provider-result")).toBeUndefined();
-    expect(executed.slice(before)).toContain("amicode.onboarding.open");
+    expect(executed.slice(before)).toContain("amicode.connectHarmoniqsProvider");
+    expect(executed.slice(before)).not.toContain("amicode.onboarding.open");
   });
 
   it("rejects a present-but-malformed key inline without opening the onboarding panel", async () => {
@@ -528,6 +533,7 @@ describe("amicode bridge — connect-harmoniqs-provider", () => {
     expect(result).toEqual({ source: "amicode", kind: "connect-harmoniqs-provider-result", tab: "tab-1", ok: false, error: "Enter a valid API key" });
     expect(host.posted.find((m: any) => m.kind === "connect-harmoniqs-provider-ack")).toBeUndefined();
     expect(executed.slice(before)).not.toContain("amicode.onboarding.open");
+    expect(executed.slice(before)).not.toContain("amicode.connectHarmoniqsProvider");
   });
 
   it("restarts the server on success so the running Provider.list() picks up the new credentials", async () => {
