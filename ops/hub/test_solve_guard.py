@@ -113,7 +113,7 @@ class Base(unittest.TestCase):
     def env(self, **extra):
         e = {k: v for k, v in os.environ.items()
              if not k.startswith("SOLVE_GUARD_") and not k.startswith("WATCHDOG_")
-             and k not in ("BUN_INSPECT", "AMICODE_ENGINE_INSPECT", "AMICODE_SHARD_INDEX")}
+             and k not in ("BUN_INSPECT", "AMICODE_ENGINE_INSPECT", "AMICODE_SHARD_INDEX", "AMICODE_REPO")}
         e.update({
             "HOME": self.home,
             "SOLVE_GUARD_CGROUP_ROOT": self.cgroot,
@@ -746,6 +746,90 @@ class TestDriftCheck(Base):
         r = self.drift(root)
         self.assertEqual(r.returncode, 1, r.stdout)
         self.assertIn("MISSING", r.stdout)
+
+    # -- amicode#2050: the repo root is explicit and verified ----------------
+    def drift_args(self, root, *args, repo_env=None, script=DRIFT):
+        extra = {"DEPLOY_ROOT": root}
+        if repo_env:
+            extra["AMICODE_REPO"] = repo_env
+        return subprocess.run(["bash", script, *args], env=self.env(**extra), capture_output=True,
+                              text=True, timeout=60)
+
+    def make_repo(self, name="repo"):
+        """A real temp 'checkout': the markers plus every checked file, laid out as in the repo."""
+        repo = os.path.join(self.tmp, name)
+        os.makedirs(os.path.join(repo, "packages", "amico-run"))
+        for n in self.NAMES:
+            dst = os.path.join(repo, "ops", n) if n == "hub-restart.sh" else os.path.join(repo, "ops", "hub", n)
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.copy(self.repo_path(n), dst)
+        return repo
+
+    def test_run_from_the_deploy_root_without_a_repo_refuses(self):
+        root = os.path.join(self.tmp, "deploy")
+        self.deploy_all(root)
+        shutil.copy(DRIFT, os.path.join(root, "ops-drift-check.sh"))
+        r = self.drift_args(root, script=os.path.join(root, "ops-drift-check.sh"))
+        self.assertEqual(r.returncode, 64, r.stdout + r.stderr)
+        self.assertIn("run from a repository checkout or pass --repo", r.stderr)
+        self.assertNotIn("ok", r.stdout)
+
+    def test_explicit_repo_with_a_differing_file_names_it_and_exits_1(self):
+        repo, root = self.make_repo(), os.path.join(self.tmp, "deploy")
+        self.deploy_all(root)
+        with open(os.path.join(root, "deploy-gate.sh"), "a") as f:
+            f.write("# hot fix\n")
+        shutil.copy(DRIFT, os.path.join(root, "ops-drift-check.sh"))
+        r = self.drift_args(root, "--repo", repo, script=os.path.join(root, "ops-drift-check.sh"))
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        row = [l for l in r.stdout.splitlines() if l.startswith("deploy-gate.sh")]
+        self.assertTrue(row and "DIFF" in row[0], r.stdout)
+        ok = [l for l in r.stdout.splitlines() if l.startswith("lane-roll.sh")]
+        self.assertTrue(ok and " ok " in ok[0], r.stdout)
+
+    def test_explicit_repo_identical_passes_via_flag_and_env(self):
+        repo, root = self.make_repo(), os.path.join(self.tmp, "deploy")
+        self.deploy_all(root)
+        shutil.copy(DRIFT, os.path.join(root, "ops-drift-check.sh"))
+        script = os.path.join(root, "ops-drift-check.sh")
+        r = self.drift_args(root, "--repo", repo, script=script)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        r = self.drift_args(root, repo_env=repo, script=script)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+    def test_repo_root_equal_to_the_deploy_root_refuses(self):
+        repo = self.make_repo()
+        r = self.drift_args(repo, "--repo", repo)
+        self.assertEqual(r.returncode, 64, r.stdout + r.stderr)
+        self.assertNotIn(" ok ", r.stdout)
+        # a symlink to the same directory is the same directory
+        link = os.path.join(self.tmp, "link")
+        os.symlink(repo, link)
+        r = self.drift_args(link, "--repo", repo)
+        self.assertEqual(r.returncode, 64, r.stdout + r.stderr)
+
+    def test_a_symlinked_deployed_file_refuses(self):
+        repo, root = self.make_repo(), os.path.join(self.tmp, "deploy")
+        self.deploy_all(root)
+        os.remove(os.path.join(root, "lane-roll.sh"))
+        os.symlink(os.path.join(repo, "ops", "hub", "lane-roll.sh"), os.path.join(root, "lane-roll.sh"))
+        r = self.drift_args(root, "--repo", repo)
+        self.assertEqual(r.returncode, 64, r.stdout + r.stderr)
+        self.assertIn("lane-roll.sh", r.stderr)
+        self.assertNotIn(" ok ", r.stdout)
+
+    def test_an_invalid_repo_root_refuses(self):
+        root = os.path.join(self.tmp, "deploy")
+        self.deploy_all(root)
+        bogus = os.path.join(self.tmp, "notarepo")
+        os.makedirs(bogus)
+        r = self.drift_args(root, "--repo", bogus)
+        self.assertEqual(r.returncode, 64, r.stdout + r.stderr)
+        self.assertIn("not a repository checkout", r.stderr)
+        r = self.drift_args(root, "--repo", os.path.join(self.tmp, "nonexistent"))
+        self.assertEqual(r.returncode, 64, r.stdout + r.stderr)
+        r = self.drift_args(root, repo_env=bogus)
+        self.assertEqual(r.returncode, 64, r.stdout + r.stderr)
 
 
 if __name__ == "__main__":
