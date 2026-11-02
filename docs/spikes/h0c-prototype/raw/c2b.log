@@ -1,0 +1,33 @@
+# c2b built: {"startup ms":109,"overrides accepted (workspace registry)":true}
+PASS c2b/bare                 C1   info=200 v=0.0.0-h0c create=200 id=ses_e6654f7a7ffexmx51At6x9C9sJ listed=true (n=1)
+NA   c2b/bare                 C2   no custom-route seam without a host front at this layer
+FAIL c2b/bare                 C3   no-credentials: /api/info=401 /api/session=401 /amicode/ping=404 /nope=404 /api/event=401; wrong-password /api/info=401
+PASS c2b/bare                 C4   server.connected=true
+PASS c2b/bare                 C5   heartbeat after 2 ms
+PASS c2b/bare                 C5b  heartbeats at 2, 15009 ms (gap 15007 ms)
+PASS c2b/bare                 C6   server-side feed log: subscribed(subscribers=1) -> released(subscribers=0)
+NA   c2b/bare                 C7   seam exposes no in-process plugin handle
+NA   c2b/bare                 C8   seam cannot drive a workspace provider in-process
+PASS c2b/fronted              C1   info=200 v=0.0.0-h0c create=200 id=ses_e6654bc86ffezybZYkhcgxCPro listed=true (n=2)
+PASS c2b/fronted              C2   status=200 body.ok=true
+PASS c2b/fronted              C3   no-credentials: /api/info=401 /api/session=401 /amicode/ping=401 /nope=401 /api/event=401; wrong-password /api/info=401
+PASS c2b/fronted              C4   server.connected=true
+PASS c2b/fronted              C5   heartbeat after 1 ms
+PASS c2b/fronted              C5b  heartbeats at 1, 15010 ms (gap 15009 ms)
+PASS c2b/fronted              C6   server-side feed log: subscribed(subscribers=1) -> released(subscribers=0)
+NA   c2b/fronted              C7   seam exposes no in-process plugin handle
+NA   c2b/fronted              C8   seam cannot drive a workspace provider in-process
+PASS c2b/fronted-default-idle C1   info=200 v=0.0.0-h0c create=200 id=ses_e66548176ffeTvTAC4MAuRvGqD listed=true (n=3)
+PASS c2b/fronted-default-idle C2   status=200 body.ok=true
+PASS c2b/fronted-default-idle C3   no-credentials: /api/info=401 /api/session=401 /amicode/ping=401 /nope=401 /api/event=401; wrong-password /api/info=401
+PASS c2b/fronted-default-idle C4   server.connected=true err=TypeError: The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()
+PASS c2b/fronted-default-idle C5   heartbeat after 1 ms
+FAIL c2b/fronted-default-idle C5b  only 1 heartbeat(s) in 40000 ms (TypeError: The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch())
+PASS c2b/fronted-default-idle C6   server-side feed log: subscribed(subscribers=1) -> released(subscribers=0)
+NA   c2b/fronted-default-idle C7   seam exposes no in-process plugin handle
+NA   c2b/fronted-default-idle C8   seam cannot drive a workspace provider in-process
+PASS c2b                      C9a  hub-path fds=0; own fresh DB fds=3
+PASS c2b                      C9b  listening ports of process tree: [51758,51956,51226]; outside 51000-51999: []
+PASS c2b                      C9c  service registration files under sandbox: []
+# c2b done
+warn: Bun.serve() timed out a request after 10 seconds. Pass `idleTimeout` to configure.

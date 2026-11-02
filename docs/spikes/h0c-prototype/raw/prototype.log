@@ -1,0 +1,14 @@
+PASS prototype                C1   info=200 v=0.0.0-h0c create=200 id=ses_e66528ebcffeuNu6G2py5QbCtg listed=true (n=1)
+PASS prototype                C2   status=200 body.ok=true
+PASS prototype                C3   no-credentials: /api/info=401 /api/session=401 /amicode/ping=401 /nope=401 /api/event=401; wrong-password /api/info=401
+PASS prototype                C4   server.connected=true
+PASS prototype                C5   heartbeat after 3 ms
+PASS prototype                C5b  heartbeats at 3, 15009 ms (gap 15006 ms)
+PASS prototype                C6   server-side feed log: subscribed(subscribers=1) -> released(subscribers=0)
+PASS prototype                C7   listed=true rpc=200 {"output":"pong-from-in-process-plugin"}
+PASS prototype                C8   provider=h0c calls=create,destroy
+PASS prototype                C9a  hub-path fds=0; own fresh DB fds=3
+PASS prototype                C9b  listening ports of process tree: [51525]; outside 51000-51999: []
+PASS prototype                C9c  service registration files under sandbox: []
+
+12/12 rows pass (NA counted as pass)
