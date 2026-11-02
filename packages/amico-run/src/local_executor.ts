@@ -214,8 +214,28 @@ function emitSolveStanza(runDir: string): void {
   }
 }
 
+/** A run that has its directory, manifest, index entry and `latest` pointer — everything the
+ *  manifest-FIRST contract promises — but whose Julia child has not been spawned yet.
+ *  `prepareRun` produces it; `startRun` (in this process, or in an `--adopt` orchestrator
+ *  placed outside the engine's process group) consumes it. */
+export interface PreparedRun {
+  runId: string;
+  runDir: string;
+  runsRoot: string;
+  juliaBin: string;
+  juliaArgs: string[];
+  /** gate-computed spec hash, or null for bare (spec-less) runs */
+  specHash: string | null;
+}
+
 export class LocalExecutor implements Executor {
   async submit(scriptPath: string | undefined, opts: SubmitOpts = {}): Promise<RunHandle> {
+    return this.startRun(this.prepareRun(scriptPath, opts), opts);
+  }
+
+  /** Steps 1–5 of the run-dir contract: validate config (failures create NO run dir), then
+   *  run dir, manifest FIRST, problem.toml / solvespec.json, index, latest. */
+  prepareRun(scriptPath: string | undefined, opts: SubmitOpts = {}): PreparedRun {
     // ---- step 1 (spec §5): validate config; failures here create NO run dir ----
     // Two shapes: a normal script run, or a v4 problem_spec run (route to
     // Piccolo.Specs.solve_spec). For problem_spec, `script` (recorded as the
@@ -282,13 +302,22 @@ export class LocalExecutor implements Executor {
     appendIndex(runsRoot, runId, createdAt, script);
     updateLatest(runsRoot, runId);
 
-    // ---- step 6: spawn julia, own process group, cwd = runDir ----
-    const args: string[] = [];
-    if (opts.julia?.project) args.push(`--project=${opts.julia.project}`);
-    if (opts.julia?.sysimage) args.push(`--sysimage=${opts.julia.sysimage}`);
+    // ---- step 6 (argv): julia flags + script / typed-spec runner ----
+    const juliaArgs: string[] = [];
+    if (opts.julia?.project) juliaArgs.push(`--project=${opts.julia.project}`);
+    if (opts.julia?.sysimage) juliaArgs.push(`--sysimage=${opts.julia.sysimage}`);
     // problem_spec → the generic typed-spec runner; else the authored script.
-    if (problemSpecPath !== undefined) args.push("-e", PROBLEM_SPEC_RUNNER, problemSpecPath);
-    else args.push(script);
+    if (problemSpecPath !== undefined) juliaArgs.push("-e", PROBLEM_SPEC_RUNNER, problemSpecPath);
+    else juliaArgs.push(script);
+
+    return { runId, runDir, runsRoot, juliaBin, juliaArgs, specHash: opts.spec?.hashes?.spec_hash ?? null };
+  }
+
+  /** Step 6 onward: spawn julia in its own process group (cwd = runDir), stream run.log,
+   *  settle with FINISHED. */
+  startRun(prepared: PreparedRun, opts: SubmitOpts = {}): RunHandle {
+    const { runId, runDir, juliaBin } = prepared;
+    const args = prepared.juliaArgs;
 
     const events = new EventQueue<RunEvent>();
     const logStream = createWriteStream(join(runDir, "run.log"), { flags: "a" });
