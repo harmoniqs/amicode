@@ -12,6 +12,10 @@ export interface SubmitOpts {
   julia?: JuliaOpts;
   graceMs?: number; // abort SIGTERM→SIGKILL grace; default 5000. Test knob, NOT exposed in the CLI.
   spec?: SpecStamp; // spec C: gate-passed SolveSpec → solvespec.json persisted + run.toml v2 stamped
+  /** #2045: how the orchestrator that owns this run is placed, recorded in run.lock.
+   *  Default: in-process, unprotected (`none`, no unit). */
+  lock?: { protection: "unit" | "none"; unit?: string | null };
+  heartbeatMs?: number; // run.lock heartbeat; default 30 s. Test knob, NOT exposed in the CLI.
 }
 
 /** What a gate-passed --spec launch carries into the run dir (spec C). */

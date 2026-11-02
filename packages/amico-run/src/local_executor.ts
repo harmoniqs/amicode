@@ -7,6 +7,8 @@ import { parse as tomlParse, stringify as tomlStringify } from "smol-toml";
 import { EventQueue } from "./event_queue.js";
 import { appendRecord, type SolveOutcome, type SolveRecord, type SolveSummary } from "./ledger.js";
 import { classifyLine } from "./telemetry.js";
+import { LOCK_HEARTBEAT_MS, startRunLock } from "./run_lock.js";
+import { writePendingVerification } from "./verify.js";
 import {
   appendIndex,
   atomicWriteFile,
@@ -226,6 +228,8 @@ export interface PreparedRun {
   juliaArgs: string[];
   /** gate-computed spec hash, or null for bare (spec-less) runs */
   specHash: string | null;
+  /** manifest tier; `free` local runs get a pending-verification marker before FINISHED */
+  tier?: string;
 }
 
 export class LocalExecutor implements Executor {
@@ -310,7 +314,7 @@ export class LocalExecutor implements Executor {
     if (problemSpecPath !== undefined) juliaArgs.push("-e", PROBLEM_SPEC_RUNNER, problemSpecPath);
     else juliaArgs.push(script);
 
-    return { runId, runDir, runsRoot, juliaBin, juliaArgs, specHash: opts.spec?.hashes?.spec_hash ?? null };
+    return { runId, runDir, runsRoot, juliaBin, juliaArgs, specHash: opts.spec?.hashes?.spec_hash ?? null, tier: opts.spec?.tier };
   }
 
   /** Step 6 onward: spawn julia in its own process group (cwd = runDir), stream run.log,
@@ -318,6 +322,19 @@ export class LocalExecutor implements Executor {
   startRun(prepared: PreparedRun, opts: SubmitOpts = {}): RunHandle {
     const { runId, runDir, juliaBin } = prepared;
     const args = prepared.juliaArgs;
+
+    // run.lock + heartbeat: the liveness record any engine can read from files alone.
+    // Written before the child exists so a crash at any later point leaves a lock to age.
+    const heartbeat = startRunLock(
+      runDir,
+      {
+        runId,
+        unit: opts.lock?.unit ?? null,
+        protection: opts.lock?.protection ?? "none",
+        specHash: prepared.specHash,
+      },
+      opts.heartbeatMs ?? (Number(process.env.AMICO_RUN_HEARTBEAT_MS) || LOCK_HEARTBEAT_MS),
+    );
 
     const events = new EventQueue<RunEvent>();
     const logStream = createWriteStream(join(runDir, "run.log"), { flags: "a" });
@@ -331,6 +348,17 @@ export class LocalExecutor implements Executor {
     const settle = (status: RunStatus, exitCode: number): void => {
       if (settled) return;
       settled = true;
+      // Verdict ordering: pending-verification marker, then the lock's final ended:true,
+      // then FINISHED. A supervisor killed anywhere in between never leaves a finished-looking
+      // free run whose verification is merely absent.
+      if (prepared.tier === "free") {
+        try {
+          writePendingVerification(runDir);
+        } catch (e) {
+          process.stderr.write(`amico-run: failed to write pending verification marker: ${(e as Error).message}\n`);
+        }
+      }
+      heartbeat.end();
       try {
         writeFinished(runDir, status, exitCode); // orchestrator verdict, atomic — overwrites
       } catch (e) {
