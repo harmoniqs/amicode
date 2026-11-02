@@ -37,6 +37,20 @@ const ORCHESTRATOR_VERSION = pkg.version; // single source of truth (esbuild inl
 // spec path at ARGS[1]; cwd is the run dir, so run_dir=pwd() lands artifacts there.
 const PROBLEM_SPEC_RUNNER = "using Piccolo; Piccolo.Specs.solve_spec(ARGS[1]; run_dir=pwd())";
 
+/** Julia argv for a run: env flags, then the typed-spec runner (problem_spec) or the script.
+ *  Shared by prepareRun and adopt mode so both build the identical command. */
+export function juliaArgv(
+  julia: { project?: string; sysimage?: string } | undefined,
+  target: { problemSpecPath: string } | { script: string },
+): string[] {
+  const args: string[] = [];
+  if (julia?.project) args.push(`--project=${julia.project}`);
+  if (julia?.sysimage) args.push(`--sysimage=${julia.sysimage}`);
+  if ("problemSpecPath" in target) args.push("-e", PROBLEM_SPEC_RUNNER, target.problemSpecPath);
+  else args.push(target.script);
+  return args;
+}
+
 function resolveExecutable(bin: string): void {
   const candidates = bin.includes("/")
     ? [resolve(bin)]
@@ -307,12 +321,8 @@ export class LocalExecutor implements Executor {
     updateLatest(runsRoot, runId);
 
     // ---- step 6 (argv): julia flags + script / typed-spec runner ----
-    const juliaArgs: string[] = [];
-    if (opts.julia?.project) juliaArgs.push(`--project=${opts.julia.project}`);
-    if (opts.julia?.sysimage) juliaArgs.push(`--sysimage=${opts.julia.sysimage}`);
     // problem_spec → the generic typed-spec runner; else the authored script.
-    if (problemSpecPath !== undefined) juliaArgs.push("-e", PROBLEM_SPEC_RUNNER, problemSpecPath);
-    else juliaArgs.push(script);
+    const juliaArgs = juliaArgv(opts.julia, problemSpecPath !== undefined ? { problemSpecPath } : { script });
 
     return { runId, runDir, runsRoot, juliaBin, juliaArgs, specHash: opts.spec?.hashes?.spec_hash ?? null, tier: opts.spec?.tier };
   }

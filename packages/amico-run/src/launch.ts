@@ -7,7 +7,6 @@
 // <args>` is exactly `launch(<args>)`, byte-for-byte the historical amico-run behavior.
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { parse as parseToml } from "smol-toml";
 import { LocalExecutor } from "./local_executor.js";
 import { RemoteExecutor } from "./remote_executor.js";
 import { ConfigError, type Executor, type Finished, type SubmitOpts } from "./types.js";
@@ -15,16 +14,9 @@ import { readAuthoring } from "./authoring.js";
 import { runGate } from "./gate.js";
 import { readSolverMode } from "./solver_mode.js";
 import { assembleWarrantContext } from "./warrant_context.js";
-import { runVerification } from "./verify.js";
 import { trySubcommand } from "./subcommands.js";
-
-function readTomlSafe(fp: string): Record<string, unknown> | undefined {
-  try {
-    return parseToml(readFileSync(fp, "utf8")) as Record<string, unknown>;
-  } catch {
-    return undefined;
-  }
-}
+import { adopt } from "./adopt.js";
+import { exitCodeFor, verifyFreeLocal } from "./run_finish.js";
 
 const USAGE = `usage: amico-run <script.jl> [--executor local|remote] [--lab <id-or-path>]
                  [--runs-root <path>] [--julia <path>] [--project <path>] [--sysimage <path>]
@@ -34,6 +26,9 @@ const USAGE = `usage: amico-run <script.jl> [--executor local|remote] [--lab <id
        (a bare script literally named "resolve"/"sandbox" still launches — dispatch checks the file exists)`;
 
 export async function launch(argv: string[]): Promise<number> {
+  // INTERNAL (#2045): the orchestrator half of a placed run — see adopt.ts. Not a user verb.
+  if (argv[0] === "--adopt") return adopt(argv.slice(1));
+
   // spec C subcommands — dispatched before the launch flag loop
   const sub = trySubcommand(argv);
   if (sub !== undefined) return sub;
@@ -258,10 +253,8 @@ export async function launch(argv: string[]): Promise<number> {
       // honestly (no verification.toml → the promote gate never sees agree).
       console.error(`amico-run: free-tier re-rollout verification skipped for --executor remote (local-only)`);
     } else {
-      const { config: authoring } = readAuthoring();
-      await runVerification(handle.runDir, opts.spec, authoring);
-      const verified = readTomlSafe(join(handle.runDir, "verification.toml"));
-      console.log(`AMICODE_VERIFIED agree=${verified?.agree === true}`);
+      const agree = await verifyFreeLocal(handle.runDir, opts.spec);
+      console.log(`AMICODE_VERIFIED agree=${agree}`);
     }
   }
   // NOTE: tier=hpc (High-Performance + Cloud) runs remote and skips local
@@ -269,7 +262,5 @@ export async function launch(argv: string[]): Promise<number> {
   // cloud-side re-rollout is the Phase-2 follow-up.
   // stdout protocol line — camelCase by design (spec §4)
   console.log(`AMICODE_FINISHED status=${f.status} exitCode=${f.exitCode} runDir=${handle.runDir}`);
-  if (f.status === "aborted") return 130;
-  if (f.status === "completed") return 0;
-  return f.exitCode === 0 ? 1 : f.exitCode;
+  return exitCodeFor(f);
 }
