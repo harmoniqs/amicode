@@ -288,7 +288,84 @@ describe("bringUpSshAttachment — honest failure when the ssh child exits befor
       }),
     ).rejects.toThrow(/Could not resolve hostname/);
   });
+
+  it("retries a transient early ssh exit (sshd not ready yet) and succeeds once the forward answers", async () => {
+    const localPort = await pickFreeLoopbackPort();
+    // a stub listener standing in for the forward's far end. It only starts
+    // listening when the RETRIED ssh child is spawned, so the first attempt
+    // genuinely has nothing to reach and must exit-then-respawn.
+    const stub = http.createServer((_req, res) => {
+      res.writeHead(200, { "content-type": "text/plain" });
+      res.end("ok");
+    });
+    let calls = 0;
+    const spawnFn = ((() => {
+      calls += 1;
+      if (calls === 1) {
+        return fakeExitingSshChild("kex_exchange_identification: Connection closed by remote host\n");
+      }
+      stub.listen(localPort, "127.0.0.1");
+      return fakeLiveSshChild();
+    }) as unknown) as typeof spawn;
+    try {
+      const handle = await bringUpSshAttachment({
+        target: { sshAlias: "retry-alias", transport: "ssh", machine_id: "m-retry" },
+        remotePort: localPort,
+        localPort,
+        spawnFn,
+        readyTimeoutMs: 5000,
+        readyPollIntervalMs: 20,
+      });
+      expect(calls).toBeGreaterThanOrEqual(2);
+      expect(handle.localUrl).toBe(`http://127.0.0.1:${localPort}`);
+      await handle.stop();
+    } finally {
+      if (stub.listening) await new Promise<void>((resolve) => stub.close(() => resolve()));
+    }
+  });
+
+  it("when every attempt exits, rejects after the bounded budget with the stderr of the attempts (no endless respawn)", async () => {
+    const localPort = await pickFreeLoopbackPort();
+    let calls = 0;
+    const spawnFn = ((() => {
+      calls += 1;
+      return fakeExitingSshChild(`attempt ${calls}: Connection refused\n`);
+    }) as unknown) as typeof spawn;
+    const started = Date.now();
+    const err = await bringUpSshAttachment({
+      target: { sshAlias: "dead-alias", transport: "ssh", machine_id: "m-dead" },
+      remotePort: localPort,
+      localPort,
+      spawnFn,
+      readyTimeoutMs: 1500,
+      readyPollIntervalMs: 20,
+    }).then(
+      () => undefined,
+      (e: unknown) => e as Error,
+    );
+    expect(err).toBeInstanceOf(Error);
+    expect(err?.message).toMatch(/Connection refused/);
+    expect(calls).toBeGreaterThan(1);
+    expect(Date.now() - started).toBeLessThan(5000);
+  });
 });
+
+// A live stand-in for an ssh child that never exits on its own (kill() ends it).
+function fakeLiveSshChild() {
+  const child = new EventEmitter() as unknown as ReturnType<typeof spawn> & { exitCode: number | null };
+  Object.assign(child, {
+    stdin: null,
+    stdout: new EventEmitter(),
+    stderr: new EventEmitter(),
+    exitCode: null,
+    kill: () => {
+      (child as { exitCode: number | null }).exitCode = null;
+      (child as unknown as EventEmitter).emit("exit", null, "SIGTERM");
+      return true;
+    },
+  });
+  return child;
+}
 
 // ── real SSH-default per-attachment transport ───────────────────────────────
 // attach_over_real_transport == 1 / attach_injects_client_credential == 1
