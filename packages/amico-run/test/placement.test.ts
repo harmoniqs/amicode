@@ -406,3 +406,23 @@ describe("duplicate-spec guard (#2045 G)", () => {
     await first.result;
   }, 40000);
 });
+
+describe("gate and warrant are evaluated once, in the client (#2045 E)", () => {
+  it("an armed warrant gate refuses in the client: ONE structured refusal, exit 64, no run dir, nothing placed", async () => {
+    const root = tmpRoot();
+    const script = join(root, "s.jl");
+    writeFileSync(script, "using Piccolo\n");
+    writeFileSync(join(root, "ledger.jsonl"), "");
+    writeFileSync(
+      join(root, "spec.json"),
+      JSON.stringify({ schema_version: "5", lab_id: "default", script_path: script, tier: "free", env: { kind: "sandbox" }, plan_hash: "abcd" }),
+    );
+    const r = await runCli(
+      ["run", script, "--runs-root", join(root, "runs"), "--spec", join(root, "spec.json"), "--julia", fakeJulia(root, "j", "")],
+      cliEnv({ ...PLACED, AMICO_WARRANTS: "1", AMICO_LEDGER: join(root, "ledger.jsonl") }),
+    );
+    expect(r.code).toBe(64);
+    expect(r.stdout.trim().split("\n").filter((l) => l.includes("warrant_required"))).toHaveLength(1);
+    expect(existsSync(join(root, "runs"))).toBe(false);
+  }, 30000);
+});
