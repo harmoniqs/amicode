@@ -24,7 +24,6 @@ export async function load(plugin: Plugin.Plugin, extra: Record<string, unknown>
     app: { name: "amicode-host", version: "test" },
     location: { directory: "/nonexistent" },
     options: {},
-    session: { hook: registrar("session"), ...(extra.session as object) },
     permission: { hook: registrar("permission") },
     tool: { hook: registrar("tool") },
     shell: { hook: registrar("shell") },
