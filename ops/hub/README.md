@@ -19,7 +19,7 @@ against a file that lived nowhere. This import fixes that.
 | `../hub-restart.sh` | `~/.amico/server/hub-restart.sh` **and** `~/.amico/ops/hub-restart.sh` | the restart ritual (stage/swap/restart/verify); `restart` is guarded, `--force` is logged. Lives one level up in the repo because `packages/extension` reads it there; the extension runs the `~/.amico/ops/` copy over ssh, so BOTH deployed copies must be current |
 | `lane-roll.sh` | `~/.amico/server/lane-roll.sh` | rolls shards 2/3 onto the swapped binary when idle; committed from the hub copy (#2044); restart is guarded and a blocked shard is retried next tick |
 | `restart-witness.sh` | run in place / from cron | #2044: independent witness — run dirs whose `run.log` stopped within 60 s before a unit start with no `FINISHED`, classified `guarded`/`unguarded` against the decision log; prints `guarded_losses=N unguarded_losses=M` |
-| `ops-drift-check.sh` | run in place | #2044: sha256 of each ops script vs its deployed copy (`DEPLOY_ROOT`, default `~/.amico/server`); exit 1 on any difference or missing file |
+| `ops-drift-check.sh` | run from a repo checkout, or `--repo <checkout>` / `AMICODE_REPO` | #2044: sha256 of each ops script vs its deployed copy (`DEPLOY_ROOT`, default `~/.amico/server`); exit 1 on any difference or missing file; #2050: exit 64 (never `ok`) when the repo root is missing/invalid, is the deploy root, or a file would be compared with itself (symlink) |
 | `test_solve_guard.py` | run in place (wired into `deploy-gate.sh`) | #2044: real-process suite for all of the above (fabricated cgroup tree; restarts are recorded by stubs, never made) |
 | `fleet-watchdog/cdp-stack.mjs` | `~/.amico/server/fleet-watchdog/cdp-stack.mjs` | CDP all-threads JS stack capture for wedge postmortems (connects to the engine's BUN_INSPECT port) |
 
@@ -67,7 +67,7 @@ default grabs an arbitrary shard's engine via `head -1`.
    reconcile any drift INTO this repo first (a hot fix that lives only on
    the hub is how this directory came to exist).
 2. Copy files with a targeted `cp -p` per file after `ops/hub/ops-drift-check.sh`
-   shows what differs (deployed files HAVE drifted — an older file deployed over
+   (run from a checkout, or `--repo <checkout>` when invoking the deployed copy) shows what differs (deployed files HAVE drifted — an older file deployed over
    a newer one is what lost the watchdog's wedge recovery on Oct 11, so never
    rsync the whole directory). Never touch `rss-trajectory.log`, wedge
    captures, or `*.bak-*` — those are hub-local history.
@@ -127,7 +127,9 @@ the RSS watchdog all restart **only** through `solve-guard.sh run`.
 - **Deploying** (file copy with backups + a dry run, never a restart; do NOT rsync the
   whole directory — deployed files have drifted): `cp -p` the seven files
   `ops-drift-check.sh` lists (plus `~/.amico/ops/{hub-restart,solve-guard}.sh`), then
-  run `ops/hub/ops-drift-check.sh` until it prints no `DIFF`/`MISSING`.
+  run `ops/hub/ops-drift-check.sh` (from the checkout, or `~/.amico/server/ops-drift-check.sh --repo <checkout>`)
+  until it prints no `DIFF`/`MISSING`. Without a verified repo root it exits 64 rather than
+  comparing deployed files to themselves.
 
 ## The app-dist deploy (`deploy-dist.sh`, amicode #1906 / A13b)
 
