@@ -35,6 +35,8 @@ describe("database path", () => {
 describe("password", () => {
   test("no password at all is refused (deny-by-default, never an open server)", () =>
     refuses({ ...good, AMICODE_HOST_PASSWORD: undefined }, /AMICODE_HOST_PASSWORD/))
+  test("a --password flag is not accepted (argv is world-visible)", () =>
+    refuses({ ...good, AMICODE_HOST_PASSWORD: undefined }, /AMICODE_HOST_PASSWORD/, ["--password", "from-argv"]))
   test("an empty password is refused", () => refuses({ ...good, AMICODE_HOST_PASSWORD: "" }, /AMICODE_HOST_PASSWORD/))
   test("a password file with mode 0600 is accepted and trailing newline trimmed", () => {
     const file = path.join(sb.root, "pw-600")

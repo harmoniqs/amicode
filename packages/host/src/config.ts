@@ -31,7 +31,8 @@ export function loadConfig(env: Env, argv: readonly string[] = []): Config {
   const read = (name: string) => flag(argv, name.replace(/^AMICODE_HOST_/, "").toLowerCase().replaceAll("_", "-")) ?? env[name]
   return {
     dbPath: readDbPath(read("AMICODE_HOST_DB")),
-    password: readPassword(read("AMICODE_HOST_PASSWORD"), read("AMICODE_HOST_PASSWORD_FILE")),
+    // the password is never accepted as a flag: argv is visible to every local user via ps
+    password: readPassword(env.AMICODE_HOST_PASSWORD, read("AMICODE_HOST_PASSWORD_FILE")),
     port: readInt("AMICODE_HOST_PORT", read("AMICODE_HOST_PORT"), DEFAULT_PORT, 65_535, STOCK_SERVICE_PORTS),
     lockWaitMs: readInt("AMICODE_HOST_LOCK_WAIT_MS", read("AMICODE_HOST_LOCK_WAIT_MS"), DEFAULT_LOCK_WAIT_MS, 86_400_000),
     resume: readResume(read("AMICODE_HOST_RESUME")),
