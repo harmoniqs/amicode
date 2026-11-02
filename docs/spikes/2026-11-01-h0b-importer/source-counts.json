@@ -1,0 +1,486 @@
+{
+ "tables": {
+  "account": 0,
+  "account_state": 0,
+  "control_account": 0,
+  "credential": 0,
+  "data_migration": 0,
+  "event": 2618393,
+  "event_sequence": 3282,
+  "message": 184167,
+  "migration": 45,
+  "part": 735801,
+  "permission": 30,
+  "project": 4,
+  "project_directory": 42,
+  "provider_permission": 0,
+  "runtime_busy": 22,
+  "runtime_pending": 77,
+  "runtime_session_owner": 23,
+  "session": 3420,
+  "session_context_epoch": 1,
+  "session_input": 1,
+  "session_lineage": 1314,
+  "session_lineage_origin": 0,
+  "session_message": 637,
+  "session_receipt": 0,
+  "session_receipt_assessment": 0,
+  "session_receipt_operation": 0,
+  "session_share": 0,
+  "todo": 1775,
+  "workspace": 0
+ },
+ "schema": [
+  {
+   "name": "event_aggregate_seq_idx",
+   "type": "index",
+   "sql": "CREATE UNIQUE INDEX `event_aggregate_seq_idx` ON `event` (`aggregate_id`,`seq`)"
+  },
+  {
+   "name": "event_aggregate_type_seq_idx",
+   "type": "index",
+   "sql": "CREATE INDEX `event_aggregate_type_seq_idx` ON `event` (`aggregate_id`,`type`,`seq`)"
+  },
+  {
+   "name": "message_session_time_created_id_idx",
+   "type": "index",
+   "sql": "CREATE INDEX `message_session_time_created_id_idx` ON `message` (`session_id`,`time_created`,`id`)"
+  },
+  {
+   "name": "part_message_id_id_idx",
+   "type": "index",
+   "sql": "CREATE INDEX `part_message_id_id_idx` ON `part` (`message_id`,`id`)"
+  },
+  {
+   "name": "part_session_idx",
+   "type": "index",
+   "sql": "CREATE INDEX `part_session_idx` ON `part` (`session_id`)"
+  },
+  {
+   "name": "permission_project_action_resource_idx",
+   "type": "index",
+   "sql": "CREATE UNIQUE INDEX `permission_project_action_resource_idx` ON `permission` (`project_id`,`action`,`resource`)"
+  },
+  {
+   "name": "provider_permission_project_tier_action_resource_idx",
+   "type": "index",
+   "sql": "CREATE UNIQUE INDEX `provider_permission_project_tier_action_resource_idx` ON `provider_permission` (`project_id`,`tier_id`,`action`,`resource`)"
+  },
+  {
+   "name": "runtime_busy_session_idx",
+   "type": "index",
+   "sql": "CREATE INDEX `runtime_busy_session_idx` ON `runtime_busy` (`session_id`)"
+  },
+  {
+   "name": "runtime_pending_kind_state_idx",
+   "type": "index",
+   "sql": "CREATE INDEX `runtime_pending_kind_state_idx` ON `runtime_pending` (`kind`,`state`,`time_heartbeat`)"
+  },
+  {
+   "name": "runtime_pending_session_idx",
+   "type": "index",
+   "sql": "CREATE INDEX `runtime_pending_session_idx` ON `runtime_pending` (`session_id`)"
+  },
+  {
+   "name": "runtime_session_owner_session_idx",
+   "type": "index",
+   "sql": "CREATE INDEX `runtime_session_owner_session_idx` ON `runtime_session_owner` (`session_id`)"
+  },
+  {
+   "name": "session_input_session_admitted_seq_idx",
+   "type": "index",
+   "sql": "CREATE UNIQUE INDEX `session_input_session_admitted_seq_idx` ON `session_input` (`session_id`,`admitted_seq`)"
+  },
+  {
+   "name": "session_input_session_pending_delivery_seq_idx",
+   "type": "index",
+   "sql": "CREATE INDEX `session_input_session_pending_delivery_seq_idx` ON `session_input` (`session_id`,`promoted_seq`,`delivery`,`admitted_seq`)"
+  },
+  {
+   "name": "session_input_session_promoted_seq_idx",
+   "type": "index",
+   "sql": "CREATE UNIQUE INDEX `session_input_session_promoted_seq_idx` ON `session_input` (`session_id`,`promoted_seq`)"
+  },
+  {
+   "name": "session_lineage_origin_root_idx",
+   "type": "index",
+   "sql": "CREATE INDEX `session_lineage_origin_root_idx` ON `session_lineage_origin` (`root_id`)"
+  },
+  {
+   "name": "session_lineage_parent_idx",
+   "type": "index",
+   "sql": "CREATE INDEX `session_lineage_parent_idx` ON `session_lineage` (`parent_id`)"
+  },
+  {
+   "name": "session_lineage_root_idx",
+   "type": "index",
+   "sql": "CREATE INDEX `session_lineage_root_idx` ON `session_lineage` (`root_id`)"
+  },
+  {
+   "name": "session_message_session_seq_idx",
+   "type": "index",
+   "sql": "CREATE UNIQUE INDEX `session_message_session_seq_idx` ON `session_message` (`session_id`,`seq`)"
+  },
+  {
+   "name": "session_message_session_time_created_id_idx",
+   "type": "index",
+   "sql": "CREATE INDEX `session_message_session_time_created_id_idx` ON `session_message` (`session_id`,`time_created`,`id`)"
+  },
+  {
+   "name": "session_message_session_type_seq_idx",
+   "type": "index",
+   "sql": "CREATE INDEX `session_message_session_type_seq_idx` ON `session_message` (`session_id`,`type`,`seq`)"
+  },
+  {
+   "name": "session_message_time_created_idx",
+   "type": "index",
+   "sql": "CREATE INDEX `session_message_time_created_idx` ON `session_message` (`time_created`)"
+  },
+  {
+   "name": "session_parent_idx",
+   "type": "index",
+   "sql": "CREATE INDEX `session_parent_idx` ON `session` (`parent_id`)"
+  },
+  {
+   "name": "session_project_idx",
+   "type": "index",
+   "sql": "CREATE INDEX `session_project_idx` ON `session` (`project_id`)"
+  },
+  {
+   "name": "session_receipt_assessment_receipt_revision_idx",
+   "type": "index",
+   "sql": "CREATE UNIQUE INDEX `session_receipt_assessment_receipt_revision_idx` ON `session_receipt_assessment` (`receipt_id`,`revision`)"
+  },
+  {
+   "name": "session_receipt_assessment_root_idx",
+   "type": "index",
+   "sql": "CREATE INDEX `session_receipt_assessment_root_idx` ON `session_receipt_assessment` (`root_id`)"
+  },
+  {
+   "name": "session_receipt_operation_idx",
+   "type": "index",
+   "sql": "CREATE INDEX `session_receipt_operation_idx` ON `session_receipt` (`operation_id`)"
+  },
+  {
+   "name": "session_receipt_operation_root_idx",
+   "type": "index",
+   "sql": "CREATE INDEX `session_receipt_operation_root_idx` ON `session_receipt_operation` (`root_id`)"
+  },
+  {
+   "name": "session_receipt_root_creation_seq_idx",
+   "type": "index",
+   "sql": "CREATE UNIQUE INDEX `session_receipt_root_creation_seq_idx` ON `session_receipt` (`root_id`,`creation_seq`)"
+  },
+  {
+   "name": "session_workspace_idx",
+   "type": "index",
+   "sql": "CREATE INDEX `session_workspace_idx` ON `session` (`workspace_id`)"
+  },
+  {
+   "name": "sqlite_autoindex_account_1",
+   "type": "index",
+   "sql": null
+  },
+  {
+   "name": "sqlite_autoindex_control_account_1",
+   "type": "index",
+   "sql": null
+  },
+  {
+   "name": "sqlite_autoindex_credential_1",
+   "type": "index",
+   "sql": null
+  },
+  {
+   "name": "sqlite_autoindex_data_migration_1",
+   "type": "index",
+   "sql": null
+  },
+  {
+   "name": "sqlite_autoindex_event_1",
+   "type": "index",
+   "sql": null
+  },
+  {
+   "name": "sqlite_autoindex_event_sequence_1",
+   "type": "index",
+   "sql": null
+  },
+  {
+   "name": "sqlite_autoindex_message_1",
+   "type": "index",
+   "sql": null
+  },
+  {
+   "name": "sqlite_autoindex_migration_1",
+   "type": "index",
+   "sql": null
+  },
+  {
+   "name": "sqlite_autoindex_part_1",
+   "type": "index",
+   "sql": null
+  },
+  {
+   "name": "sqlite_autoindex_permission_1",
+   "type": "index",
+   "sql": null
+  },
+  {
+   "name": "sqlite_autoindex_project_1",
+   "type": "index",
+   "sql": null
+  },
+  {
+   "name": "sqlite_autoindex_project_directory_1",
+   "type": "index",
+   "sql": null
+  },
+  {
+   "name": "sqlite_autoindex_provider_permission_1",
+   "type": "index",
+   "sql": null
+  },
+  {
+   "name": "sqlite_autoindex_runtime_busy_1",
+   "type": "index",
+   "sql": null
+  },
+  {
+   "name": "sqlite_autoindex_runtime_pending_1",
+   "type": "index",
+   "sql": null
+  },
+  {
+   "name": "sqlite_autoindex_runtime_session_owner_1",
+   "type": "index",
+   "sql": null
+  },
+  {
+   "name": "sqlite_autoindex_session_1",
+   "type": "index",
+   "sql": null
+  },
+  {
+   "name": "sqlite_autoindex_session_context_epoch_1",
+   "type": "index",
+   "sql": null
+  },
+  {
+   "name": "sqlite_autoindex_session_input_1",
+   "type": "index",
+   "sql": null
+  },
+  {
+   "name": "sqlite_autoindex_session_lineage_1",
+   "type": "index",
+   "sql": null
+  },
+  {
+   "name": "sqlite_autoindex_session_lineage_origin_1",
+   "type": "index",
+   "sql": null
+  },
+  {
+   "name": "sqlite_autoindex_session_message_1",
+   "type": "index",
+   "sql": null
+  },
+  {
+   "name": "sqlite_autoindex_session_receipt_1",
+   "type": "index",
+   "sql": null
+  },
+  {
+   "name": "sqlite_autoindex_session_receipt_assessment_1",
+   "type": "index",
+   "sql": null
+  },
+  {
+   "name": "sqlite_autoindex_session_receipt_operation_1",
+   "type": "index",
+   "sql": null
+  },
+  {
+   "name": "sqlite_autoindex_session_share_1",
+   "type": "index",
+   "sql": null
+  },
+  {
+   "name": "sqlite_autoindex_todo_1",
+   "type": "index",
+   "sql": null
+  },
+  {
+   "name": "sqlite_autoindex_workspace_1",
+   "type": "index",
+   "sql": null
+  },
+  {
+   "name": "todo_session_idx",
+   "type": "index",
+   "sql": "CREATE INDEX `todo_session_idx` ON `todo` (`session_id`)"
+  },
+  {
+   "name": "account",
+   "type": "table",
+   "sql": "CREATE TABLE `account` (\n          `id` text PRIMARY KEY,\n          `email` text NOT NULL,\n          `url` text NOT NULL,\n          `access_token` text NOT NULL,\n          `refresh_token` text NOT NULL,\n          `token_expiry` integer,\n          `time_created` integer NOT NULL,\n          `time_updated` integer NOT NULL\n        )"
+  },
+  {
+   "name": "account_state",
+   "type": "table",
+   "sql": "CREATE TABLE `account_state` (\n          `id` integer PRIMARY KEY NOT NULL,\n          `active_account_id` text, `active_org_id` text,\n          FOREIGN KEY (`active_account_id`) REFERENCES `account`(`id`) ON UPDATE no action ON DELETE set null\n        )"
+  },
+  {
+   "name": "control_account",
+   "type": "table",
+   "sql": "CREATE TABLE `control_account` (\n          `email` text NOT NULL,\n          `url` text NOT NULL,\n          `access_token` text NOT NULL,\n          `refresh_token` text NOT NULL,\n          `token_expiry` integer,\n          `active` integer NOT NULL,\n          `time_created` integer NOT NULL,\n          `time_updated` integer NOT NULL,\n          CONSTRAINT `control_account_pk` PRIMARY KEY(`email`, `url`)\n        )"
+  },
+  {
+   "name": "credential",
+   "type": "table",
+   "sql": "CREATE TABLE `credential` (\n          `id` text PRIMARY KEY,\n          `integration_id` text,\n          `label` text NOT NULL,\n          `value` text NOT NULL,\n          `connector_id` text,\n          `method_id` text,\n          `active` integer,\n          `time_created` integer NOT NULL,\n          `time_updated` integer NOT NULL\n        )"
+  },
+  {
+   "name": "data_migration",
+   "type": "table",
+   "sql": "CREATE TABLE `data_migration` (\n          `name` text PRIMARY KEY,\n          `time_completed` integer NOT NULL\n        )"
+  },
+  {
+   "name": "event",
+   "type": "table",
+   "sql": "CREATE TABLE `event` (\n          `id` text PRIMARY KEY,\n          `aggregate_id` text NOT NULL,\n          `seq` integer NOT NULL,\n          `type` text NOT NULL,\n          `data` text NOT NULL,\n          CONSTRAINT `fk_event_aggregate_id_event_sequence_aggregate_id_fk` FOREIGN KEY (`aggregate_id`) REFERENCES `event_sequence`(`aggregate_id`) ON DELETE CASCADE\n        )"
+  },
+  {
+   "name": "event_sequence",
+   "type": "table",
+   "sql": "CREATE TABLE `event_sequence` (\n          `aggregate_id` text PRIMARY KEY,\n          `seq` integer NOT NULL\n        , `owner_id` text)"
+  },
+  {
+   "name": "message",
+   "type": "table",
+   "sql": "CREATE TABLE `message` (\n          `id` text PRIMARY KEY,\n          `session_id` text NOT NULL,\n          `time_created` integer NOT NULL,\n          `time_updated` integer NOT NULL,\n          `data` text NOT NULL,\n          CONSTRAINT `fk_message_session_id_session_id_fk` FOREIGN KEY (`session_id`) REFERENCES `session`(`id`) ON DELETE CASCADE\n        )"
+  },
+  {
+   "name": "migration",
+   "type": "table",
+   "sql": "CREATE TABLE \"migration\" (id TEXT PRIMARY KEY, time_completed INTEGER NOT NULL)"
+  },
+  {
+   "name": "part",
+   "type": "table",
+   "sql": "CREATE TABLE `part` (\n          `id` text PRIMARY KEY,\n          `message_id` text NOT NULL,\n          `session_id` text NOT NULL,\n          `time_created` integer NOT NULL,\n          `time_updated` integer NOT NULL,\n          `data` text NOT NULL,\n          CONSTRAINT `fk_part_message_id_message_id_fk` FOREIGN KEY (`message_id`) REFERENCES `message`(`id`) ON DELETE CASCADE\n        )"
+  },
+  {
+   "name": "permission",
+   "type": "table",
+   "sql": "CREATE TABLE `permission` (\n          `id` text PRIMARY KEY,\n          `project_id` text NOT NULL,\n          `action` text NOT NULL,\n          `resource` text NOT NULL,\n          `time_created` integer NOT NULL,\n          `time_updated` integer NOT NULL,\n          CONSTRAINT `fk_permission_project_id_project_id_fk` FOREIGN KEY (`project_id`) REFERENCES `project`(`id`) ON DELETE CASCADE\n        )"
+  },
+  {
+   "name": "project",
+   "type": "table",
+   "sql": "CREATE TABLE `project` (\n          `id` text PRIMARY KEY,\n          `worktree` text NOT NULL,\n          `vcs` text,\n          `name` text,\n          `icon_url` text,\n          `icon_color` text,\n          `time_created` integer NOT NULL,\n          `time_updated` integer NOT NULL,\n          `time_initialized` integer,\n          `sandboxes` text NOT NULL\n        , `commands` text, `icon_url_override` text)"
+  },
+  {
+   "name": "project_directory",
+   "type": "table",
+   "sql": "CREATE TABLE \"project_directory\" (\n          `project_id` text NOT NULL,\n          `directory` text NOT NULL,\n          `type` text,\n          `strategy` text,\n          `time_created` integer NOT NULL,\n          CONSTRAINT `project_directory_pk` PRIMARY KEY(`project_id`, `directory`),\n          CONSTRAINT `fk_project_directory_project_id_project_id_fk` FOREIGN KEY (`project_id`) REFERENCES `project`(`id`) ON DELETE CASCADE\n        )"
+  },
+  {
+   "name": "provider_permission",
+   "type": "table",
+   "sql": "CREATE TABLE `provider_permission` (\n          `id` text PRIMARY KEY,\n          `project_id` text NOT NULL,\n          `tier_id` text NOT NULL,\n          `action` text NOT NULL,\n          `resource` text NOT NULL,\n          `time_created` integer NOT NULL,\n          `time_updated` integer NOT NULL,\n          CONSTRAINT `fk_provider_permission_project_id_project_id_fk` FOREIGN KEY (`project_id`) REFERENCES `project`(`id`) ON DELETE CASCADE\n        )"
+  },
+  {
+   "name": "runtime_busy",
+   "type": "table",
+   "sql": "CREATE TABLE `runtime_busy` (\n          `session_id` text NOT NULL,\n          `owner_id` text NOT NULL,\n          `directory` text,\n          `pid` integer NOT NULL,\n          `time_started` integer NOT NULL,\n          `time_heartbeat` integer NOT NULL,\n          `conflict` integer DEFAULT false NOT NULL,\n          CONSTRAINT `runtime_busy_pk` PRIMARY KEY(`session_id`, `owner_id`)\n        )"
+  },
+  {
+   "name": "runtime_pending",
+   "type": "table",
+   "sql": "CREATE TABLE `runtime_pending` (\n          `id` text PRIMARY KEY,\n          `kind` text NOT NULL,\n          `session_id` text NOT NULL,\n          `directory` text,\n          `owner_id` text NOT NULL,\n          `pid` integer NOT NULL,\n          `state` text NOT NULL,\n          `data` text NOT NULL,\n          `resolution` text,\n          `time_created` integer NOT NULL,\n          `time_updated` integer NOT NULL,\n          `time_heartbeat` integer NOT NULL\n        )"
+  },
+  {
+   "name": "runtime_session_owner",
+   "type": "table",
+   "sql": "CREATE TABLE `runtime_session_owner` (\n          `session_id` text NOT NULL,\n          `owner_id` text NOT NULL,\n          `directory` text,\n          `pid` integer NOT NULL,\n          `time_created` integer NOT NULL,\n          `time_heartbeat` integer NOT NULL,\n          `conflict` integer DEFAULT false NOT NULL,\n          CONSTRAINT `runtime_session_owner_pk` PRIMARY KEY(`session_id`, `owner_id`)\n        )"
+  },
+  {
+   "name": "session",
+   "type": "table",
+   "sql": "CREATE TABLE `session` (\n          `id` text PRIMARY KEY,\n          `project_id` text NOT NULL,\n          `parent_id` text,\n          `slug` text NOT NULL,\n          `directory` text NOT NULL,\n          `title` text NOT NULL,\n          `version` text NOT NULL,\n          `share_url` text,\n          `summary_additions` integer,\n          `summary_deletions` integer,\n          `summary_files` integer,\n          `summary_diffs` text,\n          `revert` text,\n          `permission` text,\n          `time_created` integer NOT NULL,\n          `time_updated` integer NOT NULL,\n          `time_compacting` integer,\n          `time_archived` integer, `workspace_id` text, `path` text, `agent` text, `model` text, `cost` real DEFAULT 0 NOT NULL, `tokens_input` integer DEFAULT 0 NOT NULL, `tokens_output` integer DEFAULT 0 NOT NULL, `tokens_reasoning` integer DEFAULT 0 NOT NULL, `tokens_cache_read` integer DEFAULT 0 NOT NULL, `tokens_cache_write` integer DEFAULT 0 NOT NULL, `metadata` text, directories TEXT,\n          CONSTRAINT `fk_session_project_id_project_id_fk` FOREIGN KEY (`project_id`) REFERENCES `project`(`id`) ON DELETE CASCADE\n        )"
+  },
+  {
+   "name": "session_context_epoch",
+   "type": "table",
+   "sql": "CREATE TABLE `session_context_epoch` (\n          `session_id` text PRIMARY KEY,\n          `baseline` text NOT NULL,\n          `snapshot` text NOT NULL,\n          `baseline_seq` integer NOT NULL,\n          CONSTRAINT `fk_session_context_epoch_session_id_session_id_fk` FOREIGN KEY (`session_id`) REFERENCES `session`(`id`) ON DELETE CASCADE\n        )"
+  },
+  {
+   "name": "session_input",
+   "type": "table",
+   "sql": "CREATE TABLE \"session_input\" (\n          `id` text PRIMARY KEY,\n          `session_id` text NOT NULL,\n          `prompt` text NOT NULL,\n          `delivery` text NOT NULL,\n          `admitted_seq` integer NOT NULL,\n          `promoted_seq` integer,\n          `time_created` integer NOT NULL,\n          CONSTRAINT `fk_session_input_session_id_session_id_fk` FOREIGN KEY (`session_id`) REFERENCES `session`(`id`) ON DELETE CASCADE\n        )"
+  },
+  {
+   "name": "session_lineage",
+   "type": "table",
+   "sql": "CREATE TABLE `session_lineage` (\n          `session_id` text PRIMARY KEY,\n          `root_id` text NOT NULL,\n          `mode` text NOT NULL,\n          `parent_id` text,\n          `edge_kind` text,\n          `legacy_parent_id` text,\n          `epoch_started_at` integer,\n          CONSTRAINT `fk_session_lineage_session_id_session_id_fk` FOREIGN KEY (`session_id`) REFERENCES `session`(`id`) ON DELETE CASCADE\n        )"
+  },
+  {
+   "name": "session_lineage_origin",
+   "type": "table",
+   "sql": "CREATE TABLE `session_lineage_origin` (\n          `root_id` text NOT NULL,\n          `session_id` text NOT NULL,\n          `title` text NOT NULL,\n          `edge_kind` text NOT NULL,\n          `deleted_at` integer NOT NULL,\n          CONSTRAINT `session_lineage_origin_pk` PRIMARY KEY(`root_id`, `session_id`)\n        )"
+  },
+  {
+   "name": "session_message",
+   "type": "table",
+   "sql": "CREATE TABLE `session_message` (\n          `id` text PRIMARY KEY,\n          `session_id` text NOT NULL,\n          `type` text NOT NULL,\n          `time_created` integer NOT NULL,\n          `time_updated` integer NOT NULL,\n          `data` text NOT NULL, `seq` integer NOT NULL,\n          CONSTRAINT `fk_session_message_session_id_session_id_fk` FOREIGN KEY (`session_id`) REFERENCES `session`(`id`) ON DELETE CASCADE\n        )"
+  },
+  {
+   "name": "session_receipt",
+   "type": "table",
+   "sql": "CREATE TABLE `session_receipt` (\n          `id` text PRIMARY KEY,\n          `operation_id` text NOT NULL,\n          `root_id` text NOT NULL,\n          `creation_seq` integer NOT NULL,\n          `resource` text NOT NULL,\n          `operation` text NOT NULL,\n          `outcome` text NOT NULL,\n          `time_created` integer NOT NULL,\n          CONSTRAINT `fk_session_receipt_operation_id_session_receipt_operation_id_fk` FOREIGN KEY (`operation_id`) REFERENCES `session_receipt_operation`(`id`) ON DELETE CASCADE,\n          CONSTRAINT `fk_session_receipt_root_id_session_id_fk` FOREIGN KEY (`root_id`) REFERENCES `session`(`id`) ON DELETE CASCADE\n        )"
+  },
+  {
+   "name": "session_receipt_assessment",
+   "type": "table",
+   "sql": "CREATE TABLE `session_receipt_assessment` (\n          `id` text PRIMARY KEY,\n          `receipt_id` text NOT NULL,\n          `root_id` text NOT NULL,\n          `confidence` text NOT NULL,\n          `net_state` text NOT NULL,\n          `evidence_state` text NOT NULL,\n          `revision` integer NOT NULL,\n          `expires_at` integer,\n          `time_created` integer NOT NULL,\n          CONSTRAINT `fk_session_receipt_assessment_receipt_id_session_receipt_id_fk` FOREIGN KEY (`receipt_id`) REFERENCES `session_receipt`(`id`) ON DELETE CASCADE,\n          CONSTRAINT `fk_session_receipt_assessment_root_id_session_id_fk` FOREIGN KEY (`root_id`) REFERENCES `session`(`id`) ON DELETE CASCADE\n        )"
+  },
+  {
+   "name": "session_receipt_operation",
+   "type": "table",
+   "sql": "CREATE TABLE \"session_receipt_operation\" (\n          `id` text PRIMARY KEY,\n          `root_id` text NOT NULL,\n          `session_id` text NOT NULL,\n          `origin` text NOT NULL,\n          `reserved_receipts` integer DEFAULT 0 NOT NULL,\n          `reserved_metadata_bytes` integer DEFAULT 0 NOT NULL,\n          `state` text NOT NULL,\n          CONSTRAINT `fk_session_receipt_operation_root_id_session_id_fk` FOREIGN KEY (`root_id`) REFERENCES `session`(`id`) ON DELETE CASCADE\n        )"
+  },
+  {
+   "name": "session_share",
+   "type": "table",
+   "sql": "CREATE TABLE `session_share` (\n          `session_id` text PRIMARY KEY,\n          `id` text NOT NULL,\n          `secret` text NOT NULL,\n          `url` text NOT NULL,\n          `time_created` integer NOT NULL,\n          `time_updated` integer NOT NULL,\n          CONSTRAINT `fk_session_share_session_id_session_id_fk` FOREIGN KEY (`session_id`) REFERENCES `session`(`id`) ON DELETE CASCADE\n        )"
+  },
+  {
+   "name": "sqlite_sequence",
+   "type": "table",
+   "sql": "CREATE TABLE sqlite_sequence(name,seq)"
+  },
+  {
+   "name": "todo",
+   "type": "table",
+   "sql": "CREATE TABLE `todo` (\n          `session_id` text NOT NULL,\n          `content` text NOT NULL,\n          `status` text NOT NULL,\n          `priority` text NOT NULL,\n          `position` integer NOT NULL,\n          `time_created` integer NOT NULL,\n          `time_updated` integer NOT NULL,\n          CONSTRAINT `todo_pk` PRIMARY KEY(`session_id`, `position`),\n          CONSTRAINT `fk_todo_session_id_session_id_fk` FOREIGN KEY (`session_id`) REFERENCES `session`(`id`) ON DELETE CASCADE\n        )"
+  },
+  {
+   "name": "workspace",
+   "type": "table",
+   "sql": "CREATE TABLE \"workspace\" (\n          `id` text PRIMARY KEY,\n          `type` text NOT NULL,\n          `name` text DEFAULT '' NOT NULL,\n          `branch` text,\n          `directory` text,\n          `extra` text,\n          `project_id` text NOT NULL, `time_used` integer NOT NULL DEFAULT 0,\n          CONSTRAINT `fk_workspace_project_id_project_id_fk` FOREIGN KEY (`project_id`) REFERENCES `project`(`id`) ON DELETE CASCADE\n        )"
+  },
+  {
+   "name": "session_receipt_assessment_append_only",
+   "type": "trigger",
+   "sql": "CREATE TRIGGER `session_receipt_assessment_append_only`\n        BEFORE UPDATE ON `session_receipt_assessment`\n        BEGIN\n          SELECT RAISE(ABORT, 'session receipt assessments are append-only');\n        END"
+  },
+  {
+   "name": "session_receipt_immutable",
+   "type": "trigger",
+   "sql": "CREATE TRIGGER `session_receipt_immutable`\n        BEFORE UPDATE ON `session_receipt`\n        BEGIN\n          SELECT RAISE(ABORT, 'session receipt facts are immutable');\n        END"
+  }
+ ],
+ "user_version": 0
+}

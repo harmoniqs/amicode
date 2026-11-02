@@ -1,0 +1,21 @@
+{
+ "copy_s": 11.6,
+ "archive_bytes": 5652135936,
+ "event_src": [
+  2618393,
+  "deb4d79449aaad640d945bf0f25f6313"
+ ],
+ "event_archive": [
+  2618393,
+  "deb4d79449aaad640d945bf0f25f6313"
+ ],
+ "event_sequence_src": [
+  3282,
+  "078e9416153ab55e81e520342724d990"
+ ],
+ "event_sequence_archive": [
+  3282,
+  "078e9416153ab55e81e520342724d990"
+ ],
+ "verify_s": 46.9
+}

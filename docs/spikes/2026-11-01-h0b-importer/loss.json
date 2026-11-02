@@ -1,0 +1,326 @@
+{
+ "event_by_type_top": [
+  [
+   "message.part.updated.1",
+   1719334
+  ],
+  [
+   "message.updated.1",
+   704064
+  ],
+  [
+   "session.updated.1",
+   190750
+  ],
+  [
+   "session.created.1",
+   3278
+  ],
+  [
+   "session.next.model.switched.1",
+   336
+  ],
+  [
+   "message.removed.1",
+   329
+  ],
+  [
+   "session.next.agent.switched.1",
+   300
+  ],
+  [
+   "session.next.prompted.1",
+   1
+  ],
+  [
+   "session.next.prompt.admitted.1",
+   1
+  ]
+ ],
+ "event_distinct_types": 9,
+ "event_distinct_aggregates": 3282,
+ "event_sequence_owner_nonnull_src": 0,
+ "event_sequence_owner_nonnull_after": 0,
+ "event_bytes_data": 4883096051,
+ "part_by_type_src": [
+  [
+   "tool",
+   204812
+  ],
+  [
+   "step-start",
+   176033
+  ],
+  [
+   "step-finish",
+   175293
+  ],
+  [
+   "reasoning",
+   110672
+  ],
+  [
+   "text",
+   68521
+  ],
+  [
+   "patch",
+   295
+  ],
+  [
+   "file",
+   109
+  ],
+  [
+   "compaction",
+   64
+  ],
+  [
+   "skill",
+   2
+  ]
+ ],
+ "file_parts_total": 109,
+ "file_parts_nondata": 1,
+ "file_parts_nondata_by_user": [
+  [
+   "user",
+   1
+  ]
+ ],
+ "file_parts_nondata_url_scheme": [
+  [
+   "file:",
+   1
+  ]
+ ],
+ "message_by_role_src": [
+  [
+   "assistant",
+   176372
+  ],
+  [
+   "user",
+   7795
+  ]
+ ],
+ "session_message_by_type_after": [
+  [
+   "assistant",
+   176316
+  ],
+  [
+   "user",
+   7332
+  ],
+  [
+   "system",
+   2799
+  ],
+  [
+   "synthetic",
+   406
+  ],
+  [
+   "compaction",
+   56
+  ]
+ ],
+ "session_message_by_type_src": [
+  [
+   "model-switched",
+   336
+  ],
+  [
+   "agent-switched",
+   300
+  ],
+  [
+   "user",
+   1
+  ]
+ ],
+ "session_permission_nonnull_src": 2342,
+ "session_permission_nonnull_after_legacy": 2342,
+ "session_v2_permission_nonnull_after": 0,
+ "session_v2_count": 3420,
+ "sessions_missing_in_v2": 0,
+ "sessions_without_messages_src": 196,
+ "sessions_with_zero_v2_messages_after": 196,
+ "old_session_message_ids_surviving": 186909,
+ "old_637_ids_surviving_after": 0,
+ "old_session_message_distinct_sessions": 317,
+ "cost_sum_legacy": [
+  15422.646075314,
+  5822015107,
+  93912614
+ ],
+ "cost_sum_v2": [
+  15424.944653794,
+  5822434629,
+  93930665
+ ],
+ "project_reassigned": 1035,
+ "directory_changed": 0,
+ "path_set_v2": 3420,
+ "session_v2_by_project": [
+  [
+   "1a157b57",
+   2180
+  ],
+  [
+   "4ed47af3",
+   1003
+  ],
+  [
+   "global",
+   108
+  ],
+  [
+   "4d2ee0b5",
+   97
+  ],
+  [
+   "e22c0bef",
+   11
+  ],
+  [
+   "53bb8231",
+   8
+  ],
+  [
+   "13dc7c3d",
+   4
+  ],
+  [
+   "8c86670f",
+   2
+  ],
+  [
+   "9d44913a",
+   2
+  ],
+  [
+   "d41633e0",
+   2
+  ],
+  [
+   "365eb759",
+   1
+  ],
+  [
+   "8246aae1",
+   1
+  ],
+  [
+   "bfb160e1",
+   1
+  ]
+ ],
+ "project_after": [
+  [
+   "1a157b57",
+   "<path elided>"
+  ],
+  [
+   "4d2ee0b5",
+   "<path elided>"
+  ],
+  [
+   "global",
+   "<path elided>"
+  ],
+  [
+   "cb99afbd",
+   "<path elided>"
+  ],
+  [
+   "4ed47af3",
+   "<path elided>"
+  ],
+  [
+   "e22c0bef",
+   "<path elided>"
+  ],
+  [
+   "53bb8231",
+   "<path elided>"
+  ],
+  [
+   "8c86670f",
+   "<path elided>"
+  ],
+  [
+   "d41633e0",
+   "<path elided>"
+  ],
+  [
+   "365eb759",
+   "<path elided>"
+  ],
+  [
+   "8246aae1",
+   "<path elided>"
+  ],
+  [
+   "13dc7c3d",
+   "<path elided>"
+  ],
+  [
+   "bfb160e1",
+   "<path elided>"
+  ],
+  [
+   "9d44913a",
+   "<path elided>"
+  ]
+ ],
+ "kv": [
+  [
+   "migration.v1-v2",
+   "{\"phase\":\"completed\"}",
+   1793578180079,
+   1793578230342
+  ]
+ ],
+ "data_migration_src": [],
+ "session_input_src": [
+  [
+   "msg_<redacted>",
+   "ses_<redacted>",
+   "steer",
+   4899
+  ]
+ ],
+ "session_context_epoch_src_sessions": [
+  [
+   "ses_<redacted>",
+   4898
+  ]
+ ],
+ "fk_check_after": [],
+ "integrity_quick_after": "ok",
+ "migration_after_new_ids": [
+  "20260804233008_loose_psylocke",
+  "20260805200742_import_legacy_credentials",
+  "20260808023530_workspace_domain",
+  "20260811161259_execution_claim_attempts",
+  "20260812181746_session_inbox",
+  "20260812213948_worktree",
+  "20260819222447_session_viewed_state",
+  "20260823191254_nullable_workspace_binding",
+  "20260910120000_clear_v1_session_permission",
+  "20260923013825_project_time_active",
+  "20261007190000_azure_cli_external_credential",
+  "20261010180456_project_time_archived",
+  "20261024002554_session_allowance",
+  "20261024175301_drop_session_allowance",
+  "20261025123711_blob",
+  "20261025154125_drop_session_pending",
+  "20261026223005_schedule",
+  "20261029002625_session_part",
+  "20261029073502_session_time_busy",
+  "20261029165540_schedule_checks",
+  "20261030054400_job"
+ ]
+}
