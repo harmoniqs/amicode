@@ -190,7 +190,7 @@ describe("distiller spawn transport (config file + headless child)", () => {
 });
 
 describe("drain-time path rebase (#2097): a job's machine paths resolve against THIS machine's drain config", () => {
-  /** A fake machine: `home` stands in for os.homedir() (injected), with a real
+  /** A fake machine: `home` is a temp dir holding a real
    *  vault/ops/runs_root and one run dir under it. Foreign paths never exist. */
   function mkMachine() {
     const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "amicode-home-")));
@@ -200,7 +200,7 @@ describe("drain-time path rebase (#2097): a job's machine paths resolve against 
     fs.mkdirSync(vault, { recursive: true });
     fs.mkdirSync(ops, { recursive: true });
     fs.mkdirSync(path.join(runsRoot, "r42"), { recursive: true });
-    return { home, vault, ops, runsRoot, env: { home, exists: fs.existsSync } };
+    return { home, vault, ops, runsRoot, env: { exists: fs.existsSync } };
   }
   const foreign = { vault: "/Users/aaron/.amico/vaults/vault-old", ops: "/Users/aaron/.amico/ops", runs_root: "/Users/aaron/.amico/runs" };
   function recorder() {
@@ -250,17 +250,25 @@ describe("drain-time path rebase (#2097): a job's machine paths resolve against 
     expect(r.seen[0].rebased_from).toEqual({ ops: foreign.ops });
   });
 
-  it("a recorded path that exists but lies outside this machine's home is unusable too", async () => {
+  it("an existing path outside this machine's home (another volume) is NOT rebased: the job passes through unchanged", async () => {
     const { makeDistillHandler } = await import("../../opencode-plugin/distill_queue");
     const m = mkMachine();
-    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "amicode-outside-")); // exists, not under m.home
+    const volume = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "amicode-volume-"))); // exists, not under m.home
+    const outside = { vault: path.join(volume, "vaults"), ops: path.join(volume, "ops"), runs_root: path.join(volume, "runs") };
+    fs.mkdirSync(outside.vault);
+    fs.mkdirSync(outside.ops);
+    fs.mkdirSync(path.join(outside.runs_root, "r42"), { recursive: true });
     const r = recorder();
-    await makeDistillHandler(cfgFor(m), r.spawn, m.env)({ kind: "sweep", vault: outside, ops: m.ops });
-    expect(r.seen[0]).toMatchObject({ vault: m.vault, ops: m.ops });
-    expect(r.seen[0].rebased_from).toEqual({ vault: outside });
+    const job = { kind: "run" as const, run_id: "r42", ...outside };
+    const before = JSON.stringify(job);
+    await makeDistillHandler(cfgFor(m), r.spawn, m.env)(job); // job_defaults point at a DIFFERENT vault
+    expect(r.seen[0]).toBe(job);
+    expect(JSON.stringify(r.seen[0])).toBe(before);
+    expect(r.seen[0]).not.toHaveProperty("rebased_from");
+    expect(r.seen[0].vault).toBe(outside.vault);
   });
 
-  it("AC2: a healthy job (paths exist, under home) reaches the handler byte-identical", async () => {
+  it("AC2: a healthy job (paths exist) reaches the handler byte-identical", async () => {
     const { makeDistillHandler } = await import("../../opencode-plugin/distill_queue");
     const m = mkMachine();
     const r = recorder();

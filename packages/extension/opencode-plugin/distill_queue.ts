@@ -14,7 +14,6 @@
  *  - a failing job is set aside as `.failed-<ts>` (kept for inspection, not
  *    retried forever), and the drain continues */
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { execFile } from "node:child_process";
 
@@ -212,7 +211,7 @@ export async function enqueueAndDrain(opsDir: string, job: DistillJob, clock: Dr
 /** The drain handler used by every trigger: resolve the job's machine paths
  *  against THIS machine's config (`rebaseJob`), then spawn the distiller.
  *  A job that cannot be resolved throws before anything is spawned. `spawn` and
- *  `env` are test seams (no mocks: a recording closure and a fake home). */
+ *  `env` are test seams (no mocks: a recording closure and an injected `exists`). */
 export function makeDistillHandler(
   cfg: DistillerConfigFile,
   spawn: (cfg: DistillerConfigFile, job: DistillJob) => Promise<unknown> = runDistillerJob,
@@ -224,13 +223,11 @@ export function makeDistillHandler(
 }
 
 export interface RebaseEnv {
-  /** This machine's home directory; recorded paths outside it are unusable here. */
-  home: string;
   exists: (p: string) => boolean;
 }
 
 export function defaultRebaseEnv(): RebaseEnv {
-  return { home: os.homedir(), exists: fs.existsSync };
+  return { exists: fs.existsSync };
 }
 
 /** The fields a job records from the enqueueing machine, each resolved from the
@@ -239,9 +236,12 @@ const REBASED_FIELDS = ["vault", "ops", "runs_root"] as const;
 
 /** Resolve a queued job's machine-shaped paths for THIS machine (#2097).
  *
- *  - A recorded vault/ops/runs_root that does not exist here, or lies outside
- *    `env.home`, is replaced by `defaults[field]`; the originals are kept on the
- *    copy as `rebased_from`. No default → throws naming the field (never guessed).
+ *  - A recorded vault/ops/runs_root that does not exist here is replaced by
+ *    `defaults[field]`; the originals are kept on the copy as `rebased_from`.
+ *    No default → throws naming the field (never guessed). Existence is the ONLY
+ *    test: an existing path is trusted wherever it lives (another volume, a
+ *    mount outside $HOME), since rebasing it onto `job_defaults` could point the
+ *    distiller at a different vault.
  *  - Fields the job does not carry are not invented; identity fields (kind,
  *    run_id, session_ids, …) are never touched.
  *  - `demo_dir` has no configured counterpart to rebase onto: it is left alone if
@@ -253,8 +253,7 @@ export function rebaseJob(
   defaults: Record<string, unknown> | undefined,
   env: RebaseEnv,
 ): DistillJob {
-  const usable = (p: unknown) =>
-    typeof p === "string" && env.exists(p) && !path.relative(env.home, path.resolve(p)).startsWith("..");
+  const usable = (p: unknown) => typeof p === "string" && env.exists(p);
 
   const rebased: Record<string, unknown> = {};
   const from: Record<string, unknown> = {};
