@@ -100,6 +100,24 @@ the RSS watchdog all restart **only** through `solve-guard.sh run`.
   age (except `LanguageServer|SymbolServer`), and any non-infrastructure process
   older than 5 minutes (infrastructure = `bash zsh sh dash node bun opencode sleep tail cat grep curl timeout systemd-run`, and the unit's MainPID).
   An unreadable cgroup tree **fails closed**.
+- **What is exempt (amicode#2087):** a `julia` process is *not* protected only when it is
+  provably an abandoned precompile worker — **all four** must hold, any one failing keeps
+  it protected exactly as above: (1) its argv has the precompile output flag `--output-o`
+  as a whole argument (or `--output-o=…`; `--output-ox` does not count); (2) it is
+  sleeping (state `S`/`I`; a running or `D` process is real work); (3) its parent pid is
+  neither in the unit's cgroup tree nor the unit's MainPID (its launcher died and it was
+  reparented to the user service manager); (4) it is at least
+  `SOLVE_GUARD_ORPHAN_PRECOMPILE_AGE` seconds old (default `1800`). Set
+  `SOLVE_GUARD_ORPHAN_PRECOMPILE=0` to disable the exemption entirely (default `1`).
+  A non-precompile `julia` of any age is always protected, sleeping and orphaned or not.
+  **Audit trail:** `solve-guard.sh check` prints
+  `solve-guard: exempt <pid> julia <age>s orphaned-precompile <cmd>` for each one, and the
+  decision log line carries `"exempt":[{pid,comm,etimes,cmd,reason}]` (key omitted when
+  empty; `protected` is unchanged). The guard never kills or signals anything — an
+  exempt orphan simply stops blocking restarts; clearing it is a human's call. Honest
+  caveat: a precompile worker could in principle become useful again if its launcher were
+  revived, but an orphan's launcher is gone and cannot be, so the exemption is about
+  "no one is waiting for it", not "it is provably useless".
 - **How it restarts:** under one exclusive per-unit `flock`
   (`~/.amico/server/restart-locks/<unit>.lock`): check → sleep 2 s → check again →
   run the restart, still holding the lock.
@@ -113,7 +131,7 @@ the RSS watchdog all restart **only** through `solve-guard.sh run`.
   `touch ~/.amico/server/restart-override/<unit>` — the watchdog/lane-roll restart on
   their next tick. For an immediate one: `hub-restart.sh restart --force` (logged `force`).
 - **Reading the decision log:** `~/.amico/server/restart-decisions.log`, one JSON line
-  per decision `{ts, caller, unit, decision, protected:[{pid,comm,etimes,cmd}]}` with
+  per decision `{ts, caller, unit, decision, protected:[{pid,comm,etimes,cmd}], exempt?:[…]}` with
   `decision` ∈ `allow | refused | deferred | override | force | alert`:
   `jq -c 'select(.decision!="allow")' ~/.amico/server/restart-decisions.log | tail`.
 - **Cross-check:** `restart-witness.sh` reports run dirs killed by a unit start and whether
