@@ -3,6 +3,7 @@
 import type { Plugin } from "@opencode/plugin"
 import path from "node:path"
 import { contextPlugin, extensionSources } from "./context.ts"
+import { DEFAULT_PROVIDER_CONFIG, providerPlugin, type ProviderConfig } from "./provider.ts"
 import { defaultPolicy, permissionPlugin, type Effect, type Grant } from "./permission.ts"
 
 export class PluginConfigError extends Error {}
@@ -11,6 +12,7 @@ export interface PluginConfig {
   readonly permission: { readonly grants: readonly Grant[]; readonly replaceDefaults: boolean }
   /** Where the v1 context builders live; null turns context injection off. Default: the repo's extension. */
   readonly context: { readonly extensionDir: string | null }
+  readonly provider: ProviderConfig
   /** Absolute paths of extra plugin modules; each default-exports a `Plugin`. */
   readonly modules: readonly string[]
 }
@@ -25,12 +27,12 @@ export async function loadPlugins(env: Env): Promise<Plugin.Plugin[]> {
   const grants = config.permission.replaceDefaults ? config.permission.grants : [...defaultPolicy({ home: env.HOME }).grants, ...config.permission.grants]
   const extra = await Promise.all(config.modules.map(loadModule))
   const context = config.context.extensionDir === null ? [] : [contextPlugin({ sources: extensionSources(config.context.extensionDir) })]
-  return [permissionPlugin({ grants }), ...context, ...extra]
+  return [permissionPlugin({ grants }), ...context, providerPlugin(config.provider), ...extra]
 }
 
 export function parsePluginConfig(raw: string | undefined): PluginConfig {
   const value = raw === undefined || raw === "" ? {} : parse(raw)
-  const unknown = Object.keys(value).filter((key) => !["permission", "context", "modules"].includes(key))
+  const unknown = Object.keys(value).filter((key) => !["permission", "context", "provider", "modules"].includes(key))
   if (unknown.length) throw new PluginConfigError(`${VAR} has unknown keys: ${unknown.join(", ")}`)
   const permission = record(value.permission, "permission")
   const unknownPermission = Object.keys(permission).filter((key) => !["grants", "replaceDefaults"].includes(key))
@@ -47,6 +49,7 @@ export function parsePluginConfig(raw: string | undefined): PluginConfig {
   return {
     permission: { grants: grants(permission.grants), replaceDefaults: permission.replaceDefaults === true },
     context: { extensionDir },
+    provider: providerConfig(record(value.provider, "provider")),
     modules: modules as string[],
   }
 }
@@ -85,4 +88,19 @@ async function loadModule(file: string): Promise<Plugin.Plugin> {
   if (typeof plugin?.id !== "string" || typeof plugin?.setup !== "function")
     throw new PluginConfigError(`${VAR}.modules: ${file} must default-export a plugin { id, setup }`)
   return plugin
+}
+
+function providerConfig(value: Record<string, unknown>): ProviderConfig {
+  const unknown = Object.keys(value).filter((key) => !["qwen", "bedrock", "defaultModelGuard"].includes(key))
+  if (unknown.length) throw new PluginConfigError(`${VAR}.provider has unknown keys: ${unknown.join(", ")}`)
+  for (const key of ["bedrock", "defaultModelGuard"])
+    if (value[key] !== undefined && typeof value[key] !== "boolean") throw new PluginConfigError(`${VAR}.provider.${key} must be a boolean`)
+  const qwen = value.qwen
+  const validQwen = qwen === undefined || qwen === false || (typeof qwen === "object" && qwen !== null && typeof (qwen as any).temperature === "number" && typeof (qwen as any).topP === "number")
+  if (!validQwen) throw new PluginConfigError(`${VAR}.provider.qwen must be false or { temperature: number, topP: number }`)
+  return {
+    qwen: qwen === undefined ? DEFAULT_PROVIDER_CONFIG.qwen : (qwen as ProviderConfig["qwen"]),
+    bedrock: (value.bedrock as boolean | undefined) ?? DEFAULT_PROVIDER_CONFIG.bedrock,
+    defaultModelGuard: (value.defaultModelGuard as boolean | undefined) ?? DEFAULT_PROVIDER_CONFIG.defaultModelGuard,
+  }
 }

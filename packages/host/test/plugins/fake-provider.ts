@@ -8,7 +8,7 @@ export interface Recorded {
   readonly headers: Record<string, string>
   readonly body: any
 }
-export type Reply = { text: string } | { tool: { name: string; arguments: Record<string, unknown> } }
+export type Reply = { text: string; reasoning?: string } | { tool: { name: string; arguments: Record<string, unknown> } }
 
 export async function fakeProvider(script: (recorded: Recorded, index: number) => Reply = () => ({ text: "ok" })) {
   const requests: Recorded[] = []
@@ -46,7 +46,12 @@ function sse(reply: Reply) {
   const usage = { prompt_tokens: 5, completion_tokens: 3, total_tokens: 8 }
   const frames =
     "text" in reply
-      ? [chunk({ role: "assistant", content: "" }), chunk({ content: reply.text }), chunk({}, "stop", { usage })]
+      ? [
+          chunk({ role: "assistant", content: "" }),
+          ...(reply.reasoning ? [chunk({ reasoning_content: reply.reasoning })] : []),
+          chunk({ content: reply.text }),
+          chunk({}, "stop", { usage }),
+        ]
       : [
           chunk({ role: "assistant", content: null }),
           chunk({ tool_calls: [{ index: 0, id: "call_fake_1", type: "function", function: { name: reply.tool.name, arguments: JSON.stringify(reply.tool.arguments) } }] }),

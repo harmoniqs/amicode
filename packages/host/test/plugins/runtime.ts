@@ -28,6 +28,7 @@ export async function load(plugin: Plugin.Plugin, extra: Record<string, unknown>
     tool: { hook: registrar("tool") },
     shell: { hook: registrar("shell") },
     aisdk: { hook: registrar("aisdk") },
+    model: { transform: async () => ({ dispose: async () => {} }) },
     ...extra,
     session: { hook: registrar("session"), ...(extra.session as object) },
   }
