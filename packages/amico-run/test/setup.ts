@@ -1,3 +1,7 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 // Global test guard: NO TEST MAY EVER SPAWN A REAL MODEL CALL.
 //
 // `spec review` and `plan compile` resolve their agent binary from $AMICO_CRITIC_BIN, else
@@ -30,4 +34,17 @@ if (!process.env.AMICO_LEDGER) {
 // fails closed for the next suite that forgets.
 if (!process.env.AMICO_CLAIMS_FILE) {
   process.env.AMICO_CLAIMS_FILE = "/nonexistent/amico-test-guard/claims.jsonl";
+}
+
+// #2045: `amico run` places each solve in its own transient systemd unit when the host can.
+// Tests must never create units by accident (a unit would outlive the test and name itself
+// after the run id). Default every spawned CLI to in-process placement; the placement
+// suites opt in explicitly and use the `amico-run-test-` unit prefix.
+if (!process.env.AMICO_RUN_PLACEMENT) process.env.AMICO_RUN_PLACEMENT = "none";
+
+// #2045 H: `amico run` takes slice A0's restart-guard lock (shared) when it runs under a hub
+// unit — and a test run inside a hub unit's cgroup would otherwise create lock files under
+// ~/.amico/server/restart-locks. Point every test at a private directory.
+if (!process.env.SOLVE_GUARD_LOCK_DIR) {
+  process.env.SOLVE_GUARD_LOCK_DIR = mkdtempSync(join(tmpdir(), "amico-run-restart-locks-"));
 }

@@ -57,6 +57,23 @@ describe("RemoteExecutor.submit — the wall-clock cap is NEVER optional (GPU-pl
   });
 });
 
+describe("RemoteExecutor.submit — run.lock records the remote run id (#2045)", () => {
+  it("lock carries cloud_run_id + spec hash, protection none, and is ended before FINISHED", async () => {
+    await withCloud(async (fake) => {
+      fake.state.finished = { status: "completed" };
+      const root = tmpRoot();
+      const h = await ex(fake).submit(fakeJulia(root, "solve.jl", "// julia body"), {
+        runsRoot: join(root, "runs"),
+        spec: { canonical: "{}", tier: "hpc", hashes: { spec_hash: "sha256:cafe" } },
+      });
+      const first = JSON.parse(readFileSync(join(h.runDir, "run.lock"), "utf8"));
+      expect(first).toMatchObject({ schema: 1, run_id: h.runId, unit: null, protection: "none", cloud_run_id: fake.taskId, spec_hash: "sha256:cafe" });
+      await h.finished;
+      expect(JSON.parse(readFileSync(join(h.runDir, "run.lock"), "utf8")).ended).toBe(true);
+    });
+  });
+});
+
 describe("RemoteExecutor.submit — Δ2 wire shape + local mirror", () => {
   it("POSTs script CONTENT + filename with the Bearer credential; 202 → conforming mirror run dir", async () => {
     await withCloud(async (fake) => {

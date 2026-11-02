@@ -7,6 +7,8 @@ import { parse as tomlParse, stringify as tomlStringify } from "smol-toml";
 import { EventQueue } from "./event_queue.js";
 import { appendRecord, type SolveOutcome, type SolveRecord, type SolveSummary } from "./ledger.js";
 import { classifyLine } from "./telemetry.js";
+import { LOCK_HEARTBEAT_MS, startRunLock } from "./run_lock.js";
+import { writePendingVerification } from "./verify.js";
 import {
   appendIndex,
   atomicWriteFile,
@@ -34,6 +36,20 @@ const ORCHESTRATOR_VERSION = pkg.version; // single source of truth (esbuild inl
 // the generic typed-spec runner. `julia -e '<PROBLEM_SPEC_RUNNER>' <path>` puts the
 // spec path at ARGS[1]; cwd is the run dir, so run_dir=pwd() lands artifacts there.
 const PROBLEM_SPEC_RUNNER = "using Piccolo; Piccolo.Specs.solve_spec(ARGS[1]; run_dir=pwd())";
+
+/** Julia argv for a run: env flags, then the typed-spec runner (problem_spec) or the script.
+ *  Shared by prepareRun and adopt mode so both build the identical command. */
+export function juliaArgv(
+  julia: { project?: string; sysimage?: string } | undefined,
+  target: { problemSpecPath: string } | { script: string },
+): string[] {
+  const args: string[] = [];
+  if (julia?.project) args.push(`--project=${julia.project}`);
+  if (julia?.sysimage) args.push(`--sysimage=${julia.sysimage}`);
+  if ("problemSpecPath" in target) args.push("-e", PROBLEM_SPEC_RUNNER, target.problemSpecPath);
+  else args.push(target.script);
+  return args;
+}
 
 function resolveExecutable(bin: string): void {
   const candidates = bin.includes("/")
@@ -214,8 +230,30 @@ function emitSolveStanza(runDir: string): void {
   }
 }
 
+/** A run that has its directory, manifest, index entry and `latest` pointer — everything the
+ *  manifest-FIRST contract promises — but whose Julia child has not been spawned yet.
+ *  `prepareRun` produces it; `startRun` (in this process, or in an `--adopt` orchestrator
+ *  placed outside the engine's process group) consumes it. */
+export interface PreparedRun {
+  runId: string;
+  runDir: string;
+  runsRoot: string;
+  juliaBin: string;
+  juliaArgs: string[];
+  /** gate-computed spec hash, or null for bare (spec-less) runs */
+  specHash: string | null;
+  /** manifest tier; `free` local runs get a pending-verification marker before FINISHED */
+  tier?: string;
+}
+
 export class LocalExecutor implements Executor {
   async submit(scriptPath: string | undefined, opts: SubmitOpts = {}): Promise<RunHandle> {
+    return this.startRun(this.prepareRun(scriptPath, opts), opts);
+  }
+
+  /** Steps 1–5 of the run-dir contract: validate config (failures create NO run dir), then
+   *  run dir, manifest FIRST, problem.toml / solvespec.json, index, latest. */
+  prepareRun(scriptPath: string | undefined, opts: SubmitOpts = {}): PreparedRun {
     // ---- step 1 (spec §5): validate config; failures here create NO run dir ----
     // Two shapes: a normal script run, or a v4 problem_spec run (route to
     // Piccolo.Specs.solve_spec). For problem_spec, `script` (recorded as the
@@ -282,13 +320,31 @@ export class LocalExecutor implements Executor {
     appendIndex(runsRoot, runId, createdAt, script);
     updateLatest(runsRoot, runId);
 
-    // ---- step 6: spawn julia, own process group, cwd = runDir ----
-    const args: string[] = [];
-    if (opts.julia?.project) args.push(`--project=${opts.julia.project}`);
-    if (opts.julia?.sysimage) args.push(`--sysimage=${opts.julia.sysimage}`);
+    // ---- step 6 (argv): julia flags + script / typed-spec runner ----
     // problem_spec → the generic typed-spec runner; else the authored script.
-    if (problemSpecPath !== undefined) args.push("-e", PROBLEM_SPEC_RUNNER, problemSpecPath);
-    else args.push(script);
+    const juliaArgs = juliaArgv(opts.julia, problemSpecPath !== undefined ? { problemSpecPath } : { script });
+
+    return { runId, runDir, runsRoot, juliaBin, juliaArgs, specHash: opts.spec?.hashes?.spec_hash ?? null, tier: opts.spec?.tier };
+  }
+
+  /** Step 6 onward: spawn julia in its own process group (cwd = runDir), stream run.log,
+   *  settle with FINISHED. */
+  startRun(prepared: PreparedRun, opts: SubmitOpts = {}): RunHandle {
+    const { runId, runDir, juliaBin } = prepared;
+    const args = prepared.juliaArgs;
+
+    // run.lock + heartbeat: the liveness record any engine can read from files alone.
+    // Written before the child exists so a crash at any later point leaves a lock to age.
+    const heartbeat = startRunLock(
+      runDir,
+      {
+        runId,
+        unit: opts.lock?.unit ?? null,
+        protection: opts.lock?.protection ?? "none",
+        specHash: prepared.specHash,
+      },
+      opts.heartbeatMs ?? (Number(process.env.AMICO_RUN_HEARTBEAT_MS) || LOCK_HEARTBEAT_MS),
+    );
 
     const events = new EventQueue<RunEvent>();
     const logStream = createWriteStream(join(runDir, "run.log"), { flags: "a" });
@@ -302,39 +358,47 @@ export class LocalExecutor implements Executor {
     const settle = (status: RunStatus, exitCode: number): void => {
       if (settled) return;
       settled = true;
-      try {
-        writeFinished(runDir, status, exitCode); // orchestrator verdict, atomic — overwrites
-      } catch (e) {
-        // any FINISHED a script faked (spec §5 step 8)
-        process.stderr.write(`amico-run: failed to write FINISHED: ${(e as Error).message}\n`);
-      }
-      emitSolveStanza(runDir); // Plan 3 / L1 Task 5 — never throws; a ledger hiccup must never fail a run
 
-      // WAIT FOR run.log TO ACTUALLY FLUSH before announcing completion.
+      // FLUSH run.log BEFORE the verdict, then write the verdict, then announce.
       //
       // `logStream.end()` is ASYNCHRONOUS: it schedules the flush and returns immediately. The
-      // old code called it and then resolved `finished` / closed the event stream in the same
-      // tick, so a consumer could await completion and read a TRUNCATED run.log — the events
-      // queue is in-memory and complete while the file on disk is still short a line or two.
-      //
-      // This was an intermittent 1-in-4 failure in executor_parity.test.ts (local's iterLines
-      // had 1 entry, remote's had 2, with both event streams identical) and it is a real product
-      // bug, not just a test artifact: anything that reads run.log after a run reports finished —
-      // the extension, a replay, a user tailing the file — could see a partial log. The
-      // 'close'-not-'exit' comment above is what makes the EVENTS complete; nothing made the
-      // FILE complete.
+      // old code resolved `finished` / closed the event stream in the same tick, so a consumer
+      // could await completion and read a TRUNCATED run.log — the events queue is in-memory and
+      // complete while the file on disk is still short a line or two (an intermittent 1-in-4
+      // failure in executor_parity.test.ts, and a real bug for anything reading run.log after a
+      // run reports finished). Flushing first also gives a placed run's thin client a hard
+      // guarantee: when FINISHED exists, run.log is complete, so tailing then stopping at
+      // FINISHED can never lose the last lines.
       let announced = false;
-      const announce = (): void => {
+      const finish = (): void => {
         if (announced) return;
         announced = true;
+        // Verdict ordering: pending-verification marker, then the lock's final ended:true, then
+        // FINISHED. A supervisor killed anywhere in between never leaves a finished-looking free
+        // run whose verification is merely absent.
+        if (prepared.tier === "free") {
+          try {
+            writePendingVerification(runDir);
+          } catch (e) {
+            process.stderr.write(`amico-run: failed to write pending verification marker: ${(e as Error).message}\n`);
+          }
+        }
+        heartbeat.end();
+        try {
+          writeFinished(runDir, status, exitCode); // orchestrator verdict, atomic — overwrites
+        } catch (e) {
+          // any FINISHED a script faked (spec §5 step 8)
+          process.stderr.write(`amico-run: failed to write FINISHED: ${(e as Error).message}\n`);
+        }
+        emitSolveStanza(runDir); // Plan 3 / L1 Task 5 — never throws; a ledger hiccup must never fail a run
         events.push({ kind: "finished", status, exitCode });
         events.close();
         resolveFinished({ status, exitCode });
       };
       // A stream that errors must not wedge the run: losing the tail of a log is bad, hanging
-      // forever is worse. Both paths announce exactly once.
-      logStream.once("error", announce);
-      logStream.end(announce);
+      // forever is worse. Both paths finish exactly once.
+      logStream.once("error", finish);
+      logStream.end(finish);
     };
 
     // stdbuf (spec §5 "where available") is deliberately omitted in β.1: the β.3 script

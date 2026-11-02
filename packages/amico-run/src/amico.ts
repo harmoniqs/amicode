@@ -20,6 +20,7 @@ import { cloudVerb } from "./cloud_verb.js";
 function usage(): string {
   const rows: [string, string][] = [
     ["run <script.jl> [--spec <s.json>] […]", "launch a solve — the amico-run launch path (delegates verbatim)"],
+    ["run stop|attach <run-id|run-dir>", "stop a placed run (idempotent) / tail its log and finish like the launcher (#2045)"],
     ["resolve --platform <p> --kind <k> --size <n>", "tier resolution → JSON (amico-run subcommand)"],
     ["sandbox <workspace-dir> --packages A,B,…", "generate a per-problem Julia env (amico-run subcommand)"],
     ["estimate <script.jl> | --spec <s.json>", "v0 size estimate → JSON suggestion signal, never a route (Δ10 #34)"],

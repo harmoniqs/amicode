@@ -7,10 +7,33 @@
 // a free run must NEVER end verification-less (absence would read as "pending"
 // forever and mask a failure, and the auto-promote gate keys off agree==true).
 import { spawn } from "node:child_process";
-import { existsSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AuthoringConfig } from "./authoring.js";
 import type { SpecStamp } from "./types.js";
+
+/** The marker the orchestrator leaves BEFORE it writes FINISHED on a free-tier local run, so
+ *  a supervisor killed between FINISHED and the verification cannot present an unverified
+ *  fidelity as verified: `agree = false`, `pending = true`. The real verification (or the
+ *  fallback below) overwrites it without `pending`. */
+export const PENDING_VERIFICATION = `schema_version = "1"\nagree = false\npending = true\nreason = "pending"\n`;
+
+export function writePendingVerification(runDir: string): void {
+  const tmp = join(runDir, `.verification.toml.tmp-${process.pid}`);
+  writeFileSync(tmp, PENDING_VERIFICATION);
+  renameSync(tmp, join(runDir, "verification.toml"));
+}
+
+/** True when verification.toml is absent or still the pending marker. */
+export function verificationMissingOrPending(runDir: string): boolean {
+  const fp = join(runDir, "verification.toml");
+  if (!existsSync(fp)) return true;
+  try {
+    return /^pending\s*=\s*true\s*$/m.test(readFileSync(fp, "utf8"));
+  } catch {
+    return true;
+  }
+}
 
 function tomlEscape(s: string): string {
   return JSON.stringify(s);
@@ -52,7 +75,7 @@ export async function runVerification(runDir: string, spec: SpecStamp, authoring
     child.on("close", (code) => resolvePromise(code ?? 1));
   });
 
-  if (!existsSync(join(runDir, "verification.toml"))) {
+  if (verificationMissingOrPending(runDir)) {
     writeFallback(runDir, `verification harness exited ${exitCode} without writing verification.toml`, tolerance);
   }
 }
