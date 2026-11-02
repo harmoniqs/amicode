@@ -57,6 +57,25 @@ describe("migratePermission: v1 keys to v2 names", () => {
   })
 })
 
+describe("shipped role cards never mix v1 and v2-native permission forms", () => {
+  // Observed upstream behaviour (below, "HAZARD, observed"): when a card carries a v2-native key next to a v1
+  // `permission:` block, v2 IGNORES the v1 block with only a log warning, so a read-only role silently regains
+  // shell and edit. No shipped card does this today; this test names the hazard so the first edit that adds
+  // a native key fails HERE, with the reason, instead of as an unexplained "analyzer can run a shell".
+  const NATIVE = ["disabled", "system", "request", "permissions", "agents", "commands"]
+  test.each(cards)("%s uses one permission form", (name) => {
+    const front = /^---\n([\s\S]*?)\n---/.exec(card(name))![1]!
+    const keys = Object.keys(Bun.YAML.parse(front) as Record<string, unknown>)
+    const hasV1 = keys.includes("permission")
+    const native = keys.filter((k) => NATIVE.includes(k))
+    expect(
+      hasV1 && native.length > 0
+        ? `${name}.md mixes the v1 \`permission:\` block with v2-native key(s) ${native.join(", ")}: v2 ignores the v1 block and the deny is lost. Run it through renderV2Card.`
+        : "ok",
+    ).toBe("ok")
+  })
+})
+
 describe("the shipped role cards", () => {
   test("there are cards to check", () => {
     expect(cards).toEqual(expect.arrayContaining(["analyzer", "hypothesizer", "experimenter", "implementer", "librarian", "research", "develop"]))
