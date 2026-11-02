@@ -1,0 +1,2 @@
+AMICODE_ITER iter=1 f=0.5
+AMICODE_FINISHED status=failed exitCode=7 runDir=<ROOT>/runs/<RUNID>

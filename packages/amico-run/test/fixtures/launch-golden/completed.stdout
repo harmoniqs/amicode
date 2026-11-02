@@ -1,0 +1,6 @@
+AMICODE_ITER iter=1 f=1.0e-2
+warn: a stderr line
+plain log line
+AMICODE_ITER iter=2 f=3.0e-4
+DONE fidelity=0.9999
+AMICODE_FINISHED status=completed exitCode=0 runDir=<ROOT>/runs/<RUNID>

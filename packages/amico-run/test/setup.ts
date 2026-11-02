@@ -31,3 +31,9 @@ if (!process.env.AMICO_LEDGER) {
 if (!process.env.AMICO_CLAIMS_FILE) {
   process.env.AMICO_CLAIMS_FILE = "/nonexistent/amico-test-guard/claims.jsonl";
 }
+
+// #2045: `amico run` places each solve in its own transient systemd unit when the host can.
+// Tests must never create units by accident (a unit would outlive the test and name itself
+// after the run id). Default every spawned CLI to in-process placement; the placement
+// suites opt in explicitly and use the `amico-run-test-` unit prefix.
+if (!process.env.AMICO_RUN_PLACEMENT) process.env.AMICO_RUN_PLACEMENT = "none";
