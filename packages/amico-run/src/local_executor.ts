@@ -358,50 +358,47 @@ export class LocalExecutor implements Executor {
     const settle = (status: RunStatus, exitCode: number): void => {
       if (settled) return;
       settled = true;
-      // Verdict ordering: pending-verification marker, then the lock's final ended:true,
-      // then FINISHED. A supervisor killed anywhere in between never leaves a finished-looking
-      // free run whose verification is merely absent.
-      if (prepared.tier === "free") {
-        try {
-          writePendingVerification(runDir);
-        } catch (e) {
-          process.stderr.write(`amico-run: failed to write pending verification marker: ${(e as Error).message}\n`);
-        }
-      }
-      heartbeat.end();
-      try {
-        writeFinished(runDir, status, exitCode); // orchestrator verdict, atomic — overwrites
-      } catch (e) {
-        // any FINISHED a script faked (spec §5 step 8)
-        process.stderr.write(`amico-run: failed to write FINISHED: ${(e as Error).message}\n`);
-      }
-      emitSolveStanza(runDir); // Plan 3 / L1 Task 5 — never throws; a ledger hiccup must never fail a run
 
-      // WAIT FOR run.log TO ACTUALLY FLUSH before announcing completion.
+      // FLUSH run.log BEFORE the verdict, then write the verdict, then announce.
       //
       // `logStream.end()` is ASYNCHRONOUS: it schedules the flush and returns immediately. The
-      // old code called it and then resolved `finished` / closed the event stream in the same
-      // tick, so a consumer could await completion and read a TRUNCATED run.log — the events
-      // queue is in-memory and complete while the file on disk is still short a line or two.
-      //
-      // This was an intermittent 1-in-4 failure in executor_parity.test.ts (local's iterLines
-      // had 1 entry, remote's had 2, with both event streams identical) and it is a real product
-      // bug, not just a test artifact: anything that reads run.log after a run reports finished —
-      // the extension, a replay, a user tailing the file — could see a partial log. The
-      // 'close'-not-'exit' comment above is what makes the EVENTS complete; nothing made the
-      // FILE complete.
+      // old code resolved `finished` / closed the event stream in the same tick, so a consumer
+      // could await completion and read a TRUNCATED run.log — the events queue is in-memory and
+      // complete while the file on disk is still short a line or two (an intermittent 1-in-4
+      // failure in executor_parity.test.ts, and a real bug for anything reading run.log after a
+      // run reports finished). Flushing first also gives a placed run's thin client a hard
+      // guarantee: when FINISHED exists, run.log is complete, so tailing then stopping at
+      // FINISHED can never lose the last lines.
       let announced = false;
-      const announce = (): void => {
+      const finish = (): void => {
         if (announced) return;
         announced = true;
+        // Verdict ordering: pending-verification marker, then the lock's final ended:true, then
+        // FINISHED. A supervisor killed anywhere in between never leaves a finished-looking free
+        // run whose verification is merely absent.
+        if (prepared.tier === "free") {
+          try {
+            writePendingVerification(runDir);
+          } catch (e) {
+            process.stderr.write(`amico-run: failed to write pending verification marker: ${(e as Error).message}\n`);
+          }
+        }
+        heartbeat.end();
+        try {
+          writeFinished(runDir, status, exitCode); // orchestrator verdict, atomic — overwrites
+        } catch (e) {
+          // any FINISHED a script faked (spec §5 step 8)
+          process.stderr.write(`amico-run: failed to write FINISHED: ${(e as Error).message}\n`);
+        }
+        emitSolveStanza(runDir); // Plan 3 / L1 Task 5 — never throws; a ledger hiccup must never fail a run
         events.push({ kind: "finished", status, exitCode });
         events.close();
         resolveFinished({ status, exitCode });
       };
       // A stream that errors must not wedge the run: losing the tail of a log is bad, hanging
-      // forever is worse. Both paths announce exactly once.
-      logStream.once("error", announce);
-      logStream.end(announce);
+      // forever is worse. Both paths finish exactly once.
+      logStream.once("error", finish);
+      logStream.end(finish);
     };
 
     // stdbuf (spec §5 "where available") is deliberately omitted in β.1: the β.3 script

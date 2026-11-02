@@ -32,12 +32,14 @@ setTimeout(() => { console.error('warn: a stderr line'); }, 150);
 setTimeout(() => { console.log('plain log line'); console.log('AMICODE_ITER iter=2 f=3.0e-4'); console.log('DONE fidelity=0.9999'); }, 350);
 `;
 
-describe("launcher goldens (#2045 B)", () => {
+// The SAME goldens must hold when the run is placed outside this process: the thin client
+// (tail run.log + FINISHED + verification) must print byte-identical output and exit codes.
+describe.each(["none", "setsid-test"])("launcher goldens (#2045 B), placement=%s", (placement) => {
   it("completed run", async () => {
     const root = tmpRoot();
     const r = await runCli(
       ["run", fakeJulia(root, "s.jl", ""), "--runs-root", join(root, "runs"), "--julia", fakeJulia(root, "j", CLEAN)],
-      cliEnv(),
+      cliEnv({ AMICO_RUN_PLACEMENT: placement }),
     );
     expectGolden("completed", normalize(r.stdout, root), r.code);
   }, 30000);
@@ -45,14 +47,14 @@ describe("launcher goldens (#2045 B)", () => {
   it("failed run (julia exits 7)", async () => {
     const root = tmpRoot();
     const julia = fakeJulia(root, "j", `console.log('AMICODE_ITER iter=1 f=0.5'); setTimeout(() => process.exit(7), 150)`);
-    const r = await runCli(["run", fakeJulia(root, "s.jl", ""), "--runs-root", join(root, "runs"), "--julia", julia], cliEnv());
+    const r = await runCli(["run", fakeJulia(root, "s.jl", ""), "--runs-root", join(root, "runs"), "--julia", julia], cliEnv({ AMICO_RUN_PLACEMENT: placement }));
     expectGolden("failed", normalize(r.stdout, root), r.code);
   }, 30000);
 
   it("aborted run (client SIGINT)", async () => {
     const root = tmpRoot();
     const julia = fakeJulia(root, "j", `console.log('READY'); setInterval(() => {}, 1000)`);
-    const p = spawnCli(["run", fakeJulia(root, "s.jl", ""), "--runs-root", join(root, "runs"), "--julia", julia], cliEnv());
+    const p = spawnCli(["run", fakeJulia(root, "s.jl", ""), "--runs-root", join(root, "runs"), "--julia", julia], cliEnv({ AMICO_RUN_PLACEMENT: placement }));
     await p.waitFor("READY");
     p.child.kill("SIGINT");
     const r = await p.result;
@@ -82,7 +84,7 @@ describe("launcher goldens (#2045 B)", () => {
     const julia = fakeJulia(root, "j", `console.log('DONE f=0.99')`);
     const r = await runCli(
       ["run", script, "--runs-root", join(root, "runs"), "--spec", join(root, "free.json"), "--julia", julia],
-      cliEnv({ AMICO_AUTHORING_FILE: join(root, "authoring.json"), AMICO_VERIFY_RUNNER: harness }),
+      cliEnv({ AMICO_RUN_PLACEMENT: placement, AMICO_AUTHORING_FILE: join(root, "authoring.json"), AMICO_VERIFY_RUNNER: harness }),
     );
     expectGolden("verify-disagree", normalize(r.stdout, root), r.code);
   }, 30000);

@@ -9,13 +9,19 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { LocalExecutor } from "./local_executor.js";
 import { RemoteExecutor } from "./remote_executor.js";
-import { ConfigError, type Executor, type Finished, type SubmitOpts } from "./types.js";
+import { ConfigError, type Finished, type RunHandle, type SubmitOpts } from "./types.js";
 import { readAuthoring } from "./authoring.js";
 import { runGate } from "./gate.js";
 import { readSolverMode } from "./solver_mode.js";
 import { assembleWarrantContext } from "./warrant_context.js";
 import { trySubcommand } from "./subcommands.js";
 import { adopt } from "./adopt.js";
+import { choosePlacement, placerFor } from "./placement.js";
+import { findLiveDuplicate } from "./run_lock.js";
+import { holdRestartLock } from "./restart_lock.js";
+import { RUN_ID_RE } from "./run_follow.js";
+import { attachVerb, followAndReport, stopVerb } from "./run_verbs.js";
+import { defaultRunsRoot, deriveLabId } from "./run_dir.js";
 import { exitCodeFor, verifyFreeLocal } from "./run_finish.js";
 
 const USAGE = `usage: amico-run <script.jl> [--executor local|remote] [--lab <id-or-path>]
@@ -29,6 +35,11 @@ export async function launch(argv: string[]): Promise<number> {
   // INTERNAL (#2045): the orchestrator half of a placed run — see adopt.ts. Not a user verb.
   if (argv[0] === "--adopt") return adopt(argv.slice(1));
 
+  // `stop <run>` / `attach <run>`: a subcommand only when the NEXT argument names a run (a run id,
+  // or a run directory); anything else — including a script literally called `stop` — launches.
+  if ((argv[0] === "stop" || argv[0] === "attach") && argv[1] !== undefined && isRunRef(argv[1]))
+    argv = [`--${argv[0]}`, ...argv.slice(1)];
+
   // spec C subcommands — dispatched before the launch flag loop
   const sub = trySubcommand(argv);
   if (sub !== undefined) return sub;
@@ -36,6 +47,8 @@ export async function launch(argv: string[]): Promise<number> {
   let script: string | undefined;
   let executor = "local";
   let specPath: string | undefined;
+  let stopTarget: string | undefined;
+  let attachTarget: string | undefined;
   const opts: SubmitOpts = { julia: {} };
   let projectExplicit = false;
 
@@ -74,6 +87,12 @@ export async function launch(argv: string[]): Promise<number> {
         case "--spec":
           specPath = next();
           break;
+        case "--stop":
+          stopTarget = next();
+          break;
+        case "--attach":
+          attachTarget = next();
+          break;
         default:
           if (a.startsWith("-")) {
             console.error(`amico-run: unknown flag ${a}\n${USAGE}`);
@@ -93,6 +112,9 @@ export async function launch(argv: string[]): Promise<number> {
       throw e;
     }
   }
+  if (stopTarget !== undefined) return stopVerb(stopTarget, { runsRoot: opts.runsRoot, lab: opts.lab });
+  if (attachTarget !== undefined) return attachVerb(attachTarget, { runsRoot: opts.runsRoot, lab: opts.lab });
+
   // Parse --spec up front: a v4 solvespec carrying `problem_spec` has no script,
   // so the "no script" guard AND the gate's script read + import scan must both
   // stand down (the ProblemSpec routes to Piccolo.Specs.solve_spec, not a script).
@@ -211,10 +233,14 @@ export async function launch(argv: string[]): Promise<number> {
   // (CI build on self-hosted runners → R2 → manifest → download), pointed at via
   // this flag. Until that exists, solves pay the cold start (inspector warms up).
 
-  let handle;
+  let handle: RunHandle;
   try {
-    const exec: Executor = executor === "remote" ? new RemoteExecutor() : new LocalExecutor();
-    handle = await exec.submit(script, opts);
+    if (executor === "remote") handle = await new RemoteExecutor().submit(script, opts);
+    else {
+      const started = await startLocal(script, opts);
+      if (typeof started === "number") return started;
+      handle = started;
+    }
   } catch (e) {
     if (e instanceof ConfigError) {
       console.error(`amico-run: ${e.message}`);
@@ -263,4 +289,60 @@ export async function launch(argv: string[]): Promise<number> {
   // stdout protocol line — camelCase by design (spec §4)
   console.log(`AMICODE_FINISHED status=${f.status} exitCode=${f.exitCode} runDir=${handle.runDir}`);
   return exitCodeFor(f);
+}
+
+/** A run id, or a path to a directory holding a run (has run.toml). */
+function isRunRef(arg: string): boolean {
+  return RUN_ID_RE.test(arg) || (arg.includes("/") && existsSync(join(arg, "run.toml")));
+}
+
+/** Prepare a local run and put its orchestrator somewhere: its own unit when the host can
+ *  (the thin client then follows it and the result is the exit code), else in this process
+ *  (the handle). The gate and warrant have ALREADY run once, above — nothing here re-evaluates. */
+async function startLocal(script: string | undefined, opts: SubmitOpts): Promise<RunHandle | number> {
+  const exec = new LocalExecutor();
+
+  // #2045 G — duplicate-spec guard. After the gate (the spec hash is the gate's stamp), before any
+  // run dir exists. The warrant check is a READ of the ledger's `solve` rows (written when a run
+  // settles), so a refusal here consumes no warrant and the gate stays evaluated once.
+  const specHash = opts.spec?.hashes?.spec_hash;
+  if (specHash) {
+    const runsRoot = opts.runsRoot ?? defaultRunsRoot(deriveLabId(opts.lab ?? "default"));
+    const dup = findLiveDuplicate(runsRoot, specHash);
+    if (dup) {
+      console.error(
+        `amico-run: refused: run ${dup.runId} is already live for this exact spec (${specHash})` +
+          `${dup.pid ? `, orchestrator pid ${dup.pid}` : ""}${dup.startedAt ? `, started ${dup.startedAt}` : ""}. ` +
+          `Stop it with: amico run stop ${dup.runId} — or change the spec (seed, tolerance, …) for a deliberate re-run.`,
+      );
+      return 64;
+    }
+  }
+
+  // #2045 H — hold slice A0's restart lock SHARED from here until the child is visible in this
+  // process's cgroup, so a guarded engine restart cannot slip between the decision and the spawn.
+  const restartLock = await holdRestartLock();
+  try {
+    const prepared = exec.prepareRun(script, opts);
+    const choice = choosePlacement();
+    if (choice.mode === "unit") {
+      const placed = placerFor().place({ runId: prepared.runId, runDir: prepared.runDir, env: process.env });
+      if (typeof placed !== "string") {
+        restartLock.release(); // nothing of ours lives in the engine's cgroup beyond this thin client
+        return await followAndReport({
+          runDir: prepared.runDir,
+          runId: prepared.runId,
+          awaitVerification: opts.spec?.tier === "free",
+          alive: () => placed.alive(),
+          // Ctrl-C keeps its old meaning: stop the solve, report it aborted
+          onSigint: { stop: () => placed.stop() },
+        });
+      }
+      console.error(`amico-run: NOT protected from engine restarts (could not place the run in its own unit: ${placed}); running in-process`);
+    }
+    if (choice.warning) console.error(choice.warning);
+    return exec.startRun(prepared, { ...opts, lock: { protection: "none", unit: null } });
+  } finally {
+    restartLock.release();
+  }
 }

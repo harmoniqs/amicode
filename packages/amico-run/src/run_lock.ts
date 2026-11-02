@@ -4,7 +4,7 @@
 // owns the Julia child and writes FINISHED), refreshed by a heartbeat. A reader that finds
 // a lock without FINISHED, `ended !== true` and a heartbeat older than LOCK_STALE_MS knows
 // the orchestrator died: the run is DEAD, not merely quiet. No lock ⇒ legacy behaviour.
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
 
@@ -49,11 +49,11 @@ export function readRunLock(runDir: string): RunLock | undefined {
 
 /** The contract's liveness rule: DEAD iff a lock exists, FINISHED does not, `ended` is not
  *  true, and the heartbeat is older than LOCK_STALE_MS. */
-export function lockIsDead(runDir: string, lock: RunLock, now = Date.now()): boolean {
+export function lockIsDead(runDir: string, lock: RunLock, now = Date.now(), staleMs = LOCK_STALE_MS): boolean {
   if (existsSync(join(runDir, "FINISHED"))) return false;
   if (lock.ended === true) return false;
   const beat = Date.parse(lock.heartbeat_at);
-  return Number.isNaN(beat) || now - beat > LOCK_STALE_MS;
+  return Number.isNaN(beat) || now - beat > staleMs;
 }
 
 /** A lock that currently claims a live run: not ended, no FINISHED, fresh heartbeat. */
@@ -115,4 +115,46 @@ export function startRunLock(
       write();
     },
   };
+}
+
+/** A run in `runsRoot` that currently claims the live run of this exact spec (#2045 G), or
+ *  undefined. A run counts as live when it has a live lock (see lockIsLive) with the same
+ *  `spec_hash`, or when it is prepared but its orchestrator has not written a lock yet and the
+ *  run dir is younger than the stale window (the gap between `prepareRun` and adopt start-up).
+ *  Dead, ended and finished runs never block: deliberate re-runs are allowed. */
+export function findLiveDuplicate(
+  runsRoot: string,
+  specHash: string,
+  now = Date.now(),
+  staleMs = LOCK_STALE_MS,
+): { runId: string; pid?: number; startedAt?: string } | undefined {
+  let entries: string[];
+  try {
+    entries = readdirSync(runsRoot);
+  } catch {
+    return undefined;
+  }
+  for (const id of entries) {
+    if (id.startsWith(".")) continue;
+    const dir = join(runsRoot, id);
+    if (existsSync(join(dir, "FINISHED"))) continue;
+    const lock = readRunLock(dir);
+    if (lock) {
+      if (lock.spec_hash === specHash && lock.ended !== true) {
+        const beat = Date.parse(lock.heartbeat_at);
+        if (!Number.isNaN(beat) && now - beat <= staleMs) return { runId: id, pid: lock.pid, startedAt: lock.started_at };
+      }
+      continue;
+    }
+    // prepared, orchestrator not up yet
+    try {
+      const manifest = readFileSync(join(dir, "run.toml"), "utf8");
+      const hash = /^spec_hash = "([^"]*)"/m.exec(manifest)?.[1];
+      const created = /^created_at = "([^"]*)"/m.exec(manifest)?.[1];
+      if (hash === specHash && created && now - Date.parse(created) <= staleMs) return { runId: id, startedAt: created };
+    } catch {
+      /* not a run dir */
+    }
+  }
+  return undefined;
 }
