@@ -118,3 +118,22 @@ export function isDead(dir: string, now: number = Date.now()): boolean {
   return now - beat > DEAD_AFTER_MS
 }
 // END run.lock liveness
+
+// BEGIN verification pending (amicode#2056) — IDENTICAL in both run-terminal files;
+// test/run_liveness_lockstep.test.ts fails if the two copies drift.
+//
+// Slice A (#2045) writes <runDir>/verification.toml as a pending marker
+// (`agree = false`, `pending = true`, `reason = "pending"`) BEFORE FINISHED on
+// free-tier local runs; the real verification replaces it WITHOUT `pending`.
+// The marker is NOT a disagreement: it reads as `pending_verification`
+// (never "suppressed"), and only a bare boolean `pending = true` is the marker
+// (a string, `false`, or a missing key is a final verification, read as before).
+// Liveness is independent: a pending run that is also dead still reports status "dead".
+export function isVerificationPending(dir: string): boolean {
+  try {
+    return /^pending\s*=\s*true\s*(?:#.*)?$/m.test(readFileSync(path.join(dir, "verification.toml"), "utf8"))
+  } catch {
+    return false
+  }
+}
+// END verification pending

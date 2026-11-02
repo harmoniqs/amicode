@@ -7,7 +7,7 @@
 // injectable roots for tests; the cached entrypoints bind the real dirs.
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs"
 import path from "node:path"
-import { readTerminalState, displayStatus, isDead } from "./run_terminal"
+import { readTerminalState, displayStatus, isDead, isVerificationPending } from "./run_terminal"
 import { problemsRoot, runsRoot } from "./roots"
 
 export function synthesizeProblems(code: string, detail: string): string {
@@ -213,6 +213,9 @@ export function runStatusBody(root: string, runs: string, slug: string | undefin
     // ONE-SPINE (amicode #84): terminal state via the shared contract reader —
     // FINISHED's status field decides (a failed run with a result.toml is NOT
     // "finished"); torn FINISHED = still solving (re-poll); user-stop → "stopped".
+    // A3 (#2056): the verification-pending marker rides along as an additive
+    // `verification` field (omitted otherwise) — it never changes `status`.
+    const verification = isVerificationPending(dir) ? { verification: "pending_verification" } : {}
     const terminal = readTerminalState(dir)
     if (terminal) {
       return {
@@ -220,6 +223,7 @@ export function runStatusBody(root: string, runs: string, slug: string | undefin
         status: displayStatus(terminal.status),
         fidelity: terminal.fidelity,
         iteration: terminal.iterations,
+        ...verification,
       }
     }
     let live = { iteration: null as number | null, fidelity: null as number | null }
@@ -231,12 +235,12 @@ export function runStatusBody(root: string, runs: string, slug: string | undefin
     // A2 (#2055): a run.lock whose heartbeat has gone cold (orchestrator died)
     // is DEAD — outranks the legacy cold-log "stalled"; FINISHED already won above.
     if (isDead(dir)) {
-      return { run_id: ref.run_id, status: "dead", fidelity: live.fidelity, iteration: live.iteration }
+      return { run_id: ref.run_id, status: "dead", fidelity: live.fidelity, iteration: live.iteration, ...verification }
     }
     if (isStalled(dir)) {
-      return { run_id: ref.run_id, status: "stalled", fidelity: live.fidelity, iteration: live.iteration }
+      return { run_id: ref.run_id, status: "stalled", fidelity: live.fidelity, iteration: live.iteration, ...verification }
     }
-    return { run_id: ref.run_id, status: "solving", fidelity: live.fidelity, iteration: live.iteration }
+    return { run_id: ref.run_id, status: "solving", fidelity: live.fidelity, iteration: live.iteration, ...verification }
   })
   return JSON.stringify({ ok: true, runs: out, error: null })
 }
@@ -382,6 +386,8 @@ export function runSeriesBody(runsRoot: string, run: string | undefined, lab: st
       status,
       iteration,
       fidelity,
+      // A3 (#2056): additive, present only while the pending marker stands
+      ...(isVerificationPending(dir) ? { verification: "pending_verification" } : {}),
       best_f: bestF,
       last_f: lastIter?.f ?? null,
       elapsed_ms: elapsedMs,

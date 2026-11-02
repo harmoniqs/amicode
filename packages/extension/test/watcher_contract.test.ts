@@ -20,6 +20,8 @@ function stageRun(opts: {
   fidelity?: number;
   tier?: string;
   agree?: boolean;
+  /** the orchestrator's pending marker (agree=false + pending=true), amicode#2056 */
+  pending?: boolean;
 }): string {
   const root = mkdtempSync(join(tmpdir(), "runs-"));
   const runId = "r20260615-000000Z-ab12";
@@ -45,7 +47,10 @@ function stageRun(opts: {
       JSON.stringify({ schema_version: "2", script_path: "/s.jl", lab_id: "default", tier: opts.tier }),
     );
   if (opts.agree !== undefined)
-    writeFileSync(join(dir, "verification.toml"), `schema_version = "1"\nagree = ${opts.agree}\n`);
+    writeFileSync(
+      join(dir, "verification.toml"),
+      `schema_version = "1"\nagree = ${opts.agree}\n${opts.pending ? 'pending = true\nreason = "pending"\n' : ""}`,
+    );
   writeFileSync(join(dir, "FINISHED"), `status = "${opts.status}"\nexit_code = ${opts.exit}\n`);
   return dir;
 }
@@ -106,6 +111,18 @@ describe("ingestRunDir — β.1 contract reading (replay)", () => {
         sink,
       );
       expect(sink.promote).not.toHaveBeenCalled();
+    });
+    it("(d2) tier=free + pending marker (agree=false, pending=true) → NO promote, logged as pending, never suppressed", () => {
+      const sink = fakeSink();
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      ingestRunDir(
+        stageRun({ status: "completed", exit: 0, iters: [1], fidelity: 0.999, tier: "free", agree: false, pending: true }),
+        sink,
+      );
+      expect(sink.promote).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("pending_verification"));
+      expect(warn).not.toHaveBeenCalledWith(expect.stringContaining("suppressed"));
+      warn.mockRestore();
     });
     it("(e) tier=vetted, no verification → promote (only free is gated)", () => {
       const sink = fakeSink();

@@ -185,11 +185,18 @@ export function readTomlSafe(fp: string): Record<string, unknown> | undefined {
  *  verification.toml records agree === true — the known optimizer-vs-rollout
  *  divergence must never be promoted on the optimizer's number. Non-free runs
  *  (or runs with no solvespec) are always eligible. "pending_verification" means
- *  the harness hasn't written verification.toml yet (the FINISHED-before-verify
- *  race) — the caller must NOT promote AND must re-check when it lands, never
- *  mark the run permanently un-promotable. */
+ *  the verification hasn't landed yet — either verification.toml is absent (the
+ *  FINISHED-before-verify race) or it is the orchestrator's pending marker
+ *  (`pending = true`, written before FINISHED; amicode#2056) — the caller must
+ *  NOT promote AND must re-check when the final one lands, never mark the run
+ *  permanently un-promotable. A pending marker blocks promotion for ANY tier
+ *  (it reads `agree = false`, but is not a disagreement: never "suppressed").
+ *  Only a bare boolean `pending = true` is the marker; the final verification
+ *  overwrites it without `pending`. */
 export type PromoteEligibility = "eligible" | "pending_verification" | "suppressed";
 export function promoteEligibility(runDir: string): PromoteEligibility {
+  const verification = readTomlSafe(path.join(runDir, "verification.toml"));
+  if (verification?.pending === true) return "pending_verification";
   let spec: Record<string, unknown> | undefined;
   try {
     spec = JSON.parse(fs.readFileSync(path.join(runDir, "solvespec.json"), "utf8"));
@@ -197,7 +204,6 @@ export function promoteEligibility(runDir: string): PromoteEligibility {
     return "eligible";
   } // no/unreadable spec → a bare run, unchanged behavior
   if (spec?.tier !== "free") return "eligible";
-  const verification = readTomlSafe(path.join(runDir, "verification.toml"));
   if (!verification) return "pending_verification";
   return verification.agree === true ? "eligible" : "suppressed";
 }
