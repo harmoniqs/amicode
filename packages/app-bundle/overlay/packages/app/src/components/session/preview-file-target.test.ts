@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test"
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
 import { previewFilePathForSession } from "./preview-file-target"
 
 // #1648: `preview-file` reaches every live session view in the app webview, so
@@ -32,5 +34,35 @@ describe("previewFilePathForSession", () => {
     expect(previewFilePathForSession(msg({ sessionID: null }), "ses_a")).toBeUndefined()
     expect(previewFilePathForSession(undefined, "ses_a")).toBeUndefined()
     expect(previewFilePathForSession("preview-file", "ses_a")).toBeUndefined()
+  })
+})
+
+// #1648 wiring pins (JSX cannot render under bun here): every in-app consumer of
+// the `preview-file` bridge message must go through the session predicate, and
+// both Preview mounts must tell the tab which session it belongs to — otherwise
+// a prewarmed/backgrounded session view would still open (and persist) a file
+// that was opened for another session.
+describe("preview-file consumers are session-scoped", () => {
+  const read = (rel: string) => readFileSync(join(import.meta.dir, rel), "utf8")
+  const sessionPage = read("../../pages/session.tsx")
+  const draftPage = read("../../pages/new-session.tsx")
+  const previewTab = read("./session-preview-tab.tsx")
+  const sidePanel = read("../../pages/session/session-side-panel.tsx")
+
+  test("session page, draft page and Preview tab all filter through previewFilePathForSession", () => {
+    expect(sessionPage).toContain("previewFilePathForSession(e.data, params.id)")
+    expect(draftPage).toContain("previewFilePathForSession(")
+    expect(previewTab).toContain("previewFilePathForSession(event.data, props.sessionID?.())")
+  })
+
+  test("no consumer re-parses the raw preview-file message itself", () => {
+    for (const source of [sessionPage, draftPage, previewTab]) {
+      expect(source).not.toMatch(/kind\s*!==\s*"preview-file"/)
+    }
+  })
+
+  test("both side-panel Preview mounts pass the session id so the tab can ignore other sessions' opens", () => {
+    const mounts = sidePanel.match(/<SessionPreviewTab [^\n]*sessionID=\{\(\) => params\.id\}/g)
+    expect(mounts?.length).toBe(2)
   })
 })
