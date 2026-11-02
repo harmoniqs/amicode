@@ -130,7 +130,7 @@ Alert state itself is **not** changed by this branch; the director dismisses aft
 | pip-audit, after | "No known vulnerabilities found" |
 | `pnpm install --frozen-lockfile --ignore-scripts` on a `git archive HEAD` export | succeeds |
 | `pnpm -r run typecheck` | clean |
-| Tests (vitest, run locally with `--testTimeout=60000` because the host load average was above 30) | schema 379 passed; companion 136 passed; amico-run 2480 passed / 2 skipped; extension 5825 passed / 53 skipped / **1 failed** |
+| Tests (vitest, run locally with `--testTimeout=60000` because the host load average was above 30) | schema 379 passed; companion 136 passed; @amicode/amico-run 2480 passed / 2 skipped; extension 5825 passed / 53 skipped / **1 failed** |
 | Pasqal connector tests (temp venv, `pytest tests --ignore=tests/slow_live.py`) | 72 passed, 5 subtests passed; `pip check` clean |
 
 The one extension failure, `test/scores/skill_drift_lint.test.ts > ... hardware-loop regression ... scoped to Intonato`,
