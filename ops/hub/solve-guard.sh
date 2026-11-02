@@ -20,6 +20,22 @@
 #       which is not the unit's MainPID. `timeout` wraps a child; the child is
 #       judged on its own.
 #
+# EXEMPT PROCESS (amicode#2087): a julia process is NOT protected iff it is
+# provably an abandoned precompile worker — ALL FOUR must hold, any one failing
+# keeps it protected exactly as above:
+#   1. its argv has the precompile output flag `--output-o` as a whole argument
+#      (or `--output-o=...`; `--output-ox` etc. do not count);
+#   2. it is sleeping (state S or I) — a running (R) or uninterruptible (D)
+#      process is real work;
+#   3. its parent pid is neither in the unit's cgroup tree nor the unit's
+#      MainPID (the launcher died and it was reparented outside the unit);
+#   4. its age is >= $SOLVE_GUARD_ORPHAN_PRECOMPILE_AGE seconds (default 1800).
+# SOLVE_GUARD_ORPHAN_PRECOMPILE=0 disables the exemption entirely (default on).
+# Every exemption is printed by `check` (`solve-guard: exempt <pid> julia <age>s
+# orphaned-precompile <cmd>`) and recorded in the decision log's "exempt" array,
+# so the guard never silently ignores a process. The guard NEVER signals or
+# kills anything; it only decides.
+#
 # USAGE
 #   solve-guard.sh check <unit>
 #       exit 0 clear / exit 3 blocked (pid comm etimes cmdline on stderr).
@@ -41,7 +57,9 @@
 # DECISION LOG ($SOLVE_GUARD_LOG, default ~/.amico/server/restart-decisions.log),
 # one JSON line per decision:
 #   {"ts","caller","unit","decision":allow|refused|deferred|override|force|alert,
-#    "protected":[{"pid","comm","etimes","cmd"}], "reason"?}
+#    "protected":[{"pid","comm","etimes","cmd"}],
+#    "exempt"?:[{"pid","comm","etimes","cmd","reason"}], "reason"?}
+#   ("exempt" is omitted when empty; `protected` is unchanged.)
 #
 # RESIDUAL WINDOW (accepted, documented): between the second check and the
 # restart itself compute can still be started — the guard narrows the window to
@@ -53,11 +71,13 @@
 # Test seams (env): SOLVE_GUARD_CGROUP_ROOT (/sys/fs/cgroup), SOLVE_GUARD_CGROUP_PATH
 # (skip the `systemctl show` lookup), SOLVE_GUARD_MAIN_PID, SOLVE_GUARD_PROC_ROOT
 # (/proc), SOLVE_GUARD_LOCK_DIR, SOLVE_GUARD_LOG, SOLVE_GUARD_OVERRIDE_DIR,
-# SOLVE_GUARD_RECHECK_DELAY, SOLVE_GUARD_MIN_AGE, SOLVE_GUARD_LOCK_TIMEOUT (120).
+# SOLVE_GUARD_RECHECK_DELAY, SOLVE_GUARD_MIN_AGE, SOLVE_GUARD_LOCK_TIMEOUT (120),
+# SOLVE_GUARD_ORPHAN_PRECOMPILE (1), SOLVE_GUARD_ORPHAN_PRECOMPILE_AGE (1800).
 # This file may also be sourced (functions only; no side effects).
 set -u
 
 SG_PROT=()      # protected processes found by the last scan: "pid<TAB>comm<TAB>etimes<TAB>cmd"
+SG_EXEMPT=()    # exempted orphan precompile workers: "pid<TAB>comm<TAB>etimes<TAB>cmd<TAB>reason"
 SG_REASON=""    # why a scan was indeterminate (empty on a clean scan)
 SG_DIR=""
 
@@ -92,7 +112,10 @@ sg_main_pid() {
 # 1 = indeterminate.
 sg_scan() {
   local unit=$1 rc proc main fields infra min_age ignore clk up f pid comm stat rest state start etimes cmd
-  SG_PROT=(); SG_REASON=""
+  local orphan_on orphan_age ppid arg has_flag
+  local -A unit_pids=()
+  local -a argv
+  SG_PROT=(); SG_EXEMPT=(); SG_REASON=""
   sg_cgroup_dir "$unit"; rc=$?
   [ "$rc" -eq 2 ] && return 0
   [ "$rc" -eq 0 ] || return 1
@@ -103,7 +126,17 @@ sg_scan() {
   ignore="${SOLVE_GUARD_IGNORE_REGEX:-LanguageServer|SymbolServer}"
   infra=" bash zsh sh dash node bun opencode sleep tail cat grep curl timeout systemd-run ${SOLVE_GUARD_INFRA_EXTRA:-} "
   clk="$(getconf CLK_TCK 2>/dev/null || echo 100)"
+  orphan_on="${SOLVE_GUARD_ORPHAN_PRECOMPILE:-1}"
+  orphan_age="${SOLVE_GUARD_ORPHAN_PRECOMPILE_AGE:-1800}"
   read -r up _ < "$proc/uptime" || { SG_REASON="cannot read $proc/uptime"; return 1; }
+
+  # the unit's whole pid set first: the orphan test needs to know whether a
+  # process's parent is inside the unit
+  while IFS= read -r -d '' f; do
+    while IFS= read -r pid; do
+      [ -n "$pid" ] && unit_pids[$pid]=1
+    done < "$f"
+  done < <(find "$SG_DIR" -type f -name cgroup.procs -print0 2>/dev/null)
 
   while IFS= read -r -d '' f; do
     while IFS= read -r pid; do
@@ -113,9 +146,18 @@ sg_scan() {
       rest="${stat##*) }"                                       # comm may contain spaces/parens
       read -ra fields <<< "$rest"
       state="${fields[0]:-}"
+      ppid="${fields[1]:-0}"
       [ "$state" = "Z" ] && continue                            # zombie: holds no compute
       start="${fields[19]:-0}"
       etimes="$(awk -v u="$up" -v s="$start" -v c="$clk" 'BEGIN { printf "%d", u - s / c }')"
+      has_flag=0
+      if [ "$comm" = "julia" ] && [ "$orphan_on" != "0" ]; then
+        # whole-argument match on the NUL-separated argv, before any truncation
+        mapfile -d '' -t argv < "$proc/$pid/cmdline" 2>/dev/null || argv=()
+        for arg in "${argv[@]+"${argv[@]}"}"; do
+          case "$arg" in --output-o|--output-o=*) has_flag=1; break ;; esac
+        done
+      fi
       cmd="$(tr '\0' ' ' < "$proc/$pid/cmdline" 2>/dev/null)"
       cmd="${cmd% }"
       [ -n "$cmd" ] || cmd="[$comm]"
@@ -123,6 +165,12 @@ sg_scan() {
 
       if [ "$comm" = "julia" ]; then
         [[ "$cmd" =~ $ignore ]] && continue
+        if [ "$has_flag" = 1 ] && { [ "$state" = "S" ] || [ "$state" = "I" ]; } \
+          && [ "$etimes" -ge "$orphan_age" ] && [ "$ppid" != "$main" ] \
+          && [ -z "${unit_pids[$ppid]+x}" ]; then
+          SG_EXEMPT+=("$pid"$'\t'"$comm"$'\t'"$etimes"$'\t'"$cmd"$'\t'"orphaned-precompile")
+          continue
+        fi
       else
         [ "$etimes" -ge "$min_age" ] || continue
         case "$infra" in *" $comm "*) continue ;; esac
@@ -142,17 +190,30 @@ sg_json_str() {
 
 # sg_log <decision> <caller> <unit> [reason] — one JSON line from the last scan.
 sg_log() {
-  local decision=$1 caller=$2 unit=$3 reason=${4:-} line prot="" row pid comm et cmd log
+  local decision=$1 caller=$2 unit=$3 reason=${4:-} line prot="" exempt="" row pid comm et cmd why log
   for row in "${SG_PROT[@]+"${SG_PROT[@]}"}"; do
     IFS=$'\t' read -r pid comm et cmd <<< "$row"
     prot+="${prot:+,}{\"pid\":$pid,\"comm\":$(sg_json_str "$comm"),\"etimes\":$et,\"cmd\":$(sg_json_str "$cmd")}"
   done
+  for row in "${SG_EXEMPT[@]+"${SG_EXEMPT[@]}"}"; do
+    IFS=$'\t' read -r pid comm et cmd why <<< "$row"
+    exempt+="${exempt:+,}{\"pid\":$pid,\"comm\":$(sg_json_str "$comm"),\"etimes\":$et,\"cmd\":$(sg_json_str "$cmd"),\"reason\":$(sg_json_str "$why")}"
+  done
   line="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"caller\":$(sg_json_str "$caller"),\"unit\":$(sg_json_str "$unit"),\"decision\":\"$decision\",\"protected\":[$prot]"
+  [ -n "$exempt" ] && line+=",\"exempt\":[$exempt]"
   [ -n "$reason" ] && line+=",\"reason\":$(sg_json_str "$reason")"
   line+="}"
   log="$(sg_log_path)"
   mkdir -p "$(dirname "$log")" 2>/dev/null
   printf '%s\n' "$line" >> "$log"
+}
+
+sg_report_exempt() { # what the scan deliberately did not count, on stderr
+  local row pid comm et cmd why
+  for row in "${SG_EXEMPT[@]+"${SG_EXEMPT[@]}"}"; do
+    IFS=$'\t' read -r pid comm et cmd why <<< "$row"
+    echo "solve-guard: exempt $pid $comm ${et}s $why $cmd" >&2
+  done
 }
 
 sg_report() { # human-readable list of what is blocking, on stderr
@@ -162,6 +223,7 @@ sg_report() { # human-readable list of what is blocking, on stderr
     IFS=$'\t' read -r pid comm et cmd <<< "$row"
     echo "solve-guard: protected $pid $comm ${et}s $cmd" >&2
   done
+  sg_report_exempt
 }
 
 # 0 = clear, 1 = blocked (compute present, or the scan was indeterminate)
@@ -178,6 +240,7 @@ sg_cmd_check() {
     sg_report
     return 3
   fi
+  sg_report_exempt
   return 0
 }
 
@@ -200,7 +263,7 @@ sg_cmd_run() {
   mkdir -p "$lockdir" 2>/dev/null
   exec 9> "$lockdir/$unit.lock"
   if ! flock -w "${SOLVE_GUARD_LOCK_TIMEOUT:-120}" 9; then
-    SG_PROT=()
+    SG_PROT=(); SG_EXEMPT=()
     sg_log "$blocked_decision" "$caller" "$unit" "lock-timeout"
     echo "solve-guard: could not take the restart lock for $unit — refused" >&2
     return 3
