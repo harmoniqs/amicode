@@ -14,7 +14,13 @@ against a file that lived nowhere. This import fixes that.
 | `engine-gateway-secret.sh` | `~/.amico/server/engine-gateway-secret.sh` | #1760 P1: generates/serves the one-door shared secret (`~/.amico/server/engine-gateway-secret.env`, mode 600) |
 | `deploy-dist.sh` | run in place from a lane worktree (not copied) | #1906 A13b: the app-dist deploy — lane-tip/dirty refusals, release dirs, atomic `dist-app` symlink flip, `dist-deploys.jsonl` provenance, keep-N prune, `--rollback` |
 | `deploy-gate.sh` | run in place from a checkout (not copied) | #1725: the pre-restart battery. Its staged-binary smoke stops the server with TERM → ≤10s bounded wait → KILL; a server that ignores TERM is a named smoke FAIL (#1944). Gate: `python3 ops/hub/test_deploy_gate.py` on the hub from `/tmp` (drives the real smoke via `AMICODE_GATE_SMOKE_ONLY=1` against fake servers, temp `HOME`) |
-| `fleet-watchdog/rss-watchdog.sh` | `~/.amico/server/fleet-watchdog/rss-watchdog.sh` | 5-min RSS trajectory + corroboration probe + wedge capture + restart authority |
+| `fleet-watchdog/rss-watchdog.sh` | `~/.amico/server/fleet-watchdog/rss-watchdog.sh` | THE one watchdog (the top-level duplicate copy is gone, #2044): 5-min RSS trajectory + corroboration probe (gateway-secret aware) + wedge capture + restart authority — RSS-over-threshold-and-silent, or two silent probes regardless of RSS; every restart goes through `solve-guard.sh` |
+| `solve-guard.sh` | `~/.amico/server/solve-guard.sh` (and `~/.amico/ops/solve-guard.sh` via `ops/install.sh`, beside `hub-restart.sh`) | #2044 A0: the restart guard — refuses to restart a unit while compute runs in its cgroup; one per-unit flock; decision log. See "The restart guard" |
+| `../hub-restart.sh` | `~/.amico/server/hub-restart.sh` **and** `~/.amico/ops/hub-restart.sh` | the restart ritual (stage/swap/restart/verify); `restart` is guarded, `--force` is logged. Lives one level up in the repo because `packages/extension` reads it there; the extension runs the `~/.amico/ops/` copy over ssh, so BOTH deployed copies must be current |
+| `lane-roll.sh` | `~/.amico/server/lane-roll.sh` | rolls shards 2/3 onto the swapped binary when idle; committed from the hub copy (#2044); restart is guarded and a blocked shard is retried next tick |
+| `restart-witness.sh` | run in place / from cron | #2044: independent witness — run dirs whose `run.log` stopped within 60 s before a unit start with no `FINISHED`, classified `guarded`/`unguarded` against the decision log; prints `guarded_losses=N unguarded_losses=M` |
+| `ops-drift-check.sh` | run in place | #2044: sha256 of each ops script vs its deployed copy (`DEPLOY_ROOT`, default `~/.amico/server`); exit 1 on any difference or missing file |
+| `test_solve_guard.py` | run in place (wired into `deploy-gate.sh`) | #2044: real-process suite for all of the above (fabricated cgroup tree; restarts are recorded by stubs, never made) |
 | `fleet-watchdog/cdp-stack.mjs` | `~/.amico/server/fleet-watchdog/cdp-stack.mjs` | CDP all-threads JS stack capture for wedge postmortems (connects to the engine's BUN_INSPECT port) |
 
 Unit files live in `ops/systemd/` (existing convention for fleet services).
@@ -60,9 +66,11 @@ default grabs an arbitrary shard's engine via `head -1`.
    `diff ops/hub/<file> ~/.amico/server/<file>` before deploying anything;
    reconcile any drift INTO this repo first (a hot fix that lives only on
    the hub is how this directory came to exist).
-2. Copy files: `rsync -a ops/hub/ ~/.amico/server/ --exclude fleet-watchdog/wedge-*`
-   (or targeted `cp` per file; never touch `rss-trajectory.log`, wedge
-   captures, or `*.bak-*` — those are hub-local history).
+2. Copy files with a targeted `cp -p` per file after `ops/hub/ops-drift-check.sh`
+   shows what differs (deployed files HAVE drifted — an older file deployed over
+   a newer one is what lost the watchdog's wedge recovery on Oct 11, so never
+   rsync the whole directory). Never touch `rss-trajectory.log`, wedge
+   captures, or `*.bak-*` — those are hub-local history.
 3. Units: `cp ops/systemd/co.harmoniqs.amicode-server@.service ops/systemd/rss-watchdog@.{service,timer} ~/.config/systemd/user/ && systemctl --user daemon-reload`.
 4. **Restart only through the ritual**: `ops/hub-restart.sh` (or
    `systemd-run`/the panel button) — NEVER an inline `systemctl restart` from
@@ -78,6 +86,48 @@ Rollback: the hub keeps `*.bak-*` copies beside every live script it has ever
 hot-fixed; the pre-Phase-1 single-shard posture is shard 1's legacy unit —
 disabling the pool = stop `…@2` / `…@3`, point the frontdoor's route table
 back at shard 1 for everything (single-entry table), restart the frontdoor.
+
+## The restart guard (amicode#2044 / A0)
+
+Solves live in the engine unit's process group, and the units kill the whole
+group on restart — so any restart can destroy a running scientific solve.
+`solve-guard.sh` is the one shared check; the roll script, `hub-restart.sh` and
+the RSS watchdog all restart **only** through `solve-guard.sh run`.
+
+- **What is protected** (cgroup-first: whatever is actually in the unit's cgroup
+  tree, found with `systemctl --user show -p ControlGroup`, descendants included —
+  NOT run dirs, because agent-started compute has none): any `julia` process of any
+  age (except `LanguageServer|SymbolServer`), and any non-infrastructure process
+  older than 5 minutes (infrastructure = `bash zsh sh dash node bun opencode sleep tail cat grep curl timeout systemd-run`, and the unit's MainPID).
+  An unreadable cgroup tree **fails closed**.
+- **How it restarts:** under one exclusive per-unit `flock`
+  (`~/.amico/server/restart-locks/<unit>.lock`): check → sleep 2 s → check again →
+  run the restart, still holding the lock.
+- **Callers differ only in what a block means:** `hub-restart.sh` **refuses** (exit 3;
+  prints the protected pids); the watchdog and lane-roll **defer** (retry next tick).
+  The watchdog escalates after `WATCHDOG_DEFER_ALERT_TICKS` (12 ticks ≈ 1 h) by writing
+  `~/.amico/server/alerts/live-compute-deferred-<unit>` and an `alert` line in the
+  decision log — and **keeps deferring**. (Surfacing that marker — a Slack/Fleet-block
+  hook — is not wired yet: `fleet-alert.sh` only posts device-reachability transitions.)
+- **Overriding** (one restart, logged `override`, file consumed):
+  `touch ~/.amico/server/restart-override/<unit>` — the watchdog/lane-roll restart on
+  their next tick. For an immediate one: `hub-restart.sh restart --force` (logged `force`).
+- **Reading the decision log:** `~/.amico/server/restart-decisions.log`, one JSON line
+  per decision `{ts, caller, unit, decision, protected:[{pid,comm,etimes,cmd}]}` with
+  `decision` ∈ `allow | refused | deferred | override | force | alert`:
+  `jq -c 'select(.decision!="allow")' ~/.amico/server/restart-decisions.log | tail`.
+- **Cross-check:** `restart-witness.sh` reports run dirs killed by a unit start and whether
+  a guard decision was on record — so a blind guard cannot make the safety count read zero.
+  `ops-drift-check.sh` fails when a deployed script differs from the repo.
+- **Accepted-risk paths until slice A** (not guarded; a human or the OS does these):
+  `Restart=always` respawn after a crash, OOM kills, reboots, and a manual
+  `systemctl restart`. Also the **residual window** between the second check and the
+  restart: compute started in that gap is not seen. Slice A closes it by making
+  `amico run` take the same per-unit lock (and by moving solves out of the group).
+- **Deploying** (file copy with backups + a dry run, never a restart; do NOT rsync the
+  whole directory — deployed files have drifted): `cp -p` the seven files
+  `ops-drift-check.sh` lists (plus `~/.amico/ops/{hub-restart,solve-guard}.sh`), then
+  run `ops/hub/ops-drift-check.sh` until it prints no `DIFF`/`MISSING`.
 
 ## The app-dist deploy (`deploy-dist.sh`, amicode #1906 / A13b)
 

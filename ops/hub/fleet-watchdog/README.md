@@ -32,7 +32,7 @@ shard N (AMICODE_SHARD_INDEX=N)          → $HOME/.amico/server/bin/opencode se
 
 ## One canonical script (amicode#2044 / A0, 2026-11-01)
 
-There used to be three diverged copies (`ops/fleet-watchdog/`, `ops/hub/fleet-watchdog/`,
+There used to be three diverged copies (the top-level `fleet-watchdog/` copy, this directory,
 the hub deploy). This directory is now the only one. It carries: the
 **liveness-alone recovery** (two consecutive silent probes ⇒ capture + restart
 regardless of RSS, per-shard `http-silent-tick[-shardN]` marker — restored after

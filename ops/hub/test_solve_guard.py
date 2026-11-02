@@ -525,7 +525,7 @@ class TestWatchdog(StubBase):
 class TestStaticShape(unittest.TestCase):
     def test_exactly_one_canonical_watchdog(self):
         self.assertFalse(os.path.exists(os.path.join(OPS, "fleet-watchdog", "rss-watchdog.sh")),
-                         "the duplicate ops/fleet-watchdog copy must be gone")
+                         "the duplicate top-level fleet-watchdog copy must be gone")
         src = slurp(WATCHDOG)
         self.assertIn("http-silent-two-ticks", src)
         self.assertIn("X-Amicode-Gateway-Secret", src)
@@ -540,7 +540,7 @@ class TestStaticShape(unittest.TestCase):
                 self.assertIn("-- systemctl --user restart", l, f"unguarded restart in {path}: {l}")
 
     def test_no_stale_references_to_the_removed_watchdog_dir(self):
-        r = subprocess.run(["grep", "-rn", "ops/fleet-watchdog", OPS, "--include=*.sh", "--include=*.md",
+        r = subprocess.run(["grep", "-rn", "ops/" + "fleet-watchdog", OPS, "--include=*.sh", "--include=*.md",
                             "--include=*.py", "--include=*.service", "--include=*.timer"],
                            capture_output=True, text=True)
         stale = [l for l in r.stdout.splitlines() if "test_solve_guard.py" not in l]
