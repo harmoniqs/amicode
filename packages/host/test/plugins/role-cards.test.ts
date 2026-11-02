@@ -1,4 +1,4 @@
-// Role-card parity (#2062): the read-only cards (analyzer, hypothesizer) must stay unable to run a shell command or
+// Role-card parity (#2062): the read-only cards (analyzer, critic, hypothesizer) must stay unable to run a shell command or
 // edit a file under v2's renamed permission keys. Layers: the key-translation helper; the real cards through it; the
 // real engine's card loader (a real host process); and a real agent turn that tries both.
 import { afterAll, describe, expect, test } from "bun:test"
@@ -78,12 +78,12 @@ describe("shipped role cards never mix v1 and v2-native permission forms", () =>
 
 describe("the shipped role cards", () => {
   test("there are cards to check", () => {
-    expect(cards).toEqual(expect.arrayContaining(["analyzer", "hypothesizer", "experimenter", "implementer", "librarian", "research", "develop"]))
+    expect(cards).toEqual(expect.arrayContaining(["analyzer", "critic", "hypothesizer", "experimenter", "implementer", "librarian", "research", "develop"]))
   })
   test.each(cards)("%s translates without an unknown key", (name) => {
     expect(() => cardPermissions(card(name), `${name}.md`)).not.toThrow()
   })
-  test.each(["analyzer", "hypothesizer"])("%s denies a shell command and an edit under every v2 name", (name) => {
+  test.each(["analyzer", "critic", "hypothesizer"])("%s denies a shell command and an edit under every v2 name", (name) => {
     const rules = cardPermissions(card(name), `${name}.md`)
     for (const action of ["shell", "edit"]) expect(evaluate(action, "anything at all", rules)).toBe("deny")
   })
@@ -92,7 +92,7 @@ describe("the shipped role cards", () => {
     expect(evaluate("shell", "ls", rules)).toBe("allow")
     expect(evaluate("edit", "/x", rules)).toBe("allow")
   })
-  test.each(["analyzer", "hypothesizer"])("renderV2Card(%s) is native: renamed permissions, sampling moved to request.body, deny preserved", (name) => {
+  test.each(["analyzer", "critic", "hypothesizer"])("renderV2Card(%s) is native: renamed permissions, sampling moved to request.body, deny preserved", (name) => {
     const text = renderV2Card(card(name), `${name}.md`)
     expect(text).toContain("permissions:")
     expect(text).not.toMatch(/^permission:/m)
@@ -122,7 +122,7 @@ const agentRules = async (host: { url: string; auth: Record<string, string> }, s
 }
 
 describe("the engine's loader applies the cards' denies (observed, real host process)", () => {
-  test.each(["analyzer", "hypothesizer"])("%s: the loaded agent's rules deny `shell` and `edit` for any resource", async (name) => {
+  test.each(["analyzer", "critic", "hypothesizer"])("%s: the loaded agent's rules deny `shell` and `edit` for any resource", async (name) => {
     const sb = makeSandbox(`card-${name}`)
     const host = await hostWithCards(sb, { [name]: card(name) })
     const rules = await agentRules(host, sb, name)
