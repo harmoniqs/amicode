@@ -188,3 +188,200 @@ describe("distiller spawn transport (config file + headless child)", () => {
     expect(queueIsEmpty(ops)).toBe(true);
   });
 });
+
+describe("drain-time path rebase (#2097): a job's machine paths resolve against THIS machine's drain config", () => {
+  /** A fake machine: `home` stands in for os.homedir() (injected), with a real
+   *  vault/ops/runs_root and one run dir under it. Foreign paths never exist. */
+  function mkMachine() {
+    const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "amicode-home-")));
+    const vault = path.join(home, "vaults", "vault-new");
+    const ops = path.join(home, ".amico", "ops");
+    const runsRoot = path.join(home, ".amico", "runs");
+    fs.mkdirSync(vault, { recursive: true });
+    fs.mkdirSync(ops, { recursive: true });
+    fs.mkdirSync(path.join(runsRoot, "r42"), { recursive: true });
+    return { home, vault, ops, runsRoot, env: { home, exists: fs.existsSync } };
+  }
+  const foreign = { vault: "/Users/aaron/.amico/vaults/vault-old", ops: "/Users/aaron/.amico/ops", runs_root: "/Users/aaron/.amico/runs" };
+  function recorder() {
+    const seen: Array<Record<string, unknown>> = [];
+    const spawn = async (_cfg: unknown, job: Record<string, unknown>) => {
+      seen.push(job);
+      return { code: 0, output: "" };
+    };
+    return { seen, spawn };
+  }
+  const cfgFor = (m: ReturnType<typeof mkMachine>, defaults?: Record<string, unknown>) => ({
+    binary: "/unused",
+    config: {},
+    job_defaults: defaults ?? { vault: m.vault, ops: m.ops, runs_root: m.runsRoot },
+  });
+
+  it("AC1: foreign vault/ops/runs_root are drained against this machine's configured values", async () => {
+    const { makeDistillHandler } = await import("../../opencode-plugin/distill_queue");
+    const m = mkMachine();
+    const r = recorder();
+    await makeDistillHandler(cfgFor(m), r.spawn, m.env)({ kind: "run", run_id: "r42", ...foreign });
+    expect(r.seen).toHaveLength(1);
+    expect(r.seen[0]).toMatchObject({ vault: m.vault, ops: m.ops, runs_root: m.runsRoot });
+  });
+
+  it("AC1 end-to-end: enqueueAndDrain hands the headless child the rebased job", async () => {
+    const { enqueueAndDrain, defaultClock, writeDistillerConfig } = await import("../../opencode-plugin/distill_queue");
+    const m = mkMachine();
+    const bin = path.join(m.ops, "fake-opencode");
+    fs.writeFileSync(bin, `#!/bin/sh\nprintf '%s\\n' "$4" > "${m.ops}/captured-job"\n`);
+    fs.chmodSync(bin, 0o755);
+    writeDistillerConfig(m.ops, { binary: bin, config: {}, job_defaults: { vault: m.vault, ops: m.ops, runs_root: m.runsRoot } });
+    expect(await enqueueAndDrain(m.ops, { kind: "run", run_id: "r42", ...foreign }, defaultClock())).toBe(true);
+    const got = JSON.parse(fs.readFileSync(path.join(m.ops, "captured-job"), "utf8"));
+    expect(got).toMatchObject({ kind: "run", run_id: "r42", vault: m.vault, ops: m.ops, runs_root: m.runsRoot });
+    expect(queueIsEmpty(m.ops)).toBe(true);
+  });
+
+  it("only the unusable field is rebased; usable ones are left alone", async () => {
+    const { makeDistillHandler } = await import("../../opencode-plugin/distill_queue");
+    const m = mkMachine();
+    const otherVault = path.join(m.home, "vaults", "another-existing");
+    fs.mkdirSync(otherVault);
+    const r = recorder();
+    await makeDistillHandler(cfgFor(m), r.spawn, m.env)({ kind: "run", run_id: "r42", vault: otherVault, ops: foreign.ops, runs_root: m.runsRoot });
+    expect(r.seen[0]).toMatchObject({ vault: otherVault, ops: m.ops, runs_root: m.runsRoot });
+    expect(r.seen[0].rebased_from).toEqual({ ops: foreign.ops });
+  });
+
+  it("a recorded path that exists but lies outside this machine's home is unusable too", async () => {
+    const { makeDistillHandler } = await import("../../opencode-plugin/distill_queue");
+    const m = mkMachine();
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "amicode-outside-")); // exists, not under m.home
+    const r = recorder();
+    await makeDistillHandler(cfgFor(m), r.spawn, m.env)({ kind: "sweep", vault: outside, ops: m.ops });
+    expect(r.seen[0]).toMatchObject({ vault: m.vault, ops: m.ops });
+    expect(r.seen[0].rebased_from).toEqual({ vault: outside });
+  });
+
+  it("AC2: a healthy job (paths exist, under home) reaches the handler byte-identical", async () => {
+    const { makeDistillHandler } = await import("../../opencode-plugin/distill_queue");
+    const m = mkMachine();
+    const r = recorder();
+    const job = { kind: "run" as const, run_id: "r42", vault: m.vault, ops: m.ops, runs_root: m.runsRoot };
+    const before = JSON.stringify(job);
+    await makeDistillHandler(cfgFor(m, { vault: "/somewhere/else" }), r.spawn, m.env)(job);
+    expect(JSON.stringify(r.seen[0])).toBe(before);
+    expect(r.seen[0]).not.toHaveProperty("rebased_from");
+  });
+
+  it("AC2: a job carrying no machine paths at all is passed through untouched (even with no job_defaults)", async () => {
+    const { makeDistillHandler } = await import("../../opencode-plugin/distill_queue");
+    const m = mkMachine();
+    const r = recorder();
+    const job = { kind: "run" as const, run_id: "rZ" };
+    await makeDistillHandler({ binary: "/unused", config: {} }, r.spawn, m.env)(job);
+    expect(JSON.stringify(r.seen[0])).toBe(JSON.stringify(job));
+  });
+
+  it("AC3: identity and unrelated fields survive a rebase unchanged", async () => {
+    const { makeDistillHandler } = await import("../../opencode-plugin/distill_queue");
+    const m = mkMachine();
+    const r = recorder();
+    const job = { kind: "sweep" as const, run_id: "r42", session_ids: ["s1", "s2"], note: { a: 1 }, ...foreign };
+    await makeDistillHandler(cfgFor(m), r.spawn, m.env)(job);
+    expect(r.seen[0]).toMatchObject({ kind: "sweep", run_id: "r42", session_ids: ["s1", "s2"], note: { a: 1 } });
+  });
+
+  it("AC4: a rebased job records the original values; the queue file is never rewritten", async () => {
+    const { makeDistillHandler } = await import("../../opencode-plugin/distill_queue");
+    const m = mkMachine();
+    const r = recorder();
+    const job = { kind: "run" as const, run_id: "r42", ...foreign };
+    const file = enqueueJob(m.ops, job);
+    const original = fs.readFileSync(file, "utf8");
+    const handler = makeDistillHandler(cfgFor(m), r.spawn, m.env);
+    await handler(job);
+    expect(r.seen[0].rebased_from).toEqual(foreign);
+    expect(job).toEqual({ kind: "run", run_id: "r42", ...foreign }); // input not mutated
+    expect(fs.readFileSync(file, "utf8")).toBe(original);
+    // and when the job then fails, the set-aside file is still the original bytes
+    await drainOnce(m.ops, async (j) => {
+      await handler(j);
+      throw new Error("boom");
+    });
+    const aside = fs.readdirSync(path.join(m.ops, "distill-queue")).find((f) => f.includes(".failed-"))!;
+    expect(fs.readFileSync(path.join(m.ops, "distill-queue", aside), "utf8")).toBe(original);
+  });
+
+  it("AC5: no value in the drain config for an unusable field → named failure, distiller not invoked", async () => {
+    const { makeDistillHandler } = await import("../../opencode-plugin/distill_queue");
+    const m = mkMachine();
+    const r = recorder();
+    const handler = makeDistillHandler(cfgFor(m, { vault: m.vault, ops: m.ops }), r.spawn, m.env); // no runs_root
+    await expect(handler({ kind: "run", run_id: "r42", ...foreign })).rejects.toThrow(/runs_root/);
+    expect(r.seen).toHaveLength(0);
+  });
+
+  it("AC5: config with no job_defaults at all → named failure, never a guessed path", async () => {
+    const { makeDistillHandler } = await import("../../opencode-plugin/distill_queue");
+    const m = mkMachine();
+    const r = recorder();
+    const handler = makeDistillHandler({ binary: "/unused", config: {} }, r.spawn, m.env);
+    await expect(handler({ kind: "sweep", vault: foreign.vault, ops: m.ops })).rejects.toThrow(/vault/);
+    expect(r.seen).toHaveLength(0);
+  });
+
+  it("AC5: a blank configured value counts as missing", async () => {
+    const { makeDistillHandler } = await import("../../opencode-plugin/distill_queue");
+    const m = mkMachine();
+    const r = recorder();
+    const handler = makeDistillHandler(cfgFor(m, { vault: "" }), r.spawn, m.env);
+    await expect(handler({ kind: "sweep", vault: foreign.vault })).rejects.toThrow(/vault/);
+    expect(r.seen).toHaveLength(0);
+  });
+
+  it("AC5 end-to-end: unrebasable job is set aside .failed, child never spawned", async () => {
+    const { enqueueAndDrain, defaultClock, writeDistillerConfig } = await import("../../opencode-plugin/distill_queue");
+    const m = mkMachine();
+    const bin = path.join(m.ops, "fake-opencode");
+    fs.writeFileSync(bin, `#!/bin/sh\ntouch "${m.ops}/invoked"\n`);
+    fs.chmodSync(bin, 0o755);
+    writeDistillerConfig(m.ops, { binary: bin, config: {} }); // no job_defaults
+    await enqueueAndDrain(m.ops, { kind: "sweep", ...foreign }, defaultClock());
+    expect(fs.existsSync(path.join(m.ops, "invoked"))).toBe(false);
+    expect(queueIsEmpty(m.ops)).toBe(true);
+    expect(fs.readdirSync(path.join(m.ops, "distill-queue")).some((f) => f.includes(".failed-"))).toBe(true);
+  });
+
+  it("AC6: a run job whose run dir is missing after rebasing fails naming the directory; distiller not invoked", async () => {
+    const { makeDistillHandler } = await import("../../opencode-plugin/distill_queue");
+    const m = mkMachine();
+    const r = recorder();
+    const handler = makeDistillHandler(cfgFor(m), r.spawn, m.env);
+    await expect(handler({ kind: "run", run_id: "r-gone", ...foreign })).rejects.toThrow(path.join(m.runsRoot, "r-gone"));
+    expect(r.seen).toHaveLength(0);
+  });
+
+  it("AC6: the run-dir check also holds for a job that needed no rebasing", async () => {
+    const { makeDistillHandler } = await import("../../opencode-plugin/distill_queue");
+    const m = mkMachine();
+    const r = recorder();
+    const handler = makeDistillHandler(cfgFor(m), r.spawn, m.env);
+    await expect(
+      handler({ kind: "run", run_id: "r-gone", vault: m.vault, ops: m.ops, runs_root: m.runsRoot }),
+    ).rejects.toThrow(path.join(m.runsRoot, "r-gone"));
+    expect(r.seen).toHaveLength(0);
+  });
+
+  it("demo_dir is path-shaped but has no configured default: existing is untouched, missing fails by name", async () => {
+    const { makeDistillHandler } = await import("../../opencode-plugin/distill_queue");
+    const m = mkMachine();
+    const demo = path.join(m.home, "demos", "bell");
+    fs.mkdirSync(demo, { recursive: true });
+    const r = recorder();
+    const handler = makeDistillHandler(cfgFor(m), r.spawn, m.env);
+    await handler({ kind: "demo" as never, demo_dir: demo, vault: m.vault, ops: m.ops });
+    expect(r.seen[0].demo_dir).toBe(demo);
+    await expect(
+      handler({ kind: "demo" as never, demo_dir: "/Users/aaron/demos/bell", vault: m.vault, ops: m.ops }),
+    ).rejects.toThrow(/demo_dir/);
+    expect(r.seen).toHaveLength(1);
+  });
+});
