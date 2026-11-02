@@ -246,6 +246,164 @@ class TestGuardDecision(Base):
         self.assertEqual([x["decision"] for x in self.decisions()], ["deferred"])
 
 
+class TestOrphanPrecompileExemption(Base):
+    """amicode#2087 — only a provably abandoned precompile worker is exempt."""
+
+    PRECOMP = ["--output-o", "/tmp/x/compiled/v1.12/CairoMakie"]
+
+    def julia_bash(self):
+        # a bash whose comm is `julia`: sleeps (state S) unless told to spin
+        d = os.path.join(self.tmp, "jbash")
+        os.makedirs(d, exist_ok=True)
+        dst = os.path.join(d, "julia")
+        if not os.path.exists(dst):
+            shutil.copy("/bin/bash", dst)
+        return dst
+
+    def spawn_orphan(self, extra, script="sleep 300; :", register=True):
+        """Double-fork a `julia` so its parent is NOT this test or the fake unit."""
+        julia = self.julia_bash()
+        argv = " ".join(sh_quote(a) for a in ["-c", script, *extra])
+        pidfile = os.path.join(self.tmp, "orphan.pid%d" % len(self.procs))
+        subprocess.run(["bash", "-c",
+                        f"( {sh_quote(julia)} {argv} >/dev/null 2>&1 </dev/null & echo $! > {sh_quote(pidfile)} ) &"
+                        " wait"], check=True)
+        for _ in range(100):
+            if os.path.exists(pidfile) and slurp(pidfile).strip():
+                break
+            time.sleep(0.05)
+        pid = int(slurp(pidfile).strip())
+        with open(self.spawned, "a") as f:
+            f.write(f"{pid}\n")
+        if register:
+            self.add_to_cgroup(pid)
+        return pid
+
+    def check(self, **env):
+        env.setdefault("SOLVE_GUARD_ORPHAN_PRECOMPILE_AGE", "1")
+        return self.guard("check", UNIT, **env)
+
+    def test_orphaned_sleeping_old_precompile_worker_is_exempt(self):
+        pid = self.spawn_orphan(self.PRECOMP)
+        time.sleep(2.2)
+        r = self.check()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn(f"solve-guard: exempt {pid} julia", r.stderr)
+        self.assertIn("orphaned-precompile", r.stderr)
+        self.assertIn("--output-o", r.stderr)
+
+    def test_exemption_is_in_the_decision_log(self):
+        pid = self.spawn_orphan(self.PRECOMP)
+        time.sleep(2.2)
+        marker, cmd = self.touch_cmd()
+        r = self.guard("run", UNIT, "unit-test", "--", *cmd, SOLVE_GUARD_ORPHAN_PRECOMPILE_AGE="1")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(os.path.exists(marker))
+        d = self.decisions()
+        self.assertEqual([x["decision"] for x in d], ["allow"])
+        self.assertEqual(d[0]["protected"], [])
+        ex = d[0]["exempt"]
+        self.assertEqual([e["pid"] for e in ex], [pid])
+        self.assertEqual(ex[0]["comm"], "julia")
+        self.assertGreaterEqual(ex[0]["etimes"], 1)
+        self.assertIn("--output-o", ex[0]["cmd"])
+        self.assertEqual(ex[0]["reason"], "orphaned-precompile")
+
+    def test_no_exempt_key_when_nothing_exempt(self):
+        marker, cmd = self.touch_cmd()
+        self.guard("run", UNIT, "unit-test", "--", *cmd)
+        self.assertNotIn("exempt", self.decisions()[0])
+
+    def test_younger_than_the_bound_is_protected(self):
+        self.spawn_orphan(self.PRECOMP)
+        time.sleep(1.2)
+        r = self.check(SOLVE_GUARD_ORPHAN_PRECOMPILE_AGE="600")
+        self.assertEqual(r.returncode, 3, r.stderr)
+        self.assertNotIn("exempt", r.stderr.replace("exempt-", ""))
+
+    def test_default_bound_is_thirty_minutes(self):
+        self.spawn_orphan(self.PRECOMP)
+        time.sleep(2.2)
+        r = self.guard("check", UNIT)  # default 1800 s
+        self.assertEqual(r.returncode, 3, r.stderr)
+
+    def test_running_precompile_worker_is_protected(self):
+        self.spawn_orphan(self.PRECOMP, script="while :; do :; done")
+        time.sleep(2.2)
+        r = self.check()
+        self.assertEqual(r.returncode, 3, r.stderr)
+        self.assertNotIn("exempt", r.stderr)
+
+    def test_parent_inside_the_unit_is_protected(self):
+        julia = self.julia_bash()
+        # parent (a plain bash) forks the julia child and stays alive; both are listed
+        parent = self.spawn(["bash", "-c",
+                             f"{sh_quote(julia)} -c 'sleep 300; :' --output-o /tmp/x & wait"])
+        time.sleep(0.5)
+        kids = subprocess.run(["pgrep", "-P", str(parent.pid)], capture_output=True, text=True).stdout.split()
+        self.assertEqual(len(kids), 1, kids)
+        self.add_to_cgroup(kids[0])
+        time.sleep(2.0)
+        r = self.check()
+        self.assertEqual(r.returncode, 3, r.stderr)
+        self.assertIn(f"protected {kids[0]} julia", r.stderr)
+        self.assertNotIn("solve-guard: exempt", r.stderr)
+
+    def test_no_precompile_flag_is_protected(self):
+        self.spawn_orphan(["--project=/tmp/x", "script.jl"])
+        time.sleep(2.2)
+        r = self.check()
+        self.assertEqual(r.returncode, 3, r.stderr)
+        self.assertNotIn("solve-guard: exempt", r.stderr)
+
+    def test_flag_that_only_contains_the_substring_is_protected(self):
+        self.spawn_orphan(["--output-ox", "/tmp/x"])
+        time.sleep(2.2)
+        r = self.check()
+        self.assertEqual(r.returncode, 3, r.stderr)
+        self.assertNotIn("solve-guard: exempt", r.stderr)
+
+    def test_equals_form_of_the_flag_is_recognised(self):
+        pid = self.spawn_orphan(["--output-o=/tmp/x/CairoMakie.o"])
+        time.sleep(2.2)
+        r = self.check()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn(f"exempt {pid} julia", r.stderr)
+
+    def test_exemption_can_be_disabled(self):
+        self.spawn_orphan(self.PRECOMP)
+        time.sleep(2.2)
+        r = self.check(SOLVE_GUARD_ORPHAN_PRECOMPILE="0")
+        self.assertEqual(r.returncode, 3, r.stderr)
+        self.assertNotIn("solve-guard: exempt", r.stderr)
+
+    def test_non_precompile_orphan_old_sleeping_julia_is_protected(self):
+        self.spawn_orphan(["-e", "using Pkg; Pkg.test()"])
+        time.sleep(2.2)
+        r = self.check()
+        self.assertEqual(r.returncode, 3, r.stderr)
+
+    def test_mixed_unit_blocks_on_the_real_solve_and_logs_the_orphan(self):
+        orphan = self.spawn_orphan(self.PRECOMP)
+        solve = self.spawn_orphan(["--check-bounds=yes", "--project=/tmp/x", "script.jl"])
+        time.sleep(2.2)
+        marker, cmd = self.touch_cmd()
+        r = self.guard("run", UNIT, "unit-test", "--", *cmd, SOLVE_GUARD_ORPHAN_PRECOMPILE_AGE="1")
+        self.assertEqual(r.returncode, 3, r.stderr)
+        self.assertFalse(os.path.exists(marker))
+        self.assertIn(f"protected {solve} julia", r.stderr)
+        self.assertIn(f"exempt {orphan} julia", r.stderr)
+        d = self.decisions()[0]
+        self.assertEqual(d["decision"], "refused")
+        self.assertEqual([p["pid"] for p in d["protected"]], [solve])
+        self.assertEqual([e["pid"] for e in d["exempt"]], [orphan])
+
+    def test_unreadable_tree_still_fails_closed(self):
+        self.spawn_orphan(self.PRECOMP)
+        r = self.check(SOLVE_GUARD_CGROUP_ROOT=os.path.join(self.tmp, "nope"))
+        self.assertEqual(r.returncode, 3, r.stderr)
+
+
 class TestOverrideAndForce(Base):
     def test_override_file_allows_logs_and_is_consumed(self):
         self.julia()
