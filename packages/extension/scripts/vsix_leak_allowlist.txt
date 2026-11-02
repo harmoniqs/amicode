@@ -1,0 +1,39 @@
+# #2095 — the VSIX leak gate's VISIBLE-DEBT list (scripts/vsix_leak_scan.mjs).
+# One line per allowed occurrence of a developer-machine string in a shipped
+# text file:   <shipped path> | <exact substring of the offending line>
+# Every entry is debt, not policy: each carries its source and a TODO.
+# Adding a line here is a reviewed decision — never a way to green the gate.
+
+# Source: packages/amico-run/src/notturno_registry.ts `SURFACES` (bundled into
+# bin/dist/amico.js by esbuild as SURFACES2). "erlich" is an internal host name
+# baked into the notturno surface enum, which is held byte-parity with
+# amicissimo's Python registry (test/notturno.test.ts pins the tuple) — not a
+# configurable default, so not a trivial fix.
+# TODO(#2095): move the surface vocabulary into instance config (notturno.toml)
+# or rename the surface to a role name, in lockstep with amicissimo.
+bin/dist/amico.js | ["github-hosted", "erlich", "mini"]
+
+# ── hardcoded company-vault name "armonissima" (code literals) ───────────────
+# Source of truth for each: the default mount name/path baked into amico-run /
+# the extension. The right fix is resolving the TEAM mount by kind (as the
+# personal mount is resolved in strategy_brief.ts defaultSessionsDir, fixed in
+# #2095) — but each call site has its own env/flag override + test surface, so
+# it is not a one-line change. One line per occurrence; none are silent.
+# TODO(#2095): resolve by mount kind (kind = "team") at each site below.
+
+# packages/amico-run/src/repertoire.ts — default catalog/pulses dir
+bin/dist/amico.js | "vaults", "armonissima", "catalog", "pulses"
+# packages/amico-run/src/vault_query.ts vaultDir() — default vault root
+bin/dist/amico.js | "vaults", "armonissima");
+# packages/amico-run/src/profile_verb.ts — default --profiles-dir
+bin/dist/amico.js | "vaults", "armonissima", "profiles"
+# packages/amico-run/src/skills_verb.ts — default skills vault (AMICO_SKILLS_VAULT overrides)
+bin/dist/amico.js | "vaults", "armonissima", "skills"
+# packages/amico-run/src/curation.ts:178 — promote destination default
+bin/dist/amico.js | const destination = meta.destination ?? "armonissima";
+# packages/amico-run/src/curation.ts:270 — promote targetVault default
+bin/dist/amico.js | const target = meta.targetVault ?? "armonissima";
+# packages/extension/src/opencode_config.ts:268 — default skills source path (bundled into dist/extension.js)
+dist/extension.js | "vaults", "armonissima", "skills"
+# same opencode_config.ts:268 source, bundled into the service runner
+bin/dist/amicode-service-runner.mjs | "vaults", "armonissima", "skills"

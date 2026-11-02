@@ -17,6 +17,7 @@
 // it.
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
+import { personalMount, resolveMountStack, type MountStack } from "./mounts.js"
 import { ConfigError } from "./types.js";
 
 export interface BriefOptions {
@@ -214,11 +215,23 @@ function flagValue(argv: string[], name: string): string | undefined {
   return i >= 0 && i + 1 < argv.length ? argv[i + 1] : undefined
 }
 
+/** The default session-ledger dir: `<personal mount>/sessions`. Resolved by
+ *  mount KIND, never by a vault name (#2095 — it was a hardcoded personal
+ *  vault name shipped in the VSIX). */
+export function defaultSessionsDir(stack: MountStack): string | undefined {
+  const personal = personalMount(stack)
+  return personal ? join(personal.path, "sessions") : undefined
+}
+
 export function strategyBriefCommand(argv: string[]): number {
   const opsCheckout = process.env["AMICO_OPS_CHECKOUT"] ?? join(process.env["HOME"] ?? "", "harmoniqs", "amicissimo")
   const intentPath = flagValue(argv, "--intent") ?? join(opsCheckout, "vault", "INTENT.md")
   const receiptPath = flagValue(argv, "--receipt") ?? join(opsCheckout, "vault", "INTENT-MERGE-RECEIPT.toml")
-  const sessionsDir = flagValue(argv, "--sessions") ?? join(process.env["HOME"] ?? "", ".amico", "vaults", "vault-aaron", "sessions")
+  const sessionsDir = flagValue(argv, "--sessions") ?? defaultSessionsDir(resolveMountStack())
+  if (sessionsDir === undefined) {
+    console.error("amico-run strategy-brief: no personal mount to default --sessions from — pass --sessions explicitly")
+    return 64
+  }
   const asOf = flagValue(argv, "--as-of") ?? new Date().toISOString().slice(0, 10)
   const out = flagValue(argv, "--out")
 
