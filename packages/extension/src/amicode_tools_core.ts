@@ -393,8 +393,9 @@ The \`amico\` client passed to mount:
     /amicode/problems         {ok, active, problems:[{slug,name,status,score,recorded,entity_kinds}]}
     /amicode/problem?slug=..  one problem's detail
     /amicode/run-status?slug=..  {ok, runs:[{run_id, status, fidelity, iteration}]}
-        status is solving|stalled|finished|failed; \`fidelity\` is the objective value
+        status is solving|stalled|dead|finished|failed|stopped|aborted; \`fidelity\` is the objective value
         (~ infidelity 1-F, LOWER is better).
+        \`dead\` = the run's orchestrator stopped heartbeating (no live process); \`stalled\` = alive but quiet.
     /amicode/run-series?run=..&lab=..  one run's per-iteration series
     /amicode/run-cards        shareable run cards (the showcase gallery)
     /amicode/library          uploaded papers + learnings

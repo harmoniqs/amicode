@@ -1,5 +1,13 @@
 import { describe, expect, test } from "bun:test"
-import { ACTIVITY_COLOR, ACTIVITY_SOFT, connectionActivity, lspActivity, mcpActivity, runActivity } from "./activity"
+import {
+  ACTIVITY_COLOR,
+  ACTIVITY_SOFT,
+  connectionActivity,
+  lspActivity,
+  mcpActivity,
+  runActivity,
+  runStatusLabel,
+} from "./activity"
 
 describe("activity tokens", () => {
   test("every role resolves to its --activity-* token, never a hex", () => {
@@ -18,6 +26,14 @@ describe("activity tokens", () => {
 describe("runActivity", () => {
   test("solving is running (blue)", () => expect(runActivity("solving")).toBe("running"))
   test("stalled is attention (amber)", () => expect(runActivity("stalled")).toBe("attention"))
+  test("dead is error (red) — distinct from stalled's amber", () => {
+    expect(runActivity("dead")).toBe("error")
+    expect(runActivity("dead")).not.toBe(runActivity("stalled"))
+  })
+  test("dead explains itself; other states keep the plain label", () => {
+    expect(runStatusLabel("dead")).toBe("Run dead — the run's orchestrator stopped heartbeating")
+    expect(runStatusLabel("stalled")).toBe("Run stalled")
+  })
   test("aborted is idle (grey) — a user-chosen stop", () => expect(runActivity("aborted")).toBe("idle"))
   test("stopped is idle", () => expect(runActivity("stopped")).toBe("idle"))
   test("finished is success", () => expect(runActivity("finished")).toBe("success"))
