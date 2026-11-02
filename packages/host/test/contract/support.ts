@@ -41,11 +41,12 @@ export async function contractPort() {
 export async function startContractHost(sb: Sandbox, env: Record<string, string | undefined> = {}) {
   const port = await contractPort()
   if (port < CONTRACT_PORT_MIN || port > CONTRACT_PORT_MAX) throw new Error("port outside the contract range")
-  const preload = breakEnv(env)
-  const proc = Bun.spawn(
-    [process.execPath, ...(preload ? ["--preload", path.join(import.meta.dir, "break-preload.ts")] : []), path.join(packageRoot, "bin/amicode-host.mjs")],
-    { cwd: sb.work, env: hostEnv(sb, { AMICODE_HOST_PORT: String(port), ...env }), stdout: "pipe", stderr: "pipe" },
-  )
+  const proc = Bun.spawn([process.execPath, path.join(packageRoot, "bin/amicode-host.mjs")], {
+    cwd: sb.work,
+    env: hostEnv(sb, { AMICODE_HOST_PORT: String(port), ...env }),
+    stdout: "pipe",
+    stderr: "pipe",
+  })
   children.push(proc)
   const output = { stdout: "", stderr: "" }
   const pump = async (stream: ReadableStream<Uint8Array>, key: keyof typeof output) => {
@@ -73,17 +74,12 @@ export async function stopContractHost(host: ContractHost) {
   await Promise.race([host.exited, Bun.sleep(15_000)])
 }
 
-/** True when AMICODE_CONTRACT_BREAK (a planted break, see break-preload.ts) is in effect for children we spawn. */
-export const breakEnv = (extra: Record<string, string | undefined> = {}) =>
-  Boolean(extra.AMICODE_CONTRACT_BREAK ?? process.env.AMICODE_CONTRACT_BREAK)
-
 /** Run test/contract/probe.ts in a sandboxed child: the engine computes (and may create) its global dirs at import time. */
-export function runProbe(extraEnv: Record<string, string | undefined> = {}) {
+export function runProbe() {
   const sb = contractSandbox("probe")
-  const preload = breakEnv(extraEnv) ? ["--preload", path.join(import.meta.dir, "break-preload.ts")] : []
-  const run = Bun.spawnSync([process.execPath, ...preload, path.join(import.meta.dir, "probe.ts")], {
+  const run = Bun.spawnSync([process.execPath, path.join(import.meta.dir, "probe.ts")], {
     cwd: packageRoot,
-    env: hostEnv(sb, { AMICODE_CONTRACT_BREAK: process.env.AMICODE_CONTRACT_BREAK, ...extraEnv }),
+    env: hostEnv(sb),
     stdout: "pipe",
     stderr: "pipe",
   })

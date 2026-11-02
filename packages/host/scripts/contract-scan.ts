@@ -12,7 +12,7 @@
 import fs from "node:fs"
 import path from "node:path"
 import ts from "typescript"
-import { contractIds, CONTRACTS, type Contracts } from "../test/contract/registry.ts"
+import { contractIds, contractShapes, CONTRACTS, type Contracts } from "../test/contract/registry.ts"
 
 export type Kind = "value" | "type"
 export type Member = { name: string; kind: Kind }
@@ -247,9 +247,19 @@ export function requiredIds(inventory: Inventory) {
 export function coverage(inventory: Inventory, contracts: Contracts) {
   const required = requiredIds(inventory)
   const have = new Set(contractIds(contracts))
+  const shapes = contractShapes(contracts)
+  // The host uses it at runtime but the contract says "compile-time only": nothing would ever assert it exists.
+  const mismatched = inventory.entries.flatMap((entry) => {
+    const id = `${entry.specifier}#${entry.symbol}`
+    return [
+      ...(entry.kind === "value" && shapes.get(id)?.is === "type" ? [id] : []),
+      ...entry.members.filter((m) => m.kind === "value" && shapes.get(`${id}.${m.name}`)?.is === "type").map((m) => `${id}.${m.name}`),
+    ]
+  })
   return {
     required,
     uncovered: required.filter((id) => !have.has(id)),
+    mismatched,
     // contracts nobody demands: kept (they may be anticipated entry points) but surfaced
     unused: [...have].filter((id) => !required.includes(id) && !contractIsAnticipated(contracts, id)).sort(),
   }
@@ -319,6 +329,13 @@ if (import.meta.main) {
           inventory.underivable.map((u) => `  ${u.file}:${u.line}  ${u.text}`).join("\n"),
       )
     if (!inventoryOnly && result.unused.length) console.log(`\ncontracts nothing in the sources demands (informational):\n  ${result.unused.join("\n  ")}`)
+  }
+  if (!inventoryOnly && result.mismatched.length) {
+    console.error(
+      `\ncontract-scan: ${result.mismatched.length} import(s) are used at runtime but their contract says "type" (compile-time only):\n` +
+        result.mismatched.map((id) => `  - ${id}`).join("\n"),
+    )
+    process.exit(1)
   }
   if (!inventoryOnly && result.uncovered.length) {
     console.error(
