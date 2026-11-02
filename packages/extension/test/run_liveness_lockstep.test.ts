@@ -1,4 +1,5 @@
-// Lockstep test for the `dead` run state (amicode#2055, spec A2).
+// Lockstep test for the `dead` run state (amicode#2055, spec A2) and the
+// verification-pending marker (amicode#2056, spec A3).
 //
 // The run-status logic exists in TWO independent copies — the extension
 // service (src/amicode_service/problems.ts + run_terminal.ts) and the engine
@@ -6,13 +7,19 @@
 // run-terminal.ts). They cannot import each other, so drift is guarded here:
 //   1. a shared fixture table (fixtures/run_liveness_table.json) is asserted
 //      against BOTH implementations' run-status AND run-series routes;
-//   2. the run.lock liveness helper is textually identical across the two
-//      run-terminal files (between the BEGIN/END markers).
+//      Cases with a verification.toml also assert the `verification` payload
+//      field (both implementations) and promoteEligibility (the extension's
+//      third reader) — a pending marker is `pending_verification`, never
+//      `suppressed`, in all three;
+//   2. the run.lock liveness helper and the verification-pending helper are
+//      textually identical across the two run-terminal files (between their
+//      BEGIN/END markers).
 // Every test points at temp dirs; nothing touches ~/.amico.
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { promoteEligibility } from "../src/run_dir_reader";
 import { runStatusBody as extStatus, runSeriesBody as extSeries } from "../src/amicode_service/problems";
 import {
   runStatusBody as overlayStatus,
@@ -25,6 +32,10 @@ interface Case {
   log_age_s: number | null;
   finished?: string;
   expect: string;
+  tier?: string;
+  verification?: { agree?: boolean; pending?: boolean; reason?: string; raw?: string };
+  expect_verification?: string;
+  expect_eligibility?: string;
 }
 const table: { cases: Case[] } = JSON.parse(
   fs.readFileSync(path.join(__dirname, "fixtures", "run_liveness_table.json"), "utf8"),
@@ -56,6 +67,16 @@ beforeAll(() => {
       fs.utimesSync(log, t, t);
     }
     if (c.finished !== undefined) fs.writeFileSync(path.join(dir, "FINISHED"), c.finished);
+    if (c.tier !== undefined) fs.writeFileSync(path.join(dir, "solvespec.json"), JSON.stringify({ tier: c.tier }));
+    if (c.verification) {
+      const v = c.verification;
+      const toml =
+        v.raw ??
+        `agree = ${v.agree === true}\n` +
+          (v.pending === undefined ? "" : `pending = ${v.pending}\n`) +
+          (v.reason === undefined ? "" : `reason = "${v.reason}"\n`);
+      fs.writeFileSync(path.join(dir, "verification.toml"), toml);
+    }
     if (c.lock) {
       const body =
         c.lock.raw ??
@@ -80,6 +101,9 @@ beforeAll(() => {
 });
 afterAll(() => fs.rmSync(tmp, { recursive: true, force: true }));
 
+const caseId = (i: number) => `${RUN_PREFIX}${String(i).padStart(6, "0")}`;
+const wantVerification = table.cases.map((c) => c.expect_verification);
+
 const impls = [
   { name: "extension service", status: extStatus, series: extSeries },
   { name: "engine overlay", status: overlayStatus, series: overlaySeries },
@@ -92,12 +116,27 @@ describe.each(impls)("run liveness fixture table — $name", (impl) => {
     const got = parsed.runs.map((r: { status: string }) => r.status);
     expect(got).toEqual(table.cases.map((c) => c.expect));
   });
+  it("run-status carries verification only for a pending marker (and the pending run keeps its liveness status)", () => {
+    const parsed = JSON.parse(impl.status(problems, runs, "lockstep"));
+    expect(parsed.runs.map((r: { verification?: string }) => r.verification)).toEqual(wantVerification);
+  });
+  it("run-series carries the same verification field", () => {
+    const got = table.cases.map((_, i) => JSON.parse(impl.series(runs, caseId(i), "default")).run.verification);
+    expect(got).toEqual(wantVerification);
+  });
   it("run-series reports the same state for every fixture", () => {
     const got = table.cases.map((_, i) => {
       const id = `${RUN_PREFIX}${String(i).padStart(6, "0")}`;
       return JSON.parse(impl.series(runs, id, "default")).run.status;
     });
     expect(got).toEqual(table.cases.map((c) => c.expect));
+  });
+});
+
+describe("promoteEligibility (extension) reads the same fixtures", () => {
+  it("a pending marker is pending_verification, a final verification reads as before", () => {
+    const got = table.cases.map((_, i) => promoteEligibility(path.join(runs, "default", caseId(i))));
+    expect(got).toEqual(table.cases.map((c) => c.expect_eligibility ?? "eligible"));
   });
 });
 
@@ -117,6 +156,18 @@ describe("lockstep: the two implementations agree byte-for-byte", () => {
       const src = fs.readFileSync(file, "utf8");
       const m = src.match(/\/\/ BEGIN run\.lock liveness[\s\S]*?\/\/ END run\.lock liveness/);
       expect(m, `${file} must carry the BEGIN/END run.lock liveness block`).not.toBeNull();
+      return m![0];
+    };
+    const ext = grab(path.join(__dirname, "..", "src", "amicode_service", "run_terminal.ts"));
+    const overlay = grab(
+      path.join(__dirname, "..", "..", "app-bundle", "overlay", "packages", "opencode", "src", "server", "amicode", "run-terminal.ts"),
+    );
+    expect(overlay).toBe(ext);
+  });
+  it("the verification-pending helper text is identical in both run-terminal files", () => {
+    const grab = (file: string) => {
+      const m = fs.readFileSync(file, "utf8").match(/\/\/ BEGIN verification pending[\s\S]*?\/\/ END verification pending/);
+      expect(m, `${file} must carry the BEGIN/END verification pending block`).not.toBeNull();
       return m![0];
     };
     const ext = grab(path.join(__dirname, "..", "src", "amicode_service", "run_terminal.ts"));
