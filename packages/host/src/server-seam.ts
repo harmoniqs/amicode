@@ -8,6 +8,7 @@
 // `HostServer`. Nothing outside this file changes. (Dynamic imports below keep the host's startup path
 // free of the engine until it is needed, and let non-engine modules load under any runtime.)
 
+import type { Plugin } from "@opencode/plugin"
 import type { Effect } from "effect"
 import type { HttpServerResponse } from "effect/http"
 
@@ -27,6 +28,8 @@ export interface CreateServerOptions {
   readonly resume: boolean
   /** Extra ServerOptions (config dir, models, fs ...). Host-owned keys are already rejected by config. */
   readonly serverOptions: Record<string, unknown>
+  /** In-process plugins (promise API), registered with the engine before the first request (#2062). */
+  readonly plugins?: readonly Plugin[]
 }
 
 export async function createServer(options: CreateServerOptions): Promise<HostServer> {
@@ -46,6 +49,15 @@ export async function createServer(options: CreateServerOptions): Promise<HostSe
   const context = await Effect.runPromise(
     Layer.buildWithScope(createRoutes(serverOptions, () => []).pipe(Layer.provide(HttpServer.layerServices)), scope),
   )
+
+  // Plugins ride the engine's own SDK-plugin store: every Location boot adds them through its ordinary plugin
+  // generation. Registered before anything can serve a request, so no Location boots without them.
+  if (options.plugins?.length) {
+    const { SdkPlugins } = await import("@opencode/core/plugin/sdk")
+    const { fromPromise } = await import("@opencode/plugin/promise/adapter")
+    const sdkPlugins = Context.get(context, SdkPlugins.Service)
+    for (const plugin of options.plugins) await Effect.runPromise(sdkPlugins.register(fromPromise(plugin)))
+  }
 
   // `createRoutes` does NOT resume suspended sessions (ServerFetch.make and the node server process fork it
   // themselves), so resume is entirely the host's call.
