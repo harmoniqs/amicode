@@ -162,3 +162,10 @@ Result: seven files, **all under `opencode/test/` (six `*.test.ts` and one `test
 ## Counting note
 
 The open set returned by the Dependabot alerts API at triage time was 67 critical+high alert numbers (13 critical, 54 high) across 62 distinct (package, advisory) pairs. Earlier planning notes quoted "200 alerts, 14 critical, 72 high"; that was the repository-wide security banner, which counts differently. This document uses the API set, and every count above comes from a command.
+
+
+## Addendum: the host package changes the dependency picture (merged tree)
+
+After merging the host package (#2080), the lockfile gained the opencode v2 package set (375 packages) and `pnpm audit --prod` on the merged tree reported **10 high** advisories, all reached through `packages/host > @opencode/core > @opencode/plugin > ...` (the figure `0 high` above held for this branch alone). A transitive in-range refresh (`pnpm update brace-expansion nanoid postcss source-map-js zod --recursive`, a 17-line lockfile change) cleared nine of them. Result: `{moderate: 5, high: 1, critical: 0}` for production dependencies.
+
+**One high remains, deliberately: `zod` GHSA-mrhx-c7xc-m3w5 (memory exhaustion validating oversized constrained collections; vulnerable `< 4.6.6`).** The vulnerable copy is `zod@3.25.76`, which is the **latest 3.x release**; the fix exists only on 4.x, so clearing it means forcing a major bump inside `@anthropic-ai/sdk`, reached only via `packages/host > @opencode/core@2.2.5 > gitlab-ai-provider@6.23.1 > @anthropic-ai/sdk@0.71.2`. Reachability: `@opencode/core` loads `gitlab-ai-provider` only by dynamic `import()` inside its GitLab provider branch (`evt.package === "gitlab-ai-provider"`); nothing in `packages/host` imports it (`grep -rn "gitlab-ai-provider\|anthropic-ai" packages/host/src packages/host/test` is empty), and the host never selects that provider. Decision: **deferred**, not dismissed. Revisit when `@opencode/core` or `gitlab-ai-provider` moves to zod 4; the contract suite (#2064) will catch the bump. Do not add a root override to zod 4: it would silently change the validation semantics of a library we do not own.
