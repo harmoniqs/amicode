@@ -186,7 +186,7 @@ export interface BringUpSshAttachmentOptions {
   /** Injectable spawn (test seam); default node:child_process spawn. */
   spawnFn?: typeof spawn;
   /** How long to wait for the forward to answer ANY request before giving
-   *  up (ms). Default 8000. */
+   *  up (ms) — the overall bound across respawn retries. Default 10000. */
   readyTimeoutMs?: number;
   /** Poll interval while waiting for the forward to come up (ms). Default 150. */
   readyPollIntervalMs?: number;
@@ -207,7 +207,7 @@ export async function bringUpSshAttachment(opts: BringUpSshAttachmentOptions): P
   const localPort = opts.localPort ?? opts.remotePort;
   const spawnFn = opts.spawnFn ?? spawn;
   const doFetch = opts.fetchFn ?? fetch;
-  const readyTimeoutMs = opts.readyTimeoutMs ?? 8000;
+  const readyTimeoutMs = opts.readyTimeoutMs ?? 10000;
   const pollIntervalMs = opts.readyPollIntervalMs ?? 150;
 
   const args = attachmentForwardArgs({
@@ -216,25 +216,57 @@ export async function bringUpSshAttachment(opts: BringUpSshAttachmentOptions): P
     remotePort: opts.remotePort,
     extraSshOptions: opts.extraSshOptions,
   });
-  const child = spawnFn("ssh", args, { stdio: ["ignore", "pipe", "pipe"] }) as ChildProcessByStdio<null, Readable, Readable>;
-  let stderr = "";
-  child.stderr.on("data", (chunk: Buffer) => {
-    stderr += chunk.toString("utf8");
-  });
-  let exited: { code: number | null; signal: NodeJS.Signals | null } | undefined;
-  child.once("exit", (code, signal) => {
-    exited = { code, signal };
-  });
 
   const localUrl = `http://127.0.0.1:${localPort}`;
   const deadline = Date.now() + readyTimeoutMs;
+
+  // #1991: a freshly-started sshd / known_hosts write can make the FIRST
+  // `ssh -N -L` exit (code=255) before the forward is up on a CI runner. An
+  // early exit is therefore RETRIED (respawn + exponential backoff) until the
+  // overall `readyTimeoutMs` bound; every attempt's stderr is kept so a final
+  // failure reports all of it instead of only the last attempt.
+  interface Attempt {
+    child: ChildProcessByStdio<null, Readable, Readable>;
+    stderr: string;
+    exited?: { code: number | null; signal: NodeJS.Signals | null };
+  }
+  const attempts: Attempt[] = [];
+  const spawnAttempt = (): Attempt => {
+    const child = spawnFn("ssh", args, { stdio: ["ignore", "pipe", "pipe"] }) as ChildProcessByStdio<null, Readable, Readable>;
+    const attempt: Attempt = { child, stderr: "" };
+    child.stderr.on("data", (chunk: Buffer) => {
+      attempt.stderr += chunk.toString("utf8");
+    });
+    child.once("exit", (code, signal) => {
+      attempt.exited = { code, signal };
+    });
+    attempts.push(attempt);
+    return attempt;
+  };
+  const stderrReport = (): string =>
+    attempts
+      .map((a, i) => {
+        const text = a.stderr.trim();
+        if (!text && !a.exited) return "";
+        const exit = a.exited ? ` (code=${a.exited.code}, signal=${a.exited.signal})` : "";
+        return `[attempt ${i + 1}${exit}] ${text || "(no stderr)"}`;
+      })
+      .filter(Boolean)
+      .join("\n");
+
+  let current = spawnAttempt();
   let ready = false;
   let lastFailure = "";
+  let backoffMs = 100;
   while (Date.now() < deadline) {
-    if (exited) {
-      throw new Error(
-        `ssh forward exited before becoming reachable (code=${exited.code}, signal=${exited.signal}): ${stderr.trim() || "(no stderr)"}`,
-      );
+    if (current.exited) {
+      // Early exit: back off (bounded by the deadline), then respawn.
+      const wait = Math.min(backoffMs, Math.max(0, deadline - Date.now()));
+      backoffMs = Math.min(backoffMs * 2, 1000);
+      await new Promise((r) => setTimeout(r, wait));
+      if (Date.now() >= deadline) break;
+      current = spawnAttempt();
+      continue;
     }
     try {
       // ANY response (even a 401) proves the WHOLE path is live: the local
@@ -242,6 +274,9 @@ export async function bringUpSshAttachment(opts: BringUpSshAttachmentOptions): P
       // target host's remote port answered — this is the readiness gate
       // AND the first proof of end-to-end reachability, at once.
       await doFetch(localUrl, { signal: AbortSignal.timeout(500) });
+      // A fetch can succeed only through a live forward; but if the child
+      // died while the fetch was in flight, don't trust it — loop again.
+      if (current.exited) continue;
       ready = true;
       break;
     } catch (e) {
@@ -250,11 +285,21 @@ export async function bringUpSshAttachment(opts: BringUpSshAttachmentOptions): P
     }
   }
   if (!ready) {
-    child.kill();
+    for (const a of attempts) {
+      if (!a.exited) a.child.kill();
+    }
+    const report = stderrReport();
+    if (attempts.every((a) => a.exited)) {
+      throw new Error(
+        `ssh forward exited before becoming reachable after ${attempts.length} attempt(s) within ${readyTimeoutMs}ms: ${report || "(no stderr)"}`,
+      );
+    }
     throw new Error(
-      `ssh forward never became reachable within ${readyTimeoutMs}ms (last attempt: ${lastFailure})${stderr ? ` — stderr: ${stderr.trim()}` : ""}`,
+      `ssh forward never became reachable within ${readyTimeoutMs}ms after ${attempts.length} attempt(s) (last attempt: ${lastFailure})${report ? ` — stderr: ${report}` : ""}`,
     );
   }
+  const child = current.child;
+  const exited = () => current.exited;
 
   const provider = providerForAttachment(opts.target, () => localUrl);
   let stopped = false;
@@ -265,7 +310,7 @@ export async function bringUpSshAttachment(opts: BringUpSshAttachmentOptions): P
     async stop(): Promise<void> {
       if (stopped) return;
       stopped = true;
-      if (exited || child.exitCode !== null) return;
+      if (exited() || child.exitCode !== null) return;
       await new Promise<void>((resolve) => {
         const done = () => resolve();
         child.once("exit", done);
