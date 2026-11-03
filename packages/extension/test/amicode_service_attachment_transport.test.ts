@@ -271,6 +271,22 @@ function fakeExitingSshChild(stderrText: string) {
   return child;
 }
 
+function fakeLiveSshChild() {
+  const child = new EventEmitter() as unknown as ReturnType<typeof spawn> & { exitCode: number | null };
+  Object.assign(child, {
+    stdin: null,
+    stdout: new EventEmitter(),
+    stderr: new EventEmitter(),
+    exitCode: null,
+    kill: () => {
+      (child as { exitCode: number | null }).exitCode = 0;
+      queueMicrotask(() => (child as unknown as EventEmitter).emit("exit", 0, "SIGTERM"));
+      return true;
+    },
+  });
+  return child;
+}
+
 describe("bringUpSshAttachment — honest failure when the ssh child exits before the forward answers (no real ssh needed)", () => {
   it("rejects with the captured ssh stderr — never a fabricated success", async () => {
     const localPort = await pickFreeLoopbackPort();
@@ -287,6 +303,56 @@ describe("bringUpSshAttachment — honest failure when the ssh child exits befor
         readyTimeoutMs: 3000,
       }),
     ).rejects.toThrow(/Could not resolve hostname/);
+  });
+});
+
+describe("bringUpSshAttachment — transient early ssh exit is retried within the bound (#1991)", () => {
+  it("respawns the forward after an early exit and succeeds once the port is reachable", async () => {
+    const localPort = await pickFreeLoopbackPort();
+    const target: AttachmentTarget = { sshAlias: "flaky-alias", transport: "ssh", machine_id: "m-flaky" };
+    let spawns = 0;
+    const handle = await bringUpSshAttachment({
+      target,
+      remotePort: localPort,
+      localPort,
+      spawnFn: ((() => {
+        spawns += 1;
+        if (spawns < 3) return fakeExitingSshChild("kex_exchange_identification: Connection closed by remote host\n");
+        return fakeLiveSshChild();
+      }) as unknown) as typeof spawn,
+      fetchFn: (async () => new Response("ok", { status: 401 })) as unknown as typeof fetch,
+      readyTimeoutMs: 5000,
+      readyPollIntervalMs: 10,
+    });
+    expect(spawns).toBe(3);
+    expect(handle.localUrl).toBe(`http://127.0.0.1:${localPort}`);
+    await handle.stop();
+  });
+
+  it("when every attempt fails, the error carries the ssh stderr from the attempts and the attempt count", async () => {
+    const localPort = await pickFreeLoopbackPort();
+    const target: AttachmentTarget = { sshAlias: "dead-alias", transport: "ssh", machine_id: "m-dead" };
+    let spawns = 0;
+    const err = await bringUpSshAttachment({
+      target,
+      remotePort: localPort,
+      localPort,
+      spawnFn: ((() => {
+        spawns += 1;
+        return fakeExitingSshChild(`attempt-${spawns}: Permission denied (publickey)\n`);
+      }) as unknown) as typeof spawn,
+      readyTimeoutMs: 1500,
+      readyPollIntervalMs: 10,
+    }).then(
+      () => null,
+      (e: Error) => e,
+    );
+    expect(err).toBeInstanceOf(Error);
+    expect(spawns).toBeGreaterThan(1);
+    expect(err!.message).toMatch(/Permission denied \(publickey\)/);
+    expect(err!.message).toMatch(/attempt-1:/);
+    expect(err!.message).toMatch(/attempt-2:/);
+    expect(err!.message).toMatch(/code=255/);
   });
 });
 
