@@ -12,6 +12,7 @@ Run from the spike directory:
 """
 
 import copy
+import math
 import sys
 import unittest
 import warnings
@@ -28,6 +29,7 @@ from pulse_contract import (  # noqa: E402
     NonIdleEndpointsWarning,
     build_sequence,
     load_knots,
+    validate_against_device,
     validate_schema,
     warn_non_idle_endpoints,
     zero_order_hold,
@@ -286,6 +288,124 @@ class TestAtomsKey(unittest.TestCase):
         for bad in ([], [[0.0]], [[0.0, float("nan")]], [["x", 0.0]], "atoms"):
             with self.assertRaises(ContractError):
                 validate_schema(self.corrupt(atoms=bad))
+
+
+def calibrated_triangle(layout) -> list:
+    """Three mutually adjacent traps of a triangular-lattice layout, as the
+    [x, y] pairs a solver would write into `atoms` (trap coordinates as-is)."""
+    coords = [tuple(float(c) for c in row) for row in layout.coords]
+    spacing = min(
+        math.dist(a, b) for i, a in enumerate(coords) for b in coords[i + 1:]
+    )
+
+    def adjacent(a, b):
+        return abs(math.dist(a, b) - spacing) < 1e-3
+
+    centre = min(coords, key=lambda c: math.hypot(*c))
+    near = [c for c in coords if adjacent(centre, c)]
+    for b in near:
+        for c in near:
+            if b < c and adjacent(b, c):
+                return [list(centre), list(b), list(c)]
+    raise AssertionError("no triangle found in layout")
+
+
+class TestMinDistanceTolerance(unittest.TestCase):
+    """The distance check must use Pulser's own coordinate-precision tolerance
+    (10^-COORD_PRECISION), not a strict `<` (harmoniqs/amicode#1854)."""
+
+    def corrupt(self, **changes):
+        data = copy.deepcopy(golden())
+        data.update(changes)
+        return data
+
+    def test_rounded_calibrated_spacing_passes(self):
+        # 4.9999999836 µm: the calibrated layout's 5 µm spacing after the
+        # layout's coordinate rounding. Pulser accepts it; so must we.
+        atoms = [[0.0, 0.0], [4.9999999836, 0.0], [2.4999999918, 4.330127]]
+        validate_against_device(self.corrupt(atoms=atoms))
+        seq = build_sequence(self.corrupt(atoms=atoms))
+        self.assertEqual(len(seq.register.qubits), 3)
+
+    def test_calibrated_layout_triangle_coordinates_pass(self):
+        layout = pulser.AnalogDevice.pre_calibrated_layouts[0]
+        validate_against_device(self.corrupt(atoms=calibrated_triangle(layout)))
+
+    def test_just_inside_tolerance_passes_just_outside_fails(self):
+        validate_against_device(self.corrupt(atoms=[[0.0, 0.0], [5.0 - 5e-7, 0.0]]))
+        with self.assertRaises(ContractError) as ctx:
+            validate_against_device(self.corrupt(atoms=[[0.0, 0.0], [5.0 - 2e-6, 0.0]]))
+        self.assertIn("minimum atom distance", str(ctx.exception))
+
+    def test_genuinely_too_close_still_rejected(self):
+        with self.assertRaises(ContractError) as ctx:
+            build_sequence(self.corrupt(atoms=[[0.0, 0.0], [4.9, 0.0]]))
+        self.assertIn("minimum atom distance", str(ctx.exception))
+
+
+class TestLayoutKeptThroughContract(unittest.TestCase):
+    """Additive `layout` key: the built register keeps its RegisterLayout."""
+
+    def setUp(self):
+        self.device = pulser.AnalogDevice
+        self.layout = self.device.pre_calibrated_layouts[0]
+        self.atoms = calibrated_triangle(self.layout)
+
+    def corrupt(self, **changes):
+        data = copy.deepcopy(golden())
+        data.update(changes)
+        return data
+
+    def test_layout_register_keeps_calibrated_layout(self):
+        seq = build_sequence(self.corrupt(atoms=self.atoms, layout="calibrated"))
+        reg = seq.register
+        self.assertIsNotNone(reg.layout)
+        self.assertEqual(reg.layout, self.layout)
+        self.assertEqual(len(reg.qubits), 3)
+        self.assertTrue(self.device.register_is_from_calibrated_layout(reg))
+
+    def test_layout_selectable_by_calibrated_layout_name(self):
+        name = str(self.layout)
+        seq = build_sequence(self.corrupt(atoms=self.atoms, layout=name))
+        self.assertEqual(seq.register.layout, self.layout)
+
+    def test_atoms_snap_to_layout_trap_coordinates(self):
+        # solver-written coordinates carry float dust; the layout's traps win
+        dusty = [[x + 1e-8, y - 1e-8] for x, y in self.atoms]
+        seq = build_sequence(self.corrupt(atoms=dusty, layout="calibrated"))
+        traps = {tuple(map(float, row)) for row in self.layout.coords}
+        for pos in seq.register.qubits.values():
+            self.assertIn(tuple(float(c) for c in pos), traps)
+
+    def test_no_layout_key_keeps_layoutless_register(self):
+        seq = build_sequence(self.corrupt(atoms=self.atoms))
+        self.assertIsNone(seq.register.layout)
+
+    def test_atom_off_the_layout_raises(self):
+        with self.assertRaises(ContractError) as ctx:
+            build_sequence(self.corrupt(atoms=[[0.0, 0.0], [7.5, 0.0]], layout="calibrated"))
+        self.assertIn("trap", str(ctx.exception))
+
+    def test_unknown_layout_name_raises(self):
+        with self.assertRaises(ContractError) as ctx:
+            build_sequence(self.corrupt(atoms=self.atoms, layout="NoSuchLayout"))
+        self.assertIn("calibrated", str(ctx.exception))
+
+    def test_layout_without_atoms_is_a_schema_error(self):
+        with self.assertRaises(ContractError):
+            validate_schema(self.corrupt(layout="calibrated"))
+
+    def test_malformed_layout_raises(self):
+        for bad in ("", 3, ["calibrated"]):
+            with self.assertRaises(ContractError):
+                validate_schema(self.corrupt(atoms=self.atoms, layout=bad))
+
+    def test_too_close_atoms_on_layout_still_rejected(self):
+        # two atoms on the SAME trap are 0 µm apart: distance error, not a snap
+        atoms = [self.atoms[0], self.atoms[0]]
+        with self.assertRaises(ContractError) as ctx:
+            build_sequence(self.corrupt(atoms=atoms, layout="calibrated"))
+        self.assertIn("minimum atom distance", str(ctx.exception))
 
 
 if __name__ == "__main__":
