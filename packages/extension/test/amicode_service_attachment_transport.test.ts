@@ -298,7 +298,17 @@ describe("bringUpSshAttachment — honest failure when the ssh child exits befor
 function fakeSshChildThatStaysUp() {
   const stderrStream = new EventEmitter() as unknown as Readable;
   const child = new EventEmitter() as unknown as ReturnType<typeof spawn> & { exitCode: number | null };
-  Object.assign(child, { stdin: null, stdout: new EventEmitter(), stderr: stderrStream, exitCode: null, kill: () => true });
+  Object.assign(child, {
+    stdin: null,
+    stdout: new EventEmitter(),
+    stderr: stderrStream,
+    exitCode: null,
+    // a real ssh child emits "exit" once SIGTERM lands; mirror that so stop() resolves.
+    kill: () => {
+      (child as unknown as EventEmitter).emit("exit", null, "SIGTERM");
+      return true;
+    },
+  });
   return child;
 }
 
@@ -335,7 +345,7 @@ describe("bringUpSshAttachment — retries a transient early ssh exit within a b
     } finally {
       await new Promise<void>((resolve) => (server.listening ? server.close(() => resolve()) : resolve()));
     }
-  });
+  }, 15_000);
 });
 
 // ── real SSH-default per-attachment transport ───────────────────────────────
