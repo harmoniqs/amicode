@@ -2312,7 +2312,10 @@ class TestSourceSideSequencing(RouterTest):
         # queue past MEMBER_QUEUE_MAX_ITEMS
         flood = [b'data: {"id":"evt_s%d","type":"test.frame","properties":'
                  b'{"partID":"p%d"}}\n\n' % (i, i) for i in range(200)]
-        self.shards[0].httpd.sse_inject.extend(flood)
+        # target the flood at the member's /event stream (#1997): an untargeted
+        # raw entry is drained by whichever shard-0 stream ticks first — sometimes
+        # /global/event, which no member reads — so the slow member never fills.
+        self.shards[0].httpd.sse_inject.extend((b"/event", f) for f in flood)
         slow.settimeout(0.5)
         dropped = False
         deadline = time.time() + 8
