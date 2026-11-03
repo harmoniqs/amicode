@@ -290,6 +290,54 @@ describe("bringUpSshAttachment — honest failure when the ssh child exits befor
   });
 });
 
+// #1991: the real-SSH suites flaked on GH runners with `ssh forward exited
+// before becoming reachable (code=255)` — the ssh child lost a race with sshd
+// readiness / known_hosts and exited before the forward answered once. A single
+// early exit must NOT fail the bring-up: the forward is retried with backoff
+// within a bounded window, and only a persistent failure surfaces (with stderr).
+function fakeSshChildThatStaysUp() {
+  const stderrStream = new EventEmitter() as unknown as Readable;
+  const child = new EventEmitter() as unknown as ReturnType<typeof spawn> & { exitCode: number | null };
+  Object.assign(child, { stdin: null, stdout: new EventEmitter(), stderr: stderrStream, exitCode: null, kill: () => true });
+  return child;
+}
+
+describe("bringUpSshAttachment — retries a transient early ssh exit within a bounded window (#1991)", () => {
+  it("an ssh child that exits 255 once (sshd not ready yet) is retried and the forward comes up", async () => {
+    // The "remote" end is a real loopback server that only starts listening once
+    // the SECOND ssh attempt is spawned — the first attempt's forward is not
+    // reachable at all (sshd/known_hosts not ready), exactly the flake shape.
+    const localPort = await pickFreeLoopbackPort();
+    const server = http.createServer((_req, res) => {
+      res.writeHead(401, { "content-type": "application/json" });
+      res.end("{}");
+    });
+    let spawns = 0;
+    try {
+      const handle = await bringUpSshAttachment({
+        target: { sshAlias: "flaky-alias", transport: "ssh", machine_id: "m-flaky" },
+        remotePort: localPort,
+        localPort,
+        spawnFn: ((() => {
+          spawns++;
+          if (spawns === 1) {
+            return fakeExitingSshChild("kex_exchange_identification: Connection closed by remote host\n");
+          }
+          server.listen(localPort, "127.0.0.1");
+          return fakeSshChildThatStaysUp();
+        }) as unknown) as typeof spawn,
+        readyTimeoutMs: 10_000,
+        readyPollIntervalMs: 50,
+      });
+      expect(spawns).toBeGreaterThanOrEqual(2);
+      expect(handle.localUrl).toBe(`http://127.0.0.1:${localPort}`);
+      await handle.stop();
+    } finally {
+      await new Promise<void>((resolve) => (server.listening ? server.close(() => resolve()) : resolve()));
+    }
+  });
+});
+
 // ── real SSH-default per-attachment transport ───────────────────────────────
 // attach_over_real_transport == 1 / attach_injects_client_credential == 1
 //
