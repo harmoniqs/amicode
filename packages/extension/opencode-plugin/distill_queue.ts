@@ -205,7 +205,82 @@ export async function enqueueAndDrain(opsDir: string, job: DistillJob, clock: Dr
   enqueueJob(opsDir, job);
   const cfg = readDistillerConfig(opsDir);
   if (!cfg) return false;
-  return runDrainLoop(opsDir, (j) => runDistillerJob(cfg, j).then(() => undefined), clock);
+  return runDrainLoop(opsDir, makeDistillHandler(cfg), clock);
+}
+
+/** The drain handler used by every trigger: resolve the job's machine paths
+ *  against THIS machine's config (`rebaseJob`), then spawn the distiller.
+ *  A job that cannot be resolved throws before anything is spawned. `spawn` and
+ *  `env` are test seams (no mocks: a recording closure and an injected `exists`). */
+export function makeDistillHandler(
+  cfg: DistillerConfigFile,
+  spawn: (cfg: DistillerConfigFile, job: DistillJob) => Promise<unknown> = runDistillerJob,
+  env: RebaseEnv = defaultRebaseEnv(),
+): (job: DistillJob) => Promise<void> {
+  return async (job) => {
+    await spawn(cfg, rebaseJob(job, cfg.job_defaults, env));
+  };
+}
+
+export interface RebaseEnv {
+  exists: (p: string) => boolean;
+}
+
+export function defaultRebaseEnv(): RebaseEnv {
+  return { exists: fs.existsSync };
+}
+
+/** The fields a job records from the enqueueing machine, each resolved from the
+ *  drain config's `job_defaults` when the recorded path is not usable here. */
+const REBASED_FIELDS = ["vault", "ops", "runs_root"] as const;
+
+/** Resolve a queued job's machine-shaped paths for THIS machine (#2097).
+ *
+ *  - A recorded vault/ops/runs_root that does not exist here is replaced by
+ *    `defaults[field]`; the originals are kept on the copy as `rebased_from`.
+ *    No default → throws naming the field (never guessed). Existence is the ONLY
+ *    test: an existing path is trusted wherever it lives (another volume, a
+ *    mount outside $HOME), since rebasing it onto `job_defaults` could point the
+ *    distiller at a different vault.
+ *  - Fields the job does not carry are not invented; identity fields (kind,
+ *    run_id, session_ids, …) are never touched.
+ *  - `demo_dir` has no configured counterpart to rebase onto: it is left alone if
+ *    it exists, otherwise the job fails naming `demo_dir`.
+ *  - A run job whose `<runs_root>/<run_id>` is missing fails naming that directory.
+ *  - A job needing no change is returned as-is (same object, byte-identical). */
+export function rebaseJob(
+  job: DistillJob,
+  defaults: Record<string, unknown> | undefined,
+  env: RebaseEnv,
+): DistillJob {
+  const usable = (p: unknown) => typeof p === "string" && env.exists(p);
+
+  const rebased: Record<string, unknown> = {};
+  const from: Record<string, unknown> = {};
+  for (const field of REBASED_FIELDS) {
+    if (!(field in job) || usable(job[field])) continue;
+    const value = defaults?.[field];
+    if (typeof value !== "string" || value === "") {
+      throw new Error(
+        `distill job cannot be rebased: ${field} (${JSON.stringify(job[field])}) is not usable on this machine ` +
+          `and the drain config has no job_defaults.${field}`,
+      );
+    }
+    if (value === job[field]) continue;
+    from[field] = job[field];
+    rebased[field] = value;
+  }
+
+  const out: DistillJob = Object.keys(from).length ? { ...job, ...rebased, rebased_from: from } : job;
+
+  if (typeof out.demo_dir === "string" && !env.exists(out.demo_dir)) {
+    throw new Error(`distill job cannot run: demo_dir ${out.demo_dir} does not exist on this machine`);
+  }
+  if (out.kind === "run" && typeof out.run_id === "string" && typeof out.runs_root === "string") {
+    const runDir = path.join(out.runs_root, out.run_id);
+    if (!env.exists(runDir)) throw new Error(`distill job cannot run: run directory ${runDir} does not exist`);
+  }
+  return out;
 }
 
 export function defaultClock(): DrainClock {
