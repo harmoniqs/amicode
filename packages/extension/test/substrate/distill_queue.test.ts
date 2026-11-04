@@ -11,6 +11,10 @@ import {
   reclaimIfStale,
   drainOnce,
   runDrainLoop,
+  runDrainLoopResult,
+  drainPass,
+  resetDistillHalt,
+  readDistillHalt,
 } from "../../opencode-plugin/distill_queue";
 
 function mkOps(): string {
@@ -391,5 +395,228 @@ describe("drain-time path rebase (#2097): a job's machine paths resolve against 
       handler({ kind: "demo" as never, demo_dir: "/Users/aaron/demos/bell", vault: m.vault, ops: m.ops }),
     ).rejects.toThrow(/demo_dir/);
     expect(r.seen).toHaveLength(1);
+  });
+});
+
+describe("bounded retry, parking and halt (#2098) — temp ops dirs + injected clock only", () => {
+  const MIN = 60_000;
+  const T0 = 1_800_000_000_000;
+  const queue = (ops: string) => path.join(ops, "distill-queue");
+  const files = (ops: string) => fs.readdirSync(queue(ops)).sort();
+  const failing = async () => {
+    throw new Error("boom: timeout");
+  };
+  /** A drain against a fake clock; returns the pass result. */
+  const pass = (ops: string, at: number, handler: (j: { kind: string; [k: string]: unknown }) => Promise<void> = failing) =>
+    drainPass(ops, handler as never, { now: () => at });
+  const ledgerOf = (ops: string, ready: string) =>
+    JSON.parse(fs.readFileSync(path.join(queue(ops), `${ready}.attempts`), "utf8"));
+
+  it("AC1: a failed job records attempt, last error and time, and is withheld until its backoff has passed", async () => {
+    const ops = mkOps();
+    const file = path.basename(enqueueJob(ops, { kind: "run", run_id: "a" }));
+    const seen: string[] = [];
+    const ok = async (j: { run_id?: unknown }) => void seen.push(String(j.run_id));
+
+    await pass(ops, T0);
+    expect(ledgerOf(ops, file)).toMatchObject({ attempt: 1, last_error: "boom: timeout", last_at: T0 });
+    expect(files(ops).some((f) => f.startsWith(`${file}.failed-`))).toBe(true);
+
+    expect((await pass(ops, T0 + 10 * MIN - 1, ok)).attempted).toBe(0); // not yet
+    expect(seen).toEqual([]);
+    expect((await pass(ops, T0 + 10 * MIN, ok)).succeeded).toBe(1); // due
+    expect(seen).toEqual(["a"]);
+    expect(fs.readdirSync(queue(ops))).toEqual([]); // job AND ledger gone after success
+  });
+
+  it("AC1: delays grow with each attempt (10 min, then 40, then 160)", async () => {
+    const ops = mkOps();
+    enqueueJob(ops, { kind: "run", run_id: "a" });
+    let t = T0;
+    for (const delay of [10, 40, 160]) {
+      expect((await pass(ops, t)).failed).toBe(1);
+      expect((await pass(ops, t + delay * MIN - 1)).attempted).toBe(0);
+      t += delay * MIN;
+    }
+    expect((await pass(ops, t)).attempted).toBe(1); // the 4th and last attempt
+  });
+
+  it("AC1: the error message is persisted truncated to 500 chars", async () => {
+    const ops = mkOps();
+    const file = path.basename(enqueueJob(ops, { kind: "run" }));
+    await pass(ops, T0, async () => {
+      throw new Error("x".repeat(900));
+    });
+    expect(ledgerOf(ops, file).last_error).toBe("x".repeat(500));
+  });
+
+  it("AC2: the 4th failed attempt parks the job — kept byte-identical, never re-offered", async () => {
+    const ops = mkOps();
+    const file = path.basename(enqueueJob(ops, { kind: "run", run_id: "a" }));
+    const original = fs.readFileSync(path.join(queue(ops), file), "utf8");
+    let t = T0;
+    for (const delay of [10, 40, 160, 0]) {
+      expect((await pass(ops, t)).failed).toBe(1);
+      t += delay * MIN;
+    }
+    const parked = files(ops).find((f) => f.startsWith(`${file}.parked-`))!;
+    expect(parked).toBeDefined();
+    expect(files(ops).some((f) => f.includes(".failed-") || f === file)).toBe(false);
+    expect(fs.readFileSync(path.join(queue(ops), parked), "utf8")).toBe(original);
+    expect(ledgerOf(ops, file).attempt).toBe(4);
+    const seen: string[] = [];
+    const r = await pass(ops, t + 365 * 24 * 60 * MIN, async (j) => void seen.push(String(j.run_id)));
+    expect(r.attempted).toBe(0);
+    expect(seen).toEqual([]);
+    expect(files(ops)).toContain(parked); // never deleted
+    expect(queueIsEmpty(ops)).toBe(true);
+  });
+
+  it("AC3: five consecutive failures across different jobs halt the drain, leaving the rest untouched", async () => {
+    const ops = mkOps();
+    for (let i = 0; i < 7; i++) enqueueJob(ops, { kind: "run", run_id: `j${i}` });
+    const called: string[] = [];
+    const r = await pass(ops, T0, async (j) => {
+      called.push(String(j.run_id));
+      throw new Error("no model access");
+    });
+    expect(called).toEqual(["j0", "j1", "j2", "j3", "j4"]);
+    expect(r.halted?.reason).toMatch(/halted/);
+    expect(r.halted?.reason).toMatch(/5 consecutive failures across different jobs/);
+    expect(files(ops).filter((f) => f.endsWith(".json")).length).toBe(2); // j5, j6 untouched
+    expect(readDistillHalt(ops)).toMatchObject({ consecutive: 5 });
+    expect(fs.existsSync(path.join(ops, "distill-halt.json"))).toBe(true);
+    // while halted no drain runs and nothing is spent
+    const again: string[] = [];
+    const r2 = await pass(ops, T0 + 1000 * MIN, async (j) => void again.push(String(j.run_id)));
+    expect(again).toEqual([]);
+    expect(r2.attempted).toBe(0);
+    expect(r2.halted?.reason).toMatch(/halted/);
+    // manual reset clears it
+    resetDistillHalt(ops);
+    expect(readDistillHalt(ops)).toBeNull();
+    const r3 = await pass(ops, T0 + 1000 * MIN, async (j) => void again.push(String(j.run_id)));
+    expect(r3.halted).toBeUndefined();
+    // after the reset the untouched jobs run, and the five backed-off ones are due again by then
+    expect(again).toEqual(["j0", "j1", "j2", "j3", "j4", "j5", "j6"]);
+  });
+
+  it("AC3: one job failing repeatedly does not count as five", async () => {
+    const ops = mkOps();
+    for (let i = 0; i < 4; i++) enqueueJob(ops, { kind: "run", run_id: `j${i}` });
+    let t = T0;
+    for (const delay of [10, 40, 160, 0]) {
+      // four distinct jobs fail on every pass, each job failing again and again
+      expect((await pass(ops, t)).halted).toBeUndefined();
+      t += delay * MIN;
+    }
+    expect(readDistillHalt(ops)).toBeNull();
+    expect(files(ops).filter((f) => f.includes(".parked-")).length).toBe(4);
+  });
+
+  it("AC4: a success resets the consecutive-failure count", async () => {
+    const ops = mkOps();
+    ["f0", "f1", "f2", "f3", "ok", "g0", "g1", "g2", "g3"].forEach((id) => enqueueJob(ops, { kind: "run", run_id: id }));
+    const r = await pass(ops, T0, async (j) => {
+      if (j.run_id !== "ok") throw new Error("boom");
+    });
+    expect(r.halted).toBeUndefined(); // 4 + success + 4, never 5 in a row
+    expect(r.failed).toBe(8);
+    expect(r.succeeded).toBe(1);
+  });
+
+  it("AC5: legacy .failed-<ms> files are one prior attempt, retry-eligible, and left byte-identical until retried", async () => {
+    const ops = mkOps();
+    fs.mkdirSync(queue(ops), { recursive: true });
+    const legacy = "1690000000000-0000-run.json";
+    const legacyFile = path.join(queue(ops), `${legacy}.failed-1690000600000`);
+    fs.writeFileSync(legacyFile, JSON.stringify({ kind: "run", run_id: "old" }) + "\n");
+    const before = fs.readFileSync(legacyFile, "utf8");
+    expect(queueIsEmpty(ops)).toBe(true); // not "ready"
+    expect(listJobs(ops)).toEqual([]);
+
+    // a standing halt means no drain runs: the legacy file is neither moved nor rewritten
+    fs.writeFileSync(path.join(ops, "distill-halt.json"), JSON.stringify({ reason: "halted: test", at: T0, consecutive: 5, job_ids: [] }));
+    await pass(ops, T0);
+    expect(fs.readFileSync(legacyFile, "utf8")).toBe(before);
+    expect(files(ops)).toEqual([`${legacy}.failed-1690000600000`]);
+    resetDistillHalt(ops);
+
+    // retried immediately (long overdue); the retry fails → it is now attempt 2 (40 min backoff)
+    expect((await pass(ops, T0)).failed).toBe(1);
+    expect(ledgerOf(ops, legacy).attempt).toBe(2);
+    expect((await pass(ops, T0 + 40 * MIN - 1)).attempted).toBe(0);
+    const seen: string[] = [];
+    expect((await pass(ops, T0 + 40 * MIN, async (j) => void seen.push(String(j.run_id)))).succeeded).toBe(1);
+    expect(seen).toEqual(["old"]);
+    expect(fs.readdirSync(queue(ops))).toEqual([]);
+  });
+
+  it("an unparseable job is attempted and set aside like any failure, but is no evidence of a systemic fault", async () => {
+    const ops = mkOps();
+    fs.mkdirSync(queue(ops), { recursive: true });
+    for (let i = 0; i < 6; i++) fs.writeFileSync(path.join(queue(ops), `170000000000${i}-0000-run.json`), "{not json");
+    const r = await pass(ops, T0, async () => {
+      throw new Error("handler must not run");
+    });
+    expect(r.failed).toBe(6);
+    expect(r.halted).toBeUndefined();
+    expect(files(ops).filter((f) => f.includes(".failed-")).length).toBe(6);
+  });
+
+  it("runDrainLoop: a backing-off job is not work — the handler runs once, the loop ends, the lock is released", async () => {
+    const ops = mkOps();
+    enqueueJob(ops, { kind: "run", run_id: "a" });
+    let calls = 0;
+    const out = await runDrainLoopResult(
+      ops,
+      async () => {
+        calls++;
+        throw new Error("boom");
+      },
+      { pid: 42, now: () => T0, isPidAlive: () => true },
+    );
+    expect(out).toEqual({ ran: true });
+    expect(calls).toBe(1);
+    expect(claimLock(ops, 7)).toBe(true);
+  });
+
+  it("runDrainLoop: a clock that jumps past the backoff does not re-offer the job inside the same loop", async () => {
+    const ops = mkOps();
+    enqueueJob(ops, { kind: "run", run_id: "a" });
+    let t = T0;
+    let calls = 0;
+    await runDrainLoopResult(
+      ops,
+      async () => {
+        calls++;
+        t += 1000 * MIN;
+        throw new Error("boom");
+      },
+      { pid: 42, now: () => t, isPidAlive: () => true },
+    );
+    expect(calls).toBe(1);
+  });
+
+  it("runDrainLoop: a halted drain exits the loop with the reason, releases the lock and spends nothing more", async () => {
+    const ops = mkOps();
+    for (let i = 0; i < 8; i++) enqueueJob(ops, { kind: "run", run_id: `j${i}` });
+    let calls = 0;
+    const clock = { pid: 42, now: () => T0, isPidAlive: () => true };
+    const handler = async () => {
+      calls++;
+      throw new Error("wrong binary");
+    };
+    const out = await runDrainLoopResult(ops, handler, clock);
+    expect(out.ran).toBe(true);
+    expect(out.halted?.reason).toMatch(/halted/);
+    expect(calls).toBe(5);
+    expect(claimLock(ops, 7)).toBe(true);
+    releaseLock(ops);
+    // a later trigger finds the halt and spends nothing
+    expect((await runDrainLoopResult(ops, handler, clock)).halted?.reason).toMatch(/halted/);
+    expect(calls).toBe(5);
+    expect(await runDrainLoop(ops, handler, clock)).toBe(true);
+    expect(calls).toBe(5);
   });
 });

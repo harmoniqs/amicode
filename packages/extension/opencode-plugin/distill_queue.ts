@@ -11,8 +11,34 @@
  *  - drain  = winner processes the ENTIRE queue sequentially, releases, then
  *    RE-CHECKS the queue and re-claims if non-empty (closes the race where a
  *    loser's job lands after the final listing but before the release)
- *  - a failing job is set aside as `.failed-<ts>` (kept for inspection, not
- *    retried forever), and the drain continues */
+ *  - a failing job is set aside (kept, never deleted) and the drain continues
+ *
+ *  FAILURE POLICY (#2098, decided by the owner 2026-11-03): a failed job is
+ *  retried 3 times with growing backoff; after the 4th failed attempt (the
+ *  original run + 3 retries) it is PARKED — terminal, counted, never deleted,
+ *  never retried automatically. The drain HALTS after 5 consecutive failures
+ *  across DIFFERENT jobs; a success resets that count.
+ *
+ *  ON-DISK GRAMMAR — the only contract between this module and the CLI's
+ *  read-only health reader (packages/amico-run/src/distill_health.ts parses it
+ *  independently; keep the two in step). Files in `<ops>/distill-queue/`:
+ *    <base>.json                READY. Strictly "offered now"; never rewritten.
+ *    <base>.json.failed-<ms>    set aside after a failure at <ms>. WITH a ledger
+ *                               it is backing off until the ledger's not_before.
+ *                               WITHOUT a ledger it is the pre-#2098 format: one
+ *                               prior attempt, unknown error, retry-eligible NOW.
+ *    <base>.json.parked-<ms>    TERMINAL (4 failed attempts). Never offered.
+ *    <base>.json.attempts       LEDGER (JSON): { attempt, last_error (<=500
+ *                               chars), last_at, not_before }. Stable across
+ *                               state renames; removed when the job succeeds.
+ *  The job file's bytes are never rewritten (attempt state lives in the name +
+ *  ledger), so a set-aside file is always the original job.
+ *  Other files in `<ops>/`:
+ *    distill-streak.json   { job_ids: string[] } — distinct jobs failed since
+ *                          the last success. Removed on success / reset.
+ *    distill-halt.json     { reason, at, consecutive, job_ids } — present iff the
+ *                          drain is HALTED. While present no drain runs (nothing
+ *                          is spent) until `resetDistillHalt`. */
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { execFile } from "node:child_process";
@@ -20,6 +46,13 @@ import { execFile } from "node:child_process";
 export const STALE_LOCK_MS = 15 * 60 * 1000;
 /** One distill job gets at most 10 min of LLM time before it's set aside. */
 export const JOB_TIMEOUT_MS = 10 * 60 * 1000;
+/** Delay before retry n (n = 1..3) after the n-th failed attempt: 10 min, 40 min, 160 min. */
+export const RETRY_BACKOFF_MS = [10 * 60 * 1000, 40 * 60 * 1000, 160 * 60 * 1000];
+/** Attempts before a job is parked: the original run plus one per backoff slot. */
+export const MAX_ATTEMPTS = RETRY_BACKOFF_MS.length + 1;
+/** Consecutive failures across DIFFERENT jobs that halt the drain. */
+export const HALT_AFTER = 5;
+const MAX_ERROR_CHARS = 500;
 
 export interface DistillJob {
   kind: "run" | "sweep" | "onboarding" | "batch";
@@ -110,31 +143,197 @@ export function reclaimIfStale(
   return claimLock(opsDir, pid);
 }
 
-/** Process every queued job in order. A job file is removed only after its
- *  handler resolves; a throwing handler sets the job aside as .failed-<ts>. */
-export async function drainOnce(opsDir: string, handler: (job: DistillJob) => Promise<void>): Promise<number> {
-  let n = 0;
-  for (const file of listJobs(opsDir)) {
-    let job: DistillJob;
+export interface DrainHalt {
+  reason: string;
+  at: number;
+  consecutive: number;
+  job_ids: string[];
+}
+
+export interface DrainResult {
+  /** Jobs the handler (or the parser) was invoked on this pass. */
+  attempted: number;
+  succeeded: number;
+  failed: number;
+  parked: number;
+  /** Set when the drain is (now, or already) halted; remaining jobs untouched. */
+  halted?: DrainHalt;
+}
+
+export interface DrainOpts {
+  now?: () => number;
+  /** Job bases already attempted in this drain loop — skipped, so one loop never
+   *  offers the same job twice (bounds spend and rules out a spin). */
+  attempted?: Set<string>;
+}
+
+interface Ledger {
+  attempt: number;
+  last_error: string;
+  last_at: number;
+  not_before: number;
+}
+
+const STATE_NAME = /^(.+\.json)(?:\.(failed|parked)-(\d+))?$/;
+
+function ledgerPath(opsDir: string, base: string): string {
+  return path.join(queueDir(opsDir), `${base}.attempts`);
+}
+function streakPath(opsDir: string): string {
+  return path.join(opsDir, "distill-streak.json");
+}
+function haltPath(opsDir: string): string {
+  return path.join(opsDir, "distill-halt.json");
+}
+
+function readJson(file: string): unknown {
+  try {
+    return JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function readLedger(opsDir: string, base: string): Ledger | null {
+  const v = readJson(ledgerPath(opsDir, base)) as Partial<Ledger> | null;
+  if (!v || typeof v.attempt !== "number" || typeof v.not_before !== "number") return null;
+  return { attempt: v.attempt, last_error: String(v.last_error ?? ""), last_at: Number(v.last_at ?? 0), not_before: v.not_before };
+}
+
+/** The halt record, or null when the drain is not halted. */
+export function readDistillHalt(opsDir: string): DrainHalt | null {
+  const v = readJson(haltPath(opsDir)) as Partial<DrainHalt> | null;
+  if (!v || typeof v.reason !== "string") return null;
+  return { reason: v.reason, at: Number(v.at ?? 0), consecutive: Number(v.consecutive ?? 0), job_ids: Array.isArray(v.job_ids) ? v.job_ids.map(String) : [] };
+}
+
+/** Manual reset (no UI): clears the halt and the failure streak. Parked jobs and
+ *  ledgers are left exactly as they are. */
+export function resetDistillHalt(opsDir: string): void {
+  fs.rmSync(haltPath(opsDir), { force: true });
+  fs.rmSync(streakPath(opsDir), { force: true });
+}
+
+interface Candidate {
+  file: string;
+  base: string;
+  /** Attempts already made: 0 for a ready job, the ledger's count (1 when the
+   *  ledger is absent = legacy `.failed-<ms>`) for a set-aside one. */
+  prior: number;
+}
+
+/** Everything the drain may offer right now: ready jobs plus set-aside jobs whose
+ *  backoff has passed (legacy `.failed-` files are always due). Parked jobs and
+ *  ledgers are never candidates. Sorted by base name = enqueue order. */
+function candidates(opsDir: string, now: number, skip?: Set<string>): Candidate[] {
+  let names: string[];
+  try {
+    names = fs.readdirSync(queueDir(opsDir));
+  } catch {
+    return [];
+  }
+  return names
+    .flatMap((name): Candidate[] => {
+      const m = STATE_NAME.exec(name);
+      if (!m || skip?.has(m[1])) return [];
+      const file = path.join(queueDir(opsDir), name);
+      if (!m[2]) return [{ file, base: m[1], prior: readLedger(opsDir, m[1])?.attempt ?? 0 }];
+      if (m[2] === "parked") return [];
+      const ledger = readLedger(opsDir, m[1]);
+      if (ledger && ledger.not_before > now) return [];
+      return [{ file, base: m[1], prior: ledger?.attempt ?? 1 }];
+    })
+    .sort((a, b) => (a.base < b.base ? -1 : a.base > b.base ? 1 : 0));
+}
+
+/** Is there anything a drain loop could still offer? (Ready jobs and due retries;
+ *  a backing-off or parked job is NOT work.) */
+export function hasOfferableWork(opsDir: string, now: number, skip?: Set<string>): boolean {
+  return candidates(opsDir, now, skip).length > 0;
+}
+
+/** One pass over every offerable job, in order. A job file is removed only after
+ *  its handler resolves. A failure records attempt / error / time in the ledger and
+ *  sets the file aside (backing off) — or parks it on the 4th failed attempt.
+ *  Stops, leaving every remaining job untouched, once 5 DIFFERENT jobs have failed
+ *  consecutively; refuses to start at all while a halt is on record. */
+export async function drainPass(
+  opsDir: string,
+  handler: (job: DistillJob) => Promise<void>,
+  opts: DrainOpts = {},
+): Promise<DrainResult> {
+  const now = opts.now ?? Date.now;
+  const result: DrainResult = { attempted: 0, succeeded: 0, failed: 0, parked: 0 };
+  const standing = readDistillHalt(opsDir);
+  if (standing) return { ...result, halted: standing };
+
+  for (const c of candidates(opsDir, now(), opts.attempted)) {
+    opts.attempted?.add(c.base);
+    result.attempted++;
+    let failure: unknown;
+    let handlerRan = false;
     try {
-      job = JSON.parse(fs.readFileSync(file, "utf8"));
-    } catch {
-      fs.renameSync(file, `${file}.failed-${Date.now()}`);
+      const job: DistillJob = JSON.parse(fs.readFileSync(c.file, "utf8"));
+      handlerRan = true;
+      await handler(job);
+    } catch (err) {
+      failure = err ?? new Error("unknown failure");
+    }
+    if (failure === undefined) {
+      fs.unlinkSync(c.file);
+      fs.rmSync(ledgerPath(opsDir, c.base), { force: true });
+      fs.rmSync(streakPath(opsDir), { force: true });
+      result.succeeded++;
       continue;
     }
+    result.failed++;
+    const at = now();
+    const attempt = c.prior + 1;
+    const parks = attempt >= MAX_ATTEMPTS;
+    if (parks) result.parked++;
     try {
-      await handler(job);
-      fs.unlinkSync(file);
-      n++;
+      // ledger first: a crash between the two leaves a ready job with an
+      // over-counted ledger (parks sooner), never an uncounted failure.
+      fs.mkdirSync(queueDir(opsDir), { recursive: true });
+      fs.writeFileSync(
+        ledgerPath(opsDir, c.base),
+        JSON.stringify({
+          attempt,
+          last_error: (failure instanceof Error ? failure.message : String(failure)).slice(0, MAX_ERROR_CHARS),
+          last_at: at,
+          not_before: parks ? 0 : at + RETRY_BACKOFF_MS[attempt - 1],
+        }) + "\n",
+      );
+      fs.renameSync(c.file, path.join(queueDir(opsDir), `${c.base}.${parks ? "parked" : "failed"}-${at}`));
     } catch {
-      try {
-        fs.renameSync(file, `${file}.failed-${Date.now()}`);
-      } catch {
-        /* leave it */
-      }
+      /* leave it; the attempted set keeps this loop from re-offering it */
+    }
+    // An unparseable file never reached the handler: it is no evidence of a systemic fault.
+    if (!handlerRan) continue;
+    const ids = (readJson(streakPath(opsDir)) as { job_ids?: string[] } | null)?.job_ids ?? [];
+    if (!ids.includes(c.base)) ids.push(c.base);
+    fs.writeFileSync(streakPath(opsDir), JSON.stringify({ job_ids: ids }) + "\n");
+    if (ids.length >= HALT_AFTER) {
+      const halt: DrainHalt = {
+        reason: `distill drain halted: ${ids.length} consecutive failures across different jobs (last: ${c.base}) — reset with resetDistillHalt after fixing the cause`,
+        at,
+        consecutive: ids.length,
+        job_ids: ids,
+      };
+      fs.writeFileSync(haltPath(opsDir), JSON.stringify(halt, null, 2) + "\n");
+      return { ...result, halted: halt };
     }
   }
-  return n;
+  return result;
+}
+
+/** Back-compat wrapper: one pass, returns the number of jobs that succeeded. */
+export async function drainOnce(
+  opsDir: string,
+  handler: (job: DistillJob) => Promise<void>,
+  opts: DrainOpts = {},
+): Promise<number> {
+  return (await drainPass(opsDir, handler, opts)).succeeded;
 }
 
 /** The distiller spawn transport (spec §4 config transport, plan reviewer #5):
@@ -298,27 +497,49 @@ export function defaultClock(): DrainClock {
   };
 }
 
+export interface DrainLoopResult {
+  /** True when this caller won the lock and drained; false when it lost the claim. */
+  ran: boolean;
+  /** Set when the drain is halted (now or by an earlier drain). */
+  halted?: DrainHalt;
+}
+
 /** Full winner protocol: claim (or reclaim stale) → drain → release →
  *  post-release re-check → re-claim if jobs landed during the handoff.
- *  Returns false immediately if we lost the claim (a holder will drain). */
+ *  Returns `ran: false` immediately if we lost the claim (a holder will drain).
+ *  Terminates: every pass only offers jobs not yet attempted in this loop, and a
+ *  backing-off / parked job is not "work", so nothing can spin. */
+export async function runDrainLoopResult(
+  opsDir: string,
+  handler: (job: DistillJob) => Promise<void>,
+  clock: DrainClock,
+): Promise<DrainLoopResult> {
+  if (
+    !claimLock(opsDir, clock.pid) &&
+    !reclaimIfStale(opsDir, clock.pid, { now: clock.now(), isPidAlive: clock.isPidAlive })
+  ) {
+    return { ran: false };
+  }
+  // We hold the lock.
+  const attempted = new Set<string>();
+  for (;;) {
+    let halted: DrainHalt | undefined;
+    while (hasOfferableWork(opsDir, clock.now(), attempted)) {
+      const pass = await drainPass(opsDir, handler, { now: clock.now, attempted });
+      halted = pass.halted;
+      if (halted || pass.attempted === 0) break;
+    }
+    releaseLock(opsDir);
+    if (halted ??= readDistillHalt(opsDir) ?? undefined) return { ran: true, halted };
+    if (!hasOfferableWork(opsDir, clock.now(), attempted)) return { ran: true }; // post-release re-check: truly done
+    if (!claimLock(opsDir, clock.pid)) return { ran: true }; // a new holder owns the late jobs
+  }
+}
+
 export async function runDrainLoop(
   opsDir: string,
   handler: (job: DistillJob) => Promise<void>,
   clock: DrainClock,
 ): Promise<boolean> {
-  if (
-    !claimLock(opsDir, clock.pid) &&
-    !reclaimIfStale(opsDir, clock.pid, { now: clock.now(), isPidAlive: clock.isPidAlive })
-  ) {
-    return false;
-  }
-  // We hold the lock.
-  for (;;) {
-    while (!queueIsEmpty(opsDir)) {
-      await drainOnce(opsDir, handler);
-    }
-    releaseLock(opsDir);
-    if (queueIsEmpty(opsDir)) return true; // post-release re-check: truly done
-    if (!claimLock(opsDir, clock.pid)) return true; // a new holder owns the late jobs
-  }
+  return (await runDrainLoopResult(opsDir, handler, clock)).ran;
 }
