@@ -48,3 +48,8 @@ if (!process.env.AMICO_RUN_PLACEMENT) process.env.AMICO_RUN_PLACEMENT = "none";
 if (!process.env.SOLVE_GUARD_LOCK_DIR) {
   process.env.SOLVE_GUARD_LOCK_DIR = mkdtempSync(join(tmpdir(), "amico-run-restart-locks-"));
 }
+
+// #2133: the CPU rate file (~/.amico/amicode/rates.json) is human-edited; a test must neither read
+// the developer's real rates nor depend on them. Default to an absent file (no rate ⇒ no dollars);
+// the cost suites pass their own path.
+if (!process.env.AMICO_RATES_FILE) process.env.AMICO_RATES_FILE = "/nonexistent/amico-test-guard/rates.json";

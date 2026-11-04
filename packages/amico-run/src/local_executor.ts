@@ -5,8 +5,9 @@ import { delimiter, join, resolve } from "node:path";
 import * as readline from "node:readline";
 import { parse as tomlParse, stringify as tomlStringify } from "smol-toml";
 import { EventQueue } from "./event_queue.js";
-import { appendRecord, type SolveOutcome, type SolveRecord, type SolveSummary } from "./ledger.js";
+import { appendRecord, type ReceiptRecord, type SolveOutcome, type SolveRecord, type SolveSummary } from "./ledger.js";
 import { classifyLine } from "./telemetry.js";
+import { costFields, readCpuRate, startCpuMeter } from "./cost.js";
 import { LOCK_HEARTBEAT_MS, startRunLock } from "./run_lock.js";
 import { writePendingVerification } from "./verify.js";
 import {
@@ -230,6 +231,34 @@ function emitSolveStanza(runDir: string): void {
   }
 }
 
+/** The `local` receipt (#2133): CPU-seconds from the unit cgroup, priced by the human-edited rate
+ *  file, attributed to a principal and Lab. Never throws and never touches the run's verdict —
+ *  accounting failure is logged once and the run is unaffected. */
+function emitCpuReceipt(
+  runId: string,
+  status: RunStatus,
+  cpuSeconds: number | undefined,
+  cost: NonNullable<SubmitOpts["cost"]>,
+): void {
+  try {
+    const rec: ReceiptRecord = {
+      type: "receipt",
+      ts: new Date().toISOString(),
+      task_id: runId,
+      executor: "local",
+      ...costFields(cpuSeconds, readCpuRate(cost.ratesPath)),
+      status,
+    };
+    const principal = cost.principal ?? process.env.AMICO_PRINCIPAL;
+    const lab = cost.lab ?? process.env.AMICO_LAB;
+    if (principal) rec.principal = principal;
+    if (lab) rec.lab = lab;
+    appendRecord(rec);
+  } catch (e) {
+    process.stderr.write(`amico-run: failed to emit cpu receipt: ${(e as Error).message}\n`);
+  }
+}
+
 /** A run that has its directory, manifest, index entry and `latest` pointer — everything the
  *  manifest-FIRST contract promises — but whose Julia child has not been spawned yet.
  *  `prepareRun` produces it; `startRun` (in this process, or in an `--adopt` orchestrator
@@ -346,6 +375,11 @@ export class LocalExecutor implements Executor {
       opts.heartbeatMs ?? (Number(process.env.AMICO_RUN_HEARTBEAT_MS) || LOCK_HEARTBEAT_MS),
     );
 
+    // CPU meter (#2133): first reading before Julia exists, second at settle, both from the unit's
+    // cgroup. Total — a meter that cannot read yields undefined, never an exception.
+    const cost = opts.cost ?? {};
+    const meter = startCpuMeter({ unit: opts.lock?.unit, cgroupDir: cost.cgroupDir });
+
     const events = new EventQueue<RunEvent>();
     const logStream = createWriteStream(join(runDir, "run.log"), { flags: "a" });
     let resolveFinished!: (f: Finished) => void;
@@ -358,6 +392,8 @@ export class LocalExecutor implements Executor {
     const settle = (status: RunStatus, exitCode: number): void => {
       if (settled) return;
       settled = true;
+      // Read the cgroup NOW: Julia has exited and the unit is still up (teardown follows FINISHED).
+      const cpuSeconds = meter.stop();
 
       // FLUSH run.log BEFORE the verdict, then write the verdict, then announce.
       //
@@ -390,6 +426,7 @@ export class LocalExecutor implements Executor {
           // any FINISHED a script faked (spec §5 step 8)
           process.stderr.write(`amico-run: failed to write FINISHED: ${(e as Error).message}\n`);
         }
+        emitCpuReceipt(runId, status, cpuSeconds, cost); // #2133 — never throws
         emitSolveStanza(runDir); // Plan 3 / L1 Task 5 — never throws; a ledger hiccup must never fail a run
         events.push({ kind: "finished", status, exitCode });
         events.close();

@@ -123,7 +123,8 @@ describe("placement ladder (#2045 E.1/E.2)", () => {
     const root = tmpRoot();
     const r = await runCli(
       ["run", fakeJulia(root, "s.jl", ""), "--runs-root", join(root, "runs"), "--julia", fakeJulia(root, "j", "process.exit(0)")],
-      cliEnv({ AMICO_RUN_PLACEMENT: "none" }),
+      // every local run now appends a CPU receipt (#2133): give it a writable ledger so "silently" holds
+      cliEnv({ AMICO_RUN_PLACEMENT: "none", AMICO_LEDGER: join(root, "ledger.jsonl") }),
     );
     expect(r.code).toBe(0);
     expect(r.stderr).toBe("");
