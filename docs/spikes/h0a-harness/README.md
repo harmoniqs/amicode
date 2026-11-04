@@ -76,7 +76,7 @@ A transient unit's `PATH` is minimal; `run.sh` falls back to `$HOME/.bun/bin/bun
   own process group/session (again by exact pid; a zombie is ignored), then report anything still alive. It never
   signals by command-line text or cwd, and never `pkill`s. The report is in `final.json` / `summary.json` (`leftovers`); the
   run exits 4 if it is not empty.
-- After a run, `bash ~/.amico/vaults/vault-aaron/amicode/scratchpad/cast-leak-check.sh <run dir> <repo dir>` must exit 0.
+- After a run, the operator's leak check (a script that scans the run dir and the repo for stray processes, listeners and files; kept outside this repo) must exit 0.
 
 ## Output files (`<out>`)
 

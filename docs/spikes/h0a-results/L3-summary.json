@@ -1,0 +1,251 @@
+{
+  "verdict": "fail",
+  "criteria": [
+    {
+      "criterion": "latency",
+      "samples": 28800,
+      "host_p99_ms": 336.7,
+      "control_p99_ms": 25.9,
+      "excess_p99_ms": 310.8,
+      "host_p50_ms": 10.9,
+      "control_p50_ms": 0.7,
+      "host_max_ms": 1252.09,
+      "host_non200_fraction": 0,
+      "status": "fail",
+      "detail": "excess 310.8 ms (< 250) and host p99 336.7 ms (< 500)"
+    },
+    {
+      "criterion": "no_wedge",
+      "status": "pass",
+      "wedges": 0,
+      "wedge_events": [],
+      "warmup_wedges": 0,
+      "unplanned_host_exits": 0,
+      "missed_ticks": 0,
+      "detail": "0 wedge event(s) in the window, 0 unplanned host exit(s); 0 wedge(s) during warm-up (excluded)"
+    },
+    {
+      "criterion": "memory",
+      "status": "pass",
+      "samples": 719,
+      "window_s": 7188.097,
+      "rss_start_bytes": 508801024,
+      "rss_end_bytes": 686260224,
+      "rss_max_bytes": 872611840,
+      "growth_bytes": 177459200,
+      "slope_bytes_per_hour": 124209792.89287457,
+      "projected_rss_24h_bytes": 3539579816.9127026,
+      "extrapolation_reliable": true,
+      "detail": "growth 177.5 MB (< 2000); least-squares projection at 24 h 3.54 GB (< 8)"
+    },
+    {
+      "criterion": "turns",
+      "status": "pass",
+      "started": 24789,
+      "succeeded": 24789,
+      "failed": 0,
+      "interrupted": 0,
+      "lost": 0,
+      "completion_rate": 1,
+      "ended_via_poll": 0,
+      "detail": "24789/24789 completed (>= 99 %); 0 silently lost (must be 0)"
+    }
+  ],
+  "driver_saturated": false,
+  "driver_p99_drift_ms": 18.1,
+  "driver_p99_drift_limit_ms": 50,
+  "harness_unplanned_exits": [],
+  "host_cpu_seconds": 4770.39,
+  "harness_cost": {
+    "model": {
+      "cpu_s": 143.89,
+      "rss_end_bytes": 30281728
+    },
+    "control": {
+      "cpu_s": 13.29,
+      "rss_end_bytes": 17391616
+    }
+  },
+  "load1": {
+    "mean": 25.45,
+    "max": 35.67
+  },
+  "problems": [],
+  "config": {
+    "event": "window",
+    "t0": 1793651659041,
+    "measure_from": 1793651959041,
+    "measure_until": 1793659159041,
+    "sessions": 36,
+    "subscribers": 13,
+    "chaos_subscribers": [
+      30
+    ],
+    "duration_s": 7200,
+    "warmup_s": 300,
+    "seed": 3,
+    "ports": {
+      "model": 53507,
+      "control": 53929,
+      "host": 53208
+    },
+    "host_pid": 2281189,
+    "bun": "1.4.2",
+    "model_s": [
+      2,
+      8
+    ],
+    "reconnect_s": [
+      120,
+      300
+    ],
+    "fault": null,
+    "started_at": "2026-11-02T20:34:19.041Z"
+  },
+  "model_stats": {
+    "requests": 31160,
+    "active": 0,
+    "maxActive": 36,
+    "completed": 31160,
+    "aborted": 0,
+    "text": 22959,
+    "reasoning": 2981,
+    "tool": 5220,
+    "other": 0
+  },
+  "driver_stats": {
+    "turns_started": 25940,
+    "succeeded": 25940,
+    "failed": 0,
+    "interrupted": 0,
+    "lost": 0,
+    "via_poll": 0,
+    "post_errors": 0,
+    "unfinished_at_stop": 0,
+    "session_create_errors": 0,
+    "polls": 2900,
+    "poll_errors": 0,
+    "subscribers": {
+      "global": {
+        "frames": 773272,
+        "connects": 1,
+        "disconnects": 1,
+        "planned_aborts": 0,
+        "unplanned_ends": 0,
+        "seq_gaps": 0,
+        "seq_gap_frames": 0
+      },
+      "session-0": {
+        "frames": 773231,
+        "connects": 1,
+        "disconnects": 1,
+        "planned_aborts": 0,
+        "unplanned_ends": 0,
+        "seq_gaps": 0,
+        "seq_gap_frames": 0
+      },
+      "session-3": {
+        "frames": 773231,
+        "connects": 1,
+        "disconnects": 1,
+        "planned_aborts": 0,
+        "unplanned_ends": 0,
+        "seq_gaps": 0,
+        "seq_gap_frames": 0
+      },
+      "session-6": {
+        "frames": 773231,
+        "connects": 1,
+        "disconnects": 1,
+        "planned_aborts": 0,
+        "unplanned_ends": 0,
+        "seq_gaps": 0,
+        "seq_gap_frames": 0
+      },
+      "session-9": {
+        "frames": 773231,
+        "connects": 1,
+        "disconnects": 1,
+        "planned_aborts": 0,
+        "unplanned_ends": 0,
+        "seq_gaps": 0,
+        "seq_gap_frames": 0
+      },
+      "session-12": {
+        "frames": 773231,
+        "connects": 1,
+        "disconnects": 1,
+        "planned_aborts": 0,
+        "unplanned_ends": 0,
+        "seq_gaps": 0,
+        "seq_gap_frames": 0
+      },
+      "session-15": {
+        "frames": 773231,
+        "connects": 1,
+        "disconnects": 1,
+        "planned_aborts": 0,
+        "unplanned_ends": 0,
+        "seq_gaps": 0,
+        "seq_gap_frames": 0
+      },
+      "session-18": {
+        "frames": 773231,
+        "connects": 1,
+        "disconnects": 1,
+        "planned_aborts": 0,
+        "unplanned_ends": 0,
+        "seq_gaps": 0,
+        "seq_gap_frames": 0
+      },
+      "session-21": {
+        "frames": 773231,
+        "connects": 1,
+        "disconnects": 1,
+        "planned_aborts": 0,
+        "unplanned_ends": 0,
+        "seq_gaps": 0,
+        "seq_gap_frames": 0
+      },
+      "session-24": {
+        "frames": 773231,
+        "connects": 1,
+        "disconnects": 1,
+        "planned_aborts": 0,
+        "unplanned_ends": 0,
+        "seq_gaps": 0,
+        "seq_gap_frames": 0
+      },
+      "session-27": {
+        "frames": 773231,
+        "connects": 1,
+        "disconnects": 1,
+        "planned_aborts": 0,
+        "unplanned_ends": 0,
+        "seq_gaps": 0,
+        "seq_gap_frames": 0
+      },
+      "session-30": {
+        "frames": 772149,
+        "connects": 35,
+        "disconnects": 35,
+        "planned_aborts": 34,
+        "unplanned_ends": 0,
+        "seq_gaps": 162,
+        "seq_gap_frames": 437
+      },
+      "session-33": {
+        "frames": 773231,
+        "connects": 1,
+        "disconnects": 1,
+        "planned_aborts": 0,
+        "unplanned_ends": 0,
+        "seq_gaps": 0,
+        "seq_gap_frames": 0
+      }
+    },
+    "killed": false
+  },
+  "leftovers": [],
+  "run_dir": "/tmp/opencode/h0a/L3"
+}
