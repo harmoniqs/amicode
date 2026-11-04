@@ -15,6 +15,12 @@ export interface SubmitOpts {
   /** #2045: how the orchestrator that owns this run is placed, recorded in run.lock.
    *  Default: in-process, unprotected (`none`, no unit). */
   lock?: { protection: "unit" | "none"; unit?: string | null };
+  /** #2133: cost attribution. `principal` / `lab` default to $AMICO_PRINCIPAL / $AMICO_LAB (the
+   *  future hub frontdoor sets them); absent ⇒ rolled up as `(unattributed)`. NOTE `lab` here is the
+   *  Lab the spend is charged to — not the hardware-lab pointer in `SubmitOpts.lab`. `ratesPath`
+   *  overrides ~/.amico/amicode/rates.json; `cgroupDir` overrides the unit's cgroup (a dir holding
+   *  `cpu.stat`) — both are test seams. */
+  cost?: { principal?: string; lab?: string; ratesPath?: string; cgroupDir?: string };
   heartbeatMs?: number; // run.lock heartbeat; default 30 s. Test knob, NOT exposed in the CLI.
 }
 

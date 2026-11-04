@@ -266,10 +266,49 @@ describe("the receipt record (GPU accounting, #425)", () => {
     expect(validate(receipt({ gpu_seconds: "1800" }), "ledger-record").ok).toBe(false);
     expect(validate(receipt({ cost_usd: -0.01 }), "ledger-record").ok).toBe(false);
   });
-  it("executor is an enum — local receipts make no sense (nothing burns)", () => {
-    expect(validate(receipt({ executor: "local" }), "ledger-record").ok).toBe(false);
+  it("executor is an enum — local (CPU of a solve on this host, #2133) and remote; nothing else", () => {
+    expect(validate(receipt({ executor: "local" }), "ledger-record").ok).toBe(true);
+    expect(validate(receipt({ executor: "elsewhere" }), "ledger-record").ok).toBe(false);
   });
   it("optional problem/session stamps for attribution", () => {
     expect(validate(receipt({ problem: "cx-cat-cat-cavity", session: "s1" }), "ledger-record")).toMatchObject({ ok: true });
+  });
+});
+
+// ── the local CPU receipt (#2133): cost attribution from the solve unit's cgroup ────
+describe("the local CPU receipt (cost attribution, #2133)", () => {
+  const local = (over: Record<string, unknown> = {}) => ({
+    type: "receipt",
+    ts: "2026-11-04T12:00:00.000Z",
+    task_id: "r20261104-120000Z-abc123",
+    executor: "local",
+    cpu_seconds: 1.5,
+    cost_usd: 0.000075,
+    cost_basis: "list_price_estimate",
+    principal: "aaron",
+    lab: "harmoniqs",
+    status: "completed",
+    ...over,
+  });
+  it("accepts cpu_seconds, cost_usd, cost_basis, principal and lab", () => {
+    expect(validate(local(), "ledger-record")).toMatchObject({ ok: true });
+  });
+  it("accepts an unmeasured receipt: no cpu_seconds, no cost_usd, cost_basis unmeasured", () => {
+    expect(
+      validate(local({ cpu_seconds: undefined, cost_usd: undefined, cost_basis: "unmeasured", principal: undefined, lab: undefined }), "ledger-record"),
+    ).toMatchObject({ ok: true });
+  });
+  it("rejects bad types: string cpu_seconds, negative cpu_seconds, zero cost_usd, unknown cost_basis, empty/non-string principal or lab", () => {
+    for (const over of [
+      { cpu_seconds: "1.5" },
+      { cpu_seconds: -1 },
+      { cost_usd: 0 },
+      { cost_basis: "invoice" },
+      { principal: "" },
+      { principal: 7 },
+      { lab: "" },
+      { lab: ["a"] },
+    ])
+      expect(validate(local(over), "ledger-record").ok, JSON.stringify(over)).toBe(false);
   });
 });

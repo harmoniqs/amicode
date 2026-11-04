@@ -274,10 +274,21 @@ export interface ReceiptRecord {
   type: "receipt";
   ts: string;
   task_id: string;
-  executor: "remote";
+  /** `local` = CPU burned by a solve on this host (#2133); `remote` = cloud GPU solve. */
+  executor: "local" | "remote";
   gpu_sku?: string;
   gpu_seconds?: number;
+  /** CPU-seconds of a local solve, measured from its unit's cgroup (never process.cpuUsage()).
+   *  Absent when no cgroup was available — see cost_basis. */
+  cpu_seconds?: number;
   cost_usd?: number;
+  /** `list_price_estimate` = cost_usd is cpu_seconds × the configured list rate (not an invoice);
+   *  `unmeasured` = no cgroup, so no seconds and no dollars. */
+  cost_basis?: "list_price_estimate" | "unmeasured";
+  /** Person principal the run is charged to (central-hub attribution). */
+  principal?: string;
+  /** Lab the run is charged to. */
+  lab?: string;
   problem?: string;
   session?: string;
   status?: "completed" | "failed" | "aborted";
@@ -341,7 +352,7 @@ export function gpuTotals(file = ledgerPath()): GpuTotals {
     } catch {
       continue; // a torn line never breaks accounting
     }
-    if (rec.type !== "receipt") continue;
+    if (rec.type !== "receipt" || rec.executor === "local") continue; // local CPU rows: see costTotals
     t.receipts += 1;
     if (rec.gpu_seconds !== undefined) t.gpu_seconds += rec.gpu_seconds;
     if (rec.cost_usd !== undefined) t.cost_usd += rec.cost_usd;
@@ -354,6 +365,47 @@ export function gpuTotals(file = ledgerPath()): GpuTotals {
     if (rec.status !== undefined) t.by_status[rec.status] = (t.by_status[rec.status] ?? 0) + 1;
   }
   t.cost_usd = Math.round(t.cost_usd * 1e4) / 1e4;
+  return t;
+}
+
+export interface CostBucket {
+  receipts: number;
+  cpu_seconds: number;
+  cost_usd: number;
+  /** receipts with no cpu_seconds (nothing could be measured) */
+  unmeasured: number;
+}
+
+export interface CostTotals extends CostBucket {
+  by_principal: Record<string, CostBucket>;
+  by_lab: Record<string, CostBucket>;
+}
+
+export const UNATTRIBUTED = "(unattributed)";
+
+/** CPU cost rollup over LOCAL receipt rows, by principal and by Lab (#2133). Pure; never throws;
+ *  zeros on empty. A row with no principal / lab rolls up under `(unattributed)`, so each
+ *  breakdown sums to the total. Rounding to 1e-4 happens here only — per-record values stay raw. */
+export function costTotals(records: readonly LedgerRecord[]): CostTotals {
+  const bucket = (): CostBucket => ({ receipts: 0, cpu_seconds: 0, cost_usd: 0, unmeasured: 0 });
+  const t: CostTotals = { ...bucket(), by_principal: {}, by_lab: {} };
+  const add = (b: CostBucket, r: ReceiptRecord): void => {
+    b.receipts += 1;
+    if (r.cpu_seconds === undefined) b.unmeasured += 1;
+    else b.cpu_seconds += r.cpu_seconds;
+    if (r.cost_usd !== undefined) b.cost_usd += r.cost_usd;
+  };
+  for (const rec of records) {
+    if (rec.type !== "receipt" || rec.executor !== "local") continue;
+    add(t, rec);
+    add((t.by_principal[rec.principal ?? UNATTRIBUTED] ??= bucket()), rec);
+    add((t.by_lab[rec.lab ?? UNATTRIBUTED] ??= bucket()), rec);
+  }
+  const round = (b: CostBucket): void => {
+    b.cpu_seconds = Math.round(b.cpu_seconds * 1e4) / 1e4;
+    b.cost_usd = Math.round(b.cost_usd * 1e4) / 1e4;
+  };
+  [t, ...Object.values(t.by_principal), ...Object.values(t.by_lab)].forEach(round);
   return t;
 }
 

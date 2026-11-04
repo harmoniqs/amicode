@@ -861,7 +861,7 @@
     },
     {
       "title": "receipt",
-      "description": "GPU/compute accounting for a remote run (#425, GPU-plane spec): pure spend record \u2014 no fidelity, never feeds priors. Emitted by the remote executor at settle from the runner's finished payload; the campaign warrant fold sums these (unit-keyed bounds, telaio #5). A receipt names WHAT consumed (task_id) and WHERE (executor: remote) \u2014 local runs burn nothing billable and produce none.",
+      "description": "GPU/compute accounting for a remote run (#425, GPU-plane spec): pure spend record \u2014 no fidelity, never feeds priors. Emitted by the remote executor at settle from the runner's finished payload; the campaign warrant fold sums these (unit-keyed bounds, telaio #5). A receipt names WHAT consumed (task_id) and WHERE (executor: remote = cloud GPU; local = CPU of a solve on this host, #2133: cpu_seconds measured from the solve unit's cgroup, never process.cpuUsage(); cost_usd = cpu_seconds x the human-edited list rate, cost_basis names its provenance; principal and lab attribute the spend).",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -882,7 +882,10 @@
           "minLength": 1
         },
         "executor": {
-          "const": "remote"
+          "enum": [
+            "local",
+            "remote"
+          ]
         },
         "gpu_sku": {
           "type": "string",
@@ -892,9 +895,27 @@
           "type": "number",
           "exclusiveMinimum": 0
         },
+        "cpu_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
         "cost_usd": {
           "type": "number",
           "exclusiveMinimum": 0
+        },
+        "cost_basis": {
+          "enum": [
+            "list_price_estimate",
+            "unmeasured"
+          ]
+        },
+        "principal": {
+          "type": "string",
+          "minLength": 1
+        },
+        "lab": {
+          "type": "string",
+          "minLength": 1
         },
         "problem": {
           "type": "string",

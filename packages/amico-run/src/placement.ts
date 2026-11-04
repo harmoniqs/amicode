@@ -28,7 +28,7 @@ export function unitPrefix(env: NodeJS.ProcessEnv = process.env): string {
 }
 
 /** Env for the systemd-run / setsid subprocess: the user bus must be discoverable. */
-function managerEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+export function managerEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const out = { ...env };
   delete out.BUN_INSPECT;
   if (!out.XDG_RUNTIME_DIR) {
