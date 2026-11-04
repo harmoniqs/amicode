@@ -165,7 +165,9 @@ describe("LocalExecutor.settle() emits the solve ledger stanza", () => {
     await collect(h.events);
     const fin = await h.finished;
     expect(fin.status).toBe("completed"); // the run itself is unaffected
-    expect(readRecords()).toEqual([]);
+    // Cost ledger (#1875/#1880): a local run now emits a `receipt` stanza
+    // attributed to CPU-seconds, but no `solve` stanza when there is no result.toml.
+    expect(readRecords().filter((r) => r.type === "solve")).toEqual([]);
   });
 
   // REGRESSION (found by adversarial spec review, 2026-07-28): the `max_solves`
@@ -226,6 +228,6 @@ describe("LocalExecutor.settle() emits the solve ledger stanza", () => {
     const h = await new LocalExecutor().submit(script, { runsRoot: join(root, "runs"), julia: { julia } });
     await collect(h.events);
     await h.finished;
-    expect(readRecords()).toEqual([]);
+    expect(readRecords().filter((r) => r.type === "solve")).toEqual([]);
   });
 });

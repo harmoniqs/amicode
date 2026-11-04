@@ -8,6 +8,7 @@ export interface JuliaOpts {
 
 export interface SubmitOpts {
   lab?: string; // lab POINTER (id or lab.toml path), passed through verbatim; default "default"
+  principal?: string; // person principal who owns the run (central-hub attribution)
   runsRoot?: string; // default: ~/.amico/runs/<lab-id>/
   julia?: JuliaOpts;
   graceMs?: number; // abort SIGTERM→SIGKILL grace; default 5000. Test knob, NOT exposed in the CLI.

@@ -30,7 +30,7 @@
             "ro",
             "rw"
           ],
-          "description": "THE autonomy datum (codesign SEAM 6, the one-autonomy doctrine): the SINGLE switch for what a warrant may do to a device — one enum, one definition (this schema), three documented meanings, no second knob (any other device-permission-shaped field in bounds is rejected by additionalProperties:false; any value outside this enum is rejected here). none = no device access; ro = read-only device access; rw = device writes permitted — and even then only inside a real-board session, which is an enumerated human gate, never a schema-granted right. Three-systems contract, stated once with each counterpart's criterion NAMED under its own owner (never claimed as another's): amicode's bounds are THIS schema (the one definition); the P4 gate's end-to-end read is merge-gated on strumento #75 MERGED (not verified here); Telaio's warrant-bounds deserialization conformance is their campaign's criterion."
+          "description": "THE autonomy datum (codesign SEAM 6, the one-autonomy doctrine): the SINGLE switch for what a warrant may do to a device \u2014 one enum, one definition (this schema), three documented meanings, no second knob (any other device-permission-shaped field in bounds is rejected by additionalProperties:false; any value outside this enum is rejected here). none = no device access; ro = read-only device access; rw = device writes permitted \u2014 and even then only inside a real-board session, which is an enumerated human gate, never a schema-granted right. Three-systems contract, stated once with each counterpart's criterion NAMED under its own owner (never claimed as another's): amicode's bounds are THIS schema (the one definition); the P4 gate's end-to-end read is merge-gated on strumento #75 MERGED (not verified here); Telaio's warrant-bounds deserialization conformance is their campaign's criterion."
         }
       }
     }
@@ -882,7 +882,11 @@
           "minLength": 1
         },
         "executor": {
-          "const": "remote"
+          "enum": [
+            "local",
+            "modal",
+            "remote"
+          ]
         },
         "gpu_sku": {
           "type": "string",
@@ -909,6 +913,18 @@
             "failed",
             "aborted"
           ]
+        },
+        "cpu_seconds": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "principal": {
+          "type": "string",
+          "minLength": 1
+        },
+        "lab": {
+          "type": "string",
+          "minLength": 1
         }
       }
     }

@@ -274,12 +274,20 @@ export interface ReceiptRecord {
   type: "receipt";
   ts: string;
   task_id: string;
-  executor: "remote";
+  /** Where the work ran. `local` = on the hub/host CPU; `modal` = Modal execution
+   *  site; `remote` = cloud solve service. */
+  executor: "local" | "modal" | "remote";
   gpu_sku?: string;
   gpu_seconds?: number;
+  /** CPU-seconds consumed by a local run (costed at the hub's CPU rate). */
+  cpu_seconds?: number;
   cost_usd?: number;
   problem?: string;
   session?: string;
+  /** Person principal who owned the run (central-hub attribution, #1875). */
+  principal?: string;
+  /** Lab the run was charged to (central-hub budget, #1880). */
+  lab?: string;
   status?: "completed" | "failed" | "aborted";
 }
 
@@ -354,6 +362,48 @@ export function gpuTotals(file = ledgerPath()): GpuTotals {
     if (rec.status !== undefined) t.by_status[rec.status] = (t.by_status[rec.status] ?? 0) + 1;
   }
   t.cost_usd = Math.round(t.cost_usd * 1e4) / 1e4;
+  return t;
+}
+
+/** Cost totals across receipt rows, broken down by principal and Lab (central-hub
+ *  spend plane). Pure aggregation; never throws; zeros on empty. */
+export interface CostTotals {
+  receipts: number;
+  cpu_seconds: number;
+  gpu_seconds: number;
+  cost_usd: number;
+  by_principal: Record<string, { receipts: number; cpu_seconds: number; gpu_seconds: number; cost_usd: number }>;
+  by_lab: Record<string, { receipts: number; cpu_seconds: number; gpu_seconds: number; cost_usd: number }>;
+}
+
+export function costTotals(file = ledgerPath()): CostTotals {
+  const t: CostTotals = { receipts: 0, cpu_seconds: 0, gpu_seconds: 0, cost_usd: 0, by_principal: {}, by_lab: {} };
+  let raw: string;
+  try { raw = readFileSync(file, "utf8"); } catch { return t; }
+  for (const line of raw.split("\\n")) {
+    if (!line.trim()) continue;
+    let rec: LedgerRecord;
+    try { rec = JSON.parse(line) as LedgerRecord; } catch { continue; }
+    if (rec.type !== "receipt") continue;
+    t.receipts += 1;
+    if (rec.cpu_seconds !== undefined) t.cpu_seconds += rec.cpu_seconds;
+    if (rec.gpu_seconds !== undefined) t.gpu_seconds += rec.gpu_seconds;
+    if (rec.cost_usd !== undefined) t.cost_usd += rec.cost_usd;
+    const keyP = rec.principal ?? "(unattributed)";
+    const keyL = rec.lab ?? "(unattributed)";
+    for (const [key, bucket] of [[keyP, t.by_principal], [keyL, t.by_lab]] as const) {
+      const b = bucket[key] ?? { receipts: 0, cpu_seconds: 0, gpu_seconds: 0, cost_usd: 0 };
+      b.receipts += 1;
+      if (rec.cpu_seconds !== undefined) b.cpu_seconds += rec.cpu_seconds;
+      if (rec.gpu_seconds !== undefined) b.gpu_seconds += rec.gpu_seconds;
+      if (rec.cost_usd !== undefined) b.cost_usd += rec.cost_usd;
+      bucket[key] = b;
+    }
+  }
+  t.cost_usd = Math.round(t.cost_usd * 1e4) / 1e4;
+  for (const bucket of [t.by_principal, t.by_lab]) {
+    for (const k of Object.keys(bucket)) bucket[k].cost_usd = Math.round(bucket[k].cost_usd * 1e4) / 1e4;
+  }
   return t;
 }
 

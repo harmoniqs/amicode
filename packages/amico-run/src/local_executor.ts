@@ -5,7 +5,7 @@ import { delimiter, join, resolve } from "node:path";
 import * as readline from "node:readline";
 import { parse as tomlParse, stringify as tomlStringify } from "smol-toml";
 import { EventQueue } from "./event_queue.js";
-import { appendRecord, type SolveOutcome, type SolveRecord, type SolveSummary } from "./ledger.js";
+import { appendRecord, type ReceiptRecord, type SolveOutcome, type SolveRecord, type SolveSummary } from "./ledger.js";
 import { classifyLine } from "./telemetry.js";
 import {
   appendIndex,
@@ -299,6 +299,7 @@ export class LocalExecutor implements Executor {
 
     let settled = false;
     let aborting = false;
+    const startCpu = process.cpuUsage();
     const settle = (status: RunStatus, exitCode: number): void => {
       if (settled) return;
       settled = true;
@@ -309,6 +310,36 @@ export class LocalExecutor implements Executor {
         process.stderr.write(`amico-run: failed to write FINISHED: ${(e as Error).message}\n`);
       }
       emitSolveStanza(runDir); // Plan 3 / L1 Task 5 — never throws; a ledger hiccup must never fail a run
+
+      // Cost ledger (central-hub #1875/#1880): attribute CPU time to the run's
+      // principal and Lab. Best-effort; never fail the run.
+      try {
+        const cpu = process.cpuUsage(startCpu);
+        const cpuSeconds = (cpu.user + cpu.system) / 1e6;
+        // List-price estimate: CPU-seconds * a small per-second rate. Labeled
+        // "list price, not invoice" until reconciled against invoices.
+        const CPU_RATE_USD_PER_SEC = 0.00005;
+        const rawCost = cpuSeconds > 0 ? cpuSeconds * CPU_RATE_USD_PER_SEC : 0;
+        const costUsd = rawCost > 0 ? Math.round(rawCost * 1e6) / 1e6 : undefined;
+        if (costUsd !== undefined && costUsd <= 0) {
+          // below schema precision; omit rather than violate exclusiveMinimum
+        }
+        const rec: ReceiptRecord = {
+          type: "receipt",
+          ts: new Date().toISOString(),
+          task_id: runId,
+          executor: "local",
+          cpu_seconds: cpuSeconds > 0 ? cpuSeconds : undefined,
+          cost_usd: costUsd && costUsd > 0 ? costUsd : undefined,
+          principal: opts.principal,
+          lab: opts.lab,
+          status: status === "completed" ? "completed" : status === "aborted" ? "aborted" : "failed",
+        };
+        // Only emit when we have something to attribute (principal or lab or cpu).
+        if (rec.principal || rec.lab || rec.cpu_seconds) appendRecord(rec);
+      } catch (e) {
+        process.stderr.write(`amico-run: failed to emit receipt stanza: ${(e as Error).message}\n`);
+      }
 
       // WAIT FOR run.log TO ACTUALLY FLUSH before announcing completion.
       //
