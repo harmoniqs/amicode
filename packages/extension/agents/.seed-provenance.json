@@ -9,30 +9,30 @@
     {
       "role": "hypothesizer",
       "source_path": "/home/aaron/.amico/server/opencode-project-staging/opencode-project/.opencode/agents/hypothesizer.md",
-      "seeded_sha256": "sha256:096fa4ba69acfae0d18036ab80b4b58a1e1edb8d7a9a4c6ff01dc16e3ef57880",
+      "seeded_sha256": "sha256:253528e0eedc9bf46aa6b800c9ed94a07ba63c635e609f02bf90d9182747c672",
       "seeded_at": "2026-08-18T19:45:34.000Z"
     },
     {
       "role": "experimenter",
       "source_path": "/home/aaron/.amico/server/opencode-project-staging/opencode-project/.opencode/agents/experimenter.md",
-      "seeded_sha256": "sha256:4497d4d5aa3188a3e28626b86c2e91498e7799928893e2560b880f847901bc8d",
+      "seeded_sha256": "sha256:46fd8f01386d674be2e64a290874a1dffb1bdd47f0b2f979eea8a535e3e47d7e",
       "seeded_at": "2026-08-18T19:45:39.000Z"
     },
     {
       "role": "analyzer",
       "source_path": "/home/aaron/.amico/server/opencode-project-staging/opencode-project/.opencode/agents/analyzer.md",
-      "seeded_sha256": "sha256:c0f190aa8636bee4ab2a3211e4cd16fb24994a0ff0ce2d3eaddff2a84b3ff6f9",
+      "seeded_sha256": "sha256:8f64825ce71a910a3e537a10951d52f13858bbf23f6181a5f1f202af7ff40ccf",
       "seeded_at": "2026-08-18T19:45:39.000Z"
     },
     {
       "role": "implementer",
       "source_path": "/home/aaron/.amico/server/opencode-project-staging/opencode-project/.opencode/agents/implementer.md",
-      "seeded_sha256": "sha256:6b489254c13f960fc75822046276c33fd25b6b7c8c689e85efe8140442097eb0",
+      "seeded_sha256": "sha256:027b40fbe5ac0ad590026e0b41d9b72120fac994a0b27be993a1475524b5d4a1",
       "seeded_at": "2026-08-20T18:24:56.000Z"
     }
   ],
   "amended": true,
-  "amended_at": "2026-11-02T00:00:00.000Z",
-  "amendment_signed_by": "aaron via harmoniqs/amicode#860 amendment 1 (S3 model routing); amendment 2 via harmoniqs/amicode#1133 (post-campaign linkage-audit slice — the cast cards learn their hooks, the audit's items 1-2, AFK walk); amendment 3 via harmoniqs/amicode#2093 (receipt return contract — system-v2 audit slice, orchestrated walk)",
-  "amendment_note": "Amendment 3 (receipt return contract, #2093, 2026-11-02): each of the four cast cards gains the identical '## Return contract (receipt)' section the critic and librarian cards also carry — the full work product goes to a file the caller names (or a reported scratch path; read-only roles hand it over as one fenced block after the receipt for the caller to file), and the final message is a receipt of at most ~1,500 tokens (verdict/status, key numbers, artifact paths, open items). The implementer's step-7 structured yaml is named as its receipt; the hypothesizer's return line routes the full spec-card draft to the work product. Amendment 2 (post-campaign linkage audit, 2026-09-14): the four cast cards learn the landed skill-integrity hooks — analyzer gains duty #6 (the skill-friction check: instructions-vs-reality mismatches → findings-ledger notes quoting both sources; repeated un-skilled idioms → proposal-type findings, provenance-tagged), implementer's structured-return enumeration gains skill_findings (the front-line rule: findings, never silent workarounds), hypothesizer's briefing gains the campaign findings ledger (amicode/skills-integrity/findings/, personal vault) as a prior, experimenter's checkout-registry path moves to the Research-Project location <project>/ledger/campaigns/CHECKOUTS.md. Amendment 1 (S3 model routing, #860): the model_routing slots of the four seeded role cards were filled with CLASS-level prefer-lists (a '## Model routing' section appending one 'Model routing, suggested:' line naming workhorse / strongest-reasoner / fast-cheap — the public suggestion vocabulary, never tuned assignments). seeded_sha256 entries updated to the amended bytes per this record's amendment protocol."
+  "amended_at": "2026-11-04T00:00:00.000Z",
+  "amendment_signed_by": "aaron via harmoniqs/amicode#860 amendment 1 (S3 model routing); amendment 2 via harmoniqs/amicode#1133 (post-campaign linkage-audit slice — the cast cards learn their hooks, the audit's items 1-2, AFK walk); amendment 3 via harmoniqs/amicode#2093 (receipt return contract — system-v2 audit slice, orchestrated walk); amendment 4 via harmoniqs/amicode#2118 (Method sections and overlay dispatch — Amicissimo release-audit slice, orchestrated walk)",
+  "amendment_note": "Amendment 4 (Method sections and overlay dispatch, #2118, 2026-11-04): each of the four cast cards gains 'dispatch: <role>-tuning' in its frontmatter and a '## Method' section carrying a complete default for every method-class dimension, modelled on the librarian card — a numbered 'Default procedure' (the card's existing job text moved into it; the Briefing, Rules/Hard rules and Return paragraphs stay in place above it), the card's existing 'Model routing, suggested:' content as 'Model routing, default:' (the separate '## Model routing' section is folded in and removed), an 'Iteration budget, default:' derived from the card's steps cap and role, and an 'Example brief' in a text fence — so an entitled overlay always merges as a delta on a working default instead of throwing a missing-anchor error. The permission frontmatter, mode, temperature, steps, and the Return contract (receipt) section are byte-unchanged; no rule was weakened. Amendment 3 (receipt return contract, #2093, 2026-11-02): each of the four cast cards gains the identical '## Return contract (receipt)' section the critic and librarian cards also carry — the full work product goes to a file the caller names (or a reported scratch path; read-only roles hand it over as one fenced block after the receipt for the caller to file), and the final message is a receipt of at most ~1,500 tokens (verdict/status, key numbers, artifact paths, open items). The implementer's step-7 structured yaml is named as its receipt; the hypothesizer's return line routes the full spec-card draft to the work product. Amendment 2 (post-campaign linkage audit, 2026-09-14): the four cast cards learn the landed skill-integrity hooks — analyzer gains duty #6 (the skill-friction check: instructions-vs-reality mismatches → findings-ledger notes quoting both sources; repeated un-skilled idioms → proposal-type findings, provenance-tagged), implementer's structured-return enumeration gains skill_findings (the front-line rule: findings, never silent workarounds), hypothesizer's briefing gains the campaign findings ledger (amicode/skills-integrity/findings/, personal vault) as a prior, experimenter's checkout-registry path moves to the Research-Project location <project>/ledger/campaigns/CHECKOUTS.md. Amendment 1 (S3 model routing, #860): the model_routing slots of the four seeded role cards were filled with CLASS-level prefer-lists (a '## Model routing' section appending one 'Model routing, suggested:' line naming workhorse / strongest-reasoner / fast-cheap — the public suggestion vocabulary, never tuned assignments). seeded_sha256 entries updated to the amended bytes per this record's amendment protocol."
 }

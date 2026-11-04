@@ -198,7 +198,7 @@ describe("staging — the seeded role cards ride the bundle, digest-verified (H2
 
 describe("role-card structural floor (pre-signature: shape, never flagged content)", () => {
   for (const role of ALL_ROLES) {
-    it(`${role}: frontmatter — description, subagent mode, permission scoping, and NO overlay dispatch`, () => {
+    it(`${role}: frontmatter — description, subagent mode, permission scoping, and the <role>-tuning overlay dispatch`, () => {
       const text = cardText(role);
       expect(text.startsWith("---\n")).toBe(true);
       const end = text.indexOf("\n---\n", 4);
@@ -207,9 +207,10 @@ describe("role-card structural floor (pre-signature: shape, never flagged conten
       expect(fm).toMatch(/^description:\s*\S/m);
       expect(fm).toMatch(/^mode:\s*subagent/m);
       expect(fm).toMatch(/^permission:\s*$/m);
-      // role cards are bundle-owned registry artifacts, not overlay-tuned
-      // worker cards (#758's architecture survives on librarian alone)
-      expect(fm, `${role} must not carry a dispatch target`).not.toMatch(/^dispatch:/m);
+      // #2118: the cast cards carry a Method section with a complete default
+      // and dispatch to <role>-tuning, so an entitled overlay can merge
+      // (the merge itself is pinned in card_overlay_merge.test.ts)
+      expect(fm, `${role} dispatches ${role}-tuning`).toMatch(new RegExp(`^dispatch:[ \\t]*${role}-tuning$`, "m"));
     });
 
     it(`${role}: zero blocklisted proprietary strings / banned names`, () => {
