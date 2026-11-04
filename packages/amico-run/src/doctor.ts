@@ -7,6 +7,8 @@ import type { StudioPaths } from "@amicode/schema";
 import { studioPathsOrLegacy } from "@amicode/schema";
 import { readFile, readdir } from "node:fs/promises";
 import { homedir } from "node:os";
+import { amicodeOpsDir } from "./session_retention.js";
+import { distillQueueCheck, readDistillHealth } from "./distill_health.js";
 import { join } from "node:path";
 import {
   surfaceInventory,
@@ -263,6 +265,11 @@ export async function doctorReport(
   } else if (pinned.status === "warn") {
     diagnosis.warnings.push(`pinned_cli: ${pinned.detail}`);
   }
+  // #2098: distill-queue health rides the same checks table — warn (never error)
+  // on parked jobs or a halted drain; read-only, never throws.
+  const distill = distillQueueCheck(readDistillHealth(amicodeOpsDir(process.env)));
+  diagnosis.checks.push(distill);
+  if (distill.status === "warn") diagnosis.warnings.push(`distill_queue: ${distill.detail}`);
   const surfaces = await surfaceInventory(parsed.args.roots);
   const width = Math.max(...diagnosis.checks.map((c) => c.name.length));
   const lines = diagnosis.checks.map((c) => {
