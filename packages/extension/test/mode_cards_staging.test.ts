@@ -294,9 +294,9 @@ describe("stageModCards — overlay merge (entitlement + overlays present)", () 
 
   it("cards with NO dispatch target stage alone, no errors — role cards, directors, and an absent-target synthetic", () => {
     const { destDir, receipt, result } = stageEntitled();
-    // D3 (#806): the four seeded role cards carry no dispatch target —
-    // bundle-owned registry artifacts, never overlay-tuned; the critic
-    // (#2093) is likewise a plain, untuned card
+    // #2118: the four seeded role cards now dispatch <role>-tuning, but no
+    // overlay for them exists in this fixture registry, so they stage alone;
+    // the critic (#2093) is a plain, untuned card with no dispatch target
     for (const card of ["hypothesizer.md", "experimenter.md", "analyzer.md", "implementer.md", "critic.md", "develop.md", "research.md"]) {
       expect(readFileSync(join(destDir, card), "utf8")).toBe(
         readFileSync(join(AGENTS_SRC, card), "utf8"),
@@ -435,29 +435,33 @@ describe("stageModCards — freeze violations stage the base alone, rejection re
 });
 
 // ── #761: the dispatch-target validator ───────────────────────────────────
+/** #2118: the cards that carry a Method section + `dispatch: <role>-tuning`. */
+const DISPATCHING_CARDS = ["analyzer.md", "experimenter.md", "hypothesizer.md", "implementer.md", "librarian.md"];
 describe("dispatch-target validator", () => {
   it("every shipped card with a dispatch target is a well-formed slug; the rest carry none", () => {
     for (const f of expectedCards()) {
       const text = readFileSync(join(AGENTS_SRC, f), "utf8");
       const target = cardDispatch(text);
-      if (f === "librarian.md") {
-        expect(target, "librarian — the surviving worker card — declares a dispatch target").toBeDefined();
+      if (DISPATCHING_CARDS.includes(f)) {
+        expect(target, `${f} declares its <role>-tuning dispatch target`).toBe(`${f.replace(/\.md$/, "")}-tuning`);
         expect(() => validateDispatchTarget(f, target!)).not.toThrow();
       } else {
-        // directors + the four D3-seeded role cards dispatch no overlay
+        // directors and the critic (#2093, no overlay yet) dispatch no overlay
         expect(target, `${f} dispatches no overlay`).toBeUndefined();
       }
     }
   });
 
-  it("after D3 the only shipped dispatch target is librarian-tuning, on librarian alone", () => {
+  it("the shipped dispatch targets are exactly <role>-tuning on the five worker cards (#2118)", () => {
     const targets = new Map<string, string[]>();
     for (const f of expectedCards()) {
       const target = cardDispatch(readFileSync(join(AGENTS_SRC, f), "utf8"));
       if (target === undefined) continue;
       targets.set(target, [...(targets.get(target) ?? []), f]);
     }
-    expect([...targets.entries()]).toEqual([["librarian-tuning", ["librarian.md"]]]);
+    expect([...targets.entries()].sort()).toEqual(
+      DISPATCHING_CARDS.map((f) => [`${f.replace(/\.md$/, "")}-tuning`, [f]] as [string, string[]]).sort(),
+    );
   });
 
   it("a malformed dispatch target throws (loud — a base-card defect)", () => {
