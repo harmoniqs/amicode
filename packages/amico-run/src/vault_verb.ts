@@ -18,7 +18,10 @@
 //         Git-backed mounts additionally carry an additive `sync` object (state
 //         OK|STALE|UNKNOWN|ZOMBIE|ro-by-policy + failure/behind facts) read from the
 //         sync loop's records (vault_sync.ts), and a `warnings` entry for any state
-//         that needs a human (#2033).
+//         that needs a human (#2033). The result also carries an additive top-level
+//         `distill` object — the distill queue's health (ready / backing_off /
+//         retry_due / parked / old_format_failed / oldest_ready_age_s / halt?), read
+//         read-only from `$AMICODE_OPS_DIR` (distill_health.ts, #2098).
 //
 //   amico vault resolve <relpath>
 //       → first-hit lookup of <relpath> across the stack in precedence order:
@@ -34,6 +37,8 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { loadNotesAcross, rankNotes, type QueryOpts } from "./vault_query.js";
 import { resolveMountStack, readVaultMarker } from "./mounts.js";
+import { amicodeOpsDir } from "./session_retention.js";
+import { readDistillHealth } from "./distill_health.js";
 import { isGitBacked, loadSyncRecords, syncInfoFor, syncWarning } from "./vault_sync.js";
 import type { VerbResult } from "./verbs.js";
 
@@ -115,7 +120,8 @@ export function vaultStatus(_argv: string[]): VerbResult {
     if (w) warnings.push(w);
     return { ...base, sync };
   });
-  return { json: { ok: true, mounts, error: null }, code: 0 };
+  // Distill-queue health (#2098): additive top-level field — the per-mount shape is unchanged.
+  return { json: { ok: true, mounts, error: null, distill: readDistillHealth(amicodeOpsDir(process.env)) }, code: 0 };
 }
 
 // ── resolve (first-hit across precedence) ───────────────────────────────────────
