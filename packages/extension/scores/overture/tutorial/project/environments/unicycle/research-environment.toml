@@ -1,0 +1,10 @@
+schema_version = 1
+name = "Unicycle"
+slug = "unicycle"
+created = "2026-01-01"
+description = "A kinematic unicycle: state (x, y, heading), controls (forward speed, turn rate)."
+tags = ["tutorial", "control"]
+
+[domain]
+platform = "python"
+field = "control"

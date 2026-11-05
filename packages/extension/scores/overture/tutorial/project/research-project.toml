@@ -1,0 +1,15 @@
+schema_version = 1
+name = "Unicycle Tutorial"
+slug = "unicycle-tutorial"
+question = "How much does each control loop (feedforward, PID, MPC) improve a unicycle's tracking of a circle?"
+status = "running"
+created = "2026-01-01"
+tags = ["tutorial", "control", "unicycle"]
+
+[domain_pack]
+name = "general"
+
+# The scaffolder resolves this slug against environments/unicycle/ in the
+# project tree (it adds the absolute `path` when it copies the template out).
+[environment]
+slug = "unicycle"
