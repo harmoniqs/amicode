@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { amicodeOpsDir } from "./session_retention.js";
 
 // ============================================================================
 // The selected solver, read from the extension's solver-mode.json contract.
@@ -17,13 +17,8 @@ import { join } from "node:path";
 
 export type SolverMode = "piccolo" | "hp";
 
-/** $AMICODE_OPS_DIR → ~/.amico/amicode — the SAME resolution the fork's
- *  amicodeOpsDir(), the extension, and pasqal_verb.ts use, so we read exactly
- *  the file the extension wrote. */
-function amicodeOpsDir(env: NodeJS.ProcessEnv): string {
-  const v = env.AMICODE_OPS_DIR;
-  return v && v.trim() !== "" ? v : join(homedir(), ".amico", "amicode");
-}
+// amicodeOpsDir (session_retention.ts) is the amico-run resolution: $AMICODE_OPS_DIR
+// → ~/.amico/amicode, so we read exactly the file the extension wrote.
 
 export function solverModeFile(env: NodeJS.ProcessEnv = process.env): string {
   return join(amicodeOpsDir(env), "solver-mode.json");
