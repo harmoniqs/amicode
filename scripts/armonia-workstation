@@ -27,18 +27,27 @@ while [ $# -gt 0 ]; do case "$1" in
 say()  { printf '  %s\n' "$*"; }
 head_() { printf '\n== %s ==\n' "$*"; }
 
-# Code repos: the extension, the design authority, the skill library, the fork.
-CODE=(amicode amico amico-plugin opencode)
+# Code repos: the extension, the design authority. `amico` was renamed to
+# `amicissimo` (cloned into the `amicissimo` directory, which mode_cards.ts and
+# WORKSTATION.md expect). `amico-plugin` is archived and `opencode` is a retired
+# fork (engine source is packages/app-bundle/overlay/); see harmoniqs/amicode#2135.
+CODE=(amicode amicissimo)
 # DEFAULT_SKILL_ROOTS — package skills resolve as <pkg>.jl/skills/<name>/SKILL.md
+# IntonatoQICK.jl is archived (harmoniqs/amicode#2135) and intentionally not cloned.
 PKGS=(Piccolo.jl Piccolissimo.jl DirectTrajOpt.jl NamedTrajectories.jl Intonato.jl
-      Intonatissimo.jl IntonatoQICK.jl Altissimo.jl Legato.jl Legatissimo.jl
+      Intonatissimo.jl Altissimo.jl Legato.jl Legatissimo.jl
       HarmoniqsBenchmarks.jl PiccoloMultidocs.jl CuQuantum.jl JuliaStaticData.jl
       jl2py pypiccolo)
-# Distiller demo-ingest root.
+# Distiller demo-ingest root. embedded-operators-demo is archived (#2135), dropped.
 DEMO_REPOS=(atoms-demo atom-transport-demo braket-testing cloud-demo cryocmos-spin-demo
-      embedded-operators-demo fluxonium-demo ions kerr-readout-stanford nv-center-demo
+      fluxonium-demo ions kerr-readout-stanford nv-center-demo
       nyu-bosonic-demo nyu-multiqubit-demo spin-qubit-demo stanford-bosonics
       syndrome-extraction-demo)
+# Renamed, archived or retired checkouts a workstation built before #2135 still
+# carries. Reported as STALE (never deleted); --check exits nonzero if any exist.
+STALE_DIRS=("$HQ/amico" "$HQ/amico-plugin" "$HQ/opencode"
+            "$HQ/packages/IntonatoQICK.jl" "$HQ/demos/embedded-operators-demo")
+STALE=0
 
 clone_into() { # <dest-dir> <repo>
   local dest="$1/$2"
@@ -59,6 +68,15 @@ if [ "$DEMOS" = 1 ]; then
   head_ "Demos -> $HQ/demos  (distiller demo-ingest)"
   for r in "${DEMO_REPOS[@]}"; do clone_into "$HQ/demos" "$r"; done
 fi
+
+head_ "Stale checkouts from the pre-#2135 layout (reported, never removed)"
+for p in "${STALE_DIRS[@]}"; do
+  if [ -d "$p" ]; then
+    STALE=$((STALE + 1))
+    say "STALE    $p (renamed/archived/retired — remove by hand; not touched)"
+  fi
+done
+[ "$STALE" -eq 0 ] && say "ok       none"
 
 head_ "Vault mounts -> $VAULTS"
 # Canonical state lives HERE, not in ~/harmoniqs. ~/harmoniqs/armonia is only a
@@ -123,3 +141,7 @@ if [ -d "$HQ/amicode" ]; then
 fi
 
 printf '\nDone.%s\n' "$([ "$CHECK" = 1 ] && echo ' (--check: nothing was changed)')"
+
+# --check must not pass a machine that still carries the old layout.
+[ "$CHECK" = 1 ] && [ "$STALE" -gt 0 ] && exit 1
+exit 0
