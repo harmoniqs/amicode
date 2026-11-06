@@ -1008,4 +1008,12 @@ describe("HTML preview routing and sandbox (#2141)", () => {
     expect(htmlViewSrc).not.toMatch(/allow-scripts"/)
     expect(htmlViewSrc).toContain("srcdoc=")
   })
+
+  test("live refresh (#2142): the view polls through the gate, and the parent never clobbers unsaved edits", () => {
+    expect(htmlViewSrc).toContain("shouldPollHtml(")
+    expect(htmlViewSrc).toContain("setInterval(")
+    expect(htmlViewSrc).toContain("clearInterval(")
+    expect(htmlViewSrc).toContain("watcherPathMatches(")
+    expect(fileViewSrc).toMatch(/onExternalContent=\{\(text\) => \{[\s\S]{0,200}if \(unsavedContent\(\) !== null\) return[\s\S]{0,60}setFileContent\(text\)/)
+  })
 })

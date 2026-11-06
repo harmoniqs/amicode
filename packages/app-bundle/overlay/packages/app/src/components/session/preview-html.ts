@@ -221,3 +221,33 @@ export function dataUrlFromRead(
 export function serializeHtml(doc: Document): string {
   return `<!doctype html>\n${doc.documentElement.outerHTML}`
 }
+
+// ---------------------------------------------------------------------------
+// Live refresh (#2142)
+// ---------------------------------------------------------------------------
+
+/** How often a visible rendered page re-reads itself (and its images). The
+ *  engine's watcher only sees the project tree and the agent's own writes; a
+ *  dashboard a script rewrites in the personal vault needs this. */
+export const HTML_POLL_MS = 3000
+
+/** Images are re-read on a poll only while the inlined total stays under this. */
+export const ASSET_POLL_MAX_CHARS = 8_000_000
+
+export function shouldPollHtml(state: { active: boolean; visible: boolean }): boolean {
+  return state.active && state.visible
+}
+
+/** True when any file's inlined data differs, appeared, or vanished. */
+export function assetsChanged(previous: Map<string, string>, next: Map<string, string>): boolean {
+  if (previous.size !== next.size) return true
+  for (const [path, url] of previous) if (next.get(path) !== url) return true
+  return false
+}
+
+/** Watcher events carry absolute paths; an asset path may be project-relative. */
+export function watcherPathMatches(changed: string, asset: string): boolean {
+  if (changed === asset) return true
+  if (asset.startsWith("/")) return false
+  return changed.endsWith(`/${asset}`)
+}

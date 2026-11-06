@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test"
 import {
+  ASSET_POLL_MAX_CHARS,
+  HTML_POLL_MS,
+  MAX_INLINE_CHARS,
+  assetsChanged,
   classifyLink,
   dataUrlFromRead,
   imageMimeFor,
@@ -7,6 +11,8 @@ import {
   prepareHtml,
   resolveLocalRef,
   serializeHtml,
+  shouldPollHtml,
+  watcherPathMatches,
 } from "./preview-html"
 
 // #2141: Preview renders .html pages in a scripts-off sandboxed frame. These
@@ -168,5 +174,41 @@ describe("dataUrlFromRead", () => {
     expect(imageMimeFor("x.svg")).toBe("image/svg+xml")
     expect(imageMimeFor("x.webp")).toBe("image/webp")
     expect(imageMimeFor("x.mp4")).toBeUndefined()
+  })
+})
+
+// #2142: keep the rendered page live when it (or a plot it shows) changes where
+// the engine's watcher cannot see — a script writing into the personal vault.
+describe("live refresh helpers (#2142)", () => {
+  test("polls only while the pane is active and the window is visible", () => {
+    expect(shouldPollHtml({ active: true, visible: true })).toBe(true)
+    expect(shouldPollHtml({ active: false, visible: true })).toBe(false)
+    expect(shouldPollHtml({ active: true, visible: false })).toBe(false)
+  })
+
+  test("asset change detection compares the inlined data per file", () => {
+    const before = new Map([
+      ["/a/f1.png", "data:image/png;base64,AAA"],
+      ["/a/f2.png", "data:image/png;base64,BBB"],
+    ])
+    expect(assetsChanged(before, new Map(before))).toBe(false)
+    expect(assetsChanged(before, new Map([...before, ["/a/f2.png", "data:image/png;base64,CCC"]]))).toBe(true)
+    // a file that could not be read this time counts as a change (it vanished)
+    expect(assetsChanged(before, new Map([["/a/f1.png", "data:image/png;base64,AAA"]]))).toBe(true)
+    // a file that newly became readable counts too
+    expect(assetsChanged(new Map(), new Map([["/a/f1.png", "x"]]))).toBe(true)
+  })
+
+  test("watcher paths match a project-relative or absolute asset path", () => {
+    expect(watcherPathMatches("/work/data/run/f1.png", "data/run/f1.png")).toBe(true)
+    expect(watcherPathMatches("/v/s/plots/f1.png", "/v/s/plots/f1.png")).toBe(true)
+    expect(watcherPathMatches("/work/data/run/xf1.png", "f1.png")).toBe(false)
+    expect(watcherPathMatches("/work/a.png", "/other/a.png")).toBe(false)
+  })
+
+  test("assets are re-polled only while the inlined total stays under the cap", () => {
+    expect(ASSET_POLL_MAX_CHARS).toBeLessThan(MAX_INLINE_CHARS)
+    expect(HTML_POLL_MS).toBeGreaterThanOrEqual(1000)
+    expect(HTML_POLL_MS).toBeLessThanOrEqual(5000)
   })
 })

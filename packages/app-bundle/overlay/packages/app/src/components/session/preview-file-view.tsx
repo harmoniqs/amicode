@@ -1151,7 +1151,13 @@ export function PreviewFileView(props: {
                   html={fileContent}
                   zoom={props.zoom}
                   sessionID={draftScope}
+                  active={props.active}
                   readFile={(path) => sdk().client.file.read({ path }).then((result) => result.data as any)}
+                  onExternalContent={(text) => {
+                    // #2142: a poll found new page text; never clobber unsaved Source edits
+                    if (unsavedContent() !== null) return
+                    setFileContent(text)
+                  }}
                 />
               </Show>
             </Match>

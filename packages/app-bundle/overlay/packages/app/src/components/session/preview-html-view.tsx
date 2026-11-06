@@ -11,18 +11,29 @@
  * watcher-driven reloads); this view prepares it (preview-html.ts), inlines
  * local images through the engine's file API, and swaps the srcdoc.
  *
+ * #2142: the view also keeps itself live where the engine's watcher cannot
+ * see — while visible it re-reads the page (handing new text to the parent)
+ * and, under a size cap, its images; a watcher change to any inlined image
+ * re-renders too.
+ *
  * @module
  */
 
-import { createEffect, createSignal, on, onCleanup } from "solid-js"
+import { createEffect, createSignal, on, onCleanup, onMount } from "solid-js"
 import { usePlatform } from "@/context/platform"
+import { useSDK } from "@/context/sdk"
 import {
+  ASSET_POLL_MAX_CHARS,
+  HTML_POLL_MS,
   MAX_INLINE_CHARS,
+  assetsChanged,
   MAX_INLINE_IMAGES,
   classifyLink,
   dataUrlFromRead,
   prepareHtml,
   serializeHtml,
+  shouldPollHtml,
+  watcherPathMatches,
 } from "./preview-html"
 
 export type HtmlFileRead = (path: string) => Promise<
@@ -36,39 +47,49 @@ export function PreviewHtmlView(props: {
   readFile: HtmlFileRead
   /** The session the view belongs to — preview-file opens target it (#1648). */
   sessionID?: string
-  /** Called after each render with the local files the page inlined (#2142). */
-  onAssetsChange?: (paths: string[]) => void
-  /** Bumped by the parent to re-render even when the page text is unchanged
-   *  (a referenced image changed on disk, #2142). */
-  refreshKey?: () => number
+  /** Whether this pane is the visible one; polling stops when it is not (#2142). */
+  active?: () => boolean
+  /** New page text found by a poll (#2142); the parent decides whether to apply it. */
+  onExternalContent?: (text: string) => void
 }) {
   const platform = usePlatform()
+  const sdk = useSDK()
   const [srcdoc, setSrcdoc] = createSignal<string | undefined>(undefined)
+  const [refresh, setRefresh] = createSignal(0)
+  let inlined = new Map<string, string>()
+  let inlinedChars = 0
   let frame: HTMLIFrameElement | undefined
   let generation = 0
   let savedScroll: { x: number; y: number } | undefined
 
   // ─── Prepare + inline ────────────────────────────────────────────────
-  const render = async (html: string, path: string) => {
-    const mine = ++generation
-    const prepared = prepareHtml(html, path)
-    const unique = [...new Set(prepared.images.map((image) => image.path))].slice(0, MAX_INLINE_IMAGES)
-    const urls = new Map<string, string>()
-    let budget = MAX_INLINE_CHARS
+  const readImages = async (files: string[]) => {
     const reads = await Promise.all(
-      unique.map((file) =>
+      files.map((file) =>
         props
           .readFile(file)
           .then((result) => [file, dataUrlFromRead(result, file)] as const)
           .catch(() => [file, undefined] as const),
       ),
     )
-    if (mine !== generation) return
+    const urls = new Map<string, string>()
+    let budget = MAX_INLINE_CHARS
     for (const [file, url] of reads) {
       if (!url || url.length > budget) continue
       budget -= url.length
       urls.set(file, url)
     }
+    return urls
+  }
+
+  const render = async (html: string, path: string) => {
+    const mine = ++generation
+    const prepared = prepareHtml(html, path)
+    const unique = [...new Set(prepared.images.map((image) => image.path))].slice(0, MAX_INLINE_IMAGES)
+    const urls = await readImages(unique)
+    if (mine !== generation) return
+    inlined = urls
+    inlinedChars = [...urls.values()].reduce((total, url) => total + url.length, 0)
     for (const image of prepared.images) {
       const url = urls.get(image.path)
       if (url) image.element.setAttribute(image.attribute, url)
@@ -83,12 +104,11 @@ export function PreviewHtmlView(props: {
       if (win) savedScroll = { x: win.scrollX, y: win.scrollY }
     } catch {}
     setSrcdoc(serializeHtml(prepared.doc))
-    props.onAssetsChange?.(unique)
   }
 
   createEffect(
     on(
-      () => [props.html(), props.filePath, props.refreshKey?.() ?? 0] as const,
+      () => [props.html(), props.filePath, refresh()] as const,
       ([html, path]) => {
         void render(html, path)
       },
@@ -96,6 +116,54 @@ export function PreviewHtmlView(props: {
   )
   onCleanup(() => {
     generation++
+  })
+
+  // ─── Live refresh (#2142) ────────────────────────────────────────────
+  // A watcher change to an inlined image re-renders (the page's own changes
+  // reach us through the parent's watcher re-read).
+  createEffect(() => {
+    const unsub = sdk().event.listen((e) => {
+      if (e.details.type !== "file.watcher.updated") return
+      const details = e.details.properties as Record<string, unknown> | undefined
+      const changed = typeof details?.file === "string" ? details.file : undefined
+      if (!changed || (details?.event !== "change" && details?.event !== "add")) return
+      for (const asset of inlined.keys()) {
+        if (watcherPathMatches(changed, asset)) {
+          setRefresh((n) => n + 1)
+          return
+        }
+      }
+    })
+    onCleanup(unsub)
+  })
+
+  // A visible page re-reads itself, and (under the cap) its images, on a timer:
+  // the watcher never sees a file a script rewrites outside the project.
+  let polling = false
+  const poll = async () => {
+    if (polling) return
+    const visible = typeof document === "undefined" || document.visibilityState !== "hidden"
+    if (!shouldPollHtml({ active: props.active?.() ?? true, visible })) return
+    polling = true
+    try {
+      const mine = generation
+      const page = await props.readFile(props.filePath).catch(() => undefined)
+      if (mine !== generation) return
+      if (page && page.type === "text" && typeof page.content === "string" && page.content !== props.html()) {
+        props.onExternalContent?.(page.content)
+        return
+      }
+      if (inlined.size === 0 || inlinedChars > ASSET_POLL_MAX_CHARS) return
+      const fresh = await readImages([...inlined.keys()])
+      if (mine !== generation) return
+      if (assetsChanged(inlined, fresh)) setRefresh((n) => n + 1)
+    } finally {
+      polling = false
+    }
+  }
+  onMount(() => {
+    const timer = setInterval(() => void poll(), HTML_POLL_MS)
+    onCleanup(() => clearInterval(timer))
   })
 
   // ─── Frame wiring ────────────────────────────────────────────────────
