@@ -81,7 +81,8 @@ skill-friction check — instructions-vs-reality mismatches become findings,
 repeated un-skilled idioms become skill proposals — and the record boundary
 carries the same skill-delta row (findings filed, skills touched, proposals
 pending) PLUS the loop's visual record: pulse/data plot artifacts beside the
-run outputs and the campaign dashboard widget refresh where one exists, and
+run outputs and the campaign dashboard page rewrite (the `research` skill's
+dashboard contract), and
 vault knowledge cards for measured laws. Recording, refining, and curating
 skills and vault knowledge is a first-class loop output — meta-improvement
 rides the loop, never trails it (the `record-boundary-curation` gate).

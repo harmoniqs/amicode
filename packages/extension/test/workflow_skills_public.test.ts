@@ -253,3 +253,39 @@ describe("content lens — the public workflow skills carry no proprietary or in
     }
   });
 });
+
+// ── #2144: the research loop writes a live campaign dashboard page ──────────
+
+describe("the research skill carries the live campaign dashboard contract (#2144)", () => {
+  const research = skillText("research");
+  const card = readFileSync(join(MODES, "research", "card.md"), "utf8");
+
+  it("names where the page lives, inside a Research Project and outside one", () => {
+    expect(research).toMatch(/## The campaign dashboard/);
+    expect(research).toContain("<project>/reports/dashboards/<ledger-stem>/index.html");
+    expect(research).toContain("~/.amico/dashboards/<ledger-stem>/index.html");
+  });
+
+  it("names the required sections", () => {
+    for (const section of ["Status line", "Needs you", "Loop table", "Key findings", "Plots"]) {
+      expect(research, `dashboard section ${section}`).toContain(`**${section}**`);
+    }
+  });
+
+  it("states the static-only rule Preview's sandbox enforces", () => {
+    expect(research).toMatch(/no scripts/i);
+    expect(research).toMatch(/no CDN/i);
+    expect(research).toMatch(/meta refresh/i);
+    expect(research).toMatch(/plots\//);
+  });
+
+  it("binds the rewrite to the record step and the one-time chat link", () => {
+    expect(research).toMatch(/Rewrite the campaign dashboard/);
+    expect(research).toMatch(/file:\/\//);
+  });
+
+  it("the mode card's record sentence points at the dashboard page, not a widget", () => {
+    expect(card).toContain("the campaign dashboard page rewrite");
+    expect(card).not.toContain("campaign dashboard widget refresh");
+  });
+});

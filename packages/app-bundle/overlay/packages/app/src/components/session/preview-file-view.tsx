@@ -10,6 +10,9 @@
  * the CM6 editor. Async fileType signal detects binary/error/oversize after
  * file.read().
  *
+ * #2141: .html/.htm files render in a scripts-off sandboxed frame
+ * (PreviewHtmlView) with the same Preview/Edit toggle as markdown.
+ *
  * #934: images render via data URI from the SDK binary response. PDFs render
  * via PDF.js (pdfjs-dist) to canvas — no iframe, no browser plugin. Save dot
  * moved to parent (SessionPreviewTab); zoom controls moved here to share
@@ -45,6 +48,8 @@ import {
 } from "./preview-latex-compile"
 import { splitFrontmatter } from "./preview-frontmatter"
 import { FrontmatterCard } from "./preview-frontmatter-card"
+import { PreviewHtmlView } from "./preview-html-view"
+import { popOutHtmlMessage } from "./preview-html"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -55,7 +60,7 @@ function getExtension(path: string): string {
   return dot > 0 ? path.slice(dot).toLowerCase() : ""
 }
 
-type FileCategory = "markdown" | "image" | "pdf" | "text"
+type FileCategory = "markdown" | "html" | "image" | "pdf" | "text"
 
 /**
  * Sync, extension-based file classification (phase 1).
@@ -67,6 +72,7 @@ function getFileCategory(path: string): FileCategory {
   if ((RENDERABLE_EXTENSIONS.markdown as readonly string[]).includes(ext)) return "markdown"
   if ((RENDERABLE_EXTENSIONS.images as readonly string[]).includes(ext)) return "image"
   if ((RENDERABLE_EXTENSIONS.pdf as readonly string[]).includes(ext)) return "pdf"
+  if ((RENDERABLE_EXTENSIONS.html as readonly string[]).includes(ext)) return "html"
   return "text"
 }
 
@@ -502,12 +508,12 @@ export function PreviewFileView(props: {
 
   // ─── Render ────────────────────────────────────────────────────────────
 
-  const showModeToggle = () => category() === "markdown"
+  const showModeToggle = () => category() === "markdown" || category() === "html"
 
   // Zoom is disabled in edit mode — pill disappears entirely
   const isEditing = () => {
     const cat = category()
-    if (cat === "markdown") return mode() === "edit"
+    if (cat === "markdown" || cat === "html") return mode() === "edit"
     if (cat === "image" || cat === "pdf") return false
     return true // text/code files are always in edit mode
   }
@@ -712,6 +718,12 @@ export function PreviewFileView(props: {
     link.remove()
   }
 
+  // #2143: the pop-out rides its own bridge kind (open-external stays https-only).
+  const popOutHtml = () => {
+    if (window.parent === window) return
+    window.parent.postMessage(popOutHtmlMessage(selfAbsolute()), "*")
+  }
+
   return (
     <div
       class="h-full relative overflow-hidden"
@@ -908,6 +920,21 @@ export function PreviewFileView(props: {
                 aria-label="Download"
               >
                 <Icon name="download" size="small" />
+              </button>
+            </TooltipV2>
+          </Show>
+          {/* Pop-out (#2143): open the rendered page in the system browser. The
+              extension opens only an existing local .html/.htm file and names a refusal. */}
+          <Show when={category() === "html"}>
+            <TooltipV2 openDelay={400} value="Open in browser">
+              <button
+                data-preview-open-browser
+                class="shrink-0 flex items-center justify-center w-7 h-7 rounded-md border border-border-base shadow-sm cursor-pointer text-text-weak hover:text-text-base hover:bg-background-stronger transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-border-focus"
+                style={previewControlSurfaceStyle}
+                onClick={popOutHtml}
+                aria-label="Open in browser"
+              >
+                <Icon name="square-arrow-top-right" size="small" />
               </button>
             </TooltipV2>
           </Show>
@@ -1122,6 +1149,38 @@ export function PreviewFileView(props: {
                     )
                   })()}
                 </div>
+              </Show>
+            </Match>
+
+            {/* HTML (#2141): rendered in a scripts-off sandboxed frame; Edit = source */}
+            <Match when={category() === "html"}>
+              <Show
+                when={mode() === "preview"}
+                fallback={
+                  <PreviewEditor
+                    content={fileContent()}
+                    filePath={props.filePath}
+                    active={props.active}
+                    onChange={handleEdit}
+                    onSave={handleImmediateSave}
+                    viewState={() => props.viewState?.()?.editor}
+                    onViewStateChange={(editor) => props.onViewStateChange?.({ editor })}
+                  />
+                }
+              >
+                <PreviewHtmlView
+                  filePath={props.filePath}
+                  html={fileContent}
+                  zoom={props.zoom}
+                  sessionID={draftScope}
+                  active={props.active}
+                  readFile={(path) => sdk().client.file.read({ path }).then((result) => result.data as any)}
+                  onExternalContent={(text) => {
+                    // #2142: a poll found new page text; never clobber unsaved Source edits
+                    if (unsavedContent() !== null) return
+                    setFileContent(text)
+                  }}
+                />
               </Show>
             </Match>
 
