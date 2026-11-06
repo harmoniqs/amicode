@@ -24,9 +24,9 @@
 // token appears in the digest, the JSON output, or the launcher argv.
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { amicodeOpsDir } from "./session_retention.js";
 import {
   pulseSha256,
   readDevicePathStatus,
@@ -54,15 +54,6 @@ function flagValue(argv: string[], name: string): string | undefined {
 }
 
 // ── connector + launcher resolution ───────────────────────────────────────────
-
-/** $AMICODE_OPS_DIR → ~/.amico/amicode — the SAME resolution the fork's
- *  amicodeOpsDir() and the extension use, so the packaged connector is found
- *  where it is staged. */
-function amicodeOpsDir(env: NodeJS.ProcessEnv): string {
-  const v = env.AMICODE_OPS_DIR;
-  if (v && v.trim() !== "") return v;
-  return join(homedir(), ".amico", "amicode");
-}
 
 /** $AMICO_PASQAL_CONNECTOR overrides; default is the staged submit connector. */
 function connectorScript(env: NodeJS.ProcessEnv): string {
