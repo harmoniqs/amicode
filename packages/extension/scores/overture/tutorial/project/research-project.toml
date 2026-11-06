@@ -1,0 +1,9 @@
+schema_version = 1
+name = "Amicode Tutorial: Unicycle Control"
+slug = "amicode-tutorial"
+question = "Can a feedforward, PID, and MPC controller each make a unicycle track a circle, and where does each one break down?"
+status = "proposing"
+created = "2026-11-06"
+
+[environment]
+slug = "amicode-tutorial-env"
