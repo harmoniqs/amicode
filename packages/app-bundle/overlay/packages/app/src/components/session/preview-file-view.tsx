@@ -10,6 +10,9 @@
  * the CM6 editor. Async fileType signal detects binary/error/oversize after
  * file.read().
  *
+ * #2141: .html/.htm files render in a scripts-off sandboxed frame
+ * (PreviewHtmlView) with the same Preview/Edit toggle as markdown.
+ *
  * #934: images render via data URI from the SDK binary response. PDFs render
  * via PDF.js (pdfjs-dist) to canvas — no iframe, no browser plugin. Save dot
  * moved to parent (SessionPreviewTab); zoom controls moved here to share
@@ -45,6 +48,7 @@ import {
 } from "./preview-latex-compile"
 import { splitFrontmatter } from "./preview-frontmatter"
 import { FrontmatterCard } from "./preview-frontmatter-card"
+import { PreviewHtmlView } from "./preview-html-view"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -55,7 +59,7 @@ function getExtension(path: string): string {
   return dot > 0 ? path.slice(dot).toLowerCase() : ""
 }
 
-type FileCategory = "markdown" | "image" | "pdf" | "text"
+type FileCategory = "markdown" | "html" | "image" | "pdf" | "text"
 
 /**
  * Sync, extension-based file classification (phase 1).
@@ -67,6 +71,7 @@ function getFileCategory(path: string): FileCategory {
   if ((RENDERABLE_EXTENSIONS.markdown as readonly string[]).includes(ext)) return "markdown"
   if ((RENDERABLE_EXTENSIONS.images as readonly string[]).includes(ext)) return "image"
   if ((RENDERABLE_EXTENSIONS.pdf as readonly string[]).includes(ext)) return "pdf"
+  if ((RENDERABLE_EXTENSIONS.html as readonly string[]).includes(ext)) return "html"
   return "text"
 }
 
@@ -502,12 +507,12 @@ export function PreviewFileView(props: {
 
   // ─── Render ────────────────────────────────────────────────────────────
 
-  const showModeToggle = () => category() === "markdown"
+  const showModeToggle = () => category() === "markdown" || category() === "html"
 
   // Zoom is disabled in edit mode — pill disappears entirely
   const isEditing = () => {
     const cat = category()
-    if (cat === "markdown") return mode() === "edit"
+    if (cat === "markdown" || cat === "html") return mode() === "edit"
     if (cat === "image" || cat === "pdf") return false
     return true // text/code files are always in edit mode
   }
@@ -1122,6 +1127,32 @@ export function PreviewFileView(props: {
                     )
                   })()}
                 </div>
+              </Show>
+            </Match>
+
+            {/* HTML (#2141): rendered in a scripts-off sandboxed frame; Edit = source */}
+            <Match when={category() === "html"}>
+              <Show
+                when={mode() === "preview"}
+                fallback={
+                  <PreviewEditor
+                    content={fileContent()}
+                    filePath={props.filePath}
+                    active={props.active}
+                    onChange={handleEdit}
+                    onSave={handleImmediateSave}
+                    viewState={() => props.viewState?.()?.editor}
+                    onViewStateChange={(editor) => props.onViewStateChange?.({ editor })}
+                  />
+                }
+              >
+                <PreviewHtmlView
+                  filePath={props.filePath}
+                  html={fileContent}
+                  zoom={props.zoom}
+                  sessionID={draftScope}
+                  readFile={(path) => sdk().client.file.read({ path }).then((result) => result.data as any)}
+                />
               </Show>
             </Match>
 
