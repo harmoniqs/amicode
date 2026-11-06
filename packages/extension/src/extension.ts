@@ -138,6 +138,7 @@ import {
   type HubClientSession,
 } from "./hub_client";
 import { stopServer } from "./stop_server";
+import { ensureEulaAccepted, registerEulaCommand, registerEulaGateSurface } from "./eula";
 import { quitAmicode } from "./quit_command";
 import { pushEngineState, pushFleetRole } from "./engine_state_push";
 import type { QueueView } from "./qick_job_server";
@@ -145,6 +146,7 @@ import { postDeviceStatus, postDeviceActions, postDeviceActivate } from "./inspe
 
 // ============================================================================
 // Extension entry point. Boot order on activate:
+//   0. EULA gate — decline ⇒ inert (see eula.ts); accept ⇒ continue
 //   1. Register UI surfaces (trees, inspector, status bar, commands)
 //   2. Start watching /tmp/amicode-runs/latest/ for new runs
 //   3. Write per-session opencode project dir with AGENTS.md
@@ -429,6 +431,18 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   const runsChannel = vscode.window.createOutputChannel("Amicode — runs");
   const devicesChannel = vscode.window.createOutputChannel("Amicode — devices");
   ctx.subscriptions.push(opencodeChannel, runsChannel, devicesChannel);
+
+  // EULA gate — before ANYTHING else activates (no staging, no server spawn,
+  // no views, no commands). Declining registers only the inert surface (a
+  // status bar item, a notice in the sidebar view, and `amicode.reviewEula`);
+  // Amicode stays off until the user reads and accepts the EULA. Acceptance is
+  // per machine and keyed on the EULA version — a material EULA change
+  // re-prompts everyone.
+  if (!(await ensureEulaAccepted(ctx, (l) => opencodeChannel.appendLine(l)))) {
+    registerEulaGateSurface(ctx, (l) => opencodeChannel.appendLine(l));
+    return;
+  }
+  registerEulaCommand(ctx, (l) => opencodeChannel.appendLine(l));
 
   // Runs root (resolved early — the inspector needs it for its CSP resource roots).
   const runsRoot = resolveRunsRoot(vscode.workspace.getConfiguration("amicode").get<string>("runsRoot", ""));
