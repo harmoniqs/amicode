@@ -4,7 +4,7 @@
   "description": "Open autonomous research in VS Code \u2014 vaults, fleet, and live solves for quantum control and physical intelligence.",
   "version": "0.4.0",
   "publisher": "harmoniqs",
-  "license": "Apache-2.0",
+  "license": "SEE LICENSE IN EULA.txt",
   "icon": "media/icon.png",
   "private": false,
   "preview": true,
@@ -39,6 +39,7 @@
     "onCommand:amicode.newChat",
     "onCommand:amicode.newProject",
     "onCommand:amicode.chatDeck",
+    "onCommand:amicode.reviewEula",
     "onView:amicode.workspace",
     "onStartupFinished"
   ],
@@ -66,6 +67,10 @@
       ]
     },
     "commands": [
+      {
+        "command": "amicode.reviewEula",
+        "title": "Amicode: Review EULA"
+      },
       {
         "command": "amicode.onboarding.open",
         "title": "Amicode: Open Onboarding"

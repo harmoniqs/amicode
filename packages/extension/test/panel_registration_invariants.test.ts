@@ -183,6 +183,8 @@ function invariantViolations(regs: PanelRegistration[]): Array<{ reg: PanelRegis
 // that the enumeration is alive and complete.
 
 const GOLDEN_REGISTRATIONS = [
+  { kind: "registerWebviewViewProvider", viewType: "amicode.workspace", file: "eula.ts", status: "retained" },
+  { kind: "webview.options", viewType: "", file: "eula.ts", status: "exempt" },
   { kind: "registerWebviewViewProvider", viewType: "amicode.workspace", file: "extension.ts", status: "retained" },
   { kind: "createWebviewPanel", viewType: "amicode.chat", file: "chat_panel.ts", status: "retained" },
   { kind: "createWebviewPanel", viewType: "amicode.deck", file: "deck_panel.ts", status: "retained" },
