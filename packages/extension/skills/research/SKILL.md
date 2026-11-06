@@ -43,6 +43,7 @@ block in the system prompt (injected by `stack_state.ts` when a workspace folder
 | Data | `<project>/data/` |
 | Config | `<project>/config/` |
 | Reports | `<project>/reports/` |
+| Campaign dashboard | `<project>/reports/dashboards/<ledger-stem>/index.html` (see below) |
 | Checkout registry | `<project>/ledger/campaigns/CHECKOUTS.md` |
 | Environment proposals | `<project>/ledger/environment-proposals/` (created on demand) |
 | Environment digest | `<project>/ledger/campaigns/env-digest-<campaign-slug>.md` |
@@ -156,8 +157,45 @@ reference the in-flight casts? Append the audit row to §9.
    touched, proposals pending — so the loop's own improvement is part of its record.
    Rewrite the session todo list to mirror §3 and §5 — the derived-view rule in
    `director-core`: current loop only; a stale todo list is a lying §3.
+   Rewrite the campaign dashboard from the ledger you just committed (below).
 8. **Repeat.** Compact only at a boundary, and only when the user is present to choose it —
    the protocol does not otherwise try to time compaction (see below).
+
+## The campaign dashboard (live status page)
+
+One static HTML page per campaign that the researcher watches instead of the chat. It is
+a **derived view of the ledger** — rewrite it whole at kickoff and at every record step
+(and when a cast starts or blocks), never hand-edit it, never let it say more than the
+ledger does.
+
+**Where:** inside a Research Project, `<project>/reports/dashboards/<ledger-stem>/index.html`;
+otherwise `~/.amico/dashboards/<ledger-stem>/index.html` (local, never the vault — plot
+churn does not belong in a synced repo). `<ledger-stem>` is the ledger's file name without
+`.md`. Plots go in `plots/` beside the page and are referenced relatively
+(`<img src="plots/h3-convergence.png">`).
+
+**Sections, top to bottom:**
+
+1. **Status line** — the objective in one line; phase, loop number, last-updated time
+   (ISO, with timezone), and one state word: running, waiting, blocked, or done.
+2. **Needs you** — §4 blocked items, pending approvals and open human gates, each with
+   what is needed. When empty, say "Nothing — running unattended".
+3. **Loop table** — one row per H#: spec, cast in flight, verdict copied from the ledger
+   (derived, never upgraded), and a link to the evidence.
+4. **Key findings** — short bullets with the numbers in the researcher's notation; an
+   unverified result says UNTRUSTED.
+5. **Plots** — the current loop's figures, newest first, each with a one-line caption.
+6. Log — newest first, one line per event, trimmed to the last ~30.
+
+**Static only.** Preview renders the page in a sandbox with no scripts: no scripts, no CDN
+libraries (Plotly, MathJax), no meta refresh, no external stylesheets. Use inline CSS,
+tables, inline SVG, and PNG/SVG files in `plots/`. Keep the page under 1 MB. Preview reloads
+it when the file changes, so a rewrite is the refresh.
+
+**Link it once.** After the first write, post the page as a `file://` link in chat
+(`[campaign dashboard](file:///abs/path/index.html)`); one click opens it in Preview, where
+it stays live, and its "Open in browser" control pops it out for a second monitor. Do not
+re-post the link every loop.
 
 ## Roles at a glance
 
