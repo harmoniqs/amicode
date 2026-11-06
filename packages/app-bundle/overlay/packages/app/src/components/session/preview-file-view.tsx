@@ -49,6 +49,7 @@ import {
 import { splitFrontmatter } from "./preview-frontmatter"
 import { FrontmatterCard } from "./preview-frontmatter-card"
 import { PreviewHtmlView } from "./preview-html-view"
+import { popOutHtmlMessage } from "./preview-html"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -717,6 +718,12 @@ export function PreviewFileView(props: {
     link.remove()
   }
 
+  // #2143: the pop-out rides its own bridge kind (open-external stays https-only).
+  const popOutHtml = () => {
+    if (window.parent === window) return
+    window.parent.postMessage(popOutHtmlMessage(selfAbsolute()), "*")
+  }
+
   return (
     <div
       class="h-full relative overflow-hidden"
@@ -913,6 +920,21 @@ export function PreviewFileView(props: {
                 aria-label="Download"
               >
                 <Icon name="download" size="small" />
+              </button>
+            </TooltipV2>
+          </Show>
+          {/* Pop-out (#2143): open the rendered page in the system browser. The
+              extension opens only an existing local .html/.htm file and names a refusal. */}
+          <Show when={category() === "html"}>
+            <TooltipV2 openDelay={400} value="Open in browser">
+              <button
+                data-preview-open-browser
+                class="shrink-0 flex items-center justify-center w-7 h-7 rounded-md border border-border-base shadow-sm cursor-pointer text-text-weak hover:text-text-base hover:bg-background-stronger transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-border-focus"
+                style={previewControlSurfaceStyle}
+                onClick={popOutHtml}
+                aria-label="Open in browser"
+              >
+                <Icon name="square-arrow-top-right" size="small" />
               </button>
             </TooltipV2>
           </Show>

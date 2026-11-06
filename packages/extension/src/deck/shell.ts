@@ -487,6 +487,7 @@ window.addEventListener("message", (e) => {
     d.kind === "clipboard-write" ||
     d.kind === "clipboard-image-write" ||
     d.kind === "open-external" ||
+    d.kind === "open-html-external" ||
     d.kind === "open-file" ||
     d.kind === "save-file" ||
     d.kind === "set-default-model" ||

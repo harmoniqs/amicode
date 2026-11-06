@@ -1016,4 +1016,9 @@ describe("HTML preview routing and sandbox (#2141)", () => {
     expect(htmlViewSrc).toContain("watcherPathMatches(")
     expect(fileViewSrc).toMatch(/onExternalContent=\{\(text\) => \{[\s\S]{0,200}if \(unsavedContent\(\) !== null\) return[\s\S]{0,60}setFileContent\(text\)/)
   })
+
+  test("pop-out (#2143): an html-only control posts the dedicated bridge kind with the absolute path", () => {
+    expect(fileViewSrc).toMatch(/<Show when=\{category\(\) === "html"\}>[\s\S]{0,400}data-preview-open-browser/)
+    expect(fileViewSrc).toContain("popOutHtmlMessage(selfAbsolute())")
+  })
 })

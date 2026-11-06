@@ -251,3 +251,13 @@ export function watcherPathMatches(changed: string, asset: string): boolean {
   if (asset.startsWith("/")) return false
   return changed.endsWith(`/${asset}`)
 }
+
+// ---------------------------------------------------------------------------
+// Pop-out (#2143)
+// ---------------------------------------------------------------------------
+
+/** The bridge message that asks the extension to open the page in the system
+ *  browser. Its own kind: the open-external lane stays https-only. */
+export function popOutHtmlMessage(absolutePath: string): { source: "amicode"; kind: "open-html-external"; path: string } {
+  return { source: "amicode", kind: "open-html-external", path: absolutePath }
+}

@@ -222,6 +222,65 @@ describe("amicode bridge — open-external", () => {
   });
 });
 
+describe("amicode bridge — open-html-external pops a previewed page out to the browser (#2143)", () => {
+  const win = vscode.window as unknown as { messages: string[] };
+  const venv = vscode.env as unknown as { remoteName: string | undefined };
+  afterEach(() => {
+    venv.remoteName = undefined;
+    win.messages.length = 0;
+  });
+
+  it("opens an existing local .html/.htm file with the system handler", () => {
+    for (const ext of [".html", ".HTM"]) {
+      const target = path.join(os.tmpdir(), `amicode dashboard ${Date.now()}${ext}`);
+      fs.writeFileSync(target, "<h1>status</h1>");
+      const before = env.opened.length;
+      expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "open-html-external", path: target }, host())).toBe(true);
+      expect(env.opened).toHaveLength(before + 1);
+      expect((env.opened[env.opened.length - 1] as { fsPath: string }).fsPath).toBe(target);
+      fs.rmSync(target, { force: true });
+    }
+  });
+
+  it("refuses relative paths, missing files and non-HTML files, naming why", () => {
+    const script = path.join(os.tmpdir(), `amicode not-html ${Date.now()}.command`);
+    fs.writeFileSync(script, "echo hi");
+    for (const p of ["status.html", "/definitely/not/here-xyz.html", script]) {
+      expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "open-html-external", path: p }, host())).toBe(true);
+    }
+    expect(env.opened).toHaveLength(0);
+    expect(win.messages).toHaveLength(3);
+    expect(win.messages.every((m) => m.startsWith("Amicode: page not opened in the browser"))).toBe(true);
+    fs.rmSync(script, { force: true });
+  });
+
+  it("refuses in a remote window (the file is not on the machine showing the browser)", () => {
+    const target = path.join(os.tmpdir(), `amicode remote ${Date.now()}.html`);
+    fs.writeFileSync(target, "<p>x</p>");
+    venv.remoteName = "ssh-remote";
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "open-html-external", path: target }, host())).toBe(true);
+    expect(env.opened).toHaveLength(0);
+    expect(win.messages[0]).toMatch(/remote/);
+    fs.rmSync(target, { force: true });
+  });
+
+  it("a malformed payload is not consumed", () => {
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "open-html-external", path: 7 }, host())).toBe(false);
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "open-html-external" }, host())).toBe(false);
+  });
+
+  it("both webview shells forward the kind to the extension (chat panel twice, deck shell once)", () => {
+    const chat = fs.readFileSync(path.join(__dirname, "..", "src", "chat_panel.ts"), "utf8");
+    const deck = fs.readFileSync(path.join(__dirname, "..", "src", "deck", "shell.ts"), "utf8");
+    expect(chat.match(/d\.kind === "open-html-external"/g)).toHaveLength(2);
+    expect(deck.match(/d\.kind === "open-html-external"/g)).toHaveLength(1);
+  });
+
+  function host() {
+    return io();
+  }
+});
+
 describe("amicode bridge — open-file routes to preview-file (#935)", () => {
   it("routes markdown files to preview-file instead of markdown.showPreview", async () => {
     const host = io();

@@ -8,6 +8,7 @@ import {
   dataUrlFromRead,
   imageMimeFor,
   isHtmlFile,
+  popOutHtmlMessage,
   prepareHtml,
   resolveLocalRef,
   serializeHtml,
@@ -210,5 +211,15 @@ describe("live refresh helpers (#2142)", () => {
     expect(ASSET_POLL_MAX_CHARS).toBeLessThan(MAX_INLINE_CHARS)
     expect(HTML_POLL_MS).toBeGreaterThanOrEqual(1000)
     expect(HTML_POLL_MS).toBeLessThanOrEqual(5000)
+  })
+})
+
+describe("pop-out message (#2143)", () => {
+  test("carries the absolute path on its own bridge kind", () => {
+    expect(popOutHtmlMessage("/v/s/c.dashboard.html")).toEqual({
+      source: "amicode",
+      kind: "open-html-external",
+      path: "/v/s/c.dashboard.html",
+    })
   })
 })

@@ -463,6 +463,30 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     return true;
   }
 
+  // #2143: Preview's pop-out — open a previewed HTML page in the system
+  // browser (a second monitor for a live campaign dashboard). A dedicated kind
+  // so open-external stays https-only; restricted to an existing, absolute,
+  // local .html/.htm file so the bridge can never launch an arbitrary local
+  // file through the OS handler. In a remote window the path lives on the
+  // remote machine, not the one showing the browser — refuse, named.
+  if (msg.kind === "open-html-external" && typeof (msg as { path?: unknown }).path === "string") {
+    const target = (msg as unknown as { path: string }).path;
+    const refuse = (why: string) => {
+      vscode.window.showWarningMessage(`Amicode: page not opened in the browser — ${why}`);
+      return true;
+    };
+    if (!path.isAbsolute(target) || target.length > 4096) return refuse(`${target} is not an absolute path`);
+    if (!/\.html?$/i.test(target)) return refuse(`${path.basename(target)} is not an HTML file`);
+    if (vscode.env.remoteName) return refuse(`this is a remote window (${vscode.env.remoteName}); the page is on the remote machine`);
+    let isFile = false;
+    try {
+      isFile = fs.statSync(target).isFile();
+    } catch {}
+    if (!isFile) return refuse(`${target} is not on this machine`);
+    void vscode.env.openExternal(vscode.Uri.file(target));
+    return true;
+  }
+
   // File bridge (chat links to vault notes, run artifacts): the framed app
   // renders LLM output and can't open local files — the extension opens them
   // for it. file:// URLs only; the resolved path must be absolute, bounded,
