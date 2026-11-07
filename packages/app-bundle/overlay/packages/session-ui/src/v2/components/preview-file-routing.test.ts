@@ -977,3 +977,48 @@ describe("compile button visibility (#1403)", () => {
     expect(fileViewSrc).toMatch(/<Show when=\{isLatexFile\(props\.filePath\)\}>[\s\S]{0,1200}data-preview-compile/)
   })
 })
+
+// ---------------------------------------------------------------------------
+// HTML preview (#2141): rendered in a scripts-off, same-origin sandboxed frame
+// ---------------------------------------------------------------------------
+
+describe("HTML preview routing and sandbox (#2141)", () => {
+  const fileViewSrc = fs.readFileSync(
+    path.resolve(__dirname, "../../../../app/src/components/session/preview-file-view.tsx"),
+    "utf8",
+  )
+  const htmlViewSrc = fs.readFileSync(
+    path.resolve(__dirname, "../../../../app/src/components/session/preview-html-view.tsx"),
+    "utf8",
+  )
+
+  test("the file view classifies .html/.htm as its own category", () => {
+    expect(fileViewSrc).toMatch(/RENDERABLE_EXTENSIONS\.html[\s\S]{0,80}return "html"/)
+  })
+
+  test("html gets the Preview/Edit toggle and renders through PreviewHtmlView", () => {
+    expect(fileViewSrc).toMatch(/showModeToggle = \(\) => category\(\) === "markdown" \|\| category\(\) === "html"/)
+    expect(fileViewSrc).toMatch(/<Match when=\{category\(\) === "html"\}>[\s\S]{0,1200}<PreviewHtmlView/)
+  })
+
+  test("the frame is sandboxed same-origin WITHOUT scripts, forms or popups", () => {
+    const sandbox = htmlViewSrc.match(/sandbox="([^"]*)"/)
+    expect(sandbox).not.toBeNull()
+    expect(sandbox![1]).toBe("allow-same-origin")
+    expect(htmlViewSrc).not.toMatch(/allow-scripts"/)
+    expect(htmlViewSrc).toContain("srcdoc=")
+  })
+
+  test("live refresh (#2142): the view polls through the gate, and the parent never clobbers unsaved edits", () => {
+    expect(htmlViewSrc).toContain("shouldPollHtml(")
+    expect(htmlViewSrc).toContain("setInterval(")
+    expect(htmlViewSrc).toContain("clearInterval(")
+    expect(htmlViewSrc).toContain("watcherPathMatches(")
+    expect(fileViewSrc).toMatch(/onExternalContent=\{\(text\) => \{[\s\S]{0,200}if \(unsavedContent\(\) !== null\) return[\s\S]{0,60}setFileContent\(text\)/)
+  })
+
+  test("pop-out (#2143): an html-only control posts the dedicated bridge kind with the absolute path", () => {
+    expect(fileViewSrc).toMatch(/<Show when=\{category\(\) === "html"\}>[\s\S]{0,400}data-preview-open-browser/)
+    expect(fileViewSrc).toContain("popOutHtmlMessage(selfAbsolute())")
+  })
+})
