@@ -1,0 +1,21 @@
+[Unit]
+Description=Amicode fleet status collection + projection refresh, every 5 min (the Fleet (live) block's freshness backbone, amicode#1560)
+Documentation=https://github.com/harmoniqs/amicode/blob/main/ops/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# #1558's deployment finding, carried in the versioned unit (one place, all hosts):
+# systemd's default PATH resolves /usr/bin/node v12 on erlich, which SyntaxErrors
+# the amico dist — the fleet host's node must come first.
+Environment=PATH=%h/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/bin/bash %h/.amico/ops/fleet-status.sh
+# The projection refresh (#1106 P3b-2): amicissimo parses and publishes, the
+# consumers read the one cache (~/.amico/ops/fleet/projection.json). Exit 75 is
+# the verb's HONEST bootstrap exception (unenrolled host) — never a failed
+# cadence, same posture as fleet-status's own unreachable-warnings.
+ExecStart=%h/.local/bin/amico fleet status --projection
+SuccessExitStatus=75
+StandardOutput=append:%h/.amico/ops/fleet-status/systemd.out
+StandardError=append:%h/.amico/ops/fleet-status/systemd.err

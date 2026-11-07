@@ -26,6 +26,7 @@ import { TextReveal } from "@opencode-ai/ui/text-reveal"
 import { createAutoScroll } from "@opencode-ai/ui/hooks"
 import { useI18n } from "@opencode-ai/ui/context/i18n"
 import { normalize } from "./session-diff"
+import { hasBody } from "./summary-patch"
 
 function record(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value)
@@ -470,9 +471,32 @@ export function SessionTurn(
                     >
                       <For each={visible()}>
                         {(diff) => {
-                          const view = normalize(diff)
                           const active = createMemo(() => expanded().includes(diff.file))
                           const [shown, setShown] = createSignal(false)
+                          // #1778: a live summary carries no patch body — fetch the
+                          // turn's stored diffs once this file is expanded and shown.
+                          // A plain signal, not a resource: a pending fetch must not
+                          // suspend the timeline around it.
+                          const [fetched, setFetched] = createSignal<string>()
+                          createEffect(
+                            on(shown, (value) => {
+                              if (!value || hasBody(diff) || fetched() !== undefined) return
+                              void data
+                                .summaryPatch({
+                                  sessionID: props.sessionID,
+                                  messageID: props.messageID,
+                                  file: diff.file,
+                                  summary: diffs(),
+                                })
+                                .then((patch) => {
+                                  if (patch !== undefined) setFetched(patch)
+                                })
+                            }),
+                          )
+                          const view = createMemo(() => {
+                            const patch = fetched()
+                            return normalize(patch === undefined ? diff : { ...diff, patch })
+                          })
 
                           createEffect(
                             on(
@@ -519,7 +543,7 @@ export function SessionTurn(
                               <Accordion.Content>
                                 <Show when={shown()}>
                                   <div data-slot="session-turn-diff-view" data-scrollable>
-                                    <Dynamic component={fileComponent} mode="diff" fileDiff={view.fileDiff} />
+                                    <Dynamic component={fileComponent} mode="diff" fileDiff={view().fileDiff} />
                                   </div>
                                 </Show>
                               </Accordion.Content>

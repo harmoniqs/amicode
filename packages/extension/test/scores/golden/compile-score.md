@@ -218,7 +218,7 @@ Per-stage notes:
    drops silently; short/fast gates also want higher N and possibly larger
    `drive_max`). `max_iter`: 60 near the default regime, ~150–200 for harder
    cases. Then author `solve.jl` and launch it through the tiered gate per the
-   solve workflow (`amico-run resolve` → author per tier → `amico-run --spec`
+   solve workflow (`amico resolve` → author per tier → `amico run --spec`
    via bash; `amicode_solve` records the Run entity with its tier). A stock
    single-qubit transmon gate resolves to the **vetted** tier — the
    fill-in-the-block flow.

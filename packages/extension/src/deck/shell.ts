@@ -401,7 +401,7 @@ window.addEventListener("message", (e) => {
       boot.colorScheme = d.colorScheme;
       for (const f of frameByTab.values()) f.contentWindow?.postMessage({ source: "amicode", kind: "theme", colorScheme: d.colorScheme }, boot.origin);
     }
-    if (d.kind === "clipboard" && typeof d.tab === "string") {
+    if ((d.kind === "clipboard" || d.kind === "clipboard-image-written") && typeof d.tab === "string") {
       frameByTab.get(d.tab)?.contentWindow?.postMessage(d, boot.origin);
     }
     if ((d.kind === "dev-tools-status" || d.kind === "dev-tools-rebuild-status" || d.kind === "data-storage-defaults" || d.kind === "data-storage-status") && typeof d.tab === "string") {
@@ -423,6 +423,14 @@ window.addEventListener("message", (e) => {
     // #351: inspector fan-out — broadcast to every live pane (no tab routing;
     // the app's Work Column tabs buffer per-run/per-device themselves).
     if (typeof d.kind === "string" && (d.kind.indexOf("run:") === 0 || d.kind.indexOf("device:") === 0)) {
+      for (const f of frameByTab.values()) f.contentWindow?.postMessage(d, boot.origin);
+    }
+    // #1608: engine-state + fleet-role fan-out — the #1598 engine toggle (and
+    // the intentional-off banner) render from these pushes, which arrive via
+    // postToAll with NO tab id, so broadcast to every pane like the inspector
+    // fan-out above. Without this the toggle in a deck pane never sees a
+    // lifecycle push and an intentional off reads as an endless reconnect.
+    if (d.kind === "engine-state" || d.kind === "fleet-role") {
       for (const f of frameByTab.values()) f.contentWindow?.postMessage(d, boot.origin);
     }
     return;
@@ -477,7 +485,9 @@ window.addEventListener("message", (e) => {
     d.kind === "command" ||
     d.kind === "clipboard-request" ||
     d.kind === "clipboard-write" ||
+    d.kind === "clipboard-image-write" ||
     d.kind === "open-external" ||
+    d.kind === "open-html-external" ||
     d.kind === "open-file" ||
     d.kind === "save-file" ||
     d.kind === "set-default-model" ||

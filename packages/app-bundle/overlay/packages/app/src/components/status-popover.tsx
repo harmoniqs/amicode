@@ -25,8 +25,10 @@ import { useGlobal } from "@/context/global"
 import {
   hasNonBlockingServiceIssue,
   hasServiceNeedingAttention,
-  serverStatusDotClass,
+  serverStatusActivity,
+  serverStatusLabel,
 } from "./status-popover-indicator"
+import { ActivityDot } from "@opencode-ai/ui/amicode-activity"
 
 const Body = lazy(() =>
   retryImport(() => import("./status-popover-body").then((x) => ({ default: x.StatusPopoverBody }))),
@@ -66,7 +68,14 @@ export function StatusPopover(props: { healthDot?: boolean }) {
       triggerProps={{
         variant: "ghost",
         class: "titlebar-icon w-8 h-6 p-0 box-border",
-        "aria-label": language.t("status.popover.trigger"),
+        "aria-label": (props.healthDot ?? true)
+          ? `${language.t("status.popover.trigger")} — ${statusLabel({
+              ready: ready(),
+              serverHealth: serverHealth(),
+              attention: attention(),
+              issue: issue(),
+            })}`
+          : language.t("status.popover.trigger"),
         style: { scale: 1 },
       }}
       trigger={
@@ -77,14 +86,14 @@ export function StatusPopover(props: { healthDot?: boolean }) {
           {/* amicode (#174): the dot is the only part of the trigger the
               show-status setting governs — see statusTriggerVisibility. */}
           <Show when={props.healthDot ?? true}>
-            <div
-              class={`absolute -top-px -right-px size-1.5 rounded-full ${serverStatusDotClass({
-                ready: ready(),
-                serverHealth: serverHealth(),
-                attention: attention(),
-                issue: issue(),
-              })}`}
-            />
+            <span class="absolute -top-px -right-px flex">
+              <ServerStatusDot
+                ready={ready()}
+                serverHealth={serverHealth()}
+                attention={attention()}
+                issue={issue()}
+              />
+            </span>
           </Show>
         </div>
       }
@@ -172,6 +181,22 @@ function ServerStatusPopover() {
   return <StatusPopoverView state={state()} />
 }
 
+type ServerStatusInput = {
+  ready: boolean
+  serverHealth: boolean | undefined
+  attention: boolean
+  issue: boolean
+}
+
+function statusLabel(input: ServerStatusInput) {
+  return serverStatusLabel({ activity: serverStatusActivity(input), attention: input.attention })
+}
+
+function ServerStatusDot(props: ServerStatusInput & { class?: string }) {
+  const activity = () => serverStatusActivity(props)
+  return <ActivityDot activity={activity()} label={statusLabel(props)} class={props.class} />
+}
+
 type StatusPopoverState = {
   shown: boolean
   ready: boolean
@@ -214,15 +239,15 @@ function StatusPopoverView(props: { state: StatusPopoverState }) {
         size: "large",
         class: "!w-9 shrink-0",
         state: props.state.shown ? "pressed" : undefined,
-        "aria-label": props.state.label,
+        "aria-label": props.state.dotVisible ? `${props.state.label} — ${statusLabel(props.state)}` : props.state.label,
       }}
       trigger={
         <div class="relative size-4">
           <IconV2 name={props.state.shown ? "status-active" : "status"} />
           <Show when={props.state.dotVisible}>
-            <div
-              class={`absolute -top-1 -right-1 size-2 rounded-full border border-[var(--v2-background-bg-deep)] ${serverStatusDotClass(props.state)}`}
-            />
+            <span class="absolute -top-1 -right-1 flex rounded-full border border-[var(--v2-background-bg-deep)]">
+              <ServerStatusDot {...props.state} class="size-1.5" />
+            </span>
           </Show>
         </div>
       }

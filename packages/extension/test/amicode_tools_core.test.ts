@@ -86,10 +86,12 @@ describe("amicode_author_widget (issue #799)", () => {
     expect(def().description).toBe(carried);
   });
 
-  it("the schema is fork-equivalent (id/name/size/height/description/js, tile|hero enum)", () => {
+  it("the schema is fork-equivalent (id/name/size/height/sticky/description/js, tile|hero enum)", () => {
     const args = def().args as Record<string, { type: unknown; enum?: string[]; description: string }>;
-    expect(Object.keys(args).sort()).toEqual(["description", "height", "id", "js", "name", "size"]);
+    expect(Object.keys(args).sort()).toEqual(["description", "height", "id", "js", "name", "size", "sticky"]);
     expect(args.size.enum).toEqual(["tile", "hero"]);
+    // #1856: optional on the wire → nullable (the MCP projection requires every key)
+    expect(args.sticky.type).toEqual(["boolean", "null"]);
     expect(args.id.description).toMatch(/UPDATE that widget in place/);
     expect(args.js.description).toMatch(/export default \{ mount/);
   });
@@ -144,6 +146,33 @@ describe("amicode_author_widget (issue #799)", () => {
       } finally {
         await service.stop();
       }
+    } finally {
+      if (saved === undefined) delete process.env.AMICODE_WIDGETS_DIR;
+      else process.env.AMICODE_WIDGETS_DIR = saved;
+    }
+  });
+
+  it("sticky: true writes `sticky = true` into the manifest and the widget wire serves it (#1856)", async () => {
+    const { mkdtempSync, readFileSync } = await import("node:fs");
+    const userDir = mkdtempSync(join(tmpdir(), "amico-widgets-1856-"));
+    const saved = process.env.AMICODE_WIDGETS_DIR;
+    process.env.AMICODE_WIDGETS_DIR = userDir;
+    try {
+      const js = "export default { mount: function (el) { el.textContent = 'live' } }";
+      await def().execute(
+        { id: "live-solve", name: "Live solve", size: "hero", height: 220, sticky: true, description: null, js },
+        {},
+      );
+      await def().execute(
+        { id: "plain-tile", name: "Plain", size: "tile", height: 120, sticky: null, description: null, js },
+        {},
+      );
+      expect(readFileSync(join(userDir, "live-solve", "manifest.toml"), "utf8")).toContain("sticky = true");
+      expect(readFileSync(join(userDir, "plain-tile", "manifest.toml"), "utf8")).not.toContain("sticky");
+      const { widgetsResponse } = await import("../src/amicode_service/widgets");
+      const wire = JSON.parse(widgetsResponse()).widgets as Array<{ id: string; sticky: boolean }>;
+      expect(wire.find((w) => w.id === "live-solve")?.sticky).toBe(true);
+      expect(wire.find((w) => w.id === "plain-tile")?.sticky).toBe(false);
     } finally {
       if (saved === undefined) delete process.env.AMICODE_WIDGETS_DIR;
       else process.env.AMICODE_WIDGETS_DIR = saved;

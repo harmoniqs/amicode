@@ -4,7 +4,6 @@ import {
   boundsText,
   isActionable,
   parseApprovalInput,
-  railWarrantChip,
   warrantFor,
   type Warrant,
 } from "./approval"
@@ -140,40 +139,3 @@ describe("boundsText", () => {
   })
 })
 
-describe("railWarrantChip", () => {
-  const w2 = (over: Partial<Warrant> = {}): Warrant => ({
-    plan_hash: "9f2c",
-    bounds: { max_solves: 8, tier: "free", max_size_class: "MEDIUM" },
-    expires_at: iso(30),
-    issued_by: "user:ui",
-    ...over,
-  })
-
-  test("shows consumption against the declared bounds", () => {
-    expect(railWarrantChip([w2({ solves_used: 3 })], NOW)).toBe("3 of 8 solves · tier free · up to MEDIUM")
-  })
-
-  test("omits the count when the surface did not supply one, rather than guessing 0", () => {
-    expect(railWarrantChip([w2()], NOW)).toBe("8 solves · tier free · up to MEDIUM")
-  })
-
-  test("no live warrant → no chip", () => {
-    expect(railWarrantChip([], NOW)).toBeUndefined()
-    expect(railWarrantChip([w2({ expires_at: iso(-1) })], NOW)).toBeUndefined()
-  })
-
-  // A chip saying "warranted" with nothing behind it would imply an authorization
-  // the gate does not grant, since an omitted bound is a refusal not a default.
-  test("a live warrant declaring NO bounds produces no chip", () => {
-    expect(railWarrantChip([w2({ bounds: {} })], NOW)).toBeUndefined()
-  })
-
-  test("among live warrants, reports the one expiring latest (what the gate checks)", () => {
-    const later = w2({ expires_at: iso(90), bounds: { max_solves: 2 }, solves_used: 1 })
-    expect(railWarrantChip([w2({ solves_used: 7 }), later], NOW)).toBe("1 of 2 solves")
-  })
-
-  test("an unparseable expiry is not live", () => {
-    expect(railWarrantChip([w2({ expires_at: "nope" })], NOW)).toBeUndefined()
-  })
-})

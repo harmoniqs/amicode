@@ -4,6 +4,7 @@ import { Icon } from "@opencode-ai/ui/icon"
 import { Switch } from "@opencode-ai/ui/switch"
 import { Tabs } from "@opencode-ai/ui/tabs"
 import { showToast } from "@/utils/toast"
+import { WhatsNewStatusEntry } from "@/amicode/whats-new/whats-new"
 import { useNavigate } from "@solidjs/router"
 import {
   type Accessor,
@@ -49,6 +50,9 @@ import { authTokenFromCredentials } from "@/utils/server"
 import { GLOBAL_STATUS_DEFAULT_TAB } from "./status-popover-model"
 import { useServerProtocol } from "@/context/server-sdk"
 import { beginSolverSwitch } from "@/components/solver-switch-banner"
+import { sendEngineCommand, engineDotClass } from "./engine-toggle-utils"
+import { effectiveEngineState, latchStopRequested, installEngineStateListener } from "./engine-state-signal"
+import { ActivityDot, lspActivity, mcpActivity } from "@opencode-ai/ui/amicode-activity"
 
 const pluginEmptyMessage = (value: string, file: string): JSXElement => {
   const parts = value.split(file)
@@ -317,6 +321,16 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean>; onClose?: (
     return listServersByHealth(list, server.key, global.servers.health)
   })
   const toggleMcp = useMcpToggle()
+
+  // #1598/#1608: engine lifecycle — the "amicode" MCP row doubles as the engine
+  // toggle. The state now lives in a GLOBAL always-mounted signal
+  // (engine-state-signal.ts), so a push arriving while this popover is closed is
+  // not lost. We read effectiveEngineState() (the delivered state, or the local
+  // self-expiring "stopping" latch during the click→push gap). The ONE listener
+  // install is owned by the always-mounted layout (layout-new.tsx); this call is
+  // idempotent belt-and-braces so the toggle still works if that host changes.
+  installEngineStateListener()
+  const engineState = () => effectiveEngineState()
   const defaultServer = useDefaultServerKey(platform.getDefaultServer)
   const mcpNames = createMemo(() => Object.keys(sync().data.mcp ?? {}).sort((a, b) => a.localeCompare(b)))
   const mcpStatus = (name: string) => sync().data.mcp?.[name]?.status
@@ -343,6 +357,7 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean>; onClose?: (
 
   return (
     <div class="flex items-center gap-1 w-[360px] rounded-lg shadow-[var(--shadow-lg-border-base)]">
+      <div class="w-full bg-[var(--v2-background-bg-base)] rounded-lg overflow-hidden">
       <Tabs
         aria-label={language.t("status.popover.ariaLabel")}
         class="tabs bg-[var(--v2-background-bg-base)] rounded-lg overflow-hidden"
@@ -453,33 +468,69 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean>; onClose?: (
               >
                 <For each={mcpNames()}>
                   {(name) => {
+                    // #1598: the "amicode" MCP row IS the engine toggle — its
+                    // dot/switch reflect engine lifecycle state rather than MCP
+                    // connection status, and toggling it starts/stops the engine.
+                    const isEngine = name === "amicode"
                     const status = () => mcpStatus(name)
-                    const enabled = () => status() === "connected"
+                    const enabled = () => (isEngine ? engineState() === "on" : status() === "connected")
+                    const locked = () =>
+                      isEngine
+                        ? engineState() === "booting" || engineState() === "stopping"
+                        : toggleMcp.isPending && toggleMcp.variables === name
+
+                    const handleToggle = () => {
+                      if (locked()) return
+                      if (isEngine) {
+                        // #1608 AC5: flip off instantly via the local latch
+                        // BEFORE the extension round-trip, so the switch reflects
+                        // intent immediately. The delivered push reconciles it.
+                        if (engineState() === "on") latchStopRequested()
+                        sendEngineCommand(engineState())
+                      } else {
+                        toggleMcp.mutate(name)
+                      }
+                    }
+
+                    const dotClass = (): string => {
+                      if (isEngine) return engineDotClass(engineState())
+                      const s = status()
+                      if (s === "connected") return "bg-icon-success-base"
+                      if (s === "failed") return "bg-icon-critical-base"
+                      if (s === "needs_auth" || s === "needs_client_registration") return "bg-icon-warning-base"
+                      return "bg-border-weak-base"
+                    }
+
                     return (
                       <button
                         type="button"
-                        class="flex items-center gap-2 w-full min-h-8 pl-3 pr-2 py-1 rounded-md hover:bg-surface-raised-base-hover transition-colors text-left"
-                        onClick={() => {
-                          if (toggleMcp.isPending) return
-                          toggleMcp.mutate(name)
+                        class="flex items-center gap-2 w-full min-h-8 pl-3 pr-2 py-1 rounded-md transition-colors text-left"
+                        classList={{
+                          "hover:bg-surface-raised-base-hover": !locked(),
+                          "cursor-not-allowed opacity-60": locked(),
                         }}
-                        disabled={toggleMcp.isPending && toggleMcp.variables === name}
+                        onClick={handleToggle}
+                        disabled={locked()}
                       >
-                        <div
-                          classList={{
-                            "size-1.5 rounded-full shrink-0": true,
-                            "bg-icon-success-base": status() === "connected",
-                            "bg-icon-critical-base": status() === "failed",
-                            "bg-border-weak-base": status() === "disabled",
-                            "bg-icon-warning-base":
-                              status() === "needs_auth" || status() === "needs_client_registration",
-                          }}
-                        />
+                        {isEngine ? (
+                          <div class={`size-1.5 rounded-full shrink-0 ${dotClass()}`} />
+                        ) : (
+                          <ActivityDot activity={mcpActivity(status() ?? "")} label={`MCP ${status() ?? "unknown"}`} />
+                        )}
                         <span class="flex flex-col min-w-0 flex-1">
                           <span class="flex items-center gap-2 min-w-0">
                             <span class="text-14-regular text-text-base truncate">{name}</span>
+                            {/* #1616: transitional narration inline, to the RIGHT
+                                of the name (not a stacked second line) so the row
+                                never changes height on toggle. Muted, not accent. */}
+                            <Show when={isEngine && engineState() === "booting"}>
+                              <span class="text-11-regular text-text-weaker shrink-0">starting…</span>
+                            </Show>
+                            <Show when={isEngine && engineState() === "stopping"}>
+                              <span class="text-11-regular text-text-weaker shrink-0">stopping…</span>
+                            </Show>
                           </span>
-                          <Show when={status() === "needs_auth"}>
+                          <Show when={!isEngine && status() === "needs_auth"}>
                             <span class="text-11-regular text-text-weaker truncate">
                               {language.t("mcp.auth.clickToAuthenticate")}
                             </span>
@@ -488,11 +539,8 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean>; onClose?: (
                         <div onClick={(event) => event.stopPropagation()}>
                           <Switch
                             checked={enabled()}
-                            disabled={toggleMcp.isPending && toggleMcp.variables === name}
-                            onChange={() => {
-                              if (toggleMcp.isPending) return
-                              toggleMcp.mutate(name)
-                            }}
+                            disabled={locked()}
+                            onChange={handleToggle}
                           />
                         </div>
                       </button>
@@ -516,13 +564,7 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean>; onClose?: (
                 <For each={lspItems()}>
                   {(item) => (
                     <div class="flex items-center gap-2 w-full px-2 py-1">
-                      <div
-                        classList={{
-                          "size-1.5 rounded-full shrink-0": true,
-                          "bg-icon-success-base": item.status === "connected",
-                          "bg-icon-critical-base": item.status === "error",
-                        }}
-                      />
+                      <ActivityDot activity={lspActivity(item.status)} label={`LSP ${item.status}`} />
                       <span class="text-14-regular text-text-base truncate">{item.name || item.id}</span>
                     </div>
                   )}
@@ -543,7 +585,7 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean>; onClose?: (
                   <For each={plugins()}>
                     {(plugin) => (
                       <div class="flex items-center gap-2 w-full px-2 py-1">
-                        <div class="size-1.5 rounded-full shrink-0 bg-icon-success-base" />
+                        <ActivityDot activity="success" label="Plugin loaded" />
                         <span class="text-14-regular text-text-base truncate">{plugin}</span>
                       </div>
                     )}
@@ -556,6 +598,9 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean>; onClose?: (
 
         <AmicodeStatusTabContents state={amicodeTabs} />
       </Tabs>
+      {/* amicode#2001: reopen the What's-new page */}
+      <WhatsNewStatusEntry onClose={props.onClose} />
+      </div>
     </div>
   )
 }

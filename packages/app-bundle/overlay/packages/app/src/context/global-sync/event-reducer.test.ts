@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test"
 import type { Message, Part, PermissionRequest, Project, QuestionRequest, Session } from "@opencode-ai/sdk/v2/client"
-import { createStore } from "solid-js/store"
+import type { OpencodeClient } from "@opencode-ai/sdk/v2/client"
+import { createStore, type SetStoreFunction } from "solid-js/store"
 import type { State } from "./types"
+import { createServerSession } from "../server-session"
 import { applyDirectoryEvent, applyGlobalEvent, cleanupDroppedSessionCaches } from "./event-reducer"
 
 const rootSession = (input: { id: string; parentID?: string; archived?: number }) =>
@@ -71,6 +73,7 @@ const baseState = (input: Partial<State> = {}) =>
     session: [],
     sessionTotal: 0,
     session_status: {},
+    session_turn_active: {},
     session_diff: {},
     todo: {},
     permission: {},
@@ -153,6 +156,43 @@ describe("applyDirectoryEvent", () => {
 
     expect(store.part_text_accum_delta.part).toBe("existing appended")
     expect((store.part.message?.[0] as { text: string }).text).toBe("existing appended")
+  })
+
+  // #1637-followup: the engine publishes session.status (busy/idle) but NEVER
+  // session.execution.started (no publisher exists — it is a stale SDK type).
+  // The turn-active floor must therefore rise on the busy status frame that
+  // actually arrives, not only on the phantom execution bracket.
+  test("a session.status busy frame raises the turn-active floor", () => {
+    const [store, setStore] = createStore(baseState())
+
+    applyDirectoryEvent({
+      event: { type: "session.status", properties: { sessionID: "ses_x", status: { type: "busy" } } },
+      store,
+      setStore,
+      push() {},
+      directory: "/tmp",
+      loadLsp() {},
+    })
+
+    expect(store.session_status.ses_x).toEqual({ type: "busy" })
+    expect(store.session_turn_active?.ses_x).toBe(true)
+  })
+
+  test("a session.status idle frame lowers the turn-active floor", () => {
+    const [store, setStore] = createStore(
+      baseState({ session_status: { ses_y: { type: "busy" } }, session_turn_active: { ses_y: true } }),
+    )
+
+    applyDirectoryEvent({
+      event: { type: "session.status", properties: { sessionID: "ses_y", status: { type: "idle" } } },
+      store,
+      setStore,
+      push() {},
+      directory: "/tmp",
+      loadLsp() {},
+    })
+
+    expect(store.session_turn_active?.ses_y).toBe(false)
   })
 
   test("preserves a Home-specific retained session limit", () => {
@@ -614,4 +654,183 @@ describe("applyDirectoryEvent", () => {
     expect(lspLoads).toBe(1)
   })
 
+  // #1539: the directory store is local-only. The gate in server-sync.tsx checks
+  // `event.origin` and skips `applyDirectoryEvent` for remote-origin events. This
+  // test verifies the gate's contract: a remote-origin event WOULD mutate the
+  // store if the gate weren't there, proving the gate is necessary.
+  test("#1539 gate contract: session.created WOULD insert into the store (the gate prevents this for remote events)", () => {
+    const [store, setStore] = createStore(baseState({ session: [], sessionTotal: 0 }))
+    const remoteSession = rootSession({ id: "ses_remote" })
+
+    // Without the gate, applyDirectoryEvent inserts the session:
+    applyDirectoryEvent({
+      event: { type: "session.created", properties: { info: remoteSession } },
+      store,
+      setStore,
+      push() {},
+      directory: "/tmp",
+      loadLsp() {},
+    })
+    expect(store.session).toHaveLength(1)
+    expect(store.sessionTotal).toBe(1)
+
+    // The gate in server-sync.tsx: `if (isRemote) return` — skips this call.
+    // A remote-origin event with `origin: "studio"` never reaches here.
+    // This test documents what the gate prevents.
+  })
+
+  test("#1539 gate contract: session.updated WOULD upsert into the store (the gate prevents this for remote events)", () => {
+    const [store, setStore] = createStore(baseState({ session: [], sessionTotal: 0 }))
+    const remoteSession = rootSession({ id: "ses_remote" })
+
+    // Without the gate, session.updated inserts a previously-unknown session:
+    applyDirectoryEvent({
+      event: { type: "session.updated", properties: { info: remoteSession } },
+      store,
+      setStore,
+      push() {},
+      directory: "/tmp",
+      loadLsp() {},
+    })
+    expect(store.session).toHaveLength(1)
+    // The gate prevents this for events with `origin: "studio"`.
+  })
+
+  // ── #1637 — the child-store's second session_working honors the turn floor ──
+  // The global-sync child store's reducer previously wrote status ONLY from
+  // session.status frames — the execution bracket never reached it, so its
+  // session_working had no turn floor. Plumb the flag: execution.started sets it,
+  // the terminals / session.error / an idle status frame clear it.
+  test("#1637 the child-store reducer raises session_turn_active on execution.started", () => {
+    const [store, setStore] = createStore(baseState())
+    applyDirectoryEvent({
+      event: { type: "session.execution.started", properties: { sessionID: "ses_1" } },
+      store,
+      setStore,
+      push() {},
+      directory: "/tmp",
+      loadLsp() {},
+    })
+    expect(store.session_turn_active?.ses_1).toBe(true)
+  })
+
+  test("#1637 the child-store reducer clears session_turn_active on a terminal execution event", () => {
+    const [store, setStore] = createStore(baseState({ session_turn_active: { ses_1: true } }))
+    applyDirectoryEvent({
+      event: { type: "session.execution.succeeded", properties: { sessionID: "ses_1" } },
+      store,
+      setStore,
+      push() {},
+      directory: "/tmp",
+      loadLsp() {},
+    })
+    expect(store.session_turn_active?.ses_1).toBe(false)
+  })
+
+  test("#1637 the child-store reducer clears session_turn_active on session.error", () => {
+    const [store, setStore] = createStore(baseState({ session_turn_active: { ses_1: true } }))
+    applyDirectoryEvent({
+      event: { type: "session.error", properties: { sessionID: "ses_1" } },
+      store,
+      setStore,
+      push() {},
+      directory: "/tmp",
+      loadLsp() {},
+    })
+    expect(store.session_turn_active?.ses_1).toBe(false)
+  })
+
+  test("#1637 the child-store reducer honors status seq (drops a stale idle)", () => {
+    const [store, setStore] = createStore(baseState({ session_status: { ses_1: { type: "busy" } } }))
+    applyDirectoryEvent({
+      event: { type: "session.status", properties: { sessionID: "ses_1", status: { type: "busy" }, seq: 5 } },
+      store,
+      setStore,
+      push() {},
+      directory: "/tmp",
+      loadLsp() {},
+    })
+    // A lower-seq idle is dropped — the busy stands.
+    applyDirectoryEvent({
+      event: { type: "session.status", properties: { sessionID: "ses_1", status: { type: "idle" }, seq: 3 } },
+      store,
+      setStore,
+      push() {},
+      directory: "/tmp",
+      loadLsp() {},
+    })
+    expect(store.session_status.ses_1?.type).toBe("busy")
+  })
+})
+
+// #1753: the live question/permission card seam. The root dispatch
+// (server-sync.tsx's event listener) feeds EVERY event to the shared
+// ServerSession store first (session.apply — the store the composer reads via
+// directory-sync's sessionFields proxy), THEN hands it to
+// applyDirectoryEvent with sessionContent: false, which drops per-session
+// content from the DIRECTORY-LIST store. The flag is protective by design:
+// the list store is the sidebar/home session list, not a content cache —
+// per-session content lives in the shared session store (upstream's
+// e55a91ea "use shared server data" end-state removed the flag by deleting
+// the list store's content maps entirely; the overlay already routes card
+// reads through the shared store). These pins hold BOTH halves: live events
+// reach the card-rendering state, and the list store stays content-free.
+describe("live question/permission card dispatch (sessionContent: false seam)", () => {
+  const dispatch = (input: { event: { type: string; properties?: unknown }; store: State; setStore: SetStoreFunction<State> }) => {
+    // The shared session store — exactly what server-sync.tsx:553 does
+    // (session.apply(event)) BEFORE the gated directory dispatch at :627.
+    const session = createServerSession({ session: { get: async () => ({ data: undefined }) } } as unknown as OpencodeClient)
+    session.apply(input.event)
+    // The gated directory-list dispatch — exactly what server-sync.tsx:618-638 does.
+    applyDirectoryEvent({
+      event: input.event,
+      store: input.store,
+      setStore: input.setStore,
+      push() {},
+      directory: "/tmp",
+      sessionContent: false,
+      loadLsp() {},
+    })
+    return session
+  }
+
+  test("a live question.asked reaches the card-rendering state while the directory-list store stays clean", () => {
+    const [store, setStore] = createStore(baseState())
+    const session = dispatch({
+      event: { type: "question.asked", properties: questionRequest("q_live", "ses_1") },
+      store,
+      setStore,
+    })
+
+    // The card-rendering state (the composer reads sync().data.question, which
+    // directory-sync proxies to serverSync.session.data.question).
+    expect(session.data.question.ses_1?.map((x) => x.id)).toEqual(["q_live"])
+    // The directory-list store — protected by the sessionContent gate.
+    expect(store.question.ses_1).toBeUndefined()
+  })
+
+  test("a live permission.asked reaches the card-rendering state while the directory-list store stays clean", () => {
+    const [store, setStore] = createStore(baseState())
+    const session = dispatch({
+      event: { type: "permission.asked", properties: permissionRequest("per_live", "ses_1") },
+      store,
+      setStore,
+    })
+
+    expect(session.data.permission.ses_1?.map((x) => x.id)).toEqual(["per_live"])
+    expect(store.permission.ses_1).toBeUndefined()
+  })
+
+  test("without the gate the directory-list reducer still tracks the lifecycles (the ungated path stays intact)", () => {
+    const [store, setStore] = createStore(baseState())
+    applyDirectoryEvent({
+      event: { type: "question.asked", properties: questionRequest("q_ungated", "ses_1") },
+      store,
+      setStore,
+      push() {},
+      directory: "/tmp",
+      loadLsp() {},
+    })
+    expect(store.question.ses_1?.map((x) => x.id)).toEqual(["q_ungated"])
+  })
 })

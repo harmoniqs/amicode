@@ -1,8 +1,20 @@
 # Fleet — configurable multi-machine studio
 
-Operational tooling for Amicode's fleet: one canonical server, clients attach via tunnel.
+Operational tooling for Amicode's fleet. Two **additive** topologies share the same
+roster, discovery, and Fleet Manager:
 
-## Architecture
+- **Hub / star** (ADR 0005/0025) — one canonical `role=server`; every other machine is a
+  never-fork `role=client` that tunnels to the hub and shares the hub's database. This is
+  what `amico fleet enroll` builds and what the rest of this doc describes.
+- **Peer studios** (ADR 0027, Horizon 1 — merged in #1353) — each machine runs its **own**
+  engine on its **own** database and *advertises* itself; you attach/switch between peers
+  from the Fleet Manager. A peer stays `standalone` — it never takes the `client` stance,
+  so the never-fork guard is never triggered. See [Peer studios](#peer-studios-adr-0027).
+
+The two coexist; peer support **adds** files and never edits the hub path (`enroll`, the
+guard, and ADR 0025 are byte-unchanged).
+
+## Architecture (hub / star)
 
 Fleet topology is declared in `~/.amico/ops/fleet/fleet.json`:
 
@@ -17,8 +29,9 @@ Fleet topology is declared in `~/.amico/ops/fleet/fleet.json`:
 }
 ```
 
-- **No file = standalone** (safe default — local server, pre-fleet behavior)
-- `role`: `"standalone"` | `"server"` | `"client"`
+- **No file = standalone** (safe default — local server, pre-fleet behavior). A **peer** is
+  a standalone machine that additionally advertises `serving` — no `client` role, no `fleet.json` change.
+- `role`: `"standalone"` | `"server"` | `"client"` (there is **no** `peer` role — peer = standalone + advertise)
 - The guard script, extension, installer, and CI all read from this file
 
 ## Components
@@ -79,6 +92,88 @@ cat > ~/.amico/ops/fleet/fleet.json << 'EOF'
 EOF
 # Then restart VS Code / the extension.
 ```
+
+## Peer studios (ADR 0027)
+
+The additive **peer** topology (Horizon 1, merged in #1353). Where the hub/star model has one
+engine and N thin clients, peer studios give every machine its **own** engine and let you hop
+between them. It exists because the north star — engines dispatching agents to one another
+(compute federation, Horizon 2) — is impossible with never-fork clients; peer studios are the
+substrate for it. Horizon 2 itself is **declared, not built** (`compute` stays inert).
+
+### What a peer is
+
+- **Independent studio with synced fleet sessions.** Each peer runs its own engine on its own DB
+  (single-writer-per-DB preserved *per machine* by the existing adopt-or-spawn gate), while
+  session activity and prompts sync between machines in near real time. If one peer is off, the
+  others keep working — **there is no single engine whose loss stops the fleet.** This is the key
+  difference from a hub client, which is dead whenever the hub is down.
+- **Standalone, never a client.** A peer keeps `role: standalone` (or no `fleet.json`) and
+  *advertises*; it never writes `role: client` and never installs the never-fork guard.
+  Attaching to another peer is a **proxy** operation that spawns no engine.
+
+### The pieces (all merged, ADR 0027 §3–7)
+
+| Piece | Where | What it does |
+|---|---|---|
+| Serving advertisement | `@amicode/schema` `fleet_roster.ts` — the `serving` capability tag + `placementDescriptor(row)` | A peer advertises its running engine by carrying `serving` in its roster row's `capabilities[]` plus reach coordinates. Does **not** change `server_mode`. |
+| Directory keeper pointer | `keeper_pointer.ts` → `~/.amico/ops/fleet/keeper.json` (env `$AMICO_FLEET_KEEPER_FILE`) | A resolvable `{sshAlias, transport}` coordinate for the roster host, carried in its own file (never derived from the `roster.json` it hosts — that would be circular). |
+| Switch-control pointer | `attachment_pointer.ts` (env `$AMICO_FLEET_ATTACHMENT_FILE`); honesty surface `GET /amicode/fleet/attachment` | The "currently attached server". Empty ⇒ local. Never proxied. |
+| Attach / detach | `POST /amicode/fleet/attach {machine_id, base_url?, token?}` and `POST /amicode/fleet/detach` (registered **unconditionally** — a standalone peer must attach) | Adds/removes an upstream and drives the pointer; the roster is the sole candidate source. A switch resets the SSE cursor. |
+| Per-attachment transport + credential | `attachment_transport.ts`, `attachment_credential.ts` | Tailscale is recommended for machines on different networks; SSH works when peers are already privately reachable. Each attach injects a UI client credential to authenticate to the peer engine. |
+| Fleet Manager **Attach** control | overlay `packages/app/src/pages/session/fleet-manager.ts:219` | The per-device-row Attach/Detach button — the front-end that drives the attach route. |
+| Placement seam | `amicode_session` / Task dispatch `placement` field, default `local` | Threaded and defaulted for Horizon 2; **provably inert** today (nothing routes on it). |
+
+### Shared sessions across peers
+
+Peer machines keep their own engines and databases, while session activity and prompts sync
+between them in near real time. Users can work with fleet sessions from either machine without
+making one peer the sole host. The Attach control selects a peer; it does not merge the peers'
+local databases into one shared database.
+
+### Per-peer SSH forwards (#1775)
+
+When a peer is reached over SSH, this machine holds a loopback forward to that peer's hub. The
+installer (and `Fleet — Repair`) generates it — never hand-install one:
+
+| | |
+|---|---|
+| Template | `co.harmoniqs.amico-peer-forward.plist` — the tunnel's standard options: `ServerAliveInterval 15 / CountMax 2 / TCPKeepAlive yes / ExitOnForwardFailure yes` (+ `BatchMode yes`) |
+| Label | `co.harmoniqs.amico-peer-<machine_id>-forward` — one agent per peer |
+| Local port | the port of the peer's `base_url` in the reader peer-token store (`~/.amico/fleet-peer-tokens-reader.json`, `http://127.0.0.1:<port>`) |
+| Remote port / host | the fleet's canonical hub port, on the peer's roster `sshAlias` (else its machine id) |
+
+A peer reached over https (Tailscale / direct) gets no SSH forward. A hand-installed
+`co.harmoniqs.amico-<name>-forward` agent for the same peer (same local port or ssh host) is
+unloaded and moved to `~/.amico/ops/fleet/launchagents-backup/` — replaced, never silently
+deleted. The healthcheck and `install.sh --check` report every forward agent and flag
+missing or stale keepalives. The installer also retires the old `co.harmoniqs.amico-fleet-flag`
+agent (it set `AMICO_FLEET_MULTIPLEX=1` session-wide; the flag defaults on). Darwin only —
+the supervised Linux/WSL link is #1260.
+
+### Making two hub machines into peers (no single point of failure)
+
+There is **no `amico fleet` peer subcommand and no Command Palette wizard** yet — peer entry
+is not a turnkey flow the way `enroll` is. To convert an existing hub/client pair so neither
+machine is a single point of failure:
+
+1. On the **client** machine, leave the hub: `Amicode: Fleet — Go Standalone` (writes
+   `role: standalone`, clears the guard override + tunnel, spawns a local engine). It now runs
+   its own studio.
+2. On the **former hub**, it is already `role: server` with its own engine; either leave it as
+   `server` (it can also act as the roster keeper) or `Go Standalone` it too — either way it
+   keeps its own engine, so it is no longer a dependency for the other machine.
+3. Have each machine advertise `serving` (its roster self-report carries the tag) and set the
+   keeper bootstrap pointer (`~/.amico/ops/fleet/keeper.json`) to the roster host, so both show
+   up in the Fleet Manager and expose the Attach control.
+
+For peers on different networks, use Tailscale for private reachability rather than asking users
+to configure router port-forwarding. Direct users to
+[Tailscale's install guide](https://tailscale.com/kb/1017/install) when needed. Never expose
+fleet services with `tailscale funnel` or a public bind.
+
+After step 1–2 the single-point-of-failure is gone (each machine has its own engine); step 3
+adds mutual discovery. Session activity and prompts sync between the peers when they are online.
 
 ## Prevention
 

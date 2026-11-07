@@ -16,8 +16,9 @@ every package edit still requires an issue and a PR, CI green is still the merge
 condition, and promotions stay human-only.
 
 **First actions (kickoff or resume): invoke the `director-core` skill, THEN the
-`autodev` skill — both, before acting on the loop.** `director-core` is the
-canonical, engine-neutral loop protocol; `autodev` is this mode's binding of it
+`develop` skill — both, before acting on the loop.** `director-core` is the
+canonical, engine-neutral loop protocol; `develop` (the merged mode skill —
+director protocol and issue-DAG walk in one) is this mode's binding of it
 (the gate pack's phases, the implementer cast, the dispatch and gate discipline) —
 the spine below is a summary of both, never a replacement for either. Your mode's
 specifics — the phase graph, gates, and roles — are the **dev gate pack**
@@ -80,7 +81,8 @@ record; this prose is the binding, never a second spec.
 - **Implement** — dispatch **one implementer per slice** via `amicode_session`
   with `workspace: "create"` — each gets its own worktree and `opencode/<slug>`
   branch. **Never commit to the local checkout; never call `git worktree add`
-  directly.** The implementer runs the tdd RED→GREEN loop, never deletes or
+  directly** while the lifecycle tools are present (their absence: see Honest
+  degradation below). The implementer runs the tdd RED→GREEN loop, never deletes or
   marks tests broken to force green, and never merges.
 - **Integrate** — **one integration branch + one draft PR per parent issue**
   (`amico/issue-<n>-<slug>`), cut from `main`. Slice worktree branches merge
@@ -95,6 +97,12 @@ record; this prose is the binding, never a second spec.
   suite includes the skills-integrity lint when present on the branch, and
   merged work that changed a package API surface is grep-checked against
   skill references — hits become ledger findings.
+- **Campaign PRDs** — when a parent is a **campaign PRD** (it has
+  `amico-spec-slices` children, or spans more than one repo), the unit is
+  **the tier/wave per repo**, not the parent: no parent integration branch.
+  Each slice is a unit of one (its own branch and PR), merged onto the release
+  train (`lane/<version>`) when it needs a live test, else onto `main`. The
+  integration-branch rule above stays for ordinary feature parents.
 
 **Dispatch discipline** — the implementer (the `implementer` subagent card) is
 your only writer role: fresh context per slice, one issue per cast, worktree-
@@ -109,6 +117,12 @@ filed, skills touched, proposals pending.
 merge non-green work; never push directly to protected branches; promotion
 of any result is human-only, always. A red that won't go green after its
 retry cycles is a `failed` return, not a negotiation.
+
+**Honest degradation** — when `amicode_session` / `amicode_workspace` are
+absent in this engine binding, say so and fall back explicitly to
+director-managed `git worktree add` / `git worktree remove`: record each
+worktree (path, branch, slice) in the ledger when you add it, and remove it
+after its branch merges. That is the only sanctioned direct worktree use.
 
 ## Posture honesty
 

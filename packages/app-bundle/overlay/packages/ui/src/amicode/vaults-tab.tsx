@@ -3,6 +3,8 @@
 // parsed VaultsView down. `view === undefined` means loading.
 import { For, Show } from "solid-js"
 import type { VaultsView } from "./vaults"
+import { ACTIVITY_COLOR } from "./activity"
+import { ActivityDot } from "./activity-dot"
 
 export const AMICODE_MANAGE_VAULTS_PROMPT = "Help me manage my vaults — check status, mount, create, or repair."
 
@@ -23,7 +25,11 @@ export function AmicodeVaultsTab(props: {
             when={view().ok}
             fallback={
               <div class="flex items-center gap-2 w-full px-2 py-1">
-                <div class="size-1.5 rounded-full shrink-0 bg-icon-critical-base" />
+                <div
+                  aria-hidden="true"
+                  class="size-1.5 rounded-full shrink-0"
+                  style={{ background: ACTIVITY_COLOR.error }}
+                />
                 <span class="text-14-regular text-text-weak flex-1 truncate">{view().error}</span>
                 <button
                   type="button"
@@ -44,12 +50,9 @@ export function AmicodeVaultsTab(props: {
                 {(mount) => (
                   <div class="flex flex-col w-full px-2 py-1" data-slot="amicode-vault-row">
                     <div class="flex items-center gap-2 w-full min-w-0">
-                      <div
-                        classList={{
-                          "size-1.5 rounded-full shrink-0": true,
-                          "bg-icon-success-base": mount.warnings.length === 0,
-                          "bg-icon-warning-base": mount.warnings.length > 0,
-                        }}
+                      <ActivityDot
+                        activity={mount.warnings.length > 0 ? "attention" : "success"}
+                        label={mount.warnings.length > 0 ? "Vault has warnings" : "Vault healthy"}
                       />
                       <span class="text-14-regular text-text-base truncate">{mount.id}</span>
                       <Show when={mount.kind}>

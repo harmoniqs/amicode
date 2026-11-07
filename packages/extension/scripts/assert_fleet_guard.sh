@@ -45,6 +45,16 @@ grep -q "TCPKeepAlive=yes" "$PLIST" || fail "plist TCPKeepAlive yes missing"
 grep -q "127.0.0.1:4096:127.0.0.1:4096" "$PLIST" || fail "plist LocalForward 4096 missing"
 ok "tunnel plist $PLIST"
 
+# #1775: the per-peer forward template carries the SAME standard options.
+PEER_PLIST="$ROOT/tools/fleet/co.harmoniqs.amico-peer-forward.plist"
+[[ -f "$PEER_PLIST" ]] || fail "peer-forward plist template missing at $PEER_PLIST"
+grep -q "ServerAliveInterval=15" "$PEER_PLIST" || fail "peer-forward plist ServerAliveInterval 15 missing"
+grep -q "ServerAliveCountMax=2" "$PEER_PLIST" || fail "peer-forward plist ServerAliveCountMax 2 missing"
+grep -q "TCPKeepAlive=yes" "$PEER_PLIST" || fail "peer-forward plist TCPKeepAlive yes missing"
+grep -q "ExitOnForwardFailure=yes" "$PEER_PLIST" || fail "peer-forward plist ExitOnForwardFailure yes missing"
+grep -q "co.harmoniqs.amico-peer-PEER_MACHINE_ID-forward" "$PEER_PLIST" || fail "peer-forward plist label is not the co.harmoniqs.amico-peer-<machine_id>-forward convention"
+ok "peer-forward plist $PEER_PLIST"
+
 # The extension's health checks consume the projection topology state
 # (fleet_topology.ts) — the consumer import must be present (#1106).
 grep -q "fleet_topology" "$ROOT/packages/extension/src/fleet_health.ts" || fail "fleet_health.ts missing the fleet_topology consumer import (#1106)"
@@ -53,11 +63,13 @@ grep -q "fleet_topology" "$ROOT/packages/extension/src/fleet_health.ts" || fail 
 PKG_GUARD="$ROOT/packages/extension/tools/fleet/amico-opencode-fleet-guard"
 PKG_PLIST="$ROOT/packages/extension/tools/fleet/co.harmoniqs.amico-tunnel.plist"
 PKG_INSTALL="$ROOT/packages/extension/tools/fleet/install.sh"
-for f in "$PKG_GUARD" "$PKG_PLIST" "$PKG_INSTALL"; do
+PKG_PEER_PLIST="$ROOT/packages/extension/tools/fleet/co.harmoniqs.amico-peer-forward.plist"
+for f in "$PKG_GUARD" "$PKG_PLIST" "$PKG_INSTALL" "$PKG_PEER_PLIST"; do
   [[ -f "$f" ]] || fail "packaged fleet file missing at $f (run: cp tools/fleet/* packages/extension/tools/fleet/)"
 done
 cmp -s "$GUARD" "$PKG_GUARD" || fail "packaged guard drift — cp tools/fleet/amico-opencode-fleet-guard packages/extension/tools/fleet/"
 cmp -s "$PLIST" "$PKG_PLIST" || fail "packaged plist drift — cp tools/fleet/co.harmoniqs.amico-tunnel.plist packages/extension/tools/fleet/"
+cmp -s "$PEER_PLIST" "$PKG_PEER_PLIST" || fail "packaged peer-forward plist drift — cp tools/fleet/co.harmoniqs.amico-peer-forward.plist packages/extension/tools/fleet/"
 cmp -s "$INSTALL" "$PKG_INSTALL" || fail "packaged installer drift — cp tools/fleet/install.sh packages/extension/tools/fleet/"
 
 echo "[fleet-gate] all fleet gates passed"

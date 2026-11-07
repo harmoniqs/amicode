@@ -9,6 +9,12 @@ export default defineConfig({
   resolve: {
     alias: { vscode: path.resolve(process.cwd(), "test/__mocks__/vscode.ts") },
   },
+  test: {
+    // Neutralize ambient dev-shell env (AMICODE_*/AMICO_*/OPENCODE_*) per file so
+    // the local suite matches CI's clean environment — see setup_hermetic_env.ts.
+    setupFiles: ["./test/setup_hermetic_env.ts"],
+    globalTeardown: ["./test/teardown_roster_hygiene.ts"],
+  },
   plugins: [
     // Match esbuild.config.mjs's `loader: {".svg": "text"}`: Vite's own default
     // .svg handling returns a URL string, not raw markup, which would make

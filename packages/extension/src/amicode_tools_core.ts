@@ -428,7 +428,7 @@ returns an error, fix \`js\`/the fields and call it again.
 export const AMICODE_TOOLS: Record<string, AmicodeToolDef> = {
 
     // Capability warrant request (spec-20260727-164748 §9.5 / G-9). The CARD is the
-    // point: this tool exists so a refusal from amico-run's --spec gate becomes a
+    // point: this tool exists so a refusal from the amico CLI's --spec gate becomes a
     // button the researcher can press, instead of prose asking them to run a CLI verb.
     // The tool records NOTHING and authorises NOTHING — it only renders the ask. The
     // warrant is minted by the card's bridge through `amico ledger approve`, so the
@@ -563,6 +563,12 @@ export const AMICODE_TOOLS: Record<string, AmicodeToolDef> = {
           type: "number",
           description: "resting pixel height (40..2000); the frame grows to content",
         },
+        sticky: {
+          type: ["boolean", "null"],
+          description:
+            "optional; true = when the card scrolls out of view on home, dock it at the top as a slim ~64px strip " +
+            "(the widget receives density 'tight' while docked). Use for live/streaming widgets. Null for not sticky.",
+        },
         description: {
           type: ["string", "null"],
           description: "one-line description of the widget. Null for none.",
@@ -577,6 +583,7 @@ export const AMICODE_TOOLS: Record<string, AmicodeToolDef> = {
         name: string;
         size: string;
         height: number;
+        sticky?: boolean | null;
         description?: string | null;
         js: string;
       }) {
@@ -588,6 +595,7 @@ export const AMICODE_TOOLS: Record<string, AmicodeToolDef> = {
           name: a.name,
           size: a.size,
           height: a.height,
+          sticky: a.sticky ?? undefined,
           description: a.description ?? undefined,
           js: a.js,
         });
@@ -1124,7 +1132,7 @@ export const AMICODE_TOOLS: Record<string, AmicodeToolDef> = {
       description:
         "Record the Run entity stub (interview stage 6: SOLVE PARAMS), merging solve " +
         "parameters (T/N/max_iter/integrator) into the Formulation. This tool NEVER " +
-        "launches a solve — the launch is the AGENTS.md bash workflow (`nohup amico-run …`). " +
+        "launches a solve — the launch is the AGENTS.md bash workflow (`nohup amico run …`). " +
         "Bookkeeping, not a gate.",
       args: {
         run_dir: {
@@ -1216,7 +1224,7 @@ export const AMICODE_TOOLS: Record<string, AmicodeToolDef> = {
           ...(stub.formulation_ref ? [] : ["formulation (stages 4–5 skipped?)"]),
         ];
         const warn = missing.length ? ` Note: no recorded ${missing.join(" or ")}.` : "";
-        const runWarn = given(a.run_dir) ? "" : " No run_dir yet — launch via the workflow's amico-run bash command.";
+        const runWarn = given(a.run_dir) ? "" : " No run_dir yet — launch via the workflow's amico run bash command.";
         completeStage(dir, "solve");
         return `Solve knobs set for "${meta.slug}".${warn}${runWarn}\n\n${sentinel}`;
       },
@@ -1225,7 +1233,7 @@ export const AMICODE_TOOLS: Record<string, AmicodeToolDef> = {
     amicode_verify: {
       description:
         "Record the free-tier re-rollout VERIFICATION outcome on the Run entity (spec C). " +
-        'Call this AFTER a `tier="free"` solve finishes: amico-run runs the fixed re-rollout ' +
+        'Call this AFTER a `tier="free"` solve finishes: the amico CLI runs the fixed re-rollout ' +
         "harness and writes verification.toml; read it and pass agree + the two fidelities here. " +
         "Bookkeeping AFTER the fact — no stage gate (a verification record must never be lost). " +
         "Promotion of a free run is blocked until agree = true.",
@@ -1481,7 +1489,7 @@ export const AMICODE_TOOLS: Record<string, AmicodeToolDef> = {
         "fix_global_variable! path) + solve.pinned_globals; re-staging replaces the pin.\n" +
         "RE-OPTIMIZE: pass warm_start (the bank seed — catalog entry id or pulse ref); the run " +
         "stub records it. The re-solve itself launches through the EXISTING solve path (bash " +
-        "amico-run), warm-started via the load_traj idiom; pass its run_dir when known.\n" +
+        "amico run), warm-started via the load_traj idiom; pass its run_dir when known.\n" +
         "RE-BANK: the tool STAGES the exact `amico catalog ingest` command with the chain's " +
         "provenance flags (--warm-start/--calibration-ref/--pin — which calibration, which pin, " +
         "which seed). Promotion is human-gated like all promotions: run it ONLY after the " +
@@ -2011,6 +2019,14 @@ export const AMICODE_TOOLS: Record<string, AmicodeToolDef> = {
             "(validated as a git worktree of this project); null (default) inherits the parent " +
             "directory. Requires the experimental worktrees feature to be enabled.",
         },
+        placement: {
+          type: ["string", "null"],
+          description:
+            'Optional placement target for the child session — the H2 compute-federation ' +
+            '"where" dimension (ADR-0027 §7 seam 4). null/omitted (default) resolves to ' +
+            '"local". INERT in H1: threaded and defaulted but never routed on — a future H2 ' +
+            "executor reads it to place work on a peer.",
+        },
       },
       async execute(
         a: {
@@ -2023,6 +2039,7 @@ export const AMICODE_TOOLS: Record<string, AmicodeToolDef> = {
           force?: boolean | null;
           command?: string | null;
           workspace?: string | null;
+          placement?: string | null;
         },
         ctx: AmicodeToolContext,
       ) {

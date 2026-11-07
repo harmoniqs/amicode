@@ -9,12 +9,12 @@
 // opts?) which copies the shipped mode-card markdown into the global opencode
 // agents directory. Semantics: ALWAYS-COPY (extension-owned, overwrite-on-
 // activate, never blocks activation).
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { globalAgentsDir, stageModCards } from "../src/mode_cards";
+import { globalAgentsDir, opencodeGlobalConfigRoot, stageModCards } from "../src/mode_cards";
 import { validateModeRegistry } from "@amicode/schema";
 
 // The REAL extension root — packages/extension/agents/ ships in the vsix.
@@ -35,9 +35,28 @@ function expectedCards(): string[] {
 const HERMETIC = { entitlements: [] as string[], overlaySource: null as string | null };
 
 describe("globalAgentsDir", () => {
-  it("is ~/.config/opencode/agents/", () => {
+  let prevXdg: string | undefined;
+  beforeEach(() => {
+    prevXdg = process.env.XDG_CONFIG_HOME;
+  });
+  afterEach(() => {
+    if (prevXdg === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = prevXdg;
+  });
+
+  it("is ~/.config/opencode/agents/ when XDG_CONFIG_HOME is unset", () => {
+    delete process.env.XDG_CONFIG_HOME;
     const home = process.env.HOME ?? "/tmp";
     expect(globalAgentsDir()).toBe(join(home, ".config", "opencode", "agents"));
+  });
+
+  // #1015: the engine resolves its config dir via XDG_CONFIG_HOME (Flatpak VS
+  // Code overrides it to ~/.var/app/com.visualstudio.code/config); staging to a
+  // hardcoded ~/.config left every staged agent/mode invisible to the engine.
+  it("honours XDG_CONFIG_HOME for the agents dir and the config root (#1015)", () => {
+    process.env.XDG_CONFIG_HOME = "/var/app/flatpak/config";
+    expect(globalAgentsDir()).toBe(join("/var/app/flatpak/config", "opencode", "agents"));
+    expect(opencodeGlobalConfigRoot()).toBe(join("/var/app/flatpak/config", "opencode"));
   });
 });
 

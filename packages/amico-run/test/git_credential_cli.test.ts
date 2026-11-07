@@ -4,7 +4,7 @@
 // cases use a PREFILLED fresh cache, so nothing touches the network.
 import { describe, it, expect, beforeAll } from "vitest";
 import { execFileSync, spawnSync } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { testKeyPair } from "../src/github_app.js";
 import { tmpRoot } from "./helpers.js";
@@ -28,7 +28,12 @@ function setup() {
   writeFileSync(pemFile, privateKeyPem);
   const configFile = join(root, "github.json");
   const cacheFile = join(root, "tok.json");
-  const baseEnv = { AMICO_GITHUB_FILE: configFile, AMICO_GITHUB_TOKEN_FILE: cacheFile };
+  // #1928: identity by AMICO_GH_IDENTITY ("" = the person default, pinned
+  // against the developer's env); the principal cache lives in the sandbox.
+  const appsDir = join(root, "github-apps");
+  mkdirSync(appsDir, { recursive: true });
+  writeFileSync(join(appsDir, "principal.json"), JSON.stringify({ on_behalf_of: "test-human", captured_at: new Date().toISOString(), source: "gh api user" }));
+  const baseEnv = { AMICO_GITHUB_FILE: configFile, AMICO_GITHUB_TOKEN_FILE: cacheFile, AMICO_GITHUB_APPS_DIR: appsDir, AMICO_GH_IDENTITY: "" };
   return { root, pemFile, configFile, cacheFile, baseEnv };
 }
 
@@ -46,21 +51,32 @@ describe("parseCredentialRequest", () => {
 describe("git credential helper (unit)", () => {
   it("non-https or non-github → silent no-op", async () => {
     const { baseEnv } = setup();
-    expect(await credentialMain("protocol=http\nhost=github.com\n\n", baseEnv)).toEqual({ stdout: "", code: 0 });
-    expect(await credentialMain("protocol=https\nhost=gitlab.com\n\n", baseEnv)).toEqual({ stdout: "", code: 0 });
+    const agentEnv = { ...baseEnv, AMICO_GH_IDENTITY: "agent" };
+    expect(await credentialMain("protocol=http\nhost=github.com\n\n", agentEnv)).toEqual({ stdout: "", code: 0 });
+    expect(await credentialMain("protocol=https\nhost=gitlab.com\n\n", agentEnv)).toEqual({ stdout: "", code: 0 });
   });
   it("unconfigured → silent no-op (git falls through)", async () => {
     const { baseEnv } = setup(); // neither file is ever written
     expect(await credentialMain("protocol=https\nhost=github.com\n\n", baseEnv)).toEqual({ stdout: "", code: 0 });
+    expect(await credentialMain("protocol=https\nhost=github.com\n\n", { ...baseEnv, AMICO_GH_IDENTITY: "agent" })).toEqual({ stdout: "", code: 0 });
   });
 });
 
 describe("git credential helper (bundle)", () => {
-  it("configured + fresh cached token → protocol answer with the token", () => {
+  it("configured but identity unset (person, the default) → silence, git falls through (#1928)", () => {
     const { pemFile, configFile, cacheFile, baseEnv } = setup();
     writeFileSync(configFile, JSON.stringify({ app_id: "1", installation_id: "2", pem_path: pemFile }));
     writeFileSync(cacheFile, JSON.stringify({ token: "ghs_test_cred", expiresAt: new Date(Date.now() + 3600_000).toISOString() }));
     const r = runHelper("protocol=https\nhost=github.com\n\n", baseEnv);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toBe("");
+  });
+
+  it("configured + agent identity + fresh cached token → protocol answer with the token", () => {
+    const { pemFile, configFile, cacheFile, baseEnv } = setup();
+    writeFileSync(configFile, JSON.stringify({ app_id: "1", installation_id: "2", pem_path: pemFile }));
+    writeFileSync(cacheFile, JSON.stringify({ token: "ghs_test_cred", expiresAt: new Date(Date.now() + 3600_000).toISOString() }));
+    const r = runHelper("protocol=https\nhost=github.com\n\n", { ...baseEnv, AMICO_GH_IDENTITY: "agent" });
     expect(r.code).toBe(0);
     expect(r.stdout).toBe("username=x-access-token\npassword=ghs_test_cred\n");
   });
@@ -69,14 +85,15 @@ describe("git credential helper (bundle)", () => {
     const { pemFile, configFile, cacheFile, baseEnv } = setup();
     writeFileSync(configFile, JSON.stringify({ app_id: "1", installation_id: "2", pem_path: pemFile }));
     writeFileSync(cacheFile, JSON.stringify({ token: "ghs_test_cred", expiresAt: new Date(Date.now() + 3600_000).toISOString() }));
-    expect(runHelper("protocol=https\nhost=example.com\n\n", baseEnv).stdout).toBe("");
-    expect(runHelper("protocol=http\nhost=github.com\n\n", baseEnv).stdout).toBe("");
+    const agentEnv = { ...baseEnv, AMICO_GH_IDENTITY: "agent" };
+    expect(runHelper("protocol=https\nhost=example.com\n\n", agentEnv).stdout).toBe("");
+    expect(runHelper("protocol=http\nhost=github.com\n\n", agentEnv).stdout).toBe("");
   });
 
   it("malformed config → token-free stderr note, stdout stays protocol-clean, exit 0 (never blocks auth)", () => {
     const { configFile, baseEnv } = setup();
     writeFileSync(configFile, "{nope");
-    const r = runHelper("protocol=https\nhost=github.com\n\n", baseEnv);
+    const r = runHelper("protocol=https\nhost=github.com\n\n", { ...baseEnv, AMICO_GH_IDENTITY: "agent" });
     expect(r.code).toBe(0);
     expect(r.stdout).toBe("");
     expect(r.stderr).toMatch(/malformed/);

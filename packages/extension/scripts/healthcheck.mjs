@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-// Amicode healthcheck — exit 0 iff julia+project, opencode /event, amico-run,
+// Amicode healthcheck — exit 0 iff julia+project, opencode /event, the amico CLI,
 // and LLM creds all resolve; else non-zero with a precise ✗ line per failure.
+// (#1667: the amico-run bin is deleted — the probe execs the `amico` verb router.)
 import { execFileSync } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
@@ -11,7 +12,7 @@ import { bootOpencodeAndProbe } from "./opencode_probe.mjs";
 const EXT_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const JULIA_PROJECT = join(homedir(), ".amico", "julia"); // absolute — '~' is NOT expanded in flags
 const CHECK_ORDER = ["julia", "opencode", "amicorun", "creds"];
-const LABEL = { julia: "julia+project", opencode: "opencode /event", amicorun: "amico-run", creds: "LLM creds" };
+const LABEL = { julia: "julia+project", opencode: "opencode /event", amicorun: "amico CLI", creds: "LLM creds" };
 
 /** PURE: results = { [name]: {ok} | {ok:false,reason,fix} } → { exitCode, lines }. Unit-tested. */
 export function resolveChecks(results) {
@@ -46,7 +47,7 @@ function probeJulia() {
 }
 function probeAmicorun() {
   for (const dir of [join(EXT_ROOT, "bin", "launcher"), join(EXT_ROOT, "..", "amico-run", "launcher")]) {
-    const p = join(dir, "amico-run");
+    const p = join(dir, "amico");
     if (existsSync(p)) {
       try {
         execFileSync(p, ["--help"], { stdio: "ignore", timeout: 15_000 });
@@ -54,13 +55,13 @@ function probeAmicorun() {
       } catch (e) {
         return {
           ok: false,
-          reason: `amico-run --help failed (${(e.message || "").slice(0, 60)})`,
-          fix: "rebuild amico-run / check node on PATH",
+          reason: `amico --help failed (${(e.message || "").slice(0, 60)})`,
+          fix: "rebuild the amico CLI / check node on PATH",
         };
       }
     }
   }
-  return { ok: false, reason: "amico-run launcher not found", fix: "pnpm -r build (stages bin/) or check the VSIX" };
+  return { ok: false, reason: "amico CLI launcher not found", fix: "pnpm -r build (stages bin/) or check the VSIX" };
 }
 
 // opencode + LLM creds (0.3): ONE boot of the vendored opencode answers both —

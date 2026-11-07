@@ -4,12 +4,15 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
+  clipboardImageWriteCommand,
   extractReportBugModel,
   handleAmicodeBridgeMessage,
   rebuildAppBundleStep,
   rebuildGitCommand,
   resolveDbBackupDir,
   resolveRebuildMode,
+  saveFileRequest,
+  writeClipboardImageNative,
   type BridgeIo,
 } from "../src/chat_bridge";
 
@@ -179,6 +182,34 @@ describe("developer-tools rebuild — only amicodePath is required (#1018/#1115)
   });
 });
 
+describe("amicode bridge — save-file payloads", () => {
+  const b64 = (text: string) => Buffer.from(text).toString("base64");
+
+  it("saves a previewed PDF with a PDF filter and its exact bytes", () => {
+    const save = saveFileRequest("comb-vs-posterior.pdf", `data:application/pdf;base64,${b64("%PDF-1.5 x")}`);
+    expect(save?.name).toBe("comb-vs-posterior.pdf");
+    expect(save?.filters).toEqual({ PDF: ["pdf"] });
+    expect(save?.bytes.toString()).toBe("%PDF-1.5 x");
+  });
+
+  it("keeps the run-card PNG and markdown export paths", () => {
+    expect(saveFileRequest("card.png", `data:image/png;base64,${b64("png")}`)?.filters).toEqual({
+      Images: ["png", "jpg", "jpeg", "gif", "webp", "svg"],
+    });
+    expect(saveFileRequest("session.md", `data:text/markdown;base64,${b64("# hi")}`)?.filters).toEqual({
+      Markdown: ["md", "markdown", "txt"],
+    });
+  });
+
+  it("refuses paths, unknown types, non-base64 URLs and oversized payloads", () => {
+    expect(saveFileRequest("../../etc/x.pdf", `data:application/pdf;base64,${b64("x")}`)?.name).toBe("x.pdf");
+    expect(saveFileRequest("run.sh", `data:text/plain;base64,${b64("x")}`)).toBeNull();
+    expect(saveFileRequest("pdf", `data:application/pdf;base64,${b64("x")}`)).toBeNull();
+    expect(saveFileRequest("a.pdf", "data:application/pdf,%25PDF")).toBeNull();
+    expect(saveFileRequest("a.pdf", `data:application/pdf;base64,${"A".repeat(24_000_004)}`)).toBeNull();
+  });
+});
+
 describe("amicode bridge — open-external", () => {
   it("opens https URLs and nothing else", () => {
     const host = io();
@@ -189,6 +220,65 @@ describe("amicode bridge — open-external", () => {
     }
     expect(env.opened).toHaveLength(1);
   });
+});
+
+describe("amicode bridge — open-html-external pops a previewed page out to the browser (#2143)", () => {
+  const win = vscode.window as unknown as { messages: string[] };
+  const venv = vscode.env as unknown as { remoteName: string | undefined };
+  afterEach(() => {
+    venv.remoteName = undefined;
+    win.messages.length = 0;
+  });
+
+  it("opens an existing local .html/.htm file with the system handler", () => {
+    for (const ext of [".html", ".HTM"]) {
+      const target = path.join(os.tmpdir(), `amicode dashboard ${Date.now()}${ext}`);
+      fs.writeFileSync(target, "<h1>status</h1>");
+      const before = env.opened.length;
+      expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "open-html-external", path: target }, host())).toBe(true);
+      expect(env.opened).toHaveLength(before + 1);
+      expect((env.opened[env.opened.length - 1] as { fsPath: string }).fsPath).toBe(target);
+      fs.rmSync(target, { force: true });
+    }
+  });
+
+  it("refuses relative paths, missing files and non-HTML files, naming why", () => {
+    const script = path.join(os.tmpdir(), `amicode not-html ${Date.now()}.command`);
+    fs.writeFileSync(script, "echo hi");
+    for (const p of ["status.html", "/definitely/not/here-xyz.html", script]) {
+      expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "open-html-external", path: p }, host())).toBe(true);
+    }
+    expect(env.opened).toHaveLength(0);
+    expect(win.messages).toHaveLength(3);
+    expect(win.messages.every((m) => m.startsWith("Amicode: page not opened in the browser"))).toBe(true);
+    fs.rmSync(script, { force: true });
+  });
+
+  it("refuses in a remote window (the file is not on the machine showing the browser)", () => {
+    const target = path.join(os.tmpdir(), `amicode remote ${Date.now()}.html`);
+    fs.writeFileSync(target, "<p>x</p>");
+    venv.remoteName = "ssh-remote";
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "open-html-external", path: target }, host())).toBe(true);
+    expect(env.opened).toHaveLength(0);
+    expect(win.messages[0]).toMatch(/remote/);
+    fs.rmSync(target, { force: true });
+  });
+
+  it("a malformed payload is not consumed", () => {
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "open-html-external", path: 7 }, host())).toBe(false);
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "open-html-external" }, host())).toBe(false);
+  });
+
+  it("both webview shells forward the kind to the extension (chat panel twice, deck shell once)", () => {
+    const chat = fs.readFileSync(path.join(__dirname, "..", "src", "chat_panel.ts"), "utf8");
+    const deck = fs.readFileSync(path.join(__dirname, "..", "src", "deck", "shell.ts"), "utf8");
+    expect(chat.match(/d\.kind === "open-html-external"/g)).toHaveLength(2);
+    expect(deck.match(/d\.kind === "open-html-external"/g)).toHaveLength(1);
+  });
+
+  function host() {
+    return io();
+  }
 });
 
 describe("amicode bridge — open-file routes to preview-file (#935)", () => {
@@ -238,6 +328,33 @@ describe("amicode bridge — open-file routes to preview-file (#935)", () => {
     // No preview-file message should have been posted
     const previewMsg = host.posted.find((m: any) => m.kind === "preview-file");
     expect(previewMsg).toBeUndefined();
+  });
+});
+
+describe("amicode bridge — preview-file carries its target session (#1648)", () => {
+  const fileUrl = (target: string) => "file://" + target.split("/").map(encodeURIComponent).join("/");
+  const open = async (host: ReturnType<typeof io>) => {
+    const target = path.join(os.tmpdir(), `amicode target ${Date.now()}.md`);
+    fs.writeFileSync(target, "# note\n");
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "open-file", url: fileUrl(target) }, host)).toBe(true);
+    await flush();
+    fs.rmSync(target, { force: true });
+    return host.posted.find((m: any) => m.kind === "preview-file") as any;
+  };
+
+  it("stamps the host panel's session id so every other session view can ignore the open", async () => {
+    const host = io();
+    host.previewFileTarget = () => "ses_a";
+    const msg = await open(host);
+    expect(msg.sessionID).toBe("ses_a");
+  });
+
+  it("omits the field when the host cannot target (draft route / unknown / no callback) — legacy broadcast", async () => {
+    const unknown = io();
+    unknown.previewFileTarget = () => undefined;
+    expect("sessionID" in (await open(unknown))).toBe(false);
+    const bare = io();
+    expect("sessionID" in (await open(bare))).toBe(false);
   });
 });
 
@@ -339,6 +456,21 @@ describe("chat panel relay — preview-file in iframe allowlist (#934)", () => {
   });
 });
 
+describe("chat panel relay — fleet-enable-control in the app→extension allowlist (#1551)", () => {
+  it("both outer-relay instances forward the enable envelope up to the extension host", () => {
+    const src = fs.readFileSync(
+      path.resolve(__dirname, "..", "src", "chat_panel.ts"),
+      "utf8",
+    );
+    // The inbound (app→extension) relay allowlist must carry fleet-enable-control
+    // in BOTH relay instances (renderHtml + renderTransitionHtml), else the
+    // envelope is dropped before handleAmicodeBridgeMessage sees it.
+    const matches = src.match(/d\.kind === "fleet-enable-control"/g);
+    expect(matches).not.toBeNull();
+    expect(matches!.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
 describe("amicode bridge — clipboard", () => {
   it("clipboard-request answers with the OS clipboard text and echoes the pane tab", async () => {
     const host = io();
@@ -367,6 +499,63 @@ describe("amicode bridge — clipboard", () => {
     expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "clipboard-write", text: "x".repeat(5_000_001) }, host)).toBe(true);
     await flush();
     expect(env.clipboard.text).toBe("");
+  });
+});
+
+describe("amicode bridge — clipboard-image-write", () => {
+  it("writes on the host the user sits at and answers the nonce'd caller", async () => {
+    const host = io();
+    const png = "data:image/png;base64,iVBORw0KGgo=";
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "clipboard-image-write", dataUrl: png, nonce: "c1", tab: "pane-2" }, host)).toBe(true);
+    await vi.waitFor(() => expect(host.posted).toHaveLength(1));
+    const reply = host.posted[0] as { kind: string; nonce: string; tab: string; ok: unknown };
+    expect(reply).toMatchObject({ source: "amicode", kind: "clipboard-image-written", nonce: "c1", tab: "pane-2" });
+    expect(typeof reply.ok).toBe("boolean");
+  });
+
+  it("drops non-PNG payloads, oversize payloads, and hidden panels", async () => {
+    const hidden = io(false);
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "clipboard-image-write", dataUrl: "data:image/png;base64,AA==" }, hidden)).toBe(true);
+    const host = io();
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "clipboard-image-write", dataUrl: "data:image/svg+xml;base64,AA==" }, host)).toBe(true);
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "clipboard-image-write", dataUrl: "data:image/png;base64," + "A".repeat(24_000_001) }, host)).toBe(true);
+    await flush();
+    expect(hidden.posted).toHaveLength(0);
+    expect(host.posted).toHaveLength(0);
+  });
+
+  it("a failed temp-file write answers ok:false instead of throwing (the caller is never left waiting)", async () => {
+    const savedTmp = { TMPDIR: process.env.TMPDIR, TMP: process.env.TMP, TEMP: process.env.TEMP };
+    const missing = path.join(os.tmpdir(), `amicode-no-such-dir-${process.pid}`, "nested");
+    process.env.TMPDIR = missing;
+    process.env.TMP = missing;
+    process.env.TEMP = missing;
+    try {
+      await expect(writeClipboardImageNative(Buffer.from("iVBORw0KGgo=", "base64"))).resolves.toBe(false);
+      const host = io();
+      expect(
+        handleAmicodeBridgeMessage(
+          { source: "amicode", kind: "clipboard-image-write", dataUrl: "data:image/png;base64,iVBORw0KGgo=", nonce: "c9", tab: "pane-3" },
+          host,
+        ),
+      ).toBe(true);
+      await vi.waitFor(() => expect(host.posted).toHaveLength(1));
+      expect(host.posted[0]).toEqual({ source: "amicode", kind: "clipboard-image-written", nonce: "c9", tab: "pane-3", ok: false });
+    } finally {
+      for (const [k, v] of Object.entries(savedTmp)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  });
+
+  it("picks the platform writer and never splices the path into a script", () => {
+    const mac = clipboardImageWriteCommand("darwin", {});
+    expect(mac?.cmd).toBe("osascript");
+    expect(mac?.args.join(" ")).toContain("item 1 of argv");
+    expect(clipboardImageWriteCommand("linux", {})).toEqual({ cmd: "xclip", args: ["-selection", "clipboard", "-t", "image/png", "-i"] });
+    expect(clipboardImageWriteCommand("linux", { WAYLAND_DISPLAY: "wayland-0" })?.args[1]).toContain("wl-copy --type image/png");
+    expect(clipboardImageWriteCommand("win32", {})).toBeNull();
   });
 });
 
@@ -467,6 +656,18 @@ describe("amicode bridge — commands & settings", () => {
     await flush();
     const ran = (vscode.commands as unknown as { executed: string[] }).executed ?? [];
     expect(ran).toContain("amicode.reportBug");
+  });
+
+  it("allowlists the Fleet Manager tab's This-machine/Hub commands (#1322 — invoke, not reimplement)", async () => {
+    const host = io();
+    // The Fleet Manager tab's This-machine (Repair / Go Standalone) buttons post
+    // these EXISTING commands over the bridge; the tab never reimplements them.
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "command", command: "amicode.fleet.repair" }, host)).toBe(true);
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "command", command: "amicode.fleet.goStandalone" }, host)).toBe(true);
+    await flush();
+    const ran = (vscode.commands as unknown as { executed: string[] }).executed ?? [];
+    expect(ran).toContain("amicode.fleet.repair");
+    expect(ran).toContain("amicode.fleet.goStandalone");
   });
 
   it("set-default-model accepts provider/model-id shapes and mirrors them to config", () => {
@@ -638,9 +839,15 @@ describe("amicode bridge — reportBug model handoff (amicode#277)", () => {
   it("no additional command gains a payload channel and the allowlist is unchanged in size (AC7)", async () => {
     const { BRIDGE_ALLOWED_COMMANDS } = await import("../src/chat_bridge");
     // amicode#653 added amicode.restartHub (payload-free, like restartServer).
-    expect(BRIDGE_ALLOWED_COMMANDS.size).toBe(11);
+    // #1322 added the Fleet Manager tab's This-machine actions (payload-free):
+    // amicode.fleet.repair + amicode.fleet.goStandalone.
+    // #1598 added amicode.stopServer for the engine on/off toggle.
+    expect(BRIDGE_ALLOWED_COMMANDS.size).toBe(14);
     expect(BRIDGE_ALLOWED_COMMANDS.has("amicode.reportBug")).toBe(true);
     expect(BRIDGE_ALLOWED_COMMANDS.has("amicode.restartHub")).toBe(true);
+    expect(BRIDGE_ALLOWED_COMMANDS.has("amicode.fleet.repair")).toBe(true);
+    expect(BRIDGE_ALLOWED_COMMANDS.has("amicode.fleet.goStandalone")).toBe(true);
+    expect(BRIDGE_ALLOWED_COMMANDS.has("amicode.stopServer")).toBe(true);
     // other allowlisted commands ignore model payload
     const host = io();
     let received: unknown = "sentinel";
@@ -776,6 +983,25 @@ describe("amicode bridge — add-workspace-project (#663)", () => {
   });
 });
 
+describe("amicode bridge — reveal-in-sidebar (#1036)", () => {
+  it("hands a string path to onRevealInSidebar (a dedicated kind, because the command lane carries no args)", () => {
+    const revealed: string[] = [];
+    const host = { ...io(), onRevealInSidebar: (p: string) => revealed.push(p) };
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "reveal-in-sidebar", path: "/w/p/a.md" }, host)).toBe(true);
+    expect(revealed).toEqual(["/w/p/a.md"]);
+  });
+
+  it("consumes the message silently without the callback, and ignores empty / non-string paths", () => {
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "reveal-in-sidebar", path: "/x" }, io())).toBe(true);
+    const revealed: string[] = [];
+    const host = { ...io(), onRevealInSidebar: (p: string) => revealed.push(p) };
+    for (const path of ["", 42, undefined, "x".repeat(5000)]) {
+      expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "reveal-in-sidebar", path }, host)).toBe(true);
+    }
+    expect(revealed).toEqual([]);
+  });
+});
+
 describe("amicode bridge — project-selected (#663)", () => {
   it("consumes project-selected and calls onProjectSelected with the path", () => {
     const selected: string[] = [];
@@ -806,6 +1032,62 @@ describe("amicode bridge — project-selected (#663)", () => {
     );
     expect(handled).toBe(true);
     expect(selected).toEqual([]);
+  });
+});
+
+// ============================================================================
+// #1551 — the enable-control act rides a PAYLOAD envelope (kind:
+// "fleet-enable-control" carrying { ownerMachineId, sessionID }), NOT the
+// command lane: the bare command relay cannot carry the target peer. The
+// handler shape-validates the payload and forwards it to the host's
+// onFleetEnableControl callback (which shows the native modal + mints).
+// ============================================================================
+describe("amicode bridge — fleet-enable-control (#1551)", () => {
+  it("forwards a well-formed enable envelope to onFleetEnableControl with { ownerMachineId, sessionID }", () => {
+    const seen: Array<{ ownerMachineId: string; sessionID: string }> = [];
+    const host = { ...io(), onFleetEnableControl: (req: { ownerMachineId: string; sessionID: string }) => seen.push(req) };
+    const handled = handleAmicodeBridgeMessage(
+      { source: "amicode", kind: "fleet-enable-control", ownerMachineId: "the-studio", sessionID: "ses_1" },
+      host,
+    );
+    expect(handled).toBe(true);
+    expect(seen).toEqual([{ ownerMachineId: "the-studio", sessionID: "ses_1" }]);
+  });
+
+  it("consumes the envelope even without onFleetEnableControl wired (never foreign-noise)", () => {
+    const host = io();
+    expect(
+      handleAmicodeBridgeMessage(
+        { source: "amicode", kind: "fleet-enable-control", ownerMachineId: "the-studio", sessionID: "ses_1" },
+        host,
+      ),
+    ).toBe(true);
+  });
+
+  it("a malformed payload (missing/non-string ownerMachineId or sessionID) mints nothing — the callback never fires", () => {
+    const seen: unknown[] = [];
+    const host = { ...io(), onFleetEnableControl: (req: unknown) => seen.push(req) };
+    // missing sessionID
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "fleet-enable-control", ownerMachineId: "the-studio" }, host)).toBe(true);
+    // missing ownerMachineId
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "fleet-enable-control", sessionID: "ses_1" }, host)).toBe(true);
+    // non-string ownerMachineId
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "fleet-enable-control", ownerMachineId: 7, sessionID: "ses_1" }, host)).toBe(true);
+    // empty strings
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "fleet-enable-control", ownerMachineId: "", sessionID: "" }, host)).toBe(true);
+    expect(seen).toEqual([]);
+  });
+
+  it("the enable act is NOT on the command lane — the bare command is refused (payload envelope, not a command)", () => {
+    const host = io();
+    // Key Decision: the bare command lane cannot carry the target peer, so the
+    // enable command is deliberately NOT allowlisted.
+    expect(
+      handleAmicodeBridgeMessage(
+        { source: "amicode", kind: "command", command: "amicode.fleet.enableControl" },
+        host,
+      ),
+    ).toBe(false);
   });
 });
 

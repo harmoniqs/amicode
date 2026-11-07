@@ -2,6 +2,7 @@ import * as http from "node:http";
 import * as vscode from "vscode";
 import type { StatusBarManager } from "./status_bar";
 import { SseLivenessTracker, type SseState } from "./sse_liveness";
+import { SseFrameSplitter } from "./amicode_service/sse_frame_splitter";
 
 // ============================================================================
 // OpencodeEventClient — Channel 1 of the bidirectional plumbing.
@@ -19,6 +20,9 @@ import { SseLivenessTracker, type SseState } from "./sse_liveness";
 // dead SSE doesn't break the demo.
 // ============================================================================
 
+/** One parsed stream event (the `data:` payload of an SSE frame). */
+export type OpencodeStreamEvent = { type?: string; properties?: Record<string, unknown> };
+
 export interface SseClientOptions {
   channel: vscode.OutputChannel;
   statusBar?: StatusBarManager;
@@ -29,12 +33,22 @@ export interface SseClientOptions {
   /** Liveness states (L1, #638): fired on every transition. The status bar
    *  is driven automatically from this; this hook is for any other sink. */
   onSseState?: (from: SseState, to: SseState) => void;
+  /** #1788 (S3): observe-only event sink — every PARSED event reaches it
+   *  immediately, before the built-in routing. A passive consumer (the
+   *  followed-session watcher): it must never mutate the stream, its cursor
+   *  handling, or this connection. A throwing observer is CONTAINED here —
+   *  logged, never propagated into the stream loop. */
+  onEvent?: (event: OpencodeStreamEvent) => void;
 }
 
 export class OpencodeEventClient implements vscode.Disposable {
   private req?: http.ClientRequest;
   private res?: http.IncomingMessage;
-  private buf = "";
+  /** #1790: linear-time frame splitter — scans only the new chunk, carrying a
+   *  two-character lookback for a boundary split across chunks.  Handles both
+   *  LF (`\n\n`) and CRLF (`\r\n\r\n`) frame endings.  Replaces the quadratic
+   *  `buf += chunk; buf.indexOf("\n\n")` pattern the client shipped with. */
+  private splitter = new SseFrameSplitter();
   private url?: URL;
   private reconnectTimer?: NodeJS.Timeout;
   private disposed = false;
@@ -135,6 +149,9 @@ export class OpencodeEventClient implements vscode.Disposable {
         }
         this.opts.channel.appendLine(`[sse] connected`);
         this.liveness?.noteConnected();
+        // #1790: reset the splitter on each new connection so a partial frame
+        // from a previous connection never bleeds into the next one.
+        this.splitter = new SseFrameSplitter();
         res.setEncoding("utf8");
         res.on("data", (chunk: string) => this.onChunk(chunk));
         res.on("end", () => {
@@ -171,19 +188,20 @@ export class OpencodeEventClient implements vscode.Disposable {
     // ANY bytes = the stream is speaking (events or comment-only pings —
     // the liveness signal the old client discarded, #638)
     this.liveness?.noteFrame();
-    this.buf += chunk;
-    // SSE events terminate on a blank line (\n\n).
-    let sep: number;
-    while ((sep = this.buf.indexOf("\n\n")) >= 0) {
-      const block = this.buf.slice(0, sep);
-      this.buf = this.buf.slice(sep + 2);
-      this.handleBlock(block);
+    // #1790: linear-time frame splitting — SseFrameSplitter scans only the new
+    // chunk, carrying a two-character lookback for a boundary (`\n\n` or
+    // `\r\n\r\n`) split across chunks.  Each whole frame is forwarded to
+    // handleBlock verbatim (delimiter included), so `\r\n` line endings inside
+    // the frame reach handleBlock intact; handleBlock splits on /\r?\n/.
+    for (const frame of this.splitter.push(chunk)) {
+      // strip the trailing blank-line delimiter before passing to handleBlock
+      this.handleBlock(frame.replace(/\r?\n\r?\n$/, ""));
     }
   }
 
   private handleBlock(block: string): void {
     const dataLines: string[] = [];
-    for (const line of block.split("\n")) {
+    for (const line of block.split(/\r?\n/)) {
       if (line.startsWith("data:")) dataLines.push(line.slice(5).trimStart());
     }
     if (dataLines.length === 0) return;
@@ -197,7 +215,16 @@ export class OpencodeEventClient implements vscode.Disposable {
     this.dispatch(event);
   }
 
-  private dispatch(event: { type?: string; properties?: Record<string, unknown> }): void {
+  private dispatch(event: OpencodeStreamEvent): void {
+    // #1788 (S3): the observe-only sink first. Contained: a broken observer
+    // must never take the shared stream's own routing down with it.
+    if (this.opts.onEvent) {
+      try {
+        this.opts.onEvent(event);
+      } catch (err) {
+        this.opts.channel.appendLine(`[sse] event observer error: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
     const type = event.type ?? "";
     const props = event.properties ?? {};
     // Light routing: only the events we currently care about. We don't

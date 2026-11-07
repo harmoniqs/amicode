@@ -10,6 +10,9 @@
  * the CM6 editor. Async fileType signal detects binary/error/oversize after
  * file.read().
  *
+ * #2141: .html/.htm files render in a scripts-off sandboxed frame
+ * (PreviewHtmlView) with the same Preview/Edit toggle as markdown.
+ *
  * #934: images render via data URI from the SDK binary response. PDFs render
  * via PDF.js (pdfjs-dist) to canvas — no iframe, no browser plugin. Save dot
  * moved to parent (SessionPreviewTab); zoom controls moved here to share
@@ -30,7 +33,23 @@ import { useServerSDK } from "@/context/server-sdk"
 import { PreviewEditor } from "@opencode-ai/session-ui/v2/preview-editor"
 import type { PreviewViewState } from "@opencode-ai/session-ui/v2/preview-view-state"
 import { PdfCanvasView } from "./pdf-canvas-view"
+import { createPdfFindController } from "./pdf-find-controller"
+import { PdfFindPill } from "./pdf-find-pill"
 import { toAbsolutePath, shouldApplyWatcherRead } from "./preview-file-helpers"
+import { validateHumanWritePath } from "./preview-human-write-gate"
+import { previewDrafts } from "./preview-draft-store"
+import {
+  COMPILE_DONE_FADE_MS,
+  canStartCompile,
+  compileRequestMessage,
+  compileStatusFromMessage,
+  isLatexFile,
+  type CompileState,
+} from "./preview-latex-compile"
+import { splitFrontmatter } from "./preview-frontmatter"
+import { FrontmatterCard } from "./preview-frontmatter-card"
+import { PreviewHtmlView } from "./preview-html-view"
+import { popOutHtmlMessage } from "./preview-html"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -41,7 +60,7 @@ function getExtension(path: string): string {
   return dot > 0 ? path.slice(dot).toLowerCase() : ""
 }
 
-type FileCategory = "markdown" | "image" | "pdf" | "text"
+type FileCategory = "markdown" | "html" | "image" | "pdf" | "text"
 
 /**
  * Sync, extension-based file classification (phase 1).
@@ -53,6 +72,7 @@ function getFileCategory(path: string): FileCategory {
   if ((RENDERABLE_EXTENSIONS.markdown as readonly string[]).includes(ext)) return "markdown"
   if ((RENDERABLE_EXTENSIONS.images as readonly string[]).includes(ext)) return "image"
   if ((RENDERABLE_EXTENSIONS.pdf as readonly string[]).includes(ext)) return "pdf"
+  if ((RENDERABLE_EXTENSIONS.html as readonly string[]).includes(ext)) return "html"
   return "text"
 }
 
@@ -82,8 +102,18 @@ export function PreviewFileView(props: {
   onSaveComplete?: () => void
   saveRequest?: () => number
   onSaveStatusChange?: (status: "idle" | "saving" | "saved") => void
+  /** Request-counter for "open the PDF find pill" (Cmd+F / Cmd+G routing).
+   *  Bump to open; the pill consumes the bump. Parallel to saveRequest. */
+  findRequest?: () => number
+  /** Direction for Cmd+G / Shift+Cmd+G — 1 next, -1 previous. Only consumed
+   *  while the find pill is open. */
+  findDirection?: () => number
   viewState?: () => PreviewViewState | undefined
   onViewStateChange?: (state: PreviewViewState) => void
+  /** The session this view belongs to (#1249). With it, unsaved edits are kept in
+   *  the per-(session, path) draft store so they survive a session-tab remount
+   *  and are never shown to another session. Absent = purely local drafts. */
+  draftSession?: string
   zoom: () => number
   zoomIn: (maximum: number) => void
   zoomOut: () => void
@@ -91,13 +121,93 @@ export function PreviewFileView(props: {
 }) {
   const sdk = useSDK()
   const serverSDK = useServerSDK()
-  const [fileContent, setFileContent] = createSignal("")
-  const [mode, setMode] = createSignal<"preview" | "edit">("preview")
-  const [unsavedContent, setUnsavedContent] = createSignal<string | null>(null)
+  // #1249: a remount (session-tab switch) restores this session's cached draft
+  // before anything reads the disk, so the editor returns with the exact text and
+  // dirty indicator the user left.
+  const draftScope = props.draftSession
+  const restoredDraft = draftScope ? previewDrafts.get(draftScope, props.filePath) : undefined
+  const [fileContent, setFileContent] = createSignal(restoredDraft?.content ?? "")
+  const [mode, setMode] = createSignal<"preview" | "edit">(restoredDraft ? "edit" : "preview")
+  const [unsavedContent, setUnsavedContent] = createSignal<string | null>(restoredDraft?.content ?? null)
+  onMount(() => {
+    if (restoredDraft) props.onDirtyChange(true)
+  })
   const [loading, setLoading] = createSignal(true)
   const [fileType, setFileType] = createSignal<FileType>(null)
   const [pdfNavigation, setPdfNavigation] = createSignal<PdfPageNavigation | null>(null)
   const pageInputID = `pdf-page-input-${props.filePath}`
+
+  // ─── PDF find (S1) ───────────────────────────────────────────────────
+  // Per-pane find controller. Lives here (above the viewer) so it survives
+  // reloads and zoom re-renders. The index is built lazily on first open
+  // from the PdfCanvasView wrapper; rebuilt when the PDF payload changes.
+  let pdfRoot: HTMLElement | undefined
+  let findInput: HTMLInputElement | undefined
+  const pdfFind = createPdfFindController({
+    pdfRoot: () => pdfRoot,
+    scrollContainer: () => scrollRef,
+  })
+
+  const focusPdfPane = () => scrollRef?.focus({ preventScroll: true })
+
+  const openPdfFind = () => {
+    if (category() !== "pdf") return
+    pdfFind.openFind()
+    // Focus lands on the pill input a frame later so the open state (and the
+    // pill's mount) has settled.
+    requestAnimationFrame(() => {
+      findInput?.focus({ preventScroll: true })
+    })
+  }
+
+  const closePdfFind = () => {
+    pdfFind.close()
+    focusPdfPane()
+  }
+
+  createEffect(
+    on(
+      () => props.findRequest?.() ?? 0,
+      (request) => {
+        if (request === 0) return
+        openPdfFind()
+      },
+    ),
+  )
+
+  // Cmd+G / Shift+Cmd+G step the current match while the pill is open.
+  // The parent packs direction into the counter's sign: bumping the find
+  // counter opens the pill; bumping with a NEGATIVE tick steps previous.
+  // Consumed via the same request-counter pattern as findRequest, so each
+  // keypress lands exactly once regardless of Solid re-renders.
+  createEffect(
+    on(
+      () => props.findDirection?.() ?? 0,
+      (request) => {
+        if (request === 0) return
+        if (!pdfFind.open()) {
+          openPdfFind()
+          return
+        }
+        if (request > 0) pdfFind.next()
+        else pdfFind.prev()
+      },
+    ),
+  )
+
+  // Rebuild the find index when the PDF payload changes (recompile, tab
+  // restore). Naive for S1 — a fresh build on every base64 swap.
+  createEffect(
+    on(
+      () => binaryData()?.base64,
+      (base64) => {
+        if (!base64) return
+        pdfFind.rebuild()
+      },
+    ),
+  )
+
+  onCleanup(() => pdfFind.dispose())
 
   // Binary data for image/PDF rendering (data URI / blob URL)
   const [binaryData, setBinaryData] = createSignal<{ base64: string; mime: string } | null>(null)
@@ -153,6 +263,8 @@ export function PreviewFileView(props: {
               return
             }
             setFileType("text")
+            // A disk read never replaces a cached draft (#1249).
+            if (unsavedContent() !== null) return
             setFileContent(content.content)
           })
           .catch(() => {
@@ -271,6 +383,41 @@ export function PreviewFileView(props: {
     onCleanup(() => window.removeEventListener("message", handler))
   })
 
+  // ─── Compile button status (#1403) ─────────────────────────────────────
+  // idle → compiling → done (check fades) | error, driven by the same
+  // run-latex-status relay the PDF refresh above listens to. Only for LaTeX files.
+  const [compileState, setCompileState] = createSignal<CompileState>("idle")
+  const [compileDetail, setCompileDetail] = createSignal<string | undefined>(undefined)
+  let compileFadeTimer: ReturnType<typeof setTimeout> | undefined
+  const applyCompileStatus = (status: { state: CompileState; detail?: string }) => {
+    if (compileFadeTimer) clearTimeout(compileFadeTimer)
+    compileFadeTimer = undefined
+    setCompileState(status.state)
+    setCompileDetail(status.detail)
+    if (status.state === "done") {
+      compileFadeTimer = setTimeout(() => setCompileState("idle"), COMPILE_DONE_FADE_MS)
+    }
+  }
+  const requestCompile = () => {
+    if (!canStartCompile(compileState())) return
+    // Same message Cmd+S posts after a save — works on a clean (unmodified) file.
+    try {
+      window.parent?.postMessage(compileRequestMessage(selfAbsolute()), "*")
+    } catch {}
+  }
+  onMount(() => {
+    const handler = (event: MessageEvent) => {
+      if (!isLatexFile(props.filePath)) return
+      const status = compileStatusFromMessage(event.data, selfAbsolute())
+      if (status) applyCompileStatus(status)
+    }
+    window.addEventListener("message", handler)
+    onCleanup(() => window.removeEventListener("message", handler))
+  })
+  onCleanup(() => {
+    if (compileFadeTimer) clearTimeout(compileFadeTimer)
+  })
+
   // ─── Binary URLs ───────────────────────────────────────────────────────
 
   // Data URI for images (small enough for inline base64)
@@ -291,13 +438,33 @@ export function PreviewFileView(props: {
   })
 
   const saveFile = async (filePath: string, content: string, closeAfterSave = false) => {
+    // #1454 (W5): human write gate — reject a write that resolves outside the
+    // session workspace (the engine handler stays permissive for the agent; the
+    // gate is applied UPSTREAM here). Only gate when the workspace is known.
+    const workspace = sdk().directory
+    if (workspace && !validateHumanWritePath(filePath, workspace).allowed) {
+      setSaveStatus("idle")
+      return
+    }
     setSaveStatus("saving")
     try {
-      await serverSDK().client.file.write({ path: filePath, content })
+      // #1249: serialize per server + project + file; a close-save of the same text
+      // joins an in-flight save instead of writing twice. The draft revision is
+      // captured NOW so a completion can only clear the edit it actually wrote.
+      const revision = draftScope ? previewDrafts.get(draftScope, filePath)?.revision : undefined
+      const fileKey = [serverSDK().url, workspace ?? "", filePath].join("\u0000")
+      await previewDrafts.enqueueSave(fileKey, content, async () => {
+        await serverSDK().client.file.write({ path: filePath, content })
+      })
       setSaveStatus("saved")
-      setUnsavedContent(null)
-      props.onDirtyChange(false)
-      if (closeAfterSave) props.onSaveComplete?.()
+      // A newer edit typed while the write was in flight keeps the document dirty
+      // (and an older completion never closes it).
+      const settled = draftScope && revision !== undefined ? previewDrafts.settle(draftScope, filePath, revision) : true
+      if (settled) {
+        setUnsavedContent(null)
+        props.onDirtyChange(false)
+        if (closeAfterSave) props.onSaveComplete?.()
+      }
       if (savedTimer) clearTimeout(savedTimer)
       savedTimer = setTimeout(() => setSaveStatus("idle"), 2000)
       // #1253: trigger LaTeX compilation after saving a .tex file. #1414: post
@@ -313,6 +480,7 @@ export function PreviewFileView(props: {
   }
 
   const handleEdit = (content: string) => {
+    if (draftScope) previewDrafts.write(draftScope, props.filePath, content)
     setUnsavedContent(content)
     props.onDirtyChange(true)
     setFileContent(content)
@@ -340,12 +508,12 @@ export function PreviewFileView(props: {
 
   // ─── Render ────────────────────────────────────────────────────────────
 
-  const showModeToggle = () => category() === "markdown"
+  const showModeToggle = () => category() === "markdown" || category() === "html"
 
   // Zoom is disabled in edit mode — pill disappears entirely
   const isEditing = () => {
     const cat = category()
-    if (cat === "markdown") return mode() === "edit"
+    if (cat === "markdown" || cat === "html") return mode() === "edit"
     if (cat === "image" || cat === "pdf") return false
     return true // text/code files are always in edit mode
   }
@@ -358,7 +526,9 @@ export function PreviewFileView(props: {
   const startIdleTimer = () => {
     if (idleTimer) clearTimeout(idleTimer)
     idleTimer = setTimeout(() => {
-      if (!controlsHovered) setShowControls(false)
+      // The find pill is exempt from auto-hide while open — it holds the
+      // user's query and focus; hiding it mid-search would lose both.
+      if (!controlsHovered && !pdfFind.open()) setShowControls(false)
     }, 2000)
   }
 
@@ -527,6 +697,33 @@ export function PreviewFileView(props: {
     "backdrop-filter": "blur(4px)",
   }
 
+  // AMICODE: save a previewed PDF/image to the user's machine. Downloads are
+  // dead inside the webview iframe, so the bytes ride the extension's
+  // save-file bridge (a native Save dialog on the machine the user is at);
+  // unframed, a plain anchor download stands.
+  const downloadPreview = () => {
+    const data = binaryData()
+    if (!data) return
+    const filename = props.filePath.split("/").pop() || "download"
+    const dataUrl = `data:${data.mime};base64,${data.base64}`
+    if (window.parent !== window) {
+      window.parent.postMessage({ source: "amicode", kind: "save-file", filename, dataUrl }, "*")
+      return
+    }
+    const link = document.createElement("a")
+    link.href = dataUrl
+    link.download = filename
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+  }
+
+  // #2143: the pop-out rides its own bridge kind (open-external stays https-only).
+  const popOutHtml = () => {
+    if (window.parent === window) return
+    window.parent.postMessage(popOutHtmlMessage(selfAbsolute()), "*")
+  }
+
   return (
     <div
       class="h-full relative overflow-hidden"
@@ -544,8 +741,11 @@ export function PreviewFileView(props: {
           "z-index": "20",
           display: "flex",
           "align-items": "center",
-          opacity: showControls() ? "1" : "0",
-          "pointer-events": showControls() ? "auto" : "none",
+          gap: "6px",
+          // The find pill stays visible (and interactive) even when the rest
+          // of the floating controls have idled out.
+          opacity: showControls() || pdfFind.open() ? "1" : "0",
+          "pointer-events": showControls() || pdfFind.open() ? "auto" : "none",
           transition: "opacity 200ms ease",
         }}
       >
@@ -578,6 +778,62 @@ export function PreviewFileView(props: {
                 </SegmentedControlItemV2>
               </TooltipV2>
             </SegmentedControlV2>
+          </div>
+        </Show>
+        {/* Compile (#1403): LaTeX sources only. A .tex opens straight in the editor, where
+            the zoom/page controls are hidden, so this sits OUTSIDE the isEditing gate. */}
+        <Show when={isLatexFile(props.filePath)}>
+          <div
+            class="shrink-0 flex items-center h-7 rounded-md border border-border-base overflow-hidden shadow-sm"
+            style={previewControlSurfaceStyle}
+          >
+            <TooltipV2
+              openDelay={400}
+              value={compileState() === "error" && compileDetail() ? `Compile failed: ${compileDetail()}` : "Compile LaTeX"}
+            >
+              <button
+                type="button"
+                data-preview-compile
+                data-compile-state={compileState()}
+                class="flex items-center justify-center gap-1 h-full px-2 cursor-pointer text-12-regular text-text-weak hover:text-text-base hover:bg-background-stronger transition-colors disabled:cursor-wait focus-visible:outline focus-visible:outline-2 focus-visible:outline-border-focus"
+                aria-label={compileState() === "compiling" ? "Compiling" : "Compile LaTeX"}
+                aria-busy={compileState() === "compiling"}
+                onClick={requestCompile}
+              >
+                <Show
+                  when={compileState() !== "compiling"}
+                  fallback={<span data-compile-spinner class="size-3 rounded-full border-2 border-current border-t-transparent animate-spin" />}
+                >
+                  <Show
+                    when={compileState() === "done"}
+                    fallback={
+                      <Show
+                        when={compileState() === "error"}
+                        fallback={
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                            <path d="M7 4.5v15a.5.5 0 0 0 .77.42l11.5-7.5a.5.5 0 0 0 0-.84L7.77 4.08A.5.5 0 0 0 7 4.5z" />
+                          </svg>
+                        }
+                      >
+                        <Icon name="circle-x" size="small" class="text-icon-critical-base" />
+                      </Show>
+                    }
+                  >
+                    <Icon name="check-small" size="small" />
+                  </Show>
+                </Show>
+                <span>Compile</span>
+              </button>
+            </TooltipV2>
+            <span class="sr-only" role="status" aria-live="polite">
+              {compileState() === "compiling"
+                ? "Compiling"
+                : compileState() === "done"
+                  ? "Compiled"
+                  : compileState() === "error"
+                    ? "Compile failed"
+                    : ""}
+            </span>
           </div>
         </Show>
         <Show when={!isEditing()}>
@@ -653,6 +909,34 @@ export function PreviewFileView(props: {
                 </div>
               )
             }}
+          </Show>
+          <Show when={binaryData()}>
+            <TooltipV2 openDelay={400} value="Download">
+              <button
+                data-preview-download
+                class="shrink-0 flex items-center justify-center w-7 h-7 rounded-md border border-border-base shadow-sm cursor-pointer text-text-weak hover:text-text-base hover:bg-background-stronger transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-border-focus"
+                style={previewControlSurfaceStyle}
+                onClick={downloadPreview}
+                aria-label="Download"
+              >
+                <Icon name="download" size="small" />
+              </button>
+            </TooltipV2>
+          </Show>
+          {/* Pop-out (#2143): open the rendered page in the system browser. The
+              extension opens only an existing local .html/.htm file and names a refusal. */}
+          <Show when={category() === "html"}>
+            <TooltipV2 openDelay={400} value="Open in browser">
+              <button
+                data-preview-open-browser
+                class="shrink-0 flex items-center justify-center w-7 h-7 rounded-md border border-border-base shadow-sm cursor-pointer text-text-weak hover:text-text-base hover:bg-background-stronger transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-border-focus"
+                style={previewControlSurfaceStyle}
+                onClick={popOutHtml}
+                aria-label="Open in browser"
+              >
+                <Icon name="square-arrow-top-right" size="small" />
+              </button>
+            </TooltipV2>
           </Show>
           {/* Zoom controls: [editable %] [reset] [+ over -] */}
           <div
@@ -735,10 +1019,55 @@ export function PreviewFileView(props: {
             </div>
           </div>
         </Show>
+        {/* PDF find pill — sits after the zoom controls. Placement is
+            load-bearing: the routing test slices from the FIRST
+            `category() === "pdf"` to the next Match close tag and expects
+            PdfCanvasView inside, so this Show must live AFTER that slice
+            closes — here, at the end of the controls row. */}
+        <Show when={category() === "pdf" && pdfFind.open()}>
+          <PdfFindPill
+            query={pdfFind.query}
+            index={pdfFind.currentIndex}
+            count={pdfFind.count}
+            hasText={pdfFind.hasText}
+            setInput={(el) => {
+              findInput = el
+            }}
+            onInput={(value) => pdfFind.setQuery(value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.preventDefault()
+                event.stopPropagation()
+                closePdfFind()
+                return
+              }
+              if (event.key === "Enter") {
+                event.preventDefault()
+                if (event.shiftKey) pdfFind.prev()
+                else pdfFind.next()
+              }
+            }}
+            onClose={closePdfFind}
+            onPrev={() => pdfFind.prev()}
+            onNext={() => pdfFind.next()}
+          />
+        </Show>
       </div>
 
       {/* Content */}
-      <div ref={scrollRef} data-preview-scroll class="h-full overflow-auto">
+      {/* tabIndex -1 + pointerdown focus: clicking into the pane makes it the
+          keyboard target, so Cmd+F routes here (and the find pill can return
+          focus to the pane on Esc). */}
+      <div
+        ref={scrollRef}
+        data-preview-scroll
+        tabIndex={-1}
+        class="h-full overflow-auto outline-none"
+        onPointerDown={() => {
+          if (category() !== "pdf") return
+          if (document.activeElement !== scrollRef) focusPdfPane()
+        }}
+      >
         <Show when={!loading()} fallback={<div class="p-4 text-12-regular text-text-weak">Loading...</div>}>
           <Switch>
             <Match when={fileType() === "error"}>
@@ -767,6 +1096,10 @@ export function PreviewFileView(props: {
                 filePath={props.filePath}
                 active={props.active}
                 onPageNavigationChange={setPdfNavigation}
+                onRootChange={(root) => {
+                  pdfRoot = root ?? undefined
+                  pdfFind.rebuild()
+                }}
                 initialPage={props.viewState?.()?.pdf?.page}
                 initialScrollTop={props.viewState?.()?.pdf?.scrollTop}
                 onViewStateChange={(pdf) => props.onViewStateChange?.({ pdf })}
@@ -804,8 +1137,50 @@ export function PreviewFileView(props: {
                   class="p-4 origin-top-left [&_.katex-display]:overflow-x-auto [&_.katex-display]:overflow-y-hidden [&_.katex-display]:max-w-full [&_.katex]:text-[0.9em]"
                   style={{ transform: `scale(${props.zoom() / 100})`, width: `${10000 / props.zoom()}%` }}
                 >
-                  <Markdown text={preprocessMarkdown(fileContent())} class="text-12-regular" />
+                  {(() => {
+                    // front matter renders as a properties card, not as a
+                    // rule + a giant setext heading (marked has no YAML support)
+                    const split = createMemo(() => splitFrontmatter(fileContent()))
+                    return (
+                      <>
+                        <Show when={split().frontmatter}>{(fm) => <FrontmatterCard frontmatter={fm()} />}</Show>
+                        <Markdown text={preprocessMarkdown(split().body)} class="text-12-regular" />
+                      </>
+                    )
+                  })()}
                 </div>
+              </Show>
+            </Match>
+
+            {/* HTML (#2141): rendered in a scripts-off sandboxed frame; Edit = source */}
+            <Match when={category() === "html"}>
+              <Show
+                when={mode() === "preview"}
+                fallback={
+                  <PreviewEditor
+                    content={fileContent()}
+                    filePath={props.filePath}
+                    active={props.active}
+                    onChange={handleEdit}
+                    onSave={handleImmediateSave}
+                    viewState={() => props.viewState?.()?.editor}
+                    onViewStateChange={(editor) => props.onViewStateChange?.({ editor })}
+                  />
+                }
+              >
+                <PreviewHtmlView
+                  filePath={props.filePath}
+                  html={fileContent}
+                  zoom={props.zoom}
+                  sessionID={draftScope}
+                  active={props.active}
+                  readFile={(path) => sdk().client.file.read({ path }).then((result) => result.data as any)}
+                  onExternalContent={(text) => {
+                    // #2142: a poll found new page text; never clobber unsaved Source edits
+                    if (unsavedContent() !== null) return
+                    setFileContent(text)
+                  }}
+                />
               </Show>
             </Match>
 

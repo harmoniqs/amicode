@@ -15,6 +15,7 @@ jobs:
       - uses: actions/setup-node@v7
         with: { node-version: 20, cache: pnpm }
       - uses: oven-sh/setup-bun@v2
+        with: { bun-version: 1.4.2 }
       - run: pnpm install --frozen-lockfile
       - name: Build native binary (linux-x64)
         run: node packages/extension/scripts/build_binary.mjs
@@ -95,6 +96,13 @@ jobs:
     needs: [build-binary]
     steps:
       - uses: actions/checkout@v7
+        # full history: the #1346 additive-invariants-gate diffs the enroll/guard
+        # set vs `git merge-base HEAD <base>` — a shallow (depth-1) checkout has no
+        # common ancestor, so the merge-base is empty and the gate (correctly)
+        # refuses to pass an UNVERIFIABLE AC1 under INVARIANT_STRICT=1. Full history
+        # lets it actually verify. (#1346)
+        with:
+          fetch-depth: 0
       - uses: pnpm/action-setup@v6   # version pinned by packageManager in package.json
       - uses: actions/setup-node@v7
         with: { node-version: 20, cache: pnpm }
@@ -112,6 +120,16 @@ jobs:
         run: node packages/extension/scripts/assert_packaged_cli.mjs
       - name: fleet-gate — guard + tunnel template sane (#324)
         run: bash packages/extension/scripts/assert_fleet_guard.sh
+      - name: additive-invariants-gate — peer studios stay additive (ADR 0027, #1346)
+        env:
+          INVARIANT_STRICT: "1" # CI must be able to verify AC1 — an unverifiable base is a hard fail
+        run: |
+          # AC1 diffs the enroll/guard set vs the MERGE-BASE with the base branch.
+          # A shallow checkout may not carry the base branch, so fetch it here —
+          # this also persists the ref for the later vitest subprocess in the
+          # `pnpm -r run test` step, which runs the same gate.
+          git fetch --no-tags --quiet origin "${GITHUB_BASE_REF:-feature/free-tier-fleet}" || true
+          bash packages/extension/scripts/assert_additive_invariants.sh
       # Pasqal python provisioning gate, source lane: the SHIPPED connector
       # assets must provision a working interpreter (real venv + pip + SDK
       # import at the pinned version + validator env-guard smoke). Guards the
@@ -132,7 +150,22 @@ jobs:
           path: packages/extension/vendor/opencode
       - name: Restore binary permissions
         run: chmod +x packages/extension/vendor/opencode/*/opencode
-      - run: pnpm -r run test   # amico-run suite (incl. S31 grep rule) + extension unit suite (incl. the opencode inject/merge integration) + @amicode/schema conformance
+      - run: pnpm -r --filter '!@amicode/amico-run' run test   # extension unit suite (incl. the opencode inject/merge integration) + @amicode/schema conformance + companion; amico-run runs through the quarantine gate below
+      # A13c test quarantine (#1907): the amico-run suite (incl. S31 grep rule)
+      # is judged by scripts/test_quarantine_gate.mjs against the committed
+      # config/test-quarantine/ lists, not by vitest's exit code alone. CI reds
+      # on a failure in neither list, a known-fail that passes or did not run,
+      # an expired known-flaky ttl, a list entry without an issue ref, or a
+      # non-zero vitest exit the report cannot explain (crash / unhandled error).
+      - name: test-quarantine-gate — amico-run suite vs config/test-quarantine (A13c, #1907)
+        working-directory: packages/amico-run
+        run: |
+          set +e
+          pnpm exec vitest run --passWithNoTests --exclude '**/slow/**' \
+            --reporter=default --reporter=json --outputFile.json="$RUNNER_TEMP/amico-run-results.json"
+          VITEST_EXIT=$?
+          set -e
+          node ../../scripts/test_quarantine_gate.mjs --runner-exit "$VITEST_EXIT" "$RUNNER_TEMP/amico-run-results.json"
       - name: amico-validate — shipped configs conform + linked bin works (0.1c gate)
         run: |
           # Exercise the LINKED bin via a dependent (the bin links into amico-run /
@@ -159,8 +192,9 @@ jobs:
     # TS side uses (cross-language anti-drift). Fast tier — JSONSchema only, NO Piccolo
     # solve. Lanes: (1) golden + negative fixtures INCL. the problemspec dual-validation
     # sweep (ajv == JSONSchema.jl accept/reject on every valid/invalid problemspec
-    # fixture, runtests.jl); (2) a REAL producer lane (amico-run emits a run-dir →
-    # validate it); (3) AC6 drift check — perturb the shared schema (run AND problemspec
+    # fixtures, runtests.jl); (2) a REAL producer lane (the amico CLI's `run`
+    # verb emits a run-dir → validate it); (3) AC6 drift check — perturb the
+    # shared schema (run AND problemspec
     # cases) → BOTH TS and Julia flip; (4) cross-repo vendoring-drift — the vendored
     # problemspec schemas byte-match the pinned Piccolo/Piccolissimo emission (Task 9).
     # NOTE: the TS canonical-JSON/hash vitest runs in the `fast` job (pnpm -r run test),
@@ -178,7 +212,7 @@ jobs:
       - run: julia --project=packages/schema/julia -e 'using Pkg; Pkg.instantiate()'
       - name: round-trip (golden + negative fixtures)
         run: julia --project=packages/schema/julia packages/schema/julia/runtests.jl
-      - name: producer lane — amico-run emits a run-dir, Julia validates the emitted output
+      - name: producer lane — amico run emits a run-dir, Julia validates the emitted output
         run: bash packages/schema/scripts/producer_roundtrip.sh
       - name: AC6 anti-drift — perturbing the shared schema flips BOTH TS and Julia (run + problemspec)
         run: bash packages/schema/scripts/ac6_drift_check.sh
@@ -209,6 +243,7 @@ jobs:
       - uses: actions/setup-node@v7
         with: { node-version: 20, cache: pnpm }
       - uses: oven-sh/setup-bun@v2
+        with: { bun-version: 1.4.2 }
       - run: pnpm install --frozen-lockfile
       # Download pre-built binaries (#1096)
       - name: Download built binaries
@@ -282,9 +317,9 @@ jobs:
         # linux-x64 + linux-arm64 + darwin-arm64 — every pin machine-gated (spec §5).
         # ubuntu-24.04-arm is the free GitHub-hosted arm runner (public repo), and it
         # is the ONLY place a linux-arm64 binary is executed.
-        # macos-14 boot-smoke: the binary is cross-compiled from linux; native
+        # macos-15 boot-smoke: the binary is cross-compiled from linux; native
         # execution on macOS is the safety net.
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-14]
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-15]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -324,6 +359,7 @@ jobs:
       - uses: actions/setup-node@v7
         with: { node-version: 20, cache: pnpm }
       - uses: oven-sh/setup-bun@v2
+        with: { bun-version: 1.4.2 }
       - run: pnpm install --frozen-lockfile
       - name: Materialize the full engine tree (canonical base + overlay)
         run: pnpm --filter @amicode/app-bundle run materialize

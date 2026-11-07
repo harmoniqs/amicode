@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { parse as parseYaml } from "yaml";
 import { detectProjectType } from "../project/detect";
 import type { SkillIndexEntry } from "./package_skills";
+import { readNativeSkillsOwned } from "./package_skills";
 
 // --- Types ---
 
@@ -185,10 +186,15 @@ const KNOWN_SKILL_PATHS = [
   ".config/opencode/skills",
 ];
 
-/** Check if a directory contains at least one valid skill (has a <name>/SKILL.md). */
+/** Check if a directory contains at least one valid skill (has a <name>/SKILL.md).
+ *  Extension-owned dirs (the native-skills receipt, #1949 §1) don't count: the
+ *  extension stages the shipped set into ~/.config/opencode/skills/, and
+ *  offering that back as an "import" provider would double-register it. */
 function hasSkills(dir: string): boolean {
+  const owned = new Set(readNativeSkillsOwned(dir));
   try {
     for (const name of fs.readdirSync(dir)) {
+      if (owned.has(name)) continue;
       if (fs.existsSync(path.join(dir, name, "SKILL.md"))) return true;
     }
   } catch { /* empty */ }

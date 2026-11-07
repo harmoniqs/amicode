@@ -2,7 +2,7 @@
 // ledger_client.ts — the amicode_* tool pack's ONLY door to the run ledger
 // (Plan 3 / L1 Tasks 6–7). SINGLE-WRITER DISCIPLINE: this module never touches
 // ~/.amico/ledger/runs.jsonl directly — every append shells to `amico ledger
-// append` (amico-run is the sole writer). Queries shell to `amico ledger
+// append` (the amico CLI is the sole writer). Queries shell to `amico ledger
 // query`. Both degrade gracefully (undefined / false), never throw: a ledger
 // hiccup must never break a chat-tool call (mirrors local_executor.ts's
 // "never fail the run" doctrine, one layer up).
@@ -33,7 +33,7 @@ import type { RunRef } from "./entities";
 export function resolveAmicoBinFrom(extensionRoot: string): string | undefined {
   const staged = join(extensionRoot, "bin", "launcher", "amico");
   if (existsSync(staged)) return staged;
-  const sibling = join(extensionRoot, "..", "amico-run", "launcher", "amico");
+  const sibling = join(extensionRoot, "..", "amico-run/launcher/amico");
   if (existsSync(sibling)) return sibling;
   return undefined;
 }
@@ -191,7 +191,7 @@ function mostRecentRunRef(slug: string): RunRef | undefined {
 }
 
 /** A script_path is only a ProblemSpec (not an authored .jl script) when it
- *  parses as TOML AND has a `system` table — mirrors amico-run's
+ *  parses as TOML AND has a `system` table — mirrors the amico CLI's
  *  local_executor.ts readSpecFromScriptPath (duplicated, not imported: cross-
  *  package bare imports don't resolve in the Bun plugin runtime). */
 function readSpecFromScriptPath(scriptPath: string): Record<string, unknown> | undefined {

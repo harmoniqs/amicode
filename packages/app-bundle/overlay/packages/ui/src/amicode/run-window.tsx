@@ -1,7 +1,9 @@
 import { For, Show, createEffect, createMemo, onCleanup, onMount } from "solid-js"
 import { createStore, reconcile } from "solid-js/store"
-import { fetchAmicodeRunSeries, openAmicodeEntity } from "./ui-bridge"
+import { fetchAmicodeRunSeries } from "./ui-bridge"
 import { heroPaths, objectivePath } from "./run-plot"
+import { runActivity } from "./activity"
+import { ActivityDot } from "./activity-dot"
 import {
   type RunSeries,
   type RunSeriesView,
@@ -18,23 +20,17 @@ export { parseRunSeriesResponse, type RunSeries, type RunSeriesView } from "./ru
 // plot (the pulse IS the artifact); convergence shrinks to a header sparkline
 // next to the F chip; the log tail streams human solver lines only (AMICODE_*
 // protocol dumps filtered). Data from GET /amicode/run-series via the ui
-// bridge; polls while solving; click opens the full Run entity. Transport lives
-// in the app (rail registers fetchRunSeries) so this stays self-contained but
-// context-free — no-op until the rail is mounted, exactly like the entity view.
+// bridge; polls while solving. Transport lives in the app (the session
+// timeline registers fetchRunSeries) so this stays self-contained but
+// context-free — no-op until the host is mounted. #1818: the click-through to
+// the entity view is gone with the deprecated entity surfaces; the window is
+// the live record of the run itself.
 
 const POLL_MS = 2500
 const PLOT_W = 100
 const PLOT_H = 34
 const SPARK_W = 40
 const SPARK_H = 14
-
-function statusColor(status: string): string {
-  if (status === "finished") return "var(--v2-state-fg-success)"
-  if (status === "failed" || status === "aborted") return "var(--v2-state-fg-danger)"
-  if (status === "stalled") return "var(--v2-state-fg-warning)" // wedged (OOM?) — not blue: must not read as live
-  if (status === "stopped") return "var(--v2-text-text-muted)" // deliberate user stop — calm, not alarming, not live
-  return "var(--v2-text-text-accent)" // solving
-}
 
 function Plot(props: { d: string[] | undefined }) {
   return (
@@ -144,7 +140,6 @@ export function RunWindow(props: { run: string; lab?: string }) {
     <div
       data-component="amicode-run-window"
       data-run={props.run}
-      onClick={() => openAmicodeEntity("run")}
       style={{
         display: "flex",
         "flex-direction": "column",
@@ -153,7 +148,6 @@ export function RunWindow(props: { run: string; lab?: string }) {
         padding: "8px 12px",
         "font-size": "12px",
         "line-height": "16px",
-        cursor: "pointer",
       }}
     >
       {/* header: Run · status · iter · metric · spark · elapsed. No Amico mark:
@@ -173,7 +167,20 @@ export function RunWindow(props: { run: string; lab?: string }) {
         >
           {(r) => (
             <>
-              <span style={{ "font-weight": "600", color: statusColor(r().status), "flex-shrink": "0" }}>
+              {/* the dot carries the activity colour (blue solving, amber stalled,
+                  grey aborted/stopped); the word stays neutral ink so small
+                  status text keeps body contrast in both schemes */}
+              <span
+                style={{
+                  display: "inline-flex",
+                  "align-items": "center",
+                  gap: "4px",
+                  "font-weight": "600",
+                  color: "var(--v2-text-text-base)",
+                  "flex-shrink": "0",
+                }}
+              >
+                <ActivityDot activity={runActivity(r().status)} label={`Run ${r().status}`} />
                 {r().status}
               </span>
               <Show when={r().iteration !== null}>

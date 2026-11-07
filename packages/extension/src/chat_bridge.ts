@@ -13,6 +13,9 @@ import { hashDirectoryTree, shouldSkipBinaryBuild } from "./server_handshake";
 import { readCachedOverlayHash, writeCachedOverlayHash } from "./rebuild/overlay_cache";
 import type { ExplorerIconTheme } from "./explorer_icon_theme";
 import { resolveLatexTarget } from "./latex_compile";
+import { resolveChatFileLink, type LinkResolutionContext } from "./link_resolution";
+import { resolveRemoteSshTarget } from "./fleet_connect_remote_ssh";
+import { handleWhatsNewBridgeMessage } from "./whats_new";
 import { HARMONIQS_MODEL_ID, HARMONIQS_PROVIDER_ID, testConnection, writeOnboardingConfig } from "./onboarding_panel";
 import {
   readSkillProviders,
@@ -142,10 +145,18 @@ export function rebuildAppBundleStep(mode: RebuildMode, branch: string): { cmd: 
 // app renders LLM output, so we never executeCommand anything outside this set.
 export const BRIDGE_ALLOWED_COMMANDS: ReadonlySet<string> = new Set([
   "amicode.restartServer",
+  // #1598: the engine on/off toggle in the status cluster — the app posts this
+  // to stop the engine (the companion amicode.restartServer is already here).
+  "amicode.stopServer",
   // amicode#653: the connection banner's Restart Hub action — the client-
   // initiated atomic restart over SSH (amicode#649). Initiated from the
   // extension host, never from the hub itself.
   "amicode.restartHub",
+  // #1322: the Fleet Manager tab's This-machine actions. The tab INVOKES these
+  // existing registered commands (Repair / Go Standalone) over the bridge — it
+  // never reimplements their logic. Payload-free, like restartHub/restartServer.
+  "amicode.fleet.repair",
+  "amicode.fleet.goStandalone",
   "amicode.distillNow",
   "amicode.stopRun",
   "amicode.openRunDir",
@@ -192,9 +203,41 @@ export interface BridgeIo {
    *  "reset" = expand selected + collapse others, "expand" = expand selected
    *  only, "none" = highlight only. */
   onProjectSelected?: (path: string, mode?: "none" | "expand" | "reset") => void;
+  /** #1551: the self-owned enable-control act. The app posts a
+   *  `fleet-enable-control` PAYLOAD envelope carrying the target owner
+   *  machineId + sessionID (the bare command lane cannot carry a target); the
+   *  host shows the ADR 0034 D4 native modal and, on confirm, mints the
+   *  self-owned control grant. Undefined until activation wires it; the kind is
+   *  consumed regardless. */
+  onFleetEnableControl?: (req: { ownerMachineId: string; sessionID: string }) => void;
+  /** #1648: the panel's settled session id for targeting `preview-file`
+   *  opens; undefined when it cannot target (draft route / not yet reported). */
+  previewFileTarget?: () => string | undefined;
+  /** #1036: the Preview tab's "Find in sidebar" — reveal this absolute file path
+   *  in the Amicode sidebar tree. A dedicated kind because the `command` lane
+   *  forwards no arguments. Undefined until activation wires it. */
+  onRevealInSidebar?: (path: string) => void;
   previewVisibleChildren?: (root: string, relativeDirectory: string) => Promise<Array<{ name: string; kind: "file" | "directory"; absolute: string; relative: string }>>;
   /** Returns the currently-selected Explorer file icon theme as opaque assets. */
   explorerIconTheme?: () => ExplorerIconTheme;
+  /** #1826: the posture-aware link resolution context (boot posture, hub
+   *  origin, ssh alias, ?directory= placement) — wired at activation where
+   *  the #1784 posture is decided. Undefined keeps the pre-#1826 local-stat
+   *  behavior (panels constructed before the wiring lands). */
+  linkResolution?: LinkResolutionContext;
+}
+
+/** #1648: a `preview-file` open stamped with the host panel's settled session
+ *  id; the field is omitted when the host cannot target (draft route, unknown,
+ *  deck pane — legacy broadcast), so those still open everywhere. */
+function previewFileMessage(filePath: string, io: BridgeIo) {
+  const sessionID = io.previewFileTarget?.();
+  return {
+    source: "amicode" as const,
+    kind: "preview-file" as const,
+    path: filePath,
+    ...(sessionID !== undefined ? { sessionID } : {}),
+  };
 }
 
 const isAmicode = (msg: unknown): msg is { source: "amicode"; kind: string; tab?: string } =>
@@ -206,7 +249,10 @@ const isAmicode = (msg: unknown): msg is { source: "amicode"; kind: string; tab?
 // PDF so rapid saves never overlap. Availability is detected once. Status
 // (compiling / done / error / unavailable) is relayed back so the Preview can
 // show a spinner and, on done, refresh the companion PDF (#1254).
-type LatexTargetRef = { dir: string; base: string; pdf: string };
+// `requested` (#1403): the path exactly as the app asked for it — echoed on every
+// status so the Preview's Compile button can match a status to its file even when
+// `file` (symlink-resolved) differs from the posted path.
+type LatexTargetRef = { dir: string; base: string; pdf: string; requested?: string };
 // #1414: the coalesced re-run remembers the LATEST request's target+tab, not a
 // bare boolean — otherwise the rerun replays the stale target/tab captured by
 // the original in-flight call's closure.
@@ -288,7 +334,15 @@ export async function runLatexmk(
   // the running check and spawning a second latexmk.
   state.running = true;
   const post = (extra: Record<string, unknown>) =>
-    io.postToWebview({ source: "amicode", kind: "run-latex-status", tab, file: texFile, pdf: target.pdf, ...extra });
+    io.postToWebview({
+      source: "amicode",
+      kind: "run-latex-status",
+      tab,
+      file: texFile,
+      pdf: target.pdf,
+      ...(target.requested !== undefined ? { requested: target.requested } : {}),
+      ...extra,
+    });
 
   const detect = deps.detect ?? detectLatexmk;
   if (!(await detect())) {
@@ -409,10 +463,39 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     return true;
   }
 
+  // #2143: Preview's pop-out — open a previewed HTML page in the system
+  // browser (a second monitor for a live campaign dashboard). A dedicated kind
+  // so open-external stays https-only; restricted to an existing, absolute,
+  // local .html/.htm file so the bridge can never launch an arbitrary local
+  // file through the OS handler. In a remote window the path lives on the
+  // remote machine, not the one showing the browser — refuse, named.
+  if (msg.kind === "open-html-external" && typeof (msg as { path?: unknown }).path === "string") {
+    const target = (msg as unknown as { path: string }).path;
+    const refuse = (why: string) => {
+      vscode.window.showWarningMessage(`Amicode: page not opened in the browser — ${why}`);
+      return true;
+    };
+    if (!path.isAbsolute(target) || target.length > 4096) return refuse(`${target} is not an absolute path`);
+    if (!/\.html?$/i.test(target)) return refuse(`${path.basename(target)} is not an HTML file`);
+    if (vscode.env.remoteName) return refuse(`this is a remote window (${vscode.env.remoteName}); the page is on the remote machine`);
+    let isFile = false;
+    try {
+      isFile = fs.statSync(target).isFile();
+    } catch {}
+    if (!isFile) return refuse(`${target} is not on this machine`);
+    void vscode.env.openExternal(vscode.Uri.file(target));
+    return true;
+  }
+
   // File bridge (chat links to vault notes, run artifacts): the framed app
   // renders LLM output and can't open local files — the extension opens them
-  // for it. file:// URLs only; the resolved path must be absolute,
-  // bounded, and exist on disk. Posix path semantics (the fleet is mac/linux).
+  // for it. file:// URLs only; the resolved path must be absolute, bounded,
+  // and exist on disk. Posix path semantics (the fleet is mac/linux).
+  // #1826: when the host supplies the posture context, resolution is
+  // posture-aware (vault-root local opens; the hub-client default re-resolves
+  // through the hub's resolve-file route at click time and Previews via the
+  // hub SDK — the client stat routes but never blocks). Without the context
+  // the pre-#1826 local-stat gate stands (every spawned-server posture).
   if (
     msg.kind === "open-file" &&
     typeof (msg as { url?: unknown }).url === "string" &&
@@ -424,15 +507,68 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     } catch {
       return true;
     }
-    if (!path.isAbsolute(fsPath) || fsPath.length > 4096 || !fs.existsSync(fsPath)) return true;
-    // Route to the Preview companion tab (#935) — the session page's
-    // preview-file listener (from #934) sets previewFile, opens the side
-    // panel, and switches to the Preview tab.
-    io.postToWebview({
-      source: "amicode",
-      kind: "preview-file",
-      path: fsPath,
+    if (!path.isAbsolute(fsPath) || fsPath.length > 4096) return true;
+    const linkResolution = io.linkResolution;
+    if (!linkResolution) {
+      // #1845: never a silent no-op — without the posture context a path
+      // that isn't on this disk names itself (on a hub-backed panel the path
+      // lives on the hub, which is the clue that the context never wired).
+      if (!fs.existsSync(fsPath)) {
+        vscode.window.showWarningMessage(
+          `Amicode: link not opened — ${fsPath} is not on this machine (no link-resolution context for this panel; reload the window if it is a hub session)`,
+        );
+        return true;
+      }
+      // Route to the Preview companion tab (#935) — the session page's
+      // preview-file listener (from #934) sets previewFile, opens the side
+      // panel, and switches to the Preview tab.
+      io.postToWebview(previewFileMessage(fsPath, io));
+      return true;
+    }
+    // #1826: one function owns the resolution order; the outcome is Preview
+    // (hub-resolved path fetched via the hub-bound SDK) or a named-outcome
+    // toast — never a silent no-op.
+    void resolveChatFileLink(fsPath, linkResolution).then((resolution) => {
+      if (resolution.action === "preview") {
+        io.postToWebview(previewFileMessage(resolution.path, io));
+      } else if (resolution.action === "failed") {
+        vscode.window.showErrorMessage(`Amicode: link not opened — ${resolution.reason} (${resolution.detail})`);
+      } else {
+        // #1845: the non-hub postures' refusal (stale path) is named too.
+        vscode.window.showWarningMessage(
+          `Amicode: link not opened — ${fsPath} is not on this machine (posture: ${linkResolution.posture})`,
+        );
+      }
+    }, (err: unknown) => {
+      vscode.window.showErrorMessage(`Amicode: link not opened — ${err instanceof Error ? err.message : String(err)}`);
     });
+    return true;
+  }
+
+  // #1826 layer 3 — the remote affordance: the app's explicit second action
+  // on a hub-resolved link (chevron/modifier). The bridge constructs the
+  // vscode-remote URI with the Remote-SSH builder that already exists
+  // (fleet_connect_remote_ssh.ts) and opens it in a Remote-SSH window; a
+  // missing alias is its own named outcome (no-ssh-alias) — a fresh
+  // non-fleet laptop gets it honestly, never a crash.
+  if (
+    msg.kind === "open-remote-file" &&
+    typeof (msg as { url?: unknown }).url === "string" &&
+    /^file:\/\//i.test((msg as unknown as { url: string }).url)
+  ) {
+    let fsPath: string;
+    try {
+      fsPath = decodeURIComponent(new URL((msg as unknown as { url: string }).url).pathname);
+    } catch {
+      return true;
+    }
+    if (!path.isAbsolute(fsPath) || fsPath.length > 4096) return true;
+    const resolution = resolveRemoteSshTarget(io.linkResolution?.sshAlias, fsPath);
+    if (resolution.ok) {
+      void vscode.commands.executeCommand("vscode.open", vscode.Uri.parse(resolution.uri));
+    } else {
+      vscode.window.showErrorMessage(`Amicode: link not opened — ${resolution.reason} (${resolution.detail})`);
+    }
     return true;
   }
 
@@ -481,6 +617,27 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     return true;
   }
 
+  // Image copy bridge (chat image frame + preview "Copy"): vscode.env.clipboard
+  // is text-only, so write the PNG with the platform tool. This handler runs in
+  // the extension host — on the machine the user is sitting at — which is what
+  // makes the paste land there even when the image was rendered on a remote
+  // server. PNG only (the iframe rasterizes anything else), bounded like
+  // save-file; the result is echoed for the nonce'd caller.
+  if (msg.kind === "clipboard-image-write" && typeof (msg as { dataUrl?: unknown }).dataUrl === "string") {
+    if (!io.visible()) return true;
+    const raw = msg as unknown as { dataUrl: string; nonce?: string; tab?: string };
+    const prefix = "data:image/png;base64,";
+    if (!raw.dataUrl.startsWith(prefix)) return true;
+    const base64 = raw.dataUrl.slice(prefix.length);
+    if (!base64 || base64.length > 24_000_000) return true;
+    void writeClipboardImageNative(Buffer.from(base64, "base64"))
+      .catch(() => false)
+      .then((ok) => {
+        io.postToWebview({ source: "amicode", kind: "clipboard-image-written", nonce: raw.nonce, tab: raw.tab, ok });
+      });
+    return true;
+  }
+
   // Clipboard image bridge: the outer webview's navigator.clipboard.read()
   // requires user activation (a keystroke on that document), but the user typed
   // inside the sandboxed iframe — so the async Clipboard API throws in newer
@@ -505,34 +662,25 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     return true;
   }
 
-  // Save bridge (run-card PNG + session markdown export): downloads are dead
-  // inside the framed app — the extension shows a save dialog and writes the
-  // file. Bounded size, basename-only: the payload is untrusted.
+  // Save bridge (run-card PNG, session markdown export, chat image + preview
+  // downloads): downloads are dead inside the framed app — the extension shows
+  // a save dialog and writes the file. Bounded size, basename-only, extension
+  // allow-listed: the payload is untrusted.
   if (
     msg.kind === "save-file" &&
     typeof (msg as { filename?: unknown }).filename === "string" &&
     typeof (msg as { dataUrl?: unknown }).dataUrl === "string"
   ) {
     const raw = msg as unknown as { filename: string; dataUrl: string };
-    const name = path.basename(raw.filename).replace(/[^\w.-]+/g, "-");
-    if (!name || !/\.(png|md|markdown|txt)$/i.test(name)) return true;
-    let base64: string | undefined;
-    if (raw.dataUrl.startsWith("data:image/png;base64,")) base64 = raw.dataUrl.slice("data:image/png;base64,".length);
-    else if (raw.dataUrl.startsWith("data:text/markdown;base64,")) base64 = raw.dataUrl.slice("data:text/markdown;base64,".length);
-    else if (raw.dataUrl.startsWith("data:text/plain;base64,")) base64 = raw.dataUrl.slice("data:text/plain;base64,".length);
-    else {
-      const m = raw.dataUrl.match(/^data:[^;]+;base64,(.+)$/s);
-      if (m) base64 = m[1];
-    }
-    if (!base64 || base64.length > 24_000_000) return true;
-    const isPng = name.toLowerCase().endsWith(".png");
+    const save = saveFileRequest(raw.filename, raw.dataUrl);
+    if (!save) return true;
     void (async () => {
       const target = await vscode.window.showSaveDialog({
-        defaultUri: vscode.Uri.file(path.join(os.homedir(), "Downloads", name)),
-        filters: isPng ? { Images: ["png"] } : { Markdown: ["md", "txt", "markdown"] },
+        defaultUri: vscode.Uri.file(path.join(os.homedir(), "Downloads", save.name)),
+        filters: save.filters,
       });
       if (!target) return;
-      await vscode.workspace.fs.writeFile(target, Buffer.from(base64!, "base64"));
+      await vscode.workspace.fs.writeFile(target, save.bytes);
       const pick = await vscode.window.showInformationMessage(`Amicode: saved ${path.basename(target.fsPath)}`, "Reveal");
       if (pick === "Reveal") await vscode.commands.executeCommand("revealFileInOS", target);
     })();
@@ -549,7 +697,7 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     const roots = (vscode.workspace.workspaceFolders ?? []).map((folder) => folder.uri.fsPath);
     const target = resolveLatexTarget(rawFile, roots);
     if (!target.ok) return true; // invalid / uncontained / non-tex — ignore silently
-    scheduleLatexCompile(target, tab, io);
+    scheduleLatexCompile({ dir: target.dir, base: target.base, pdf: target.pdf, requested: rawFile }, tab, io);
     return true;
   }
 
@@ -594,8 +742,27 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
   }
   // The app's boot catch-up: re-post open-bug-report when a bug session is
   // live (heals a lost one-shot open — cold-boot race, webview reload).
+  // #2001: the What's-new page's last-seen version (globalState) — query/seen.
+  if (handleWhatsNewBridgeMessage(msg, (m) => io.postToWebview(m))) return true;
   if (msg.kind === "bug-report-poke") {
     io.bugReport?.poke();
+    return true;
+  }
+
+  // #1551: the self-owned enable-control act rides a PAYLOAD envelope, NOT the
+  // command lane — the bare command relay cannot carry the target peer. Shape-
+  // validate { ownerMachineId, sessionID } (both non-empty bounded strings) and
+  // forward to the host's onFleetEnableControl (native modal → self-owned mint).
+  // A malformed payload is consumed and dropped — the callback never fires.
+  if (msg.kind === "fleet-enable-control") {
+    const ownerMachineId = (msg as { ownerMachineId?: unknown }).ownerMachineId;
+    const sessionID = (msg as { sessionID?: unknown }).sessionID;
+    if (
+      typeof ownerMachineId === "string" && ownerMachineId !== "" && ownerMachineId.length <= 200 &&
+      typeof sessionID === "string" && sessionID !== "" && sessionID.length <= 200
+    ) {
+      io.onFleetEnableControl?.({ ownerMachineId, sessionID });
+    }
     return true;
   }
 
@@ -1492,6 +1659,13 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     return true;
   }
 
+  // #1036: Preview tab "Find in sidebar" → reveal the file in the sidebar tree.
+  if (msg.kind === "reveal-in-sidebar") {
+    const p = (msg as { path?: unknown }).path;
+    if (typeof p === "string" && p !== "" && p.length <= 4096) io.onRevealInSidebar?.(p);
+    return true;
+  }
+
   // #663: the chat app posts project-selected when the user picks a project in
   // the composer dropdown. Forward to the sidebar so it can update folder state.
   // mode controls expand/collapse behavior: "reset" (default) for explicit
@@ -1533,6 +1707,98 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
   }
 
   return false;
+}
+
+// ---------------------------------------------------------------------------
+// save-file payload validation
+// ---------------------------------------------------------------------------
+
+const SAVE_FILE_TYPES: Record<string, string[]> = {
+  Images: ["png", "jpg", "jpeg", "gif", "webp", "svg"],
+  PDF: ["pdf"],
+  Markdown: ["md", "markdown", "txt"],
+};
+
+/** The save the host will offer for an untrusted save-file payload, or null to
+ *  refuse: the basename only (sanitized), an allow-listed extension, a base64
+ *  data: URL, at most ~18 MB decoded. The dialog filter is the file's own type. */
+export function saveFileRequest(
+  filename: string,
+  dataUrl: string,
+): { name: string; bytes: Buffer; filters: Record<string, string[]> } | null {
+  const name = path.basename(filename).replace(/[^\w.-]+/g, "-");
+  const ext = name.toLowerCase().split(".").pop() ?? "";
+  const kind = name.includes(".") ? Object.keys(SAVE_FILE_TYPES).find((k) => SAVE_FILE_TYPES[k]!.includes(ext)) : undefined;
+  if (!kind) return null;
+  const m = dataUrl.match(/^data:[^;,]+;base64,(.+)$/s);
+  if (!m || m[1]!.length > 24_000_000) return null;
+  return { name, bytes: Buffer.from(m[1]!, "base64"), filters: { [kind]: SAVE_FILE_TYPES[kind]! } };
+}
+
+// ---------------------------------------------------------------------------
+// Native clipboard image writer
+// ---------------------------------------------------------------------------
+// Puts a PNG on the system clipboard via a temp file and the platform tool.
+// The path is passed as an argument (never spliced into a script). Resolves
+// false on any failure or an unsupported platform.
+
+export async function writeClipboardImageNative(png: Buffer): Promise<boolean> {
+  const command = clipboardImageWriteCommand(process.platform, process.env);
+  if (!command) return false;
+  const file = path.join(os.tmpdir(), `amicode-copy-${process.pid}-${Date.now()}.png`);
+  // A full/readonly tmpdir must answer the nonce'd caller with ok:false — a
+  // throw here would reject the reply promise and leave the iframe waiting.
+  try {
+    fs.writeFileSync(file, png);
+  } catch {
+    return false;
+  }
+  const ok = await runToExit(command.cmd, [...command.args, file]);
+  // xclip/wl-copy fork a selection server that keeps the bytes in memory, but
+  // give it a moment to finish reading before the temp file goes.
+  setTimeout(() => fs.rmSync(file, { force: true }), 5000);
+  return ok;
+}
+
+/** The writer for this host; the PNG path is appended as the last argument. */
+export function clipboardImageWriteCommand(
+  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv,
+): { cmd: string; args: string[] } | null {
+  if (platform === "darwin")
+    return {
+      cmd: "osascript",
+      args: ["-e", "on run argv", "-e", "set the clipboard to (read (POSIX file (item 1 of argv)) as «class PNGf»)", "-e", "end run"],
+    };
+  if (platform === "linux" && env.WAYLAND_DISPLAY)
+    return { cmd: "sh", args: ["-c", 'exec wl-copy --type image/png < "$1"', "amicode-copy"] };
+  if (platform === "linux") return { cmd: "xclip", args: ["-selection", "clipboard", "-t", "image/png", "-i"] };
+  // win32 is served through WSL (the linux branch); a native Windows host has no writer.
+  return null;
+}
+
+// Resolve on the launched process's own exit, not on stdio close: xclip and
+// wl-copy daemonize a child that inherits stdio, so execFile would hang until
+// its timeout and report failure for a copy that worked.
+function runToExit(cmd: string, args: string[]): Promise<boolean> {
+  return import("node:child_process").then(
+    ({ spawn }) =>
+      new Promise<boolean>((resolve) => {
+        const child = spawn(cmd, args, { stdio: "ignore" });
+        const timer = setTimeout(() => {
+          child.kill();
+          resolve(false);
+        }, 5000);
+        child.on("error", () => {
+          clearTimeout(timer);
+          resolve(false);
+        });
+        child.on("exit", (code) => {
+          clearTimeout(timer);
+          resolve(code === 0);
+        });
+      }),
+  );
 }
 
 // ---------------------------------------------------------------------------

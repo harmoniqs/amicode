@@ -7,17 +7,37 @@
 
 export type FileRefResolver = (text: string) => Promise<string | null>
 
-let resolver: FileRefResolver | undefined
+import { createSignal } from "solid-js"
 
-/** App-side registration — called once at shell mount, `undefined` on
- *  unmount. The resolver must resolve its server connection PER CALL (a server
- *  switch is picked up by the very next resolution). */
-export function registerFileRefResolver(next: FileRefResolver | undefined): void {
+let resolver: FileRefResolver | undefined
+// #1845: reactive registration version — Markdown re-runs its linkification
+// when a resolver lands AFTER the message rendered (a shell remount registers
+// late; without this the pills stayed plain until the message re-rendered).
+const [version, setVersion] = createSignal(0)
+
+/** App-side registration — called at shell mount. Returns the unregister for
+ *  onCleanup: it clears ONLY if this registration is still current. Shells
+ *  remount on route redirects (/<dir>/session → /server/…/session), and the
+ *  outgoing shell's cleanup used to run AFTER the incoming shell registered —
+ *  wiping the live resolver, so no chat file link was ever linkified (#1845).
+ *  The resolver must resolve its server connection PER CALL. */
+export function registerFileRefResolver(next: FileRefResolver | undefined): () => void {
   resolver = next
+  setVersion((v) => v + 1)
+  return () => {
+    if (resolver !== next) return
+    resolver = undefined
+    setVersion((v) => v + 1)
+  }
 }
 
 export function fileRefResolver(): FileRefResolver | undefined {
   return resolver
+}
+
+/** Reactive read: track this in an effect to re-linkify on (re)registration. */
+export function fileRefResolverVersion(): number {
+  return version()
 }
 
 // text → absolute path (null = resolved-to-nothing). Bounded FIFO: pill text

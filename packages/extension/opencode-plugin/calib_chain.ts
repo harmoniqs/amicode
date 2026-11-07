@@ -22,7 +22,7 @@
 //      `solve.pinned_globals` (the names) — the fix_global_variable! path.
 //   3. re-optimize — the run stub records the warm-start seed (additive
 //      `warm_start`); the re-solve itself launches through the EXISTING solve
-//      path (bash amico-run) — this core NEVER launches anything.
+//      path (bash amico run) — this core NEVER launches anything.
 //   4. re-bank — the chain stages the `amico catalog ingest` command with the
 //      provenance flags (which calibration, which pin, which seed) and
 //      VERIFIES the promoted entry afterwards. Promotion is human-gated like

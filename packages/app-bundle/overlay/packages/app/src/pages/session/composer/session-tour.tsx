@@ -38,6 +38,12 @@ const TOUR_TARGETS: Record<string, readonly string[]> = {
   Status: [anchor("status")],
   Profile: [anchor("profile")],
   Settings: [anchor("settings")],
+  // The side panel's own surfaces, each named for the element it lights.
+  "File tree": [anchor("file-tree")],
+  Preview: [anchor("preview-tab")],
+  "Files changed": [anchor("files-changed")],
+  // The posture (mode) indicator: the composer's agent select.
+  Posture: [anchor("posture")],
 }
 
 /** The data-tour-target candidates for a question request, or undefined when

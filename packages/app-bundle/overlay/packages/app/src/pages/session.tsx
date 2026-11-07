@@ -37,7 +37,7 @@ import { Button } from "@opencode-ai/ui/button"
 import { showToast } from "@/utils/toast"
 import { base64Encode, checksum } from "@opencode-ai/core/util/encode"
 import { useLocation, useNavigate, useParams, useSearchParams } from "@solidjs/router"
-import { NewSessionView, SessionHeader } from "@/components/session"
+import { NewSessionView, SessionHeader, SessionComposerControlScrim } from "@/components/session"
 import { ContextWarningBanner } from "@/components/session/context-warning-banner"
 import { ErrorPage } from "@/pages/error"
 import { CommentsProvider, useComments } from "@/context/comments"
@@ -110,6 +110,9 @@ import { serializeSession } from "@/utils/serialize-session"
 import { useUsageExceededDialogs } from "./session/usage-exceeded-dialogs"
 import { createSessionOwnership } from "./session/session-ownership"
 import { createSessionLineage } from "./session/session-lineage"
+import { composerRefocusOffset } from "./session/composer-refocus"
+import { previewFilePathForSession } from "@/components/session/preview-file-target"
+import { sessionContextMessage } from "@/utils/amicode-session-relay"
 
 type FollowupItem = FollowupDraft & { id: string }
 type FollowupEdit = Pick<FollowupItem, "id" | "prompt" | "context">
@@ -619,6 +622,9 @@ export default function Page() {
         layout.handoff.clearTabs()
         if (pending.dir !== base64Encode(sdk().directory)) return
 
+        // #1966: the draft's side panel is keyed by the workspace; keep it open on the new session.
+        layout.handoff.reviewPanel(workspaceKey(), sessionKey())
+
         const from = workspaceTabs().tabs()
         if (from.all.length === 0 && !from.active) return
 
@@ -790,7 +796,37 @@ export default function Page() {
   const activeTab = tabState.activeTab
   const activeFileTab = tabState.activeFileTab
   const revertMessageID = createMemo(() => info()?.revert?.messageID)
-  const timeline = createTimelineModel({ sessionID: () => params.id, revertMessageID })
+  const timeline = createTimelineModel({
+    sessionID: () => params.id,
+    revertMessageID,
+    // #1646 (transcript self-heal) — the same global SSE liveness signals
+    // message-timeline.tsx feeds the entity rail, so the transcript heals on a
+    // reconnect edge / fan-in-wedge resync while staying on this session.
+    streamConnected: () => serverSDK().event.status() === "connected",
+    forceResync: () => serverSDK().event.resyncCount(),
+  })
+  // #1785 S1: on every resync edge, sync ALL loaded sessions (not just the
+  // viewed one). Background tabs for running sessions go stale after a
+  // reconnect because forceSyncViewed() only refreshes the active tab.
+  createEffect(() => {
+    const count = serverSDK().event.resyncCount()
+    if (count === 0) return
+    untrack(() => {
+      try { sync().session.syncAllOnResync() } catch {}
+    })
+  })
+  // #1785 S1: the session view pulls its messages on FIRST MOUNT. A session
+  // in a background tab after a reload never has its messages loaded (the
+  // view was never active, no dirty-marking fires, syncAllOnResync skips it
+  // because data.message[sid] is empty). This mount-time pull ensures every
+  // view that renders has its data, regardless of tab order or lifecycle.
+  createEffect(() => {
+    const sid = params.id
+    if (!sid) return
+    untrack(() => {
+      void sync().session.sync(sid, { force: true }).catch(() => {})
+    })
+  })
   const historyLoading = timeline.history.loading
   const historyMore = timeline.history.more
   const lastUserMessage = timeline.lastUserMessage
@@ -1013,14 +1049,25 @@ export default function Page() {
   window.addEventListener("message", onFileOpNotify)
   onCleanup(() => window.removeEventListener("message", onFileOpNotify))
 
+  // Report the settled session to the host panel (the draft page reports its own
+  // "no session"; #1287 dropped the session half). The host stamps `preview-file`
+  // opens with this id so every other session view ignores them (#1648), and
+  // derives its follow set / mutation context from it (#1788).
+  createEffect(() => {
+    if (window.parent === window) return
+    window.parent.postMessage(sessionContextMessage(params.id), "*")
+    onCleanup(() => window.parent.postMessage(sessionContextMessage(), "*"))
+  })
+
   // #934: preview-file — the sidebar (or chat bridge, #935) tells us to show
   // a file in the Preview companion tab. Opens the side panel, switches to
   // the Preview tab, and sets the previewFile signal in the layout context.
   const onPreviewFile = (e: MessageEvent) => {
-    const d = e.data as { source?: string; kind?: string; path?: string } | undefined
-    if (d?.source !== "amicode" || d?.kind !== "preview-file" || !d.path) return
+    // #1648: a session-targeted open belongs to exactly one live session view.
+    const path = previewFilePathForSession(e.data, params.id)
+    if (!path) return
     batch(() => {
-      view().previewFile.set(d.path!)
+      view().previewFile.set(path)
       void tabs().open(SESSION_PREVIEW_TAB)
       tabs().setActive(SESSION_PREVIEW_TAB)
       if (!view().reviewPanel.opened()) view().reviewPanel.open()
@@ -1346,7 +1393,7 @@ export default function Page() {
   let scroller: HTMLDivElement | undefined
   let content: HTMLDivElement | undefined
   let revealMessage = (_id: string) => {}
-  let scrollToEnd = () => {}
+  let scrollToEnd = (_opts?: { smooth?: boolean }) => {}
   let scrollMark = 0
   let messageMark = 0
 
@@ -1598,6 +1645,36 @@ export default function Page() {
     if (isChildSession()) return
     inputRef?.focus()
   }
+
+  // #1248: on a session tab switch, give the composer its focus back and put the
+  // caret where the user left it in that session (prompt.cursor(), written on
+  // composer blur; fallback: end). Guards mirror type-to-focus — see
+  // composerRefocusOffset. Decided inside the frame so focus has settled.
+  createEffect(
+    on(
+      sessionKey,
+      (key, prevKey) => {
+        requestAnimationFrame(() => {
+          const editor = inputRef
+          const offset = composerRefocusOffset({
+            key,
+            prevKey,
+            childSession: isChildSession(),
+            composerBlocked: composer.blocked(),
+            dialogActive: !!dialog.active,
+            active: deepActiveElement(),
+            composer: editor,
+            saved: prompt.cursor(),
+            length: promptLength(prompt.current()),
+          })
+          if (offset === undefined || !editor) return
+          editor.focus()
+          setCursorPosition(editor, offset)
+        })
+      },
+      { defer: true },
+    ),
+  )
 
   useComposerCommands()
   useSessionCommands({
@@ -1936,7 +2013,11 @@ export default function Page() {
       (id, previous) => {
         if (!id || !previous || id === previous) return
         if (location.hash || store.messageId || ui.pendingMessage) return
-        autoScroll.resume()
+        // amicode: clear the flag only — resume() would scrollToBottom on
+        // the OLD session's element (still mounted) and markAuto its position,
+        // leaving a stale 1500ms mark that could swallow a real user scroll
+        // on the NEW session if the positions happen to be within 2px.
+        autoScroll.clearUserScrolled()
       },
     ),
   )
@@ -1975,7 +2056,11 @@ export default function Page() {
 
   const resumeScroll = () => {
     setStore("messageId", undefined)
-    autoScroll.resume()
+    // amicode: decouple "re-engage auto-follow" from "scroll now" — clear the
+    // flag without triggering createAutoScroll's own instant scrollToBottom,
+    // then let the virtualizer's scrollToEnd() handle positioning cleanly
+    // (no dual-scroll fight, no animation chasing unmeasured items).
+    autoScroll.clearUserScrolled()
     scrollToEnd()
     clearMessageHash()
 
@@ -2419,7 +2504,7 @@ export default function Page() {
 
         dockHeight = next
 
-        if (stick) scrollToEnd()
+        if (stick) scrollToEnd({ smooth: true })
 
         if (el) scheduleScrollState(el)
         fill()
@@ -2442,7 +2527,7 @@ export default function Page() {
     autoScroll: {
       pause: autoScroll.pause,
       forceScrollToBottom: () => {
-        autoScroll.resume()
+        autoScroll.clearUserScrolled()
         scrollToEnd()
       },
     },
@@ -2672,7 +2757,10 @@ export default function Page() {
               if ((await sdk().protocol) !== "v1") return
               try {
                 await (sdk().client.session.update as Function)({ sessionID: id, directory: sdk().directory, time: { archived: null } })
-                void sync().session.sync(id, { force: true })
+                // #1646: INFO-ONLY resolve to flip the archived banner off — the
+                // messages are already loaded (you were viewing the archived
+                // session), so a forced sync's message re-fetch is pure waste.
+                void sync().session.resolve(id, { force: true })
               } catch (err: unknown) {
                 showToast({
                   title: language.t("common.requestFailed"),
@@ -2691,6 +2779,7 @@ export default function Page() {
             <SessionComposerRegion
               controller={controller}
               promptInput={
+                <SessionComposerControlScrim>
                 <Show
                   when={newSessionDesign()}
                   fallback={
@@ -2748,6 +2837,7 @@ export default function Page() {
                     return <PromptInputV2Composer controller={controller} borderUnderlay />
                   }}
                 </Show>
+                </SessionComposerControlScrim>
               }
             />
           )

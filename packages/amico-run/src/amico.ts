@@ -36,7 +36,17 @@ function usage(): string {
       "cloud submit <s.jl> | status | mirror | abort | run",
       "thin cloud solve client — submit→poll→mirror without the launch path (#460)",
     ],
+    [
+      "census [--brief] [--prd <o/r#n>] [--window-days <n>] […]",
+      "census-lite: framework slices, movement + 72h stall tripwire, bypass, deploys, PR depth, overlay (#1902)",
+    ],
     ["slack login", "Slack OAuth PKCE login — browser flow, writes ~/.amico/slack.json (#1156)"],
+    ["gh whoami [--offline]", "effective GitHub identity — person login, or agent App slug + principal; never a token (#1928)"],
+    ["gh agent-env [--sh] [--helper <p>]", "agent-launcher env: AMICO_GH_IDENTITY=agent + scrubbed git credential config (#1928)"],
+    [
+      "review post-check --repo <o/r> --sha <sha> --name reviewer-pass|charter-class --verdict <f>",
+      "reviewer-App check-run — dispatcher only, refuses in sessions / under agent identity (#1928)",
+    ],
     ...SPINE_VERBS.map(
       (v) => [`${v.name} …`, v.stub ? `${v.summary} [stub → ${v.slice}]` : v.summary] as [string, string],
     ),
@@ -80,6 +90,12 @@ export async function main(argv: string[]): Promise<number> {
       return launch(["sandbox", ...rest]);
     case "estimate":
       return launch(["estimate", ...rest]);
+    // the strategy-brief renderer as a TOP-LEVEL verb — the notturno weekly-
+    // synthesis seam invokes `bun …/src/amico.ts strategy-brief …` (its
+    // documented contract); without the case the head falls to the switch's
+    // default and the seam dies as "unknown verb" (dry-run 36836288143).
+    case "strategy-brief":
+      return launch(["strategy-brief", ...rest]);
 
     case "doctor": {
       // The studio binding's health check (#402) + the fleet surface inventory
@@ -136,6 +152,18 @@ export async function main(argv: string[]): Promise<number> {
       return code;
     }
 
+    // ── census-lite (rd-system v2.1 A0b, #1902): a read-only, GitHub-derived census
+    // of the framework tier with per-source coverage and the 72h stall tripwire.
+    // `--brief` prints the morning-brief markdown instead of JSON. CLI-only like
+    // `cloud` (not a SPINE_VERBS entry, so no MCP tool is auto-published). ──
+    case "census": {
+      const { censusVerb } = await import("./census_verb.js");
+      const r = await censusVerb(rest);
+      if (r.brief !== undefined) process.stdout.write(r.brief);
+      else console.log(JSON.stringify(r.json));
+      return r.code;
+    }
+
     // ── Slack OAuth PKCE login (#1156): `amico slack login` starts a
     // temporary HTTP server, opens the browser to Slack's authorize endpoint,
     // exchanges the callback code for a user token, and writes it to
@@ -143,6 +171,23 @@ export async function main(argv: string[]): Promise<number> {
     case "slack": {
       const { slackVerb } = await import("./slack_verb.js");
       return (await slackVerb(rest)).code;
+    }
+
+    // ── A15 identity surfaces (#1928): `gh whoami` reports the effective
+    // identity; `review post-check` is the dispatcher's reviewer-App posting.
+    // Same {json, code} shape as the spine verbs; NOT MCP tools. ──
+    case "gh": {
+      const { ghVerb } = await import("./gh_verb.js");
+      const { json, code, text } = await ghVerb(rest);
+      if (text !== undefined) process.stdout.write(text); // `agent-env --sh`: eval-able, not JSON
+      else console.log(JSON.stringify(json));
+      return code;
+    }
+    case "review": {
+      const { reviewVerb } = await import("./review_verb.js");
+      const { json, code } = await reviewVerb(rest);
+      console.log(JSON.stringify(json));
+      return code;
     }
 
     case "mcp-serve":

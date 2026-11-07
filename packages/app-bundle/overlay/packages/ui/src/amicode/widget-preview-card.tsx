@@ -26,6 +26,7 @@ export function WidgetPreviewCard(props: { preview: WidgetPreview }) {
     description: "",
     size: props.preview.size,
     height: props.preview.height,
+    sticky: false, // chat previews never dock (#1856: home dashboard only)
     config: {},
     builtin: false,
     overridden: false,

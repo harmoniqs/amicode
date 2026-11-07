@@ -15,6 +15,9 @@
 //                 stale/dirty pre-flight — the reason MUST be non-empty and is
 //                 stamped into dist-app/deploy.json (honest hotfixes, never
 //                 silent ones)
+//   AMICODE_DEPLOY_BASELINE=<branch>                # #1906: compare HEAD
+//                 against origin/<branch> instead of the default branch (set
+//                 by ops/hub/deploy-dist.sh for a verified lane/* tip)
 //
 // #992 DEPLOY GUARD: before any build/stage, fetch origin and refuse (exit 1,
 // named reason + remedy) when HEAD ≠ origin/<default-branch> (#1196: the
@@ -121,7 +124,11 @@ const preflight = () => {
     const r = spawnSync("git", ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], { cwd: REPO_ROOT, encoding: "utf8" });
     return r.status === 0 ? r.stdout : "";
   })();
-  const baseline = resolveDefaultBranch({ remoteShowOutput: remoteShowOut, symbolicRefOutput: symbolicRefOut });
+  const baseline = resolveDefaultBranch({
+    explicit: process.env.AMICODE_DEPLOY_BASELINE,
+    remoteShowOutput: remoteShowOut,
+    symbolicRefOutput: symbolicRefOut,
+  });
   const baselineRef = `origin/${baseline.branch}`;
   console.log(`[build:app] pre-flight baseline: ${baselineRef} (default branch via ${baseline.source})`);
   const headSha = gitOut(["rev-parse", "HEAD"], "rev-parse HEAD");

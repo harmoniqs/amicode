@@ -1,0 +1,125 @@
+# Notturno instance-deny-list (amicissimo #490) — what stays private.
+#
+# The tree splits into the framework CORE (generic machinery that ships
+# public — the amicode #852 step 6 TS-native port's hard prerequisite) and
+# the Harmoniqs INSTANCE (org-configured content, denied here with a reason).
+# The boundary is structural, not convention:
+# tests/automation/notturno/test_instance_boundary.py fails the suite if a
+# core module's runtime imports reach a denied path, and proves the core
+# import surface is importable with every instance module blocked.
+#
+# Rules (the registry's total-coverage idiom, both directions):
+#   - a row names a directory (claims every file under it, recursively) or a
+#     single file, repo-root-relative;
+#   - every file under automation/notturno/ is claimed by exactly one row of
+#     each kind at most: an unclassified file fails the suite, and so does a
+#     row naming a path that does not exist;
+#   - a deny row beats a core row claiming the same file (the carve-out:
+#     the instance parity manifest inside the core merge-sentinel engine);
+#   - CORE = everything not denied below.
+#
+# Workflows invoke the entry points (`python -m automation.notturno.briefs`,
+# `.triage`, `.assign`, …) — instance packages keep their module paths; this
+# manifest is the marking, and automation/notturno/company.py is the one
+# relocation the import boundary required (the org vault resolver out of the
+# core package shell).
+
+# ── INSTANCE — denied, each with a reason ─────────────────────────────────
+
+[[deny]]
+path = "automation/notturno/notturno.toml"
+reason = "the org's job registry entries — instance config by construction (#490)"
+
+[[deny]]
+path = "automation/notturno/merge_sentinel/parity-manifest.toml"
+reason = "the org fork's patch-parity manifest (harmoniqs/opencode paths) — instance data inside the core engine directory"
+
+[[deny]]
+path = "automation/notturno/company.py"
+reason = "the company (armonissima) vault resolver — org mount paths and the org clone instructions; moved out of the core package shell by #490"
+
+[[deny]]
+path = "automation/notturno/profiles.py"
+reason = "team member profiles — the org's team/ frontmatter schema and loader"
+
+[[deny]]
+path = "automation/notturno/projects.py"
+reason = "GitHub Projects board client wired to the org's board sync (#5) and issue-status hook (#12) — conservative: the deny list never guesses a path public"
+
+[[deny]]
+path = "automation/notturno/briefs"
+reason = "member morning briefs — rollout members, clone layout, vault sections"
+
+[[deny]]
+path = "automation/notturno/eod"
+reason = "member end-of-day check-ins — org questions, Slack DMs, company-vault storage"
+
+[[deny]]
+path = "automation/notturno/intake"
+reason = "member cold-start intake — two-phase ask/collect against the org's board"
+
+[[deny]]
+path = "automation/notturno/assign"
+reason = "hopper dole — company-hopper items onto the org Projects board"
+
+[[deny]]
+path = "automation/notturno/triage"
+reason = "hopper triage — tiers company-hopper items, gate-watches org specs"
+
+[[deny]]
+path = "automation/notturno/autoupdate"
+reason = "team-profile auto-update from org members' GitHub signals"
+
+[[deny]]
+path = "automation/notturno/night"
+reason = "the overnight worklist over the org's strategy/AFK issues (reads the company vault's STRATEGY.md)"
+
+[[deny]]
+path = "automation/notturno/architecture"
+reason = "the FTQC architecture-of-record engine — the org's research ladder over the org's knowledge plane (dormant, hand-runnable)"
+
+[[deny]]
+path = "automation/notturno/intent_receipt"
+reason = "the INTENT merge-receipt stamper for the org's strategy vault"
+
+# ── CORE — the framework machinery that ships public ──────────────────────
+
+[[core]]
+path = "automation/notturno/__init__.py"
+role = "the core package shell — instance-free since #490 (the org vault resolver moved to company.py)"
+
+[[core]]
+path = "automation/notturno/registry.py"
+role = "the job-registry loader + total-coverage check — generic shape; the org's entries are denied data in notturno.toml"
+
+[[core]]
+path = "automation/notturno/passes.py"
+role = "the scheduled-pass recorder"
+
+[[core]]
+path = "automation/notturno/alert.py"
+role = "failure alerting — thread-dedup + channel resolution (carries the org's #fleet default channel as an overridable default; parameterize at the port)"
+
+[[core]]
+path = "automation/notturno/gha.py"
+role = "GitHub Actions runtime helper"
+
+[[core]]
+path = "automation/notturno/slack.py"
+role = "Slack Web client — identity via the org's bot token, no channels or member names carried"
+
+[[core]]
+path = "automation/notturno/watchdog"
+role = "the doctor-watchdog engine"
+
+[[core]]
+path = "automation/notturno/merge_sentinel"
+role = "the upstream-merge sentinel engine (its parity manifest is denied instance data)"
+
+[[core]]
+path = "automation/notturno/synthesis"
+role = "the weekly-synthesis engine's shape — renders via the amicode CLI seam"
+
+[[core]]
+path = "automation/notturno/instance-deny-list.toml"
+role = "this manifest — the boundary artifact the public side consumes"

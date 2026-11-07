@@ -17,20 +17,20 @@ const RebuildStatusBadge: Component<{ controller: DeveloperToolsController }> = 
   return (
     <Switch>
       <Match when={props.controller.rebuildState() === "rebuilding"}>
-        <div class="devtools-rebuild-status devtools-rebuild-status--building">
-          <span class="devtools-status-dot devtools-status-dot--orange" />
+        <div class="devtools-rebuild-status devtools-rebuild-status--running">
+          <span class="devtools-status-dot devtools-status-dot--running amc-activity-pulse" aria-hidden="true" />
           <span>{language.t("settings.general.row.devTools.rebuilding")}</span>
         </div>
       </Match>
       <Match when={props.controller.rebuildState() === "rebuilt"}>
-        <div class="devtools-rebuild-status devtools-rebuild-status--done">
-          <span class="devtools-status-dot devtools-status-dot--green" />
+        <div class="devtools-rebuild-status devtools-rebuild-status--success">
+          <span class="devtools-status-dot devtools-status-dot--success" aria-hidden="true" />
           <span>{language.t("settings.general.row.devTools.rebuilt")}</span>
         </div>
       </Match>
       <Match when={props.controller.rebuildState() === "failed"}>
-        <div class="devtools-rebuild-status devtools-rebuild-status--failed">
-          <span class="devtools-status-dot devtools-status-dot--red" />
+        <div class="devtools-rebuild-status devtools-rebuild-status--error">
+          <span class="devtools-status-dot devtools-status-dot--error" aria-hidden="true" />
           <span>Failed</span>
         </div>
       </Match>
@@ -47,7 +47,7 @@ const RebuildErrorPanel: Component<{ controller: DeveloperToolsController }> = (
     <Show when={props.controller.rebuildState() === "failed" && err()}>
       <div class="devtools-error-panel">
         <div class="devtools-error-message">
-          <span class="devtools-status-dot devtools-status-dot--red" />
+          <span class="devtools-status-dot devtools-status-dot--error" aria-hidden="true" />
           <span>{err()!.message}</span>
         </div>
         <Show when={err()!.fix.length > 0}>
@@ -118,14 +118,14 @@ const DeveloperToolsContent: Component<{ controller: DeveloperToolsController }>
           </ButtonV2>
         </div>
         <Show when={props.controller.vsixBuildState() === "rebuilt"}>
-          <div class="devtools-rebuild-status devtools-rebuild-status--done">
-            <span class="devtools-status-dot devtools-status-dot--green" />
+          <div class="devtools-rebuild-status devtools-rebuild-status--success">
+            <span class="devtools-status-dot devtools-status-dot--success" aria-hidden="true" />
             <span>VSIX built: {props.controller.vsixPath() ?? ""}</span>
           </div>
         </Show>
         <Show when={props.controller.vsixBuildState() === "failed"}>
-          <div class="devtools-rebuild-status devtools-rebuild-status--failed">
-            <span class="devtools-status-dot devtools-status-dot--red" />
+          <div class="devtools-rebuild-status devtools-rebuild-status--error">
+            <span class="devtools-status-dot devtools-status-dot--error" aria-hidden="true" />
             <span>{props.controller.vsixBuildError()}</span>
           </div>
         </Show>

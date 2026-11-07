@@ -16,7 +16,7 @@ import {
   untrack,
 } from "solid-js"
 import { makeEventListener } from "@solid-primitives/event-listener"
-import { createStore, reconcile } from "solid-js/store"
+import { createStore, produce } from "solid-js/store"
 import { useQuery } from "@tanstack/solid-query"
 import { Button } from "@opencode-ai/ui/button"
 import { Logo } from "@opencode-ai/ui/logo"
@@ -65,6 +65,7 @@ import { ServerRowMenu } from "@/components/server/server-row-menu"
 import { ServerHealthIndicator } from "@/components/server/server-row"
 import { type ServerHealth } from "@/utils/server-health"
 import { amicodeGet, amicodePost } from "@/utils/amicode-fetch"
+import { archivedSessionsWithRemote, isRemotePeerSession, deriveSessionBadge, readSessionControl, writeAffordanceEnabled, failClosedChip, remoteDeleteAction, type DropdownSession } from "@/components/session/session-fleet-peers"
 import { AmicodeRunGallery } from "@opencode-ai/ui/amicode-run-gallery"
 import { AmicodeOnboardingWizard, shouldShowWizard } from "@opencode-ai/ui/amicode-onboarding-wizard"
 import { AMICODE_MANAGE_VAULTS_PROMPT } from "@opencode-ai/ui/amicode-vaults-tab"
@@ -73,7 +74,7 @@ import { createAmicodeConnectionsState } from "@/components/status-popover-body"
 import { COMPANY_COMPUTE_ID } from "@opencode-ai/ui/amicode-connections-tab"
 import { GlobalConnectionsPopover } from "@/components/status-popover"
 import { parseRunCardsResponse } from "@opencode-ai/ui/amicode-run-card"
-import { AmicodeHomeCards, parseProfileResponse, type HomeLiveRun } from "@opencode-ai/ui/amicode-home-cards"
+import { AmicodeHomeCards, parseProfileResponse } from "@opencode-ai/ui/amicode-home-cards"
 import {
   WidgetGrid,
   parseWidgetsResponse,
@@ -86,14 +87,12 @@ import {
   type Density,
   type WidgetHostCallbacks,
 } from "@opencode-ai/ui/amicode-widget-grid"
-import { parseRunSeriesResponse } from "@opencode-ai/ui/amicode-run-window"
-import { parseProblemsResponse } from "@opencode-ai/ui/amicode-problem-switcher"
-import { parseProblemResponse } from "@opencode-ai/ui/amicode-entity-view"
 import { Mark } from "@opencode-ai/ui/logo"
 import { AmicodeFooter } from "@opencode-ai/ui/amicode-footer"
 import { useTheme } from "@opencode-ai/ui/theme/context"
 import { SessionTabStatusDot, sessionTabStatus } from "@/pages/layout/session-tab-status"
-import { useSessionTabAvatarState } from "@/pages/layout/project-avatar-state"
+import { SessionListStatusChip } from "@/pages/layout/session-list-chip"
+import { useSessionTabAvatarState, useSessionListChipState } from "@/pages/layout/project-avatar-state"
 
 const HOME_SESSION_LIMIT = 64
 const HOME_ROW_LAYOUT =
@@ -356,15 +355,20 @@ function HomeDesign() {
       const result = await ctx.sdk.client.experimental.session.list(
         { archived: true, limit: ARCHIVED_PAGE_SIZE, ...(cursor ? { cursor: Number(cursor) } : {}) },
       )
-      const sessions: Session[] = (result.data ?? []) as Session[]
+      const local: Session[] = (result.data ?? []) as Session[]
       if (reset) {
-        setArchivedSessions(sessions)
+        // #1647 (S3): fold in peer-owned archived sessions from the fleet
+        // projection (owner-tagged). Bounded recent window, merged only on the
+        // first page. Standalone / fetch failure → no remote rows → unchanged.
+        const proj = await amicodeGet(focusedServer(), "/amicode/fleet/sessions?archived=true").catch(() => undefined)
+        setArchivedSessions(archivedSessionsWithRemote(local as DropdownSession[], proj) as Session[])
       } else {
-        setArchivedSessions((prev) => [...prev, ...sessions])
+        const have = new Set(archivedSessions().map((s) => s.id))
+        setArchivedSessions((prev) => [...prev, ...local.filter((s) => !have.has(s.id))])
       }
-      // Cursor-based pagination: if we got a full page, there may be more
-      const lastSession = sessions[sessions.length - 1]
-      if (sessions.length >= ARCHIVED_PAGE_SIZE && lastSession) {
+      // Cursor-based pagination tracks the LOCAL engine only (remote is a window)
+      const lastSession = local[local.length - 1]
+      if (local.length >= ARCHIVED_PAGE_SIZE && lastSession) {
         setArchivedCursor(String(lastSession.time.updated ?? lastSession.time.created))
         setArchivedHasMore(true)
       } else {
@@ -378,9 +382,30 @@ function HomeDesign() {
     }
   }
 
+  // #1647 (S6): keep the Archived tab live while it is open. A local OR remote
+  // (fan-in-relayed) archive/unarchive should surface without a manual refresh.
+  // Remote archive events are owned by a peer and don't reliably flow through
+  // the local directory stores, so instead of fragile cross-store reactivity we
+  // refresh on the SAME 5s cadence the fleet projection / owner-map already use
+  // — bounded real-time (≤5s), robust, and cleaned up on tab-close / unmount.
+  createEffect(() => {
+    if (flyoutTab() !== "archived") return
+    const timer = setInterval(() => void loadArchivedSessions(true), 5000)
+    onCleanup(() => clearInterval(timer))
+  })
+
   async function unarchiveSession(session: Session) {
     const ctx = focusedServerCtx()
     if (!ctx) return
+    // #1647 (S4): a remote archived row unarchives on its owner; gate on control.
+    const ds = session as DropdownSession
+    if (isRemotePeerSession(ds) && !remoteDeleteAction(ds).allowed) {
+      showToast({
+        title: "Control not enabled",
+        description: `Enable control of ${ds.amicode_owner?.owner_name ?? "the owner machine"} to unarchive its sessions from here.`,
+      })
+      return
+    }
     try {
       // Unarchive via the v1 session.update endpoint (same as archive, but nulling the timestamp)
       await (ctx.sdk.client.session.update as Function)({
@@ -415,12 +440,33 @@ function HomeDesign() {
       })
       // Add to archived list
       setArchivedSessions((prev) => [session, ...prev])
-      // Reload active sessions so it disappears from the open list
-      await Promise.all(
-        projectDirectories().map((directory) =>
-          focusedSync().project.loadSessions(directory, { limit: HOME_SESSION_LIMIT }),
-        ),
+      // PERF (#archive-lag cleanup): remove the archived row from its directory
+      // store DIRECTLY instead of re-fetching + reconciling EVERY project
+      // directory's session list on each archive (wasted work). roots()
+      // (pages/layout/helpers.ts) filters archived sessions out of the list, so
+      // this splice is the entire removal; the next natural loadSessions
+      // reconciles from the server. Matches the Rail (layout.tsx) and chat-menu
+      // (message-timeline.tsx) archive paths, which already splice. (The
+      // measured dropdown lag was a different cause — the cached fleet
+      // projection re-filling the row; see session-header.tsx's tombstones.)
+      const [, setChildStore] = focusedSync().child(session.directory, { bootstrap: false })
+      setChildStore(
+        produce((draft) => {
+          const index = draft.session.findIndex((s) => s.id === session.id)
+          if (index !== -1) draft.session.splice(index, 1)
+        }),
       )
+      // #1646: flip the composer of the viewed session to its read-only banner
+      // in place. The removal above touches the LIST store; the composer's
+      // `archived` memo reads the PER-SESSION store (focusedSync().session.get(id)),
+      // which only a forced per-session refresh lands. INFO-ONLY `resolve`
+      // (session.get → remember), NOT `sync`: the archived flag is metadata, so a
+      // forced `sync` additionally re-pulled the viewed session's full message
+      // history + parents (seconds of wasted wire). `resolve` lands the flag
+      // without touching messages, matching the composer controller's convergence.
+      void focusedSync()
+        .session.resolve(session.id, { force: true })
+        .catch(() => {})
     } catch (cause) {
       showToast({
         title: language.t("common.requestFailed"),
@@ -433,6 +479,15 @@ function HomeDesign() {
   async function deleteArchivedSession(session: Session) {
     const ctx = focusedServerCtx()
     if (!ctx) return
+    // #1647 (S4): remote delete routes to the owner; gate on control.
+    const ds = session as DropdownSession
+    if (isRemotePeerSession(ds) && !remoteDeleteAction(ds).allowed) {
+      showToast({
+        title: "Control not enabled",
+        description: `Enable control of ${ds.amicode_owner?.owner_name ?? "the owner machine"} to delete its sessions from here.`,
+      })
+      return
+    }
     try {
       await (ctx.sdk.client.session.delete as Function)({
         sessionID: session.id,
@@ -460,6 +515,11 @@ function HomeDesign() {
   // amicode: home-card data. All read from the focused server's /amicode/* raw
   // routes (~/.amico). Each degrades to undefined on failure so a card simply
   // doesn't render (no empty chrome) rather than erroring the whole page.
+  // #1818: the deprecated research readouts (the "Jump back in" problem-resume
+  // chip and the live-run card, fed by the retired research readout,
+  // problem-entity, and run read routes) were removed — home no longer fetches
+  // ANY problem-entity route; the live research readouts are the widget grid
+  // and the Run Inspector.
   const [profileRaw, { refetch: refetchProfile }] = createResource(
     () => state.selection.server,
     () => amicodeGet(focusedServer(), "/amicode/profile").catch(() => undefined),
@@ -468,40 +528,7 @@ function HomeDesign() {
     const raw = profileRaw()
     return raw === undefined ? undefined : parseProfileResponse(raw)
   })
-  const [problemsRaw] = createResource(
-    () => state.selection.server,
-    () => amicodeGet(focusedServer(), "/amicode/problems").catch(() => undefined),
-  )
-  const resumeProblem = createMemo(() => {
-    const raw = problemsRaw()
-    if (raw === undefined) return undefined
-    const view = parseProblemsResponse(raw)
-    if (!view.ok) return undefined
-    const open = view.problems.filter((p) => p.status !== "archived")
-    if (open.length === 0) return undefined
-    return [...open].sort((a, b) => (b.recorded ?? "").localeCompare(a.recorded ?? ""))[0]
-  })
-  const [resumeDetailRaw] = createResource(
-    () => resumeProblem()?.slug,
-    (slug) => amicodeGet(focusedServer(), `/amicode/problem?slug=${encodeURIComponent(slug)}`).catch(() => undefined),
-  )
-  const resumeMeta = createMemo(() => {
-    const raw = resumeDetailRaw()
-    if (raw === undefined) return undefined
-    const view = parseProblemResponse(raw) as { ok: boolean; entities?: Record<string, any> }
-    if (!view.ok || !view.entities) return undefined
-    const parts = [
-      view.entities.system?.platform,
-      view.entities.formulation?.target,
-      view.entities.formulation?.objective,
-    ].filter((v): v is string => typeof v === "string" && v.trim() !== "")
-    return parts.length > 0 ? parts.join(" · ") : undefined
-  })
 
-  // amicode (spec C): "Now solving" — light live readout of the active problem's
-  // in-flight run. Polls run-status + run-series only while a run is solving; the
-  // interval self-terminates once status leaves "solving". All failures collapse
-  // to undefined so the card simply doesn't render.
   // amicode: run gallery (shareable solve cards) — fetched on open, newest first.
   const [galleryOpen, setGalleryOpen] = createSignal(false)
   const [runCardsRaw] = createResource(
@@ -518,85 +545,6 @@ function HomeDesign() {
   const saveCardPng = (filename: string, dataUrl: string) => {
     window.parent.postMessage({ source: "amicode", kind: "save-file", filename, dataUrl }, "*")
   }
-
-  // Store-based fetch with reconcile for run-status polling
-  const [runStatusStore, setRunStatusStore] = createStore<{ raw: unknown | undefined }>({ raw: undefined })
-  const refetchRunStatus = async () => {
-    try {
-      const data = await amicodeGet(focusedServer(), "/amicode/run-status")
-      setRunStatusStore(reconcile({ raw: data }))
-    } catch {
-      // keep existing data on error
-    }
-  }
-  const runStatusRaw = () => runStatusStore.raw
-  const solvingRun = createMemo(() => {
-    const raw = runStatusRaw()
-    if (typeof raw !== "object" || raw === null) return undefined
-    const view = raw as { ok?: boolean; runs?: any[] }
-    if (view.ok !== true || !Array.isArray(view.runs)) return undefined
-    const solving = view.runs.find((r) => r && typeof r.run_id === "string" && r.status === "solving")
-    if (!solving) return undefined
-    return {
-      runId: solving.run_id as string,
-      iteration: typeof solving.iteration === "number" ? solving.iteration : null,
-      fidelity: typeof solving.fidelity === "number" ? solving.fidelity : null,
-    }
-  })
-  const solvingRunId = createMemo(() => solvingRun()?.runId)
-  // Store-based fetch with reconcile for granular updates — prevents flicker
-  // when polling every 2.5s (createResource replaces the whole object)
-  const [runSeriesStore, setRunSeriesStore] = createStore<{ raw: unknown | undefined }>({ raw: undefined })
-  const refetchRunSeries = async () => {
-    const runId = solvingRunId()
-    if (!runId) return
-    try {
-      const data = await amicodeGet(focusedServer(), `/amicode/run-series?run=${encodeURIComponent(runId)}`)
-      setRunSeriesStore(reconcile({ raw: data }))
-    } catch {
-      // keep existing data on error
-    }
-  }
-  const runSeriesRaw = () => runSeriesStore.raw
-  const liveRun = createMemo<HomeLiveRun | undefined>(() => {
-    const solving = solvingRun()
-    if (!solving) return undefined
-    const raw = runSeriesRaw()
-    const view = raw === undefined ? undefined : parseRunSeriesResponse(raw)
-    const run = view?.ok ? view.run : undefined
-    // convergence curve = log10 of the objective (spans orders of magnitude)
-    const series = run ? run.series.map((p) => Math.log10(Math.max(p.f, 1e-12))) : []
-    // Only show F once it's a valid fidelity (final, or 1 - f with f < 1). Early
-    // in a solve the objective f ≫ 1, so leave F blank rather than misleading.
-    const derivedF = run?.fidelity ?? (run && run.lastF !== null && run.lastF < 1 ? 1 - run.lastF : null)
-    return {
-      name: resumeProblem()?.name,
-      iteration: run?.iteration ?? solving.iteration,
-      fidelity: derivedF,
-      series,
-      // pulse-first sparkline: the tile shows the artifact once a snapshot streams
-      pulse: run?.pulse?.values,
-      drives: run?.pulseMeta?.drives,
-    }
-  })
-  // Initial fetch on mount, then poll every 2.5s while solving
-  onMount(() => {
-    void refetchRunStatus()
-    void refetchRunSeries()
-  })
-  createEffect(() => {
-    // Standing slow poll while Home is mounted (a solve STARTED from chat must
-    // surface here without a remount), tightening to 2.5s while one is live.
-    const live = Boolean(solvingRunId())
-    const timer = setInterval(
-      () => {
-        void refetchRunStatus()
-        if (live) void refetchRunSeries()
-      },
-      live ? 2500 : 5000,
-    )
-    onCleanup(() => clearInterval(timer))
-  })
 
   // Shared by the About-You card and the onboarding wizard: identity fields
   // ride query params on the raw POST route; refetch renders the saved state.
@@ -726,9 +674,12 @@ function HomeDesign() {
     onCleanup(() => cancelAnimationFrame(id))
   })
 
+  // #1818: widget context carries ONLY live, host-derivable state — library.
+  // The deprecated resume/liveRun entries (fed by the retired /amicode/
+  // problems + run-status reads) are gone; a widget that wants problem or run
+  // data fetches it through amico.fetch (the /amicode/* allowlist still serves
+  // those routes server-side).
   const widgetContext = createMemo(() => ({
-    resume: resumeProblem()?.name ? { name: resumeProblem()!.name, meta: resumeMeta() } : undefined,
-    liveRun: liveRun(),
     library: libraryView(),
   }))
 
@@ -738,11 +689,6 @@ function HomeDesign() {
       const p = (payload ?? {}) as Record<string, unknown>
       const str = (k: string) => (typeof p[k] === "string" ? (p[k] as string) : "")
       switch (verb) {
-        case "resume-session": {
-          const name = resumeProblem()?.name
-          if (name) startWithPrompt(`Open the problem "${name}" and continue where we left off`)
-          return { ok: true }
-        }
         case "save-profile": {
           await saveProfileFields({
             name: str("name") || undefined,
@@ -777,11 +723,10 @@ function HomeDesign() {
       }
     },
     prompt: startWithPrompt,
-    open: (entity) => {
-      if (entity === "run") {
-        const name = resumeProblem()?.name
-        if (name) startWithPrompt(`Open the problem "${name}" and show me the running solve`)
-      }
+    open: () => {
+      // #1818: the entity-view open path is gone with the deprecated research
+      // surfaces; widgets that call amico.open() get an acknowledged no-op,
+      // same as the session view's widget host.
     },
   }
 
@@ -1364,19 +1309,7 @@ function HomeDesign() {
                 onUploadPaper={uploadPaper}
                 onEditProfile={() => startWithPrompt("update my profile — my name, affiliation, and what I work on")}
                 onSaveProfile={saveProfileFields}
-                resumeName={resumeProblem()?.name}
-                resumeMeta={resumeMeta()}
-                onResume={() => {
-                  const name = resumeProblem()?.name
-                  if (name) startWithPrompt(`Open the problem "${name}" and continue where we left off`)
-                }}
-                onWarmStart={() => startWithPrompt("warm-start a new solve from my pulse bank")}
                 onOpenGallery={() => setGalleryOpen(true)}
-                liveRun={liveRun()}
-                onOpenLiveRun={() => {
-                  const name = resumeProblem()?.name
-                  if (name) startWithPrompt(`Open the problem "${name}" and show me the running solve`)
-                }}
               />
             }
           >
@@ -1390,6 +1323,7 @@ function HomeDesign() {
                 context={widgetContext()}
                 callbacks={widgetCallbacks}
                 onSave={saveDashboard}
+                dock
                 onNewWidget={() =>
                   // Authoring is a conversation: hand off to a fresh chat with the
                   // composer prefilled (not auto-sent — the user completes the
@@ -2079,6 +2013,15 @@ function HomeSessionRow(props: {
     () => props.record.session.directory,
     () => props.record.session.id,
   )
+  // amicode#1787 (S1): the live status chip — running / waiting on question /
+  // idle <age> — derived off the shared store rows; omitted (no evidence)
+  // renders no chip. Age refreshes with every store re-derivation (the same
+  // render-time relative-time posture as session-new-view's toRelative()).
+  const chip = useSessionListChipState(
+    () => props.server,
+    () => props.record.session.id,
+    () => props.record.session.time.updated,
+  )
 
   return (
     <div class="group/session relative flex h-7 min-w-0 items-center rounded-sm">
@@ -2106,6 +2049,7 @@ function HomeSessionRow(props: {
             {props.record.projectName}
           </span>
         </Show>
+        <SessionListStatusChip chip={chip()} />
       </button>
       <Show when={props.archiveSession}>
         <div
@@ -2180,6 +2124,14 @@ function ArchivedSessionRow(props: {
   onDelete: (session: Session) => void
 }) {
   const title = createMemo(() => sessionTitle(props.session.title) || props.session.id)
+  // #1647 (S4): a remote archived row (owner-tagged from the fleet projection)
+  // shows the owner badge and control-gates unarchive/delete — fail-closed to a
+  // lock chip when control is not held.
+  const badge = createMemo(() => deriveSessionBadge(props.session as DropdownSession))
+  const isRemote = createMemo(() => isRemotePeerSession(props.session as DropdownSession))
+  const control = createMemo(() => readSessionControl(props.session as DropdownSession))
+  const canWrite = createMemo(() => writeAffordanceEnabled(control()))
+  const chip = createMemo(() => failClosedChip(control()))
   const [armed, setArmed] = createSignal(false)
   let resetTimer: ReturnType<typeof setTimeout> | undefined
 
@@ -2218,10 +2170,38 @@ function ArchivedSessionRow(props: {
         <span class="min-w-0 flex-[1_1_auto] overflow-hidden text-ellipsis whitespace-nowrap">
           {title()}
         </span>
+        <Show when={isRemote() && badge()}>
+          <span
+            data-slot="archived-session-owner-badge"
+            class="shrink-0 inline-flex items-center gap-1 text-[10px] leading-none text-v2-text-text-faint"
+            title={badge()}
+          >
+            <IconV2 name="monitor" size="small" class="shrink-0 opacity-70" />
+            <span class="max-w-24 overflow-hidden text-ellipsis whitespace-nowrap">{badge()}</span>
+          </span>
+        </Show>
       </button>
       <div
         class="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center gap-0.5 opacity-0 group-hover/archived:opacity-100 focus-within:opacity-100 transition-opacity"
       >
+        <Show
+          when={!isRemote() || canWrite()}
+          fallback={
+            <Show when={chip()} keyed>
+              {(c) => (
+                <span
+                  data-slot="session-control-chip"
+                  data-control-reason={c.reason}
+                  class="shrink-0 inline-flex items-center gap-1 rounded-sm px-1 py-0.5 text-[10px] leading-none text-v2-text-text-faint bg-v2-background-bg-layer-02"
+                  title={c.label}
+                >
+                  <IconV2 name="lock" class="shrink-0 opacity-70" />
+                  <span>{c.label}</span>
+                </span>
+              )}
+            </Show>
+          }
+        >
         <TooltipV2 placement="top" value="Unarchive">
           <IconButtonV2
             data-action="home-session-unarchive"
@@ -2263,6 +2243,7 @@ function ArchivedSessionRow(props: {
           >
             Delete
           </ButtonV2>
+        </Show>
         </Show>
       </div>
     </div>

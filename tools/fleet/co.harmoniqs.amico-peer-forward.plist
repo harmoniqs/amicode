@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>KeepAlive</key>
+	<true/>
+	<key>Label</key>
+	<string>co.harmoniqs.amico-peer-PEER_MACHINE_ID-forward</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/usr/bin/ssh</string>
+		<string>-N</string>
+		<string>-o</string>
+		<string>ExitOnForwardFailure=yes</string>
+		<string>-o</string>
+		<string>ServerAliveInterval=15</string>
+		<string>-o</string>
+		<string>ServerAliveCountMax=2</string>
+		<string>-o</string>
+		<string>TCPKeepAlive=yes</string>
+		<string>-o</string>
+		<string>BatchMode=yes</string>
+		<string>-L</string>
+		<string>127.0.0.1:PEER_LOCAL_PORT:127.0.0.1:PEER_REMOTE_PORT</string>
+		<string>PEER_SSH_ALIAS</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardErrorPath</key>
+	<string>/tmp/amico-peer-PEER_MACHINE_ID-forward.log</string>
+	<key>StandardOutPath</key>
+	<string>/tmp/amico-peer-PEER_MACHINE_ID-forward.log</string>
+	<key>ThrottleInterval</key>
+	<integer>10</integer>
+</dict>
+</plist>

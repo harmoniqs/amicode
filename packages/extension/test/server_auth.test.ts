@@ -333,6 +333,18 @@ describe("buildGitCredentialHelperEnv — the #399 gate", () => {
       GIT_CONFIG_VALUE_0: `!"/ext/bin/launcher/amico-git-credential"`,
     });
   });
+  it("#1928: a github-apps/agent.json (the per-role App config) opens the gate too; an empty apps dir does not", () => {
+    const apps = mkdtempSync(join(tmpdir(), "amico-auth-apps-"));
+    expect(buildGitCredentialHelperEnv(binDir, { AMICO_GITHUB_APPS_DIR: apps })).toEqual({});
+    writeFileSync(join(apps, "agent.json"), JSON.stringify({ app_id: "1", installation_id: "2", pem_path: join(apps, "agent.pem") }));
+    expect(buildGitCredentialHelperEnv(binDir, { AMICO_GITHUB_APPS_DIR: apps })).toEqual({
+      GIT_CONFIG_COUNT: "1",
+      GIT_CONFIG_KEY_0: "credential.https://github.com.helper",
+      GIT_CONFIG_VALUE_0: `!"/ext/bin/launcher/amico-git-credential"`,
+    });
+    // an explicit AMICO_GITHUB_FILE stays authoritative (the #399 override)
+    expect(buildGitCredentialHelperEnv(binDir, { AMICO_GITHUB_APPS_DIR: apps, ...unconfiguredEnv })).toEqual({});
+  });
   it("flows through buildServerSpawnEnv: gate open adds the three keys, gate closed adds none", () => {
     const open = buildServerSpawnEnv({
       amicoRunBinDir: binDir,

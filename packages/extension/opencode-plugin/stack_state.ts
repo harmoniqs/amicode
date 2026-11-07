@@ -119,15 +119,15 @@ function buildSolverModeSection(): string {
   const routing = connected
     ? "Harmoniqs Cloud is CONNECTED, and EVERY solve on this solver runs there — this tier has no local " +
       "mode, so never ask the user where a solve should run. Author it as: " +
-      '`tier="hpc"`, `executor="remote"`, `env.kind="provisioned"` (via `amico-run --spec <spec> ' +
+      '`tier="hpc"`, `executor="remote"`, `env.kind="provisioned"` (via `amico run --spec <spec> ' +
       "<script.jl> --executor remote`). The runner image has Piccolissimo/Altissimo pre-baked, so there " +
       "is NO local precompile and NO sandbox — never author a sandbox env for HP. A local launch is " +
-      "REFUSED by amico-run while this solver is selected (exit 64), so attempting one only wastes a turn. " +
+      "REFUSED by the amico CLI while this solver is selected (exit 64), so attempting one only wastes a turn. " +
       "Live iteration frames stream to the Inspector; note that per-iteration AMICODE_ITER stats + the " +
       "cooperative Stop are not yet available on the cloud bundle, and re-rollout verification is skipped " +
       "for cloud runs (say so). Only claim cloud execution when the launch actually used `--executor remote`."
     : "Harmoniqs Cloud is NOT connected (no API key). Piccolissimo + Altissimo is a PAID cloud tier and " +
-      "CANNOT run locally — do NOT attempt a local Piccolissimo solve (it will fail three ways: amico-run " +
+      "CANNOT run locally — do NOT attempt a local Piccolissimo solve (it will fail three ways: the amico CLI " +
       "refuses a local launch in this mode, the private package can't be instantiated in a sandbox, and " +
       "the gate rejects a local hpc run). Instead, STOP and tell the user: " +
       '"Piccolissimo + Altissimo needs a Harmoniqs Cloud connection — click **Piccolissimo + Altissimo** ' +
@@ -146,12 +146,16 @@ function buildSolverModeSection(): string {
     "`EmbeddedOperator`, `UnitaryTrajectory` — every problem-setup name comes from Piccolo. The failure is " +
     "an UndefVarError at load time, before any solve starts, and on a cloud run you pay the full queue and " +
     "instance-boot wait before seeing it. " +
-    "**Solver backend:** the default remains IPOPT (`IpoptOptions`), which is what streams per-iteration " +
-    "telemetry — its `intermediate_callback` produces the Inspector's frames and the `AMICODE_ITER` lines. " +
+    "**Solver backend:** the default is **MadNLP** (the DirectTrajOpt 0.11 default, inherited by Piccolo 2.2) — " +
+    "a plain `solve!(qcp; max_iter = …)` rides it with no options struct, which is exactly what the template's " +
+    "`SOLVER = :default` does. Ipopt remains the documented selectable path (`SOLVER = :ipopt` → " +
+    "`options = IpoptOptions(…)`). Both backends stream per-iteration telemetry: the Inspector's frames ride " +
+    "the backend's `intermediate_callback`, and the `AMICODE_ITER` lines ride the backend's rich-state channel " +
+    "(Ipopt's raw callback; MadNLP's raw `MadNLP.AbstractUserCallback`, regular-mode filtered — Q74 amended). " +
     "If the researcher asks for the **Altissimo** backend (the augmented-Lagrangian GPU solver, " +
     "`AltissimoOptions`), switch it by setting **`SOLVER = :altissimo`** in the template's FILL-IN block — that " +
     "one line is the whole change. Do NOT hand-roll the solve call: the template already re-hangs BOTH telemetry " +
-    "channels onto Altissimo's `(x, info)` hook (the frames come off `IpoptOptions.intermediate_callback`, which " +
+    "channels onto Altissimo's `(x, info)` hook (the frames come off the backend's `intermediate_callback`, which " +
     "`AltissimoOptions` does not have, so a hand-written call loses the Inspector's frames as well as its " +
     "numbers), passes the budget as `AltissimoOptions(max_outer_iter = max_iter)` (a `max_iter` given to " +
     "`solve!` is silently DROPPED on that path — the solve would quietly run 20 outer iterations), and derives " +
@@ -181,12 +185,12 @@ function buildRoutingSection(): string {
     "which is a CLOUD-ONLY tier. Every solve on this solver runs in the cloud: there is no " +
     "local-vs-cloud choice to make here, so do NOT ask the researcher where it should run.\n" +
     "- **Author it as High-Performance + Cloud.** Set `tier=\"hpc\"`, `executor=\"remote\"`, and " +
-    '`env.kind="provisioned"` on solvespec.json, then launch with `amico-run --spec <spec> ' +
+    '`env.kind="provisioned"` on solvespec.json, then launch with `amico run --spec <spec> ' +
     "<script.jl> --executor remote`.\n" +
     "- **Never dispatch this solver locally.** The runner image has Piccolissimo/Altissimo " +
-    "pre-baked; a laptop would precompile the HP stack from scratch. amico-run REFUSES a local " +
+    "pre-baked; a laptop would precompile the HP stack from scratch. The amico CLI REFUSES a local " +
     "launch while this solver is selected (exit 64), so a local attempt only wastes a turn.\n" +
-    "- **`amico-run estimate` is still worth running** to report size and cost to the " +
+    "- **`amico estimate` is still worth running** to report size and cost to the " +
     "researcher, but it no longer decides anything: an estimate that fits in local RAM does " +
     "not make an HP solve local.\n" +
     "- **A local solve means switching solvers.** If the researcher wants to run locally, they " +
@@ -387,37 +391,254 @@ function readFleetStatus(statusPath?: string): FleetStatusSummary | undefined {
   };
 }
 
+// #780 — MACHINE POSTURE (read-only here; the EXTENSION is the sole writer).
+// The extension's fleet attach loop persists each attach-state TRANSITION to
+// ~/.amico/ops/fleet/posture-state.json (beside the fleet role config and the
+// projection cache). This plugin READS it to render an honest posture block:
+// which machine, the mode, the hub identity + reachability, where canonical
+// sessions live. No network I/O — files only. Missing / corrupt / stale → a
+// degraded-but-honest block, NEVER a false "healthy" claim and NEVER a crash.
+// The role config stays the ROLE truth; this file is the LIVE posture truth,
+// and the plugin prefers it. (The plugin never reads the raw role config — it
+// reads only the projection cache and this posture file — F1: one topology
+// reader.)
+
+function fleetPostureStateFile(override?: string): string {
+  if (override) return override;
+  const env = process.env.AMICO_FLEET_POSTURE_STATE;
+  if (env && env.trim() !== "") return env.trim();
+  return path.join(os.homedir(), ".amico", "ops", "fleet", "posture-state.json");
+}
+
+// Writes are TRANSITION-ONLY (the writer never heartbeats), so `updated_at` is
+// the last-transition instant, not a liveness ping — a stably-attached client
+// legitimately carries an hours-old timestamp. The TTL therefore flags only a
+// GENUINELY ancient file (a dead writer / a machine asleep for a day); the
+// real honesty is that EVERY reachability claim is separately timestamped
+// ("as of …"), so the block can never read as a bare "healthy".
+const POSTURE_STALE_MS = 24 * 60 * 60 * 1000;
+
+interface PostureRecord {
+  hostname?: string;
+  mode?: string;
+  hub?: { name?: string | null; base_url?: string | null };
+  reachable?: boolean;
+  last_ok?: string | null;
+  last_rtt_ms?: number | null;
+  updated_at?: string;
+}
+
+type PostureRead =
+  | { kind: "ok"; rec: PostureRecord; ageMin: number }
+  | { kind: "stale"; rec: PostureRecord; ageMin: number }
+  | { kind: "corrupt" }
+  | { kind: "absent" };
+
+/** Read the posture state file, shape-tolerantly. A read error → absent; a
+ *  parse/shape error → corrupt; a parsed record older than the TTL → stale;
+ *  otherwise ok. Never throws. */
+function readPostureState(override?: string): PostureRead {
+  const file = fleetPostureStateFile(override);
+  let text: string;
+  try {
+    text = fs.readFileSync(file, "utf8");
+  } catch {
+    return { kind: "absent" }; // ENOENT and friends: nothing recorded
+  }
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return { kind: "corrupt" };
+  }
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return { kind: "corrupt" };
+  const rec = raw as PostureRecord;
+  if (typeof rec.mode !== "string" || rec.mode === "") return { kind: "corrupt" }; // must at least name a mode
+  let ageMin = 0;
+  if (typeof rec.updated_at === "string") {
+    const t = Date.parse(rec.updated_at);
+    if (!Number.isNaN(t)) {
+      ageMin = Math.max(0, Math.round((Date.now() - t) / 60000));
+      if (Date.now() - t > POSTURE_STALE_MS) return { kind: "stale", rec, ageMin };
+    }
+  }
+  return { kind: "ok", rec, ageMin };
+}
+
+/** Render the honest posture lines from a read. Every reachability claim is
+ *  timestamped; a hub SERVER is not a tunnel client, so its caller skips this
+ *  entirely when there is no file. */
+function renderPostureLines(read: PostureRead): string[] {
+  if (read.kind === "corrupt")
+    return ["Machine posture: live state unreadable — the role above is configuration, not live reachability."];
+  if (read.kind === "absent")
+    return ["Machine posture: not yet recorded — the role above is configuration, not live reachability."];
+
+  const rec = read.rec;
+  const machine = typeof rec.hostname === "string" && rec.hostname !== "" ? `\`${rec.hostname}\`` : "this machine";
+  const hubName = typeof rec.hub?.name === "string" && rec.hub.name !== "" ? `**${rec.hub.name}**` : "the canonical hub";
+  const hubUrl = typeof rec.hub?.base_url === "string" && rec.hub.base_url !== "" ? ` (\`${rec.hub.base_url}\`)` : "";
+  const when = typeof rec.updated_at === "string" ? rec.updated_at : "unknown time";
+  const age = `${read.ageMin} min ago`;
+  const rtt = typeof rec.last_rtt_ms === "number" ? `, RTT ${rec.last_rtt_ms}ms` : "";
+  const lastOk = typeof rec.last_ok === "string" && rec.last_ok !== "" ? ` (last ok ${rec.last_ok})` : "";
+  const lines: string[] = [];
+
+  if (rec.mode === "standalone") {
+    lines.push(
+      `Machine: ${machine} · mode **standalone** — hub ${hubName} UNREACHABLE; fell back at ${when} (${age}). ` +
+        `Sessions started now are LOCAL to this machine, not on the hub.`,
+    );
+  } else if (rec.mode === "degraded") {
+    lines.push(
+      `Machine: ${machine} · mode **degraded** — hub ${hubName}${hubUrl} reachable but slow${rtt} — as of ${when} (${age}). Usable; expect latency.`,
+    );
+    lines.push("Canonical sessions live on the hub; this client rides the tunnel.");
+  } else {
+    // fleet (attached) — or any other named mode, rendered honestly as attached
+    const reach = rec.reachable === false ? "NOT reachable" : "reachable";
+    lines.push(
+      `Machine: ${machine} · mode **fleet** — attached to hub ${hubName}${hubUrl}, ${reach}${lastOk}${rtt} — as of ${when} (${age}).`,
+    );
+    lines.push("Canonical sessions live on the hub; this client rides the tunnel.");
+  }
+  if (read.kind === "stale") {
+    lines.push(`Posture may be STALE — last transition ${age}; treat reachability as unverified until the next attach-state transition.`);
+  }
+  return lines;
+}
+
+// #1272 — WINDOW MODE (read-only here; the EXTENSION is the sole writer). An
+// axis ORTHOGONAL to link-health posture: which machine the editor WINDOW sits
+// on — `remote-ssh` (attached to a Remote-SSH host) vs `local` (editor-local,
+// or a non-SSH remote). Its OWN state file (window-mode.json), written by its
+// OWN transition-only writer (src/fleet_window_mode_state.ts) so a
+// window-mode-only change is never swallowed by the posture signature. Here we
+// only READ it and render one honest, timestamped line. Missing / corrupt /
+// unknown-value → NOTHING (additive & optional — never a false claim, never a
+// crash), and NEVER the link-health `standalone` token (AC1).
+
+function fleetWindowModeStateFile(override?: string): string {
+  if (override) return override;
+  const env = process.env.AMICO_FLEET_WINDOW_MODE_STATE;
+  if (env && env.trim() !== "") return env.trim();
+  return path.join(os.homedir(), ".amico", "ops", "fleet", "window-mode.json");
+}
+
+interface WindowModeRecord {
+  hostname?: string;
+  window_mode?: string;
+  remote_name?: string | null;
+  updated_at?: string;
+}
+
+type WindowModeRead = { kind: "ok"; rec: WindowModeRecord; ageMin: number } | { kind: "absent" };
+
+/** Read the window-mode file, shape-tolerantly. A read/parse/shape error, or a
+ *  value that is not one of the two window-mode tokens, → absent (nothing to
+ *  say). Never throws. */
+function readWindowModeState(override?: string): WindowModeRead {
+  const file = fleetWindowModeStateFile(override);
+  let text: string;
+  try {
+    text = fs.readFileSync(file, "utf8");
+  } catch {
+    return { kind: "absent" };
+  }
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return { kind: "absent" };
+  }
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return { kind: "absent" };
+  const rec = raw as WindowModeRecord;
+  // Only the two window-mode tokens are renderable (AC1: never the posture
+  // `standalone`, never a guessed value).
+  if (rec.window_mode !== "remote-ssh" && rec.window_mode !== "local") return { kind: "absent" };
+  let ageMin = 0;
+  if (typeof rec.updated_at === "string") {
+    const t = Date.parse(rec.updated_at);
+    if (!Number.isNaN(t)) ageMin = Math.max(0, Math.round((Date.now() - t) / 60000));
+  }
+  return { kind: "ok", rec, ageMin };
+}
+
+/** Render the honest, timestamped window-mode line, or null when there is
+ *  nothing to say. */
+function renderWindowModeLine(read: WindowModeRead): string | null {
+  if (read.kind !== "ok") return null;
+  const rec = read.rec;
+  const machine = typeof rec.hostname === "string" && rec.hostname !== "" ? `\`${rec.hostname}\`` : "this machine";
+  const when = typeof rec.updated_at === "string" ? rec.updated_at : "unknown time";
+  const age = `${read.ageMin} min ago`;
+  if (rec.window_mode === "remote-ssh") {
+    const host = typeof rec.remote_name === "string" && rec.remote_name !== "" ? ` (\`${rec.remote_name}\`)` : "";
+    return `Window: editor attached over **Remote-SSH**${host}, on ${machine} — as of ${when} (${age}).`;
+  }
+  return `Window: editor is **local** on ${machine} — as of ${when} (${age}).`;
+}
+
 /** Lean fleet line + on-demand pointers (the reader's choice: detail loads
  *  from fleet-status.json / the fleet skill only when relevant). Absent
- *  projection (standalone or no fleet tooling — or a projection with no
- *  topology section) → "" — nothing to say. */
-function buildFleetSection(opts: { projectionPath?: string; statusPath?: string } = {}): string {
+ *  projection AND no live posture recorded (standalone or no fleet tooling)
+ *  → "" — nothing to say. */
+function buildFleetSection(opts: { projectionPath?: string; statusPath?: string; posturePath?: string; windowModePath?: string } = {}): string {
   const role = readFleetRoleFromProjection(opts.projectionPath);
-  if (role === null) return "";
+  const posture = readPostureState(opts.posturePath);
+  const windowMode = readWindowModeState(opts.windowModePath);
+  // Nothing to say: not a fleet machine (no projection role) AND no live
+  // posture ever recorded AND no window mode recorded — a genuinely standalone
+  // box, the base default.
+  if (role === null && posture.kind === "absent" && windowMode.kind === "absent") return "";
 
-  const roleText =
-    role === "server"
-      ? "**server** — this machine is the canonical Amicode server"
-      : role === "client"
-        ? "**client** — rides the tunnel to the canonical server"
-        : `**${role}**`;
-  const lines = [`## Fleet (live)`, `Role: ${roleText} (from the fleet projection at \`~/.amico/ops/fleet/projection.json\`).`];
-
-  const status = readFleetStatus(opts.statusPath);
-  if (status) {
-    const who = status.names.length > 0 ? ` (${status.names.join(", ")})` : "";
-    const age = status.ageMin !== undefined ? ` — refreshed ${status.ageMin} min ago` : "";
-    lines.push(
-      `Devices: ${status.up}/${status.total} reachable${who}${age} (launchd, 5-min cadence).`,
-    );
-  } else {
-    lines.push("Devices: status unknown (`~/.amico/ops/fleet-status.json` unreadable).");
+  const lines = [`## Fleet (live)`];
+  if (role !== null) {
+    const roleText =
+      role === "server"
+        ? "**server** — this machine is the canonical Amicode server"
+        : role === "client"
+          ? "**client** — rides the tunnel to the canonical server"
+          : `**${role}**`;
+    lines.push(`Role: ${roleText} (from the fleet projection at \`~/.amico/ops/fleet/projection.json\`).`);
   }
-  lines.push(
-    "Full status on demand: `~/.amico/ops/fleet-status.json` (devices, chat-db health,",
-    "server guard, repo sync). The `fleet` skill is the playbook for the sync/lock",
-    "rituals; code repos sync by `wip-sync.sh` leave/arrive — never file-sync a live `.git`.",
-  );
+
+  // #780: the live posture block, preferred over the role line. A hub SERVER
+  // is not a tunnel client — it gets NO posture note when it has no state file
+  // (its existing section stays unchanged in substance). Every other case (a
+  // client, a fell-back box, or any machine that actually wrote a state file)
+  // gets the honest, timestamped posture — including the degraded-but-honest
+  // missing/corrupt/stale renderings.
+  if (!(role === "server" && posture.kind === "absent")) {
+    for (const l of renderPostureLines(posture)) lines.push(l);
+  }
+
+  // #1272: the window-mode line (an axis ORTHOGONAL to link-health posture —
+  // which machine the editor WINDOW sits on, Remote-SSH vs local). Its own
+  // file, its own honest timestamped line, surfaced right beside the posture
+  // block. Additive & optional: absent/corrupt/unknown → nothing (unlike
+  // posture it is not a "role is config, not live" correction, so it does not
+  // emit a degraded note). Never the link-health `standalone` token (AC1).
+  const windowLine = renderWindowModeLine(windowMode);
+  if (windowLine) lines.push(windowLine);
+
+  // Devices + on-demand pointers stay role-scoped (they describe the fleet the
+  // projection knows about) — unchanged in substance from before #780.
+  if (role !== null) {
+    const status = readFleetStatus(opts.statusPath);
+    if (status) {
+      const who = status.names.length > 0 ? ` (${status.names.join(", ")})` : "";
+      const age = status.ageMin !== undefined ? ` — refreshed ${status.ageMin} min ago` : "";
+      lines.push(`Devices: ${status.up}/${status.total} reachable${who}${age} (launchd, 5-min cadence).`);
+    } else {
+      lines.push("Devices: status unknown (`~/.amico/ops/fleet-status.json` unreadable).");
+    }
+    lines.push(
+      "Full status on demand: `~/.amico/ops/fleet-status.json` (devices, chat-db health,",
+      "server guard, repo sync). The `fleet` skill is the playbook for the sync/lock",
+      "rituals; code repos sync by `wip-sync.sh` leave/arrive — never file-sync a live `.git`.",
+    );
+  }
   return lines.join("\n");
 }
 

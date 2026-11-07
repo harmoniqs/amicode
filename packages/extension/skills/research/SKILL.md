@@ -43,6 +43,7 @@ block in the system prompt (injected by `stack_state.ts` when a workspace folder
 | Data | `<project>/data/` |
 | Config | `<project>/config/` |
 | Reports | `<project>/reports/` |
+| Campaign dashboard | `<project>/reports/dashboards/<ledger-stem>/index.html` (see below) |
 | Checkout registry | `<project>/ledger/campaigns/CHECKOUTS.md` |
 | Environment proposals | `<project>/ledger/environment-proposals/` (created on demand) |
 | Environment digest | `<project>/ledger/campaigns/env-digest-<campaign-slug>.md` |
@@ -154,8 +155,47 @@ reference the in-flight casts? Append the audit row to §9.
    queue. Close every advisory (fixed / waived-with-reason / obsolete) and record closures.
    The update also carries the campaign's **skill delta** row — findings filed, skills
    touched, proposals pending — so the loop's own improvement is part of its record.
+   Rewrite the session todo list to mirror §3 and §5 — the derived-view rule in
+   `director-core`: current loop only; a stale todo list is a lying §3.
+   Rewrite the campaign dashboard from the ledger you just committed (below).
 8. **Repeat.** Compact only at a boundary, and only when the user is present to choose it —
    the protocol does not otherwise try to time compaction (see below).
+
+## The campaign dashboard (live status page)
+
+One static HTML page per campaign that the researcher watches instead of the chat. It is
+a **derived view of the ledger** — rewrite it whole at kickoff and at every record step
+(and when a cast starts or blocks), never hand-edit it, never let it say more than the
+ledger does.
+
+**Where:** inside a Research Project, `<project>/reports/dashboards/<ledger-stem>/index.html`;
+otherwise `~/.amico/dashboards/<ledger-stem>/index.html` (local, never the vault — plot
+churn does not belong in a synced repo). `<ledger-stem>` is the ledger's file name without
+`.md`. Plots go in `plots/` beside the page and are referenced relatively
+(`<img src="plots/h3-convergence.png">`).
+
+**Sections, top to bottom:**
+
+1. **Status line** — the objective in one line; phase, loop number, last-updated time
+   (ISO, with timezone), and one state word: running, waiting, blocked, or done.
+2. **Needs you** — §4 blocked items, pending approvals and open human gates, each with
+   what is needed. When empty, say "Nothing — running unattended".
+3. **Loop table** — one row per H#: spec, cast in flight, verdict copied from the ledger
+   (derived, never upgraded), and a link to the evidence.
+4. **Key findings** — short bullets with the numbers in the researcher's notation; an
+   unverified result says UNTRUSTED.
+5. **Plots** — the current loop's figures, newest first, each with a one-line caption.
+6. Log — newest first, one line per event, trimmed to the last ~30.
+
+**Static only.** Preview renders the page in a sandbox with no scripts: no scripts, no CDN
+libraries (Plotly, MathJax), no meta refresh, no external stylesheets. Use inline CSS,
+tables, inline SVG, and PNG/SVG files in `plots/`. Keep the page under 1 MB. Preview reloads
+it when the file changes, so a rewrite is the refresh.
+
+**Link it once.** After the first write, post the page as a `file://` link in chat
+(`[campaign dashboard](file:///abs/path/index.html)`); one click opens it in Preview, where
+it stays live, and its "Open in browser" control pops it out for a second monitor. Do not
+re-post the link every loop.
 
 ## Roles at a glance
 
@@ -223,12 +263,29 @@ casting any experimenter; claim your row; release it when work lands. First-writ
 races are possible and visible — a visible conflict beats a silent double-ownership every
 time.
 
+Pinned scratch harnesses rot between loops: /tmp trees get cleaned, and shared depots garbage-collect pinned package trees. Before re-using one, verify the worktree SHAs and clean status, check every Manifest tree hash is present, instantiate if not, and assert the Manifest is byte-unchanged afterwards (never resolve). Record this in the run's env log.
+
 ## Standing anti-gaming contract
 
 Production `step` paths only for A/B loop experiments; CRN pairing with f=0-style
 invariants; impossibility checks on noise denominators; FD sanity gates on derived
 quantities; raw artifacts are the evidence, prose is not. Promotion of any result to
 catalog/status is human-only, always.
+
+**Every measured axis carries its own wiring gate** (2026-10, three measured instances:
+loop-3 playback-unwired, loop-6 detuning-axis-unwired, loop-10's S2-objective probe) — an
+unwired axis returns 0s (or a unit-slip returns ~0.5) and banks a wrong verdict with every
+other gate green. A spec whose axis lacks a positive wiring check (loader reproduction,
+monotonicity, a closed-form anchor cell) is an incomplete spec; critics reject on this
+class. Bonus idiom: a symmetric ±σ telegraph arm's MEAN equals the closed-form single-node
+cost exactly — a free wiring validator for detuning axes. Analyzer findings are verified by
+the director before being applied (2026-10, a factually-wrong receipts finding was caught);
+a critic's arithmetic is never trusted over the test file's machine-pinned literals.
+
+- **Score corrections out of sample.** Under drift drawn fresh each round, a correction fitted at round k and scored at round k is in-sample. Report the one-step-ahead score F(k+1) − F_do-nothing(k+1) beside it. One campaign's entire arm ordering turned out to rank least harm: every arm was worse than doing nothing on 8/8 seeds. Always carry a do-nothing reference, and pair by seed, because pooled medians can reverse paired orderings.
+- **Keep every STOP artifact** (rename it `*_STOP`; never delete it). An extra check an experimenter adds is a record, never a pass condition. An unregistered gate is a spec deviation even when it is caught.
+- **Run-mode tokens live only in filenames.** Determinism twins must not carry `_det` (or any pass marker) in their content. After the det pass, `grep -F _det` over twinned content must come back empty. This defect broke byte-identity four times in one campaign.
+- **Interpretation waits for the analyzer.** The director records a mechanical label at the gate. Its meaning (recommendations, mechanism claims) lands only after the read-only analysis of the raw artifacts.
 
 ## Failure modes to watch
 
@@ -240,3 +297,12 @@ catalog/status is human-only, always.
   that's an open loop in §5, never an outcome in §2.
 - **Summary drift** — after each compaction, the audit in §9 is the check that the summary
   still points HERE rather than becoming a competing source of truth.
+- **The silent no-op edit** — programmatic edits that report success but never matched
+  (six measured instances, 2026-10): every edit asserts its pattern and grep-verifies the
+  critical line; before `git add -A`, inspect status and account for every path (silent
+  subagent failures leave partial state that a blind add commits); after multi-edit
+  confusion, rewrite clean and let git arbitrate.
+- **Unattended runs** — plain `nohup` backgrounds die at tool-call exit in sandboxed
+  harnesses; `setsid` survives (measured both ways). Chain unattended cells through a
+  driver script; commit the state to the ledger BEFORE the night starts so any compaction
+  is safe.

@@ -20,6 +20,7 @@ import { createPrivateKey, sign as cryptoSign, verify as cryptoVerify, generateK
 import { accessSync, chmodSync, constants as fsConstants, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { ConfigError } from "./types.js";
 
 /** GitHub caps App JWT lifetimes at 10 minutes; 3 minutes is ample for one
@@ -37,6 +38,8 @@ export interface GithubAppConfig {
   appId: string;
   installationId: string;
   pemPath: string;
+  /** The App's slug (github-apps/*.json carry it; legacy github.json may not). Not a secret. */
+  slug?: string;
 }
 
 export interface InstallationToken {
@@ -76,12 +79,19 @@ export function parseGithubAppConfig(raw: unknown, file: string): GithubAppConfi
     throw new ConfigError(
       `GitHub App credential file at ${file} needs a non-empty string key "pem_path" pointing at the App's PEM private key — re-add the GitHub connection to rewrite it`,
     );
-  return { appId: d.app_id, installationId: d.installation_id, pemPath: d.pem_path };
+  const cfg: GithubAppConfig = { appId: d.app_id, installationId: d.installation_id, pemPath: d.pem_path };
+  if (typeof d.slug === "string" && d.slug !== "") cfg.slug = d.slug;
+  return cfg;
 }
 
 /** Read + parse the config file. Distinct ConfigError per failure mode. */
 export function readGithubAppConfig(env: NodeJS.ProcessEnv = process.env): GithubAppConfig {
-  const file = githubAppConfigFile(env);
+  return readGithubAppConfigFile(githubAppConfigFile(env));
+}
+
+/** Read + parse a config at an explicit path (the per-role github-apps/*.json
+ *  files of #1928 share the #399 shape). */
+export function readGithubAppConfigFile(file: string): GithubAppConfig {
   if (!existsSync(file))
     throw new ConfigError(
       `not connected — no GitHub App credential file at ${file} (remove the expectation or re-add the connection)`,
@@ -157,7 +167,7 @@ export function parseInstallationToken(body: unknown): InstallationToken {
 
 export type FetchImpl = (
   url: string,
-  init: { method: string; headers: Record<string, string>; signal?: AbortSignal },
+  init: { method: string; headers: Record<string, string>; body?: string; signal?: AbortSignal },
 ) => Promise<{ status: number; json(): Promise<unknown> }>;
 
 /** One mint must never outlive a human's patience for `gh` or `git push`. */
@@ -196,8 +206,7 @@ export async function fetchInstallationToken(jwt: string, installationId: string
 
 /** Cache read: absent or corrupt → undefined, NEVER an error (the cache is an
  *  optimization; a bad cache is re-minted, not diagnosed). */
-export function readTokenCache(env: NodeJS.ProcessEnv = process.env): InstallationToken | undefined {
-  const file = githubTokenCacheFile(env);
+export function readTokenCache(env: NodeJS.ProcessEnv = process.env, file: string = githubTokenCacheFile(env)): InstallationToken | undefined {
   if (!existsSync(file)) return undefined;
   try {
     const d = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
@@ -215,8 +224,7 @@ export function readTokenCache(env: NodeJS.ProcessEnv = process.env): Installati
 }
 
 /** Atomic 0600 cache write (tmp + rename, the esbuild-staging idiom). */
-export function writeTokenCache(cache: InstallationToken, env: NodeJS.ProcessEnv = process.env): void {
-  const file = githubTokenCacheFile(env);
+export function writeTokenCache(cache: InstallationToken, env: NodeJS.ProcessEnv = process.env, file: string = githubTokenCacheFile(env)): void {
   mkdirSync(dirname(file), { recursive: true });
   const tmp = `${file}.tmp-${process.pid}`;
   writeFileSync(tmp, JSON.stringify(cache, null, 2) + "\n", { mode: 0o600 });
@@ -230,6 +238,15 @@ export interface EnsureDeps {
   nowMs?: () => number;
   fetchImpl?: FetchImpl;
   readPem?: (path: string) => string;
+  /** An already-resolved config (the per-role github-apps files, #1928);
+   *  default: readGithubAppConfig(env) — the #399 single-file contract. */
+  config?: GithubAppConfig;
+  /** Cache path override (per-role caches, #1928); default githubTokenCacheFile(env). */
+  cacheFile?: string;
+  /** Called with every FRESH mint (never a cache hit) BEFORE the token is
+   *  cached or returned — the principal-bound mint record hook (#1928). A
+   *  throw here refuses the token: nothing is cached, nothing returned. */
+  onMint?: (token: InstallationToken, config: GithubAppConfig) => void;
 }
 
 /** Cache-first token acquisition: fresh cache → reuse; else mint (config →
@@ -239,8 +256,9 @@ export async function ensureInstallationToken(deps: EnsureDeps = {}): Promise<In
   const now = deps.nowMs ?? Date.now;
   // Read config first so an unreadable config is an error even on a fresh cache
   // (config faults are exit-64-class) and so we can key the cache by identity.
-  const cfg = readGithubAppConfig(env);
-  const cached = readTokenCache(env);
+  const cfg = deps.config ?? readGithubAppConfig(env);
+  const cacheFile = deps.cacheFile ?? githubTokenCacheFile(env);
+  const cached = readTokenCache(env, cacheFile);
   if (
     cached &&
     isCacheFresh(cached, now()) &&
@@ -259,8 +277,19 @@ export async function ensureInstallationToken(deps: EnsureDeps = {}): Promise<In
   const jwt = mintAppJwt(cfg.appId, pem, now());
   const token = await fetchInstallationToken(jwt, cfg.installationId, deps.fetchImpl ?? (fetch as unknown as FetchImpl));
   const toCache: InstallationToken = { ...token, appId: cfg.appId, installationId: cfg.installationId };
-  writeTokenCache(toCache, env);
+  deps.onMint?.(toCache, cfg);
+  writeTokenCache(toCache, env, cacheFile);
   return toCache;
+}
+
+/** A bundle at <pkg>/dist/<x>.js → <pkg>/launcher: the dir holding the gh
+ *  shim, i.e. the PATH entry the real-gh hunt must skip (recursion guard). */
+export function launcherDirFor(bundleUrl: string): string | undefined {
+  try {
+    return join(dirname(dirname(fileURLToPath(bundleUrl))), "launcher");
+  } catch {
+    return undefined;
+  }
 }
 
 /** Scan PATH for the REAL gh, skipping every alias of THIS shim — a bare exec

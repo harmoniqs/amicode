@@ -7,16 +7,18 @@ import {
   type InstitutionSuggestion,
 } from "./institution-lookup"
 import { fileToBase64 } from "./upload"
-import { drivePaths, linePath } from "./run-plot"
 
 // AMICODE: home-screen card strip (the "central screen" Aaron wanted the H-bot
 // and useful practitioner info on). Two identity heroes — MEET AMICO (who your
 // pal is + what it can do) and ABOUT YOU (your profile, earned stats, and the
 // live "Amico remembers" trust surface) — over a row of action cards. All
-// presentation: the app owns fetching (/amicode/profile, /amicode/problems,
-// /amicode/run-status) and passes data + callbacks. Inline styles on v2 tokens,
-// matching the entity-rail/getting-started convention → dark/light correct.
-// en-only by design, consistent with the default-locale-en patch.
+// presentation: the app owns fetching (/amicode/profile, /amicode/library) and
+// passes data + callbacks. Inline styles on v2 tokens, matching the
+// getting-started convention → dark/light correct. en-only by design,
+// consistent with the default-locale-en patch.
+// #1818: the deprecated research readouts (the resume/live-run trio of
+// bank — fed by the retired /amicode/problems + run-status reads) were removed;
+// the live research surfaces are the widget grid + the Run Inspector.
 
 // ---------------------------------------------------------------------------
 // profile response shape + parser (mirrors ./problem.ts's parse discipline:
@@ -102,11 +104,6 @@ function initials(name: string): string {
   if (parts.length === 0) return "?"
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
-}
-function fidelity(value: number | null): string {
-  if (value === null) return "—"
-  if (value >= 1) return "1.0"
-  return value.toFixed(5)
 }
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 function sinceLabel(iso: string | null): string | undefined {
@@ -1112,40 +1109,6 @@ const CARD_SUB: JSX.CSSProperties = {
   "text-overflow": "ellipsis",
   "white-space": "nowrap",
 }
-const SPARK_W = 96
-const SPARK_H = 22
-/** Pulse-first: the latest pulse trace when a snapshot exists (per-drive paths
- *  on a shared scale, companions at 0.55), else the convergence series. */
-function liveSparkPaths(run: HomeLiveRun): string[] {
-  const pulse = run.pulse ?? []
-  if (pulse.length >= 2) {
-    const paths = drivePaths(pulse, run.drives ?? 1, SPARK_W, SPARK_H)
-    if (paths.length > 0) return paths
-  }
-  const d = linePath(run.series ?? [], SPARK_W, SPARK_H)
-  return d ? [d] : []
-}
-
-function Sparkline(props: { paths: string[] }) {
-  return (
-    <Show when={props.paths.length > 0}>
-      <svg width={SPARK_W} height={SPARK_H} viewBox={`0 0 ${SPARK_W} ${SPARK_H}`} style={{ "flex-shrink": "0" }}>
-        <For each={props.paths}>
-          {(d, i) => (
-            <path
-              d={d}
-              fill="none"
-              stroke="var(--v2-icon-icon-accent)"
-              stroke-width="1.5"
-              stroke-linejoin="round"
-              opacity={i() === 0 ? 1 : 0.55}
-            />
-          )}
-        </For>
-      </svg>
-    </Show>
-  )
-}
 
 // ---------------------------------------------------------------------------
 // LIBRARY — upload papers so Amico learns YOUR work (the personalization card)
@@ -1238,16 +1201,6 @@ function LibraryCard(props: {
   )
 }
 
-export interface HomeLiveRun {
-  name?: string
-  iteration?: number | null
-  fidelity?: number | null
-  series?: number[]
-  // latest pulse snapshot, drives flattened back-to-back (see run-plot drivePaths)
-  pulse?: number[]
-  drives?: number
-}
-
 // ---------------------------------------------------------------------------
 // height compaction — the home page must fit ONE screen on a laptop (no box
 // scrolling; scrolling is a phone affordance). Cards style inline, so these
@@ -1273,7 +1226,7 @@ const COMPACT_CSS = `
   [data-slot="amicode-home-shell"] { padding-top: 8px !important; gap: 8px !important; padding-bottom: 10px !important; }
   [data-slot="amicode-home-band"] { max-height: 180px !important; }
   [data-component="amicode-card-meet"], [data-component="amicode-card-you"] { padding: 8px 12px !important; }
-  [data-slot="amicode-card-meet-cta"] { padding: 6px 14px !important; }
+  [data-slot="amicode-card-meet-cta"] { padding: 6px 14px !important; font-size: 13px !important; }
   /* content tier: the capability bullets STAY (user-requested suggestions);
      only the decor engine-line goes, and the bullets tighten */
   [data-slot="amicode-meet-engine"] { display: none !important; }
@@ -1297,19 +1250,9 @@ export function AmicodeHomeCards(props: {
     scholar?: string
     affiliation_logo?: string
   }) => Promise<void>
-  // Jump back in
-  resumeName?: string
-  resumeMeta?: string
-  onResume?: () => void
-  // Now solving
-  liveRun?: HomeLiveRun
-  onOpenLiveRun?: () => void
-  // Pulse bank
-  onWarmStart?: () => void
   // Run gallery (shareable cards)
   onOpenGallery?: () => void
 }) {
-  const stats = createMemo(() => (props.profile?.ok ? props.profile.you.stats : undefined))
   return (
     <div data-component="amicode-home-cards" style={{ display: "flex", "flex-direction": "column", gap: "12px" }}>
       <style>{COMPACT_CSS}</style>
@@ -1336,49 +1279,7 @@ export function AmicodeHomeCards(props: {
           gap: "8px",
         }}
       >
-        {/* Jump back in */}
-        <Show when={props.resumeName}>
-          <ActionCard eyebrow="Jump back in" slot="amicode-card-resume" onClick={props.onResume}>
-            <div style={CARD_TITLE}>{props.resumeName}</div>
-            <Show when={props.resumeMeta}>
-              <div style={CARD_SUB}>{props.resumeMeta}</div>
-            </Show>
-            <div style={{ "font-size": "11px", color: "var(--v2-text-text-accent)", "margin-top": "auto" }}>
-              Resume →
-            </div>
-          </ActionCard>
-        </Show>
-
-        {/* Now solving */}
-        <Show when={props.liveRun}>
-          {(run) => (
-            <ActionCard eyebrow="Now solving" slot="amicode-card-live" onClick={props.onOpenLiveRun}>
-              <div style={CARD_TITLE}>{run().name ?? "current run"}</div>
-              <div style={{ display: "flex", "align-items": "center", gap: "8px", "min-width": "0" }}>
-                <span style={{ ...CARD_SUB, "font-variant-numeric": "tabular-nums" }}>
-                  iter {run().iteration ?? "—"} · F {fidelity(run().fidelity ?? null)}
-                </span>
-              </div>
-              <div style={{ "margin-top": "auto" }}>
-                <Sparkline paths={liveSparkPaths(run())} />
-              </div>
-            </ActionCard>
-          )}
-        </Show>
-
-        {/* Pulse bank */}
-        <Show when={(stats()?.banked ?? 0) > 0}>
-          <ActionCard eyebrow="Pulse bank" slot="amicode-card-bank" onClick={props.onWarmStart}>
-            <div style={CARD_TITLE}>
-              {stats()!.banked} pulse{stats()!.banked === 1 ? "" : "s"} banked
-            </div>
-            <div style={{ "font-size": "11px", color: "var(--v2-text-text-accent)", "margin-top": "auto" }}>
-              Warm-start →
-            </div>
-          </ActionCard>
-        </Show>
-
-        {/* Run gallery — the trophy case of shareable solve cards */}
+        {/* Run gallery — the trophy case of shareable cards */}
         <Show when={props.onOpenGallery}>
           <ActionCard eyebrow="Showcase" slot="amicode-card-gallery" onClick={props.onOpenGallery}>
             <div style={CARD_TITLE}>Run gallery</div>

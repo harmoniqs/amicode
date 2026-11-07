@@ -1,4 +1,4 @@
-export { SessionHeader } from "./session-header"
+export { SessionHeader, SessionComposerControlScrim } from "./session-header"
 export { SessionContextTab } from "./session-context-tab"
 export { SessionPreviewTab } from "./session-preview-tab"
 export { PanelMenu } from "./panel-menu"

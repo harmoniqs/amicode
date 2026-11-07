@@ -6,7 +6,7 @@
 // and every consumer — the extension's RunsManager AND the service's
 // run-status/run-series routes — must agree on it:
 //
-//   * FINISHED (written by amico-run, the orchestrator) is the ONLY terminal
+//   * FINISHED (written by the amico CLI, the orchestrator) is the ONLY terminal
 //     authority. Script output (e.g. the DONE line) never decides status.
 //   * FINISHED's `status` field decides the outcome; a missing/torn/mid-write
 //     FINISHED is NOT terminal — callers keep polling (never latch "failed"

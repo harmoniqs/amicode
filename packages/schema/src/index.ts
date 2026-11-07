@@ -50,6 +50,10 @@ import libraryPaperSchema from "../schemas/library-paper.schema.json" with { typ
 // The SKILL.md frontmatter contract (amicode#996) — the third markdown-
 // frontmatter kind: validated as a parsed object, never filename-kinded.
 import skillSchema from "../schemas/skill.schema.json" with { type: "json" };
+// The claim object (amicode#1681, brain flywheel slice 2) — the company brain's
+// atomic unit: the ONE type namespace machinery operates on. Fourth markdown-
+// frontmatter kind (a registry claim note's frontmatter IS this object).
+import claimSchema from "../schemas/claim.schema.json" with { type: "json" };
 
 // Cross-language ProblemSpec hashing (Plan 2 Task 5) — re-exported at the package
 // root so cross-package consumers (e.g. the extension's ledger_client.ts, Plan 3
@@ -186,12 +190,106 @@ export {
   FLEET_PROJECTION_CACHE_RELPATH,
   fleetTopologyPath,
   FLEET_TOPOLOGY_RELPATH,
+  BASE_TIER_PUBLISHER_IDENTITY,
+  parseFleetTopology,
+  buildBaseProjection,
   type FleetFreshness,
   type FleetProjection,
   type FleetProvenance,
   type FleetSection,
   type FleetFreshnessStamp,
+  type BaseTopology,
+  type BaseTopologyCanonical,
+  type BaseProjectionOpts,
 } from "./fleet_projection.js";
+
+// The fleet roster contract (amicode#1318, fleet capability model + host-owned
+// roster; ADR 0026): an amicode-OWNED, schema-versioned, fleet-wide device
+// roster whose rows each machine self-reports. Sibling of fleet_projection but
+// amicode's OWN format (fleet.json is untouched — ADR 0023 one-parser holds).
+// Same documented root seam: the extension's `/amicode/roster` route (reader +
+// self-report writer) and `ops/fleet-status.sh` (via the ONE cache path) both
+// consume this single definition.
+export {
+  ROSTER_SCHEMA_VERSION,
+  HEALTH_VOCABULARY,
+  KNOWN_CAPABILITY_TAGS,
+  KNOWN_DEVICE_TYPES,
+  isKnownCapability,
+  parseRosterRow,
+  parseRosterDocument,
+  emptyRoster,
+  upsertRosterRow,
+  placementDescriptor,
+  classifyMacModel,
+  classifyLinuxChassis,
+  normalizeDeviceName,
+  isWslKernel,
+  detectIdentityConflicts,
+  IDENTITY_STATE_VOCABULARY,
+  FLEET_ROSTER_CACHE_RELPATH,
+  fleetRosterCachePath,
+  type RosterHealth,
+  type RosterRow,
+  type RosterDocument,
+  type ParseRosterRowResult,
+  type ParseRosterDocumentResult,
+  type PlacementDescriptor,
+  type KnownDeviceType,
+  type IdentityState,
+  type IdentityConflict,
+} from "./fleet_roster.js";
+
+// The pure version-skew verdict (amicode#1319, hoisted from the extension's
+// #1261 relay-start gate): the ONE cross-package definition of client↔host
+// version parity. The extension re-exports it (relayVersionGate/hostVersionProbe
+// stay there); `amico fleet enroll` reuses it for the enroll-time pin check.
+export {
+  versionSkewVerdict,
+  type SkewTolerance,
+  type VersionSkewVerdict,
+} from "./fleet_version_skew.js";
+
+// The fleet.json WRITER (amicode#1319) — the write side of the membership
+// record, hoisted beside its reader (parseFleetTopology). The extension
+// re-exports it from fleet_fallback.ts; `amico fleet enroll` uses it to write
+// the role+canonical record on the enrolling machine.
+export {
+  writeFleetConfig,
+  type FleetConfig,
+} from "./fleet_config.js";
+
+// The lifecycle-admin AUTHORITY store (amicode#1541, ADR 0034 D3) — the NET-NEW
+// persistence seeded at `amico fleet enroll` (writer in @amicode/amico-run) and
+// resolved extension-side (#1545 routing). A shared on-disk contract at ONE
+// path, the SAME cross-package pattern as fleet_roster / fleet_config.
+export {
+  LIFECYCLE_AUTHORITY_STORE_VERSION,
+  lifecycleAuthorityStorePath,
+  recordLifecycleAuthority,
+  resolveLifecycleAuthority,
+  readAllLifecycleAuthorities,
+  type LifecycleAuthorityRecord,
+} from "./fleet_lifecycle_authority.js";
+
+// The claim object's ONE validator + closed vocabularies + the distill→claim
+// confidence bridge (amicode#1681, brain flywheel slice 2): the amico-run
+// claims verb (registry lint + memory-card projection) and any future consumer
+// import from here — same documented root seam as vault-card/mode_registry.
+export {
+  validateClaim,
+  CLAIM_TYPES,
+  CLAIM_STATUSES,
+  CLAIM_CONFIDENCE_LEVELS,
+  CLAIM_SCOPES,
+  CLAIM_HISTORY_EVENTS,
+  bucketConfidence,
+  type ClaimType,
+  type ClaimStatus,
+  type ClaimConfidence,
+  type ClaimScope,
+  type ClaimHistoryEvent,
+} from "./claim.js";
 
 // ajv-formats ships a CJS default export; under NodeNext the default import can
 // bind the module namespace rather than the callable, so normalize defensively.
@@ -232,6 +330,11 @@ const SCHEMAS = {
 // SKILL.md frontmatter contract (amicode#996) — frontmatter carries no
 // schema_version, same pattern as library-paper.
   skill: skillSchema,
+// Registered in SCHEMAS ONLY (not SUPPORTED_VERSIONS_BY_KIND): claim is the
+// claim-object frontmatter contract (amicode#1681) — a registry claim note's
+// frontmatter IS the claim object and carries no schema_version, same pattern
+// as library-paper/skill.
+  claim: claimSchema,
 } as const;
 
 export type SchemaKind = keyof typeof SCHEMAS;
@@ -245,16 +348,17 @@ export const SCHEMA_KINDS = Object.keys(SCHEMAS) as SchemaKind[];
  *  the rest remain v1 and bump independently. `finished` (no schema_version),
  * `problemspec`, and `ledger-record` (both top-level `oneOf` shapes with no
  * top-level properties.schema_version), `library-paper` (vault note
- * frontmatter — real notes carry no schema_version), and `skill` (SKILL.md
- * frontmatter, amicode#996 — frontmatter carries no schema_version) are
- * excluded from this string-version map. */
-export const SUPPORTED_VERSIONS_BY_KIND: Record<Exclude<SchemaKind, "finished" | "problemspec" | "ledger-record" | "library-paper" | "skill">, string[]> =
+ * frontmatter — real notes carry no schema_version), `skill` (SKILL.md
+ * frontmatter, amicode#996 — frontmatter carries no schema_version), and
+ * `claim` (registry claim-note frontmatter, amicode#1681 — the frontmatter IS
+ * the claim object) are excluded from this string-version map. */
+export const SUPPORTED_VERSIONS_BY_KIND: Record<Exclude<SchemaKind, "finished" | "problemspec" | "ledger-record" | "library-paper" | "skill" | "claim">, string[]> =
   Object.fromEntries(
     (["run", "result", "lab", "solvespec", "catalog-entry", "spec", "plan", "pack", "amicode-config"] as const).map((kind) => [
       kind,
       (SCHEMAS[kind] as { properties: { schema_version: { enum: string[] } } }).properties.schema_version.enum,
     ]),
-  ) as Record<Exclude<SchemaKind, "finished" | "problemspec" | "ledger-record" | "library-paper" | "skill">, string[]>;
+  ) as Record<Exclude<SchemaKind, "finished" | "problemspec" | "ledger-record" | "library-paper" | "skill" | "claim">, string[]>;
 
 export interface Validation {
   ok: boolean;

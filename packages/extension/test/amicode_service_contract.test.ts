@@ -122,6 +122,17 @@ describe("amicode service — golden-fixture parity with the fork", () => {
       });
       out = { ...out, mounts };
     }
+    // amicode#1856: the port's /amicode/widgets wire adds `sticky` per widget
+    // (opt-in docking); the fork pin predates it. Only the DEFAULT (false) is
+    // stripped, so a widget that unexpectedly turns sticky still fails parity.
+    if (out && typeof out === "object" && Array.isArray(out.widgets)) {
+      const widgets = out.widgets.map((w: any) => {
+        if (!w || typeof w !== "object" || w.sticky !== false) return w;
+        const { sticky: _dropped, ...rest } = w;
+        return rest;
+      });
+      out = { ...out, widgets };
+    }
     // amicode#663: the port's /amicode/projects adds `type` per project
     // (research vs dev); the fork pin predates this field.
     if (out && typeof out === "object" && Array.isArray(out.projects)) {
@@ -187,6 +198,11 @@ describe("amicode service — golden-fixture parity with the fork", () => {
       savedEnv[k] = process.env[k];
       process.env[k] = env[k];
     }
+    // The boot pins the credential auth default; a dev host running a live
+    // amicode service exports AMICODE_SERVICE_AUTH=open (the runner's
+    // tunnel/LAN posture) — isolate it (restored by the afterAll loop below).
+    savedEnv.AMICODE_SERVICE_AUTH = process.env.AMICODE_SERVICE_AUTH;
+    delete process.env.AMICODE_SERVICE_AUTH;
     service = createAmicodeService({ password: "contract-test-password" });
     const url = await service.start();
     base = url.toString().replace(/\/$/, "");

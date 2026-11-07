@@ -40,11 +40,18 @@ solve!(qcp; max_iter = 200, tol = 1e-8)
 
 Three facts worth internalizing:
 
-- **Piccolo deliberately has no `:spline` backend of its own.** Passing
-  `integrator_type = :spline` to `SplinePulseProblem` errors with instructions;
-  the only shipped Piccolo backend is `:pwc` (`BilinearIntegrator`), which models
-  the drive as piecewise-constant and ignores `:du` — a spline pulse optimized
-  against it is not the pulse its name promises.
+- **`SplineIntegrator` is Piccolo open-core (since the 2026-09 slices) — but check
+  your resolution.** The old error text saying it is "Piccolissimo only" is stale
+  (the S-18 finding): it is TRUE of the provisioned env's Piccolo git-tree but
+  FALSE of the registered v2.1.0 *tag* — the same version string covers both
+  realities, so probe before relying on it:
+  `isdefined(Piccolo, :SplineIntegrator)`. The `:pwc` fallback
+  (`BilinearIntegrator`) models the drive as piecewise-constant and ignores
+  `:du` — a spline pulse optimized against it is not the pulse its name promises
+  (Piccolo now errors on the CubicSplinePulse+Bilinear pairing by design).
+  What this tier still exclusively owns: the performance flags (GPU spline
+  cells, matrix-free HVP), the HermitianExponential specializations, adjoint
+  robustness, and the conjugation kernels (P1 on main, unreleased).
 - **`global_names` requires this integrator.** Optimizing global variables
   (frequencies, couplings) with `SplinePulseProblem(qtraj, N; global_names = [...])`
   errors unless you pass a globals-aware integrator — the spline integrator above,
@@ -165,3 +172,45 @@ solve!(qcp; max_iter = 60)
   knot data when you have it.
 - `load_pulse` returns only the pulse object; bundle metadata (fidelity, gate
   name) with `JLD2.jldsave(...; pulse = ..., fidelity = ...)` at save time.
+
+## Display — the spline NLP in classic form
+
+A Piccolissimo write-up states the problem in the `formulation-display`
+house style, with the spline parameterization explicit. The controls are
+**spline coefficients at knots** (not per-timestep samples): the emitted
+waveform is by construction the spline the integrator integrates — that
+is the package's defining honesty property (spline-faithful dynamics).
+Classic form:
+
+$$\begin{split}
+\underset{\text{knot values } \mathbf{a}_{1:K},\ (\Delta t,\ \theta)}{\text{minimize}}\quad &
+\ell(\widetilde{U}_N) + R\,\|\text{control regularization}\| \\
+\text{subject to}\quad &
+\text{spline-faithful collocation: } f(z_k, z_{k+1}; \text{spline}(\mathbf{a})) = 0 \\
+& \widetilde{U}_1 = I,\quad \text{amplitude bounds},\quad
+\text{slew bound } \|\mathrm{d}u\| \le \texttt{du\_bound}
+\end{split}$$
+
+with $\theta$ the (optionally free) globals and the second-order mode
+Gauss–Newton (matrix-free). State which integrator ran (`:spline` vs the
+Piccolo default) — the two are not interchangeable claims (the
+Piccolissimo-vs-Piccolo integrator comparison is a recorded lesson, not
+lore).
+
+### The required display set
+
+1. **The emitted spline against the optimizer's knots** — the device
+   plays the spline, not the knot values; the two rendered together
+   expose any knot-vs-emitted mismatch.
+2. **Gauss–Newton convergence** — the objective and constraint violation
+   trace; Altissimo's callback fields (`f_val`, `eq_viol`, `kkt_error`)
+   are the honest convergence line.
+3. **Slew/roughness against the bound** — the `du_bound` margin, since
+   the smoothness axis is Piccolissimo's reason for existing.
+
+## Cross-reference
+
+The adjoint-robustness objective's own form (when used) is stated
+alongside, from the robustness section above — a Piccolissimo report
+never presents robustness numbers without the objective that produced
+them.

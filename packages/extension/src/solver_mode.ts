@@ -10,7 +10,7 @@ import { amicodeOpsDir } from "./substrate/vault_store";
 // the real switch — grant/revoke the `issimo` entitlement, re-prep the session
 // config, restart the opencode server — and only then write status:"ready".
 // The entitlement path is deliberate: it exercises the SAME machinery a paid
-// subscription will use (packageAllowlist → agent + amico-run import scan).
+// subscription will use (packageAllowlist → agent + amico CLI import scan).
 // ============================================================================
 
 export type SolverMode = "piccolo" | "hp";

@@ -54,6 +54,24 @@ afterEach(() => {
 });
 
 describe("terminal env injection — OPENCODE_DB and OPENCODE_CONFIG_DIR", () => {
+  // The terminal env is seeded from process.env (#564 injects ON TOP of the
+  // ambient env). The no-injection assertions below pin that the SETTINGS
+  // contribute nothing — the ambient dev host (a live opencode checkout)
+  // exports OPENCODE_DB, which would otherwise leak into every assertion.
+  // Save/clear/restore so "not injected" is actually tested.
+  let savedDb: string | undefined;
+  let savedConfigDir: string | undefined;
+  beforeEach(() => {
+    savedDb = process.env.OPENCODE_DB;
+    savedConfigDir = process.env.OPENCODE_CONFIG_DIR;
+    delete process.env.OPENCODE_DB;
+    delete process.env.OPENCODE_CONFIG_DIR;
+  });
+  afterEach(() => {
+    if (savedDb !== undefined) process.env.OPENCODE_DB = savedDb;
+    if (savedConfigDir !== undefined) process.env.OPENCODE_CONFIG_DIR = savedConfigDir;
+  });
+
   it("injects OPENCODE_DB when amicode.sessionDatabase is non-empty", async () => {
     mockSettings({ sessionDatabase: "/custom/path/opencode.db", configDir: "" });
 

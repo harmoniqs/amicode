@@ -108,6 +108,12 @@ describe("isRenderable", () => {
     expect(isRenderable("paper.pdf")).toBe(true)
   })
 
+  test("accepts .html/.htm files (#2141)", () => {
+    expect(isRenderable("campaign.dashboard.html")).toBe(true)
+    expect(isRenderable("old/STATUS.HTM")).toBe(true)
+    expect(RENDERABLE_EXTENSIONS.html).toEqual([".html", ".htm"])
+  })
+
   test("rejects non-renderable files", () => {
     expect(isRenderable("app.ts")).toBe(false)
     expect(isRenderable("style.css")).toBe(false)

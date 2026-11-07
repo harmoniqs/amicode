@@ -150,7 +150,7 @@ export const DEFAULT_DEMO_SOLVE = `# Amicode Demo — Transmon X Gate (vetted te
 # Parameters: T=${DEMO_PARAMS.T}ns, N=${DEMO_PARAMS.N}, max_iter=${DEMO_PARAMS.max_iter}
 #
 # The actual solve.jl is authored from the vetted template at launch time
-# via amico-run resolve + the fill-in-the-block flow.
+# via amico resolve + the fill-in-the-block flow.
 `;
 
 // ─── Demo solvespec ──────────────────────────────────────────────────────────

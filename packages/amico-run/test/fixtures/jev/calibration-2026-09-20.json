@@ -1,0 +1,55 @@
+{
+  "calibration_set": "2026-09-20 session-curation sweep (spec-20260920-session-curation.md §Calibration)",
+  "model": "jev-1.13.0",
+  "notes": "Six real sweep sessions: two junk, one borderline (fleet-smoke — the single bucket mismatch, action-irrelevant: both buckets archive), three substantive. Recorded answers are the 2026-09-20 live run (5/6 bucket agreement; noul spread 0.05 junk → 0.71 blocked-on-user → 0.91 live campaign; ~300-350 ms, ~13 µ$/session). Features are the classifier fold as swept; last_text is the ~3KB-capped excerpt the noul question was asked over. recorded.noul absent where the spec did not record one.",
+  "entries": [
+    {
+      "session_id": "ses_greet_1",
+      "features": { "title": "Friendly greeting", "user_message_count": 1, "user_text_chars": 12, "assistant_message_count": 2, "todo_count": 0 },
+      "last_text": "Hello! Ready when you are — what would you like to work on?",
+      "hand_bucket": "junk-greeting",
+      "hand_has_thread": false,
+      "recorded": { "choice": "junk-greeting", "confidence": 1.0, "noul": 0.05 }
+    },
+    {
+      "session_id": "ses_greet_2",
+      "features": { "title": "Howdy greeting", "user_message_count": 1, "user_text_chars": 8, "assistant_message_count": 3, "todo_count": 0 },
+      "last_text": "Howdy! Ask me anything.",
+      "hand_bucket": "junk-greeting",
+      "hand_has_thread": false,
+      "recorded": { "choice": "junk-greeting", "confidence": 1.0, "noul": 0.08 }
+    },
+    {
+      "session_id": "ses_smoke",
+      "features": { "title": "fleet-smoke", "user_message_count": 1, "user_text_chars": 15, "assistant_message_count": 3, "todo_count": 0 },
+      "last_text": "smoke run complete — 4/4 checks green.",
+      "hand_bucket": "junk-greeting",
+      "hand_has_thread": false,
+      "recorded": { "choice": "dead-cast", "confidence": 0.75 }
+    },
+    {
+      "session_id": "ses_bugreport",
+      "features": { "title": "Bug report: panel sessions disappear", "user_message_count": 6, "user_text_chars": 400, "assistant_message_count": 12, "todo_count": 0 },
+      "last_text": "The fix is staged on the branch — waiting on your confirmation before I merge it.",
+      "hand_bucket": "substantive",
+      "hand_has_thread": true,
+      "recorded": { "choice": "substantive", "confidence": 1.0, "noul": 0.71 }
+    },
+    {
+      "session_id": "ses_campaign",
+      "features": { "title": "Session cleanup & curation planning", "user_message_count": 11, "user_text_chars": 1400, "assistant_message_count": 25, "todo_count": 3 },
+      "last_text": "The sweep is recorded and the integration contract is drafted; the Jev middle layer is the next slice.",
+      "hand_bucket": "substantive",
+      "hand_has_thread": true,
+      "recorded": { "choice": "substantive", "confidence": 1.0, "noul": 0.91 }
+    },
+    {
+      "session_id": "ses_engine_compare",
+      "features": { "title": "SoL-Pi vs telaio autoresearch engine comparison", "user_message_count": 10, "user_text_chars": 1200, "assistant_message_count": 20, "todo_count": 2 },
+      "last_text": "Both engines are mapped; the routing decision rides on which loop protocol fits telaio's task rows.",
+      "hand_bucket": "substantive",
+      "hand_has_thread": true,
+      "recorded": { "choice": "substantive", "confidence": 1.0 }
+    }
+  ]
+}

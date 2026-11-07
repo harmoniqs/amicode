@@ -1,0 +1,932 @@
+// SESSION MULTIPLEXER (#1440, ADR 0031 §D1): the per-session owner routing
+// that RETIRES the single attachment pointer's one-target-for-all model.
+//
+// Today, ALL engine/`/amicode/*` traffic routes to ONE upstream chosen by a
+// single global attachment pointer (server.ts:279-408). Opening a session on
+// another machine does a FULL WINDOW RELOAD. This module inverts that model:
+//
+//   1. Each session carries an OWNER machine_id (from the fleet-wide
+//      projection's amicode_owner tag — slice 2).
+//   2. Session-pathed requests (e.g. /api/session/{id}/event) resolve the
+//      owner from the path.
+//   3. Path-less engine requests (file.write/file.read) carry the owner
+//      machine_id as the X-Amicode-Owner routing header.
+//   4. Keyless requests → local (fail-safe), NEVER to an arbitrary target.
+//
+// The multiplexer routes through the SAME origin (ADR 0027: single-origin) —
+// it is a proxy, never a redirect. The app holds ONE base URL throughout.
+
+import * as http from "node:http";
+import type { SessionOwnerTag, OwnerRefreshPeer } from "./merged_projection";
+import { evaluateRemoteWriteGate, type WriteGrantRead } from "./remote_write_gate";
+import { SseFrameSplitter } from "./sse_frame_splitter";
+
+/** #1790 — the peer session-event stream reader's per-chunk path: decoded
+ *  chunks in, each frame's parsed `data:` JSON out via `onEvent`. Splits with
+ *  SseFrameSplitter, so it is LINEAR in the text received (the old reader
+ *  appended every chunk to the whole partial buffer and searched it from the
+ *  start — quadratic for a large frame in small chunks) and ends a frame at a
+ *  CRLF blank line too. Malformed `data:` payloads are skipped. Exported so the
+ *  split cost can be measured on this exact path. */
+export function sessionEventChunkReader(
+  onEvent: (event: Record<string, unknown>) => void,
+): (chunk: string) => void {
+  const splitter = new SseFrameSplitter();
+  return (chunk) => {
+    for (const frame of splitter.push(chunk)) {
+      // Parse the data: line from the whole frame (may contain \r\n).
+      const dataLine = frame.split(/\r?\n/).find((l) => l.startsWith("data:"));
+      if (!dataLine) continue;
+      try {
+        onEvent(JSON.parse(dataLine.slice(5).trim()) as Record<string, unknown>);
+      } catch { /* skip malformed */ }
+    }
+  };
+}
+
+// ── owner-routing header ─────────────────────────────────────────────────────
+
+/** The routing header for path-less engine requests. The Work Column's bound
+ *  session sets this on every request it makes. Absent → local. */
+export const OWNER_ROUTING_HEADER = "x-amicode-owner";
+
+// ── session ID extraction ────────────────────────────────────────────────────
+
+/** Extract the session ID from an engine-format path. Recognizes:
+ *    /api/session/{id}/event
+ *    /api/session/{id}/message
+ *    /api/session/{id}/prompt
+ *    /api/session/{id}/tool
+ *    /api/session/{id}/permission
+ *    /api/session/{id}/<anything>
+ *  Returns undefined for non-session paths. */
+export function extractSessionIdFromPath(pathname: string): string | undefined {
+  const m = pathname.match(/^\/api\/session\/([^/]+)\//);
+  return m ? m[1] : undefined;
+}
+
+/** Extract the session ID from ANY real engine session-read path — mirroring
+ *  the engine's OWN authoritative `getWorkspaceRouteSessionID`
+ *  (packages/opencode/src/server/shared/workspace-routing.ts). The app emits
+ *  BOTH client shapes, and — crucially — the BARE session-detail read carries
+ *  NO trailing sub-segment (that is the request that renders "This session
+ *  cannot be found" when it falls through to a local engine that never held the
+ *  peer's session):
+ *    /session/{id}                     (v1 legacy client — bare detail read)
+ *    /session/{id}/message | …         (v1 messages / member calls)
+ *    /api/session/{id}                 (v2 vendored client — bare detail read)
+ *    /api/session/{id}/message | …     (v2 messages / member calls)
+ *    /experimental/session/{id}/background
+ *  `/session/status` is NOT a session id (the status poll), and a bare
+ *  `/session` (the list) carries no id. Returns undefined for both.
+ *
+ *  DISTINCT from `extractSessionIdFromPath` above (the premium multiplexer's
+ *  narrower `/api/session/{id}/<sub>`-only matcher, which misses the v1 shape
+ *  AND the bare detail read) — left untouched so the armed path is unchanged. */
+export function extractSessionIdFromReadPath(pathname: string): string | undefined {
+  if (pathname === "/session/status") return undefined;
+  const id =
+    pathname.match(/^\/session\/([^/]+)(?:\/|$)/)?.[1] ??
+    pathname.match(/^\/api\/session\/([^/]+)(?:\/|$)/)?.[1] ??
+    pathname.match(/^\/experimental\/session\/([^/]+)\/background$/)?.[1];
+  return id ?? undefined;
+}
+
+// ── session→owner map ────────────────────────────────────────────────────────
+
+/** How long a create-time pending owner binding survives without projection
+ *  confirmation. Comfortably longer than the owner-map refresh cadence
+ *  (OWNER_MAP_REFRESH_MS = 5s) so the projection reliably supersedes it first;
+ *  a binding still unconfirmed after this is treated as dead (the session was
+ *  never really created, or was deleted) and drops back to local. */
+export const PENDING_OWNER_TTL_MS = 60_000;
+
+/** #1774: how long a peer's last-good owner entries survive refreshes in which
+ *  that peer's fetch FAILED (timeout / network error / 5xx). A peer's session set
+ *  changes slowly relative to this; past it the entries expire. Configurable per
+ *  map (`retentionMs`). */
+export const OWNER_RETENTION_MS = 60_000;
+
+/** A session entry with owner tag (the fleet-wide projection's shape). */
+export interface SessionEntry {
+  id: string;
+  amicode_owner?: SessionOwnerTag;
+  [key: string]: unknown;
+}
+
+/** #1774: does a failed peer refresh RETAIN the peer's last-good entries? Decided
+ *  from #1771's per-peer outcome: a timeout, or a transport failure (a network
+ *  error, a 5xx, the peer's upstream momentarily absent) retains. A credential or
+ *  trust problem — unauthorized, untrusted, credential missing, identity
+ *  conflict — does not: it is not a blip, and it surfaces as unavailable. */
+export function refreshRetains(peer: Pick<OwnerRefreshPeer, "outcome" | "reason">): boolean {
+  if (peer.outcome === "timeout") return true;
+  if (peer.outcome !== "error") return false;
+  return peer.reason === "fetch-failed" || peer.reason === "no-upstream";
+}
+
+/** #1774: what one refresh did to ONE peer's owner entries (for the refresh log).
+ *   - retained   — the fetch failed within the window: `held` last-good entries
+ *                  kept, last confirmed `ageMs` ago;
+ *   - expired    — the window lapsed: `dropped` entries expired, the peer is now
+ *                  named unavailable;
+ *   - dropped    — a non-retaining failure (unauthorized, …): `dropped` entries
+ *                  removed at once, the peer is now named unavailable;
+ *   - unavailable — the peer holds nothing and is still named unavailable.
+ *  A successful refresh (or a failure with nothing ever held) has no record. */
+export type OwnerRetention =
+  | { kind: "retained"; held: number; ageMs: number }
+  | { kind: "expired"; dropped: number }
+  | { kind: "dropped"; dropped: number }
+  | { kind: "unavailable" };
+
+/** One owned entry as the map holds it (the owner is the map key's peer). */
+interface HeldEntry {
+  id: string;
+  directory?: string;
+}
+
+/** The per-session owner binding — maps session IDs to their owner machine_id.
+ *  Populated from the fleet-wide projection's amicode_owner overlay (slice 2).
+ *  A miss returns undefined, which the multiplexer interprets as "local".
+ *
+ *  Free-tier remote create (feature/free-tier-fleet): a session just created on
+ *  a peer is not yet in the pull-only projection, so a PENDING overlay bridges
+ *  the gap — `recordPendingOwner` binds the new id at create time, the binding
+ *  survives projection refreshes that don't yet include it, is superseded once
+ *  the projection does, and expires after a TTL.
+ *
+ *  #1774: when the projection carries #1771's PER-PEER refresh outcomes, the
+ *  update is authoritative only for the peers that answered. A peer whose fetch
+ *  failed (an empty slice, not an error) keeps its LAST-GOOD entries for
+ *  `retentionMs` — its sessions keep routing to it and its fan-in arm stays open
+ *  — then they expire and the peer is NAMED unavailable (still an owner in
+ *  `ownerMachineIds()`, never a reachable arm — see `fanInReachable`) until a
+ *  successful refresh. A non-retaining failure (unauthorized, …) drops the
+ *  entries at once and names the peer unavailable the same way. */
+export class SessionOwnerMap {
+  private readonly owners = new Map<string, string>();
+  /** #1766: each OWNED session's working directory (id → directory), recorded
+   *  from the SAME owner-tagged projection entry as its owner. Only non-empty
+   *  string values, stored byte-for-byte (no normalization). */
+  private readonly directories = new Map<string, string>();
+  /** Create-time bindings awaiting projection confirmation (id → {owner, at}). */
+  private readonly pending = new Map<string, { machineId: string; at: number }>();
+  /** #1774: each peer's entries as of its last SUCCESSFUL refresh (peer → {at, entries}). */
+  private readonly lastGood = new Map<string, { at: number; entries: HeldEntry[] }>();
+  /** #1774: peers whose entries expired or were dropped — named unavailable. */
+  private readonly unavailablePeers = new Set<string>();
+  private readonly now: () => number;
+  private readonly retentionMs: number;
+
+  constructor(opts: { now?: () => number; retentionMs?: number } = {}) {
+    this.now = opts.now ?? Date.now;
+    this.retentionMs = opts.retentionMs ?? OWNER_RETENTION_MS;
+  }
+
+  /** Rebuild the map from a fleet-wide projection's session list. The projection
+   *  is authoritative: a pending binding now present in it is superseded (dropped
+   *  from the overlay); expired pending bindings are pruned.
+   *
+   *  #1774: `peers` (the projection's per-peer refresh outcomes) scopes that
+   *  authority — see the class comment. Returns what the update did to each
+   *  failed peer's entries (absent for a peer that answered). Without `peers`
+   *  every owner is replaced, exactly as before. */
+  update(
+    sessions: SessionEntry[],
+    peers?: ReadonlyArray<Pick<OwnerRefreshPeer, "machineId" | "outcome" | "reason">>,
+  ): Map<string, OwnerRetention> {
+    this.owners.clear();
+    this.directories.clear();
+    const fresh = new Map<string, HeldEntry[]>();
+    for (const s of sessions) {
+      if (typeof s.id === "string" && s.amicode_owner?.owner_machine_id) {
+        const owner = s.amicode_owner.owner_machine_id;
+        // #1766: the session record's own `directory` (the cross-project list
+        // carries it verbatim); the owner tag mirrors the same value, so it is
+        // the fallback when an entry carries no top-level field.
+        const directory = typeof s.directory === "string" && s.directory !== "" ? s.directory : s.amicode_owner.directory;
+        const held: HeldEntry = { id: s.id, ...(typeof directory === "string" && directory !== "" ? { directory } : {}) };
+        this.hold(owner, held);
+        const list = fresh.get(owner);
+        if (list) list.push(held);
+        else fresh.set(owner, [held]);
+      }
+    }
+    const retention = peers === undefined ? this.forgetPeers() : this.applyPeerOutcomes(fresh, peers);
+    // Prune the pending overlay: drop entries the authoritative projection now
+    // carries (superseded), and any that have outlived the TTL.
+    const cutoff = this.now() - PENDING_OWNER_TTL_MS;
+    for (const [id, entry] of this.pending) {
+      if (this.owners.has(id) || entry.at < cutoff) this.pending.delete(id);
+    }
+    return retention;
+  }
+
+  private hold(owner: string, e: HeldEntry): void {
+    this.owners.set(e.id, owner);
+    if (e.directory !== undefined) this.directories.set(e.id, e.directory);
+  }
+
+  /** No per-peer outcomes: the projection is authoritative for every owner, so
+   *  there is nothing to retain and no one to name unavailable. */
+  private forgetPeers(): Map<string, OwnerRetention> {
+    this.lastGood.clear();
+    this.unavailablePeers.clear();
+    return new Map();
+  }
+
+  /** #1774: per peer — an answer replaces, a retaining failure keeps the
+   *  last-good entries inside the window, anything else drops them. */
+  private applyPeerOutcomes(
+    fresh: Map<string, HeldEntry[]>,
+    peers: ReadonlyArray<Pick<OwnerRefreshPeer, "machineId" | "outcome" | "reason">>,
+  ): Map<string, OwnerRetention> {
+    const now = this.now();
+    const out = new Map<string, OwnerRetention>();
+    const refreshed = new Set(peers.map((p) => p.machineId));
+    // A peer no longer refreshed at all left the fleet's serving set: nothing
+    // of it is retained, and it is not unavailable — it is gone.
+    for (const id of [...this.lastGood.keys()]) if (!refreshed.has(id)) this.lastGood.delete(id);
+    for (const id of [...this.unavailablePeers]) if (!refreshed.has(id)) this.unavailablePeers.delete(id);
+    for (const peer of peers) {
+      const id = peer.machineId;
+      if (peer.outcome === "ok") {
+        const entries = fresh.get(id) ?? [];
+        if (entries.length > 0) this.lastGood.set(id, { at: now, entries });
+        else this.lastGood.delete(id);
+        this.unavailablePeers.delete(id);
+        continue;
+      }
+      const last = this.lastGood.get(id);
+      if (last && refreshRetains(peer) && now - last.at <= this.retentionMs) {
+        // keep what this refresh did not re-confirm; never shadow a fresh entry
+        for (const e of last.entries) if (!this.owners.has(e.id)) this.hold(id, e);
+        out.set(id, { kind: "retained", held: last.entries.length, ageMs: now - last.at });
+      } else if (last) {
+        this.lastGood.delete(id);
+        this.unavailablePeers.add(id);
+        out.set(id, refreshRetains(peer) ? { kind: "expired", dropped: last.entries.length } : { kind: "dropped", dropped: last.entries.length });
+      } else if (this.unavailablePeers.has(id)) {
+        out.set(id, { kind: "unavailable" });
+      }
+    }
+    return out;
+  }
+
+  /** Bind a just-created session to its owner peer BEFORE the projection catches
+   *  up (free-tier remote create). Superseded by the next projection that
+   *  includes the session; expires after PENDING_OWNER_TTL_MS otherwise. */
+  recordPendingOwner(sessionId: string, machineId: string): void {
+    if (!sessionId || !machineId) return;
+    this.pending.set(sessionId, { machineId, at: this.now() });
+  }
+
+  /** Look up the owner machine_id for a session. Undefined → local. The
+   *  authoritative projection map wins; a non-expired pending binding is the
+   *  fallback (the create-time bridge). */
+  resolveOwner(sessionId: string): string | undefined {
+    const authoritative = this.owners.get(sessionId);
+    if (authoritative) return authoritative;
+    const p = this.pending.get(sessionId);
+    if (!p) return undefined;
+    if (p.at < this.now() - PENDING_OWNER_TTL_MS) {
+      this.pending.delete(sessionId);
+      return undefined;
+    }
+    return p.machineId;
+  }
+
+  /** #1766: the working directory the owner-tagged projection recorded for a
+   *  session, exactly as its record carries it. Undefined when the session is
+   *  unknown, unowned, carries no non-empty directory, or is only a pending
+   *  create-time binding — callers must never substitute a directory of their
+   *  own (the fleet status read queries only directories that came from here). */
+  resolveDirectory(sessionId: string): string | undefined {
+    return this.directories.get(sessionId);
+  }
+
+  /** The DISTINCT owner machine_ids currently holding ≥1 owned session (#1511,
+   *  §D1) — the fan-in membership's owner set. Order is unspecified; callers
+   *  exclude `local` themselves. #1774: plus every peer NAMED unavailable (its
+   *  entries expired or were dropped), so the fan-in keeps it as a member and
+   *  announces it unavailable instead of dropping its arm in silence — the
+   *  driver's `fanInReachable` keeps such a member from ever being an arm. */
+  ownerMachineIds(): string[] {
+    return [...new Set([...this.owners.values(), ...this.unavailablePeers])];
+  }
+
+  /** #1774: is this peer NAMED unavailable — its retention window lapsed, or its
+   *  refresh was refused — with no successful refresh since? */
+  isUnavailable(machineId: string): boolean {
+    return this.unavailablePeers.has(machineId);
+  }
+
+  /** The number of tracked sessions (for diagnostics). */
+  get size(): number {
+    return this.owners.size;
+  }
+}
+
+// ── owner-map feed (#1449, W1b) ──────────────────────────────────────────────
+
+/** #1774: the fan-in driver's per-owner reachability, composed over the owner
+ *  map — an owner-peer the map NAMES unavailable is never an active arm, whatever
+ *  its transport says, so the aggregator closes its arm with the existing named
+ *  unavailable comment instead of dropping it in silence. Both fan-in drivers in
+ *  index.ts are wired with this. */
+export function fanInReachable(
+  ownerMap: SessionOwnerMap,
+  transportUp: (machineId: string) => boolean,
+): (machineId: string) => boolean {
+  return (machineId) => !ownerMap.isUnavailable(machineId) && transportUp(machineId);
+}
+
+/** The live loop that keeps a SessionOwnerMap populated (#1449, W1b, AC1).
+ *
+ *  The fleet-wide projection is PULL-ONLY — it is rebuilt per request at the
+ *  /amicode/fleet/sessions route (index.ts), there is nothing to subscribe to.
+ *  So per-session routing cannot lean on the sidebar being polled: it needs its
+ *  OWN cadence. This feed rebuilds the projection on an interval and calls
+ *  `ownerMap.update(projection.sessions)` — the caller (createAmicodeService)
+ *  injects a `buildProjection` closure that wraps `buildFleetProjection` with the
+ *  same serving-peer set the sessions route uses.
+ *
+ *  Honesty: a projection BUILD failure (a peer fan-out that threw) leaves the
+ *  LAST-GOOD map intact — it never clears the map on error, so a transient blip
+ *  does not silently reroute owned sessions to local. Only a SUCCESSFUL
+ *  projection re-populates the map (the SessionOwnerMap.update contract).
+ *  #1774: the builder itself never throws — a failed PEER is an empty slice plus
+ *  its #1771 outcome in `peers`, which the feed hands to `update` so that peer
+ *  keeps its last-good entries for the retention window. */
+export interface OwnerMapFeedOpts {
+  ownerMap: SessionOwnerMap;
+  /** Build the fleet-wide projection whose `.sessions` carry the amicode_owner
+   *  overlay. Injected so the feed is unit-testable without a real fan-out.
+   *  #1771: `peers` (optional) carries each peer's refresh outcome — the feed
+   *  logs one line per peer, so a failed peer refresh is visible even though
+   *  neither the builder nor the feed ever throws. #1774: and scopes the map
+   *  update per peer (retention); absent → every owner is replaced. */
+  buildProjection: () => Promise<{ sessions: SessionEntry[]; peers?: OwnerRefreshPeer[] }>;
+  /** The refresh cadence in ms. Default 5000. */
+  intervalMs?: number;
+  /** Observe a build failure (diagnostics only — the feed never throws). */
+  onError?: (err: unknown) => void;
+  /** #1771: the service log for per-peer refresh outcomes. Absent → silent. */
+  log?: (line: string) => void;
+}
+
+/** #1771: one per-peer refresh line: outcome, duration, entry count, and for a
+ *  failure its named reason and detail. #1774: plus what the owner map did with
+ *  a failed peer's entries (`retention=`), so a retained peer reads as retained —
+ *  `entries` stays this refresh's own count. Absent for an answered peer. */
+export function ownerRefreshLine(p: OwnerRefreshPeer, retention?: OwnerRetention): string {
+  const reason = p.reason !== undefined ? ` reason=${p.reason}` : "";
+  const detail = p.detail !== undefined ? ` detail=${JSON.stringify(p.detail)}` : "";
+  return `[owner-map] refresh peer=${p.machineId} outcome=${p.outcome} duration_ms=${p.durationMs} entries=${p.entries}${reason}${detail}${retentionFields(retention)}`;
+}
+
+function retentionFields(r: OwnerRetention | undefined): string {
+  if (r === undefined) return "";
+  switch (r.kind) {
+    case "retained":
+      return ` retention=retained held=${r.held} age_ms=${r.ageMs}`;
+    case "expired":
+    case "dropped":
+      return ` retention=${r.kind} dropped=${r.dropped}`;
+    case "unavailable":
+      return " retention=unavailable";
+  }
+}
+
+/** The default owner-map refresh cadence. */
+export const OWNER_MAP_REFRESH_MS = 5000;
+
+export class OwnerMapFeed {
+  private timer?: ReturnType<typeof setInterval>;
+  private stopped = false;
+
+  constructor(private readonly opts: OwnerMapFeedOpts) {}
+
+  /** Rebuild the projection ONCE and update the owner-map. Never throws: a
+   *  build failure is reported via `onError` and the last-good map is kept. */
+  async refreshOnce(): Promise<void> {
+    let projection: { sessions: SessionEntry[]; peers?: OwnerRefreshPeer[] };
+    try {
+      projection = await this.opts.buildProjection();
+    } catch (err) {
+      this.opts.onError?.(err);
+      this.log(`[owner-map] refresh failed error=${JSON.stringify(err instanceof Error ? err.message : String(err))}`);
+      return; // last-good map intact — never clear on a transient failure
+    }
+    if (this.stopped) return; // a stop() raced the in-flight build
+    // #1774: the per-peer outcomes scope the update — a failed peer keeps its
+    // last-good entries for the retention window instead of vanishing.
+    const retention = this.opts.ownerMap.update(projection.sessions ?? [], projection.peers);
+    for (const peer of projection.peers ?? []) this.log(ownerRefreshLine(peer, retention.get(peer.machineId)));
+  }
+
+  private log(line: string): void {
+    try {
+      this.opts.log?.(line);
+    } catch {
+      /* a broken log sink never breaks the feed */
+    }
+  }
+
+  /** Start the loop: fire an immediate refresh, then re-refresh on the
+   *  interval. Idempotent — a second start() is a no-op. The interval is
+   *  `unref`'d so it never keeps the process alive on its own. */
+  start(): void {
+    if (this.timer) return;
+    this.stopped = false;
+    void this.refreshOnce();
+    this.timer = setInterval(() => void this.refreshOnce(), this.opts.intervalMs ?? OWNER_MAP_REFRESH_MS);
+    this.timer.unref?.();
+  }
+
+  /** Halt the loop. Idempotent; safe to call before start(). */
+  stop(): void {
+    this.stopped = true;
+    if (this.timer) {
+      clearInterval(this.timer);
+      this.timer = undefined;
+    }
+  }
+}
+
+// ── peer transport ───────────────────────────────────────────────────────────
+
+/** A peer's transport coordinates — how to reach a remote machine. The URL is
+ *  read LATE (per request) so a downed peer yields undefined (honest degraded),
+ *  never a stale boot-time snapshot. */
+export interface PeerTransport {
+  getUrl(): string | undefined;
+  /** Auth token for the peer (from the peer-token store, slice 1). */
+  token?: string;
+}
+
+// ── observation-only read router (#1537, B2b read seam) ──────────────────────
+
+/** A REACHABLE peer read target — proxy the read to `url` with `token`. */
+export type ObservationReadPeerTarget = { kind: "peer"; machineId: string; url: string; token: string };
+
+/** #1774: a session-scoped request whose id has NO known owner (not in the owner
+ *  map, no pending binding). The caller tries the LOCAL engine first; if the
+ *  local engine does not hold the session it answers a retryable owner-unknown
+ *  503 — never a 404 or an empty result (the map may simply not have caught up). */
+export type ObservationUnknownOwner = { kind: "unknown-owner"; sessionId: string };
+
+/** The resolution of an observation-mode read:
+ *   - a REACHABLE peer target → proxy to the owner with its reader token;
+ *   - the honest DEGRADED variant (owner is a KNOWN peer, but its transport is
+ *     down — getUrl() undefined / no token) → the caller answers a named 503,
+ *     NEVER local-dressed-as-peer (the #1382 invariant);
+ *   - #1774 the unknown-owner outcome → local first, then a retryable 503;
+ *   - `undefined` (NOT a target) → LOCAL, the fail-safe: a write, a keyless /
+ *     non-session path, /amicode/*, a local-owned session, or an owner that is
+ *     not a known peer. The read falls through BYTE-IDENTICAL to the local
+ *     engine. */
+export type ObservationReadResolution =
+  | ObservationReadPeerTarget
+  | { kind: "degraded"; machineId: string }
+  | ObservationUnknownOwner;
+
+/** Options for the ObservationReadRouter. */
+export interface ObservationReadRouterOpts {
+  ownerMap: SessionOwnerMap;
+  localMachineId: string;
+  /** Late-bound peer transport by owner machine_id (fleet discipline: read per
+   *  request). `undefined` → the owner is NOT a known/serving peer (→ local).
+   *  A present transport whose `getUrl()`/`token` is absent is the honest
+   *  DEGRADED case (owner known, transport momentarily down). */
+  peer(machineId: string): PeerTransport | undefined;
+}
+
+/** The observation-only per-session owner router (#1537, B2b). On the
+ *  OBSERVATION machine (no premium fleet plane; getMode stays "engine"), a
+ *  peer-owned session's READ requests must reach the owner instead of falling
+ *  through to a local engine that never held them (→ "This session cannot be
+ *  found"). This resolves a GET/HEAD read to its owner peer using ONLY the
+ *  path-borne session id (the empirically-verified owner signal — the app emits
+ *  the id in the URL for both client shapes) resolved against the SessionOwnerMap.
+ *
+ *  Additive & fail-safe: anything that does not resolve to a reachable/degraded
+ *  peer returns undefined and the caller falls through byte-identical to today.
+ *  GET-only: writes NEVER route (remote writes are B2b, design-gated). */
+export class ObservationReadRouter {
+  private readonly ownerMap: SessionOwnerMap;
+  private readonly localMachineId: string;
+  private readonly peer: (machineId: string) => PeerTransport | undefined;
+
+  constructor(opts: ObservationReadRouterOpts) {
+    this.ownerMap = opts.ownerMap;
+    this.localMachineId = opts.localMachineId;
+    this.peer = opts.peer;
+  }
+
+  /** Resolve a read to its owner peer, or undefined for local (fall through).
+   *
+   *  Resolution order:
+   *   0. NON-read (POST/PATCH/DELETE/…) → local (writes NEVER route)
+   *   1. /amicode/* (the machine's own honesty + local surface) → local
+   *   2. no session id extractable from the path → local
+   *   3. owner unknown (unowned) → #1774 the unknown-owner outcome (local first)
+   *   4. owner == localMachineId (local-owned) → local
+   *   5. owner is not a known peer → local
+   *   6. owner is a known peer, transport down (no url/token) → DEGRADED (503)
+   *   7. owner is a known reachable peer → the peer target */
+  resolve(method: string, pathname: string): ObservationReadResolution | undefined {
+    const m = (method || "GET").toUpperCase();
+    if (m !== "GET" && m !== "HEAD") return undefined; // (0) writes never route
+    // (1) never proxy the machine's OWN /amicode/* surface (honesty + local).
+    //     Reads there are served by the local route table, never a peer.
+    if (pathname === "/amicode" || pathname.startsWith("/amicode/")) return undefined;
+    const sessionId = extractSessionIdFromReadPath(pathname); // (2)
+    if (!sessionId) return undefined;
+    const owner = this.ownerMap.resolveOwner(sessionId); // (3)
+    if (!owner) return { kind: "unknown-owner", sessionId };
+    if (owner === this.localMachineId) return undefined; // (4)
+    const peer = this.peer(owner); // (5)
+    if (!peer) return undefined;
+    const url = peer.getUrl();
+    if (!url || !peer.token) return { kind: "degraded", machineId: owner }; // (6)
+    return { kind: "peer", machineId: owner, url, token: peer.token }; // (7)
+  }
+}
+
+// ── observation-only WRITE router (#1542, B2b write seam) ────────────────────
+
+/** An AUTHORIZED peer write target — proxy the write to `url` with `token`.
+ *  `token` is the PEER credential the owner accepts (the reader token, the SAME
+ *  the read plane sources), NOT the self-issued control-grant token — see the
+ *  empirical note on ObservationWriteRouter. */
+export type ObservationWritePeerTarget = { kind: "peer"; machineId: string; url: string; token: string };
+
+/** The gate's NAMED honest deny — never local. `reason` is the write gate's
+ *  own reason vocabulary: `no-control-grant` | `grant-revoked` (the gate
+ *  COLLAPSES `revocation-pending`→`grant-revoked`) | `insufficient-scope` |
+ *  `transport-down`. NOT `read-only`/`unavailable` (those are ControlGatedTarget
+ *  kinds — a different module). */
+export type ObservationWriteDenied = { kind: "denied"; machineId: string; reason: string };
+
+/** The resolution of an observation-mode WRITE:
+ *   - an AUTHORIZED peer target → proxy the write to the owner with the peer
+ *     credential (the reader token);
+ *   - a NAMED deny → the caller answers the gate's honest deny (an auth denial,
+ *     or the peer-unreachable 503 for `transport-down`), NEVER local (#1382);
+ *   - #1774 the unknown-owner outcome → local first, then a retryable 503;
+ *   - `undefined` (NOT a target) → LOCAL, the fail-safe: a GET/HEAD (the read
+ *     plane owns those — the INVERTED decision), a keyless / non-session path,
+ *     /amicode/*, a local-owned session, or an owner that is not a serving
+ *     peer. The write falls through BYTE-IDENTICAL to the local engine. */
+export type ObservationWriteResolution = ObservationWritePeerTarget | ObservationWriteDenied | ObservationUnknownOwner;
+
+/** Options for the ObservationWriteRouter. */
+export interface ObservationWriteRouterOpts {
+  ownerMap: SessionOwnerMap;
+  localMachineId: string;
+  /** Late-bound peer transport by owner machine_id (fleet discipline: read per
+   *  request), used for BOTH reachability and the transport credential.
+   *  `undefined` → the owner is NOT a serving peer (→ local). A present
+   *  transport whose `getUrl()`/`token` is absent is transport-down. */
+  peer(machineId: string): PeerTransport | undefined;
+  /** The D2-corrected grant read: the CONTROLLING machine's OWN active `control`
+   *  grant, resolved by `targetMachineId === ownerMachineId` (composed from
+   *  `findControlGrantByTarget` at the wiring, #1541). The naïve
+   *  `requesterMachineId`-keyed lookup on the owner returns undefined and every
+   *  write wrongly denies — this closure fixes that. Injected so the router is
+   *  unit-testable without a grant store. */
+  grantReader(ownerMachineId: string): WriteGrantRead | undefined;
+}
+
+/** The observation-only per-session owner WRITE router (#1542, B2b) — the mirror
+ *  of ObservationReadRouter with the GET/non-GET decision INVERTED. On the
+ *  OBSERVATION machine (no premium fleet plane; getMode "engine"), a NON-GET
+ *  request (prompt / archive / delete) to a PEER-OWNED session must be
+ *  AUTHORIZED by the pure `evaluateRemoteWriteGate` (active `control` grant +
+ *  reachable transport) and, when allowed, ROUTED to the owner peer with the
+ *  credential the owner accepts. A denied write is the gate's NAMED honest deny,
+ *  NEVER executed locally (the #1382 invariant). GET/HEAD are IGNORED here — the
+ *  read plane owns them.
+ *
+ *  EMPIRICAL CREDENTIAL BOUNDARY (resolved against reality, #1537-style trap):
+ *  the control grant is the CLIENT-SIDE authorization gate — it decides whether
+ *  this machine may SEND the write. The transport credential presented to the
+ *  owner is the PEER credential the owner accepts (today: the reader token, the
+ *  SAME credential the read plane sources via `fleetPeers.readPeerToken`). A
+ *  self-issued control-grant token the owner has never seen would 401 — the
+ *  observation-only owner does NOT yet enforce a separate control scope on
+ *  proxied `/session` (it accepts the peer reader token for full CRUD). A
+ *  distinct owner-enforced control token is a future tightening. So the target
+ *  carries `peer.token` (the reader token), never the grant's token.
+ *
+ *  Additive & fail-safe: anything that does not resolve to a peer/deny returns
+ *  undefined and the caller falls through byte-identical to today. */
+export class ObservationWriteRouter {
+  private readonly ownerMap: SessionOwnerMap;
+  private readonly localMachineId: string;
+  private readonly peer: (machineId: string) => PeerTransport | undefined;
+  private readonly grantReader: (ownerMachineId: string) => WriteGrantRead | undefined;
+
+  constructor(opts: ObservationWriteRouterOpts) {
+    this.ownerMap = opts.ownerMap;
+    this.localMachineId = opts.localMachineId;
+    this.peer = opts.peer;
+    this.grantReader = opts.grantReader;
+  }
+
+  /** Resolve a write to its owner-peer target, a named deny, or undefined
+   *  (fall through local).
+   *
+   *  Resolution order (the read router's, with 0 INVERTED):
+   *   0. GET/HEAD → local (the read plane owns reads — writes NEVER touch GET)
+   *   1. /amicode/* (the machine's own surface) → local
+   *   2. no session id extractable from the path → local
+   *   3. owner unknown (unowned) → #1774 the unknown-owner outcome (local first)
+   *   4. owner == localMachineId (local-owned) → local
+   *   5. owner is not a serving peer → local
+   *   6. owner is a serving peer → AUTHORIZE via the pure write gate:
+   *        allowed → the peer target (with the peer reader token);
+   *        denied  → the gate's NAMED deny (never local). */
+  resolve(method: string, pathname: string): ObservationWriteResolution | undefined {
+    const m = (method || "GET").toUpperCase();
+    if (m === "GET" || m === "HEAD") return undefined; // (0) INVERTED: reads never route here
+    // (1) never proxy the machine's OWN /amicode/* surface (honesty + local).
+    if (pathname === "/amicode" || pathname.startsWith("/amicode/")) return undefined;
+    const sessionId = extractSessionIdFromReadPath(pathname); // (2)
+    if (!sessionId) return undefined;
+    const owner = this.ownerMap.resolveOwner(sessionId); // (3)
+    if (!owner) return { kind: "unknown-owner", sessionId };
+    if (owner === this.localMachineId) return undefined; // (4)
+    const peer = this.peer(owner); // (5)
+    if (!peer) return undefined; // owner is not a serving peer → local fall-through
+    // (6) authorize via the pure gate. The gate reads the control grant (D2-
+    //     corrected reader) FIRST, then transport reachability — so it emits the
+    //     honest reason for every denial (no-control-grant / grant-revoked /
+    //     insufficient-scope / transport-down).
+    const gate = evaluateRemoteWriteGate(
+      { ownerMachineId: owner, action: m, path: pathname },
+      {
+        localMachineId: this.localMachineId,
+        grantReader: (id) => this.grantReader(id),
+        peerReachable: (id) => {
+          const p = this.peer(id);
+          return !!(p && p.getUrl() && p.token);
+        },
+      },
+    );
+    if (!gate.allowed) return { kind: "denied", machineId: owner, reason: gate.reason };
+    // Allowed → route to the owner with the PEER credential (reader token), NOT
+    // the control-grant token (the empirical boundary above). Defensive
+    // transport re-read: the gate's peerReachable already guaranteed url+token,
+    // but this narrows the optionals honestly to transport-down if they vanished.
+    const url = peer.getUrl();
+    const token = peer.token;
+    if (!url || !token) return { kind: "denied", machineId: owner, reason: "transport-down" };
+    return { kind: "peer", machineId: owner, url, token };
+  }
+
+  /** Resolve the PATH-LESS session-create POST (feature/free-tier-fleet) — the
+   *  one write that has no session id yet, so `resolve` above (which keys off a
+   *  path session id) declines it and it would fall through to the local engine.
+   *  The target peer is carried in the X-Amicode-Owner header (the same header
+   *  the app arms on a remote pick, and the same one the premium multiplexer
+   *  reads). Authorized through the SAME write gate (active `control` grant +
+   *  reachable transport) and, when allowed, routed to the owner with the peer
+   *  reader token — mirroring `resolve` exactly, header-keyed instead of
+   *  path-keyed. Once the create lands, the new session is tagged to its owner
+   *  in the fleet projection, so every follow-up (`/session/{id}/…`) routes via
+   *  `resolve` / the read plane with no extra wiring.
+   *
+   *  Resolution order:
+   *   0. non-POST → undefined (create is a POST; other verbs are not creates)
+   *   1. not the path-less create path (`/session` | `/api/session`) → undefined
+   *      (a pathed write is `resolve`'s job; the list/status polls are GETs)
+   *   2. no owner header → undefined (LOCAL fail-safe — a plain local create)
+   *   3. owner == localMachineId → undefined (a local create, served locally)
+   *   4. owner is not a serving peer → undefined (local, never an arbitrary target)
+   *   5. owner is a serving peer → AUTHORIZE via the write gate:
+   *        allowed → the peer target (peer reader token); denied → NAMED deny. */
+  resolveCreate(
+    method: string,
+    pathname: string,
+    headers: Record<string, string | string[] | undefined>,
+  ): ObservationWriteResolution | undefined {
+    if ((method || "GET").toUpperCase() !== "POST") return undefined; // (0)
+    if (pathname !== "/session" && pathname !== "/api/session") return undefined; // (1) path-less create only
+    const headerVal = headers[OWNER_ROUTING_HEADER]; // (2)
+    const owner = typeof headerVal === "string" && headerVal.trim() ? headerVal.trim() : undefined;
+    if (!owner) return undefined;
+    if (owner === this.localMachineId) return undefined; // (3)
+    const peer = this.peer(owner); // (4)
+    if (!peer) return undefined;
+    // (5) authorize via the SAME pure write gate as resolve().
+    const gate = evaluateRemoteWriteGate(
+      { ownerMachineId: owner, action: method.toUpperCase(), path: pathname },
+      {
+        localMachineId: this.localMachineId,
+        grantReader: (id) => this.grantReader(id),
+        peerReachable: (id) => {
+          const p = this.peer(id);
+          return !!(p && p.getUrl() && p.token);
+        },
+      },
+    );
+    if (!gate.allowed) return { kind: "denied", machineId: owner, reason: gate.reason };
+    const url = peer.getUrl();
+    const token = peer.token;
+    if (!url || !token) return { kind: "denied", machineId: owner, reason: "transport-down" };
+    return { kind: "peer", machineId: owner, url, token };
+  }
+}
+
+// ── multiplexing proxy ───────────────────────────────────────────────────────
+
+/** The resolved target for one request. The `resolveTarget` return is
+ *  `ResolvedTarget | undefined`, with THREE distinct outcomes:
+ *
+ *   - REACHABLE peer — `{ machineId, url }`: proxy the request to `url`.
+ *   - DEGRADED peer (#1448, W1a) — `{ machineId, unreachable: true }`: the owner
+ *     is KNOWN (in the owner-map) but its transport `getUrl()` is currently
+ *     undefined. This is the honest-degraded variant, DISTINCT from the
+ *     `undefined` return below. W1b (#1449) turns it into a
+ *     FLEET_PEER_UNREACHABLE 503 rather than silently serving local (the #1382
+ *     silent-local-fallback the whole design forbids).
+ *   - `undefined` (NOT a ResolvedTarget) — LOCAL, the fail-safe: keyless, the
+ *     owner is local, or the owner is not in the peer set.
+ *
+ *  The two variants are discriminated by `unreachable`; the reachable variant
+ *  carries `url`, the degraded one never does. */
+export type ResolvedTarget =
+  | { machineId: string; url: string; token?: string; unreachable?: false }
+  | { machineId: string; url?: undefined; unreachable: true };
+
+/** #1448 (W1a): the narrow resolver seam the dispatch peer branch consults on
+ *  the ATTACHED arm when AMICO_FLEET_MULTIPLEX is ON. Deliberately exposes ONLY
+ *  `resolveTarget` — the per-session SSE relay is W1c and is NOT wired into
+ *  dispatch here (AC4 structural guard: no SSE crosses the multiplexer). The
+ *  SessionMultiplexProxy satisfies it structurally. */
+export interface MultiplexResolver {
+  resolveTarget(
+    method: string,
+    pathname: string,
+    headers: Record<string, string | string[] | undefined>,
+  ): ResolvedTarget | undefined;
+}
+
+/** Options for the SessionMultiplexProxy. */
+export interface SessionMultiplexProxyOpts {
+  ownerMap: SessionOwnerMap;
+  peers: Record<string, PeerTransport>;
+  localMachineId: string;
+}
+
+/** An SSE event stream handle — the test consumes events one at a time. */
+export interface SseStreamHandle {
+  next(): Promise<Record<string, unknown>>;
+  close(): void;
+}
+
+/** The session-aware multiplexing proxy. Routes each request to its session's
+ *  owner, never to a single global target. The app holds ONE origin throughout
+ *  (ADR 0027 single-origin); this proxy sits behind that origin and fans out.
+ *
+ *  Structural: no reloadRequired or attachSwitch signal exists — per-session
+ *  routing removes the need for a global attach-swap and its window reload. */
+export class SessionMultiplexProxy implements MultiplexResolver {
+  private readonly ownerMap: SessionOwnerMap;
+  private readonly peers: Record<string, PeerTransport>;
+  private readonly localMachineId: string;
+
+  constructor(opts: SessionMultiplexProxyOpts) {
+    this.ownerMap = opts.ownerMap;
+    this.peers = opts.peers;
+    this.localMachineId = opts.localMachineId;
+  }
+
+  /** Resolve which peer should handle this request. Returns the peer's
+   *  resolved URL + machine_id, or undefined for local (fail-safe).
+   *
+   *  Resolution order:
+   *   0. Honesty surface (/amicode/fleet/*) → local ALWAYS (never proxied)
+   *   1. Extract session ID from the path → look up owner
+   *   2. Read X-Amicode-Owner header → use as owner
+   *   3. No session, no header → local (undefined)
+   *   4. Owner == localMachineId → local (undefined)
+   *   5. Owner not in peers → local (undefined)
+   *   6. Peer URL undefined → the DEGRADED variant (owner known, url undefined
+   *      — #1448, W1a), NEVER undefined/local (the #1382 silent-local-fallback
+   *      the design forbids; W1b turns this into a 503) */
+  resolveTarget(
+    _method: string,
+    pathname: string,
+    headers: Record<string, string | string[] | undefined>,
+  ): ResolvedTarget | undefined {
+    // 0. Honesty surface: /amicode/fleet/* is the machine's OWN truth — NEVER
+    //    proxied to a peer, regardless of session owner or routing header.
+    //    This is the multiplexer's equivalent of shouldProxyAmicodeToHost's
+    //    /amicode/fleet/* exclusion (ADR 0027 §4).
+    if (pathname === "/amicode/fleet" || pathname.startsWith("/amicode/fleet/")) {
+      return undefined;
+    }
+    // 1. Path-based: extract session ID → owner
+    const sessionId = extractSessionIdFromPath(pathname);
+    let machineId: string | undefined;
+    if (sessionId) {
+      machineId = this.ownerMap.resolveOwner(sessionId);
+    }
+    // 2. Header-based: read X-Amicode-Owner
+    if (!machineId) {
+      const headerVal = headers[OWNER_ROUTING_HEADER];
+      if (typeof headerVal === "string" && headerVal.trim()) {
+        machineId = headerVal.trim();
+      }
+    }
+    // 3. No owner → local
+    if (!machineId) return undefined;
+    // 4. Owner is local → local
+    if (machineId === this.localMachineId) return undefined;
+    // 5. Look up peer transport
+    const peer = this.peers[machineId];
+    if (!peer) return undefined;
+    // 6. Resolve URL (late-bound). #1448 (W1a): owner KNOWN but URL undefined
+    //    is the honest DEGRADED variant — NOT undefined/local. W1b (#1449) turns
+    //    it into a 503 rather than silently serving local (the #1382 bug).
+    const url = peer.getUrl();
+    if (!url) return { machineId, unreachable: true };
+    // Carry the peer's OWN reader token so the dispatch dials the peer with
+    // serverAuthHeader(peer.token) — NOT the hub credential (the real peer
+    // engine's ServerAuth.authorized accepts only its per-boot password or a
+    // token IT issued; the hub token is neither → 401 on every create).
+    return { machineId, url, token: peer.token };
+  }
+
+  /** Open an SSE event stream for a session. The multiplexer connects to the
+   *  session's owner peer via http.get (not fetch — fetch may buffer SSE data
+   *  in Node.js, causing missed events). Relays events with `session_id`
+   *  attribution. Returns a handle the caller uses to consume events one at
+   *  a time. No head-of-line blocking: each session's stream is independent. */
+  openSseStream(sessionId: string): SseStreamHandle {
+    const machineId = this.ownerMap.resolveOwner(sessionId);
+    const peer = machineId ? this.peers[machineId] : undefined;
+    const peerUrl = peer?.getUrl();
+
+    // Pending events queue (resolved by next() callers)
+    const queue: Array<{ resolve: (event: Record<string, unknown>) => void }> = [];
+    const buffer: Array<Record<string, unknown>> = [];
+    let closed = false;
+    let req: http.ClientRequest | undefined;
+
+    const push = (event: Record<string, unknown>) => {
+      if (closed) return;
+      // Tag with session_id for attribution
+      const tagged = { ...event, session_id: sessionId };
+      const waiter = queue.shift();
+      if (waiter) {
+        waiter.resolve(tagged);
+      } else {
+        buffer.push(tagged);
+      }
+    };
+
+    // Connect to the peer's SSE stream using http.get (streaming-safe)
+    if (peerUrl) {
+      try {
+        const target = new URL(`/api/session/${sessionId}/event`, peerUrl);
+        req = http.get(target, (res) => {
+          // #1790: linear-time frame splitting (see sessionEventChunkReader).
+          const read = sessionEventChunkReader(push);
+          res.setEncoding("utf8");
+          res.on("data", (chunk: string) => {
+            if (closed) return;
+            read(chunk);
+          });
+          res.on("end", () => { /* stream ended — nothing more to push */ });
+          res.on("error", () => { /* stream error — nothing more to push */ });
+        });
+        req.on("error", () => { /* connection error — nothing to push */ });
+      } catch {
+        /* invalid URL — no stream */
+      }
+    }
+
+    return {
+      next(): Promise<Record<string, unknown>> {
+        const buffered = buffer.shift();
+        if (buffered) return Promise.resolve(buffered);
+        if (closed) return Promise.reject(new Error("stream closed"));
+        return new Promise((resolve) => { queue.push({ resolve }); });
+      },
+      close() {
+        closed = true;
+        req?.destroy();
+        // Resolve any pending waiters with a closed marker
+        for (const w of queue) {
+          w.resolve({ _closed: true, session_id: sessionId });
+        }
+        queue.length = 0;
+      },
+    };
+  }
+}

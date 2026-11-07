@@ -1,3 +1,5 @@
+export * as SessionRunnerLLM from "./llm"
+
 import {
   LLM,
   LLMClient,
@@ -5,6 +7,7 @@ import {
   LLMEvent,
   Message,
   SystemPart,
+  TransportReason,
   isContextOverflowFailure,
   type ProviderErrorEvent,
 } from "@opencode-ai/llm"
@@ -91,6 +94,42 @@ import { filterSystemBaseline, redactSessionMessages } from "../../provider-perm
  * provider turn. Registry definitions are advertised, local tool calls are settled durably, and an
  * explicit loop starts the next provider turn after local settlement. Configured agent step limits bound the loop.
  */
+
+/** 2026-10-11 (#1739): the provider stream await had no idle/read timeout — a
+ * socket that dies without a clean FIN/EOF (tunnel drop, NAT timeout, LB
+ * idle-kill) parked the read forever, leaking the turn, its coordinator
+ * registration, and the session's busy state for hours (observed live: 8h of
+ * eternal "thinking", cleared only by an explicit abort). The transport work
+ * bounded the response (#775 caps) but not the wait for the next chunk.
+ * Reasoning deltas arrive continuously, so 90s of dead air means the transport
+ * is gone; env-overridable for diagnosis, same seam as the #775 caps. */
+const STREAM_IDLE_TIMEOUT_MS = 90_000
+const streamIdleTimeoutMs = () => {
+  const configured = Number(process.env.AMICODE_STREAM_IDLE_TIMEOUT_MS)
+  return Number.isFinite(configured) && configured > 0 ? configured : STREAM_IDLE_TIMEOUT_MS
+}
+
+/** #1739: races every stream read against the idle ceiling — reset-on-read: each
+ * arriving batch starts a fresh window, so healthy slow generations (brief gaps
+ * between chunks) never trip it, while a read parked past the ceiling fails the
+ * stream with a transport error that unwinds through the existing turn-failure
+ * path. The single `llm.stream(request)` call per provider turn is untouched;
+ * the ceiling wraps the read loop only. */
+const withStreamIdleCeiling = <A, E, R>(
+  self: Stream.Stream<A, E, R>,
+  idleMs: number,
+  onIdle: () => LLMError,
+) =>
+  Stream.fromPull(
+    Effect.map(Stream.toPull(self), (pull) =>
+      Effect.suspend(() =>
+        pull.pipe(
+          Effect.timeoutOption(idleMs),
+          Effect.flatMap((batch) => (Option.isNone(batch) ? Effect.fail(onIdle()) : Effect.succeed(batch.value))),
+        ),
+      ),
+    ),
+  )
 
 const layer = Layer.effect(
   Service,
@@ -245,7 +284,19 @@ const layer = Layer.effect(
       const publish = (event: LLMEvent, outputPaths: ReadonlyArray<string> = []) =>
         withPublication(publisher.publish(event, outputPaths))
       let overflowFailure: ProviderErrorEvent | undefined
-      const providerStream = llm.stream(request).pipe(
+      const providerStream = withStreamIdleCeiling(
+        llm.stream(request),
+        streamIdleTimeoutMs(),
+        () =>
+          new LLMError({
+            module: "session-runner",
+            method: "stream",
+            reason: new TransportReason({
+              message: `provider stream idle for ${streamIdleTimeoutMs()}ms — the transport likely died without closing the stream; the turn was aborted rather than holding the session busy (raise AMICODE_STREAM_IDLE_TIMEOUT_MS if your provider legitimately pauses longer between chunks)`,
+              kind: "idle-timeout",
+            }),
+          }),
+      ).pipe(
         Stream.runForEach((event) =>
           Effect.gen(function* () {
             if (overflowFailure || publisher.hasProviderError()) return

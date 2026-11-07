@@ -1,0 +1,6 @@
+schema = 1
+intent_path = "vault/INTENT.md"
+intent_sha256 = "abc123def4567890fedcba0987654321fedcba0987654321fedcba0987654321"
+merged_date = "2026-09-06"
+merge_commit = "3481877550327481db2179206e79936fc41fc118"
+stamped_by = "intent-merge-receipt workflow"

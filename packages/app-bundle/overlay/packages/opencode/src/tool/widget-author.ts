@@ -20,6 +20,10 @@ export const Parameters = Schema.Struct({
     description: '"tile" = compact card in the tile row; "hero" = wide card in the top grid',
   }),
   height: Schema.Number.annotate({ description: "resting pixel height (40..2000); the frame grows to content" }),
+  sticky: Schema.optional(Schema.Boolean).annotate({
+    description:
+      "optional; true = when the card scrolls out of view on home, dock it at the top as a slim ~64px strip (the widget receives density 'tight' while docked). Use for live/streaming widgets.",
+  }),
   description: Schema.optional(Schema.String).annotate({ description: "one-line description of the widget" }),
   js: Schema.String.annotate({
     description: "the widget.js ES module body: export default { mount: function (el, amico) { ... } }",
@@ -41,6 +45,7 @@ export const WidgetAuthorTool = Tool.define<typeof Parameters, Metadata, never>(
             name: params.name,
             size: params.size,
             height: params.height,
+            sticky: params.sticky,
             description: params.description,
             js: params.js,
           })

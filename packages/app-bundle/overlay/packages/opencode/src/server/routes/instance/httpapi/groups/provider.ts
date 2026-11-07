@@ -1,5 +1,6 @@
 import { ProviderAuth } from "@/provider/auth"
 import { Provider } from "@/provider/provider"
+import { ProviderProbe } from "@/provider/probe"
 
 import { Schema } from "effect"
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/unstable/httpapi"
@@ -54,6 +55,19 @@ export const ProviderApi = HttpApi.make("provider")
             identifier: "provider.auth",
             summary: "Get provider auth methods",
             description: "Retrieve available authentication methods for all AI providers.",
+          }),
+        ),
+        // #1984: one-token reachability probe per model, credentials stay in the engine.
+        HttpApiEndpoint.post("probe", `${root}/probe`, {
+          query: WorkspaceRoutingQuery,
+          payload: ProviderProbe.Input,
+          success: described(ProviderProbe.Output, "Per-model reachability results"),
+        }).annotateMerge(
+          OpenApi.annotations({
+            identifier: "provider.probe",
+            summary: "Probe model reachability",
+            description:
+              "Send a one-token request to each listed model of a provider through the engine's own credentials and return a named status (ok, denied, unavailable, invalid, rate-limited, error) per model. No secret material is returned.",
           }),
         ),
         HttpApiEndpoint.post("authorize", `${root}/:providerID/oauth/authorize`, {

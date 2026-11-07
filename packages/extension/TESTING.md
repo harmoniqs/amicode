@@ -4,7 +4,7 @@ What this branch adds on top of main: the **pulse-designer interview** (Amico as
 the **entity rail** (System · Formulation · Run tracked live), **scores** (interview-as-data,
 `packages/extension/scores/`), a **branded fork binary** (says AMICODE, H-robot mark, AMICO
 question forms, H spinner), **7 `amicode_*` tools**, and a **Rydberg CZ template** alongside the
-transmon one. Nothing in main's contracts changed — `amico-run`, run-dir, schemas, inspector are
+transmon one. Nothing in main's contracts changed — the CLI, run-dir, schemas, inspector are
 untouched.
 
 ## Prerequisites

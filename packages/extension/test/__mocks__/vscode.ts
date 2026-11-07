@@ -4,9 +4,20 @@
 export const FileType = { Unknown: 0, File: 1, Directory: 2, SymbolicLink: 64 };
 const colorThemeCbs: Array<(theme: { kind: number }) => void> = [];
 export const window = {
-  showInformationMessage: () => Promise.resolve(undefined),
-  showErrorMessage: () => Promise.resolve(undefined),
-  showWarningMessage: () => Promise.resolve(undefined),
+  // Recorded toast surface (#1826): named-outcome message tests assert on it.
+  messages: [] as string[],
+  showInformationMessage: (m: string) => {
+    window.messages.push(m);
+    return Promise.resolve(undefined);
+  },
+  showErrorMessage: (m: string) => {
+    window.messages.push(m);
+    return Promise.resolve(undefined);
+  },
+  showWarningMessage: (m: string) => {
+    window.messages.push(m);
+    return Promise.resolve(undefined);
+  },
   showInputBox: () => Promise.resolve(undefined),
   showSaveDialog: () => Promise.resolve(undefined),
   showOpenDialog: () => Promise.resolve(undefined),
@@ -89,6 +100,9 @@ export const window = {
 const registeredCommands = new Map<string, (...a: unknown[]) => unknown>();
 export const commands = {
   executed: [] as string[],
+  // Args per executed command, parallel to `executed` (#1826: URI-shape tests
+  // assert on the vscode-remote URI passed to vscode.open).
+  executedArgs: [] as unknown[][],
   registerCommand: (id: string, fn: (...a: unknown[]) => unknown) => {
     registeredCommands.set(id, fn);
     return {
@@ -99,6 +113,7 @@ export const commands = {
   },
   executeCommand: (id: string, ...a: unknown[]) => {
     commands.executed.push(id);
+    commands.executedArgs.push(a);
     return Promise.resolve(registeredCommands.get(id)?.(...a));
   },
 };
@@ -107,6 +122,10 @@ export const ColorThemeKind = { Light: 1, Dark: 2, HighContrast: 3, HighContrast
 export const ConfigurationTarget = { Global: 1, Workspace: 2, WorkspaceFolder: 3 };
 export const env = {
   opened: [] as unknown[],
+  // #1272 — the editor's remote indicator: an "ssh-remote…" string under
+  // Remote-SSH, undefined when the editor is local. Tests set it to exercise
+  // window-mode detection (windowModeFromRemoteName).
+  remoteName: undefined as string | undefined,
   openExternal: (u: unknown) => {
     env.opened.push(u);
     return Promise.resolve(true);
@@ -214,6 +233,26 @@ export class WorkspaceEdit {
     this._edits.push({ uri, range, newText });
   }
 }
+// FileSystemError with the code-bearing static factories the real API exposes
+// (used by the amico-host FileSystemProvider adapter, #1267). Each factory sets
+// `.code` so the host can render the honest outcome.
+export class FileSystemError extends Error {
+  code: string;
+  constructor(messageOrUri?: unknown, code = "Unknown") {
+    super(typeof messageOrUri === "string" ? messageOrUri : String(messageOrUri ?? ""));
+    this.name = "FileSystemError";
+    this.code = code;
+  }
+  static FileNotFound(messageOrUri?: unknown) { return new FileSystemError(messageOrUri, "FileNotFound"); }
+  static FileExists(messageOrUri?: unknown) { return new FileSystemError(messageOrUri, "FileExists"); }
+  static FileNotADirectory(messageOrUri?: unknown) { return new FileSystemError(messageOrUri, "FileNotADirectory"); }
+  static FileIsADirectory(messageOrUri?: unknown) { return new FileSystemError(messageOrUri, "FileIsADirectory"); }
+  static NoPermissions(messageOrUri?: unknown) { return new FileSystemError(messageOrUri, "NoPermissions"); }
+  static Unavailable(messageOrUri?: unknown) { return new FileSystemError(messageOrUri, "Unavailable"); }
+}
+export const FilePermission = { Readonly: 1 };
+export const FileChangeType = { Changed: 1, Created: 2, Deleted: 3 };
+export const StatusBarAlignment = { Left: 1, Right: 2 };
 export class TreeItem {
   description?: string;
   tooltip?: string;

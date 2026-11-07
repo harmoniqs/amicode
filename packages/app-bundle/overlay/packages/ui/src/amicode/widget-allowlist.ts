@@ -3,11 +3,11 @@
 // or route + "?" query; no bare-prefix rides (/amicode/problem-x must NOT
 // pass via /amicode/problem). Pure, unit-tested.
 
+// #1818: the deprecated research routes (problems, problem, run-status) left
+// the allowlist with the surfaces that fetched them — a sandboxed widget can
+// no longer reach them either. The live transport routes stay.
 const FETCH_ROUTES = [
   "/amicode/profile",
-  "/amicode/problems",
-  "/amicode/problem",
-  "/amicode/run-status",
   "/amicode/run-series",
   "/amicode/run-cards",
   "/amicode/library",

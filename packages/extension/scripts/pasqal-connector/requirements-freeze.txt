@@ -1,0 +1,47 @@
+# pip freeze of the durable pasqal venv (~/.amico/venvs/pasqal) — the env the
+# campaign pasqal-gate-autoresearch (F0) stood up and the one the
+# gate-unitary leg's validated numbers were produced with. S-4: record the
+# freeze alongside the pins. NOTE: this venv carries pasqal-cloud==0.22.0
+# (campaign-era resolution) while requirements.txt pins 0.23.0 — the
+# auth-only pasqal_validate.py is version-tolerant (tested via stubs);
+# reconcile on the next venv rebuild.
+annotated-types==0.8.0
+attrs==26.1.0
+auth0-python==3.24.1
+certifi==2026.7.22
+cffi==2.1.1
+charset-normalizer==3.5.1
+contourpy==1.4.0
+cryptography==50.0.1
+cycler==0.12.1
+fonttools==4.66.0
+idna==3.20
+jsonschema==4.26.0
+jsonschema-specifications==2025.9.1
+kiwisolver==1.5.1
+matplotlib==3.11.2
+numpy==2.5.3
+packaging==26.3
+pasqal-cloud==0.22.0
+pillow==12.3.0
+pulser==1.8.0
+pulser-core==1.8.0
+pulser-pasqal==0.24.0
+pulser-simulation==1.8.0
+pycparser==3.0
+pydantic==2.13.5
+pydantic_core==2.46.5
+PyJWT==2.15.0
+pyparsing==3.3.3
+python-dateutil==2.9.0.post0
+qutip==5.3.1
+referencing==0.37.0
+requests==2.34.2
+requests-mock==1.12.1
+rpds-py==2026.6.3
+scipy==1.18.1
+six==1.17.0
+tenacity==8.5.0
+typing-inspection==0.4.4
+typing_extensions==4.16.0
+urllib3==2.8.0

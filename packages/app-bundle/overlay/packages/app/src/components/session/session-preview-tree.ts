@@ -39,6 +39,100 @@ export const createPreviewWorkspace = (paths: readonly string[] = []): PreviewWo
   nextPaneID: 1,
 })
 
+// ── Preview persistence decisions (pure) ─────────────────────────────────────
+// These are the restore/close decisions the SessionPreviewTab persistence uses.
+// Kept pure and here (not inline in the component) so the exact regressions we
+// hit — "only the active file restored", "closed tab reopened", "net-new open
+// lost" — are unit-testable without a reactive harness.
+
+/** The set to restore into the workspace: the persisted open paths, plus the
+ *  active file when it is a net-new open not yet tracked (a first open that
+ *  mounted the Preview tab). Restoring [a,b,c] when only the active [c] is known
+ *  must still yield all of [a,b,c] — never collapse to the active one. */
+export const previewRestoreTarget = (persisted: readonly string[], active: string | null): string[] =>
+  active && !persisted.includes(active) ? [...persisted, active] : [...persisted]
+
+/** Which of `target` are not yet open — the paths to merge into the workspace.
+ *  On a plain re-instantiation (everything already open) this is empty, so the
+ *  restore is a no-op and nothing re-opens. */
+export const previewMissingPaths = (target: readonly string[], open: readonly string[]): string[] => {
+  const openSet = new Set(open)
+  return target.filter((path) => !openSet.has(path))
+}
+
+export type PreviewRestorePlan = {
+  /** Identity of this input set; the caller stores it as `last`. */
+  signature: string
+  /** False when the inputs are unchanged since `last` — the restore is inert. */
+  run: boolean
+  /** Paths to merge into the workspace (never removes anything). */
+  missing: string[]
+  /** A net-new open (active file not yet persisted) that should be written now. */
+  persistNetNew: boolean
+}
+
+/** One reactive pass of the restore: a signature-guarded merge. `hydrated` is part
+ *  of the signature so a net-new open that arrived BEFORE the layout store
+ *  hydrated (its write was held) is re-planned — and persisted — once it does,
+ *  even when hydration leaves the persisted set unchanged. The write is only
+ *  planned once hydrated, so it is never silently dropped. */
+export const planPreviewRestore = (input: {
+  last: string
+  hydrated: boolean
+  persisted: readonly string[]
+  active: string | null
+  open: readonly string[]
+  /** Extra paths that must return with the session (unsaved drafts, #1249). */
+  extra?: readonly string[]
+}): PreviewRestorePlan => {
+  const extra = (input.extra ?? []).filter((path) => !input.persisted.includes(path))
+  const target = previewRestoreTarget([...input.persisted, ...extra], input.active)
+  const signature = `${input.hydrated ? "h" : "-"}\u0001${target.join("\u0000")}`
+  if (signature === input.last) return { signature, run: false, missing: [], persistNetNew: false }
+  const netNew = (!!input.active && !input.persisted.includes(input.active)) || extra.length > 0
+  return {
+    signature,
+    run: true,
+    missing: target.length === 0 ? [] : previewMissingPaths(target, input.open),
+    persistNetNew: input.hydrated && netNew,
+  }
+}
+
+/** The active file after closing `closed`: unchanged when a background tab was
+ *  closed; otherwise the last remaining tab, or null if none remain — so a
+ *  closed active file is never left as the pointer that gets re-opened. */
+export const previewActiveAfterClose = (
+  closed: string,
+  wasActive: string | null,
+  remaining: readonly string[],
+): string | null => (closed === wasActive ? (remaining[remaining.length - 1] ?? null) : wasActive)
+
+/** Is this app document the visible, foreground one? Each VS Code chat tab is
+ *  its own retained webview (retainContextWhenHidden), and the `preview-file`
+ *  bridge message is an un-targeted broadcast to ALL of them (#1648) — so a
+ *  backgrounded session view receives every open. visibilityState is the
+ *  signal that actually flips on a VS Code tab switch (#1584). */
+export const isForegroundDocument = (doc: { visibilityState?: string } | undefined = globalThis.document): boolean =>
+  !doc || doc.visibilityState !== "hidden"
+
+/** The persisted-open-set writer for a Preview tab: writes only once the
+ *  layout store has hydrated (a pre-hydration transient would clobber the
+ *  stored list) AND only from the visible foreground session. A background
+ *  session view still handles the broadcast `preview-file` locally, but it
+ *  must not save — otherwise one open lands under every live session's key
+ *  (the cross-session bleed, #1648). */
+export const createPreviewPersister = (opts: {
+  hydrated?: () => boolean
+  foreground?: () => boolean
+  write?: (paths: string[]) => void
+}) => (paths: string[]): boolean => {
+  if (opts.hydrated && !opts.hydrated()) return false
+  if (!(opts.foreground ?? isForegroundDocument)()) return false
+  if (!opts.write) return false
+  opts.write(paths)
+  return true
+}
+
 export const previewLeaves = (tree: PreviewPane): PreviewLeaf[] => {
   if (tree.kind === "leaf") return [tree]
   return [...previewLeaves(tree.first), ...previewLeaves(tree.second)]

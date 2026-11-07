@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="3" failures="2">
+  <testsuite name="test/a.test.ts" file="test/a.test.ts" tests="2" failures="2">
+    <testsuite name="math" file="test/a.test.ts" tests="2" failures="2">
+      <testcase name="is broken" classname="math" file="test/a.test.ts">
+        <failure type="AssertionError" message="expected 1 to be 2" />
+      </testcase>
+      <testcase name="adds &amp; carries" classname="math" file="test/a.test.ts">
+        <failure type="AssertionError" message="boom" />
+      </testcase>
+    </testsuite>
+  </testsuite>
+  <testsuite name="test/b.test.ts" file="test/b.test.ts" tests="1">
+    <testsuite name="net" file="test/b.test.ts" tests="1">
+      <testcase name="sometimes" classname="net" file="test/b.test.ts" />
+    </testsuite>
+  </testsuite>
+</testsuites>

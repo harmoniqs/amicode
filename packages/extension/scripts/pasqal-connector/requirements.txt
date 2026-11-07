@@ -1,1 +1,9 @@
-pasqal-cloud==0.23.0
+# The local emulation leg's pinned deps. S-4 (campaign
+# pasqal-gate-autoresearch): these are NOT optional — the qutip-5 cubic-spline
+# default trap (S-10) is version-sensitive, and the gate-unitary leg's
+# validated numbers (emulate_gate_unitary.py) were produced against exactly
+# these versions. Full freeze of the durable venv: requirements-freeze.txt.
+pasqal-cloud==0.22.0
+pulser==1.8.0
+pulser-simulation==1.8.0
+qutip==5.3.1

@@ -13,6 +13,10 @@ import * as http from "node:http";
 import { AddressInfo } from "node:net";
 import { createAmicodeService } from "../src/amicode_service";
 import { serverAuthHeader } from "../src/server_auth";
+import { EngineProxy } from "../src/amicode_service/engine_proxy";
+import { HubProxy } from "../src/amicode_service/hub_proxy";
+import type { HubCredentialRead } from "../src/amicode_service/hub_credential";
+import { fakeEngine, startEngineSseServer, LOCAL_EPOCH } from "./fixtures/engine_stream/engine_frames";
 
 interface RecordedHit {
   method: string;
@@ -34,6 +38,28 @@ async function startMockEngine(): Promise<{ hits: RecordedHit[]; url: string; st
       if (req.method === "GET" && req.url === "/session") {
         res.writeHead(200, { "content-type": "application/json" });
         res.end(JSON.stringify({ ok: true, engine: true, sessions: [] }));
+        return;
+      }
+      // #1549 (the harness seam): the engine-owned route the service
+      // forwards for the composer control — GET serves the registry view,
+      // POST records the switch request.
+      if (req.method === "GET" && req.url === "/amicode/harness") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify({
+            harness: "opencode",
+            status: "ready",
+            options: [
+              { id: "opencode", displayName: "opencode (default)", state: "ready", detail: "mock", disabled: false },
+              { id: "telaio", displayName: "telaio", state: "needs-setup", detail: "mock", disabled: true, reason: "not installed" },
+            ],
+          }),
+        );
+        return;
+      }
+      if (req.method === "POST" && req.url === "/amicode/harness") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: true, harness: JSON.parse(body || "{}").harness ?? "opencode", status: "switching" }));
         return;
       }
       if (req.method === "POST" && req.url === "/echo") {
@@ -71,8 +97,14 @@ describe("amicode service — engine proxy (transparent passthrough to the spawn
   let base: string;
   const enginePassword = "engine-mint-test-password";
   let engineAuth: string;
+  let savedAuthEnv: string | undefined;
 
   beforeAll(async () => {
+    // The boot relies on the credential auth default; a dev host running a
+    // live amicode service exports AMICODE_SERVICE_AUTH=open (the runner's
+    // tunnel/LAN posture) which would fail the 401 pin here. Isolate it.
+    savedAuthEnv = process.env.AMICODE_SERVICE_AUTH;
+    delete process.env.AMICODE_SERVICE_AUTH;
     root = mkdtempSync(join(tmpdir(), "amicode-proxy-"));
     const dist = join(root, "dist");
     mkdirSync(join(dist, "assets"), { recursive: true });
@@ -93,6 +125,7 @@ describe("amicode service — engine proxy (transparent passthrough to the spawn
     await service.stop();
     await engine.stop();
     rmSync(root, { recursive: true, force: true });
+    if (savedAuthEnv !== undefined) process.env.AMICODE_SERVICE_AUTH = savedAuthEnv;
   });
 
   it("a non-amicode, non-static request proxies to the engine: method, path, headers, body preserved", async () => {
@@ -144,15 +177,49 @@ describe("amicode service — engine proxy (transparent passthrough to the spawn
   it("precedence: an exact /amicode/* route never reaches the proxy, and a static shelf hit never reaches the proxy", async () => {
     // /amicode/* is the service's OWN namespace — the mock engine must never
     // see it (a proxied /amicode/* would launder our route table upstream).
+    // #1549's named exception: /amicode/harness GET+POST IS forwarded (the
+    // engine-owned route — see the dedicated tests below); every OTHER
+    // /amicode/* path keeps this discipline.
     const route = await fetch(base + "/amicode/profile", { headers: { Authorization: engineAuth } });
     expect(route.status).toBe(200);
-    expect(engine.hits.some((h) => h.url.startsWith("/amicode")), "no /amicode/* hit may reach the engine").toBe(false);
+    expect(engine.hits.some((h) => h.url.startsWith("/amicode/")), "no /amicode/* hit may reach the engine").toBe(false);
     // A static asset is served by the shelf — the engine never sees it.
     const asset = await fetch(base + "/assets/app.js", { headers: { Authorization: engineAuth } });
     expect(asset.status).toBe(200);
     expect(asset.headers.get("content-type")).toContain("text/javascript");
     expect(await asset.text()).toContain("console.log");
     expect(engine.hits.some((h) => h.url.startsWith("/assets")), "no /assets hit may reach the engine").toBe(false);
+  });
+
+  it("#1549 the harness seam: GET /amicode/harness forwards to the ENGINE-owned route (the composer's menu fetch)", async () => {
+    // The composer control fetches this at its panel origin — the service —
+    // so the service must reach the route's owner. Without this forwarding
+    // the control renders nothing (the live-test finding on PR #1550).
+    const r = await fetch(base + "/amicode/harness", { headers: { Authorization: engineAuth } });
+    expect(r.status).toBe(200);
+    const menu = (await r.json()) as { harness: string; options: { id: string; disabled: boolean }[] };
+    expect(menu.harness).toBe("opencode");
+    expect(menu.options.map((o) => o.id)).toEqual(["opencode", "telaio"]);
+    expect(menu.options[1].disabled).toBe(true);
+    expect(engine.hits.some((h) => h.url === "/amicode/harness" && h.method === "GET"), "the menu fetch reached the engine").toBe(true);
+  });
+
+  it("#1549 the harness seam: POST /amicode/harness forwards too (the switch write path)", async () => {
+    const r = await fetch(base + "/amicode/harness", {
+      method: "POST",
+      headers: { Authorization: engineAuth, "content-type": "application/json" },
+      body: JSON.stringify({ harness: "opencode" }),
+    });
+    expect(r.status).toBe(200);
+    const answer = (await r.json()) as { status: string };
+    expect(answer.status).toBe("switching");
+    expect(engine.hits.some((h) => h.url === "/amicode/harness" && h.method === "POST"), "the switch POST reached the engine").toBe(true);
+  });
+
+  it("#1549 the exception is NARROW: an unmatched /amicode/* path still 404s at the service and never reaches the engine", async () => {
+    const r = await fetch(base + "/amicode/no-such-route", { headers: { Authorization: engineAuth } });
+    expect(r.status).toBe(404);
+    expect(engine.hits.some((h) => h.url.startsWith("/amicode/no-such-route")), "the unmatched path must never reach the engine").toBe(false);
   });
 
   it("SSE (/event) streams UNBUFFERED through the proxy (chunks arrive as the engine sends them)", async () => {
@@ -179,4 +246,103 @@ describe("amicode service — engine proxy (transparent passthrough to the spawn
     const last = chunks[chunks.length - 1]!.at;
     expect(last - first, `first@${first}ms last@${last}ms — buffered, not streamed`).toBeGreaterThanOrEqual(180);
   });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// #1773 AC3 — a proxied stream lost AFTER its response headers were sent is an
+// ERROR close, never a clean end. The proxies used to answer an upstream failure
+// mid-stream with `res.end()`, which a listener (or the next relay) reads as
+// "the stream ended normally, nothing was lost". Both the engine proxy and the
+// hub proxy now destroy the downstream with the error, so it sees a transport
+// error. A clean upstream end still passes through as a clean end.
+// ══════════════════════════════════════════════════════════════════════════════
+describe("#1773 AC3 — engine and hub proxies error-close a stream lost after headers", () => {
+  /** Serve `handler` on 127.0.0.1:0 and dial it at its own address. */
+  async function front(handler: (req: http.IncomingMessage, res: http.ServerResponse) => void) {
+    const server = http.createServer(handler);
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    const { port } = server.address() as AddressInfo;
+    return {
+      url: `http://127.0.0.1:${port}`,
+      stop: () =>
+        new Promise<void>((r) => {
+          server.close(() => r());
+          server.closeAllConnections?.();
+        }),
+    };
+  }
+
+  /** Read a whole response: its status, body, and whether it ENDED cleanly or ERRORED. */
+  function read(url: string): Promise<{ status: number; body: string; how: "end" | "error" }> {
+    return new Promise((resolve, reject) => {
+      const req = http.get(url, (res) => {
+        let body = "";
+        res.setEncoding("utf8");
+        res.on("data", (c: string) => (body += c));
+        res.on("end", () => resolve({ status: res.statusCode ?? 0, body, how: "end" }));
+        res.on("error", () => resolve({ status: res.statusCode ?? 0, body, how: "error" }));
+      });
+      req.on("error", reject);
+    });
+  }
+
+  const hubCredential = (): HubCredentialRead => ({
+    ok: true,
+    mint: "hub",
+    credential: { baseUrl: "http://hub.invalid", token: "hub-tok" },
+  });
+
+  const proxies: Array<{ name: string; handler: (upstreamUrl: string) => (req: http.IncomingMessage, res: http.ServerResponse) => void }> = [
+    {
+      name: "engine proxy",
+      handler: (upstreamUrl) => {
+        const proxy = new EngineProxy({ getUrl: () => upstreamUrl });
+        return (req, res) => void proxy.handle(req, res);
+      },
+    },
+    {
+      name: "hub proxy",
+      handler: (upstreamUrl) => {
+        const proxy = new HubProxy({ getUrl: () => upstreamUrl, credential: hubCredential });
+        return (req, res) => void proxy.handle(req, res);
+      },
+    },
+  ];
+
+  for (const { name, handler } of proxies) {
+    it(`${name}: the upstream dies mid-stream → the listener's response ERRORS after the frames it got (no clean end)`, async () => {
+      const engine = fakeEngine({ legacy: true });
+      const sent = [engine.connected(), engine.event("session.status", { sessionID: "ses_1", status: { type: "busy" } })];
+      const upstream = await startEngineSseServer((res) => {
+        for (const f of sent) res.write(f);
+        setTimeout(() => res.destroy(), 20); // the link dies after the headers and two frames
+      });
+      const relay = await front(handler(upstream.url));
+      try {
+        const { status, body, how } = await read(`${relay.url}/global/event`);
+        expect(status).toBe(200); // the headers were already relayed …
+        expect(body).toBe(sent.join("")); // … with every frame the upstream sent …
+        expect(how).toBe("error"); // … so the loss must surface as a transport error
+      } finally {
+        await relay.stop();
+        await upstream.stop();
+      }
+    });
+
+    it(`${name}: a clean upstream end still relays as a clean end (pass-through unchanged)`, async () => {
+      const engine = fakeEngine({ epoch: LOCAL_EPOCH });
+      const sent = [engine.connected(), engine.heartbeat()];
+      const upstream = await startEngineSseServer((res) => {
+        for (const f of sent) res.write(f);
+        res.end();
+      });
+      const relay = await front(handler(upstream.url));
+      try {
+        expect(await read(`${relay.url}/global/event`)).toEqual({ status: 200, body: sent.join(""), how: "end" });
+      } finally {
+        await relay.stop();
+        await upstream.stop();
+      }
+    });
+  }
 });

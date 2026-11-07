@@ -8,6 +8,7 @@ import { createStore } from "solid-js/store"
 import { Portal } from "solid-js/web"
 import createPresence from "solid-presence"
 import { PromptInputV2Composer } from "@/components/prompt-input-v2"
+import { ModelDeadPickWarning } from "@/components/model-dead-pick-warning"
 import { PromptGitStatus, PromptWorkspaceSelector } from "@/components/prompt-workspace-selector"
 import {
   PromptProjectAddButton,
@@ -24,6 +25,7 @@ import { NEW_SESSION_CONTENT_WIDTH } from "@/pages/session/new-session-layout"
 import { SessionBugDock } from "@/pages/session/composer/session-bug-dock"
 import { bugReportEnabled } from "@/utils/amicode-bug-report"
 import { Persist, persisted } from "@/utils/persist"
+import { NewSessionMachinePicker } from "./new-session-machine-picker-mount"
 import type { NewSessionDraftController } from "./new-session-draft-controller"
 import type { NewSessionWorkspaceController } from "./new-session-workspace-controller"
 
@@ -68,6 +70,8 @@ export function NewSessionView(props: {
                 <Show when={bugReportEnabled()}>
                   <SessionBugDock />
                 </Show>
+                {/* amicode#1989: warn before sending on a model already known dead */}
+                <ModelDeadPickWarning />
                 <PromptInputV2Composer controller={props.input} />
               </div>
               <Show when={props.project.empty()}>
@@ -97,6 +101,13 @@ export function NewSessionView(props: {
                   </Show>
                 </div>
               </Show>
+              {/* #1453 (W4b): the new-session machine picker — chooses which
+                  machine a NEW session runs on. Its default follows the focused
+                  machine delivered over the W3 (#1451) chat_bridge fleet-focus
+                  down-message; self-hides on a fleet with no remote sessions. */}
+              <div class="flex justify-center">
+                <NewSessionMachinePicker />
+              </div>
             </div>
           </div>
         </div>

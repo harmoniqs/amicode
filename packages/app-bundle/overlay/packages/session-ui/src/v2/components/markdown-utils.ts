@@ -37,6 +37,8 @@ export const RENDERABLE_EXTENSIONS = {
   markdown: [".md", ".markdown"] as const,
   images: [".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".ico", ".bmp"] as const,
   pdf: [".pdf"] as const,
+  // #2141: rendered in a scripts-off sandboxed frame (app preview-html-view.tsx)
+  html: [".html", ".htm"] as const,
 } as const
 
 /** Flat set of all renderable extensions for O(1) lookup. */
@@ -44,6 +46,7 @@ const ALL_RENDERABLE = new Set<string>([
   ...RENDERABLE_EXTENSIONS.markdown,
   ...RENDERABLE_EXTENSIONS.images,
   ...RENDERABLE_EXTENSIONS.pdf,
+  ...RENDERABLE_EXTENSIONS.html,
 ])
 
 /**

@@ -27,6 +27,7 @@ jobs:
       - uses: actions/setup-node@v7
         with: { node-version: 20, cache: pnpm }
       - uses: oven-sh/setup-bun@v2
+        with: { bun-version: 1.4.2 }
       - run: pnpm install --frozen-lockfile
       - name: Build native binary (linux-x64)
         run: node packages/extension/scripts/build_binary.mjs
@@ -55,6 +56,7 @@ jobs:
       - uses: actions/setup-node@v7
         with: { node-version: 20, cache: pnpm }
       - uses: oven-sh/setup-bun@v2
+        with: { bun-version: 1.4.2 }
       - name: Resolve tag and publish gate
         id: meta
         run: |
@@ -136,7 +138,7 @@ jobs:
         run: |
           FAILED=0
           for V in packages/extension/amicode-linux-x64.vsix packages/extension/amicode-linux-arm64.vsix packages/extension/amicode-darwin-arm64.vsix packages/extension/amicode-win32-x64.vsix packages/extension/amicode-win32-arm64.vsix packages/extension/amicode-darwin-x64.vsix; do
-            OUTPUT=$(npx --yes @vscode/vsce publish --packagePath "$V" 2>&1) && { echo "$OUTPUT"; continue; }
+            OUTPUT=$(pnpm --dir packages/extension exec vsce publish --packagePath "$GITHUB_WORKSPACE/$V" 2>&1) && { echo "$OUTPUT"; continue; }
             echo "$OUTPUT"
             echo "$OUTPUT" | grep -q "already exists" || FAILED=1
           done

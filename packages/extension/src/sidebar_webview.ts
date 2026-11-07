@@ -4,6 +4,15 @@
 
 import { groupRootsForResearchSection } from "./sidebar_bridge";
 import type { EnvGroup } from "./sidebar_bridge";
+import {
+  REVEAL_HIGHLIGHT_MS,
+  REVEAL_LOAD_TIMEOUT_MS,
+  nextRevealAction,
+  revealChain,
+  revealScrollTop,
+} from "./sidebar_reveal";
+import { renderFleetSection, createFleetRefreshControl, FLEET_REFRESH_LABEL } from "./sidebar_fleet_section";
+import type { FleetSectionModel } from "./sidebar_fleet_section";
 
 declare function acquireVsCodeApi(): {
   postMessage(msg: unknown): void;
@@ -190,6 +199,23 @@ function createIconEl(icon: string): HTMLElement {
   // the DOM and re-dispatches with mode "none" (highlight only — the persisted
   // expanded state already handles folder visibility after re-render).
   let pendingActiveProject: { path: string | null; mode: "none" | "expand" | "reset" } | null = null;
+  interface PendingReveal {
+    path: string;
+    dirs: string[];
+    /** The section body was just animated open — the scroll must wait it out. */
+    sectionAnimated: boolean;
+    /** Directories whose children we already asked for (no duplicate requests). */
+    requested: Set<string>;
+    /** The directory whose `children` reply we are waiting on, if any. */
+    awaiting?: string;
+    timeout?: ReturnType<typeof setTimeout>;
+  }
+  // #1036 "Find in sidebar" state (declared early: renderRoots replays a queued reveal).
+  let pendingReveal: PendingReveal | null = null;
+  let revealHighlightTimer: ReturnType<typeof setTimeout> | undefined;
+  let revealHighlightEl: HTMLElement | null = null;
+  /** A reveal that arrived before any roots rendered; replayed by renderRoots. */
+  let pendingRevealPath: string | null = null;
 
   // Track the last path we scrolled the sidebar to. "expand" mode (tab switch /
   // session re-focus) only scrolls when the path actually changes — re-focusing
@@ -943,6 +969,15 @@ function createIconEl(icon: string): HTMLElement {
   // (drag-reorder and section-order re-renders bypass the host's pushGitStatus).
   let lastGitStatusMap: Record<string, string> = {};
 
+  // #1321 — the last fleet view-model the host pushed. Defaults to the honest
+  // empty state so the section renders something real before the first
+  // fleet-status arrives (never a spinner, never a fabricated device list).
+  let lastFleetModel: FleetSectionModel = { state: "empty", devices: [], posture: null, manage: { enabled: false }, troubleshoot: { enabled: false } };
+  // #1764 — the FLEET header Refresh button's busy/backstop state. Lives here,
+  // not on the button, so a header re-render mid-refresh keeps it; any
+  // fleet-status clears it.
+  const fleetRefresh = createFleetRefreshControl({ post: (m) => vscode.postMessage(m) });
+
   /** Walk all rendered nodes and apply/remove git-status CSS classes. */
   function applyGitStatus(statusMap: Record<string, string>): void {
     const gitClasses = ["git-modified", "git-added", "git-deleted", "git-untracked", "git-ignored", "git-conflict"];
@@ -1085,6 +1120,9 @@ function createIconEl(icon: string): HTMLElement {
     label: string;
     icon: HTMLElement;
     onClick: (e: MouseEvent, anchor: HTMLElement) => void;
+    /** Called with the rendered button — lets a stateful action (Refresh's
+     *  busy control) re-bind after a header re-render. */
+    onMount?: (btn: HTMLElement) => void;
   };
 
   /** 16×16 inline SVG plus icon for the "New Project" section action. */
@@ -1164,6 +1202,50 @@ function createIconEl(icon: string): HTMLElement {
     ];
   }
 
+  /** 16×16 inline SVG circular-arrow icon for the Fleet "Refresh fleet" action (line art). */
+  function createRefreshIconEl(): HTMLElement {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("width", "16");
+    svg.setAttribute("height", "16");
+    svg.setAttribute("viewBox", "0 0 16 16");
+    svg.setAttribute("fill", "none");
+    svg.setAttribute("aria-hidden", "true");
+    const arc = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    arc.setAttribute("d", "M13 8a5 5 0 1 1-1.46-3.54");
+    arc.setAttribute("stroke", "currentColor");
+    arc.setAttribute("stroke-width", "1.4");
+    arc.setAttribute("stroke-linecap", "round");
+    svg.appendChild(arc);
+    const head = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    head.setAttribute("d", "M13 2.5v3h-3");
+    head.setAttribute("stroke", "currentColor");
+    head.setAttribute("stroke-width", "1.4");
+    head.setAttribute("stroke-linecap", "round");
+    head.setAttribute("stroke-linejoin", "round");
+    svg.appendChild(head);
+    return svg as unknown as HTMLElement;
+  }
+
+  /** Fleet (#1764): "+" opens a chat running the guided add-a-machine skill the
+   *  host routes on the section's last-posted state; the circular arrow re-reads
+   *  the roster now and re-arms the change watcher. Navigation and reads only —
+   *  the sidebar never writes fleet config or roster rows. */
+  function fleetSectionActions(): SectionAction[] {
+    return [
+      {
+        label: "Add machine to fleet",
+        icon: createPlusIconEl(),
+        onClick: () => vscode.postMessage({ kind: "add-fleet-machine" }),
+      },
+      {
+        label: FLEET_REFRESH_LABEL,
+        icon: createRefreshIconEl(),
+        onMount: (btn) => fleetRefresh.bind(btn),
+        onClick: () => fleetRefresh.click(),
+      },
+    ];
+  }
+
   // ── Development create menu (shared by the "+" icon and the empty-area context menu)
 
   type CreateMenuItem = { label: string; run: () => void } | { separator: true };
@@ -1239,6 +1321,27 @@ function createIconEl(icon: string): HTMLElement {
     }
   }
 
+  /** Append a section's icon actions to its label bar, after the title. The
+   *  header's collapse-toggle and drag guards skip anything inside
+   *  `.section-actions`, so an action click neither collapses nor drags. */
+  function mountSectionActions(header: HTMLElement, actions: SectionAction[]): void {
+    if (actions.length === 0) return;
+    const actionsEl = document.createElement("div");
+    actionsEl.className = "section-actions";
+    for (const action of actions) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "section-action";
+      btn.title = action.label;
+      btn.setAttribute("aria-label", action.label);
+      btn.appendChild(action.icon);
+      btn.addEventListener("click", (e: MouseEvent) => action.onClick(e, btn));
+      action.onMount?.(btn);
+      actionsEl.appendChild(btn);
+    }
+    header.appendChild(actionsEl);
+  }
+
   function renderSectionHeader(
     title: string,
     sectionKey: string,
@@ -1262,21 +1365,7 @@ function createIconEl(icon: string): HTMLElement {
     header.appendChild(chevron);
     header.appendChild(titleEl);
 
-    if (actions.length > 0) {
-      const actionsEl = document.createElement("div");
-      actionsEl.className = "section-actions";
-      for (const action of actions) {
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.className = "section-action";
-        btn.title = action.label;
-        btn.setAttribute("aria-label", action.label);
-        btn.appendChild(action.icon);
-        btn.addEventListener("click", (e: MouseEvent) => action.onClick(e, btn));
-        actionsEl.appendChild(btn);
-      }
-      header.appendChild(actionsEl);
-    }
+    mountSectionActions(header, actions);
 
     const body = document.createElement("div");
     body.className = sectionExpanded[sectionKey] ? "section-body expanded" : "section-body";
@@ -1355,10 +1444,11 @@ function createIconEl(icon: string): HTMLElement {
         treeRoot.appendChild(section);
       } else if (key === "fleet") {
         const { section, body } = renderSectionHeader("Fleet", "fleet");
-        const placeholder = document.createElement("div");
-        placeholder.className = "fleet-placeholder-text";
-        placeholder.textContent = "Coming soon";
-        body.appendChild(placeholder);
+        mountSectionActions(section.querySelector(".tree-section-label") as HTMLElement, fleetSectionActions());
+        body.classList.add("fleet-section-body");
+        // Read-only glanceable fleet section (#1321): render the last-pushed
+        // view-model; the only up-message is the Manage navigation.
+        renderFleetSection(body, lastFleetModel, (m) => vscode.postMessage(m));
         treeRoot.appendChild(section);
       }
     }
@@ -1383,6 +1473,12 @@ function createIconEl(icon: string): HTMLElement {
     // intent and should survive the race too.
     if (pendingActiveProject !== null) {
       applyActiveProject(pendingActiveProject.path, pendingActiveProject.mode);
+    }
+    // #1036: a reveal queued before the roots rendered.
+    if (pendingRevealPath !== null) {
+      const queued = pendingRevealPath;
+      pendingRevealPath = null;
+      startReveal(queued);
     }
   }
 
@@ -2249,6 +2345,148 @@ function createIconEl(icon: string): HTMLElement {
     // session switch. The project row receives the highlight directly.
   }
 
+  // ── Find in sidebar (#1036) ────────────────────────────────────────────────
+  // Reveal an absolute file path: open its section, expand ancestors TOP-DOWN
+  // (a child's DOM only exists once its parent's children rendered, so each level
+  // awaits its `children` round-trip), scroll the row ~3 rows below the top, and
+  // flash a transient highlight. Anything that cannot be found is a silent no-op.
+
+
+  function treeNodeEl(nodePath: string): HTMLElement | null {
+    return (treeRoot?.querySelector(`[data-path="${CSS.escape(nodePath)}"]`) as HTMLElement | null) ?? null;
+  }
+
+  function cancelReveal(): void {
+    if (pendingReveal?.timeout) clearTimeout(pendingReveal.timeout);
+    pendingReveal = null;
+  }
+
+  /** Programmatically open one directory row (same effect as clicking its chevron). */
+  function expandDirectoryNode(dataEl: HTMLElement, nodePath: string): void {
+    expanded[nodePath] = true;
+    saveExpandedState();
+    const chevronSpan = dataEl.querySelector(".chevron") as HTMLElement | null;
+    if (chevronSpan) chevronSpan.classList.add("expanded");
+    const rootInfo = currentRoots.find((r) => r.path === nodePath);
+    // Custom SVG icons (flask, clipboard) are static for research/environment roots (#914).
+    if (rootInfo?.projectType !== "research" && rootInfo?.projectType !== "environment") {
+      const iconSpan = dataEl.querySelector(".icon") as HTMLElement | null;
+      if (iconSpan) {
+        const newIcon = createFolderIconEl(true);
+        if (newIcon) iconSpan.replaceWith(newIcon);
+      }
+    }
+    const childrenEl = dataEl.querySelector(".children") as HTMLElement | null;
+    if (childrenEl) childrenEl.style.display = "block";
+  }
+
+  function scrollParentOf(el: HTMLElement): HTMLElement | null {
+    for (let node = el.parentElement; node; node = node.parentElement) {
+      const overflowY = getComputedStyle(node).overflowY;
+      if ((overflowY === "auto" || overflowY === "scroll") && node.scrollHeight > node.clientHeight) return node;
+    }
+    return null;
+  }
+
+  function flashRevealHighlight(row: HTMLElement): void {
+    // Rapid successive reveals cancel the previous highlight (no stacking / flicker).
+    if (revealHighlightTimer) clearTimeout(revealHighlightTimer);
+    revealHighlightEl?.classList.remove("reveal-highlight");
+    revealHighlightEl = row;
+    row.style.transition = "background-color 0.6s ease-out";
+    row.classList.add("reveal-highlight");
+    revealHighlightTimer = setTimeout(() => {
+      row.classList.remove("reveal-highlight");
+      revealHighlightEl = null;
+      revealHighlightTimer = undefined;
+      setTimeout(() => { row.style.transition = ""; }, 700);
+    }, REVEAL_HIGHLIGHT_MS);
+  }
+
+  function scrollAndFlash(targetEl: HTMLElement, sectionAnimated: boolean): void {
+    const row = (targetEl.querySelector(".tree-node") as HTMLElement | null) ?? targetEl;
+    const run = () => {
+      const scroller = scrollParentOf(row);
+      if (scroller) {
+        const top = row.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+        scroller.scrollTo({ top: revealScrollTop(top, row.offsetHeight || 22), behavior: "smooth" });
+      } else {
+        row.scrollIntoView({ block: "center", behavior: "smooth" });
+      }
+      flashRevealHighlight(row);
+    };
+    // A section that was just opened animates for SECTION_ANIM_MS: scroll past it.
+    if (sectionAnimated) setTimeout(run, SECTION_ANIM_MS + 50);
+    else requestAnimationFrame(run);
+  }
+
+  function advanceReveal(): void {
+    const pending = pendingReveal;
+    if (!pending) return;
+    if (pending.timeout) clearTimeout(pending.timeout);
+    pending.timeout = undefined;
+    pending.awaiting = undefined;
+    // Bounded: each iteration either expands one more ancestor or returns.
+    for (let guard = 0; guard < 128; guard++) {
+      const targetEl = treeNodeEl(pending.path);
+      const action = nextRevealAction({
+        dirs: pending.dirs,
+        expanded: (d) => !!expanded[d],
+        childrenLoaded: (d) => !!childrenCache[d],
+        targetInDom: !!targetEl,
+      });
+      if (action.kind === "expand") {
+        const dirEl = treeNodeEl(action.path);
+        if (!dirEl) { cancelReveal(); return; }
+        expandDirectoryNode(dirEl, action.path);
+        continue;
+      }
+      if (action.kind === "load") {
+        if (!pending.requested.has(action.path)) {
+          pending.requested.add(action.path);
+          vscode.postMessage({ kind: "get-children", path: action.path });
+        }
+        pending.awaiting = action.path;
+        // Children load failed / never arrives: stop expanding (no broken state).
+        pending.timeout = setTimeout(cancelReveal, REVEAL_LOAD_TIMEOUT_MS);
+        return;
+      }
+      if (action.kind === "scroll" && targetEl) {
+        const animated = pending.sectionAnimated;
+        cancelReveal();
+        scrollAndFlash(targetEl, animated);
+      } else {
+        cancelReveal();
+      }
+      return;
+    }
+    cancelReveal();
+  }
+
+  function startReveal(filePath: string): void {
+    cancelReveal();
+    const chain = revealChain(filePath, currentRoots.map((r) => r.path));
+    if (!chain) return; // outside every root: silent no-op
+    // Auto-expand the section that owns the root (Research / Development).
+    const rootInfo = currentRoots.find((r) => r.path === chain.root);
+    const sectionKey = rootInfo?.projectType === "dev" ? "dev" : "research";
+    let sectionAnimated = false;
+    if (!sectionExpanded[sectionKey]) {
+      sectionExpanded[sectionKey] = true;
+      saveSectionState();
+      const section = getAllSections().find((s) => s.dataset.sectionKey === sectionKey);
+      const body = section?.querySelector(".section-body") as HTMLElement | null;
+      if (section && body) {
+        const chevron = section.querySelector(".section-chevron") as HTMLElement | null;
+        if (chevron) chevron.classList.add("expanded");
+        toggleSectionBody(body, true, section);
+        sectionAnimated = true;
+      }
+    }
+    pendingReveal = { path: filePath, dirs: chain.dirs, sectionAnimated, requested: new Set() };
+    advanceReveal();
+  }
+
   // ── Host → Webview messages ────────────────────────────────────────────────
 
   window.addEventListener("message", (event) => {
@@ -2312,6 +2550,12 @@ function createIconEl(icon: string): HTMLElement {
             activeInlineEdit.input.focus();
           }
         }
+        // #1036: the level a pending reveal was waiting on has rendered — continue
+        // top-down; an empty / failed load cannot contain the target, so stop.
+        if (pendingReveal && pendingReveal.awaiting === msg.path) {
+          if (childrenCache[msg.path]) advanceReveal();
+          else cancelReveal();
+        }
         break;
       }
 
@@ -2354,6 +2598,15 @@ function createIconEl(icon: string): HTMLElement {
         break;
       }
 
+      case "reveal-file": {
+        if (typeof msg.path === "string" && msg.path !== "") {
+          // Roots may not have rendered yet (sidebar just opened): retry once they do.
+          if (currentRoots.length === 0) pendingRevealPath = msg.path;
+          else startReveal(msg.path);
+        }
+        break;
+      }
+
       case "git-status": {
         // Reactive git coloring: cache + apply.
         lastGitStatusMap = msg.statusMap ?? {};
@@ -2386,6 +2639,20 @@ function createIconEl(icon: string): HTMLElement {
         for (const dir of orphanedDirs) {
           delete childrenCache[dir];
           vscode.postMessage({ kind: "get-children", path: dir });
+        }
+        break;
+      }
+
+      case "fleet-status": {
+        // #1321 — the host pushed a fresh read-only fleet view-model. Cache it
+        // (so a later renderRoots re-render keeps it) and re-render the fleet
+        // section body in place if it is mounted. No manual reload needed —
+        // this fires on every posture-change.
+        if (msg.model) lastFleetModel = msg.model as FleetSectionModel;
+        fleetRefresh.sectionUpdated();
+        const fleetBody = treeRoot?.querySelector(".fleet-section-body") as HTMLElement | null;
+        if (fleetBody) {
+          renderFleetSection(fleetBody, lastFleetModel, (m) => vscode.postMessage(m));
         }
         break;
       }

@@ -1,26 +1,16 @@
-// AMICODE: ConnectionIcon — 18px logo + 6px state-dot badge (issue #327)
+// AMICODE: ConnectionIcon — 18px logo + 6px activity-dot badge (issue #327)
 import { Show } from "solid-js"
 import { cardModel } from "./connections"
 import type { ConnectionView } from "./connections"
+import { connectionActivity } from "./activity"
+import { ActivityDot } from "./activity-dot"
 
-export function ConnectionIcon(props: { conn: ConnectionView }) {
+export function ConnectionIcon(props: { conn: ConnectionView; label?: string }) {
   const model = () => cardModel(props.conn)
-  const tone = () => model().tone
 
-  const dotClass = () => {
-    switch (tone()) {
-      case "success":
-        return "bg-icon-success-base"
-      case "critical":
-        return "bg-icon-critical-base"
-      case "warning":
-        return "bg-icon-warning-base"
-      case "pending":
-        return "bg-icon-warning-base animate-pulse"
-      default:
-        return "bg-border-weak-base"
-    }
-  }
+  // pending → running, expired/unreachable/drift → attention, connected →
+  // success, invalid/unentitled → error, needs-key → idle
+  const activity = () => connectionActivity(model())
 
   const isSvg = () => Boolean(props.conn.icon && props.conn.icon.trim().startsWith("<svg"))
   const letter = () => {
@@ -39,7 +29,9 @@ export function ConnectionIcon(props: { conn: ConnectionView }) {
           <span class="w-[18px] h-[18px] flex items-center justify-center [&>svg]:w-[18px] [&>svg]:h-[18px] [&>svg]:rounded-sm" innerHTML={props.conn.icon ?? ""} />
         </Show>
       </div>
-      <div class={`absolute -bottom-0.5 -right-0.5 size-[6px] rounded-full border border-surface-base ${dotClass()}`} />
+      <span class="absolute -bottom-0.5 -right-0.5 flex rounded-full border border-surface-base">
+        <ActivityDot activity={activity()} label={props.label ?? model().state} class="size-[6px]" />
+      </span>
     </div>
   )
 }

@@ -140,21 +140,21 @@ describe("naming records — six locked terms in the amicode glossary", () => {
 });
 
 // #807 (#809 fold) — the public workflow skill surface joins the naming
-// discipline: the five dev-workflow skills + the develop mode-protocol skill
-// are now user-facing product content (surface: public, in-repo canonical
-// copies), so the same locked vocabulary governs them. The pin reads the
-// fixture of record (protocol-blocklist.json) — never a private copy of the
-// strings — and the full content-lens guard (internal path shapes, recipe
-// prose) lives in workflow_skills_public.test.ts beside the skills.
+// discipline: the five dev-workflow skills (the develop mode protocol merged
+// into the `develop` skill — one skill per mode, mirroring research) are now
+// user-facing product content (surface: public, in-repo canonical copies),
+// so the same locked vocabulary governs them. The pin reads the fixture of
+// record (protocol-blocklist.json) — never a private copy of the strings —
+// and the full content-lens guard (internal path shapes, recipe prose) lives
+// in workflow_skills_public.test.ts beside the skills.
 describe("naming records — the public workflow skills carry open-protocol vocabulary (#807)", () => {
   const SKILLS_DIR = join(__dirname, "..", "skills");
   const PUBLIC_WORKFLOW_SKILLS = [
     "director-core",
-    "develop",
+    "develop", // the merged mode skill — protocol + issue-DAG walk, ex-autodev id read-resolves to it
     "implement-issue",
     "write-an-issue",
     "break-into-subissues",
-    "autodev", // the develop mode's protocol skill — id retained at the #858 rename
     "sota-review", // #820 — the public SOTA survey skill joins the naming discipline
   ];
   const blocklist = JSON.parse(readFileSync(BLOCKLIST_PATH, "utf8")) as {

@@ -181,6 +181,83 @@ describe("bootstrapDirectory", () => {
 
     expect(store.status).toBe("complete")
   })
+
+  // #1753: the list-pull render path — open/reload must still surface pending
+  // cards even when the live stream never delivered (or missed) the events.
+  // bootstrapDirectory pulls /question + /permission and reconciles them into
+  // the SHARED session store (the store the composer's card reads), including
+  // the stale-card cleanup for sessions whose directory matches but that no
+  // longer hold a pending request.
+  test("seeds pending question and permission cards into the session store and clears stale ones", async () => {
+    const [store, setStore] = directoryState()
+    // A real solid store: bootstrapDirectory wraps seeded values in
+    // solid's reconcile(), which only a solid setter unwraps — a plain
+    // assignment mock would store the reconcile wrapper itself.
+    const [sessionData, setSessionData] = createStore<{
+      question: Record<string, unknown[]>
+      permission: Record<string, unknown[]>
+    }>({
+      question: { ses_stale: [{ id: "que_stale", sessionID: "ses_stale", questions: [] }] },
+      permission: { ses_stale: [{ id: "per_stale", sessionID: "ses_stale", permission: "edit" }] },
+    })
+    const session = {
+      data: sessionData,
+      set(prop: "question" | "permission", sessionID: string, value: unknown[]) {
+        setSessionData(prop, sessionID, value as never)
+      },
+      get(sessionID: string) {
+        return { id: sessionID, directory: "/project" }
+      },
+      resolve: async (sessionID: string) => ({ id: sessionID, directory: "/project" }),
+    }
+
+    await bootstrapDirectory({
+      directory: "/project",
+      scope: ServerScope.local,
+      mcp: false,
+      global: {
+        config: {} satisfies Config,
+        path: { state: "", config: "", worktree: "/project", directory: "/project", home: "/home" },
+        project: [{ id: "project", worktree: "/project" } as Project],
+        provider,
+      },
+      sdk: {
+        config: { get: async () => ({ data: {} }) },
+        question: {
+          list: async () => ({
+            data: [
+              {
+                id: "que_live",
+                sessionID: "ses_q",
+                questions: [{ header: "h", question: "q?", options: [{ label: "a", description: "" }] }],
+              },
+            ],
+          }),
+        },
+        permission: {
+          list: async () => ({
+            data: [{ id: "per_live", sessionID: "ses_p", permission: "edit", patterns: ["*"], metadata: {}, always: [] }],
+          }),
+        },
+      } as unknown as OpencodeClient,
+      api,
+      store,
+      setStore,
+      session: session as unknown as Parameters<typeof bootstrapDirectory>[0]["session"],
+      vcsCache: { setStore() {} } as unknown as VcsCache,
+      loadSessions() {},
+      translate: (key) => key,
+      queryClient: new QueryClient(),
+      protocol: Promise.resolve("v1"),
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 150))
+
+    expect((session.data.question as Record<string, { id: string }[]>).ses_q?.map((x) => x.id)).toEqual(["que_live"])
+    expect((session.data.permission as Record<string, { id: string }[]>).ses_p?.map((x) => x.id)).toEqual(["per_live"])
+    expect((session.data.question as Record<string, unknown[]>).ses_stale).toEqual([])
+    expect((session.data.permission as Record<string, unknown[]>).ses_stale).toEqual([])
+  })
 })
 
 describe("config queries", () => {

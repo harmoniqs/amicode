@@ -2,34 +2,43 @@ import { describe, expect, test } from "bun:test"
 import {
   hasNonBlockingServiceIssue,
   hasServiceNeedingAttention,
-  serverStatusDotClass,
+  serverStatusActivity,
+  serverStatusLabel,
 } from "./status-popover-indicator"
 
-describe("serverStatusDotClass", () => {
-  test("uses the success token while the server and services are healthy", () => {
-    expect(serverStatusDotClass({ ready: true, serverHealth: true, issue: false })).toBe("bg-icon-success-base")
+describe("serverStatusActivity", () => {
+  test("success while the server and services are healthy", () => {
+    expect(serverStatusActivity({ ready: true, serverHealth: true, issue: false })).toBe("success")
   })
 
-  test("uses the session attention token when a service needs attention", () => {
-    expect(serverStatusDotClass({ ready: true, serverHealth: true, attention: true, issue: true })).toBe(
-      // a bare yellow fill is 1.07:1 on the light ground, so the ink ring is what
-      // makes the highest-urgency state visible at all
-      "bg-v2-background-bg-accent ring-1 ring-[var(--accent-edge-ink)]",
+  test("attention (amber, never yellow) when a service needs the user", () => {
+    expect(serverStatusActivity({ ready: true, serverHealth: true, attention: true, issue: true })).toBe("attention")
+  })
+
+  test("attention for non-blocking service issues while the server is online", () => {
+    expect(serverStatusActivity({ ready: true, serverHealth: true, issue: true })).toBe("attention")
+  })
+
+  test("error only after the server connection drops", () => {
+    expect(serverStatusActivity({ ready: true, serverHealth: false, issue: false })).toBe("error")
+    expect(serverStatusActivity({ ready: true, serverHealth: false, issue: true })).toBe("error")
+  })
+
+  test("running (pending) before status is ready", () => {
+    expect(serverStatusActivity({ ready: false, serverHealth: true, issue: false })).toBe("running")
+    expect(serverStatusActivity({ ready: false, serverHealth: undefined, issue: false })).toBe("running")
+  })
+})
+
+describe("serverStatusLabel", () => {
+  test("every activity carries a distinct accessible label", () => {
+    const labels = (["idle", "running", "attention", "success", "error"] as const).map((activity) =>
+      serverStatusLabel({ activity, attention: false }),
     )
-  })
-
-  test("uses the warning token for non-blocking issues while the server is online", () => {
-    expect(serverStatusDotClass({ ready: true, serverHealth: true, issue: true })).toBe("bg-icon-warning-base")
-  })
-
-  test("uses the critical token only after the server connection drops", () => {
-    expect(serverStatusDotClass({ ready: true, serverHealth: false, issue: false })).toBe("bg-icon-critical-base")
-    expect(serverStatusDotClass({ ready: true, serverHealth: false, issue: true })).toBe("bg-icon-critical-base")
-  })
-
-  test("stays neutral before status is ready", () => {
-    expect(serverStatusDotClass({ ready: false, serverHealth: true, issue: false })).toBe("bg-border-weak-base")
-    expect(serverStatusDotClass({ ready: false, serverHealth: undefined, issue: false })).toBe("bg-border-weak-base")
+    expect(new Set(labels).size).toBe(labels.length)
+    expect(serverStatusLabel({ activity: "attention", attention: true })).not.toBe(
+      serverStatusLabel({ activity: "attention", attention: false }),
+    )
   })
 })
 

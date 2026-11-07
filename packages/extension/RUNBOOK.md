@@ -16,7 +16,7 @@ the dominant cost is the first Julia precompile.
 
 - `✗ julia+project` → re-run `install.sh`; check `julia --version`.
 - `✗ opencode /event` → `pnpm --filter amicode fetch:opencode`; re-run.
-- `✗ amico-run` → `pnpm -r build` (stages `bin/`) or reinstall the VSIX.
+- `✗ amico CLI` → `pnpm -r build` (stages `bin/`) or reinstall the VSIX.
 - `✗ LLM creds: LLM creds not configured (opencode resolves no provider)` → give opencode a provider credential (step 4: env key / `~/.config/opencode` / `opencode auth login`), then re-run.
 - `✗ LLM creds: opencode model provider "X" has no resolved credentials` → set creds for that provider, or point the opencode model at one that resolves (step 4).
 

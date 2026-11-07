@@ -1,0 +1,2 @@
+# fixture known-fail list
+fx::test/a.test.ts::math > is broken | issue:#100

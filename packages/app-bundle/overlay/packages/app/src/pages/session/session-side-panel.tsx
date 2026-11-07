@@ -95,6 +95,7 @@ import { setSessionHandoff } from "@/pages/session/handoff"
 import { useSessionLayout } from "@/pages/session/session-layout"
 import { floorPanelColumnWidth, WORK_COLUMN_WIDTH_MIN } from "@/pages/session/session-panel-width"
 import { SessionFileBrowserTab, type SessionFileBrowserState } from "@/pages/session/v2/session-file-browser-tab"
+import { FleetManagerContent } from "@/pages/session/fleet-manager-tab"
 
 type PulseInspectorStage = "optimization" | "calibration" | "compilation"
 
@@ -382,9 +383,13 @@ export function SessionSidePanel(props: {
 
   // ── Preview companion state ──────────────────────────────────────────────
   // The file to show in the Preview tab. Null = empty state ("Select a file
-  // from the sidebar"). Managed in the layout context's ephemeral store so
-  // the bridge message handler can set it from outside the side panel.
+  // from the sidebar"). Managed in the layout context's persisted session-view
+  // store (previewActive + previewPaths) so the bridge message handler can set
+  // it from outside the side panel AND it survives reloads.
   const previewFile = createMemo(() => view().previewFile.get())
+  const previewPaths = createMemo(() => view().previewPaths.get())
+  const setPreviewPaths = (paths: string[]) => view().previewPaths.set(paths)
+  const setPreviewActive = (path: string | null) => view().previewFile.set(path)
 
   createEffect(
     on(previewFile, (path) => {
@@ -462,6 +467,21 @@ export function SessionSidePanel(props: {
   const contextOpen = tabState.contextOpen
   const previewOpen = tabState.previewOpen
   const pulseInspectorOpen = tabState.pulseInspectorOpen
+  const fleetManagerOpen = tabState.fleetManagerOpen
+  // Bridge listener: open the fleet manager tab when the extension broadcasts
+  // the open-fleet-manager message. This runs at the panel level so the tab
+  // activates even when FleetManagerContent is not yet mounted.
+  if (typeof window !== "undefined") {
+    const onFleetBridge = (e: MessageEvent) => {
+      const d = e.data as { source?: string; kind?: string }
+      if (d?.source !== "amicode" || d.kind !== "open-fleet-manager") return
+      tabs().open("fleetManager")
+      tabs().setActive("fleetManager")
+      openReviewPanel()
+    }
+    window.addEventListener("message", onFleetBridge)
+    onCleanup(() => window.removeEventListener("message", onFleetBridge))
+  }
   const openFileOpen = tabState.openFileOpen
   const panelTabs = tabState.panelTabs
   const openedTabs = tabState.openedTabs
@@ -476,6 +496,7 @@ export function SessionSidePanel(props: {
     if (tab === "review") return reviewTab() && props.canReview() && reviewTabOpen()
     if (tab === "context") return contextOpen()
     if (tab === "pulseInspector") return pulseInspectorOpen()
+    if (tab === "fleetManager") return fleetManagerOpen()
     return previewOpen()
   }
 
@@ -565,6 +586,14 @@ export function SessionSidePanel(props: {
       available: () => true,
       active: () => activeTab() === "pulseInspector",
       group: "Quantum",
+    },
+    {
+      id: "fleetManager",
+      label: "Fleet Manager",
+      icon: "server",
+      available: () => true,
+      active: () => activeTab() === "fleetManager",
+      group: "Fleet",
     },
     {
       id: SESSION_PREVIEW_TAB,
@@ -732,6 +761,7 @@ export function SessionSidePanel(props: {
                                 <Tabs.Trigger
                                   value="review"
                                   id={reviewTabID}
+                                  data-tour-target="files-changed"
                                   style={{ order: layout.sidePanelTabs.order().indexOf("review") }}
                                   aria-controls={activeTab() === "review" ? reviewTabPanelID : undefined}
                                 >
@@ -817,12 +847,46 @@ export function SessionSidePanel(props: {
                               </div>
                               <div
                                 style={{
+                                  display: fleetManagerOpen() ? undefined : "none",
+                                  order: layout.sidePanelTabs.order().indexOf("fleetManager"),
+                                }}
+                              >
+                                <Tabs.Trigger
+                                  value="fleetManager"
+                                  closeButton={
+                                    <TooltipKeybind
+                                      title={language.t("common.closeTab")}
+                                      keybind={command.keybind("tab.close")}
+                                      placement="bottom"
+                                      gutter={10}
+                                    >
+                                      <IconButton
+                                        icon="close-small"
+                                        variant="ghost"
+                                        class="h-5 w-5"
+                                        onClick={() => tabs().close("fleetManager")}
+                                        aria-label={language.t("common.closeTab")}
+                                      />
+                                    </TooltipKeybind>
+                                  }
+                                  hideCloseButton
+                                  onMiddleClick={() => tabs().close("fleetManager")}
+                                >
+                                  <div class="flex items-center gap-1.5">
+                                    <Icon name="server" size="small" />
+                                    <div>Fleet Manager</div>
+                                  </div>
+                                </Tabs.Trigger>
+                              </div>
+                              <div
+                                style={{
                                   display: previewOpen() ? undefined : "none",
                                   order: layout.sidePanelTabs.order().indexOf(SESSION_PREVIEW_TAB),
                                 }}
                               >
                                 <Tabs.Trigger
                                   value={SESSION_PREVIEW_TAB}
+                                  data-tour-target="preview-tab"
                                   closeButton={
                                     <TooltipKeybind
                                       title={language.t("common.closeTab")}
@@ -932,6 +996,15 @@ export function SessionSidePanel(props: {
                             </Tabs.Content>
                           </Show>
 
+                          <Show when={activeTab() === "fleetManager"}>
+                            <Tabs.Content
+                              value="fleetManager"
+                              class="flex flex-col h-full overflow-hidden contain-strict"
+                            >
+                              <FleetManagerContent />
+                            </Tabs.Content>
+                          </Show>
+
                           <Tabs.Content
                             value={SESSION_PREVIEW_TAB}
                             forceMount
@@ -940,7 +1013,14 @@ export function SessionSidePanel(props: {
                             inert={activeTab() !== SESSION_PREVIEW_TAB}
                           >
                             <div class="relative flex-1 min-h-0 overflow-hidden">
-                              <SessionPreviewTab previewFile={previewFile} panelVisible={() => activeTab() === SESSION_PREVIEW_TAB} />
+                              {/* #1249: one Preview per session — the route instance is shared across session tabs, so
+                                  key it or one session's open files and unsaved drafts carry into the next. Drafts live in
+                                  the per-(session, path) store and come back with the session. */}
+                              <Show when={params.id ?? "none"} keyed>
+                                {(_session) => (
+                                  <SessionPreviewTab previewFile={previewFile} panelVisible={() => activeTab() === SESSION_PREVIEW_TAB} openPaths={previewPaths} onOpenedPathsChange={setPreviewPaths} onActiveChange={setPreviewActive} hydrated={layout.ready} sessionID={() => params.id} />
+                                )}
+                              </Show>
                             </div>
                           </Tabs.Content>
 
@@ -1021,6 +1101,7 @@ export function SessionSidePanel(props: {
                                       <Tabs.Trigger
                                         value="review"
                                         id={reviewTabID}
+                                        data-tour-target="files-changed"
                                         aria-controls={activeTab() === "review" ? reviewTabPanelID : undefined}
                                         closeButton={
                                           <TooltipV2
@@ -1124,9 +1205,44 @@ export function SessionSidePanel(props: {
                                         </div>
                                       </Tabs.Trigger>
                                     </Match>
+                                    <Match when={tab === "fleetManager"}>
+                                      <Tabs.Trigger
+                                        value="fleetManager"
+                                        closeButton={
+                                          <TooltipV2
+                                            value={
+                                              <>
+                                                {language.t("common.closeTab")}
+                                                <Show when={closeTabKeybind().length > 0}>
+                                                  <KeybindV2 keys={closeTabKeybind()} variant="neutral" />
+                                                </Show>
+                                              </>
+                                            }
+                                            placement="bottom"
+                                            gutter={10}
+                                          >
+                                            <IconButton
+                                              icon="close-small"
+                                              variant="ghost"
+                                              class="h-5 w-5"
+                                              onClick={() => tabs().close("fleetManager")}
+                                              aria-label={language.t("common.closeTab")}
+                                            />
+                                          </TooltipV2>
+                                        }
+                                        hideCloseButton
+                                        onMiddleClick={() => tabs().close("fleetManager")}
+                                      >
+                                        <div class="flex items-center gap-1.5">
+                                          <Icon name="server" size="small" />
+                                          <div>Fleet Manager</div>
+                                        </div>
+                                      </Tabs.Trigger>
+                                    </Match>
                                     <Match when={tab === SESSION_PREVIEW_TAB}>
                                       <Tabs.Trigger
                                         value={SESSION_PREVIEW_TAB}
+                                        data-tour-target="preview-tab"
                                         closeButton={
                                           <TooltipV2
                                             value={
@@ -1279,6 +1395,15 @@ export function SessionSidePanel(props: {
                         </Tabs.Content>
                       </Show>
 
+                      <Show when={activeTab() === "fleetManager"}>
+                        <Tabs.Content
+                          value="fleetManager"
+                          class="flex flex-col h-full overflow-hidden contain-strict"
+                        >
+                          <FleetManagerContent />
+                        </Tabs.Content>
+                      </Show>
+
                       <Tabs.Content
                         value={SESSION_PREVIEW_TAB}
                         forceMount
@@ -1287,7 +1412,14 @@ export function SessionSidePanel(props: {
                         inert={activeTab() !== SESSION_PREVIEW_TAB}
                       >
                         <div class="relative flex-1 min-h-0 overflow-hidden">
-                          <SessionPreviewTab previewFile={previewFile} panelVisible={() => activeTab() === SESSION_PREVIEW_TAB} />
+                          {/* #1249: one Preview per session — the route instance is shared across session tabs, so
+                              key it or one session's open files and unsaved drafts carry into the next. Drafts live in
+                              the per-(session, path) store and come back with the session. */}
+                          <Show when={params.id ?? "none"} keyed>
+                            {(_session) => (
+                              <SessionPreviewTab previewFile={previewFile} panelVisible={() => activeTab() === SESSION_PREVIEW_TAB} openPaths={previewPaths} onOpenedPathsChange={setPreviewPaths} onActiveChange={setPreviewActive} hydrated={layout.ready} sessionID={() => params.id} />
+                            )}
+                          </Show>
                         </div>
                       </Tabs.Content>
 
@@ -1321,6 +1453,7 @@ export function SessionSidePanel(props: {
             <Show when={fileOpen()}>
               <div
                 id="file-tree-panel"
+                data-tour-target="file-tree"
                 class="relative min-w-0 h-full shrink-0 overflow-hidden"
                 classList={{
                   "transition-[width] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] will-change-[width] motion-reduce:transition-none":

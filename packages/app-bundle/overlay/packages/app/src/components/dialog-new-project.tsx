@@ -76,7 +76,7 @@ export function DialogNewProject(props: {
 
         <Show when={error()}>
           <div class="flex items-center gap-2" role="alert" aria-live="polite" data-slot="new-project-error">
-            <div class="size-1.5 rounded-full shrink-0 bg-icon-critical-base" />
+            <div aria-hidden="true" class="size-1.5 rounded-full shrink-0 bg-[var(--activity-error)]" />
             <span class="text-12-regular text-text-weak">{error()}</span>
           </div>
         </Show>

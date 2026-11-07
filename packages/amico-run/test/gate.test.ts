@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runGate } from "../src/gate.js";
 import { maskedHash } from "../src/baseline.js";
-import type { AuthoringConfig } from "../src/authoring.js";
+import { DEFAULT_SUPPORT, type AuthoringConfig } from "../src/authoring.js";
 
 let dir: string;
 beforeEach(() => {
@@ -178,5 +178,15 @@ describe("runGate", () => {
     const v1 = { schema_version: "1", script_path: "/s.jl", lab_id: "default" };
     expect(runGate(v1, "using Piccolo\n", authoring()).ok).toBe(true);
     expect(runGate(v1, "using Zygote\n", authoring()).ok).toBe(false);
+  });
+
+  // #1676: the vetted templates' default arm carries `import MadNLP` (the raw
+  // user-callback channel for AMICODE_ITER's state columns). The gate's support
+  // set must admit it — it IS a package the run-dir contract requires.
+  it("the default support set admits the templates' `import MadNLP` (and still rejects the rest)", () => {
+    const v1 = { schema_version: "1", script_path: "/s.jl", lab_id: "default" };
+    const withDefaults = { ...authoring(), support_set: DEFAULT_SUPPORT };
+    expect(runGate(v1, "using Piccolo\nimport MadNLP\n", withDefaults).ok).toBe(true);
+    expect(runGate(v1, "using Zygote\n", withDefaults).ok).toBe(false);
   });
 });

@@ -3,7 +3,7 @@ import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { Database } from "@opencode-ai/core/database/database"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { SessionProjector } from "@opencode-ai/core/session/projector"
-import { Deferred, Effect, Exit, Fiber, Layer } from "effect"
+import { Cause, Deferred, Effect, Exit, Fiber, Layer } from "effect"
 import { Agent } from "../../src/agent/agent"
 import { BackgroundJob } from "@/background/job"
 import { EventV2Bridge } from "@/event-v2-bridge"
@@ -17,6 +17,7 @@ import { SessionRunState } from "@/session/run-state"
 import { SessionStatus } from "@/session/status"
 
 import { TaskTool, type TaskPromptOps } from "../../src/tool/task"
+import { ExhaustedReceipt } from "../../src/session/exhausted-receipt"
 import { Truncate } from "@/tool/truncate"
 import { ToolRegistry } from "@/tool/registry"
 import { RuntimeFlags } from "@/effect/runtime-flags"
@@ -214,6 +215,115 @@ describe("tool.task", () => {
         },
       },
     },
+  )
+
+  // #1849: the child's last turn died on a provider 429 — the parent must get
+  // a failure naming the resumable session, not an empty "completed".
+  it.instance("execute reports an errored child as a failure carrying its task_id", () =>
+    Effect.gen(function* () {
+      const { chat, assistant } = yield* seed()
+      const tool = yield* TaskTool
+      const def = yield* tool.init()
+      const promptOps: TaskPromptOps = {
+        ...stubOps(),
+        prompt: (input) =>
+          Effect.sync(() => {
+            const out = reply(input, "partial analysis")
+            return {
+              ...out,
+              info: {
+                ...out.info,
+                finish: undefined,
+                error: new SessionV1.APIError({
+                  message: "Too Many Requests: Too Many Requests",
+                  statusCode: 429,
+                  isRetryable: true,
+                }).toObject(),
+              } as SessionV1.WithParts["info"],
+            }
+          }),
+      }
+
+      const exit = yield* Effect.exit(
+        def.execute(
+          { description: "analyze artifacts", prompt: "analyze", subagent_type: "general" },
+          {
+            sessionID: chat.id,
+            messageID: assistant.id,
+            agent: "build",
+            abort: new AbortController().signal,
+            extra: { promptOps },
+            messages: [],
+            metadata: () => Effect.void,
+            ask: () => Effect.void,
+          },
+        ),
+      )
+
+      expect(Exit.isFailure(exit)).toBe(true)
+      const sessions = yield* Session.Service
+      const kids = yield* sessions.children(chat.id)
+      expect(kids).toHaveLength(1)
+      const text = Exit.isFailure(exit) ? String(Cause.squash(exit.cause)) : ""
+      expect(text).toContain("Too Many Requests")
+      expect(text).toContain(`task_id="${kids[0]!.id}"`)
+      expect(text).toContain("partial analysis")
+    }),
+  )
+
+  // #1905: the step-limit turn itself errored — the failure still carries the
+  // engine-emitted receipt (with last_error) alongside the resumable task_id.
+  it.instance("execute attaches the EXHAUSTED receipt to an errored step-limited child", () =>
+    Effect.gen(function* () {
+      const { chat, assistant } = yield* seed()
+      const tool = yield* TaskTool
+      const def = yield* tool.init()
+      const promptOps: TaskPromptOps = {
+        ...stubOps(),
+        prompt: (input) =>
+          Effect.sync(() => {
+            const out = reply(input, "")
+            ExhaustedReceipt.mark(out.info.id, 3)
+            return {
+              ...out,
+              info: {
+                ...out.info,
+                finish: undefined,
+                error: new SessionV1.APIError({ message: "Overloaded", isRetryable: true }).toObject(),
+              } as SessionV1.WithParts["info"],
+            }
+          }),
+      }
+
+      const exit = yield* Effect.exit(
+        def.execute(
+          { description: "analyze artifacts", prompt: "analyze", subagent_type: "general" },
+          {
+            sessionID: chat.id,
+            messageID: assistant.id,
+            agent: "build",
+            abort: new AbortController().signal,
+            extra: { promptOps },
+            messages: [],
+            metadata: () => Effect.void,
+            ask: () => Effect.void,
+          },
+        ),
+      )
+
+      expect(Exit.isFailure(exit)).toBe(true)
+      const sessions = yield* Session.Service
+      const kids = yield* sessions.children(chat.id)
+      const text = Exit.isFailure(exit) ? String(Cause.squash(exit.cause)) : ""
+      expect(text).toContain(`task_id="${kids[0]!.id}"`)
+      expect(ExhaustedReceipt.parse(text)).toEqual({
+        exhausted: true,
+        steps: 3,
+        files_touched: [],
+        last_error: "APIError: Overloaded",
+        task_id: kids[0]!.id,
+      })
+    }),
   )
 
   it.instance("execute resumes an existing task session from task_id", () =>

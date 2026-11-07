@@ -105,6 +105,99 @@ export function resolveHarness(id: string): HarnessDescriptor | undefined {
   return HARNESS_REGISTRY.find((d) => d.id === id);
 }
 
+// ============================================================================
+// #1549 — the harness switcher in the chat box. The palette command and the
+// composer control are TWO FRONTS on this ONE registry: both render from
+// harnessMenu's serialization and both consult decideHarnessSwitch before
+// anything persists or restarts. The entitlement read-side gate lives at this
+// layer (disabled with its reason) — never a hidden failure at spawn time.
+// ============================================================================
+
+export interface HarnessMenuItem {
+  id: HarnessId;
+  displayName: string;
+  state: "ready" | "needs-setup";
+  detail: string;
+  disabled: boolean;
+  /** Present exactly when disabled — the honest why, value-free copy. */
+  reason?: string;
+}
+
+export interface HarnessMenu {
+  current: HarnessId;
+  options: HarnessMenuItem[];
+}
+
+const UNENTITLED_DETAIL = (entitlement: string) =>
+  `Requires the \`${entitlement}\` entitlement — this build's subscription gate hasn't granted it.`;
+
+/** harnessMenu — the ONE serialization of the registry both fronts render.
+ *  An unset or unknown current displays as the opencode default, matching the
+ *  default resolveSelectedLaunch serves. Blocking precedence: the entitlement
+ *  first (configuring a binary is pointless without the grant), then
+ *  availability detail. */
+export function harnessMenu(input: {
+  current: string;
+  entitlements: string[];
+  settingsBag: { opencodeBinary: string; telaioBinary: string; telaioAppDir: string };
+}): HarnessMenu {
+  const current = (resolveHarness(input.current) ?? opencodeDescriptor).id;
+  const options = HARNESS_REGISTRY.map((descriptor): HarnessMenuItem => {
+    const avail = descriptor.availability(input.settingsBag);
+    const unentitled =
+      descriptor.requiredEntitlement !== undefined && !input.entitlements.includes(descriptor.requiredEntitlement);
+    const disabled = unentitled || avail.state === "needs-setup";
+    const reason = unentitled
+      ? UNENTITLED_DETAIL(descriptor.requiredEntitlement!)
+      : avail.state === "needs-setup"
+        ? avail.detail
+        : undefined;
+    return {
+      id: descriptor.id,
+      displayName: descriptor.displayName,
+      state: avail.state,
+      detail: avail.detail,
+      disabled,
+      ...(reason !== undefined ? { reason } : {}),
+    };
+  });
+  return { current, options };
+}
+
+export interface HarnessSwitchDecision {
+  allowed: boolean;
+  /** true when the requested harness is already the current one — the caller
+   *  pokes no restart for a no-op (the solver-mode watcher discipline). */
+  noop: boolean;
+  /** Present exactly when blocked — the honest why. */
+  reason?: string;
+}
+
+/** decideHarnessSwitch — the ONE gate both fronts consult before persisting
+ *  or restarting. Unknown ids are blocked here (a stale or hand-edited client
+ *  cannot poke the watcher into a fallback restart); needs-setup and
+ *  unentitled targets are blocked with their reason. */
+export function decideHarnessSwitch(input: {
+  requested: string;
+  current: string;
+  entitlements: string[];
+  settingsBag: { opencodeBinary: string; telaioBinary: string; telaioAppDir: string };
+}): HarnessSwitchDecision {
+  const requested = resolveHarness(input.requested === "" ? "opencode" : input.requested);
+  if (requested === undefined) {
+    return { allowed: false, noop: false, reason: `Unknown harness "${input.requested}" — pick one from the registry.` };
+  }
+  const current = (resolveHarness(input.current === "" ? "opencode" : input.current) ?? opencodeDescriptor).id;
+  if (requested.id === current) return { allowed: true, noop: true };
+  const item = harnessMenu({
+    current,
+    entitlements: input.entitlements,
+    settingsBag: input.settingsBag,
+  }).options.find((o) => o.id === requested.id);
+  if (item?.disabled) return { allowed: false, noop: false, reason: item.reason };
+  return { allowed: true, noop: false };
+}
+
 export interface SelectedLaunch {
   descriptor: HarnessDescriptor;
   binary: string;

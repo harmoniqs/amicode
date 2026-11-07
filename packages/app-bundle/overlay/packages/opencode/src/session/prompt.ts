@@ -19,6 +19,7 @@ import { SystemPrompt } from "./system"
 import { Instruction } from "./instruction"
 import { Plugin } from "../plugin"
 import { MAX_STEPS_PROMPT } from "@opencode-ai/core/session/runner/max-steps"
+import { ExhaustedReceipt } from "./exhausted-receipt"
 import { ToolRegistry } from "@/tool/registry"
 import { MCP } from "../mcp"
 import { LSP } from "@/lsp/lsp"
@@ -1372,6 +1373,9 @@ const layer = Layer.effect(
             sessionID,
           }
           yield* sessions.updateMessage(msg)
+          // #1905: the step limit forced this turn — mark it so the task tool
+          // can hand the parent an engine-emitted EXHAUSTED receipt.
+          if (isLastStep) ExhaustedReceipt.mark(msg.id, step)
 
           const finalizeInterruptedAssistant = Effect.gen(function* () {
             if (msg.time.completed) return

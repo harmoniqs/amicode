@@ -11,5 +11,8 @@
     "sync:fix": "bash scripts/repo-sync.sh --fix",
     "sync:fork": "bash scripts/repo-sync.sh --fork"
   },
-  "packageManager": "pnpm@9.15.9"
+  "packageManager": "pnpm@9.15.9",
+  "workspaces": [
+    "packages/*"
+  ]
 }

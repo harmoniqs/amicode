@@ -20,10 +20,11 @@
 // The driver is the python3 stdlib sqlite3 bridge (src/sqlite_bridge.ts) —
 // NOT node:sqlite, which does not exist on the repo's CI node (20.x). See the
 // bridge module header for the full rationale.
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
+  amicodeOpsDir,
   readArchiveDays,
   readAutoArchiveHours,
   renderSessionIndex,
@@ -32,7 +33,9 @@ import {
   writeAutoArchiveHours,
   type IndexSession,
 } from "./session_retention.js";
-import { classifySession, type SessionFeatures } from "./session_junk.js";
+import { classifySession, isGreetingTitle, type SessionFeatures } from "./session_junk.js";
+import { jevArchiveAdmits, jevJunkResidual, jevThreadNouls, type JevPassStatus, type NoulCandidate, type ResidualSession, type ResidualVerdict } from "./jev_curation.js";
+import { jevDisabled } from "./jev_client.js";
 import { sqliteBatch, type BridgeStatement } from "./sqlite_bridge.js";
 import type { VerbResult } from "./verbs.js";
 
@@ -192,7 +195,17 @@ const AUTOARCHIVE_FEATURES_SQL = `
   WHERE s.time_archived IS NULL AND s.time_updated < ?
   ORDER BY s.time_updated DESC, s.id`;
 
-function sessionsAutoarchive(argv: string[], env: NodeJS.ProcessEnv): VerbResult {
+// ── autoarchive (#1304 + #1311): classification-gated curation with the Jev
+//    classifier residual as the confidence-gated middle layer ───────────────
+
+/** The jev residual pass over rule-unclassified sessions — injectable so the
+ * suite runs hermetically (the default is the real client, key read at call
+ * time from the secrets path; disabled/unavailable → fail-open). */
+export interface AutoarchiveDeps {
+  jev?: (sessions: ResidualSession[]) => Promise<{ status: JevPassStatus; verdicts: Record<string, ResidualVerdict> }>;
+}
+
+export async function sessionsAutoarchive(argv: string[], env: NodeJS.ProcessEnv, deps: AutoarchiveDeps = {}): Promise<VerbResult> {
   const dbPath = resolveSessionDb(argv);
   if (!existsSync(dbPath)) return fail(`session DB not found: ${dbPath}`);
   const hours = flagValue(argv, "--hours") ? Number(flagValue(argv, "--hours")) : readAutoArchiveHours(env);
@@ -217,22 +230,32 @@ function sessionsAutoarchive(argv: string[], env: NodeJS.ProcessEnv): VerbResult
       assistant_message_count: Number(r.assistant_message_count),
       todo_count: Number(r.todo_count),
     };
-    return { id: String(r.id), bucket: classifySession(features) };
+    return { id: String(r.id), bucket: classifySession(features), features, time_updated: Number(r.time_updated) };
   });
   const buckets = judged.reduce<Record<string, number>>((acc, j) => {
     acc[j.bucket] = (acc[j.bucket] ?? 0) + 1;
     return acc;
   }, {});
-  // Junk buckets only — curation archives the deterministic noise, never a
-  // substantive session (the classifier's closed-set default guards work).
+  // Deterministic junk first — the #1304 rule, first and untouched. Jev NEVER
+  // re-judges a session the rules already classified (residual-only wiring).
   const ids = judged.filter((j) => j.bucket !== "substantive").map((j) => j.id);
 
-  if (apply && ids.length > 0) {
+  // ── the #1311 residual: the middle layer, additive and fail-open ─────────
+  // Sessions the rules left unclassified (substantive = no junk rule fired)
+  // get ONE Jev Choice; a junk-bucket read at p ≥ 0.95 AND age ≥ 48 h (the
+  // FIXED gate, never the scan cutoff) admits to the archive path as an OR.
+  // The off-switch (AMICO_JEV_DISABLED) skips the pass entirely — the output
+  // is byte-identical to the deterministic shape (zero behavioral delta).
+  const jevReport: Record<string, unknown> | undefined = await runJunkResidual(judged, env, deps);
+  const admittedIds = Array.isArray(jevReport?.admitted_ids) ? (jevReport.admitted_ids as string[]) : [];
+  const allIds = [...ids, ...admittedIds];
+
+  if (apply && allIds.length > 0) {
     try {
       sqliteBatch(dbPath, "rw", [
         {
-          sql: `UPDATE session SET time_archived = ? WHERE time_archived IS NULL AND id IN (${ids.map(() => "?").join(",")})`,
-          params: [Date.now(), ...ids],
+          sql: `UPDATE session SET time_archived = ? WHERE time_archived IS NULL AND id IN (${allIds.map(() => "?").join(",")})`,
+          params: [Date.now(), ...allIds],
         },
       ]);
     } catch (e) {
@@ -250,10 +273,164 @@ function sessionsAutoarchive(argv: string[], env: NodeJS.ProcessEnv): VerbResult
       cutoff_iso: new Date(cutoff).toISOString(),
       scanned: judged.length,
       buckets,
-      candidates: ids.length,
-      candidate_ids: ids.slice(0, 50),
-      archived: apply ? ids.length : 0,
+      candidates: allIds.length,
+      candidate_ids: allIds.slice(0, 50),
+      archived: apply ? allIds.length : 0,
       note: apply ? undefined : "dry-run: nothing written — pass --apply to stamp time_archived",
+      ...(jevReport !== undefined ? { jev: jevReport } : {}),
+    },
+    code: 0,
+  };
+}
+
+/** The residual step, isolated: returns the jev report block (undefined when
+ * the path is disabled — the zero-delta off-switch), never throws (fail-open:
+ * an error report still archives the deterministic candidates). */
+async function runJunkResidual(
+  judged: { id: string; bucket: string; features: SessionFeatures; time_updated: number }[],
+  env: NodeJS.ProcessEnv,
+  deps: AutoarchiveDeps,
+): Promise<Record<string, unknown> | undefined> {
+  if (jevDisabled(env)) return undefined;
+  const residual: ResidualSession[] = judged
+    .filter((j) => j.bucket === "substantive")
+    .map((j) => ({ id: j.id, features: j.features, ageHours: (Date.now() - j.time_updated) / 3_600_000 }));
+  if (residual.length === 0) return { status: "ran", consulted: 0, admitted: 0, admitted_ids: [] };
+  try {
+    const pass = deps.jev !== undefined ? await deps.jev(residual) : await jevJunkResidual(residual, { env });
+    if (pass.status !== "ran") return { status: pass.status, consulted: 0, admitted: 0, admitted_ids: [] };
+    const admittedIds = residual
+      .filter((s) => jevArchiveAdmits(pass.verdicts[s.id]?.choice, pass.verdicts[s.id]?.confidence ?? 0, s.ageHours))
+      .map((s) => s.id);
+    return { status: "ran", consulted: residual.length, admitted: admittedIds.length, admitted_ids: admittedIds };
+  } catch (e) {
+    return { status: "error", error: e instanceof Error ? e.message : String(e), consulted: 0, admitted: 0, admitted_ids: [] };
+  }
+}
+
+// ── thread-noul (#1311): the onset digest's noul-map pass ────────────────────
+// The amico-run half of the onset thread-Noul seam: sweep the digest window,
+// ONE Jev noul per candidate (junk titles pre-filtered by the SAME
+// deterministic vocabulary the classifier uses — the middle layer never
+// pays for obvious noise), and write the derived map (thread-nouls.json in
+// the ops dir) the plugin's digest READS as an input feature. The digest's
+// deterministic derivation never calls Jev; this pass is the only spender.
+// DRY-RUN by default (the S2 convention); --apply writes the map.
+
+/** The sweep window matches the digest's (open_threads AMICODE_OPEN_THREADS_
+ * WINDOW_DAYS default 14). */
+export const DEFAULT_THREAD_NOUL_WINDOW_DAYS = 14;
+
+const THREAD_NOUL_CANDIDATES_SQL = `
+  SELECT s.id, s.title,
+    (SELECT json_extract(p.data, '$.text') FROM part p JOIN message m ON m.id = p.message_id
+      WHERE p.session_id = s.id AND json_extract(m.data, '$.role') = 'assistant'
+        AND json_extract(p.data, '$.type') = 'text'
+        AND length(json_extract(p.data, '$.text')) > 0
+      ORDER BY p.time_created DESC LIMIT 1) AS last_text,
+    (SELECT COUNT(*) FROM todo t WHERE t.session_id = s.id
+      AND t.status != 'completed') AS todo_count
+  FROM session s
+  WHERE s.parent_id IS NULL AND s.time_archived IS NULL AND s.time_created > ?
+  ORDER BY s.time_created DESC`;
+
+/** The noul pass's injectable seam (the same shape autoarchive's residual takes). */
+export interface ThreadNoulDeps {
+  jev?: (candidates: NoulCandidate[]) => Promise<{ status: JevPassStatus; nouls: Record<string, number> }>;
+}
+
+export async function sessionsThreadNoul(argv: string[], env: NodeJS.ProcessEnv, deps: ThreadNoulDeps = {}): Promise<VerbResult> {
+  const dbPath = resolveSessionDb(argv);
+  if (!existsSync(dbPath)) return fail(`session DB not found: ${dbPath}`);
+  const days = flagValue(argv, "--days") ? Number(flagValue(argv, "--days")) : DEFAULT_THREAD_NOUL_WINDOW_DAYS;
+  if (!Number.isInteger(days) || days < 1) return fail(`--days must be a positive integer, got ${days}`);
+  const apply = hasFlag(argv, "--apply");
+  const cutoff = Date.now() - days * 86_400_000;
+  const mapPath = join(amicodeOpsDir(env), "thread-nouls.json");
+
+  if (jevDisabled(env)) {
+    return {
+      json: { verb: "sessions", subcommand: "thread-noul", dry_run: !apply, days, disabled: true, note: "jev path disabled (AMICO_JEV_DISABLED) — zero delta; no map written" },
+      code: 0,
+    };
+  }
+
+  let batch;
+  try {
+    batch = sqliteBatch(dbPath, "ro", [{ sql: THREAD_NOUL_CANDIDATES_SQL, params: [cutoff] }]);
+  } catch (e) {
+    return fail(e instanceof Error ? e.message : String(e));
+  }
+
+  // The deterministic pre-filter: greeting-vocabulary titles never reach the
+  // middle layer (the classifier's noise vocabulary — same words, one source).
+  const candidates: NoulCandidate[] = batch.results[0].rows
+    .map((r) => ({
+      id: String(r.id),
+      title: String(r.title),
+      lastAssistantText: r.last_text === null || r.last_text === undefined ? "" : String(r.last_text),
+      pendingTodos: Number(r.todo_count),
+    }))
+    .filter((c) => !isGreetingTitle(c.title));
+
+  let pass: { status: JevPassStatus | "error"; nouls: Record<string, number> };
+  try {
+    pass = deps.jev !== undefined ? await deps.jev(candidates) : await jevThreadNouls(candidates, { env });
+  } catch (e) {
+    pass = { status: "error", nouls: {} };
+    return {
+      json: {
+        verb: "sessions",
+        subcommand: "thread-noul",
+        dry_run: !apply,
+        days,
+        window_days: days,
+        candidates: candidates.length,
+        status: "error",
+        error: e instanceof Error ? e.message : String(e),
+        map_path: mapPath,
+        note: "fail-open: the noul pass crashed; no map written; the digest degrades to today",
+      },
+      code: 0,
+    };
+  }
+
+  if (pass.status !== "ran") {
+    return {
+      json: {
+        verb: "sessions",
+        subcommand: "thread-noul",
+        dry_run: !apply,
+        days,
+        window_days: days,
+        candidates: candidates.length,
+        status: pass.status,
+        map_path: mapPath,
+        note: "fail-open: the middle layer is unavailable; no map written; the digest degrades to today",
+      },
+      code: 0,
+    };
+  }
+
+  if (apply) {
+    const tmpMap = `${mapPath}.tmp-${process.pid}`;
+    mkdirSync(dirname(mapPath), { recursive: true });
+    writeFileSync(tmpMap, JSON.stringify({ schema_version: 1, generated_at: new Date().toISOString(), entries: pass.nouls }, null, 2) + "\n");
+    renameSync(tmpMap, mapPath);
+  }
+
+  return {
+    json: {
+      verb: "sessions",
+      subcommand: "thread-noul",
+      dry_run: !apply,
+      days,
+      window_days: days,
+      candidates: candidates.length,
+      status: "ran",
+      judged: Object.keys(pass.nouls).length,
+      map_path: apply ? mapPath : undefined,
+      note: apply ? undefined : "dry-run: nothing written — pass --apply to write the derived thread-nouls map",
     },
     code: 0,
   };
@@ -375,7 +552,9 @@ export async function sessionsVerb(argv: string[]): Promise<VerbResult> {
     case "archive":
       return sessionsArchive(rest, env);
     case "autoarchive":
-      return sessionsAutoarchive(rest, env);
+      return await sessionsAutoarchive(rest, env);
+    case "thread-noul":
+      return await sessionsThreadNoul(rest, env);
     case "restore":
       return sessionsRestore(rest);
     case "index":
@@ -388,7 +567,7 @@ export async function sessionsVerb(argv: string[]): Promise<VerbResult> {
           verb: "sessions",
           error: `unknown subcommand ${sub ? `"${sub}"` : "(none)"}`,
           usage:
-            "amico sessions list [--archived] [--limit <n>] [--cursor <c>] [--db <path>]  |  amico sessions archive [--days <n>] [--apply]  |  amico sessions autoarchive [--hours <n>] [--apply]  |  amico sessions restore <id>  |  amico sessions index [--out <path>]  |  amico sessions prefs [--days <n>] [--autoarchive-hours <n>]",
+            "amico sessions list [--archived] [--limit <n>] [--cursor <c>] [--db <path>]  |  amico sessions archive [--days <n>] [--apply]  |  amico sessions autoarchive [--hours <n>] [--apply]  |  amico sessions thread-noul [--days <n>] [--apply]  |  amico sessions restore <id>  |  amico sessions index [--out <path>]  |  amico sessions prefs [--days <n>] [--autoarchive-hours <n>]",
         },
         code: 64,
       };

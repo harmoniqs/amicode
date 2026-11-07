@@ -47,6 +47,15 @@ export type State = {
   session_status: {
     [sessionID: string]: SessionStatus
   }
+  /**
+   * #1637 — sessionID → the turn is inside a `session.execution.started` bracket
+   * whose terminal / fallback clear has not yet arrived. Feeds the turn-active
+   * floor read by `session_working` so a no-part turn (and a stray idle) cannot
+   * blank a live rail.
+   */
+  session_turn_active?: {
+    [sessionID: string]: boolean
+  }
   session_working(id: string): boolean
   session_diff: {
     [sessionID: string]: FileDiffInfo[]

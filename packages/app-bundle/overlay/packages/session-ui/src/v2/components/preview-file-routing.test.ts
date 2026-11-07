@@ -947,3 +947,78 @@ describe("files changed tab: pinch/wheel zoom in markdown preview (#937)", () =>
     expect(handlerBlock).toContain("Math.max")
   })
 })
+
+// ---------------------------------------------------------------------------
+// Compile button in the floating controls: LaTeX sources only (#1403)
+// ---------------------------------------------------------------------------
+
+describe("compile button visibility (#1403)", () => {
+  // The gate the file view applies to the button: `<Show when={isLatexFile(props.filePath)}>`.
+  const { isLatexFile } = require("../../../../app/src/components/session/preview-latex-compile") as {
+    isLatexFile: (path: string) => boolean
+  }
+  const fileViewSrc = fs.readFileSync(
+    path.resolve(__dirname, "../../../../app/src/components/session/preview-file-view.tsx"),
+    "utf8",
+  )
+
+  test("the button renders for .tex and .ltx", () => {
+    expect(isLatexFile("paper.tex")).toBe(true)
+    expect(isLatexFile("/w/refs/macros.ltx")).toBe(true)
+  })
+
+  test("the button does not render for markdown, images, PDFs, or plain text", () => {
+    for (const file of ["notes.md", "figure.png", "paper.pdf", "readme.txt", "Makefile"]) {
+      expect(isLatexFile(file)).toBe(false)
+    }
+  })
+
+  test("the file view gates the button on that predicate", () => {
+    expect(fileViewSrc).toMatch(/<Show when=\{isLatexFile\(props\.filePath\)\}>[\s\S]{0,1200}data-preview-compile/)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// HTML preview (#2141): rendered in a scripts-off, same-origin sandboxed frame
+// ---------------------------------------------------------------------------
+
+describe("HTML preview routing and sandbox (#2141)", () => {
+  const fileViewSrc = fs.readFileSync(
+    path.resolve(__dirname, "../../../../app/src/components/session/preview-file-view.tsx"),
+    "utf8",
+  )
+  const htmlViewSrc = fs.readFileSync(
+    path.resolve(__dirname, "../../../../app/src/components/session/preview-html-view.tsx"),
+    "utf8",
+  )
+
+  test("the file view classifies .html/.htm as its own category", () => {
+    expect(fileViewSrc).toMatch(/RENDERABLE_EXTENSIONS\.html[\s\S]{0,80}return "html"/)
+  })
+
+  test("html gets the Preview/Edit toggle and renders through PreviewHtmlView", () => {
+    expect(fileViewSrc).toMatch(/showModeToggle = \(\) => category\(\) === "markdown" \|\| category\(\) === "html"/)
+    expect(fileViewSrc).toMatch(/<Match when=\{category\(\) === "html"\}>[\s\S]{0,1200}<PreviewHtmlView/)
+  })
+
+  test("the frame is sandboxed same-origin WITHOUT scripts, forms or popups", () => {
+    const sandbox = htmlViewSrc.match(/sandbox="([^"]*)"/)
+    expect(sandbox).not.toBeNull()
+    expect(sandbox![1]).toBe("allow-same-origin")
+    expect(htmlViewSrc).not.toMatch(/allow-scripts"/)
+    expect(htmlViewSrc).toContain("srcdoc=")
+  })
+
+  test("live refresh (#2142): the view polls through the gate, and the parent never clobbers unsaved edits", () => {
+    expect(htmlViewSrc).toContain("shouldPollHtml(")
+    expect(htmlViewSrc).toContain("setInterval(")
+    expect(htmlViewSrc).toContain("clearInterval(")
+    expect(htmlViewSrc).toContain("watcherPathMatches(")
+    expect(fileViewSrc).toMatch(/onExternalContent=\{\(text\) => \{[\s\S]{0,200}if \(unsavedContent\(\) !== null\) return[\s\S]{0,60}setFileContent\(text\)/)
+  })
+
+  test("pop-out (#2143): an html-only control posts the dedicated bridge kind with the absolute path", () => {
+    expect(fileViewSrc).toMatch(/<Show when=\{category\(\) === "html"\}>[\s\S]{0,400}data-preview-open-browser/)
+    expect(fileViewSrc).toContain("popOutHtmlMessage(selfAbsolute())")
+  })
+})

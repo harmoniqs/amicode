@@ -1,0 +1,11 @@
+{
+  "numTotalTests": 1,
+  "success": false,
+  "testResults": [
+    { "name": "/ROOT/test/a.test.ts", "status": "failed", "message": "",
+      "assertionResults": [
+        { "ancestorTitles": ["math"], "title": "is broken", "fullName": "math is broken", "status": "failed", "failureMessages": [] }
+      ] },
+    { "name": "/ROOT/test/c.test.ts", "status": "failed", "message": "Error: Cannot find module './gone'", "assertionResults": [] }
+  ]
+}

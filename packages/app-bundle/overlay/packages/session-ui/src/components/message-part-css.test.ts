@@ -35,3 +35,19 @@ describe("skill-only pill alignment (#672)", () => {
     )
   })
 })
+
+describe("inline group members (rework)", () => {
+  test("shell commands wrap instead of eliding to one line", () => {
+    expect(css).toMatch(/group-shell-command[^}]*white-space:\s*pre-wrap/s)
+  })
+  test("member rows read as clickable and expand into an indented card", () => {
+    expect(css).toMatch(/group-member-trigger[^}]*cursor:\s*pointer/s)
+    expect(css).toContain('[data-slot="group-member-detail"]')
+  })
+})
+
+describe("queued user message tag (#1671)", () => {
+  test("the Queued tag slot is styled", () => {
+    expect(css).toContain('[data-slot="user-message-queued"]')
+  })
+})

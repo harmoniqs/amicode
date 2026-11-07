@@ -26,9 +26,10 @@
 import { buildModeBlock, deployedModesRoot, type ModeBlockClient } from "./mode_block";
 import { buildStackStateBlock } from "./stack_state";
 import { buildRecentSessionsBlock } from "./session_recap";
-import { buildOpenThreadsBlock } from "./open_threads";
+import { buildOpenThreadsBlock, readThreadNoulMap } from "./open_threads";
 import { buildSetupStateSection } from "./setup_state";
 import { applyHarmoniqsHeaders } from "./harmoniqs_transport";
+import { applySessionEnv } from "./session_env";
 
 console.error("[amicode-context] loaded — stack-state + session-recap + mode-block injection plugin");
 
@@ -98,9 +99,15 @@ export const AmicodeContext = async (input: unknown) => {
 
       // Open-threads digest (#1305) — derived, deterministic read of what is
       // still open, rendered after the recent-sessions block. PR-state is an
-      // input feature; this pass spends no network call.
+      // input feature; this pass spends no network call. The #1311 thread-Noul
+      // map is the same shape of input: the amico CLI curation pass spent the
+      // Jev calls and wrote the derived map; this hook only READS it (ranking
+      // + ≥ 0.5 promotion — bucket labels stay deterministic, and an absent
+      // map degrades the digest to #1305's exact behavior).
       try {
-        const threadsBlock = buildOpenThreadsBlock(input.sessionID);
+        const threadNouls = readThreadNoulMap();
+        const threadNoulFor = threadNouls === undefined ? undefined : (sessionId: string) => threadNouls[sessionId];
+        const threadsBlock = buildOpenThreadsBlock(input.sessionID, undefined, threadNoulFor);
         if (threadsBlock) {
           output.system.push(threadsBlock);
         }
@@ -114,6 +121,14 @@ export const AmicodeContext = async (input: unknown) => {
       output: { headers: Record<string, string> },
     ): Promise<void> => {
       applyHarmoniqsHeaders(input, output);
+    },
+    // #1928 (A15): every bash-tool env carries AMICO_SESSION_ID (the engine
+    // exposes the session id to tool children only through this hook).
+    "shell.env": async (
+      input: { cwd?: string; sessionID?: string; callID?: string },
+      output: { env: Record<string, string> },
+    ): Promise<void> => {
+      applySessionEnv(input, output);
     },
   };
 };

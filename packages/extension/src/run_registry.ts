@@ -2,10 +2,10 @@ import type { RunStatus } from "./types";
 
 // ============================================================================
 // Pure multi-run registry (1.2, #57) — vscode-free so the state machine is
-// unit-testable. The append-only `runs/index` (written by amico-run's
+// unit-testable. The append-only `runs/index` (written by the amico CLI's
 // appendIndex: `runId\tcreatedAt\tscriptPath\n`) is the multi-run source of
 // truth; RunsManager tails it and registers every run here. The `latest`
-// symlink keeps being WRITTEN by amico-run (frozen contract) but is no longer
+// symlink keeps being WRITTEN by the amico CLI (frozen contract) but is no longer
 // followed for discovery.
 // ============================================================================
 

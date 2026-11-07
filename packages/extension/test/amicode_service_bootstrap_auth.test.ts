@@ -55,8 +55,14 @@ describe("amicode service — bootstrap auth seam (the M3 cutover, #823)", () =>
   let engineToken: string;
   /** The service's own mint's carrier (accepted too — one carrier shape). */
   let serviceToken: string;
+  let savedAuthEnv: string | undefined;
 
   beforeAll(async () => {
+    // The boot relies on the credential auth default; a dev host running a
+    // live amicode service exports AMICODE_SERVICE_AUTH=open (the runner's
+    // tunnel/LAN posture) which would fail every 401 pin here. Isolate it.
+    savedAuthEnv = process.env.AMICODE_SERVICE_AUTH;
+    delete process.env.AMICODE_SERVICE_AUTH;
     root = mkdtempSync(join(tmpdir(), "amicode-bootstrap-"));
     const dist = buildMockDist(root);
     engine = await startMockEngine();
@@ -74,6 +80,7 @@ describe("amicode service — bootstrap auth seam (the M3 cutover, #823)", () =>
     await service.stop();
     await engine.stop();
     rmSync(root, { recursive: true, force: true });
+    if (savedAuthEnv !== undefined) process.env.AMICODE_SERVICE_AUTH = savedAuthEnv;
   });
 
   // ── the iframe document bootstrap: ?auth_token= with NO header ────────────

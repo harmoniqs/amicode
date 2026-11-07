@@ -1,6 +1,7 @@
 import { Show, createEffect, createSignal, onCleanup } from "solid-js"
 import { useLanguage } from "@/context/language"
 import { useServerSDK } from "@/context/server-sdk"
+import { ActivityDot } from "@opencode-ai/ui/amicode-activity"
 
 // Amicode webview: a dead server (e.g. an opencode:build restart) used to read
 // as an endless "thinking" wave — the event loop retries silently every 250ms.
@@ -64,12 +65,18 @@ export function ConnectionBanner() {
           "border-radius": "var(--radius-full)",
           "font-size": "12px",
           "font-weight": 600,
-          border: "1px solid var(--v2-border-border-base, #3c3c3c)",
-          background: "var(--v2-background-bg-layer-01, #1e1e1e)",
-          "box-shadow": "0 8px 24px rgba(0, 0, 0, 0.35)",
-          color: down() ? "var(--v2-state-fg-warning, #d29922)" : "var(--v2-state-fg-success, #3fb950)",
+          display: "flex",
+          "align-items": "center",
+          gap: "var(--space-2)",
+          border: "1px solid var(--v2-border-border-base)",
+          background: "var(--v2-background-bg-layer-01)",
+          "box-shadow": "var(--elev-float)",
+          color: "var(--v2-text-text-base)",
         }}
       >
+        {/* activity dot: attention while the link is down, success once back.
+            The words carry the state; the dot is the at-a-glance colour. */}
+        <ActivityDot activity={down() ? "attention" : "success"} pulse={down()} />
         {down() ? language.t("app.server.connectionLost") : language.t("app.server.reconnected")}
       </div>
     </Show>

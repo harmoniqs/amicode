@@ -27,6 +27,17 @@ describe("parseWidgetsResponse", () => {
     expect("junk" in widgets[0].config).toBe(false)
     expect("bad" in widgets[0].config).toBe(false)
   })
+  test("sticky rides the wire; absent or malformed → false (#1856)", () => {
+    const widgets = parseWidgetsResponse({
+      ok: true,
+      widgets: [
+        { id: "live", name: "Live", sticky: true },
+        { id: "plain", name: "Plain" },
+        { id: "odd", name: "Odd", sticky: "true" },
+      ],
+    })
+    expect(widgets.map((w) => w.sticky)).toEqual([true, false, false])
+  })
   test("garbage → empty", () => {
     expect(parseWidgetsResponse(undefined)).toEqual([])
     expect(parseWidgetsResponse({ ok: false })).toEqual([])
@@ -96,11 +107,17 @@ describe("allowFetch", () => {
     expect(allowFetch("/amicode/dashboard")).toBe(true)
   })
   test("prefix rides and foreign paths rejected", () => {
-    expect(allowFetch("/amicode/problem-x")).toBe(false)
-    expect(allowFetch("/amicode/problemx?slug=s")).toBe(false)
+    expect(allowFetch("/amicode/profile-x")).toBe(false)
+    expect(allowFetch("/amicode/profilex?slug=s")).toBe(false)
     expect(allowFetch("/session")).toBe(false)
     expect(allowFetch("http://evil.example/amicode/profile")).toBe(false)
     expect(allowFetch(42)).toBe(false)
+  })
+  test("#1818: the deprecated research routes left the allowlist with their surfaces", () => {
+    expect(allowFetch("/amicode/problems")).toBe(false)
+    expect(allowFetch("/amicode/problem")).toBe(false)
+    expect(allowFetch("/amicode/problem?slug=s")).toBe(false)
+    expect(allowFetch("/amicode/run-status")).toBe(false)
   })
 })
 

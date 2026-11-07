@@ -1,0 +1,170 @@
+# Notturno job registry — job truth (ADR 0001).
+#
+# Every scheduled agentic job at Harmoniqs is listed here with its cadence,
+# execution surface, warrant tier, and delivery channels. The vault receives
+# job OUTPUTS, never definitions — definitions live here, reviewed like code.
+#
+# Coverage is total: every .github/workflows/*.yml is either a [job.*] entry
+# or a named [[exclude]] with a reason. `python -m automation.notturno.registry --check`
+# fails on any workflow that is neither, and on any entry whose file is missing.
+#
+# surface: github-hosted | erlich | mini      (ADR 0001 — the MacBook is never a surface)
+# warrant: report | stage | gated             (ADR 0001 — new jobs default to stage)
+# enabled: the cron is live. Dispatch-only / commented-cron workflows are false.
+
+# ── Retired 2026-08-10 (amicobot retirement): notturno-morning-brief, eod-checkin,
+#    news-arxiv, news-tech (jobs) and team-notify (utility exclude) — workflows
+#    deleted from .github/workflows. Entries removed so coverage stays total;
+#    pass history remains in vault/dashboards/scheduled-passes.md. The Slack
+#    surface returns as the unified fleet (spec-20260818-150711): fleet-digest
+#    below, failure alerts thread-deduped in #fleet via automation.notturno.alert.
+
+# ── Retired 2026-09-05 (living-sota review, spec-20260905-103000 D6): notturno-
+#    architecture — the FTQC architecture-of-record's nightly regeneration slot
+#    (issue #306, spec-20260803-034328) is superseded by the weekly synthesis
+#    below: the spec's D6 rebuild replaces the regenerated-STRATEGY.md view, and
+#    the job slot subsumes into weekly-synthesis (reciprocal amendments recorded
+#    on both spec files, Sequencing 1). Workflow deleted; entry removed so
+#    coverage stays total; pass history remains in vault/dashboards/scheduled-
+#    passes.md; the architecture engine (automation/notturno/architecture) stays
+#    in-tree, hand-runnable — dormant, not dead.
+
+# ── Scheduled, enabled ──────────────────────────────────────────────────────
+
+[job.notturno-briefs]
+workflow = "notturno-briefs.yml"
+cadence  = "23 13 * * 1-5"        # weekday mornings; rollout members only
+surface  = "github-hosted"
+warrant  = "report"
+delivers = ["slack-dm"]
+record   = "acted"                # self-filtering: a pass is recorded only when briefs went out
+enabled  = true
+
+[job.fleet-digest]
+workflow = "fleet-digest.yml"
+cadence  = "30 7 * * *"            # daily 07:30 UTC; LIVE since 2026-08-20 (mini runner registered, dry-run 32349992190 green)
+surface  = "mini"                  # the fleet server — only it can SSH the mesh, read the registry, and hold the token
+warrant  = "report"
+delivers = ["slack-channel"]
+enabled  = true
+
+[job.vault-hygiene]
+workflow = "vault-hygiene.yml"
+cadence  = "0 6 * * 1"            # Mondays 06:00 UTC
+surface  = "github-hosted"
+warrant  = "report"
+delivers = ["vault-commit"]
+enabled  = true
+
+[job.coordination-board]
+workflow = "coordination-board.yml"
+cadence  = "45 5 * * *"           # nightly 05:45 UTC; M5's second no-daemon executor
+surface  = "github-hosted"
+warrant  = "report"               # mechanical lint — reads fixtures/vault, writes nothing
+delivers = ["github-status"]
+enabled  = true
+
+# ── Notturno jobs, cron not yet enabled (house rule: dispatch dry-run first) ──
+
+[job.notturno-triage]
+workflow = "notturno-triage.yml"
+cadence  = "0 1 * * *"            # intended 01:00 UTC; commented out in the workflow
+surface  = "github-hosted"
+warrant  = "report"
+delivers = ["vault-commit"]
+enabled  = false
+# Scope includes hopper gate-watch (structured gate frontmatter checks, issue
+# #295) — one hopper pass, two outputs (tiers + gates); not a separate job.
+
+[job.notturno-profile-autoupdate]
+workflow = "notturno-profile-autoupdate.yml"
+cadence  = "0 0 * * *"            # intended 00:00 UTC; commented out in the workflow
+surface  = "github-hosted"
+warrant  = "report"
+delivers = ["vault-commit"]
+enabled  = false
+
+[job.notturno-assign]
+workflow = "notturno-assign.yml"
+cadence  = "manual (workflow_dispatch)"
+surface  = "github-hosted"
+warrant  = "report"
+delivers = ["gh-projects"]
+enabled  = false
+
+[job.notturno-intake]
+workflow = "notturno-intake.yml"
+cadence  = "manual (workflow_dispatch; two-phase bootstrap)"
+surface  = "github-hosted"
+warrant  = "report"
+delivers = ["slack-dm", "gh-projects"]
+enabled  = false
+
+[job.weekly-synthesis]
+workflow = "weekly-synthesis.yml"
+cadence  = "0 12 * * 1"            # intended Mondays 12:00 UTC — ahead of the 13:23 weekday briefs pass so the week opens on a fresh strategy brief; commented out in the workflow
+surface  = "github-hosted"
+warrant  = "stage"                 # renders the strategy brief as a vault draft (spec-20260905-103000 D3/D6): never writes INTENT.md, never edits STRATEGY.md, never touches the portfolio's ledger sources
+delivers = ["vault-commit"]
+enabled  = true                    # live 2026-10-01: the workflow_dispatch dry-run passed (run 36863698778, conclusion success) — the renderer landed (amicode #1526) and its top-level verb is wired (amicode #1654); the house rule's gate is satisfied
+
+[job.doctor-watchdog]
+workflow = "doctor-watchdog.yml"
+cadence  = "30 5 * * *"            # intended nightly 05:30 UTC — before the fleet digest (07:30) so drift lands in the morning surfaces; commented out in the workflow (house rule: dispatch dry-run first)
+surface  = "mini"                  # doctor probes the fleet's live surfaces — only the mini can see them
+warrant  = "report"                # ADR 0001 semantics: posts directly, read-only w.r.t. fleet surfaces; night never mutates the fleet
+delivers = ["slack-channel", "brief"]  # drift digest to #fleet; the no-drift/failed pass record rolls into the morning brief
+enabled  = false                   # flips to true only after the workflow_dispatch dry-run passes (the house rule, unwaived)
+
+# ── The Canary (program #421, orchestrator slice #427) ──────────────────────
+
+[job.canary]
+workflow = "canary.yml"
+cadence  = "0 2 * * *"            # intended nightly 02:00 UTC — dev settled, ahead of the morning surfaces; commented out in the workflow
+surface  = "erlich"               # the hub — the canary runs beside the live service it pre-tests (ADR-0021, amicode); staging slots only
+warrant  = "stage"                # outputs are Slack pings + filed chore issues — it files, never works the board; the wave stays human
+delivers = ["slack-channel", "issue"]
+enabled  = true                   # live 2026-09-15: the workflow_dispatch dry-run passed (run 34976316152, conclusion success)
+
+[job.canary.config]
+# The canary's config paths — the orchestrator's ONLY config source
+# (no hidden defaults scattered in code). Relative paths resolve against
+# the engine checkout root; "~" expands.
+allowlist = "canary/known-reds.toml"                      # the known-reds allowlist (slice 3, #424) — humans write it, the canary reads it
+state     = "~/.amico/ops/fleet/canary-state.json"        # the canary state store (slice 1, #422), beside the fleet projection cache
+
+# ── Wave 3 jobs (ADR 0001) ───────────────────────────────────────────────────
+
+[job.upstream-merge-sentinel]
+workflow = "notturno-merge-sentinel.yml"
+cadence  = "0 8 * * 1"            # Mondays 08:00 UTC; LIVE since 2026-08-04 (dry-run 30874763468)
+surface  = "erlich"               # DESIGN target — provisioned=false until #302 runs; the workflow uses ubuntu-latest meanwhile
+warrant  = "stage"                # outputs are PRs and issues, always human-merged
+delivers = ["pr", "issue"]
+enabled  = true
+
+# ── Excluded from the registry (coverage is total — named, with reasons) ─────
+
+[[exclude]]
+workflow = "notturno-smoke.yml"
+reason   = "substrate validation harness (opencode + Bedrock); manual-only by design"
+
+[[exclude]]
+workflow = "amicobot-query.yml"
+reason   = "event-driven (repository_dispatch / issues), not a scheduled pass"
+
+[[exclude]]
+workflow = "retrieval-benchmark.yml"
+reason   = "PR/push CI benchmark, not a scheduled pass"
+
+[[exclude]]
+workflow = "vault-tombstone-guard.yml"
+reason   = "PR guard on vault/**, not a scheduled pass"
+
+[[exclude]]
+workflow = "intent-merge-receipt.yml"
+reason   = "event-driven (post-merge stamp for vault/INTENT.md), not a scheduled pass"
+
+[[exclude]]
+workflow = "notturno-registry-check.yml"
+reason   = "CI check for the registry itself (PR-only), not a scheduled pass"

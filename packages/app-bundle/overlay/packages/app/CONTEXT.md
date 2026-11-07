@@ -69,6 +69,20 @@ Chat-only. Selecting an item inside a Panel acts in the Chat rather than navigat
 away from it.
 _Avoid_: Modal, page, route, flyout
 
+**Work Column**:
+The session's supporting column beside the **Chat** — a strip of tabs over the work a
+session produces: the files it changed, the file tabs a researcher opens, and named
+surfaces (Context, Pulse Inspector, Preview). Most tabs are scoped to the session's own
+content. **Home** and **Fleet Manager** are its two **global exceptions** — window-wide
+concerns surfaced as Work Column tabs rather than session content: Home is the
+resume/overview surface, and Fleet Manager consolidates fleet management (the device
+roster and capability chips, this machine's Server mode / transport / Go-Standalone /
+Repair, the durable hub service on a server, and fleet versions — absorbing the retired
+Fleet & Versions panel). Every tab closes and reorders alike; the two exceptions aside, a
+tab tracks something the session itself did.
+_Avoid_: side panel (as the whole), review pane (that is one tab), Fleet & Versions panel
+(retired — absorbed into the Fleet Manager tab)
+
 **Account zone**:
 The cluster at the foot of the **Rail** for identity and configuration, distinct from
 the navigation surfaces above it. Holds the researcher profile (About You), backend
@@ -91,6 +105,34 @@ per-step progress — vault, Julia, connection — would require an extension→
 It persists until onboarding is complete and then disappears; it never gates the Chat.
 _Avoid_: Onboarding modal, wizard (the wizard is the conversational interview; the nudge
 only surfaces its state), setup wall
+
+### Activity vocabulary
+
+**Activity**:
+The one semantic state set every status surface speaks — session dots (tab strip,
+sessions dropdown, sidebar, home), run status (run window, run view), health dots
+(connection, MCP, LSP, server, vault), build status, and status banners. Five roles,
+each a `--activity-*` token in `src/design-polish.css` (solid dot colour plus a `-soft`
+fill) aliasing the theme's v2 state tokens so light and dark move together:
+
+| Role | Colour | Means |
+| --- | --- | --- |
+| `running` | blue | in progress — working, solving, pending, validating |
+| `attention` | amber | waiting on you — permission, question, needs auth, expired, drift, stalled |
+| `success` | green | done-unread, healthy, finished |
+| `error` | red | failed, unreachable |
+| `idle` | grey | done-seen, aborted, stopped, disabled |
+
+A session's tab status ranks **error > attention > running > done-unread > idle**. Running
+dots share one reduced-motion-aware pulse (`.amc-activity-pulse`). Colour is never the
+only signal: every status dot carries an accessible label or sits beside text that
+names the state.
+
+**Yellow never encodes a state.** Yellow is brand and selection only (the `--accent`
+family). Amico's presence — the thought-rail harmonic dot, the working lane, the
+thinking wave, the mark — is brand, not status, and keeps the accent.
+_Avoid_: yellow "running", gold/amber warning edges from the theme as an attention
+colour, the agent identity tint on a status spinner, raw hex status colours
 
 ## Relationships
 

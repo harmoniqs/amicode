@@ -4,7 +4,7 @@
 // Manifest's pinned 1.12.3, which is fine: install.sh's long-standing policy is
 // "minor must match, patch re-resolves." We never touch the user's global
 // juliaup default — solves run through the channel's own binary, resolved here
-// and handed to amico-run via its existing `--julia` plumbing.
+// and handed to the amico CLI via its existing `--julia` plumbing.
 //
 // Pure helpers + command builders are unit-testable; the impure shell probes
 // take an injectable runner (the healthcheck pattern).
@@ -117,7 +117,7 @@ export function hasChannel(
   }
 }
 
-/** Resolve the channel's concrete julia binary (absolute), to hand to amico-run
+/** Resolve the channel's concrete julia binary (absolute), to hand to the amico CLI
  *  as `--julia` so solves use amicode's pinned Julia regardless of the user's
  *  global default. Returns null if the channel can't be resolved. */
 export function resolveChannelJulia(

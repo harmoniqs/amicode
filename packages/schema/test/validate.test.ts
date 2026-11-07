@@ -45,6 +45,10 @@ describe("schema set + exports", () => {
         // the SKILL.md frontmatter contract (amicode#996); same
         // SCHEMAS-only registration as library-paper
         "skill",
+        // the claim object (amicode#1681, brain flywheel slice 2) — the
+        // registry claim note's frontmatter IS this object; same SCHEMAS-only
+        // registration as library-paper/skill
+        "claim",
       ]),
     );
   });

@@ -644,8 +644,12 @@ export function SessionReviewFilePreviewV2(props: SessionReviewFilePreviewV2Prop
                   "align-items": "center",
                   "justify-content": "space-between",
                   padding: "6px 12px",
-                  "background-color": "var(--amc-warning, #ffc107)",
-                  color: "var(--amc-bg, #000)",
+                  // attention (amber) — the app's activity token, falling back to
+                  // the theme's v2 warning state where design-polish isn't loaded
+                  // (share pages). --amc-* only exist inside widget iframes.
+                  "background-color": "var(--activity-attention-soft, var(--v2-state-bg-warning))",
+                  border: "1px solid var(--activity-attention, var(--v2-state-border-warning))",
+                  color: "var(--v2-text-text-base)",
                   "font-size": "12px",
                   "border-radius": "4px",
                   margin: "4px 0",
@@ -793,11 +797,11 @@ export function SessionReviewFilePreviewV2(props: SessionReviewFilePreviewV2Prop
                   border: "none",
                   background: "none",
                   cursor: "pointer",
-                  color: "var(--amc-text-muted, var(--icon-base))",
+                  color: "var(--v2-text-text-muted)",
                   "flex-shrink": "0",
                 }}
-                onMouseEnter={(e) => (e.currentTarget.style.color = "var(--amc-danger, #f44336)")}
-                onMouseLeave={(e) => (e.currentTarget.style.color = "var(--amc-text-muted, var(--icon-base))")}
+                onMouseEnter={(e) => (e.currentTarget.style.color = "var(--v2-state-fg-danger)")}
+                onMouseLeave={(e) => (e.currentTarget.style.color = "var(--v2-text-text-muted)")}
               >
                 <Icon name="reset" size="small" />
               </button>
@@ -812,7 +816,7 @@ export function SessionReviewFilePreviewV2(props: SessionReviewFilePreviewV2Prop
                 "font-size": "11px",
                 "margin-left": "8px",
                 "white-space": "nowrap",
-                color: "var(--amc-danger, #f44336)",
+                color: "var(--v2-state-fg-danger)",
               }}
             >
               Save failed

@@ -1,0 +1,2 @@
+fx::test/a.test.ts::math > no ref at all
+fx::test/a.test.ts::math > placeholder ref | issue:#TBD

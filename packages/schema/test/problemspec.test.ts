@@ -35,6 +35,16 @@ describe("problemspec schema", () => {
     expect(r.ok).toBe(true);
   });
 
+  // P3a (#1676): the reflected backend vocabulary carries the MadNLP default
+  // (DirectTrajOpt 0.11 / Piccolo 2.2 registries register :madnlp + :ipopt).
+  // A spec declaring `backend = "madnlp"` must validate — pre-amendment the
+  // enum only knew ["altissimo","ipopt"].
+  it("accepts the inherited-default backend madnlp", () => {
+    const r = validate({ ...validControlSpec, solver: { backend: "madnlp" } }, "problemspec");
+    expect(r.errors).toEqual([]);
+    expect(r.ok).toBe(true);
+  });
+
   it("rejects an unknown system template (fails both oneOf branches)", () => {
     const bad = { ...validControlSpec, system: { kind: "template", template: "Nope" } };
     expect(validate(bad, "problemspec").ok).toBe(false);

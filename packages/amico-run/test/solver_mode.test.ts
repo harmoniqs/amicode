@@ -10,14 +10,16 @@ import { readSolverMode, solverModeFile } from "../src/solver_mode.js";
 // of that guarantee: the reader that decides which solver is selected, and the
 // launch refusal that makes "cloud-only" true rather than merely advertised.
 
-const BUNDLE = join(__dirname, "..", "dist", "amico-run.js");
+// The launch path through the `amico` verb router (`amico run …` ≡ the deleted
+// `amico-run` bin, #1667).
+const BUNDLE = join(__dirname, "..", "dist", "amico.js");
 beforeAll(() => {
   execFileSync("node", [join(__dirname, "..", "esbuild.config.mjs")], { cwd: join(__dirname, "..") });
 });
 
 function run(args: string[], env: Record<string, string> = {}): { code: number; stdout: string; stderr: string } {
   try {
-    const stdout = execFileSync("node", [BUNDLE, ...args], { encoding: "utf8", env: { ...process.env, ...env } });
+    const stdout = execFileSync("node", [BUNDLE, "run", ...args], { encoding: "utf8", env: { ...process.env, ...env } });
     return { code: 0, stdout, stderr: "" };
   } catch (e) {
     const err = e as { status?: number; stdout?: string; stderr?: string };
@@ -116,7 +118,7 @@ describe("Piccolissimo + Altissimo never solves locally", () => {
       const r = await new Promise<{ code: number; stdout: string; stderr: string }>((resolveP) => {
         let stdout = "";
         let stderr = "";
-        const child = execFile("node", [BUNDLE, script, "--executor", "remote", "--runs-root", join(root, "runs")], {
+        const child = execFile("node", [BUNDLE, "run", script, "--executor", "remote", "--runs-root", join(root, "runs")], {
           env: { ...process.env, AMICODE_OPS_DIR: ops, AMICO_CLOUD_URL: fake.base, AMICO_CLOUD_TOKEN: fake.token },
         });
         child.stdout!.on("data", (d: string) => {

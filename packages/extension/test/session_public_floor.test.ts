@@ -143,6 +143,7 @@ describe("the no-entitlement spawn fixture (ADR-0004 decision 1, amicode#826)", 
       "force",
       "command",
       "workspace",
+      "placement",
     ]);
   });
 

@@ -81,6 +81,14 @@ export function serveUIEffect(
   services: { fs: FSUtil.Interface; client: HttpClient.HttpClient; disableEmbeddedWebUi: boolean },
 ) {
   return Effect.gen(function* () {
+    // amicode #1760 P1: an SSE request reaching the SPA fallback means NO route
+    // claimed it — answering index.html (the SPA fallback's default) hangs the
+    // reader forever with no error and no reconnect, the silent stream-death
+    // class the issue kills at this door. 404 JSON, never HTML, applies with
+    // the gateway secret armed or not (it is a wire-contract fix, not auth).
+    if ((request.headers["accept"] ?? "").toLowerCase().includes("text/event-stream")) {
+      return HttpServerResponse.jsonUnsafe({ error: "no such event stream route" }, { status: 404 })
+    }
     const embeddedWebUI = yield* Effect.promise(() => embeddedUI(services.disableEmbeddedWebUi))
     const path = new URL(request.url, "http://localhost").pathname
 

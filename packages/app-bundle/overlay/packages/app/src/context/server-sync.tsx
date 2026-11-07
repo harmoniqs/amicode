@@ -8,7 +8,7 @@ import type {
 } from "@opencode-ai/sdk/v2/client"
 import { showToast } from "@/utils/toast"
 import { getFilename } from "@opencode-ai/core/util/path"
-import { type Accessor, batch, createMemo, getOwner, onCleanup, onMount, untrack } from "solid-js"
+import { type Accessor, batch, createEffect, createMemo, getOwner, onCleanup, onMount, untrack } from "solid-js"
 import { createStore, produce, reconcile } from "solid-js/store"
 import { useLanguage } from "@/context/language"
 import type { InitError } from "../pages/error"
@@ -59,6 +59,15 @@ import type {
 } from "@opencode-ai/client/promise"
 import { toggleMcp } from "./global-sync/mcp"
 import { createServerSession, type ServerSession } from "./server-session"
+import { amicodeGetResponse } from "@/utils/amicode-fetch"
+import {
+  createFleetDiagnostics,
+  fleetSessionStatusRoute,
+  runFleetReseed,
+  type FleetReseedDeps,
+} from "./fleet-session-status"
+import { createFleetReseedScheduler, viewedSessionIdFromLocation } from "./fleet-reseed-scheduler"
+import { runLocalReseed } from "./local-reseed"
 
 type GlobalStore = {
   ready: boolean
@@ -301,6 +310,60 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
   let bootedAt = 0
   let bootingRoot = false
   let eventFrame: number | undefined
+  // #1637 — reconcile session_status from /session/status (the FULL tri-state
+  // map — NOT /session/active, which is running-only and cannot carry the idle
+  // needed to downgrade a stale busy) on every reconnect edge / gap frame. The
+  // fetch is timestamped BEFORE the request so the store's recency guard can
+  // refuse a downgrade of a busy that was mutated locally after the snapshot.
+  // #1766: this is now the FALLBACK — today's local re-seed, unchanged.
+  // #1767: the engine keeps status PER DIRECTORY and resolves a directory-less
+  // read to its own working dir (a no-op for every real session) — so read once
+  // per directory of the PINNED sessions instead (never any other directory).
+  const localReseed = () =>
+    runLocalReseed({
+      pinnedIds: () => session.pinnedIds(),
+      directoryOf: (id) => session.data.info[id]?.directory,
+      resolve: (id) => session.resolve(id),
+      readStatus: async (directory) => (await serverSDK.client.session.status({ directory })).data ?? {},
+      reconcile: (statuses, opts) => session.reconcileStatuses(statuses, opts),
+    })
+  // #1766 — the FLEET re-seed: name the pinned sessions (every open tab's, the
+  // viewed one first) to the service's fleet session-status read, which asks
+  // each session's OWNER for status in that session's exact DIRECTORY, and
+  // apply its tri-state map through the same recency-guarded reconcile. A peer
+  // session's busy re-learned here re-raises the rail's working floor after a
+  // reopen (the fan-in does not replay). Unavailable → localReseed().
+  const fleetDiagnostics = createFleetDiagnostics()
+  const fleetReseedDeps: FleetReseedDeps = {
+    fetchFleet: (ids, signal) => amicodeGetResponse(serverSDK.server, fleetSessionStatusRoute(ids), { signal }),
+    // The read passes the engine's own SessionStatus entries through validated.
+    reconcile: (statuses, opts) => session.reconcileStatuses(statuses as Record<string, SessionStatus>, opts),
+    localReseed,
+    diagnostics: fleetDiagnostics,
+  }
+  // #1766 — the re-seed TRIGGERS + 10 s SELF-HEAL: the connected edge and the
+  // sync-gap frame (below), a newly pinned session (debounced), `unknown`
+  // retries for a cold owner map, and a visibility-gated periodic tick — all
+  // single-flight, each read bounded by the client timeout. Nothing pinned →
+  // the edges keep today's local re-seed.
+  const fleetReseed = createFleetReseedScheduler({
+    pinnedIds: () => session.pinnedIds(),
+    viewedId: () =>
+      typeof window === "undefined"
+        ? undefined
+        : viewedSessionIdFromLocation(`${window.location.pathname}${window.location.hash}`),
+    reseed: (ids, signal) => runFleetReseed(ids, { ...fleetReseedDeps, signal }),
+    localReseed,
+    isConnected: () => serverSDK.event.status() === "connected",
+    isVisible: () => typeof document === "undefined" || document.visibilityState !== "hidden",
+    diagnostics: fleetDiagnostics,
+  })
+  const offPinned = session.onPinned((sessionID) => fleetReseed.notePinned(sessionID))
+  fleetReseed.start()
+  onCleanup(() => {
+    offPinned()
+    fleetReseed.stop()
+  })
   // #1264/#1289 (reconnect-storm debounce): the SSE preamble replays
   // `server.connected` to EVERY reconnecting member — over a flaky link a
   // reconnect flurry would re-bootstrap all active directories once per
@@ -548,11 +611,17 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
     const event = e.details
     const eventType: string = event.type
     const recent = bootingRoot || Date.now() - bootedAt < 1500
+    // #1539: remote-origin events must NOT mutate the local directory store.
+    // The origin field is set by the SSE loop when the event came from a remote
+    // peer's namespace in the fan-in composite cursor. `undefined` = local.
+    const isRemote = typeof event.origin === "string"
 
     if (event.current) session.applyV2(event.current)
     session.apply(event)
     if (event.type === "session.created" || event.type === "session.updated" || event.type === "session.deleted") {
-      homeSessions.apply(event)
+      // #1539: homeSessions feeds into the session list that mergePeerSessions
+      // deduplicates against; remote events contaminate it the same way.
+      if (!isRemote) homeSessions.apply(event)
     }
     homeSessions.refresh(event.type)
     if (eventType === "integration.connection.updated") void refreshProviders()
@@ -560,6 +629,12 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
     if (directory === "global") {
       if (eventType === "server.connected" && activeSessionsQuery.data === undefined && !activeSessionsQuery.isFetching)
         void activeSessionsQuery.refetch()
+      // #1637 — reconcile the tri-state status on every reconnect edge / gap
+      // frame so a status left stale during an outage self-corrects without a
+      // reload (a stale busy AND a stale idle), recency-guarded in the store.
+      // #1766: through the FLEET read (peer sessions included), local fallback.
+      if (eventType === "server.connected") fleetReseed.trigger("connected")
+      if (eventType === "amicode.sync.gap") fleetReseed.trigger("gap")
       applyGlobalEvent({
         event,
         project: globalStore.project,
@@ -573,7 +648,14 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
         eventType === "config.updated" ||
         eventType === "catalog.updated" ||
         eventType === "agent.updated" ||
-        eventType === "project.directories.updated"
+        eventType === "project.directories.updated" ||
+        // #1617 (ADR 0033 Amendment 1): the fan-in aggregator dropped frames on
+        // buffer overflow while the downstream was backpressured and emitted a
+        // gap signal; the SDK loop re-emitted it as this synthetic global event.
+        // A gap is a real loss, so force a bootstrap refetch UNCONDITIONALLY —
+        // this branch runs before the #1289 `server.connected` debounce below and
+        // keys on a distinct type, so the forced refetch bypasses that debounce.
+        eventType === "amicode.sync.gap"
       )
         bootstrap.refetch()
       if (eventType === "server.connected" || eventType === "global.disposed") {
@@ -584,21 +666,27 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
         lastConnectedQueueAt = Date.now()
         for (const directory of Object.keys(children.children)) {
           if (!children.active(directory)) continue
-          queue.push(directory)
+          // #1539: a remote server.connected/global.disposed must not trigger
+          // local directory re-bootstraps.
+          if (!isRemote) queue.push(directory)
         }
       }
       return
     }
 
-    if (event.current?.type === "session.moved") {
-      const info = session.get(event.current.data.sessionID)
-      if (info) indexSession(info)
+    // #1539: indexSession inserts synthetic session.created events into the
+    // directory store — skip for remote events.
+    if (!isRemote) {
+      if (event.current?.type === "session.moved") {
+        const info = session.get(event.current.data.sessionID)
+        if (info) indexSession(info)
+      }
+      if (event.current?.type === "session.forked")
+        void session
+          .resolve(event.current.data.sessionID, { force: true })
+          .then(indexSession)
+          .catch(() => {})
     }
-    if (event.current?.type === "session.forked")
-      void session
-        .resolve(event.current.data.sessionID, { force: true })
-        .then(indexSession)
-        .catch(() => {})
 
     const existing = children.children[key]
     if (!existing) return
@@ -610,10 +698,16 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
       eventType === "command.updated" ||
       eventType === "config.updated" ||
       eventType === "agent.updated"
-    )
-      queue.push(key)
+    ) {
+      // #1539: queue.push triggers directory re-fetches that would pull remote
+      // sessions into the local store.
+      if (!isRemote) queue.push(key)
+    }
     if (eventType === "mcp.status.changed") void queryClient.invalidateQueries(queryOptionsApi.mcp(key))
     if (eventType === "mcp.resources.changed") void queryClient.invalidateQueries(queryOptionsApi.mcpResources(key))
+    // #1539: applyDirectoryEvent is the primary contamination point — remote
+    // events must not insert into or update the directory-scoped store.session.
+    if (isRemote) return
     const [store, setStore] = existing
     applyDirectoryEvent({
       event,
@@ -647,6 +741,129 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
       children.disposeDirectory(directoryKey(directory))
     }
   })
+
+  // #1760/#1785 attach protocol — SYNC-LAYER placement (2026-10-20). On every
+  // stream (re)connect, pull the hub's one-wire snapshot (/attach?directory= —
+  // merged busy map + session list) per known directory and reconcile busy
+  // state from STATE, not transitions. A fresh/reconnecting client never
+  // witnessed the busy transitions of sessions that started while it was
+  // away, and the boot seed (activeSessionsQuery) runs once with
+  // staleTime:Infinity — the "output streams but the busy chip never lights"
+  // class. Locally-busy sessions ABSENT from the snapshot downgrade to idle
+  // (an idle transition swallowed by a gap heals); reconcileStatuses applies
+  // everything recency-guarded so live transitions win.
+  // WHY HERE and not a component: the view-level resync effects
+  // (session.tsx, layout) are DISPOSED with a transient first-mount owner
+  // right after their initial run (diagnosed 2026-10-20 via onCleanup
+  // telemetry: "EFFECT DISPOSED (count was 0)" — the resync signal bumps
+  // 1,2,3 across reconnects but no component effect ever observes it). The
+  // sync context outlives view churn — its onMount starts the very stream
+  // that bumps the signal — so the attach consumer lives here.
+  const attachInflight = new Set<string>()
+  const attachDirectory = async (directory: string) => {
+    const conn = serverSDK.server
+    if (!conn) return
+    if (attachInflight.has(directory)) return
+    attachInflight.add(directory)
+    const fetchedAt = Date.now()
+    try {
+      const { status, body } = await amicodeGetResponse(
+        conn,
+        `/attach?directory=${encodeURIComponent(directory)}`,
+      )
+      if (status !== 200 || !body || typeof body !== "object") return
+      const snap = body as { busy?: Record<string, unknown> }
+      if (!snap.busy || typeof snap.busy !== "object") return
+      // The engines' status maps carry BUSY sessions only — absent = idle.
+      // Compose the full map: snapshot busy + idle downgrades for locally-busy
+      // sessions the snapshot no longer knows (recency-guarded inside
+      // reconcileStatuses — a busy transition newer than this fetch refuses
+      // the downgrade).
+      const localBusy = untrack(() => {
+        const all = session.data.session_status
+        return Object.entries(all).filter(([, st]) => st && st.type !== "idle")
+      })
+      const statuses: Record<string, { type: string }> = {}
+      for (const [sid, st] of Object.entries(snap.busy)) {
+        if (st && typeof st === "object" && "type" in st) statuses[sid] = st as { type: string }
+      }
+      // SCOPE (2026-10-20 flaky-animation fix): each attach carries only ITS
+      // directory's sessions — absent-from-snapshot means idle ONLY within
+      // that directory. A panel attaches EVERY project concurrently (the
+      // boot fans out one attach per project worktree); an unscoped
+      // downgrade let the emptiest directory's attach (a worktree, "/")
+      // mark the whole fleet's busy sessions idle, and whichever attach
+      // landed LAST won. Animation then lit only when the right
+      // directory's attach happened to be final — random per reload. Only
+      // sessions whose cached info places them in THIS directory may be
+      // downgraded; unknown-directory sessions are left alone (safe: the
+      // recency guard inside reconcileStatuses still refuses downgrades
+      // newer than the fetch).
+      for (const [sid] of localBusy) {
+        const sessionDirectory = untrack(() => session.data.info[sid]?.directory)
+        if (sessionDirectory !== directory) continue
+        if (!statuses[sid]) statuses[sid] = { type: "idle" }
+      }
+      session.reconcileStatuses(statuses as Record<string, SessionStatus>, { fetchedAt })
+      // Sessions spawned during the gap appear immediately.
+      void loadSessions(directory).catch(() => {})
+    } catch {
+      // A failed attach is non-fatal: the next resync edge retries.
+    } finally {
+      attachInflight.delete(directory)
+    }
+  }
+  // 2026-10-20 (boot-race fix): the directory source is the PROJECT LIST,
+  // not loadSessions registration. The VS Code panel iframe boots at the
+  // bare origin — no directory route — so loadSessions never runs at boot
+  // (verified in the frontdoor log: no /session?directory=...&roots=true for
+  // webview boots) and a registry fed by it stays empty forever: bump-time
+  // attach had no dirs, register-time never came. The projects query
+  // (/project) runs on EVERY boot regardless of route, so the effect below
+  // fires when EITHER edge arrives last — the first stream connect, or the
+  // project list resolving — and attaches every project's worktree (plus
+  // sandboxes). Tracked reads: the effect re-runs on count bumps AND on
+  // project-list changes; the attach body itself is untracked.
+  // The directory source: project worktrees UNION the directories of every
+  // session the store has cached info for. The projects query is the ideal
+  // source but has proven non-deterministic across webview boots (observed
+  // 2026-10-20: a webview boot that never issued /project); session info
+  // accumulates from any session list/view load, so the union converges on
+  // every panel regardless of which query raced which.
+  const knownAttachDirs = (): string[] => {
+    const dirs = new Set<string>()
+    for (const project of globalStore.project ?? []) {
+      if (project?.worktree) dirs.add(project.worktree)
+      for (const sandbox of project.sandboxes ?? []) if (sandbox) dirs.add(sandbox)
+    }
+    for (const info of Object.values(session.data.info)) {
+      if (info?.directory) dirs.add(info.directory)
+    }
+    return [...dirs]
+  }
+  createEffect(() => {
+    const count = serverSDK.event.resyncCount()
+    const projects = globalStore.project ?? []
+    if (count === 0) return
+    const dirs = untrack(() => knownAttachDirs())
+    untrack(() => {
+      for (const directory of dirs) void attachDirectory(directory)
+    })
+  })
+  // 2026-10-20 (deterministic convergence): the reactive edges (stream bump,
+  // project list, session info arriving) have each been observed to lose
+  // races across real webview boots. A 15s poll makes busy-state truth
+  // converge REGARDLESS of which reactive path fired: whatever the boot
+  // ordering, within one poll tick of the store knowing a directory, its
+  // merged snapshot is reconciled. Cheap (one request per directory per
+  // tick, inflight-deduped), and the scoped downgrade keeps cross-directory
+  // attaches from fighting each other.
+  const attachPoll = setInterval(() => {
+    if (serverSDK.event.status() !== "connected") return
+    const dirs = untrack(() => knownAttachDirs())
+    for (const directory of dirs) void attachDirectory(directory)
+  }, 15000)
+  onCleanup(() => clearInterval(attachPoll))
 
   onMount(() => {
     if (typeof requestAnimationFrame === "function") {

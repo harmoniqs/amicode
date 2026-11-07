@@ -124,7 +124,8 @@ function summaryFromProblemSpec(spec: Record<string, unknown>): Partial<SolveSum
   if (typeof pulse.T === "number") out.T = pulse.T;
   if (typeof goal.gate === "string") out.goal = goal.gate;
   else if (typeof goal.kind === "string") out.goal = goal.kind;
-  out.solver = typeof solver.backend === "string" ? solver.backend : "ipopt";
+  // omitted backend = the inherited default — MadNLP since DTO 0.11 / Piccolo 2.2 (#1676; parse.jl parity with @amicode/schema hashing)
+  out.solver = typeof solver.backend === "string" ? solver.backend : "madnlp";
   out.strategy = typeof solver.strategy === "string" ? solver.strategy : "direct";
   const sysParams = isRecord(system.params) ? system.params : undefined;
   if (sysParams && typeof sysParams.levels === "number") out.levels = sysParams.levels;

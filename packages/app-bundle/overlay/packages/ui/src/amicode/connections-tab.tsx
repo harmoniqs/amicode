@@ -37,6 +37,8 @@ import {
   type StartAuthPayload,
 } from "./connections"
 import { ConnectionIcon } from "./connection-icon"
+import { ACTIVITY_COLOR } from "./activity"
+import { ActivityDot } from "./activity-dot"
 import { ConnectionPicker } from "./connection-picker"
 
 export type ConnectionsTabLabels = {
@@ -97,7 +99,7 @@ export function AmicodeConnectionsTab(props: {
             when={view().ok}
             fallback={
               <div class="flex items-center gap-2 w-full px-2 py-1">
-                <div class="size-1.5 rounded-full shrink-0 bg-icon-critical-base" />
+                <div aria-hidden="true" class="size-1.5 rounded-full shrink-0" style={{ background: ACTIVITY_COLOR.error }} />
                 <span class="text-14-regular text-text-weak flex-1 truncate">{view().error}</span>
                 <Button
                   type="button"
@@ -197,14 +199,6 @@ export function AmicodeConnectionsTab(props: {
   )
 }
 
-const TONE_DOT: Record<ReturnType<typeof cardModel>["tone"], string> = {
-  success: "bg-icon-success-base",
-  critical: "bg-icon-critical-base",
-  warning: "bg-icon-warning-base",
-  pending: "bg-icon-warning-base animate-pulse",
-  neutral: "bg-border-weak-base",
-}
-
 /** amicode#200: exported — the solver toggle's popover mounts the SAME card
  *  for Company Compute (connect / connected-manage / expired states). */
 export function ConnectionCard(props: {
@@ -282,7 +276,7 @@ export function ConnectionCard(props: {
     <div class="flex flex-col w-full px-2 py-1" data-slot="amicode-connection-card" data-state={props.conn.state}>
       <Show when={!props.hideHeader}>
         <div class="flex items-center gap-2 w-full min-w-0">
-          <ConnectionIcon conn={props.conn} />
+          <ConnectionIcon conn={props.conn} label={stateCopy(props.conn, props.labels.states)} />
           <span class="text-14-regular text-text-base truncate">{connectionDisplayName(props.conn)}</span>
           <Show when={model().showRawState}>
             <span class="text-11-regular text-text-base bg-surface-base px-1.5 py-0.5 rounded-md shrink-0">
@@ -303,7 +297,7 @@ export function ConnectionCard(props: {
         data-slot="amicode-connection-state-copy"
       >
         <Show when={props.hideHeader}>
-          <ConnectionIcon conn={props.conn} />
+          <ConnectionIcon conn={props.conn} label={stateCopy(props.conn, props.labels.states)} />
         </Show>
         {stateCopy(props.conn, props.labels.states)}
         <Show when={model().showIdentity}>
@@ -313,7 +307,7 @@ export function ConnectionCard(props: {
 
       <Show when={model().showDrift}>
         <div class="flex items-center gap-2" data-slot="amicode-connection-drift">
-          <div class="size-1 rounded-full shrink-0 bg-icon-warning-base" />
+          <div aria-hidden="true" class="size-1 rounded-full shrink-0" style={{ background: ACTIVITY_COLOR.attention }} />
           <span class="text-11-regular text-text-weak">{driftCopy(props.conn, props.labels.driftHint)}</span>
         </div>
       </Show>
@@ -336,7 +330,7 @@ export function ConnectionCard(props: {
 
       <Show when={props.actionError}>
         <div class="flex items-center gap-2" data-slot="amicode-connection-action-error">
-          <div class="size-1 rounded-full shrink-0 bg-icon-critical-base" />
+          <div aria-hidden="true" class="size-1 rounded-full shrink-0" style={{ background: ACTIVITY_COLOR.error }} />
           <span class="text-11-regular text-text-weak truncate">{props.actionError}</span>
         </div>
       </Show>
@@ -413,7 +407,7 @@ export function ConnectionCard(props: {
 
       <Show when={model().showWaiting}>
         <div class="flex items-center gap-2 pt-1" data-slot="amicode-connection-waiting">
-          <div class="size-1.5 rounded-full shrink-0 bg-icon-warning-base animate-pulse" />
+          <ActivityDot activity="running" label={stateCopy(props.conn, props.labels.states)} />
           <div class="flex-1" />
           <Button
             type="button"

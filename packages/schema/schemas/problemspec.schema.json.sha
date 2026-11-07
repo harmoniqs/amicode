@@ -5,7 +5,7 @@
 #       Task 9 vendoring-drift gate can git-fetch the committed schema at the pinned
 #       sha and byte-compare. Update this sha whenever you re-vendor.
 repo = "harmoniqs/Piccolissimo.jl"
-sha = "9098f6f"
-piccolo_sha = "c3884122"
+sha = "1c6514a"
+piccolo_sha = "5e8f209a"
 path = "src/specs/schema/problemspec.full.schema.json"
 variant = "full"

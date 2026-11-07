@@ -18,12 +18,12 @@
  *  and a warning — never a throw (the session must boot regardless).
  *
  *  TWIN / UNIFY-LATER: a second copy of this resolver lives in
- *  amico-run (packages/amico-run/src/mounts.ts) with the same API + semantics
+ *  the amico CLI's mount module (packages/amico-run/src/mounts.ts) with the same API + semantics
  *  plus an $AMICO_VAULTS_ROOT/$AMICO_MOUNTS_TOML env seam (its verb tests cross a
  *  child-process boundary; this in-process vitest twin needs no env seam). The
  *  duplication is deliberate short-term (Ombra spec chose extension-resident
  *  mount discovery; depth-1 §7.3 wants the CLI to own it long-term). Unify-later
- *  follow-up: fold both onto the amico-run implementation once the CLI is the
+ *  follow-up: fold both onto the packages/amico-run implementation once the CLI is the
  *  single retrieval spine. */
 import * as fs from "node:fs";
 import * as os from "node:os";

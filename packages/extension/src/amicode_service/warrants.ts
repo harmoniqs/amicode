@@ -3,7 +3,7 @@
 //
 // SINGLE-WRITER DISCIPLINE (#212). Reading the ledger here is a plain file read, but
 // WRITING goes through `amico ledger approve` — never an append from this process.
-// amico-run is the ledger's only writer, which is what makes O_APPEND atomicity hold
+// the amico CLI is the ledger's only writer, which is what makes O_APPEND atomicity hold
 // across the extension, the CLI, and this server. A "quick" append here would break
 // that quietly and only under concurrency.
 //
@@ -32,7 +32,7 @@ export interface WarrantRow {
 }
 
 /** $AMICO_LEDGER override, else ~/.amico/ledger/runs.jsonl — must stay identical to
- *  amico-run's ledgerPath(), or the card would read a different file than the gate. */
+ *  the amico CLI's ledgerPath(), or the card would read a different file than the gate. */
 export function ledgerPath(env: Record<string, string | undefined> = process.env): string {
   return env.AMICO_LEDGER || path.join(homedir(), ".amico", "ledger", "runs.jsonl")
 }

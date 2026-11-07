@@ -146,8 +146,8 @@
   justify-content: flex-end;
 }
 
-[data-slot="settings-v2-row-control"] > div:has([data-component="switch"]),
-[data-slot="settings-v2-row-control"] > [data-component="switch"] {
+[data-slot="settings-v2-row-control"] > div:has([data-component="switch-v2"]),
+[data-slot="settings-v2-row-control"] > [data-component="switch-v2"] {
   display: inline-flex;
   align-items: center;
   padding: 4px;

@@ -22,6 +22,7 @@ import type {
   PromptInputV2Suggestion,
 } from "./types"
 import type { PromptInputV2Interaction, PromptInputV2SelectControl } from "./interaction"
+import { ComposerResizeHandle, composerHeightStyle, createComposerResize } from "./resize-handle"
 import "./attachments.css"
 
 export type {
@@ -42,6 +43,23 @@ export type PromptInputV2Props = {
   class?: string
   modelControl?: JSX.Element
   /**
+   * Optional control rendered to the RIGHT of the effort/variant select —
+   * after agent/model/variant (amicode#1549: the harness switcher reads as
+   * the outermost context, positioned right of the trio per the live-test
+   * layout ruling). Outside the degraded wrapper so it stays clickable under
+   * a non-opencode harness. Follows the modelControl optional-control
+   * pattern: pass `undefined` and nothing renders — the row's layout does
+   * not shift.
+   */
+  harnessControl?: JSX.Element
+  /**
+   * Degraded-composer affordance (amicode#1549): when the serving harness's
+   * contract accepts no agent/model/variant (telaio's Harness Contract v1),
+   * those slots dim inertly with an honest why instead of silently failing.
+   * Undefined/false renders `display: contents` — byte-identical layout.
+   */
+  harnessDegraded?: boolean
+  /**
    * Optional control rendered in the bottom row's right anchor, immediately
    * left of the send button (amicode/opencode#116: the report-a-bug button).
    * Follows the modelControl optional-control pattern: pass `undefined` and
@@ -58,6 +76,9 @@ export function PromptInputV2(props: PromptInputV2Props) {
   const view = props.controller.view
   let editor: HTMLDivElement | undefined
   let localInput = false
+  // amicode#612: drag the form's top edge to make the text area taller. The
+  // chosen height persists (localStorage) across sessions; unset = stock sizing.
+  const resize = createComposerResize(() => editor?.getBoundingClientRect().height)
   const updateCursor = () => {
     if (!editor || !window.getSelection()?.isCollapsed) return
     props.controller.onCursor(promptInputV2Cursor(editor))
@@ -130,6 +151,8 @@ export function PromptInputV2(props: PromptInputV2Props) {
         onDragLeave={props.controller.onDragLeave}
         onDrop={props.controller.onDrop}
       >
+        <ComposerResizeHandle resize={resize} />
+
         <Show when={state.drag === "active"}>
           <div class="pointer-events-none absolute inset-0 z-20 grid place-items-center rounded-xl bg-v2-background-bg-base/90 text-v2-text-text-base">
             Drop files to attach
@@ -168,6 +191,7 @@ export function PromptInputV2(props: PromptInputV2Props) {
             autocomplete="off"
             class="relative z-10 block min-h-[60px] max-h-[180px] w-full overflow-y-auto whitespace-pre-wrap bg-transparent px-4 pt-4 pb-2 text-[13px] font-[440] leading-5 text-v2-text-text-base focus:outline-none empty:before:content-['\200B'] [&_[data-mention=file]]:text-syntax-property [&_[data-mention=agent]]:text-syntax-type [&_[data-mention=reference]]:text-syntax-keyword"
             classList={{ "font-mono!": state.mode === "shell", "opacity-50": props.disabled }}
+            style={composerHeightStyle(resize.height())}
             onInput={(event) => {
               const cursor = promptInputV2Cursor(event.currentTarget)
               const prompt = parsePromptInputV2Editor(event.currentTarget)
@@ -220,38 +244,57 @@ export function PromptInputV2(props: PromptInputV2Props) {
               onContext={props.controller.openContext}
               onShell={props.controller.openShell}
             />
-            <Show when={view.agent} keyed>
-              {(control) => (
-                <PromptInputV2ConfiguredSelect title="Choose agent" keybind={["Mod", "."]} control={control} />
-              )}
-            </Show>
-            <Show
-              when={props.modelControl}
-              fallback={
-                <Show when={view.model} keyed>
-                  {(control) => (
-                    <PromptInputV2ConfiguredSelect
-                      title="Choose model"
-                      keybind={["Mod", "M"]}
-                      control={control}
-                      model
-                    />
-                  )}
-                </Show>
-              }
+            <div
+              class={props.harnessDegraded ? "flex min-w-0 flex-1 items-center gap-1 opacity-40 pointer-events-none" : "contents"}
+              title={props.harnessDegraded ? "Not accepted by this harness" : undefined}
             >
-              {props.modelControl}
-            </Show>
-            <Show when={(props.variantControlVisible ?? true) && view.variant} keyed>
-              {(control) => (
-                <Show when={control.options().length > 1}>
+              <Show when={view.agent} keyed>
+                {(control) => (
                   <PromptInputV2ConfiguredSelect
-                    title="Choose model variant"
-                    keybind={["Shift", "Mod", "D"]}
+                    title="Choose agent"
+                    keybind={["Mod", "."]}
                     control={control}
+                    tourTarget="posture"
                   />
-                </Show>
-              )}
+                )}
+              </Show>
+              <Show
+                when={props.modelControl}
+                fallback={
+                  <Show when={view.model} keyed>
+                    {(control) => (
+                      <PromptInputV2ConfiguredSelect
+                        title="Choose model"
+                        keybind={["Mod", "M"]}
+                        control={control}
+                        model
+                      />
+                    )}
+                  </Show>
+                }
+              >
+                {props.modelControl}
+              </Show>
+              <Show when={(props.variantControlVisible ?? true) && view.variant} keyed>
+                {(control) => (
+                  <Show when={control.options().length > 1}>
+                    <PromptInputV2ConfiguredSelect
+                      title="Choose model variant"
+                      keybind={["Shift", "Mod", "D"]}
+                      control={control}
+                    />
+                  </Show>
+                )}
+              </Show>
+            </div>
+            {/* amicode#1549: the harness select renders to the RIGHT of the
+                effort/variant select — the outermost context read right-to-left
+                after the trio, NOT first-in-row (the live-test layout ruling:
+                agent → model → effort → harness). Deliberately OUTSIDE the
+                degraded wrapper: under a telaio harness the trio dims inert but
+                the harness select must stay clickable — it is the way back. */}
+            <Show when={props.harnessControl} keyed>
+              {(control) => control}
             </Show>
           </div>
           <Show when={props.trailingControl} keyed>
@@ -532,12 +575,14 @@ function PromptInputV2ConfiguredSelect(props: {
   keybind?: string[]
   control: PromptInputV2SelectControl
   model?: boolean
+  tourTarget?: string
 }) {
   const current = () => props.control.current()
   const providerID = () => props.control.options().find((option) => option.id === current())?.providerID
   return (
     <PromptInputV2Select
       title={props.title}
+      tourTarget={props.tourTarget}
       keybind={props.control.keybind?.() ?? props.keybind}
       options={props.control.options()}
       current={current()}
@@ -558,6 +603,8 @@ export function PromptInputV2Select(props: {
   current: string
   currentIcon?: JSX.Element
   class?: string
+  /** data-tour-target anchor on the trigger button, for the onboarding spotlight. */
+  tourTarget?: string
   onOpenChange?: (open: boolean) => void
   onSelect: (id: string) => void
 }) {
@@ -578,6 +625,7 @@ export function PromptInputV2Select(props: {
           size="normal"
           class={`max-w-[220px] justify-start ![font-weight:440] ${props.class ?? ""}`}
           aria-label={props.title}
+          data-tour-target={props.tourTarget}
         >
           {props.currentIcon}
           <span class="truncate capitalize leading-5">

@@ -25,7 +25,13 @@ export { checkKnownFixes };
 //      remote's HEAD (full refs/remotes/origin/<b> or short origin/<b>).
 //   3. the "main" fallback — yesterday's behavior, never a silent upgrade of
 //      the guard's strictness.
-export function resolveDefaultBranch({ remoteShowOutput, symbolicRefOutput, fallback = "main" }) {
+//   0. #1906: an EXPLICIT baseline (AMICODE_DEPLOY_BASELINE) — set by
+//      ops/hub/deploy-dist.sh after it verified HEAD is the tip of
+//      origin/<lane>. A lane deploy then compares against its lane (no
+//      override needed) instead of the default branch. Blank = unset.
+export function resolveDefaultBranch({ explicit, remoteShowOutput, symbolicRefOutput, fallback = "main" }) {
+  const pinned = String(explicit ?? "").trim().replace(/^origin\//, "");
+  if (pinned !== "") return { branch: pinned, source: "explicit" };
   const fromRemoteShow = String(remoteShowOutput ?? "").match(/^[ \t]*HEAD branch:[ \t]*(\S+)[ \t]*$/m);
   if (fromRemoteShow) return { branch: fromRemoteShow[1], source: "remote-show" };
   const symref = String(symbolicRefOutput ?? "").trim();

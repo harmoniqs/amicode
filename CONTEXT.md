@@ -79,6 +79,14 @@ _Avoid_: cron, scheduler (as concept names), night shift
 The role that leads any autonomous loop — one canonical protocol (ledger discipline, dispatch through gates, analyze, record) that every campaign runs under, whichever mode it is bound to. Research and development differ in their gate packs, never in their director.
 _Avoid_: conductor (standing decision)
 
+**Critic pass**:
+A fresh-context LLM judgment dispatch (critic, reviewer, analyzer): one lens per pass, a code-enforced verdict vocabulary, a receipt in the dispatching record. Blind to implementer reasoning. The brief carries the diff, spec, tests, and CI output, never the PR body, commit messages, review threads, or transcript, and no critic runs on the implementer's session or model instance (spec-20261026-101500 A10). It is the substrate for spec-review critics, merge-gate critic panels, and architecture passes. Its lens set has a mechanical floor derived from the diff's paths and classes. Renamed from "Jev pass" by spec-20261026-101500 A1. The v2 D16 and Notturno v1 D3 "Jev passes" read as critic passes.
+_Avoid_: Jev pass (the retired name: a critic pass is an LLM, never Jev), reviewer call, check (a critic pass is receipted judgment, not a mechanical check)
+
+**Jev**:
+TypeSafe's calibrated System One model, and only that. It chooses or scores among declared options, and it routes, orders, prioritizes, and pre-labels. It never generates text. It never sits in a verdict, gate, merge, promotion, or summary-fidelity path, and a Jev answer is never a label. In critic lens routing it may add lenses above the mechanical floor or reorder them, but never remove one. Every Jev seam fails open to its deterministic behavior (spec-20261026-101500 A1).
+_Avoid_: Jev pass (renamed to Critic pass), Jev review, "Jev" as a name for any LLM dispatch
+
 **Research**:
 The research mode (renamed from `autoresearch` — the three-mode surface, spec-20260907-011500; old ids read-resolve for one release cycle, never migrated in place): hypothesis queue → deliberate spec → experiment → gates → analyzer — the shipped, name-frozen autonomous mode, binding the research gate pack over the director core.
 _Avoid_: autoresearch (the pre-rename id — an alias at read time, not a name)
@@ -175,6 +183,26 @@ source)
 The per-machine stance for where Sessions are served from, in three values. `standalone` — this machine spawns and owns its own chat server, detached and survivable so it outlives an extension-host reload and is re-adopted rather than dying with the editor (the default; the only mode that ever spawns). `server` — this machine runs the Canonical Server as a system service and the panel attaches to it. `client` — this machine never serves; the panel attaches to the Canonical Server through a Managed Tunnel. Determined by `~/.amico/ops/fleet/fleet.json` (no file = standalone). Machine-scoped, never synced.
 _Avoid_: profile, spawn vs attach (as concept names)
 
+**Capability**:
+An orthogonal, open tag describing what a machine is *for* — distinct from its serve-stance (Server mode). Two known, behavior-adjacent tags: `compute` (a solve-target hint — declared-but-inert until a fleet-peer executor exists, an explicit non-goal today) and `roaming` (a transport hint that defaults a machine to Tailscale). Any other tag is a free descriptive label with no behavioral meaning; it round-trips verbatim. A Capability never overrides the guard/tunnel/hub decision — Server mode stays the only serve-stance authority (ADR 0026).
+_Avoid_: role (that is Server mode), type, class
+
+**Roster**:
+The amicode-owned, fleet-wide device list on the Canonical Server (`~/.amico/ops/fleet/roster.json`) — one row per machine, each machine the single writer of its own row (a registry/heartbeat model). A row is `{ machine_id, name, server_mode, capabilities[], sshAlias, transport, last_report, health, device_type? }` with `health ∈ {reachable, degraded, down}`; the UI labels `server_mode` as "role" and `last_report` as "last-seen". Surfaced at `GET /amicode/roster` (read) + `POST /amicode/roster` (self-report), on the proxied `/amicode/*` namespace so a client sees it through the host proxy. Separate from `fleet.json` (untouched — one-parser invariant, ADR 0023) and from the per-machine projection (which carries only this machine's topology). ADR 0026.
+_Avoid_: fleet.json (a different, per-machine file), device table, inventory
+
+**Device identity**:
+The self-reported, human-facing half of a Roster row: the machine's friendly **name** (macOS `scutil` ComputerName / Linux `PRETTY_HOSTNAME` / an explicit `amicode.deviceName` override, else the prettified hostname) and its **device type** (`server | desktop | laptop`, an open set — macOS `system_profiler` model / Linux chassis / an `amicode.deviceType` override, else absent). Derived once by logic shared between the enroll producer and the sidebar self-row so a machine and its peers cannot disagree; absent/undefined values fall back honestly (type → `server_mode`), never fabricated. The Canonical Server self-registers its own device identity keyed by `machine_id = canonical.host`. Refreshed by re-enroll. ADR 0028.
+_Avoid_: hostname (the raw FQDN, not the friendly name), machine_id (the identity key, not the display name)
+
+**Machine**:
+One computer in the Fleet — the unit a Roster row describes and Enroll brings in.
+_Avoid_: device (a Device is a QPU or emulator behind a Connection), node
+
+**Focused machine**:
+The one Machine the window's working surfaces are scoped to, chosen in the FLEET section and defaulting to this machine; a UI selection, never a Roster change.
+_Avoid_: active machine, selected device
+
 **Fleet config**:
 The file at `~/.amico/ops/fleet/fleet.json` that declares this machine's fleet role and the canonical server's coordinates (`host`, `port`, `sshAlias`). No file on disk = standalone. The guard script, extension, and installer all resolve role from this file — never from a hardcoded hostname.
 _Avoid_: fleet.toml, fleet settings (those are VS Code settings, a different thing)
@@ -184,12 +212,16 @@ The one chat server that owns the fleet's Session store — the single writer ev
 _Avoid_: master, primary, host
 
 **Fleet**:
-The user's machines acting as one logical studio: exactly one Canonical Server plus zero-or-more clients, all attaching to the same Session store.
+The user's machines acting as one logical studio. Two topologies, both "the Fleet": the **single-store** shape — exactly one Canonical Server plus zero-or-more clients, all attaching to the same Session store — and the **independent-peer** shape (ADR 0031/0034), where **Peer studios** each own their own Sessions and reach each other by Observe/Control rather than a shared writer. A keeper/canonical coordinate owns roster and bootstrap authority in both.
 _Avoid_: mesh, cluster
 
 **Go Standalone**:
-The user-invoked mode switch from `client` to `standalone` — the machine leaves the fleet and serves itself permanently. Not an escape hatch: a first-class choice. Sessions made locally stay local. Re-enrollment in a fleet is a separate flow (Enroll, deferred).
+The user-invoked mode switch from `client` to `standalone` — the machine leaves the fleet and serves itself permanently. Not an escape hatch: a first-class choice. Sessions made locally stay local. Re-enrollment in a fleet is a separate flow (Enroll).
 _Avoid_: local fallback, offline mode, degraded mode
+
+**Enroll**:
+The idempotent, verifiable flow that brings one machine into a fleet — the inverse of Go Standalone. Server-first, the standard join-token pattern: `amico fleet enroll --as-server` provisions the durable hub service, mints the Fleet token, and emits a **join token** (`{ canonical, fleet_token, transport_hint, pin_version }` — a secret, 0600, never logged). A client redeems it with `amico fleet enroll --join-token`: it rejects a pin-mismatched token before writing anything, then writes `fleet.json` (role + canonical only — capabilities go to the roster row), registers its roster row, sets the transport (`tailscale` when the machine roams, else the token's hint), runs the installer (which installs the never-fork guard), and **verify-attaches** — reporting success only after a live probe of the just-set transport passes. A re-run repairs in place; a failed verify surfaces the specific cause with its fix and never reports a false success. `amico fleet enroll` is a distinct verb from the session registry — it writes membership, not session records.
+_Avoid_: register (as the verb name), pair, handshake
 
 **Fleet token**:
 The shared secret authenticating a client to the Canonical Server's data routes — minted when the fleet server is enabled, stored at 0600, handed to clients during the ssh-based setup flow. The sibling of the per-boot server password (ADR 0002): that guards a spawned server its extension owns; this guards the service no extension spawns.
@@ -215,6 +247,30 @@ _Avoid_: keepalive, lock, busy flag
 The interval after an extension-host teardown during which a detached standalone server stays alive awaiting re-adoption. On expiry with no adoption and no active-work pin the server self-exits and deletes its handshake; a reload re-adopts well within it, a genuine quit does not.
 _Avoid_: timeout, linger period
 
+**Peer studio**:
+An independent serving peer whose Sessions it owns, observed or controlled from another machine's window. The independent-peer complement to the single-store Canonical Server: Peer studios do **not** share one Session store — each owns its own, and cross-machine access is by Observe/Control, never a shared writer (ADR 0031, 0034).
+_Avoid_: remote server (that is transport), replica, node
+
+**Observe (peer observation)**:
+Read-only visibility into a Peer studio's Sessions from another machine — its session list, one session's history and events. Unlocked by **trust** (a reader token seeded at Enroll), not by a Control grant. A peer-owned session's reads route to the owner with the owner's own reader token; a write never routes on the observation path (#1537).
+_Avoid_: view, mirror, follow, spectate
+
+**Control (peer control)**:
+The authority to *drive* a Peer studio's Session from another machine — send prompts, archive, delete. A strictly higher unlock than Observe, carried by a persisted per-peer **Control grant** (`control` scope) and re-armed each session (never auto-restored). Fails closed: no grant, revoked, transport-down, or observe-only → the write is denied, never served locally.
+_Avoid_: write access, remote admin, takeover
+
+**Enable control**:
+The explicit, per-session act that arms Control on a peer. For a **self-owned** peer with verified management access it is one click on the controlling machine, authorized at Enroll — no target-side prompt, since a headless peer has no window. For a **shared** peer it is the far side of a request→approve handshake routed to the peer's Lifecycle-admin authority.
+_Avoid_: grant (that is the record), connect, claim
+
+**Lifecycle-admin authority**:
+The machine/operator that may mint, revoke, and re-admit a Peer studio's grants — the `lifecycle-admin` scope, **not** a superset of Control. Seeded at Enroll (the enroller is recorded as the peer's `authorityIdentityKey`), so a headless peer's Control can be approved from a UI-bearing machine; the peer itself only *enforces* presented tokens, never rendering approval.
+_Avoid_: owner, root, keeper (keeper is roster/bootstrap coordination, a different authority)
+
+**Driving**:
+The live state in which one window is authoring turns on a Peer studio's Session under active Control, marked by a persistent "driving `<peer>`" banner so control is never ambient.
+_Avoid_: remote session, controlling (as a noun), piloting
+
 ### Surfaces
 
 **Work Column**:
@@ -238,12 +294,24 @@ A sandboxed ES-module card rendered in an iframe within Home. Authored by the ag
 _Avoid_: Card (ambiguous — the UI has many cards), tile (as the concept name — tile is a size class)
 
 **Sidebar**:
-The webview in the VS Code activity bar container, showing project navigation and system status. Contains action buttons (open chat, create project), a session-aware unified project tree (Research Projects with lifecycle metadata expanding into file trees; Dev Projects as plain expandable folders), and a collapsible fleet section (deferred). The sidebar is navigation chrome — it follows the active session's project binding but never drives session switching. Single-clicking a file opens it as a tab in Preview (the multi-document file workspace in the side panel); double-clicking opens a native VS Code editor tab.
+The webview in the VS Code activity bar container, showing project navigation and system status. Contains action buttons (open chat, create project), a session-aware unified project tree (Research Projects with lifecycle metadata expanding into file trees; Dev Projects as plain expandable folders), and a collapsible fleet section that is **read-only** toward the fleet — a glanceable list of Machines from the host-owned Roster (one row per machine: name, `server_mode` labeled "role" + capability chips, a `reachable`/`degraded`/`down` health indicator, and `last_report` labeled "last-seen"), marking the Focused machine. It offers navigation actions only — connect, focus, Troubleshoot, Add machine, Refresh — and never writes fleet config or Roster rows. The section refreshes on posture-change and shows an honest empty/degraded state when the roster host is down — never a fabricated list (#1321, ADR 0026). The sidebar is navigation chrome — it renders state and navigates, never mutating fleet config or driving session switching. Single-clicking a file opens it as a tab in Preview (the multi-document file workspace in the side panel); double-clicking opens a native VS Code editor tab.
 _Avoid_: Explorer (VS Code's native file explorer is separate), Panel (the in-app dismissible drawer is a different concept)
 
 **Preview**:
 The multi-document file workspace in the side panel. Holds zero or more files as inner tabs, each rendering its content (markdown rendered with a toggle to edit; text/code files in a CodeMirror editor; images and PDFs inline). Files arrive via Sidebar single-click or a Chat file pill and accumulate as tabs — each closeable and drag-reorderable; opening an already-open file focuses its existing tab rather than duplicating it. A breadcrumb bar under each pane's tab strip shows the active file's project-relative path with interactive sibling navigation. Supports recursive split panes via edge-drop: dragging a tab toward a pane's edge divides the view, and each resulting pane keeps its own tab bar, breadcrumb, zoom, and preview/edit toggle. Empty panes auto-collapse; a minimum pane dimension is enforced so splits can't shrink below a usable size. Opens and activates automatically when the first file is selected; shows a placeholder when no file is open. For committed editing, double-click the Sidebar entry to open a native VS Code tab.
 _Avoid_: Editor (Preview is a multi-document viewer, not a primary editor — committed editing belongs in a native VS Code tab), File browser (the Sidebar is still the primary project-wide file tree; the breadcrumb is a contextual sibling-navigation aid scoped to the open file, not a second tree)
+
+**Paper Mode**:
+A first-class, opt-in session surface for *committed* LaTeX co-editing: the `.tex` editor is primary, Chat docks beneath it, and the compiled PDF sits to the right. Distinct from Preview (which stays a viewer) and from the Work Column layout — Paper Mode is its own layout, not a resize of an existing one. The live editor Draft is the single source of truth; the agent reads it fresh each turn; agent edits arrive as reviewable Pending Hunks rather than direct disk writes; and compilation is manual. Does not depend on the paused wide-mode work.
+_Avoid_: Write mode (superseded name), Overleaf mode, wide mode (a separate, paused feature)
+
+**Draft** (Paper Mode):
+The live in-editor content of a `.tex` file, versioned by a monotonic Content Revision. In Paper Mode it is the single source of truth: the human's typing and accepted agent edits both land here, saves flush it to disk, and the agent always reads it at its current revision. Supersedes disk and any cached copy as the authority for "current content."
+_Avoid_: Buffer (implementation detail), file contents (ambiguous with disk)
+
+**Pending Hunk**:
+A proposed agent edit shown as an inline, reviewable diff decoration in the Paper Mode editor, not yet written to the Draft or disk. Accepted (`✓`) hunks apply to the Draft; rejected (`✗`) hunks vanish. A Pending Hunk that overlaps concurrent human edits becomes a Conflict Hunk requiring explicit resolution — nothing lands unchecked. Only accepted hunks emit mutation-ledger receipts and enter the compiled source.
+_Avoid_: Suggestion, agent write (in Paper Mode the agent proposes, it does not write disk), pending change
 
 ### Developer tooling
 
@@ -296,3 +364,25 @@ _Avoid_: Offload (as the decision name), auto-routing
 **Estimate**:
 The predicted size/cost of a solve (sizeClass, time) computed at solve-assembly time. Informs the Routing confirm; suggests, never decides.
 _Avoid_: Classifier
+
+### Prompt context
+
+**Block**:
+A generated, TTL-stamped section of a session's system context — one data source, one generator, a size budget, and a freshness contract. The prompt is a dashboard of Blocks, never a hand-maintained document: each Block carries its generator stamp (tamper-evident, the mode-registry pattern) and is composed per prompt build. Never silent: a Block that is missing, stale, or failing renders its own place as a Named outcome.
+_Avoid_: prompt section, context block (the AGENTS.md sections are documents, not Blocks)
+
+**Block registry**:
+The single declarative list of every Block — name, generator, TTL, size budget, named-outcome rule, renderer bindings (the per-prompt plugin transform first; a V2 SystemContext source as the second renderer). Block truth lives here, not in prose; adding context to the prompt means adding a Block, not editing a template.
+_Avoid_: prompt template, context config
+
+**Named outcome**:
+The one-line, machine-checkable record a surface emits when it cannot deliver its content — the reason class plus the relevant timestamp or path (e.g. `overnight: not-found (payload absent since <ts>)`). The alternative to silent degradation everywhere freshness matters: a missing surface must be visible as missing, never simply absent.
+_Avoid_: error line, fallback text (a Named outcome names the failure class; it is not content)
+
+**Context route**:
+A read-only `/amicode/context/*` HTTP route exposing a Block's full-fidelity source — the details a size-budgeted prompt Block can only point to. Sessions fetch them through the read-only `amico.context` seam; widgets through `amico.fetch`. The prompt carries digests + pointers; depth is one fetch away.
+_Avoid_: API endpoint (as a concept name), data route
+
+**Link resolution**:
+The posture-aware order a client follows when a chat file link is clicked: vault-root local first (the synced mounts — the local preference is exactly as wide as the sync guarantee), the session's server next (click-time re-resolution, then Preview through the hub — the default on hub-client), and the remote editor explicitly (a deliberate second action, never the default click). Failure at every layer renders a Named outcome naming the failure class.
+_Avoid_: link rewriting, file mapping (mechanisms, not the concept)

@@ -2077,3 +2077,40 @@ it.effect("opencode loader keeps paid models when auth exists", () =>
     expect(keyedCount).toBeGreaterThan(0)
   }).pipe(provideMultiInstance),
 )
+
+// #1848: the fleet's engine shards share one auth.json but each caches its
+// provider state per instance. A connect landing on ANOTHER process (a sibling
+// shard, the CLI) writes the file directly; this instance must see the new
+// provider — and lose a removed one — on its next read, with no dispose.
+it.instance("stored credentials written by another process reach a live instance", () =>
+  Effect.gen(function* () {
+    yield* remove("GROQ_API_KEY")
+    const groq = ProviderV2.ID.make("groq")
+    const authPath = path.join(Global.Path.data, "auth.json")
+    const original = yield* Effect.promise(() => Filesystem.readText(authPath).catch(() => undefined))
+    const base = original ? (JSON.parse(original) as Record<string, unknown>) : {}
+    const { groq: _ignored, ...without } = base
+    const writeAuth = (data: Record<string, unknown>) =>
+      Effect.promise(() => Filesystem.write(authPath, JSON.stringify(data)))
+
+    yield* Effect.acquireRelease(writeAuth(without), () =>
+      Effect.promise(async () => {
+        if (original !== undefined) await Filesystem.write(authPath, original)
+        else await unlink(authPath).catch(() => undefined)
+      }),
+    )
+
+    // the state is built (and cached) before the "other shard" connects
+    expect((yield* list)[groq]).toBeUndefined()
+
+    yield* writeAuth({ ...without, groq: { type: "api", key: "sibling-shard-key" } })
+    const connected = yield* list
+    expect(connected[groq]).toBeDefined()
+    expect(connected[groq].source).toBe("api")
+    expect(yield* Provider.Service.use((svc) => svc.getProvider(groq))).toBeDefined()
+
+    // and a disconnect on the sibling drops it here too (the stale-openrouter half)
+    yield* writeAuth(without)
+    expect((yield* list)[groq]).toBeUndefined()
+  }),
+)

@@ -27,8 +27,10 @@ import {
   reorderSidePanelTabs,
   type SidePanelTabID,
 } from "./layout-side-panel-tabs"
+import { createSessionReviewPanel, DEFAULT_REVIEW_PANEL_OPENED, type ReviewPanelSource } from "./layout-review-panel"
 
 export { createSessionKeyReader, ensureSessionKey, pruneSessionKeys }
+export type { ReviewPanelSource }
 
 export type { ProjectAvatarVariant }
 
@@ -44,7 +46,6 @@ const DEFAULT_FILE_TREE_WIDTH = 200
 const DEFAULT_PANEL_COLUMN_WIDTH = 330
 const DEFAULT_SESSION_WIDTH = 600
 const DEFAULT_TERMINAL_HEIGHT = 280
-const DEFAULT_REVIEW_PANEL_OPENED = false
 export type AvatarColorKey = (typeof AVATAR_COLOR_KEYS)[number]
 
 export function getAvatarColors(key?: string) {
@@ -86,6 +87,16 @@ type SessionView = {
   pendingMessage?: string
   pendingMessageAt?: number
   todoCollapsed?: boolean
+  /** Preview companion — the active file shown in the Preview tab. Persisted
+   *  (was ephemeral) so it survives session re-instantiation AND editor reloads. */
+  previewActive?: string | null
+  /** Preview companion — the ordered list of open Preview file paths, so a
+   *  reload restores every open preview tab, not just the active one. Split-pane
+   *  layout is deliberately not persisted here (see #981). */
+  previewPaths?: string[]
+  /** #1966: side-panel open/closed is per session, persisted here. Unset means
+   *  closed — a session never inherits another session's panel state. */
+  reviewPanelOpened?: boolean
 }
 
 type TabHandoff = {
@@ -100,7 +111,6 @@ export type HomeProjectSelection = { server: ServerConnection.Key; directory?: s
 
 export type ReviewDiffStyle = "unified" | "split" | "preview"
 export type ReviewChangeMode = "git" | "branch" | "turn"
-export type ReviewPanelSource = "context-button" | "other"
 
 export type LayoutRoute =
   | { type: "home" }
@@ -339,10 +349,7 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
       }),
     )
     const [ephemeral, setEphemeral] = createStore({
-      reviewPanelSource: "other" as ReviewPanelSource,
       sessionTabPreview: {} as Record<string, string | undefined>,
-      /** Per-session preview file path (companion viewer). Null = empty state. */
-      sessionPreviewFile: {} as Record<string, string | null>,
     })
 
     const MAX_SESSION_KEYS = 50
@@ -400,6 +407,7 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
       )
 
       scroll.drop(drop)
+      reviewPanel.drop(drop)
       dropSessionState(drop)
       setEphemeral(
         "sessionTabPreview",
@@ -438,6 +446,19 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
 
         setStore("sessionView", sessionKey, "scroll", (prev) => ({ ...prev, ...next }))
         prune(keep)
+      },
+    })
+
+    const reviewPanel = createSessionReviewPanel({
+      views: () => store.sessionView,
+      write: (session, opened) => {
+        if (!store.sessionView[session]) {
+          setStore("sessionView", session, { scroll: {}, reviewPanelOpened: opened })
+          prune(session)
+          return
+        }
+        setStore("sessionView", session, "reviewPanelOpened", opened)
+        prune(session)
       },
     })
 
@@ -663,6 +684,10 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
           if (!store.handoff?.tabs) return
           setStore("handoff", "tabs", undefined)
         },
+        // #1966: carry the draft (workspace-keyed) side-panel state to the new session.
+        reviewPanel(from: string, to: string) {
+          reviewPanel.handoff(from, to)
+        },
       },
       projects: {
         list,
@@ -867,8 +892,10 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
           if (typeof file === "string") return file
         })
         const terminalOpened = createMemo(() => store.terminal?.opened ?? false)
-        const reviewPanelOpened = createMemo(() => store.review?.panelOpened ?? DEFAULT_REVIEW_PANEL_OPENED)
-        const reviewPanelSource = createMemo(() => (reviewPanelOpened() ? ephemeral.reviewPanelSource : "other"))
+        // #1966: open/closed and its source are per session (store.review.panelOpened
+        // is the legacy global value, kept only for persisted-state compatibility).
+        const reviewPanelOpened = createMemo(() => reviewPanel.opened(key()))
+        const reviewPanelSource = createMemo(() => reviewPanel.source(key()))
 
         function setTerminalOpened(next: boolean) {
           const current = store.terminal
@@ -883,25 +910,7 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
         }
 
         function setReviewPanelOpened(next: boolean, source: ReviewPanelSource) {
-          const nextSource = next ? source : "other"
-          const current = store.review
-          if (!current) {
-            batch(() => {
-              setStore("review", { diffStyle: "split" as ReviewDiffStyle, panelOpened: next })
-              setEphemeral("reviewPanelSource", nextSource)
-            })
-            return
-          }
-
-          const value = current.panelOpened ?? DEFAULT_REVIEW_PANEL_OPENED
-          if (value === next) {
-            if (ephemeral.reviewPanelSource !== nextSource) setEphemeral("reviewPanelSource", nextSource)
-            return
-          }
-          batch(() => {
-            setStore("review", "panelOpened", next)
-            setEphemeral("reviewPanelSource", nextSource)
-          })
+          reviewPanel.set(key(), next, source)
         }
 
         return {
@@ -923,11 +932,41 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
               }
             },
           },
-          /** Preview companion — the file to show in the Preview tab. */
+          /** Preview companion — the active file shown in the Preview tab.
+           *  Persisted in the session view so it survives session
+           *  re-instantiation AND editor reloads (#1398 + reload persistence). */
           previewFile: {
-            get: createMemo(() => ephemeral.sessionPreviewFile[key()] ?? null),
+            get: createMemo(() => s().previewActive ?? null),
             set(path: string | null) {
-              setEphemeral("sessionPreviewFile", key(), path)
+              const session = key()
+              const current = store.sessionView[session]
+              if (!current) {
+                setStore("sessionView", session, { scroll: {}, previewActive: path })
+                prune(session)
+                return
+              }
+              if (current.previewActive === path) return
+              setStore("sessionView", session, "previewActive", path)
+              prune(session)
+            },
+          },
+          /** Preview companion — the ordered list of open Preview file paths.
+           *  Persisted alongside previewActive so a reload restores every open
+           *  preview tab, not just the active one. */
+          previewPaths: {
+            get: createMemo(() => s().previewPaths ?? []),
+            set(paths: string[]) {
+              const session = key()
+              const next = Array.from(new Set(paths))
+              const current = store.sessionView[session]
+              if (!current) {
+                setStore("sessionView", session, { scroll: {}, previewPaths: next })
+                prune(session)
+                return
+              }
+              if (same(current.previewPaths, next)) return
+              setStore("sessionView", session, "previewPaths", next)
+              prune(session)
             },
           },
           terminal: {

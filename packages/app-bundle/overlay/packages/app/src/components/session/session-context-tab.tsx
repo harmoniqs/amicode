@@ -170,20 +170,8 @@ export function SessionContextTab() {
     { equals: same },
   )
 
-  const usd = createMemo(
-    () =>
-      new Intl.NumberFormat(language.intl(), {
-        style: "currency",
-        currency: "USD",
-      }),
-  )
-
   const ctx = createMemo(() => getSessionContext(messages(), [...providers.all().values()]))
   const formatter = createMemo(() => createSessionContextFormatter(language.intl()))
-
-  const cost = createMemo(() => {
-    return usd().format(info()?.cost ?? 0)
-  })
 
   const counts = createMemo(() => {
     const all = messages()
@@ -259,7 +247,6 @@ export function SessionContextTab() {
     },
     { label: "context.stats.userMessages", value: () => counts().user.toLocaleString(language.intl()) },
     { label: "context.stats.assistantMessages", value: () => counts().assistant.toLocaleString(language.intl()) },
-    { label: "context.stats.totalCost", value: cost },
     { label: "context.stats.sessionCreated", value: () => formatter().time(info()?.time.created) },
     { label: "context.stats.lastActivity", value: () => formatter().time(ctx()?.message.time.created) },
   ] satisfies { label: string; value: () => JSX.Element }[]
@@ -284,7 +271,13 @@ export function SessionContextTab() {
     return map.get(mount) === false
   }
 
-  const busy = createMemo(() => (sync().data.session_status[params.id ?? ""]?.type ?? "idle") !== "idle")
+  // #1637: the context-tab busy memo reflects session_working (the turn-active
+  // floor), NOT raw status type, so a stray idle during a live turn cannot flip
+  // a turn to done in the context tree.
+  const busy = createMemo(() => {
+    const id = params.id
+    return !!id && sync().data.session_working(id)
+  })
 
   const turns = createMemo<ContextTurn[]>(() => {
     const byPrompt = new Map<string, ContextTurn>()
