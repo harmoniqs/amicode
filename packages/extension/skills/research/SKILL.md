@@ -170,6 +170,16 @@ reference the in-flight casts? Append the audit row to §9.
 Enforcement honesty: the two read-only roles are permission-isolated; the experimenter's
 ledger-abstinence is discipline + git history. The parent is the SOLE ledger writer.
 
+### Lines a launch-shaped experimenter brief carries
+
+These five lines each cost a cast a wrong turn in the fluxonium-cz campaign (2026-11; friction notes F-fcz-07…15, observation notes B8, B9, H2c, D2a, G1, B11). Put them in the brief rather than hoping the experimenter re-derives them.
+
+1. **Memory floor in `MemAvailable`, never "`free -g` ≥ N GB".** `free -g` prints a `free` and an `available` column; one cast read `free` (19 GB, launched 1 GB under the bar), another saw `free` at 4–12 GB while `available` was 23–34 GB. Write "MemAvailable ≥ N GiB (`/proc/meminfo`)". The `detached-run` launcher enforces this.
+2. **Count what is being capped.** "≤ 6 processes" and "a 40-minute guard per chain build" were each read two ways (do wrapper shells and `xargs` count? build only, or build plus integration?). Say which. When a step must *reproduce* a stored number to a tolerance, give an iteration cap as well as the wall-clock guard — a guard alone made the reproduction depend on box load.
+3. **"A copy of X where only a path or cap changes" needs a list of what X hard-codes.** In one wave the "only" copy was impossible: the base script hard-coded a geometry-specific modulus cap and drive frame, and its verifier hard-coded one geometry's seed pulse; the quoted Hilbert-space dimension was specific to that geometry too. Have the experimenter list every hard-coded constant and output root in X first, and parametrise them through environment variables.
+4. **Timings carry the load average.** Local timings on a shared box were off by 2–3×; a ledger-quoted "≈5 s per point" measured 36–62 s on the production path at load 23–57. Ask for `uptime` beside every timing the brief requires.
+5. **Background launch and sealing:** launch through `detached-run` (outside the gate, the result is untrusted until independently re-rolled), and if the spec pre-registers rules or predictions, `prereg-seal` them *before* the launch.
+
 ## Deliberate integration — current tooling state (honest)
 
 - `amico spec review` WORKS on this box: tier-1 mechanical lenses always; judgment critics
@@ -265,6 +275,8 @@ a critic's arithmetic is never trusted over the test file's machine-pinned liter
   subagent failures leave partial state that a blind add commits); after multi-edit
   confusion, rewrite clean and let git arbitrate.
 - **Unattended runs** — plain `nohup` backgrounds die at tool-call exit in sandboxed
-  harnesses; `setsid` survives (measured both ways). Chain unattended cells through a
-  driver script; commit the state to the ledger BEFORE the night starts so any compaction
-  is safe.
+  harnesses; `setsid` survives (measured both ways). Use the `detached-run` launcher for
+  anything that must also be bounded and stoppable: `timeout` without `-k` can leave a
+  SIGTERM-ignoring child running, and killing the `timeout` PID alone orphans it. Chain
+  unattended cells through a driver script; commit the state to the ledger BEFORE the night
+  starts so any compaction is safe.
