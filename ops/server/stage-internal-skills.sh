@@ -33,6 +33,10 @@ ALLOWLIST=(
   harmony
   shape
   sweep
+  # private-package usage cards: vault-only, never in the public library
+  altissimo
+  piccolissimo
+  intonatissimo
 )
 
 for skill in "${ALLOWLIST[@]}"; do

@@ -9,7 +9,7 @@ On-demand loader for the Amicode research **composition** (the D6 model, spec-20
 
 ## What exists (and what no longer does)
 
-- **Direction** lives in `INTENT.md` (the amicissimo repo's vault dir), PI-owned: research bets, access filters, partner tracks, quality bars, banned directions, the campaign→direction map. It is amended **only by PR** — the human merge is the ownership transfer. `STRATEGY.md` in the team vault is **frozen evidence** of a retired ranked-P-list model; its superseded pointer is its only live content.
+- **Direction** lives in `INTENT.md` (the house repo's vault dir), PI-owned: research bets, access filters, partner tracks, quality bars, banned directions, the campaign→direction map. It is amended **only by PR** — the human merge is the ownership transfer. `STRATEGY.md` in the team vault is **frozen evidence** of a retired ranked-P-list model; its superseded pointer is its only live content.
 - **The portfolio** (what is actually being worked on) is **derived mechanically from campaign session-ledgers** — never the session DB, never the board. A campaign ledger is a `sessions/session-*.md` note in the personal vault.
 - **The strategy brief** is the rendered composition: intent × portfolio, with **health stamps inline** (intent SHA + merged date + age; ledger anomalies; coverage) — staleness is IN the render.
 
@@ -30,7 +30,7 @@ If the CLI is unavailable, read `INTENT.md` directly and fold the ledgers yourse
 - **No ranked priority list exists or should be synthesized.** Direction tiers order the portfolio's render; they are not a to-do list. Priorities are what is actually being worked on — the derived portfolio plus PI judgment.
 - **Health stamps are load-bearing:** an aged intent stamp or listed anomalies mean the render is stale or partial — say so before reasoning from it.
 - **Before proposing a new experiment,** check the campaign→direction map and the portfolio: does an existing campaign cover this? Don't duplicate effort.
-- **Direction changes are proposals, not edits:** intent-direction proposals go to the amicissimo proposals surface (one file per proposal); survey-derived suggestions go to the hopper with a triage tag. This skill exposes **no INTENT write verb** — there is no update path from an agent.
+- **Direction changes are proposals, not edits:** intent-direction proposals go to the house proposals surface (one file per proposal); survey-derived suggestions go to the hopper with a triage tag. This skill exposes **no INTENT write verb** — there is no update path from an agent.
 
 ## Who Uses This
 

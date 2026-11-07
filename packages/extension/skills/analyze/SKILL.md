@@ -17,7 +17,7 @@ Post-experiment analysis for Amico optimization results.
 ## Instructions
 
 ### When to Run
-After a batch of optimization experiments (3+), or when research direction needs informing (route findings via the D6 rules: survey-shaped → the hopper with a triage tag; intent-direction → the amicissimo proposals surface — agents never edit INTENT).
+After a batch of optimization experiments (3+), or when research direction needs informing (route findings via the D6 rules: survey-shaped → the hopper with a triage tag; intent-direction → the house proposals surface — agents never edit INTENT).
 
 ### Step 1: Gather Data
 - Read recent experiment notes in `<project>/ledger/observations/`

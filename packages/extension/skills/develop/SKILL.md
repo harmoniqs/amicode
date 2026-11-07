@@ -4,7 +4,7 @@ description: The develop mode in one skill — the director loop protocol bound 
 agents: [implementer, orchestrator]
 surface: public
 source: amicode
-revision: 5
+revision: 6
 ---
 
 # Develop — the director's protocol & issue-DAG walk
@@ -192,7 +192,7 @@ A cast that returns **empty** — state `completed`, zero output: no commits, no
 
 ### Standing directives (AFK mandates)
 
-A standing directive recorded in the ledger (the user's words + date — "do it all", "keep going for a while") is the explicit approval for the arc's issue filings AND its merge ladder, within the scope the directive names; every filing and every merge under it is reported in the loop record and the session summary. The mandate does not extend past its named scope: outward-publishing acts (releases, registration, visibility flips) always need the word. Worked example: the Favo campaign merged twelve standard-tier issues under two AFK mandates while holding its General-registry trigger parked for the user's explicit word (finding F34).
+A standing directive recorded in the ledger (the user's words + date — "do it all", "keep going for a while") is the explicit approval for the arc's issue filings AND its merge ladder, within the scope the directive names; every filing and every merge under it is reported in the loop record and the session summary. The mandate does not extend past its named scope: outward-publishing acts (releases, registration, visibility flips) always need the word. Worked example: one package campaign merged twelve standard-tier issues under two AFK mandates while holding its General-registry trigger parked for the user's explicit word (finding F34).
 
 ### When NOT to use
 

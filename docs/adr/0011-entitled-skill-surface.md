@@ -1,6 +1,6 @@
 # Skill surfaces are three-tier: public ships and loads for all, entitled ships and loads only for entitled sessions, internal stays vault-only
 
-Status: accepted (2026-08-27; content policy amended 2026-09-05 — see the Amendment record)
+Status: accepted (2026-08-27; content policy amended 2026-09-05 and 2026-11-07 — see the Amendment records)
 
 ADR-0003's two surface tiers amend to three. `public` ships in the .vsix and loads for every
 session, as before. `internal` stays exactly as ADR-0003 left it: private-vault content
@@ -99,3 +99,25 @@ review (director + independent reviewer, per the dev gate) — the pass had not 
 was written; it completed 2026-09-05: **approved** (independent reviewer, findings tracked:
 the slice-3 content lens folded here; the internal-location vocabulary seam tracked as a chore
 for the parents' next amendment).
+
+---
+
+**Amendment (2026-11-07): private-package skills leave the public repo.** In-repo entitled
+placement no longer applies to skills about private packages. Shipping usage guidance
+world-readable was the premise of the entitled tier ("ship usage, keep internals"); for
+private packages that premise is withdrawn — usage guidance is itself proprietary. Such skills
+live in the team vault as `surface: internal`, admitted by mount presence and staged for
+headless sessions through the internal-skills allowlist (`ops/server/stage-internal-skills.sh`).
+The `issimo` entitlement keeps its meaning — the staging gate described above — for any paid
+guidance about public packages. The tier machinery is untouched: three surfaces, root admission
+(`{public, entitled}` in-repo, `{internal}` vault-only), and the entitlement check stand as
+written.
+
+Public skills refer to private capabilities only neutrally (the "premium tier"). The review-time
+content policy gains a mechanical backstop: the skill-library lint's `private-package` rule fails
+any shippable skill (surface `public`, `entitled`, or untagged) that names a package on the
+denylist in `packages/extension/scripts/lint-skills-private-packages.txt`, which is the single
+place the list lives. The rule is on by default for the repo library and exempts `internal` cards.
+Exceptions go in `lint-skills-known.txt`, and that list is empty.
+
+Implementation: harmoniqs/amicode#2147.

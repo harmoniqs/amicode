@@ -6,7 +6,7 @@
 // fail.
 import { describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -210,5 +210,96 @@ describe("skills-integrity lint [vpath] rotted vault-path rule (F28)", () => {
     const r = run(["--dir", REAL_SKILLS, "--known", KNOWN_FILE]);
     expect(r.status).toBe(0);
     expect(r.stdout + r.stderr).not.toMatch(/\[vpath\] error:/);
+  });
+});
+
+// [private-package] — the public repo is world-readable, so a shippable skill
+// (public / entitled / untagged surface) must not name a private package. The
+// denylist lives in ONE file (scripts/lint-skills-private-packages.txt); the
+// rule is on by default for the repo library and opt-in (`--denylist`) for
+// any other root. `surface: internal` cards are vault-only and exempt.
+const DENYLIST_FILE = join(EXT_ROOT, "scripts", "lint-skills-private-packages.txt");
+
+function readDenylist(file: string): string[] {
+  return readFileSync(file, "utf8")
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l && !l.startsWith("#"));
+}
+
+describe("skills-integrity lint [private-package] denylist rule", () => {
+  it("errors on a shippable skill naming a denylisted package in its body or frontmatter name", () => {
+    const dir = mkdtempSync(join(tmpdir(), "skills-integrity-priv-"));
+    try {
+      const deny = join(dir, "deny.txt");
+      writeFileSync(deny, "# fixture denylist\nSecretissimo\nhushpkg\n");
+      makeSkill(dir, "body-skill", "Plug in SECRETISSIMO integrators for speed.");
+      makeSkill(dir, "hushpkg-usage", "Body without the word.");
+      makeSkill(dir, "untagged-skill", "Uses secretissimo.", "---\nname: untagged-skill\ndescription: x\n---\n");
+      makeSkill(dir, "internal-skill", "Secretissimo internals.", "---\nname: internal-skill\ndescription: x\nsurface: internal\n---\n");
+      makeSkill(dir, "near-miss-skill", "Secretissimos and hushpkgs are different words.");
+      const r = run(["--dir", dir, "--denylist", deny]);
+      expect(r.status).toBe(1);
+      const out = r.stdout + r.stderr;
+      expect(out).toMatch(/body-skill\/SKILL\.md:\d+: \[private-package\] error:.*Secretissimo/i);
+      expect(out).toMatch(/hushpkg-usage\/SKILL\.md:2: \[private-package\] error:.*hushpkg/);
+      expect(out).toMatch(/untagged-skill\/SKILL\.md:\d+: \[private-package\] error:/);
+      expect(out).not.toMatch(/internal-skill\/SKILL\.md/); // vault-only cards may name them
+      expect(out).not.toMatch(/near-miss-skill\/SKILL\.md/); // whole-word match only
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("every entry of the checked-in denylist trips the rule", () => {
+    const names = readDenylist(DENYLIST_FILE);
+    expect(names.length).toBeGreaterThanOrEqual(11);
+    const dir = mkdtempSync(join(tmpdir(), "skills-integrity-priv-default-"));
+    try {
+      names.forEach((n, i) => makeSkill(dir, `skill-${i}`, `See ${n}.jl for details.`));
+      const r = run(["--dir", dir, "--denylist", DENYLIST_FILE]);
+      expect(r.status).toBe(1);
+      const hits = (r.stdout.match(/\[private-package\] error:/g) ?? []).length;
+      expect(hits).toBe(names.length);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("is off for a non-library root unless --denylist is passed (vault roots keep their verdict)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "skills-integrity-priv-off-"));
+    try {
+      const deny = join(dir, "deny.txt");
+      writeFileSync(deny, "Secretissimo\n");
+      makeSkill(dir, "body-skill", "Plug in Secretissimo.");
+      expect(run(["--dir", dir]).status).toBe(0);
+      expect(run(["--dir", dir, "--denylist", deny]).status).toBe(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("--known can exempt a private-package hit (the documented exception list)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "skills-integrity-priv-known-"));
+    try {
+      const deny = join(dir, "deny.txt");
+      writeFileSync(deny, "Secretissimo\n");
+      makeSkill(dir, "body-skill", "Plug in Secretissimo.");
+      const known = join(dir, "known.txt");
+      writeFileSync(known, "body-skill/SKILL.md:private-package\n");
+      const r = run(["--dir", dir, "--denylist", deny, "--known", known]);
+      expect(r.status).toBe(0);
+      expect(r.stdout).toMatch(/\[private-package\] known:/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("the repo library is clean by default, with ZERO private-package exceptions", () => {
+    const r = run(["--dir", REAL_SKILLS, "--known", KNOWN_FILE]);
+    expect(r.stdout + r.stderr).not.toMatch(/\[private-package\] (error|known):/);
+    expect(readFileSync(KNOWN_FILE, "utf8")).not.toMatch(/:private-package/);
+    // default-on for the library: the denylist file is actually consulted
+    expect(readDenylist(DENYLIST_FILE).length).toBeGreaterThan(0);
   });
 });

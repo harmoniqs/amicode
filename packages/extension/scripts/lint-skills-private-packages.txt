@@ -1,0 +1,25 @@
+# lint-skills-private-packages.txt — the private-package DENYLIST for the
+# `private-package` rule of scripts/lint-skills.mjs. This file is the single
+# place the list lives.
+#
+# This repository is public, so everything in the skill library is
+# world-readable. A shippable skill (surface public, entitled, or untagged)
+# must not name a private package. Usage guidance for private packages lives
+# in the team vault as `surface: internal` skills, which this rule exempts.
+#
+# One package name per line, matched case-insensitively as a whole word.
+# The rule is on by default for the repo library (packages/extension/skills)
+# and opt-in for other roots via `--denylist <file>`. Exceptions go in
+# lint-skills-known.txt as `<skill>/SKILL.md:private-package`. Keep that list
+# empty: reword to "premium tier" instead.
+Piccolissimo
+Intonatissimo
+Altissimo
+Prestissimo
+Passaggissimo
+Coro
+Legatissimo
+Telaio
+Favo
+Strettissimo
+amicissimo
