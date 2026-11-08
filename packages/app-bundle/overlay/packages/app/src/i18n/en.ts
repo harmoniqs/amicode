@@ -367,6 +367,12 @@ export const dict = {
   "prompt.toast.attachmentDuplicate.title": "This file has already been uploaded",
   "prompt.toast.modelAgentRequired.title": "Select an agent and model",
   "prompt.toast.modelAgentRequired.description": "Choose an agent and model before sending a prompt.",
+  "prompt.toast.agentsUnavailable.title": "Agents didn't load",
+  "prompt.toast.agentsUnavailable.description":
+    "Couldn't load the agent list from the engine, even after retrying. Nothing was sent. Reload the window and try again.",
+  "prompt.toast.modelUnavailable.title": "Selected model isn't available",
+  "prompt.toast.modelUnavailable.description":
+    "The selected model's provider isn't connected. Nothing was sent. Pick another model, or reconnect the provider in Settings.",
   "prompt.toast.worktreeCreateFailed.title": "Failed to create worktree",
   "prompt.toast.sessionCreateFailed.title": "Failed to create session",
   "prompt.toast.shellSendFailed.title": "Failed to send shell command",
