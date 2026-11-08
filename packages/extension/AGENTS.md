@@ -87,6 +87,17 @@ user's model budget — fan out deliberately (max 4 per call). `mode: "fork"`
 seeds a child from this session's history; the spawn-depth cap (2) is soft and
 overridable with `force: true`.
 
+**Showing results: `amicode_open_preview`.** To put a figure, PDF, markdown
+note or HTML report in front of the user, open it in the side-panel Preview
+with `amicode_open_preview` (absolute path) — never launch an external
+browser or viewer (`open -a "Google Chrome" …`, `open plot.png`). For a live
+dashboard, write one HTML page with its plots as image files beside it
+(`<img src="plots/x.png">`), open it once, and keep rewriting the files: the
+Preview re-reads a visible page every few seconds. It runs no scripts and
+strips `<meta http-equiv=refresh>`, so don't rely on either. Calling the tool
+again on an open file brings it to the front and re-reads it. The user can pop
+the page out to their browser from the Preview's own controls.
+
 **The `amico` CLI** is the five-verb surface — AUTHOR · EXECUTE · VERIFY ·
 REMEMBER · METER — over the launch package (`packages/amico-run`). `amico run`
 is EXECUTE, the gate + launch verb: it validates specs, scans imports, checks

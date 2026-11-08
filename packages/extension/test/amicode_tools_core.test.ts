@@ -28,6 +28,7 @@ const EXPECTED_TOOLS = [
   "amicode_request_approval",
   "amicode_ask",
   "amicode_author_widget",
+  "amicode_open_preview",
   "amicode_problem",
   "amicode_pick_system",
   "amicode_set_model",

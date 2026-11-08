@@ -1,5 +1,12 @@
 import { test, expect, describe } from "bun:test"
-import { toAbsolutePath, shouldApplyWatcherRead } from "./preview-file-helpers"
+import {
+  toAbsolutePath,
+  shouldApplyWatcherRead,
+  previewSizeLimit,
+  isPreviewRefreshFor,
+  MAX_HTML_PREVIEW_SIZE,
+  MAX_TEXT_PREVIEW_SIZE,
+} from "./preview-file-helpers"
 
 // #1414 (my review finding): saving a .tex opened by a workspace-RELATIVE path
 // posted `run-latex` with that relative path; the compile bridge's containment
@@ -64,5 +71,45 @@ describe("shouldApplyWatcherRead", () => {
 
   test("discards when the user began editing during the read", () => {
     expect(shouldApplyWatcherRead({ ...base, hasUnsavedEdits: true })).toBe(false)
+  })
+})
+
+// #2130: the HTML size cap and the agent tool's refresh request.
+describe("previewSizeLimit", () => {
+  test("HTML pages get the larger cap; everything else read as text keeps 1 MB", () => {
+    expect(previewSizeLimit("/r/transport-dashboard.html")).toBe(MAX_HTML_PREVIEW_SIZE)
+    expect(previewSizeLimit("page.HTM")).toBe(MAX_HTML_PREVIEW_SIZE)
+    expect(previewSizeLimit("/r/notes.md")).toBe(MAX_TEXT_PREVIEW_SIZE)
+    expect(previewSizeLimit("/r/data.json")).toBe(MAX_TEXT_PREVIEW_SIZE)
+    // a 1.73 MB dashboard with embedded plots now fits
+    expect(1_732_245).toBeLessThan(previewSizeLimit("/r/transport-dashboard.html"))
+  })
+})
+
+describe("isPreviewRefreshFor", () => {
+  const msg = (extra: Record<string, unknown> = {}) => ({
+    source: "amicode",
+    kind: "preview-file",
+    path: "/v/dash/index.html",
+    refresh: true,
+    sessionID: "ses_a",
+    ...extra,
+  })
+  test("a refresh for this file and this session", () => {
+    expect(isPreviewRefreshFor(msg(), "/v/dash/index.html", "ses_a")).toBe(true)
+  })
+  test("absolute message path matches a workspace-relative previewed path", () => {
+    expect(isPreviewRefreshFor(msg({ path: "/w/repo/docs/a.md" }), "docs/a.md", "ses_a")).toBe(true)
+  })
+  test("an unstamped message refreshes every view of the file", () => {
+    expect(isPreviewRefreshFor(msg({ sessionID: undefined }), "/v/dash/index.html", "ses_b")).toBe(true)
+  })
+  test("another session, another file, no refresh flag, or not a preview-file → no", () => {
+    expect(isPreviewRefreshFor(msg(), "/v/dash/index.html", "ses_b")).toBe(false)
+    expect(isPreviewRefreshFor(msg(), "/v/dash/other.html", "ses_a")).toBe(false)
+    expect(isPreviewRefreshFor(msg({ path: "/x/index.html" }), "/v/dash/index.html", "ses_a")).toBe(false)
+    expect(isPreviewRefreshFor(msg({ refresh: undefined }), "/v/dash/index.html", "ses_a")).toBe(false)
+    expect(isPreviewRefreshFor(msg({ kind: "open-file" }), "/v/dash/index.html", "ses_a")).toBe(false)
+    expect(isPreviewRefreshFor("preview-file", "/v/dash/index.html", "ses_a")).toBe(false)
   })
 })

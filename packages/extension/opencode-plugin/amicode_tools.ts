@@ -166,6 +166,9 @@ import {
 // test/warrant_bounds_parity.test.ts. The core table validates against the
 // schema itself; the twin follows it by construction + pin.
 import { validateWarrantBounds, boundsRefusal } from "./warrant_bounds";
+// #2130: the open-in-Preview tool — one dependency-free definition shared with
+// the core table (src/amicode_tools_core.ts), so the two cannot drift.
+import { PREVIEW_OPEN_ARGS, PREVIEW_OPEN_DESCRIPTION, executePreviewOpen } from "./preview_open";
 
 // Issue #799/#995 — the widget-authoring twin executes against the SAME
 // service helper the core table calls (src/amicode_service/widgets.ts).
@@ -606,6 +609,15 @@ returns an error, fix \`js\`/the fields and call it again.
           `A live preview is shown below — the user can Pin it to their dashboard.\n` +
           `AMICODE_WIDGET ${sentinel}`
         );
+      },
+    },
+
+    // #2130: put a file in the side-panel Preview (twin of the core entry).
+    amicode_open_preview: {
+      description: PREVIEW_OPEN_DESCRIPTION,
+      args: { ...PREVIEW_OPEN_ARGS },
+      async execute(a: { path?: unknown }) {
+        return executePreviewOpen(a);
       },
     },
 

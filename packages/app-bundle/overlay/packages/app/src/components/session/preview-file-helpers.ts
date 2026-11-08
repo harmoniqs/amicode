@@ -45,3 +45,41 @@ export function shouldApplyWatcherRead(args: {
     !args.hasUnsavedEdits
   )
 }
+
+/** The Preview's read cap for text-like files: bigger files show a placeholder. */
+export const MAX_TEXT_PREVIEW_SIZE = 1_000_000
+
+/** #2130: an HTML page's cap is larger — a campaign dashboard often carries its
+ *  plots as base64 data URIs, and the HTML renderer's own inlining budget
+ *  (preview-html.ts MAX_INLINE_CHARS) is already far above 1 MB. Mirrored by
+ *  the agent tool's size warning (extension opencode-plugin/preview_open.ts). */
+export const MAX_HTML_PREVIEW_SIZE = 16_000_000
+
+/** The size above which a text read shows "File too large to preview". */
+export function previewSizeLimit(path: string): number {
+  return /\.html?$/i.test(path) ? MAX_HTML_PREVIEW_SIZE : MAX_TEXT_PREVIEW_SIZE
+}
+
+/** Does a watcher/bridge path name the previewed file? The watcher reports
+ *  absolute paths; the previewed path may be workspace-relative. */
+export function previewPathMatches(other: string, filePath: string): boolean {
+  if (other === filePath) return true
+  return other.endsWith(`/${filePath}`) || filePath.endsWith(`/${other}`)
+}
+
+/**
+ * #2130: is this window message a request to RE-READ the file this view shows?
+ * The agent's open-in-Preview tool posts the ordinary `preview-file` open with
+ * `refresh: true`; when the file is already open the open itself is a no-op,
+ * so the view re-reads instead (files outside the project never reach the
+ * engine's watcher). Session targeting follows preview-file-target.ts: a
+ * stamped message is for its session only; an unstamped one is for everyone.
+ */
+export function isPreviewRefreshFor(data: unknown, filePath: string, sessionID: string | undefined): boolean {
+  if (!data || typeof data !== "object") return false
+  const msg = data as { source?: unknown; kind?: unknown; path?: unknown; sessionID?: unknown; refresh?: unknown }
+  if (msg.source !== "amicode" || msg.kind !== "preview-file" || msg.refresh !== true) return false
+  if (typeof msg.path !== "string" || msg.path === "") return false
+  if (msg.sessionID !== undefined && msg.sessionID !== sessionID) return false
+  return previewPathMatches(msg.path, filePath)
+}
