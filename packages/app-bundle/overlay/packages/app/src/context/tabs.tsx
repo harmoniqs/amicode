@@ -21,6 +21,9 @@ export type SessionTab = {
   type: "session"
   server: ServerConnection.Key
   sessionId: string
+  /** amicode(#2154): pinned tabs render compact at the left of the strip and
+   *  are skipped by every bulk close. Never part of the tab's identity. */
+  pinned?: boolean
 }
 
 export type DraftTab = {
@@ -36,6 +39,10 @@ export type Tab = SessionTab | DraftTab
 export type TabInfo = {
   title?: string
   directory?: string
+  /** amicode(#2154): the session this tab's session was spawned from
+   *  (`metadata.spawned_by`), or null once checked and found unstamped.
+   *  undefined = not checked yet. Cached so grouping holds on cold restores. */
+  spawnedBy?: string | null
 }
 
 type RecentTab = {
@@ -464,10 +471,70 @@ export const { use: useTabs, provider: TabsProvider } = createSimpleContext({
       },
       rememberSessionInfo(tab: SessionTab, session: Session) {
         const key = tabKey(tab)
-        const next = { title: session.title, directory: session.directory }
         const current = info[key]
+        const next = { ...current, title: session.title, directory: session.directory }
         if (current?.title === next.title && current.directory === next.directory) return
         setInfo(key, next)
+      },
+      /** amicode(#2154): cache the tab's spawn parent (see TabInfo.spawnedBy). */
+      rememberSpawnedBy(tab: SessionTab, spawnedBy: string | null) {
+        const key = tabKey(tab)
+        if (info[key]?.spawnedBy === spawnedBy) return
+        setInfo(key, { ...info[key], spawnedBy })
+      },
+      /** amicode(#2154): pin or unpin a session tab in place. */
+      setPinned(tab: SessionTab, pinned: boolean) {
+        const key = tabKey(tab)
+        const index = store.findIndex((item) => tabKey(item) === key)
+        if (index === -1) return
+        setStore(
+          index,
+          produce((item) => {
+            if (item.type !== "session") return
+            if (pinned) item.pinned = true
+            else delete item.pinned
+          }),
+        )
+      },
+      /** amicode(#2154): close a set of tabs in one step — the context menu's
+       *  bulk closes. Pinned tabs are never closed this way. Every closed
+       *  session tab goes onto the closed stack (reopen-closed-tab brings them
+       *  back one by one). When the active tab is among them, `anchor` becomes
+       *  active (or the first tab left, or home). `activeKey` lets the strip
+       *  name the active tab directly (a subagent route maps onto its parent's
+       *  tab, which the route alone does not reveal). */
+      closeMany(keys: string[], opts?: { anchor?: Tab; activeKey?: string }) {
+        const targets = new Set(keys)
+        const removed = store.flatMap((tab, index) =>
+          targets.has(tabKey(tab)) && !(tab.type === "session" && tab.pinned) ? [{ tab, index }] : [],
+        )
+        if (removed.length === 0) return
+        const removedKeys = new Set(removed.map(({ tab }) => tabKey(tab)))
+        const routeActive = store[currentTabIndex()]
+        const activeKey = opts?.activeKey ?? (routeActive ? tabKey(routeActive) : undefined)
+        const removedActive = !!activeKey && removedKeys.has(activeKey)
+        const remaining = store.filter((tab) => !removedKeys.has(tabKey(tab)))
+        const anchor = opts?.anchor
+        const next = removedActive
+          ? (anchor && remaining.find((tab) => tabKey(tab) === tabKey(anchor))) ?? remaining[0]
+          : undefined
+        updateClosed((stack) => removed.reduce((acc, { tab, index }) => pushClosedTab(acc, tab, index), stack))
+        void startTransition(() => {
+          setStore(() => remaining)
+          if (!removedActive) return
+          if (next) navigateTab(next)
+          else {
+            setRecentKey(undefined)
+            navigate("/")
+          }
+        })
+        for (const { tab } of removed) {
+          const key = tabKey(tab)
+          memory.remove(key)
+          removeInfo(key)
+          if (tab.type === "draft") removeDraftPersisted(tab.draftID)
+        }
+        if (recent.key && removedKeys.has(recent.key) && !removedActive) setRecentKey(undefined)
       },
       select: navigateTab,
       remember(tab: Tab) {

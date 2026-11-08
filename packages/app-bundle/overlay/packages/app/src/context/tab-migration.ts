@@ -21,7 +21,10 @@ export function migrateTabs(
       server = fallback
     }
     if (tab.type === "session" && typeof tab.sessionId === "string") {
-      return [{ type: tab.type, server, sessionId: tab.sessionId }]
+      // amicode(#2154): a pinned tab stays pinned across reloads; any other
+      // value of the flag is dropped so the stored shape stays minimal.
+      const pinned = "pinned" in tab && tab.pinned === true
+      return [pinned ? { type: tab.type, server, sessionId: tab.sessionId, pinned } : { type: tab.type, server, sessionId: tab.sessionId }]
     }
     if (
       tab.type === "draft" &&
