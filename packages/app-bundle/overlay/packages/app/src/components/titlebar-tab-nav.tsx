@@ -2,6 +2,7 @@ import { createEffect, createMemo, createSignal, onCleanup, Show, type Ref } fro
 import { makeEventListener } from "@solid-primitives/event-listener"
 import { createResizeObserver } from "@solid-primitives/resize-observer"
 import { createMutation } from "@tanstack/solid-query"
+import { MenuV2 } from "@opencode-ai/ui/v2/menu-v2"
 import { IconButtonV2 } from "@opencode-ai/ui/v2/icon-button-v2"
 import { Icon as IconV2 } from "@opencode-ai/ui/v2/icon"
 import { useGlobal } from "@/context/global"
@@ -11,6 +12,7 @@ import { SessionTabAvatar } from "@/pages/layout/session-tab-avatar"
 import type { Session } from "@opencode-ai/sdk/v2"
 import { canOpenTabRename, forwardTabRef } from "./titlebar-tab-gesture"
 import { TabPreviewPopover } from "./titlebar-tab-popover"
+import { TabMenuItems, type TabMenu } from "./titlebar-tab-menu"
 import "./titlebar-tab-nav.css"
 
 // MouseEvent.button uses 1 for the middle/wheel button.
@@ -33,8 +35,16 @@ export function TabNavItem(props: {
   dragging?: boolean
   pressed?: boolean
   hidden?: boolean
+  /** amicode(#2154): compact, protected from accidental close */
+  pinned?: boolean
+  /** amicode(#2154): the right-click menu's model (evaluated while open) */
+  menu?: () => TabMenu
+  /** amicode(#2154): extra hover-preview line, e.g. "Spawned from …" */
+  note?: string
 }) {
   const [editing, setEditing] = createSignal(false)
+  const [menuOpen, setMenuOpen] = createSignal(false)
+  let renameFromMenu = false
   const [titleOverflowing, setTitleOverflowing] = createSignal(false)
   let tabRoot!: HTMLDivElement
   let titleEl!: HTMLSpanElement
@@ -77,7 +87,7 @@ export function TabNavItem(props: {
   })
 
   const [popoverOpen, setPopoverOpen] = createSignal(false)
-  const previewBlocked = () => !!props.dragging || editing() || !!props.pressed || !props.session()
+  const previewBlocked = () => !!props.dragging || editing() || menuOpen() || !!props.pressed || !props.session()
 
   const measureTitleOverflow = () => {
     if (!titleEl || editing()) {
@@ -139,9 +149,9 @@ export function TabNavItem(props: {
     titleEl.textContent = value
   })
 
-  const openRename = (event: MouseEvent) => {
-    event.preventDefault()
-    event.stopPropagation()
+  const openRename = (event?: MouseEvent) => {
+    event?.preventDefault()
+    event?.stopPropagation()
     if (!canOpenTabRename(props.dragging, editing(), rename.isPending)) return
     const session = props.session()
     if (!session) return
@@ -172,7 +182,7 @@ export function TabNavItem(props: {
     onCleanup(cleanup)
   })
 
-  const tab = (
+  const tab = () => (
     <div
       ref={(el) => {
         tabRoot = el
@@ -182,6 +192,7 @@ export function TabNavItem(props: {
       data-slot="titlebar-tab-item"
       data-title-overflow={titleOverflowing()}
       data-editing={editing()}
+      data-pinned={props.pinned || undefined}
       class="group relative flex h-7 w-full min-w-0 select-none flex-row items-center gap-1.5 overflow-hidden whitespace-nowrap rounded-sm px-1.5 [container-type:inline-size]"
       classList={{ invisible: props.hidden }}
       data-active={props.active}
@@ -194,10 +205,21 @@ export function TabNavItem(props: {
       }}
       onAuxClick={(event) => {
         if (event.button !== MIDDLE_MOUSE_BUTTON) return
+        // A pinned tab ignores middle-click — it is pinned so a stray click
+        // can't take it away. Close stays in its menu and on mod+w.
+        if (props.pinned) {
+          event.preventDefault()
+          return
+        }
         closeTab(event)
       }}
     >
-      <a
+      <MenuV2.Context.Trigger
+        as="a"
+        disabled={editing() || props.dragging || !props.menu}
+        aria-haspopup={props.menu ? "menu" : undefined}
+        aria-expanded={props.menu ? menuOpen() : undefined}
+        aria-label={title()}
         data-slot="tab-link"
         data-titlebar-tab-link
         href={props.href}
@@ -272,7 +294,7 @@ export function TabNavItem(props: {
           data-titlebar-tab-title
           class="min-w-0 flex-1 outline-none leading-4"
           classList={{
-            "overflow-hidden text-clip whitespace-nowrap": !editing(),
+            "overflow-hidden text-ellipsis whitespace-nowrap": !editing(),
             "select-text": editing(),
           }}
           contenteditable={editing() ? true : undefined}
@@ -299,39 +321,75 @@ export function TabNavItem(props: {
             event.preventDefault()
           }}
         />
-      </a>
+      </MenuV2.Context.Trigger>
 
-      <div data-slot="tab-close">
-        <IconButtonV2
-          size="small"
-          variant="ghost-muted"
-          class="hover-reveal relative z-10 group-hover:opacity-100 group-data-[active=true]:opacity-100 group-data-[editing=true]:opacity-100"
-          onPointerDown={(event) => {
-            event.preventDefault()
-            event.stopPropagation()
-          }}
-          onClick={closeTab}
-          icon={<IconV2 name="xmark-small" />}
-        />
-      </div>
+      <Show when={!props.pinned}>
+        <div data-slot="tab-close">
+          <IconButtonV2
+            size="small"
+            variant="ghost-muted"
+            class="hover-reveal relative z-10 group-hover:opacity-100 group-data-[active=true]:opacity-100 group-data-[editing=true]:opacity-100"
+            onPointerDown={(event) => {
+              event.preventDefault()
+              event.stopPropagation()
+            }}
+            onClick={closeTab}
+            icon={<IconV2 name="xmark-small" />}
+            aria-label={title() ? `Close ${title()}` : "Close tab"}
+          />
+        </div>
+      </Show>
     </div>
   )
 
   return (
-    <TabPreviewPopover
-      trigger={tab}
-      open={popoverOpen() && !previewBlocked()}
-      onOpenChange={(value) => {
-        if (value && previewBlocked()) return
-        setPopoverOpen(value)
+    <MenuV2.Context
+      onOpenChange={(open) => {
+        setMenuOpen(open)
+        if (open) setPopoverOpen(false)
       }}
-      data={{
-        projectName: projectName(),
-        title: props.session()?.title,
-        path: previewPath(),
-        serverName: serverLabel(),
-      }}
-    />
+    >
+      <TabPreviewPopover
+        trigger={tab()}
+        open={popoverOpen() && !previewBlocked()}
+        onOpenChange={(value) => {
+          if (value && previewBlocked()) return
+          setPopoverOpen(value)
+        }}
+        data={{
+          projectName: projectName(),
+          title: props.session()?.title,
+          path: previewPath(),
+          note: props.note,
+          serverName: serverLabel(),
+        }}
+      />
+      <Show when={props.menu}>
+        {(menu) => (
+          <MenuV2.Context.Portal>
+            <MenuV2.Context.Content
+              onCloseAutoFocus={(event) => {
+                // Rename from the menu: wait for the menu to hand focus back,
+                // then open the inline editor (it needs focus to stay).
+                if (!renameFromMenu) return
+                event.preventDefault()
+                renameFromMenu = false
+                openRename()
+              }}
+            >
+              <TabMenuItems
+                menu={menu()()}
+                renameDisabled={!props.session() || rename.isPending}
+                onRename={() => {
+                  renameFromMenu = true
+                }}
+                onClose={props.onClose}
+              />
+            </MenuV2.Context.Content>
+          </MenuV2.Context.Portal>
+        )}
+      </Show>
+    </MenuV2.Context>
   )
 }
 
@@ -346,13 +404,14 @@ export function DraftTabItem(props: {
   dragging?: boolean
   pressed?: boolean
   hidden?: boolean
+  menu?: () => TabMenu
 }) {
   const closeTab = (event: MouseEvent) => {
     event.preventDefault()
     event.stopPropagation()
     props.onClose()
   }
-  return (
+  const tab = () => (
     <div
       ref={(el) => forwardTabRef(props.ref, el)}
       data-titlebar-tab
@@ -372,7 +431,11 @@ export function DraftTabItem(props: {
         closeTab(event)
       }}
     >
-      <a
+      <MenuV2.Context.Trigger
+        as="a"
+        disabled={props.dragging || !props.menu}
+        aria-haspopup={props.menu ? "menu" : undefined}
+        aria-label={props.title}
         data-slot="tab-link"
         data-titlebar-tab-link
         href={props.href}
@@ -401,11 +464,11 @@ export function DraftTabItem(props: {
         </span>
         <span
           data-titlebar-tab-title
-          class="min-w-0 flex-1 overflow-hidden text-clip whitespace-nowrap outline-none leading-4"
+          class="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap outline-none leading-4"
         >
           {props.title}
         </span>
-      </a>
+      </MenuV2.Context.Trigger>
       <div data-slot="tab-close">
         <IconButtonV2
           size="small"
@@ -425,5 +488,19 @@ export function DraftTabItem(props: {
         />
       </div>
     </div>
+  )
+  return (
+    <MenuV2.Context>
+      {tab()}
+      <Show when={props.menu}>
+        {(menu) => (
+          <MenuV2.Context.Portal>
+            <MenuV2.Context.Content>
+              <TabMenuItems menu={menu()()} onClose={props.onClose} />
+            </MenuV2.Context.Content>
+          </MenuV2.Context.Portal>
+        )}
+      </Show>
+    </MenuV2.Context>
   )
 }

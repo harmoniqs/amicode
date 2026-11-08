@@ -68,32 +68,12 @@
   display: none;
 }
 
-[data-titlebar-tab][data-title-overflow="true"]:not([data-editing="true"]) [data-slot="tab-link"] {
-  --tab-title-fade-offset: 4px;
-  -webkit-mask-image: linear-gradient(
-    to right,
-    black 0,
-    black calc(100% - var(--tab-title-fade-offset) - 16px),
-    transparent calc(100% - var(--tab-title-fade-offset)),
-    transparent 100%
-  );
-  mask-image: linear-gradient(
-    to right,
-    black 0,
-    black calc(100% - var(--tab-title-fade-offset) - 16px),
-    transparent calc(100% - var(--tab-title-fade-offset)),
-    transparent 100%
-  );
-}
-
-[data-titlebar-tab][data-title-overflow="true"]:is(:hover, [data-active="true"]):not([data-editing="true"])
-  [data-slot="tab-link"] {
-  --tab-title-fade-offset: 24px;
-}
-
-[data-titlebar-tab][data-title-overflow="true"]:not(:hover):not([data-active="true"]):not([data-editing="true"])
-  [data-slot="tab-link"] {
-  padding-right: 0;
+/* amicode(#2154): truncated titles end in an ellipsis (text-ellipsis on the
+   title) instead of fading out, so a cut-off title reads as cut off. The
+   active tab always shows its close button, so its title stops short of it;
+   on hover the close button's own background covers the title's tail. */
+[data-titlebar-tab][data-active="true"]:not([data-pinned]):not([data-editing="true"]) [data-slot="tab-link"] {
+  padding-right: 20px;
 }
 
 [data-titlebar-tab] [data-slot="tab-title"] {
@@ -156,4 +136,50 @@
   .tab-mark-running [data-component="amico-mark"].amc-mark {
     animation: none;
   }
+}
+
+/* amicode(#2154): spawned-session groups. A parent tab and the tabs spawned
+   from it share a 2px underline (neutral strong edge — yellow can't define on
+   light). The bar bridges the 6px gap between slots so the group reads as one. */
+[data-titlebar-tab-slot][data-group-edge]::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  border-radius: var(--radius-full);
+  background: var(--v2-border-border-strong);
+  pointer-events: none;
+}
+
+[data-titlebar-tab-slot][data-group-edge="start"]::after {
+  left: 6px;
+  right: -6px;
+}
+
+[data-titlebar-tab-slot][data-group-edge="middle"]::after {
+  right: -6px;
+}
+
+[data-titlebar-tab-slot][data-group-edge="end"]::after {
+  right: 6px;
+}
+
+/* The bar already separates grouped tabs; no divider tick between them. */
+[data-titlebar-tab-slot][data-group-edge="middle"]::before,
+[data-titlebar-tab-slot][data-group-edge="end"]::before {
+  display: none;
+}
+
+/* amicode(#2154): a pinned tab is its status dot — the title lives in the
+   hover preview and the all-tabs list. */
+[data-titlebar-tab][data-pinned] [data-titlebar-tab-title] {
+  display: none;
+}
+
+[data-titlebar-tab][data-pinned] [data-titlebar-tab-link] {
+  justify-content: center;
+  gap: 0;
+  padding-inline: 0;
 }
