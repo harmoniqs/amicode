@@ -5,7 +5,7 @@
 import { describe, it, expect } from "vitest";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 
 process.env.AMICODE_PROBLEMS_DIR = mkdtempSync(join(tmpdir(), "amicode-preview-open-"));
 
@@ -44,7 +44,7 @@ describe("executePreviewOpen", () => {
     const home = mkdtempSync(join(homedir(), ".amicode-preview-open-test-"));
     const f = join(home, "a.md");
     writeFileSync(f, "# a");
-    const rel = "~/" + f.slice(homedir().length + 1);
+    const rel = "~/" + relative(homedir(), f);
     try {
       expect(sentinelOf(executePreviewOpen({ path: rel }))?.path).toBe(f);
     } finally {
