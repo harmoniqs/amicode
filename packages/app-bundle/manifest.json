@@ -234,7 +234,7 @@
     "packages/app/src/context/server-session-orphan-part.test.ts": "1d635374c0bfff25a01825061aabac7334e5cdaedca2dab9f3d9467ff543caea",
     "packages/app/src/context/server-session.test.ts": "b332098635885211bccaec0d7da8ca6b60696b04bd3f89ba3fcd97cd4c881856",
     "packages/app/src/context/server-session.ts": "ad486fc5d36f93f5f53d51b70fdf191a3008b67f2b280dfc58b64e6d8d20982d",
-    "packages/app/src/context/server-sync.tsx": "a8dad0dad76a402e6c4f912bba1d0a2018bf8885f30ac8fcf03b840f3bebc29e",
+    "packages/app/src/context/server-sync.tsx": "fdd4775a71348af39ac274dd1bf6a86477b151d35132bce3db8fe9e403ed3712",
     "packages/app/src/context/server.tsx": "08e978e4b4b3094221a2a0b92e069f39cbedb6d6cf95935881e21cde52265ee2",
     "packages/app/src/context/session-mirror.test.ts": "65e6d6474e4e67f2da194047140c8c8aac04fe0cc9926441468e53fabc48db96",
     "packages/app/src/context/session-mirror.ts": "b98de060f2b06e6f9a48b1f69ed408f12086c626d90c7dd22029a4ee732260e2",
@@ -268,7 +268,7 @@
     "packages/app/src/i18n/compaction-failure.test.ts": "a4a3765beb238a2c157c07c9c8ede8418b9febb814d8d1e3a5b2d8868cbd80d9",
     "packages/app/src/i18n/da.ts": "db685cb94f22ace194850efe9bdc02c530777a4583dc9eb9d00b97002b0a0968",
     "packages/app/src/i18n/de.ts": "c440ad7543321cae1425e0c2fad92ff73963f21672fbf31176831933573bf103",
-    "packages/app/src/i18n/en.ts": "50c3be0346b9d989f43de76e39319ab8192bc91e065e2af40cbaf3b0ffc27474",
+    "packages/app/src/i18n/en.ts": "81f395edb26e83bcc84b9178b6227d29dd4db2b20d371578c0549cc41d8c4370",
     "packages/app/src/i18n/es.ts": "8cdec3592cddf0b91d7fd59002c81c4e8973c5bf6573e065df64d48c42e1802f",
     "packages/app/src/i18n/fr.ts": "b9f646352189054b6918bfbac670579e76418c3148eb7e5afca9d71d97e7f2b7",
     "packages/app/src/i18n/ja.ts": "27ffc41a0fd8dc4b2e814a45c55fad4726ff1c7a85c884cf6af95f8397f17cbf",
@@ -770,6 +770,8 @@
     "packages/app/src/amicode/whats-new/whats-new-view.tsx": "90b31bc029bafb088f3e1f0669e0a484fd90b6d314f70d2f77a4613121877c23",
     "packages/app/src/amicode/whats-new/whats-new.tsx": "1b996377d7b67a8b1954f4b0711cf52619eb7f2552b175f2f76ed1e7b938a68d",
     "packages/app/src/components/prompt-input/attachments.ts": "c3c28df0d2f18378d39e17147a4c64e8ea01d63b97c39e1874ed9445ca671bb1",
+    "packages/app/src/components/prompt-input/catalog-recovery.test.ts": "ffc1a19840279860437802b992da8398836679f9d7d67fa7bb68d1c3b28839e0",
+    "packages/app/src/components/prompt-input/catalog-recovery.ts": "01db339b2222083001cc3b9620a375504e01d9c993a4e0727cbd7aec2b20ce47",
     "packages/app/src/components/prompt-input/clipboard-bridge.test.ts": "15f76dca1a25d024128718e4099220b79ca029263410aab55502cf9caf9b2914",
     "packages/app/src/components/prompt-input/clipboard-bridge.ts": "4b5a1edf59d4c85268d6ff72aa9f9d66f82d4fdb887121fb978c09caf4c5be65",
     "packages/app/src/components/prompt-input/context-items.tsx": "027b02e394ccd14849052bf3fcacdae1e090c71d164fa8955addfe3f7abf1758",
@@ -785,7 +787,7 @@
     "packages/app/src/components/prompt-input/slash-popover.tsx": "a1800173edebcd419802796470f7270acaf0ef689a72f1b81a1cedfd8968337d",
     "packages/app/src/components/prompt-input/submit-concise.test.ts": "5d76bad06ced24bda9e5be84f6a01577145bcf2ad6dfa55d2941344da2a3d935",
     "packages/app/src/components/prompt-input/submit-stream-gap.test.ts": "351f0f5a8cf7aff55c859cb82fbca388ef848831256b80f74ee52ab9cf5d07c6",
-    "packages/app/src/components/prompt-input/submit.ts": "abae05ffc6793faf2edc0e21d9e9f20e8c97edc332027426833216206c5ca564",
+    "packages/app/src/components/prompt-input/submit.ts": "3940378c5cc0832fed56310c19df10066700bb9034da3ab9c17eb562cc228438",
     "packages/app/src/components/server/server-row.tsx": "caf3179cf0b34b00fcab6ed57a324ff1f90f571f604216c49164dc54bd9f12ab",
     "packages/app/src/components/session/context-warning-banner.tsx": "c4ceb3f9589ebd21cc66e21cef209552fc5fcff6cd825da5069c2259c8d33e50",
     "packages/app/src/components/session/index.ts": "f0d58fa3a336639566ec51a10b692649707f91a7b780c0b5c4dcf18642d030e8",
@@ -1104,10 +1106,10 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-11-08T15:21:50.674Z",
+  "extracted_at": "2026-11-08T17:11:11.473Z",
   "per_package": {
     "packages/app": {
-      "A": 314,
+      "A": 316,
       "M": 166,
       "D": 0
     },
@@ -1153,7 +1155,7 @@
     }
   },
   "counts": {
-    "overlay_total": 1082,
+    "overlay_total": 1084,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1920,6 +1922,8 @@
     "packages/app/src/amicode/whats-new/whats-new-view.tsx": "A",
     "packages/app/src/amicode/whats-new/whats-new.tsx": "A",
     "packages/app/src/components/prompt-input/attachments.ts": "M",
+    "packages/app/src/components/prompt-input/catalog-recovery.test.ts": "A",
+    "packages/app/src/components/prompt-input/catalog-recovery.ts": "A",
     "packages/app/src/components/prompt-input/clipboard-bridge.test.ts": "A",
     "packages/app/src/components/prompt-input/clipboard-bridge.ts": "A",
     "packages/app/src/components/prompt-input/context-items.tsx": "M",

@@ -36,6 +36,7 @@ import { queryOptions, useMutation, useQueries, useQuery, useQueryClient } from 
 import type { SolidQueryOptions } from "@tanstack/solid-query"
 import { createRefreshQueue } from "./global-sync/queue"
 import { directoryKey } from "./global-sync/utils"
+import { singleFlight } from "@/components/prompt-input/catalog-recovery"
 import { PathKey } from "@/utils/path-key"
 import { createDirSyncContext } from "./directory-sync"
 import { createSimpleContext } from "@opencode-ai/ui/context"
@@ -545,6 +546,23 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
     return promise
   }
 
+  // The composer's send-guard recovery: the directory bootstrap writes the
+  // agent list into the child store ONCE, so a single failed request (engine
+  // mid re-init) left it empty for the window's lifetime. Re-fetch the agent
+  // list (fresh, not the cached failure) and every providers query, and write
+  // the agents back. Concurrent calls for one directory share a request.
+  const reloadCatalog = singleFlight(async (directory: string) => {
+    const key = directoryKey(directory)
+    if (!key) return
+    const [, setStore] = children.child(directory, { bootstrap: false })
+    await Promise.allSettled([
+      queryClient
+        .fetchQuery({ ...queryOptionsApi.agents(key), staleTime: 0 })
+        .then((agents) => setStore("agent", agents)),
+      refreshProviders(),
+    ])
+  })
+
   async function bootstrapInstance(directory: string) {
     const key = directoryKey(directory)
     if (!key) return
@@ -919,6 +937,7 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
     disableMcp: children.disableMcp,
     queryOptions: queryOptionsApi,
     refreshProviders,
+    reloadCatalog,
     // bootstrap,
     updateConfig: updateConfigMutation.mutateAsync,
     project: projectApi,
