@@ -4,6 +4,7 @@ import { base64Encode } from "@opencode-ai/core/util/encode"
 import { Binary } from "@opencode-ai/core/util/binary"
 import { useNavigate, useParams, useSearchParams } from "@solidjs/router"
 import { batch, startTransition, type Accessor } from "solid-js"
+import { withNewSessionGate } from "./new-session-gate"
 import { useTabs } from "@/context/tabs"
 import { useServerSync, type ServerSync } from "@/context/server-sync"
 import { useServer } from "@/context/server"
@@ -359,7 +360,19 @@ export function createPromptSubmit(input: PromptSubmitInput) {
     })
   }
 
+  // #2157: a new chat admits one submit at a time per draft — the composer
+  // keeps its text until create + navigation + first send finish (seconds on a
+  // busy engine), and a second Enter in that window used to create a second
+  // session with the same first message. Follow-ups in an existing session
+  // are not gated (they queue as designed).
   const handleSubmit = async (event: Event) => {
+    event.preventDefault()
+    if (params.id) return submitPrompt(event)
+    const key = ScopedKey.from(sdk().scope, sdk().directory, "new-session", search.draftId ?? "")
+    await withNewSessionGate(key, () => submitPrompt(event))
+  }
+
+  const submitPrompt = async (event: Event) => {
     event.preventDefault()
 
     const target = prompt.capture()
