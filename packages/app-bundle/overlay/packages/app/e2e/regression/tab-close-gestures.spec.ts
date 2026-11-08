@@ -6,7 +6,13 @@ const server = "http://127.0.0.1:4096"
 const sessionA = session("ses_tab_a", "Tab A session")
 const sessionB = session("ses_tab_b", "Tab B session")
 
-test("double-clicking a session tab closes it", async ({ page }) => {
+// Closing a tab without hunting for it: middle-click closes a background tab;
+// the close button closes the active one and moves to its neighbour.
+// (Double-click on the title renames — see titlebar_dblclick_close.test.ts in
+// the extension; this spec used to assert double-click-to-close, which the
+// .18 tab rework replaced.)
+
+test("middle-clicking a background session tab closes it", async ({ page }) => {
   await mockServer(page)
   await page.addInitScript(
     ({ server, sessionA, sessionB }) => {
@@ -26,23 +32,18 @@ test("double-clicking a session tab closes it", async ({ page }) => {
   const hrefB = `/server/${base64Encode(server)}/session/${sessionB.id}`
   await page.goto(hrefA)
   await expect(page.getByText(sessionA.title).first()).toBeVisible()
-
-  // Both tabs should be visible
   await expect(page.locator("[data-titlebar-tab-slot]:visible")).toHaveCount(2)
 
-  // Double-click the B tab container (not the title rename area) to close it
   const tabB = page.locator(`[data-titlebar-tab-slot]:has(a[href="${hrefB}"]) [data-titlebar-tab]`)
   await expect(tabB).toBeVisible()
-  await tabB.dblclick()
+  await tabB.click({ button: "middle" })
 
-  // B should be removed — only A remains
   await expect(page.locator("[data-titlebar-tab-slot]:visible")).toHaveCount(1)
   await expect(page.locator(`a[data-titlebar-tab-link][href="${hrefB}"]`)).toHaveCount(0)
-  // A stays active
   await expect(page).toHaveURL(new RegExp(`${hrefA.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`))
 })
 
-test("double-clicking the active session tab closes it and navigates to neighbor", async ({ page }) => {
+test("the close button on the active session tab closes it and navigates to its neighbour", async ({ page }) => {
   await mockServer(page)
   await page.addInitScript(
     ({ server, sessionA, sessionB }) => {
@@ -63,11 +64,8 @@ test("double-clicking the active session tab closes it and navigates to neighbor
   await page.goto(hrefA)
   await expect(page.locator("[data-titlebar-tab-slot]:visible")).toHaveCount(2)
 
-  const tabA = page.locator(`[data-titlebar-tab-slot]:has(a[href="${hrefA}"]) [data-titlebar-tab]`)
-  await expect(tabA).toBeVisible()
-  await tabA.dblclick()
+  await page.getByRole("button", { name: `Close ${sessionA.title}` }).click()
 
-  // A closed — B should be the remaining tab and active
   await expect(page.locator("[data-titlebar-tab-slot]:visible")).toHaveCount(1)
   await expect(page.locator(`a[data-titlebar-tab-link][href="${hrefA}"]`)).toHaveCount(0)
   await expect(page).toHaveURL(new RegExp(`${hrefB.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`))
