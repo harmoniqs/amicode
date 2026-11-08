@@ -35,7 +35,12 @@ import type { PreviewViewState } from "@opencode-ai/session-ui/v2/preview-view-s
 import { PdfCanvasView } from "./pdf-canvas-view"
 import { createPdfFindController } from "./pdf-find-controller"
 import { PdfFindPill } from "./pdf-find-pill"
-import { toAbsolutePath, shouldApplyWatcherRead } from "./preview-file-helpers"
+import {
+  toAbsolutePath,
+  shouldApplyWatcherRead,
+  previewSizeLimit,
+  isPreviewRefreshFor,
+} from "./preview-file-helpers"
 import { validateHumanWritePath } from "./preview-human-write-gate"
 import { previewDrafts } from "./preview-draft-store"
 import {
@@ -85,8 +90,6 @@ type PdfPageNavigation = {
   canNext: boolean
   navigate: (page: number) => boolean
 }
-
-const MAX_FILE_SIZE = 1_000_000
 
 // Wrapper padding: p-4 = 16px each side = 32px total
 const IMAGE_WRAPPER_PADDING = 32
@@ -224,10 +227,13 @@ export function PreviewFileView(props: {
 
   const category = () => getFileCategory(props.filePath)
 
+  // #2130: bumped to force a full re-load of the same path (a refresh request
+  // while the view shows a placeholder — too large, or a failed read).
+  const [reloadTick, setReloadTick] = createSignal(0)
   createEffect(
     on(
-      () => props.filePath,
-      (path) => {
+      () => [props.filePath, reloadTick()] as const,
+      ([path]) => {
         setLoading(true)
         setFileType(null)
         setBinaryData(null)
@@ -257,7 +263,7 @@ export function PreviewFileView(props: {
               return
             }
             const size = (content as any).length ?? content.content.length
-            if (size > MAX_FILE_SIZE) {
+            if (size > previewSizeLimit(path)) {
               setFileType("too-large")
               setFileContent("")
               return
@@ -286,6 +292,50 @@ export function PreviewFileView(props: {
   // #1414: reads are async — guard their completion so a read finishing after a
   // file switch, a newer read, or a fresh edit can't clobber the view.
   let watcherReadGen = 0
+  // Re-read the previewed file from disk (watcher change, or an explicit refresh
+  // request, #2130), tagging the read so a stale completion is discarded.
+  const rereadFromDisk = (filePath: string) => {
+    const capturedGeneration = ++watcherReadGen
+    sdk()
+      .client.file.read({ path: filePath })
+      .then((result) => {
+        if (
+          !shouldApplyWatcherRead({
+            capturedPath: filePath,
+            currentPath: props.filePath,
+            capturedGeneration,
+            latestGeneration: watcherReadGen,
+            hasUnsavedEdits: unsavedContent() !== null,
+          })
+        )
+          return
+        const content = result.data
+        if (!content) return
+        if (content.type !== "text") {
+          // Binary file (PDF, image) — update binary data
+          if ((content as any).encoding === "base64") {
+            setBinaryData({
+              base64: content.content,
+              mime: (content as any).mimeType ?? "application/octet-stream",
+            })
+          }
+        } else {
+          // Text file — update content
+          setFileContent(content.content)
+          // #1423: If a .tex/.ltx file was updated on disk (e.g. by the
+          // agent), trigger a LaTeX recompile so the PDF auto-refreshes.
+          if (/\.(tex|ltx)$/i.test(filePath)) {
+            try {
+              window.parent?.postMessage(
+                { source: "amicode", kind: "run-latex", file: toAbsolute(filePath) },
+                "*",
+              )
+            } catch {}
+          }
+        }
+      })
+      .catch(() => {})
+  }
   createEffect(() => {
     const filePath = props.filePath
     const unsub = sdk().event.listen((e) => {
@@ -299,49 +349,26 @@ export function PreviewFileView(props: {
       if (!changedPath.endsWith(filePath) && !filePath.endsWith(changedPath)) return
       // Skip if the user has unsaved edits — don't clobber their work
       if (unsavedContent() !== null) return
-      // Re-read the file, tagging this read so a stale completion is discarded.
-      const capturedGeneration = ++watcherReadGen
-      sdk()
-        .client.file.read({ path: filePath })
-        .then((result) => {
-          if (
-            !shouldApplyWatcherRead({
-              capturedPath: filePath,
-              currentPath: props.filePath,
-              capturedGeneration,
-              latestGeneration: watcherReadGen,
-              hasUnsavedEdits: unsavedContent() !== null,
-            })
-          )
-            return
-          const content = result.data
-          if (!content) return
-          if (content.type !== "text") {
-            // Binary file (PDF, image) — update binary data
-            if ((content as any).encoding === "base64") {
-              setBinaryData({
-                base64: content.content,
-                mime: (content as any).mimeType ?? "application/octet-stream",
-              })
-            }
-          } else {
-            // Text file — update content
-            setFileContent(content.content)
-            // #1423: If a .tex/.ltx file was updated on disk (e.g. by the
-            // agent), trigger a LaTeX recompile so the PDF auto-refreshes.
-            if (/\.(tex|ltx)$/i.test(filePath)) {
-              try {
-                window.parent?.postMessage(
-                  { source: "amicode", kind: "run-latex", file: toAbsolute(filePath) },
-                  "*",
-                )
-              } catch {}
-            }
-          }
-        })
-        .catch(() => {})
+      rereadFromDisk(filePath)
     })
     onCleanup(unsub)
+  })
+
+  // #2130: the agent's open-in-Preview tool posts `preview-file` with
+  // `refresh: true`. Opening an already-open file changes nothing, so the view
+  // re-reads it here — the only way a file outside the project (a vault
+  // dashboard, a results folder) refreshes on demand. A placeholder view (too
+  // large, failed read) gets a full re-load instead; unsaved edits are kept.
+  onMount(() => {
+    const onRefresh = (event: MessageEvent) => {
+      if (!isPreviewRefreshFor(event.data, props.filePath, props.draftSession)) return
+      if (unsavedContent() !== null) return
+      const type = fileType()
+      if (type === "too-large" || type === "error") setReloadTick((n) => n + 1)
+      else rereadFromDisk(props.filePath)
+    }
+    window.addEventListener("message", onRefresh)
+    onCleanup(() => window.removeEventListener("message", onRefresh))
   })
 
   // ─── PDF refresh after compile (#1254) ─────────────────────────────────

@@ -1,4 +1,4 @@
-import { For, Match, Show, Switch, createMemo } from "solid-js"
+import { For, Match, Show, Switch, createEffect, createMemo, on } from "solid-js"
 import { openFileInEditor } from "./bridge"
 import { amicodeStage } from "./stage"
 import { parseAskInput } from "./ask"
@@ -11,6 +11,13 @@ import { compositeChip, chipText } from "./problem"
 import { RunWindow } from "./run-window"
 import { parseWidgetSentinel } from "./widget-preview"
 import { WidgetPreviewCard } from "./widget-preview-card"
+import { parsePreviewSentinel, shouldAutoOpen } from "./preview-open"
+import { PreviewOpenCard, openInPreview } from "./preview-open-card"
+
+// #2130: tool parts whose live completion already opened the Preview — so a
+// remount of the same card (timeline virtualization, a re-render) never opens
+// it a second time. Keyed by message + path: the card is not handed a part id.
+const autoOpenedPreviews = new Set<string>()
 
 // spec C: when an amicode_solve recorded a run_dir, its sentinel carries the
 // path (well under the 120-char truncation cap) — extract lab/run_id from the
@@ -321,6 +328,39 @@ export function AmicodeToolCard(props: {
     props.tool === "amicode_author_widget" ? parseWidgetSentinel(props.output) : undefined,
   )
 
+  // #2130: amicode_open_preview — open the file in this session's Preview when
+  // the call completes LIVE. The watcher lives here, not in PreviewOpenCard:
+  // this card is mounted from the part's first (pending) render, so it sees
+  // the transition; a replayed session mounts already-completed and never
+  // re-opens anything. A missed open is one click on the chip.
+  const previewRequest = createMemo(() =>
+    props.tool === "amicode_open_preview" && props.status === "completed"
+      ? parsePreviewSentinel(props.output)
+      : undefined,
+  )
+  // `sawLive` latches when the part is seen pending/running; the open fires on
+  // the first completed render that also carries the sentinel (status and
+  // output may land in separate updates, so both are tracked).
+  let sawLive = false
+  createEffect(
+    on(
+      () => [props.status, props.output] as const,
+      ([current]) => {
+        if (props.tool !== "amicode_open_preview") return
+        if (current === "pending" || current === "running") {
+          sawLive = true
+          return
+        }
+        const request = previewRequest()
+        if (!request) return
+        const key = `${props.messageID ?? ""}:${request.path}`
+        if (!shouldAutoOpen({ sawLive, current, alreadyOpened: autoOpenedPreviews.has(key) })) return
+        autoOpenedPreviews.add(key)
+        openInPreview(request.path, props.sessionID)
+      },
+    ),
+  )
+
   return (
     <Switch fallback={<Chip tool={props.tool} status={props.status} output={props.output} count={props.count} />}>
       <Match when={ask()}>
@@ -329,6 +369,9 @@ export function AmicodeToolCard(props: {
       <Match when={approval()}>{(req) => <AmicodeApprovalCard request={req()} />}</Match>
       <Match when={runRef()}>{(ref) => <RunWindow run={ref().run} lab={ref().lab} />}</Match>
       <Match when={authored()}>{(preview) => <WidgetPreviewCard preview={preview()} />}</Match>
+      <Match when={previewRequest()}>
+        {(request) => <PreviewOpenCard request={request()} sessionID={props.sessionID} />}
+      </Match>
     </Switch>
   )
 }

@@ -142,6 +142,11 @@ import {
 // the same directory, so a tool call lands in the inventory end-to-end
 // without an HTTP hop and without touching the harness server.
 import { authorWidget } from "./amicode_service/widgets";
+import {
+  PREVIEW_OPEN_ARGS,
+  PREVIEW_OPEN_DESCRIPTION,
+  executePreviewOpen,
+} from "../opencode-plugin/preview_open";
 
 /** The shipped role cards' directory, for the S3 routing resolver (#860):
  *  the suggestion source + the hand-set `model:` tier. The bundled core
@@ -623,6 +628,17 @@ export const AMICODE_TOOLS: Record<string, AmicodeToolDef> = {
           `A live preview is shown below — the user can Pin it to their dashboard.\n` +
           `AMICODE_WIDGET ${sentinel}`
         );
+      },
+    },
+
+    // #2130: put a file in the side-panel Preview (the in-studio replacement
+    // for launching Chrome). One definition shared with the plugin twin
+    // (opencode-plugin/preview_open.ts); the app's card does the opening.
+    amicode_open_preview: {
+      description: PREVIEW_OPEN_DESCRIPTION,
+      args: { ...PREVIEW_OPEN_ARGS },
+      async execute(a: { path?: unknown }) {
+        return executePreviewOpen(a);
       },
     },
 
