@@ -118,9 +118,11 @@ export function Titlebar(props: { update?: TitlebarUpdate; debugTools?: { visibl
   const [editMode, setEditMode] = createSignal(false)
   const handleContextMenu = (e: MouseEvent) => {
     if (!useV2Titlebar()) return
-    // Don't show on tabs — they may get their own context menu later
+    // Tabs carry their own context menu (amicode#2154) — the strip's root
+    // slot is `titlebar-tabs` (the old `titlebar-tab-strip` selector never
+    // matched, so right-clicking a tab opened Customize/Reset).
     const target = e.target as HTMLElement
-    if (target.closest("[data-slot='titlebar-tab-strip']")) return
+    if (target.closest("[data-slot='titlebar-tabs']")) return
     e.preventDefault()
     const menu = document.createElement("div")
     menu.className = "titlebar-context-menu"
