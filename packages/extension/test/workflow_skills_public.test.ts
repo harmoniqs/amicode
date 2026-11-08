@@ -284,6 +284,11 @@ describe("the research skill carries the live campaign dashboard contract (#2144
     expect(research).toMatch(/file:\/\//);
   });
 
+  it("opens the page in the Preview with the agent tool, never an external browser (#2130)", () => {
+    expect(research).toContain("amicode_open_preview");
+    expect(research).toMatch(/Never launch an external browser/);
+  });
+
   it("the mode card's record sentence points at the dashboard page, not a widget", () => {
     expect(card).toContain("the campaign dashboard page rewrite");
     expect(card).not.toContain("campaign dashboard widget refresh");

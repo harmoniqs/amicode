@@ -189,13 +189,16 @@ churn does not belong in a synced repo). `<ledger-stem>` is the ledger's file na
 
 **Static only.** Preview renders the page in a sandbox with no scripts: no scripts, no CDN
 libraries (Plotly, MathJax), no meta refresh, no external stylesheets. Use inline CSS,
-tables, inline SVG, and PNG/SVG files in `plots/`. Keep the page under 1 MB. Preview reloads
-it when the file changes, so a rewrite is the refresh.
+tables, inline SVG, and PNG/SVG files in `plots/`. Keep the page under 1 MB of its own HTML
+(plots as files, never base64-embedded). While the page is visible, Preview re-reads it and
+its plots every few seconds, so a rewrite is the refresh.
 
-**Link it once.** After the first write, post the page as a `file://` link in chat
-(`[campaign dashboard](file:///abs/path/index.html)`); one click opens it in Preview, where
-it stays live, and its "Open in browser" control pops it out for a second monitor. Do not
-re-post the link every loop.
+**Open it once.** After the first write, call `amicode_open_preview` with the page's
+absolute path: it opens in the Preview beside the chat and stays live there, and its "Open
+in browser" control pops it out for a second monitor. Never launch an external browser
+(`open -a "Google Chrome" …`) instead. Also post it once as a `file://` link in chat
+(`[campaign dashboard](file:///abs/path/index.html)`) so the researcher can reopen it with
+one click. Do not re-open or re-post it every loop.
 
 ## Roles at a glance
 
