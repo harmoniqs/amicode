@@ -23,7 +23,7 @@ matplotlib==3.11.2
 numpy==2.5.3
 packaging==26.3
 pasqal-cloud==0.22.0
-pillow==12.3.0
+pillow==13.0.0
 pulser==1.8.0
 pulser-core==1.8.0
 pulser-pasqal==0.24.0
