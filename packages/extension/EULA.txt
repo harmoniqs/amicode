@@ -1,0 +1,75 @@
+AMICODE — END USER LICENSE AGREEMENT
+Version 0.1.0-placeholder (effective 2026-11-05)
+
+*** PLACEHOLDER — NOT LEGAL TEXT ***
+This file is a stand-in. Harmoniqs has not supplied the real End User License
+Agreement yet. Everything below is placeholder material so the install-time
+gate, the packaged license asset, and the review flow can be wired up and
+tested. Replace this file with counsel-approved wording before any external
+release. Do NOT ship this text as-is.
+*** END PLACEHOLDER NOTICE ***
+
+1. Parties
+   This End User License Agreement ("Agreement") is a legal agreement between
+   you ("Licensee") and Harmoniqs, Inc. ("Harmoniqs", "we", "us") governing
+   your use of the Amicode extension for Visual Studio Code (the "Software").
+
+2. Grant of License
+   Subject to your acceptance of this Agreement, Harmoniqs grants you a
+   non-exclusive, non-transferable, revocable license to install and use the
+   Software for its intended purpose, in accordance with this Agreement.
+
+3. Restrictions (placeholder)
+   You may not: (a) reverse engineer the Software except as permitted by law;
+   (b) redistribute the Software except as permitted by its license notices;
+   (c) use the Software in violation of applicable law; (d) remove or alter
+   any proprietary notices in the Software.
+
+4. Beta / Preview Notice
+   The Software is currently a preview ("preview": true). It may contain
+   errors, change materially, or be withdrawn at any time. No SLA is offered.
+
+5. Data & Telemetry
+   The Software may include opt-in telemetry (see the amicode.telemetry.*
+   settings). Telemetry is OFF by default and nothing is transmitted until you
+   explicitly consent in the product. See the README for details.
+
+6. No Warranty (placeholder)
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+
+7. Limitation of Liability (placeholder)
+   IN NO EVENT SHALL HARMONIQS BE LIABLE FOR ANY INDIRECT, INCIDENTAL,
+   SPECIAL, CONSEQUENTIAL OR PUNITIVE DAMAGES ARISING OUT OF OR IN CONNECTION
+   WITH THIS AGREEMENT OR THE USE OF THE SOFTWARE, EVEN IF ADVISED OF THE
+   POSSIBILITY OF SUCH DAMAGES.
+
+8. Termination
+   This Agreement terminates automatically upon breach of its terms. Upon
+   termination you must cease all use of the Software and uninstall it.
+
+9. Governing Law
+   This Agreement is governed by the laws of [PLACEHOLDER — jurisdiction to be
+   supplied with the final text], without regard to conflict-of-laws rules.
+
+10. Source Code License
+    The Amicode source code in this repository is licensed under the Apache
+    License, Version 2.0 (see the LICENSE file at the repository root). This
+    Agreement governs the packaged extension and its distribution to end
+    users; where the two conflict, this Agreement controls for the packaged
+    distribution. Third-party components retain their own licenses (see
+    THIRD_PARTY_LICENSES.md).
+
+11. Entire Agreement; Changes
+    This Agreement is the placeholder entire agreement between you and
+    Harmoniqs regarding the Software. Harmoniqs may update this Agreement; on
+    a material change the Software will require you to review and accept the
+    new version before it runs again. The version line at the top tracks
+    acceptance — bump it when the final text is in place.
+
+12. Contact
+    Questions about this Agreement: [PLACEHOLDER — legal contact to be
+    supplied with the final text].
+
+Copyright (c) 2026 Harmoniqs, Inc. All rights reserved.
