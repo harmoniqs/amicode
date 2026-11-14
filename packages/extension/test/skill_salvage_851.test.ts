@@ -10,8 +10,9 @@
 //     amico-vault spec + plan schemas and the brainstorming spec template
 //     carry the field;
 //   - the `intonatoqick` skill (amico-plugin PR #42): public surface,
-//     provenance, the entitled tier named as `intonatissimo` (current
-//     package reality), and the sibling skills referenced not duplicated;
+//     provenance, the entitled tier named neutrally (no private-package
+//     name — the library is public), and the sibling skills referenced
+//     not duplicated;
 //   - the restricted 6th vault kind (amico-plugin PRs #48/#27): the
 //     amico-vault kind table carries all SIX kinds and the prompt-side
 //     condensed routing (stack_state.ts) agrees — the prompt↔skill
@@ -112,8 +113,9 @@ describe("salvaged intonatoqick skill (amico-plugin PR #42 → amicode#851)", ()
     expect(skill).toMatch(/#851/);
   });
 
-  it("names the entitled tuning tier as `intonatissimo` (current package reality), not the archived private path", () => {
-    expect(skill).toMatch(/intonatissimo/);
+  it("names the entitled tuning tier neutrally (premium calibration tier), never a private package or the archived private path", () => {
+    expect(skill).toMatch(/premium calibration tier/);
+    expect(skill).not.toMatch(/issimo/i); // private-package names stay out of the public library
     expect(skill).not.toMatch(/qilc-calibration/); // the archived repo's private-skill name
     expect(skill).toMatch(/IdentityStrategy/); // the public no-op default the boundary is defined against
   });

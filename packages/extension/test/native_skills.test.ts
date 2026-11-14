@@ -87,10 +87,16 @@ describe("stageNativeUserSkills (#1949 §1)", () => {
   });
 
   it("does not stage an entitled skill without its entitlement", () => {
-    const r = stage();
-    // piccolissimo is surface: entitled — no entitlements.toml in the temp HOME
-    expect(r.staged).not.toContain("piccolissimo");
-    expect(fs.existsSync(path.join(r.dir, "piccolissimo"))).toBe(false);
+    // the in-repo library ships no entitled skill, so pin the gate on a fixture
+    // library root: a public sibling stages, the entitled one does not (no
+    // entitlements.toml in the temp HOME)
+    const lib = path.join(home, "fixture-library");
+    writeSkill(lib, "public-usage", "public");
+    writeSkill(lib, "premium-usage", "entitled", "entitlement: premium\n");
+    const r = stage({ skillLibraryRoots: [{ path: lib, surfaces: ["public", "entitled"] }] });
+    expect(r.staged).toContain("public-usage");
+    expect(r.staged).not.toContain("premium-usage");
+    expect(fs.existsSync(path.join(r.dir, "premium-usage"))).toBe(false);
   });
 
   it("re-staging is idempotent", () => {

@@ -153,8 +153,8 @@ forms follow the papers' notation.
 | `NonhermitianExponentialIntegrator` (density / multidensity) | $\rho_{k+1} = e^{\mathcal{L}(\mathbf{a}_k)\Delta t}\rho_k$, $\mathcal{L}(\cdot) = -i[H,\cdot] + \text{dissipation}$ | Daleckii–Krein for the Fréchet derivative (`daleckii_krein.jl`) |
 | `BilinearIntegrator` | Piecewise-constant control, first-order | The simplest collocation step |
 | `SplineIntegrator` (Piccolo) | The constraint integrates the **exact spline waveform** reconstructed from knot values — the emitted pulse and the optimized pulse are the same object | Per trajectory type (unitary/ket/multiket/density/multidensity) |
-| Piccolissimo `SplineIntegrator` cores | Magnus series: `MagnusGL4Alg`, `MagnusAdapt4Alg`; `ChebyshevAlg` (ket); Duhamel for density (`density_duhamel.jl`) | State which core ran — they are different approximations, and "Magnus does not apply to the dissipative density ODE (non-skew rhs)" is a recorded lesson |
-| `SplitOperatorIntegrator` (Piccolissimo) | Strang split-step, matrix-free: kinetic factor $e^{-ik^2\Delta t/2m}$ (control-independent) + potential kicks; analytic JVP/VJP, no AD near the FFT | Atom-transport venue (issue #270) |
+| Premium-tier spline integrator cores | Higher-order propagators for the same spline waveform (Magnus-series and Chebyshev-type cores) | State which core ran — they are different approximations, and "Magnus does not apply to the dissipative density ODE (non-skew rhs)" is a recorded lesson |
+| Premium-tier split-operator integrator | Strang split-step: kinetic factor $e^{-ik^2\Delta t/2m}$ (control-independent) + potential kicks | Atom-transport problems |
 | Tsit5 (explicit RK) | Adaptive rollout only | **Never** a collocation constraint; verification/rollout path — quote its agreement separately (density paths are Tsit5-primary + Tsit5-cross-check: weaker integrator independence, a recorded honesty note) |
 
 ### Objective terms
@@ -168,10 +168,10 @@ forms follow the papers' notation.
 | `LeakageObjective` | $\lVert(I - \Pi)\psi_k\rVert^2$ at knot points | `objectives.jl` |
 | `QuadraticRegularizer` | $R = \sum_k r\lVert\mathbf{a}_k\rVert^2$ | `docs_cache.jl` usage |
 | Minimum-time term | $D\sum_k \Delta t_k$ | `templates/minimum_time_problem.jl`; the two-stage construction follows arXiv:2305.03261's continuation |
-| Piccolissimo regularizers (`HermiteBendingEnergyRegularizer`, `HermiteC2Regularizer`) | Bending energy $\int\lvert u''\rvert^2$ and C² forms on the spline | `objectives/hermite_bending_energy_regularizer.jl` |
-| Adjoint robustness / `UnitarySensitivityObjective` | First-order infidelity response $\lvert\partial J/\partial\theta\rvert$ to Hamiltonian-parameter perturbations, via adjoints (no finite differences) | `objectives_robustness/`; Piccolissimo reexports |
-| Channel process infidelity (Piccolissimo) | $F_\mathrm{pro}$ exact vs Choi, linear coordinates + HS-dual $\tau_k$ | `objectives/channel_process_infidelity.jl` |
-| `MeasurementMatchingObjective` (Intonatissimo) | $\lVert y(z) - y_\text{target}\rVert^2_{Q_\text{meas}}$ | The intonatissimo card's display section |
+| Spline smoothness regularizers (`HermiteBendingEnergyRegularizer`; the premium tier adds C² forms) | Bending energy $\int\lvert u''\rvert^2$ and C² forms on the spline | `objectives.jl` |
+| Adjoint robustness / `UnitarySensitivityObjective` | First-order infidelity response $\lvert\partial J/\partial\theta\rvert$ to Hamiltonian-parameter perturbations, via adjoints (no finite differences) | `objectives.jl`, `objectives_robustness/` |
+| Channel process infidelity (premium tier) | $F_\mathrm{pro}$, exact against the Choi representation | The premium tier's usage guidance |
+| Measurement matching (premium calibration tier) | $\lVert y(z) - y_\text{target}\rVert^2_{Q_\text{meas}}$ | The premium calibration tier's usage guidance |
 
 ### Constraints
 
@@ -182,15 +182,15 @@ forms follow the papers' notation.
 | Leakage bound (`KnotPointConstraint` / `NonlinearKnotPointConstraint`) | $\lVert(I-\Pi)\psi(t_k)\rVert^2 \le \varepsilon$ at knots | `constraints.jl` |
 | `FinalUnitaryFidelityConstraint` | $\mathcal{F}(U_N) \ge \bar{\mathcal{F}}$ | `templates/minimum_time_problem.jl` |
 | `DurationConstraint` | $\sum_k \Delta t_k \le T_{\max}$ (or per-interval $\Delta t$ bounds) | `templates/`; per-interval floors encode physics (settling, clock) |
-| QILC trust region | $\lVert u - u_\text{ref}\rVert^2_{R_\text{tr}}$ recentered on $z_\text{ref}$ each iteration | The intonatissimo card |
+| QILC trust region | $\lVert u - u_\text{ref}\rVert^2_{R_\text{tr}}$ recentered on $z_\text{ref}$ each iteration | The premium calibration tier's usage guidance |
 
 ### Solvers
 
 | Solver | What it is | When stated |
 | --- | --- | --- |
 | IPOPT (via DirectTrajOpt) | Interior-point, exact sparse NLP | Every Piccolo solve; `exact_hessian=false` on MultiKet is a recorded caveat |
-| Altissimo (Piccolissimo) | Matrix-free interior-point; callback fields $f_\text{val}$, $eq\_viol$, $kkt\_error$ are the honest convergence line | Piccolissimo solves |
-| Gauss–Newton second-order mode | Matrix-free HVP composition | When Piccolissimo's GN default runs |
+| Premium-tier matrix-free solver | Matrix-free NLP solver; its own reported objective value, constraint violation, and optimality error are the honest convergence line | Premium-tier solves |
+| Gauss–Newton second-order mode | Matrix-free HVP composition | When a premium-tier Gauss–Newton default runs |
 | Armijo backtracking (ILC) | Accept/reject on objective descent; show accepted **and** rejected steps | QILC convergence displays |
 
 **Completeness rule.** A formulation statement that omits any row the

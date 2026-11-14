@@ -3,7 +3,7 @@ name: intonatoqick
 description: Drive the public IntonatoQICK.jl QICK/RFSoC hardware backend — mock loop, channel map, measurement model, and composing a QickExperiment into Intonato's closed-loop chassis. Use when running or testing quantum optimal control on QICK hardware (or its pure-Julia mock).
 agents: [experimenter, engineer]
 surface: public
-revision: 1
+revision: 2
 ---
 
 # IntonatoQICK — the public QICK hardware backend
@@ -34,7 +34,7 @@ not push board specifics into Julia.
 closed-loop path — `PulseTuningProblem` → `StrumentoExperiment` → `StrumentoBackend` →
 Strumento.jl → the Python `strumento` side — plus MockSoc-first validation and the
 unattended-loop safety gates; **strumento** owns the board-side tProc-v2 experiment framework
-itself; **intonatissimo** is the entitled tuning-strategy tier (below). This skill stays at
+itself; the **premium calibration tier** supplies the convergent tuning strategies (below). This skill stays at
 the IntonatoQICK package boundary.
 
 ## Core types
@@ -76,7 +76,7 @@ solve!(ptp; max_iter = 10)
   knots on the DAC grid.
 - Swap `MockQickSoc` → `PyQickSoc` for a real board; nothing else in the loop changes.
 - **Intonato ≥ v0.4:** the `R_tr` / `Q_meas` constructor kwargs are **removed** — trust-region
-  weighting belongs to the strategy (Intonatissimo's subproblem constructors take `R_tr`) and
+  weighting belongs to the strategy (the tuning strategy's own constructors take `R_tr`) and
   task weighting to the whitening `W_task`; the chassis constructor takes neither.
 
 ## The tuning strategy is where public stops
@@ -88,8 +88,8 @@ Newton in the low-rank principal subspace of the model-cost Hessian, where the d
 supplies the directions/curvatures and the gradient is measured on the device by central finite
 differences along each direction. **Algorithmic convergence** (matching hardware measurements
 iteration-over-iteration) beyond that needs a concrete tuning strategy, which ships as the
-**entitlement-gated** `intonatissimo` tier — see
-the in-repo `intonatissimo` skill if you hold that entitlement. Without it, the public path is:
+**entitlement-gated** premium calibration tier — its usage guidance loads in sessions that hold
+that entitlement. Without it, the public path is:
 drive the backend, roll the mock, validate the seam.
 
 ## Verification contract

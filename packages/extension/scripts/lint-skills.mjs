@@ -17,10 +17,18 @@
 //                 `~/...armonia-data.../`) → WARNING — the rot-prone class
 //                 (the armonia-aaron-trowbridge rename rotted these once);
 //                 warnings never fail the lint
+//   private-package  a shippable skill (surface public / entitled / untagged)
+//                 names a package on the private-package DENYLIST
+//                 (scripts/lint-skills-private-packages.txt — the one file
+//                 the list lives in), whole-word, case-insensitive, anywhere
+//                 in the file (frontmatter `name:` included) → ERROR. The repo
+//                 is public; private-package skills live in the team vault as
+//                 `surface: internal`, which this rule exempts. On by default
+//                 for the repo library; opt-in elsewhere via --denylist
 //   agents        unknown `agents:` value — WARNING only (the ontology sweep
 //                 is a later slice); warnings never fail the lint
 //
-//   node scripts/lint-skills.mjs [--dir <skills-root>] [--known <file>] [--json]
+//   node scripts/lint-skills.mjs [--dir <skills-root>] [--known <file>] [--denylist <file>] [--json]
 //
 //   --dir    skills library root (default: this repo's source tree,
 //            packages/extension/skills)
@@ -31,6 +39,10 @@
 //            that referenced path (`skill/SKILL.md:companion:guide.md`) —
 //            unlisted occurrences in the same file still fail. Listed
 //            occurrences are reported as known-warnings, never errors.
+//   --denylist  private-package denylist file (one name per line, `#`
+//            comments). Default: scripts/lint-skills-private-packages.txt
+//            when --dir is the repo library, otherwise the rule is off —
+//            vault roots legitimately carry private-package content.
 //   --json   machine-readable report on stdout (the dream-side pass consumes
 //            this; findings land in the vault ledger)
 //
@@ -47,6 +59,7 @@ import { fileURLToPath } from "node:url";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_DIR = path.join(SCRIPT_DIR, "..", "skills");
+const DEFAULT_DENYLIST = path.join(SCRIPT_DIR, "lint-skills-private-packages.txt");
 
 const AGENT_VALUES = new Set([
   "researcher", "experimenter", "librarian", "hypothesizer", "analyzer",
@@ -54,7 +67,7 @@ const AGENT_VALUES = new Set([
   "engineer", "pulse-designer",
 ]);
 const SURFACE_VALUES = new Set(["public", "internal", "entitled"]);
-const RULES = ["amico-plugin", "companion", "name", "surface", "vpath"];
+const RULES = ["amico-plugin", "companion", "name", "surface", "vpath", "private-package"];
 
 // F28 — the known-rotted vault-path idioms: the old ops-repo vault tree, the
 // pre-rename personal vault name, and the retired transcript substrate.
@@ -67,7 +80,7 @@ const VPATH_ERROR_SHAPES = [
 // rotted once already (the armonia-aaron-trowbridge rename), so they warn.
 const VPATH_HOME_RE = /~\/[A-Za-z0-9_/.-]*(vaults|armonia-data)[A-Za-z0-9_/.-]*\//;
 
-const USAGE = `usage: node scripts/lint-skills.mjs [--dir <skills-root>] [--known <file>] [--json]`;
+const USAGE = `usage: node scripts/lint-skills.mjs [--dir <skills-root>] [--known <file>] [--denylist <file>] [--json]`;
 
 function fail(msg) {
   console.error(`lint-skills: ${msg}\n${USAGE}`);
@@ -75,17 +88,18 @@ function fail(msg) {
 }
 
 function parseArgs(argv) {
-  const out = { dir: DEFAULT_DIR, known: null, json: false };
+  const out = { dir: DEFAULT_DIR, known: null, denylist: null, json: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--help" || a === "-h") return { help: true };
     if (a === "--json") out.json = true;
     else if (a === "--dir") out.dir = argv[++i];
     else if (a === "--known") out.known = argv[++i];
+    else if (a === "--denylist") out.denylist = argv[++i];
     else if (a.startsWith("--")) return { error: `unknown flag ${a}` };
     else return { error: `unexpected argument ${a}` };
   }
-  if (out.dir === undefined || out.known === undefined) return { error: "missing value for flag" };
+  if (out.dir === undefined || out.known === undefined || out.denylist === undefined) return { error: "missing value for flag" };
   return out;
 }
 
@@ -111,6 +125,22 @@ function loadKnown(file) {
     else if (parts.length === 3 && parts[2]) set.add(`${parts[0]}:${rule}:${parts[2]}`);
   }
   return set;
+}
+
+// The private-package denylist → one whole-word, case-insensitive matcher per
+// name. Names are escaped, so a denylist line can never become a regex.
+function loadDenylist(file) {
+  let text;
+  try {
+    text = fs.readFileSync(file, "utf8");
+  } catch (e) {
+    return { error: `cannot read --denylist file: ${e.message}` };
+  }
+  return text
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l && !l.startsWith("#"))
+    .map((name) => ({ name, re: new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i") }));
 }
 
 // Conservative companion-path collection: markdown-link targets ending in
@@ -143,7 +173,7 @@ function isResolvable(ref) {
   return true;
 }
 
-function lintSkill(skillDir, relDir) {
+function lintSkill(skillDir, relDir, denylist = []) {
   const findings = [];
   const file = path.join(skillDir, "SKILL.md");
   const rel = relDir ? path.join(relDir, "SKILL.md") : "SKILL.md";
@@ -164,6 +194,7 @@ function lintSkill(skillDir, relDir) {
   });
 
   // (2) frontmatter (between the first two `---` lines)
+  let surface = null;
   if (lines[0]?.trim() === "---") {
     const end = lines.indexOf("---", 1);
     if (end > 0) {
@@ -174,6 +205,7 @@ function lintSkill(skillDir, relDir) {
         if (key === "name" && value && value !== path.basename(skillDir)) {
           findings.push({ rel, line: i + 1, rule: "name", severity: "error", msg: `frontmatter name \`${value}\` ≠ directory \`${path.basename(skillDir)}\`` });
         }
+        if (key === "surface") surface = value;
         if (key === "surface" && value && !SURFACE_VALUES.has(value)) {
           findings.push({ rel, line: i + 1, rule: "surface", severity: "error", msg: `surface \`${value}\` not in {public, internal, entitled}` });
         }
@@ -206,6 +238,18 @@ function lintSkill(skillDir, relDir) {
     }
   });
 
+  // (3b) private-package names in a shippable card — internal cards are
+  // vault-only (the packaging leak-guard refuses them in the .vsix).
+  if (surface !== "internal") {
+    lines.forEach((line, idx) => {
+      for (const { name, re } of denylist) {
+        if (re.test(line)) {
+          findings.push({ rel, line: idx + 1, rule: "private-package", severity: "error", msg: `names private package \`${name}\` — the repo is public; private-package guidance lives in the team vault as surface: internal (reword to "premium tier")` });
+        }
+      }
+    });
+  }
+
   // (4) dead companion files — resolve inside the skill's own directory only
   for (const { ref, line } of collectCompanionRefs(text)) {
     const cleaned = ref.replace(/^\.\//, "").split("#")[0].trim();
@@ -220,7 +264,7 @@ function lintSkill(skillDir, relDir) {
   return findings;
 }
 
-function lintDir(root) {
+function lintDir(root, denylist = []) {
   const findings = [];
   let skills = 0;
   const entries = fs.readdirSync(root, { withFileTypes: true });
@@ -229,7 +273,7 @@ function lintDir(root) {
     const skillMd = path.join(root, ent.name, "SKILL.md");
     if (!fs.existsSync(skillMd)) continue; // not a skill dir
     skills++;
-    findings.push(...lintSkill(path.join(root, ent.name), ent.name));
+    findings.push(...lintSkill(path.join(root, ent.name), ent.name, denylist));
   }
   return { findings, skills };
 }
@@ -267,7 +311,12 @@ function main(argv) {
   const known = loadKnown(parsed.known);
   if (known.error) return fail(known.error);
 
-  const { findings, skills } = lintDir(parsed.dir);
+  const isLibrary = path.resolve(parsed.dir) === path.resolve(DEFAULT_DIR);
+  const denyFile = parsed.denylist ?? (isLibrary ? DEFAULT_DENYLIST : null);
+  const denylist = denyFile ? loadDenylist(denyFile) : [];
+  if (denylist.error) return fail(denylist.error);
+
+  const { findings, skills } = lintDir(parsed.dir, denylist);
   const lines = render(findings, known);
   const errors = lines.filter((l) => l.includes(" error: ")).length;
   const warnings = lines.filter((l) => l.includes(" warning: ")).length;
@@ -294,4 +343,4 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   process.exit(main(process.argv.slice(2)));
 }
 
-export { main, lintDir, lintSkill, collectCompanionRefs, isResolvable, loadKnown };
+export { main, lintDir, lintSkill, collectCompanionRefs, isResolvable, loadKnown, loadDenylist };

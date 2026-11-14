@@ -90,7 +90,7 @@ Read the file content — do not classify by filename alone.
 - Reference material that doesn't change between experiments
 
 **Experiment scripts** — destination: `scripts/experiment/`
-- `.jl` files with `using Piccolo`, `QuantumCollocation`, `Piccolissimo`
+- `.jl` files with `using Piccolo`, `QuantumCollocation`, or another Piccolo-family package
 - Contains `solve!`, `UnitarySmoothPulseProblem`, trajectory definitions
 - The bulk of a researcher's scripts — optimization solves, gate synthesis
 
@@ -160,7 +160,7 @@ Read these sources for manifest fields — do NOT ask for what you can read:
   reasoning, let the researcher correct
 
 **Domain pack** (optional — infer silently):
-- `using Piccolo` or `using Piccolissimo` → `quantum-control`
+- `using Piccolo` (or any Piccolo-family package) → `quantum-control`
 - Otherwise: omit (no default)
 
 **Author** (optional — infer silently):
