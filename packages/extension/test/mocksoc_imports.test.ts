@@ -2,14 +2,14 @@
 // `rehearsal_imports_strumento_path_only == 1`.
 //
 // The rehearsal entry point (templates/mocksoc_rehearsal.jl) must import NO
-// sim module outside the Strumento.jl path — the entire point is that the
+// sim module outside the Intonato transport path — the entire point is that the
 // preview exercises the identical transport seam real hardware uses (F1: if
 // the real path cannot be used, ship NOTHING). This scan is the "verbatim"
 // check: every `using`/`import` line in the entry point must name a module in
 // the allowlist, and the allowlist maps each module to WHY it is on it. A new
 // import outside the list reds this test — bespoke sim cannot sneak in.
 //
-// (The module GRAPH below the entry point is Intonato/Piccolo/Strumento's own
+// (The module GRAPH below the entry point is Intonato/Piccolo's own
 // dependency surface, resolved by Pkg from the committed rehearsal env — the
 // source scan pins the seam's author-facing surface, which is the part this
 // repo controls.)
@@ -23,9 +23,8 @@ const SCRIPT = join(__dirname, "..", "templates", "mocksoc_rehearsal.jl");
 const ALLOWED: Record<string, string> = {
   // the chassis WITH the absorbed hardware seam (StrumentoBackend /
   // StrumentoExperiment / PulseTuningProblem / IdentityStrategy / MockSoc
-  // reexport) — reexports Piccolo + Strumento's soc surface
-  Intonato: "the QILC chassis; reexports Piccolo + Strumento's soc surface + MockSoc",
-  Strumento: "the soc substrate (explicit reach without the Intonato reexport)",
+  // — Intonato 0.5 owns the whole seam; Strumento.jl is retired
+  Intonato: "the QILC chassis; reexports Piccolo; owns MockSoc + the QICK seam",
   Piccolo: "the physics stack (systems, pulses, trajectories)",
   NamedTrajectories: "Piccolo's trajectory/pulse container (load_traj)",
   // stdlib + IO only — no simulation lives here
@@ -63,7 +62,7 @@ describe("rehearsal import surface (rehearsal_imports_strumento_path_only)", () 
     expect(
       offenders,
       `imports outside the Strumento path: ${offenders.join(", ")} — ` +
-        `the rehearsal must ride Strumento/Intonato/Piccolo, nothing else`,
+        `the rehearsal must ride Intonato/Piccolo, nothing else`,
     ).toEqual([]);
   });
 

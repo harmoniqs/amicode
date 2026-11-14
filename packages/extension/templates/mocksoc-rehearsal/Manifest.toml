@@ -2,7 +2,7 @@
 
 julia_version = "1.12.5"
 manifest_format = "2.0"
-project_hash = "ac7681ad3b109a26880f51c94f1bdc7c45144a60"
+project_hash = "3fc1ac32ec69b508a44210a742b20c14cf027fa1"
 
 [[deps.ADTypes]]
 deps = ["PrecompileTools"]
@@ -1069,16 +1069,18 @@ weakdeps = ["Random", "RecipesBase", "Statistics"]
     IntervalSetsStatisticsExt = "Statistics"
 
 [[deps.Intonato]]
-deps = ["ForwardDiff", "GenericSchur", "LinearAlgebra", "NamedTrajectories", "Piccolo", "Random", "Reexport", "SpecialFunctions", "Strumento", "TestItemRunner", "TestItems"]
-git-tree-sha1 = "ba7844ce50cf9a8bd2428f074b4ce572b528353f"
+deps = ["Distributions", "ForwardDiff", "GenericSchur", "LinearAlgebra", "NamedTrajectories", "Piccolo", "Random", "Reexport", "SpecialFunctions", "StableRNGs", "TestItemRunner", "TestItems", "YAML"]
+git-tree-sha1 = "40f1ff377fa2bc43f7441a35c746fb602a7a9f2e"
 uuid = "4c8581c7-0eaf-45eb-b8fa-a3474c50779c"
-version = "0.4.1"
+version = "0.5.0"
 
     [deps.Intonato.extensions]
     IntonatoOptimExt = "Optim"
+    IntonatoPythonCallExt = "PythonCall"
 
     [deps.Intonato.weakdeps]
     Optim = "429524aa-4258-5aef-a3af-852621145aeb"
+    PythonCall = "6099a3de-0909-46bc-b1f4-468b9a2dfc0d"
 
 [[deps.InverseFunctions]]
 git-tree-sha1 = "a779299d77cd080bf77b97535acecd73e1c5e5cb"
@@ -2362,20 +2364,6 @@ version = "2.8.5"
     Measurements = "eff96d63-e80a-5855-80a2-b1b0885c5ab7"
     StaticArraysCore = "1e83bf80-4336-4d27-bf5d-d5a4f845583c"
     Tables = "bd369af6-aec1-5ad0-b16a-f7cc5008161c"
-
-[[deps.Strumento]]
-deps = ["Distributions", "GenericSchur", "LinearAlgebra", "Random", "StableRNGs", "TestItemRunner", "TestItems", "YAML"]
-git-tree-sha1 = "60d7089f4906c6f4c2451a41b6bacfd6cd0b196f"
-uuid = "9a96c2ab-728f-48d1-a688-c746ce4d362f"
-version = "0.3.0"
-
-    [deps.Strumento.extensions]
-    StrumentoPiccoloExt = "Piccolo"
-    StrumentoPythonCallExt = "PythonCall"
-
-    [deps.Strumento.weakdeps]
-    Piccolo = "c4671d76-df94-11ed-2057-43d4fd632fad"
-    PythonCall = "6099a3de-0909-46bc-b1f4-468b9a2dfc0d"
 
 [[deps.StyledStrings]]
 uuid = "f489334b-da3d-4c2e-b8f0-e476e12c162b"

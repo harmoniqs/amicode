@@ -8,12 +8,12 @@
 //                                produces the real solved pulse via amico-run,
 //                                exactly the template.test.ts lane
 //   AMICO_TEST_REHEARSAL_PROJECT the rehearsal env (templates/mocksoc-rehearsal/
-//                                — Strumento 0.3 + Intonato 0.4 + Piccolo 2.x
+//                                — Intonato 0.5 + Piccolo 2.x
 //                                from the General registry; instantiate once)
 //   AMICO_TEST_JULIA_BIN         optional julia override (default: PATH's julia)
 //
 // The rehearsal consumes the REAL run-dir artifacts (pulse.jld2 + result.toml
-// from an actual template solve) and must pass through the ACTUAL Strumento
+// from an actual template solve) and must pass through the ACTUAL Intonato
 // MockSoc transport path — no Python, no board, no bespoke sim.
 import { describe, it, expect } from "vitest";
 import { execFileSync } from "node:child_process";
