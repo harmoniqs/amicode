@@ -75,6 +75,17 @@ describe("vetted templates on the MadNLP-default solve surface (#1676)", () => {
       expect(T).toContain("_get_DefaultSolverOptions()");
       expect(T).toMatch(/requires Piccolo ≥ 2\.2/);
     });
+
+    // #613 (Piccolo.jl#317 · DirectTrajOpt.jl#145): `timesteps_all_equal = true`
+    // forces a uniform mesh but leaves one free duration scale, so the solve was
+    // uniform-free-duration, not the fixed T the interview promises. Pinning
+    // every Δt to the nominal step T/(N-1) (the construction grid's spacing:
+    // times = range(0, T, length = N)) fixes the duration at T.
+    it("fixes the gate time T: Δt pinned to the nominal step, not timesteps_all_equal (#613)", () => {
+      expect(T).toMatch(/Δt_bounds\s*=\s*\(Δt_nominal,\s*Δt_nominal\)/);
+      expect(T).toMatch(/Δt_nominal\s*=\s*T\s*\/\s*\(N\s*-\s*1\)/);
+      expect(T).not.toMatch(/timesteps_all_equal\s*=\s*true/);
+    });
   });
 
   describe("pasqal-mis templates/solve.jl", () => {

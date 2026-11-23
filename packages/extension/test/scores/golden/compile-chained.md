@@ -566,6 +566,7 @@ tier resolution** — a non-stock problem still resolves to the **free tier** an
 | --- | --- |
 | `trajectory_type` | `KetTrajectory` / `MultiKetTrajectory` / `UnitaryTrajectory` (+`EmbeddedOperator`) / `DensityTrajectory` (+`OpenQuantumSystem`) |
 | `parameterization` | `SmoothPulseProblem` / `SplinePulseProblem` (linear\|cubic) / `BangBangPulseProblem` |
+| `time_mode: fixed` (default) | pin every timestep: `…Problem(...; Δt_bounds = (T/(N-1), T/(N-1)))` — `PiccoloOptions(timesteps_all_equal = true)` is a uniform mesh with a **free** duration, not fixed T (#613) |
 | `time_mode: min_time` | wrap the solved problem in `MinimumTimeProblem(qcp; final_fidelity, D, Δt_bounds)` |
 | `robustness: ensemble` | `SamplingProblem(qcp, systems; weights)` |
 | `robustness: sensitivity` | `UnitarySensitivityObjective` / `AdjointRobustnessObjective` (Piccolissimo) |
