@@ -13,6 +13,14 @@ describe("slow-suite env gate (#2180)", () => {
     expect(reason).toMatch(/AMICO_TEST_REHEARSAL_PROJECT/);
   });
 
+  it("says so when a required var is one the hermetic setup clears", () => {
+    const reason = slowSkipReason({ AMICO_TEST_JULIA_PROJECT: "/p" }, [
+      "AMICO_TEST_JULIA_PROJECT",
+      "AMICO_TEST_REHEARSAL_PROJECT",
+    ]);
+    expect(reason).toMatch(/AMICO_TEST_REHEARSAL_PROJECT.*cleared by test\/setup_hermetic_env\.ts/s);
+  });
+
   it("treats an empty value as missing", () => {
     expect(slowSkipReason({ AMICO_TEST_JULIA_PROJECT: "" }, ["AMICO_TEST_JULIA_PROJECT"])).not.toBeNull();
   });

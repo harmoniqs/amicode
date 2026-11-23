@@ -3,16 +3,21 @@
 // A slow suite runs only when the env names the Julia project(s) it solves
 // against. When it skips, it says why on stderr, so `test:slow` can never
 // quietly turn into a no-op again.
+import { isHermeticallyCleared } from "./hermetic_env";
+
 type Env = Record<string, string | undefined>;
 
 /** Null when every required var is set (non-empty); otherwise a human reason. */
 export function slowSkipReason(env: Env, required: readonly string[]): string | null {
   const missing = required.filter((name) => !env[name]);
   if (missing.length === 0) return null;
-  return (
-    `${missing.join(", ")} not set. Point it at an instantiated Julia project, e.g. ` +
-    `${missing[0]}=$HOME/.amico/julia pnpm --filter amicode run test:slow`
+  const notes = missing.map((name) =>
+    isHermeticallyCleared(name)
+      ? `${name} is cleared by test/setup_hermetic_env.ts, so this suite cannot opt in from the shell`
+      : `${name} not set (point it at an instantiated Julia project, e.g. ` +
+        `${name}=$HOME/.amico/julia pnpm --filter amicode run test:slow)`,
   );
+  return notes.join("; ");
 }
 
 /** Evaluate the gate for one suite and log the reason when it skips. Use as
