@@ -91,6 +91,7 @@ export type Event =
   | EventWorkspaceStatus
   | EventWorktreeReady
   | EventWorktreeFailed
+  | EventWorktreeRenamed
   | EventServerConnected
   | EventGlobalDisposed
   | EventServerInstanceDisposed
@@ -259,6 +260,7 @@ export type UserMessage = {
   tools?: {
     [key: string]: boolean
   }
+  response_presentation?: PromptResponsePresentation
 }
 
 export type ProviderAuthError = {
@@ -659,6 +661,7 @@ export type Prompt = {
   files?: Array<PromptFileAttachment>
   agents?: Array<PromptAgentAttachment>
   skills?: Array<PromptSkillAttachment>
+  response_presentation?: PromptResponsePresentation
 }
 
 export type Pty = {
@@ -1610,6 +1613,15 @@ export type GlobalEvent = {
       }
     | {
         id: string
+        type: "worktree.renamed"
+        properties: {
+          name: string
+          branch?: string
+          oldDirectory: string
+        }
+      }
+    | {
+        id: string
         type: "server.connected"
         properties: {
           [key: string]: unknown
@@ -2181,6 +2193,7 @@ export type WorktreeError = {
     | "WorktreeStartCommandFailedError"
     | "WorktreeRemoveFailedError"
     | "WorktreeResetFailedError"
+    | "WorktreeRenameFailedError"
     | "WorktreeListFailedError"
   data: {
     message: string
@@ -2207,6 +2220,11 @@ export type WorktreeRemoveInput = {
 
 export type WorktreeResetInput = {
   directory: string
+}
+
+export type WorktreeRenameInput = {
+  directory: string
+  newName: string
 }
 
 export type ProjectSummary = {
@@ -2752,6 +2770,7 @@ export type PromptInput = {
   text: string
   files?: Array<PromptInputFileAttachment>
   agents?: Array<PromptAgentAttachment>
+  response_presentation?: PromptResponsePresentation
 }
 
 export type ServiceUnavailableError = {
@@ -2976,6 +2995,7 @@ export type V2Event =
   | WorkspaceStatus
   | WorktreeReady
   | WorktreeFailed
+  | WorktreeRenamed
   | ServerConnected
   | GlobalDisposed
 
@@ -3071,6 +3091,8 @@ export type SkillV2Source = SkillV2DirectorySource | SkillV2UrlSource | SkillV2E
 export type MoveSessionDestination = {
   directory: string
 }
+
+export type PromptResponsePresentation = "concise" | "standard" | "detailed"
 
 export type ModelRef = {
   id: string
@@ -4031,6 +4053,7 @@ export type SessionMessageUser = {
   text: string
   files?: Array<PromptFileAttachment>
   agents?: Array<PromptAgentAttachment>
+  response_presentation?: PromptResponsePresentation
   type: "user"
 }
 
@@ -6121,6 +6144,25 @@ export type WorktreeFailed = {
   }
 }
 
+export type WorktreeRenamed = {
+  id: string
+  metadata?: {
+    [key: string]: unknown
+  }
+  type: "worktree.renamed"
+  durable?: {
+    aggregateID: string
+    seq: number
+    version: number
+  }
+  location?: LocationRef
+  data: {
+    name: string
+    branch?: string
+    oldDirectory: string
+  }
+}
+
 export type ServerConnected = {
   id: string
   metadata?: {
@@ -7086,6 +7128,16 @@ export type EventWorktreeFailed = {
   }
 }
 
+export type EventWorktreeRenamed = {
+  id: string
+  type: "worktree.renamed"
+  properties: {
+    name: string
+    branch?: string
+    oldDirectory: string
+  }
+}
+
 export type EventServerConnected = {
   id: string
   type: "server.connected"
@@ -7842,6 +7894,34 @@ export type WorktreeResetResponses = {
 
 export type WorktreeResetResponse = WorktreeResetResponses[keyof WorktreeResetResponses]
 
+export type WorktreeRenameData = {
+  body?: WorktreeRenameInput
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/experimental/worktree/rename"
+}
+
+export type WorktreeRenameErrors = {
+  /**
+   * WorktreeError | InvalidRequestError
+   */
+  400: WorktreeError | InvalidRequestError
+}
+
+export type WorktreeRenameError = WorktreeRenameErrors[keyof WorktreeRenameErrors]
+
+export type WorktreeRenameResponses = {
+  /**
+   * Worktree renamed
+   */
+  200: Worktree
+}
+
+export type WorktreeRenameResponse = WorktreeRenameResponses[keyof WorktreeRenameResponses]
+
 export type ExperimentalSessionListData = {
   body?: never
   path?: never
@@ -8573,6 +8653,36 @@ export type McpAddResponses = {
 }
 
 export type McpAddResponse = McpAddResponses[keyof McpAddResponses]
+
+export type McpRemoveData = {
+  body?: never
+  path: {
+    name: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/mcp/{name}"
+}
+
+export type McpRemoveErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type McpRemoveError = McpRemoveErrors[keyof McpRemoveErrors]
+
+export type McpRemoveResponses = {
+  /**
+   * MCP server removed successfully
+   */
+  200: boolean
+}
+
+export type McpRemoveResponse = McpRemoveResponses[keyof McpRemoveResponses]
 
 export type McpAuthRemoveData = {
   body?: never
@@ -10135,6 +10245,7 @@ export type SessionPromptData = {
     format?: OutputFormat
     system?: string
     variant?: string
+    response_presentation?: PromptResponsePresentation
     parts: Array<TextPartInput | FilePartInput | AgentPartInput | SkillPartInput | SubtaskPartInput>
   }
   path: {
@@ -10482,6 +10593,7 @@ export type SessionPromptAsyncData = {
     format?: OutputFormat
     system?: string
     variant?: string
+    response_presentation?: PromptResponsePresentation
     parts: Array<TextPartInput | FilePartInput | AgentPartInput | SkillPartInput | SubtaskPartInput>
   }
   path: {
@@ -10524,6 +10636,7 @@ export type SessionCommandData = {
     arguments: string
     command: string
     variant?: string
+    response_presentation?: PromptResponsePresentation
     parts?: Array<{
       id?: string
       type: "file"

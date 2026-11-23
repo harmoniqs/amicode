@@ -2,6 +2,7 @@ import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import path from "path"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
+import { ResponsePresentation } from "@opencode-ai/schema/prompt"
 import { producedUserVisibleOutput } from "./turn-output"
 import { askedQuestionInProse, PROSE_QUESTION_NUDGE } from "./prose-guard"
 import os from "os"
@@ -681,6 +682,7 @@ const layer = Layer.effect(
         },
         system: input.system,
         format: input.format,
+        response_presentation: input.response_presentation ?? "standard",
       }
 
       // `current` was hoisted above for the agent fallback (#1206)
@@ -1671,6 +1673,7 @@ const layer = Layer.effect(
         agent: userAgent,
         parts,
         variant: input.variant,
+        response_presentation: input.response_presentation,
       })
       yield* events.publish(Command.Event.Executed, {
         name: input.command,
@@ -1710,6 +1713,7 @@ export const PromptInput = Schema.Struct({
   format: Schema.optional(SessionV1.Format),
   system: Schema.optional(Schema.String),
   variant: Schema.optional(Schema.String),
+  response_presentation: ResponsePresentation.pipe(Schema.optional),
   parts: Schema.Array(
     Schema.Union([
       SessionV1.TextPartInput,
@@ -1743,6 +1747,7 @@ export const CommandInput = Schema.Struct({
   arguments: Schema.String,
   command: Schema.String,
   variant: Schema.optional(Schema.String),
+  response_presentation: ResponsePresentation.pipe(Schema.optional),
   // Inlined (no identifier annotation) to keep the original SDK output — the
   // PromptInput call site below references FilePartInput by ref via the
   // Schema export in message-v2.ts.

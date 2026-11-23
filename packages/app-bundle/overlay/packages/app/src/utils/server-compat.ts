@@ -1,6 +1,7 @@
 import type { ServerApi } from "./server"
 import type { ServerProtocol } from "./server-protocol"
 import type { AgentPartInput, FilePartInput, OpencodeClient, Session, TextPartInput } from "@opencode-ai/sdk/v2/client"
+import type { ResponsePresentation } from "@opencode-ai/schema/prompt"
 import type {
   Project,
   ProjectCurrent,
@@ -23,7 +24,7 @@ type CompatibleSessionApi = Omit<
   "prompt" | "command" | "shell" | "compact" | "rename" | "archive" | "remove"
 > & {
   prompt: (input: SessionPromptInput & LegacyPrompt) => Promise<SessionPromptOutput>
-  command: (input: SessionCommandInput) => Promise<SessionCommandOutput>
+  command: (input: SessionCommandInput & LegacyPresentation) => Promise<SessionCommandOutput>
   shell: (input: SessionShellInput & LegacyPrompt) => Promise<SessionShellOutput>
   compact: (input: SessionCompactInput & { model?: LegacyPrompt["model"] }) => Promise<SessionCompactOutput>
   rename: (input: Parameters<SessionApi["rename"]>[0] & LegacyLocation) => ReturnType<SessionApi["rename"]>
@@ -44,7 +45,11 @@ type LegacyPrompt = {
   agent?: string
   model?: { providerID: string; modelID: string }
   variant?: string
+  response_presentation?: ResponsePresentation
   legacyParts?: (TextPartInput | FilePartInput | AgentPartInput)[]
+}
+type LegacyPresentation = {
+  response_presentation?: ResponsePresentation
 }
 type LegacyLocation = { directory?: string }
 type CompatibleQuestionApi = Omit<ServerApi["question"], "reply" | "reject"> & {
@@ -99,9 +104,10 @@ function sessionInfo(session: Session): SessionInfo {
 
 export function createCompatibleApi(input: CompatibleInput): CompatibleApi {
   const v1 = createV1Api(input)
+  const v2 = createV2Api(input)
   return lazyApi(
-    input.protocol.then((protocol) => (protocol === "v1" ? v1 : input.current)),
-    input.current,
+    input.protocol.then((protocol) => (protocol === "v1" ? v1 : v2)),
+    v2,
   )
 }
 
@@ -218,6 +224,7 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
           agent: value.agent,
           model: value.model,
           variant: value.variant,
+          response_presentation: value.response_presentation,
           parts: value.legacyParts ?? [
             { type: "text", text: value.text },
             ...(value.files ?? []).map((file) => ({
@@ -252,7 +259,7 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
           delivery: value.delivery ?? "steer",
         }
       },
-      async command(value: SessionCommandInput) {
+      async command(value: SessionCommandInput & LegacyPresentation) {
         await legacy().session.command({
           sessionID: value.sessionID,
           messageID: value.id ?? undefined,
@@ -261,6 +268,7 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
           agent: value.agent ?? undefined,
           model: value.model ? `${value.model.providerID}/${value.model.id}` : undefined,
           variant: value.model?.variant,
+          response_presentation: value.response_presentation,
           parts: value.files?.map((file) => ({
             type: "file" as const,
             mime: mime(file.uri),
@@ -526,6 +534,54 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
       },
       async reject(value: Parameters<ServerApi["question"]["reject"]>[0] & { location?: LegacyLocation }) {
         await legacy(value.location).question.reject({ requestID: value.requestID })
+      },
+    },
+  }
+}
+
+function createV2Api(input: CompatibleInput): CompatibleApi {
+  const legacy = () => input.legacy(input.directory)
+
+  return {
+    ...input.current,
+    session: {
+      ...input.current.session,
+      async prompt(value: SessionPromptInput & LegacyPrompt) {
+        const response = await legacy().v2.session.prompt({
+          sessionID: value.sessionID,
+          id: value.id ?? undefined,
+          prompt: {
+            text: value.text,
+            files: value.files?.map((file) => ({
+              uri: file.uri,
+              name: file.name,
+              description: file.description,
+              source: file.mention
+                ? { text: file.mention.text, start: file.mention.start, end: file.mention.end }
+                : undefined,
+            })),
+            agents: value.agents?.map((agent) => ({
+              name: agent.name,
+              source: agent.mention
+                ? { text: agent.mention.text, start: agent.mention.start, end: agent.mention.end }
+                : undefined,
+            })),
+            response_presentation: value.response_presentation ?? "standard",
+          },
+          delivery: value.delivery ?? undefined,
+          resume: value.resume ?? undefined,
+        })
+        const admitted = response.data?.data
+        if (!admitted) throw new Error("Failed to admit session prompt")
+        return {
+          admittedSeq: admitted.admittedSeq,
+          id: admitted.id,
+          sessionID: admitted.sessionID,
+          timeCreated: admitted.timeCreated,
+          type: "user",
+          data: { text: admitted.prompt.text },
+          delivery: admitted.delivery,
+        }
       },
     },
   }
