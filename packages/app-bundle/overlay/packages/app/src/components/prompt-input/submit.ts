@@ -3,8 +3,9 @@ import { showToast } from "@/utils/toast"
 import { base64Encode } from "@opencode-ai/core/util/encode"
 import { Binary } from "@opencode-ai/core/util/binary"
 import { useNavigate, useParams, useSearchParams } from "@solidjs/router"
-import { batch, startTransition, type Accessor } from "solid-js"
-import { withNewSessionGate } from "./new-session-gate"
+import { batch, type Accessor } from "solid-js"
+import { newSessionKey, withNewSessionGate } from "./new-session-gate"
+import { whenTransitionStarted } from "./transition-started"
 import { useTabs } from "@/context/tabs"
 import { useServerSync, type ServerSync } from "@/context/server-sync"
 import { useServer } from "@/context/server"
@@ -368,11 +369,18 @@ export function createPromptSubmit(input: PromptSubmitInput) {
   const handleSubmit = async (event: Event) => {
     event.preventDefault()
     if (params.id) return submitPrompt(event)
-    const key = ScopedKey.from(sdk().scope, sdk().directory, "new-session", search.draftId ?? "")
-    await withNewSessionGate(key, () => submitPrompt(event))
+    const key = newSessionKey(sdk().scope, sdk().directory, search.draftId)
+    // #2158: the first message is sent as soon as the route is promoted; the
+    // gate (and the new-session view's "Starting session" notice, which reads
+    // it) is held until the navigation settles and the session page is shown.
+    await withNewSessionGate(key, async () => {
+      let navigation: Promise<void> | undefined
+      await submitPrompt(event, (settled) => (navigation = settled))
+      await navigation
+    })
   }
 
-  const submitPrompt = async (event: Event) => {
+  const submitPrompt = async (event: Event, onNavigation?: (settled: Promise<void>) => void) => {
     event.preventDefault()
 
     const target = prompt.capture()
@@ -536,7 +544,10 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       if (created) {
         seed(sessionDirectory, created)
         session = created
-        await startTransition(() => {
+        // #2158: send as soon as the route is promoted and the prompt is
+        // retargeted. Awaiting startTransition itself waited for the new
+        // session page's resources to load (10–30 s on a busy engine).
+        const { settled } = await whenTransitionStarted(() => {
           if (!session) return
           if (shouldAutoAccept) permissionState.enableAutoAccept(session.id, sessionDirectory)
           local.session.promote(sessionDirectory, session.id, {
@@ -552,6 +563,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
           else navigate(`/${base64Encode(sessionDirectory)}/session/${session.id}`)
           submission.retarget(prompt.capture({ dir: base64Encode(sessionDirectory), id: session.id }))
         })
+        onNavigation?.(settled)
       }
     }
     if (!session) {

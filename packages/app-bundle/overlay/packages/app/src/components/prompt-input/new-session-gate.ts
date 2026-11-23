@@ -6,20 +6,41 @@
 // new-session submit per draft at a time; it is keyed by the draft so two
 // different drafts (two panes) can still start sessions concurrently, and it
 // is module-level so a composer remount mid-create cannot reset it. The
-// caller supplies the key (submit.ts: ScopedKey of scope, directory, draft id).
+// caller supplies the key (submit.ts: newSessionKey of scope, directory, draft id).
+//
+// #2158: the in-flight set is reactive, so it doubles as the "this new chat is
+// starting" signal the new-session view shows from the moment Enter is pressed
+// until the submit settles (isNewSessionStarting).
+import { createSignal } from "solid-js"
+import { ScopedKey, type ServerScope } from "@/utils/server-scope"
 
-const inFlight = new Set<string>()
+const [inFlight, setInFlight] = createSignal<ReadonlySet<string>>(new Set(), { equals: false })
+
+/** The gate key for a new-chat draft: server scope + project directory + draft id. */
+export function newSessionKey(scope: ServerScope, directory: string, draftId: string | undefined): string {
+  return ScopedKey.from(scope, directory, "new-session", draftId ?? "")
+}
+
+/** Reactive: true while a new-session submit from this draft is in flight. */
+export function isNewSessionStarting(key: string): boolean {
+  return inFlight().has(key)
+}
 
 /** Admit a new-session submit from this draft, or refuse it while one is in
  *  flight. Every `true` must be paired with exactly one `releaseNewSessionSubmit`. */
 export function tryEnterNewSessionSubmit(key: string): boolean {
-  if (inFlight.has(key)) return false
-  inFlight.add(key)
+  const current = inFlight()
+  if (current.has(key)) return false
+  setInFlight(new Set(current).add(key))
   return true
 }
 
 export function releaseNewSessionSubmit(key: string): void {
-  inFlight.delete(key)
+  const current = inFlight()
+  if (!current.has(key)) return
+  const next = new Set(current)
+  next.delete(key)
+  setInFlight(next)
 }
 
 /** Run one new-session submit under the gate: a concurrent call from the same
