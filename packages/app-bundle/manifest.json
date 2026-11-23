@@ -787,7 +787,7 @@
     "packages/app/src/components/prompt-input/slash-popover.tsx": "a1800173edebcd419802796470f7270acaf0ef689a72f1b81a1cedfd8968337d",
     "packages/app/src/components/prompt-input/submit-concise.test.ts": "5d76bad06ced24bda9e5be84f6a01577145bcf2ad6dfa55d2941344da2a3d935",
     "packages/app/src/components/prompt-input/submit-stream-gap.test.ts": "351f0f5a8cf7aff55c859cb82fbca388ef848831256b80f74ee52ab9cf5d07c6",
-    "packages/app/src/components/prompt-input/submit.ts": "3940378c5cc0832fed56310c19df10066700bb9034da3ab9c17eb562cc228438",
+    "packages/app/src/components/prompt-input/submit.ts": "69a345d8af71728dcc172f46150e5dfb4921b8c9750828822504d6c8aa1ef811",
     "packages/app/src/components/server/server-row.tsx": "caf3179cf0b34b00fcab6ed57a324ff1f90f571f604216c49164dc54bd9f12ab",
     "packages/app/src/components/session/context-warning-banner.tsx": "c4ceb3f9589ebd21cc66e21cef209552fc5fcff6cd825da5069c2259c8d33e50",
     "packages/app/src/components/session/index.ts": "f0d58fa3a336639566ec51a10b692649707f91a7b780c0b5c4dcf18642d030e8",

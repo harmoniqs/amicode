@@ -419,6 +419,12 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       return
     }
 
+    const projectDirectory = sdk().directory
+    // amicode#1651: read the concise switch (and the new chat's draft key) NOW,
+    // before any await — once the session exists the composer's key moves to it.
+    const conciseAtSend = input.concise?.() ?? false
+    const conciseDraftKey = conciseKey.draft(sdk().scope, projectDirectory, search.draftId)
+
     // The engine catalog (agents + connected providers) can be stale-empty if
     // its one bootstrap load failed; reload it once before refusing, and name
     // what is missing. Never default the agent — see catalog-recovery.ts.
@@ -444,14 +450,9 @@ export function createPromptSubmit(input: PromptSubmitInput) {
     input.addToHistory(currentPrompt, mode)
     input.resetHistoryNavigation()
 
-    const projectDirectory = sdk().directory
     const permissionState = permission.currentServerState()
     const isNewSession = !params.id
     const shouldAutoAccept = isNewSession && input.autoAccept()
-    // amicode#1651: read the concise switch (and the new chat's draft key) NOW,
-    // before any await — once the session exists the composer's key moves to it.
-    const conciseAtSend = input.concise?.() ?? false
-    const conciseDraftKey = conciseKey.draft(sdk().scope, projectDirectory, search.draftId)
     const worktreeSelection = input.newSessionWorktree?.() || "main"
 
     let sessionDirectory = projectDirectory
