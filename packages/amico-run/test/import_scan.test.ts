@@ -31,6 +31,14 @@ describe("checkImports", () => {
       expect(bad.reason).toMatch(/not in the allowed package set/);
     }
   });
+  it("allows the DelimitedFiles stdlib (and the other shipped stdlibs) without a workaround", () => {
+    const scanned = scanImports(`using DelimitedFiles\n`);
+    expect(scanned.ok).toBe(true);
+    if (scanned.ok) expect(checkImports(scanned.roots, ALLOW)).toEqual({ ok: true });
+    expect(
+      checkImports(["DelimitedFiles", "Mmap", "Sockets", "Downloads", "FileWatching", "Libdl", "Profile"], ALLOW),
+    ).toEqual({ ok: true });
+  });
   it("issimo package blocked without entitlement", () => {
     expect(checkImports(["Piccolissimo"], ALLOW).ok).toBe(false);
   });

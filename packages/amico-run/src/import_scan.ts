@@ -26,6 +26,13 @@ export const JULIA_STDLIBS = new Set([
   "Base64",
   "Unicode",
   "REPL",
+  "DelimitedFiles",
+  "Mmap",
+  "Sockets",
+  "Downloads",
+  "FileWatching",
+  "Libdl",
+  "Profile",
 ]);
 
 export type ScanResult = { ok: true; roots: string[] } | { ok: false; reason: string };
