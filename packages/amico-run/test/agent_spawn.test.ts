@@ -313,6 +313,19 @@ describe("the model is read back from the CHILD, never from argv", () => {
   });
 });
 
+// #1347. `run --format json` carries no model on any event, and a free-tier gateway model does not
+// reliably name itself — so EVERY critic and the planner were discarded on the free tier. The
+// engine's own session record (`opencode export <sessionID>`) does carry it: the assistant
+// message's providerID/modelID, written by the engine for the provider call it actually made.
+// That is an observed fact, not the request, so the ledger's "never stamp argv" rule still holds.
+describe("the model is read from the ENGINE's session record when the child cannot name itself (#1347)", () => {
+  it("a child that answers in-contract but cannot name itself RUNS, stamped with the engine-recorded model", async () => {
+    const out = await run({ FAKE_AGENT_MODE: "no-model", FAKE_AGENT_ENGINE_MODEL: "opencode/nemotron-3.5-lightning-free" });
+    expect(out.status).toBe("ran");
+    expect(out.model).toBe("opencode/nemotron-3.5-lightning-free");
+  });
+});
+
 describe("findings hygiene (§3.9)", () => {
   const withRemedy = { lens: "x", severity: "advisory", claim: "c", evidence: "e", remedy: "r" };
 
