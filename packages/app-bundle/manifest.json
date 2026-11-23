@@ -415,6 +415,7 @@
     "packages/opencode/src/session/status.ts": "25e385e0d0b02a79f8862c5a9909256cb0b0bd983d71d6f78e8a1e630f85d20a",
     "packages/opencode/src/session/summary.ts": "09f546db362a992156bdb4901cce58e495bd38bab6ba41b4386cca77bebab7f3",
     "packages/opencode/src/session/system.ts": "b8708f3e63386e08041368e6dfa887f250bc6a7543ca396bb8b838041e8aeb19",
+    "packages/opencode/src/session/tools.ts": "9816cc7b8f48de306b60c0008088fe764df98bdeb92ebc9b28eb7c38915db23f",
     "packages/opencode/src/session/turn-output.ts": "889624ca54a8149d35f200c7efa732771dfca36984e8a322a9781b1a25434762",
     "packages/opencode/src/session/user-mutation.ts": "8f8cebe1370a8a54361c546fb6777ee4fbdd47d0dec1ef870305ce5dbe232208",
     "packages/opencode/src/snapshot/index.ts": "4d76a78c48597bda2379e2c3396f4a53828b21c6ce03e1975d2911150822c6de",
@@ -503,6 +504,7 @@
     "packages/opencode/test/session/run-state-store.test.ts": "412ad2f9829bc60a3552f3e116783ab5b40d327947cd7ae31235486954be8434",
     "packages/opencode/test/session/session.test.ts": "c182f3e5311324175c9ba44a7164737a75ee6d2f22e4a024d66518b5ae91f5f2",
     "packages/opencode/test/session/status-store.test.ts": "6e62765c18e6ace57ff7e04d836628235cb42c41aca7c0e50251f783ca260c2b",
+    "packages/opencode/test/session/tools.test.ts": "ea2c6ab974cb21c3d55532d4cffa5665b5e5507f083627a38229f8dbd3f56483",
     "packages/opencode/test/session/turn-output.test.ts": "3e92f545d10054e501ad2c8857b43719f5a8f768065643d343c0c37c2e6fb60c",
     "packages/opencode/test/session/user-mutation.test.ts": "d06d6646cbf3b9796931660fd23292c450f8083c438ef78f4d6d01d75f575454",
     "packages/opencode/test/share/share-next.test.ts": "d94076118b558644c06de3ef315041a6fd8895098377da843e98530311e9e609",
@@ -1104,7 +1106,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-11-08T15:21:50.674Z",
+  "extracted_at": "2026-11-23T21:50:49.600Z",
   "per_package": {
     "packages/app": {
       "A": 314,
@@ -1123,7 +1125,7 @@
     },
     "packages/opencode": {
       "A": 103,
-      "M": 100,
+      "M": 102,
       "D": 0
     },
     "packages/schema": {
@@ -1153,7 +1155,7 @@
     }
   },
   "counts": {
-    "overlay_total": 1082,
+    "overlay_total": 1084,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1565,6 +1567,7 @@
     "packages/opencode/src/session/status.ts": "M",
     "packages/opencode/src/session/summary.ts": "M",
     "packages/opencode/src/session/system.ts": "M",
+    "packages/opencode/src/session/tools.ts": "M",
     "packages/opencode/src/session/turn-output.ts": "A",
     "packages/opencode/src/session/user-mutation.ts": "A",
     "packages/opencode/src/snapshot/index.ts": "M",
@@ -1653,6 +1656,7 @@
     "packages/opencode/test/session/run-state-store.test.ts": "A",
     "packages/opencode/test/session/session.test.ts": "M",
     "packages/opencode/test/session/status-store.test.ts": "A",
+    "packages/opencode/test/session/tools.test.ts": "M",
     "packages/opencode/test/session/turn-output.test.ts": "A",
     "packages/opencode/test/session/user-mutation.test.ts": "A",
     "packages/opencode/test/share/share-next.test.ts": "M",
