@@ -151,6 +151,8 @@
     "packages/app/src/components/windows-app-menu.tsx": "262d085facace692084d79763a6bd8eba6c5ceb53b952a134e12c7e8a8a12946",
     "packages/app/src/components/workbench-panel.tsx": "d16f477044098842a214a2e16f9be719e7688a04bcb575889ca544988f23c690",
     "packages/app/src/context/command.tsx": "388d6cb12b6dc43ecb0827e3fb918370cb9d16d96161a5990dec10fff05af172",
+    "packages/app/src/context/concise-mode.test.ts": "534258a1d82d66bd8b482bb3a8ca6a24d508328505abd0f7f52e1b75cdf57fa2",
+    "packages/app/src/context/concise-mode.ts": "b03ac887222543e590d31781c944e69aca97bff32a661751dd817d46bf4ead64",
     "packages/app/src/context/directory-sync.test.ts": "c03c7bcd95ac47b3de5e1e9719b6eccdb3569063026fe993b448453c818c7b48",
     "packages/app/src/context/directory-sync.ts": "8515e0f8a5bdf0bf6243a0c2dfe64f234f5292074464e38c68da8287235acc3e",
     "packages/app/src/context/language.tsx": "0f7b1cbd33071f293c15b66e3a900dfd07347f9eb93d8cf61df0fac3bc4effc5",
@@ -623,7 +625,7 @@
     "packages/app/src/components/prompt-input/placeholder.ts": "6b2af23a0588e7970cd0dd059fc60c3671c907a76ba3db660483a932f1dce79d",
     "packages/app/src/components/prompt-input/slash-popover.tsx": "a1800173edebcd419802796470f7270acaf0ef689a72f1b81a1cedfd8968337d",
     "packages/app/src/components/prompt-input/submit-stream-gap.test.ts": "68a94b03e75625531b2f2ad161ef9d0b93365f9edae154a797f82031b5bfc062",
-    "packages/app/src/components/prompt-input/submit.ts": "ea6818c3d0570f382b355b31c23ce3c654d726b277c3413dcc2d343c2f4ea555",
+    "packages/app/src/components/prompt-input/submit.ts": "0785f6374e41abf80230e3c5674d3cc1db165965e662918109127b5b2e893560",
     "packages/app/src/components/session/context-warning-banner.tsx": "f5fab4d7a9536238b70d64488fc30d44f6a4948fdcffd910a9666f4b6c296019",
     "packages/app/src/components/session/index.ts": "21473290d4a1a3d0670fd878372ddf21ff22d4a0b30d1aef6c81ea906c1488b4",
     "packages/app/src/components/session/panel-menu.tsx": "42f323046b7375ae158023a51506038eb15f2e1545c407f45acd47446a8ef3e0",
@@ -859,9 +861,7 @@
     "packages/opencode/src/server/routes/instance/httpapi/handlers/file.ts": "10bcb79b117beebee04184fb48c1ad789e782e2f7ae4b0c68603edc00f03aee9",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/mcp.ts": "7da08d58765cdf2b6ce4648fc70de371402949f5bb7b75696f674d43f2d5365b",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/provider.ts": "8baf16cad0992c5351b61b0c0fb27903bb25b17e1b25fc7c5d77f807c24413a6",
-    "packages/opencode/src/server/routes/instance/httpapi/handlers/session.ts": "b37ff4136c4aea85b23083bf441f03e09820e3e4cdd95e4118ca570d8435b94f",
-    "packages/app/src/context/concise-mode.ts": "b03ac887222543e590d31781c944e69aca97bff32a661751dd817d46bf4ead64",
-    "packages/app/src/context/concise-mode.test.ts": "534258a1d82d66bd8b482bb3a8ca6a24d508328505abd0f7f52e1b75cdf57fa2"
+    "packages/opencode/src/server/routes/instance/httpapi/handlers/session.ts": "b37ff4136c4aea85b23083bf441f03e09820e3e4cdd95e4118ca570d8435b94f"
   },
   "symlinks": [
     "packages/app/public/amico.svg"
@@ -876,7 +876,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-09-30T02:26:16.851Z",
+  "extracted_at": "2026-10-05T19:24:12.909Z",
   "per_package": {
     "packages/app": {
       "A": 189,
@@ -1073,6 +1073,8 @@
     "packages/app/src/components/windows-app-menu.tsx": "M",
     "packages/app/src/components/workbench-panel.tsx": "A",
     "packages/app/src/context/command.tsx": "M",
+    "packages/app/src/context/concise-mode.test.ts": "A",
+    "packages/app/src/context/concise-mode.ts": "A",
     "packages/app/src/context/directory-sync.test.ts": "A",
     "packages/app/src/context/directory-sync.ts": "M",
     "packages/app/src/context/language.tsx": "M",
@@ -1781,9 +1783,7 @@
     "packages/opencode/src/server/routes/instance/httpapi/handlers/file.ts": "M",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/mcp.ts": "M",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/provider.ts": "M",
-    "packages/opencode/src/server/routes/instance/httpapi/handlers/session.ts": "M",
-    "packages/app/src/context/concise-mode.ts": "A",
-    "packages/app/src/context/concise-mode.test.ts": "A"
+    "packages/opencode/src/server/routes/instance/httpapi/handlers/session.ts": "M"
   },
   "upstream_base_archive_sha256": "4b5f2e5edfc796082a353fd09c1b1dec3e7a108a4b080fe3a86b12d9fa59fae6"
 }
