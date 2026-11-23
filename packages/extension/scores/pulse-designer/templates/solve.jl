@@ -131,10 +131,17 @@ initial = 0.1 * randn(sys.n_drives, N)
 # (max_iter/N/R/Q at the FILL-IN defaults throughout).
 pulse = LinearSplinePulse(initial, times)
 qtraj = UnitaryTrajectory(sys, pulse, op)
+# ── FIXED gate time T (#613) ────────────────────────────────────────────────
+# Every Δt is pinned to the nominal step of the construction grid
+# (times = range(0, T, length = N) → Δt = T/(N-1)), so the solved duration is
+# exactly T. The all-equal option (`timesteps_all_equal`) is NOT fixed T: it
+# forces a uniform mesh but leaves one free duration scale (Piccolo.jl#317 ·
+# DirectTrajOpt.jl#145), which the optimizer then moves.
+Δt_nominal = T / (N - 1)
 qcp = SplinePulseProblem(qtraj, N;
     Q = 100.0, R = R,
     integrator_type = :pwc,
-    piccolo_options = PiccoloOptions(timesteps_all_equal = true))
+    Δt_bounds = (Δt_nominal, Δt_nominal))
 prob = hasproperty(qcp, :prob) ? qcp.prob : qcp
 
 # Per-iter live plot flows through Piccolo's `LivePulsePlotCallback`, an
