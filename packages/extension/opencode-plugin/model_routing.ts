@@ -58,7 +58,7 @@ export type ModelClass = (typeof MODEL_CLASSES)[number];
  *  engine's models.dev registry instead of a hand list.) */
 export const MODEL_CLASS_CATALOG: Record<ModelClass, string[]> = {
   workhorse: ["anthropic/claude-sonnet-4-5", "openai/gpt-5", "zai/glm-5.3-flash"],
-  "strongest-reasoner": ["anthropic/claude-opus-4-1", "openai/gpt-5", "zai/glm-5.3"],
+  "strongest-reasoner": ["anthropic/claude-opus-5", "openai/gpt-5", "zai/glm-5.3"],
   "fast-cheap": ["anthropic/claude-haiku-4-5", "openai/gpt-5-mini", "zai/glm-5.3-flash"],
 };
 

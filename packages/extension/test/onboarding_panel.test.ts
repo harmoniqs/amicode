@@ -1549,7 +1549,7 @@ describe("probeModels — find first accessible model for a provider", () => {
     expect(url1).toContain("claude-opus-4-6-v1");
     // Second call should probe the second model
     const url2 = fetchMock.mock.calls[1][0] as string;
-    expect(url2).toContain("claude-sonnet-4-5-v2");
+    expect(url2).toContain("claude-sonnet-4-6");
   });
 });
 
