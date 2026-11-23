@@ -13,6 +13,7 @@ import { readRecords, type SpecReviewRecord } from "../src/ledger.js";
 import { reviewSpec, REVIEW_CEILING_MS } from "../src/spec_review.js";
 import type { AgentOutcome } from "../src/agent_spawn.js";
 import type { Finding } from "../src/lenses.js";
+import { fakeAgentBin } from "./fixtures/fake_agent_bin.js";
 
 const fm = (o: Record<string, unknown>) =>
   "---\n" +
@@ -343,6 +344,20 @@ describe("reviewSpec", () => {
       });
       expect(r.critics.length).toBe(3);
     });
+  });
+
+  // #1347: on the free tier every critic answered in-contract but could not name its own model,
+  // so all three judgment lenses were discarded and the review could never leave `degraded`.
+  // Driven through the REAL child path ($AMICO_CRITIC_BIN → runAgent → spawn), not an injected
+  // spawnCritic, because the defect lived in that path.
+  it("critics that cannot name themselves RUN, stamped with the engine-recorded model (#1347)", async () => {
+    const bin = fakeAgentBin(dir, { FAKE_AGENT_MODE: "no-model", FAKE_AGENT_ENGINE_MODEL: "opencode/nemotron-3.5-lightning-free" });
+    const r = await reviewSpec(specPath, fm(SLICE), { env: { ...process.env, AMICO_CRITIC_BIN: bin } as NodeJS.ProcessEnv });
+    expect(r.critic_spawns).toBe(3);
+    expect(r.critics).toHaveLength(3);
+    expect(r.critics.every((c) => c.model === "opencode/nemotron-3.5-lightning-free")).toBe(true);
+    expect(r.lens_status.filter((l) => l.status === "skipped")).toEqual([]);
+    expect(r.review_verdict).not.toBe("degraded");
   });
 });
 

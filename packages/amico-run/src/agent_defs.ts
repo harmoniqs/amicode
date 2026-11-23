@@ -46,10 +46,14 @@ fix it is DROPPED before it reaches the record, so an unactionable observation i
  *  This is a compromise, and the honest reason is worth recording: opencode's `--format json`
  *  emits an NDJSON event stream whose `message.updated` events (the ones carrying `modelID`)
  *  are explicitly suppressed in json mode, and `step-start`/`step-finish` parts carry no model
- *  field. So the model is NOT recoverable from the transport, and self-report is the only
- *  channel available.
+ *  field. So the model is NOT recoverable from the transport.
  *
- *  Self-report is weaker than transport-observed and this system claims no more than that. What
+ *  It IS recoverable from the engine's session record: agent_spawn.ts reads the assistant
+ *  message's providerID/modelID via `opencode export <sessionID>` and prefers it (#1347 — free
+ *  gateway models routinely cannot name themselves, which discarded every critic on that tier).
+ *  This self-report is now the FALLBACK, for when the record cannot be read.
+ *
+ *  Self-report is weaker than engine-observed and this system claims no more than that. What
  *  it does preserve is the rule the ledger schema states: never stamp argv. A child that does
  *  not name itself is recorded as `skipped`, not as a critic that ran — we would rather lose a
  *  critic than record a request as a fact. */

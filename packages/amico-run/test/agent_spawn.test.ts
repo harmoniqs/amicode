@@ -313,6 +313,53 @@ describe("the model is read back from the CHILD, never from argv", () => {
   });
 });
 
+// #1347. `run --format json` carries no model on any event, and a free-tier gateway model does not
+// reliably name itself — so EVERY critic and the planner were discarded on the free tier. The
+// engine's own session record (`opencode export <sessionID>`) does carry it: the assistant
+// message's providerID/modelID, written by the engine for the provider call it actually made.
+// That is an observed fact, not the request, so the ledger's "never stamp argv" rule still holds.
+describe("the model is read from the ENGINE's session record when the child cannot name itself (#1347)", () => {
+  it("a child that answers in-contract but cannot name itself RUNS, stamped with the engine-recorded model", async () => {
+    const out = await run({ FAKE_AGENT_MODE: "no-model", FAKE_AGENT_ENGINE_MODEL: "opencode/nemotron-3.5-lightning-free" });
+    expect(out.status).toBe("ran");
+    expect(out.model).toBe("opencode/nemotron-3.5-lightning-free");
+  });
+
+  it("the engine record WINS over a self-report that disagrees — observed beats claimed", async () => {
+    const out = await run({ FAKE_AGENT_MODEL: "anthropic/claude-opus-5", FAKE_AGENT_ENGINE_MODEL: "opencode/beam-free" });
+    expect(out.model).toBe("opencode/beam-free");
+  });
+
+  it("reads the ASSISTANT message, never the user message's model (the request)", async () => {
+    // The record's user message carries what we asked for. With no assistant message there is no
+    // observed model, so this must fail closed rather than stamp the request.
+    const out = await run(
+      { FAKE_AGENT_MODE: "no-model", FAKE_AGENT_ENGINE_MODEL: "", FAKE_AGENT_REQUESTED: "anthropic/claude-opus-5" },
+      { model: "anthropic/claude-opus-5" },
+    );
+    expect(out).toMatchObject({ status: "skipped", skip_class: "failed" });
+    expect(out.model).toBeUndefined();
+  });
+
+  it("an AMBIGUOUS record (assistant messages naming two models) does not pick one", async () => {
+    const out = await run({ FAKE_AGENT_MODE: "no-model", FAKE_AGENT_ENGINE_MODEL: "opencode/beam-free,opencode/iceman-free" });
+    expect(out.status).toBe("skipped");
+    expect(out.reason).toMatch(/did not report the model/);
+  });
+
+  it("asks the engine with `export <sessionID>` from the stream, in the child's cwd, with no secret", async () => {
+    await run({ FAKE_AGENT_MODE: "no-model", FAKE_AGENT_ENGINE_MODEL: "opencode/beam-free" });
+    const exp = JSON.parse(readFileSync(record + ".export", "utf8")) as { argv: string[]; cwd: string };
+    expect(exp.argv).toEqual(["export", "ses_fake1347"]);
+    expect(exp.cwd).toBe(recorded().cwd);
+  });
+
+  it("falls back to self-report when the engine has no record of the session", async () => {
+    const out = await run({ FAKE_AGENT_MODEL: "anthropic/claude-haiku-4-5" });
+    expect(out).toMatchObject({ status: "ran", model: "anthropic/claude-haiku-4-5" });
+  });
+});
+
 describe("findings hygiene (§3.9)", () => {
   const withRemedy = { lens: "x", severity: "advisory", claim: "c", evidence: "e", remedy: "r" };
 

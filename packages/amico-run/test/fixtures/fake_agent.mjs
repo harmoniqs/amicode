@@ -8,6 +8,46 @@
 // all seven rows of the §3.7 child-outcome table.
 import { writeFileSync, readdirSync } from "node:fs";
 
+// `opencode export <sessionID>` — the engine's own session record (#1347). Real `run --format json`
+// carries no model on any event; the record's assistant messages do (`providerID`/`modelID`, written
+// by the engine for the provider call it made). $FAKE_AGENT_ENGINE_MODEL is what the engine recorded
+// (comma-separated for one assistant message per model): unset means no record (an engine that
+// cannot find the session), which exits 1 like upstream's "Session not found"; set but empty means
+// a record with no assistant message, only the user's request. Handled BEFORE the
+// run record is written, so a test reading the run's argv/env never sees the export call's — that
+// one goes to `<record>.export`.
+const SESSION_ID = "ses_fake1347";
+if (process.argv[2] === "export") {
+  if (process.env.FAKE_AGENT_RECORD)
+    writeFileSync(process.env.FAKE_AGENT_RECORD + ".export", JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd() }));
+  // Unset: no record at all. Set but empty: a record holding only the user message (the request).
+  const engineModels = (process.env.FAKE_AGENT_ENGINE_MODEL ?? "").split(",").filter(Boolean);
+  if (process.env.FAKE_AGENT_ENGINE_MODEL === undefined || process.argv[3] !== SESSION_ID) {
+    process.stderr.write(`Session not found: ${process.argv[3]}\n`);
+    process.exit(1);
+  }
+  const [reqProvider, ...reqModel] = (process.env.FAKE_AGENT_REQUESTED ?? "anthropic/claude-opus-5").split("/");
+  process.stderr.write(`Exporting session: ${SESSION_ID}\n`);
+  process.stdout.write(
+    JSON.stringify(
+      {
+        info: { id: SESSION_ID, model: { providerID: reqProvider, id: reqModel.join("/") } },
+        messages: [
+          // The USER message carries the REQUEST — reading this one would be stamping argv.
+          { info: { role: "user", model: { providerID: reqProvider, modelID: reqModel.join("/") } }, parts: [] },
+          ...engineModels.map((m) => {
+            const [providerID, ...rest] = m.split("/");
+            return { info: { role: "assistant", providerID, modelID: rest.join("/") }, parts: [] };
+          }),
+        ],
+      },
+      null,
+      2,
+    ) + "\n",
+  );
+  process.exit(0);
+}
+
 if (process.env.FAKE_AGENT_RECORD) {
   writeFileSync(
     process.env.FAKE_AGENT_RECORD,
@@ -26,7 +66,8 @@ if (process.env.FAKE_AGENT_RECORD) {
 const mode = process.env.FAKE_AGENT_MODE ?? "stream";
 const exitCode = Number(process.env.FAKE_AGENT_EXIT ?? 0);
 
-const stream = (parts) => parts.map((p) => JSON.stringify(p)).join("\n") + "\n";
+// Every real event carries the session id: `{type, timestamp, sessionID, part}`.
+const stream = (parts) => parts.map((p) => JSON.stringify({ sessionID: SESSION_ID, ...p })).join("\n") + "\n";
 
 /** opencode `--format json` emits NDJSON — one object per line, `{type, timestamp, sessionID,
  *  ...data}` — NOT a JSON array. The assistant's text arrives as `{type: "text", part: {text}}`,
@@ -46,8 +87,11 @@ switch (mode) {
     process.stdout.write("I read the spec and I think it looks fine.\n");
     process.exit(exitCode);
     break;
-  case "no-model": // a critic that will not name itself — must not be recorded as having run
-    process.stdout.write(stream([{ type: "text", part: { type: "text", text: JSON.stringify({ findings: [] }) } }]));
+  case "no-model": // a child that will not name itself — recorded as having run ONLY on the engine's record
+    // $FAKE_AGENT_TEXT: the answer itself (e.g. a planner's goal+steps), still without a `model`.
+    process.stdout.write(
+      stream([{ type: "text", part: { type: "text", text: process.env.FAKE_AGENT_TEXT ?? JSON.stringify({ findings: [] }) } }]),
+    );
     process.exit(exitCode);
     break;
   case "hang": // drives the timeout row; never exits on its own

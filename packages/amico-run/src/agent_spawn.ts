@@ -54,8 +54,9 @@ export interface AgentOutcome {
   status: "ran" | "skipped";
   skip_class?: SkipClass;
   reason?: string;
-  /** Read back from the CHILD's own output. Never argv — the ledger's independence disclosure
-   *  must stamp a fact, not a request. A child that does not report one is `skipped`. */
+  /** Observed, never argv — the ledger's independence disclosure must stamp a fact, not a
+   *  request. Read from the engine's session record for the child's session (#1347), else from
+   *  the child's own self-report. A child with neither is `skipped`. */
   model?: string;
   variant?: string;
   findings: Finding[];
@@ -225,6 +226,66 @@ function readFindings(payload: Record<string, unknown>, lens: string, round: num
   return { findings, dropped };
 }
 
+const MODEL_RE = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
+const SESSION_ID_RE = /^ses_[A-Za-z0-9]+$/;
+/** Ceiling for the session-record read. A local DB read, not a model call. */
+export const SESSION_RECORD_TIMEOUT_MS = 30_000;
+
+/** The child's session id, from the event stream (every `run --format json` event carries one).
+ *  Shape-checked because it goes on argv. */
+export function sessionIdOf(stdout: string): string | undefined {
+  for (const line of stdout.split("\n")) {
+    try {
+      const id = (JSON.parse(line) as { sessionID?: unknown } | null)?.sessionID;
+      if (typeof id === "string" && SESSION_ID_RE.test(id)) return id;
+    } catch {
+      /* not every line is ours */
+    }
+  }
+  return undefined;
+}
+
+/** The model the ENGINE recorded for this session's answer (#1347).
+ *
+ *  `run --format json` suppresses the `message.updated` events that carry `providerID`/`modelID`
+ *  (see agent_defs.ts REPORT_RULE), so the stream cannot say which model answered. The session
+ *  record can: `opencode export <sessionID>` returns the stored messages, and each ASSISTANT
+ *  message's `providerID`/`modelID` is written by the engine for the provider call it actually
+ *  made — the same fields those suppressed events carry. That is an observed fact, not the
+ *  request. The USER message's `model` IS the request and is deliberately never read.
+ *
+ *  Returns undefined — never a guess — when there is no session id, the read fails or times out,
+ *  the record has no assistant message, or its assistant messages name more than one model
+ *  (ambiguous: which one answered is not a question to settle by picking). The caller then falls
+ *  back to self-report and, failing that, fails closed. */
+async function recordedModel(
+  spawnFn: typeof nodeSpawn,
+  bin: string,
+  sessionId: string | undefined,
+  spawnOpts: SpawnOptions,
+): Promise<string | undefined> {
+  if (sessionId === undefined) return undefined;
+  const res = await collect(spawnFn, bin, ["export", sessionId], spawnOpts, SESSION_RECORD_TIMEOUT_MS);
+  if (res.kind !== "exit" || res.code !== 0) return undefined;
+  let record: unknown;
+  try {
+    record = JSON.parse(res.stdout.slice(Math.max(0, res.stdout.indexOf("{"))));
+  } catch {
+    return undefined;
+  }
+  const messages = (record as { messages?: unknown } | null)?.messages;
+  if (!Array.isArray(messages)) return undefined;
+  const models = new Set<string>();
+  for (const m of messages) {
+    const info = (m as { info?: { role?: unknown; providerID?: unknown; modelID?: unknown } } | null)?.info;
+    if (info?.role !== "assistant") continue;
+    if (typeof info.providerID !== "string" || typeof info.modelID !== "string") return undefined;
+    models.add(`${info.providerID}/${info.modelID}`);
+  }
+  const [only] = models;
+  return models.size === 1 && MODEL_RE.test(only) ? only : undefined;
+}
+
 const skipped = (skip_class: SkipClass, reason: string): AgentOutcome => ({
   status: "skipped",
   skip_class,
@@ -330,12 +391,16 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentOutcome> {
     // answered and then failed to clean up, which is not the same as not answering.
     if (payload === undefined) return skipped("failed", `unparseable output (exit ${res.code})${tail(res.stderr)}`);
 
-    const reportedModel = typeof payload.model === "string" ? payload.model : undefined;
-    if (reportedModel === undefined || !/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(reportedModel)) {
+    // The model, in order of evidence: the ENGINE's session record first (what the engine
+    // recorded for the provider call it made — observed, #1347), then the child's self-report.
+    const engineModel = await recordedModel(spawnFn, opts.bin, sessionIdOf(res.stdout), spawnOpts);
+    const selfReported = typeof payload.model === "string" && MODEL_RE.test(payload.model) ? payload.model : undefined;
+    const reportedModel = engineModel ?? selfReported;
+    if (reportedModel === undefined) {
       // Fail CLOSED. We could stamp `model` from argv and the row would validate — and it would
       // be a request masquerading as a fact, in the one field whose job is to let a reader judge
       // how independent the review was. Losing a critic is the cheaper error.
-      return skipped("failed", "the child did not report the model it ran as");
+      return skipped("failed", "the child did not report the model it ran as, and the engine's session record did not name one");
     }
     const { findings, dropped } = readFindings(payload, lens, round);
     return {
