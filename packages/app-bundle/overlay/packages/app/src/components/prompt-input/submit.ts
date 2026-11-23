@@ -5,6 +5,7 @@ import { Binary } from "@opencode-ai/core/util/binary"
 import { useNavigate, useParams, useSearchParams } from "@solidjs/router"
 import { batch, startTransition, type Accessor } from "solid-js"
 import { withNewSessionGate } from "./new-session-gate"
+import { resolveWithCatalogRecovery } from "./catalog-recovery"
 import { useTabs } from "@/context/tabs"
 import { useServerSync, type ServerSync } from "@/context/server-sync"
 import { useServer } from "@/context/server"
@@ -418,14 +419,30 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       return
     }
 
+    const projectDirectory = sdk().directory
+    // amicode#1651: read the concise switch (and the new chat's draft key) NOW,
+    // before any await — once the session exists the composer's key moves to it.
+    const conciseAtSend = input.concise?.() ?? false
+    const conciseDraftKey = conciseKey.draft(sdk().scope, projectDirectory, search.draftId)
+
+    // The engine catalog (agents + connected providers) can be stale-empty if
+    // its one bootstrap load failed; reload it once before refusing, and name
+    // what is missing. Never default the agent — see catalog-recovery.ts.
     const modelSelection = input.model ?? local.model
-    const currentModel = modelSelection.current()
-    const currentAgent = local.agent.current()
+    const resolved = await resolveWithCatalogRecovery({
+      read: () => ({ model: modelSelection.current(), agent: local.agent.current() }),
+      reload: () => serverSync().reloadCatalog(sdk().directory),
+    })
+    const currentModel = resolved.model
+    const currentAgent = resolved.agent
     const variant = modelSelection.variant.current()
     if (!currentModel || !currentAgent) {
+      const agentMissing = resolved.missing === "agent"
       showToast({
-        title: language.t("prompt.toast.modelAgentRequired.title"),
-        description: language.t("prompt.toast.modelAgentRequired.description"),
+        title: language.t(agentMissing ? "prompt.toast.agentsUnavailable.title" : "prompt.toast.modelUnavailable.title"),
+        description: language.t(
+          agentMissing ? "prompt.toast.agentsUnavailable.description" : "prompt.toast.modelUnavailable.description",
+        ),
       })
       return
     }
@@ -433,14 +450,9 @@ export function createPromptSubmit(input: PromptSubmitInput) {
     input.addToHistory(currentPrompt, mode)
     input.resetHistoryNavigation()
 
-    const projectDirectory = sdk().directory
     const permissionState = permission.currentServerState()
     const isNewSession = !params.id
     const shouldAutoAccept = isNewSession && input.autoAccept()
-    // amicode#1651: read the concise switch (and the new chat's draft key) NOW,
-    // before any await — once the session exists the composer's key moves to it.
-    const conciseAtSend = input.concise?.() ?? false
-    const conciseDraftKey = conciseKey.draft(sdk().scope, projectDirectory, search.draftId)
     const worktreeSelection = input.newSessionWorktree?.() || "main"
 
     let sessionDirectory = projectDirectory
