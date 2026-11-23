@@ -38,6 +38,16 @@ function root(): string {
 }
 
 describe("`amico sota papers` — one on-demand query through the queue", () => {
+  it("--help prints usage and exits 0 instead of demanding --query (#2131)", async () => {
+    for (const argv of [["papers", "--help"], ["papers", "-h"], ["--help"]]) {
+      const res = await sotaVerb(argv);
+      expect(res.code).toBe(0);
+      const json = res.json as { usage?: string; error?: string };
+      expect(json.error).toBeUndefined();
+      expect(json.usage).toContain("amico sota papers --query");
+    }
+  });
+
   it("serves the seeded REAL-API payload from the cache and returns the cited brief", async () => {
     const r = root();
     const url = arxivApiUrl(["optimal control"], 5);
