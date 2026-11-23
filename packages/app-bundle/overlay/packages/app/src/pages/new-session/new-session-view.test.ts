@@ -42,3 +42,30 @@ describe("machine picker is mounted in the new-session view (#1453 AC2)", () => 
     expect(mountSource).toMatch(/fleetSessionsFromResponse/)
   })
 })
+
+// #2158: on a busy engine the create and the navigation took 10–30 s while the
+// composer still showed the text and nothing moved. The view shows a
+// "Starting session" notice under the composer from the moment Enter is
+// pressed, driven by the new-chat gate's in-flight state for THIS draft.
+describe("starting notice in the new-session view (#2158)", () => {
+  const notice = readFileSync(join(import.meta.dir, "new-session-starting.tsx"), "utf8")
+  const en = readFileSync(join(import.meta.dir, "../../i18n/en.ts"), "utf8")
+
+  test("the view renders the notice right under the composer", () => {
+    expect(source).toMatch(/from "\.\/new-session-starting"/)
+    expect(source).toMatch(/<PromptInputV2Composer controller=\{props\.input\} \/>\s*<NewSessionStartingNotice \/>/)
+  })
+
+  test("the notice reads the gate for this draft (same key the submit uses)", () => {
+    expect(notice).toMatch(/from "@\/components\/prompt-input\/new-session-gate"/)
+    expect(notice).toContain("isNewSessionStarting(newSessionKey(sdk().scope, sdk().directory, search.draftId))")
+  })
+
+  test("the notice is announced to screen readers and pairs text with a spinner", () => {
+    expect(notice).toContain('role="status"')
+    expect(notice).toContain('aria-live="polite"')
+    expect(notice).toContain("<Spinner")
+    expect(notice).toContain('language.t("prompt.newSession.starting")')
+    expect(en).toContain('"prompt.newSession.starting": "Starting session…"')
+  })
+})

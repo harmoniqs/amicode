@@ -910,6 +910,7 @@ export const dict = {
   "lsp.label.connected": "{{count}} LSP",
 
   "prompt.loading": "Loading prompt...",
+  "prompt.newSession.starting": "Starting session…",
   "terminal.loading": "Loading terminal...",
   "terminal.title": "Terminal",
   "terminal.title.numbered": "Terminal {{number}}",

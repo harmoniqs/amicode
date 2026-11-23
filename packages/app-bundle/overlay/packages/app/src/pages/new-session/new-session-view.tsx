@@ -26,6 +26,7 @@ import { SessionBugDock } from "@/pages/session/composer/session-bug-dock"
 import { bugReportEnabled } from "@/utils/amicode-bug-report"
 import { Persist, persisted } from "@/utils/persist"
 import { NewSessionMachinePicker } from "./new-session-machine-picker-mount"
+import { NewSessionStartingNotice } from "./new-session-starting"
 import type { NewSessionDraftController } from "./new-session-draft-controller"
 import type { NewSessionWorkspaceController } from "./new-session-workspace-controller"
 
@@ -73,6 +74,7 @@ export function NewSessionView(props: {
                 {/* amicode#1989: warn before sending on a model already known dead */}
                 <ModelDeadPickWarning />
                 <PromptInputV2Composer controller={props.input} />
+                <NewSessionStartingNotice />
               </div>
               <Show when={props.project.empty()}>
                 <PromptProjectAddButton controller={props.project} />
