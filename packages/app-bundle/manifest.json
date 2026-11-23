@@ -495,7 +495,7 @@
     "packages/opencode/test/session/message-v2.test.ts": "90fbd916cea08ddb1de066dccf2677490b547afc5805aa36e55683b28fbb079f",
     "packages/opencode/test/session/mutation.test.ts": "ccb82b6858ac097d2af09a94497d05f6a0ff843b928a69e763fdb510905a10cd",
     "packages/opencode/test/session/processor-effect.test.ts": "51ebe1cb9b7b0e1d249472367491a1306b5add24ca8b04d5dc15b2b2fa1f1b56",
-    "packages/opencode/test/session/prompt.test.ts": "298c4d59c276bd3be14a9fb66dcd38f243ae8e9278be3bed0a4f1aac37d7e442",
+    "packages/opencode/test/session/prompt.test.ts": "6ce0cdde7b2391c87399d99282444a37f0a17d766c7fa833c650dff1a24d0a54",
     "packages/opencode/test/session/prose-guard.test.ts": "7239a758cbf27df4c3879fa9ee0374964559c1461773c2f5a85196f64632e6c4",
     "packages/opencode/test/session/receipt-privacy.test.ts": "6c8777edc280a061fec1a4d16e2504aec18bdf9cd6dd2cedc7a09ef8fc6c2ca0",
     "packages/opencode/test/session/retry.test.ts": "8136de9fed8d493c9703098b5f701674681ecf8a3f823268c039b819753d00e2",
@@ -1104,7 +1104,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-11-08T15:21:50.674Z",
+  "extracted_at": "2026-11-23T22:05:55.774Z",
   "per_package": {
     "packages/app": {
       "A": 314,

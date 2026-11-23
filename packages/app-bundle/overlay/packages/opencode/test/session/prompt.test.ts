@@ -665,6 +665,175 @@ it.instance("loop stops provider overflow instead of auto-compacting when disabl
   }),
 )
 
+// #2129 regression guards: auto-compaction must hand the turn back to the
+// model, which answers the pending request in the same loop. The turn must not
+// end on the compaction summary. The persisted records of both incidents cited
+// in #2129 show the engine already does this (the "resent" message was the
+// overflow replay below, not the user); these lock the behavior in.
+const textOf = (parts: SessionV1.Part[]) =>
+  parts
+    .filter((part): part is SessionV1.TextPart => part.type === "text")
+    .map((part) => part.text)
+    .join("")
+
+it.instance("loop answers the replayed request after auto-compacting a provider overflow (#2129)", () =>
+  Effect.gen(function* () {
+    const { llm } = yield* useServerConfig(providerCfg)
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const chat = yield* sessions.create({ title: "Pinned" })
+
+    // An earlier, answered turn, so the overflow path has context to summarize
+    // and a request to replay.
+    yield* prompt.prompt({
+      sessionID: chat.id,
+      agent: "build",
+      noReply: true,
+      parts: [{ type: "text", text: "earlier question" }],
+    })
+    yield* llm.text("earlier answer")
+    yield* prompt.loop({ sessionID: chat.id })
+
+    yield* prompt.prompt({
+      sessionID: chat.id,
+      agent: "build",
+      noReply: true,
+      parts: [{ type: "text", text: "present H1-H3" }],
+    })
+    yield* llm.error(413, { error: { message: "request entity too large" } })
+    yield* llm.text("summary of the session")
+    yield* llm.text("here are H1-H3")
+
+    const result = yield* prompt.loop({ sessionID: chat.id })
+
+    // earlier turn, overflowed request, compaction summary, replayed request
+    expect(yield* llm.calls).toBe(4)
+    expect(result.info.role).toBe("assistant")
+    if (result.info.role === "assistant") {
+      expect(result.info.summary).toBeFalsy()
+      expect(result.info.finish).toBe("stop")
+    }
+    expect(textOf(result.parts)).toBe("here are H1-H3")
+    const hits = yield* llm.hits
+    expect(JSON.stringify(hits.at(-1)?.body)).toContain("present H1-H3")
+    expect(JSON.stringify(hits.at(-1)?.body)).toContain("summary of the session")
+  }),
+)
+
+it.instance("loop continues the turn after auto-compacting at the context limit mid-task (#2129)", () =>
+  Effect.gen(function* () {
+    const { llm } = yield* useServerConfig(providerCfg)
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const chat = yield* sessions.create({
+      title: "Pinned",
+      permission: [{ permission: "*", pattern: "*", action: "allow" }],
+    })
+
+    yield* prompt.prompt({
+      sessionID: chat.id,
+      agent: "build",
+      noReply: true,
+      parts: [{ type: "text", text: "present H1-H3" }],
+    })
+    // A tool step whose usage crosses the usable context (90k of the test
+    // model's 100k) triggers auto-compaction in the middle of the turn.
+    yield* llm.push(reply().tool("first", { value: "first" }).usage({ input: 95_000, output: 10 }))
+    yield* llm.text("summary of the session")
+    yield* llm.text("here are H1-H3")
+
+    const result = yield* prompt.loop({ sessionID: chat.id })
+    const messages = yield* sessions.messages({ sessionID: chat.id })
+
+    // tool step, compaction summary, continued turn
+    expect(yield* llm.calls).toBe(3)
+    expect(messages.filter((message) => message.parts.some((part) => part.type === "compaction"))).toHaveLength(1)
+    expect(result.info.role).toBe("assistant")
+    if (result.info.role === "assistant") {
+      expect(result.info.summary).toBeFalsy()
+      expect(result.info.finish).toBe("stop")
+    }
+    expect(textOf(result.parts)).toBe("here are H1-H3")
+    // On this path (no replay) the request reaches the continued turn through
+    // the summary, followed by the engine's auto-continue instruction.
+    const last = JSON.stringify((yield* llm.hits).at(-1)?.body)
+    expect(last).toContain("summary of the session")
+    expect(last).toContain("Continue if you have next steps")
+  }),
+)
+
+// #2136 regression guard: a long polling tool call (sleep, then read logs)
+// returns with finish "tool-calls", and the loop must hand the result back to
+// the model. A user message sent while the poll is still running is picked up
+// by the same loop. This mirrors the incident's persisted record, where the
+// loop resumed as soon as the 420 s sleep returned.
+unix(
+  "loop continues after a polling bash call and picks up a message sent mid-poll (#2136)",
+  () =>
+    Effect.gen(function* () {
+      const { dir, llm } = yield* useServerConfig(providerCfg)
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      const chat = yield* sessions.create({
+        title: "Pinned",
+        permission: [{ permission: "*", pattern: "*", action: "allow" }],
+      })
+
+      yield* prompt.prompt({
+        sessionID: chat.id,
+        agent: "build",
+        noReply: true,
+        parts: [{ type: "text", text: "start the solves and poll them" }],
+      })
+      yield* llm.tool("bash", {
+        command: "sleep 2; echo first-poll-ready",
+        timeout: 10_000,
+        workdir: path.resolve(dir),
+      })
+      // A second poll with no user message during it: the loop must still hand
+      // its result back to the model rather than end the turn.
+      yield* llm.tool("bash", {
+        command: "sleep 1; echo second-poll-ready",
+        timeout: 10_000,
+        workdir: path.resolve(dir),
+      })
+      yield* llm.text("next planned step")
+
+      const run = yield* prompt.loop({ sessionID: chat.id }).pipe(Effect.forkChild)
+      yield* llm.wait(1)
+      yield* pollWithTimeout(
+        Effect.gen(function* () {
+          const msgs = yield* MessageV2.filterCompactedEffect(chat.id)
+          const running = msgs.some((msg) =>
+            msg.parts.some((part) => part.type === "tool" && part.tool === "bash" && part.state.status === "running"),
+          )
+          return running ? (true as const) : undefined
+        }),
+        "timed out waiting for the polling bash call to start",
+      )
+      yield* prompt.prompt({
+        sessionID: chat.id,
+        agent: "build",
+        noReply: true,
+        parts: [{ type: "text", text: "note sent mid-poll" }],
+      })
+
+      const result = yield* Fiber.join(run)
+
+      expect(yield* llm.calls).toBe(3)
+      expect(result.info.role).toBe("assistant")
+      if (result.info.role === "assistant") expect(result.info.finish).toBe("stop")
+      expect(textOf(result.parts)).toBe("next planned step")
+      const hits = yield* llm.hits
+      const second = JSON.stringify(hits[1]?.body)
+      expect(second).toContain("first-poll-ready")
+      expect(second).toContain("note sent mid-poll")
+      expect(JSON.stringify(hits[2]?.body)).toContain("second-poll-ready")
+    }),
+  { git: true, config: cfg },
+  30_000,
+)
+
 noLLMServer.instance.skip(
   "prompt emits v2 prompted and synthetic events (v2 projector disabled)",
   () =>
