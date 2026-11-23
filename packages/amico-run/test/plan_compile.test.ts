@@ -16,6 +16,7 @@ import {
   type CompiledStep,
 } from "../src/plan_compile.js";
 import type { AgentOutcome } from "../src/agent_spawn.js";
+import { fakeAgentBin } from "./fixtures/fake_agent_bin.js";
 
 const OPUS = "anthropic/claude-opus-5";
 const HAIKU = "anthropic/claude-haiku-4-5";
@@ -318,6 +319,23 @@ describe("plan compile", () => {
       expect(r).toMatchObject({ ok: false, exit_code: 64 });
       expect((r as { errors: string[] }).errors.join(" ")).toMatch(/Nothing was written/);
       expect(readRecords().filter((x) => x.type === "plan_compiled")).toHaveLength(0);
+    });
+
+    // #1347: a free-tier planner returned a valid plan but could not name its own model, and
+    // compile exited 64 with "the child did not report the model it ran as". Through the REAL
+    // child path, not an injected runPlanner.
+    it("a planner that cannot name itself still compiles, stamped with the engine-recorded model (#1347)", async () => {
+      const bin = fakeAgentBin(dir, {
+        FAKE_AGENT_MODE: "no-model",
+        FAKE_AGENT_ENGINE_MODEL: "opencode/nemotron-3.5-lightning-free",
+        FAKE_AGENT_TEXT: JSON.stringify({ goal: "g", steps: [step()] }),
+      });
+      const r = await compilePlan(specPath, fm(SLICE_SPEC), {
+        plansDir, records: [], allowUnreviewed: true,
+        env: { ...process.env, AMICO_CRITIC_BIN: bin } as NodeJS.ProcessEnv,
+      });
+      expect(r).toMatchObject({ ok: true, compiled_by: { model: "opencode/nemotron-3.5-lightning-free" } });
+      expect(readdirSync(plansDir)).toHaveLength(1);
     });
 
     it("a planner that produced nothing usable is exit 64, not a silent empty plan", async () => {

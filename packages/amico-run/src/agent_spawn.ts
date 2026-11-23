@@ -54,8 +54,9 @@ export interface AgentOutcome {
   status: "ran" | "skipped";
   skip_class?: SkipClass;
   reason?: string;
-  /** Read back from the CHILD's own output. Never argv — the ledger's independence disclosure
-   *  must stamp a fact, not a request. A child that does not report one is `skipped`. */
+  /** Observed, never argv — the ledger's independence disclosure must stamp a fact, not a
+   *  request. Read from the engine's session record for the child's session (#1347), else from
+   *  the child's own self-report. A child with neither is `skipped`. */
   model?: string;
   variant?: string;
   findings: Finding[];

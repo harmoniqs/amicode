@@ -12,15 +12,17 @@ import { writeFileSync, readdirSync } from "node:fs";
 // carries no model on any event; the record's assistant messages do (`providerID`/`modelID`, written
 // by the engine for the provider call it made). $FAKE_AGENT_ENGINE_MODEL is what the engine recorded
 // (comma-separated for one assistant message per model): unset means no record (an engine that
-// cannot find the session), which exits 1 like upstream's "Session not found". Handled BEFORE the
+// cannot find the session), which exits 1 like upstream's "Session not found"; set but empty means
+// a record with no assistant message, only the user's request. Handled BEFORE the
 // run record is written, so a test reading the run's argv/env never sees the export call's — that
 // one goes to `<record>.export`.
 const SESSION_ID = "ses_fake1347";
 if (process.argv[2] === "export") {
   if (process.env.FAKE_AGENT_RECORD)
     writeFileSync(process.env.FAKE_AGENT_RECORD + ".export", JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd() }));
+  // Unset: no record at all. Set but empty: a record holding only the user message (the request).
   const engineModels = (process.env.FAKE_AGENT_ENGINE_MODEL ?? "").split(",").filter(Boolean);
-  if (engineModels.length === 0 || process.argv[3] !== SESSION_ID) {
+  if (process.env.FAKE_AGENT_ENGINE_MODEL === undefined || process.argv[3] !== SESSION_ID) {
     process.stderr.write(`Session not found: ${process.argv[3]}\n`);
     process.exit(1);
   }
@@ -85,8 +87,11 @@ switch (mode) {
     process.stdout.write("I read the spec and I think it looks fine.\n");
     process.exit(exitCode);
     break;
-  case "no-model": // a critic that will not name itself — must not be recorded as having run
-    process.stdout.write(stream([{ type: "text", part: { type: "text", text: JSON.stringify({ findings: [] }) } }]));
+  case "no-model": // a child that will not name itself — recorded as having run ONLY on the engine's record
+    // $FAKE_AGENT_TEXT: the answer itself (e.g. a planner's goal+steps), still without a `model`.
+    process.stdout.write(
+      stream([{ type: "text", part: { type: "text", text: process.env.FAKE_AGENT_TEXT ?? JSON.stringify({ findings: [] }) } }]),
+    );
     process.exit(exitCode);
     break;
   case "hang": // drives the timeout row; never exits on its own

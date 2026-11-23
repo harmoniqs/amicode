@@ -324,6 +324,40 @@ describe("the model is read from the ENGINE's session record when the child cann
     expect(out.status).toBe("ran");
     expect(out.model).toBe("opencode/nemotron-3.5-lightning-free");
   });
+
+  it("the engine record WINS over a self-report that disagrees — observed beats claimed", async () => {
+    const out = await run({ FAKE_AGENT_MODEL: "anthropic/claude-opus-5", FAKE_AGENT_ENGINE_MODEL: "opencode/beam-free" });
+    expect(out.model).toBe("opencode/beam-free");
+  });
+
+  it("reads the ASSISTANT message, never the user message's model (the request)", async () => {
+    // The record's user message carries what we asked for. With no assistant message there is no
+    // observed model, so this must fail closed rather than stamp the request.
+    const out = await run(
+      { FAKE_AGENT_MODE: "no-model", FAKE_AGENT_ENGINE_MODEL: "", FAKE_AGENT_REQUESTED: "anthropic/claude-opus-5" },
+      { model: "anthropic/claude-opus-5" },
+    );
+    expect(out).toMatchObject({ status: "skipped", skip_class: "failed" });
+    expect(out.model).toBeUndefined();
+  });
+
+  it("an AMBIGUOUS record (assistant messages naming two models) does not pick one", async () => {
+    const out = await run({ FAKE_AGENT_MODE: "no-model", FAKE_AGENT_ENGINE_MODEL: "opencode/beam-free,opencode/iceman-free" });
+    expect(out.status).toBe("skipped");
+    expect(out.reason).toMatch(/did not report the model/);
+  });
+
+  it("asks the engine with `export <sessionID>` from the stream, in the child's cwd, with no secret", async () => {
+    await run({ FAKE_AGENT_MODE: "no-model", FAKE_AGENT_ENGINE_MODEL: "opencode/beam-free" });
+    const exp = JSON.parse(readFileSync(record + ".export", "utf8")) as { argv: string[]; cwd: string };
+    expect(exp.argv).toEqual(["export", "ses_fake1347"]);
+    expect(exp.cwd).toBe(recorded().cwd);
+  });
+
+  it("falls back to self-report when the engine has no record of the session", async () => {
+    const out = await run({ FAKE_AGENT_MODEL: "anthropic/claude-haiku-4-5" });
+    expect(out).toMatchObject({ status: "ran", model: "anthropic/claude-haiku-4-5" });
+  });
 });
 
 describe("findings hygiene (§3.9)", () => {
