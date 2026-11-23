@@ -71,7 +71,8 @@ import {
   pinnedJuliaMinor,
   hasJuliaup,
   hasChannel,
-  projectInstantiated,
+  juliaProjectStatus,
+  juliaProjectHealthDetail,
   buildSetupSteps,
   resolveJuliaupCommands,
   juliaProjectFingerprint,
@@ -2665,7 +2666,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     const juliaupCommands = resolveJuliaupCommands();
     const juliaupPresent = hasJuliaup(undefined, juliaupCommands);
     const channelPresent = juliaupPresent && hasChannel(minor, undefined, juliaupCommands);
-    const ready = juliaupPresent && channelPresent && projectInstantiated(project, projectFingerprint);
+    const projectStatus = juliaProjectStatus(project, projectFingerprint);
+    const ready = juliaupPresent && channelPresent && projectStatus === "current";
     if (ready) {
       void vscode.window.showInformationMessage(`Amicode: Julia ${minor} is already set up.`);
       return;
@@ -2688,7 +2690,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     term.sendText(steps.map((s) => `echo '[amicode] ${s.label}...' && ${s.command}`).join(" && \\\n"));
     opencodeChannel.appendLine(`[julia] setup started (channel ${minor}, ${steps.length} step(s)) — see the terminal`);
     void vscode.window.showInformationMessage(
-      `Amicode: setting up Julia ${minor} in the terminal. When it finishes, run "Amicode: Healthcheck" (Command Palette) to verify.`,
+      projectStatus === "stale"
+        ? `Amicode: upgrading your Julia project to the Piccolo stack this Amicode ships, in the terminal. When it finishes, run "Amicode: Healthcheck" (Command Palette) to verify.`
+        : `Amicode: setting up Julia ${minor} in the terminal. When it finishes, run "Amicode: Healthcheck" (Command Palette) to verify.`,
     );
   };
   ctx.subscriptions.push(vscode.commands.registerCommand("amicode.setupJulia", () => void runJuliaSetup()));
@@ -2710,10 +2714,12 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         const project = resolveJuliaProject(
           vscode.workspace.getConfiguration("amicode").get<string>("juliaProject", ""),
         );
+        const projectStatus = projectFingerprint ? juliaProjectStatus(project, projectFingerprint) : "missing";
         if (!minor || !projectFingerprint) {
           results.push({ name: "Julia", ok: false, detail: "could not fingerprint bundled Julia project" });
-        } else if (!projectInstantiated(project, projectFingerprint)) {
-          results.push({ name: "Julia", ok: false, detail: `project not instantiated — run "Amicode: Set up Julia"` });
+        } else if (projectStatus !== "current") {
+          // #2180: an env set up from an older bundled pin is told to upgrade.
+          results.push({ name: "Julia", ok: false, detail: juliaProjectHealthDetail(projectStatus) });
         } else {
           const juliaupCommands = resolveJuliaupCommands();
           const channel =

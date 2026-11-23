@@ -42,6 +42,7 @@ function readyState(): SetupState {
       juliaupPresent: true,
       channelPresent: true,
       projectInstantiated: true,
+      projectStale: false,
       channel: "1.12",
     },
     labToml: { state: "valid", path: "/tmp/lab.toml" },
@@ -56,6 +57,7 @@ function notReadyState(): SetupState {
       juliaupPresent: true,
       channelPresent: false,
       projectInstantiated: false,
+      projectStale: false,
       channel: "1.12",
     },
   };
@@ -89,6 +91,22 @@ describe("setup state handoff", () => {
     expect(section).toContain("channel 1.12 not installed");
     expect(section).toContain("Piccolo project not instantiated");
     expect(section).not.toContain("juliaup not installed");
+    expect(section).toContain("Amicode: Set up Julia");
+  });
+
+  // #2180: an env instantiated from an older bundled pin is not "missing" — the
+  // agent must say it is out of date and offer the upgrade.
+  it("renders an out-of-date Piccolo project as an upgrade, not a missing install", () => {
+    mkTmp();
+    const state = readyState();
+    writeSetupStateFile({
+      ...state,
+      julia: { ...state.julia, ready: false, projectInstantiated: false, projectStale: true },
+    });
+    const section = buildSetupStateSection() ?? "";
+    expect(section).toContain("Piccolo project out of date");
+    expect(section).not.toContain("Piccolo project not instantiated");
+    expect(section).toMatch(/upgrade/i);
     expect(section).toContain("Amicode: Set up Julia");
   });
 

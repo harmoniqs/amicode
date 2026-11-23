@@ -4,6 +4,7 @@ import { mkdtempSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse } from "smol-toml";
+import { gateSlowSuite } from "../slow_gate";
 
 // Live golden test for the tier-3 re-rollout harness (spec C). Gated on a real
 // Julia+Piccolo project (same gate the template slow test uses). Builds a
@@ -68,7 +69,9 @@ function stageAndVerify(scale: number): Record<string, unknown> {
   return parse(readFileSync(join(runDir, "verification.toml"), "utf8")) as Record<string, unknown>;
 }
 
-describe.skipIf(!PROJECT)("slow: verify_rollout.jl golden (spec C tier-3 harness)", () => {
+const GATE = gateSlowSuite("slow: verify_rollout.jl golden", ["AMICO_TEST_JULIA_PROJECT"]);
+
+describe.skipIf(!GATE.run)("slow: verify_rollout.jl golden (spec C tier-3 harness)", () => {
   it("unmodified pulse round-trips with agree=true", () => {
     const v = stageAndVerify(1.0);
     expect(v.integrator).toBe("piccolo_unitary_rollout");

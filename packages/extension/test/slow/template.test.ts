@@ -4,12 +4,15 @@ import { mkdtempSync, readdirSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse } from "smol-toml";
+import { gateSlowSuite } from "../slow_gate";
 
 const PROJECT = process.env.AMICO_TEST_JULIA_PROJECT;
 const RUN = join(__dirname, "..", "..", "..", "amico-run", "dist", "amico.js"); // the verb-router bundle (`amico run`, #1667)
 const TEMPLATE = join(__dirname, "..", "..", "templates", "solve_template.jl");
 
-describe.skipIf(!PROJECT)("slow: solve_template.jl through amico-run (β.3 AC)", () => {
+const GATE = gateSlowSuite("slow: solve_template.jl", ["AMICO_TEST_JULIA_PROJECT"]);
+
+describe.skipIf(!GATE.run)("slow: solve_template.jl through amico-run (β.3 AC)", () => {
   it("unmodified template → FINISHED{completed} + pulse + iter PNG + AMICODE_ITER", () => {
     const root = mkdtempSync(join(tmpdir(), "tmpl-vet-"));
     const stdout = execFileSync(

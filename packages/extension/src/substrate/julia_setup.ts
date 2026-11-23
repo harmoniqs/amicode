@@ -149,6 +149,30 @@ export function projectInstantiated(project: string, expectedFingerprint: string
   }
 }
 
+/** Where the user's project stands against the bundled pin:
+ *   - `current`: instantiated from exactly the bundled Project + Manifest;
+ *   - `stale`:   set up before, from an older bundled pin (marker mismatch, or a
+ *                Manifest with no marker from a pre-marker install). The vetted
+ *                templates refuse an older stack, so the user must upgrade (#2180);
+ *   - `missing`: never set up.
+ *  Re-running setup upgrades a stale project in place (it re-copies the bundled
+ *  pin and re-instantiates). */
+export type JuliaProjectStatus = "current" | "stale" | "missing";
+
+export function juliaProjectStatus(project: string, expectedFingerprint: string): JuliaProjectStatus {
+  if (projectInstantiated(project, expectedFingerprint)) return "current";
+  const previouslySetUp =
+    fs.existsSync(path.join(project, JULIA_SETUP_MARKER)) || fs.existsSync(path.join(project, "Manifest.toml"));
+  return previouslySetUp ? "stale" : "missing";
+}
+
+/** The healthcheck's one-line verdict for a non-current project. */
+export function juliaProjectHealthDetail(status: Exclude<JuliaProjectStatus, "current">): string {
+  return status === "stale"
+    ? `project is on an older pinned Piccolo stack than this Amicode ships (the vetted templates refuse it) — upgrade it by running "Amicode: Set up Julia"`
+    : `project not instantiated — run "Amicode: Set up Julia"`;
+}
+
 /** First-run gate (mirrors shouldOfferVaultSetup): offer setup if anything in
  *  the chain is missing and the user hasn't dismissed. */
 export function shouldOfferJuliaSetup(o: {

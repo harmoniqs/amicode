@@ -195,7 +195,7 @@ reports the new sha). See `ops/README.md` § The pinned CLI root.
 
 ## Known sharp edges
 
-- `test:slow` without `AMICO_TEST_JULIA_PROJECT` silently skips the Julia gates.
+- `test:slow` without `AMICO_TEST_JULIA_PROJECT` skips the Julia gates (each skipped suite logs why on stderr).
 - Free-tier live e2e tiers are non-deterministic; a single tier-C failure is sampling noise.
 - Julia 1.12.x minor-version drift vs the pinned Manifest prints a warning and proceeds.
 - A tag pushed by CI's `GITHUB_TOKEN` does not fire `release.yml`'s `push` trigger (Actions'

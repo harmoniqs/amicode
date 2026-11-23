@@ -4,7 +4,7 @@
 // this file skips VISIBLY unless both envs are provided, the same gating
 // idiom as template.test.ts / verify_harness.test.ts:
 //
-//   AMICO_TEST_JULIA_PROJECT     the provisioned solve env (Piccolo ~1.19) —
+//   AMICO_TEST_JULIA_PROJECT     the provisioned solve env (packages/extension/julia) —
 //                                produces the real solved pulse via amico-run,
 //                                exactly the template.test.ts lane
 //   AMICO_TEST_REHEARSAL_PROJECT the rehearsal env (templates/mocksoc-rehearsal/
@@ -24,6 +24,7 @@ import { createHash } from "node:crypto";
 
 import { readRehearsalRecord } from "../../opencode-plugin/rehearsal";
 import { rehearsalSatisfiesStage } from "../../opencode-plugin/entities";
+import { gateSlowSuite } from "../slow_gate";
 
 const SOLVE_PROJECT = process.env.AMICO_TEST_JULIA_PROJECT;
 const REHEARSAL_PROJECT = process.env.AMICO_TEST_REHEARSAL_PROJECT;
@@ -32,7 +33,9 @@ const RUN = join(__dirname, "..", "..", "..", "amico-run", "dist", "amico.js"); 
 const TEMPLATE = join(__dirname, "..", "..", "templates", "solve_template.jl");
 const REHEARSAL_SCRIPT = join(__dirname, "..", "..", "templates", "mocksoc_rehearsal.jl");
 
-describe.skipIf(!(SOLVE_PROJECT && REHEARSAL_PROJECT))(
+const GATE = gateSlowSuite("slow: MockSoc rehearsal E2E", ["AMICO_TEST_JULIA_PROJECT", "AMICO_TEST_REHEARSAL_PROJECT"]);
+
+describe.skipIf(!GATE.run)(
   "slow: MockSoc rehearsal E2E (SEAM 1 — the real transport path)",
   () => {
     it(

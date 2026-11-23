@@ -1,21 +1,25 @@
 [deps]
 CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
 JLD2 = "033835bb-8acc-5ee8-8aae-3f567f8a3819"
+MadNLP = "2621e9c9-9eb4-46b1-8089-e8c72242dfb6"
 DirectTrajOpt = "c823fa1f-8872-4af5-b810-2b9b72bbbf56"
 NamedTrajectories = "538bc3a1-5ab9-4fc3-b776-35ca1e893e08"
 Piccolo = "c4671d76-df94-11ed-2057-43d4fd632fad"
 TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 
 [compat]
-# Raised ~1.19 -> 2.1 in amicode#540 (the same-PR re-vet the old comment demanded):
-# the six family gates re-validated strictly (F > 0.999 on X/Y/Z/H/sqrtX/T) on the
-# re-tuned template (R = 1e-2*(T/N) per DTO #122 semantics, linear spline + :pwc),
-# the version probe refuses pre-2.x Piccolo with an actionable message, the quartet
-# rides params.shape_metrics, the skeleton idiom verified on DTO 0.10.1. The bounds
-# are explicit per package: a Pkg.update can no longer silently move the minor.
+# Raised 2.1 -> 2.2 in amicode#2180: the vetted pulse-designer template's version
+# probe requires Piccolo >= 2.2 / DirectTrajOpt >= 0.11 (the MadNLP-default flip)
+# / NamedTrajectories >= 0.9.4 and refuses to run on anything older. MadNLP is a
+# direct dep because the template `import MadNLP`s for its raw user callback; its
+# minor is whatever DTO 0.11 admits. History: ~1.19 -> 2.1 in amicode#540 (six
+# family gates re-vetted at F > 0.999). The bounds are explicit per package so a
+# Pkg.update can never silently move a minor; test/julia_env_pins.test.ts checks
+# them against the template's floor.
 julia = "1.11"
 CairoMakie = "0.15"
 JLD2 = "0.6"
-DirectTrajOpt = "0.10"
+DirectTrajOpt = "0.11"
+MadNLP = "0.9"
 NamedTrajectories = "0.9.4"
-Piccolo = "2.1"
+Piccolo = "2.2"

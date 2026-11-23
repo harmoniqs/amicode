@@ -12,7 +12,7 @@ import { amicodeOpsDir } from "./substrate/vault_store";
 import {
   hasJuliaup,
   hasChannel,
-  projectInstantiated,
+  juliaProjectStatus,
   pinnedJuliaMinor,
   juliaProjectFingerprint,
 } from "./substrate/julia_setup";
@@ -26,6 +26,8 @@ export interface SetupState {
     juliaupPresent: boolean;
     channelPresent: boolean;
     projectInstantiated: boolean;
+    /** Instantiated before, from an older bundled pin: needs an upgrade (#2180). */
+    projectStale: boolean;
     /** The pinned MINOR channel (e.g. "1.12"), null when unparseable. */
     channel: string | null;
   };
@@ -54,7 +56,8 @@ export function computeSetupState(o: {
   const juliaupPresent = channel !== null ? hasJuliaup() : false;
   const channelPresent = channel !== null && juliaupPresent ? hasChannel(channel) : false;
   const fingerprint = channel !== null ? juliaProjectFingerprint(projectSrc, manifestSrc) : null;
-  const instantiated = fingerprint !== null ? projectInstantiated(o.juliaProject, fingerprint) : false;
+  const status = fingerprint !== null ? juliaProjectStatus(o.juliaProject, fingerprint) : "missing";
+  const instantiated = status === "current";
 
   const lab = checkLabToml(o.labTomlSetting);
 
@@ -65,6 +68,7 @@ export function computeSetupState(o: {
       juliaupPresent,
       channelPresent,
       projectInstantiated: instantiated,
+      projectStale: status === "stale",
       channel,
     },
     labToml:
