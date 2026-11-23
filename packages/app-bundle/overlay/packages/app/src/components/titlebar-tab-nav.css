@@ -130,6 +130,13 @@
     left: 50%;
     transform: translateX(-50%);
   }
+
+  /* #2016: centered in a tab this narrow, the 20px close button (live even while
+     hover-reveal keeps it transparent) covers nearly the whole tab, so selecting a
+     tab closed it. Inactive compact tabs drop it; middle-click still closes them. */
+  [data-titlebar-tab]:not([data-active="true"]) [data-slot="tab-close"] {
+    display: none;
+  }
 }
 
 /* Running-agent tab avatar: the Amicode mark glowing yellow with a gentle pulse.
