@@ -123,7 +123,7 @@ Before sending, delete:
 4. Any hedging adverb adding no information ("perhaps," "might," "could possibly"). Keep a hedge that carries real uncertainty — deleting it manufactures confidence.
 5. Any idiom or figurative phrase ("circle back," "on the same page"). Replace with the literal action.
 6. Any sentence missing its subject, verb, or article just to save words — a fragment that saves three words costs a re-read.
-7. Default to active voice, naming the actual actor (you, I, the solver, `amico-run`) — passive only when the actor is genuinely unknown.
+7. Default to active voice, naming the actual actor (you, I, the solver, `amico run`) — passive only when the actor is genuinely unknown.
 
 Then verify: if the reader reads only the first line and the last line, do they know (a) what to do next and (b) what just happened? If yes, send.
 
