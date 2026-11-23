@@ -95,6 +95,7 @@ import { sessionTitle } from "@/utils/session-title"
 import { scheduleConnectedMeasure } from "./measure"
 import { observeElementOffsetReconnectAware } from "./observe-element-offset"
 import { smoothScrollInterpolate, SMOOTH_SCROLL_DURATION, shouldInstantScroll } from "./smooth-scroll"
+import { restoreScrollPosture, scrollPostures } from "./scroll-posture"
 import { queuedUserMessageIDs } from "./model-pure"
 import { createTimelineProjection } from "./projection"
 import { MessageComment, SummaryDiff, TimelineRow, TimelineRowMap } from "./rows"
@@ -312,6 +313,9 @@ export function MessageTimeline(props: {
   onHistoryScroll: () => void
   onAutoScrollInteraction: (event: MouseEvent) => void
   shouldAnchorBottom: () => boolean
+  /** harmoniqs/amicode#1251: mark the reader as away from the bottom (autoScroll.holdUserScrolled)
+   *  so streaming/resize follow does not pull a restored mid-scroll position down. */
+  onHoldScrollPosture?: () => void
   centered: boolean
   setContentRef: (el: HTMLDivElement) => void
   userMessages: UserMessage[]
@@ -452,7 +456,17 @@ export function MessageTimeline(props: {
   const ownerSessionKey = sessionKey()
   const cached = timelineCache.get(ownerSessionKey)
   const initialMeasurements = cached?.measurements
-  const coldBottomMount = !initialMeasurements?.length && props.shouldAnchorBottom()
+  // harmoniqs/amicode#1251: a session the reader left scrolled up reopens where
+  // they were. Only restorable when the measurement snapshot survived (a saved
+  // scrollTop is meaningless against estimated row heights).
+  const savedPostureTop = initialMeasurements?.length ? scrollPostures.get(ownerSessionKey) : undefined
+  const [restoringPosture, setRestoringPosture] = createSignal(savedPostureTop !== undefined)
+  let postureReady = false
+  // The single "should this timeline pull to the bottom" decision: the session-level
+  // signal, vetoed while a saved posture is being restored and once the route has
+  // moved to another session (the outgoing timeline must not be yanked down).
+  const anchorBottom = () => !restoringPosture() && sessionKey() === ownerSessionKey && props.shouldAnchorBottom()
+  const coldBottomMount = !initialMeasurements?.length && anchorBottom()
   // Hide the scroll container for the first frame on cold-bottom-mount to prevent
   // a flash of content at the top before scrollToEnd fires.
   const [scrollReady, setScrollReady] = createSignal(!coldBottomMount)
@@ -774,7 +788,7 @@ export function MessageTimeline(props: {
     },
     getScrollElement: () => listRoot() ?? null,
     observeElementOffset: observeElementOffsetReconnectAware,
-    initialOffset: () => (props.shouldAnchorBottom() ? Number.MAX_SAFE_INTEGER : 0),
+    initialOffset: () => savedPostureTop ?? (anchorBottom() ? Number.MAX_SAFE_INTEGER : 0),
     initialMeasurementsCache: initialMeasurements,
     estimateSize: () => timelineFallbackItemSize,
     scrollToFn: (offset, options, instance) => {
@@ -793,7 +807,7 @@ export function MessageTimeline(props: {
     },
     anchorTo: "end",
     get followOnAppend() {
-      return props.shouldAnchorBottom() && !props.hasScrollGesture()
+      return anchorBottom() && !props.hasScrollGesture()
     },
     scrollEndThreshold: 80,
     get scrollMargin() {
@@ -884,7 +898,7 @@ export function MessageTimeline(props: {
     resizeAnchorScheduled = true
     queueMicrotask(() => {
       resizeAnchorScheduled = false
-      if (!props.shouldAnchorBottom() || props.hasScrollGesture()) return
+      if (!anchorBottom() || props.hasScrollGesture()) return
       // amicode: use instant scroll to avoid fighting the auto-scroller's
       // ResizeObserver during streaming — the 180ms animation and the instant
       // scrollToBottom were competing, causing visible oscillation.
@@ -913,10 +927,10 @@ export function MessageTimeline(props: {
       })
     }
     resizeItem(index, size)
-    if (root && props.shouldAnchorBottom()) anchorResizedBottom()
+    if (root && anchorBottom()) anchorResizedBottom()
   }
   virtualizer.shouldAdjustScrollPositionOnItemSizeChange = (item) => {
-    if (props.shouldAnchorBottom()) return false
+    if (anchorBottom()) return false
     const first = virtualizer.range?.startIndex
     return first !== undefined && item.index < first
   }
@@ -1007,13 +1021,36 @@ export function MessageTimeline(props: {
   })
 
   let overscanFrame: number | undefined
+  let cancelPostureRestore: (() => void) | undefined
   onMount(() => {
+    // harmoniqs/amicode#1251: re-assert "reader is away from the bottom" before any
+    // follow logic runs (the session page may have cleared it on the switch).
+    if (savedPostureTop !== undefined) props.onHoldScrollPosture?.()
     // Single scroll to end after initial render to prevent flicker
     overscanFrame = requestAnimationFrame(() => {
       overscanFrame = undefined
       if (renderOverscan() < 20) setRenderOverscan(20)
-      if (props.shouldAnchorBottom()) virtualizer.scrollToEnd()
+      if (anchorBottom()) virtualizer.scrollToEnd()
       if (!scrollReady()) setScrollReady(true)
+      if (savedPostureTop === undefined) postureReady = true
+      else
+        cancelPostureRestore = restoreScrollPosture({
+          target: savedPostureTop,
+          read: () => listRoot()?.scrollTop,
+          apply: (top) => virtualizer.scrollToOffset(top),
+          interrupted: () => props.hasScrollGesture(),
+          schedule: (fn) => {
+            const frame = requestAnimationFrame(fn)
+            return () => cancelAnimationFrame(frame)
+          },
+          done: () => {
+            cancelPostureRestore = undefined
+            // Hand off to the normal machinery with bottom-follow held off.
+            props.onHoldScrollPosture?.()
+            setRestoringPosture(false)
+            postureReady = true
+          },
+        })
       // one more frame so measurement-driven scroll corrections land before
       // the cascade is released
       requestAnimationFrame(() => setEntranceReady(true))
@@ -1022,7 +1059,7 @@ export function MessageTimeline(props: {
 
   const maybeAnchorBottom = () => {
     if (timelineRows().length === 0) return
-    if (!props.shouldAnchorBottom() || props.hasScrollGesture()) return
+    if (!anchorBottom() || props.hasScrollGesture()) return
     if (resizePinFrame !== undefined) cancelAnimationFrame(resizePinFrame)
     clearPrependAnchor()
     if (prependAnchorFrame !== undefined) cancelAnimationFrame(prependAnchorFrame)
@@ -1044,9 +1081,15 @@ export function MessageTimeline(props: {
     clearPrependAnchor()
     timelineCache.delete(ownerSessionKey)
     timelineCache.set(ownerSessionKey, { measurements: virtualizer.takeSnapshot(), toolOpen: { ...toolOpen } })
-    while (timelineCache.size > 16) timelineCache.delete(timelineCache.keys().next().value!)
+    while (timelineCache.size > 16) {
+      const evicted = timelineCache.keys().next().value!
+      timelineCache.delete(evicted)
+      // #1251: a posture is only restorable against its measurement snapshot.
+      scrollPostures.clear(evicted)
+    }
     if (resizePinFrame !== undefined) cancelAnimationFrame(resizePinFrame)
     if (overscanFrame !== undefined) cancelAnimationFrame(overscanFrame)
+    cancelPostureRestore?.()
     props.setRevealMessage?.(() => {})
     props.setScrollToEnd?.(() => {})
     props.setHistoryAnchor?.({ capture: () => {}, restore: () => {} })
@@ -1130,7 +1173,16 @@ export function MessageTimeline(props: {
     props.onMarkScrollGesture(event.currentTarget)
   }
 
+  // harmoniqs/amicode#1251: remember where this session's reader is, so coming
+  // back to its tab reopens there. Ignored before the mount scroll/restore has
+  // settled, and once the route has moved on (late scrolls of the outgoing view).
+  const recordPosture = (root: HTMLDivElement) => {
+    if (!postureReady || sessionKey() !== ownerSessionKey) return
+    scrollPostures.record(ownerSessionKey, root)
+  }
+
   const handleListScroll = (event: Event & { currentTarget: HTMLDivElement }) => {
+    recordPosture(event.currentTarget)
     if (prependLoading) updatePrependAnchor()
     props.onScheduleScrollState(event.currentTarget)
     props.onHistoryScroll()

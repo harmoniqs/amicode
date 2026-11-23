@@ -71,6 +71,7 @@ import {
 } from "@/pages/session/composer"
 import { createOpenReviewFile, createSessionTabs, createSizing, shouldShowFileTree, SESSION_PREVIEW_TAB } from "@/pages/session/helpers"
 import { MessageTimeline } from "@/pages/session/timeline/message-timeline"
+import { scrollPostures } from "@/pages/session/timeline/scroll-posture"
 import { createTimelineModel } from "@/pages/session/timeline/model"
 import { type DiffStyle, SessionReviewTab, type SessionReviewTabProps } from "@/pages/session/review-tab"
 import { useSessionLayout } from "@/pages/session/session-layout"
@@ -2013,6 +2014,13 @@ export default function Page() {
       (id, previous) => {
         if (!id || !previous || id === previous) return
         if (location.hash || store.messageId || ui.pendingMessage) return
+        // harmoniqs/amicode#1251: a session the reader left scrolled up comes
+        // back held off the bottom (its timeline restores the position);
+        // otherwise re-engage bottom-follow.
+        if (scrollPostures.get(sessionKey()) !== undefined) {
+          autoScroll.holdUserScrolled()
+          return
+        }
         // amicode: clear the flag only — resume() would scrollToBottom on
         // the OLD session's element (still mounted) and markAuto its position,
         // leaving a stale 1500ms mark that could swallow a real user scroll
@@ -2675,6 +2683,7 @@ export default function Page() {
                     onUserScroll={markUserScroll}
                     onHistoryScroll={onHistoryScroll}
                     onAutoScrollInteraction={autoScroll.handleInteraction}
+                    onHoldScrollPosture={autoScroll.holdUserScrolled}
                     shouldAnchorBottom={() =>
                       !location.hash && !store.messageId && !ui.pendingMessage && !autoScroll.userScrolled()
                     }

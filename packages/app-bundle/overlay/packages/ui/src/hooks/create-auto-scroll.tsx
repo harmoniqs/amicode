@@ -237,6 +237,12 @@ export function createAutoScroll(options: AutoScrollOptions) {
     clearUserScrolled: () => {
       if (store.userScrolled) setStore("userScrolled", false)
     },
+    // amicode#1251: mark the reader as away from the bottom WITHOUT needing a
+    // live scroll element (pause() bails when scrollRef is detached or not yet
+    // scrollable, which is exactly the state during a session tab switch).
+    holdUserScrolled: () => {
+      if (!store.userScrolled) setStore("userScrolled", true)
+    },
     scrollToBottom: () => scrollToBottom(false),
     forceScrollToBottom: () => scrollToBottom(true),
     userScrolled: () => store.userScrolled,
