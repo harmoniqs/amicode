@@ -75,3 +75,26 @@ describe("concise switch → V1 request", () => {
     expect(h.calls[0]!.system).toBeUndefined()
   })
 })
+
+// #2163: concise mode stayed on but replies stayed verbose — headed essays for
+// bare topic questions, and a deep register carried over from earlier turns.
+// The directive must say the short lead resets every turn and that only an
+// explicit ask in THIS message earns headers or a structured explainer.
+describe("concise directive content (#2163)", () => {
+  test("resets every turn, regardless of earlier long or headed replies", () => {
+    expect(CONCISE_DIRECTIVE).toContain("resets every turn")
+  })
+  test("leads with a short direct answer in 2-4 sentences, no headers", () => {
+    expect(CONCISE_DIRECTIVE).toContain("2-4 sentences")
+    expect(CONCISE_DIRECTIVE).toMatch(/no headers/)
+  })
+  test("only an explicit ask in this message earns a structured explainer", () => {
+    expect(CONCISE_DIRECTIVE).toMatch(/only if this exact message explicitly asks/)
+  })
+  test("bans announcing what it will or won't do as preamble", () => {
+    expect(CONCISE_DIRECTIVE).toMatch(/no preamble \(including stating what you will or won't do\)/)
+  })
+  test("keeps required caveats, questions, and safety confirmations", () => {
+    expect(CONCISE_DIRECTIVE).toContain("without dropping required caveats, questions, or safety confirmations")
+  })
+})
