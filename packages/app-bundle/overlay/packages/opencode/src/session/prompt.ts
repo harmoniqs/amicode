@@ -604,12 +604,10 @@ const layer = Layer.effect(
       if (Exit.isSuccess(exit)) return exit.value
       const err = Cause.squash(exit.cause)
       if (Provider.ModelNotFoundError.isInstance(err)) {
-        const hint = err.suggestions?.length ? ` Did you mean: ${err.suggestions.join(", ")}?` : ""
+        // amicode#1282: the error's own message names the provider + the fix.
         yield* events.publish(Session.Event.Error, {
           sessionID,
-          error: new NamedError.Unknown({
-            message: `Model not found: ${err.providerID}/${err.modelID}.${hint}`,
-          }).toObject(),
+          error: new NamedError.Unknown({ message: err.message }).toObject(),
         })
       }
       return yield* Effect.die(err)

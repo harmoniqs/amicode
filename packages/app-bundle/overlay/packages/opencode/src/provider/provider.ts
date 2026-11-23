@@ -1223,9 +1223,15 @@ export class ModelNotFoundError extends Schema.TaggedErrorClass<ModelNotFoundErr
   suggestions: Schema.optional(Schema.Array(Schema.String)),
   cause: Schema.optional(Schema.Defect()),
 }) {
+  // amicode#1282: name the fix, not just the miss — a stale pin (baked default,
+  // config template, catalog rename) must read as an actionable model problem.
   override get message() {
     const suggestions = this.suggestions?.length ? ` Did you mean: ${this.suggestions.join(", ")}?` : ""
-    return `Model not found: ${this.providerID}/${this.modelID}.${suggestions}`
+    return (
+      `Model not found: ${this.providerID}/${this.modelID}. ` +
+      `Model "${this.modelID}" is not available from provider "${this.providerID}"; ` +
+      `pick another model in the model picker or update the pinned model in your config.${suggestions}`
+    )
   }
 
   static isInstance(input: unknown): input is ModelNotFoundError {

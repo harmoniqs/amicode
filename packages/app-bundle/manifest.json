@@ -389,7 +389,7 @@
     "packages/opencode/src/provider/auth.ts": "b0ab1322c1039e27176bf9e3500603eae27506065ac141a69710220f3361f6b8",
     "packages/opencode/src/provider/error.ts": "871df37ff31d180e99e9dfc49bfac773f8adb5f9929bba9f1a3053f572723620",
     "packages/opencode/src/provider/probe.ts": "6f5b7f3a201a67b66c387411f4c893c7e91ca74a70fdcf7b220f1a2ff511adc7",
-    "packages/opencode/src/provider/provider.ts": "b89bc0ca0a12ea0cfaf5c956a4b731a0397d4c407e787a16cdd66fb7f54ee476",
+    "packages/opencode/src/provider/provider.ts": "1648c98bef8c0a275301c6ca38717ac140648e6544618c8f86206c3057db25d6",
     "packages/opencode/src/provider/transform.ts": "70c7492d4a23a30ebc340a5605702b1602960f4b412e18557534e02962c137b8",
     "packages/opencode/src/question/index.ts": "8317348c2ca27dd9e4f7d18fdc126a4d355c20495c1b86668430ad477a68e9b3",
     "packages/opencode/src/server/auth.ts": "a054aff2ea06a303a99f326275332a68089c58916356a26d66af44f048f597cc",
@@ -403,7 +403,7 @@
     "packages/opencode/src/session/lineage.ts": "fce706aacb78004f9ce04783da9341e56a9dffc94fb54ca2b7b488d5efaeeafa",
     "packages/opencode/src/session/message-v2.ts": "3b308ef7feb697fbcfd20f416e6d9a5bb73a2a2a41c4ff77aee771788d0c6d19",
     "packages/opencode/src/session/mutation.ts": "31f29e8865be9dd62eb8148d240811f2344db4c440be2739dc113764749d3e88",
-    "packages/opencode/src/session/prompt.ts": "777cfd5f58a697d6bed77f1255d787b27360f198b436eacec17288d157a61bcd",
+    "packages/opencode/src/session/prompt.ts": "0b3277e9421377b13a30997c93cc715f297806e458d23fb015f7b150f8ed34eb",
     "packages/opencode/src/session/prose-guard.ts": "dd6f8dfdc41b9cad3406ac586db9a60f7ee0a040b41550d6c55da2d040dc7c13",
     "packages/opencode/src/session/receipt-privacy.ts": "92ba8a92d4ddc0d18249efa5efdf600a32ebc0453d605b8c747cd4bcbd6d19a9",
     "packages/opencode/src/session/receipt.ts": "06fd30326424112b8dacd756e4bba5424b3a7a2d10318464a5670aeabb0c4808",
@@ -466,6 +466,7 @@
     "packages/opencode/test/server/global-bus-sequencing.test.ts": "db0998c0f4715bc5d600b006c18c37133e5405e735853d9b31346501da31367f",
     "packages/opencode/test/server/global-event-replay.test.ts": "c6c1fdba829c7b9a82976a90d71073086078d438f678c11f8577b21044cf3f56",
     "packages/opencode/test/server/httpapi-compression.test.ts": "5f7603d7018e0b95f1c2f36c01dd297c01770bfcdd91ce29778e03b7d6143f75",
+    "packages/opencode/test/server/httpapi-error-middleware.test.ts": "0c372c91a93a78d36e92a5cdef984a204557b8f59442f0f26859835069d5c787",
     "packages/opencode/test/server/httpapi-event-replay.test.ts": "c94c13dbfb4ca5d5e9b80f4c1a17955d1530a8bf9141b9a83a810ee56743269f",
     "packages/opencode/test/server/httpapi-event-sequencing.test.ts": "a2ec57f999b26b8ac9e4dfd6208c8028264cb0b267f4e6383429df62738967fa",
     "packages/opencode/test/server/httpapi-event-summary-strip.test.ts": "bfb13fbacdb2764cdd11ab0e110c93e635ef68f70500b19333350e4805a9164a",
@@ -1087,6 +1088,7 @@
     "packages/opencode/src/server/routes/instance/httpapi/handlers/mcp.ts": "7da08d58765cdf2b6ce4648fc70de371402949f5bb7b75696f674d43f2d5365b",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/provider.ts": "e899320a028e639a845d6c6aef547d448341671a195f5465ee4e8fa847957c52",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/session.ts": "b37ff4136c4aea85b23083bf441f03e09820e3e4cdd95e4118ca570d8435b94f",
+    "packages/opencode/src/server/routes/instance/httpapi/middleware/error.ts": "e8440c41d4e58ba31f5e322184bb5f08ae7ffc2e9e607f67588d0642e32a76f4",
     "packages/opencode/src/server/routes/instance/httpapi/middleware/file-write-workspace.ts": "665c33633173ee89c6da1d4a0eaacaf4eebe3ccdd04eb36b063515cb4c093e4a",
     "packages/opencode/src/server/routes/instance/httpapi/middleware/gateway-secret.ts": "ec6133ee5d331920ded81042fbeb05221bec0c4b26f5897b3f28bc267d26aefa",
     "packages/opencode/src/server/routes/instance/httpapi/middleware/workspace-routing.ts": "6ded09e0f424f894e100e1f4904787d97ae1512f25688cfa2f05cbfbd3811a2a"
@@ -1104,7 +1106,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-11-08T15:21:50.674Z",
+  "extracted_at": "2026-11-23T22:16:31.614Z",
   "per_package": {
     "packages/app": {
       "A": 314,
@@ -1123,7 +1125,7 @@
     },
     "packages/opencode": {
       "A": 103,
-      "M": 100,
+      "M": 102,
       "D": 0
     },
     "packages/schema": {
@@ -1153,7 +1155,7 @@
     }
   },
   "counts": {
-    "overlay_total": 1082,
+    "overlay_total": 1084,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1616,6 +1618,7 @@
     "packages/opencode/test/server/global-bus-sequencing.test.ts": "A",
     "packages/opencode/test/server/global-event-replay.test.ts": "A",
     "packages/opencode/test/server/httpapi-compression.test.ts": "M",
+    "packages/opencode/test/server/httpapi-error-middleware.test.ts": "M",
     "packages/opencode/test/server/httpapi-event-replay.test.ts": "A",
     "packages/opencode/test/server/httpapi-event-sequencing.test.ts": "A",
     "packages/opencode/test/server/httpapi-event-summary-strip.test.ts": "A",
@@ -2237,6 +2240,7 @@
     "packages/opencode/src/server/routes/instance/httpapi/handlers/mcp.ts": "M",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/provider.ts": "M",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/session.ts": "M",
+    "packages/opencode/src/server/routes/instance/httpapi/middleware/error.ts": "M",
     "packages/opencode/src/server/routes/instance/httpapi/middleware/file-write-workspace.ts": "A",
     "packages/opencode/src/server/routes/instance/httpapi/middleware/gateway-secret.ts": "A",
     "packages/opencode/src/server/routes/instance/httpapi/middleware/workspace-routing.ts": "M"

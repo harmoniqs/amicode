@@ -77,14 +77,14 @@ export interface ModelEntry {
 export const PROVIDER_MODELS: Record<string, ModelEntry[]> = {
   "github-copilot": [
     { id: "github-copilot/claude-sonnet-5", name: "Claude Sonnet 5" },
-    { id: "github-copilot/gpt-5.6", name: "GPT-5.6" },
+    { id: "github-copilot/gpt-5.6-sol", name: "GPT-5.6 Sol" },
     { id: "github-copilot/gpt-5.6-luna", name: "GPT-5.6 Luna" },
   ],
   [HARMONIQS_PROVIDER_ID]: [{ id: `${HARMONIQS_PROVIDER_ID}/${HARMONIQS_MODEL_ID}`, name: "Harmoniqs Auto" }],
   opencode: [
-    { id: "anthropic/claude-opus-5", name: "Claude Opus 5" },
-    { id: "anthropic/claude-sonnet-5", name: "Claude Sonnet 5" },
-    { id: "openai/gpt-5.6-sol", name: "GPT-5.6 Sol" },
+    { id: "opencode/claude-opus-5", name: "Claude Opus 5" },
+    { id: "opencode/claude-sonnet-5", name: "Claude Sonnet 5" },
+    { id: "opencode/gpt-5.6-sol", name: "GPT-5.6 Sol" },
   ],
   anthropic: [
     { id: "anthropic/claude-sonnet-5", name: "Claude Sonnet 5" },
@@ -112,7 +112,7 @@ export const PROVIDER_MODELS: Record<string, ModelEntry[]> = {
   ],
   "amazon-bedrock": [
     { id: "amazon-bedrock/anthropic.claude-opus-4-6-v1", name: "Claude Opus 4.6 (Bedrock)" },
-    { id: "amazon-bedrock/anthropic.claude-sonnet-4-5-v2", name: "Claude Sonnet 4.5 v2 (Bedrock)" },
+    { id: "amazon-bedrock/anthropic.claude-sonnet-4-6", name: "Claude Sonnet 4.6 (Bedrock)" },
     { id: "amazon-bedrock/anthropic.claude-sonnet-5", name: "Claude Sonnet 5 (Bedrock)" },
   ],
   custom: [],
