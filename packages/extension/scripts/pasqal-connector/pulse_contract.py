@@ -21,6 +21,7 @@ import warnings
 
 import numpy as np
 import pulser
+from pulser.register._coordinates import COORD_PRECISION
 
 SCHEMA_VERSION = 1
 UNITS = "rad/us"
@@ -33,6 +34,16 @@ DUST_TOL = 1e-6
 # Endpoints are "at idle" when both drives sit at Ω=Δ=0 to within the same
 # dust tolerance the bounds checks use.
 IDLE_TOL = DUST_TOL
+
+# Absolute slack (µm) on the device's min_atom_distance — Pulser's own
+# coordinate-precision tolerance, the same one its register validation uses
+# (BaseDevice._validate_atom_distance). Layout trap coordinates are stored
+# rounded to COORD_PRECISION decimals, so a device's own calibrated lattice
+# comes out a hair under its nominal spacing (AnalogDevice's triangle:
+# 4.9999999836 µm vs 5 µm). This absorbs that rounding only; the physical
+# bound itself is unchanged, and a genuinely close pair (e.g. 4.9 µm) still
+# fails by many orders of magnitude (#1854).
+DISTANCE_TOL = 10.0 ** (-COORD_PRECISION)
 
 
 class ContractError(ValueError):
@@ -144,7 +155,7 @@ def validate_against_device(
         for i in range(len(atoms)):
             for j in range(i + 1, len(atoms)):
                 dist = math.dist(atoms[i], atoms[j])
-                if dist < device.min_atom_distance:
+                if dist < device.min_atom_distance - DISTANCE_TOL:
                     raise ContractError(
                         f"atoms[{i}] and atoms[{j}] are {dist:.3g} µm apart — below the "
                         f"device's minimum atom distance ({device.min_atom_distance} µm)"
@@ -208,6 +219,29 @@ def zero_order_hold(knots: list, dt_ns: float) -> np.ndarray:
     return np.repeat(np.asarray(knots[:-1], dtype=float), per_knot)
 
 
+def build_register(
+    atoms: list, device: pulser.devices.Device = pulser.AnalogDevice,
+) -> pulser.register.base_register.BaseRegister:
+    """Atom positions (µm) → Pulser register, keeping a calibrated layout.
+
+    When every atom sits on a trap of one of the device's calibrated layouts
+    (to Pulser's coordinate precision), the register is defined *from that
+    layout*, so it carries `layout` — devices with `requires_layout` (e.g.
+    AnalogDevice) need it for QPU submission. Otherwise it is a free register
+    from coordinates, exactly as before (#1854).
+    """
+    qubit_ids = [f"q{i}" for i in range(len(atoms))]
+    for layout in device.calibrated_register_layouts.values():
+        try:
+            trap_ids = layout.get_traps_from_coordinates(*atoms)
+        except ValueError:
+            continue  # some atom is not a trap of this layout
+        if len(set(trap_ids)) == len(trap_ids):
+            return layout.define_register(*trap_ids, qubit_ids=qubit_ids)
+    coords = [tuple(pos) for pos in atoms]
+    return pulser.Register.from_coordinates(coords, prefix="q")
+
+
 def build_sequence(
     data: dict, device: pulser.devices.Device = pulser.AnalogDevice,
     channel_name: str = "rydberg_global",
@@ -227,8 +261,7 @@ def build_sequence(
     amp = np.clip(amp, 0.0, channel.max_amp)          # dust only, per above
     det = np.clip(det, -channel.max_abs_detuning, channel.max_abs_detuning)
 
-    coords = [tuple(pos) for pos in data.get("atoms", [[0, 0]])]
-    register = pulser.Register.from_coordinates(coords, prefix="q")
+    register = build_register(data.get("atoms", [[0, 0]]), device)
     sequence = pulser.Sequence(register, device)
     sequence.declare_channel(channel_name, channel_name)
     pulse = pulser.Pulse(
