@@ -12,6 +12,7 @@ Run from the spike directory:
 """
 
 import copy
+import math
 import sys
 import unittest
 import warnings
@@ -286,6 +287,75 @@ class TestAtomsKey(unittest.TestCase):
         for bad in ([], [[0.0]], [[0.0, float("nan")]], [["x", 0.0]], "atoms"):
             with self.assertRaises(ContractError):
                 validate_schema(self.corrupt(atoms=bad))
+
+
+def calibrated_triangle() -> tuple:
+    """The device's own calibrated layout plus an equilateral triangle of its
+    traps, read off the device object (never typed in by hand). The trap
+    coordinates are stored rounded, so adjacent spacing comes out at
+    ~4.99999998 µm against the 5 µm minimum (#1854)."""
+    layout = next(iter(pulser.AnalogDevice.calibrated_register_layouts.values()))
+    traps = layout.traps_dict
+    # Traps 0, 1 and 4 are an equilateral triangle at the lattice spacing.
+    return layout, [[float(c) for c in traps[i]] for i in (0, 1, 4)]
+
+
+class TestCalibratedLayoutRegister(unittest.TestCase):
+    """#1854: the device's calibrated triangle must pass the contract, and the
+    layout must survive into the built sequence (QPU submission needs it)."""
+
+    def corrupt(self, **changes):
+        data = copy.deepcopy(golden())
+        data.update(changes)
+        return data
+
+    def test_calibrated_triangle_spacing_is_rounded_below_minimum(self):
+        # Guards the premise: if Pulser ever stores exact coordinates this
+        # test documents why the tolerance exists rather than silently passing.
+        _, atoms = calibrated_triangle()
+        self.assertLess(math.dist(atoms[0], atoms[1]), pulser.AnalogDevice.min_atom_distance)
+
+    def test_calibrated_triangle_passes_contract(self):
+        _, atoms = calibrated_triangle()
+        seq = build_sequence(self.corrupt(atoms=atoms))
+        self.assertEqual(len(seq.register.qubits), 3)
+
+    def test_calibrated_triangle_keeps_its_layout(self):
+        layout, atoms = calibrated_triangle()
+        seq = build_sequence(self.corrupt(atoms=atoms))
+        self.assertIsNotNone(seq.register.layout)
+        self.assertEqual(seq.register.layout, layout)
+        self.assertTrue(pulser.AnalogDevice.register_is_from_calibrated_layout(seq.register))
+
+    def test_layout_round_trips_through_abstract_repr(self):
+        # The cloud submission path serializes the sequence; the layout must
+        # survive that round trip, not just exist on the in-memory object.
+        layout, atoms = calibrated_triangle()
+        seq = build_sequence(self.corrupt(atoms=atoms))
+        restored = pulser.Sequence.from_abstract_repr(seq.to_abstract_repr())
+        self.assertEqual(restored.register.layout, layout)
+        self.assertTrue(pulser.AnalogDevice.register_is_from_calibrated_layout(restored.register))
+
+    def test_qubit_ids_keep_q_prefix(self):
+        _, atoms = calibrated_triangle()
+        seq = build_sequence(self.corrupt(atoms=atoms))
+        self.assertEqual(list(seq.register.qubit_ids), ["q0", "q1", "q2"])
+
+    def test_on_lattice_pair_gets_layout(self):
+        # (0, 0) and (5, 0) are traps of the calibrated triangular lattice.
+        layout, _ = calibrated_triangle()
+        seq = build_sequence(self.corrupt(atoms=[[0.0, 0.0], [5.0, 0.0]]))
+        self.assertEqual(seq.register.layout, layout)
+
+    def test_off_layout_register_still_builds_without_layout(self):
+        seq = build_sequence(self.corrupt(atoms=[[0.3, 0.0], [5.3, 0.0]]))
+        self.assertEqual(len(seq.register.qubits), 2)
+        self.assertIsNone(seq.register.layout)
+
+    def test_genuinely_too_close_register_still_rejected(self):
+        with self.assertRaises(ContractError) as ctx:
+            build_sequence(self.corrupt(atoms=[[0.0, 0.0], [4.9, 0.0]]))
+        self.assertIn("minimum atom distance", str(ctx.exception))
 
 
 if __name__ == "__main__":
