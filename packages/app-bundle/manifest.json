@@ -41,6 +41,7 @@
     "packages/core/src/permission.ts": "8c46b08adc9edd6bbfb90481b592ea6f00c40743d1ea0ee6a8b2e185dfd2de66",
     "packages/core/src/provider-permission.ts": "a672c1f40fa2efb0cd8923b0b7827b6debe770308bcaef692ad8589ba9b40685",
     "packages/core/src/question.ts": "11da591147ec49834ab9c1babea2dddbdcd3181d9bd7da0980eede5b87459411",
+    "packages/core/src/ripgrep.ts": "59094d8bbe7ded5510d4f438789918c9c6189d053f7b73812e61cf012b3acc5b",
     "packages/core/src/runtime-state.ts": "3ef37e03f51b777f3c96ae12a3c855ef5e8a9f3342f697d70935e48bb7cdceaa",
     "packages/core/src/session.ts": "c4147b433b07f62439054ac3367c4780d203a08f9fa0fcd691e1be653e4794b6",
     "packages/core/test/database-migration.test.ts": "e5ffa9b36028a8bf31ae7d3eac7fe34fb0566a609325c8dc29e59021d5ee0b1a",
@@ -508,6 +509,7 @@
     "packages/opencode/test/share/share-next.test.ts": "d94076118b558644c06de3ef315041a6fd8895098377da843e98530311e9e609",
     "packages/opencode/test/tool/apply_patch.test.ts": "4a22d83eead95e6b9eb26d42dae3b421bf07d5ac9ab3e1fdcb396c2941262c25",
     "packages/opencode/test/tool/edit.test.ts": "ec1ed35002b1af4e2ff508aeac456c3edbb2e1dde3f6df4abd957eda9ef6d056",
+    "packages/opencode/test/tool/grep-long-line.test.ts": "d0fcbacca1455f595d41eeba83b755aa0bce4250008c391af134737f5b41ba72",
     "packages/opencode/test/tool/question.test.ts": "75760ba6ed98f2fdfd75945c3b492342dfe91026f99cde86db19cf52444260c2",
     "packages/opencode/test/tool/registry-schema.test.ts": "053cb9732299ea6554db007bad873d8d61cd3769aa9514d66c70c3bf0d405b90",
     "packages/opencode/test/tool/shell-output-throttle.test.ts": "9fed6f4ea8f7c62941280ab4f973848ea4184274830a153fbea83aae2c028576",
@@ -1104,7 +1106,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-11-08T15:21:50.674Z",
+  "extracted_at": "2026-11-23T22:06:31.669Z",
   "per_package": {
     "packages/app": {
       "A": 314,
@@ -1113,7 +1115,7 @@
     },
     "packages/core": {
       "A": 18,
-      "M": 47,
+      "M": 48,
       "D": 0
     },
     "packages/llm": {
@@ -1122,7 +1124,7 @@
       "D": 0
     },
     "packages/opencode": {
-      "A": 103,
+      "A": 104,
       "M": 100,
       "D": 0
     },
@@ -1153,7 +1155,7 @@
     }
   },
   "counts": {
-    "overlay_total": 1082,
+    "overlay_total": 1084,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1191,6 +1193,7 @@
     "packages/core/src/permission.ts": "M",
     "packages/core/src/provider-permission.ts": "A",
     "packages/core/src/question.ts": "M",
+    "packages/core/src/ripgrep.ts": "M",
     "packages/core/src/runtime-state.ts": "A",
     "packages/core/src/session.ts": "M",
     "packages/core/test/database-migration.test.ts": "M",
@@ -1658,6 +1661,7 @@
     "packages/opencode/test/share/share-next.test.ts": "M",
     "packages/opencode/test/tool/apply_patch.test.ts": "M",
     "packages/opencode/test/tool/edit.test.ts": "M",
+    "packages/opencode/test/tool/grep-long-line.test.ts": "A",
     "packages/opencode/test/tool/question.test.ts": "M",
     "packages/opencode/test/tool/registry-schema.test.ts": "A",
     "packages/opencode/test/tool/shell-output-throttle.test.ts": "A",

@@ -66,6 +66,10 @@ const USAGE = `amico sota — the SOTA survey surface (read-only toward the worl
 
 export async function sotaVerb(argv: string[]): Promise<VerbResult> {
   const head = argv[0] ?? "";
+  // `amico sota --help` and `amico sota <lens> --help` print usage (#2131) —
+  // before any lens validation, so `papers --help` is not "--query is required".
+  const isHelp = (a: string | undefined) => a === "--help" || a === "-h";
+  if (isHelp(head) || isHelp(argv[1])) return { json: { verb: "sota", usage: USAGE }, code: 0 };
   const root = flagValue(argv, "--root") ?? sotaRoot();
   const sessions = flagValue(argv, "--sessions") ?? sotaSessionsDir();
 

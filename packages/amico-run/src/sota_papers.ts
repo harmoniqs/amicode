@@ -32,10 +32,16 @@ import { ANOMALY_FLOOR_WINDOW_DAYS, type AnomalyFloorVerdict } from "./sota_hist
  *  http:// endpoint silently hangs; there is no http constant anywhere). */
 export const ARXIV_API_ENDPOINT = "https://export.arxiv.org/api/query";
 
+/** The export API's search-field prefixes (arXiv API user manual, 5.1). */
+const ARXIV_FIELD_PREFIX = /(^|[\s(])(ti|au|abs|co|jr|cat|rn|id|all):/;
+
 /** Build the canonical export-API query URL for one on-demand survey query. */
 export function arxivApiUrl(terms: string[], maxResults: number): string {
   if (terms.length === 0) throw new Error("arxivApiUrl: at least one search term is required — a wildcard firehose is never the survey");
-  const q = terms.map((t) => `all:${t}`).join(" AND ");
+  // A term that already names an arXiv field (ti:, au:, abs:, …) is passed
+  // through verbatim; prefixing it again yields `all:ti:"…"`, which the API
+  // rejects with HTTP 400 (#2131). Bare terms keep the all: default.
+  const q = terms.map((t) => (ARXIV_FIELD_PREFIX.test(t) ? t : `all:${t}`)).join(" AND ");
   return `${ARXIV_API_ENDPOINT}?search_query=${encodeURIComponent(q)}&max_results=${maxResults}`;
 }
 

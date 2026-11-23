@@ -73,6 +73,18 @@ describe("arxivApiUrl — the query builder targets the REAL export API over HTT
     expect(url.startsWith("https://")).toBe(true); // the recipe gotcha is structural: the builder cannot emit http
   });
 
+  it("passes a field-prefixed query through verbatim instead of nesting it under all: (#2131)", () => {
+    // `all:ti:"..."` is a malformed arXiv query and the API answers HTTP 400.
+    const url = arxivApiUrl(['ti:"noise-induced heating"'], 5);
+    const q = new URL(url).searchParams.get("search_query");
+    expect(q).toBe('ti:"noise-induced heating"');
+    expect(q).not.toContain("all:ti:");
+    const combined = new URL(arxivApiUrl(["au:Smith AND abs:qubit"], 5)).searchParams.get("search_query");
+    expect(combined).toBe("au:Smith AND abs:qubit");
+    // a bare term keeps the all: default
+    expect(new URL(arxivApiUrl(["qubit"], 5)).searchParams.get("search_query")).toBe("all:qubit");
+  });
+
   it("empty terms is a usage error (never a wildcard firehose)", () => {
     expect(() => arxivApiUrl([], 5)).toThrow(/at least one/);
   });
