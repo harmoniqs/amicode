@@ -4,7 +4,7 @@
 #   - AMICODE_ITER key=value lines on stdout, flushed per iteration
 #   - result.toml written atomically (temp + rename)
 #   - final DONE line
-# Vetted against Piccolo 1.19 (the version `Pkg.add Piccolo` installs today).
+# Runs on the shipped solve env (packages/extension/julia, Piccolo 2.2).
 using Piccolo
 using JLD2
 using TOML
@@ -39,8 +39,13 @@ function cb_log(optimizer, optimizer_state; kwargs...)
 end
 
 t0 = time()
+# Ipopt explicitly: DTO ≥ 0.11 (Piccolo 2.2) defaults to MadNLP, where the raw
+# `callback` kwarg never fires (it is Ipopt-only), so the default solver would
+# emit no AMICODE_ITER lines (#2180). This fixture tests the run-dir contract,
+# not the solver choice.
 solve!(qcp;
     max_iter = 150, print_level = 1,
+    options = IpoptOptions(),
     callback = Callbacks.callback_factory(cb_update, cb_log))
 wall = time() - t0
 
