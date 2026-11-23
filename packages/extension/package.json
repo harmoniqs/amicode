@@ -40,7 +40,7 @@
     "onCommand:amicode.newProject",
     "onCommand:amicode.chatDeck",
     "onView:amicode.workspace",
-    "onStartupFinished"
+    "onFileSystem:amico-host"
   ],
   "main": "./dist/extension.js",
   "extensionKind": [
