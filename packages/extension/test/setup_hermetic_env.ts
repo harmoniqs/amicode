@@ -19,14 +19,16 @@
 // needs a specific value sets it explicitly in its own beforeAll/beforeEach,
 // which runs AFTER this and therefore wins — hermetic by construction, never a
 // muzzle on a test that legitimately drives one of these vars.
+//
+// One exception: AMICO_TEST_JULIA_PROJECT passes through. It is the explicit
+// opt-in for the slow Julia suites, not ambient shell state (#2180). The rule
+// lives in hermetic_env.ts so it is unit-tested.
 import { afterAll } from "vitest";
-
-const CLEAR_PREFIXES = ["AMICODE_", "AMICO_", "OPENCODE_"];
-const CLEAR_EXACT = new Set(["OPENCODE"]);
+import { isHermeticallyCleared } from "./hermetic_env";
 
 const saved: Record<string, string | undefined> = {};
 for (const key of Object.keys(process.env)) {
-  if (CLEAR_EXACT.has(key) || CLEAR_PREFIXES.some((p) => key.startsWith(p))) {
+  if (isHermeticallyCleared(key)) {
     saved[key] = process.env[key];
     delete process.env[key];
   }

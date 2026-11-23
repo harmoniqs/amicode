@@ -11,6 +11,8 @@ import {
   resolveJuliaupCommands,
   juliaProjectFingerprint,
   projectInstantiated,
+  juliaProjectStatus,
+  juliaProjectHealthDetail,
   buildSetupSteps,
   juliaupInstallCommand,
   type Runner,
@@ -122,6 +124,40 @@ describe("projectInstantiated", () => {
     writeFileSync(join(d, ".amicode-instantiated"), `${fingerprint}\n`);
     expect(projectInstantiated(d, fingerprint)).toBe(true);
     rmSync(d, { recursive: true, force: true });
+  });
+});
+
+// #2180: a user env set up from an OLDER bundled pin (e.g. Piccolo 2.1) must be
+// told to upgrade, not reported as "not instantiated" or silently left behind.
+describe("juliaProjectStatus", () => {
+  it("is missing on a bare project dir", () => {
+    const d = tmp();
+    expect(juliaProjectStatus(d, "abc123")).toBe("missing");
+    rmSync(d, { recursive: true, force: true });
+  });
+  it("is current when the marker matches the bundled fingerprint", () => {
+    const d = tmp();
+    writeFileSync(join(d, "Manifest.toml"), "");
+    writeFileSync(join(d, ".amicode-instantiated"), "abc123\n");
+    expect(juliaProjectStatus(d, "abc123")).toBe("current");
+    rmSync(d, { recursive: true, force: true });
+  });
+  it("is stale when the marker records an older bundled pin", () => {
+    const d = tmp();
+    writeFileSync(join(d, "Manifest.toml"), "");
+    writeFileSync(join(d, ".amicode-instantiated"), "older-pin\n");
+    expect(juliaProjectStatus(d, "abc123")).toBe("stale");
+    rmSync(d, { recursive: true, force: true });
+  });
+  it("is stale when a Manifest exists without a marker (a pre-marker install)", () => {
+    const d = tmp();
+    writeFileSync(join(d, "Manifest.toml"), "");
+    expect(juliaProjectStatus(d, "abc123")).toBe("stale");
+    rmSync(d, { recursive: true, force: true });
+  });
+  it("the stale health detail says to upgrade via Set up Julia", () => {
+    expect(juliaProjectHealthDetail("stale")).toMatch(/older.*upgrade.*Amicode: Set up Julia/is);
+    expect(juliaProjectHealthDetail("missing")).toMatch(/not instantiated.*Amicode: Set up Julia/is);
   });
 });
 

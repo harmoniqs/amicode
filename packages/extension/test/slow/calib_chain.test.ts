@@ -2,7 +2,7 @@
 // END-TO-END on mock. Env-gated exactly like the SEAM 1 slow lane (Julia is NOT
 // a vitest prerequisite — the fast suite runs without it):
 //
-//   AMICO_TEST_JULIA_PROJECT     the provisioned solve env (Piccolo ~1.19) —
+//   AMICO_TEST_JULIA_PROJECT     the provisioned solve env (packages/extension/julia) —
 //                                produces the real pulses via amico-run
 //   AMICO_TEST_REHEARSAL_PROJECT the rehearsal env (templates/mocksoc-rehearsal/
 //                                — Strumento 0.3 + Intonato 0.4 + Piccolo 2.1;
@@ -41,6 +41,7 @@ import { readRehearsalRecord } from "../../opencode-plugin/rehearsal";
 import { formulationToml, type FormulationEntity } from "../../opencode-plugin/entities";
 import { createProblem, problemDir, writeEntityFiles } from "../../opencode-plugin/problems";
 import { recordCalibChain, completeCalibChain } from "../../opencode-plugin/calib_chain";
+import { gateSlowSuite } from "../slow_gate";
 
 const SOLVE_PROJECT = process.env.AMICO_TEST_JULIA_PROJECT;
 const REHEARSAL_PROJECT = process.env.AMICO_TEST_REHEARSAL_PROJECT;
@@ -65,7 +66,9 @@ function solveScript(root: string, name: string, edits: [string, string][]): str
   return p;
 }
 
-describe.skipIf(!(SOLVE_PROJECT && REHEARSAL_PROJECT))(
+const GATE = gateSlowSuite("slow: calibrate-pin-reoptimize chain", ["AMICO_TEST_JULIA_PROJECT", "AMICO_TEST_REHEARSAL_PROJECT"]);
+
+describe.skipIf(!GATE.run)(
   "slow: the calibrate→pin→re-optimize chain on mock (SEAM 5 — executed end-to-end)",
   () => {
     const prevProblemsDir = process.env.AMICODE_PROBLEMS_DIR;

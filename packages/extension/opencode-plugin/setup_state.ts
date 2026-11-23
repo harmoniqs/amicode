@@ -28,6 +28,8 @@ interface SetupState {
     juliaupPresent?: boolean;
     channelPresent?: boolean;
     projectInstantiated?: boolean;
+    /** Instantiated from an older bundled pin (#2180). */
+    projectStale?: boolean;
     channel?: string | null;
   };
   labToml?: {
@@ -70,7 +72,20 @@ export function buildSetupStateSection(): string | null {
     const missing: string[] = [];
     if (j.juliaupPresent === false) missing.push("juliaup not installed");
     if (j.channelPresent === false) missing.push(`channel ${j.channel ?? "?"} not installed`);
-    if (j.projectInstantiated === false) missing.push("Piccolo project not instantiated");
+    if (j.projectInstantiated === false && !j.projectStale) missing.push("Piccolo project not instantiated");
+    if (j.projectStale === true && missing.length === 0) {
+      // #2180: set up before from an older bundled pin. Not a fresh install.
+      lines.push(
+        "- **Julia toolchain: Piccolo project out of date** (instantiated from an older pinned " +
+          "stack than this Amicode ships; the vetted templates refuse to run on it). If the current " +
+          "task needs a solve, tell the user and offer to upgrade via **Amicode: Set up Julia** " +
+          "(Command Palette, or the `amicode.setupJulia` command): it re-instantiates the bundled " +
+          "environment in a visible terminal. Do NOT upgrade packages yourself, and do NOT raise " +
+          "this when the task doesn't touch solves.",
+      );
+    } else if (j.projectStale === true) {
+      missing.push("Piccolo project out of date (upgrade needed)");
+    }
     if (missing.length > 0) {
       lines.push(
         `- **Julia toolchain: NOT set up** (${missing.join(" · ")}). Solves cannot run without it. ` +

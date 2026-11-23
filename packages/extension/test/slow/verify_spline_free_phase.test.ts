@@ -4,6 +4,7 @@ import { mkdtempSync, existsSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse } from "smol-toml";
+import { gateSlowSuite } from "../slow_gate";
 
 // Live golden for the spline/free-phase harness (spec-20260704-113005 §6/§9).
 // make_verify_golden.jl builds a REAL qubit⊗qutrit [2,3] EmbeddedOperator (unequal
@@ -27,7 +28,9 @@ function runHarness(dir: string): Record<string, unknown> {
   return parse(readFileSync(join(dir, "verification.toml"), "utf8")) as Record<string, unknown>;
 }
 
-describe.skipIf(!PROJECT)("slow: verify_rollout.jl spline + free-phase (spec-20260704-113005 §6/§9)", () => {
+const GATE = gateSlowSuite("slow: verify_rollout.jl spline + free-phase", ["AMICO_TEST_JULIA_PROJECT"]);
+
+describe.skipIf(!GATE.run)("slow: verify_rollout.jl spline + free-phase (spec-20260704-113005 §6/§9)", () => {
   it("dense pulse + free-phase [2,3] → agree=true via the binary-decomposition builder", () => {
     const v = runHarness(genGolden());
     expect(v.integrator).toBe("piccolo_unitary_rollout_dense");
