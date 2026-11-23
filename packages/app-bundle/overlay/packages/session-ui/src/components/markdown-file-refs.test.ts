@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
+import DOMPurify from "dompurify"
+import { sanitizeMarkdown } from "./markdown-cache"
 import {
   cachedFileRef,
   clearFileRefCache,
@@ -114,5 +116,28 @@ describe("registration handles (#1845)", () => {
     unregister()
     expect(fileRefResolver()).toBeUndefined()
     expect(fileRefResolverVersion()).toBe(before + 2)
+  })
+})
+
+// #2117: an authored `[name](file:///abs/path)` link rendered as an anchor with
+// NO href. DOMPurify's default URI allow-list drops the file: scheme, so the
+// click handler (setupExternalLinks) saw an empty href and did nothing: no
+// open, no toast, no error. file:// is the open-file bridge's own scheme (the
+// resolver's rewritten links use it too), so the chat sanitizer must keep it.
+// happy-dom's tree walker never reaches attributes during sanitize(), so the
+// URI policy is asserted through DOMPurify.isValidAttribute, which reads the
+// config the chat sanitizer just applied.
+describe("chat sanitizer keeps file:// links (#2117)", () => {
+  test("file:// hrefs survive; script schemes stay stripped", () => {
+    sanitizeMarkdown("<p>x</p>")
+    expect(DOMPurify.isValidAttribute("a", "href", "file:///home/u/proj/deck.html")).toBe(true)
+    expect(DOMPurify.isValidAttribute("a", "href", "file:///home/u/My%20Project/report.pdf")).toBe(true)
+    expect(DOMPurify.isValidAttribute("a", "href", "https://example.com/x")).toBe(true)
+    expect(DOMPurify.isValidAttribute("a", "href", "mailto:a@b.c")).toBe(true)
+    expect(DOMPurify.isValidAttribute("a", "href", "plans/foo.md")).toBe(true)
+    expect(DOMPurify.isValidAttribute("a", "href", "#heading")).toBe(true)
+    expect(DOMPurify.isValidAttribute("a", "href", "javascript:alert(1)")).toBe(false)
+    expect(DOMPurify.isValidAttribute("a", "href", "vbscript:x")).toBe(false)
+    expect(DOMPurify.isValidAttribute("a", "href", "data:text/html,<script>x</script>")).toBe(false)
   })
 })

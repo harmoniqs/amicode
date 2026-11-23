@@ -527,7 +527,8 @@
     "packages/session-ui/src/components/group-parts.test.ts": "a31ce19009e1d62e75e83b682190a4613da0eed334420409ed73a9e21834ae84",
     "packages/session-ui/src/components/image-lightbox.tsx": "d6bddb0db8736f8284568d74ae2a33b1c3b1acf51e8627a711ae6637386a0b23",
     "packages/session-ui/src/components/line-comment-styles.ts": "2077836c13bd3c3f1c39c67722119e448a2dfa123377f94bfd3676634e955d00",
-    "packages/session-ui/src/components/markdown-file-refs.test.ts": "2172d17a0ee5e49636c8bd323f4fb797a7f41e469d0098864b82d374f0c10144",
+    "packages/session-ui/src/components/markdown-cache.tsx": "fae72b94c2a6149c44451f8046e13e74c7b2c34c8c7983813ff04eb53e7eead3",
+    "packages/session-ui/src/components/markdown-file-refs.test.ts": "815753da251b1da23ba08749eeea46eecd55b4671f5a8900a1e0c14593bdc40c",
     "packages/session-ui/src/components/markdown-file-refs.ts": "417417f3660fe18f04a13ca4765b155b5479d7ce41b3638a57ba1abaa5830054",
     "packages/session-ui/src/components/markdown-local-images.test.ts": "f614e986656d128f5b72ca772a7f3c8ea607cbed69559227feb3d9286f4110be",
     "packages/session-ui/src/components/markdown-local-images.ts": "17fd69cdda8056711227601c695d7419bc8147433f7700eb3ed301b1803ce188",
@@ -1104,7 +1105,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-11-08T15:21:50.674Z",
+  "extracted_at": "2026-11-23T21:55:54.079Z",
   "per_package": {
     "packages/app": {
       "A": 314,
@@ -1143,7 +1144,7 @@
     },
     "packages/session-ui": {
       "A": 56,
-      "M": 32,
+      "M": 33,
       "D": 0
     },
     "packages/ui": {
@@ -1153,7 +1154,7 @@
     }
   },
   "counts": {
-    "overlay_total": 1082,
+    "overlay_total": 1083,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1677,6 +1678,7 @@
     "packages/session-ui/src/components/group-parts.test.ts": "A",
     "packages/session-ui/src/components/image-lightbox.tsx": "A",
     "packages/session-ui/src/components/line-comment-styles.ts": "M",
+    "packages/session-ui/src/components/markdown-cache.tsx": "M",
     "packages/session-ui/src/components/markdown-file-refs.test.ts": "A",
     "packages/session-ui/src/components/markdown-file-refs.ts": "A",
     "packages/session-ui/src/components/markdown-local-images.test.ts": "A",
