@@ -186,8 +186,9 @@
     "packages/app/src/components/titlebar-layout.ts": "f8e1950c75ae0530b96208a8146ad9efe20f8b8d8c2ae8dd3025b9b9809b4831",
     "packages/app/src/components/titlebar-portal-dedup.test.ts": "99034b76bf7896247a7eb8d492e7801ac2d67290cce226e70487c008eaff2a1f",
     "packages/app/src/components/titlebar-portal-registry.ts": "e6a159c44490125046ddbb249fbda5cef6cef383a604a168cb4018cf49025521",
-    "packages/app/src/components/titlebar-tab-nav.css": "90930c2f9476fb0eace8692424a029b3510781c88d1ee61f7f2edba559526832",
-    "packages/app/src/components/titlebar-tab-nav.tsx": "0d5e11f63006e87fc42a4682c481203f50622677b07a8ff87a3348613cdf3674",
+    "packages/app/src/components/titlebar-tab-close-target.test.ts": "bc432bc9b773e5394511ac0b7bb18941240f3121698a7bcda40f097d40fd6f74",
+    "packages/app/src/components/titlebar-tab-nav.css": "c40ac8077481b51bd4f6fcbb67533583fe7d24fabe71bcf40c75061d83310837",
+    "packages/app/src/components/titlebar-tab-nav.tsx": "8a7fb46c02751f7eb557da0c497a3f5a7d5ef8296dc87fbb593088b2675ee670",
     "packages/app/src/components/titlebar-tab-popover.css": "d731db2d7d49838004089a3d82ff68c22214b0ca636bf3b8e02498c14dadbf8d",
     "packages/app/src/components/titlebar-tab-strip.tsx": "a3c8a8df186a6164494230bec7f302cfe3a1cf658e3ab10f9ef0af4f5d63c038",
     "packages/app/src/components/titlebar.css": "50c262603ba1140db9e4fefe8f03e9c6ae3bf64dc7a917e55586bfd67a5e3011",
@@ -1104,10 +1105,10 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-11-08T15:21:50.674Z",
+  "extracted_at": "2026-11-23T22:12:40.531Z",
   "per_package": {
     "packages/app": {
-      "A": 314,
+      "A": 315,
       "M": 166,
       "D": 0
     },
@@ -1153,7 +1154,7 @@
     }
   },
   "counts": {
-    "overlay_total": 1082,
+    "overlay_total": 1083,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1336,6 +1337,7 @@
     "packages/app/src/components/titlebar-layout.ts": "A",
     "packages/app/src/components/titlebar-portal-dedup.test.ts": "A",
     "packages/app/src/components/titlebar-portal-registry.ts": "A",
+    "packages/app/src/components/titlebar-tab-close-target.test.ts": "A",
     "packages/app/src/components/titlebar-tab-nav.css": "M",
     "packages/app/src/components/titlebar-tab-nav.tsx": "M",
     "packages/app/src/components/titlebar-tab-popover.css": "M",
