@@ -54,12 +54,20 @@ describe("chips truncate; Send is never overlapped", () => {
     expect(body).toMatch(/margin-inline:\s*-4px/)
   })
 
-  test("every slot chip can shrink below its label width so the label ellipsizes", () => {
-    for (const slot of ["agent", "model", "variant", "harness"]) {
-      expect(indexCss).toContain(`.amicode-composer-controls .amicode-composer-${slot}`)
-    }
-    const body = ruleBody(indexCss, ".amicode-composer-controls .amicode-composer-agent")
+  // Each chip's trigger sits inside TooltipV2's `div[data-component="tooltip-v2-trigger"]`
+  // (display: flex). That wrapper, not the button, is the row's flex item, so
+  // min-width: 0 on the button alone never lets it shrink: the wrapper's
+  // automatic min-width pins it at the full label width.
+  const CHIPS = ".amicode-composer-agent, .amicode-composer-model, .amicode-composer-variant, .amicode-composer-harness"
+  const TRIGGER = '.amicode-composer-controls [data-component="tooltip-v2-trigger"]'
+
+  test("every slot chip, and the tooltip wrapper that is its flex item, can shrink so the label ellipsizes", () => {
+    const body = ruleBody(indexCss, `.amicode-composer-controls :is(${CHIPS}),\n${TRIGGER}:has(:is(${CHIPS}))`)
     expect(body).toMatch(/min-width:\s*0/)
+  })
+
+  test("the add button never shrinks", () => {
+    expect(ruleBody(indexCss, `${TRIGGER}:has([data-action="prompt-attach"])`)).toMatch(/flex-shrink:\s*0/)
   })
 
   test("the trailing controls never shrink", () => {
@@ -110,11 +118,17 @@ describe("explicit shed order: variant -> harness -> model label -> concise", ()
     expect(concise).toBe(26)
   })
 
-  test("variant and harness are removed outright", () => {
+  test("variant and harness are removed outright, tooltip wrapper included (no stray gap)", () => {
     const blocks = containerBlocks(indexCss)
     const body = (n: number | undefined) => blocks.find(([rem]) => rem === n)![1]
-    expect(ruleBody(body(variant), ".amicode-composer-variant")).toMatch(/display:\s*none/)
-    expect(ruleBody(body(harness), ".amicode-composer-harness")).toMatch(/display:\s*none/)
+    const variantBody = body(variant)
+    expect(variantBody).toContain('[data-component="tooltip-v2-trigger"]:has(.amicode-composer-variant)')
+    expect(ruleBody(variantBody, ".amicode-composer-variant")).toMatch(/display:\s*none/)
+    const harnessBody = body(harness)
+    expect(harnessBody).toContain(
+      '.amicode-composer-controls:not([data-harness-degraded]) [data-component="tooltip-v2-trigger"]:has(.amicode-composer-harness)',
+    )
+    expect(ruleBody(harnessBody, ".amicode-composer-harness")).toMatch(/display:\s*none/)
   })
 
   test("the harness is never shed under a degraded harness (it is the way back)", () => {

@@ -28,7 +28,7 @@
     "packages/app/src/design-polish.css": "abe7515fe2ffdc090a51302f910d4b0873fb741f1534bd5196ddecc71fc7b714",
     "packages/app/src/desktop-menu.ts": "350e0e9f2e4294bfe1b1f357b3cd2ea0908b14d20ca1e79fda2305db1958fb24",
     "packages/app/src/entry.tsx": "080b3c11cdd61dfaf4bea8132970a1a300b77b0e8fc53065e42d5ccd75eaed01",
-    "packages/app/src/index.css": "ef339acb102e98adc528fc8cf1aa60989d738b3683dae6354f923360f0fc220c",
+    "packages/app/src/index.css": "2192acffe9ea087a56833e8d9a473dfaa648ff634583a49ce5d0491cbdf4362d",
     "packages/app/src/theme-preload.test.ts": "d9e4e96dd39a3491493637682611bedf6ddf4b6e4dbdddcb60bf006211b137a1",
     "packages/app/test-browser/empty-workspace-landing.test.ts": "83d19ecf5da37c234dbde1a004432865204d7f412a335c4e470a07e73d9bcda4",
     "packages/app/test-browser/keybind-migration.test.ts": "192418880d432ff62d15fd80f6250ece6233e43d0dbe11d5a4fbb5f4d9e45a06",
@@ -772,7 +772,7 @@
     "packages/app/src/components/prompt-input/attachments.ts": "c3c28df0d2f18378d39e17147a4c64e8ea01d63b97c39e1874ed9445ca671bb1",
     "packages/app/src/components/prompt-input/clipboard-bridge.test.ts": "15f76dca1a25d024128718e4099220b79ca029263410aab55502cf9caf9b2914",
     "packages/app/src/components/prompt-input/clipboard-bridge.ts": "4b5a1edf59d4c85268d6ff72aa9f9d66f82d4fdb887121fb978c09caf4c5be65",
-    "packages/app/src/components/prompt-input/composer-row-responsive.test.ts": "7207efb26d28e92f0dbe110056d45a3df51690a25c74d535c1c4ba79136b69b7",
+    "packages/app/src/components/prompt-input/composer-row-responsive.test.ts": "eec6dffe42b47e87320740af9d7d91c83d94e37bceededeb2dd0c2ea14d534e1",
     "packages/app/src/components/prompt-input/context-items.tsx": "027b02e394ccd14849052bf3fcacdae1e090c71d164fa8955addfe3f7abf1758",
     "packages/app/src/components/prompt-input/harness-control.test.tsx": "b8b9bfe984843d22aeb398d978c6a79ac114face03e0911ef3a67aa172dd6509",
     "packages/app/src/components/prompt-input/harness-control.tsx": "4e5a5731a62e35e167a99f3f8ecf556baf9f0dce9979a1dc502a084d07625f18",
@@ -1105,7 +1105,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-11-24T14:31:44.650Z",
+  "extracted_at": "2026-11-24T14:35:47.678Z",
   "per_package": {
     "packages/app": {
       "A": 315,
