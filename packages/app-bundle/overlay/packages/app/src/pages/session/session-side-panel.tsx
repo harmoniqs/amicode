@@ -371,6 +371,9 @@ export function SessionSidePanel(props: {
   const [reviewTabOpen, setReviewTabOpen] = createSignal(true)
   const panelWidth = createMemo(() => {
     if (!open()) return "0px"
+    // Wide mode widens the work column; the panel fills it instead of keeping
+    // its stored pixel width (amicode#2188).
+    if (props.isWide?.()) return "100%"
     // the tabs column owns its width (never flex-fills the window) and can be
     // dragged much narrower — Kate 2026-07-27
     // Floor at WORK_COLUMN_WIDTH_MIN so the <aside> always fills its work column
@@ -692,7 +695,8 @@ export function SessionSidePanel(props: {
         }}
         style={{ width: panelWidth() }}
       >
-        <Show when={tabsOpen()}>
+        {/* hidden while wide: the stored width is ignored there (amicode#2188) */}
+        <Show when={tabsOpen() && !props.isWide?.()}>
           <div onPointerDown={() => props.size.start()}>
             <ResizeHandle
               direction="horizontal"
