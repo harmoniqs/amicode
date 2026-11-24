@@ -224,8 +224,13 @@ export function PromptInputV2(props: PromptInputV2Props) {
         </div>
 
         <div class="flex h-11 items-center px-2">
+          {/* amicode#2189: the control group is the row's only flexible region.
+              It clips horizontally so a crowded chip can never paint over the
+              trailing controls or Send, and the app's `amicode-composer`
+              container query sheds its chips in priority order (index.css). */}
           <div
-            class="flex min-w-0 flex-1 items-center gap-1"
+            class="amicode-composer-controls flex min-w-0 flex-1 items-center gap-1"
+            data-harness-degraded={props.harnessDegraded ? "" : undefined}
             aria-hidden={state.mode === "shell"}
             inert={state.mode === "shell" ? true : undefined}
             style={buttons()}
@@ -254,6 +259,7 @@ export function PromptInputV2(props: PromptInputV2Props) {
                     title="Choose agent"
                     keybind={["Mod", "."]}
                     control={control}
+                    class="amicode-composer-agent"
                     tourTarget="posture"
                   />
                 )}
@@ -282,6 +288,7 @@ export function PromptInputV2(props: PromptInputV2Props) {
                       title="Choose model variant"
                       keybind={["Shift", "Mod", "D"]}
                       control={control}
+                      class="amicode-composer-variant"
                     />
                   </Show>
                 )}
@@ -298,7 +305,7 @@ export function PromptInputV2(props: PromptInputV2Props) {
             </Show>
           </div>
           <Show when={props.trailingControl} keyed>
-            {(control) => <div class="mr-1 flex items-center">{control}</div>}
+            {(control) => <div class="mr-1 flex shrink-0 items-center">{control}</div>}
           </Show>
           <PromptInputV2SubmitButton
             mode={state.mode}
@@ -576,6 +583,7 @@ function PromptInputV2ConfiguredSelect(props: {
   control: PromptInputV2SelectControl
   model?: boolean
   tourTarget?: string
+  class?: string
 }) {
   const current = () => props.control.current()
   const providerID = () => props.control.options().find((option) => option.id === current())?.providerID
@@ -583,6 +591,7 @@ function PromptInputV2ConfiguredSelect(props: {
     <PromptInputV2Select
       title={props.title}
       tourTarget={props.tourTarget}
+      class={props.class}
       keybind={props.control.keybind?.() ?? props.keybind}
       options={props.control.options()}
       current={current()}

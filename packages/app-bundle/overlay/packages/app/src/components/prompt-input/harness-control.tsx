@@ -94,7 +94,7 @@ export function HarnessComposerControl() {
               as={ButtonV2}
               variant="ghost-muted"
               size="normal"
-              class="max-w-[220px] justify-start ![font-weight:440]"
+              class="amicode-composer-harness min-w-0 max-w-[220px] justify-start ![font-weight:440]"
               aria-label="Choose harness"
               data-action="prompt-harness"
             >

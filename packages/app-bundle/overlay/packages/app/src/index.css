@@ -430,3 +430,57 @@
     display: none;
   }
 }
+
+/* amicode(#2189): the composer control row at narrow widths. The control
+   group (.amicode-composer-controls, session-ui prompt-input) is the row's only
+   flexible region; the trailing controls and Send never shrink.
+   - It clips on the x axis, so however long a label gets, no chip can paint
+     over the trailing controls or Send. `clip` (not `hidden`) leaves the y axis
+     visible; the 4px inline padding, cancelled by a -4px margin, keeps the
+     first and last chips' focus rings (2px + 2.5px offset) inside the clip.
+   - Every select chip may shrink below its label width, so a label that does
+     not fit ellipsizes (each label span is already `truncate`). */
+.amicode-composer-controls {
+  overflow-x: clip;
+  padding-inline: 4px;
+  margin-inline: -4px;
+}
+
+.amicode-composer-controls .amicode-composer-agent,
+.amicode-composer-controls .amicode-composer-model,
+.amicode-composer-controls .amicode-composer-variant,
+.amicode-composer-controls .amicode-composer-harness {
+  min-width: 0;
+}
+
+/* amicode(#2189): the shed order. As the composer narrows, its chips leave
+   in an explicit priority order, widest breakpoint first:
+     variant (36rem) -> harness (32rem) -> model label (28rem) -> concise (26rem,
+     the #1633 rule above).
+   The agent chip and Send are never shed; the agent label ellipsizes instead.
+   The harness is never shed under a degraded harness: there the trio is
+   inert and the harness select is the only way back. The model chip goes
+   icon-only (provider icon + chevron); its label is visually hidden, not
+   removed, so the button keeps its accessible name. */
+@container amicode-composer (max-width: 36rem) {
+  .amicode-composer-controls .amicode-composer-variant {
+    display: none;
+  }
+}
+
+@container amicode-composer (max-width: 32rem) {
+  .amicode-composer-controls:not([data-harness-degraded]) .amicode-composer-harness {
+    display: none;
+  }
+}
+
+@container amicode-composer (max-width: 28rem) {
+  .amicode-composer-controls .amicode-composer-model-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
