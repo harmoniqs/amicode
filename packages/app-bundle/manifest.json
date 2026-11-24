@@ -901,8 +901,8 @@
     "packages/app/src/pages/session/review-tab.tsx": "3c90e6b11fad40ea19a258966c374ee12c05bd0e7891fcea561ba0b965ddc9f5",
     "packages/app/src/pages/session/session-panel-width.test.ts": "9482afba7fbce254cbbd21ef885e9e9620b981616681635376f466478f611155",
     "packages/app/src/pages/session/session-panel-width.ts": "02ee3a02ed78db2eac47c2528055cf78aef95f389641e929ddc56c17471dcbe2",
-    "packages/app/src/pages/session/session-side-panel-structure.test.ts": "b2d1d007d9200d0ac4a0889e45c2dbe57a324a10cb26ae9ab8f420d3c890402b",
-    "packages/app/src/pages/session/session-side-panel.tsx": "d6c0cd6cdc2a586ce342b1ef91d68f4560d7c348891e5a83bc9665b671b892e9",
+    "packages/app/src/pages/session/session-side-panel-structure.test.ts": "1dd28991d4eb2ee27c49e6f55ea59ae7f9ffa804a0a5044c98237d35722ca7d2",
+    "packages/app/src/pages/session/session-side-panel.tsx": "895cb528d3e5a44f1bbbfddc7fb96096fc8c3eea2fdc97b6ef67a54ef7febd22",
     "packages/app/src/pages/session/terminal-panel-v2.tsx": "68dad9307f1d2abf3ff9248e451bd08005acf01ddc46b30a6d01b58f4a90dce0",
     "packages/app/src/pages/session/use-amicode-commands.test.ts": "65671d054c404edd2b799b0f6591a9c055e6ecb454a674fa0bd9a7fa6f68e111",
     "packages/app/src/pages/session/use-amicode-commands.tsx": "88bfdad9ae6dfd920b8e6a14ffebd2cf9e52b8f67bb9284cb358ad940643ca67",
@@ -1104,7 +1104,7 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-11-08T15:21:50.674Z",
+  "extracted_at": "2026-11-24T14:30:34.883Z",
   "per_package": {
     "packages/app": {
       "A": 314,

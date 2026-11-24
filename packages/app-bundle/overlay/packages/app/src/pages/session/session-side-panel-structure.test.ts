@@ -28,3 +28,36 @@ describe("work column is vault-free (amicode#105)", () => {
     expect(source).toContain("handleSurfaceTabDragEnd")
   })
 })
+
+// amicode#2188: wide mode must widen the side panel itself, not just its work
+// column container. The <aside> fills the widened column ("100%") and its own
+// resize handle is hidden (dragging it would only change the stored pixel
+// width, which is ignored while wide). Outside wide mode the stored pixel width
+// and a working handle stay as before.
+describe("wide mode fills the work column (amicode#2188)", () => {
+  const panelWidthBody = source.slice(
+    source.indexOf("const panelWidth = createMemo("),
+    source.indexOf("const treeWidth = createMemo("),
+  )
+
+  test("panelWidth returns 100% while wide and the panel is open", () => {
+    const wideIdx = panelWidthBody.indexOf('if (props.isWide?.()) return "100%"')
+    expect(wideIdx).toBeGreaterThan(-1)
+    // the closed guard still wins, and wide takes precedence over the stored width
+    expect(panelWidthBody.indexOf('if (!open()) return "0px"')).toBeLessThan(wideIdx)
+    expect(wideIdx).toBeLessThan(panelWidthBody.indexOf("floorPanelColumnWidth(layout.panelColumn.width())"))
+  })
+
+  test("outside wide mode the stored pixel width is still applied", () => {
+    expect(panelWidthBody).toContain("return `${floorPanelColumnWidth(layout.panelColumn.width())}px`")
+    expect(source).toContain("style={{ width: panelWidth() }}")
+  })
+
+  test("the aside's resize handle is hidden while wide", () => {
+    const asideHandle = source.slice(source.indexOf("style={{ width: panelWidth() }}"))
+    const showIdx = asideHandle.indexOf("<Show when={tabsOpen() && !props.isWide?.()}>")
+    expect(showIdx).toBeGreaterThan(-1)
+    expect(showIdx).toBeLessThan(asideHandle.indexOf("<ResizeHandle"))
+    expect(asideHandle.indexOf("layout.panelColumn.resize(width)")).toBeGreaterThan(showIdx)
+  })
+})
