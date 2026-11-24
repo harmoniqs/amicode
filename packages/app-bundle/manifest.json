@@ -28,7 +28,7 @@
     "packages/app/src/design-polish.css": "abe7515fe2ffdc090a51302f910d4b0873fb741f1534bd5196ddecc71fc7b714",
     "packages/app/src/desktop-menu.ts": "350e0e9f2e4294bfe1b1f357b3cd2ea0908b14d20ca1e79fda2305db1958fb24",
     "packages/app/src/entry.tsx": "080b3c11cdd61dfaf4bea8132970a1a300b77b0e8fc53065e42d5ccd75eaed01",
-    "packages/app/src/index.css": "727656c5e7ff7d7c7ff4fc95a3ec7c9148a34f1f974a58a297285e870519be5d",
+    "packages/app/src/index.css": "2192acffe9ea087a56833e8d9a473dfaa648ff634583a49ce5d0491cbdf4362d",
     "packages/app/src/theme-preload.test.ts": "d9e4e96dd39a3491493637682611bedf6ddf4b6e4dbdddcb60bf006211b137a1",
     "packages/app/test-browser/empty-workspace-landing.test.ts": "83d19ecf5da37c234dbde1a004432865204d7f412a335c4e470a07e73d9bcda4",
     "packages/app/test-browser/keybind-migration.test.ts": "192418880d432ff62d15fd80f6250ece6233e43d0dbe11d5a4fbb5f4d9e45a06",
@@ -155,7 +155,7 @@
     "packages/app/src/components/profile-popover.tsx": "eff742e90544455f13234a9351bb1b82189663cba2cd3172bdcea1a8a37284e8",
     "packages/app/src/components/prompt-input-clipboard-structure.test.ts": "946b718c2164da394602f26e4d9919d752da0d0b9bee714f345ba16c274542da",
     "packages/app/src/components/prompt-input-resize-structure.test.ts": "38244b103702afc4b45cd40176f338c2a632d64b8ee9a719ee2073b6d7aaf062",
-    "packages/app/src/components/prompt-input-v2.tsx": "f0b637e46737e3c7345957a0167c878c8e9870a15bb850057665a4444ea91fe8",
+    "packages/app/src/components/prompt-input-v2.tsx": "915d563eb74e6aa40959f04f14b20d007f1a4a50ddc787e6d210641a857e25a4",
     "packages/app/src/components/prompt-input.tsx": "e3bfbadfd0a049aa2351bb6ef413708a56e66881fdcc052d43a6cd82563c6c03",
     "packages/app/src/components/prompt-project-selector.tsx": "0157c954b938bce2b5aca9a82f4a72338e361f4c9027e55a7fd5a14a1654d294",
     "packages/app/src/components/question-inbox.tsx": "5ce03a30b7110092ddffccf3bf38e6c1b1a79624f378c819be7019725c96478a",
@@ -772,9 +772,10 @@
     "packages/app/src/components/prompt-input/attachments.ts": "c3c28df0d2f18378d39e17147a4c64e8ea01d63b97c39e1874ed9445ca671bb1",
     "packages/app/src/components/prompt-input/clipboard-bridge.test.ts": "15f76dca1a25d024128718e4099220b79ca029263410aab55502cf9caf9b2914",
     "packages/app/src/components/prompt-input/clipboard-bridge.ts": "4b5a1edf59d4c85268d6ff72aa9f9d66f82d4fdb887121fb978c09caf4c5be65",
+    "packages/app/src/components/prompt-input/composer-row-responsive.test.ts": "eec6dffe42b47e87320740af9d7d91c83d94e37bceededeb2dd0c2ea14d534e1",
     "packages/app/src/components/prompt-input/context-items.tsx": "027b02e394ccd14849052bf3fcacdae1e090c71d164fa8955addfe3f7abf1758",
     "packages/app/src/components/prompt-input/harness-control.test.tsx": "b8b9bfe984843d22aeb398d978c6a79ac114face03e0911ef3a67aa172dd6509",
-    "packages/app/src/components/prompt-input/harness-control.tsx": "6f3825cb6b312e6b1d85b7af0da99976cbb15082822a92e869f956f5ec2e91fd",
+    "packages/app/src/components/prompt-input/harness-control.tsx": "4e5a5731a62e35e167a99f3f8ecf556baf9f0dce9979a1dc502a084d07625f18",
     "packages/app/src/components/prompt-input/harness.test.ts": "35739529b06829dd9fa169209c54ae668e0fc06d6968b00cfce638a221ce1361",
     "packages/app/src/components/prompt-input/harness.ts": "2a9406b14da9de68a172e61b6ddb4e49442a90f770b1b88669761f2ec201f9ab",
     "packages/app/src/components/prompt-input/image-attachments.tsx": "aa451ed6aa61a68ba0e8dacd8c45137f84c62566797a5242b75a89487ef0e9bf",
@@ -1068,7 +1069,7 @@
     "packages/sdk/js/src/v2/gen/sdk.gen.ts": "6610638b4fb71bac498da98d232ef9adcd4b011b63e5e81a63fc6dc20d311b17",
     "packages/sdk/js/src/v2/gen/types.gen.ts": "20dfc17423861bd51c197fe6a2fcb6efbd7ad11853b28e0bb79844115256e729",
     "packages/session-ui/src/v2/components/prompt-input/attachments.ts": "ff66078f2edc9a67a4df0d7dfd76a49be5eab27ac332b303f3412721ef7268ea",
-    "packages/session-ui/src/v2/components/prompt-input/index.tsx": "f3e79853a30c71b7c7ec99ca7c092695ce59b03233c8cf0f6e094fcf00498c60",
+    "packages/session-ui/src/v2/components/prompt-input/index.tsx": "4fb03e92a90f631714eade4bf205aac8449f299c22adb2a9db3b6da17abe9070",
     "packages/session-ui/src/v2/components/prompt-input/resize-handle.test.ts": "1bd88c8e864d5d240f8b00f9e3bf4a265c79282c0073b7711d797ff7d7e81d6e",
     "packages/session-ui/src/v2/components/prompt-input/resize-handle.tsx": "61362de659c8000539bdb20bd710b86967e85df6cf5b4ecfb2fa3bae46cb4e0a",
     "packages/session-ui/src/v2/components/prompt-input/resize.test.ts": "c049ad1cd60e5ac4ec779dd37ab4b2c8a6244b5b6cbbc59240d1c43a449cfabd",
@@ -1104,10 +1105,10 @@
     "packages/ui/src/v2/components/text-shimmer-v2.tsx"
   ],
   "exceptions": [],
-  "extracted_at": "2026-11-08T15:21:50.674Z",
+  "extracted_at": "2026-11-24T14:35:47.678Z",
   "per_package": {
     "packages/app": {
-      "A": 314,
+      "A": 315,
       "M": 166,
       "D": 0
     },
@@ -1153,7 +1154,7 @@
     }
   },
   "counts": {
-    "overlay_total": 1082,
+    "overlay_total": 1083,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1922,6 +1923,7 @@
     "packages/app/src/components/prompt-input/attachments.ts": "M",
     "packages/app/src/components/prompt-input/clipboard-bridge.test.ts": "A",
     "packages/app/src/components/prompt-input/clipboard-bridge.ts": "A",
+    "packages/app/src/components/prompt-input/composer-row-responsive.test.ts": "A",
     "packages/app/src/components/prompt-input/context-items.tsx": "M",
     "packages/app/src/components/prompt-input/harness-control.test.tsx": "A",
     "packages/app/src/components/prompt-input/harness-control.tsx": "A",
